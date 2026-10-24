@@ -62,6 +62,7 @@ EOF
 
 cd "$REDOX"
 make "${1:-all}" \
+    PODMAN_BUILD=0 \
     ARCH=aarch64 \
     BOARD=raspi3bp \
     CONFIG_NAME=minimal \
