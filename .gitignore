@@ -1,0 +1,6 @@
+.DS_Store
+# Build output and downloaded sources
+/build/
+/redox/
+*.img
+*.iso
