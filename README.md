@@ -22,9 +22,11 @@ step-by-step plan.
 - Ethernet on both boards (Wi-Fi later, optional)
 - Prebuilt images and a beginner-friendly guide
 
-Kernel, driver and board changes are contributed upstream to
-[gitlab.redox-os.org](https://gitlab.redox-os.org/redox-os) whenever possible.
-This repository holds the roadmap, build scripts, documentation and images.
+This is an **unofficial, AI-assisted fork** and not part of the Redox OS
+project. Redox does not accept LLM-generated contributions, so changes are not
+submitted upstream. They are kept small and close to upstream Redox so the fork
+can follow new releases. This repository holds the roadmap, build scripts,
+documentation and images.
 
 ## Hardware you need
 
@@ -38,8 +40,8 @@ This repository holds the roadmap, build scripts, documentation and images.
 ## Contributing
 
 Issues, ideas and pull requests are welcome. Good starting points are the
-open steps in [ROADMAP.md](ROADMAP.md). Redox development is discussed in the
-[Redox Matrix chat](https://matrix.to/#/#redox-join:matrix.org).
+open steps in [ROADMAP.md](ROADMAP.md). Please report problems with this fork
+here, not to the Redox OS project.
 
 ## License
 

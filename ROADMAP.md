@@ -68,7 +68,7 @@ console and running QEMU.
 | 2.2 | Same image on the real Pi 3 (if it is a 3B rather than 3B+, swap in the matching DTB) | Kernel log on UART |
 | 2.3 | Fix whatever is broken (bootloader, MMU, timer, BCM2836 interrupt controller, UART) | **Shell over the serial console** |
 | 2.4 | Root filesystem on the SD card | RedoxFS root on SD, survives reboot |
-| 2.5 | Update the outdated Pi 3 docs in the Redox book, submit fixes upstream | Merge requests submitted |
+| 2.5 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
 
 QEMU `raspi3b` is the key tool: development without swapping SD cards, and
 automated testing in CI later.
@@ -79,7 +79,7 @@ automated testing in CI later.
 |---|---|---|
 | 3.1 | Pi 3 image with Zero 2 W DTB and firmware | Kernel log on UART |
 | 3.2 | Adjust for 512 MB RAM (memory map, lean image) | Shell over the serial console |
-| 3.3 | Own board variant `raspizero2w` in the build system, submitted upstream | Merge request submitted |
+| 3.3 | Own board variant `raspizero2w` in the fork's build system | `make` builds a Zero 2 W image |
 
 ## Phase 4: Stable on both boards
 
@@ -115,14 +115,20 @@ automated testing in CI later.
 
 ## Open source strategy
 
-- **Upstream first.** Code (kernel, drivers, board config) goes into the
-  official **gitlab.redox-os.org** via merge requests, so it does not rot. A
-  Redox GitLab account is requested through the Matrix chat.
+- **An unofficial, AI-assisted fork.** Development uses AI coding tools. Since
+  March 2026 Redox does not accept LLM-generated contributions, so this work
+  lives in a fork and is not submitted upstream. The fork is clearly labelled
+  as unofficial and AI-assisted, and does not claim to be Redox OS itself.
+- **Stay close to upstream.** Changes are kept small and in separate commits
+  per component (kernel, drivers, board config), so the fork can be rebased on
+  new Redox releases and parts could be rewritten for upstream later if the
+  policy changes or someone reimplements them by hand.
 - **This repository** holds the roadmap, build instructions, scripts, prebuilt
-  images and issues.
-- **MIT license**, like Redox itself.
-- Share progress publicly: Redox Matrix, blog posts, maybe a guest post in the
-  Redox news. A working Pi 3 alone already helps many people.
+  images and issues; forked Redox components are linked from here.
+- **MIT license**, like Redox itself. No code copied from GPL-licensed sources
+  (e.g. Linux drivers); hardware documentation and datasheets are fine.
+- Share progress publicly: blog posts, forums, Raspberry Pi community. A
+  working Pi 3 alone already helps many people.
 
 ## Risks
 
@@ -131,6 +137,7 @@ automated testing in CI later.
   it is incomplete.
 - The HAT's Ethernet chip may need its own driver (if it is not the same as on
   the Pi 3).
+- The fork drifts away from upstream Redox if it is not rebased regularly.
 
 Phases 0–4 are realistic in spare time. Phase 5 is a real driver project.
 
