@@ -99,6 +99,21 @@ Result in QEMU `raspi3b`: all secondaries pass the IPI/timer self-test,
 `CPU activation complete: 4 CPUs online`, and the system boots to the login
 prompt. Not yet tested on real hardware.
 
+## Own image build (Linux host)
+
+[`scripts/build-image.sh`](../scripts/build-image.sh) builds a `raspi3bp`
+image on the x86_64 Linux host in about 25 minutes (first run, natively
+without Podman): kernel, `base` and bootloader from source with our patches
+and `BOARD=raspi3bp`, the rest from Redox's prebuilt packages or built by the
+cookbook. Result: a 256 MiB image (126 MiB RedoxFS).
+
+In QEMU `raspi3b` it boots **without live mode** in 24 seconds (on the Linux
+host): `bcm2835-sdhcid` drives the SD card and `redoxfs` mounts the root
+filesystem from it. `ps` shows the processes spread over all four CPUs.
+`uname`, `ls` and `ps` work; `df` and `free` still crash with the relibc
+`no filetable fd present` panic, and `cat /scheme/sys/cpu` faults with
+"Write, but grant was not PROT_WRITE".
+
 ## Implications for the Zero 2 W
 
 - **512 MB RAM rules out live mode** with the server image (509 MiB). The

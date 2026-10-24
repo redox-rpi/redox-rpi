@@ -47,7 +47,7 @@ The main hurdles:
 |---|---|---|
 | 0.1 | Set up an **x86_64 Linux build host** (native machine, VM on x86 hardware or cloud VM; Debian/Ubuntu/Fedora) | Redox build prerequisites installed |
 | 0.2 | Native Redox build for x86_64 | `make all` succeeds, `make qemu` boots |
-| 0.3 | 🟡 aarch64 build, run in QEMU (`virt` machine) | Redox boots in `qemu-system-aarch64` (daily image ✅, own build open) |
+| 0.3 | ✅ Own aarch64 image build on the Linux host (`scripts/build-image.sh`, ~25 min) | Image boots in QEMU |
 | 0.4 | ✅ Check current state of the Pi 3 port | [docs/status.md](docs/status.md) |
 | 0.5 | ✅ Kernel build and image patching on macOS | [docs/build-host.md](docs/build-host.md), `tools/redoxfs-file` |
 
@@ -72,9 +72,9 @@ console and running QEMU.
 |---|---|---|
 | 2.1 | ✅ Boot a Redox aarch64 image in **QEMU `-M raspi3b`** (`scripts/qemu-raspi3b.sh`) | Kernel log on the emulated serial port |
 | 2.2 | ✅ Fix the kernel panic in devicetree interrupt parsing (`patches/fdt/`) | Root shell in QEMU `raspi3b` |
-| 2.3 | Userspace programs run (relibc `no filetable fd present` crash, upstream regression) | `ls`, `ps`, `free` work in QEMU |
+| 2.3 | 🟡 Userspace programs run: `ls`, `ps`, `uname` work in our own image; `df`, `free` still hit the relibc crash | `ls`, `ps`, `free` work in QEMU |
 | 2.4 | Same image on the real Pi 3 (if it is a 3B rather than 3B+, swap in the matching DTB) | **Shell over the serial console** |
-| 2.5 | Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`) | RedoxFS root on SD, survives reboot |
+| 2.5 | 🟡 Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`) | RedoxFS root on SD without live mode (QEMU ✅), survives reboot |
 | 2.6 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
 
 QEMU `raspi3b` is the key tool: development without swapping SD cards, and
