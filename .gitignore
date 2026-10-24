@@ -4,3 +4,6 @@
 /redox/
 *.img
 *.iso
+/upstream/
+/images/
+target/

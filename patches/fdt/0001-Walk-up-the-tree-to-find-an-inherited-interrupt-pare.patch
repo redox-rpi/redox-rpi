@@ -1,0 +1,175 @@
+From 14fe6005060354374d3e2ce42f8952772b514001 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 24 Oct 2026 15:35:11 +0200
+Subject: [PATCH] Walk up the tree to find an inherited interrupt parent
+
+Without an `interrupt-parent` property, the devicetree parent was returned
+as interrupt parent even when it is a plain bus node without
+`#interrupt-cells`. Follow `interrupt-parent` links and devicetree parents
+until an interrupt controller is found, like Linux's `of_irq_find_parent`.
+
+This broke parsing `interrupts` of the GPIO controller on the Raspberry Pi 3
+and Zero 2 W, whose `/soc` node inherits `interrupt-parent` from the root.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dtb/interrupt-parent.dtb     | Bin 0 -> 519 bytes
+ dtb/interrupt-parent.dts     |  29 ++++++++++++++++++
+ src/properties/interrupts.rs |  58 +++++++++++++++++++++++++++++++----
+ src/tests.rs                 |  14 +++++++++
+ 4 files changed, 95 insertions(+), 6 deletions(-)
+ create mode 100644 dtb/interrupt-parent.dtb
+ create mode 100644 dtb/interrupt-parent.dts
+
+diff --git a/dtb/interrupt-parent.dtb b/dtb/interrupt-parent.dtb
+new file mode 100644
+index 0000000000000000000000000000000000000000..0d52657913bf89792db265340eb4afbc001c32a9
+GIT binary patch
+literal 519
+zcmZ`#%TB{E5Zn|bKo#O~<${z8heirq;Djo^0g1DltWry^ZQ1Dseu0nUNB9NAPU1F3
+zDwZZYJD#1`{yP8pCYqfP(GyYeDfLcpCAbt|eTe=#(m&rKbw^T<6Nk3zFNEj)P3nv2
+z8rb2R3l>ptyy0rKjga^A;Q4%>hrLJaYuj@OTi;iWvwd*Ja9G~gbq&Xubt?6Fyv}fB
+z{1@v*usiFU@LATcg~JT3=)88zheMgS$u{H&|2GqF=>^Ec+oE2l3J#o=s%-<uST$@+
+vq%!JvPJFtiSAlI$joWzD>y=>&%61$na7UAEdJQTwbqMxrWm_5C>ydr|DZ)qV
+
+literal 0
+HcmV?d00001
+
+diff --git a/dtb/interrupt-parent.dts b/dtb/interrupt-parent.dts
+new file mode 100644
+index 0000000..712658e
+--- /dev/null
++++ b/dtb/interrupt-parent.dts
+@@ -0,0 +1,29 @@
++/dts-v1/;
++
++/* Interrupt parent inherited through a plain bus node, like on the
++ * Raspberry Pi 3 where `/soc` has no `#interrupt-cells`. */
++/ {
++	#address-cells = <1>;
++	#size-cells = <1>;
++	interrupt-parent = <&intc>;
++
++	soc {
++		compatible = "simple-bus";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		intc: interrupt-controller@1000 {
++			reg = <0x1000 0x100>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++		};
++
++		gpio@2000 {
++			reg = <0x2000 0x100>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++			interrupts = <2 17>, <2 18>;
++		};
++	};
++};
+diff --git a/src/properties/interrupts.rs b/src/properties/interrupts.rs
+index 642a579..d147c8e 100644
+--- a/src/properties/interrupts.rs
++++ b/src/properties/interrupts.rs
+@@ -355,14 +355,60 @@ impl<'a, P: ParserWithMode<'a>> core::ops::DerefMut for InterruptParent<'a, P> {
+ 
+ impl<'a, P: ParserWithMode<'a>> Property<'a, P> for InterruptParent<'a, P> {
+     fn parse(node: FallibleNode<'a, P>, root: FallibleRoot<'a, P>) -> Result<Option<Self>, FdtError> {
+-        match node.properties()?.find("interrupt-parent")? {
+-            Some(phandle) => match root.resolve_phandle(PHandle(phandle.as_value()?))? {
+-                Some(parent) => Ok(Some(Self(parent.alt()))),
+-                None => Err(FdtError::MissingPHandleNode(phandle.as_value()?)),
+-            },
+-            None => Ok(node.parent().map(|n| Self(n.alt()))),
++        // Like Linux's `of_irq_find_parent`: follow `interrupt-parent` links
++        // and devicetree parents until reaching a node with
++        // `#interrupt-cells`. The devicetree parent itself is often a plain
++        // bus node (e.g. `soc`) that only inherits `interrupt-parent` from
++        // further up the tree.
++        let mut current = node;
++        for _ in 0..MAX_INTERRUPT_PARENT_DEPTH {
++            let next = match current.properties()?.find("interrupt-parent")? {
++                Some(phandle) => match root.resolve_phandle(PHandle(phandle.as_value()?))? {
++                    Some(parent) => parent,
++                    None => return Err(FdtError::MissingPHandleNode(phandle.as_value()?)),
++                },
++                None => match current.parent() {
++                    // `parent()` does not know its own parent, so look the
++                    // node up again to be able to keep walking up the tree.
++                    Some(parent) => match find_node_with_parent::<P>(root, parent)? {
++                        Some(parent) => parent,
++                        None => return Ok(None),
++                    },
++                    None => return Ok(None),
++                },
++            };
++
++            if next.property::<InterruptCells>()?.is_some() {
++                return Ok(Some(Self(next.alt())));
++            }
++
++            current = next;
++        }
++
++        Ok(None)
++    }
++}
++
++/// Upper bound for the `interrupt-parent` walk, guards against phandle cycles.
++const MAX_INTERRUPT_PARENT_DEPTH: usize = 64;
++
++fn find_node_with_parent<'a, P: ParserWithMode<'a>>(
++    root: FallibleRoot<'a, P>,
++    target: FallibleNode<'a, P>,
++) -> Result<Option<FallibleNode<'a, P>>, FdtError> {
++    // `all_nodes()` does not yield the root node itself.
++    if core::ptr::eq(root.node.this, target.this) {
++        return Ok(Some(root.node.alt()));
++    }
++
++    for node in root.all_nodes()? {
++        let (_, node) = node?;
++        if core::ptr::eq(node.this, target.this) {
++            return Ok(Some(node));
+         }
+     }
++
++    Ok(None)
+ }
+ 
+ /// [Devicetree 2.4.2.1.
+diff --git a/src/tests.rs b/src/tests.rs
+index 29ae91e..9634644 100644
+--- a/src/tests.rs
++++ b/src/tests.rs
+@@ -50,6 +50,7 @@ impl<const N: usize> Align4<N> {
+ static TEST: Align4<3764> = Align4::new(AlignArrayUp(*include_bytes!("../dtb/test.dtb")).align_up::<3764>());
+ static ISSUE_3: &[u8] = include_bytes!("../dtb/issue-3.dtb");
+ static SIFIVE: &[u8] = include_bytes!("../dtb/sifive.dtb");
++static INTERRUPT_PARENT: &[u8] = include_bytes!("../dtb/interrupt-parent.dtb");
+ 
+ #[test]
+ fn returns_fdt() {
+@@ -491,3 +492,16 @@ fn node_pretty_print() {
+ 
+     assert_eq!(std::string::ToString::to_string(&cpu), expected);
+ }
++
++#[test]
++fn inherited_interrupt_parent() {
++    let fdt = Fdt::new_unaligned(INTERRUPT_PARENT).unwrap();
++    let gpio = fdt.find_node("/soc/gpio@2000").unwrap();
++    let interrupts = match gpio.property::<Interrupts<_>>().unwrap() {
++        Interrupts::Legacy(legacy) => legacy,
++        _ => unreachable!(),
++    };
++
++    assert_eq!(interrupts.interrupt_parent().name().name, "interrupt-controller");
++    assert_eq!(interrupts.iter().count(), 2);
++}
+-- 
+2.54.0 (Apple Git-157)
+

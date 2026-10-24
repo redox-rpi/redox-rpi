@@ -1,5 +1,10 @@
 # Roadmap: Redox OS (server) on the Raspberry Pi Zero 2 W
 
+> **Current state (2026-10-24):** the daily Redox server image boots in QEMU
+> `raspi3b` to a root shell, with a fix for a kernel panic on the Pi's
+> devicetree. Details in [docs/status.md](docs/status.md). Done steps are
+> marked ✅, partly done ones 🟡.
+
 ## Starting point
 
 The Pi Zero 2 W is technically almost a **Raspberry Pi 3**: BCM2710A1 SoC
@@ -42,8 +47,9 @@ The main hurdles:
 |---|---|---|
 | 0.1 | Set up an **x86_64 Linux build host** (native machine, VM on x86 hardware or cloud VM; Debian/Ubuntu/Fedora) | Redox build prerequisites installed |
 | 0.2 | Native Redox build for x86_64 | `make all` succeeds, `make qemu` boots |
-| 0.3 | aarch64 build, run in QEMU (`virt` machine) | Redox boots in `qemu-system-aarch64` |
-| 0.4 | Check current state: [issue #1396](https://gitlab.redox-os.org/redox-os/redox/-/issues/1396), HARDWARE.md, open MRs; ask in the Redox Matrix chat who works on ARM | We know what is broken and who maintains it |
+| 0.3 | 🟡 aarch64 build, run in QEMU (`virt` machine) | Redox boots in `qemu-system-aarch64` (daily image ✅, own build open) |
+| 0.4 | ✅ Check current state of the Pi 3 port | [docs/status.md](docs/status.md) |
+| 0.5 | ✅ Kernel build and image patching on macOS | [docs/build-host.md](docs/build-host.md), `tools/redoxfs-file` |
 
 Why x86_64 Linux: it is the build host Redox is developed and tested on, and
 the prebuilt cross toolchains target it. macOS (including Apple Silicon) only
@@ -64,11 +70,12 @@ console and running QEMU.
 
 | # | Step | Done when … |
 |---|---|---|
-| 2.1 | Boot the `raspi3bp` image in **QEMU `-M raspi3b`** | Kernel log on the emulated serial port |
-| 2.2 | Same image on the real Pi 3 (if it is a 3B rather than 3B+, swap in the matching DTB) | Kernel log on UART |
-| 2.3 | Fix whatever is broken (bootloader, MMU, timer, BCM2836 interrupt controller, UART) | **Shell over the serial console** |
-| 2.4 | Root filesystem on the SD card | RedoxFS root on SD, survives reboot |
-| 2.5 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
+| 2.1 | ✅ Boot a Redox aarch64 image in **QEMU `-M raspi3b`** (`scripts/qemu-raspi3b.sh`) | Kernel log on the emulated serial port |
+| 2.2 | ✅ Fix the kernel panic in devicetree interrupt parsing (`patches/fdt/`) | Root shell in QEMU `raspi3b` |
+| 2.3 | Userspace programs run (relibc `no filetable fd present` crash, upstream regression) | `ls`, `ps`, `free` work in QEMU |
+| 2.4 | Same image on the real Pi 3 (if it is a 3B rather than 3B+, swap in the matching DTB) | **Shell over the serial console** |
+| 2.5 | Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`) | RedoxFS root on SD, survives reboot |
+| 2.6 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
 
 QEMU `raspi3b` is the key tool: development without swapping SD cards, and
 automated testing in CI later.
@@ -77,15 +84,17 @@ automated testing in CI later.
 
 | # | Step | Done when … |
 |---|---|---|
-| 3.1 | Pi 3 image with Zero 2 W DTB and firmware | Kernel log on UART |
-| 3.2 | Adjust for 512 MB RAM (memory map, lean image) | Shell over the serial console |
-| 3.3 | Own board variant `raspizero2w` in the fork's build system | `make` builds a Zero 2 W image |
+| 3.1 | U-Boot that uses the firmware's DT (the prebuilt one embeds a Pi 3B DT) | U-Boot prompt, correct model and RAM size |
+| 3.2 | Pi 3 image with Zero 2 W DTB and firmware | Kernel log on UART |
+| 3.3 | Adjust for 512 MB RAM: the 509 MiB server live image does not fit, use a smaller image or boot from SD | Shell over the serial console |
+| 3.4 | SD card: route it to the Arasan controller (`dtoverlay=mmc`?) or write an sdhost driver | Root filesystem on SD |
+| 3.5 | Own board variant `raspizero2w` in the fork's build system | `make` builds a Zero 2 W image |
 
 ## Phase 4: Stable on both boards
 
 | # | Step | Done when … |
 |---|---|---|
-| 4.1 | Bring up all 4 cores (SMP via spin table) | `top` shows 4 CPUs |
+| 4.1 | Bring up all 4 cores: implement `spin-table` (kernel only supports PSCI today) | `top` shows 4 CPUs |
 | 4.2 | Mailbox driver (clocks, temperature), watchdog for reboot/shutdown | `reboot` works |
 | 4.3 | Minimal "server" profile (low RAM, no GUI) | Runs stable for 24 h |
 

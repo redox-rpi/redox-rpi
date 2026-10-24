@@ -11,8 +11,25 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 
 ## Status
 
-🚧 Early planning. Nothing boots yet. See [ROADMAP.md](ROADMAP.md) for the
-step-by-step plan.
+🚧 Early work. Redox boots to a root shell in QEMU's emulated Raspberry Pi 3
+(with a fix from this repository); real hardware is next. See
+[docs/status.md](docs/status.md) for details and [ROADMAP.md](ROADMAP.md) for
+the step-by-step plan.
+
+Try it on macOS or Linux (needs QEMU, curl and zstd):
+
+```sh
+scripts/qemu-raspi3b.sh
+```
+
+## Repository layout
+
+| Path | Content |
+|---|---|
+| [docs/](docs/) | Status and findings, hardware notes, build host setup |
+| [patches/](patches/) | Fixes for upstream components, as `git format-patch` files |
+| [scripts/](scripts/) | Helper scripts (QEMU boot) |
+| [tools/redoxfs-file](tools/redoxfs-file) | Read or replace files in a Redox image without FUSE |
 
 ## Goals
 

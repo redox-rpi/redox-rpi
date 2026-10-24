@@ -1,0 +1,10 @@
+[package]
+name = "redoxfs-file"
+description = "Read or replace a file inside the RedoxFS partition of a Redox disk image, without FUSE"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+redoxfs = { git = "https://gitlab.redox-os.org/redox-os/redoxfs.git", rev = "c988cb84008bb9dd402c8404331078af47be39af", default-features = false, features = ["std"] }
+redox_syscall = "0.9.5"
