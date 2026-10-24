@@ -7,12 +7,27 @@
 | SoC | BCM2837 | BCM2837B0 | BCM2710A1 (RP3A0 SiP) |
 | CPU | 4× Cortex-A53 1.2 GHz | 4× Cortex-A53 1.4 GHz | 4× Cortex-A53 1.0 GHz |
 | RAM | 1 GB | 1 GB | 512 MB |
-| Ethernet | LAN9514 (USB hub + 100 Mbit) | LAN7515 (USB hub + Gigabit over USB 2) | none (Ethernet/USB hub HAT) |
+| Ethernet | LAN9514 (USB hub + 100 Mbit) | LAN7515 (USB hub + Gigabit over USB 2), see below | none (Ethernet/USB hub HAT) |
 | Firmware DTB | `bcm2710-rpi-3-b.dtb` | `bcm2710-rpi-3-b-plus.dtb` | `bcm2710-rpi-zero-2-w.dtb` |
 | Mainline DTB (U-Boot/Linux) | `bcm2837-rpi-3-b.dtb` | `bcm2837-rpi-3-b-plus.dtb` | `bcm2837-rpi-zero-2-w.dtb` |
 
 All three share the same peripherals at the same addresses (peripheral base
 `0x3F000000`), so one kernel and driver set covers them.
+
+### Our Pi 3 Model B+ (rev 1.3, revision code `a020d3`)
+
+USB tree under Raspberry Pi OS (Linux 6.18, `lsusb -t`):
+
+```
+DWC2 root hub (dwc_otg)
+└─ 0424:2514 USB 2.0 hub (4 ports)
+   └─ 0424:2514 USB 2.0 hub (3 ports)
+      └─ 0424:7800 Ethernet, Linux driver lan78xx
+```
+
+So Ethernet on the Pi 3B+ needs: DWC2 host driver → two levels of USB 2.0
+hubs → a LAN7800 driver. The SD card runs on `sdhost`; the Arasan
+controller (`mmc-bcm2835 3f300000.mmcnr`) drives Wi-Fi.
 
 ## Serial console
 
