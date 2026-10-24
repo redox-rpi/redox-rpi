@@ -1,7 +1,7 @@
-# redox-rpi-zero2
+# redox-rpi
 
 Bringing [Redox OS](https://www.redox-os.org/) (server profile) to the
-**Raspberry Pi Zero 2 W**.
+**Raspberry Pi 3** and **Raspberry Pi Zero 2 W**, with one kernel for both.
 
 The Zero 2 W is close to a Raspberry Pi 3 (BCM2710A1, 4× Cortex-A53, 512 MB
 RAM, no onboard Ethernet). Redox already boots on the Pi 3 Model B+, so this
