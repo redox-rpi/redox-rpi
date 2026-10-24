@@ -1,0 +1,11 @@
+# Redox image for the Raspberry Pi 3 Model B+.
+#
+# Build with scripts/build-image.sh. Kernel and base (drivers, init) are built
+# from source with this repository's patches and BOARD=raspi3bp; everything
+# else comes from Redox's prebuilt packages.
+
+include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
+
+[packages]
+kernel = "source"
+base = "source"
