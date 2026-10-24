@@ -76,6 +76,7 @@ logged here as a first data point.
 | Date | Stage | Human interventions | Effort | Notes |
 |---|---|---|---|---|
 | 2026-10-24 | 2 in QEMU (partly) | Direction and approvals only | Not measured | Shell reached after fixing a devicetree bug; most programs crash on an upstream regression |
+| 2026-10-24 | 4 in QEMU | Direction and approvals only | Not measured | All 4 cores online: spin-table and BCM2836 IPIs, working on the first boot attempt |
 
 ## Open questions
 

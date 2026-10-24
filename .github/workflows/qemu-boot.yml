@@ -35,6 +35,7 @@ jobs:
           scripts/qemu-raspi3b.sh --test --timeout 2400 \
             --kernel upstream/kernel/build/aarch64/kernel \
             --expect "irq_bcm2836:INFO" \
+            --expect "CPU activation complete: 4 CPUs online" \
             --expect "redox login:"
 
       - name: Upload serial log

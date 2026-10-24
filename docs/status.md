@@ -24,7 +24,7 @@ daily image `redox_server_aarch64_2026-10-24_565`.
 | Interrupts | Drivers for `brcm,bcm2836-l1-intc` and `brcm,bcm2836-armctrl-ic` (kernel `src/arch/aarch64/device/irqchip/`) |
 | Timer | ARM generic timer, works |
 | Serial | PL011 only (`arm,pl011`). The mini UART (`brcm,bcm2835-aux-uart`) is not supported → `dtoverlay=disable-bt` is required so the PL011 is on GPIO14/15 |
-| SMP | Only PSCI is supported. The Pi 3 / Zero 2 W use `enable-method = "spin-table"` → **only 1 of 4 cores** runs |
+| SMP | Upstream supports only PSCI with a GICv2, so **only 1 of 4 cores** runs. ✅ Fixed here: [`patches/kernel/`](../patches/kernel/) adds `spin-table` and BCM2836 IPIs, all 4 cores come up in QEMU |
 | SD card | `bcm2835-sdhcid` (in `base/drivers/storage/`) for the Arasan controller `brcm,bcm2835-sdhci`. Only started on images built with `BOARD=raspi3bp` (`condition_board`) |
 | USB / Ethernet | No DWC2 driver. Redox USB is xHCI only. No LAN9514/LAN7515/RTL8152 drivers |
 | Reset / power-off | Not available (no PSCI node on the Pi) |
@@ -78,6 +78,27 @@ the unmodified kernel, so it is a general regression in the 2026-10-24 daily
 build. Likely related to the `dup2` / filetable changes in relibc and base
 this week. Next step: retry with a newer daily image or a self-built image.
 
+## SMP: all four cores (fixed here)
+
+Upstream starts secondary CPUs only through PSCI and sends IPIs only through
+a GICv2. The Pi has neither: the firmware parks the cores in a spin-table
+loop (`cpu-release-addr` 0xe0/0xe8/0xf0) and the BCM2836 local interrupt
+controller delivers IPIs through per-core mailboxes.
+
+[`patches/kernel/0001-…`](../patches/kernel/) adds:
+
+- the `spin-table` enable method, with a trampoline entry that picks up the
+  boot arguments from the trampoline page (spin-table passes no context),
+- IPIs through mailbox 0 of the BCM2836, reported like GIC SGI IDs,
+- per-core routing of all architected timer interrupts. Upstream could only
+  enable the physical timer interrupt, not the virtual timer the kernel
+  uses on Cortex-A53. On real hardware this may also matter for the boot
+  CPU's scheduler tick.
+
+Result in QEMU `raspi3b`: all secondaries pass the IPI/timer self-test,
+`CPU activation complete: 4 CPUs online`, and the system boots to the login
+prompt. Not yet tested on real hardware.
+
 ## Implications for the Zero 2 W
 
 - **512 MB RAM rules out live mode** with the server image (509 MiB). The
@@ -97,5 +118,10 @@ this week. Next step: retry with a newer daily image or a self-built image.
 
 - [`tools/redoxfs-file`](../tools/redoxfs-file): read or replace a file in the
   RedoxFS partition of an image, without FUSE (works on macOS).
+- [`scripts/build-kernel.sh`](../scripts/build-kernel.sh): build the latest
+  upstream kernel with this repository's patches (macOS and Linux).
 - [`scripts/qemu-raspi3b.sh`](../scripts/qemu-raspi3b.sh): download the latest
-  daily server image, optionally inject a kernel, boot in QEMU `raspi3b`.
+  daily server image, optionally inject a kernel, boot in QEMU `raspi3b`;
+  `--test` checks the console output automatically.
+- CI ([`.github/workflows/qemu-boot.yml`](../.github/workflows/qemu-boot.yml)):
+  builds and boot-tests on every push and daily against the latest upstream.

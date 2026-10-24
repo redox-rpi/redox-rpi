@@ -1,0 +1,614 @@
+From 570a6cfe97ab1e0ea6827ba4ce841a79681c0543 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 24 Oct 2026 19:14:41 +0200
+Subject: [PATCH] aarch64: start secondary CPUs on the Raspberry Pi 3
+
+The Raspberry Pi firmware parks secondary cores in a spin-table loop and
+the BCM2836 local interrupt controller has no GIC, so SMP needs:
+
+- spin-table enable method: parse cpu-release-addr, release the core by
+  writing a trampoline entry to it, and pass the BootArgs address through
+  a slot in the trampoline page, since spin-table passes no context.
+- BCM2836 IPIs through the per-core mailbox 0, reported like GIC SGI IDs.
+- Per-core routing of all four architected timer interrupts. Before, only
+  the non-secure physical timer could be enabled, not the virtual timer
+  the kernel uses on Cortex-A53.
+
+Tested in QEMU raspi3b: all four CPUs pass the IPI/timer self-test and
+come online, the system boots to the login prompt.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/device/cpu/boot.rs           | 109 +++++++++---
+ src/arch/aarch64/device/cpu/mod.rs            |   6 +-
+ src/arch/aarch64/device/cpu/topology.rs       |  30 +++-
+ .../aarch64/device/irqchip/irq_bcm2836.rs     | 166 +++++++++++++-----
+ src/arch/aarch64/device/irqchip/mod.rs        |  29 ++-
+ 5 files changed, 261 insertions(+), 79 deletions(-)
+
+diff --git a/src/arch/aarch64/device/cpu/boot.rs b/src/arch/aarch64/device/cpu/boot.rs
+index edaebb5..d8c25b2 100644
+--- a/src/arch/aarch64/device/cpu/boot.rs
++++ b/src/arch/aarch64/device/cpu/boot.rs
+@@ -65,7 +65,10 @@ struct BootArgs {
+ }
+ 
+ // PSCI enters the target PE at a physical address with the stage-1 MMU and
+-// caches disabled, and passes context_id in x0. This trampoline establishes
++// caches disabled, and passes context_id in x0. Spin-table firmware (Raspberry
++// Pi) jumps to the released address without a context, so CPUs started that
++// way enter at __aarch64_ap_spin_entry, which loads the BootArgs address the
++// BSP stored in the trampoline page right before the release. This trampoline establishes
+ // the kernel translation regime and only then enters Rust at a virtual
+ // address. Cache invalidation and coherency-domain management belong to the
+ // PSCI implementation and are deliberately not duplicated here.
+@@ -159,6 +162,17 @@ __aarch64_ap_trampoline_start:
+     wfe
+     b .Lap_park
+ 
++    .balign 8
++    .global __aarch64_ap_spin_entry
++__aarch64_ap_spin_entry:
++    ldr x0, __aarch64_ap_spin_args
++    b __aarch64_ap_trampoline_start
++
++    .balign 8
++    .global __aarch64_ap_spin_args
++__aarch64_ap_spin_args:
++    .quad 0
++
+     .global __aarch64_ap_trampoline_end
+ __aarch64_ap_trampoline_end:
+     .previous
+@@ -181,12 +195,20 @@ __aarch64_ap_trampoline_end:
+ 
+ unsafe extern "C" {
+     static __aarch64_ap_trampoline_start: u8;
++    static __aarch64_ap_spin_entry: u8;
++    static __aarch64_ap_spin_args: u8;
+     static __aarch64_ap_trampoline_end: u8;
+ }
+ 
++/// Offset of a trampoline symbol from the start of the trampoline page.
++fn trampoline_offset(symbol: *const u8) -> usize {
++    symbol as usize - ptr::addr_of!(__aarch64_ap_trampoline_start) as usize
++}
++
+ struct PreparedBootSlot {
+     logical_id: LogicalCpuId,
+     mpidr: u64,
++    enable_method: EnableMethod,
+     stack: Kstack,
+     percpu: RaiiFrame,
+     args: RaiiFrame,
+@@ -319,10 +341,10 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
+     }
+     if let Some(cpu) = topology
+         .iter()
+-        .find(|cpu| !cpu.boot_cpu && cpu.enable_method != EnableMethod::Psci)
++        .find(|cpu| !cpu.boot_cpu && !cpu.enable_method.is_startable())
+     {
+         warn!(
+-            "CPU boot resources unavailable: secondary MPIDR={:#x} is not PSCI-enabled",
++            "CPU boot resources unavailable: secondary MPIDR={:#x} has no supported enable-method",
+             cpu.mpidr
+         );
+         return;
+@@ -367,7 +389,7 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
+     let cpacr = unsafe { control_regs::cpacr_el1() };
+ 
+     for (logical_id, cpu) in topology.iter().enumerate() {
+-        if cpu.boot_cpu || cpu.enable_method != EnableMethod::Psci {
++        if cpu.boot_cpu || !cpu.enable_method.is_startable() {
+             continue;
+         }
+ 
+@@ -434,6 +456,7 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
+         slots.push(PreparedBootSlot {
+             logical_id,
+             mpidr: cpu.mpidr,
++            enable_method: cpu.enable_method,
+             stack,
+             percpu,
+             args,
+@@ -446,7 +469,7 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
+         idmap_root,
+     });
+     info!(
+-        "CPU boot resources: {} PSCI slots ready, trampoline={:#x}, idmap={:#x}",
++        "CPU boot resources: {} slots ready, trampoline={:#x}, idmap={:#x}",
+         resources.slots.len(),
+         resources.trampoline.get().base().data(),
+         resources.idmap_root.data()
+@@ -473,15 +496,15 @@ pub(super) fn start_secondaries() {
+     let Some(resources) = BOOT_RESOURCES.get() else {
+         return;
+     };
+-    let Some(gic_capacity) = crate::arch::device::irqchip::cpu_capacity() else {
+-        error!("CPU activation unavailable: PSCI secondary boot currently requires GICv2");
++    let Some(ipi_capacity) = crate::arch::device::irqchip::cpu_capacity() else {
++        error!("CPU activation unavailable: interrupt controller cannot send IPIs");
+         return;
+     };
+-    if resources.slots.len() + 1 > gic_capacity {
++    if resources.slots.len() + 1 > ipi_capacity {
+         error!(
+-            "CPU activation unavailable: topology requires {} CPUs but GICv2 exposes {} interfaces",
++            "CPU activation unavailable: topology requires {} CPUs but the interrupt controller supports {}",
+             resources.slots.len() + 1,
+-            gic_capacity
++            ipi_capacity
+         );
+         return;
+     }
+@@ -508,19 +531,32 @@ pub(super) fn start_secondaries() {
+         args.state.store(STATE_STARTING, Ordering::Release);
+         clean_data_to_poc(args as *const BootArgs as usize, size_of::<BootArgs>());
+ 
+-        info!(
+-            "CPU logical {}: PSCI CPU_ON MPIDR={:#x}",
+-            slot.logical_id, slot.mpidr
+-        );
+-        if let Err(error) =
+-            crate::arch::device::psci::cpu_on(slot.mpidr, entry_phys, slot.args.get().base().data())
+-        {
+-            args.state.store(STATE_FAILED, Ordering::Release);
+-            error!(
+-                "CPU logical {}: PSCI CPU_ON failed: {:?}",
+-                slot.logical_id, error
+-            );
+-            break;
++        match slot.enable_method {
++            EnableMethod::SpinTable(release_addr) => {
++                info!(
++                    "CPU logical {}: spin-table release MPIDR={:#x} at {:#x}",
++                    slot.logical_id, slot.mpidr, release_addr
++                );
++                release_spin_table(resources, slot, release_addr);
++            }
++            _ => {
++                info!(
++                    "CPU logical {}: PSCI CPU_ON MPIDR={:#x}",
++                    slot.logical_id, slot.mpidr
++                );
++                if let Err(error) = crate::arch::device::psci::cpu_on(
++                    slot.mpidr,
++                    entry_phys,
++                    slot.args.get().base().data(),
++                ) {
++                    args.state.store(STATE_FAILED, Ordering::Release);
++                    error!(
++                        "CPU logical {}: PSCI CPU_ON failed: {:?}",
++                        slot.logical_id, error
++                    );
++                    break;
++                }
++            }
+         }
+ 
+         let started = unsafe { control_regs::cntvct_el0() };
+@@ -613,6 +649,33 @@ pub(super) fn start_secondaries() {
+     info!("CPU activation complete: {} CPUs online", online);
+ }
+ 
++/// Release a CPU that firmware parks in a spin-table loop. The CPU wakes on
++/// `sev`, reads its release address and jumps there with the MMU off, so
++/// everything it reads first must be cleaned to the point of coherency.
++fn release_spin_table(resources: &BootResources, slot: &PreparedBootSlot, release_addr: u64) {
++    let trampoline_phys = resources.trampoline.get().base().data();
++    let trampoline_virt = RmmA::phys_to_virt(resources.trampoline.get().base()).data();
++    let args_slot = trampoline_virt + trampoline_offset(ptr::addr_of!(__aarch64_ap_spin_args));
++    unsafe {
++        ptr::write_volatile(args_slot as *mut u64, slot.args.get().base().data() as u64);
++    }
++    clean_data_to_poc(args_slot, size_of::<u64>());
++
++    let entry = trampoline_phys + trampoline_offset(ptr::addr_of!(__aarch64_ap_spin_entry));
++    // The release address lies in memory the firmware reserves for itself,
++    // which is not part of the kernel's linear map.
++    let release_virt = unsafe {
++        crate::memory::map_device_memory(
++            PhysicalAddress::new(release_addr as usize),
++            size_of::<u64>(),
++        )
++    };
++    unsafe {
++        ptr::write_volatile(release_virt.data() as *mut u64, entry as u64);
++        asm!("dsb sy", "sev", options(nostack));
++    }
++}
++
+ unsafe extern "C" fn secondary_start(args_ptr: *const BootArgs) -> ! {
+     let Some(args) = (unsafe { args_ptr.as_ref() }) else {
+         park();
+diff --git a/src/arch/aarch64/device/cpu/mod.rs b/src/arch/aarch64/device/cpu/mod.rs
+index d8a5f0c..aed7462 100644
+--- a/src/arch/aarch64/device/cpu/mod.rs
++++ b/src/arch/aarch64/device/cpu/mod.rs
+@@ -174,13 +174,13 @@ impl CpuInfo {
+ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
+     let cpuinfo = CpuInfo::new();
+ 
+-    if let Some((source, described, psci_secondaries)) = topology::summary() {
++    if let Some((source, described, startable_secondaries)) = topology::summary() {
+         writeln!(
+             w,
+-            "{} CPUs: {} ({} PSCI secondaries)",
++            "{} CPUs: {} ({} startable secondaries)",
+             source.name(),
+             described,
+-            psci_secondaries
++            startable_secondaries
+         )?;
+     }
+     writeln!(w, "MIDR_EL1: 0x{:08x}", cpuinfo.midr)?;
+diff --git a/src/arch/aarch64/device/cpu/topology.rs b/src/arch/aarch64/device/cpu/topology.rs
+index 92e230e..977e163 100644
+--- a/src/arch/aarch64/device/cpu/topology.rs
++++ b/src/arch/aarch64/device/cpu/topology.rs
+@@ -48,6 +48,9 @@ struct CpuTopology {
+ pub(super) enum EnableMethod {
+     None,
+     Psci,
++    /// Released by writing the entry point to this physical address
++    /// (`cpu-release-addr`), as done by the Raspberry Pi firmware.
++    SpinTable(u64),
+     Unsupported,
+ }
+ 
+@@ -56,9 +59,15 @@ impl EnableMethod {
+         match self {
+             Self::None => "none",
+             Self::Psci => "psci",
++            Self::SpinTable(_) => "spin-table",
+             Self::Unsupported => "unsupported",
+         }
+     }
++
++    /// Whether the kernel knows how to start a secondary CPU with this method.
++    pub(super) const fn is_startable(self) -> bool {
++        matches!(self, Self::Psci | Self::SpinTable(_))
++    }
+ }
+ 
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+@@ -146,6 +155,13 @@ fn enable_method(node: FdtNode<'_>) -> EnableMethod {
+         None => EnableMethod::None,
+         Some(method) => match method.as_value::<&str>() {
+             Ok("psci") => EnableMethod::Psci,
++            Ok("spin-table") => match node.raw_property("cpu-release-addr") {
++                Some(addr) => match <[u8; 8]>::try_from(addr.value) {
++                    Ok(bytes) => EnableMethod::SpinTable(u64::from_be_bytes(bytes)),
++                    Err(_) => EnableMethod::Unsupported,
++                },
++                None => EnableMethod::Unsupported,
++            },
+             _ => EnableMethod::Unsupported,
+         },
+     }
+@@ -298,19 +314,19 @@ fn install(
+         source,
+         cpus: discovered.cpus,
+     });
+-    let psci_secondaries = topology
++    let startable_secondaries = topology
+         .cpus
+         .iter()
+-        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
++        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method.is_startable())
+         .count();
+ 
+     info!(
+-        "{} CPU topology: {} enabled, {} disabled, BSP MPIDR={:#x}, {} PSCI secondaries",
++        "{} CPU topology: {} enabled, {} disabled, BSP MPIDR={:#x}, {} startable secondaries",
+         topology.source.name(),
+         topology.cpus.len(),
+         disabled,
+         boot_mpidr,
+-        psci_secondaries
++        startable_secondaries
+     );
+     for (logical_id, cpu) in topology.cpus.iter().enumerate() {
+         debug!(
+@@ -356,12 +372,12 @@ pub(super) fn init_acpi(
+ 
+ pub(super) fn summary() -> Option<(TopologySource, usize, usize)> {
+     let topology = TOPOLOGY.get()?;
+-    let psci_secondaries = topology
++    let startable_secondaries = topology
+         .cpus
+         .iter()
+-        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
++        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method.is_startable())
+         .count();
+-    Some((topology.source, topology.cpus.len(), psci_secondaries))
++    Some((topology.source, topology.cpus.len(), startable_secondaries))
+ }
+ 
+ #[cfg(test)]
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+index 7fa8c9b..0a10357 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2836.rs
+@@ -11,10 +11,10 @@ use crate::{
+ use core::{
+     arch::asm,
+     ptr::{read_volatile, write_volatile},
+-    sync::atomic::Ordering,
++    sync::atomic::{AtomicUsize, Ordering},
+ };
+ use syscall::{
+-    error::{Error, EINVAL},
++    error::{Error, EINVAL, ENODEV},
+     Result,
+ };
+ 
+@@ -22,13 +22,109 @@ const LOCAL_CONTROL: u32 = 0x000;
+ const LOCAL_PRESCALER: u32 = 0x008;
+ const LOCAL_GPU_ROUTING: u32 = 0x00C;
+ const LOCAL_TIMER_INT_CONTROL0: u32 = 0x040;
++const LOCAL_MAILBOX_INT_CONTROL0: u32 = 0x050;
+ const LOCAL_IRQ_PENDING: u32 = 0x060;
++const LOCAL_MAILBOX0_SET0: u32 = 0x080;
++const LOCAL_MAILBOX0_CLR0: u32 = 0x0C0;
++/// Distance between the mailbox registers of two cores.
++const LOCAL_MAILBOX_CORE_STRIDE: u32 = 0x10;
+ 
+-const LOCAL_IRQ_CNTPNSIRQ: u32 = 0x1;
++const LOCAL_IRQ_CNTVIRQ: u32 = 0x3;
++const LOCAL_IRQ_MAILBOX0: u32 = 0x4;
+ const LOCAL_IRQ_GPU_FAST: u32 = 0x8;
+ const LOCAL_IRQ_PMU_FAST: u32 = 0x9;
+ const LOCAL_IRQ_LAST: u32 = LOCAL_IRQ_PMU_FAST;
+ 
++/// Number of cores served by the local interrupt controller.
++const CPU_COUNT: usize = 4;
++
++/// Virtual base address of the controller, 0 until it is initialized.
++static BASE: AtomicUsize = AtomicUsize::new(0);
++
++fn current_cpu() -> u32 {
++    let mpidr: usize;
++    unsafe { asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
++    mpidr as u32 & 0x3
++}
++
++fn read_reg(base: usize, reg: u32) -> u32 {
++    unsafe { read_volatile((base + reg as usize) as *const u32) }
++}
++
++fn write_reg(base: usize, reg: u32, value: u32) {
++    unsafe { write_volatile((base + reg as usize) as *mut u32, value) }
++}
++
++fn active_base() -> Result<usize> {
++    match BASE.load(Ordering::Acquire) {
++        0 => Err(Error::new(ENODEV)),
++        base => Ok(base),
++    }
++}
++
++pub(crate) fn active() -> bool {
++    BASE.load(Ordering::Acquire) != 0
++}
++
++pub(crate) fn cpu_capacity() -> usize {
++    CPU_COUNT
++}
++
++/// Enable IPI delivery to the current core and publish its IPI target mask.
++pub(crate) fn init_current_cpu() -> Result<()> {
++    let base = active_base()?;
++    let cpu = current_cpu();
++    // Discard IPIs that were sent before this core listened.
++    write_reg(
++        base,
++        LOCAL_MAILBOX0_CLR0 + LOCAL_MAILBOX_CORE_STRIDE * cpu,
++        u32::MAX,
++    );
++    write_reg(base, LOCAL_MAILBOX_INT_CONTROL0 + 4 * cpu, 1);
++    crate::percpu::PercpuBlock::current()
++        .misc_arch_info
++        .gic_target_mask
++        .store(1 << cpu, Ordering::Release);
++    Ok(())
++}
++
++/// Route one of the current core's architected timer interrupts to its IRQ.
++pub(crate) fn enable_local_irq(hwirq: u32) -> Result<()> {
++    let base = active_base()?;
++    if hwirq > LOCAL_IRQ_CNTVIRQ {
++        return Err(Error::new(EINVAL));
++    }
++    let reg = LOCAL_TIMER_INT_CONTROL0 + 4 * current_cpu();
++    write_reg(base, reg, read_reg(base, reg) | 1 << hwirq);
++    Ok(())
++}
++
++/// Send IPI number `ipi` through mailbox 0 to every core in `target_mask`,
++/// or to all other cores if no mask is given.
++pub(crate) fn send_ipi(ipi: u8, target_mask: Option<u8>) -> Result<()> {
++    let base = active_base()?;
++    if ipi >= 32 {
++        return Err(Error::new(EINVAL));
++    }
++    let mask = match target_mask {
++        Some(0) => return Err(Error::new(EINVAL)),
++        Some(mask) => mask,
++        None => !(1u8 << current_cpu()),
++    };
++    // Make the data the IPI announces visible before the mailbox write.
++    unsafe { asm!("dsb sy", options(nostack, preserves_flags)) };
++    for cpu in 0..CPU_COUNT as u32 {
++        if mask & (1 << cpu) != 0 {
++            write_reg(
++                base,
++                LOCAL_MAILBOX0_SET0 + LOCAL_MAILBOX_CORE_STRIDE * cpu,
++                1 << ipi,
++            );
++        }
++    }
++    Ok(())
++}
++
+ #[inline(always)]
+ fn ffs(num: u32) -> u32 {
+     let mut x = num;
+@@ -140,11 +236,11 @@ impl InterruptController for Bcm2836ArmInterruptController {
+         };
+         unsafe {
+             self.address = base + crate::PHYS_OFFSET;
+-            let cpuid: usize;
+-            asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+-            self.active_cpu = cpuid as u32 & 0x3;
++            self.active_cpu = current_cpu();
+ 
+             self.init();
++            BASE.store(self.address, Ordering::Release);
++            init_current_cpu()?;
+             let idx = *irq_idx;
+             let cnt = LOCAL_IRQ_LAST as usize;
+             let mut i: usize = 0;
+@@ -171,53 +267,39 @@ impl InterruptController for Bcm2836ArmInterruptController {
+     }
+ 
+     fn irq_ack(&mut self) -> u32 {
+-        let cpuid: usize;
+-        unsafe {
+-            asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+-        }
+-        let cpu = cpuid as u32 & 0x3;
++        let cpu = current_cpu();
+         let sources: u32 = unsafe { self.read(LOCAL_IRQ_PENDING + 4 * cpu) };
+-        ffs(sources) - 1
++        let source = ffs(sources).wrapping_sub(1);
++        if source != LOCAL_IRQ_MAILBOX0 {
++            return source;
++        }
++
++        // An IPI: report its number like a GIC SGI ID, so that ipi::handle
++        // recognizes it. Local sources 0 and 1 (physical timers) would
++        // collide, but they stay disabled: Cortex-A53 has no VHE, so the
++        // kernel uses the virtual timer.
++        let clear = LOCAL_MAILBOX0_CLR0 + LOCAL_MAILBOX_CORE_STRIDE * cpu;
++        let pending = unsafe { self.read(clear) };
++        let ipi = ffs(pending).wrapping_sub(1);
++        unsafe { self.write(clear, 1 << ipi) };
++        ipi
+     }
+ 
+     fn irq_eoi(&mut self, _irq_num: u32) {}
+ 
+     fn irq_enable(&mut self, irq_num: u32) {
+         debug!("bcm2836 enable {}", irq_num);
+-        match irq_num {
+-            LOCAL_IRQ_CNTPNSIRQ => unsafe {
+-                let cpuid: usize;
+-                asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+-                let cpu = cpuid as u32 & 0x3;
+-                let mut reg_val = self.read(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu);
+-                reg_val |= 0x2;
+-                self.write(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu, reg_val);
+-            },
+-            LOCAL_IRQ_GPU_FAST => {
+-                //GPU IRQ always enable
+-            }
+-            _ => {
+-                //ignore
+-            }
++        if irq_num <= LOCAL_IRQ_CNTVIRQ {
++            let reg = LOCAL_TIMER_INT_CONTROL0 + 4 * current_cpu();
++            unsafe { self.write(reg, self.read(reg) | 1 << irq_num) };
+         }
++        // GPU IRQs are always enabled, other sources are not used.
+     }
+ 
+     fn irq_disable(&mut self, irq_num: u32) {
+-        match irq_num {
+-            LOCAL_IRQ_CNTPNSIRQ => unsafe {
+-                let cpuid: usize;
+-                asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+-                let cpu = cpuid as u32 & 0x3;
+-                let mut reg_val = self.read(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu);
+-                reg_val &= !0x2;
+-                self.write(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu, reg_val);
+-            },
+-            LOCAL_IRQ_GPU_FAST => {
+-                //GPU IRQ always enable
+-            }
+-            _ => {
+-                //ignore
+-            }
++        if irq_num <= LOCAL_IRQ_CNTVIRQ {
++            let reg = LOCAL_TIMER_INT_CONTROL0 + 4 * current_cpu();
++            unsafe { self.write(reg, self.read(reg) & !(1 << irq_num)) };
+         }
+     }
+     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
+diff --git a/src/arch/aarch64/device/irqchip/mod.rs b/src/arch/aarch64/device/irqchip/mod.rs
+index 0148906..b628252 100644
+--- a/src/arch/aarch64/device/irqchip/mod.rs
++++ b/src/arch/aarch64/device/irqchip/mod.rs
+@@ -45,28 +45,45 @@ pub(crate) fn ic_for_chip(fdt: &Fdt, node: &FdtNode) -> Option<usize> {
+ 
+ pub(crate) fn init_ap() -> syscall::Result<()> {
+     // Secondary CPU activation currently supports the memory-mapped GICv2
+-    // interface. GICv3 remains on the safe single-CPU fallback path.
++    // interface and the BCM2836 local interrupt controller (Raspberry Pi 3).
++    // GICv3 remains on the safe single-CPU fallback path.
+     if gic::active() {
+         gic::init_current_cpu()?;
+         gic::current_cpu_target_mask()
+             .map(|_| ())
+             .ok_or_else(|| syscall::Error::new(syscall::error::EINVAL))
++    } else if irq_bcm2836::active() {
++        irq_bcm2836::init_current_cpu()
+     } else {
+         Err(syscall::Error::new(syscall::error::ENODEV))
+     }
+ }
+ 
+ pub(crate) fn cpu_capacity() -> Option<usize> {
+-    gic::cpu_capacity()
++    if irq_bcm2836::active() {
++        Some(irq_bcm2836::cpu_capacity())
++    } else {
++        gic::cpu_capacity()
++    }
+ }
+ 
+ pub(crate) fn current_cpu_target_mask() -> Option<u8> {
+-    gic::active().then(gic::current_cpu_target_mask).flatten()
++    if gic::active() || irq_bcm2836::active() {
++        let target_mask = crate::percpu::PercpuBlock::current()
++            .misc_arch_info
++            .gic_target_mask
++            .load(core::sync::atomic::Ordering::Acquire);
++        (target_mask != 0).then_some(target_mask)
++    } else {
++        None
++    }
+ }
+ 
+ pub(crate) fn enable_local_irq(hwirq: u32) -> syscall::Result<()> {
+     if gic::active() {
+         gic::enable_local_irq(hwirq)
++    } else if irq_bcm2836::active() {
++        irq_bcm2836::enable_local_irq(hwirq)
+     } else {
+         Err(syscall::Error::new(syscall::error::ENODEV))
+     }
+@@ -100,5 +117,9 @@ pub(crate) fn end_root(raw_iar: u32) {
+ }
+ 
+ pub(crate) fn send_sgi(sgi: u8, target_mask: Option<u8>) -> syscall::Result<()> {
+-    gic::send_sgi(sgi, target_mask)
++    if irq_bcm2836::active() {
++        irq_bcm2836::send_ipi(sgi, target_mask)
++    } else {
++        gic::send_sgi(sgi, target_mask)
++    }
+ }
+-- 
+2.54.0 (Apple Git-157)
+

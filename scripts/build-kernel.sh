@@ -23,6 +23,7 @@ mkdir -p "$UPSTREAM"
 
 if [ ! -d "$KERNEL" ]; then
     git clone --depth 1 https://gitlab.redox-os.org/redox-os/kernel.git "$KERNEL"
+    git -C "$KERNEL" apply "$ROOT"/patches/kernel/*.patch
 fi
 
 if [ ! -d "$FDT" ]; then
