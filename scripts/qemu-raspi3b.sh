@@ -18,8 +18,8 @@
 #   --expect <regex>  extended regex that must appear (repeatable)
 #   --timeout <s>     give up after this many seconds (default 900)
 #
-# The bootloader waits for a resolution choice; the script answers it on the
-# serial console automatically. Exit QEMU with Ctrl-A X.
+# The bootloader waits for a resolution choice: press Enter. In --test mode
+# the script answers it automatically. Exit QEMU with Ctrl-A X.
 
 set -euo pipefail
 
@@ -82,12 +82,14 @@ qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
     -kernel u-boot-rpi-3-b-plus.bin
     -drive file=run.img,if=sd,format=raw
-    -serial stdio -display none -monitor none
+    -display none -monitor none
     -usb -device usb-kbd)
 
 if [ "$test" = no ]; then
-    # Confirm the bootloader's resolution menu, then hand the console to the user.
-    { sleep 45; printf '\r'; cat; } | "${qemu[@]}"
+    # QEMU gets the terminal directly, so it switches it to raw mode and keys
+    # like Enter reach the guest unchanged. mon:stdio keeps Ctrl-A X working.
+    echo "Press Enter at the bootloader's resolution menu. Exit with Ctrl-A X."
+    "${qemu[@]}" -serial mon:stdio
     exit
 fi
 
@@ -95,7 +97,7 @@ log="$IMAGES/qemu-test.log"
 fifo="$IMAGES/qemu-test.in"
 rm -f "$log" "$fifo"
 mkfifo "$fifo"
-"${qemu[@]}" < "$fifo" > "$log" 2>&1 &
+"${qemu[@]}" -serial stdio < "$fifo" > "$log" 2>&1 &
 pid=$!
 exec 3> "$fifo"
 trap 'kill $pid 2>/dev/null || true; rm -f "$fifo"' EXIT
