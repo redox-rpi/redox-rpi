@@ -61,7 +61,8 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 cd "$REDOX"
-make "${1:-all}" \
+# CI disables the cookbook's terminal UI, which needs a real terminal.
+CI="${CI:-1}" make "${1:-all}" \
     PODMAN_BUILD=0 \
     ARCH=aarch64 \
     BOARD=raspi3bp \
