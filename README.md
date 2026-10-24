@@ -26,7 +26,7 @@ scripts/qemu-raspi3b.sh
 
 | Path | Content |
 |---|---|
-| [docs/](docs/) | Status and findings, hardware notes, build host setup |
+| [docs/](docs/) | Status and findings, hardware notes, build host setup, [AI challenge draft](docs/ai-challenge.md) |
 | [patches/](patches/) | Fixes for upstream components, as `git format-patch` files |
 | [scripts/](scripts/) | Helper scripts (QEMU boot) |
 | [tools/redoxfs-file](tools/redoxfs-file) | Read or replace files in a Redox image without FUSE |
