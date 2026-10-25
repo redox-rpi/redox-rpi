@@ -5,12 +5,16 @@
 # (or sha256sum).
 #
 # Usage:
-#   scripts/qemu-raspi3b.sh [--kernel <file>] [--image <file>]
+#   scripts/qemu-raspi3b.sh [--kernel <file>] [--image <file>] [--uboot ours|redox]
 #                           [--test [--expect <regex>]... [--timeout <seconds>]]
 #
 #   --kernel <file>   replace usr/lib/boot/kernel in a copy of the image
 #                     (uses tools/redoxfs-file)
 #   --image <file>    boot this image instead of the latest daily server image
+#   --uboot ours      our U-Boot from scripts/build-uboot.sh (default if built),
+#                     with the mainline devicetree adjusted like the config.txt
+#                     overlays on a real Pi (PL011 console, SD on Arasan)
+#   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -34,6 +38,7 @@ image=""
 test=no
 expect=()
 timeout=900
+uboot=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -41,6 +46,7 @@ while [ $# -gt 0 ]; do
         --test) test=yes; shift ;;
         --expect) expect+=("$2"); shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
+        --uboot) uboot="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -53,9 +59,31 @@ sha256() {
     if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
 }
 
-if [ ! -f u-boot-rpi-3-b-plus.bin ]; then
-    curl -fsSLO "$UBOOT_URL"
+our_uboot="$ROOT/build/u-boot/u-boot.bin"
+if [ -z "$uboot" ]; then
+    if [ -f "$our_uboot" ]; then uboot=ours; else uboot=redox; fi
 fi
+case "$uboot" in
+    ours)
+        [ -f "$our_uboot" ] || { echo "$our_uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
+        # Our U-Boot expects the devicetree from the Pi firmware. Use the
+        # mainline one and apply what config.txt does on a real Pi:
+        # disable-bt (console on the PL011) and mmc (SD card on Arasan).
+        cp "$ROOT/build/u-boot/dtb/bcm2837-rpi-3-b-plus.dtb" qemu-3bp.dtb
+        fdtput -t s qemu-3bp.dtb /chosen stdout-path "serial0:115200n8"
+        fdtput -t s qemu-3bp.dtb /soc/mmc@7e202000 status disabled
+        firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
+        # The second serial port is the mini UART, which stays unused.
+        extra_serial=(-serial null)
+        ;;
+    redox)
+        [ -f u-boot-rpi-3-b-plus.bin ] || curl -fsSLO "$UBOOT_URL"
+        firmware=(-kernel u-boot-rpi-3-b-plus.bin)
+        extra_serial=()
+        ;;
+    *) echo "unknown U-Boot: $uboot" >&2; exit 1 ;;
+esac
+echo "U-Boot: $uboot"
 
 if [ -z "$image" ]; then
     name="$(curl -fsSL "$DAILY_URL/" | grep -oE 'redox_server_aarch64_[0-9-]+_[0-9]+_livedisk\.iso\.zst' | sort -u | tail -1)"
@@ -80,7 +108,7 @@ fi
 
 qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
-    -kernel u-boot-rpi-3-b-plus.bin
+    "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
     -display none -monitor none
     -usb -device usb-kbd)
@@ -89,7 +117,7 @@ if [ "$test" = no ]; then
     # QEMU gets the terminal directly, so it switches it to raw mode and keys
     # like Enter reach the guest unchanged. mon:stdio keeps Ctrl-A X working.
     echo "Press Enter at the bootloader's resolution menu. Exit with Ctrl-A X."
-    "${qemu[@]}" -serial mon:stdio
+    "${qemu[@]}" -serial mon:stdio ${extra_serial[@]+"${extra_serial[@]}"}
     exit
 fi
 
@@ -97,7 +125,7 @@ log="$IMAGES/qemu-test.log"
 fifo="$IMAGES/qemu-test.in"
 rm -f "$log" "$fifo"
 mkfifo "$fifo"
-"${qemu[@]}" -serial stdio < "$fifo" > "$log" 2>&1 &
+"${qemu[@]}" -serial stdio ${extra_serial[@]+"${extra_serial[@]}"} < "$fifo" > "$log" 2>&1 &
 pid=$!
 exec 3> "$fifo"
 trap 'kill $pid 2>/dev/null || true; rm -f "$fifo"' EXIT
