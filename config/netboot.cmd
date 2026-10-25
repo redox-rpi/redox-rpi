@@ -1,0 +1,28 @@
+# U-Boot script: boot Redox over the network.
+#
+# Loads a Redox disk image over TFTP into RAM, exposes it as a block device
+# with blkmap and starts the live bootloader from TFTP, which copies the image
+# into memory for the kernel. Compiled into netboot.scr by scripts/netboot.sh.
+#
+# Variables (defaults set by scripts/netboot.sh, override in the environment):
+#   redox_server   TFTP server (IP address)
+#   redox_dir      directory on the TFTP server, with a trailing slash
+#   redox_img_addr RAM address for the disk image
+
+echo "redox-rpi: network boot from ${redox_server}"
+
+# Ethernet on the Pi is a USB device. Harmless where there is no USB.
+usb start
+
+setenv autoload no
+dhcp || exit
+# DHCP may set serverip from the router; ours wins.
+setenv serverip ${redox_server}
+
+tftpboot ${redox_img_addr} ${redox_dir}harddrive.img || exit
+setexpr redox_blocks ${filesize} / 0x200
+blkmap create redox
+blkmap map redox 0 ${redox_blocks} mem ${redox_img_addr}
+
+tftpboot ${kernel_addr_r} ${redox_dir}bootloader-live.efi || exit
+bootefi ${kernel_addr_r} ${fdtcontroladdr}
