@@ -65,7 +65,7 @@ console and running QEMU.
 | 1.2 | Pi 3: boot Raspberry Pi OS Lite, wire up the serial console (GPIO14/15, `enable_uart=1`, possibly `dtoverlay=disable-bt`) | Linux login over UART |
 | 1.3 | 🟡 Zero 2 W with the Ethernet/USB hub HAT running; chips identified (FE1.1s hub, RTL8152) | Linux login over UART, HAT chips identified |
 | 1.4 | 🟡 Build **U-Boot** v2026.10 for both boards (`scripts/build-uboot.sh`, boots Redox in QEMU ✅) | U-Boot prompt over UART on the real boards |
-| 1.5 | 🟡 Network boot from the build server (`scripts/netboot.sh`, `scripts/make-sdcard.sh`; QEMU `virt` ✅) | Pi 3B+ boots Redox over TFTP |
+| 1.5 | ✅ Network boot from the build server (`scripts/netboot.sh`, `scripts/make-sdcard.sh`) | Pi 3B+ boots Redox over TFTP |
 
 ## Phase 2: Intermediate goal – Redox on the Pi 3
 
@@ -74,7 +74,7 @@ console and running QEMU.
 | 2.1 | ✅ Boot a Redox aarch64 image in **QEMU `-M raspi3b`** (`scripts/qemu-raspi3b.sh`) | Kernel log on the emulated serial port |
 | 2.2 | ✅ Fix the kernel panic in devicetree interrupt parsing (`patches/fdt/`) | Root shell in QEMU `raspi3b` |
 | 2.3 | 🟡 Userspace programs run: `ls`, `ps`, `uname` work in our own image; `df`, `free` still hit the relibc crash | `ls`, `ps`, `free` work in QEMU |
-| 2.4 | Same image on the real Pi 3 (if it is a 3B rather than 3B+, swap in the matching DTB) | **Shell over the serial console** |
+| 2.4 | 🟡 Same image on the real Pi 3B+: ✅ boots over the network to `redox login:` on HDMI (2026-10-25); login needs the serial console or USB | **Shell over the serial console** |
 | 2.5 | 🟡 Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`) | RedoxFS root on SD without live mode (QEMU ✅), survives reboot |
 | 2.6 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
 

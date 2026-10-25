@@ -77,6 +77,7 @@ logged here as a first data point.
 |---|---|---|---|---|
 | 2026-10-24 | 2 in QEMU (partly) | Direction and approvals only | Not measured | Shell reached after fixing a devicetree bug; most programs crash on an upstream regression |
 | 2026-10-24 | 4 in QEMU | Direction and approvals only | Not measured | All 4 cores online: spin-table and BCM2836 IPIs, working on the first boot attempt |
+| 2026-10-25 | 2 on a real Pi 3B+ (login prompt) | Direction, approvals, hardware handling (SD card, power, photos) | Not measured | Network boot from the build server; prompt on HDMI; no keyboard input yet |
 
 ## Open questions
 

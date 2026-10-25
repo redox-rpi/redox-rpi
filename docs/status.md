@@ -4,6 +4,17 @@ Last update: 2026-10-24. Upstream revisions checked: redox `4338ac2`,
 kernel `6cfaba5`, base `d2ffc4c`, relibc `5bfdd35`, bootloader `cc922ec`,
 daily image `redox_server_aarch64_2026-10-24_565`.
 
+## Milestone: first boot on real hardware (2026-10-25)
+
+![Redox login prompt on a Raspberry Pi 3B+](images/first-boot-pi3bplus.jpg)
+
+A Raspberry Pi 3B+ booted Redox over the network from the build server:
+Pi firmware → our U-Boot v2026.10 (LAN7800, DHCP, TFTP) → compressed image
+unpacked in RAM as a `blkmap` disk → patched live bootloader → our kernel →
+`redox login:` on the HDMI screen (framebuffer inherited from UEFI). The USB
+keyboard does not work in Redox yet (no DWC2 driver), and the kernel log is
+only on the serial console, so SMP on real hardware is not confirmed yet.
+
 ## Summary
 
 - Redox's latest daily **aarch64 server image boots in QEMU `raspi3b`** (an
