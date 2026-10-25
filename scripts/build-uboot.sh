@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build U-Boot for the Raspberry Pi 3, 3B+ and Zero 2 W.
+# Build U-Boot for the Raspberry Pi 3, 3B+ and Zero 2 W, or for QEMU's virt
+# machine to test the network boot flow without a Pi.
 #
 # Uses the upstream release below with rpi_arm64_defconfig, which takes the
 # devicetree from the Pi firmware instead of embedding one, plus the options
@@ -10,9 +11,10 @@
 # libgnutls28-dev, python3-pyelftools, device-tree-compiler.
 #
 # Usage:
-#   scripts/build-uboot.sh
+#   scripts/build-uboot.sh [rpi|qemu]    (default: rpi)
 #
-# Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/
+# Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/,
+# or build/u-boot-qemu/u-boot.bin for qemu.
 
 set -euo pipefail
 
@@ -20,7 +22,11 @@ UBOOT_TAG="v2026.10"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/upstream/u-boot"
-OUT="$ROOT/build/u-boot"
+case "${1:-rpi}" in
+    rpi) DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot" ;;
+    qemu) DEFCONFIG=qemu_arm64_defconfig; OUT="$ROOT/build/u-boot-qemu" ;;
+    *) echo "unknown target: $1" >&2; exit 1 ;;
+esac
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 
 if [ ! -d "$SRC" ]; then
@@ -32,7 +38,7 @@ if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
 fi
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
-make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" rpi_arm64_defconfig
+make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" "$DEFCONFIG"
 "$SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT/obj" \
     "$OUT/obj/.config" "$ROOT/config/u-boot.config"
 make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
