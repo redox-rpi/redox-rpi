@@ -1,0 +1,80 @@
+From 0fac1473b82e418c1b3a08d1659ec795e73a2167 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 25 Oct 2026 17:07:48 +0100
+Subject: [PATCH 2/2] Only boot a RedoxFS that contains a kernel
+
+The bootloader booted the first RedoxFS it found. With a RedoxFS data
+partition on another disk, for example on the SD card of a Raspberry Pi
+booted over the network, it picked the data partition and failed. Skip
+filesystems without usr/lib/boot/kernel.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/main.rs        |  5 ++++-
+ src/os/uefi/mod.rs | 20 +++++++++++++++++++-
+ 2 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index 160c13b..217903d 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -108,6 +108,9 @@ pub struct KernelArgs {
+     bootstrap_size: u64,
+ }
+ 
++/// Where the kernel lives in a bootable RedoxFS.
++pub(crate) const KERNEL_PATH: &str = "usr/lib/boot/kernel";
++
+ /// How long the mode selection waits for a key before it continues.
+ const AUTO_SELECT_SECONDS: u64 = 5;
+ 
+@@ -550,7 +553,7 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+     };
+ 
+     let (kernel, kernel_entry) = {
+-        let kernel = load_to_memory(os, &mut fs, "usr/lib/boot/kernel", Filetype::Elf);
++        let kernel = load_to_memory(os, &mut fs, KERNEL_PATH, Filetype::Elf);
+         let (kernel_entry, kernel_64bit) = elf_entry(kernel);
+         unsafe {
+             KERNEL_64BIT = kernel_64bit;
+diff --git a/src/os/uefi/mod.rs b/src/os/uefi/mod.rs
+index 5956e56..f9f462f 100644
+--- a/src/os/uefi/mod.rs
++++ b/src/os/uefi/mod.rs
+@@ -203,7 +203,14 @@ impl Os for OsEfi {
+             let block = device.partition_offset / redoxfs::BLOCK_SIZE;
+ 
+             match redoxfs::FileSystem::open(device.disk, password_opt, Some(block), false) {
+-                Ok(ok) => return Ok(ok),
++                // Data partitions are RedoxFS too; only boot one with a kernel.
++                Ok(mut fs) if has_kernel(&mut fs) => return Ok(fs),
++                Ok(_) => {
++                    println!(
++                        "RedoxFS on {} has no kernel, skipping",
++                        device_path_to_string(device.device_path.0)
++                    );
++                }
+                 Err(err) => match err.errno {
+                     // Ignore header not found error
+                     syscall::ENOENT => (),
+@@ -377,6 +384,17 @@ fn status_to_result(status: Status) -> Result<usize> {
+     }
+ }
+ 
++fn has_kernel(fs: &mut redoxfs::FileSystem<DiskOrFileEfi>) -> bool {
++    fs.tx(|tx| {
++        let mut node = redoxfs::TreePtr::root();
++        for component in crate::KERNEL_PATH.split('/') {
++            node = tx.find_node(node, component)?.ptr();
++        }
++        Ok(())
++    })
++    .is_ok()
++}
++
+ fn os_key(key: TextInputKey) -> OsKey {
+     match key.ScanCode {
+         0 => match key.UnicodeChar {
+-- 
+2.54.0 (Apple Git-157)
+
