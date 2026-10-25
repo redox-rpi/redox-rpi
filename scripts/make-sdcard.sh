@@ -5,8 +5,9 @@
 # config.txt and a boot script. Redox itself comes from the TFTP server on
 # every boot (see scripts/netboot.sh), so a new build needs no new card.
 # Partition 2 is a RedoxFS data partition that Redox mounts at /scheme/data, for
-# everything that should survive a reboot. It is found by its fixed UUID
-# (DATA_UUID, also in config/raspi3bp.toml), whatever disk it is on.
+# everything that should survive a reboot. Redox mounts it by position
+# (/scheme/disk.mmc/0p1, see config/raspi3bp.toml); it also has a fixed UUID
+# (DATA_UUID) so tools can recognize it.
 #
 # Needs: curl, sfdisk, mtools, cargo (builds tools/redoxfs-file).
 # Run scripts/build-uboot.sh and scripts/netboot.sh --server <ip> first.
