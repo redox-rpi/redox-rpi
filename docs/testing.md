@@ -56,21 +56,19 @@ on every push, on pull requests and daily. Results:
 [Actions](https://github.com/redox-rpi/redox-rpi/actions); the serial log of
 each run is attached as an artifact.
 
-## Our U-Boot in QEMU
+## Which U-Boot
+
+If our U-Boot is built (`scripts/build-uboot.sh`, writes
+`build/u-boot/u-boot.bin`), the script uses it automatically; otherwise it
+downloads Redox's prebuilt U-Boot 2022.07. Choose explicitly with
+`--uboot ours` or `--uboot redox`. The first line of the output says which one
+runs.
 
 Our U-Boot takes the devicetree from the Pi firmware, which QEMU does not
-have. Pass the mainline devicetree built with U-Boot and adjust it the way the
-`config.txt` overlays do on a real Pi:
-
-```sh
-cp build/u-boot/dtb/bcm2837-rpi-3-b-plus.dtb qemu-3bp.dtb
-fdtput -t s qemu-3bp.dtb /chosen stdout-path "serial0:115200n8"  # like disable-bt
-fdtput -t s qemu-3bp.dtb /soc/mmc@7e202000 status disabled        # like dtoverlay=mmc
-qemu-system-aarch64 -M raspi3b -smp 4 -m 1024 \
-    -kernel build/u-boot/u-boot.bin -dtb qemu-3bp.dtb \
-    -drive file=run.img,if=sd,format=raw \
-    -serial mon:stdio -serial null -display none
-```
+have. The script therefore passes the mainline devicetree built with U-Boot
+and adjusts it the way the `config.txt` overlays do on a real Pi:
+`stdout-path` on the PL011 (like `disable-bt`) and the `sdhost` controller
+disabled, so the SD card is on the Arasan controller (like `dtoverlay=mmc`).
 
 ## Known problems
 
