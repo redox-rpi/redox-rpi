@@ -23,6 +23,9 @@ tftpboot ${redox_img_addr} ${redox_dir}harddrive.img || exit
 setexpr redox_blocks ${filesize} / 0x200
 blkmap create redox
 blkmap map redox 0 ${redox_blocks} mem ${redox_img_addr}
+# Reading the partition table probes the device, which makes U-Boot register
+# it and its partitions as UEFI block devices for the Redox bootloader.
+part list blkmap 0
 
 tftpboot ${kernel_addr_r} ${redox_dir}bootloader-live.efi || exit
 bootefi ${kernel_addr_r} ${fdtcontroladdr}
