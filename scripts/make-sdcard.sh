@@ -5,9 +5,10 @@
 # config.txt and a boot script. Redox itself comes from the TFTP server on
 # every boot (see scripts/netboot.sh), so a new build needs no new card.
 # Partition 2 is a RedoxFS data partition that Redox mounts at /data, for
-# everything that should survive a reboot.
+# everything that should survive a reboot. It is found by its fixed UUID
+# (DATA_UUID, also in config/raspi3bp.toml), whatever disk it is on.
 #
-# Needs: curl, sfdisk, mtools, and redoxfs-mkfs from scripts/build-image.sh.
+# Needs: curl, sfdisk, mtools, cargo (builds tools/redoxfs-file).
 # Run scripts/build-uboot.sh and scripts/netboot.sh --server <ip> first.
 #
 # Usage:
@@ -30,6 +31,7 @@ FIRMWARE_FILES=(
     overlays/disable-bt.dtbo overlays/mmc.dtbo
 )
 BOOT_MIB=64
+DATA_UUID="7265646f-7872-7069-2d64-617461000001"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tftp="$ROOT/build/tftp"
@@ -57,10 +59,9 @@ for file in "${FIRMWARE_FILES[@]}"; do
     fi
 done
 
-mkfs="$ROOT/upstream/redox/build/fstools/bin/redoxfs-mkfs"
-if [ "$data_mib" -gt 0 ] && [ ! -x "$mkfs" ]; then
-    echo "$mkfs missing, run scripts/build-image.sh" >&2
-    exit 1
+tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+if [ "$data_mib" -gt 0 ] && [ ! -x "$tool" ]; then
+    cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
 fi
 
 # MBR, since the Pi boot ROM reads MBR only: FAT32 boot partition from 1 MiB
@@ -94,7 +95,12 @@ if [ "$data_mib" -gt 0 ]; then
     data="$out.data"
     rm -f "$data"
     truncate -s "${data_mib}M" "$data"
-    "$mkfs" "$data" >/dev/null
+    printf '%s\n' \
+        "This is the data partition of a redox-rpi SD card (https://github.com/redox-rpi)." \
+        "Redox mounts it at /data. Everything stored here survives a reboot." \
+        > "$out.readme"
+    "$tool" "$data" mkfs "$DATA_UUID" "$out.readme" >/dev/null
+    rm -f "$out.readme"
     dd if="$data" of="$out" bs=1M seek="$BOOT_MIB" conv=notrunc status=none
     rm -f "$data"
 fi

@@ -1,18 +1,22 @@
-//! Read or replace a file inside the RedoxFS partition of a Redox disk image.
+//! Read or replace a file inside the RedoxFS partition of a Redox disk image,
+//! or create a RedoxFS with a given UUID.
 //!
 //! Usage:
 //!   redoxfs-file <image> get <path-in-redoxfs> <local-file>
 //!   redoxfs-file <image> put <path-in-redoxfs> <local-file>
+//!   redoxfs-file <file> mkfs <uuid> [<readme-file>]
 //!
-//! The RedoxFS partition is located through the GPT. For `put` the target
-//! file must already exist; it is truncated and overwritten.
+//! For get and put the RedoxFS partition is located through the GPT, and for
+//! `put` the target file must already exist; it is truncated and overwritten.
+//! `mkfs` formats the whole file, so a fixed UUID lets Redox find the
+//! filesystem on any disk (`redoxfs --uuid`), optionally with a README.txt.
 
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use redoxfs::{Disk, FileSystem, TreePtr, BLOCK_SIZE};
+use redoxfs::{Disk, FileSystem, Node, TreePtr, BLOCK_SIZE};
 use syscall::error::{Error, Result, EIO};
 
 const SECTOR_SIZE: u64 = 512;
@@ -94,10 +98,63 @@ fn fail(msg: impl std::fmt::Display) -> ! {
     exit(1);
 }
 
+fn parse_uuid(text: &str) -> Option<[u8; 16]> {
+    let hex: Vec<u8> = text.bytes().filter(|&b| b != b'-').collect();
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut uuid = [0; 16];
+    for (byte, pair) in uuid.iter_mut().zip(hex.chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(uuid)
+}
+
+fn mkfs(path: &str, uuid: &str, readme: Option<&str>) {
+    let uuid = parse_uuid(uuid).unwrap_or_else(|| fail(format!("invalid uuid {uuid}")));
+    let readme = readme.map(|path| {
+        std::fs::read(path).unwrap_or_else(|e| fail(format!("failed to read {path}: {e}")))
+    });
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap_or_else(|e| fail(format!("failed to open {path}: {e}")));
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let disk = PartitionDisk { file, offset: 0, size };
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let mut fs = FileSystem::create(disk, None, now.as_secs(), now.subsec_nanos())
+        .unwrap_or_else(|e| fail(format!("failed to create RedoxFS on {path}: {e}")));
+    // The next commit writes the header, and with it the new UUID.
+    fs.header.uuid = uuid;
+    fs.tx(|tx| {
+        if let Some(readme) = &readme {
+            let node = tx.create_node(
+                TreePtr::root(),
+                "README.txt",
+                Node::MODE_FILE | 0o644,
+                now.as_secs(),
+                now.subsec_nanos(),
+            )?;
+            tx.write_node(node.ptr(), 0, readme, now.as_secs(), now.subsec_nanos())?;
+        }
+        tx.sync(true)?;
+        Ok(())
+    })
+    .unwrap_or_else(|e| fail(format!("failed to write RedoxFS on {path}: {e}")));
+    println!("created RedoxFS on {path}, {} MiB", size / 1024 / 1024);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if matches!(args.len(), 4 | 5) && args[2] == "mkfs" {
+        mkfs(&args[1], &args[3], args.get(4).map(String::as_str));
+        return;
+    }
     if args.len() != 5 || !matches!(args[2].as_str(), "get" | "put") {
         eprintln!("usage: redoxfs-file <image> get|put <path-in-redoxfs> <local-file>");
+        eprintln!("       redoxfs-file <file> mkfs <uuid> [<readme-file>]");
         exit(1);
     }
     let (image, command, target, local) = (&args[1], &args[2], &args[3], &args[4]);
