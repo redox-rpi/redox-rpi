@@ -88,6 +88,10 @@ for name in bootloader; do
 done
 
 cd "$REDOX"
+# make only rebuilds packages when repo.tag is older than what it tracks,
+# which does not include our patches. The cookbook itself skips unchanged
+# recipes, so letting it check every time is cheap.
+rm -f build/aarch64/minimal/repo.tag
 # CI disables the cookbook's terminal UI, which needs a real terminal.
 CI="${CI:-1}" make "${1:-all}" \
     PODMAN_BUILD=0 \
