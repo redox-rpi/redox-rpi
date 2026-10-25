@@ -1,13 +1,15 @@
 # U-Boot script: boot Redox over the network.
 #
-# Loads a Redox disk image over TFTP into RAM, exposes it as a block device
-# with blkmap and starts the live bootloader from TFTP, which copies the image
-# into memory for the kernel. Compiled into netboot.scr by scripts/netboot.sh.
+# Loads a gzip-compressed Redox disk image over TFTP, unpacks it in RAM,
+# exposes it as a block device with blkmap and starts the live bootloader from
+# TFTP, which copies the image into memory for the kernel. Compiled into
+# netboot.scr by scripts/netboot.sh.
 #
 # Variables (defaults set by scripts/netboot.sh, override in the environment):
 #   redox_server   TFTP server (IP address)
 #   redox_dir      directory on the TFTP server, with a trailing slash
 #   redox_img_addr RAM address for the disk image
+#   redox_gz_addr  RAM address for the compressed image, after the disk image
 
 echo "redox-rpi: network boot from ${redox_server}"
 
@@ -19,7 +21,9 @@ dhcp || exit
 # DHCP may set serverip from the router; ours wins.
 setenv serverip ${redox_server}
 
-tftpboot ${redox_img_addr} ${redox_dir}harddrive.img || exit
+# The image is mostly empty space; compressed it is about a sixth.
+tftpboot ${redox_gz_addr} ${redox_dir}harddrive.img.gz || exit
+unzip ${redox_gz_addr} ${redox_img_addr} || exit
 setexpr redox_blocks ${filesize} / 0x200
 blkmap create redox
 blkmap map redox 0 ${redox_blocks} mem ${redox_img_addr}

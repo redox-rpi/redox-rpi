@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Prepare a TFTP directory for booting Redox over the network with U-Boot.
 #
-# Copies the disk image and the live bootloader into <tftp-dir>/redox/ and
-# compiles config/netboot.cmd into netboot.scr there, plus boot.scr: put that
-# on the SD card's FAT partition and U-Boot network-boots on its own.
+# Copies the disk image (gzip-compressed) and the live bootloader into
+# <tftp-dir>/redox/ and compiles config/netboot.cmd into netboot.scr there,
+# plus boot.scr: put that on the SD card's FAT partition and U-Boot
+# network-boots on its own.
 #
 # Run after scripts/build-image.sh and scripts/build-uboot.sh.
 #
@@ -40,9 +41,10 @@ done
 case "$board" in
     # RAM starts at 0; U-Boot and the firmware live near the top of the first
     # GiB, the kernel is loaded at 0x80000.
-    rpi) img_addr=0x10000000; mkimage="$ROOT/build/u-boot/obj/tools/mkimage" ;;
+    # The compressed image goes right after the 256 MiB disk image.
+    rpi) img_addr=0x10000000; gz_addr=0x20000000; mkimage="$ROOT/build/u-boot/obj/tools/mkimage" ;;
     # RAM starts at 1 GiB.
-    qemu) img_addr=0x50000000; mkimage="$ROOT/build/u-boot-qemu/obj/tools/mkimage" ;;
+    qemu) img_addr=0x50000000; gz_addr=0x60000000; mkimage="$ROOT/build/u-boot-qemu/obj/tools/mkimage" ;;
     *) echo "unknown board: $board" >&2; exit 1 ;;
 esac
 [ -x "$mkimage" ] || { echo "$mkimage missing, run scripts/build-uboot.sh $board" >&2; exit 1; }
@@ -51,7 +53,8 @@ bootloader="$(find "$REDOX/recipes/core/bootloader/target" -path '*stage/usr/lib
 [ -n "$bootloader" ] || { echo "bootloader-live.efi missing, run scripts/build-image.sh" >&2; exit 1; }
 
 mkdir -p "$tftp/redox"
-cp "$image" "$tftp/redox/harddrive.img"
+rm -f "$tftp/redox/harddrive.img"
+gzip -9 -c "$image" > "$tftp/redox/harddrive.img.gz"
 cp "$bootloader" "$tftp/redox/bootloader-live.efi"
 
 script="$tftp/redox/netboot.cmd"
@@ -60,6 +63,7 @@ script="$tftp/redox/netboot.cmd"
     echo "if test -z \"\${redox_server}\"; then setenv redox_server $server; fi"
     echo "if test -z \"\${redox_dir}\"; then setenv redox_dir redox/; fi"
     echo "if test -z \"\${redox_img_addr}\"; then setenv redox_img_addr $img_addr; fi"
+    echo "if test -z \"\${redox_gz_addr}\"; then setenv redox_gz_addr $gz_addr; fi"
     cat "$ROOT/config/netboot.cmd"
 } > "$script"
 "$mkimage" -q -A arm64 -T script -C none -n "redox-rpi netboot" -d "$script" "$tftp/redox/netboot.scr"
