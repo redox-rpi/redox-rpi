@@ -9,6 +9,7 @@ include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
 [packages]
 kernel = "source"
 base = "source"
+bootloader = "source"
 # Mounts the data partition below; the minimal config has it in initfs only.
 redoxfs = {}
 

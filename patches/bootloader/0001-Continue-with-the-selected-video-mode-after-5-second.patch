@@ -1,0 +1,161 @@
+From cd2e972fd21760da7bc830003866dc5a699b16d4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 25 Oct 2026 17:03:01 +0100
+Subject: [PATCH] Continue with the selected video mode after 5 seconds
+
+The mode selection waited for a key forever, so a board without keyboard,
+like a headless server or a Raspberry Pi booted over the network, never
+got past it. The first key read now times out after 5 seconds and takes
+the preselected mode; any key switches to the normal selection.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/main.rs        | 19 +++++++++++++++-
+ src/os/mod.rs      |  6 +++++
+ src/os/uefi/mod.rs | 56 +++++++++++++++++++++++++++++++++-------------
+ 3 files changed, 65 insertions(+), 16 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index 489a7fe..160c13b 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -108,6 +108,9 @@ pub struct KernelArgs {
+     bootstrap_size: u64,
+ }
+ 
++/// How long the mode selection waits for a key before it continues.
++const AUTO_SELECT_SECONDS: u64 = 5;
++
+ fn select_mode(
+     os: &impl Os,
+     output_i: usize,
+@@ -163,12 +166,19 @@ fn select_mode(
+         println!("Press l to  enable live mode");
+     }
+     println!("Press e to edit boot environment");
++    println!(
++        "Continuing with the selected mode in {} seconds",
++        AUTO_SELECT_SECONDS
++    );
+     println!();
+     print!(" ");
+ 
+     let (off_x, off_y) = os.get_text_position();
+     let rows = 12;
+     let mut mode_opt = None;
++    // Boards without keyboard or screen, like headless servers, must not wait
++    // here forever. Any key switches to the normal, untimed selection.
++    let mut auto_select = true;
+     while !modes.is_empty() {
+         let mut row = 0;
+         let mut col = 0;
+@@ -187,7 +197,14 @@ fn select_mode(
+         }
+ 
+         // Read keypress
+-        match os.get_key() {
++        let key = if auto_select {
++            auto_select = false;
++            os.get_key_timeout(AUTO_SELECT_SECONDS * 1000)
++                .unwrap_or(OsKey::Enter)
++        } else {
++            os.get_key()
++        };
++        match key {
+             OsKey::Left => {
+                 if let Some(mut mode_i) = modes.iter().position(|x| x.0.id == selected) {
+                     if mode_i < rows {
+diff --git a/src/os/mod.rs b/src/os/mod.rs
+index df22102..099fc55 100644
+--- a/src/os/mod.rs
++++ b/src/os/mod.rs
+@@ -111,6 +111,12 @@ pub trait Os {
+ 
+     fn get_key(&self) -> OsKey;
+ 
++    /// Wait at most `timeout_ms` for a key. Implementations that cannot time
++    /// out wait forever.
++    fn get_key_timeout(&self, _timeout_ms: u64) -> Option<OsKey> {
++        Some(self.get_key())
++    }
++
+     fn clear_text(&self);
+     fn get_text_position(&self) -> (usize, usize);
+     fn set_text_position(&self, x: usize, y: usize);
+diff --git a/src/os/uefi/mod.rs b/src/os/uefi/mod.rs
+index f55d8e8..5956e56 100644
+--- a/src/os/uefi/mod.rs
++++ b/src/os/uefi/mod.rs
+@@ -318,21 +318,28 @@ impl Os for OsEfi {
+         })
+         .unwrap();
+ 
+-        match key.ScanCode {
+-            0 => match key.UnicodeChar {
+-                8 => OsKey::Backspace,
+-                13 => OsKey::Enter,
+-                w => match char::from_u32(w as u32) {
+-                    Some(c) => OsKey::Char(c),
+-                    None => OsKey::Other,
+-                },
+-            },
+-            1 => OsKey::Up,
+-            2 => OsKey::Down,
+-            3 => OsKey::Right,
+-            4 => OsKey::Left,
+-            8 => OsKey::Delete,
+-            _ => OsKey::Other,
++        os_key(key)
++    }
++
++    fn get_key_timeout(&self, timeout_ms: u64) -> Option<OsKey> {
++        const POLL_US: usize = 10_000;
++        let mut waited_us = 0;
++        loop {
++            let mut key = TextInputKey {
++                ScanCode: 0,
++                UnicodeChar: 0,
++            };
++            // Returns NOT_READY while no key is pending.
++            if status_to_result((self.st.ConsoleIn.ReadKeyStroke)(self.st.ConsoleIn, &mut key))
++                .is_ok()
++            {
++                return Some(os_key(key));
++            }
++            if waited_us as u64 >= timeout_ms * 1000 {
++                return None;
++            }
++            (self.st.BootServices.Stall)(POLL_US);
++            waited_us += POLL_US;
+         }
+     }
+ 
+@@ -370,6 +377,25 @@ fn status_to_result(status: Status) -> Result<usize> {
+     }
+ }
+ 
++fn os_key(key: TextInputKey) -> OsKey {
++    match key.ScanCode {
++        0 => match key.UnicodeChar {
++            8 => OsKey::Backspace,
++            13 => OsKey::Enter,
++            w => match char::from_u32(w as u32) {
++                Some(c) => OsKey::Char(c),
++                None => OsKey::Other,
++            },
++        },
++        1 => OsKey::Up,
++        2 => OsKey::Down,
++        3 => OsKey::Right,
++        4 => OsKey::Left,
++        8 => OsKey::Delete,
++        _ => OsKey::Other,
++    }
++}
++
+ fn maybe_retry<T, F>(mut func: F) -> Result<T>
+ where
+     F: FnMut() -> Result<T>,
+-- 
+2.54.0 (Apple Git-157)
+

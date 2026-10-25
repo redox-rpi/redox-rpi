@@ -60,6 +60,18 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 """
 EOF
 
+# Other recipes: add our patches to their [source] section.
+for name in bootloader; do
+    recipe="$REDOX/recipes/core/$name"
+    git -C "$REDOX" checkout -q -- "recipes/core/$name"
+    list=""
+    for patch in "$ROOT/patches/$name"/*.patch; do
+        cp "$patch" "$recipe/"
+        list="$list\"$(basename "$patch")\", "
+    done
+    sed -i "/^git = /a patches = [ $list]" "$recipe/recipe.toml"
+done
+
 cd "$REDOX"
 # CI disables the cookbook's terminal UI, which needs a real terminal.
 CI="${CI:-1}" make "${1:-all}" \
