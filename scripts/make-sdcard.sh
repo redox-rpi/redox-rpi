@@ -4,7 +4,7 @@
 # Partition 1 (FAT32, 63 MiB) holds the Raspberry Pi firmware, our U-Boot,
 # config.txt and a boot script. Redox itself comes from the TFTP server on
 # every boot (see scripts/netboot.sh), so a new build needs no new card.
-# Partition 2 is a RedoxFS data partition that Redox mounts at /data, for
+# Partition 2 is a RedoxFS data partition that Redox mounts at /scheme/data, for
 # everything that should survive a reboot. It is found by its fixed UUID
 # (DATA_UUID, also in config/raspi3bp.toml), whatever disk it is on.
 #
@@ -97,7 +97,7 @@ if [ "$data_mib" -gt 0 ]; then
     truncate -s "${data_mib}M" "$data"
     printf '%s\n' \
         "This is the data partition of a redox-rpi SD card (https://github.com/redox-rpi)." \
-        "Redox mounts it at /data. Everything stored here survives a reboot." \
+        "Redox mounts it at /scheme/data. Everything stored here survives a reboot." \
         > "$out.readme"
     "$tool" "$data" mkfs "$DATA_UUID" "$out.readme" >/dev/null
     rm -f "$out.readme"

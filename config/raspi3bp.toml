@@ -9,10 +9,13 @@ include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
 [packages]
 kernel = "source"
 base = "source"
+# Mounts the data partition below; the minimal config has it in initfs only.
+redoxfs = {}
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh)
-# at /scheme/data, reachable as /data. It is found by its fixed UUID on any
-# disk. Fails harmlessly without such a partition.
+# at /scheme/data. It is found by its fixed UUID on any disk. Fails harmlessly
+# without such a partition. (A /data symlink does not work: Redox does not
+# follow symlinks into another scheme.)
 [[files]]
 path = "/usr/lib/init.d/60_data.service"
 data = """
@@ -25,8 +28,3 @@ cmd = "redoxfs"
 args = ["--uuid", "7265646f-7872-7069-2d64-617461000001", "data"]
 type = "oneshot"
 """
-
-[[files]]
-path = "/data"
-data = "/scheme/data"
-symlink = true
