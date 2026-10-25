@@ -104,7 +104,7 @@ automated testing in CI later.
 | # | Step | Done when … |
 |---|---|---|
 | 5.1 | Optional stopgap: IP over the serial line (SLIP/PPP) | Ping from host to Pi |
-| 5.2 | 🟡 **DWC2 USB host driver** `dwc2d` (`patches/base/`): host mode, port reset, control transfers over DMA ✅ in QEMU | A USB stick or keyboard is enumerated |
+| 5.2 | 🟡 **DWC2 USB host driver** `dwc2d` (`patches/base/`): host mode, port reset, control transfers over DMA; enumerates the root device in QEMU ✅ and on the real Pi 3B+ ✅ | A USB stick or keyboard is enumerated |
 | 5.3 | USB hub support behind DWC2 | Devices behind the onboard/HAT hub are enumerated |
 | 5.4 | Ethernet driver for the Pi 3 chip (LAN7800 `0424:7800` on our 3B+, LAN9514 on the 3B) | `ping` and TCP from the Pi 3 |
 | 5.5 | Ethernet driver for the HAT's chip: RTL8152 `0bda:8152` behind a FE1.1s hub | `ping` and TCP from the Zero 2 W |

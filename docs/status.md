@@ -140,9 +140,17 @@ BSD drivers; Linux only for understanding, nothing copied). First stage:
   configuration descriptors, assigns address 1
 
 In QEMU `raspi3b` it enumerates the device on the root port: QEMU's
-`usb-hub` (`0409:55aa`, class 0x09), with the keyboard behind it. The real
-Pi 3B+ also has a hub first, so hub support comes next, then the scheme
-interface of `xhcid` so `usbhubd` and `usbhidd` can run on top.
+`usb-hub` (`0409:55aa`, class 0x09), with the keyboard behind it.
+
+**On the real Pi 3B+** it enumerates the onboard hub (2026-10-25): core
+`0x4f54280a` (DWC2 v2.80a; QEMU models v2.94a), device on the root port at
+high speed, endpoint 0 max packet 64, device `0424:2514`, USB 2.00, class
+0x09 with the single-TT and multi-TT alternate settings.
+
+![dwc2d output on a Raspberry Pi 3B+](images/dwc2d-pi3bplus.jpg)
+
+Next: hub support, then the scheme interface of `xhcid` so `usbhubd` and
+`usbhidd` can run on top.
 
 ## Implications for the Zero 2 W
 
