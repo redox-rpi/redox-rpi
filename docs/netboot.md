@@ -8,7 +8,7 @@ serial console; no SD card swapping.
 ```
 Pi firmware → U-Boot ── DHCP (router) ──────────────── IP address
                      └─ TFTP (build server) ── netboot.scr
-                                              ├─ harddrive.img → RAM → blkmap disk
+                                              ├─ harddrive.img.gz → unzip in RAM → blkmap disk
                                               └─ bootloader-live.efi → copies RedoxFS into RAM → kernel
 ```
 
@@ -78,11 +78,20 @@ setenv autoload no; dhcp; setenv serverip 10.0.2.2
 tftpboot ${scriptaddr} redox/netboot.scr; source ${scriptaddr}
 ```
 
+## Transfer time
+
+TFTP sends one small block and waits for the acknowledgement, so every
+millisecond of network latency counts (the build server is on Wi-Fi). The
+256 MiB image is mostly empty space, so `scripts/netboot.sh` gzips it to about
+42 MB and U-Boot unpacks it in RAM. Measured from a Mac over Wi-Fi: 8:47 min
+uncompressed, 1:19 min compressed.
+
 ## Limits
 
 - The bootloader's resolution menu still waits for **Enter** on the serial
   console.
-- RAM: the image (256 MiB, half of it the EFI partition) is loaded at
-  256 MiB and the bootloader copies the 126 MiB RedoxFS once more. That fits
-  the Pi 3B+ (1 GB), but not the Zero 2 W (512 MB). The Zero needs a smaller
-  image or a transfer of the RedoxFS partition only.
+- RAM: the unpacked image (256 MiB, half of it the EFI partition) sits at
+  256 MiB, the compressed one after it, and the bootloader copies the
+  126 MiB RedoxFS once more. That fits the Pi 3B+ (1 GB), but not the
+  Zero 2 W (512 MB). The Zero needs a smaller image (EFI partition) or a
+  transfer of the RedoxFS partition only.
