@@ -21,6 +21,19 @@ KERNEL_RECIPE="$REDOX/recipes/core/kernel"
 
 mkdir -p "$UPSTREAM"
 
+# The cookbook does not notice changed patches in an already fetched recipe.
+# Drop its source and build when our patch set for it changed.
+refresh_on_patch_change() {
+    local recipe="$1" patches="$2"
+    local stamp="$recipe/.redox-rpi-patches"
+    local sum
+    sum="$(cat "$patches"/*.patch | sha256sum | cut -d' ' -f1)"
+    if [ "$(cat "$stamp" 2>/dev/null)" != "$sum" ]; then
+        rm -rf "$recipe/source" "$recipe/target"
+        echo "$sum" > "$stamp"
+    fi
+}
+
 if [ ! -d "$REDOX" ]; then
     git clone --depth 1 https://gitlab.redox-os.org/redox-os/redox.git "$REDOX"
 fi
@@ -35,6 +48,7 @@ fi
 # Kernel recipe: apply our kernel patches and build against the patched fdt.
 # Rewritten on every run so changes to the patches are picked up.
 git -C "$REDOX" checkout -q -- recipes/core/kernel
+refresh_on_patch_change "$KERNEL_RECIPE" "$ROOT/patches/kernel"
 patches=""
 for patch in "$ROOT"/patches/kernel/*.patch; do
     cp "$patch" "$KERNEL_RECIPE/"
@@ -64,6 +78,7 @@ EOF
 for name in bootloader; do
     recipe="$REDOX/recipes/core/$name"
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
+    refresh_on_patch_change "$recipe" "$ROOT/patches/$name"
     list=""
     for patch in "$ROOT/patches/$name"/*.patch; do
         cp "$patch" "$recipe/"
