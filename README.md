@@ -26,9 +26,10 @@ scripts/qemu-raspi3b.sh
 
 | Path | Content |
 |---|---|
-| [docs/](docs/) | Status and findings, hardware notes, build host setup, [AI challenge draft](docs/ai-challenge.md) |
+| [docs/](docs/README.md) | Documentation: architecture, status, testing, hardware, build host, [AI challenge draft](docs/ai-challenge.md) |
 | [patches/](patches/) | Fixes for upstream components, as `git format-patch` files |
-| [scripts/](scripts/) | Helper scripts (QEMU boot) |
+| [scripts/](scripts/) | Build kernel, image and U-Boot; boot in QEMU |
+| [config/](config/) | Image and U-Boot configuration |
 | [tools/redoxfs-file](tools/redoxfs-file) | Read or replace files in a Redox image without FUSE |
 
 ## Goals

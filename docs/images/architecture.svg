@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" width="960" height="700" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Redox on the Raspberry Pi: boot chain and components</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+    <style>
+      .title { font-size: 22px; font-weight: 700; fill: #1f2328; }
+      .h { font-size: 15px; font-weight: 700; fill: #1f2328; }
+      .t { font-size: 13px; fill: #1f2328; }
+      .s { font-size: 12px; fill: #57606a; }
+      .num { font-size: 15px; font-weight: 700; fill: #ffffff; }
+      .fw   { fill: #eaeef2; stroke: #8c959f; }
+      .gpl  { fill: #fff1e5; stroke: #d4a72c; }
+      .rdx  { fill: #ddf4ff; stroke: #54aeff; }
+      .our  { fill: #dafbe1; stroke: #4ac26b; }
+      .box  { stroke-width: 1.5; }
+      .ext  { fill: #ffffff; stroke: #8c959f; stroke-dasharray: 5 4; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="700" fill="#ffffff"/>
+  <text x="32" y="44" class="title">Redox OS on the Raspberry Pi 3 / Zero 2 W</text>
+  <text x="32" y="68" class="s">Boot chain from power-on to the shell, and where each part comes from</text>
+
+  <!-- Boot chain -->
+  <g>
+    <rect x="32" y="96" width="520" height="66" rx="8" class="box fw"/>
+    <circle cx="58" cy="129" r="14" fill="#6e7781"/><text x="58" y="134" text-anchor="middle" class="num">1</text>
+    <text x="84" y="122" class="h">Pi firmware</text>
+    <text x="84" y="144" class="t">bootcode.bin, start.elf · reads config.txt · loads u-boot.bin</text>
+
+    <rect x="32" y="186" width="520" height="66" rx="8" class="box gpl"/>
+    <circle cx="58" cy="219" r="14" fill="#bf8700"/><text x="58" y="224" text-anchor="middle" class="num">2</text>
+    <text x="84" y="212" class="h">U-Boot v2026.10</text>
+    <text x="84" y="234" class="t">SD card, USB, Ethernet (DHCP/TFTP) · provides UEFI · starts BOOTAA64.EFI</text>
+
+    <rect x="32" y="276" width="520" height="66" rx="8" class="box rdx"/>
+    <circle cx="58" cy="309" r="14" fill="#0969da"/><text x="58" y="314" text-anchor="middle" class="num">3</text>
+    <text x="84" y="302" class="h">Redox bootloader</text>
+    <text x="84" y="324" class="t">finds RedoxFS · loads kernel and initfs · passes the devicetree</text>
+
+    <rect x="32" y="366" width="520" height="66" rx="8" class="box our"/>
+    <circle cx="58" cy="399" r="14" fill="#1a7f37"/><text x="58" y="404" text-anchor="middle" class="num">4</text>
+    <text x="84" y="392" class="h">Redox kernel + our patches</text>
+    <text x="84" y="414" class="t">devicetree fix (fdt) · 4 cores: spin-table, BCM2836 IPIs · PL011 UART</text>
+
+    <rect x="32" y="456" width="520" height="66" rx="8" class="box rdx"/>
+    <circle cx="58" cy="489" r="14" fill="#0969da"/><text x="58" y="494" text-anchor="middle" class="num">5</text>
+    <text x="84" y="482" class="h">initfs: init + drivers (base, BOARD=raspi3bp)</text>
+    <text x="84" y="504" class="t">bcm2835-sdhcid (SD card) · redoxfs · planned: DWC2 USB, LAN7800</text>
+
+    <rect x="32" y="546" width="520" height="66" rx="8" class="box rdx"/>
+    <circle cx="58" cy="579" r="14" fill="#0969da"/><text x="58" y="584" text-anchor="middle" class="num">6</text>
+    <text x="84" y="572" class="h">Userspace</text>
+    <text x="84" y="594" class="t">relibc · ion shell · coreutils · planned: network services</text>
+
+    <line x1="292" y1="162" x2="292" y2="184" stroke="#57606a" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="292" y1="252" x2="292" y2="274" stroke="#57606a" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="292" y1="342" x2="292" y2="364" stroke="#57606a" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="292" y1="432" x2="292" y2="454" stroke="#57606a" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="292" y1="522" x2="292" y2="544" stroke="#57606a" stroke-width="2" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- SD card layout -->
+  <g>
+    <text x="592" y="112" class="h">SD card</text>
+    <rect x="592" y="124" width="336" height="182" rx="8" class="ext"/>
+    <text x="608" y="148" class="t" font-weight="700">FAT partition (EFI)</text>
+    <text x="608" y="170" class="s">bootcode.bin, start.elf, *.dtb, overlays/</text>
+    <text x="608" y="190" class="s">config.txt (disable-bt, mmc, arm_64bit)</text>
+    <text x="608" y="210" class="s">u-boot.bin</text>
+    <text x="608" y="230" class="s">EFI/BOOT/BOOTAA64.EFI</text>
+    <line x1="608" y1="244" x2="912" y2="244" stroke="#d0d7de"/>
+    <text x="608" y="264" class="t" font-weight="700">RedoxFS partition</text>
+    <text x="608" y="290" class="s">/usr/lib/boot/kernel, initfs, /usr/bin, /etc</text>
+  </g>
+
+  <!-- Legend -->
+  <g>
+    <text x="592" y="352" class="h">Where the parts come from</text>
+
+    <rect x="592" y="366" width="22" height="22" rx="4" class="box fw"/>
+    <text x="624" y="382" class="t">Raspberry Pi firmware (binary only)</text>
+    <text x="624" y="400" class="s">github.com/raspberrypi/firmware</text>
+
+    <rect x="592" y="414" width="22" height="22" rx="4" class="box gpl"/>
+    <text x="624" y="430" class="t">U-Boot, built by us (C, GPL-2.0)</text>
+    <text x="624" y="448" class="s">source.denx.de/u-boot · scripts/build-uboot.sh</text>
+
+    <rect x="592" y="462" width="22" height="22" rx="4" class="box rdx"/>
+    <text x="624" y="478" class="t">Redox OS, unchanged (Rust, MIT)</text>
+    <text x="624" y="496" class="s">gitlab.redox-os.org/redox-os</text>
+
+    <rect x="592" y="510" width="22" height="22" rx="4" class="box our"/>
+    <text x="624" y="526" class="t">Redox OS with our patches</text>
+    <text x="624" y="544" class="s">github.com/redox-rpi · patches/, config/, scripts/</text>
+  </g>
+
+  <!-- Hosts -->
+  <g>
+    <text x="32" y="648" class="s">Build: x86_64 Linux host (scripts/build-image.sh) · Test: QEMU raspi3b (scripts/qemu-raspi3b.sh) and CI on every push</text>
+    <text x="32" y="668" class="s">Console: USB-serial adapter on GPIO14/15 (pins 8/10), 115200 baud</text>
+  </g>
+</svg>
