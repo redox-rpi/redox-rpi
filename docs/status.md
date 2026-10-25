@@ -12,8 +12,9 @@ A Raspberry Pi 3B+ booted Redox over the network from the build server:
 Pi firmware → our U-Boot v2026.10 (LAN7800, DHCP, TFTP) → compressed image
 unpacked in RAM as a `blkmap` disk → patched live bootloader → our kernel →
 `redox login:` on the HDMI screen (framebuffer inherited from UEFI). The USB
-keyboard does not work in Redox yet (no DWC2 driver), and the kernel log is
-only on the serial console, so SMP on real hardware is not confirmed yet.
+keyboard does not work in Redox yet (no DWC2 driver). The boot log scrolls
+by on the screen before the login prompt and shows
+`CPU activation complete: 4 CPUs online`: **SMP works on real hardware**.
 
 ## Summary
 

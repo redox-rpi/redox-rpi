@@ -95,7 +95,7 @@ automated testing in CI later.
 
 | # | Step | Done when … |
 |---|---|---|
-| 4.1 | 🟡 Bring up all 4 cores: `spin-table` and BCM2836 IPIs (`patches/kernel/`) | 4 CPUs online (QEMU ✅, real Pi 3 open) |
+| 4.1 | ✅ Bring up all 4 cores: `spin-table` and BCM2836 IPIs (`patches/kernel/`) | 4 CPUs online (QEMU ✅, real Pi 3B+ ✅) |
 | 4.2 | Mailbox driver (clocks, temperature), watchdog for reboot/shutdown | `reboot` works |
 | 4.3 | Minimal "server" profile (low RAM, no GUI) | Runs stable for 24 h |
 
