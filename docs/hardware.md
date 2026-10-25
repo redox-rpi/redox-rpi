@@ -87,7 +87,22 @@ Note vendor:product IDs and the Linux driver name in this file.
 
 | HAT | Hub chip | Ethernet chip | Linux driver |
 |---|---|---|---|
-| (to be filled in) | | | |
+| Our Zero 2 W HAT | Terminus FE1.1s `1a40:0101` (USB 2.0, 4 ports) | Realtek RTL8152 `0bda:8152` (100 Mbit) | `r8152` |
+
+### Our Zero 2 W (rev 1.0, revision code `902120`)
+
+USB tree under Raspberry Pi OS (32-bit, Linux 6.18, `lsusb -t`):
+
+```
+DWC2 root hub (dwc_otg)
+└─ 1a40:0101 USB 2.0 hub (4 ports, on the HAT)
+   └─ port 4: 0bda:8152 Ethernet, Linux driver r8152, 100 Mbit
+```
+
+So Ethernet on the Zero 2 W needs: DWC2 host driver → one USB 2.0 hub →
+an RTL8152 driver. The RTL8152 is also the chip in many cheap USB Ethernet
+dongles, so the driver is useful beyond this HAT. Linux reports 424 MiB of
+usable RAM (512 MB minus the GPU's share).
 
 ## Debugging without serial output
 
