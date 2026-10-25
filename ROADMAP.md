@@ -64,7 +64,8 @@ console and running QEMU.
 | 1.1 | Accessories: **3.3 V USB-UART adapter** (CP2102/FTDI), microSD cards, power supplies; pin header on the Zero 2 W | – |
 | 1.2 | Pi 3: boot Raspberry Pi OS Lite, wire up the serial console (GPIO14/15, `enable_uart=1`, possibly `dtoverlay=disable-bt`) | Linux login over UART |
 | 1.3 | 🟡 Zero 2 W with the Ethernet/USB hub HAT running; chips identified (FE1.1s hub, RTL8152) | Linux login over UART, HAT chips identified |
-| 1.4 | Build **U-Boot** for both boards (`rpi_arm64_defconfig`, DTBs `bcm2837-rpi-3-b(-plus).dtb` and `bcm2837-rpi-zero-2-w.dtb`) | U-Boot prompt over UART, `bootefi hello` works |
+| 1.4 | 🟡 Build **U-Boot** v2026.10 for both boards (`scripts/build-uboot.sh`, boots Redox in QEMU ✅) | U-Boot prompt over UART on the real boards |
+| 1.5 | 🟡 Network boot from the build server (`scripts/netboot.sh`, `scripts/make-sdcard.sh`; QEMU `virt` ✅) | Pi 3B+ boots Redox over TFTP |
 
 ## Phase 2: Intermediate goal – Redox on the Pi 3
 

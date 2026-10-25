@@ -16,6 +16,7 @@ the pieces fit together, how to build and test, and what we found on the way.
 | Page | What it explains |
 |---|---|
 | [Testing](testing.md) | Booting Redox in QEMU (macOS and Linux), automated boot test, CI |
+| [Network boot](netboot.md) | Booting a real Pi from the build server over TFTP, the SD card for it |
 | [Build host](build-host.md) | Setting up the Linux build machine, building the kernel on macOS |
 | [Hardware](hardware.md) | Boards, serial console wiring, `config.txt`, Ethernet/USB topology |
 
