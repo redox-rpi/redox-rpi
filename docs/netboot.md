@@ -43,11 +43,22 @@ scripts/build-uboot.sh
 scripts/make-sdcard.sh --tftp-dir /srv/tftp
 ```
 
-Writes `build/sdcard-netboot.img` (64 MiB). Flash it with Raspberry Pi Imager
-("Use custom") or `dd`. It contains the Pi firmware (pinned release),
-[`config/config.txt`](../config/config.txt), our U-Boot and `boot.scr`, which
-fetches `redox/netboot.scr` from the server. So changes to the boot script
-also only need `scripts/netboot.sh`, not a new card.
+Writes `build/sdcard-netboot.img` (1 GiB, any card of that size or larger).
+Flash it with Raspberry Pi Imager ("Use custom") or `dd`.
+
+| Partition | Size | Content |
+|---|---|---|
+| 1, FAT32 | 63 MiB | Pi firmware (pinned release), [`config/config.txt`](../config/config.txt), our U-Boot, `boot.scr` |
+| 2, RedoxFS | 960 MiB (`--data-size`) | Data that survives a reboot, mounted at **`/scheme/data`** |
+
+`boot.scr` fetches `redox/netboot.scr` from the server, so changes to the boot
+script also only need `scripts/netboot.sh`, not a new card.
+
+The Redox system itself runs from RAM and starts fresh on every boot; keep
+anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:
+Redox does not follow symlinks into another scheme. Mounting a RedoxFS
+partition by path and finding the data again after a reboot is tested in
+QEMU; the netboot card's own layout only on real hardware.
 
 ## Testing the flow in QEMU
 
