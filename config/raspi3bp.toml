@@ -9,3 +9,23 @@ include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
 [packages]
 kernel = "source"
 base = "source"
+
+# Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh)
+# at /scheme/data, reachable as /data. Fails harmlessly without such a card.
+[[files]]
+path = "/usr/lib/init.d/60_data.service"
+data = """
+[unit]
+description = "Data partition on the SD card"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "redoxfs"
+args = ["/scheme/disk.mmc/0p1", "data"]
+type = "oneshot"
+"""
+
+[[files]]
+path = "/data"
+data = "/scheme/data"
+symlink = true

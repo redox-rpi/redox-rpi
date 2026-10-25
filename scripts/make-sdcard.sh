@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Create a network-boot SD card image for the Raspberry Pi 3, 3B+ and Zero 2 W.
 #
-# The card only holds the Raspberry Pi firmware, our U-Boot, config.txt and a
-# boot script. Redox itself comes from the TFTP server on every boot (see
-# scripts/netboot.sh), so a new build needs no new card.
+# Partition 1 (FAT32, 63 MiB) holds the Raspberry Pi firmware, our U-Boot,
+# config.txt and a boot script. Redox itself comes from the TFTP server on
+# every boot (see scripts/netboot.sh), so a new build needs no new card.
+# Partition 2 is a RedoxFS data partition that Redox mounts at /data, for
+# everything that should survive a reboot.
 #
-# Needs: curl, sfdisk, mtools. Run scripts/build-uboot.sh and
-# scripts/netboot.sh --server <ip> first.
+# Needs: curl, sfdisk, mtools, and redoxfs-mkfs from scripts/build-image.sh.
+# Run scripts/build-uboot.sh and scripts/netboot.sh --server <ip> first.
 #
 # Usage:
-#   scripts/make-sdcard.sh [--tftp-dir <dir>] [--out <file>]
+#   scripts/make-sdcard.sh [--tftp-dir <dir>] [--out <file>] [--data-size <MiB>]
+#
+#   --data-size <MiB>  size of the data partition (default 960, 0 for none).
+#                      RedoxFS does not grow with the card, so pick the size
+#                      you want to use.
 #
 # Write the result with Raspberry Pi Imager ("Use custom") or dd.
 
@@ -23,15 +29,17 @@ FIRMWARE_FILES=(
     bcm2710-rpi-3-b.dtb bcm2710-rpi-3-b-plus.dtb bcm2710-rpi-zero-2-w.dtb
     overlays/disable-bt.dtbo overlays/mmc.dtbo
 )
-SIZE_MIB=64
+BOOT_MIB=64
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tftp="$ROOT/build/tftp"
 out="$ROOT/build/sdcard-netboot.img"
+data_mib=960
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
+        --data-size) data_mib="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -49,11 +57,25 @@ for file in "${FIRMWARE_FILES[@]}"; do
     fi
 done
 
-# One FAT32 partition starting at 1 MiB. The Pi boot ROM reads MBR only.
+mkfs="$ROOT/upstream/redox/build/fstools/bin/redoxfs-mkfs"
+if [ "$data_mib" -gt 0 ] && [ ! -x "$mkfs" ]; then
+    echo "$mkfs missing, run scripts/build-image.sh" >&2
+    exit 1
+fi
+
+# MBR, since the Pi boot ROM reads MBR only: FAT32 boot partition from 1 MiB
+# to 64 MiB, then the data partition (type da, "non-FS data").
 rm -f "$out"
-truncate -s "${SIZE_MIB}M" "$out"
-echo 'start=2048, type=c, bootable' | sfdisk -q "$out"
-fat="$out@@1M"
+truncate -s "$((BOOT_MIB + data_mib))M" "$out"
+{
+    echo "start=2048, size=$(((BOOT_MIB - 1) * 2048)), type=c, bootable"
+    [ "$data_mib" -eq 0 ] || echo "start=$((BOOT_MIB * 2048)), type=da"
+} | sfdisk -q "$out"
+
+# Build the FAT partition in its own file, so it cannot grow past its size.
+fat="$out.fat"
+rm -f "$fat"
+truncate -s "$((BOOT_MIB - 1))M" "$fat"
 mformat -i "$fat" -F -v REDOXBOOT ::
 
 for file in "${FIRMWARE_FILES[@]}"; do
@@ -63,6 +85,19 @@ done
 mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
 mcopy -i "$fat" "$uboot" ::u-boot.bin
 mcopy -i "$fat" "$bootscr" ::boot.scr
+echo "Boot partition:"
+mdir -i "$fat" -/ ::
+dd if="$fat" of="$out" bs=1M seek=1 conv=notrunc status=none
+rm -f "$fat"
+
+if [ "$data_mib" -gt 0 ]; then
+    data="$out.data"
+    rm -f "$data"
+    truncate -s "${data_mib}M" "$data"
+    "$mkfs" "$data" >/dev/null
+    dd if="$data" of="$out" bs=1M seek="$BOOT_MIB" conv=notrunc status=none
+    rm -f "$data"
+fi
 
 echo "SD card image: $out"
-mdir -i "$fat" -/ ::
+sfdisk -l "$out" | tail -n +8
