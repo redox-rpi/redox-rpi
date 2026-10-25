@@ -1,0 +1,620 @@
+From f1df303366921ab78a0208f5b68596eefbbb8aa2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 25 Oct 2026 19:30:00 +0100
+Subject: [PATCH] Add dwc2d, a DWC2 USB host controller driver (first stage)
+
+Brings up the Synopsys DesignWare USB 2.0 controller of the Raspberry Pi
+in host mode with buffer DMA, resets the root port and enumerates the
+device behind it with control transfers. Polling only, and it does not
+offer the USB scheme to class drivers yet.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                      |  11 ++
+ Cargo.toml                      |   1 +
+ Makefile                        |   2 +-
+ drivers/usb/dwc2d/Cargo.toml    |  16 +++
+ drivers/usb/dwc2d/src/dwc2.rs   | 245 ++++++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs   | 130 +++++++++++++++++
+ drivers/usb/dwc2d/src/regs.rs   | 100 +++++++++++++
+ init.initfs.d/40_drivers.target |   1 +
+ init.initfs.d/40_dwc2d.service  |   9 ++
+ 9 files changed, 514 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/usb/dwc2d/Cargo.toml
+ create mode 100644 drivers/usb/dwc2d/src/dwc2.rs
+ create mode 100644 drivers/usb/dwc2d/src/main.rs
+ create mode 100644 drivers/usb/dwc2d/src/regs.rs
+ create mode 100644 init.initfs.d/40_dwc2d.service
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 9aaac3a..c10be2e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -721,6 +721,17 @@ dependencies = [
+  "linux-raw-sys 0.9.4",
+ ]
+ 
++[[package]]
++name = "dwc2d"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox_syscall 0.9.5",
++]
++
+ [[package]]
+ name = "e1000d"
+ version = "0.1.0"
+diff --git a/Cargo.toml b/Cargo.toml
+index 67666be..e8f1350 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -66,6 +66,7 @@ members = [
+     "drivers/storage/usbscsid",
+     "drivers/storage/virtio-blkd",
+ 
++    "drivers/usb/dwc2d",
+     "drivers/usb/xhcid",
+     "drivers/usb/usbctl",
+     "drivers/usb/usbhubd",
+diff --git a/Makefile b/Makefile
+index 6bdec71..6b454de 100644
+--- a/Makefile
++++ b/Makefile
+@@ -27,7 +27,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+ endif
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += bcm2835-sdhcid
++	INITFS_BINS += bcm2835-sdhcid dwc2d
+ endif
+ 
+ # For testing/benchmarking only
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+new file mode 100644
+index 0000000..bdc5f86
+--- /dev/null
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "dwc2d"
++description = "Synopsys DesignWare USB 2.0 (DWC2) host controller driver"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++
++libredox.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+new file mode 100644
+index 0000000..dc009ea
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -0,0 +1,245 @@
++//! DWC2 host controller in buffer DMA mode, driven by polling.
++
++use std::ptr::{read_volatile, write_volatile};
++use std::thread::sleep;
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++
++use crate::regs::*;
++
++/// The Pi's DMA masters see RAM through the VideoCore bus, where it is
++/// aliased (uncached) at 0xC000_0000. QEMU's raspi machines alias it there too.
++const DMA_BUS_OFFSET: usize = 0xC000_0000;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Speed {
++    High,
++    Full,
++    Low,
++}
++
++#[derive(Debug)]
++pub enum Error {
++    Timeout(&'static str),
++    Stall,
++    /// Channel halted without completing, with the HCINT bits.
++    Transfer(u32),
++}
++
++pub struct Dwc2 {
++    base: usize,
++    channels: usize,
++}
++
++/// One transaction phase of a transfer on a host channel.
++pub struct Phase {
++    pub dev_addr: u8,
++    pub endpoint: u8,
++    pub dir_in: bool,
++    pub ep_type: u32,
++    pub max_packet: u16,
++    pub low_speed: bool,
++    pub pid: u32,
++    pub buf_phys: usize,
++    pub len: usize,
++}
++
++impl Dwc2 {
++    pub fn new(base: usize) -> Self {
++        Self { base, channels: 1 }
++    }
++
++    pub fn read(&self, reg: usize) -> u32 {
++        unsafe { read_volatile((self.base + reg) as *const u32) }
++    }
++
++    pub fn write(&self, reg: usize, value: u32) {
++        unsafe { write_volatile((self.base + reg) as *mut u32, value) }
++    }
++
++    fn wait(&self, what: &'static str, timeout: Duration, done: impl Fn(&Self) -> bool) -> Result<(), Error> {
++        let start = Instant::now();
++        while !done(self) {
++            if start.elapsed() > timeout {
++                return Err(Error::Timeout(what));
++            }
++            std::hint::spin_loop();
++        }
++        Ok(())
++    }
++
++    pub fn id(&self) -> u32 {
++        self.read(GSNPSID)
++    }
++
++    pub fn channels(&self) -> usize {
++        self.channels
++    }
++
++    /// Reset the core and bring it up in host mode with DMA enabled.
++    pub fn init_host(&mut self) -> Result<(), Error> {
++        let hwcfg2 = self.read(GHWCFG2);
++        self.channels =
++            ((hwcfg2 >> GHWCFG2_NUM_HOST_CHAN_SHIFT) & GHWCFG2_NUM_HOST_CHAN_MASK) as usize + 1;
++
++        // Core soft reset, after the AHB master is idle.
++        self.wait("AHB idle", Duration::from_millis(100), |s| {
++            s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
++        })?;
++        self.write(GRSTCTL, GRSTCTL_CSFT_RST);
++        self.wait("core reset", Duration::from_millis(100), |s| {
++            s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
++        })?;
++        sleep(Duration::from_millis(1));
++
++        // Force host mode; the switch takes up to 25 ms.
++        let usbcfg = self.read(GUSBCFG);
++        self.write(
++            GUSBCFG,
++            (usbcfg & !GUSBCFG_FORCE_DEV_MODE) | GUSBCFG_FORCE_HOST_MODE,
++        );
++        sleep(Duration::from_millis(30));
++        self.wait("host mode", Duration::from_millis(100), |s| {
++            s.read(GINTSTS) & GINTSTS_CUR_MODE_HOST != 0
++        })?;
++
++        // FIFO layout in 32-bit words, as Linux and U-Boot use on the Pi:
++        // RX 1024, non-periodic TX 1024 at 1024, periodic TX 1024 at 2048.
++        self.write(GRXFSIZ, 1024);
++        self.write(GNPTXFSIZ, (1024 << 16) | 1024);
++        self.write(HPTXFSIZ, (1024 << 16) | 2048);
++        self.write(GRSTCTL, GRSTCTL_TXF_FLSH | GRSTCTL_TXF_NUM_ALL);
++        self.wait("TX FIFO flush", Duration::from_millis(100), |s| {
++            s.read(GRSTCTL) & GRSTCTL_TXF_FLSH == 0
++        })?;
++        self.write(GRSTCTL, GRSTCTL_RXF_FLSH);
++        self.wait("RX FIFO flush", Duration::from_millis(100), |s| {
++            s.read(GRSTCTL) & GRSTCTL_RXF_FLSH == 0
++        })?;
++
++        self.write(HCFG, HCFG_FSLSPCLKSEL_30_60_MHZ);
++        // Polling for now: no interrupts, DMA on.
++        self.write(GINTMSK, 0);
++        self.write(GAHBCFG, GAHBCFG_DMA_EN);
++
++        for ch in 0..self.channels {
++            self.write(hcintmsk(ch), 0);
++            self.write(hcint(ch), u32::MAX);
++        }
++        Ok(())
++    }
++
++    fn write_port(&self, set: u32, clear: u32) {
++        let value = self.read(HPRT0) & !HPRT0_W1C;
++        self.write(HPRT0, (value | set) & !clear);
++    }
++
++    /// Power the root port, wait for a device and reset it.
++    /// Returns the speed of the connected device.
++    pub fn reset_port(&self) -> Result<Speed, Error> {
++        self.write_port(HPRT0_PWR, 0);
++        self.wait("device connect", Duration::from_secs(2), |s| {
++            s.read(HPRT0) & HPRT0_CONN_STS != 0
++        })?;
++        // Debounce, as required by the USB specification.
++        sleep(Duration::from_millis(100));
++
++        self.write_port(HPRT0_RST, 0);
++        sleep(Duration::from_millis(60));
++        self.write_port(0, HPRT0_RST);
++        self.wait("port enable", Duration::from_millis(500), |s| {
++            s.read(HPRT0) & HPRT0_ENA != 0
++        })?;
++        // Recovery time after reset.
++        sleep(Duration::from_millis(20));
++
++        Ok(match (self.read(HPRT0) >> HPRT0_SPD_SHIFT) & HPRT0_SPD_MASK {
++            0 => Speed::High,
++            1 => Speed::Full,
++            _ => Speed::Low,
++        })
++    }
++
++    /// Run one transaction phase on channel 0 and return the bytes moved.
++    pub fn transfer(&self, phase: &Phase) -> Result<usize, Error> {
++        let ch = 0;
++        let mps = phase.max_packet as usize;
++        let packets = phase.len.div_ceil(mps).max(1) as u32;
++
++        self.write(hcint(ch), u32::MAX);
++        self.write(hcsplt(ch), 0);
++        self.write(
++            hctsiz(ch),
++            phase.len as u32 | (packets << HCTSIZ_PKTCNT_SHIFT) | (phase.pid << HCTSIZ_PID_SHIFT),
++        );
++        self.write(hcdma(ch), (phase.buf_phys | DMA_BUS_OFFSET) as u32);
++
++        let mut hcchar_value = (phase.max_packet as u32 & HCCHAR_MPS_MASK)
++            | (u32::from(phase.endpoint) << HCCHAR_EPNUM_SHIFT)
++            | (phase.ep_type << HCCHAR_EPTYPE_SHIFT)
++            | (1 << HCCHAR_MC_SHIFT)
++            | (u32::from(phase.dev_addr) << HCCHAR_DEVADDR_SHIFT)
++            | HCCHAR_CHENA;
++        if phase.dir_in {
++            hcchar_value |= HCCHAR_EPDIR_IN;
++        }
++        if phase.low_speed {
++            hcchar_value |= HCCHAR_LSPDDEV;
++        }
++        self.write(hcchar(ch), hcchar_value);
++
++        self.wait("channel halt", Duration::from_secs(1), |s| {
++            s.read(hcint(ch)) & HCINT_CH_HLTD != 0
++        })?;
++        let status = self.read(hcint(ch));
++        self.write(hcint(ch), u32::MAX);
++
++        if status & HCINT_STALL != 0 {
++            return Err(Error::Stall);
++        }
++        if status & HCINT_XFER_COMPL == 0
++            || status & (HCINT_AHB_ERR | HCINT_XACT_ERR | HCINT_BBL_ERR | HCINT_DATA_TGL_ERR) != 0
++        {
++            return Err(Error::Transfer(status));
++        }
++        let remaining = (self.read(hctsiz(ch)) & 0x7FFFF) as usize;
++        Ok(phase.len.saturating_sub(remaining))
++    }
++
++    /// A control transfer: SETUP, optional data stage, status stage.
++    /// `data` is the DMA buffer for the data stage; its direction comes from
++    /// bit 7 of the request type. Returns the length of the data stage.
++    pub fn control(
++        &self,
++        dev_addr: u8,
++        max_packet: u16,
++        low_speed: bool,
++        setup: &mut Dma<[u8; 8]>,
++        data: &mut Dma<[u8; 512]>,
++    ) -> Result<usize, Error> {
++        let dir_in = setup[0] & 0x80 != 0;
++        let len = u16::from_le_bytes([setup[6], setup[7]]) as usize;
++        let phase = |dir_in, pid, buf_phys, len| Phase {
++            dev_addr,
++            endpoint: 0,
++            dir_in,
++            ep_type: EPTYPE_CONTROL,
++            max_packet,
++            low_speed,
++            pid,
++            buf_phys,
++            len,
++        };
++
++        self.transfer(&phase(false, PID_SETUP, setup.physical(), 8))?;
++        let moved = if len > 0 {
++            self.transfer(&phase(dir_in, PID_DATA1, data.physical(), len.min(512)))?
++        } else {
++            0
++        };
++        // The status stage goes the other way, always with DATA1.
++        self.transfer(&phase(!dir_in || len == 0, PID_DATA1, data.physical(), 0))?;
++        Ok(moved)
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+new file mode 100644
+index 0000000..067327c
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -0,0 +1,130 @@
++//! Driver for the Synopsys DesignWare USB 2.0 OTG controller (DWC2) in host
++//! mode, as found on the Raspberry Pi 1-3 and Zero.
++//!
++//! First stage: bring up the controller, reset the root port and enumerate
++//! the device behind it with control transfers. It does not offer the USB
++//! scheme to class drivers yet.
++
++use std::process;
++
++use common::dma::Dma;
++use fdt::Fdt;
++
++mod dwc2;
++mod regs;
++
++use dwc2::{Dwc2, Speed};
++
++fn get_dtb() -> Vec<u8> {
++    std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
++}
++
++/// Physical address and size of the controller's registers.
++fn find_controller(fdt: &Fdt) -> Option<(usize, usize)> {
++    let node = fdt.find_compatible(&["brcm,bcm2835-usb", "snps,dwc2"])?;
++    let reg = node.reg()?.next()?;
++    let size = reg.size?;
++    let mut addr = reg.starting_address as usize;
++    // Peripheral addresses in the devicetree are VideoCore bus addresses.
++    if let Some(mut ranges) = fdt.find_node("/soc").and_then(|soc| soc.ranges()) {
++        if let Some(range) = ranges
++            .find(|r| r.child_bus_address <= addr && addr - r.child_bus_address < r.size)
++        {
++            addr = range.parent_bus_address + (addr - range.child_bus_address);
++        }
++    }
++    Some((addr, size))
++}
++
++fn main() {
++    daemon::Daemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::Daemon) -> ! {
++    common::init();
++
++    let dtb = get_dtb();
++    let Some((phys, size)) = Fdt::new(&dtb).ok().and_then(|fdt| find_controller(&fdt)) else {
++        eprintln!("dwc2d: no DWC2 controller in the devicetree");
++        daemon.ready();
++        process::exit(0);
++    };
++    let base = unsafe {
++        common::physmap(phys, size, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("dwc2d: failed to map registers") as usize
++    };
++
++    let mut hc = Dwc2::new(base);
++    println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());
++    // USB setup takes a while; do not hold up the boot.
++    daemon.ready();
++
++    if let Err(err) = enumerate(&mut hc) {
++        eprintln!("dwc2d: {:?}", err);
++    }
++
++    loop {
++        std::thread::sleep(std::time::Duration::from_secs(3600));
++    }
++}
++
++fn enumerate(hc: &mut Dwc2) -> Result<(), dwc2::Error> {
++    hc.init_host()?;
++    println!("dwc2d: host mode, {} channels", hc.channels());
++
++    let speed = hc.reset_port()?;
++    println!("dwc2d: device on root port, {:?} speed", speed);
++    let low_speed = speed == Speed::Low;
++
++    let mut setup = Dma::new([0u8; 8]).expect("dwc2d: DMA allocation failed");
++    let mut data = Dma::new([0u8; 512]).expect("dwc2d: DMA allocation failed");
++
++    // GET_DESCRIPTOR(DEVICE), first 8 bytes: they hold the maximum packet
++    // size of endpoint 0, which the rest of the enumeration needs.
++    *setup = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 8, 0];
++    hc.control(0, 8, low_speed, &mut setup, &mut data)?;
++    let max_packet = u16::from(data[7]);
++    println!("dwc2d: endpoint 0 max packet size {}", max_packet);
++
++    // SET_ADDRESS(1)
++    *setup = [0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0, 0];
++    hc.control(0, max_packet, low_speed, &mut setup, &mut data)?;
++    std::thread::sleep(std::time::Duration::from_millis(10));
++
++    // The whole device descriptor, now at address 1.
++    *setup = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0];
++    let len = hc.control(1, max_packet, low_speed, &mut setup, &mut data)?;
++    let d = &data[..len];
++    println!(
++        "dwc2d: device {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {} configuration(s)",
++        u16::from_le_bytes([d[8], d[9]]),
++        u16::from_le_bytes([d[10], d[11]]),
++        d[3],
++        d[2],
++        d[4],
++        d[17]
++    );
++
++    // Configuration descriptor with its interfaces and endpoints.
++    *setup = [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02];
++    let len = hc.control(1, max_packet, low_speed, &mut setup, &mut data)?;
++    let mut pos = 0;
++    while pos + 2 <= len && data[pos] >= 2 {
++        let desc = &data[pos..(pos + data[pos] as usize).min(len)];
++        match desc[1] {
++            4 if desc.len() >= 9 => println!(
++                "dwc2d:   interface {}: class {:#04x} subclass {:#04x} protocol {:#04x}",
++                desc[2], desc[5], desc[6], desc[7]
++            ),
++            5 if desc.len() >= 7 => println!(
++                "dwc2d:     endpoint {:#04x}: {} max packet {}",
++                desc[2],
++                ["control", "isochronous", "bulk", "interrupt"][usize::from(desc[3] & 3)],
++                u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF
++            ),
++            _ => {}
++        }
++        pos += desc.len();
++    }
++    Ok(())
++}
+diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
+new file mode 100644
+index 0000000..cfe08ae
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/regs.rs
+@@ -0,0 +1,100 @@
++//! DWC2 register offsets and bits, host mode only.
++
++// Core global registers
++pub const GAHBCFG: usize = 0x008;
++pub const GUSBCFG: usize = 0x00C;
++pub const GRSTCTL: usize = 0x010;
++pub const GINTSTS: usize = 0x014;
++pub const GINTMSK: usize = 0x018;
++pub const GRXFSIZ: usize = 0x024;
++pub const GNPTXFSIZ: usize = 0x028;
++pub const GSNPSID: usize = 0x040;
++pub const GHWCFG2: usize = 0x048;
++pub const HPTXFSIZ: usize = 0x100;
++
++pub const GAHBCFG_GLBL_INTR_EN: u32 = 1 << 0;
++pub const GAHBCFG_DMA_EN: u32 = 1 << 5;
++
++pub const GUSBCFG_FORCE_HOST_MODE: u32 = 1 << 29;
++pub const GUSBCFG_FORCE_DEV_MODE: u32 = 1 << 30;
++
++pub const GRSTCTL_CSFT_RST: u32 = 1 << 0;
++pub const GRSTCTL_RXF_FLSH: u32 = 1 << 4;
++pub const GRSTCTL_TXF_FLSH: u32 = 1 << 5;
++/// Flush all transmit FIFOs (TXFNUM = 0x10).
++pub const GRSTCTL_TXF_NUM_ALL: u32 = 0x10 << 6;
++pub const GRSTCTL_AHB_IDLE: u32 = 1 << 31;
++
++pub const GINTSTS_CUR_MODE_HOST: u32 = 1 << 0;
++
++/// GHWCFG2 bits 14..=17: number of host channels minus one.
++pub const GHWCFG2_NUM_HOST_CHAN_SHIFT: u32 = 14;
++pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
++
++// Host mode registers
++pub const HCFG: usize = 0x400;
++pub const HFIR: usize = 0x404;
++pub const HPRT0: usize = 0x440;
++
++/// PHY clock for full/low speed: 30/60 MHz (UTMI+ PHY, as on the Pi).
++pub const HCFG_FSLSPCLKSEL_30_60_MHZ: u32 = 0;
++
++pub const HPRT0_CONN_STS: u32 = 1 << 0;
++pub const HPRT0_CONN_DET: u32 = 1 << 1;
++pub const HPRT0_ENA: u32 = 1 << 2;
++pub const HPRT0_ENA_CHG: u32 = 1 << 3;
++pub const HPRT0_OVR_CURR_CHG: u32 = 1 << 5;
++pub const HPRT0_RST: u32 = 1 << 8;
++pub const HPRT0_PWR: u32 = 1 << 12;
++pub const HPRT0_SPD_SHIFT: u32 = 17;
++pub const HPRT0_SPD_MASK: u32 = 0x3;
++/// Write-1-to-clear bits; writing back a read value with them set would
++/// clear them (and disable the port, for ENA).
++pub const HPRT0_W1C: u32 = HPRT0_CONN_DET | HPRT0_ENA | HPRT0_ENA_CHG | HPRT0_OVR_CURR_CHG;
++
++// Host channel registers, 0x20 apart
++pub const fn hcchar(ch: usize) -> usize {
++    0x500 + ch * 0x20
++}
++pub const fn hcsplt(ch: usize) -> usize {
++    0x504 + ch * 0x20
++}
++pub const fn hcint(ch: usize) -> usize {
++    0x508 + ch * 0x20
++}
++pub const fn hcintmsk(ch: usize) -> usize {
++    0x50C + ch * 0x20
++}
++pub const fn hctsiz(ch: usize) -> usize {
++    0x510 + ch * 0x20
++}
++pub const fn hcdma(ch: usize) -> usize {
++    0x514 + ch * 0x20
++}
++
++pub const HCCHAR_MPS_MASK: u32 = 0x7FF;
++pub const HCCHAR_EPNUM_SHIFT: u32 = 11;
++pub const HCCHAR_EPDIR_IN: u32 = 1 << 15;
++pub const HCCHAR_LSPDDEV: u32 = 1 << 17;
++pub const HCCHAR_EPTYPE_SHIFT: u32 = 18;
++pub const HCCHAR_MC_SHIFT: u32 = 20;
++pub const HCCHAR_DEVADDR_SHIFT: u32 = 22;
++pub const HCCHAR_CHDIS: u32 = 1 << 30;
++pub const HCCHAR_CHENA: u32 = 1 << 31;
++
++pub const EPTYPE_CONTROL: u32 = 0;
++
++pub const HCINT_XFER_COMPL: u32 = 1 << 0;
++pub const HCINT_CH_HLTD: u32 = 1 << 1;
++pub const HCINT_AHB_ERR: u32 = 1 << 2;
++pub const HCINT_STALL: u32 = 1 << 3;
++pub const HCINT_NAK: u32 = 1 << 4;
++pub const HCINT_XACT_ERR: u32 = 1 << 7;
++pub const HCINT_BBL_ERR: u32 = 1 << 8;
++pub const HCINT_DATA_TGL_ERR: u32 = 1 << 10;
++
++pub const HCTSIZ_PKTCNT_SHIFT: u32 = 19;
++pub const HCTSIZ_PID_SHIFT: u32 = 29;
++pub const PID_DATA0: u32 = 0;
++pub const PID_DATA1: u32 = 2;
++pub const PID_SETUP: u32 = 3;
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 8ddb479..d9e2dab 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -5,6 +5,7 @@ requires_weak = [
+     "20_graphics.target",
+     "40_ps2d.service",
+     "40_bcm2835-sdhcid.service",
++    "40_dwc2d.service",
+     "40_hwd.service",
+     "40_pcid-spawner-initfs.service",
+ ]
+diff --git a/init.initfs.d/40_dwc2d.service b/init.initfs.d/40_dwc2d.service
+new file mode 100644
+index 0000000..e9e0ecf
+--- /dev/null
++++ b/init.initfs.d/40_dwc2d.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "DWC2 USB host controller driver"
++requires_weak = ["10_inputd.service", "20_graphics.target"]
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "dwc2d"
++type = "notify"
+-- 
+2.54.0 (Apple Git-157)
+

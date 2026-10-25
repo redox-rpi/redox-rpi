@@ -1,7 +1,7 @@
-From 0fac1473b82e418c1b3a08d1659ec795e73a2167 Mon Sep 17 00:00:00 2001
+From 83dc20401859d35168dc6a14e2481c36ff3a0148 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sun, 25 Oct 2026 17:07:48 +0100
-Subject: [PATCH 2/2] Only boot a RedoxFS that contains a kernel
+Subject: [PATCH] Only boot a RedoxFS that contains a kernel
 
 The bootloader booted the first RedoxFS it found. With a RedoxFS data
 partition on another disk, for example on the SD card of a Raspberry Pi
@@ -11,8 +11,8 @@ filesystems without usr/lib/boot/kernel.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/main.rs        |  5 ++++-
- src/os/uefi/mod.rs | 20 +++++++++++++++++++-
- 2 files changed, 23 insertions(+), 2 deletions(-)
+ src/os/uefi/mod.rs | 22 +++++++++++++++++++++-
+ 2 files changed, 25 insertions(+), 2 deletions(-)
 
 diff --git a/src/main.rs b/src/main.rs
 index 160c13b..217903d 100644
@@ -38,17 +38,19 @@ index 160c13b..217903d 100644
          unsafe {
              KERNEL_64BIT = kernel_64bit;
 diff --git a/src/os/uefi/mod.rs b/src/os/uefi/mod.rs
-index 5956e56..f9f462f 100644
+index 5956e56..e57b595 100644
 --- a/src/os/uefi/mod.rs
 +++ b/src/os/uefi/mod.rs
-@@ -203,7 +203,14 @@ impl Os for OsEfi {
+@@ -203,7 +203,16 @@ impl Os for OsEfi {
              let block = device.partition_offset / redoxfs::BLOCK_SIZE;
  
              match redoxfs::FileSystem::open(device.disk, password_opt, Some(block), false) {
 -                Ok(ok) => return Ok(ok),
 +                // Data partitions are RedoxFS too; only boot one with a kernel.
-+                Ok(mut fs) if has_kernel(&mut fs) => return Ok(fs),
-+                Ok(_) => {
++                Ok(mut fs) => {
++                    if has_kernel(&mut fs) {
++                        return Ok(fs);
++                    }
 +                    println!(
 +                        "RedoxFS on {} has no kernel, skipping",
 +                        device_path_to_string(device.device_path.0)
@@ -57,7 +59,7 @@ index 5956e56..f9f462f 100644
                  Err(err) => match err.errno {
                      // Ignore header not found error
                      syscall::ENOENT => (),
-@@ -377,6 +384,17 @@ fn status_to_result(status: Status) -> Result<usize> {
+@@ -377,6 +386,17 @@ fn status_to_result(status: Status) -> Result<usize> {
      }
  }
  

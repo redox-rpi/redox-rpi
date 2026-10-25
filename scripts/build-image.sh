@@ -75,7 +75,7 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: add our patches to their [source] section.
-for name in bootloader; do
+for name in bootloader base; do
     recipe="$REDOX/recipes/core/$name"
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
     refresh_on_patch_change "$recipe" "$ROOT/patches/$name"
