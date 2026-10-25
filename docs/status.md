@@ -149,8 +149,15 @@ high speed, endpoint 0 max packet 64, device `0424:2514`, USB 2.00, class
 
 ![dwc2d output on a Raspberry Pi 3B+](images/dwc2d-pi3bplus.jpg)
 
-Next: hub support, then the scheme interface of `xhcid` so `usbhubd` and
-`usbhidd` can run on top.
+**Hubs** (second stage): `dwc2d` configures hubs, powers and resets their
+ports and enumerates the devices behind them, recursively. In QEMU it finds
+the keyboard behind QEMU's hub: `0627:0001`, HID boot keyboard (class 0x03,
+subclass 0x01, protocol 0x01) with an interrupt endpoint `0x81`. Full and low
+speed devices behind a high-speed hub (keyboards on the real Pi) still need
+split transactions and are skipped with a message.
+
+Next: interrupt transfers and the scheme interface of `xhcid`, so `usbhidd`
+can run on top; split transactions.
 
 ## Implications for the Zero 2 W
 
