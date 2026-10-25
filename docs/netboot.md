@@ -2,15 +2,14 @@
 
 Boot Redox on a real Pi straight from the build server: the SD card only
 holds the Pi firmware, U-Boot and a boot script. On every power-on U-Boot
-fetches the current Redox image over TFTP. Build, power-cycle, watch the
-serial console; no SD card swapping.
+fetches the current Redox image from the build server. Build, power-cycle,
+watch the serial console; no SD card swapping.
 
 ```
-Pi firmware → U-Boot ── DHCP (router) ──────────────── IP address
-                     └─ TFTP (build server) ── netboot.scr
-                     └─ HTTP (build server, port 8080)
-                                              ├─ harddrive.img.gz → unzip in RAM → blkmap disk
-                                              └─ bootloader-live.efi → copies RedoxFS into RAM → kernel
+Pi firmware → U-Boot ─┬─ DHCP (router) ───────────── IP address
+                      ├─ TFTP (build server) ─────── netboot.scr
+                      └─ HTTP (build server :8080) ─┬─ harddrive.img.gz → unzip in RAM → blkmap disk
+                         (TFTP as fallback)         └─ bootloader-live.efi → copies RedoxFS into RAM → kernel
 ```
 
 The flow is tested in QEMU's `virt` machine (virtio network, QEMU's built-in
