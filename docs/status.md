@@ -125,6 +125,24 @@ filesystem from it. `ps` shows the processes spread over all four CPUs.
 `no filetable fd present` panic, and `cat /scheme/sys/cpu` faults with
 "Write, but grant was not PROT_WRITE".
 
+## USB: dwc2d, first stage
+
+Redox has no driver for the DWC2 USB controller of the Pi 1-3 and Zero, so
+no keyboard and no Ethernet. [`patches/base/`](../patches/base/) adds
+`dwc2d`, written from scratch in Rust (references: QEMU's DWC2 model and the
+BSD drivers; Linux only for understanding, nothing copied). First stage:
+
+- finds the controller in the devicetree, resets the core, forces host mode,
+  sets up the FIFOs, buffer DMA (bus address = physical | 0xC0000000)
+- powers and resets the root port, detects the device speed
+- control transfers on channel 0, polled: reads the device and
+  configuration descriptors, assigns address 1
+
+In QEMU `raspi3b` it enumerates the device on the root port: QEMU's
+`usb-hub` (`0409:55aa`, class 0x09), with the keyboard behind it. The real
+Pi 3B+ also has a hub first, so hub support comes next, then the scheme
+interface of `xhcid` so `usbhubd` and `usbhidd` can run on top.
+
 ## Implications for the Zero 2 W
 
 - **512 MB RAM rules out live mode** with the server image (509 MiB). The
