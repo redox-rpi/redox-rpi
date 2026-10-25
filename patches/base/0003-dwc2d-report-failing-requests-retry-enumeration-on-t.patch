@@ -1,0 +1,78 @@
+From 9b12113523043c1c167d1f9669c85017235fcc8b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 25 Oct 2026 20:27:42 +0100
+Subject: [PATCH 3/3] dwc2d: report failing requests, retry enumeration on the
+ root port
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 16 +++++++++-------
+ drivers/usb/dwc2d/src/main.rs      | 26 ++++++++++++++++++++------
+ 2 files changed, 29 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 21db27f..a532417 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -82,13 +82,15 @@ impl<'a> Bus<'a> {
+         let [i0, i1] = index.to_le_bytes();
+         let [l0, l1] = length.to_le_bytes();
+         *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
+-        let len = self.hc.control(
+-            address,
+-            max_packet,
+-            speed == Speed::Low,
+-            &mut self.setup,
+-            &mut self.data,
+-        )?;
++        let len = self
++            .hc
++            .control(address, max_packet, speed == Speed::Low, &mut self.setup, &mut self.data)
++            .inspect_err(|err| {
++                println!(
++                    "dwc2d: request {:02x?} to address {address} (max packet {max_packet}, {speed:?} speed) failed: {err:?}",
++                    *self.setup
++                );
++            })?;
+         Ok(self.data[..len].to_vec())
+     }
+ 
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index eb48507..8eb575f 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -75,11 +75,25 @@ fn enumerate(hc: &mut Dwc2) -> Result<(), dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+-    let speed = hc.reset_port()?;
+-    println!("dwc2d: device on root port, {:?} speed", speed);
++    // Devices sometimes fail their first requests after a reset (seen on the
++    // real Pi 3B+ hub); reset the port and start over, like Linux does.
++    const ATTEMPTS: usize = 3;
++    for attempt in 1..=ATTEMPTS {
++        let speed = hc.reset_port()?;
++        println!("dwc2d: device on root port, {:?} speed", speed);
+ 
+-    let mut bus = Bus::new(hc, speed);
+-    bus.enumerate(speed, 0)?;
+-    println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+-    Ok(())
++        let mut bus = Bus::new(hc, speed);
++        match bus.enumerate(speed, 0) {
++            Ok(()) => {
++                println!("dwc2d: {} device(s) enumerated", bus.devices.len());
++                return Ok(());
++            }
++            Err(err) if attempt < ATTEMPTS => {
++                println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
++                std::thread::sleep(std::time::Duration::from_millis(100));
++            }
++            Err(err) => return Err(err),
++        }
++    }
++    unreachable!()
+ }
+-- 
+2.54.0 (Apple Git-157)
+
