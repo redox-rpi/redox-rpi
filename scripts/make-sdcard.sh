@@ -19,7 +19,8 @@
 #                      RedoxFS does not grow with the card, so pick the size
 #                      you want to use.
 #
-# Write the result with Raspberry Pi Imager ("Use custom") or dd.
+# Also writes <out>.xz (a few MiB, the data partition is mostly zeros), which
+# Raspberry Pi Imager ("Use custom") flashes directly. Or write <out> with dd.
 
 set -euo pipefail
 
@@ -106,5 +107,8 @@ if [ "$data_mib" -gt 0 ]; then
     rm -f "$data"
 fi
 
+xz -T0 -6 -k -f "$out"
+
 echo "SD card image: $out"
+echo "compressed:    $out.xz ($(du -h "$out.xz" | cut -f1))"
 sfdisk -l "$out" | tail -n +8
