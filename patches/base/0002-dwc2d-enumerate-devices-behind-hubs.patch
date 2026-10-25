@@ -1,0 +1,334 @@
+From b9972381bf48282c892acc8b7b19ae666c56a61f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 25 Oct 2026 20:21:44 +0100
+Subject: [PATCH 2/2] dwc2d: enumerate devices behind hubs
+
+Powers and resets hub ports and enumerates the devices behind them,
+recursively. Full and low speed devices behind a high-speed hub still
+need split transactions and are skipped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 220 +++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs      |  63 ++-------
+ 2 files changed, 228 insertions(+), 55 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/enumerate.rs
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+new file mode 100644
+index 0000000..21db27f
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -0,0 +1,220 @@
++//! Device enumeration on the root port and behind hubs.
++
++use std::thread::sleep;
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++
++use crate::dwc2::{Dwc2, Error, Speed};
++
++const CLASS_HUB: u8 = 0x09;
++
++// Standard requests
++const REQ_GET_STATUS: u8 = 0x00;
++const REQ_CLEAR_FEATURE: u8 = 0x01;
++const REQ_SET_FEATURE: u8 = 0x03;
++const REQ_SET_ADDRESS: u8 = 0x05;
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++
++const DESC_DEVICE: u8 = 0x01;
++const DESC_CONFIGURATION: u8 = 0x02;
++const DESC_HUB: u8 = 0x29;
++
++// Hub port features and status bits (USB 2.0, 11.24.2)
++const PORT_RESET: u16 = 4;
++const PORT_POWER: u16 = 8;
++const C_PORT_CONNECTION: u16 = 16;
++const C_PORT_RESET: u16 = 20;
++const PORT_STAT_CONNECTION: u16 = 1 << 0;
++const PORT_STAT_ENABLE: u16 = 1 << 1;
++const PORT_STAT_RESET: u16 = 1 << 4;
++const PORT_STAT_LOW_SPEED: u16 = 1 << 9;
++const PORT_STAT_HIGH_SPEED: u16 = 1 << 10;
++
++/// Hubs nest at most five deep below the root (USB 2.0, 4.1.1).
++const MAX_HUB_DEPTH: usize = 5;
++
++pub struct Device {
++    pub address: u8,
++    pub speed: Speed,
++    pub max_packet: u16,
++    pub vendor: u16,
++    pub product: u16,
++    pub class: u8,
++    /// Hub nesting level: 0 on the root port.
++    pub depth: usize,
++}
++
++pub struct Bus<'a> {
++    hc: &'a Dwc2,
++    root_speed: Speed,
++    next_address: u8,
++    setup: Dma<[u8; 8]>,
++    data: Dma<[u8; 512]>,
++    pub devices: Vec<Device>,
++}
++
++impl<'a> Bus<'a> {
++    pub fn new(hc: &'a Dwc2, root_speed: Speed) -> Self {
++        Self {
++            hc,
++            root_speed,
++            next_address: 1,
++            setup: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
++            data: Dma::new([0; 512]).expect("dwc2d: DMA allocation failed"),
++            devices: Vec::new(),
++        }
++    }
++
++    fn request(
++        &mut self,
++        address: u8,
++        max_packet: u16,
++        speed: Speed,
++        request_type: u8,
++        request: u8,
++        value: u16,
++        index: u16,
++        length: u16,
++    ) -> Result<Vec<u8>, Error> {
++        let [v0, v1] = value.to_le_bytes();
++        let [i0, i1] = index.to_le_bytes();
++        let [l0, l1] = length.to_le_bytes();
++        *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
++        let len = self.hc.control(
++            address,
++            max_packet,
++            speed == Speed::Low,
++            &mut self.setup,
++            &mut self.data,
++        )?;
++        Ok(self.data[..len].to_vec())
++    }
++
++    /// Enumerate the device that was just reset on a port (address 0) and,
++    /// if it is a hub, everything behind it.
++    pub fn enumerate(&mut self, speed: Speed, depth: usize) -> Result<(), Error> {
++        let indent = "  ".repeat(depth);
++        if speed != Speed::High && self.root_speed == Speed::High {
++            // Full/low speed behind a high-speed hub talks to the hub's
++            // transaction translator: needs split transactions.
++            println!("dwc2d: {indent}{:?} speed device behind a high-speed hub: split transactions not supported yet", speed);
++            return Ok(());
++        }
++
++        // The first 8 bytes of the device descriptor hold the max packet
++        // size of endpoint 0.
++        let head = self.request(0, 8, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8)?;
++        let max_packet = u16::from(head[7]);
++
++        let address = self.next_address;
++        self.next_address += 1;
++        self.request(0, max_packet, speed, 0x00, REQ_SET_ADDRESS, u16::from(address), 0, 0)?;
++        sleep(Duration::from_millis(10));
++
++        let d = self.request(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18)?;
++        let device = Device {
++            address,
++            speed,
++            max_packet,
++            vendor: u16::from_le_bytes([d[8], d[9]]),
++            product: u16::from_le_bytes([d[10], d[11]]),
++            class: d[4],
++            depth,
++        };
++        println!(
++            "dwc2d: {indent}address {}: {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {:?} speed",
++            address, device.vendor, device.product, d[3], d[2], device.class, speed
++        );
++        let class = device.class;
++        self.devices.push(device);
++
++        let config = self.request(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_CONFIGURATION) << 8, 0, 512)?;
++        print_configuration(&indent, &config);
++
++        if class == CLASS_HUB && depth < MAX_HUB_DEPTH {
++            let configuration = config.get(5).copied().unwrap_or(1);
++            self.request(address, max_packet, speed, 0x00, REQ_SET_CONFIGURATION, u16::from(configuration), 0, 0)?;
++            self.enumerate_hub(address, max_packet, speed, depth)?;
++        }
++        Ok(())
++    }
++
++    fn port_status(&mut self, hub: u8, max_packet: u16, speed: Speed, port: u16) -> Result<(u16, u16), Error> {
++        let s = self.request(hub, max_packet, speed, 0xA3, REQ_GET_STATUS, 0, port, 4)?;
++        Ok((u16::from_le_bytes([s[0], s[1]]), u16::from_le_bytes([s[2], s[3]])))
++    }
++
++    fn enumerate_hub(&mut self, hub: u8, max_packet: u16, speed: Speed, depth: usize) -> Result<(), Error> {
++        let indent = "  ".repeat(depth);
++        let desc = self.request(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71)?;
++        let ports = u16::from(desc[2]);
++        let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
++        println!("dwc2d: {indent}hub at address {hub}: {ports} ports");
++
++        for port in 1..=ports {
++            self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
++        }
++        // Power-on-to-power-good time, plus time for devices to connect.
++        sleep(power_on_delay + Duration::from_millis(100));
++
++        for port in 1..=ports {
++            let (status, _) = self.port_status(hub, max_packet, speed, port)?;
++            if status & PORT_STAT_CONNECTION == 0 {
++                continue;
++            }
++            self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
++
++            self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_RESET, port, 0)?;
++            let start = Instant::now();
++            let status = loop {
++                sleep(Duration::from_millis(10));
++                let (status, _) = self.port_status(hub, max_packet, speed, port)?;
++                if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
++                    break status;
++                }
++                if start.elapsed() > Duration::from_millis(500) {
++                    return Err(Error::Timeout("hub port reset"));
++                }
++            };
++            self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
++            // Reset recovery time.
++            sleep(Duration::from_millis(20));
++
++            let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
++                Speed::Low
++            } else if status & PORT_STAT_HIGH_SPEED != 0 {
++                Speed::High
++            } else {
++                Speed::Full
++            };
++            println!("dwc2d: {indent}hub {hub} port {port}: device connected");
++            if let Err(err) = self.enumerate(child_speed, depth + 1) {
++                println!("dwc2d: {indent}hub {hub} port {port}: {err:?}");
++            }
++        }
++        Ok(())
++    }
++}
++
++fn print_configuration(indent: &str, config: &[u8]) {
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        match desc[1] {
++            4 if desc.len() >= 9 => println!(
++                "dwc2d: {indent}  interface {} alt {}: class {:#04x} subclass {:#04x} protocol {:#04x}",
++                desc[2], desc[3], desc[5], desc[6], desc[7]
++            ),
++            5 if desc.len() >= 7 => println!(
++                "dwc2d: {indent}    endpoint {:#04x}: {} max packet {}",
++                desc[2],
++                ["control", "isochronous", "bulk", "interrupt"][usize::from(desc[3] & 3)],
++                u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF
++            ),
++            _ => {}
++        }
++        pos += desc.len();
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 6fe954b..eb48507 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -2,18 +2,19 @@
+ //! mode, as found on the Raspberry Pi 1-3 and Zero.
+ //!
+ //! First stage: bring up the controller, reset the root port and enumerate
+-//! the device behind it with control transfers. It does not offer the USB
+-//! scheme to class drivers yet.
++//! the devices behind it, through hubs, with control transfers. It does not
++//! offer the USB scheme to class drivers yet.
+ 
+ use std::process;
+ 
+-use common::dma::Dma;
+ use fdt::Fdt;
+ 
+ mod dwc2;
++mod enumerate;
+ mod regs;
+ 
+-use dwc2::{Dwc2, Speed};
++use dwc2::Dwc2;
++use enumerate::Bus;
+ 
+ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+@@ -76,57 +77,9 @@ fn enumerate(hc: &mut Dwc2) -> Result<(), dwc2::Error> {
+ 
+     let speed = hc.reset_port()?;
+     println!("dwc2d: device on root port, {:?} speed", speed);
+-    let low_speed = speed == Speed::Low;
+ 
+-    let mut setup = Dma::new([0u8; 8]).expect("dwc2d: DMA allocation failed");
+-    let mut data = Dma::new([0u8; 512]).expect("dwc2d: DMA allocation failed");
+-
+-    // GET_DESCRIPTOR(DEVICE), first 8 bytes: they hold the maximum packet
+-    // size of endpoint 0, which the rest of the enumeration needs.
+-    *setup = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 8, 0];
+-    hc.control(0, 8, low_speed, &mut setup, &mut data)?;
+-    let max_packet = u16::from(data[7]);
+-    println!("dwc2d: endpoint 0 max packet size {}", max_packet);
+-
+-    // SET_ADDRESS(1)
+-    *setup = [0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0, 0];
+-    hc.control(0, max_packet, low_speed, &mut setup, &mut data)?;
+-    std::thread::sleep(std::time::Duration::from_millis(10));
+-
+-    // The whole device descriptor, now at address 1.
+-    *setup = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0];
+-    let len = hc.control(1, max_packet, low_speed, &mut setup, &mut data)?;
+-    let d = &data[..len];
+-    println!(
+-        "dwc2d: device {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {} configuration(s)",
+-        u16::from_le_bytes([d[8], d[9]]),
+-        u16::from_le_bytes([d[10], d[11]]),
+-        d[3],
+-        d[2],
+-        d[4],
+-        d[17]
+-    );
+-
+-    // Configuration descriptor with its interfaces and endpoints.
+-    *setup = [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02];
+-    let len = hc.control(1, max_packet, low_speed, &mut setup, &mut data)?;
+-    let mut pos = 0;
+-    while pos + 2 <= len && data[pos] >= 2 {
+-        let desc = &data[pos..(pos + data[pos] as usize).min(len)];
+-        match desc[1] {
+-            4 if desc.len() >= 9 => println!(
+-                "dwc2d:   interface {}: class {:#04x} subclass {:#04x} protocol {:#04x}",
+-                desc[2], desc[5], desc[6], desc[7]
+-            ),
+-            5 if desc.len() >= 7 => println!(
+-                "dwc2d:     endpoint {:#04x}: {} max packet {}",
+-                desc[2],
+-                ["control", "isochronous", "bulk", "interrupt"][usize::from(desc[3] & 3)],
+-                u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF
+-            ),
+-            _ => {}
+-        }
+-        pos += desc.len();
+-    }
++    let mut bus = Bus::new(hc, speed);
++    bus.enumerate(speed, 0)?;
++    println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+     Ok(())
+ }
+-- 
+2.54.0 (Apple Git-157)
+
