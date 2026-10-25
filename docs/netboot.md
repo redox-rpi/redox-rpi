@@ -8,6 +8,7 @@ serial console; no SD card swapping.
 ```
 Pi firmware → U-Boot ── DHCP (router) ──────────────── IP address
                      └─ TFTP (build server) ── netboot.scr
+                     └─ HTTP (build server, port 8080)
                                               ├─ harddrive.img.gz → unzip in RAM → blkmap disk
                                               └─ bootloader-live.efi → copies RedoxFS into RAM → kernel
 ```
@@ -81,10 +82,41 @@ tftpboot ${scriptaddr} redox/netboot.scr; source ${scriptaddr}
 ## Transfer time
 
 TFTP sends one small block and waits for the acknowledgement, so every
-millisecond of network latency counts (the build server is on Wi-Fi). The
-256 MiB image is mostly empty space, so `scripts/netboot.sh` gzips it to about
-42 MB and U-Boot unpacks it in RAM. Measured from a Mac over Wi-Fi: 8:47 min
-uncompressed, 1:19 min compressed.
+millisecond of network latency counts (the build server is on Wi-Fi). Two
+measures make it fast:
+
+- The 256 MiB image is mostly empty space: `scripts/netboot.sh` gzips it to
+  about 42 MB and U-Boot unpacks it in RAM.
+- The image and the bootloader come over **HTTP** with U-Boot's `wget`
+  (lwIP network stack), TFTP is only the fallback. TCP does not wait for every
+  block.
+
+| Transfer of the image | Time |
+|---|---|
+| TFTP, uncompressed (Mac over Wi-Fi) | 8:47 min |
+| TFTP, gzip (Mac over Wi-Fi) | 1:19 min |
+| HTTP, gzip (Mac over Wi-Fi) | 3.6 s |
+| HTTP, gzip (QEMU on the server) | 0.55 s |
+
+The HTTP server is a systemd user service on the build server:
+
+```ini
+# ~/.config/systemd/user/redox-http.service
+[Unit]
+Description=HTTP server for Redox network boot (/srv/tftp)
+
+[Service]
+ExecStart=/usr/bin/python3 -m http.server 8080 --directory /srv/tftp
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user enable --now redox-http.service
+sudo loginctl enable-linger "$USER"   # keep it running without a login
+```
 
 ## Limits
 
