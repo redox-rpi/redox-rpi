@@ -28,6 +28,7 @@ setenv serverip ${redox_server}
 if wget ${redox_gz_addr} ${redox_http}${redox_dir}harddrive.img.gz; then
     echo "redox-rpi: image loaded over HTTP"
 else
+    setenv serverip ${redox_server}
     tftpboot ${redox_gz_addr} ${redox_dir}harddrive.img.gz || exit
 fi
 unzip ${redox_gz_addr} ${redox_img_addr} || exit
@@ -41,6 +42,7 @@ part list blkmap 0
 if wget ${kernel_addr_r} ${redox_http}${redox_dir}bootloader-live.efi; then
     true
 else
+    setenv serverip ${redox_server}
     tftpboot ${kernel_addr_r} ${redox_dir}bootloader-live.efi || exit
 fi
 bootefi ${kernel_addr_r} ${fdtcontroladdr}
