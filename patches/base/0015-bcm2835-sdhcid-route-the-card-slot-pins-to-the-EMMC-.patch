@@ -1,7 +1,7 @@
 From 777e795b5a47f3069ca435f507014740bdf48092 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 15:54:30 +0100
-Subject: [PATCH 15/15] bcm2835-sdhcid: route the card slot pins to the EMMC
+Subject: [PATCH 15/16] bcm2835-sdhcid: route the card slot pins to the EMMC
  controller
 
 The card slot's data reads failed with data CRC errors. Set GPIO 48-53

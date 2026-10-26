@@ -1,7 +1,7 @@
 From 5affc48db1ea02d9784c802414cf87a37c80ca24 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 10:13:16 +0100
-Subject: [PATCH 08/15] dwc2d: LAN7800 Ethernet (Raspberry Pi 3B+)
+Subject: [PATCH 08/16] dwc2d: LAN7800 Ethernet (Raspberry Pi 3B+)
 
 Initializes the Microchip LAN7800 over vendor register requests (lite
 reset, MAC address and perfect filter, USB burst settings, FIFOs, PHY

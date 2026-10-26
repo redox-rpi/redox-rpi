@@ -1,7 +1,7 @@
 From 1943eb9a0864f60b87eddc57d48f58727d826065 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 10:20:40 +0100
-Subject: [PATCH 09/15] dwc2d: take the LAN7800 MAC address from the devicetree
+Subject: [PATCH 09/16] dwc2d: take the LAN7800 MAC address from the devicetree
 
 The Pi firmware writes the board's address as local-mac-address into the
 ethernet0 node; the chip registers were empty on a Pi 3B+.

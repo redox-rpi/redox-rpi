@@ -1,0 +1,48 @@
+From 7be2c33e2ed27f04431175ee702377e12f961c6e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 15:59:11 +0100
+Subject: [PATCH 16/16] bcm2835-sdhcid: pick the data clock divisor for a 250
+ MHz base clock
+
+Reads failed with data CRC errors while commands worked. U-Boot may
+raise EMMC's clock to 250 MHz, which turns the 25 MHz data clock into
+62.5 MHz. Choose the divisor for 250 MHz, so the card gets at most
+12.5 MHz.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index a4d1115..0352df6 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -162,6 +162,8 @@ const SCR_SUPP_CCS: u32 = 0x0000_0001;
+ /// Dividing 250 MHz instead left the card initialization at 33 kHz, where
+ /// ACMD41 failed on a real Pi 3B+.
+ const EMMC_BASE_CLOCK: u32 = 41_666_666;
++/// The highest clock the firmware can run EMMC at.
++const EMMC_MAX_CLOCK: u32 = 250_000_000;
+ 
+ /// Attempts for a block transfer, with a reset of the command and data
+ /// lines in between.
+@@ -369,8 +371,13 @@ impl SdHostCtrl {
+         self.size = ((csize + 1) << (cmult + 2)) * 512;
+         println!("mmc size = 0x{:08x}", self.size);
+ 
+-        if let Err(_) = self.set_clock(2500_0000) {
+-            println!("failed to set clock 2500_0000 Hz");
++        // The firmware runs EMMC at 41.67 MHz, but U-Boot may raise it to
++        // its 250 MHz maximum before it starts us, and a divisor picked for
++        // 41.67 MHz then clocks the card at 62.5 MHz: data CRC errors. Pick
++        // the divisor as if it ran at 250 MHz: at most 12.5 MHz either way.
++        let freq = (25_000_000u64 * EMMC_BASE_CLOCK as u64 / EMMC_MAX_CLOCK as u64) as u32;
++        if let Err(_) = self.set_clock(freq) {
++            println!("failed to set clock {freq} Hz");
+             return;
+         }
+ 
+-- 
+2.54.0 (Apple Git-157)
+
