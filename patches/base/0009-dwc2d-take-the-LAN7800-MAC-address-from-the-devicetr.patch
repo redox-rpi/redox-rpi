@@ -1,0 +1,109 @@
+From 1943eb9a0864f60b87eddc57d48f58727d826065 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 10:20:40 +0100
+Subject: [PATCH 9/9] dwc2d: take the LAN7800 MAC address from the devicetree
+
+The Pi firmware writes the board's address as local-mac-address into the
+ethernet0 node; the chip registers were empty on a Pi 3B+.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 18 +++++++++++-------
+ drivers/usb/dwc2d/src/main.rs    | 18 +++++++++++++++---
+ 2 files changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index f6cb51e..b301c72 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -196,19 +196,23 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ }
+ 
+ /// Bring the chip up: reset, MAC address, FIFOs, filters, PHY, and enable
+-/// receiver and transmitter. Returns the MAC address.
+-pub fn init(bus: &mut Bus, f: &Lan78xxFunction) -> Result<[u8; 6], Error> {
++/// receiver and transmitter. `dt_mac` is the address from the devicetree,
++/// if any. Returns the MAC address in use.
++pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>) -> Result<[u8; 6], Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, 1, 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+-    // The firmware or U-Boot may already have programmed the address.
++    // The Pi firmware puts the board's address into the devicetree; else the
++    // chip may already be programmed (by an EEPROM, OTP or U-Boot).
+     let low = r.read(RX_ADDRL)?.to_le_bytes();
+     let high = r.read(RX_ADDRH)?.to_le_bytes();
+-    let mut mac = [low[0], low[1], low[2], low[3], high[0], high[1]];
+-    if !valid_mac(&mac) {
++    let chip_mac = [low[0], low[1], low[2], low[3], high[0], high[1]];
++    let mac = match dt_mac.filter(valid_mac) {
++        Some(mac) => mac,
++        None if valid_mac(&chip_mac) => chip_mac,
+         // Locally administered fallback.
+-        mac = [0x02, 0x52, 0x65, 0x64, 0x6F, 0x78];
+-    }
++        None => [0x02, 0x52, 0x65, 0x64, 0x6F, 0x78],
++    };
+ 
+     r.write(HW_CFG, HW_CFG_LRST)?;
+     r.wait_clear(HW_CFG, HW_CFG_LRST, "lite reset")?;
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 8c0bb52..b5e8933 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -67,6 +67,17 @@ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+ }
+ 
++/// The Ethernet MAC address the Pi firmware writes into the devicetree.
++fn find_mac(fdt: &Fdt) -> Option<[u8; 6]> {
++    let path = fdt
++        .find_node("/aliases")?
++        .properties()
++        .find(|p| p.name == "ethernet0")?
++        .as_str()?;
++    let value = fdt.find_node(path)?.property("local-mac-address")?.value;
++    value.try_into().ok()
++}
++
+ /// Physical address and size of the controller's registers.
+ fn find_controller(fdt: &Fdt) -> Option<(usize, usize)> {
+     // The Raspberry Pi firmware's own devicetrees say bcm2708-usb, the
+@@ -94,6 +105,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     common::init();
+ 
+     let dtb = get_dtb();
++    let dt_mac = Fdt::new(&dtb).ok().and_then(|fdt| find_mac(&fdt));
+     let Some((phys, size)) = Fdt::new(&dtb).ok().and_then(|fdt| find_controller(&fdt)) else {
+         eprintln!("dwc2d: no DWC2 controller in the devicetree");
+         daemon.ready();
+@@ -109,7 +121,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-    let network = match enumerate(&mut hc) {
++    let network = match enumerate(&mut hc, dt_mac) {
+         Ok(network) => network,
+         Err(err) => {
+             eprintln!("dwc2d: {:?}", err);
+@@ -152,7 +164,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+ /// Enumerate all devices; returns a network function, initialized, with its
+ /// MAC address.
+-fn enumerate(hc: &mut Dwc2) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
++fn enumerate(hc: &mut Dwc2, dt_mac: Option<[u8; 6]>) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -170,7 +182,7 @@ fn enumerate(hc: &mut Dwc2) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Erro
+                 for device in bus.devices.clone() {
+                     if let Some(function) = lan78xx::find(&mut bus, &device) {
+                         println!("dwc2d: LAN7800 at address {}", device.address);
+-                        let mac = lan78xx::init(&mut bus, &function)?;
++                        let mac = lan78xx::init(&mut bus, &function, dt_mac)?;
+                         return Ok(Some((NetFunction::Lan78xx(function), mac)));
+                     }
+                     if let Some(function) = ecm::find(&mut bus, &device) {
+-- 
+2.54.0 (Apple Git-157)
+
