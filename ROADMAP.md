@@ -112,6 +112,7 @@ automated testing in CI later.
 
 ## Phase 6: Real server and release
 
+- ✅ USB keyboard on the console (split transactions in `dwc2d`)
 - ✅ Remote shell over the LAN (`tools/devshd`, port 2323, unencrypted), until SSH works
 
 - Server services: HTTP server, SSH (depending on available Redox ports), NTP

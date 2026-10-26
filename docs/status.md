@@ -4,6 +4,19 @@ Last update: 2026-10-24. Upstream revisions checked: redox `4338ac2`,
 kernel `6cfaba5`, base `d2ffc4c`, relibc `5bfdd35`, bootloader `cc922ec`,
 daily image `redox_server_aarch64_2026-10-24_565`.
 
+## Milestone: USB keyboard on a real Pi 3B+ (2026-10-26)
+
+Login and shell with a USB keyboard on the Pi's HDMI console. Every USB port
+of the Pi 3B+ sits behind its high-speed hubs, so a low- or full-speed
+keyboard is only reachable through a hub's transaction translator: `dwc2d`
+now does split transactions, finds boot protocol keyboards and polls them on
+their interrupt endpoint, and sends the key changes to `inputd` like
+`usbhidd` does. US layout; held keys repeat. In QEMU, `scripts/test-keyboard.sh`
+types on QEMU's USB keyboard through the monitor and checks the result
+through `devshd`.
+
+![Root shell after typing on a USB keyboard on a Raspberry Pi 3B+](images/keyboard-pi3bplus.jpg)
+
 ## Milestone: remote login on a real Pi 3B+ (2026-10-26)
 
 `devshd` ([`tools/devshd`](../tools/devshd)) runs `login` on a pseudo-terminal
