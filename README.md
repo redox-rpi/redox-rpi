@@ -11,12 +11,18 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 
 ## Status
 
-🚧 Early work. Redox boots to a root shell in QEMU's emulated Raspberry Pi 3
-(with a fix from this repository); real hardware is next. See
-[docs/status.md](docs/status.md) for details and [ROADMAP.md](ROADMAP.md) for
-the step-by-step plan.
+🚧 Alpha. Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
+with all four cores, a USB keyboard, Ethernet and a writable root
+filesystem. About every third program still fails at start (a Redox bug on
+aarch64, [under investigation](docs/debugging-random-crashes.md)). See
+[docs/status.md](docs/status.md), [docs/known-issues.md](docs/known-issues.md)
+and [ROADMAP.md](ROADMAP.md).
 
-Try it on macOS or Linux (needs QEMU, curl and zstd):
+**Try it on a Pi 3 Model B+:** flash the image from the
+[latest release](https://github.com/redox-rpi/redox-rpi/releases) to a microSD
+card and log in as `root` / `password`.
+
+**Or in QEMU** on macOS or Linux (needs QEMU, curl and zstd):
 
 ```sh
 scripts/qemu-raspi3b.sh
