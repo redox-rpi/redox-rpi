@@ -1,4 +1,4 @@
-From 9e1ac4580647344d8047e505ceb8a90d6aecd10c Mon Sep 17 00:00:00 2001
+From 0a442b495b0bebcac40655e283c033507c2270d9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 16:55:05 +0100
 Subject: [PATCH 3/3] DIAGNOSTIC: dump the stack of a process without filetable
@@ -9,7 +9,7 @@ Subject: [PATCH 3/3] DIAGNOSTIC: dump the stack of a process without filetable
  1 file changed, 30 insertions(+), 1 deletion(-)
 
 diff --git a/src/start.rs b/src/start.rs
-index 0fb3c8f..8b79cd5 100644
+index 0fb3c8f..c23d79e 100644
 --- a/src/start.rs
 +++ b/src/start.rs
 @@ -180,7 +180,7 @@ pub unsafe extern "C" fn relibc_start_v1(
@@ -45,7 +45,7 @@ index 0fb3c8f..8b79cd5 100644
 +        while pairs < 64 && *auxv.add(2 * pairs) != 0 {
 +            pairs += 1;
 +        }
-+        core::arch::asm!("brk #2",
++        core::arch::asm!("ldr x16, [xzr]", "brk #2",
 +            in("x0") base, in("x1") argc, in("x2") n, in("x3") auxv,
 +            in("x4") *auxv, in("x5") *auxv.add(1), in("x6") *auxv.add(2),
 +            in("x7") *auxv.add(3), in("x9") *auxv.add(4), in("x10") *auxv.add(5),
