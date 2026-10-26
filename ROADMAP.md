@@ -75,7 +75,7 @@ console and running QEMU.
 | 2.2 | ✅ Fix the kernel panic in devicetree interrupt parsing (`patches/fdt/`) | Root shell in QEMU `raspi3b` |
 | 2.3 | 🟡 Userspace programs run: `ls`, `ps`, `uname` work in our own image; `df`, `free` still hit the relibc crash | `ls`, `ps`, `free` work in QEMU |
 | 2.4 | 🟡 Same image on the real Pi 3B+: ✅ boots over the network to `redox login:` on HDMI (2026-10-25); login needs the serial console or USB | **Shell over the serial console** |
-| 2.5 | 🟡 Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`) | RedoxFS root on SD without live mode (QEMU ✅), survives reboot |
+| 2.5 | 🟡 Root filesystem on the SD card (own `BOARD=raspi3bp` build, starts `bcm2835-sdhcid`); reads and writes clean on the real Pi 3B+ since the data clock fix (2026-10-26) | RedoxFS root on SD without live mode (QEMU ✅), survives reboot |
 | 2.6 | Document the Pi 3 state and all fixes in this repository | Step-by-step guide in `docs/` |
 
 QEMU `raspi3b` is the key tool: development without swapping SD cards, and
@@ -96,7 +96,7 @@ automated testing in CI later.
 | # | Step | Done when … |
 |---|---|---|
 | 4.1 | ✅ Bring up all 4 cores: `spin-table` and BCM2836 IPIs (`patches/kernel/`) | 4 CPUs online (QEMU ✅, real Pi 3B+ ✅) |
-| 4.2 | Mailbox driver (clocks, temperature), watchdog for reboot/shutdown | `reboot` works |
+| 4.2 | 🟡 Watchdog: ✅ `reboot` (`tools/reboot`); `poweroff` and a mailbox driver (clocks, temperature) still missing | `reboot` and `poweroff` work |
 | 4.3 | Minimal "server" profile (low RAM, no GUI) | Runs stable for 24 h |
 
 ## Phase 5: Networking over Ethernet
@@ -118,6 +118,27 @@ automated testing in CI later.
 - Server services: HTTP server, SSH (depending on available Redox ports), NTP
 - Prebuilt images for Pi 3 and Zero 2 W as releases, CI with QEMU `raspi3b`,
   beginner-friendly guide
+
+## Wish list: help wanted
+
+Things that would make the port much more useful. Each is a self-contained
+piece of work; if you want to take one on, open an issue first so work is
+not done twice. Hardware documentation and datasheets are fine to use, code
+from GPL-licensed drivers (Linux) is not.
+
+| Wish | What it takes | Size |
+|---|---|---|
+| **`poweroff`** | The Pi 3 has no PSCI, so `echo shutdown > /scheme/sys/kstop` only halts one core. Halt through the firmware instead: a watchdog reset that tells the firmware to stay halted (kernel, next to the reset in `bcm2835_wdt.rs`), plus a `poweroff` tool next to `tools/reboot` | small |
+| **Prebuilt programs** | bash, nano, vim, tmux, curl, wget … from Redox' aarch64 packages stop with a `brk` exception; relibc's dynamic loader fails to resolve symbols (`libonig.so.5`). Find out why, fix relibc or the packages | medium |
+| **sdhost driver** | Driver for the Pi's second SD controller (`brcm,bcm2835-sdhost`), the one Linux uses for the card slot. Frees the Arasan controller for Wi-Fi, needed for the Zero 2 W | medium |
+| **Keyboard layouts** | `dwc2d` maps USB keys to a US layout. German and other layouts | small |
+| **RTC / time** | The Pi has no clock: files are dated 1970/Jan 1. NTP client, or set the time from the network | small |
+| **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
+| **`lsusb` and hardware info** | Show USB devices and board details (model, memory, temperatures through the mailbox) | small |
+| **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
+| **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
+| **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
+| **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |
 
 ## Later / optional
 
