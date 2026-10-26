@@ -17,6 +17,10 @@ until SSH works.
     socat -,raw,echo=0 tcp:<pi-address>:2323          # interactive
     scripts/devsh.py <pi-address> 2323 "uname -a"     # scripted
 
+`reboot` (as root, [`tools/reboot`](../tools/reboot)) restarts the Pi. The
+Pi 3 firmware has no PSCI, so the kernel patch resets it through the
+BCM2835 watchdog, as Linux does.
+
 ## Milestone: Ethernet on a real Pi 3B+ (2026-10-26)
 
 Redox on the Raspberry Pi 3B+ is on the LAN: `dwc2d` enumerates both onboard
