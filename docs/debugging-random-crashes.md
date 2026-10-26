@@ -103,6 +103,26 @@ after the read. Here the file table was present and the panic could print,
 so this is a crash site where the corrupted data can be printed (idea 6
 below).
 
+### Collected stderr in QEMU (diagnostic build `diag-dyn`)
+
+120 runs of `pwd`, `ls /` and `sha256sum /etc/issue` with stderr appended to
+a file gave 23 kernel crash dumps (10 of them `brk #1`, the rest data aborts
+with ESR `0x92000004/07/44/47/4F`) and these messages from `ld.so`:
+
+```
+RELIBC PANIC: panicked at src/ld_so/linker.rs:151:46:
+called `Result::unwrap()` on an `Err` value: Errno(22)     <- munmap in MmapFile::drop
+[WARN ls@src/header/dl-tls/mod.rs:46] dl-tls: __tls_get_addr requested out-of-bounds module 5944752646630932578 (DTV len 2)
+[ld.so]: failed to locate 'pwd'                            <- start.rs: PATH lookup failed
+[ld.so]: failed to link '/usr/bin/sha256sum': NotFound
+```
+
+"failed to locate" and "NotFound" are file lookups of files that exist, and
+`munmap` returning `EINVAL` is a syscall failing for a mapping that was
+just created. So it is not only data in memory: syscalls of a freshly
+started process sometimes fail or work on wrong arguments too. The PT_DYNAMIC
+check of the diagnostic did not trigger in these runs.
+
 ## Ruled out
 
 | Hypothesis | Experiment | Result |
