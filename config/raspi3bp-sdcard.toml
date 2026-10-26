@@ -23,6 +23,8 @@ efi_partition_size = 32
 kernel = "source"
 base = "source"
 bootloader = "source"
+# relibc: our fix for fork() on aarch64 (patches/relibc).
+relibc = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
 # Programs beyond the minimal system, prebuilt by Redox. Most of them
