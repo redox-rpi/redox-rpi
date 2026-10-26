@@ -1,7 +1,7 @@
 From b9b1335d4f2322e46d694863d28f536a73ff27b1 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 16:52:20 +0100
-Subject: [PATCH 2/2] ld.so: read shared objects instead of mapping them
+Subject: [PATCH 2/3] ld.so: read shared objects instead of mapping them
 
 On aarch64, file mappings from redoxfs sometimes show corrupted contents:
 the loader then fails to link programs at random, or links them with
