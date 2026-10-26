@@ -4,6 +4,17 @@ Last update: 2026-10-24. Upstream revisions checked: redox `4338ac2`,
 kernel `6cfaba5`, base `d2ffc4c`, relibc `5bfdd35`, bootloader `cc922ec`,
 daily image `redox_server_aarch64_2026-10-24_565`.
 
+## Milestone: Ethernet on a real Pi 3B+ (2026-10-26)
+
+Redox on the Raspberry Pi 3B+ is on the LAN: `dwc2d` enumerates both onboard
+hubs and the LAN7800, our LAN7800 driver brings up the chip and the PHY
+(`link up after 2880 ms`) with the board's MAC address from the devicetree,
+and Redox' `netstack`/`dhcpd` get `192.168.178.148` from the router. From the
+build server, TCP connections to the Pi are refused instantly (RST from
+Redox' TCP stack, no service listening yet) and ARP shows it `REACHABLE`.
+
+![dwc2d and LAN7800 on a Raspberry Pi 3B+](images/lan7800-pi3bplus.jpg)
+
 ## Milestone: first boot on real hardware (2026-10-25)
 
 ![Redox login prompt on a Raspberry Pi 3B+](images/first-boot-pi3bplus.jpg)

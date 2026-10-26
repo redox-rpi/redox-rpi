@@ -79,6 +79,7 @@ logged here as a first data point.
 | 2026-10-24 | 4 in QEMU | Direction and approvals only | Not measured | All 4 cores online: spin-table and BCM2836 IPIs, working on the first boot attempt |
 | 2026-10-25 | 2 on a real Pi 3B+ (login prompt) | Direction, approvals, hardware handling (SD card, power, photos) | Not measured | Network boot from the build server; prompt on HDMI; no keyboard input yet |
 | 2026-10-25 | 4 on a real Pi 3B+; USB started | Same | Not measured | 4 CPUs online on real hardware; new DWC2 driver enumerates the onboard hub on its first real run (one fix: devicetree name) |
+| 2026-10-26 | 5 on a real Pi 3B+ (Ethernet) | Same, plus router settings | Not measured | CDC Ethernet in QEMU first (DHCP, ping), then LAN7800 on real hardware: DHCP lease, TCP answers. Fixes on the way: stalls after reset, hub port timing, MAC from devicetree |
 
 ## Open questions
 
