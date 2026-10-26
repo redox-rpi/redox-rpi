@@ -123,6 +123,22 @@ just created. So it is not only data in memory: syscalls of a freshly
 started process sometimes fail or work on wrong arguments too. The PT_DYNAMIC
 check of the diagnostic did not trigger in these runs.
 
+### Same loop on the real Pi 3B+ (netboot, `diag-dyn`)
+
+150 starts (50 × `pwd`, `ls /`, `sha256sum /etc/issue`), stderr appended to
+a file: about 37 crashed (roughly a quarter, all three programs alike), almost
+all with `ESR F2000001` (`brk #1`, the silent "no filetable fd present"
+case), a few data aborts (`0x92000047`, `0x92000005`). `cat` crashed just as
+often while reading the results. Only one start printed anything:
+
+```
+[ld.so]: failed to link '/usr/bin/pwd': Malformed
+```
+
+`Malformed` hides the reason: `ld.so` prints the error of `DSO::new` only with
+`LD_DEBUG`. The PT_DYNAMIC check did not trigger. So on the Pi the silent
+case dominates; a diagnostic has to reach that one (idea 2).
+
 ## Ruled out
 
 | Hypothesis | Experiment | Result |
