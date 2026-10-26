@@ -6,6 +6,10 @@
 
 include = ["raspi3bp-sdcard.toml"]
 
+[general]
+# U-Boot loads the whole image into RAM: keep it small.
+filesystem_size = 384
+
 [packages]
 # Mounts the data partition below; the minimal config has it in initfs only.
 redoxfs = {}

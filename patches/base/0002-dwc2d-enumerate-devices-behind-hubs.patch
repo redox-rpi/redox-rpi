@@ -1,7 +1,7 @@
 From b9972381bf48282c892acc8b7b19ae666c56a61f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sun, 25 Oct 2026 20:21:44 +0100
-Subject: [PATCH 02/12] dwc2d: enumerate devices behind hubs
+Subject: [PATCH 02/11] dwc2d: enumerate devices behind hubs
 
 Powers and resets hub ports and enumerates the devices behind them,
 recursively. Full and low speed devices behind a high-speed hub still

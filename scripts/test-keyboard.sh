@@ -49,7 +49,16 @@ sleep 4
 type_text $'touch /home/root/typed-on-usb-keyboard\n'
 sleep 3
 
-if devsh "ls /home/root" | grep -q typed-on-usb-keyboard; then
+# A devshd session sometimes misses the command's output; ask again.
+found=no
+for _ in 1 2 3; do
+    if devsh "ls /home/root" | grep -q typed-on-usb-keyboard; then
+        found=yes
+        break
+    fi
+    sleep 3
+done
+if [ "$found" = yes ]; then
     echo "PASS: typed on the USB keyboard"
 else
     # What the screen shows.

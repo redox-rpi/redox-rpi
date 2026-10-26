@@ -8,9 +8,24 @@
 
 include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
 
+[general]
+# Root filesystem in MiB. RedoxFS does not grow with the card.
+filesystem_size = 1024
+
 [packages]
 kernel = "source"
 base = "source"
 bootloader = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
+# Programs beyond the minimal system, prebuilt by Redox.
+bash = {}
+nano = {}
+vim = {}
+curl = {}
+wget = {}
+findutils = {}
+diffutils = {}
+gawk = {}
+tmux = {}
+ripgrep = {}
