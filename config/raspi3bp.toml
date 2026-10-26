@@ -36,24 +36,6 @@ type = "oneshot"
 """
 
 # Start the development shell. Unencrypted: for the home network only.
-# The framebuffer console without getty's screen clear (-J), so the boot
-# messages stay readable above the login prompt.
-[[files]]
-path = "/usr/lib/init.d/getty@.service"
-data = """
-[unit]
-description = "Initialize terminal $INSTANCE"
-requires_weak = [
-    "fbcond@$INSTANCE.service",
-    "00_ptyd.service",
-]
-
-[service]
-cmd = "getty"
-args = ["$INSTANCE", "-J"]
-type = "oneshot_async"
-"""
-
 [[files]]
 path = "/usr/lib/init.d/90_devshd.service"
 data = """
