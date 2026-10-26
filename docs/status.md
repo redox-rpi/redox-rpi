@@ -10,8 +10,9 @@ daily image `redox_server_aarch64_2026-10-24_565`.
   Pi 3B+ after a while (`Timeout waiting for ready to read`, then
   `SR_DAT_INHIBIT TIMEOUT` for every transfer), and programs loaded from the
   card crashed, `login` first. The driver never reset the data line after an
-  error and ran the card at 62.5 MHz (base clock assumed 41.67 MHz, the
-  firmware gives 250 MHz). Patched: reset and retry, 12.5 MHz.
+  error. Patched: reset the command and data lines and retry. (Dividing an
+  assumed 250 MHz base clock instead of 41.67 MHz made card initialization
+  fail on the Pi: the 41.67 MHz are right.)
 - **Prebuilt programs:** bash, nano, vim, tmux, ripgrep, curl, wget and gawk
   from Redox' aarch64 package repository stop at start with a `brk`
   exception (ESR `0xF2000001`), `find` fails to link; in QEMU as on the Pi.
