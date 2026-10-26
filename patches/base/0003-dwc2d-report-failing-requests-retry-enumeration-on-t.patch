@@ -1,7 +1,7 @@
 From 9b12113523043c1c167d1f9669c85017235fcc8b Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sun, 25 Oct 2026 20:27:42 +0100
-Subject: [PATCH 3/6] dwc2d: report failing requests, retry enumeration on the
+Subject: [PATCH 3/7] dwc2d: report failing requests, retry enumeration on the
  root port
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

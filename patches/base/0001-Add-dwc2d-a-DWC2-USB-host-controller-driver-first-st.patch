@@ -1,7 +1,7 @@
 From 73e9d7949e59569436afe06cc073c24ba8f3b5fb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sun, 25 Oct 2026 19:30:00 +0100
-Subject: [PATCH 1/6] Add dwc2d, a DWC2 USB host controller driver (first
+Subject: [PATCH 1/7] Add dwc2d, a DWC2 USB host controller driver (first
  stage)
 
 Brings up the Synopsys DesignWare USB 2.0 controller of the Raspberry Pi
