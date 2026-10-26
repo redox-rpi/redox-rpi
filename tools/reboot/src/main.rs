@@ -7,8 +7,13 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 
+extern "C" {
+    // In relibc, but not declared for Redox by the libc crate.
+    fn sync();
+}
+
 fn main() {
-    unsafe { libc::sync() };
+    unsafe { sync() };
     let result = OpenOptions::new()
         .write(true)
         .open("/scheme/sys/kstop")
