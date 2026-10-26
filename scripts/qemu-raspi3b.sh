@@ -25,6 +25,12 @@
 #                     "redox login:"), 1 on a kernel panic or timeout.
 #                     The console output is kept in images/qemu-test.log.
 #   --expect <regex>  extended regex that must appear (repeatable)
+#   --run <command>   after the expected patterns, log in as root on the
+#                     serial console and run this shell command (repeatable,
+#                     implies --test); the output lands in the log, and the
+#                     script waits until all commands are done
+#   --sd-size <MiB>   size of QEMU's SD card (a power of two, at least the
+#                     image's size); above 2048 the card is SDHC
 #   --timeout <s>     give up after this many seconds (default 900)
 #
 # The bootloader waits for a resolution choice: press Enter. In --test mode
@@ -44,6 +50,8 @@ test=no
 expect=()
 timeout=900
 uboot=""
+run=()
+sd_size=""
 usb_net=no
 monitor=(-monitor none)
 while [ $# -gt 0 ]; do
@@ -53,6 +61,8 @@ while [ $# -gt 0 ]; do
         --test) test=yes; shift ;;
         --expect) expect+=("$2"); shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
+        --run) run+=("$2"); test=yes; shift 2 ;;
+        --sd-size) sd_size="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
@@ -112,6 +122,7 @@ cp "$image" run.img
 size=$(wc -c < run.img)
 sd=1
 while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
+if [ -n "$sd_size" ]; then sd=$((sd_size * 1024 * 1024)); fi
 [ "$sd" -eq "$size" ] || truncate -s "$sd" run.img
 
 if [ -n "$kernel" ]; then
@@ -161,7 +172,8 @@ while true; do
     done
     if [ $missing -eq 0 ]; then
         echo "PASS after $((SECONDS - start))s: all expected patterns seen"
-        exit 0
+        [ ${#run[@]} -gt 0 ] || exit 0
+        break
     fi
     if grep -aq "KERNEL PANIC" "$log"; then
         grep -a -A4 "KERNEL PANIC" "$log" >&2
@@ -181,3 +193,28 @@ while true; do
     fi
     sleep 2
 done
+
+# Log in on the serial console and run the --run commands as one line,
+# followed by a marker that only appears in the output, not in the echo of
+# the typed line.
+wait_for() {
+    while ! grep -aq "$1" "$log"; do
+        if ! kill -0 $pid 2>/dev/null; then echo "FAIL: QEMU exited, see $log" >&2; exit 1; fi
+        if [ $((SECONDS - start)) -ge "$timeout" ]; then echo "FAIL: timeout waiting for $1" >&2; exit 1; fi
+        sleep 1
+    done
+}
+sleep 2
+printf 'root\r' >&3
+wait_for "assword"
+# login switches the terminal to no-echo after printing the prompt; keys sent
+# before that are lost.
+sleep 2
+printf 'password\r' >&3
+wait_for "root:"
+line=""
+for cmd in "${run[@]}"; do line="$line$cmd; "; done
+printf '%secho RUN-DONE-$((40 + 2))\r' "$line" >&3
+wait_for "RUN-DONE-42"
+echo "RUN: done after $((SECONDS - start))s, output in $log"
+

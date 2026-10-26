@@ -55,6 +55,39 @@ Two more findings in the same assembly, from reading it:
   the signal number instead of the new mask into the thread's signal word
   (`stxr w3, x1, [x5]`). Not fixed yet; thread-directed signals are rare.
 
+## Second cause: lazily populated memory in `ld.so` (workaround only)
+
+The v0.1.1-alpha SD image, built without the diagnostic patch, crashed
+again with the old signature (`brk #1`, "no filetable fd present"): about 5
+of 80 starts in QEMU. Experiments on 2026-10-26, all in QEMU with the same
+`for i in 1..=40; ls /; pwd; end` loop run over devshd:
+
+| Image | Crashes |
+|---|---|
+| Netboot image `sig-x1x2` (with the diagnostic patch), booted from SD | 0 of 80 |
+| Same image, only `libc.so` replaced by the build without the diagnostic | 5 of 120 |
+| Same, plus a kernel that populates source pages before lending them to a scheme | 5 of 120 |
+| `libc.so` that only reads one byte of every fresh page (both places) | 0 of 120 |
+| Only the `pread` buffer touched | 2 of 120 |
+| Full SD image with patch `0005` and the sdhost driver | 2 of 81 (`ps`, `pwd`) |
+
+So the medium (SD vs RAM) does not matter, and neither does the sdhost
+driver. What helped was a side effect of the diagnostic: it read every page
+of the memory `ld.so` maps for a program or library before copying the
+segments into it. When the pages are instead populated one by one by the
+write faults of the copy itself, the program sometimes starts broken.
+Relibc patch `0005` touches the pages first. It lowers the rate but does
+not remove it: the full SD image still had 2 crashes with the old signature
+in 81 starts. So touching memory changes timing or layout around the real
+bug rather than fixing it. The kernel cause is still open; the lazy borrow
+path for scheme calls was ruled out (row 3).
+
+Seen while reading the code: nothing on aarch64 cleans the data cache and
+invalidates the instruction cache after `ld.so` or `exec` copied code into
+memory (`dc cvau`/`ic ivau`; EL0 may not even use them, `SCTLR_EL1.UCI` is
+not set). QEMU does not need that, a real Cortex-A53 can. A candidate for
+failures seen only on the Pi.
+
 ## History of the hunt
 
 ### The problem
