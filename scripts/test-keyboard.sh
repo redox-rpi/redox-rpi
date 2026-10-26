@@ -52,6 +52,14 @@ sleep 3
 if devsh "ls /home/root" | grep -q typed-on-usb-keyboard; then
     echo "PASS: typed on the USB keyboard"
 else
-    echo "FAIL: no file from the USB keyboard, see $log"
+    # What the screen shows.
+    python3 - "$socket" "$ROOT/images/qemu-keyboard.ppm" <<'PYEOF'
+import socket, sys, time
+mon = socket.socket(socket.AF_UNIX)
+mon.connect(sys.argv[1])
+mon.sendall(f"screendump {sys.argv[2]}\n".encode())
+time.sleep(2)
+PYEOF
+    echo "FAIL: no file from the USB keyboard, see $log and $ROOT/images/qemu-keyboard.ppm"
     exit 1
 fi
