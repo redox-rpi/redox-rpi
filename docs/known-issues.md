@@ -9,7 +9,8 @@ for contributors in the wish list in [ROADMAP.md](../ROADMAP.md).
 - **Programs fail at random.** After login, commands often end without
   output and with exit code 1: `ls`, `cat`, `cmp`, `sha256sum`, `kibi`,
   even `reboot`. Running the same command again may work. Happens in QEMU
-  too, so it is not a Pi hardware problem. Under investigation.
+  too, so it is not a Pi hardware problem. Under investigation, see
+  [debugging-random-crashes.md](debugging-random-crashes.md).
 - **Many prebuilt programs do not start at all:** bash, nano, vim, tmux,
   ripgrep, curl, wget, gawk stop with a `brk` exception; `find` fails to
   link. Left out of the images. Possibly the same cause as above.

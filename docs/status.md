@@ -25,6 +25,10 @@ daily image `redox_server_aarch64_2026-10-24_565`.
   from Redox' aarch64 package repository stop at start with a `brk`
   exception (ESR `0xF2000001`), `find` fails to link; in QEMU as on the Pi.
   coreutils, ion, kibi and diffutils run. Not in our images for now.
+- **Programs fail at random** (open): about every third program started from
+  the shell dies at start with relibc's `no filetable fd present`. State of
+  the hunt, ruled-out causes and next steps:
+  [debugging-random-crashes.md](debugging-random-crashes.md).
 
 ## Milestone: USB keyboard on a real Pi 3B+ (2026-10-26)
 
