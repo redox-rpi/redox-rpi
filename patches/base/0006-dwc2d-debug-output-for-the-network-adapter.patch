@@ -1,0 +1,90 @@
+From 9b4d3cbe118a16a00c9cb3c8931588b7ed088912 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 09:50:45 +0100
+Subject: [PATCH 6/6] dwc2d: debug output for the network adapter
+
+---
+ drivers/usb/dwc2d/src/ecm.rs  | 17 +++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs |  8 ++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
+index e93a5f8..d452ce1 100644
+--- a/drivers/usb/dwc2d/src/ecm.rs
++++ b/drivers/usb/dwc2d/src/ecm.rs
+@@ -126,6 +126,8 @@ pub struct Ecm {
+     tx: Dma<[u8; BUF_SIZE]>,
+     rx_armed: bool,
+     rx_ready: Option<usize>,
++    rx_frames: u64,
++    tx_frames: u64,
+ }
+ 
+ /// Activate the function: select its configuration and the data interface
+@@ -169,6 +171,8 @@ impl Ecm {
+             tx: Dma::new([0; BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
+             rx_armed: false,
+             rx_ready: None,
++            rx_frames: 0,
++            tx_frames: 0,
+         };
+         ecm.arm_rx();
+         ecm
+@@ -222,6 +226,11 @@ impl Ecm {
+     pub fn mac(&self) -> [u8; 6] {
+         self.mac
+     }
++
++    /// Frames received and sent so far.
++    pub fn counters(&self) -> (u64, u64) {
++        (self.rx_frames, self.tx_frames)
++    }
+ }
+ 
+ impl NetworkAdapter for Ecm {
+@@ -241,12 +250,20 @@ impl NetworkAdapter for Ecm {
+         };
+         let len = len.min(buf.len());
+         buf[..len].copy_from_slice(&self.rx[..len]);
++        self.rx_frames += 1;
++        if self.rx_frames <= 3 {
++            println!("dwc2d: ecm received frame {} ({len} bytes)", self.rx_frames);
++        }
+         self.arm_rx();
+         Ok(Some(len))
+     }
+ 
+     fn write_packet(&mut self, buf: &[u8]) -> SysResult<usize> {
+         let len = buf.len().min(BUF_SIZE);
++        self.tx_frames += 1;
++        if self.tx_frames <= 3 {
++            println!("dwc2d: ecm sending frame {} ({len} bytes)", self.tx_frames);
++        }
+         self.tx[..len].copy_from_slice(&buf[..len]);
+         let timeout = Duration::from_millis(100);
+         let phase = self.phase(false, len);
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 53a518b..c091825 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -89,9 +89,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         "network.usb_ecm".to_string(),
+     );
+     // No interrupts yet: poll for received frames and scheme requests.
++    let mut ticks = 0u64;
++    let mut last_report = std::time::Instant::now();
+     loop {
+         scheme.tick().expect("dwc2d: network scheme failed");
+         std::thread::sleep(std::time::Duration::from_millis(1));
++        ticks += 1;
++        if last_report.elapsed() > std::time::Duration::from_secs(5) {
++            let (rx, tx) = scheme.adapter().counters();
++            println!("dwc2d: alive, {ticks} polls, {rx} frames received, {tx} sent");
++            last_report = std::time::Instant::now();
++        }
+     }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+
