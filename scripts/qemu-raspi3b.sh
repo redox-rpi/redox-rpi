@@ -104,6 +104,11 @@ fi
 
 # Never boot the downloaded image itself, QEMU and redoxfs-file write to it.
 cp "$image" run.img
+# QEMU's SD card must be a power of two in size (SD card images are not).
+size=$(wc -c < run.img)
+sd=1
+while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
+[ "$sd" -eq "$size" ] || truncate -s "$sd" run.img
 
 if [ -n "$kernel" ]; then
     tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
