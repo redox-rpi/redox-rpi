@@ -18,6 +18,8 @@
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest
+#   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
+#                     USB keyboard with `sendkey`
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -43,6 +45,7 @@ expect=()
 timeout=900
 uboot=""
 usb_net=no
+monitor=(-monitor none)
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -52,6 +55,7 @@ while [ $# -gt 0 ]; do
         --timeout) timeout="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
+        --monitor) monitor=(-monitor "unix:$2,server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -120,7 +124,7 @@ qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
-    -display none -monitor none
+    -display none "${monitor[@]}"
     -usb -device usb-kbd)
 if [ "$usb_net" = yes ]; then
     # Host port 12323 reaches devshd (port 2323) in the guest.
