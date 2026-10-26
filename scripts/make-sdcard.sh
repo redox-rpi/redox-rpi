@@ -28,7 +28,13 @@
 #                      you want to use.
 #
 # Also writes <out>.xz (a few MiB, the data partition is mostly zeros), which
-# Raspberry Pi Imager ("Use custom") flashes directly. Or write <out> with dd.
+# Raspberry Pi Imager ("Use custom") or SwiftFlash flashes directly. Or write
+# <out> with dd.
+#
+# Partition 1 gets a `.uuid` file naming the image for SwiftFlash
+# (github.com/zehrer/SwiftFlashCLI, docs/uuid-file.md): only the image block,
+# never a device or flash UUID. VERSION in the environment sets its version
+# (default: git describe).
 
 set -euo pipefail
 
@@ -106,6 +112,21 @@ for file in "${FIRMWARE_FILES[@]}"; do
     mcopy -i "$fat" "$cache/$file" "::$file"
 done
 mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
+if [ -n "$image" ]; then image_id=sdcard-redox; else image_id=sdcard-netboot; fi
+cat > "$out.uuid" <<EOF
+{
+  "schemaVersion": 1,
+  "image": {
+    "id": "$image_id",
+    "name": "Redox OS for Raspberry Pi (redox-rpi)",
+    "version": "${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty)}",
+    "build": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "commit": "$(git -C "$ROOT" rev-parse --short HEAD)"
+  }
+}
+EOF
+mcopy -i "$fat" "$out.uuid" ::.uuid
+rm -f "$out.uuid"
 mcopy -i "$fat" "$uboot" ::u-boot.bin
 if [ -n "$image" ]; then
     efi="$out.efi"
