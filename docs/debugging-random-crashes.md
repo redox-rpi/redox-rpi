@@ -139,6 +139,35 @@ often while reading the results. Only one start printed anything:
 `LD_DEBUG`. The PT_DYNAMIC check did not trigger. So on the Pi the silent
 case dominates; a diagnostic has to reach that one (idea 2).
 
+### Static programs do not crash (Pi, same boot)
+
+The user noticed that `kibi` never crashed. `kibi` is statically linked;
+`ls`, `pwd`, `cat`, `ps` (uutils, coreutils), `ion`, `login` and our own
+`devshd` and `reboot` are dynamic (interpreter `/lib/ld.so.1`). The static
+programs in the image are `getty`, the daemons from `base`, `redoxfs`, `kibi`
+and extrautils (`grep`, `gzip`, `tar`, `less`, …).
+
+Counted by the kernel's `UNHANDLED EXCEPTION … NAME` lines, later in the
+same boot:
+
+| Loop | Crashes |
+|---|---|
+| 60 × `grep` (static), alternating with 60 × `pwd` | `grep` 0 |
+| 40 × `grep` (static) | 0 |
+| 40 × `pwd` (dynamic) | 35 |
+| 40 × `gzip --help` (static), alternating with 40 × `ls /` (dynamic) | `gzip` 0, `ls` 38 |
+
+So the bug is in the dynamic path: the exec code loading `ld.so` as the
+interpreter, `ld.so` itself, or the hand-over from `ld.so` to the program's
+`_start`. Static programs read `AT_REDOX_FILETABLE_FD` from the same kind of
+auxiliary vector and never miss it, which points at what happens to the
+stack between `ld.so` and `relibc_start_v1` (idea 5).
+
+The failure rate also grew during the boot: about a quarter of the starts in
+the first loop, nearly all of them an hour later. That suggests a resource
+that is used up or reused over time, e.g. physical pages that come back
+dirty.
+
 ## Ruled out
 
 | Hypothesis | Experiment | Result |
