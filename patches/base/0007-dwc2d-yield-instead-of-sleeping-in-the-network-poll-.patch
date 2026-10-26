@@ -1,7 +1,7 @@
 From 5f6fb07a4df4b9f33d389bbb2e64b481a8d53473 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 10:04:07 +0100
-Subject: [PATCH 07/14] dwc2d: yield instead of sleeping in the network poll
+Subject: [PATCH 07/15] dwc2d: yield instead of sleeping in the network poll
  loop
 
 Sleeping in an initfs daemon after init switched to the real root

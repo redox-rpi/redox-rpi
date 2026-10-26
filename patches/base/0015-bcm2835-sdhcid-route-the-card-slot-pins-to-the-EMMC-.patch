@@ -1,0 +1,108 @@
+From 777e795b5a47f3069ca435f507014740bdf48092 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 15:54:30 +0100
+Subject: [PATCH 15/15] bcm2835-sdhcid: route the card slot pins to the EMMC
+ controller
+
+The card slot's data reads failed with data CRC errors. Set GPIO 48-53
+to ALT3 (EMMC), take GPIO 34-39 (WLAN) off EMMC and pull CMD and DAT0-3
+up, and print the pin functions before and after.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhcid/src/main.rs | 75 ++++++++++++++++++++++
+ 1 file changed, 75 insertions(+)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/main.rs b/drivers/storage/bcm2835-sdhcid/src/main.rs
+index 09c3ece..af953c6 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/main.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
+@@ -68,6 +68,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         "ioremap 0x{:08x} to 0x{:08x} 2222",
+         reg.starting_address as usize, addr
+     );
++    unsafe { route_sd_pins(reg_addr) };
+     let mut sdhci = sd::SdHostCtrl::new(addr);
+     unsafe {
+         sdhci.init();
+@@ -126,3 +127,77 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     }
+     process::exit(0);
+ }
++
++/// Connect the SD card slot to this controller.
++///
++/// The BCM2837 has two SD controllers: this one (Arasan "EMMC") and
++/// "sdhost". The function of GPIO 48-53 picks which one the card slot uses
++/// (ALT3: EMMC, ALT0: sdhost). On the Pi 3B+, GPIO 34-39 lead to the WLAN
++/// chip and can be switched to EMMC (ALT3) too; with both pin groups on
++/// EMMC, the controller may read data lines from the wrong one. Route the
++/// card slot to EMMC, disconnect the WLAN pins, and pull CMD and DAT0-3 up.
++unsafe fn route_sd_pins(emmc_phys: usize) {
++    // GPIO sits 1 MiB below EMMC on all BCM283x.
++    let gpio_phys = emmc_phys - 0x10_0000;
++    let gpio = match unsafe {
++        common::physmap(
++            gpio_phys,
++            0x1000,
++            common::Prot::RW,
++            common::MemoryType::DeviceMemory,
++        )
++    } {
++        Ok(addr) => addr as *mut u32,
++        Err(err) => {
++            println!("bcm2835-sdhcid: failed to map GPIO: {err:?}");
++            return;
++        }
++    };
++    let reg = |offset: usize| unsafe { gpio.add(offset / 4) };
++    let read = |offset| unsafe { reg(offset).read_volatile() };
++    let write = |offset, value| unsafe { reg(offset).write_volatile(value) };
++    // GPFSELn holds the function of GPIO 10n..10n+9, three bits each.
++    let set_function = |pin: usize, function: u32| {
++        let offset = pin / 10 * 4;
++        let shift = pin % 10 * 3;
++        write(offset, read(offset) & !(7 << shift) | function << shift);
++    };
++    let function = |pin: usize| read(pin / 10 * 4) >> (pin % 10 * 3) & 7;
++
++    println!(
++        "bcm2835-sdhcid: GPFSEL3 0x{:08x} GPFSEL4 0x{:08x} GPFSEL5 0x{:08x}",
++        read(0x0c),
++        read(0x10),
++        read(0x14)
++    );
++
++    const INPUT: u32 = 0;
++    const ALT3: u32 = 7;
++    for pin in 34..=39 {
++        if function(pin) == ALT3 {
++            set_function(pin, INPUT);
++        }
++    }
++    for pin in 48..=53 {
++        set_function(pin, ALT3);
++    }
++
++    // Pull-up on GPIO 49-53 (CMD, DAT0-3): set GPPUD, clock it into the
++    // pins with GPPUDCLK1, wait 150 cycles each step, then clear both.
++    const GPPUD: usize = 0x94;
++    const GPPUDCLK1: usize = 0x9c;
++    const PULL_UP: u32 = 2;
++    write(GPPUD, PULL_UP);
++    std::thread::sleep(std::time::Duration::from_micros(10));
++    write(GPPUDCLK1, 0x1f << (49 - 32));
++    std::thread::sleep(std::time::Duration::from_micros(10));
++    write(GPPUD, 0);
++    write(GPPUDCLK1, 0);
++
++    println!(
++        "bcm2835-sdhcid: now GPFSEL3 0x{:08x} GPFSEL4 0x{:08x} GPFSEL5 0x{:08x}",
++        read(0x0c),
++        read(0x10),
++        read(0x14)
++    );
++}
+-- 
+2.54.0 (Apple Git-157)
+

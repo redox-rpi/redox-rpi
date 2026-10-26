@@ -1,7 +1,7 @@
 From 27f6d25c499e3fd79baaa596ea5bf96d90d4217b Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 15:42:42 +0100
-Subject: [PATCH 14/14] bcm2835-sdhcid: space out register writes, print
+Subject: [PATCH 14/15] bcm2835-sdhcid: space out register writes, print
  interrupt flags on errors
 
 The Arasan controller may drop a register write that follows another

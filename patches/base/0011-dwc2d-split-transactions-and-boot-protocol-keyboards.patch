@@ -1,7 +1,7 @@
 From 2614629def84d87aacd55c327489cb6528104b71 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 12:11:13 +0100
-Subject: [PATCH 11/14] dwc2d: split transactions and boot protocol keyboards
+Subject: [PATCH 11/15] dwc2d: split transactions and boot protocol keyboards
 
 Full- and low-speed devices behind a high-speed hub (every USB port of
 the Pi 3B+) go through the hub's transaction translator. A boot protocol
