@@ -52,6 +52,12 @@ esac
 bootloader="$(find "$REDOX/recipes/core/bootloader/target" -path '*stage/usr/lib/boot/bootloader-live.efi' | head -1)"
 [ -n "$bootloader" ] || { echo "bootloader-live.efi missing, run scripts/build-image.sh" >&2; exit 1; }
 
+# U-Boot unpacks the image from gz_addr to img_addr: it must fit in between.
+if [ "$(wc -c < "$image")" -gt $((gz_addr - img_addr)) ]; then
+    echo "$image is larger than $(((gz_addr - img_addr) >> 20)) MiB, the space U-Boot has for it" >&2
+    exit 1
+fi
+
 mkdir -p "$tftp/redox"
 rm -f "$tftp/redox/harddrive.img"
 gzip -9 -c "$image" > "$tftp/redox/harddrive.img.gz"

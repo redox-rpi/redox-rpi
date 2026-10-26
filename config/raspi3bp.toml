@@ -7,8 +7,11 @@
 include = ["raspi3bp-sdcard.toml"]
 
 [general]
-# U-Boot loads the whole image into RAM: keep it small.
-filesystem_size = 384
+# U-Boot loads the whole image into RAM, to at most 256 MiB
+# (scripts/netboot.sh). The live bootloader comes over the network, so the
+# EFI partition only needs to exist.
+filesystem_size = 256
+efi_partition_size = 32
 
 [packages]
 # Mounts the data partition below; the minimal config has it in initfs only.

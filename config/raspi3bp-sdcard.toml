@@ -9,8 +9,11 @@
 include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
 
 [general]
-# Root filesystem in MiB. RedoxFS does not grow with the card.
+# Disk size in MiB, including the EFI partition. RedoxFS does not grow with
+# the card. scripts/make-sdcard.sh copies the bootloader from the EFI
+# partition (160 KiB), so it can be small.
 filesystem_size = 1024
+efi_partition_size = 32
 
 [packages]
 kernel = "source"
