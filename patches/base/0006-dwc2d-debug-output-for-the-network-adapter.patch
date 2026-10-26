@@ -1,12 +1,12 @@
-From f3988984b42c2ca2c2d9ecdd269d21dc2132bef9 Mon Sep 17 00:00:00 2001
+From dbcfaf412ca1ec31f9420eaf9c62d32c21f3fd7f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 09:50:45 +0100
 Subject: [PATCH 6/6] dwc2d: debug output for the network adapter
 
 ---
  drivers/usb/dwc2d/src/ecm.rs  | 17 +++++++++++++++++
- drivers/usb/dwc2d/src/main.rs | 19 ++++++++++++++++++-
- 2 files changed, 35 insertions(+), 1 deletion(-)
+ drivers/usb/dwc2d/src/main.rs | 25 ++++++++++++++++++++++++-
+ 2 files changed, 41 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
 index e93a5f8..d452ce1 100644
@@ -64,10 +64,10 @@ index e93a5f8..d452ce1 100644
          let timeout = Duration::from_millis(100);
          let phase = self.phase(false, len);
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 53a518b..9d21767 100644
+index 53a518b..356af43 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -84,14 +84,31 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -84,14 +84,37 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
      );
      let mut scheme = NetworkScheme::new(
@@ -86,11 +86,17 @@ index 53a518b..9d21767 100644
 +    let mut ticks = 0u64;
 +    let mut last_report = std::time::Instant::now();
      loop {
++        if ticks < 3 {
++            println!("dwc2d: tick {ticks} start");
++        }
          scheme.tick().expect("dwc2d: network scheme failed");
-+        if ticks == 0 {
-+            println!("dwc2d: first tick done");
++        if ticks < 3 {
++            println!("dwc2d: tick {ticks} done, sleeping");
 +        }
          std::thread::sleep(std::time::Duration::from_millis(1));
++        if ticks < 3 {
++            println!("dwc2d: tick {ticks} slept");
++        }
 +        ticks += 1;
 +        if last_report.elapsed() > std::time::Duration::from_secs(5) {
 +            let (rx, tx) = scheme.adapter().counters();
