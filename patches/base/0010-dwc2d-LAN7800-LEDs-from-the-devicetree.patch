@@ -1,0 +1,143 @@
+From fffb6eb97264060f80ba256040f11f389d1e1701 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 10:40:39 +0100
+Subject: [PATCH 10/10] dwc2d: LAN7800 LEDs from the devicetree
+
+The lite reset switches the LED outputs off. Program the PHY LED modes
+from microchip,led-modes and enable that many LEDs, like Linux and
+FreeBSD do.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 23 +++++++++++++++++++++--
+ drivers/usb/dwc2d/src/main.rs    | 31 ++++++++++++++++++++++++++++---
+ 2 files changed, 49 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index b301c72..7d54d63 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -52,6 +52,8 @@ const MAF_HI0: u16 = 0x400;
+ const MAF_LO0: u16 = 0x404;
+ 
+ const HW_CFG_LRST: u32 = 1 << 1;
++/// LED0..LED3 output enables, bits 20..=23.
++const HW_CFG_LED0_EN: u32 = 1 << 20;
+ const HW_CFG_MEF: u32 = 1 << 4;
+ const PMT_CTL_PHY_RST: u32 = 1 << 4;
+ const USB_CFG_BCE: u32 = 1 << 5;
+@@ -77,6 +79,8 @@ const PHY_ADDR: u32 = 1;
+ const MII_BMCR: u32 = 0;
+ const MII_BMSR: u32 = 1;
+ const MII_ANAR: u32 = 4;
++/// Vendor register: one 4-bit mode per LED.
++const PHY_LED_MODE: u32 = 29;
+ const BMCR_AUTOEN: u16 = 1 << 12;
+ const BMCR_STARTNEG: u16 = 1 << 9;
+ const BMCR_RESET: u16 = 1 << 15;
+@@ -197,8 +201,9 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ 
+ /// Bring the chip up: reset, MAC address, FIFOs, filters, PHY, and enable
+ /// receiver and transmitter. `dt_mac` is the address from the devicetree,
+-/// if any. Returns the MAC address in use.
+-pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>) -> Result<[u8; 6], Error> {
++/// if any; `led_modes` the PHY's `microchip,led-modes` (one entry per LED,
++/// at most four). Returns the MAC address in use.
++pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_modes: &[u32]) -> Result<[u8; 6], Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, 1, 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+@@ -264,6 +269,20 @@ pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>) -> Resu
+     let bmcr = r.mii_read(MII_BMCR)?;
+     r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)?;
+ 
++    // The lite reset turned the LED outputs off. Set the modes the board
++    // wants and enable as many LEDs.
++    let leds = &led_modes[..led_modes.len().min(4)];
++    if !leds.is_empty() {
++        let mut modes = r.mii_read(PHY_LED_MODE)?;
++        for (i, &mode) in leds.iter().enumerate() {
++            modes &= !(0xF << (4 * i));
++            modes |= ((mode & 0xF) as u16) << (4 * i);
++        }
++        r.mii_write(PHY_LED_MODE, modes)?;
++        let enables = (0..leds.len()).fold(0, |bits, i| bits | HW_CFG_LED0_EN << i);
++        r.set(HW_CFG, enables)?;
++    }
++
+     r.set(MAC_RX, MAC_RX_EN)?;
+     r.set(FCT_RX_CTL, FCT_CTL_EN)?;
+ 
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index b5e8933..662fbae 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -78,6 +78,26 @@ fn find_mac(fdt: &Fdt) -> Option<[u8; 6]> {
+     value.try_into().ok()
+ }
+ 
++/// The LED modes of the Ethernet PHY (`microchip,led-modes`), if given.
++fn find_led_modes(fdt: &Fdt) -> Vec<u32> {
++    let Some(path) = fdt
++        .find_node("/aliases")
++        .and_then(|aliases| aliases.properties().find(|p| p.name == "eth_phy"))
++        .and_then(|p| p.as_str())
++    else {
++        return Vec::new();
++    };
++    fdt.find_node(path)
++        .and_then(|phy| phy.property("microchip,led-modes"))
++        .map(|p| {
++            p.value
++                .chunks_exact(4)
++                .map(|cell| u32::from_be_bytes([cell[0], cell[1], cell[2], cell[3]]))
++                .collect()
++        })
++        .unwrap_or_default()
++}
++
+ /// Physical address and size of the controller's registers.
+ fn find_controller(fdt: &Fdt) -> Option<(usize, usize)> {
+     // The Raspberry Pi firmware's own devicetrees say bcm2708-usb, the
+@@ -106,6 +126,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     let dtb = get_dtb();
+     let dt_mac = Fdt::new(&dtb).ok().and_then(|fdt| find_mac(&fdt));
++    let led_modes = Fdt::new(&dtb).map(|fdt| find_led_modes(&fdt)).unwrap_or_default();
+     let Some((phys, size)) = Fdt::new(&dtb).ok().and_then(|fdt| find_controller(&fdt)) else {
+         eprintln!("dwc2d: no DWC2 controller in the devicetree");
+         daemon.ready();
+@@ -121,7 +142,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-    let network = match enumerate(&mut hc, dt_mac) {
++    let network = match enumerate(&mut hc, dt_mac, &led_modes) {
+         Ok(network) => network,
+         Err(err) => {
+             eprintln!("dwc2d: {:?}", err);
+@@ -164,7 +185,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+ /// Enumerate all devices; returns a network function, initialized, with its
+ /// MAC address.
+-fn enumerate(hc: &mut Dwc2, dt_mac: Option<[u8; 6]>) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
++fn enumerate(
++    hc: &mut Dwc2,
++    dt_mac: Option<[u8; 6]>,
++    led_modes: &[u32],
++) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -182,7 +207,7 @@ fn enumerate(hc: &mut Dwc2, dt_mac: Option<[u8; 6]>) -> Result<Option<(NetFuncti
+                 for device in bus.devices.clone() {
+                     if let Some(function) = lan78xx::find(&mut bus, &device) {
+                         println!("dwc2d: LAN7800 at address {}", device.address);
+-                        let mac = lan78xx::init(&mut bus, &function, dt_mac)?;
++                        let mac = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
+                         return Ok(Some((NetFunction::Lan78xx(function), mac)));
+                     }
+                     if let Some(function) = ecm::find(&mut bus, &device) {
+-- 
+2.54.0 (Apple Git-157)
+

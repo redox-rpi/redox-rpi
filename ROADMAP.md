@@ -112,6 +112,8 @@ automated testing in CI later.
 
 ## Phase 6: Real server and release
 
+- ✅ Remote shell over the LAN (`tools/devshd`, port 2323, unencrypted), until SSH works
+
 - Server services: HTTP server, SSH (depending on available Redox ports), NTP
 - Prebuilt images for Pi 3 and Zero 2 W as releases, CI with QEMU `raspi3b`,
   beginner-friendly guide

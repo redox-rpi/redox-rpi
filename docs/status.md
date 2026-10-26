@@ -4,6 +4,19 @@ Last update: 2026-10-24. Upstream revisions checked: redox `4338ac2`,
 kernel `6cfaba5`, base `d2ffc4c`, relibc `5bfdd35`, bootloader `cc922ec`,
 daily image `redox_server_aarch64_2026-10-24_565`.
 
+## Milestone: remote login on a real Pi 3B+ (2026-10-26)
+
+`devshd` ([`tools/devshd`](../tools/devshd)) runs `login` on a pseudo-terminal
+for every TCP connection on port 2323. From the build server, through the
+router: `redox login: root`, `uname -a` → `Redox redox 0.5.12 … aarch64`,
+`ps` (4 CPUs, `dwc2d`, `netstack`, `devshd`, `ion`), and
+`/scheme/netcfg/ifaces/eth0/addr/list` → `192.168.178.148/24`. Port 2323 is
+open about 80 s after power-on. Unencrypted: for the home network only,
+until SSH works.
+
+    socat -,raw,echo=0 tcp:<pi-address>:2323          # interactive
+    scripts/devsh.py <pi-address> 2323 "uname -a"     # scripted
+
 ## Milestone: Ethernet on a real Pi 3B+ (2026-10-26)
 
 Redox on the Raspberry Pi 3B+ is on the LAN: `dwc2d` enumerates both onboard
