@@ -1,0 +1,57 @@
+From b9b1335d4f2322e46d694863d28f536a73ff27b1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 16:52:20 +0100
+Subject: [PATCH 2/2] ld.so: read shared objects instead of mapping them
+
+On aarch64, file mappings from redoxfs sometimes show corrupted contents:
+the loader then fails to link programs at random, or links them with
+garbage. Read the file into anonymous memory instead.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ld_so/linker.rs | 29 +++++++++++++++++------------
+ 1 file changed, 17 insertions(+), 12 deletions(-)
+
+diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
+index 06cd439..1ef106f 100644
+--- a/src/ld_so/linker.rs
++++ b/src/ld_so/linker.rs
+@@ -101,18 +101,23 @@ impl MmapFile {
+     }
+ 
+     fn from_fd(fd: i32, size: usize) -> core::result::Result<Self, Errno> {
+-        let ptr = unsafe {
+-            Sys::mmap(
+-                ptr::null_mut(),
+-                size,
+-                sys_mman::PROT_READ,
+-                sys_mman::MAP_PRIVATE,
+-                fd,
+-                0,
+-            )
+-        }?;
+-
+-        Ok(Self { fd, ptr, size })
++        // Read the file into anonymous memory instead of mapping it. On
++        // aarch64, file mappings from redoxfs sometimes show corrupted
++        // contents (redox-rpi docs/debugging-random-crashes.md).
++        let anonymous = Self::anonymous(size.max(1))?;
++        let ptr = anonymous.ptr;
++        core::mem::forget(anonymous);
++        let this = Self { fd, ptr, size };
++        let buf = this.as_mut_slice();
++        let mut done = 0;
++        while done < size {
++            let offset = done.try_into().map_err(|_| Errno(crate::header::errno::EOVERFLOW))?;
++            match Sys::pread(fd, &mut buf[done..], offset)? {
++                0 => break,
++                n => done += n,
++            }
++        }
++        Ok(this)
+     }
+ 
+     fn anonymous(size: usize) -> core::result::Result<Self, Errno> {
+-- 
+2.54.0 (Apple Git-157)
+
