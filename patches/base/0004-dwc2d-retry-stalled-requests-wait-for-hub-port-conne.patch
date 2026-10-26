@@ -1,0 +1,114 @@
+From 7a2c50f57999046ce7126b9745258f14e01684a0 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 08:29:20 +0100
+Subject: [PATCH 4/4] dwc2d: retry stalled requests, wait for hub port
+ connections
+
+On the real Pi 3B+ the first request after a reset sometimes stalls and
+the LAN7800 connects to its hub port later than 100 ms after power-on.
+Retry stalled control requests, start high-speed devices with a max
+packet size of 64, and poll hub ports for up to a second.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 68 ++++++++++++++++++++++--------
+ 1 file changed, 51 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index a532417..e6da8d3 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -81,17 +81,33 @@ impl<'a> Bus<'a> {
+         let [v0, v1] = value.to_le_bytes();
+         let [i0, i1] = index.to_le_bytes();
+         let [l0, l1] = length.to_le_bytes();
+-        *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
+-        let len = self
+-            .hc
+-            .control(address, max_packet, speed == Speed::Low, &mut self.setup, &mut self.data)
+-            .inspect_err(|err| {
+-                println!(
+-                    "dwc2d: request {:02x?} to address {address} (max packet {max_packet}, {speed:?} speed) failed: {err:?}",
+-                    *self.setup
+-                );
+-            })?;
+-        Ok(self.data[..len].to_vec())
++        // A device sometimes stalls its first request after a reset (seen on
++        // the real Pi 3B+ hubs); the same request succeeds a moment later.
++        const ATTEMPTS: usize = 3;
++        let mut attempt = 1;
++        loop {
++            *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
++            match self.hc.control(
++                address,
++                max_packet,
++                speed == Speed::Low,
++                &mut self.setup,
++                &mut self.data,
++            ) {
++                Ok(len) => return Ok(self.data[..len].to_vec()),
++                Err(Error::Stall) if attempt < ATTEMPTS => {
++                    attempt += 1;
++                    sleep(Duration::from_millis(10));
++                }
++                Err(err) => {
++                    println!(
++                        "dwc2d: request {:02x?} to address {address} (max packet {max_packet}, {speed:?} speed) failed: {err:?}",
++                        *self.setup
++                    );
++                    return Err(err);
++                }
++            }
++        }
+     }
+ 
+     /// Enumerate the device that was just reset on a port (address 0) and,
+@@ -106,8 +122,9 @@ impl<'a> Bus<'a> {
+         }
+ 
+         // The first 8 bytes of the device descriptor hold the max packet
+-        // size of endpoint 0.
+-        let head = self.request(0, 8, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8)?;
++        // size of endpoint 0. High-speed devices always use 64.
++        let initial_max_packet = if speed == Speed::High { 64 } else { 8 };
++        let head = self.request(0, initial_max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8)?;
+         let max_packet = u16::from(head[7]);
+ 
+         let address = self.next_address;
+@@ -158,12 +175,29 @@ impl<'a> Bus<'a> {
+         for port in 1..=ports {
+             self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
+         }
+-        // Power-on-to-power-good time, plus time for devices to connect.
+-        sleep(power_on_delay + Duration::from_millis(100));
++        // Power-on-to-power-good time.
++        sleep(power_on_delay.max(Duration::from_millis(20)));
++
++        // Devices take a while to signal their connection after power-on
++        // (the Pi 3B+'s LAN7800 was missed after 100 ms). Collect the ports
++        // that connect within a second.
++        let mut connected = vec![false; usize::from(ports) + 1];
++        let start = Instant::now();
++        loop {
++            for port in 1..=ports {
++                if !connected[usize::from(port)] {
++                    let (status, _) = self.port_status(hub, max_packet, speed, port)?;
++                    connected[usize::from(port)] = status & PORT_STAT_CONNECTION != 0;
++                }
++            }
++            if connected[1..].iter().all(|&c| c) || start.elapsed() > Duration::from_secs(1) {
++                break;
++            }
++            sleep(Duration::from_millis(50));
++        }
+ 
+         for port in 1..=ports {
+-            let (status, _) = self.port_status(hub, max_packet, speed, port)?;
+-            if status & PORT_STAT_CONNECTION == 0 {
++            if !connected[usize::from(port)] {
+                 continue;
+             }
+             self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
+-- 
+2.54.0 (Apple Git-157)
+
