@@ -4,6 +4,19 @@ Last update: 2026-10-24. Upstream revisions checked: redox `4338ac2`,
 kernel `6cfaba5`, base `d2ffc4c`, relibc `5bfdd35`, bootloader `cc922ec`,
 daily image `redox_server_aarch64_2026-10-24_565`.
 
+## Findings: SD card and prebuilt programs (2026-10-26)
+
+- **SD card on real hardware:** Redox' `bcm2835-sdhcid` failed reads on the
+  Pi 3B+ after a while (`Timeout waiting for ready to read`, then
+  `SR_DAT_INHIBIT TIMEOUT` for every transfer), and programs loaded from the
+  card crashed, `login` first. The driver never reset the data line after an
+  error and ran the card at 62.5 MHz (base clock assumed 41.67 MHz, the
+  firmware gives 250 MHz). Patched: reset and retry, 12.5 MHz.
+- **Prebuilt programs:** bash, nano, vim, tmux, ripgrep, curl, wget and gawk
+  from Redox' aarch64 package repository stop at start with a `brk`
+  exception (ESR `0xF2000001`), `find` fails to link; in QEMU as on the Pi.
+  coreutils, ion, kibi and diffutils run. Not in our images for now.
+
 ## Milestone: USB keyboard on a real Pi 3B+ (2026-10-26)
 
 Login and shell with a USB keyboard on the Pi's HDMI console. Every USB port
