@@ -1,0 +1,189 @@
+From ebac18dd087598be4b379c5fc31711be394a962d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 13:09:55 +0100
+Subject: [PATCH 12/12] bcm2835-sdhcid: recover from failed transfers, correct
+ SD clock
+
+On a real Raspberry Pi 3B+, reads from the SD card failed after a while:
+one 'Timeout waiting for ready to read', then SR_DAT_INHIBIT TIMEOUT for
+every later transfer, as the data line was never reset. Programs loaded
+from the card crashed.
+
+- Reset the command and data lines after a failed transfer and retry it.
+- Return errors instead of panicking on failed commands.
+- Divide the clock from the 250 MHz the firmware gives the controller;
+  the 41.67 MHz assumed before ran the card at 62.5 MHz.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 86 ++++++++++++++------
+ 1 file changed, 63 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index ec0217f..f84d571 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -124,6 +124,16 @@ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
+ //added by bztsrc driver
+ const SCR_SUPP_CCS: u32 = 0x0000_0001;
+ 
++/// Base clock of the EMMC controller. The Raspberry Pi 3 firmware runs it
++/// at 250 MHz; the 41.67 MHz assumed before put the card at 62.5 MHz instead
++/// of at most 25 MHz, and reads failed on real hardware. Should the clock be
++/// lower, the card just runs slower.
++const EMMC_BASE_CLOCK: u32 = 250_000_000;
++
++/// Attempts for a block transfer, with a reset of the command and data
++/// lines in between.
++const TRANSFER_ATTEMPTS: usize = 3;
++
+ #[repr(C, packed)]
+ pub struct SdHostCtrlRegs {
+     //LSB
+@@ -410,7 +420,7 @@ impl SdHostCtrl {
+         regs.control1.write(reg_val);
+         wait_msec(10);
+ 
+-        let c = 4166_6666 / freq;
++        let c = EMMC_BASE_CLOCK / freq;
+         let mut x: u32 = c - 1;
+         let mut s: u32 = 32;
+ 
+@@ -642,9 +652,9 @@ impl SdHostCtrl {
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write((num) << 16 | 512);
+             if num == 1 {
+-                self.sd_cmd(CMD_READ_SINGLE, lba).unwrap();
++                self.sd_cmd(CMD_READ_SINGLE, lba)?;
+             } else {
+-                self.sd_cmd(CMD_READ_MULTI, lba).unwrap();
++                self.sd_cmd(CMD_READ_MULTI, lba)?;
+             }
+         } else {
+             let regs = self.regs.get_mut().unwrap();
+@@ -654,7 +664,7 @@ impl SdHostCtrl {
+         let mut cnt = 0;
+         while cnt < num {
+             if (self.scr[0] & SCR_SUPP_CCS) == 0 {
+-                self.sd_cmd(CMD_READ_SINGLE, (lba + cnt) * 512).unwrap();
++                self.sd_cmd(CMD_READ_SINGLE, (lba + cnt) * 512)?;
+             }
+ 
+             if let Err(_) = self.sd_int(INT_READ_RDY) {
+@@ -672,7 +682,7 @@ impl SdHostCtrl {
+ 
+         if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0
+         {
+-            self.sd_cmd(CMD_STOP_TRANS, 0).unwrap();
++            self.sd_cmd(CMD_STOP_TRANS, 0)?;
+         }
+         Ok((num * 512) as usize)
+     }
+@@ -697,9 +707,9 @@ impl SdHostCtrl {
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write((num) << 16 | 512);
+             if num == 1 {
+-                self.sd_cmd(CMD_WRITE_SINGLE, lba).unwrap();
++                self.sd_cmd(CMD_WRITE_SINGLE, lba)?;
+             } else {
+-                self.sd_cmd(CMD_WRITE_MULTI, lba).unwrap();
++                self.sd_cmd(CMD_WRITE_MULTI, lba)?;
+             }
+         } else {
+             let regs = self.regs.get_mut().unwrap();
+@@ -709,7 +719,7 @@ impl SdHostCtrl {
+         let mut cnt = 0;
+         while cnt < num {
+             if (self.scr[0] & SCR_SUPP_CCS) == 0 {
+-                self.sd_cmd(CMD_WRITE_SINGLE, (lba + cnt) * 512).unwrap();
++                self.sd_cmd(CMD_WRITE_SINGLE, (lba + cnt) * 512)?;
+             }
+ 
+             if let Err(_) = self.sd_int(INT_WRITE_RDY) {
+@@ -732,10 +742,30 @@ impl SdHostCtrl {
+ 
+         if num > 1 && (self.scr[0] & SCR_SUPP_SET_BLKCNT) == 0 && (self.scr[0] & SCR_SUPP_CCS) != 0
+         {
+-            self.sd_cmd(CMD_STOP_TRANS, 0).unwrap();
++            self.sd_cmd(CMD_STOP_TRANS, 0)?;
+         }
+         Ok((num * 512) as usize)
+     }
++
++    /// Bring the controller back to idle after a failed transfer: stop the
++    /// card's transfer, reset the command and data lines and clear all
++    /// interrupt flags. Without this, the data line stays busy and every
++    /// later transfer fails with SR_DAT_INHIBIT TIMEOUT.
++    pub unsafe fn recover(&mut self) {
++        let regs = self.regs.get_mut().unwrap();
++        regs.interrupt.write(0xffff_ffff);
++        let _ = self.sd_cmd(CMD_STOP_TRANS, 0);
++
++        let regs = self.regs.get_mut().unwrap();
++        let reg_val = regs.control1.read();
++        regs.control1.write(reg_val | C1_SRST_CMD | C1_SRST_DATA);
++        let mut cnt = 100;
++        while cnt > 0 && regs.control1.read() & (C1_SRST_CMD | C1_SRST_DATA) != 0 {
++            wait_msec(1);
++            cnt -= 1;
++        }
++        regs.interrupt.write(0xffff_ffff);
++    }
+ }
+ 
+ impl Disk for SdHostCtrl {
+@@ -757,13 +787,18 @@ impl Disk for SdHostCtrl {
+         let u32_len = buffer.len() / size_of::<u32>();
+         let num = buffer.len() / 512;
+         let u8_ptr = buffer.as_mut_ptr();
+-        let ret = unsafe {
+-            let u32_buffer = core::slice::from_raw_parts_mut(u8_ptr as *mut u32, u32_len);
+-            self.sd_readblock(block as u32, u32_buffer, num as u32)
+-        };
+-        match ret {
+-            Ok(cnt) => Ok(cnt),
+-            Err(err) => Err(err),
++        let u32_buffer = unsafe { core::slice::from_raw_parts_mut(u8_ptr as *mut u32, u32_len) };
++        let mut attempt = 1;
++        loop {
++            match unsafe { self.sd_readblock(block as u32, u32_buffer, num as u32) } {
++                Ok(cnt) => return Ok(cnt),
++                Err(err) if attempt >= TRANSFER_ATTEMPTS => return Err(err),
++                Err(_) => {
++                    println!("bcm2835-sdhcid: read of block {block} failed, retrying");
++                    unsafe { self.recover() };
++                    attempt += 1;
++                }
++            }
+         }
+     }
+ 
+@@ -776,13 +811,18 @@ impl Disk for SdHostCtrl {
+         let u32_len = buffer.len() / size_of::<u32>();
+         let num = buffer.len() / 512;
+         let u8_ptr = buffer.as_ptr();
+-        let ret = unsafe {
+-            let u32_buffer = core::slice::from_raw_parts(u8_ptr as *const u32, u32_len);
+-            self.sd_writeblock(block as u32, u32_buffer, num as u32)
+-        };
+-        match ret {
+-            Ok(cnt) => Ok(cnt),
+-            Err(err) => Err(err),
++        let u32_buffer = unsafe { core::slice::from_raw_parts(u8_ptr as *const u32, u32_len) };
++        let mut attempt = 1;
++        loop {
++            match unsafe { self.sd_writeblock(block as u32, u32_buffer, num as u32) } {
++                Ok(cnt) => return Ok(cnt),
++                Err(err) if attempt >= TRANSFER_ATTEMPTS => return Err(err),
++                Err(_) => {
++                    println!("bcm2835-sdhcid: write of block {block} failed, retrying");
++                    unsafe { self.recover() };
++                    attempt += 1;
++                }
++            }
+         }
+     }
+ }
+-- 
+2.54.0 (Apple Git-157)
+
