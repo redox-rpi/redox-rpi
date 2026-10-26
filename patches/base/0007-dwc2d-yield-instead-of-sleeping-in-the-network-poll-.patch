@@ -1,0 +1,38 @@
+From 5f6fb07a4df4b9f33d389bbb2e64b481a8d53473 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 10:04:07 +0100
+Subject: [PATCH 7/7] dwc2d: yield instead of sleeping in the network poll loop
+
+Sleeping in an initfs daemon after init switched to the real root
+filesystem never returns, which blocked the network adapter and with it
+netstack and the boot. Yield until the driver uses interrupts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/main.rs | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 80609f6..b71e0af 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -89,11 +89,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         "network.usb_ecm".to_string(),
+     );
+     // No interrupts yet: poll for received frames and scheme requests.
+-    // No output from here on: after boot nobody may read our stdout, and a
+-    // full pipe would block the whole adapter.
++    // Two things learned the hard way: printing from here on can block for
++    // good (nobody may read our stdout after boot), and so does sleeping
++    // once init has switched to the real root filesystem. Yielding costs a
++    // busy core until the driver uses interrupts.
+     loop {
+         scheme.tick().expect("dwc2d: network scheme failed");
+-        std::thread::sleep(std::time::Duration::from_millis(1));
++        std::thread::yield_now();
+     }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

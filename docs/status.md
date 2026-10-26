@@ -156,8 +156,21 @@ subclass 0x01, protocol 0x01) with an interrupt endpoint `0x81`. Full and low
 speed devices behind a high-speed hub (keyboards on the real Pi) still need
 split transactions and are skipped with a message.
 
-Next: interrupt transfers and the scheme interface of `xhcid`, so `usbhidd`
-can run on top; split transactions.
+**Network** (third stage, 2026-10-26): bulk transfers on separate channels
+(one receive transfer kept pending) and a CDC Ethernet (ECM) adapter on top
+of `driver-network`, running inside `dwc2d`. In QEMU `raspi3b` with
+`scripts/qemu-raspi3b.sh --usb-net` (QEMU's `usb-net` behind its hub, next
+to the keyboard) Redox gets `10.0.2.15/24` by DHCP and pings `10.0.2.2` with
+0 % loss: the whole path from USB to the network stack works.
+
+Two Redox pitfalls found on the way: an initfs daemon that sleeps after init
+switched to the real root filesystem never wakes up, and printing from it
+after boot can block. The poll loop therefore yields and stays silent (one
+busy core until the driver uses interrupts).
+
+Next: the LAN7800 (Pi 3B+) and RTL8152 (Zero 2 W HAT) on the same bulk
+transfers; interrupts; split transactions for keyboards behind high-speed
+hubs; the `xhcid` scheme interface for `usbhidd`.
 
 ## Implications for the Zero 2 W
 
