@@ -1,0 +1,601 @@
+From 5affc48db1ea02d9784c802414cf87a37c80ca24 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 10:13:16 +0100
+Subject: [PATCH 8/8] dwc2d: LAN7800 Ethernet (Raspberry Pi 3B+)
+
+Initializes the Microchip LAN7800 over vendor register requests (lite
+reset, MAC address and perfect filter, USB burst settings, FIFOs, PHY
+autonegotiation) and runs it as a network adapter with its RX/TX command
+headers. Written from the datasheet with FreeBSD's if_muge (BSD-2-Clause)
+as reference. Untested on hardware yet.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs |  28 ++
+ drivers/usb/dwc2d/src/lan78xx.rs   | 411 +++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs      |  74 +++++-
+ 3 files changed, 504 insertions(+), 9 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/lan78xx.rs
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 3d1762e..55d0a25 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -112,6 +112,34 @@ impl<'a> Bus<'a> {
+         }
+     }
+ 
++    /// A control request with a data stage towards the device.
++    pub(crate) fn request_out(
++        &mut self,
++        address: u8,
++        max_packet: u16,
++        speed: Speed,
++        request_type: u8,
++        request: u8,
++        value: u16,
++        index: u16,
++        data: &[u8],
++    ) -> Result<(), Error> {
++        let [v0, v1] = value.to_le_bytes();
++        let [i0, i1] = index.to_le_bytes();
++        let [l0, l1] = (data.len() as u16).to_le_bytes();
++        self.data[..data.len()].copy_from_slice(data);
++        *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
++        self.hc
++            .control(address, max_packet, speed == Speed::Low, &mut self.setup, &mut self.data)
++            .inspect_err(|err| {
++                println!(
++                    "dwc2d: request {:02x?} to address {address} failed: {err:?}",
++                    *self.setup
++                );
++            })
++            .map(|_| ())
++    }
++
+     /// Enumerate the device that was just reset on a port (address 0) and,
+     /// if it is a hub, everything behind it.
+     pub fn enumerate(&mut self, speed: Speed, depth: usize) -> Result<(), Error> {
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+new file mode 100644
+index 0000000..f6cb51e
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -0,0 +1,411 @@
++//! Microchip LAN7800 USB Gigabit Ethernet, the onboard Ethernet of the
++//! Raspberry Pi 3B+.
++//!
++//! Written from the LAN7800 datasheet, with FreeBSD's if_muge (BSD-2-Clause)
++//! as reference for the initialization order. Polled, no interrupt endpoint.
++
++use std::collections::VecDeque;
++use std::thread::sleep;
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++use driver_network::NetworkAdapter;
++use syscall::error::{Error as SysError, Result as SysResult, EIO};
++
++use crate::dwc2::{Dwc2, Error, Phase, Speed};
++use crate::enumerate::{Bus, Device};
++use crate::regs::{EPTYPE_BULK, PID_DATA0};
++
++pub const VENDOR_MICROCHIP: u16 = 0x0424;
++pub const PRODUCT_LAN7800: u16 = 0x7800;
++
++// Vendor requests for register access
++const REQ_WRITE_REG: u8 = 0xA0;
++const REQ_READ_REG: u8 = 0xA1;
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++
++// Registers
++const ID_REV: u16 = 0x000;
++const INT_STS: u16 = 0x00C;
++const HW_CFG: u16 = 0x010;
++const PMT_CTL: u16 = 0x014;
++const USB_CFG0: u16 = 0x080;
++const BURST_CAP: u16 = 0x090;
++const BULK_IN_DLY: u16 = 0x094;
++const RFE_CTL: u16 = 0x0B0;
++const FCT_RX_CTL: u16 = 0x0C0;
++const FCT_TX_CTL: u16 = 0x0C4;
++const FCT_RX_FIFO_END: u16 = 0x0C8;
++const FCT_TX_FIFO_END: u16 = 0x0CC;
++const FCT_FLOW: u16 = 0x0D0;
++const MAC_CR: u16 = 0x100;
++const MAC_RX: u16 = 0x104;
++const MAC_TX: u16 = 0x108;
++const FLOW: u16 = 0x10C;
++const RX_ADDRH: u16 = 0x118;
++const RX_ADDRL: u16 = 0x11C;
++const MII_ACC: u16 = 0x120;
++const MII_DATA: u16 = 0x124;
++/// Perfect address filter, entry 0 (high and low word).
++const MAF_HI0: u16 = 0x400;
++const MAF_LO0: u16 = 0x404;
++
++const HW_CFG_LRST: u32 = 1 << 1;
++const HW_CFG_MEF: u32 = 1 << 4;
++const PMT_CTL_PHY_RST: u32 = 1 << 4;
++const USB_CFG_BCE: u32 = 1 << 5;
++const USB_CFG_BIR: u32 = 1 << 6;
++const RFE_CTL_DA_PERFECT: u32 = 1 << 1;
++const RFE_CTL_BCAST_EN: u32 = 1 << 10;
++const FCT_CTL_EN: u32 = 1 << 31;
++const MAC_CR_AUTO_SPEED: u32 = 1 << 11;
++const MAC_CR_AUTO_DUPLEX: u32 = 1 << 12;
++const MAC_RX_EN: u32 = 1 << 0;
++const MAC_RX_MAX_SIZE_SHIFT: u32 = 16;
++const MAC_RX_MAX_SIZE_MASK: u32 = 0x3FFF_0000;
++const MAC_TX_EN: u32 = 1 << 0;
++const MAF_HI_VALID: u32 = 1 << 31;
++const MII_ACC_BUSY: u32 = 1 << 0;
++const MII_ACC_WRITE: u32 = 1 << 1;
++
++const FIFO_SIZE: u32 = 12 * 1024;
++const BULK_IN_DELAY: u32 = 0x0800;
++
++// PHY (internal, MII address 1) registers
++const PHY_ADDR: u32 = 1;
++const MII_BMCR: u32 = 0;
++const MII_BMSR: u32 = 1;
++const MII_ANAR: u32 = 4;
++const BMCR_AUTOEN: u16 = 1 << 12;
++const BMCR_STARTNEG: u16 = 1 << 9;
++const BMCR_RESET: u16 = 1 << 15;
++const BMSR_LINK: u16 = 1 << 2;
++/// 10/100 half and full duplex, CSMA, symmetric and asymmetric pause.
++const ANAR_ALL: u16 = 0x0DE1;
++
++// Frame headers
++const RX_HEADER_LEN: usize = 10;
++const RX_CMD_A_LEN_MASK: u32 = 0x3FFF;
++const RX_CMD_A_RED: u32 = 1 << 22;
++const TX_HEADER_LEN: usize = 8;
++const TX_CMD_A_FCS: u32 = 1 << 22;
++const ETHER_CRC_LEN: usize = 4;
++const ETHER_MAX_LEN: u32 = 1518;
++
++const RX_CHANNEL: usize = 1;
++const TX_CHANNEL: usize = 2;
++/// One bulk IN transfer can carry several frames, up to the burst cap.
++const RX_BUF_SIZE: usize = 16 * 1024;
++const TX_BUF_SIZE: usize = 2048;
++
++pub struct Lan78xxFunction {
++    pub address: u8,
++    pub speed: Speed,
++    max_packet0: u16,
++    ep_in: u8,
++    ep_out: u8,
++    max_packet_in: u16,
++    max_packet_out: u16,
++}
++
++/// Recognize a LAN7800 and find its bulk endpoints.
++pub fn find(bus: &mut Bus, device: &Device) -> Option<Lan78xxFunction> {
++    if device.vendor != VENDOR_MICROCHIP || device.product != PRODUCT_LAN7800 {
++        return None;
++    }
++    let config = bus
++        .request(device.address, device.max_packet, device.speed, 0x80, REQ_GET_DESCRIPTOR, 0x0200, 0, 512)
++        .ok()?;
++    let mut function = Lan78xxFunction {
++        address: device.address,
++        speed: device.speed,
++        max_packet0: device.max_packet,
++        ep_in: 0,
++        ep_out: 0,
++        max_packet_in: 0,
++        max_packet_out: 0,
++    };
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        if desc[1] == 5 && desc.len() >= 7 && desc[3] & 3 == 2 {
++            let max_packet = u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF;
++            if desc[2] & 0x80 != 0 {
++                function.ep_in = desc[2] & 0xF;
++                function.max_packet_in = max_packet;
++            } else {
++                function.ep_out = desc[2] & 0xF;
++                function.max_packet_out = max_packet;
++            }
++        }
++        pos += desc.len();
++    }
++    (function.ep_in != 0 && function.ep_out != 0).then_some(function)
++}
++
++struct Regs<'a, 'b> {
++    bus: &'a mut Bus<'b>,
++    f: &'a Lan78xxFunction,
++}
++
++impl Regs<'_, '_> {
++    fn read(&mut self, reg: u16) -> Result<u32, Error> {
++        let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
++        Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
++    }
++
++    fn write(&mut self, reg: u16, value: u32) -> Result<(), Error> {
++        self.bus.request_out(self.f.address, self.f.max_packet0, self.f.speed, 0x40, REQ_WRITE_REG, 0, reg, &value.to_le_bytes())
++    }
++
++    fn set(&mut self, reg: u16, bits: u32) -> Result<(), Error> {
++        let value = self.read(reg)?;
++        self.write(reg, value | bits)
++    }
++
++    /// Wait until `bits` read back as clear.
++    fn wait_clear(&mut self, reg: u16, bits: u32, what: &'static str) -> Result<(), Error> {
++        let start = Instant::now();
++        while self.read(reg)? & bits != 0 {
++            if start.elapsed() > Duration::from_secs(1) {
++                return Err(Error::Timeout(what));
++            }
++            sleep(Duration::from_millis(1));
++        }
++        Ok(())
++    }
++
++    fn mii_read(&mut self, reg: u32) -> Result<u16, Error> {
++        self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII busy")?;
++        self.write(MII_ACC, (PHY_ADDR << 11) | (reg << 6) | MII_ACC_BUSY)?;
++        self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII read")?;
++        Ok(self.read(MII_DATA)? as u16)
++    }
++
++    fn mii_write(&mut self, reg: u32, value: u16) -> Result<(), Error> {
++        self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII busy")?;
++        self.write(MII_DATA, u32::from(value))?;
++        self.write(MII_ACC, (PHY_ADDR << 11) | (reg << 6) | MII_ACC_WRITE | MII_ACC_BUSY)?;
++        self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII write")
++    }
++}
++
++fn valid_mac(mac: &[u8; 6]) -> bool {
++    mac[0] & 1 == 0 && mac.iter().any(|&b| b != 0)
++}
++
++/// Bring the chip up: reset, MAC address, FIFOs, filters, PHY, and enable
++/// receiver and transmitter. Returns the MAC address.
++pub fn init(bus: &mut Bus, f: &Lan78xxFunction) -> Result<[u8; 6], Error> {
++    bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, 1, 0, 0)?;
++    let mut r = Regs { bus, f };
++
++    // The firmware or U-Boot may already have programmed the address.
++    let low = r.read(RX_ADDRL)?.to_le_bytes();
++    let high = r.read(RX_ADDRH)?.to_le_bytes();
++    let mut mac = [low[0], low[1], low[2], low[3], high[0], high[1]];
++    if !valid_mac(&mac) {
++        // Locally administered fallback.
++        mac = [0x02, 0x52, 0x65, 0x64, 0x6F, 0x78];
++    }
++
++    r.write(HW_CFG, HW_CFG_LRST)?;
++    r.wait_clear(HW_CFG, HW_CFG_LRST, "lite reset")?;
++
++    let id = r.read(ID_REV)?;
++    println!("dwc2d: LAN78xx chip {:04x} rev {:04x}", id >> 16, id & 0xFFFF);
++
++    let address_low = u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]);
++    let address_high = u32::from(mac[4]) | u32::from(mac[5]) << 8;
++    r.write(RX_ADDRL, address_low)?;
++    r.write(RX_ADDRH, address_high)?;
++    r.write(MAF_LO0, address_low)?;
++    r.write(MAF_HI0, address_high | MAF_HI_VALID)?;
++
++    // Bulk IN answers NAK when empty; burst up to the FIFO size.
++    r.set(USB_CFG0, USB_CFG_BIR)?;
++    let packet = if f.speed == Speed::High { 512 } else { 64 };
++    r.write(BURST_CAP, FIFO_SIZE / packet)?;
++    r.write(BULK_IN_DLY, BULK_IN_DELAY)?;
++    r.set(HW_CFG, HW_CFG_MEF)?;
++    r.set(USB_CFG0, USB_CFG_BCE)?;
++
++    r.write(FCT_RX_FIFO_END, (FIFO_SIZE - 512) / 512)?;
++    r.write(FCT_TX_FIFO_END, (FIFO_SIZE - 512) / 512)?;
++    r.write(INT_STS, u32::MAX)?;
++    r.write(FLOW, 0)?;
++    r.write(FCT_FLOW, 0)?;
++    r.set(RFE_CTL, RFE_CTL_BCAST_EN | RFE_CTL_DA_PERFECT)?;
++
++    r.write(PMT_CTL, PMT_CTL_PHY_RST)?;
++    r.wait_clear(PMT_CTL, PMT_CTL_PHY_RST, "PHY reset")?;
++    r.set(MAC_CR, MAC_CR_AUTO_SPEED | MAC_CR_AUTO_DUPLEX)?;
++
++    r.set(MAC_TX, MAC_TX_EN)?;
++    r.set(FCT_TX_CTL, FCT_CTL_EN)?;
++    let mac_rx = r.read(MAC_RX)? & !MAC_RX_MAX_SIZE_MASK;
++    r.write(MAC_RX, mac_rx | ((ETHER_MAX_LEN + 4) << MAC_RX_MAX_SIZE_SHIFT))?;
++
++    // PHY: reset, advertise everything, autonegotiate.
++    r.mii_write(MII_BMCR, BMCR_RESET)?;
++    let start = Instant::now();
++    while r.mii_read(MII_BMCR)? & BMCR_RESET != 0 {
++        if start.elapsed() > Duration::from_secs(1) {
++            return Err(Error::Timeout("PHY BMCR reset"));
++        }
++        sleep(Duration::from_millis(10));
++    }
++    r.mii_write(MII_ANAR, ANAR_ALL)?;
++    let bmcr = r.mii_read(MII_BMCR)?;
++    r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)?;
++
++    r.set(MAC_RX, MAC_RX_EN)?;
++    r.set(FCT_RX_CTL, FCT_CTL_EN)?;
++
++    // Wait for the link, so DHCP does not start into a dead cable.
++    let start = Instant::now();
++    loop {
++        // The link bit latches low; read twice for the current state.
++        r.mii_read(MII_BMSR)?;
++        if r.mii_read(MII_BMSR)? & BMSR_LINK != 0 {
++            println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
++            break;
++        }
++        if start.elapsed() > Duration::from_secs(5) {
++            println!("dwc2d: LAN78xx no link yet");
++            break;
++        }
++        sleep(Duration::from_millis(100));
++    }
++    Ok(mac)
++}
++
++pub struct Lan78xx {
++    hc: Dwc2,
++    f: Lan78xxFunction,
++    mac: [u8; 6],
++    in_pid: u32,
++    out_pid: u32,
++    rx: Dma<[u8; RX_BUF_SIZE]>,
++    tx: Dma<[u8; TX_BUF_SIZE]>,
++    rx_armed: bool,
++    frames: VecDeque<Vec<u8>>,
++}
++
++impl Lan78xx {
++    pub fn new(hc: Dwc2, f: Lan78xxFunction, mac: [u8; 6]) -> Self {
++        let mut lan = Self {
++            hc,
++            f,
++            mac,
++            in_pid: PID_DATA0,
++            out_pid: PID_DATA0,
++            rx: Dma::new([0; RX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            tx: Dma::new([0; TX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            rx_armed: false,
++            frames: VecDeque::new(),
++        };
++        lan.arm_rx();
++        lan
++    }
++
++    fn phase(&self, dir_in: bool, len: usize) -> Phase {
++        Phase {
++            dev_addr: self.f.address,
++            endpoint: if dir_in { self.f.ep_in } else { self.f.ep_out },
++            dir_in,
++            ep_type: EPTYPE_BULK,
++            max_packet: if dir_in { self.f.max_packet_in } else { self.f.max_packet_out },
++            low_speed: false,
++            pid: if dir_in { self.in_pid } else { self.out_pid },
++            buf_phys: if dir_in { self.rx.physical() } else { self.tx.physical() },
++            len,
++        }
++    }
++
++    fn arm_rx(&mut self) {
++        let phase = self.phase(true, RX_BUF_SIZE);
++        self.hc.start(RX_CHANNEL, &phase);
++        self.rx_armed = true;
++    }
++
++    /// Split a completed bulk IN transfer into frames.
++    fn parse_rx(&mut self, len: usize) {
++        let mut off = 0;
++        while off + RX_HEADER_LEN <= len {
++            let cmd_a = u32::from_le_bytes([self.rx[off], self.rx[off + 1], self.rx[off + 2], self.rx[off + 3]]);
++            off += RX_HEADER_LEN;
++            let frame_len = (cmd_a & RX_CMD_A_LEN_MASK) as usize;
++            if frame_len < ETHER_CRC_LEN || off + frame_len > len {
++                break;
++            }
++            if cmd_a & RX_CMD_A_RED == 0 {
++                self.frames.push_back(self.rx[off..off + frame_len - ETHER_CRC_LEN].to_vec());
++            }
++            // The next header starts on a 4-byte boundary.
++            off = (off + frame_len + 3) & !3;
++        }
++    }
++
++    fn poll_rx(&mut self) {
++        if !self.rx_armed {
++            return;
++        }
++        match self.hc.poll(RX_CHANNEL, RX_BUF_SIZE) {
++            None => {}
++            Some(Ok((len, next_pid))) => {
++                self.in_pid = next_pid;
++                self.parse_rx(len);
++                self.arm_rx();
++            }
++            Some(Err(_)) => self.arm_rx(),
++        }
++    }
++}
++
++impl NetworkAdapter for Lan78xx {
++    fn mac_address(&mut self) -> [u8; 6] {
++        self.mac
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        self.poll_rx();
++        self.frames.front().map_or(0, Vec::len)
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> SysResult<Option<usize>> {
++        self.poll_rx();
++        let Some(frame) = self.frames.pop_front() else {
++            return Ok(None);
++        };
++        let len = frame.len().min(buf.len());
++        buf[..len].copy_from_slice(&frame[..len]);
++        Ok(Some(len))
++    }
++
++    fn write_packet(&mut self, buf: &[u8]) -> SysResult<usize> {
++        let len = buf.len().min(TX_BUF_SIZE - TX_HEADER_LEN);
++        let cmd_a = len as u32 | TX_CMD_A_FCS;
++        self.tx[..4].copy_from_slice(&cmd_a.to_le_bytes());
++        self.tx[4..8].copy_from_slice(&0u32.to_le_bytes());
++        self.tx[TX_HEADER_LEN..TX_HEADER_LEN + len].copy_from_slice(&buf[..len]);
++        let total = TX_HEADER_LEN + len;
++        let timeout = Duration::from_millis(100);
++        let phase = self.phase(false, total);
++        let (_, next_pid) = self
++            .hc
++            .transfer_on(TX_CHANNEL, &phase, timeout)
++            .map_err(|_| SysError::new(EIO))?;
++        self.out_pid = next_pid;
++        if total % usize::from(self.f.max_packet_out) == 0 {
++            let phase = self.phase(false, 0);
++            let (_, next_pid) = self
++                .hc
++                .transfer_on(TX_CHANNEL, &phase, timeout)
++                .map_err(|_| SysError::new(EIO))?;
++            self.out_pid = next_pid;
++        }
++        Ok(len)
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index b71e0af..8c0bb52 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -2,8 +2,8 @@
+ //! mode, as found on the Raspberry Pi 1-3 and Zero.
+ //!
+ //! Brings up the controller, enumerates the devices behind the root port and
+-//! hubs, and runs network adapters directly in this process (CDC Ethernet
+-//! for now). It does not offer the USB scheme to class drivers yet.
++//! hubs, and runs network adapters directly in this process (CDC Ethernet,
++//! LAN7800). It does not offer the USB scheme to class drivers yet.
+ 
+ use std::process;
+ 
+@@ -12,12 +12,56 @@ use fdt::Fdt;
+ mod dwc2;
+ mod ecm;
+ mod enumerate;
++mod lan78xx;
+ mod regs;
+ 
+-use driver_network::NetworkScheme;
++use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+ use ecm::{Ecm, EcmFunction};
+ use enumerate::Bus;
++use lan78xx::{Lan78xx, Lan78xxFunction};
++
++/// A network function found during enumeration, already initialized.
++enum NetFunction {
++    Ecm(EcmFunction),
++    Lan78xx(Lan78xxFunction),
++}
++
++/// The network adapter running on top of the controller.
++enum UsbNet {
++    Ecm(Ecm),
++    Lan78xx(Lan78xx),
++}
++
++impl NetworkAdapter for UsbNet {
++    fn mac_address(&mut self) -> [u8; 6] {
++        match self {
++            Self::Ecm(a) => a.mac_address(),
++            Self::Lan78xx(a) => a.mac_address(),
++        }
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        match self {
++            Self::Ecm(a) => a.available_for_read(),
++            Self::Lan78xx(a) => a.available_for_read(),
++        }
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
++        match self {
++            Self::Ecm(a) => a.read_packet(buf),
++            Self::Lan78xx(a) => a.read_packet(buf),
++        }
++    }
++
++    fn write_packet(&mut self, buf: &[u8]) -> syscall::Result<usize> {
++        match self {
++            Self::Ecm(a) => a.write_packet(buf),
++            Self::Lan78xx(a) => a.write_packet(buf),
++        }
++    }
++}
+ 
+ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+@@ -83,10 +127,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         "dwc2d: network adapter {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+     );
++    let name = match function {
++        NetFunction::Ecm(_) => "network.usb_ecm",
++        NetFunction::Lan78xx(_) => "network.usb_lan78xx",
++    };
+     let mut scheme = NetworkScheme::new(
+-        move || Ecm::new(hc, function, mac),
++        move || match function {
++            NetFunction::Ecm(f) => UsbNet::Ecm(Ecm::new(hc, f, mac)),
++            NetFunction::Lan78xx(f) => UsbNet::Lan78xx(Lan78xx::new(hc, f, mac)),
++        },
+         daemon,
+-        "network.usb_ecm".to_string(),
++        name.to_string(),
+     );
+     // No interrupts yet: poll for received frames and scheme requests.
+     // Two things learned the hard way: printing from here on can block for
+@@ -99,9 +150,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     }
+ }
+ 
+-/// Enumerate all devices; returns a CDC Ethernet function, activated, with
+-/// its MAC address.
+-fn enumerate(hc: &mut Dwc2) -> Result<Option<(EcmFunction, [u8; 6])>, dwc2::Error> {
++/// Enumerate all devices; returns a network function, initialized, with its
++/// MAC address.
++fn enumerate(hc: &mut Dwc2) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -117,10 +168,15 @@ fn enumerate(hc: &mut Dwc2) -> Result<Option<(EcmFunction, [u8; 6])>, dwc2::Erro
+             Ok(()) => {
+                 println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+                 for device in bus.devices.clone() {
++                    if let Some(function) = lan78xx::find(&mut bus, &device) {
++                        println!("dwc2d: LAN7800 at address {}", device.address);
++                        let mac = lan78xx::init(&mut bus, &function)?;
++                        return Ok(Some((NetFunction::Lan78xx(function), mac)));
++                    }
+                     if let Some(function) = ecm::find(&mut bus, &device) {
+                         println!("dwc2d: CDC Ethernet at address {}", device.address);
+                         let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
+-                        return Ok(Some((function, mac)));
++                        return Ok(Some((NetFunction::Ecm(function), mac)));
+                     }
+                 }
+                 return Ok(None);
+-- 
+2.54.0 (Apple Git-157)
+

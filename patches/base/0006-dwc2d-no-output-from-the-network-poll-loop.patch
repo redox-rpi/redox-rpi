@@ -1,7 +1,7 @@
 From 25a8721d7483305d322b9af10426d6a05d81a222 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 09:50:45 +0100
-Subject: [PATCH 6/7] dwc2d: no output from the network poll loop
+Subject: [PATCH 6/8] dwc2d: no output from the network poll loop
 
 After boot nobody may read the stdout of initfs daemons, so printing
 can block the adapter for good.
