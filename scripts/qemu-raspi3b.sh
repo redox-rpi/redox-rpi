@@ -15,6 +15,8 @@
 #                     with the mainline devicetree adjusted like the config.txt
 #                     overlays on a real Pi (PL011 console, SD on Arasan)
 #   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
+#   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
+#                     user networking: guest 10.0.2.15, host 10.0.2.2
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -39,6 +41,7 @@ test=no
 expect=()
 timeout=900
 uboot=""
+usb_net=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -47,6 +50,7 @@ while [ $# -gt 0 ]; do
         --expect) expect+=("$2"); shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
+        --usb-net) usb_net=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -112,6 +116,9 @@ qemu=(qemu-system-aarch64
     -drive file=run.img,if=sd,format=raw
     -display none -monitor none
     -usb -device usb-kbd)
+if [ "$usb_net" = yes ]; then
+    qemu+=(-netdev user,id=usbnet -device usb-net,netdev=usbnet)
+fi
 
 if [ "$test" = no ]; then
     # QEMU gets the terminal directly, so it switches it to raw mode and keys

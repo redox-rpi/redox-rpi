@@ -1,0 +1,549 @@
+From c38fe3681a5549a27122158c4a1bca41e5452eab Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 09:45:32 +0100
+Subject: [PATCH 5/5] dwc2d: CDC Ethernet network adapter
+
+Adds bulk transfers on separate channels (one kept pending for receive)
+and a CDC Ethernet (ECM) adapter on top of driver-network, so the
+network stack can use a USB network device. The daemon now reports ready
+after enumeration, because the network stack only looks for adapters at
+startup.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                         |   1 +
+ drivers/usb/dwc2d/Cargo.toml       |   1 +
+ drivers/usb/dwc2d/src/dwc2.rs      |  51 ++++--
+ drivers/usb/dwc2d/src/ecm.rs       | 269 +++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/enumerate.rs |   5 +-
+ drivers/usb/dwc2d/src/main.rs      |  55 ++++--
+ drivers/usb/dwc2d/src/regs.rs      |   1 +
+ 7 files changed, 361 insertions(+), 22 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/ecm.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index c10be2e..3823eb2 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -727,6 +727,7 @@ version = "0.1.0"
+ dependencies = [
+  "common",
+  "daemon",
++ "driver-network",
+  "fdt 0.2.0-alpha1",
+  "libredox",
+  "redox_syscall 0.9.5",
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index bdc5f86..be31e92 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -8,6 +8,7 @@ edition = "2021"
+ fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
++driver-network = { path = "../../net/driver-network" }
+ 
+ libredox.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index dc009ea..27bfa52 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -161,9 +161,9 @@ impl Dwc2 {
+         })
+     }
+ 
+-    /// Run one transaction phase on channel 0 and return the bytes moved.
+-    pub fn transfer(&self, phase: &Phase) -> Result<usize, Error> {
+-        let ch = 0;
++    /// Program a host channel for one transfer and enable it. The channel
++    /// works on its own from here; see [`Dwc2::poll`].
++    pub fn start(&self, ch: usize, phase: &Phase) {
+         let mps = phase.max_packet as usize;
+         let packets = phase.len.div_ceil(mps).max(1) as u32;
+ 
+@@ -188,23 +188,54 @@ impl Dwc2 {
+             hcchar_value |= HCCHAR_LSPDDEV;
+         }
+         self.write(hcchar(ch), hcchar_value);
++    }
+ 
+-        self.wait("channel halt", Duration::from_secs(1), |s| {
+-            s.read(hcint(ch)) & HCINT_CH_HLTD != 0
+-        })?;
++    /// Check a channel started with [`Dwc2::start`] for `len` bytes. Returns
++    /// `None` while it is busy, otherwise the bytes moved and the data PID
++    /// for the next transfer on this endpoint.
++    pub fn poll(&self, ch: usize, len: usize) -> Option<Result<(usize, u32), Error>> {
+         let status = self.read(hcint(ch));
++        if status & HCINT_CH_HLTD == 0 {
++            return None;
++        }
+         self.write(hcint(ch), u32::MAX);
+ 
+         if status & HCINT_STALL != 0 {
+-            return Err(Error::Stall);
++            return Some(Err(Error::Stall));
+         }
+         if status & HCINT_XFER_COMPL == 0
+             || status & (HCINT_AHB_ERR | HCINT_XACT_ERR | HCINT_BBL_ERR | HCINT_DATA_TGL_ERR) != 0
+         {
+-            return Err(Error::Transfer(status));
++            return Some(Err(Error::Transfer(status)));
+         }
+-        let remaining = (self.read(hctsiz(ch)) & 0x7FFFF) as usize;
+-        Ok(phase.len.saturating_sub(remaining))
++        let hctsiz_value = self.read(hctsiz(ch));
++        let remaining = (hctsiz_value & 0x7FFFF) as usize;
++        let next_pid = (hctsiz_value >> HCTSIZ_PID_SHIFT) & 0x3;
++        Some(Ok((len.saturating_sub(remaining), next_pid)))
++    }
++
++    /// Run one transfer on a channel and wait for it. Returns the bytes
++    /// moved and the data PID for the next transfer on this endpoint.
++    pub fn transfer_on(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
++        self.start(ch, phase);
++        let start = Instant::now();
++        loop {
++            if let Some(result) = self.poll(ch, phase.len) {
++                return result;
++            }
++            if start.elapsed() > timeout {
++                // Halt the channel so it can be reused.
++                let value = self.read(hcchar(ch));
++                self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                return Err(Error::Timeout("channel halt"));
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Run one transaction phase on channel 0 and return the bytes moved.
++    pub fn transfer(&self, phase: &Phase) -> Result<usize, Error> {
++        self.transfer_on(0, phase, Duration::from_secs(1)).map(|(len, _)| len)
+     }
+ 
+     /// A control transfer: SETUP, optional data stage, status stage.
+diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
+new file mode 100644
+index 0000000..e93a5f8
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/ecm.rs
+@@ -0,0 +1,269 @@
++//! USB CDC Ethernet (ECM) network adapter.
++//!
++//! The simplest USB Ethernet protocol: raw Ethernet frames over a bulk IN and
++//! a bulk OUT endpoint. QEMU's `usb-net` speaks it, which makes it the test
++//! bed for the whole network path in QEMU; real chips like the LAN7800 add
++//! their own framing on the same transfers.
++
++use std::time::Duration;
++
++use common::dma::Dma;
++use driver_network::NetworkAdapter;
++use syscall::error::{Error as SysError, Result as SysResult, EIO};
++
++use crate::dwc2::{Dwc2, Phase, Speed};
++use crate::enumerate::{Bus, Device};
++use crate::regs::{EPTYPE_BULK, PID_DATA0};
++
++const CLASS_COMM: u8 = 0x02;
++const CLASS_CDC_DATA: u8 = 0x0A;
++const SUBCLASS_ETHERNET: u8 = 0x06;
++const CS_INTERFACE: u8 = 0x24;
++const CDC_ETHERNET_FUNCTIONAL: u8 = 0x0F;
++
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++const REQ_SET_INTERFACE: u8 = 0x0B;
++const DESC_CONFIGURATION: u8 = 0x02;
++const DESC_STRING: u8 = 0x03;
++
++const RX_CHANNEL: usize = 1;
++const TX_CHANNEL: usize = 2;
++/// Large enough for a full Ethernet frame, a multiple of every bulk max
++/// packet size.
++const BUF_SIZE: usize = 2048;
++
++/// Where a CDC Ethernet function lives on a device.
++pub struct EcmFunction {
++    pub address: u8,
++    pub speed: Speed,
++    configuration: u8,
++    data_interface: u8,
++    data_alt: u8,
++    ep_in: u8,
++    ep_out: u8,
++    max_packet_in: u16,
++    max_packet_out: u16,
++    mac_string: u8,
++}
++
++/// Search the configurations of a device for a CDC Ethernet function.
++pub fn find(bus: &mut Bus, device: &Device) -> Option<EcmFunction> {
++    for index in 0..device.configurations {
++        let config = bus
++            .request(
++                device.address,
++                device.max_packet,
++                device.speed,
++                0x80,
++                REQ_GET_DESCRIPTOR,
++                u16::from(DESC_CONFIGURATION) << 8 | u16::from(index),
++                0,
++                512,
++            )
++            .ok()?;
++
++        let mut function = None::<EcmFunction>;
++        let mut is_ethernet = false;
++        // Current interface: (class, number, alternate setting)
++        let mut interface = (0u8, 0u8, 0u8);
++        let mut pos = 0;
++        while pos + 2 <= config.len() && config[pos] >= 2 {
++            let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++            match desc[1] {
++                4 if desc.len() >= 9 => {
++                    interface = (desc[5], desc[2], desc[3]);
++                    if desc[5] == CLASS_COMM && desc[6] == SUBCLASS_ETHERNET {
++                        is_ethernet = true;
++                    }
++                }
++                CS_INTERFACE if desc.len() >= 4 && desc[2] == CDC_ETHERNET_FUNCTIONAL && is_ethernet => {
++                    function = Some(EcmFunction {
++                        address: device.address,
++                        speed: device.speed,
++                        configuration: config[5],
++                        data_interface: 0,
++                        data_alt: 0,
++                        ep_in: 0,
++                        ep_out: 0,
++                        max_packet_in: 0,
++                        max_packet_out: 0,
++                        mac_string: desc[3],
++                    });
++                }
++                5 if desc.len() >= 7 && interface.0 == CLASS_CDC_DATA && desc[3] & 3 == 2 => {
++                    if let Some(f) = function.as_mut() {
++                        f.data_interface = interface.1;
++                        f.data_alt = interface.2;
++                        let max_packet = u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF;
++                        if desc[2] & 0x80 != 0 {
++                            f.ep_in = desc[2] & 0xF;
++                            f.max_packet_in = max_packet;
++                        } else {
++                            f.ep_out = desc[2] & 0xF;
++                            f.max_packet_out = max_packet;
++                        }
++                    }
++                }
++                _ => {}
++            }
++            pos += desc.len();
++        }
++        if let Some(f) = function.filter(|f| f.ep_in != 0 && f.ep_out != 0) {
++            return Some(f);
++        }
++    }
++    None
++}
++
++pub struct Ecm {
++    hc: Dwc2,
++    function: EcmFunction,
++    mac: [u8; 6],
++    in_pid: u32,
++    out_pid: u32,
++    rx: Dma<[u8; BUF_SIZE]>,
++    tx: Dma<[u8; BUF_SIZE]>,
++    rx_armed: bool,
++    rx_ready: Option<usize>,
++}
++
++/// Activate the function: select its configuration and the data interface
++/// setting with the bulk endpoints, and read the MAC address.
++pub fn activate(bus: &mut Bus, max_packet: u16, function: &EcmFunction) -> Result<[u8; 6], crate::dwc2::Error> {
++        let (a, speed) = (function.address, function.speed);
++        bus.request(a, max_packet, speed, 0x00, REQ_SET_CONFIGURATION, u16::from(function.configuration), 0, 0)?;
++        bus.request(
++            a,
++            max_packet,
++            speed,
++            0x01,
++            REQ_SET_INTERFACE,
++            u16::from(function.data_alt),
++            u16::from(function.data_interface),
++            0,
++        )?;
++
++        // The MAC address is a string descriptor of 12 hex digits.
++        let s = bus.request(a, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_STRING) << 8 | u16::from(function.mac_string), 0x0409, 64)?;
++        let digits: Vec<u8> = s.get(2..).unwrap_or_default().iter().step_by(2).copied().collect();
++        let mut mac = [0u8; 6];
++        for (byte, pair) in mac.iter_mut().zip(digits.chunks_exact(2)) {
++            *byte = std::str::from_utf8(pair)
++                .ok()
++                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
++                .unwrap_or(0);
++        }
++        Ok(mac)
++}
++
++impl Ecm {
++    pub fn new(hc: Dwc2, function: EcmFunction, mac: [u8; 6]) -> Self {
++        let mut ecm = Self {
++            hc,
++            function,
++            mac,
++            in_pid: PID_DATA0,
++            out_pid: PID_DATA0,
++            rx: Dma::new([0; BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            tx: Dma::new([0; BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            rx_armed: false,
++            rx_ready: None,
++        };
++        ecm.arm_rx();
++        ecm
++    }
++
++    fn phase(&self, dir_in: bool, len: usize) -> Phase {
++        let f = &self.function;
++        Phase {
++            dev_addr: f.address,
++            endpoint: if dir_in { f.ep_in } else { f.ep_out },
++            dir_in,
++            ep_type: EPTYPE_BULK,
++            max_packet: if dir_in { f.max_packet_in } else { f.max_packet_out },
++            low_speed: false,
++            pid: if dir_in { self.in_pid } else { self.out_pid },
++            buf_phys: if dir_in { self.rx.physical() } else { self.tx.physical() },
++            len,
++        }
++    }
++
++    /// Keep a bulk IN transfer pending; the controller retries the device's
++    /// NAKs until a frame arrives.
++    fn arm_rx(&mut self) {
++        let phase = self.phase(true, BUF_SIZE);
++        self.hc.start(RX_CHANNEL, &phase);
++        self.rx_armed = true;
++    }
++
++    fn poll_rx(&mut self) {
++        if !self.rx_armed || self.rx_ready.is_some() {
++            return;
++        }
++        match self.hc.poll(RX_CHANNEL, BUF_SIZE) {
++            None => {}
++            Some(Ok((len, next_pid))) => {
++                self.in_pid = next_pid;
++                self.rx_armed = false;
++                if len > 0 {
++                    self.rx_ready = Some(len);
++                } else {
++                    self.arm_rx();
++                }
++            }
++            Some(Err(err)) => {
++                println!("dwc2d: ecm receive failed: {err:?}");
++                self.arm_rx();
++            }
++        }
++    }
++
++    pub fn mac(&self) -> [u8; 6] {
++        self.mac
++    }
++}
++
++impl NetworkAdapter for Ecm {
++    fn mac_address(&mut self) -> [u8; 6] {
++        self.mac
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        self.poll_rx();
++        self.rx_ready.unwrap_or(0)
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> SysResult<Option<usize>> {
++        self.poll_rx();
++        let Some(len) = self.rx_ready.take() else {
++            return Ok(None);
++        };
++        let len = len.min(buf.len());
++        buf[..len].copy_from_slice(&self.rx[..len]);
++        self.arm_rx();
++        Ok(Some(len))
++    }
++
++    fn write_packet(&mut self, buf: &[u8]) -> SysResult<usize> {
++        let len = buf.len().min(BUF_SIZE);
++        self.tx[..len].copy_from_slice(&buf[..len]);
++        let timeout = Duration::from_millis(100);
++        let phase = self.phase(false, len);
++        let (_, next_pid) = self
++            .hc
++            .transfer_on(TX_CHANNEL, &phase, timeout)
++            .map_err(|_| SysError::new(EIO))?;
++        self.out_pid = next_pid;
++        // A frame that fills its last packet ends with a zero-length packet.
++        if len % usize::from(self.function.max_packet_out) == 0 {
++            let phase = self.phase(false, 0);
++            let (_, next_pid) = self
++                .hc
++                .transfer_on(TX_CHANNEL, &phase, timeout)
++                .map_err(|_| SysError::new(EIO))?;
++            self.out_pid = next_pid;
++        }
++        Ok(len)
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index e6da8d3..3d1762e 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -35,6 +35,7 @@ const PORT_STAT_HIGH_SPEED: u16 = 1 << 10;
+ /// Hubs nest at most five deep below the root (USB 2.0, 4.1.1).
+ const MAX_HUB_DEPTH: usize = 5;
+ 
++#[derive(Clone)]
+ pub struct Device {
+     pub address: u8,
+     pub speed: Speed,
+@@ -42,6 +43,7 @@ pub struct Device {
+     pub vendor: u16,
+     pub product: u16,
+     pub class: u8,
++    pub configurations: u8,
+     /// Hub nesting level: 0 on the root port.
+     pub depth: usize,
+ }
+@@ -67,7 +69,7 @@ impl<'a> Bus<'a> {
+         }
+     }
+ 
+-    fn request(
++    pub(crate) fn request(
+         &mut self,
+         address: u8,
+         max_packet: u16,
+@@ -140,6 +142,7 @@ impl<'a> Bus<'a> {
+             vendor: u16::from_le_bytes([d[8], d[9]]),
+             product: u16::from_le_bytes([d[10], d[11]]),
+             class: d[4],
++            configurations: d[17],
+             depth,
+         };
+         println!(
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 8eb575f..53a518b 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -1,19 +1,22 @@
+ //! Driver for the Synopsys DesignWare USB 2.0 OTG controller (DWC2) in host
+ //! mode, as found on the Raspberry Pi 1-3 and Zero.
+ //!
+-//! First stage: bring up the controller, reset the root port and enumerate
+-//! the devices behind it, through hubs, with control transfers. It does not
+-//! offer the USB scheme to class drivers yet.
++//! Brings up the controller, enumerates the devices behind the root port and
++//! hubs, and runs network adapters directly in this process (CDC Ethernet
++//! for now). It does not offer the USB scheme to class drivers yet.
+ 
+ use std::process;
+ 
+ use fdt::Fdt;
+ 
+ mod dwc2;
++mod ecm;
+ mod enumerate;
+ mod regs;
+ 
++use driver_network::NetworkScheme;
+ use dwc2::Dwc2;
++use ecm::{Ecm, EcmFunction};
+ use enumerate::Bus;
+ 
+ fn get_dtb() -> Vec<u8> {
+@@ -59,19 +62,42 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     let mut hc = Dwc2::new(base);
+     println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());
+-    // USB setup takes a while; do not hold up the boot.
+-    daemon.ready();
+ 
+-    if let Err(err) = enumerate(&mut hc) {
+-        eprintln!("dwc2d: {:?}", err);
+-    }
++    // Network adapters must exist before the network stack starts, so the
++    // daemon reports ready only after enumeration.
++    let network = match enumerate(&mut hc) {
++        Ok(network) => network,
++        Err(err) => {
++            eprintln!("dwc2d: {:?}", err);
++            None
++        }
++    };
++    let Some((function, mac)) = network else {
++        daemon.ready();
++        loop {
++            std::thread::sleep(std::time::Duration::from_secs(3600));
++        }
++    };
+ 
++    println!(
++        "dwc2d: network adapter {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
++        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
++    );
++    let mut scheme = NetworkScheme::new(
++        move || Ecm::new(hc, function, mac),
++        daemon,
++        "network.usb_ecm".to_string(),
++    );
++    // No interrupts yet: poll for received frames and scheme requests.
+     loop {
+-        std::thread::sleep(std::time::Duration::from_secs(3600));
++        scheme.tick().expect("dwc2d: network scheme failed");
++        std::thread::sleep(std::time::Duration::from_millis(1));
+     }
+ }
+ 
+-fn enumerate(hc: &mut Dwc2) -> Result<(), dwc2::Error> {
++/// Enumerate all devices; returns a CDC Ethernet function, activated, with
++/// its MAC address.
++fn enumerate(hc: &mut Dwc2) -> Result<Option<(EcmFunction, [u8; 6])>, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -86,7 +112,14 @@ fn enumerate(hc: &mut Dwc2) -> Result<(), dwc2::Error> {
+         match bus.enumerate(speed, 0) {
+             Ok(()) => {
+                 println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+-                return Ok(());
++                for device in bus.devices.clone() {
++                    if let Some(function) = ecm::find(&mut bus, &device) {
++                        println!("dwc2d: CDC Ethernet at address {}", device.address);
++                        let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
++                        return Ok(Some((function, mac)));
++                    }
++                }
++                return Ok(None);
+             }
+             Err(err) if attempt < ATTEMPTS => {
+                 println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
+diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
+index cfe08ae..1df22c0 100644
+--- a/drivers/usb/dwc2d/src/regs.rs
++++ b/drivers/usb/dwc2d/src/regs.rs
+@@ -83,6 +83,7 @@ pub const HCCHAR_CHDIS: u32 = 1 << 30;
+ pub const HCCHAR_CHENA: u32 = 1 << 31;
+ 
+ pub const EPTYPE_CONTROL: u32 = 0;
++pub const EPTYPE_BULK: u32 = 2;
+ 
+ pub const HCINT_XFER_COMPL: u32 = 1 << 0;
+ pub const HCINT_CH_HLTD: u32 = 1 << 1;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,7 +1,7 @@
 From 7a2c50f57999046ce7126b9745258f14e01684a0 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 08:29:20 +0100
-Subject: [PATCH 4/4] dwc2d: retry stalled requests, wait for hub port
+Subject: [PATCH 4/5] dwc2d: retry stalled requests, wait for hub port
  connections
 
 On the real Pi 3B+ the first request after a reset sometimes stalls and
