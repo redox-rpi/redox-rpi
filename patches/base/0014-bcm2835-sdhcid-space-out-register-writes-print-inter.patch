@@ -1,0 +1,253 @@
+From 27f6d25c499e3fd79baaa596ea5bf96d90d4217b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 15:42:42 +0100
+Subject: [PATCH 14/14] bcm2835-sdhcid: space out register writes, print
+ interrupt flags on errors
+
+The Arasan controller may drop a register write that follows another
+within two SD clock cycles. Wait four cycles after each register write.
+Print the interrupt register when a command or transfer fails.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 68 ++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index cb4db51..a4d1115 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -45,6 +45,40 @@ pub(crate) unsafe fn wait_msec(mut n: usize) {
+     }
+ }
+ 
++#[cfg(target_arch = "aarch64")]
++#[inline(always)]
++pub(crate) unsafe fn wait_usec(n: usize) {
++    use core::arch::asm;
++
++    let f: usize;
++    let start: usize;
++    let mut now: usize;
++    asm!("mrs {0}, cntfrq_el0", out(reg) f);
++    asm!("mrs {0}, cntpct_el0", out(reg) start);
++    let ticks = (f / 1_000_000) * n;
++    loop {
++        asm!("mrs {0}, cntpct_el0", out(reg) now);
++        if now - start >= ticks {
++            break;
++        }
++    }
++}
++
++#[cfg(not(target_arch = "aarch64"))]
++#[inline(always)]
++pub(crate) unsafe fn wait_usec(n: usize) {
++    thread::sleep(Duration::from_micros(n as u64));
++}
++
++/// Wait after a register write. The BCM2835's Arasan controller may lose a
++/// register write that follows another within two SD clock cycles (a clock
++/// domain crossing problem, see Linux' sdhci-iproc). Waiting four cycles of
++/// the current SD clock keeps writes apart.
++#[inline(always)]
++unsafe fn settle(sd_clock: u32) {
++    unsafe { wait_usec((4_000_000 / sd_clock.max(1)) as usize + 1) };
++}
++
+ #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+ #[inline(always)]
+ pub(crate) unsafe fn wait_msec(n: usize) {
+@@ -195,6 +229,8 @@ pub struct SdHostCtrl {
+     scr: [u32; 2],
+     ocr: u32,
+     size: u64,
++    /// The SD clock in Hz, as set by `set_clock`.
++    sd_clock: u32,
+ }
+ 
+ impl SdHostCtrl {
+@@ -208,6 +244,8 @@ impl SdHostCtrl {
+             scr: [0; 2],
+             ocr: 0,
+             size: 0,
++            // Until set_clock: assume a slow clock, for long write delays.
++            sd_clock: 100_000,
+         }
+     }
+ 
+@@ -218,8 +256,10 @@ impl SdHostCtrl {
+         self.host_spec_ver = (reg_val & HOST_SPEC_VERSION_MASK) >> HOST_SPEC_VERSION_OFFSET;
+ 
+         regs.control0.write(0x0);
++        settle(self.sd_clock);
+         reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_SRST_HC);
++        settle(self.sd_clock);
+         let mut cnt = 1000;
+         while (cnt >= 0) && ((regs.control1.read() & C1_SRST_HC) == C1_SRST_HC) {
+             cnt -= 1;
+@@ -233,6 +273,7 @@ impl SdHostCtrl {
+         println!("EMMC: reset OK");
+         reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_CLK_INTLEN | C1_TOUNIT_MAX);
++        settle(self.sd_clock);
+ 
+         wait_msec(10);
+ 
+@@ -245,7 +286,9 @@ impl SdHostCtrl {
+ 
+         let regs = self.regs.get_mut().unwrap();
+         regs.irpt_en.write(0xffff_ffff);
++        settle(self.sd_clock);
+         regs.irpt_mask.write(0xffff_ffff);
++        settle(self.sd_clock);
+ 
+         if let Err(_) = self.sd_cmd(CMD_GO_IDLE, 0) {
+             println!("failed to go idle");
+@@ -343,6 +386,7 @@ impl SdHostCtrl {
+ 
+         let regs = self.regs.get_mut().unwrap();
+         regs.blksizecnt.write(1 << 16 | 8);
++        settle(self.sd_clock);
+ 
+         if let Err(_) = self.sd_cmd(CMD_SEND_SCR, 0) {
+             println!("failed to CMD_SEND_SCR");
+@@ -380,6 +424,7 @@ impl SdHostCtrl {
+             }
+             let regs = self.regs.get_mut().unwrap();
+             regs.control0.write(C0_HCTL_DWITDH);
++            settle(self.sd_clock);
+         }
+ 
+         print!("EMMC: supports ");
+@@ -417,6 +462,7 @@ impl SdHostCtrl {
+         reg_val = regs.control1.read();
+         reg_val &= !C1_CLK_EN;
+         regs.control1.write(reg_val);
++        settle(self.sd_clock);
+         wait_msec(10);
+ 
+         let c = EMMC_BASE_CLOCK / freq;
+@@ -465,6 +511,11 @@ impl SdHostCtrl {
+             s = 0;
+         }
+         println!("sd clk divisor: 0x{:08x}, shift: 0x{:08x}", d, s);
++        self.sd_clock = if self.host_spec_ver > HOST_SPEC_V2 {
++            EMMC_BASE_CLOCK / (2 * d)
++        } else {
++            EMMC_BASE_CLOCK / d
++        };
+ 
+         let mut h = 0;
+         if self.host_spec_ver > HOST_SPEC_V2 {
+@@ -474,9 +525,11 @@ impl SdHostCtrl {
+         d = ((d & 0xff) << 8) | h;
+         reg_val = regs.control1.read() & 0xffff_003f;
+         regs.control1.write(reg_val | d);
++        settle(self.sd_clock);
+         wait_msec(10);
+         reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_CLK_EN);
++        settle(self.sd_clock);
+         wait_msec(10);
+ 
+         reg_val = regs.control1.read() & C1_CLK_STABLE;
+@@ -519,8 +572,11 @@ impl SdHostCtrl {
+         let regs = self.regs.get_mut().unwrap();
+         let mut reg_val = regs.interrupt.read();
+         regs.interrupt.write(reg_val);
++        settle(self.sd_clock);
+         regs.arg1.write(arg);
++        settle(self.sd_clock);
+         regs.cmdtm.write(code);
++        settle(self.sd_clock);
+ 
+         if code == CMD_SEND_OP_COND {
+             wait_msec(1000);
+@@ -623,10 +679,13 @@ impl SdHostCtrl {
+         let err = reg_val & (INT_CMD_TIMEOUT | INT_DATA_TIMEOUT | INT_ERROR_MASK);
+ 
+         if cnt <= 0 || err != 0 {
++            println!("bcm2835-sdhcid: interrupt flags 0x{:08x} (waiting for 0x{:08x})", reg_val, mask);
+             regs.interrupt.write(reg_val);
++            settle(self.sd_clock);
+             return Err(Error::new(EINVAL));
+         } else {
+             regs.interrupt.write(mask);
++            settle(self.sd_clock);
+             return Ok(());
+         }
+     }
+@@ -650,6 +709,7 @@ impl SdHostCtrl {
+             }
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write((num) << 16 | 512);
++            settle(self.sd_clock);
+             if num == 1 {
+                 self.sd_cmd(CMD_READ_SINGLE, lba)?;
+             } else {
+@@ -658,6 +718,7 @@ impl SdHostCtrl {
+         } else {
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write(1 << 16 | 512);
++            settle(self.sd_clock);
+         }
+ 
+         let mut cnt = 0;
+@@ -673,6 +734,7 @@ impl SdHostCtrl {
+ 
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write(1 << 16 | 512);
++            settle(self.sd_clock);
+             for d in 0..128 {
+                 buf[(128 * cnt + d) as usize] = regs.data.read();
+             }
+@@ -705,6 +767,7 @@ impl SdHostCtrl {
+             }
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write((num) << 16 | 512);
++            settle(self.sd_clock);
+             if num == 1 {
+                 self.sd_cmd(CMD_WRITE_SINGLE, lba)?;
+             } else {
+@@ -713,6 +776,7 @@ impl SdHostCtrl {
+         } else {
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write(1 << 16 | 512);
++            settle(self.sd_clock);
+         }
+ 
+         let mut cnt = 0;
+@@ -728,6 +792,7 @@ impl SdHostCtrl {
+ 
+             let regs = self.regs.get_mut().unwrap();
+             regs.blksizecnt.write(1 << 16 | 512);
++            settle(self.sd_clock);
+             for d in 0..128 {
+                 regs.data.write(buf[(128 * cnt + d) as usize]);
+             }
+@@ -753,17 +818,20 @@ impl SdHostCtrl {
+     pub unsafe fn recover(&mut self) {
+         let regs = self.regs.get_mut().unwrap();
+         regs.interrupt.write(0xffff_ffff);
++        settle(self.sd_clock);
+         let _ = self.sd_cmd(CMD_STOP_TRANS, 0);
+ 
+         let regs = self.regs.get_mut().unwrap();
+         let reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_SRST_CMD | C1_SRST_DATA);
++        settle(self.sd_clock);
+         let mut cnt = 100;
+         while cnt > 0 && regs.control1.read() & (C1_SRST_CMD | C1_SRST_DATA) != 0 {
+             wait_msec(1);
+             cnt -= 1;
+         }
+         regs.interrupt.write(0xffff_ffff);
++        settle(self.sd_clock);
+     }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

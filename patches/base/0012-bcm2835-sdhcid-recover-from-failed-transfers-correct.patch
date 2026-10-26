@@ -1,7 +1,7 @@
 From ebac18dd087598be4b379c5fc31711be394a962d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 13:09:55 +0100
-Subject: [PATCH 12/13] bcm2835-sdhcid: recover from failed transfers, correct
+Subject: [PATCH 12/14] bcm2835-sdhcid: recover from failed transfers, correct
  SD clock
 
 On a real Raspberry Pi 3B+, reads from the SD card failed after a while:

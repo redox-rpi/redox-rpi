@@ -1,7 +1,7 @@
 From 3829c42d5590782226a601ff8ad0079bab0d1c7d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 14:23:45 +0100
-Subject: [PATCH 13/13] bcm2835-sdhcid: back to the 41.67 MHz base clock
+Subject: [PATCH 13/14] bcm2835-sdhcid: back to the 41.67 MHz base clock
 
 The 250 MHz assumed in the previous commit made ACMD41 fail on a real
 Raspberry Pi 3B+: the card was initialized at 33 kHz.
