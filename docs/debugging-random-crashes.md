@@ -86,6 +86,23 @@ storing through a bad pointer, and once `ld.so` panicking with
 `unresolved symbol … for soname libonig.so.5`. That looks like general
 corruption of data a new process starts with, not one wrong value.
 
+With relibc patch 0002 in place (v0.1.0-alpha), `ld.so` on the real Pi 3B+
+once printed this when starting `pwd`; running `pwd` again worked:
+
+```
+RELIBC PANIC: panicked at src/ld_so/dso.rs:1091:31:
+dynamic entry was present without it's corresponding size
+```
+
+That is `get_array` in `Dso::parse_dynamic`: the program's `PT_DYNAMIC` has
+an address entry (`DT_RELA`, `DT_REL`, `DT_RELR`, `DT_INIT_ARRAY` or
+`DT_FINI_ARRAY`) but not its size entry. `ld.so` read the program file with
+`pread` into fresh anonymous memory just before (patch 0002, the call from
+`dso.rs:828`), so either `pread` returned wrong bytes or the memory changed
+after the read. Here the file table was present and the panic could print,
+so this is a crash site where the corrupted data can be printed (idea 6
+below).
+
 ## Ruled out
 
 | Hypothesis | Experiment | Result |
@@ -165,6 +182,14 @@ corruption too.
    `.data`/`.bss` of the running object, and that `ld.so` does not consume
    or overwrite the auxv entries (it moves argv/envp/auxv in place only when
    run as `ld.so prog`, `adjust_stack`).
+
+6. **Print the corrupted dynamic section.** In `parse_dynamic`
+   (`src/ld_so/dso.rs`), before the `expect` in `get_array` and the other
+   `DT_*` asserts, print the path, the address of the buffer and the raw
+   `(tag, value)` pairs, then compare them with `readelf -d` of the same file.
+   Wrong bytes at a page boundary would point to page handling in the
+   kernel (a wrong or stale physical page); wrong bytes anywhere would point
+   to the read path (redoxfs, the SD/virtio driver).
 
 A fresh pair of eyes (another person or model) should start with this page,
 the reproducer above and step 1.
