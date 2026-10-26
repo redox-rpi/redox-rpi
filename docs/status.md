@@ -10,9 +10,17 @@ daily image `redox_server_aarch64_2026-10-24_565`.
   Pi 3B+ after a while (`Timeout waiting for ready to read`, then
   `SR_DAT_INHIBIT TIMEOUT` for every transfer), and programs loaded from the
   card crashed, `login` first. The driver never reset the data line after an
-  error. Patched: reset the command and data lines and retry. (Dividing an
-  assumed 250 MHz base clock instead of 41.67 MHz made card initialization
-  fail on the Pi: the 41.67 MHz are right.)
+  error. Patched: reset the command and data lines and retry. The cause of
+  the errors: data CRC errors (interrupt flags `0x00208000`) while commands
+  worked. The driver picks its clock divisors for the firmware's 41.67 MHz
+  EMMC clock, which is right for card initialization; but the data clock
+  meant as 10.4 MHz evidently ran much faster (U-Boot may raise EMMC to its
+  250 MHz maximum, giving 62.5 MHz). Patched: pick the data clock divisor as
+  if EMMC ran at 250 MHz (12.5 MHz at most). Since then reads and writes on
+  the card are clean: a 2.4 MB file copied to the card compares equal. The
+  pin routing was right all along (GPIO 48-53 on EMMC, ALT3).
+  Redox has no driver for the Pi's other SD controller, `sdhost`, which
+  Linux uses for the card slot.
 - **Prebuilt programs:** bash, nano, vim, tmux, ripgrep, curl, wget and gawk
   from Redox' aarch64 package repository stop at start with a `brk`
   exception (ESR `0xF2000001`), `find` fails to link; in QEMU as on the Pi.
