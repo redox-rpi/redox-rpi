@@ -28,6 +28,9 @@ card and log in as `root` / `password`.
 scripts/qemu-raspi3b.sh
 ```
 
+**For developers:** boot a Pi over the network from your own build server,
+no SD card swapping after each build: [docs/netboot.md](docs/netboot.md).
+
 ## Repository layout
 
 | Path | Content |

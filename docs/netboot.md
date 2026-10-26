@@ -5,6 +5,32 @@ holds the Pi firmware, U-Boot and a boot script. On every power-on U-Boot
 fetches the current Redox image from the build server. Build, power-cycle,
 watch the serial console; no SD card swapping.
 
+This is a setup for **developers**. To just try Redox on a Pi, flash the SD
+card image from the
+[latest release](https://github.com/redox-rpi/redox-rpi/releases) instead.
+There are no prebuilt network boot files: the SD card stores your server's
+address, so you build them on your own server.
+
+## What you need
+
+- A **build server**: x86_64 Linux that can build Redox, see
+  [build-host.md](build-host.md). It also serves the image over TFTP and
+  HTTP, so it must be on the same LAN as the Pi and should have a fixed
+  address (a DHCP reservation in the router).
+- A **Raspberry Pi 3 Model B+** with Ethernet to that LAN and a DHCP server
+  (your router).
+- A microSD card of at least 1 GB.
+- Optional, but recommended: a USB serial adapter on the Pi's UART
+  ([hardware.md](hardware.md)). The bootloader's menu still waits for
+  **Enter** there (see Limits).
+
+In the commands below, `<server-ip>` is your build server's LAN address,
+`/srv/tftp` the directory it serves. Our own setup uses `192.168.178.120`.
+
+The network boot image (`config/raspi3bp.toml`) also contains `devshd`, a
+remote shell on port 2323 without encryption or extra password (it runs
+`login`). Use it only on a LAN you trust; it is not in the release image.
+
 ```
 Pi firmware → U-Boot ─┬─ DHCP (router) ───────────── IP address
                       ├─ TFTP (build server) ─────── netboot.scr
@@ -26,12 +52,15 @@ sudo install -d -o "$USER" /srv/tftp
 
 `tftpd-hpa` serves `/srv/tftp` on UDP port 69. Give the server a fixed
 address in the router (DHCP reservation), since the SD card stores it.
+Set up the HTTP server as well (section "Transfer time" below); U-Boot
+loads the image over HTTP on port 8080 and falls back to TFTP only if that
+fails.
 
 ## After every build
 
 ```sh
 scripts/build-image.sh
-scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp
+scripts/netboot.sh --server <server-ip> --tftp-dir /srv/tftp
 ```
 
 Then power-cycle the Pi.
@@ -43,8 +72,11 @@ scripts/build-uboot.sh
 scripts/make-sdcard.sh --tftp-dir /srv/tftp
 ```
 
-Writes `build/sdcard-netboot.img` (1 GiB, any card of that size or larger).
-Flash it with Raspberry Pi Imager ("Use custom") or `dd`.
+Run this once, after the first `scripts/netboot.sh`: it takes `boot.scr`,
+which holds `<server-ip>`, from the TFTP directory. Writes
+`build/sdcard-netboot.img` (1 GiB, any card of that size or larger). Flash it
+with Raspberry Pi Imager ("Use custom") or `dd`. If the server's address
+changes, run `scripts/netboot.sh` with the new one and make a new card.
 
 | Partition | Size | Content |
 |---|---|---|
