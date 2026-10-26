@@ -1,0 +1,9 @@
+[package]
+name = "devshd"
+description = "Development shell over TCP for Redox: login on a pseudo-terminal, unencrypted, LAN only"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

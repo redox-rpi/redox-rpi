@@ -87,6 +87,18 @@ for name in bootloader base; do
     sed -i "/^git = /a patches = [ $list]" "$recipe/recipe.toml"
 done
 
+# Our own packages, built from this repository.
+for tool in devshd; do
+    mkdir -p "$REDOX/recipes/other/$tool"
+    cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
+[source]
+path = "$ROOT/tools/$tool"
+
+[build]
+template = "cargo"
+EOF
+done
+
 cd "$REDOX"
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged

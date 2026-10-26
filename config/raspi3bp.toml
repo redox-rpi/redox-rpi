@@ -12,6 +12,8 @@ base = "source"
 bootloader = "source"
 # Mounts the data partition below; the minimal config has it in initfs only.
 redoxfs = {}
+# Development shell over TCP port 2323 (tools/devshd), until SSH works.
+devshd = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.
@@ -29,4 +31,17 @@ requires_weak = ["00_base.target"]
 cmd = "redoxfs"
 args = ["/scheme/disk.mmc/0p1", "data"]
 type = "oneshot"
+"""
+
+# Start the development shell. Unencrypted: for the home network only.
+[[files]]
+path = "/usr/lib/init.d/90_devshd.service"
+data = """
+[unit]
+description = "Development shell on TCP port 2323"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "devshd"
+type = "oneshot_async"
 """

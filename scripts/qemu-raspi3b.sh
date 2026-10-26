@@ -16,7 +16,8 @@
 #                     overlays on a real Pi (PL011 console, SD on Arasan)
 #   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
-#                     user networking: guest 10.0.2.15, host 10.0.2.2
+#                     user networking: guest 10.0.2.15, host 10.0.2.2;
+#                     host port 12323 forwards to devshd in the guest
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -117,7 +118,8 @@ qemu=(qemu-system-aarch64
     -display none -monitor none
     -usb -device usb-kbd)
 if [ "$usb_net" = yes ]; then
-    qemu+=(-netdev user,id=usbnet -device usb-net,netdev=usbnet)
+    # Host port 12323 reaches devshd (port 2323) in the guest.
+    qemu+=(-netdev user,id=usbnet,hostfwd=tcp::12323-:2323 -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
