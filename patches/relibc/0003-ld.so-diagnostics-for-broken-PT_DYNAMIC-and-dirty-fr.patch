@@ -1,18 +1,27 @@
-From 54251340de26377dd6c6d52197e5cb96224a0227 Mon Sep 17 00:00:00 2001
+From 07a2966e12ac9f1147a2fdec3f213066c349f30f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 17:44:10 +0100
-Subject: [PATCH] ld.so: diagnostic for broken PT_DYNAMIC (redox-rpi,
- temporary)
+Subject: [PATCH] ld.so: diagnostics for broken PT_DYNAMIC and dirty fresh
+ memory (redox-rpi, temporary)
 
 ---
- src/ld_so/dso.rs | 155 +++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 155 insertions(+)
+ src/ld_so/dso.rs    | 180 ++++++++++++++++++++++++++++++++++++++++++++
+ src/ld_so/linker.rs |   1 +
+ 2 files changed, 181 insertions(+)
 
 diff --git a/src/ld_so/dso.rs b/src/ld_so/dso.rs
-index 832d82c..f8f669b 100644
+index 832d82c..5086a35 100644
 --- a/src/ld_so/dso.rs
 +++ b/src/ld_so/dso.rs
-@@ -816,6 +816,7 @@ impl DSO {
+@@ -716,6 +716,7 @@ impl DSO {
+                     0,
+                 )
+                 .map_err(|e| format!("failed to map {}. errno: {}", path, e.0))?;
++                diag_check_zeroed(path, ptr.cast::<u8>(), size);
+ 
+                 if !(start as *mut c_void).is_null() {
+                     assert_eq!(
+@@ -816,6 +817,7 @@ impl DSO {
                          .dynamic(endian, data)
                          .map_err(|err| err.to_string())?
                          .ok_or_else(|| "Unable to parse PT_DYNAMIC section".to_string())?;
@@ -20,7 +29,7 @@ index 832d82c..f8f669b 100644
                      dynamic = Some((ph, entries));
                  }
                  _ => (),
-@@ -1672,3 +1673,157 @@ pub unsafe fn apply_relr(base: *const u8, relr: &[Relr]) {
+@@ -1672,3 +1674,181 @@ pub unsafe fn apply_relr(base: *const u8, relr: &[Relr]) {
  // TODO: Add safety comment.
  unsafe impl Send for DSO {}
  unsafe impl Sync for DSO {}
@@ -178,6 +187,42 @@ index 832d82c..f8f669b 100644
 +    );
 +    let _ = Sys::close(fd);
 +}
++
++/// redox-rpi diagnostic: fresh anonymous memory must read as zero. If it
++/// does not, the kernel's shared zero page (or a recycled frame) is dirty.
++pub(crate) fn diag_check_zeroed(what: &str, ptr: *const u8, len: usize) {
++    let mem = unsafe { slice::from_raw_parts(ptr, len) };
++    let Some(first) = mem.iter().position(|&b| b != 0) else {
++        return;
++    };
++    let pages = mem
++        .chunks(4096)
++        .filter(|page| page.iter().any(|&b| b != 0))
++        .count();
++    let end = (first + 32).min(len);
++    eprintln!(
++        "[ld.so diag] {}: fresh memory {:#x} len {:#x} NOT ZERO: first at {:#x}, {} of {} pages dirty, bytes {:02x?}",
++        what,
++        ptr as usize,
++        len,
++        first,
++        pages,
++        len.div_ceil(4096),
++        &mem[first..end]
++    );
++}
+diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
+index 1ef106f..db76eb0 100644
+--- a/src/ld_so/linker.rs
++++ b/src/ld_so/linker.rs
+@@ -106,6 +106,7 @@ impl MmapFile {
+         // contents (redox-rpi docs/debugging-random-crashes.md).
+         let anonymous = Self::anonymous(size.max(1))?;
+         let ptr = anonymous.ptr;
++        super::dso::diag_check_zeroed("read buffer", ptr.cast::<u8>(), size);
+         core::mem::forget(anonymous);
+         let this = Self { fd, ptr, size };
+         let buf = this.as_mut_slice();
 -- 
 2.54.0 (Apple Git-157)
 

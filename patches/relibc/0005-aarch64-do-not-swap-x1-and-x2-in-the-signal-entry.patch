@@ -1,0 +1,31 @@
+From e5fe573292ae8ef7ce3c1d447b77e6562be069ad Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 18:49:32 +0100
+Subject: [PATCH] aarch64: do not swap x1 and x2 in the signal entry
+
+__relibc_internal_sigentry pushed x1 below x2, but ArchIntRegs and the
+restore (ldp x2, x1) expect x2 below x1. Every signal handled this way
+returned to the interrupted code with x1 and x2 swapped.
+---
+ redox-rt/src/arch/aarch64.rs | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/redox-rt/src/arch/aarch64.rs b/redox-rt/src/arch/aarch64.rs
+index 7e8d0f7..a489b05 100644
+--- a/redox-rt/src/arch/aarch64.rs
++++ b/redox-rt/src/arch/aarch64.rs
+@@ -369,8 +369,10 @@ asmfunction!(__relibc_internal_sigentry: ["
+     mrs x3, nzcv
+     stp x2, x3, [sp, #-16]!
+ 
++    // x2 goes below x1 (ArchIntRegs order, and `ldp x2, x1` below), like
++    // the other pairs.
+     ldp x2, x3, [x0, #{tcb_sa_off} + {sa_tmp_x1_x2}]
+-    stp x2, x3, [sp, #-16]!
++    stp x3, x2, [sp, #-16]!
+     ldp x3, x4, [x0, #{tcb_sa_off} + {sa_tmp_x3_x4}]
+     stp x4, x3, [sp, #-16]!
+     ldp x5, x6, [x0, #{tcb_sa_off} + {sa_tmp_x5_x6}]
+-- 
+2.54.0 (Apple Git-157)
+

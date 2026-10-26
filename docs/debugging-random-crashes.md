@@ -1,10 +1,60 @@
-# Debugging: programs fail at random (open)
+# Debugging: programs fail at random (found)
 
-**State 2026-10-26, evening. Not solved.** This page is the handover for
-whoever continues: what is known, what was ruled out and how, what is left
-in the tree from the experiments, and what to try next.
+**State 2026-10-26, late evening: cause found and fixed in relibc patch
+`0005`.** In QEMU 300 program starts in a row ran without a crash (before:
+about half of them crashed). Test on the real Pi pending. The section "The
+cause" below explains the bug; the rest of the page is the history of the
+hunt, kept because the dead ends and tools may help with the next bug.
 
-## The problem
+## The cause
+
+`__relibc_internal_sigentry` in `redox-rt/src/arch/aarch64.rs` is where the
+kernel sends a thread when a signal is due. It saves the interrupted
+registers on the stack, calls the Rust handler, and restores them. The
+registers x1 and x2 were saved in the wrong order:
+
+```asm
+    ldp x2, x3, [x0, #{tcb_sa_off} + {sa_tmp_x1_x2}]   // x2 := old x1, x3 := old x2
+    stp x2, x3, [sp, #-16]!                            // old x1 below old x2
+    ...
+    ldp x2, x1, [sp], #16                              // restore: lower one into x2
+```
+
+`ArchIntRegs` and the restore expect x2 below x1, as for all the other
+pairs (`stp x4, x3` …). So **every signal swapped x1 and x2** of the code it
+interrupted. Whatever the program held in those two registers at that
+moment, a pointer and a length, a file descriptor and a buffer, got mixed
+up. Hence the many different symptoms: `no filetable fd present`, data
+aborts at small addresses, `NotFound` for files that exist, `munmap`
+returning `EINVAL`, garbage TLS module numbers, broken PT_DYNAMIC.
+
+The fix is one line: `stp x3, x2, [sp, #-16]!`
+([`patches/relibc/0005`](../patches/relibc/)). x86_64 saves its registers
+in different code and is not affected.
+
+How it was found: with `LD_DEBUG=all`, `pwd` crashed every time at the same
+place, inside a diagnostic loop of patch 0003. The kernel's register dump
+showed x1 holding the buffer pointer and x2 the length of a string, exactly
+the two arguments in swapped order, while the first half of the loop had
+still used the right values.
+
+Why static programs seemed immune and the rate grew over time is not fully
+explained yet: probably dynamic starts simply run long enough (ld.so loads
+several MB) to catch a signal far more often.
+
+Two more findings in the same assembly, from reading it:
+
+- The signal entry did not save the FP/SIMD registers q0-q31, fpcr, fpsr,
+  while the Rust handler uses them freely (x86_64 saves them with
+  `fxsave64`). Fixed in patch `0004`. On its own it did not change the
+  crash rate.
+- When it takes a standard signal sent to the thread (label `3:`), it stores
+  the signal number instead of the new mask into the thread's signal word
+  (`stxr w3, x1, [x5]`). Not fixed yet; thread-directed signals are rare.
+
+## History of the hunt
+
+### The problem
 
 On Redox for aarch64, roughly every third or fourth program started from the
 shell ends at once: no output, exit code 1. The same command run again
@@ -21,7 +71,7 @@ with a `brk` exception.
 - Upstream has nothing newer that could fix it: `base` main is still
   `eddcaa2`; relibc master has only unrelated commits after `841d29c`.
 
-## How to reproduce
+### How to reproduce
 
 On the build host (`ssh zehrer@homenodellm`, repository `~/redox-rpi`), after
 `scripts/build-image.sh`:
@@ -46,7 +96,7 @@ Notes on the tools:
 - `pkill -f pattern` over ssh kills the ssh session itself when the pattern
   also matches its own command line. Use `pkill -f "[b]uild-image"`.
 
-## Where it fails
+### Where it fails
 
 Every failed run ends in `relibc_start_v1` (relibc `src/start.rs`), the C
 runtime start of the program, called from the program's `_start` right after
@@ -168,7 +218,7 @@ the first loop, nearly all of them an hour later. That suggests a resource
 that is used up or reused over time, e.g. physical pages that come back
 dirty.
 
-## Ruled out
+### Ruled out
 
 | Hypothesis | Experiment | Result |
 |---|---|---|
@@ -182,7 +232,7 @@ dirty.
 | Floating point registers lost in `fork()` | relibc patch 0001, see below | A real bug, fixed, but the failures stay |
 | FP/SIMD state on context switch, exception entry | Read the code: `fp_save`/`fp_load` save q0-q31, fpcr, fpsr; the kernel is built without NEON; exception entry saves x0-x30 | Looks right |
 
-## Changes in the tree from this hunt
+### Changes in the tree from this hunt
 
 relibc is now built from source (`relibc = "source"` in
 `config/raspi3bp-sdcard.toml`, `relibc` in the patch loop of
@@ -194,6 +244,9 @@ relibc is now built from source (`relibc = "source"` in
 |---|---|
 | `0001` aarch64: keep d8-d15 across fork. `__relibc_internal_fork_wrapper` saved only x19-x30 (the source says `//TODO: store floating point regs`), so the child continued with the d8-d15 of whatever ran on its CPU before | **Keep.** A real bug, even if not this one |
 | `0002` ld.so: read shared objects instead of mapping them | Kept for now (in v0.1.0-alpha): it removes the `memcpy`, `fstat` and symbol name crashes. Revisit once the cause is known; drop if file mappings turn out fine |
+| `0003` ld.so diagnostics: PT_DYNAMIC check, fresh memory must be zero | **Drop** before the next release; it found the bug |
+| `0004` aarch64: save FP/SIMD registers in the signal entry | **Keep.** A real bug |
+| `0005` aarch64: do not swap x1 and x2 in the signal entry | **Keep.** The cause |
 
 A third, diagnostic patch (next section) was removed again before the
 v0.1.0-alpha build; it is in the history of this page's commit
@@ -202,7 +255,7 @@ v0.1.0-alpha build; it is in the history of this page's commit
 The build host's kernel source (`recipes/core/kernel/source`) has no
 experiments left in it; only our patches.
 
-## The diagnostic that did not work, and why that is interesting
+### The diagnostic that did not work, and why that is interesting
 
 Patch 0003 replaces the `expect` with a function that loads the stack
 contents (stack pointer, argc, envp count, the first auxv words) into
@@ -223,7 +276,7 @@ with state inherited from the parent. This may only be a side effect, but
 signal delivery during program start is a good candidate for the original
 corruption too.
 
-## Ideas for the next steps
+### Ideas for the next steps (before the cause was found)
 
 1. **Check in the parent.** In `redox-rt/src/proc.rs`, after the auxv and
    the strings are pushed, map the child's stack page again and compare
