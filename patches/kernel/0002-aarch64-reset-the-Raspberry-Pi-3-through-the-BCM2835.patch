@@ -1,0 +1,138 @@
+From 33d8070ccd2a2c6d96742f6a606d405667fb3467 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 10:53:09 +0100
+Subject: [PATCH 2/2] aarch64: reset the Raspberry Pi 3 through the BCM2835
+ watchdog
+
+The Pi 3 firmware has no PSCI, so SYSTEM_RESET was never available and
+kreset halted the CPU instead of restarting the board.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/device/bcm2835_wdt.rs | 55 ++++++++++++++++++++++++++
+ src/arch/aarch64/device/mod.rs         |  2 +
+ src/arch/aarch64/stop.rs               | 14 ++++++-
+ 3 files changed, 70 insertions(+), 1 deletion(-)
+ create mode 100644 src/arch/aarch64/device/bcm2835_wdt.rs
+
+diff --git a/src/arch/aarch64/device/bcm2835_wdt.rs b/src/arch/aarch64/device/bcm2835_wdt.rs
+new file mode 100644
+index 0000000..ef8d8b8
+--- /dev/null
++++ b/src/arch/aarch64/device/bcm2835_wdt.rs
+@@ -0,0 +1,55 @@
++//! Reset through the BCM2835 power management watchdog.
++//!
++//! The Raspberry Pi 3 firmware has no PSCI, so `psci::system_reset` cannot
++//! restart the board. The watchdog of the power management block can: arm it
++//! with a short timeout and select a full reset.
++
++use crate::dtb::{get_mmio_address, Fdt};
++use core::{
++    ptr::{read_volatile, write_volatile},
++    sync::atomic::{AtomicUsize, Ordering},
++};
++
++const PM_RSTC: usize = 0x1c;
++const PM_WDOG: usize = 0x24;
++const PM_PASSWORD: u32 = 0x5a00_0000;
++const PM_RSTC_WRCFG_CLR: u32 = 0xffff_ffcf;
++const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x0000_0020;
++
++/// Virtual base address of the watchdog, 0 if the board has none.
++static BASE: AtomicUsize = AtomicUsize::new(0);
++
++pub fn init(fdt: &Fdt) {
++    let Some(node) = fdt
++        .all_compatible(&["brcm,bcm2835-pm-wdt", "brcm,bcm2835-pm"])
++        .next()
++    else {
++        return;
++    };
++    let Some(Ok(reg)) = node.reg().and_then(|reg| reg.iter::<usize, usize>().nth(0)) else {
++        return;
++    };
++    if let Some(addr) = get_mmio_address(fdt, &node, &reg) {
++        info!("BCM2835 watchdog at {:#x}", addr);
++        BASE.store(addr + crate::PHYS_OFFSET, Ordering::Release);
++    }
++}
++
++/// Reset the board. Returns only if there is no watchdog.
++pub unsafe fn reset() {
++    let base = BASE.load(Ordering::Acquire);
++    if base == 0 {
++        return;
++    }
++    unsafe {
++        write_volatile((base + PM_WDOG) as *mut u32, PM_PASSWORD | 10);
++        let rstc = read_volatile((base + PM_RSTC) as *const u32);
++        write_volatile(
++            (base + PM_RSTC) as *mut u32,
++            PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET,
++        );
++        loop {
++            crate::arch::interrupt::halt();
++        }
++    }
++}
+diff --git a/src/arch/aarch64/device/mod.rs b/src/arch/aarch64/device/mod.rs
+index cdaf24f..4b6fd41 100644
+--- a/src/arch/aarch64/device/mod.rs
++++ b/src/arch/aarch64/device/mod.rs
+@@ -1,5 +1,6 @@
+ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+ 
++pub mod bcm2835_wdt;
+ pub mod cpu;
+ pub mod generic_timer;
+ pub mod irqchip;
+@@ -43,6 +44,7 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
+     unsafe {
+         info!("PSCI INIT");
+         psci::init(fdt);
++        bcm2835_wdt::init(fdt);
+         info!("CPU TOPOLOGY INIT");
+         cpu::init_topology(fdt);
+         info!("IRQCHIP INIT");
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 2678d75..42b9cb2 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -1,4 +1,7 @@
+-use crate::{arch::device::psci, sync::CleanLockToken};
++use crate::{
++    arch::device::{bcm2835_wdt, psci},
++    sync::CleanLockToken,
++};
+ 
+ fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+     error!("PSCI {} failed: {:?}", operation, error);
+@@ -10,8 +13,16 @@ fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+     }
+ }
+ 
++/// Boards without PSCI, like the Raspberry Pi 3, reset through their watchdog.
++unsafe fn reset_without_psci() {
++    if !psci::available() {
++        unsafe { bcm2835_wdt::reset() };
++    }
++}
++
+ pub unsafe fn kreset() -> ! {
+     println!("kreset");
++    unsafe { reset_without_psci() };
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
+@@ -19,6 +30,7 @@ pub unsafe fn kreset() -> ! {
+ }
+ 
+ pub unsafe fn emergency_reset() -> ! {
++    unsafe { reset_without_psci() };
+     match psci::system_reset() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
+-- 
+2.54.0 (Apple Git-157)
+

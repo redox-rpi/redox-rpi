@@ -88,7 +88,7 @@ for name in bootloader base; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd; do
+for tool in devshd reboot; do
     mkdir -p "$REDOX/recipes/other/$tool"
     cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
 [source]

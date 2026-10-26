@@ -14,6 +14,8 @@ bootloader = "source"
 redoxfs = {}
 # Development shell over TCP port 2323 (tools/devshd), until SSH works.
 devshd = "source"
+# `reboot` command (tools/reboot).
+reboot = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.
