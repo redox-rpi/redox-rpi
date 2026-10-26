@@ -1,8 +1,11 @@
 # Debugging: programs fail at random (found)
 
 **State 2026-10-26, late evening: cause found and fixed in relibc patch
-`0005`.** In QEMU 300 program starts in a row ran without a crash (before:
-about half of them crashed). Test on the real Pi pending. The section "The
+`0005`.** 300 program starts in a row (`pwd`, `ls /`, `sha256sum`) ran
+without a crash, both in QEMU and on the real Pi 3B+ (network boot image
+`sig-x1x2`); before, a quarter to nearly all of them crashed. The only crash
+left in the Pi's log was one `ion` panic (`brk #1`), probably the shell of
+a devsh session whose connection had already closed; to be checked. The section "The
 cause" below explains the bug; the rest of the page is the history of the
 hunt, kept because the dead ends and tools may help with the next bug.
 
