@@ -104,15 +104,18 @@ corruption of data a new process starts with, not one wrong value.
 
 relibc is now built from source (`relibc = "source"` in
 `config/raspi3bp-sdcard.toml`, `relibc` in the patch loop of
-`scripts/build-image.sh`), with three patches in
+`scripts/build-image.sh`), with two patches in
 [`patches/relibc/`](../patches/relibc/) (branch `redox-rpi` in
 `upstream/relibc`, base `841d29c`):
 
 | Patch | Keep? |
 |---|---|
 | `0001` aarch64: keep d8-d15 across fork. `__relibc_internal_fork_wrapper` saved only x19-x30 (the source says `//TODO: store floating point regs`), so the child continued with the d8-d15 of whatever ran on its CPU before | **Keep.** A real bug, even if not this one |
-| `0002` ld.so: read shared objects instead of mapping them | Experiment. Removes some crash kinds, see above. Decide once the cause is known; drop if mappings turn out fine |
-| `0003` DIAGNOSTIC: dump the stack of a process without filetable fd | **Drop before any release.** Did not work (see next section) |
+| `0002` ld.so: read shared objects instead of mapping them | Kept for now (in v0.1.0-alpha): it removes the `memcpy`, `fstat` and symbol name crashes. Revisit once the cause is known; drop if file mappings turn out fine |
+
+A third, diagnostic patch (next section) was removed again before the
+v0.1.0-alpha build; it is in the history of this page's commit
+(`9199d96`, `24e8eef` in this repository).
 
 The build host's kernel source (`recipes/core/kernel/source`) has no
 experiments left in it; only our patches.
