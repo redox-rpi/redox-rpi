@@ -1,7 +1,7 @@
 From fffb6eb97264060f80ba256040f11f389d1e1701 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 10:40:39 +0100
-Subject: [PATCH 10/10] dwc2d: LAN7800 LEDs from the devicetree
+Subject: [PATCH 10/11] dwc2d: LAN7800 LEDs from the devicetree
 
 The lite reset switches the LED outputs off. Program the PHY LED modes
 from microchip,led-modes and enable that many LEDs, like Linux and

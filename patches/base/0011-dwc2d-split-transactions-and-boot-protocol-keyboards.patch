@@ -1,0 +1,954 @@
+From 2614629def84d87aacd55c327489cb6528104b71 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 12:11:13 +0100
+Subject: [PATCH 11/11] dwc2d: split transactions and boot protocol keyboards
+
+Full- and low-speed devices behind a high-speed hub (every USB port of
+the Pi 3B+) go through the hub's transaction translator. A boot protocol
+keyboard is polled on its interrupt endpoint and feeds inputd.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/Cargo.toml       |   2 +
+ drivers/usb/dwc2d/src/dwc2.rs      | 208 ++++++++++++++++++--
+ drivers/usb/dwc2d/src/enumerate.rs |  63 ++++--
+ drivers/usb/dwc2d/src/hid.rs       | 296 +++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs      |  67 +++++--
+ drivers/usb/dwc2d/src/regs.rs      |  11 ++
+ 6 files changed, 597 insertions(+), 50 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/hid.rs
+
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index be31e92..32515bc 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -9,8 +9,10 @@ fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
+ driver-network = { path = "../../net/driver-network" }
++inputd = { path = "../../inputd" }
+ 
+ libredox.workspace = true
++orbclient.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+ 
+ [lints]
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 27bfa52..16406d1 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -27,12 +27,14 @@ pub enum Error {
+     Transfer(u32),
+ }
+ 
++#[derive(Clone)]
+ pub struct Dwc2 {
+     base: usize,
+     channels: usize,
+ }
+ 
+ /// One transaction phase of a transfer on a host channel.
++#[derive(Clone, Copy)]
+ pub struct Phase {
+     pub dev_addr: u8,
+     pub endpoint: u8,
+@@ -161,6 +163,22 @@ impl Dwc2 {
+         })
+     }
+ 
++    /// HCCHAR for a phase, without the enable bit.
++    fn hcchar_value(phase: &Phase) -> u32 {
++        let mut value = (phase.max_packet as u32 & HCCHAR_MPS_MASK)
++            | (u32::from(phase.endpoint) << HCCHAR_EPNUM_SHIFT)
++            | (phase.ep_type << HCCHAR_EPTYPE_SHIFT)
++            | (1 << HCCHAR_MC_SHIFT)
++            | (u32::from(phase.dev_addr) << HCCHAR_DEVADDR_SHIFT);
++        if phase.dir_in {
++            value |= HCCHAR_EPDIR_IN;
++        }
++        if phase.low_speed {
++            value |= HCCHAR_LSPDDEV;
++        }
++        value
++    }
++
+     /// Program a host channel for one transfer and enable it. The channel
+     /// works on its own from here; see [`Dwc2::poll`].
+     pub fn start(&self, ch: usize, phase: &Phase) {
+@@ -174,20 +192,168 @@ impl Dwc2 {
+             phase.len as u32 | (packets << HCTSIZ_PKTCNT_SHIFT) | (phase.pid << HCTSIZ_PID_SHIFT),
+         );
+         self.write(hcdma(ch), (phase.buf_phys | DMA_BUS_OFFSET) as u32);
++        self.write(hcchar(ch), Self::hcchar_value(phase) | HCCHAR_CHENA);
++    }
+ 
+-        let mut hcchar_value = (phase.max_packet as u32 & HCCHAR_MPS_MASK)
+-            | (u32::from(phase.endpoint) << HCCHAR_EPNUM_SHIFT)
+-            | (phase.ep_type << HCCHAR_EPTYPE_SHIFT)
+-            | (1 << HCCHAR_MC_SHIFT)
+-            | (u32::from(phase.dev_addr) << HCCHAR_DEVADDR_SHIFT)
+-            | HCCHAR_CHENA;
+-        if phase.dir_in {
+-            hcchar_value |= HCCHAR_EPDIR_IN;
++    /// Run a single packet (at most max packet bytes) on a channel, with
++    /// `hcsplt_value` for split transactions, and wait until the channel
++    /// halts. Returns the HCINT bits. Interrupt endpoints go out in the next
++    /// (micro)frame.
++    fn packet(&self, ch: usize, phase: &Phase, hcsplt_value: u32, timeout: Duration) -> Result<u32, Error> {
++        self.write(hcint(ch), u32::MAX);
++        self.write(hcsplt(ch), hcsplt_value);
++        self.write(
++            hctsiz(ch),
++            phase.len as u32 | (1 << HCTSIZ_PKTCNT_SHIFT) | (phase.pid << HCTSIZ_PID_SHIFT),
++        );
++        self.write(hcdma(ch), (phase.buf_phys | DMA_BUS_OFFSET) as u32);
++        let mut value = Self::hcchar_value(phase) | HCCHAR_CHENA;
++        // A periodic channel runs in the (micro)frame whose parity matches
++        // ODDFRM: pick the next one.
++        if phase.ep_type == EPTYPE_INTERRUPT && self.read(HFNUM) & 1 == 0 {
++            value |= HCCHAR_ODDFRM;
+         }
+-        if phase.low_speed {
+-            hcchar_value |= HCCHAR_LSPDDEV;
++        self.write(hcchar(ch), value);
++
++        let start = Instant::now();
++        loop {
++            let status = self.read(hcint(ch));
++            if status & HCINT_CH_HLTD != 0 {
++                self.write(hcint(ch), u32::MAX);
++                return Ok(status);
++            }
++            if start.elapsed() > timeout {
++                let value = self.read(hcchar(ch));
++                self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                return Err(Error::Timeout("channel halt"));
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Bytes moved by the last transfer on a channel and the data PID for
++    /// the next one.
++    fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
++        let hctsiz_value = self.read(hctsiz(ch));
++        let remaining = (hctsiz_value & 0x7FFFF) as usize;
++        (len.saturating_sub(remaining), (hctsiz_value >> HCTSIZ_PID_SHIFT) & 0x3)
++    }
++
++    /// One packet to or from a full- or low-speed device behind a
++    /// high-speed hub, through the transaction translator of hub `tt.0`,
++    /// port `tt.1` (USB 2.0, 11.14): a start split hands the transaction to
++    /// the hub, complete splits fetch its result. Returns the bytes moved
++    /// and the next data PID, or `None` if an interrupt endpoint had no data.
++    pub fn split_packet(
++        &self,
++        ch: usize,
++        phase: &Phase,
++        tt: (u8, u8),
++        timeout: Duration,
++    ) -> Result<Option<(usize, u32)>, Error> {
++        let periodic = phase.ep_type == EPTYPE_INTERRUPT;
++        let split = HCSPLT_SPLTENA
++            | HCSPLT_XACTPOS_ALL
++            | (u32::from(tt.0) << HCSPLT_HUBADDR_SHIFT)
++            | u32::from(tt.1);
++        let start = Instant::now();
++        let check_time = |what| {
++            if start.elapsed() > timeout {
++                Err(Error::Timeout(what))
++            } else {
++                Ok(())
++            }
++        };
++        'start_split: loop {
++            check_time("start split")?;
++            if periodic {
++                // Leave the hub the rest of the frame for the transaction:
++                // no start split in the last microframes.
++                while self.read(HFNUM) & 7 >= 5 {
++                    std::hint::spin_loop();
++                }
++            }
++            let status = self.packet(ch, phase, split, timeout)?;
++            if status & HCINT_STALL != 0 {
++                return Err(Error::Stall);
++            }
++            if status & HCINT_ACK == 0 {
++                if periodic && status & HCINT_NAK != 0 {
++                    return Ok(None);
++                }
++                // NAK (hub busy) or transaction error: start over.
++                continue;
++            }
++
++            loop {
++                check_time("complete split")?;
++                let status = self.packet(ch, phase, split | HCSPLT_COMPSPLT, timeout)?;
++                if status & HCINT_XFER_COMPL != 0 {
++                    return Ok(Some(self.moved(ch, phase.len)));
++                }
++                if status & HCINT_STALL != 0 {
++                    return Err(Error::Stall);
++                }
++                if status & HCINT_NYET != 0 {
++                    // The hub has no result yet.
++                    continue;
++                }
++                if periodic && status & HCINT_NAK != 0 {
++                    return Ok(None);
++                }
++                // NAK from the device or a transaction error: start over.
++                continue 'start_split;
++            }
++        }
++    }
++
++    /// One packet from an interrupt IN endpoint: through the hub's
++    /// transaction translator for `tt`, directly otherwise. `None` if the
++    /// device had no data.
++    pub fn interrupt_in(
++        &self,
++        ch: usize,
++        phase: &Phase,
++        tt: Option<(u8, u8)>,
++        timeout: Duration,
++    ) -> Result<Option<(usize, u32)>, Error> {
++        if let Some(tt) = tt {
++            return self.split_packet(ch, phase, tt, timeout);
++        }
++        let status = self.packet(ch, phase, 0, timeout)?;
++        if status & HCINT_XFER_COMPL != 0 {
++            Ok(Some(self.moved(ch, phase.len)))
++        } else if status & HCINT_STALL != 0 {
++            Err(Error::Stall)
++        } else if status & HCINT_NAK != 0 {
++            Ok(None)
++        } else {
++            Err(Error::Transfer(status))
++        }
++    }
++
++    /// A transfer of any length as split transactions, packet by packet.
++    fn split_transfer(&self, ch: usize, phase: &Phase, tt: (u8, u8), timeout: Duration) -> Result<usize, Error> {
++        let mps = usize::from(phase.max_packet);
++        let mut done = 0;
++        let mut pid = phase.pid;
++        loop {
++            let len = (phase.len - done).min(mps);
++            let packet = Phase {
++                buf_phys: phase.buf_phys + done,
++                len,
++                pid,
++                ..*phase
++            };
++            let Some((moved, next_pid)) = self.split_packet(ch, &packet, tt, timeout)? else {
++                continue;
++            };
++            done += moved;
++            pid = next_pid;
++            if moved < len || done >= phase.len {
++                return Ok(done);
++            }
+         }
+-        self.write(hcchar(ch), hcchar_value);
+     }
+ 
+     /// Check a channel started with [`Dwc2::start`] for `len` bytes. Returns
+@@ -233,19 +399,27 @@ impl Dwc2 {
+         }
+     }
+ 
+-    /// Run one transaction phase on channel 0 and return the bytes moved.
+-    pub fn transfer(&self, phase: &Phase) -> Result<usize, Error> {
+-        self.transfer_on(0, phase, Duration::from_secs(1)).map(|(len, _)| len)
++    /// Run one transaction phase on channel 0, split through the hub's
++    /// transaction translator for `tt`, and return the bytes moved.
++    pub fn transfer(&self, phase: &Phase, tt: Option<(u8, u8)>) -> Result<usize, Error> {
++        let timeout = Duration::from_secs(1);
++        match tt {
++            Some(tt) => self.split_transfer(0, phase, tt, timeout),
++            None => self.transfer_on(0, phase, timeout).map(|(len, _)| len),
++        }
+     }
+ 
+     /// A control transfer: SETUP, optional data stage, status stage.
+     /// `data` is the DMA buffer for the data stage; its direction comes from
+     /// bit 7 of the request type. Returns the length of the data stage.
++    /// `tt` is the hub and port of the transaction translator for a full- or
++    /// low-speed device behind a high-speed hub.
+     pub fn control(
+         &self,
+         dev_addr: u8,
+         max_packet: u16,
+         low_speed: bool,
++        tt: Option<(u8, u8)>,
+         setup: &mut Dma<[u8; 8]>,
+         data: &mut Dma<[u8; 512]>,
+     ) -> Result<usize, Error> {
+@@ -263,14 +437,14 @@ impl Dwc2 {
+             len,
+         };
+ 
+-        self.transfer(&phase(false, PID_SETUP, setup.physical(), 8))?;
++        self.transfer(&phase(false, PID_SETUP, setup.physical(), 8), tt)?;
+         let moved = if len > 0 {
+-            self.transfer(&phase(dir_in, PID_DATA1, data.physical(), len.min(512)))?
++            self.transfer(&phase(dir_in, PID_DATA1, data.physical(), len.min(512)), tt)?
+         } else {
+             0
+         };
+         // The status stage goes the other way, always with DATA1.
+-        self.transfer(&phase(!dir_in || len == 0, PID_DATA1, data.physical(), 0))?;
++        self.transfer(&phase(!dir_in || len == 0, PID_DATA1, data.physical(), 0), tt)?;
+         Ok(moved)
+     }
+ }
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 55d0a25..2710053 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -1,5 +1,6 @@
+ //! Device enumeration on the root port and behind hubs.
+ 
++use std::collections::HashMap;
+ use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+@@ -46,25 +47,32 @@ pub struct Device {
+     pub configurations: u8,
+     /// Hub nesting level: 0 on the root port.
+     pub depth: usize,
++    /// Hub address and port of the transaction translator, for a full- or
++    /// low-speed device behind a high-speed hub.
++    pub tt: Option<(u8, u8)>,
+ }
+ 
+ pub struct Bus<'a> {
+     hc: &'a Dwc2,
+-    root_speed: Speed,
+     next_address: u8,
+     setup: Dma<[u8; 8]>,
+     data: Dma<[u8; 512]>,
++    /// Transaction translator of every device that needs one, by address.
++    tts: HashMap<u8, (u8, u8)>,
++    /// Transaction translator of the device being enumerated at address 0.
++    new_device_tt: Option<(u8, u8)>,
+     pub devices: Vec<Device>,
+ }
+ 
+ impl<'a> Bus<'a> {
+-    pub fn new(hc: &'a Dwc2, root_speed: Speed) -> Self {
++    pub fn new(hc: &'a Dwc2) -> Self {
+         Self {
+             hc,
+-            root_speed,
+             next_address: 1,
+             setup: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
+             data: Dma::new([0; 512]).expect("dwc2d: DMA allocation failed"),
++            tts: HashMap::new(),
++            new_device_tt: None,
+             devices: Vec::new(),
+         }
+     }
+@@ -83,6 +91,7 @@ impl<'a> Bus<'a> {
+         let [v0, v1] = value.to_le_bytes();
+         let [i0, i1] = index.to_le_bytes();
+         let [l0, l1] = length.to_le_bytes();
++        let tt = self.tt(address);
+         // A device sometimes stalls its first request after a reset (seen on
+         // the real Pi 3B+ hubs); the same request succeeds a moment later.
+         const ATTEMPTS: usize = 3;
+@@ -93,6 +102,7 @@ impl<'a> Bus<'a> {
+                 address,
+                 max_packet,
+                 speed == Speed::Low,
++                tt,
+                 &mut self.setup,
+                 &mut self.data,
+             ) {
+@@ -127,10 +137,11 @@ impl<'a> Bus<'a> {
+         let [v0, v1] = value.to_le_bytes();
+         let [i0, i1] = index.to_le_bytes();
+         let [l0, l1] = (data.len() as u16).to_le_bytes();
++        let tt = self.tt(address);
+         self.data[..data.len()].copy_from_slice(data);
+         *self.setup = [request_type, request, v0, v1, i0, i1, l0, l1];
+         self.hc
+-            .control(address, max_packet, speed == Speed::Low, &mut self.setup, &mut self.data)
++            .control(address, max_packet, speed == Speed::Low, tt, &mut self.setup, &mut self.data)
+             .inspect_err(|err| {
+                 println!(
+                     "dwc2d: request {:02x?} to address {address} failed: {err:?}",
+@@ -140,16 +151,20 @@ impl<'a> Bus<'a> {
+             .map(|_| ())
+     }
+ 
++    fn tt(&self, address: u8) -> Option<(u8, u8)> {
++        if address == 0 {
++            self.new_device_tt
++        } else {
++            self.tts.get(&address).copied()
++        }
++    }
++
+     /// Enumerate the device that was just reset on a port (address 0) and,
+-    /// if it is a hub, everything behind it.
+-    pub fn enumerate(&mut self, speed: Speed, depth: usize) -> Result<(), Error> {
++    /// if it is a hub, everything behind it. `tt` is the transaction
++    /// translator for a full- or low-speed device behind a high-speed hub.
++    pub fn enumerate(&mut self, speed: Speed, depth: usize, tt: Option<(u8, u8)>) -> Result<(), Error> {
+         let indent = "  ".repeat(depth);
+-        if speed != Speed::High && self.root_speed == Speed::High {
+-            // Full/low speed behind a high-speed hub talks to the hub's
+-            // transaction translator: needs split transactions.
+-            println!("dwc2d: {indent}{:?} speed device behind a high-speed hub: split transactions not supported yet", speed);
+-            return Ok(());
+-        }
++        self.new_device_tt = tt;
+ 
+         // The first 8 bytes of the device descriptor hold the max packet
+         // size of endpoint 0. High-speed devices always use 64.
+@@ -160,6 +175,9 @@ impl<'a> Bus<'a> {
+         let address = self.next_address;
+         self.next_address += 1;
+         self.request(0, max_packet, speed, 0x00, REQ_SET_ADDRESS, u16::from(address), 0, 0)?;
++        if let Some(tt) = tt {
++            self.tts.insert(address, tt);
++        }
+         sleep(Duration::from_millis(10));
+ 
+         let d = self.request(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18)?;
+@@ -172,6 +190,7 @@ impl<'a> Bus<'a> {
+             class: d[4],
+             configurations: d[17],
+             depth,
++            tt,
+         };
+         println!(
+             "dwc2d: {indent}address {}: {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {:?} speed",
+@@ -186,7 +205,7 @@ impl<'a> Bus<'a> {
+         if class == CLASS_HUB && depth < MAX_HUB_DEPTH {
+             let configuration = config.get(5).copied().unwrap_or(1);
+             self.request(address, max_packet, speed, 0x00, REQ_SET_CONFIGURATION, u16::from(configuration), 0, 0)?;
+-            self.enumerate_hub(address, max_packet, speed, depth)?;
++            self.enumerate_hub(address, max_packet, speed, depth, tt)?;
+         }
+         Ok(())
+     }
+@@ -196,7 +215,14 @@ impl<'a> Bus<'a> {
+         Ok((u16::from_le_bytes([s[0], s[1]]), u16::from_le_bytes([s[2], s[3]])))
+     }
+ 
+-    fn enumerate_hub(&mut self, hub: u8, max_packet: u16, speed: Speed, depth: usize) -> Result<(), Error> {
++    fn enumerate_hub(
++        &mut self,
++        hub: u8,
++        max_packet: u16,
++        speed: Speed,
++        depth: usize,
++        hub_tt: Option<(u8, u8)>,
++    ) -> Result<(), Error> {
+         let indent = "  ".repeat(depth);
+         let desc = self.request(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71)?;
+         let ports = u16::from(desc[2]);
+@@ -256,8 +282,15 @@ impl<'a> Bus<'a> {
+             } else {
+                 Speed::Full
+             };
++            // A high-speed hub translates for full- and low-speed devices on
++            // its ports; deeper down, the translator of the hub applies.
++            let child_tt = if speed == Speed::High && child_speed != Speed::High {
++                Some((hub, port as u8))
++            } else {
++                hub_tt
++            };
+             println!("dwc2d: {indent}hub {hub} port {port}: device connected");
+-            if let Err(err) = self.enumerate(child_speed, depth + 1) {
++            if let Err(err) = self.enumerate(child_speed, depth + 1, child_tt) {
+                 println!("dwc2d: {indent}hub {hub} port {port}: {err:?}");
+             }
+         }
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+new file mode 100644
+index 0000000..b765485
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -0,0 +1,296 @@
++//! USB keyboards in the HID boot protocol: polled on their interrupt
++//! endpoint, key changes go to inputd like those of usbhidd.
++
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++use inputd::ProducerHandle;
++use orbclient::KeyEvent;
++
++use crate::dwc2::{Dwc2, Error, Phase, Speed};
++use crate::enumerate::{Bus, Device};
++use crate::regs::*;
++
++const CLASS_HID: u8 = 0x03;
++const SUBCLASS_BOOT: u8 = 0x01;
++const PROTOCOL_KEYBOARD: u8 = 0x01;
++
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++const DESC_CONFIGURATION: u8 = 0x02;
++// HID class requests (HID 1.11, 7.2)
++const REQ_SET_IDLE: u8 = 0x0A;
++const REQ_SET_PROTOCOL: u8 = 0x0B;
++const PROTOCOL_BOOT: u16 = 0;
++
++/// The host channel for keyboard reports; 0 does control transfers, the
++/// network adapters use 1 and 2.
++const CHANNEL: usize = 3;
++const POLL_INTERVAL: Duration = Duration::from_millis(10);
++/// Auto-repeat of a held key, as keyboards in the boot protocol leave it to
++/// the host.
++const REPEAT_DELAY: Duration = Duration::from_millis(500);
++const REPEAT_INTERVAL: Duration = Duration::from_millis(33);
++
++/// A boot keyboard interface and its interrupt IN endpoint.
++pub struct KeyboardFunction {
++    address: u8,
++    speed: Speed,
++    max_packet0: u16,
++    tt: Option<(u8, u8)>,
++    configuration: u8,
++    interface: u8,
++    endpoint: u8,
++    max_packet: u16,
++}
++
++pub fn find(bus: &mut Bus, device: &Device) -> Option<KeyboardFunction> {
++    let config = bus
++        .request(
++            device.address,
++            device.max_packet,
++            device.speed,
++            0x80,
++            REQ_GET_DESCRIPTOR,
++            u16::from(DESC_CONFIGURATION) << 8,
++            0,
++            512,
++        )
++        .ok()?;
++    let configuration = *config.get(5)?;
++
++    let mut keyboard_interface = None;
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        match desc[1] {
++            4 if desc.len() >= 9 => {
++                keyboard_interface = (desc[5] == CLASS_HID
++                    && desc[6] == SUBCLASS_BOOT
++                    && desc[7] == PROTOCOL_KEYBOARD)
++                    .then_some(desc[2]);
++            }
++            5 if desc.len() >= 7 => {
++                // Interrupt IN endpoint of the keyboard interface.
++                if let Some(interface) = keyboard_interface {
++                    if desc[2] & 0x80 != 0 && desc[3] & 3 == 3 {
++                        return Some(KeyboardFunction {
++                            address: device.address,
++                            speed: device.speed,
++                            max_packet0: device.max_packet,
++                            tt: device.tt,
++                            configuration,
++                            interface,
++                            endpoint: desc[2] & 0x0F,
++                            max_packet: u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF,
++                        });
++                    }
++                }
++            }
++            _ => {}
++        }
++        pos += desc.len();
++    }
++    None
++}
++
++/// Configure the keyboard for boot protocol reports.
++pub fn init(bus: &mut Bus, f: &KeyboardFunction) -> Result<(), Error> {
++    let index = u16::from(f.interface);
++    bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(f.configuration), 0, 0)?;
++    bus.request(f.address, f.max_packet0, f.speed, 0x21, REQ_SET_PROTOCOL, PROTOCOL_BOOT, index, 0)?;
++    // Report only on changes. Optional: some keyboards stall it.
++    let _ = bus.request(f.address, f.max_packet0, f.speed, 0x21, REQ_SET_IDLE, 0, index, 0);
++    Ok(())
++}
++
++pub struct Keyboard {
++    hc: Dwc2,
++    f: KeyboardFunction,
++    buf: Dma<[u8; 8]>,
++    pid: u32,
++    /// The last boot protocol report: modifier bits, reserved, six keys.
++    report: [u8; 8],
++    input: ProducerHandle,
++    next_poll: Instant,
++    /// The key that repeats while held and when it repeats next.
++    repeat: Option<(u8, Instant)>,
++}
++
++impl Keyboard {
++    pub fn new(hc: Dwc2, f: KeyboardFunction) -> Option<Self> {
++        let input = ProducerHandle::new()
++            .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
++            .ok()?;
++        Some(Self {
++            hc,
++            f,
++            buf: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
++            pid: PID_DATA0,
++            report: [0; 8],
++            input,
++            next_poll: Instant::now(),
++            repeat: None,
++        })
++    }
++
++    /// Fetch a report when the poll interval has passed and send the key
++    /// changes. Errors are dropped: the next poll tries again.
++    pub fn poll(&mut self) {
++        let now = Instant::now();
++        if let Some((key, at)) = self.repeat {
++            if now >= at {
++                self.send(key, true);
++                self.repeat = Some((key, now + REPEAT_INTERVAL));
++            }
++        }
++        if now < self.next_poll {
++            return;
++        }
++        self.next_poll = now + POLL_INTERVAL;
++
++        let phase = Phase {
++            dev_addr: self.f.address,
++            endpoint: self.f.endpoint,
++            dir_in: true,
++            ep_type: EPTYPE_INTERRUPT,
++            max_packet: self.f.max_packet,
++            low_speed: self.f.speed == Speed::Low,
++            pid: self.pid,
++            buf_phys: self.buf.physical(),
++            len: usize::from(self.f.max_packet).min(8),
++        };
++        match self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
++            Ok(Some((len, next_pid))) => {
++                self.pid = next_pid;
++                if len >= 3 {
++                    let mut report = [0; 8];
++                    report[..len].copy_from_slice(&self.buf[..len]);
++                    self.update(report);
++                }
++            }
++            Ok(None) | Err(_) => {}
++        }
++    }
++
++    fn update(&mut self, report: [u8; 8]) {
++        // Too many keys at once: every key slot says "rollover error".
++        if report[2..].contains(&0x01) {
++            return;
++        }
++        let old = self.report;
++        for bit in 0..8 {
++            let (was, is) = (old[0] & (1 << bit) != 0, report[0] & (1 << bit) != 0);
++            if was != is {
++                self.send(0xE0 + bit, is);
++            }
++        }
++        for &key in old[2..].iter().filter(|&&key| key > 3) {
++            if !report[2..].contains(&key) {
++                self.send(key, false);
++                if matches!(self.repeat, Some((k, _)) if k == key) {
++                    self.repeat = None;
++                }
++            }
++        }
++        for &key in report[2..].iter().filter(|&&key| key > 3) {
++            if !old[2..].contains(&key) {
++                self.send(key, true);
++                self.repeat = Some((key, Instant::now() + REPEAT_DELAY));
++            }
++        }
++        self.report = report;
++    }
++
++    fn send(&mut self, usage: u8, pressed: bool) {
++        let Some(scancode) = scancode(usage) else {
++            return;
++        };
++        let event = KeyEvent {
++            character: '\0',
++            scancode,
++            pressed,
++        };
++        let _ = self.input.write_event(event.to_event());
++    }
++}
++
++/// The scancode inputd expects for a key from the HID keyboard usage page,
++/// as in usbhidd.
++fn scancode(usage: u8) -> Option<u8> {
++    use orbclient::*;
++    Some(match usage {
++        0x04..=0x1D => {
++            const LETTERS: [u8; 26] = [
++                K_A, K_B, K_C, K_D, K_E, K_F, K_G, K_H, K_I, K_J, K_K, K_L, K_M, K_N, K_O, K_P,
++                K_Q, K_R, K_S, K_T, K_U, K_V, K_W, K_X, K_Y, K_Z,
++            ];
++            LETTERS[usize::from(usage - 0x04)]
++        }
++        0x1E..=0x27 => {
++            const DIGITS: [u8; 10] = [K_1, K_2, K_3, K_4, K_5, K_6, K_7, K_8, K_9, K_0];
++            DIGITS[usize::from(usage - 0x1E)]
++        }
++        0x28 => K_ENTER,
++        0x29 => K_ESC,
++        0x2A => K_BKSP,
++        0x2B => K_TAB,
++        0x2C => K_SPACE,
++        0x2D => K_MINUS,
++        0x2E => K_EQUALS,
++        0x2F => K_BRACE_OPEN,
++        0x30 => K_BRACE_CLOSE,
++        0x31 => K_BACKSLASH,
++        // Non-US # and ~, where PS/2 keyboards have \ and |
++        0x32 => K_BACKSLASH,
++        0x33 => K_SEMICOLON,
++        0x34 => K_QUOTE,
++        0x35 => K_TICK,
++        0x36 => K_COMMA,
++        0x37 => K_PERIOD,
++        0x38 => K_SLASH,
++        0x39 => K_CAPS,
++        0x3A..=0x45 => {
++            const FKEYS: [u8; 12] = [K_F1, K_F2, K_F3, K_F4, K_F5, K_F6, K_F7, K_F8, K_F9, K_F10, K_F11, K_F12];
++            FKEYS[usize::from(usage - 0x3A)]
++        }
++        0x46 => K_PRTSC,
++        0x47 => K_SCROLL,
++        0x49 => K_INS,
++        0x4A => K_HOME,
++        0x4B => K_PGUP,
++        0x4C => K_DEL,
++        0x4D => K_END,
++        0x4E => K_PGDN,
++        0x4F => K_RIGHT,
++        0x50 => K_LEFT,
++        0x51 => K_DOWN,
++        0x52 => K_UP,
++        0x53 => K_NUM,
++        0x54 => K_NUM_SLASH,
++        0x55 => K_NUM_ASTERISK,
++        0x56 => K_NUM_MINUS,
++        0x57 => K_NUM_PLUS,
++        0x58 => K_NUM_ENTER,
++        0x59..=0x62 => {
++            const NUMPAD: [u8; 10] = [
++                K_NUM_1, K_NUM_2, K_NUM_3, K_NUM_4, K_NUM_5, K_NUM_6, K_NUM_7, K_NUM_8, K_NUM_9,
++                K_NUM_0,
++            ];
++            NUMPAD[usize::from(usage - 0x59)]
++        }
++        // Non-US \ and | (the < > key on German keyboards)
++        0x64 => 0x56,
++        0x65 => K_APP,
++        0x66 => K_POWER,
++        0xE0 => K_LEFT_CTRL,
++        0xE1 => K_LEFT_SHIFT,
++        0xE2 => K_ALT,
++        0xE3 => K_LEFT_SUPER,
++        0xE4 => K_RIGHT_CTRL,
++        0xE5 => K_RIGHT_SHIFT,
++        0xE6 => K_ALT_GR,
++        0xE7 => K_RIGHT_SUPER,
++        _ => return None,
++    })
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 662fbae..4baf0c0 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -2,8 +2,9 @@
+ //! mode, as found on the Raspberry Pi 1-3 and Zero.
+ //!
+ //! Brings up the controller, enumerates the devices behind the root port and
+-//! hubs, and runs network adapters directly in this process (CDC Ethernet,
+-//! LAN7800). It does not offer the USB scheme to class drivers yet.
++//! hubs, and runs network adapters (CDC Ethernet, LAN7800) and a boot
++//! protocol keyboard directly in this process. It does not offer the USB
++//! scheme to class drivers yet.
+ 
+ use std::process;
+ 
+@@ -12,6 +13,7 @@ use fdt::Fdt;
+ mod dwc2;
+ mod ecm;
+ mod enumerate;
++mod hid;
+ mod lan78xx;
+ mod regs;
+ 
+@@ -19,6 +21,7 @@ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+ use ecm::{Ecm, EcmFunction};
+ use enumerate::Bus;
++use hid::Keyboard;
+ use lan78xx::{Lan78xx, Lan78xxFunction};
+ 
+ /// A network function found during enumeration, already initialized.
+@@ -142,15 +145,23 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-    let network = match enumerate(&mut hc, dt_mac, &led_modes) {
+-        Ok(network) => network,
++    let (network, keyboard) = match enumerate(&mut hc, dt_mac, &led_modes) {
++        Ok(found) => found,
+         Err(err) => {
+             eprintln!("dwc2d: {:?}", err);
+-            None
++            (None, None)
+         }
+     };
++    let mut keyboard = keyboard.and_then(|f| Keyboard::new(hc.clone(), f));
+     let Some((function, mac)) = network else {
+         daemon.ready();
++        // See below for why this loop yields instead of sleeping.
++        if let Some(keyboard) = keyboard.as_mut() {
++            loop {
++                keyboard.poll();
++                std::thread::yield_now();
++            }
++        }
+         loop {
+             std::thread::sleep(std::time::Duration::from_secs(3600));
+         }
+@@ -179,17 +190,20 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     // busy core until the driver uses interrupts.
+     loop {
+         scheme.tick().expect("dwc2d: network scheme failed");
++        if let Some(keyboard) = keyboard.as_mut() {
++            keyboard.poll();
++        }
+         std::thread::yield_now();
+     }
+ }
+ 
+ /// Enumerate all devices; returns a network function, initialized, with its
+-/// MAC address.
++/// MAC address, and a keyboard, configured.
+ fn enumerate(
+     hc: &mut Dwc2,
+     dt_mac: Option<[u8; 6]>,
+     led_modes: &[u32],
+-) -> Result<Option<(NetFunction, [u8; 6])>, dwc2::Error> {
++) -> Result<(Option<(NetFunction, [u8; 6])>, Option<hid::KeyboardFunction>), dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -200,23 +214,40 @@ fn enumerate(
+         let speed = hc.reset_port()?;
+         println!("dwc2d: device on root port, {:?} speed", speed);
+ 
+-        let mut bus = Bus::new(hc, speed);
+-        match bus.enumerate(speed, 0) {
++        let mut bus = Bus::new(hc);
++        match bus.enumerate(speed, 0, None) {
+             Ok(()) => {
+                 println!("dwc2d: {} device(s) enumerated", bus.devices.len());
++                let mut network = None;
++                let mut keyboard = None;
+                 for device in bus.devices.clone() {
+-                    if let Some(function) = lan78xx::find(&mut bus, &device) {
+-                        println!("dwc2d: LAN7800 at address {}", device.address);
+-                        let mac = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
+-                        return Ok(Some((NetFunction::Lan78xx(function), mac)));
++                    if network.is_none() {
++                        if let Some(function) = lan78xx::find(&mut bus, &device) {
++                            println!("dwc2d: LAN7800 at address {}", device.address);
++                            let mac = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
++                            network = Some((NetFunction::Lan78xx(function), mac));
++                            continue;
++                        }
++                        if let Some(function) = ecm::find(&mut bus, &device) {
++                            println!("dwc2d: CDC Ethernet at address {}", device.address);
++                            let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
++                            network = Some((NetFunction::Ecm(function), mac));
++                            continue;
++                        }
+                     }
+-                    if let Some(function) = ecm::find(&mut bus, &device) {
+-                        println!("dwc2d: CDC Ethernet at address {}", device.address);
+-                        let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
+-                        return Ok(Some((NetFunction::Ecm(function), mac)));
++                    if keyboard.is_none() {
++                        if let Some(function) = hid::find(&mut bus, &device) {
++                            match hid::init(&mut bus, &function) {
++                                Ok(()) => {
++                                    println!("dwc2d: keyboard at address {}", device.address);
++                                    keyboard = Some(function);
++                                }
++                                Err(err) => println!("dwc2d: keyboard at address {}: {err:?}", device.address),
++                            }
++                        }
+                     }
+                 }
+-                return Ok(None);
++                return Ok((network, keyboard));
+             }
+             Err(err) if attempt < ATTEMPTS => {
+                 println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
+diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
+index 1df22c0..fc7eaa2 100644
+--- a/drivers/usb/dwc2d/src/regs.rs
++++ b/drivers/usb/dwc2d/src/regs.rs
+@@ -34,6 +34,7 @@ pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
+ // Host mode registers
+ pub const HCFG: usize = 0x400;
+ pub const HFIR: usize = 0x404;
++pub const HFNUM: usize = 0x408;
+ pub const HPRT0: usize = 0x440;
+ 
+ /// PHY clock for full/low speed: 30/60 MHz (UTMI+ PHY, as on the Pi).
+@@ -79,21 +80,31 @@ pub const HCCHAR_LSPDDEV: u32 = 1 << 17;
+ pub const HCCHAR_EPTYPE_SHIFT: u32 = 18;
+ pub const HCCHAR_MC_SHIFT: u32 = 20;
+ pub const HCCHAR_DEVADDR_SHIFT: u32 = 22;
++pub const HCCHAR_ODDFRM: u32 = 1 << 29;
+ pub const HCCHAR_CHDIS: u32 = 1 << 30;
+ pub const HCCHAR_CHENA: u32 = 1 << 31;
+ 
+ pub const EPTYPE_CONTROL: u32 = 0;
+ pub const EPTYPE_BULK: u32 = 2;
++pub const EPTYPE_INTERRUPT: u32 = 3;
+ 
+ pub const HCINT_XFER_COMPL: u32 = 1 << 0;
+ pub const HCINT_CH_HLTD: u32 = 1 << 1;
+ pub const HCINT_AHB_ERR: u32 = 1 << 2;
+ pub const HCINT_STALL: u32 = 1 << 3;
+ pub const HCINT_NAK: u32 = 1 << 4;
++pub const HCINT_ACK: u32 = 1 << 5;
++pub const HCINT_NYET: u32 = 1 << 6;
+ pub const HCINT_XACT_ERR: u32 = 1 << 7;
+ pub const HCINT_BBL_ERR: u32 = 1 << 8;
+ pub const HCINT_DATA_TGL_ERR: u32 = 1 << 10;
+ 
++pub const HCSPLT_SPLTENA: u32 = 1 << 31;
++pub const HCSPLT_COMPSPLT: u32 = 1 << 16;
++/// The whole payload in one split transaction.
++pub const HCSPLT_XACTPOS_ALL: u32 = 3 << 14;
++pub const HCSPLT_HUBADDR_SHIFT: u32 = 7;
++
+ pub const HCTSIZ_PKTCNT_SHIFT: u32 = 19;
+ pub const HCTSIZ_PID_SHIFT: u32 = 29;
+ pub const PID_DATA0: u32 = 0;
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,7 +1,7 @@
 From c38fe3681a5549a27122158c4a1bca41e5452eab Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 09:45:32 +0100
-Subject: [PATCH 05/10] dwc2d: CDC Ethernet network adapter
+Subject: [PATCH 05/11] dwc2d: CDC Ethernet network adapter
 
 Adds bulk transfers on separate channels (one kept pending for receive)
 and a CDC Ethernet (ECM) adapter on top of driver-network, so the
