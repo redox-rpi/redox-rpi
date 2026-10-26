@@ -6,7 +6,11 @@
 # are built from source with this repository's patches and BOARD=raspi3bp;
 # everything else comes from Redox's prebuilt packages.
 
-include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
+include = [
+    "../upstream/redox/config/aarch64/raspi3bp/minimal.toml",
+    # Version files, written by scripts/build-image.sh.
+    "../build/redox-rpi-version.toml",
+]
 
 [general]
 # Disk size in MiB, including the EFI partition. RedoxFS does not grow with
