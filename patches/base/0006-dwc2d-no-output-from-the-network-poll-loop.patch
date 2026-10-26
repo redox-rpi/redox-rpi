@@ -1,15 +1,17 @@
-From dbcfaf412ca1ec31f9420eaf9c62d32c21f3fd7f Mon Sep 17 00:00:00 2001
+From 25a8721d7483305d322b9af10426d6a05d81a222 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 09:50:45 +0100
-Subject: [PATCH 6/6] dwc2d: debug output for the network adapter
+Subject: [PATCH 6/6] dwc2d: no output from the network poll loop
 
+After boot nobody may read the stdout of initfs daemons, so printing
+can block the adapter for good.
 ---
- drivers/usb/dwc2d/src/ecm.rs  | 17 +++++++++++++++++
- drivers/usb/dwc2d/src/main.rs | 25 ++++++++++++++++++++++++-
- 2 files changed, 41 insertions(+), 1 deletion(-)
+ drivers/usb/dwc2d/src/ecm.rs  | 16 ++++++++++++----
+ drivers/usb/dwc2d/src/main.rs |  2 ++
+ 2 files changed, 14 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
-index e93a5f8..d452ce1 100644
+index e93a5f8..d748e55 100644
 --- a/drivers/usb/dwc2d/src/ecm.rs
 +++ b/drivers/usb/dwc2d/src/ecm.rs
 @@ -126,6 +126,8 @@ pub struct Ecm {
@@ -30,7 +32,18 @@ index e93a5f8..d452ce1 100644
          };
          ecm.arm_rx();
          ecm
-@@ -222,6 +226,11 @@ impl Ecm {
+@@ -212,16 +216,18 @@ impl Ecm {
+                     self.arm_rx();
+                 }
+             }
+-            Some(Err(err)) => {
+-                println!("dwc2d: ecm receive failed: {err:?}");
+-                self.arm_rx();
+-            }
++            Some(Err(_)) => self.arm_rx(),
+         }
+     }
+ 
      pub fn mac(&self) -> [u8; 6] {
          self.mac
      }
@@ -42,14 +55,11 @@ index e93a5f8..d452ce1 100644
  }
  
  impl NetworkAdapter for Ecm {
-@@ -241,12 +250,20 @@ impl NetworkAdapter for Ecm {
+@@ -241,12 +247,14 @@ impl NetworkAdapter for Ecm {
          };
          let len = len.min(buf.len());
          buf[..len].copy_from_slice(&self.rx[..len]);
 +        self.rx_frames += 1;
-+        if self.rx_frames <= 3 {
-+            println!("dwc2d: ecm received frame {} ({len} bytes)", self.rx_frames);
-+        }
          self.arm_rx();
          Ok(Some(len))
      }
@@ -57,55 +67,22 @@ index e93a5f8..d452ce1 100644
      fn write_packet(&mut self, buf: &[u8]) -> SysResult<usize> {
          let len = buf.len().min(BUF_SIZE);
 +        self.tx_frames += 1;
-+        if self.tx_frames <= 3 {
-+            println!("dwc2d: ecm sending frame {} ({len} bytes)", self.tx_frames);
-+        }
          self.tx[..len].copy_from_slice(&buf[..len]);
          let timeout = Duration::from_millis(100);
          let phase = self.phase(false, len);
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 53a518b..356af43 100644
+index 53a518b..80609f6 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -84,14 +84,37 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-     );
-     let mut scheme = NetworkScheme::new(
--        move || Ecm::new(hc, function, mac),
-+        move || {
-+            println!("dwc2d: creating adapter");
-+            let ecm = Ecm::new(hc, function, mac);
-+            println!("dwc2d: adapter created");
-+            ecm
-+        },
-         daemon,
+@@ -89,6 +89,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          "network.usb_ecm".to_string(),
      );
-+    println!("dwc2d: network scheme registered");
      // No interrupts yet: poll for received frames and scheme requests.
-+    let mut ticks = 0u64;
-+    let mut last_report = std::time::Instant::now();
++    // No output from here on: after boot nobody may read our stdout, and a
++    // full pipe would block the whole adapter.
      loop {
-+        if ticks < 3 {
-+            println!("dwc2d: tick {ticks} start");
-+        }
          scheme.tick().expect("dwc2d: network scheme failed");
-+        if ticks < 3 {
-+            println!("dwc2d: tick {ticks} done, sleeping");
-+        }
          std::thread::sleep(std::time::Duration::from_millis(1));
-+        if ticks < 3 {
-+            println!("dwc2d: tick {ticks} slept");
-+        }
-+        ticks += 1;
-+        if last_report.elapsed() > std::time::Duration::from_secs(5) {
-+            let (rx, tx) = scheme.adapter().counters();
-+            println!("dwc2d: alive, {ticks} polls, {rx} frames received, {tx} sent");
-+            last_report = std::time::Instant::now();
-+        }
-     }
- }
- 
 -- 
 2.54.0 (Apple Git-157)
 
