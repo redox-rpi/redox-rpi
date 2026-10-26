@@ -1,21 +1,16 @@
-# Redox image for the Raspberry Pi 3 Model B+.
+# Redox image for the Raspberry Pi 3 Model B+, booted over the network
+# (scripts/netboot.sh): the SD card image plus a development shell and the
+# data partition of the network-boot SD card.
 #
-# Build with scripts/build-image.sh. Kernel and base (drivers, init) are built
-# from source with this repository's patches and BOARD=raspi3bp; everything
-# else comes from Redox's prebuilt packages.
+# Build with scripts/build-image.sh.
 
-include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
+include = ["raspi3bp-sdcard.toml"]
 
 [packages]
-kernel = "source"
-base = "source"
-bootloader = "source"
 # Mounts the data partition below; the minimal config has it in initfs only.
 redoxfs = {}
 # Development shell over TCP port 2323 (tools/devshd), until SSH works.
 devshd = "source"
-# `reboot` command (tools/reboot).
-reboot = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.

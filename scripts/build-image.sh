@@ -6,9 +6,13 @@
 # Sources are cloned into upstream/ on first use.
 #
 # Usage:
-#   scripts/build-image.sh [make target]   (default: all)
+#   scripts/build-image.sh [--sdcard] [make target]   (default: all)
 #
-# Result: upstream/redox/build/aarch64/raspi3bp/harddrive.img
+#   --sdcard  the image that boots from the SD card (config/raspi3bp-sdcard.toml)
+#             instead of the network-boot image (config/raspi3bp.toml)
+#
+# Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
+#         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard)
 
 set -euo pipefail
 
@@ -18,6 +22,14 @@ REDOX="$UPSTREAM/redox"
 FDT="$UPSTREAM/fdt-crate"
 FDT_REV="8fa4388e056e48826e8898557a1c8600f9ee5d6a"
 KERNEL_RECIPE="$REDOX/recipes/core/kernel"
+
+CONFIG_NAME=minimal
+CONFIG="$ROOT/config/raspi3bp.toml"
+if [ "${1:-}" = --sdcard ]; then
+    CONFIG_NAME=sdcard
+    CONFIG="$ROOT/config/raspi3bp-sdcard.toml"
+    shift
+fi
 
 mkdir -p "$UPSTREAM"
 
@@ -103,12 +115,12 @@ cd "$REDOX"
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged
 # recipes, so letting it check every time is cheap.
-rm -f build/aarch64/minimal/repo.tag
+rm -f "build/aarch64/$CONFIG_NAME/repo.tag"
 # CI disables the cookbook's terminal UI, which needs a real terminal.
 CI="${CI:-1}" make "${1:-all}" \
     PODMAN_BUILD=0 \
     ARCH=aarch64 \
     BOARD=raspi3bp \
-    CONFIG_NAME=minimal \
+    CONFIG_NAME="$CONFIG_NAME" \
     REPO_BINARY=1 \
-    FILESYSTEM_CONFIG="$ROOT/config/raspi3bp.toml"
+    FILESYSTEM_CONFIG="$CONFIG"

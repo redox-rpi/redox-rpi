@@ -1,0 +1,16 @@
+# Redox image for the Raspberry Pi 3 Model B+ that boots from the SD card
+# (scripts/make-sdcard.sh --local). Also the base of the network-boot image
+# (config/raspi3bp.toml).
+#
+# Build with scripts/build-image.sh --sdcard. Kernel and base (drivers, init)
+# are built from source with this repository's patches and BOARD=raspi3bp;
+# everything else comes from Redox's prebuilt packages.
+
+include = ["../upstream/redox/config/aarch64/raspi3bp/minimal.toml"]
+
+[packages]
+kernel = "source"
+base = "source"
+bootloader = "source"
+# `reboot` command (tools/reboot).
+reboot = "source"

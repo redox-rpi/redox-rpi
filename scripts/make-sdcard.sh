@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Create a network-boot SD card image for the Raspberry Pi 3, 3B+ and Zero 2 W.
+# Create an SD card image for the Raspberry Pi 3, 3B+ and Zero 2 W: for network
+# boot (default) or with Redox on the card (--local).
 #
+# Network boot:
 # Partition 1 (FAT32, 63 MiB) holds the Raspberry Pi firmware, our U-Boot,
 # config.txt and a boot script. Redox itself comes from the TFTP server on
 # every boot (see scripts/netboot.sh), so a new build needs no new card.
@@ -9,11 +11,17 @@
 # (/scheme/disk.mmc/0p1, see config/raspi3bp.toml); it also has a fixed UUID
 # (DATA_UUID) so tools can recognize it.
 #
-# Needs: curl, sfdisk, mtools, cargo (builds tools/redoxfs-file).
-# Run scripts/build-uboot.sh and scripts/netboot.sh --server <ip> first.
+# Local boot (--local <harddrive.img>, built by scripts/build-image.sh --sdcard):
+# partition 1 additionally holds the Redox bootloader as EFI/BOOT/BOOTAA64.EFI,
+# which U-Boot starts; partition 2 is the Redox root filesystem from the image.
+#
+# Needs: curl, sfdisk, partx, mtools, cargo (builds tools/redoxfs-file).
+# Run scripts/build-uboot.sh first, and for network boot
+# scripts/netboot.sh --server <ip>.
 #
 # Usage:
 #   scripts/make-sdcard.sh [--tftp-dir <dir>] [--out <file>] [--data-size <MiB>]
+#   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #
 #   --data-size <MiB>  size of the data partition (default 960, 0 for none).
 #                      RedoxFS does not grow with the card, so pick the size
@@ -39,11 +47,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tftp="$ROOT/build/tftp"
 out="$ROOT/build/sdcard-netboot.img"
 data_mib=960
+image=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
         --data-size) data_mib="$2"; shift 2 ;;
+        --local) image="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -51,7 +61,16 @@ done
 uboot="$ROOT/build/u-boot/u-boot.bin"
 bootscr="$tftp/redox/boot.scr"
 [ -f "$uboot" ] || { echo "$uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
-[ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip>" >&2; exit 1; }
+if [ -n "$image" ]; then
+    [ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh --sdcard" >&2; exit 1; }
+    # The image's EFI partition (2) and RedoxFS partition (3), in sectors.
+    read -r efi_start _ < <(partx -g -o START,SECTORS -n 2 "$image")
+    read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$image")
+    data_mib=$(((root_sectors + 2047) / 2048))
+    [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-redox.img"
+else
+    [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip>" >&2; exit 1; }
+fi
 
 cache="$ROOT/build/firmware/$FIRMWARE_TAG"
 for file in "${FIRMWARE_FILES[@]}"; do
@@ -62,12 +81,13 @@ for file in "${FIRMWARE_FILES[@]}"; do
 done
 
 tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
-if [ "$data_mib" -gt 0 ] && [ ! -x "$tool" ]; then
+if [ -z "$image" ] && [ "$data_mib" -gt 0 ] && [ ! -x "$tool" ]; then
     cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
 fi
 
 # MBR, since the Pi boot ROM reads MBR only: FAT32 boot partition from 1 MiB
-# to 64 MiB, then the data partition (type da, "non-FS data").
+# to 64 MiB, then the data or root partition (type da, "non-FS data"; Redox
+# finds its filesystems by content).
 rm -f "$out"
 truncate -s "$((BOOT_MIB + data_mib))M" "$out"
 {
@@ -87,13 +107,24 @@ for file in "${FIRMWARE_FILES[@]}"; do
 done
 mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
 mcopy -i "$fat" "$uboot" ::u-boot.bin
-mcopy -i "$fat" "$bootscr" ::boot.scr
+if [ -n "$image" ]; then
+    efi="$out.efi"
+    rm -rf "$efi"
+    mcopy -s -i "$image@@$((efi_start * 512))" ::EFI "$efi"
+    mcopy -s -i "$fat" "$efi" ::EFI
+    rm -rf "$efi"
+else
+    mcopy -i "$fat" "$bootscr" ::boot.scr
+fi
 echo "Boot partition:"
 mdir -i "$fat" -/ ::
 dd if="$fat" of="$out" bs=1M seek=1 conv=notrunc status=none
 rm -f "$fat"
 
-if [ "$data_mib" -gt 0 ]; then
+if [ -n "$image" ]; then
+    dd if="$image" of="$out" bs=512 skip="$root_start" count="$root_sectors" \
+        seek="$((BOOT_MIB * 2048))" conv=notrunc status=none
+elif [ "$data_mib" -gt 0 ]; then
     data="$out.data"
     rm -f "$data"
     truncate -s "${data_mib}M" "$data"
