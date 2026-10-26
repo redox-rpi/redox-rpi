@@ -1,0 +1,36 @@
+From 3829c42d5590782226a601ff8ad0079bab0d1c7d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 26 Oct 2026 14:23:45 +0100
+Subject: [PATCH 13/13] bcm2835-sdhcid: back to the 41.67 MHz base clock
+
+The 250 MHz assumed in the previous commit made ACMD41 fail on a real
+Raspberry Pi 3B+: the card was initialized at 33 kHz.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index f84d571..cb4db51 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -124,11 +124,10 @@ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
+ //added by bztsrc driver
+ const SCR_SUPP_CCS: u32 = 0x0000_0001;
+ 
+-/// Base clock of the EMMC controller. The Raspberry Pi 3 firmware runs it
+-/// at 250 MHz; the 41.67 MHz assumed before put the card at 62.5 MHz instead
+-/// of at most 25 MHz, and reads failed on real hardware. Should the clock be
+-/// lower, the card just runs slower.
+-const EMMC_BASE_CLOCK: u32 = 250_000_000;
++/// Base clock of the EMMC controller as the Raspberry Pi 3 firmware sets it.
++/// Dividing 250 MHz instead left the card initialization at 33 kHz, where
++/// ACMD41 failed on a real Pi 3B+.
++const EMMC_BASE_CLOCK: u32 = 41_666_666;
+ 
+ /// Attempts for a block transfer, with a reset of the command and data
+ /// lines in between.
+-- 
+2.54.0 (Apple Git-157)
+
