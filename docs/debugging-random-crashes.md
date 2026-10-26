@@ -1,7 +1,7 @@
 # Debugging: programs fail at random (found)
 
 **State 2026-10-26, late evening: cause found and fixed in relibc patch
-`0005`.** 300 program starts in a row (`pwd`, `ls /`, `sha256sum`) ran
+`0004` (was `0005` during the hunt).** 300 program starts in a row (`pwd`, `ls /`, `sha256sum`) ran
 without a crash, both in QEMU and on the real Pi 3B+ (network boot image
 `sig-x1x2`); before, a quarter to nearly all of them crashed. The only crash
 left in the Pi's log was one `ion` panic (`brk #1`), probably the shell of
@@ -32,7 +32,7 @@ aborts at small addresses, `NotFound` for files that exist, `munmap`
 returning `EINVAL`, garbage TLS module numbers, broken PT_DYNAMIC.
 
 The fix is one line: `stp x3, x2, [sp, #-16]!`
-([`patches/relibc/0005`](../patches/relibc/)). x86_64 saves its registers
+([`patches/relibc/0004`](../patches/relibc/)). x86_64 saves its registers
 in different code and is not affected.
 
 How it was found: with `LD_DEBUG=all`, `pwd` crashed every time at the same
@@ -49,7 +49,7 @@ Two more findings in the same assembly, from reading it:
 
 - The signal entry did not save the FP/SIMD registers q0-q31, fpcr, fpsr,
   while the Rust handler uses them freely (x86_64 saves them with
-  `fxsave64`). Fixed in patch `0004`. On its own it did not change the
+  `fxsave64`). Fixed in patch `0003`. On its own it did not change the
   crash rate.
 - When it takes a standard signal sent to the thread (label `3:`), it stores
   the signal number instead of the new mask into the thread's signal word
@@ -247,9 +247,9 @@ relibc is now built from source (`relibc = "source"` in
 |---|---|
 | `0001` aarch64: keep d8-d15 across fork. `__relibc_internal_fork_wrapper` saved only x19-x30 (the source says `//TODO: store floating point regs`), so the child continued with the d8-d15 of whatever ran on its CPU before | **Keep.** A real bug, even if not this one |
 | `0002` ld.so: read shared objects instead of mapping them | Kept for now (in v0.1.0-alpha): it removes the `memcpy`, `fstat` and symbol name crashes. Revisit once the cause is known; drop if file mappings turn out fine |
-| `0003` ld.so diagnostics: PT_DYNAMIC check, fresh memory must be zero | **Drop** before the next release; it found the bug |
-| `0004` aarch64: save FP/SIMD registers in the signal entry | **Keep.** A real bug |
-| `0005` aarch64: do not swap x1 and x2 in the signal entry | **Keep.** The cause |
+| (was `0003`) ld.so diagnostics: PT_DYNAMIC check, fresh memory must be zero | Dropped again for v0.1.1-alpha; it found the bug. In this repository's history (commit `0d365d2`) |
+| `0003` aarch64: save FP/SIMD registers in the signal entry | **Keep.** A real bug |
+| `0004` aarch64: do not swap x1 and x2 in the signal entry | **Keep.** The cause |
 
 A third, diagnostic patch (next section) was removed again before the
 v0.1.0-alpha build; it is in the history of this page's commit

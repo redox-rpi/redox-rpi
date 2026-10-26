@@ -1,7 +1,7 @@
-From e5fe573292ae8ef7ce3c1d447b77e6562be069ad Mon Sep 17 00:00:00 2001
+From 8f9cd082d97a17b68650cdc6e5db604d9e74d90a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 18:49:32 +0100
-Subject: [PATCH] aarch64: do not swap x1 and x2 in the signal entry
+Subject: [PATCH 4/4] aarch64: do not swap x1 and x2 in the signal entry
 
 __relibc_internal_sigentry pushed x1 below x2, but ArchIntRegs and the
 restore (ldp x2, x1) expect x2 below x1. Every signal handled this way

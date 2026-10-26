@@ -1,7 +1,7 @@
-From 19b61612b7807b6bb5e0d2fa7dc2679cb07be1b8 Mon Sep 17 00:00:00 2001
+From 8e1b51e83604ba886686df5b340b8ddc5916ac3a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 18:40:24 +0100
-Subject: [PATCH] aarch64: save FP/SIMD registers in the signal entry
+Subject: [PATCH 3/4] aarch64: save FP/SIMD registers in the signal entry
 
 The signal entry saved only x0-x30, sp, nzcv and pc. The Rust handler it
 calls uses q0-q31 freely, so code interrupted by a signal continued with
