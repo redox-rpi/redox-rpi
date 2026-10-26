@@ -55,7 +55,7 @@ while [ $# -gt 0 ]; do
         --timeout) timeout="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
-        --monitor) monitor=(-monitor "unix:$2,server,nowait"); shift 2 ;;
+        --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
