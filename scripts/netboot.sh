@@ -30,7 +30,8 @@
 #                     TFTP block size (default: U-Boot's 1468, for zero2w
 #                     512: U-Boot's r8152 driver receives into a 2048-byte
 #                     buffer, and two full-size frames that the adapter
-#                     packs into one USB transfer overflow it)
+#                     packs into one USB transfer overflow it; tested on a
+#                     real Zero 2 W)
 
 set -euo pipefail
 
