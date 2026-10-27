@@ -55,6 +55,23 @@ DHCP. QEMU puts the device behind its own full-speed hub and does not care
 about bulk packet sizes there; a real DWC2 does, so this does not replace
 the test on the Pi.
 
+**Zero 2 W, without this experiment** (2026-10-27, unchanged `v0.1.0-alpha`
+SD image, boot log from a photo of the screen): `dwc2d` finds the HAT's hub
+`1a40:0101` (high speed, 4 ports) and on its port 4 the RTL8152:
+`0bda:8152`, USB 2.10, high speed, vendor interface (class 0xff) with bulk
+IN 0x81 and bulk OUT 0x02 of 512 bytes and interrupt 0x83. That is what
+`find` expects: no transaction translator, first configuration. Then the
+CDC Ethernet search (`ecm::find`) asks for the chip's second configuration
+(`GET_DESCRIPTOR` config index 1, wLength 512) and gets
+`Timeout("channel halt")`; with no other adapter, `smolnetd` finds none.
+This driver claims the chip before that search runs and only reads the
+first configuration (index 0, which enumeration already read without
+problems), so it does not depend on that request. Why it fails is open:
+the second configuration (CDC ECM) is probably the first control transfer
+on real hardware whose data stage spans several 64-byte packets at high
+speed. If the RTL8152 init fails, the search still runs and costs that
+timeout, but goes on.
+
 **Real Pi:** not yet tested, see below.
 
 ## Test with a real chip in QEMU
