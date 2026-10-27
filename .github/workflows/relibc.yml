@@ -66,6 +66,10 @@ jobs:
 
       - name: Build
         working-directory: relibc
+        # clang compiles relibc's C parts for any target; the runner's gcc
+        # only for x86_64.
+        env:
+          CC_aarch64_unknown_redox: clang
         run: |
           rustup show active-toolchain
           cargo build --release --lib --target ${{ matrix.target }} -Zbuild-std=core,alloc
@@ -81,6 +85,8 @@ jobs:
 
       - name: Clippy (report only)
         working-directory: relibc
+        env:
+          CC_aarch64_unknown_redox: clang
         run: |
           rustup component add clippy
           cargo clippy --release --lib --target aarch64-unknown-redox -Zbuild-std=core,alloc \
