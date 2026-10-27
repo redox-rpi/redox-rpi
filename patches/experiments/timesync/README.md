@@ -25,4 +25,9 @@ timesync 192.168.178.1   # another server, here a router with NTP
 date
 ```
 
-**Result:** see below once tested.
+**Result in QEMU** (`raspi3b` with `--usb-net`, build
+`v0.1.0-alpha-24-g2e33285+ldso-diagnostics+timesync`, 2026-10-27): during
+boot `timesync: clock set to 2026-10-27 08:06:46 UTC from pool.ntp.org`;
+`date` then printed the same time as the build host. Log lines written
+before the clock was set still carry 1970 timestamps. Not yet tested on a
+real Pi ([test plan](../../../docs/test-plan.md), test 3).
