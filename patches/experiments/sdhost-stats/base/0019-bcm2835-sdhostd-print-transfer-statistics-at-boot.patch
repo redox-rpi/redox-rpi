@@ -1,0 +1,22 @@
+From c82c1b3de4114bfe9c7e93818ad2ae0a1cb0fc17 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 27 Oct 2026 17:24:31 +0100
+Subject: [PATCH] bcm2835-sdhostd: print transfer statistics at boot
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ init.initfs.d/40_bcm2835-sdhostd.service | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/init.initfs.d/40_bcm2835-sdhostd.service b/init.initfs.d/40_bcm2835-sdhostd.service
+index c494796..eaad80b 100644
+--- a/init.initfs.d/40_bcm2835-sdhostd.service
++++ b/init.initfs.d/40_bcm2835-sdhostd.service
+@@ -7,3 +7,4 @@ condition_board = ["raspi3bp"]
+ [service]
+ cmd = "bcm2835-sdhostd"
+ type = "notify"
++envs = { SDHOSTD_STATS = "1" }
+-- 
+2.54.0 (Apple Git-157)
+
