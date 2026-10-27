@@ -194,6 +194,9 @@ fn run(mode: &str, count: u64, start_sender: impl FnOnce() -> Box<dyn FnOnce()>)
     STATE.remaining.store(count, Ordering::SeqCst);
     STATE.abort.store(0, Ordering::SeqCst);
 
+    // Start the sender first: fork() in a process with a second thread
+    // crashed now and then on Redox (docs/test-reports.md).
+    let stop = start_sender();
     let watchdog = thread::spawn(|| {
         let (mut last, mut since) = (u64::MAX, Instant::now());
         loop {
@@ -210,7 +213,6 @@ fn run(mode: &str, count: u64, start_sender: impl FnOnce() -> Box<dyn FnOnce()>)
             thread::sleep(Duration::from_millis(100));
         }
     });
-    let stop = start_sender();
     let code = check_loop(&STATE);
     stop();
     // Let the watchdog end, also when the loop ended on a difference.
