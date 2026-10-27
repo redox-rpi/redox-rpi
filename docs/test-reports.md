@@ -209,3 +209,19 @@ person, without a serial console. Not a `pi-test.py` run.
 | image over TFTP, 512-byte blocks | pass | the whole 42 MB arrive; slow, many minutes, not timed |
 | boot to login | pass | logged in as root |
 | network in Redox | – | none, expected: no RTL8152 driver yet |
+
+## 2026-10-27: `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, speed of `bcm2835-sdhcid`
+
+Real Pi 3B+ over netboot, the same card and the same `dd` runs as for
+sdhost in high speed mode, to compare the two drivers.
+
+| Check | Result | Detail |
+|---|---|---|
+| write 1 MiB calls, fsync | pass | 4 MiB in 1.57 s, 2.7 MB/s (sdhost: 6.7 MB/s) |
+| write 64 KiB calls, fsync | pass | 4 MiB in 2.53 s, 1.7 MB/s (sdhost: 3.2 MB/s) |
+| write 4 KiB calls, fsync | pass | 1 MiB in 9.2 s, 114 kB/s (sdhost: 181 kB/s) |
+| write 8 MiB, restart, read back | pass | SHA-256 `f611ca802560f2ced9628a84f134df3757367235848026cae11d5c8ef3b5b12a` before and after the restart |
+| read from the card | pass | 8 MiB in 1.85 s, 4.5 MB/s (sdhost: 13 MB/s) |
+
+`uptime` printed nothing twice in a row; `date` (the clock starts at
+1970-01-01 on every boot) gave the uptime instead.
