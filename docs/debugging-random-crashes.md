@@ -70,6 +70,8 @@ of 80 starts in QEMU. Experiments on 2026-10-26, all in QEMU with the same
 | `libc.so` that only reads one byte of every fresh page (both places) | 0 of 120 |
 | Only the `pread` buffer touched | 2 of 120 |
 | Full SD image with patch `0005` and the sdhost driver | 2 of 81 (`ps`, `pwd`) |
+| Real Pi 3B+, netboot, patch `0005` (build `v0.1.0-alpha-14-gf39d20b`) | 36 of 300, `ld.so` reads malformed files |
+| Real Pi 3B+, netboot, experiment `ldso-diagnostics` instead | 0 of 300 |
 
 So the medium (SD vs RAM) does not matter, and neither does the sdhost
 driver. What helped was a side effect of the diagnostic: it read every page

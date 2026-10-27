@@ -149,7 +149,7 @@ def main():
             done += 2 * n
         detail = f"{failures} of {done} failed"
         if errors:
-            detail += "; messages: " + " | ".join(sorted(errors)[:5])
+            detail += "; messages: " + "; ".join(f'"{e}"' for e in sorted(errors)[:5])
         check("starts", failures == 0, detail)
         info["starts"] = (failures, done)
     finally:
@@ -166,6 +166,7 @@ def main():
                 f.write(f" {args.note}")
             f.write("\n\n| Check | Result | Detail |\n|---|---|---|\n")
             for name, ok, detail in results:
+                detail = detail.replace("|", "\\|")
                 f.write(f"| {name} | {'pass' if ok else '**fail**'} | {detail} |\n")
     sys.exit(0 if passed else 1)
 

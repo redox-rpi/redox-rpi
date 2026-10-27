@@ -10,16 +10,19 @@ USB-serial adapter on its console.
 
 ### T1: Measure the remaining start crashes in QEMU (QEMU)
 
-Dynamically linked programs still fail at start in about 2 of 100 starts
-(`brk #1`, "no filetable fd present").
+Dynamically linked programs still fail at start: about 2 of 100 starts in
+QEMU, 36 of 300 on a real Pi with relibc patch `0005` (`ld.so` reads a
+malformed ELF file, or `brk #1` with "no filetable fd present"). With the
+`ldso-diagnostics` experiment, which reads every byte instead of one per
+page, the Pi had 0 of 300 ([test reports](test-reports.md)).
 
 - **Do:** Build the default netboot image and run the start loop from
   [debugging-random-crashes.md](debugging-random-crashes.md) for at least
   1000 starts. Count failures and collect the crash dumps from
-  `images/qrun.log`.
-- **Done when:** a table with the rate, the build ID and the crash
-  addresses is in the task's issue. Is the faulting address always in the
-  same function?
+  `images/qrun.log`. Also try an experiment that reads every 64th byte
+  (one per cache line) instead of every byte or one per page.
+- **Done when:** a table with the rates, the build IDs and the crash
+  addresses is in the task's issue.
 
 ### T2: Find the kernel cause of the start crashes (QEMU)
 
@@ -58,14 +61,25 @@ belongs. This could leave signals such as SIGCHLD blocked.
   difference.
 - **Done when:** the patch and the test output before and after.
 
-### T5: `ps` fails when it writes straight to the terminal (QEMU or Pi)
+### T5: Programs exit with code 1 and print nothing (QEMU or Pi)
 
-Sometimes `ps` exits with code 1 and prints nothing when its output goes to
-the terminal; `ps | cat` and `ps > file` work. Seen over devshd on the Pi.
+`ps` straight to the terminal often exits with code 1 and no output;
+`ps | cat` and `ps > file` work. `reboot` showed the same: exit code 1, no
+message, it took several attempts. Seen over devshd on the Pi.
 
-- **Look at:** `ptyd` in base and how uutils `ps` handles a failed write.
+- **Look at:** `ptyd` in base, how uutils `ps` handles a failed write, and
+  whether these are start failures that cannot print their message.
 - **Done when:** the cause is known and either fixed as a patch or
   documented in [known-issues.md](known-issues.md).
+
+### T11: devshd sessions leave `login` processes behind (Pi or QEMU)
+
+After about 30 devshd sessions, 31 `login` processes were still running.
+
+- **Look at:** `tools/devshd` (how it ends a session and waits for its
+  child) and `login` in userutils.
+- **Done when:** `ps | cat` shows no extra `login` after 20 sessions with
+  `scripts/devsh.py`.
 
 ## Hardware
 
