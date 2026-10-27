@@ -1,0 +1,104 @@
+name: relibc
+
+# Builds relibc at the commit from config/upstream.lock with patches/relibc/,
+# once alone and once with each relibc experiment, for aarch64 Redox (and
+# x86_64 Redox, so the patches do not break it). Clippy reports on top, and
+# the sigregs register test runs on an aarch64 Linux runner to check the
+# test itself. Tests on Redox (QEMU, real Pi) are in docs/testing.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "patches/relibc/**"
+      - "patches/experiments/*/relibc/**"
+      - "tools/sigregs/**"
+      - "config/upstream.lock"
+      - "scripts/relibc-checkout.sh"
+      - ".github/workflows/relibc.yml"
+  pull_request:
+    paths:
+      - "patches/relibc/**"
+      - "patches/experiments/*/relibc/**"
+      - "tools/sigregs/**"
+      - "config/upstream.lock"
+      - "scripts/relibc-checkout.sh"
+      - ".github/workflows/relibc.yml"
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  variants:
+    runs-on: ubuntu-24.04
+    outputs:
+      experiments: ${{ steps.list.outputs.experiments }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        name: List relibc experiments
+        run: |
+          list=$(for d in patches/experiments/*/relibc; do basename "$(dirname "$d")"; done \
+            | jq -R . | jq -sc '[""] + .')
+          echo "experiments=$list" >> "$GITHUB_OUTPUT"
+          echo "$list"
+
+  build:
+    needs: variants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        experiment: ${{ fromJSON(needs.variants.outputs.experiments) }}
+        target: [aarch64-unknown-redox]
+        include:
+          - experiment: ""
+            target: x86_64-unknown-redox
+    name: build ${{ matrix.target }} ${{ matrix.experiment || 'patches only' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out relibc with the patches
+        run: |
+          scripts/relibc-checkout.sh relibc \
+            ${{ matrix.experiment && format('--experiment {0}', matrix.experiment) || '' }}
+
+      - name: Build
+        working-directory: relibc
+        run: |
+          rustup show active-toolchain
+          cargo build --release --lib --target ${{ matrix.target }} -Zbuild-std=core,alloc
+
+  clippy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out relibc with the patches
+        run: scripts/relibc-checkout.sh relibc
+
+      - name: Clippy (report only)
+        working-directory: relibc
+        run: |
+          rustup component add clippy
+          cargo clippy --release --lib --target aarch64-unknown-redox -Zbuild-std=core,alloc \
+            --message-format short 2> ../clippy.txt || true
+          grep -E "^(warning|error)" ../clippy.txt | sed 's/:.*\(warning\|error\)/ \1/' | sort | uniq -c | sort -rn | head -40 || true
+          echo "### Clippy on relibc (aarch64)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$(grep -cE ': warning' ../clippy.txt || true) warnings, $(grep -cE ': error' ../clippy.txt || true) errors" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clippy-relibc-aarch64
+          path: clippy.txt
+
+  sigregs-linux:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run sigregs on aarch64 Linux
+        working-directory: tools/sigregs
+        run: cargo run --release -- -n 2000
