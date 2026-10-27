@@ -52,10 +52,18 @@ class Shell:
         end_line = re.compile(rb"[\r\n]" + END.encode() + rb"\r?\n")
         data, deadline = b"", time.time() + timeout
         self.sock.settimeout(1)
+        begin_line = re.compile(rb"[\r\n]" + BEGIN.encode() + rb"\r?\n")
         while time.time() < deadline and not end_line.search(ANSI.sub(b"", data).replace(b"\x00", b"")):
             try:
                 chunk = self.sock.recv(65536)
             except socket.timeout:
+                # Ion drops the rest of the line, end marker included, when
+                # a command in it fails (a redirect, for example): stop at
+                # the prompt that follows the output.
+                text = ANSI.sub(b"", data).replace(b"\x00", b"")
+                after = text[begin_line.search(text).end():] if begin_line.search(text) else b""
+                if after and SHELL_PROMPT.search(after.rstrip(b" ") + b" "):
+                    break
                 continue
             if not chunk:
                 break
@@ -63,9 +71,10 @@ class Shell:
         read_until(self.sock, SHELL_PROMPT, 5)
         text = ANSI.sub(b"", data).decode(errors="replace")
         lines = [l.strip("\x00 ") for l in text.replace("\r", "\n").split("\n")]
-        if BEGIN not in lines or END not in lines:
-            raise RuntimeError(f"no complete output for: {command}\n{text[-1500:]!r}")
-        out = lines[lines.index(BEGIN) + 1 : lines.index(END)]
+        if BEGIN not in lines:
+            raise RuntimeError(f"no output for: {command}\n{text[-1500:]!r}")
+        stop = lines.index(END) if END in lines else len(lines)
+        out = [l for l in lines[lines.index(BEGIN) + 1 : stop] if "root:" not in l]
         # Ion marks output without a final newline with a "⏎" line.
         return [l for l in out if l and not l.startswith("⏎")]
 
@@ -131,7 +140,7 @@ def main():
         out = sh.run(
             f"echo {token} > /scheme/data/pi-test.txt; cat /scheme/data/pi-test.txt; rm /scheme/data/pi-test.txt"
         )
-        check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {out[:3]}")
+        check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {'; '.join(out[:2]) or 'nothing'}")
 
         failures, errors, done = 0, set(), 0
         per_run = 25  # iterations per command line, 2 starts each
