@@ -136,6 +136,7 @@ from GPL-licensed drivers (Linux) is not.
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
 | **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
 | **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
+| **Audio** | No sound driver: `audiod` starts and stops with "No such device". Sound over HDMI (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM). Until then `audiod` could stay out of the image | medium to large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |
