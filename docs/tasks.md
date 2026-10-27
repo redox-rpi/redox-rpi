@@ -138,6 +138,26 @@ the serial console (`logs/serial.log` on the build host):
 
 ## Hardware
 
+### T18: No `pcid` and `audiod` on the Pi (QEMU, then Pi)
+
+The Pi 3B+ and the Zero 2 W have no PCI bus and never will, and there is no
+sound driver yet. Still, every boot starts `pcid-spawner`, whose `pcid`
+panics ("not yet implemented: Pci::CfgAccess::read on this architecture"),
+and `audiod`, which stops with "No such device". Both fill the console with
+errors that hide real ones. No PCI detection is needed: leave them out of
+the Pi images.
+
+- **Look at:** in base, `init.initfs.d/40_pcid-spawner-initfs.service` and
+  its line in `40_drivers.target`, `init.d/00_pcid-spawner.service` in
+  `00_base.target`, the `audiod` service, and `init.d/10_smolnetd.service`,
+  which waits for `pcid-spawner`.
+- **Do:** an experiment with a base patch that drops these services, on a
+  branch. `audiod` comes back with a sound driver (Audio on the
+  [wish list](../ROADMAP.md#wish-list-help-wanted)).
+- **Done when:** a Pi 3B+ boots without these messages, network, USB
+  keyboard and `scripts/pi-test.py` work as before, and the result is in
+  [test-reports.md](test-reports.md).
+
 ### T6: sdhost SD driver on the real Pi (Pi with serial console)
 
 Done 2026-10-27: with `sdhost-driver` and `sdhost-boot` the Pi boots with
