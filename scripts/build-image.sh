@@ -7,12 +7,15 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard] [--experiment <name>]... [--allow-dirty]
+#   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
+#                          [--allow-dirty]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
 #                 (config/raspi3bp-sdcard.toml) instead of the network-boot
 #                 image (config/raspi3bp.toml)
+#   --zero2w      the smaller network-boot image for the Pi Zero 2 W
+#                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches, and its config.toml (packages, files) if it has one
 #   --allow-dirty build even with uncommitted changes to patches/, config/,
@@ -22,6 +25,7 @@
 #
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
+#         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
 #         and its manifest in build/manifests/
 
 set -euo pipefail
@@ -43,6 +47,10 @@ while [ $# -gt 0 ]; do
         --sdcard)
             CONFIG_NAME=sdcard
             CONFIG="$ROOT/config/raspi3bp-sdcard.toml"
+            shift ;;
+        --zero2w)
+            CONFIG_NAME=zero2w
+            CONFIG="$ROOT/config/raspizero2w.toml"
             shift ;;
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }
