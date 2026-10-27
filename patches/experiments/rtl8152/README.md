@@ -80,11 +80,16 @@ scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-host 0bda:8153 --run "ls /
 
 ## Test on hardware
 
-### A. Pi 3B+ with a USB RTL8152 adapter
+### A. Pi 3B+ with a USB RTL8152 or RTL8153 adapter
 
 Needs a person at the Pi to plug in the adapter. Any adapter that reports
-`0bda:8152` under Linux (`lsusb`) works. The HAT for the Zero cannot be used
-here: it connects to the Zero's USB test pads, not to a USB port.
+`0bda:8152` or `0bda:8153` under Linux (`lsusb`) works, for example the
+Anker 565 USB-C hub (RTL8153B) through a USB-C to USB-A adapter. The hub's
+own USB hubs and card reader stay unused. The HAT for the Zero cannot be
+used here: it connects to the Zero's USB test pads, not to a USB port.
+
+The build branch is `rtl8152`; on the shared build host, build it in a
+clone of your own (see CONTRIBUTING.md, "Branches").
 
 1. Plug the adapter into one of the Pi's USB ports and connect it to the
    same LAN. Keep the onboard Ethernet cable: U-Boot still netboots over the
@@ -96,9 +101,11 @@ here: it connects to the Zero's USB test pads, not to a USB port.
    ```
 3. Reboot the Pi and read the serial console. Expected:
    ```text
-   dwc2d: RTL8152 at address <n>
-   dwc2d: RTL8152 chip version 4c00          (or 4c10)
+      dwc2d: RTL815x at address <n>
+   dwc2d: RTL8152 chip version 4c00          (RTL8153B: 6010)
    dwc2d: RTL8152 link up after <ms> ms, 100 Mbit/s full duplex
+                                             (gigabit may need longer than
+                                             the 5 s wait: "no link yet")
    dwc2d: network adapter <MAC of the adapter>
    ```
 4. The Pi gets a DHCP address for the adapter's MAC (router's lease list).
