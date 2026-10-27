@@ -8,7 +8,8 @@ Usage:
 Checks, in this order:
   version   /etc/redox-rpi-release is readable and names a build ID
   manifest  /etc/redox-rpi-manifest matches --manifest (build ID, libc hash)
-  ps        ps runs and lists processes
+  ps        ps runs and lists processes (output piped)
+  ps-tty    ps writes its list straight to the terminal
   sdcard    a file written to /scheme/data (SD card) reads back the same
   starts    dynamically linked programs (ls, pwd) start --starts times;
             every start that fails is counted
@@ -28,7 +29,7 @@ import time
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from devsh import ANSI, SHELL_PROMPT, STEP_TIMEOUT, read_until  # noqa: E402
 
-BEGIN, END = "@@begin", "@@end"
+BEGIN, END = "PITEST-BEGIN", "PITEST-END"
 
 
 class Shell:
@@ -46,12 +47,27 @@ class Shell:
         matches them exactly."""
         line = f"echo {BEGIN}; {command}; echo {END}"
         self.sock.sendall(line.encode() + b"\r")
-        raw = read_until(self.sock, SHELL_PROMPT, timeout)
-        text = ANSI.sub(b"", raw.encode(errors="replace")).decode(errors="replace")
-        lines = [l.strip("\r\x00 ") for l in text.replace("\r", "\n").split("\n")]
+        # Ion redraws its prompt while the line is typed, so wait for the
+        # end marker on a line of its own instead of the next prompt.
+        end_line = re.compile(rb"[\r\n]" + END.encode() + rb"\r?\n")
+        data, deadline = b"", time.time() + timeout
+        self.sock.settimeout(1)
+        while time.time() < deadline and not end_line.search(ANSI.sub(b"", data).replace(b"\x00", b"")):
+            try:
+                chunk = self.sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not chunk:
+                break
+            data += chunk
+        read_until(self.sock, SHELL_PROMPT, 5)
+        text = ANSI.sub(b"", data).decode(errors="replace")
+        lines = [l.strip("\x00 ") for l in text.replace("\r", "\n").split("\n")]
         if BEGIN not in lines or END not in lines:
-            raise RuntimeError(f"no complete output for: {command}")
-        return lines[lines.index(BEGIN) + 1 : lines.index(END)]
+            raise RuntimeError(f"no complete output for: {command}\n{text[-1500:]!r}")
+        out = lines[lines.index(BEGIN) + 1 : lines.index(END)]
+        # Ion marks output without a final newline with a "⏎" line.
+        return [l for l in out if l and not l.startswith("⏎")]
 
     def close(self):
         self.sock.sendall(b"exit\r")
@@ -101,10 +117,15 @@ def main():
             check("manifest", ok, f"build ID and libc.so hash {'match' if ok else 'differ from'} {args.manifest.rsplit('/', 1)[-1]}")
         else:
             on_pi = sh.run("cat /etc/redox-rpi-manifest")
-            check("manifest", bool(on_pi), "present in the image" if on_pi else "missing in the image")
+            ok = any(l.startswith("build_id") for l in on_pi)
+            check("manifest", ok, "present in the image" if ok else "missing in the image")
 
-        ps = sh.run("ps")
-        check("ps", len(ps) > 5, f"{len(ps) - 1} processes")
+        ps = sh.run("ps | wc -l")
+        count = int(ps[0]) - 1 if ps and ps[0].isdigit() else 0
+        check("ps", count > 5, f"{count} processes (piped)")
+        tty = sh.run("ps; echo rc=$?")
+        ok = tty[-1:] == ["rc=0"] and len(tty) > 5
+        check("ps-tty", ok, f"{len(tty) - 1} lines straight to the terminal, {tty[-1] if tty else 'no output'}")
 
         token = hashlib.sha256(str(time.time()).encode()).hexdigest()[:16]
         out = sh.run(

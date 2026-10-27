@@ -6,7 +6,8 @@ matching manifest says exactly what the image contained
 ([versioning](versioning.md)).
 
 Checks: `version` (build ID readable), `manifest` (build ID and `libc.so`
-hash match the build's manifest), `ps`, `sdcard` (write and read back a file
+hash match the build's manifest), `ps` (output piped), `ps-tty` (output
+straight to the terminal), `sdcard` (write and read back a file
 on the SD card's data partition), `starts` (dynamically linked `ls` and
 `pwd` started repeatedly, every failed start counted).
 
