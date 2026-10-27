@@ -140,12 +140,24 @@ the serial console (`logs/serial.log` on the build host):
 
 ### T6: sdhost SD driver on the real Pi (Pi with serial console)
 
-Experiment `sdhost-driver` works in QEMU. A netboot image with it did not
-come back on the network on a real Pi 3B+.
+Done 2026-10-27: with `sdhost-driver` and `sdhost-boot` the Pi boots with
+sdhost and writes correctly ([results](../patches/experiments/sdhost-boot/README.md#results)).
+Open: read the real core clock instead of assuming 400 MHz (31 MHz now,
+50 MHz possible), see the
+[sdhost-driver README](../patches/experiments/sdhost-driver/README.md#results).
 
-- **Do:** build with `--experiment sdhost-driver`, boot it on a Pi with the
-  serial console attached, find where it stops.
-- **Done when:** the boot log is in the issue and, ideally, a fixed patch.
+### T16: RedoxFS writes 36 times the data for small writes (QEMU, then Pi)
+
+Writing 1 MiB in 4 KiB calls to `/scheme/data` sent about 74,000 blocks
+(37 MB) to the SD card; 1 MiB calls write at bus speed
+([statistics](../patches/experiments/sdhost-stats/README.md#results)).
+
+- **Look at:** what RedoxFS writes per transaction (node, block list, tree,
+  allocator log, header), in the `redoxfs` recipe. Count the writes per
+  4 KiB `write` call, in QEMU with `sdhost-stats` or with a counter in the
+  disk scheme.
+- **Done when:** the writes per small `write` call are explained, with an
+  experiment patch that lowers them, or the reason it cannot be lower.
 
 ### T7: Power off and reboot (QEMU, then Pi)
 

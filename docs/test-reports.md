@@ -166,3 +166,16 @@ Not caused by sdhost, seen during this test:
 - `reboot` crashed at start four times in a row (`brk`, see T12);
   `echo reset > /scheme/sys/kstop` restarted the Pi.
 
+## 2026-10-27: `v0.1.0-alpha-61-g90ef0ee+ldso-diagnostics+sdhost-driver+sdhost-boot+sdhost-stats`
+
+Real Pi 3B+ over netboot, serial console. sdhost in high speed mode, with
+transfer statistics.
+
+| Check | Result | Detail |
+|---|---|---|
+| card init | pass | `SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz` (31 MHz at the 250 MHz core clock) |
+| write 1 MiB calls, fsync | pass | 4 MiB in 0.62 s, 6.7 MB/s (before: 4.4 MB/s) |
+| write 64 KiB calls, fsync | pass | 4 MiB in 1.3 s, 3.2 MB/s (before: 2.0 MB/s) |
+| write 4 KiB calls, fsync | pass | 1 MiB in 5.8 s, 181 kB/s (before: 130 kB/s); 37 MB sent to the card, see T16 |
+| write, restart, read back | pass | 8 MiB, SHA-256 `fc2479e005e51b28074dfde9e3da3bda18deb479fc67019f345467169b78d20c` before and after the restart |
+| read from the card | pass | 8 MiB in 0.65 s, 13 MB/s |
