@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Standard tests for a redox-rpi image on a real Pi, through devshd.
+
+Usage:
+    scripts/pi-test.py <host> [--port 2323] [--manifest <file>] [--starts 300]
+                       [--report docs/test-reports.md] [--note <text>]
+
+Checks, in this order:
+  version   /etc/redox-rpi-release is readable and names a build ID
+  manifest  /etc/redox-rpi-manifest matches --manifest (build ID, libc hash)
+  ps        ps runs and lists processes
+  sdcard    a file written to /scheme/data (SD card) reads back the same
+  starts    dynamically linked programs (ls, pwd) start --starts times;
+            every start that fails is counted
+
+Prints a summary and, with --report, appends it to that Markdown file.
+Exits with 1 if a check failed.
+"""
+
+import argparse
+import datetime
+import hashlib
+import re
+import socket
+import sys
+import time
+
+sys.path.insert(0, __file__.rsplit("/", 1)[0])
+from devsh import ANSI, SHELL_PROMPT, STEP_TIMEOUT, read_until  # noqa: E402
+
+BEGIN, END = "@@begin", "@@end"
+
+
+class Shell:
+    def __init__(self, host, port):
+        self.sock = socket.create_connection((host, port), timeout=10)
+        read_until(self.sock, re.compile(rb"login: $"), STEP_TIMEOUT)
+        self.sock.sendall(b"root\r")
+        read_until(self.sock, re.compile(rb"password: $"), STEP_TIMEOUT)
+        self.sock.sendall(b"password\r")
+        read_until(self.sock, SHELL_PROMPT, STEP_TIMEOUT)
+
+    def run(self, command, timeout=120):
+        """Run one Ion command line and return its output lines. The output
+        sits between two marker lines; the echo of the typed command never
+        matches them exactly."""
+        line = f"echo {BEGIN}; {command}; echo {END}"
+        self.sock.sendall(line.encode() + b"\r")
+        raw = read_until(self.sock, SHELL_PROMPT, timeout)
+        text = ANSI.sub(b"", raw.encode(errors="replace")).decode(errors="replace")
+        lines = [l.strip("\r\x00 ") for l in text.replace("\r", "\n").split("\n")]
+        if BEGIN not in lines or END not in lines:
+            raise RuntimeError(f"no complete output for: {command}")
+        return lines[lines.index(BEGIN) + 1 : lines.index(END)]
+
+    def close(self):
+        self.sock.sendall(b"exit\r")
+        self.sock.close()
+
+
+def parse_manifest(path):
+    values = {}
+    for line in open(path):
+        m = re.match(r'^"?([^"=\s]+)"?\s*=\s*"([^"]*)"', line)
+        if m:
+            values.setdefault(m.group(1), m.group(2))
+    return values
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("host")
+    ap.add_argument("--port", type=int, default=2323)
+    ap.add_argument("--manifest")
+    ap.add_argument("--starts", type=int, default=300)
+    ap.add_argument("--report")
+    ap.add_argument("--note", default="")
+    args = ap.parse_args()
+
+    results = []  # (check, ok, detail)
+    info = {}
+
+    def check(name, ok, detail):
+        results.append((name, ok, detail))
+        print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
+
+    sh = Shell(args.host, args.port)
+    try:
+        release = dict(
+            l.split("=", 1) for l in sh.run("cat /etc/redox-rpi-release") if "=" in l
+        )
+        info["build_id"] = release.get("BUILD_ID", release.get("VERSION", "?")).strip('"')
+        info["built"] = release.get("BUILD", "?").strip('"')
+        check("version", info["build_id"] != "?", info["build_id"])
+
+        libc = sh.run("sha256sum /usr/lib/libc.so")
+        info["libc"] = libc[0].split()[0] if libc else "?"
+        if args.manifest:
+            m = parse_manifest(args.manifest)
+            ok = m.get("build_id") == info["build_id"] and m.get("/usr/lib/libc.so") == info["libc"]
+            check("manifest", ok, f"build ID and libc.so hash {'match' if ok else 'differ from'} {args.manifest.rsplit('/', 1)[-1]}")
+        else:
+            on_pi = sh.run("cat /etc/redox-rpi-manifest")
+            check("manifest", bool(on_pi), "present in the image" if on_pi else "missing in the image")
+
+        ps = sh.run("ps")
+        check("ps", len(ps) > 5, f"{len(ps) - 1} processes")
+
+        token = hashlib.sha256(str(time.time()).encode()).hexdigest()[:16]
+        out = sh.run(
+            f"echo {token} > /scheme/data/pi-test.txt; cat /scheme/data/pi-test.txt; rm /scheme/data/pi-test.txt"
+        )
+        check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {out[:3]}")
+
+        failures, errors, done = 0, set(), 0
+        per_run = 25  # iterations per command line, 2 starts each
+        while done < args.starts:
+            n = min(per_run, (args.starts - done + 1) // 2)
+            out = sh.run(
+                f"for i in 1..={n}; ls / > /dev/null || echo FAILED ls; pwd > /dev/null || echo FAILED pwd; end",
+                timeout=300,
+            )
+            for l in out:
+                if l.startswith("FAILED"):
+                    failures += 1
+                elif l and not l.startswith("/"):
+                    errors.add(l[:100])
+            done += 2 * n
+        detail = f"{failures} of {done} failed"
+        if errors:
+            detail += "; messages: " + " | ".join(sorted(errors)[:5])
+        check("starts", failures == 0, detail)
+        info["starts"] = (failures, done)
+    finally:
+        sh.close()
+
+    passed = all(ok for _, ok, _ in results)
+    if args.report:
+        date = datetime.date.today().isoformat()
+        with open(args.report, "a") as f:
+            f.write(f"\n## {date}: `{info.get('build_id', '?')}`\n\n")
+            f.write(f"Built {info.get('built', '?')}, `libc.so` `{info.get('libc', '?')[:16]}…`, "
+                    f"real Pi 3B+ over netboot.")
+            if args.note:
+                f.write(f" {args.note}")
+            f.write("\n\n| Check | Result | Detail |\n|---|---|---|\n")
+            for name, ok, detail in results:
+                f.write(f"| {name} | {'pass' if ok else '**fail**'} | {detail} |\n")
+    sys.exit(0 if passed else 1)
+
+
+if __name__ == "__main__":
+    main()

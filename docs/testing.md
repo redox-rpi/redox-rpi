@@ -70,6 +70,13 @@ and adjusts it the way the `config.txt` overlays do on a real Pi:
 `stdout-path` on the PL011 (like `disable-bt`) and the `sdhost` controller
 disabled, so the SD card is on the Arasan controller (like `dtoverlay=mmc`).
 
+## Tests on the real Pi
+
+[`scripts/pi-test.py`](../scripts/pi-test.py) runs the standard checks on a
+netbooted Pi through devshd (version and manifest, `ps`, SD card, repeated
+program starts) and appends the results to
+[test-reports.md](test-reports.md).
+
 ## Known problems
 
 - Programs started from the shell crash at random (`no filetable fd present`
