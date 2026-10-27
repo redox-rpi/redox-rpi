@@ -1,0 +1,9 @@
+[package]
+name = "timesync"
+description = "Set the Redox system clock once from an NTP server (SNTP), for boards without a real-time clock"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

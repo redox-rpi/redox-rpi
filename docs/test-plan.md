@@ -43,6 +43,7 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 |---|---|---|---|---|---|
 | 1 | sdhost driver, started by hand next to `bcm2835-sdhcid` ([steps](../patches/experiments/sdhost-driver/README.md#manual-test-on-the-pi)) | Stephan, image from the sdhost session | `--experiment ldso-diagnostics --experiment sdhost-driver` | person at the console | next |
 | 2 | Firmware properties: board, temperature, clocks (`/scheme/rpi-firmware`) | rpi-firmware session | `--experiment ldso-diagnostics --experiment rpi-firmware` | network only | waiting |
+| 3 | Clock from NTP: `date` after boot, `timesync -n` ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 
 ## Done
 

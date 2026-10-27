@@ -19,7 +19,9 @@ versions and hashes.
 ## Rules in `scripts/build-image.sh`
 
 - Every source is checked out at its commit from `config/upstream.lock`.
-- Experiments are only applied with `--experiment <name>`.
+- Experiments are only applied with `--experiment <name>`. Besides patches,
+  an experiment may have a `config.toml` that adds packages or files to the
+  image; the build includes it after the image's own config.
 - Before building, each recipe source is compared with its commit plus
   patches. A direct edit in `upstream/redox/recipes/core/*/source` stops the
   build: turn it into a patch, or delete the source to drop it.

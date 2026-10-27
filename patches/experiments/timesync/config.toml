@@ -1,0 +1,17 @@
+# Image additions of the timesync experiment, included after the image's own
+# config by scripts/build-image.sh --experiment timesync.
+
+[packages]
+timesync = "source"
+
+[[files]]
+path = "/usr/lib/init.d/20_timesync.service"
+data = """
+[unit]
+description = "Set the clock from an NTP server"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "timesync"
+type = "oneshot_async"
+"""
