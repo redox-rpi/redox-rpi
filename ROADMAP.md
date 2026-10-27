@@ -132,7 +132,7 @@ from GPL-licensed drivers (Linux) is not.
 | **Prebuilt programs** | bash, nano, vim, tmux, curl, wget … from Redox' aarch64 packages stop with a `brk` exception; relibc's dynamic loader fails to resolve symbols (`libonig.so.5`). Find out why, fix relibc or the packages | medium |
 | **sdhost driver** | Driver for the Pi's second SD controller (`brcm,bcm2835-sdhost`), the one Linux uses for the card slot. Frees the Arasan controller for Wi-Fi, needed for the Zero 2 W | medium |
 | **Keyboard layouts** | `dwc2d` maps USB keys to a US layout. German and other layouts | small |
-| **RTC / time** | The Pi has no clock: files are dated 1970/Jan 1. 🟡 NTP client `tools/timesync` (experiment `timesync`, works in QEMU); next: `clock_settime` in relibc | small |
+| **RTC / time** | The Pi has no clock: files are dated 1970/Jan 1. 🟡 NTP client `tools/timesync` with build time and saved time as fallback (experiment `timesync`, works in QEMU); next: `clock_settime` in relibc | small |
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
 | **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from `/scheme/rpi-firmware` (experiment `rpi-firmware`) | small |
 | **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
