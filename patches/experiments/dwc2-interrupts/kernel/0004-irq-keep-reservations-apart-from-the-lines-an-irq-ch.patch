@@ -1,7 +1,7 @@
 From 0069d3625eb7c248d72e586a4948be30606ebfed Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 09:28:06 +0100
-Subject: [PATCH 4/4] irq: keep reservations apart from the lines an irq chip
+Subject: [PATCH 4/5] irq: keep reservations apart from the lines an irq chip
  has
 
 All aarch64 irq chips set `used` for each of their lines at init, and

@@ -1,0 +1,52 @@
+From a3ac4a6c217f67916e805e387964cfa2ebc59bb2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 27 Oct 2026 09:53:50 +0100
+Subject: [PATCH 5/5] aarch64: ignore spurious BCM2835 interrupts quietly
+
+With user space drivers, a driver on another CPU can clear its source
+between the interrupt and the read of the pending register. Return
+instead of logging two errors and enabling a line that does not exist.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/device/irqchip/irq_bcm2835.rs | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+index a481d8a..0b2c135 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+@@ -47,6 +47,8 @@ fn ffs(num: u32) -> u32 {
+ }
+ 
+ const PENDING_0: u32 = 0x0;
++/// irq_ack() found nothing pending.
++const SPURIOUS: u32 = u32::MAX;
+ const PENDING_1: u32 = 0x4;
+ const PENDING_2: u32 = 0x8;
+ const ENABLE_0: u32 = 0x18;
+@@ -173,6 +175,11 @@ impl InterruptController for Bcm2835ArmInterruptController {
+     fn irq_ack(&mut self) -> u32 {
+         //TODO: support smp self.read(LOCAL_IRQ_PENDING + 4 * cpu)
+         let sources = unsafe { self.read(PENDING_0) };
++        if sources == 0 {
++            // Gone again: a user space driver on another CPU cleared the
++            // source between the interrupt and this read.
++            return SPURIOUS;
++        }
+         let pending_num = ffs(sources) - 1;
+         let fast_irq = [
+             7 + 32,
+@@ -296,6 +303,9 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
+     fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
+         unsafe {
+             let irq = self.irq_ack();
++            if irq == SPURIOUS {
++                return;
++            }
+             if let Some(virq) = self.irq_to_virq(irq)
+                 && virq < 1024
+             {
+-- 
+2.54.0 (Apple Git-157)
+

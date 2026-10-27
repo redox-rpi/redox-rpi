@@ -1,7 +1,7 @@
 From a224ee99349191ea6f81b75e99cc4fe5ee5d94cb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 09:03:49 +0100
-Subject: [PATCH 3/4] aarch64: deliver BCM2835 interrupts to user space drivers
+Subject: [PATCH 3/5] aarch64: deliver BCM2835 interrupts to user space drivers
 
 The BCM2835 interrupt controller only called kernel handlers. Lines
 without one were dropped and, being level triggered, fired again at
