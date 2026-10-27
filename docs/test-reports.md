@@ -193,3 +193,24 @@ Raspberry Pi Zero 2 W by a person, without a serial console. Not a
 | USB keyboard | pass | works when plugged in before boot |
 | USB keyboard hotplug | **fail** | a keyboard plugged in after boot is not detected |
 | network | – | none, expected: the Zero has no Ethernet of its own, and Redox has no driver for the HAT's RTL8152 yet |
+
+## 2026-10-27: `v0.1.0-alpha-76-g4178ec5+xbfca`
+
+Built 2026-10-27T19:39:18Z, `libc.so` `5a6866e092653007…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `rtl8152`, `sdhost-driver`, `timesync`. Release candidate v0.2.0-alpha (rc1), test #9.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.1.0-alpha-76-g4178ec5+xbfca |
+| manifest | pass | build ID and libc.so hash match netboot-v0.1.0-alpha-76-g4178ec5+xbfca.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | **fail** | 0 lines straight to the terminal, rc=1 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Manual checks on the same boot:
+
+| Check | Result | Detail |
+|---|---|---|
+| rpi-firmware | pass | `board`: Pi 3 Model B+ (revision `0x00a020d3`), 1 GiB; `temperature` 47774 (47.8 °C); `throttled` `0x00000000`; `clocks`: ARM 600 MHz (max 1400), core 250 MHz (max 400), EMMC 200 MHz |
+| timesync | pass | `timesync -n`: 20:08:02 UTC from pool.ntp.org, `date` the same as the build host; daemon running, `/scheme/data/timesync.last` written. Reboot without network not done on the Pi (passed in QEMU) |
+| sdhost by hand | **fail** | `bcm2835-sdhostd disk.sdhost &` starts and lists `0p0 0p1`, but `dd` reads nothing, later `dd` from `disk.sdhost` hangs with no output; devshd logins hang (root `redoxfs` busy). Reset over the serial console. `sdhost-driver` is left out of the release (rc2) |
