@@ -137,6 +137,14 @@ through the HAT's RTL8152, but the HTTP transfer of the image fails with
 loads everything over TFTP (`--tftp-only`, `redox_http none`): slower, about
 a minute for the image.
 
+TFTP with U-Boot's default 1468-byte blocks failed the same way on the
+Zero, after a few dozen KiB of the image. The driver receives into a
+2048-byte buffer (`RTL8152_AGG_BUF_SZ`), and the adapter packs frames that
+arrive close together into one USB transfer; two full-size frames do not
+fit. `--board zero2w` therefore also sets `tftpblocksize 512`
+(`--tftp-blocksize`). Whether that is the cause is not confirmed on the Zero
+yet.
+
 The Redox system itself runs from RAM and starts fresh on every boot; keep
 anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:
 Redox does not follow symlinks into another scheme. Mounting a RedoxFS
