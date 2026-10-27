@@ -1,28 +1,25 @@
-From eca03ce1f1955a15704bddbe7358c27e18cee96c Mon Sep 17 00:00:00 2001
+From 401387d55bfe570065e639d6b1eab1be9f56d828 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 21:09:55 +0100
 Subject: [PATCH] bcm2835-sdhostd: driver for the sdhost SD card controller
 
-The Raspberry Pi 3 can wire its card slot to either of two controllers.
-Linux uses sdhost; Redox had only a driver for the Arasan one. This one
-switches GPIO 48-53 to sdhost, sets the card up from scratch, and moves
-data by PIO through the FIFO. Every wait has a time limit of at most two
-seconds, so a card that stops answering gives an error, not a hang.
-Start it instead of bcm2835-sdhcid, which stays in the initfs.
+New driver for the BCM2835 sdhost controller, the one Linux uses for the
+card slot. Routes GPIO 48-53 to it, initializes the card and serves it as
+a disk scheme, `disk.mmc` or the name given as first argument.
+
+Not started at boot yet: bcm2835-sdhcid keeps the card. Start it by hand
+as `bcm2835-sdhostd disk.sdhost` to test it next to the old driver.
 ---
- Cargo.lock                                    |  13 +
- Cargo.toml                                    |   1 +
- Makefile                                      |   2 +-
- drivers/storage/bcm2835-sdhostd/Cargo.toml    |  18 +
- drivers/storage/bcm2835-sdhostd/src/host.rs   | 576 ++++++++++++++++++
- drivers/storage/bcm2835-sdhostd/src/main.rs   | 169 +++++
- ...cid.service => 40_bcm2835-sdhostd.service} |   4 +-
- init.initfs.d/40_drivers.target               |   2 +-
- 8 files changed, 781 insertions(+), 4 deletions(-)
+ Cargo.lock                                  |  13 +
+ Cargo.toml                                  |   1 +
+ Makefile                                    |   2 +-
+ drivers/storage/bcm2835-sdhostd/Cargo.toml  |  18 +
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 576 ++++++++++++++++++++
+ drivers/storage/bcm2835-sdhostd/src/main.rs | 186 +++++++
+ 6 files changed, 795 insertions(+), 1 deletion(-)
  create mode 100644 drivers/storage/bcm2835-sdhostd/Cargo.toml
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/host.rs
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/main.rs
- rename init.initfs.d/{40_bcm2835-sdhcid.service => 40_bcm2835-sdhostd.service} (71%)
 
 diff --git a/Cargo.lock b/Cargo.lock
 index 3823eb2..44910fd 100644
@@ -681,10 +678,10 @@ index 0000000..b72ccb6
 +}
 diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
 new file mode 100644
-index 0000000..a9396be
+index 0000000..6312b3f
 --- /dev/null
 +++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,186 @@
 +//! Driver for the "sdhost" SD card controller of the BCM2835/BCM2837.
 +//!
 +//! The Raspberry Pi 3 has two SD controllers: the Arasan "EMMC" controller
@@ -692,8 +689,12 @@ index 0000000..a9396be
 +//! slot. GPIO 48-53 decide which of the two the slot is wired to; this
 +//! driver switches them to sdhost (ALT0) and sets the card up from scratch,
 +//! whatever the firmware or U-Boot did with it before.
++//!
++//! Usage: `bcm2835-sdhostd [scheme]`, scheme name default `disk.mmc`. Started
++//! by hand next to bcm2835-sdhcid, use another name, e.g. `disk.sdhost`;
++//! the card then no longer answers bcm2835-sdhcid until the next boot.
 +
-+use std::process;
++use std::{env, process};
 +
 +use driver_block::{DiskScheme, ExecutorTrait, TrivialExecutor};
 +use event::{EventFlags, RawEventQueue};
@@ -746,8 +747,20 @@ index 0000000..a9396be
 +        .unwrap_or(bus_addr)
 +}
 +
++/// Name of the disk scheme to serve, from the first argument.
++#[cfg(target_os = "redox")]
++fn scheme_name() -> String {
++    env::args().nth(1).unwrap_or_else(|| "disk.mmc".to_string())
++}
++
++#[cfg(target_os = "linux")]
++fn scheme_name() -> String {
++    "disk.mmc".to_string()
++}
++
 +fn daemon(daemon: daemon::Daemon) -> ! {
 +    common::init();
++    let scheme_name = scheme_name();
 +    let dtb_data = get_dtb();
 +    if dtb_data.is_empty() {
 +        println!("bcm2835-sdhostd: no devicetree");
@@ -774,9 +787,10 @@ index 0000000..a9396be
 +        process::exit(1);
 +    }
 +
++    println!("bcm2835-sdhostd: serving /scheme/{scheme_name}");
 +    let mut scheme = DiskScheme::new(
 +        Some(daemon),
-+        "disk.mmc".to_string(),
++        scheme_name,
 +        [(0, sdhost)].into_iter().collect(),
 +        &TrivialExecutor,
 +    );
@@ -854,38 +868,6 @@ index 0000000..a9396be
 +        read(0x14)
 +    );
 +}
-diff --git a/init.initfs.d/40_bcm2835-sdhcid.service b/init.initfs.d/40_bcm2835-sdhostd.service
-similarity index 71%
-rename from init.initfs.d/40_bcm2835-sdhcid.service
-rename to init.initfs.d/40_bcm2835-sdhostd.service
-index 8c05462..c494796 100644
---- a/init.initfs.d/40_bcm2835-sdhcid.service
-+++ b/init.initfs.d/40_bcm2835-sdhostd.service
-@@ -1,9 +1,9 @@
- [unit]
--description = "BCM2835 SD card driver"
-+description = "BCM2835 SD card driver (sdhost)"
- requires_weak = ["10_inputd.service", "10_lived.service", "20_graphics.target"]
- condition_architecture = ["aarch64"]
- condition_board = ["raspi3bp"]
- 
- [service]
--cmd = "bcm2835-sdhcid"
-+cmd = "bcm2835-sdhostd"
- type = "notify"
-diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index d9e2dab..8099bbe 100644
---- a/init.initfs.d/40_drivers.target
-+++ b/init.initfs.d/40_drivers.target
-@@ -4,7 +4,7 @@ requires_weak = [
-     "10_lived.service",
-     "20_graphics.target",
-     "40_ps2d.service",
--    "40_bcm2835-sdhcid.service",
-+    "40_bcm2835-sdhostd.service",
-     "40_dwc2d.service",
-     "40_hwd.service",
-     "40_pcid-spawner-initfs.service",
 -- 
 2.54.0 (Apple Git-157)
 
