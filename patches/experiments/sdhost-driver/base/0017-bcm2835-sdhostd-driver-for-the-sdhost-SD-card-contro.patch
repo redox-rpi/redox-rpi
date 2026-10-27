@@ -1,4 +1,4 @@
-From 401387d55bfe570065e639d6b1eab1be9f56d828 Mon Sep 17 00:00:00 2001
+From a275007cc9540bc8d8ae821224ea4d257ef6bfb0 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 21:09:55 +0100
 Subject: [PATCH] bcm2835-sdhostd: driver for the sdhost SD card controller
@@ -8,15 +8,16 @@ card slot. Routes GPIO 48-53 to it, initializes the card and serves it as
 a disk scheme, `disk.mmc` or the name given as first argument.
 
 Not started at boot yet: bcm2835-sdhcid keeps the card. Start it by hand
-as `bcm2835-sdhostd disk.sdhost` to test it next to the old driver.
+as `bcm2835-sdhostd disk.sdhost` to test it next to the old driver; with
+an argument it stays in the foreground instead of notifying init.
 ---
  Cargo.lock                                  |  13 +
  Cargo.toml                                  |   1 +
  Makefile                                    |   2 +-
  drivers/storage/bcm2835-sdhostd/Cargo.toml  |  18 +
  drivers/storage/bcm2835-sdhostd/src/host.rs | 576 ++++++++++++++++++++
- drivers/storage/bcm2835-sdhostd/src/main.rs | 186 +++++++
- 6 files changed, 795 insertions(+), 1 deletion(-)
+ drivers/storage/bcm2835-sdhostd/src/main.rs | 191 +++++++
+ 6 files changed, 800 insertions(+), 1 deletion(-)
  create mode 100644 drivers/storage/bcm2835-sdhostd/Cargo.toml
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/host.rs
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/main.rs
@@ -678,10 +679,10 @@ index 0000000..b72ccb6
 +}
 diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
 new file mode 100644
-index 0000000..6312b3f
+index 0000000..929f829
 --- /dev/null
 +++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,191 @@
 +//! Driver for the "sdhost" SD card controller of the BCM2835/BCM2837.
 +//!
 +//! The Raspberry Pi 3 has two SD controllers: the Arasan "EMMC" controller
@@ -724,7 +725,12 @@ index 0000000..6312b3f
 +}
 +
 +fn main() {
-+    daemon::Daemon::new(daemon);
++    // Started by init: report readiness through it. Started by hand with a
++    // scheme name: stay in the foreground, there is no init to notify.
++    if cfg!(target_os = "redox") && env::args().nth(1).is_some() {
++        daemon(None);
++    }
++    daemon::Daemon::new(|daemon_handle| daemon(Some(daemon_handle)));
 +}
 +
 +/// The CPU physical address of sdhost, from the devicetree. The node is
@@ -758,7 +764,7 @@ index 0000000..6312b3f
 +    "disk.mmc".to_string()
 +}
 +
-+fn daemon(daemon: daemon::Daemon) -> ! {
++fn daemon(daemon: Option<daemon::Daemon>) -> ! {
 +    common::init();
 +    let scheme_name = scheme_name();
 +    let dtb_data = get_dtb();
@@ -789,7 +795,7 @@ index 0000000..6312b3f
 +
 +    println!("bcm2835-sdhostd: serving /scheme/{scheme_name}");
 +    let mut scheme = DiskScheme::new(
-+        Some(daemon),
++        daemon,
 +        scheme_name,
 +        [(0, sdhost)].into_iter().collect(),
 +        &TrivialExecutor,
