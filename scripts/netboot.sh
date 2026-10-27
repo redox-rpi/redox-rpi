@@ -26,6 +26,11 @@
 #   --tftp-only       load everything over TFTP, not HTTP (default for zero2w:
 #                     U-Boot's r8152 driver fails to receive the HTTP transfer)
 #   --http            use HTTP, with TFTP as fallback (default for rpi, qemu)
+#   --tftp-blocksize <bytes>
+#                     TFTP block size (default: U-Boot's 1468, for zero2w
+#                     512: U-Boot's r8152 driver receives into a 2048-byte
+#                     buffer, and two full-size frames that the adapter
+#                     packs into one USB transfer overflow it)
 
 set -euo pipefail
 
@@ -37,6 +42,7 @@ board=rpi
 tftp="$ROOT/build/tftp"
 dir=""
 http=""
+blocksize=""
 image=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -45,6 +51,7 @@ while [ $# -gt 0 ]; do
         --dir) dir="$2"; shift 2 ;;
         --tftp-only) http=0; shift ;;
         --http) http=1; shift ;;
+        --tftp-blocksize) blocksize="$2"; shift 2 ;;
         --tftp-dir) tftp="$2"; shift 2 ;;
         --image) image="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -73,6 +80,7 @@ fi
 if [ -z "$http" ]; then
     if [ "$board" = zero2w ]; then http=0; else http=1; fi
 fi
+if [ -z "$blocksize" ] && [ "$board" = zero2w ]; then blocksize=512; fi
 if [ "$http" = 1 ]; then http_url="http://$server:8080/"; else http_url=none; fi
 if [ -z "$dir" ]; then
     if [ "$board" = zero2w ]; then dir=redox-zero2w; else dir=redox; fi
@@ -110,6 +118,9 @@ script="$tftp/$dir/netboot.cmd"
     echo "if test -z \"\${redox_http}\"; then setenv redox_http $http_url; fi"
     echo "if test -z \"\${redox_img_addr}\"; then setenv redox_img_addr $img_addr; fi"
     echo "if test -z \"\${redox_gz_addr}\"; then setenv redox_gz_addr $gz_addr; fi"
+    if [ -n "$blocksize" ]; then
+        echo "if test -z \"\${tftpblocksize}\"; then setenv tftpblocksize $blocksize; fi"
+    fi
     cat "$ROOT/config/netboot.cmd"
 } > "$script"
 "$mkimage" -q -A arm64 -T script -C none -n "redox-rpi netboot" -d "$script" "$tftp/$dir/netboot.scr"
