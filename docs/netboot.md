@@ -129,7 +129,13 @@ partition. The same card boots a Pi 3 as well, with the Zero's image.
 
 Tested in QEMU's `virt` machine with `-m 512` and the Zero's RAM addresses
 (`redox_img_addr`/`redox_gz_addr` 128 and 256 MiB above the start of RAM):
-it boots to `redox login:`. Not yet tested on a real Zero 2 W.
+it boots to `redox login:`.
+
+On a real Zero 2 W, U-Boot gets DHCP and loads `netboot.scr` over TFTP
+through the HAT's RTL8152, but the HTTP transfer of the image fails with
+`Rx: failed to receive: -5` from U-Boot's r8152 driver. So `--board zero2w`
+loads everything over TFTP (`--tftp-only`, `redox_http none`): slower, about
+a minute for the image.
 
 The Redox system itself runs from RAM and starts fresh on every boot; keep
 anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:

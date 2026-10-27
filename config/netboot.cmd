@@ -9,7 +9,8 @@
 # Variables (defaults set by scripts/netboot.sh, override in the environment):
 #   redox_server   TFTP server (IP address)
 #   redox_http     HTTP URL of the same directory, with a trailing slash;
-#                  much faster than TFTP, which waits for every block
+#                  much faster than TFTP, which waits for every block;
+#                  "none" loads everything over TFTP
 #   redox_dir      directory on the TFTP server, with a trailing slash
 #   redox_img_addr RAM address for the disk image
 #   redox_gz_addr  RAM address for the compressed image, after the disk image
@@ -25,7 +26,7 @@ dhcp || exit
 setenv serverip ${redox_server}
 
 # The image is mostly empty space; compressed it is about a sixth.
-if wget ${redox_gz_addr} ${redox_http}${redox_dir}harddrive.img.gz; then
+if test "${redox_http}" != none && wget ${redox_gz_addr} ${redox_http}${redox_dir}harddrive.img.gz; then
     echo "redox-rpi: image loaded over HTTP"
 else
     setenv serverip ${redox_server}
@@ -39,7 +40,7 @@ blkmap map redox 0 ${redox_blocks} mem ${redox_img_addr}
 # it and its partitions as UEFI block devices for the Redox bootloader.
 part list blkmap 0
 
-if wget ${kernel_addr_r} ${redox_http}${redox_dir}bootloader-live.efi; then
+if test "${redox_http}" != none && wget ${kernel_addr_r} ${redox_http}${redox_dir}bootloader-live.efi; then
     true
 else
     setenv serverip ${redox_server}
