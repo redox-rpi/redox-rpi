@@ -34,7 +34,11 @@ a base patch `0017` (`dwc2-interrupts`, `sdhost-driver`, `rpi-firmware`).
 ## Result
 
 **QEMU** cannot emulate an RTL8152, so the test there only shows that
-nothing else breaks: _pending_.
+nothing else breaks. Build `v0.1.0-alpha-27-gee91c40+ldso-diagnostics+rtl8152`
+(2026-10-27, `harddrive.img` `f6374a31…`), `scripts/qemu-raspi3b.sh --usb-net`:
+boots to the login, enumerates hub, keyboard and CDC Ethernet as before,
+`network.usb_ecm` is there and `ping -c 3 10.0.2.2` gets 3 of 3 answers.
+The new code compiles without warnings.
 
 **Real hardware:** not yet tested, see below.
 
