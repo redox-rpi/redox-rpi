@@ -218,10 +218,16 @@ done
 for tool in devshd reboot sigregs timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
-    # the signal entry (docs/tasks.md, T12).
+    # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
+    # relibc recipe, not the toolchain's.
     build='template = "cargo"'
     if [ "$tool" = sigregs ]; then
-        build=$'template = "custom"\nscript = "COOKBOOK_CARGO_PATH=. cookbook_cargo"'
+        build='template = "custom"
+dependencies = ["relibc"]
+script = """
+export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
+COOKBOOK_CARGO_PATH=. cookbook_cargo
+"""'
     fi
     mkdir -p "$REDOX/recipes/other/$tool"
     cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
