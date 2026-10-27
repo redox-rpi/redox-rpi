@@ -1,4 +1,4 @@
-From dd0a052a75956e37a0c84fe345f7dcc9eb61a814 Mon Sep 17 00:00:00 2001
+From 74038bc9a8b4b83e5ed0db683d8973488d6fb4fc Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 08:48:05 +0100
 Subject: [PATCH] bcm2835-mboxd: VideoCore mailbox driver for firmware
@@ -75,7 +75,7 @@ index 0000000..4818bd4
 +workspace = true
 diff --git a/drivers/bcm2835-mboxd/src/main.rs b/drivers/bcm2835-mboxd/src/main.rs
 new file mode 100644
-index 0000000..9d20655
+index 0000000..43b99a6
 --- /dev/null
 +++ b/drivers/bcm2835-mboxd/src/main.rs
 @@ -0,0 +1,304 @@
@@ -103,7 +103,7 @@ index 0000000..9d20655
 +use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 +use syscall::error::{Error, Result, EACCES, EBADF, EISDIR, ENOENT, ENOTDIR, EROFS};
 +use syscall::schemev2::NewFdFlags;
-+use syscall::{MODE_DIR, MODE_FILE, O_ACCMODE, O_RDONLY};
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
 +
 +mod mbox;
 +
@@ -241,7 +241,7 @@ index 0000000..9d20655
 +        let handle = if path.is_empty() {
 +            Handle::Dir
 +        } else {
-+            if flags & O_ACCMODE != O_RDONLY {
++            if flags & O_WRONLY != 0 {
 +                return Err(Error::new(EROFS));
 +            }
 +            Handle::File(self.contents(path)?.into_bytes())
