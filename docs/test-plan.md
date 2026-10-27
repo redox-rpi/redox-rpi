@@ -46,7 +46,6 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
-| 1 | sdhost driver, started by hand next to `bcm2835-sdhcid` ([steps](../patches/experiments/sdhost-driver/README.md#manual-test-on-the-pi)) | Stephan, image from the sdhost session | `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, staged | person at the console | **on the Pi** |
 | 2 | Firmware properties: board, temperature, clocks (`/scheme/rpi-firmware`) | rpi-firmware session | `--experiment ldso-diagnostics --experiment rpi-firmware` | network only | waiting |
 | 3 | Clock from NTP and saved time: `date` after boot, `timesync -n`, `cat /scheme/data/timesync.last`; reboot with the Ethernet cable out, `date` must not be before the last run ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 | 4 | RTL8152 Ethernet over a USB adapter on the Pi 3B+ ([steps](../patches/experiments/rtl8152/README.md#a-pi-3b-with-a-usb-rtl8152-adapter)) | rtl8152 session | `--experiment ldso-diagnostics --experiment rtl8152` | person to plug in an RTL8152 USB adapter | waiting |
@@ -58,3 +57,4 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 |---|---|---|---|
 | 2026-10-27 | Standard checks, diagnostics image | `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` | [report](test-reports.md): all pass except `ps-tty` |
 | 2026-10-27 | Standard checks, default image | `v0.1.0-alpha-14-gf39d20b` | [report](test-reports.md): 36 of 300 start failures |
+| 2026-10-27 | sdhost driver started by hand, read test | `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` | [works](../patches/experiments/sdhost-driver/README.md#results): SDHC 15193 MiB, 4-bit, 25 MHz, partition table and FAT read correctly, 4.5 MB/s |

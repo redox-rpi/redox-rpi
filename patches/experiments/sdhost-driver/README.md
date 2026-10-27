@@ -46,6 +46,14 @@ printed.
   started it without a crash). In QEMU the root
   filesystem is on the card, so it is gone once sdhost takes the slot; on
   the netbooted Pi the root is in RAM.
+- **Real Pi 3B+, 2026-10-27, started by hand** (build
+  `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`): works.
+  `SDHC/SDXC card, 15193 MiB, 4-bit bus, up to 25 MHz`, serves
+  `disk.sdhost` with partitions `0p0` and `0p1`. Read through it: the
+  partition table matches the SD image the card was made from (except the
+  disk signature, new on every `make-sdcard.sh` run), the FAT boot sector is
+  valid (`REDOXBOOT`, `FAT32`). 8 MiB read in 1.85 s, 4.5 MB/s. Not tested
+  yet: writing, and starting it at boot.
 - Real Pi 3B+, 2026-10-27, started at boot instead of `bcm2835-sdhcid`
   (commit `2c66e72`): the Pi did not come back on the network. Likely cause:
   without `disk.mmc`, mounting the data partition (`60_data.service`) waits
