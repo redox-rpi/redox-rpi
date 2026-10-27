@@ -21,7 +21,10 @@ scripts/build-image.sh --experiment rpi-firmware
 Starts from the initfs, so other drivers (sdhost's clock divider) can ask
 for the real core clock later.
 
-**Result in QEMU** (`raspi3b`, build `v0.1.0-alpha-19-g9532b7f+mailbox-driver`,
-still under the old name, 2026-10-27): all four files answer. QEMU reports fixed values: revision
-`0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz, core 350 MHz, no
-throttling. Not yet tested on a real Pi.
+**Result in QEMU** (`raspi3b`, build `v0.1.0-alpha-21-gb8b64d7+rpi-firmware`,
+SD image, 2026-10-27): the driver starts from the initfs
+(`rpi-firmwared: mailbox at 0x3f00b880, revision 0x00a02082, model
+Raspberry Pi 3 Model B`) and all four files answer. QEMU reports fixed
+values: revision `0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz,
+core 350 MHz, no throttling, serial 0. Not yet tested on a real Pi
+(queued in [test-plan.md](../../../docs/test-plan.md)).
