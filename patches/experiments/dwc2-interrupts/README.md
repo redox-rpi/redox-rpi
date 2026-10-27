@@ -34,4 +34,19 @@ Four patches:
 Like the other base experiments it carries patch number `0017`, so it
 cannot be combined with `sdhost-driver` or `rpi-firmware` yet.
 
-**Result:** not tested yet.
+**Result in QEMU (2026-10-27, `v0.1.0-alpha-37-g13c3da6+dwc2-interrupts`):**
+`dwc2d` opens `/scheme/irq/phandle-1/1,9`, the network (CDC Ethernet) and
+the USB keyboard work (`scripts/test-keyboard.sh` passes), no
+"unexpected irq" messages. Compared with the polling driver (image with
+`sdhost-driver`, same dwc2d otherwise), both measured with `ps` about
+80 s after boot, after 500 lines of output through devshd:
+
+| | interrupts | polling |
+|---|---|---|
+| CPU time of `dwc2d` (user + system) | 0.95 s + 0.50 s | 4 min 21 s |
+| 500 lines through devshd | 2 s | 26 s |
+
+The remaining CPU time is mostly the keyboard: 100 polls per second,
+each a split transaction that spins until the hub answers.
+
+Not tested on a real Pi yet (queued in [test-plan.md](../../../docs/test-plan.md)).

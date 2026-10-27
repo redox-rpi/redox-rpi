@@ -29,7 +29,7 @@ Tests that need a person at the Pi (keyboard, screen, power) say so; the
 owner then asks that person before taking the Pi.
 
 Experiments that add a driver to base each carry their own patch `0017`,
-so `sdhost-driver`, `rpi-firmware` and `rtl8152` cannot be combined in one
+so `sdhost-driver`, `rpi-firmware`, `rtl8152` and `dwc2-interrupts` cannot be combined in one
 build yet.
 
 ## Stable image
@@ -50,6 +50,7 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 | 2 | Firmware properties: board, temperature, clocks (`/scheme/rpi-firmware`) | rpi-firmware session | `--experiment ldso-diagnostics --experiment rpi-firmware` | network only | waiting |
 | 3 | Clock from NTP and saved time: `date` after boot, `timesync -n`, `cat /scheme/data/timesync.last`; reboot with the Ethernet cable out, `date` must not be before the last run ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 | 4 | RTL8152 Ethernet over a USB adapter on the Pi 3B+ ([steps](../patches/experiments/rtl8152/README.md#a-pi-3b-with-a-usb-rtl8152-adapter)) | rtl8152 session | `--experiment ldso-diagnostics --experiment rtl8152` | person to plug in an RTL8152 USB adapter | waiting |
+| 5 | dwc2d with interrupts: `scripts/pi-test.py` standard checks plus `ps` (CPU time of `dwc2d` near 0 instead of a full core), devsh traffic over the LAN7800, typing on a USB keyboard ([experiment](../patches/experiments/dwc2-interrupts/README.md)) | dwc2-interrupts session | `--experiment ldso-diagnostics --experiment dwc2-interrupts` | network; a person for the keyboard check | waiting |
 
 ## Done
 
