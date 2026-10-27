@@ -224,7 +224,7 @@ the devicetree, which also says where the initramfs is.
   Redox bootloader to the login prompt, and `scripts/pi-test.py` passes as
   with the U-Boot image.
 
-### T18: Network boot without SD card (Pi 3B+ with serial console)
+### T19: Network boot without SD card (Pi 3B+ with serial console)
 
 `scripts/netboot-firmware.sh` and the dnsmasq proxy let the Pi firmware boot
 from the network without SD card ([netboot.md](netboot.md#without-sd-card-firmware-network-boot-untested)).
