@@ -38,4 +38,7 @@ flips a bit there.
 
 ## Results
 
-See [test reports](../../../docs/test-reports.md).
+QEMU, 2026-10-27: finds the x1/x2 swap (`x1 changed` after 2-33 signals
+without relibc patch `0004`) and the blocked thread signals (label `3`).
+`process` mode is hit by a `fork()` crash in about half of the runs
+(task T12). Details in the [test reports](../../../docs/test-reports.md).

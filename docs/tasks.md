@@ -50,16 +50,19 @@ this; a real Cortex-A53 can execute stale instructions.
   and the result on a real Pi (if you have one) is in
   [test-reports.md](test-reports.md).
 
-### T4: Signal mask bug in the aarch64 signal entry (QEMU)
+### T4: Signal mask bug in the aarch64 signal entry (Pi)
 
 In relibc's `redox-rt/src/arch/aarch64.rs`, the code at label `3` in
-`__relibc_internal_sigentry` stores the signal number where the signal mask
-belongs. This could leave signals such as SIGCHLD blocked.
+`__relibc_internal_sigentry` stores the signal number where the signal
+word belongs, so after one `pthread_kill` all signals of that thread stay
+blocked. Shown in QEMU by `sigregs thread`
+([test reports](test-reports.md)); experiment `sigentry-thread-signals`
+fixes it and passes in QEMU.
 
-- **Do:** compare with the x86_64 version of the same function, fix it as
-  relibc patch `0007`, write a small test program that shows the
-  difference.
-- **Done when:** the patch and the test output before and after.
+- **Do:** run `sigregs` on a real Pi with experiments `sigregs-test`,
+  `sigentry-by-name` and `sigentry-thread-signals`; read the patch against
+  the x86_64 version of the same function.
+- **Done when:** the Pi result is in [test-reports.md](test-reports.md).
 
 ### T5: Programs exit with code 1 and print nothing (QEMU or Pi)
 
@@ -80,6 +83,21 @@ After about 30 devshd sessions, 31 `login` processes were still running.
   child) and `login` in userutils.
 - **Done when:** `ps | cat` shows no extra `login` after 20 sessions with
   `scripts/devsh.py`.
+
+### T12: `fork()` crashes in the parent on aarch64 (QEMU)
+
+`sigregs process` forks a child that sends the signals. In about half of
+the runs the parent stops with a `brk` exception (class `0x3c`) inside
+`fork()`, before a child exists. It happens with and without the signal
+experiments. The kernel's dump shows x0-x4 = `0xffffffffffffffff`,
+x8 = `0x9e` and a frame pointer near the top of the stack.
+
+- **Do:** reproduce with a small C or Rust program that only forks (with
+  and without a signal handler installed), then look at `fork_impl` /
+  `__relibc_internal_fork_wrapper` in `redox-rt/src/arch/aarch64.rs` and
+  `fork_inner` in `redox-rt/src/proc.rs`.
+- **Done when:** the cause is known, with an experiment patch that brings
+  the crash rate to 0 in 100 runs.
 
 ## Hardware
 

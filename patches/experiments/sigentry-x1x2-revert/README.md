@@ -11,4 +11,6 @@ scripts/build-image.sh --experiment sigregs-test --experiment sigentry-x1x2-reve
 
 ## Results
 
-See [test reports](../../../docs/test-reports.md).
+QEMU, 2026-10-27: `sigregs` reports `x1 changed` after 2-33 signals in
+both modes, as expected. Details in the
+[test reports](../../../docs/test-reports.md).
