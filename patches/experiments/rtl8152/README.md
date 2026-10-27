@@ -41,7 +41,21 @@ boots to the login, enumerates hub, keyboard and CDC Ethernet as before,
 `network.usb_ecm` is there and `ping -c 3 10.0.2.2` gets 3 of 3 answers.
 The new code compiles without warnings.
 
-**Real hardware:** not yet tested, see below.
+**Real RTL8153B in QEMU** (2026-10-27, build
+`v0.1.0-alpha-55-g7ef27bb+ldso-diagnostics+rtl8152`, `harddrive.img`
+`50079d96…`): the Ethernet port of an Anker 565 USB-C hub (`0bda:8153`,
+bcdDevice 31.01) on the build host, passed through with
+`--usb-host 0bda:8153`, cable in the LAN. `dwc2d` reports `RTL8153B chip
+version 6010` and the chip's own MAC `6c:6e:07:1a:28:46`, `network.usb_rtl8152`
+is there, the guest gets its address from the router by DHCP, and
+`ping -c 5 192.168.178.1` gets 5 of 5 answers (3.4–7.2 ms). So register
+access, chip init, RX aggregation and TX work on a real chip. The link was
+not up within the 5 s wait (gigabit autonegotiation), but came up before
+DHCP. QEMU puts the device behind its own full-speed hub and does not care
+about bulk packet sizes there; a real DWC2 does, so this does not replace
+the test on the Pi.
+
+**Real Pi:** not yet tested, see below.
 
 ## Test with a real chip in QEMU
 
