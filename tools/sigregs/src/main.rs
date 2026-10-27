@@ -261,10 +261,13 @@ fn process_sender() -> Box<dyn FnOnce()> {
                 libc::usleep(300);
             }
         },
-        child => Box::new(move || unsafe {
+        child => {
+            println!("process: sending from child {child} to {parent}");
+            Box::new(move || unsafe {
             libc::kill(child, libc::SIGKILL);
             libc::waitpid(child, std::ptr::null_mut(), 0);
-        }),
+            })
+        }
     }
 }
 
