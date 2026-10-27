@@ -140,6 +140,37 @@ commit from [config/upstream.lock](../config/upstream.lock).
   latest upstream and reports whether our patches still apply.
 - **Done when:** both jobs run green on a pull request.
 
+### T13: relibc tests on Redox in CI (no hardware, long builds)
+
+[`relibc.yml`](../.github/workflows/relibc.yml) builds relibc and runs
+`sigregs` on Linux, but nothing on Redox. The image build takes too long
+for a hosted runner.
+
+- **Do:** a job (self-hosted runner on a build host, or a cached
+  toolchain) that builds the netboot image with `--experiment
+  sigregs-test` and runs `sigregs` in QEMU with
+  `scripts/qemu-raspi3b.sh --run`; then relibc's own test suite
+  (`tests/`, `make test` with the Redox toolchain) the same way.
+- **Done when:** a pull request that brings back the x1/x2 swap
+  (experiment `sigentry-x1x2-revert`) turns the job red.
+
+### T14: Deeper analysis of relibc (no hardware)
+
+relibc is the most critical component: every program uses it, and two
+bugs in its aarch64 signal entry went unnoticed (see
+[test reports](test-reports.md)). Its aarch64 tests are not run upstream.
+
+- **Do:** one at a time, each as its own pull request:
+  - unit tests on the host for code that does not need Redox (string,
+    number formatting, `ld.so` ELF parsing), with Miri where it runs;
+  - a check in CI that the offsets in the aarch64 signal entry match
+    `ArchIntRegs` and `SigStack` (disassemble and compare, as in the
+    `sigentry-by-name` README);
+  - coverage of the tests in `tests/` on Redox, once T13 runs.
+- Work in [redox-rpi/relibc](https://github.com/redox-rpi/relibc)
+  (CONTRIBUTING.md, step 4); fixes go back as patches here.
+- **Done when:** each part runs in CI.
+
 ### T10: Start loop in `pi-test.py` with crash details (Pi or QEMU)
 
 `scripts/pi-test.py` counts failed starts, but does not record which

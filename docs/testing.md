@@ -56,6 +56,27 @@ on every push, on pull requests and daily. Results:
 [Actions](https://github.com/redox-rpi/redox-rpi/actions); the serial log of
 each run is attached as an artifact.
 
+[`.github/workflows/relibc.yml`](../.github/workflows/relibc.yml) runs on
+changes to relibc patches, relibc experiments or `tools/sigregs`, and
+weekly:
+
+- builds relibc at the pinned commit with `patches/relibc/`, alone and
+  with each relibc experiment, for `aarch64-unknown-redox`, and alone for
+  `x86_64-unknown-redox`;
+- runs clippy (relibc's own lint settings) and attaches the report;
+- runs `sigregs` on an aarch64 Linux runner, to check the test itself.
+
+The same checkout locally: `scripts/relibc-checkout.sh <dir>
+[--experiment <name>]`, then in `<dir>`:
+
+```bash
+CC_aarch64_unknown_redox=clang cargo build --release --lib \
+    --target aarch64-unknown-redox -Zbuild-std=core,alloc
+```
+
+Nothing in CI runs on Redox yet: `sigregs` and the relibc test suite on
+Redox need the image build (QEMU) or a Pi ([tasks T13, T14](tasks.md)).
+
 ## Which U-Boot
 
 If our U-Boot is built (`scripts/build-uboot.sh`, writes
