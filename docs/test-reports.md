@@ -193,3 +193,19 @@ Raspberry Pi Zero 2 W by a person, without a serial console. Not a
 | USB keyboard | pass | works when plugged in before boot |
 | USB keyboard hotplug | **fail** | a keyboard plugged in after boot is not detected |
 | network | – | none, expected: the Zero has no Ethernet of its own, and Redox has no driver for the HAT's RTL8152 yet |
+
+## 2026-10-27: `v0.1.0-alpha-63-g23a4826+ldso-diagnostics`, network boot on a Pi Zero 2 W
+
+The Zero 2 W image (`build-image.sh --zero2w`, 128 MiB) booted over the
+network from a 32 MiB U-Boot card (`make-sdcard.sh --dir redox-zero2w`),
+through the RTL8152 on the Ethernet/USB HAT. Watched on a monitor by a
+person, without a serial console. Not a `pi-test.py` run.
+
+| Check | Result | Detail |
+|---|---|---|
+| U-Boot DHCP, `netboot.scr` over TFTP | pass | |
+| image over HTTP | **fail** | `Rx: failed to receive: -5` from U-Boot's r8152 driver |
+| image over TFTP, 1468-byte blocks | **fail** | same error after a few dozen KiB |
+| image over TFTP, 512-byte blocks | pass | the whole 42 MB arrive; slow, many minutes, not timed |
+| boot to login | pass | logged in as root |
+| network in Redox | – | none, expected: no RTL8152 driver yet |

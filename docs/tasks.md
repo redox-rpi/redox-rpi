@@ -218,8 +218,10 @@ USB keyboard works when plugged in before boot
   Ethernet search then fails on the chip's second configuration
   (`GET_DESCRIPTOR` config index 1, wLength 512: `Timeout("channel halt")`);
   the experiment claims the chip before that search runs.
-- **Network boot:** a smaller image for the 512 MB RAM (branch
-  `zero2w-netboot`, not yet tested to the end on a real Zero).
+- **Network boot:** works on a real Zero with a 128 MiB image and a small
+  U-Boot card ([netboot](netboot.md#pi-zero-2-w)), but only over TFTP with
+  512-byte blocks and slowly. Open: a larger receive buffer in U-Boot's
+  r8152 driver, for full TFTP blocks and HTTP.
 
 ## Boot
 
