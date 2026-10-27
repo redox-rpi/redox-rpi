@@ -220,8 +220,7 @@ USB keyboard works when plugged in before boot
   the experiment claims the chip before that search runs.
 - **Network boot:** works on a real Zero with a 128 MiB image and a small
   U-Boot card ([netboot](netboot.md#pi-zero-2-w)), but only over TFTP with
-  512-byte blocks and slowly. Open: a larger receive buffer in U-Boot's
-  r8152 driver, for full TFTP blocks and HTTP.
+  512-byte blocks and slowly. Faster: [T19](#t19-fast-network-boot-on-the-zero-2-w-zero-2-w-with-the-ethernetusb-hat).
 
 ## Boot
 
@@ -245,6 +244,27 @@ the devicetree, which also says where the initramfs is.
 - **Done when:** a Pi 3B+ boots from the SD card without U-Boot and the
   Redox bootloader to the login prompt, and `scripts/pi-test.py` passes as
   with the U-Boot image.
+
+### T19: Fast network boot on the Zero 2 W (Zero 2 W with the Ethernet/USB HAT)
+
+U-Boot's r8152 driver receives into a 2048-byte buffer
+(`RTL8152_AGG_BUF_SZ` in `drivers/usb/eth/r8152.h`). On a real Zero 2 W
+the image transfer over the HAT's RTL8152 fails with
+`Rx: failed to receive: -5`, over HTTP and over TFTP with full 1468-byte
+blocks. With 512-byte TFTP blocks the whole image arrives, but it takes
+many minutes ([test report](test-reports.md), [netboot](netboot.md#pi-zero-2-w)).
+The likely cause: the adapter packs frames that arrive close together into
+one USB transfer, and two full-size frames do not fit. Linux uses 16 KiB.
+
+- **Do:** a U-Boot patch (on a branch, in `scripts/build-uboot.sh`'s patch
+  series) that raises the buffer and the matching `USB_RX_EARLY_SIZE`,
+  then a new Zero card, and `netboot.sh --board zero2w` back to full blocks
+  and HTTP. Check U-Boot `master` first; we build v2026.10.
+- **Open questions:** whether DWC2 on the Zero copes with 16 KiB bulk
+  transfers (`CONFIG_USB_DWC2_BUFFER_SIZE` is 64 KiB); whether to report
+  the bug to U-Boot (mailing list, `u-boot@lists.denx.de`) once confirmed.
+- **Done when:** a Zero 2 W loads the image over HTTP and boots to the
+  login prompt, with the load time in the test report.
 
 ## Tooling
 
