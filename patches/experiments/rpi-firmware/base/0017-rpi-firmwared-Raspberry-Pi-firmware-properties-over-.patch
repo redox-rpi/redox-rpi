@@ -1,43 +1,43 @@
-From 74038bc9a8b4b83e5ed0db683d8973488d6fb4fc Mon Sep 17 00:00:00 2001
+From cd6b1f5cdd4253be69e26c293575257aeefcde87 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 08:48:05 +0100
-Subject: [PATCH] bcm2835-mboxd: VideoCore mailbox driver for firmware
- properties
+Subject: [PATCH] rpi-firmwared: Raspberry Pi firmware properties over the
+ VideoCore mailbox
 
-Asks the Raspberry Pi firmware over the property mailbox for the SoC
+Asks the Raspberry Pi firmware through the property mailbox for the SoC
 temperature, clock rates, throttling flags and board data, and serves
-them as text files in the mbox scheme: temperature, throttled, clocks
-and board.
+them as text files in the rpi-firmware scheme: temperature, throttled,
+clocks and board.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  Cargo.toml                             |   1 +
  Makefile                               |   2 +-
- drivers/bcm2835-mboxd/Cargo.toml       |  18 ++
- drivers/bcm2835-mboxd/src/main.rs      | 304 +++++++++++++++++++++++++
- drivers/bcm2835-mboxd/src/mbox.rs      | 146 ++++++++++++
- init.initfs.d/40_bcm2835-mboxd.service |   8 +
+ drivers/rpi-firmwared/Cargo.toml       |  18 ++
+ drivers/rpi-firmwared/src/main.rs      | 306 +++++++++++++++++++++++++
+ drivers/rpi-firmwared/src/mbox.rs      | 146 ++++++++++++
  init.initfs.d/40_drivers.target        |   1 +
- 7 files changed, 479 insertions(+), 1 deletion(-)
- create mode 100644 drivers/bcm2835-mboxd/Cargo.toml
- create mode 100644 drivers/bcm2835-mboxd/src/main.rs
- create mode 100644 drivers/bcm2835-mboxd/src/mbox.rs
- create mode 100644 init.initfs.d/40_bcm2835-mboxd.service
+ init.initfs.d/40_rpi-firmwared.service |   8 +
+ 7 files changed, 481 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/rpi-firmwared/Cargo.toml
+ create mode 100644 drivers/rpi-firmwared/src/main.rs
+ create mode 100644 drivers/rpi-firmwared/src/mbox.rs
+ create mode 100644 init.initfs.d/40_rpi-firmwared.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index e8f1350..838b7b0 100644
+index e8f1350..471b877 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -54,6 +54,7 @@ members = [
      "drivers/net/rtl8168d",
      "drivers/net/virtio-netd",
  
-+    "drivers/bcm2835-mboxd",
++    "drivers/rpi-firmwared",
      "drivers/redoxerd",
  
      "drivers/storage/ahcid",
 diff --git a/Makefile b/Makefile
-index 6b454de..f425ad8 100644
+index 6b454de..f8ebdf5 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -27,7 +27,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
@@ -45,19 +45,19 @@ index 6b454de..f425ad8 100644
  
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += bcm2835-sdhcid dwc2d
-+	INITFS_BINS += bcm2835-mboxd bcm2835-sdhcid dwc2d
++	INITFS_BINS += rpi-firmwared bcm2835-sdhcid dwc2d
  endif
  
  # For testing/benchmarking only
-diff --git a/drivers/bcm2835-mboxd/Cargo.toml b/drivers/bcm2835-mboxd/Cargo.toml
+diff --git a/drivers/rpi-firmwared/Cargo.toml b/drivers/rpi-firmwared/Cargo.toml
 new file mode 100644
-index 0000000..4818bd4
+index 0000000..3b13382
 --- /dev/null
-+++ b/drivers/bcm2835-mboxd/Cargo.toml
++++ b/drivers/rpi-firmwared/Cargo.toml
 @@ -0,0 +1,18 @@
 +[package]
-+name = "bcm2835-mboxd"
-+description = "BCM2835 VideoCore mailbox driver: firmware properties (temperature, clocks, board)"
++name = "rpi-firmwared"
++description = "Raspberry Pi firmware properties over the VideoCore mailbox: temperature, clocks, board"
 +version = "0.1.0"
 +edition = "2021"
 +
@@ -73,25 +73,27 @@ index 0000000..4818bd4
 +
 +[lints]
 +workspace = true
-diff --git a/drivers/bcm2835-mboxd/src/main.rs b/drivers/bcm2835-mboxd/src/main.rs
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
 new file mode 100644
-index 0000000..43b99a6
+index 0000000..287c0ce
 --- /dev/null
-+++ b/drivers/bcm2835-mboxd/src/main.rs
-@@ -0,0 +1,304 @@
-+//! Driver for the VideoCore mailbox of the BCM2835/BCM2837.
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -0,0 +1,306 @@
++//! Raspberry Pi firmware driver.
 +//!
-+//! Asks the Raspberry Pi firmware for what only it knows: SoC temperature,
-+//! clock rates, throttling, board model, revision, serial number and the
-+//! memory split. Serves the answers as text files in the `mbox` scheme,
-+//! queried fresh on every open:
++//! Asks the firmware on the VideoCore for what only it knows: SoC
++//! temperature, clock rates, throttling, board model, revision, serial number
++//! and the memory split. The questions go through the VideoCore mailbox
++//! (`mbox.rs`). Serves the answers as text files in the `rpi-firmware`
++//! scheme, queried fresh on every open:
 +//!
-+//! - `/scheme/mbox/temperature`: SoC temperature in millidegrees Celsius
-+//! - `/scheme/mbox/throttled`: the firmware's throttling flags (undervoltage,
-+//!   frequency capping, temperature limit), as a hex number
-+//! - `/scheme/mbox/clocks`: one line per clock: name, current and maximum
-+//!   rate in Hz
-+//! - `/scheme/mbox/board`: one `key value` line per board property
++//! - `/scheme/rpi-firmware/temperature`: SoC temperature in millidegrees
++//!   Celsius
++//! - `/scheme/rpi-firmware/throttled`: the firmware's throttling flags
++//!   (undervoltage, frequency capping, temperature limit), as a hex number
++//! - `/scheme/rpi-firmware/clocks`: one line per clock: name, current and
++//!   maximum rate in Hz
++//! - `/scheme/rpi-firmware/board`: one `key value` line per board property
 +
 +use std::fmt::Write as _;
 +use std::process;
@@ -122,12 +124,12 @@ index 0000000..43b99a6
 +    File(Vec<u8>),
 +}
 +
-+struct MboxScheme {
++struct FirmwareScheme {
 +    mbox: Mailbox,
 +    handles: HandleMap<Handle>,
 +}
 +
-+impl MboxScheme {
++impl FirmwareScheme {
 +    fn contents(&mut self, name: &str) -> Result<String> {
 +        let mut text = String::new();
 +        let mbox = &mut self.mbox;
@@ -161,7 +163,7 @@ index 0000000..43b99a6
 +}
 +
 +fn log(err: String) -> Error {
-+    eprintln!("bcm2835-mboxd: {err}");
++    eprintln!("rpi-firmwared: {err}");
 +    Error::new(syscall::EIO)
 +}
 +
@@ -221,7 +223,7 @@ index 0000000..43b99a6
 +    Some((model, memory))
 +}
 +
-+impl SchemeSync for MboxScheme {
++impl SchemeSync for FirmwareScheme {
 +    fn scheme_root(&mut self) -> Result<usize> {
 +        Ok(self.handles.insert(Handle::Root))
 +    }
@@ -310,7 +312,7 @@ index 0000000..43b99a6
 +
 +    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
 +        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
-+        FpathWriter::with(buf, "mbox", |_| Ok(()))
++        FpathWriter::with(buf, "rpi-firmware", |_| Ok(()))
 +    }
 +
 +    fn on_close(&mut self, id: usize) {
@@ -349,7 +351,7 @@ index 0000000..43b99a6
 +    common::init();
 +    let dtb = get_dtb();
 +    let Ok(fdt) = Fdt::new(&dtb) else {
-+        eprintln!("bcm2835-mboxd: no devicetree");
++        eprintln!("rpi-firmwared: no devicetree");
 +        process::exit(0);
 +    };
 +    let phys = mbox_phys(&fdt);
@@ -357,37 +359,37 @@ index 0000000..43b99a6
 +    let page = phys & !(PAGE_SIZE - 1);
 +    let regs = unsafe {
 +        common::physmap(page, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
-+            .expect("bcm2835-mboxd: failed to map registers") as usize
++            .expect("rpi-firmwared: failed to map registers") as usize
 +            + (phys - page)
 +    } as *mut u32;
-+    let mbox = Mailbox::new(regs).expect("bcm2835-mboxd: failed to allocate the message buffer");
-+    let mut scheme = MboxScheme {
++    let mbox = Mailbox::new(regs).expect("rpi-firmwared: failed to allocate the message buffer");
++    let mut scheme = FirmwareScheme {
 +        mbox,
 +        handles: HandleMap::new(),
 +    };
 +    match scheme.contents("board") {
 +        Ok(board) => {
 +            let summary: Vec<&str> = board.lines().take(2).collect();
-+            println!("bcm2835-mboxd: mailbox at 0x{phys:08x}, {}", summary.join(", "));
++            println!("rpi-firmwared: mailbox at 0x{phys:08x}, {}", summary.join(", "));
 +        }
-+        Err(_) => println!("bcm2835-mboxd: mailbox at 0x{phys:08x} does not answer"),
++        Err(_) => println!("rpi-firmwared: mailbox at 0x{phys:08x} does not answer"),
 +    }
 +
-+    let socket = Socket::create().expect("bcm2835-mboxd: failed to create the mbox scheme");
++    let socket = Socket::create().expect("rpi-firmwared: failed to create the rpi-firmware scheme");
 +    let handler = Blocking::new(Box::new(socket), 16);
 +    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
 +
-+    libredox::call::setrens(0, 0).expect("bcm2835-mboxd: failed to enter the null namespace");
++    libredox::call::setrens(0, 0).expect("rpi-firmwared: failed to enter the null namespace");
 +
 +    handler
 +        .process_requests_blocking(scheme)
-+        .expect("bcm2835-mboxd: failed to process requests");
++        .expect("rpi-firmwared: failed to process requests");
 +}
-diff --git a/drivers/bcm2835-mboxd/src/mbox.rs b/drivers/bcm2835-mboxd/src/mbox.rs
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
 new file mode 100644
 index 0000000..327a773
 --- /dev/null
-+++ b/drivers/bcm2835-mboxd/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
 @@ -0,0 +1,146 @@
 +//! The VideoCore mailbox and the firmware's property interface.
 +//!
@@ -535,32 +537,32 @@ index 0000000..327a773
 +        }
 +    }
 +}
-diff --git a/init.initfs.d/40_bcm2835-mboxd.service b/init.initfs.d/40_bcm2835-mboxd.service
-new file mode 100644
-index 0000000..f4e81f0
---- /dev/null
-+++ b/init.initfs.d/40_bcm2835-mboxd.service
-@@ -0,0 +1,8 @@
-+[unit]
-+description = "BCM2835 mailbox: firmware properties (temperature, clocks, board)"
-+condition_architecture = ["aarch64"]
-+condition_board = ["raspi3bp"]
-+
-+[service]
-+cmd = "bcm2835-mboxd"
-+type = { scheme = "mbox" }
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index d9e2dab..7753fbf 100644
+index d9e2dab..5b6c5c3 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -4,6 +4,7 @@ requires_weak = [
      "10_lived.service",
      "20_graphics.target",
      "40_ps2d.service",
-+    "40_bcm2835-mboxd.service",
++    "40_rpi-firmwared.service",
      "40_bcm2835-sdhcid.service",
      "40_dwc2d.service",
      "40_hwd.service",
+diff --git a/init.initfs.d/40_rpi-firmwared.service b/init.initfs.d/40_rpi-firmwared.service
+new file mode 100644
+index 0000000..019a7b7
+--- /dev/null
++++ b/init.initfs.d/40_rpi-firmwared.service
+@@ -0,0 +1,8 @@
++[unit]
++description = "Raspberry Pi firmware: temperature, clocks, board data"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "rpi-firmwared"
++type = { scheme = "rpi-firmware" }
 -- 
 2.54.0 (Apple Git-157)
 
