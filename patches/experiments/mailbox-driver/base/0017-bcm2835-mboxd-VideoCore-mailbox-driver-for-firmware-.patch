@@ -1,0 +1,566 @@
+From dd0a052a75956e37a0c84fe345f7dcc9eb61a814 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 27 Oct 2026 08:48:05 +0100
+Subject: [PATCH] bcm2835-mboxd: VideoCore mailbox driver for firmware
+ properties
+
+Asks the Raspberry Pi firmware over the property mailbox for the SoC
+temperature, clock rates, throttling flags and board data, and serves
+them as text files in the mbox scheme: temperature, throttled, clocks
+and board.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                             |   1 +
+ Makefile                               |   2 +-
+ drivers/bcm2835-mboxd/Cargo.toml       |  18 ++
+ drivers/bcm2835-mboxd/src/main.rs      | 304 +++++++++++++++++++++++++
+ drivers/bcm2835-mboxd/src/mbox.rs      | 146 ++++++++++++
+ init.initfs.d/40_bcm2835-mboxd.service |   8 +
+ init.initfs.d/40_drivers.target        |   1 +
+ 7 files changed, 479 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/bcm2835-mboxd/Cargo.toml
+ create mode 100644 drivers/bcm2835-mboxd/src/main.rs
+ create mode 100644 drivers/bcm2835-mboxd/src/mbox.rs
+ create mode 100644 init.initfs.d/40_bcm2835-mboxd.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index e8f1350..838b7b0 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -54,6 +54,7 @@ members = [
+     "drivers/net/rtl8168d",
+     "drivers/net/virtio-netd",
+ 
++    "drivers/bcm2835-mboxd",
+     "drivers/redoxerd",
+ 
+     "drivers/storage/ahcid",
+diff --git a/Makefile b/Makefile
+index 6b454de..f425ad8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -27,7 +27,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+ endif
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += bcm2835-sdhcid dwc2d
++	INITFS_BINS += bcm2835-mboxd bcm2835-sdhcid dwc2d
+ endif
+ 
+ # For testing/benchmarking only
+diff --git a/drivers/bcm2835-mboxd/Cargo.toml b/drivers/bcm2835-mboxd/Cargo.toml
+new file mode 100644
+index 0000000..4818bd4
+--- /dev/null
++++ b/drivers/bcm2835-mboxd/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "bcm2835-mboxd"
++description = "BCM2835 VideoCore mailbox driver: firmware properties (temperature, clocks, board)"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../common" }
++daemon = { path = "../../daemon" }
++scheme-utils = { path = "../../scheme-utils" }
++
++libredox.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/bcm2835-mboxd/src/main.rs b/drivers/bcm2835-mboxd/src/main.rs
+new file mode 100644
+index 0000000..9d20655
+--- /dev/null
++++ b/drivers/bcm2835-mboxd/src/main.rs
+@@ -0,0 +1,304 @@
++//! Driver for the VideoCore mailbox of the BCM2835/BCM2837.
++//!
++//! Asks the Raspberry Pi firmware for what only it knows: SoC temperature,
++//! clock rates, throttling, board model, revision, serial number and the
++//! memory split. Serves the answers as text files in the `mbox` scheme,
++//! queried fresh on every open:
++//!
++//! - `/scheme/mbox/temperature`: SoC temperature in millidegrees Celsius
++//! - `/scheme/mbox/throttled`: the firmware's throttling flags (undervoltage,
++//!   frequency capping, temperature limit), as a hex number
++//! - `/scheme/mbox/clocks`: one line per clock: name, current and maximum
++//!   rate in Hz
++//! - `/scheme/mbox/board`: one `key value` line per board property
++
++use std::fmt::Write as _;
++use std::process;
++
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EBADF, EISDIR, ENOENT, ENOTDIR, EROFS};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_ACCMODE, O_RDONLY};
++
++mod mbox;
++
++use mbox::*;
++
++/// Bus address of the mailbox on all BCM283x, used if the devicetree has no
++/// node.
++const MBOX_BUS_ADDR: usize = 0x7e00_b880;
++const PAGE_SIZE: usize = 4096;
++
++const FILES: &[&str] = &["board", "clocks", "temperature", "throttled"];
++
++enum Handle {
++    Root,
++    Dir,
++    File(Vec<u8>),
++}
++
++struct MboxScheme {
++    mbox: Mailbox,
++    handles: HandleMap<Handle>,
++}
++
++impl MboxScheme {
++    fn contents(&mut self, name: &str) -> Result<String> {
++        let mut text = String::new();
++        let mbox = &mut self.mbox;
++        match name {
++            "temperature" => {
++                let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
++                writeln!(text, "{value}").unwrap();
++            }
++            "throttled" => {
++                let value = mbox.property(TAG_GET_THROTTLED, &[0], 1).map_err(log)?;
++                writeln!(text, "0x{:08x}", value.first().copied().unwrap_or(0)).unwrap();
++            }
++            "clocks" => {
++                for &(id, name) in CLOCKS {
++                    // Clocks a firmware does not have answer with rate 0.
++                    let Ok(rate) = mbox.value_of(TAG_GET_CLOCK_RATE, id) else {
++                        continue;
++                    };
++                    if rate == 0 {
++                        continue;
++                    }
++                    let max = mbox.value_of(TAG_GET_MAX_CLOCK_RATE, id).unwrap_or(rate);
++                    writeln!(text, "{name} {rate} {max}").unwrap();
++                }
++            }
++            "board" => board(mbox, &mut text),
++            _ => return Err(Error::new(ENOENT)),
++        }
++        Ok(text)
++    }
++}
++
++fn log(err: String) -> Error {
++    eprintln!("bcm2835-mboxd: {err}");
++    Error::new(syscall::EIO)
++}
++
++/// Board properties, skipping those the firmware does not answer.
++fn board(mbox: &mut Mailbox, text: &mut String) {
++    if let Ok([revision]) = mbox.property(TAG_BOARD_REVISION, &[], 1).as_deref() {
++        writeln!(text, "revision 0x{revision:08x}").unwrap();
++        if let Some((model, memory)) = decode_revision(*revision) {
++            writeln!(text, "model {model}").unwrap();
++            writeln!(text, "memory {memory}").unwrap();
++        }
++    }
++    if let Ok([low, high]) = mbox.property(TAG_BOARD_SERIAL, &[], 2).as_deref() {
++        writeln!(text, "serial {high:08x}{low:08x}").unwrap();
++    }
++    if let Ok([model]) = mbox.property(TAG_BOARD_MODEL, &[], 1).as_deref() {
++        writeln!(text, "board_model {model}").unwrap();
++    }
++    if let Ok([firmware]) = mbox.property(TAG_FIRMWARE_REVISION, &[], 1).as_deref() {
++        writeln!(text, "firmware 0x{firmware:08x}").unwrap();
++    }
++    for (tag, key) in [(TAG_ARM_MEMORY, "arm_memory"), (TAG_VC_MEMORY, "vc_memory")] {
++        if let Ok([base, size]) = mbox.property(tag, &[], 2).as_deref() {
++            writeln!(text, "{key} 0x{base:08x} {size}").unwrap();
++        }
++    }
++    if let Ok(max) = mbox.value_of(TAG_GET_MAX_TEMPERATURE, 0) {
++        writeln!(text, "max_temperature {max}").unwrap();
++    }
++}
++
++/// Model and memory size from a new-style revision code (bit 23 set):
++/// bits 4-11 are the type, bits 20-22 the memory size.
++fn decode_revision(revision: u32) -> Option<(&'static str, &'static str)> {
++    if revision & (1 << 23) == 0 {
++        return None;
++    }
++    let model = match (revision >> 4) & 0xff {
++        0x08 => "Raspberry Pi 3 Model B",
++        0x0d => "Raspberry Pi 3 Model B+",
++        0x0e => "Raspberry Pi 3 Model A+",
++        0x0a => "Compute Module 3",
++        0x10 => "Compute Module 3+",
++        0x12 => "Raspberry Pi Zero 2 W",
++        0x11 => "Raspberry Pi 4 Model B",
++        _ => "unknown",
++    };
++    let memory = match (revision >> 20) & 7 {
++        0 => "256 MiB",
++        1 => "512 MiB",
++        2 => "1 GiB",
++        3 => "2 GiB",
++        4 => "4 GiB",
++        5 => "8 GiB",
++        _ => "unknown",
++    };
++    Some((model, memory))
++}
++
++impl SchemeSync for MboxScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        let path = path.trim_matches('/');
++        let handle = if path.is_empty() {
++            Handle::Dir
++        } else {
++            if flags & O_ACCMODE != O_RDONLY {
++                return Err(Error::new(EROFS));
++            }
++            Handle::File(self.contents(path)?.into_bytes())
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let Handle::File(data) = self.handles.get(id)? else {
++            return Err(Error::new(EISDIR));
++        };
++        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++        let len = buf.len().min(data.len() - start);
++        buf[..len].copy_from_slice(&data[start..start + len]);
++        Ok(len)
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        if !matches!(self.handles.get(id)?, Handle::Dir) {
++            return Err(Error::new(ENOTDIR));
++        }
++        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
++        for (i, name) in FILES.iter().enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: i as u64,
++                name,
++                kind: DirentKind::Regular,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Dir | Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "mbox", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++fn get_dtb() -> Vec<u8> {
++    std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
++}
++
++/// The CPU physical address of the mailbox, from the devicetree.
++fn mbox_phys(fdt: &Fdt) -> usize {
++    let bus_addr = fdt
++        .find_compatible(&["brcm,bcm2835-mbox"])
++        .and_then(|node| node.reg())
++        .and_then(|mut reg| reg.next())
++        .map(|reg| reg.starting_address as usize)
++        .unwrap_or(MBOX_BUS_ADDR);
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| {
++                r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
++            })
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = get_dtb();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-mboxd: no devicetree");
++        process::exit(0);
++    };
++    let phys = mbox_phys(&fdt);
++    // The mailbox block is not page aligned; map its page.
++    let page = phys & !(PAGE_SIZE - 1);
++    let regs = unsafe {
++        common::physmap(page, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-mboxd: failed to map registers") as usize
++            + (phys - page)
++    } as *mut u32;
++    let mbox = Mailbox::new(regs).expect("bcm2835-mboxd: failed to allocate the message buffer");
++    let mut scheme = MboxScheme {
++        mbox,
++        handles: HandleMap::new(),
++    };
++    match scheme.contents("board") {
++        Ok(board) => {
++            let summary: Vec<&str> = board.lines().take(2).collect();
++            println!("bcm2835-mboxd: mailbox at 0x{phys:08x}, {}", summary.join(", "));
++        }
++        Err(_) => println!("bcm2835-mboxd: mailbox at 0x{phys:08x} does not answer"),
++    }
++
++    let socket = Socket::create().expect("bcm2835-mboxd: failed to create the mbox scheme");
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++
++    libredox::call::setrens(0, 0).expect("bcm2835-mboxd: failed to enter the null namespace");
++
++    handler
++        .process_requests_blocking(scheme)
++        .expect("bcm2835-mboxd: failed to process requests");
++}
+diff --git a/drivers/bcm2835-mboxd/src/mbox.rs b/drivers/bcm2835-mboxd/src/mbox.rs
+new file mode 100644
+index 0000000..327a773
+--- /dev/null
++++ b/drivers/bcm2835-mboxd/src/mbox.rs
+@@ -0,0 +1,146 @@
++//! The VideoCore mailbox and the firmware's property interface.
++//!
++//! The ARM writes the bus address of a message buffer to mailbox 1 on
++//! channel 8; the firmware answers in place and puts the same address into
++//! mailbox 0. A message is a list of tags, each with a buffer that holds the
++//! request values and, after the call, the response values.
++
++use std::sync::atomic::{fence, Ordering};
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++
++// Registers, relative to the mailbox block.
++const MAIL0_READ: usize = 0x00;
++const MAIL0_STATUS: usize = 0x18;
++const MAIL1_WRITE: usize = 0x20;
++const MAIL1_STATUS: usize = 0x38;
++const STATUS_FULL: u32 = 1 << 31;
++const STATUS_EMPTY: u32 = 1 << 30;
++
++/// Channel of the property interface, ARM to VideoCore.
++const CHANNEL_PROPERTY: u32 = 8;
++/// The VideoCore sees RAM through its uncached alias at this bus address.
++const DMA_BUS_OFFSET: usize = 0xC000_0000;
++const REQUEST: u32 = 0;
++const RESPONSE_OK: u32 = 0x8000_0000;
++const TAG_RESPONSE: u32 = 1 << 31;
++const TIMEOUT: Duration = Duration::from_secs(1);
++
++/// Message buffer size in 32-bit words.
++const BUF_WORDS: usize = 64;
++
++// Property tags.
++pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
++pub const TAG_BOARD_MODEL: u32 = 0x0001_0001;
++pub const TAG_BOARD_REVISION: u32 = 0x0001_0002;
++pub const TAG_BOARD_SERIAL: u32 = 0x0001_0004;
++pub const TAG_ARM_MEMORY: u32 = 0x0001_0005;
++pub const TAG_VC_MEMORY: u32 = 0x0001_0006;
++pub const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
++pub const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
++pub const TAG_GET_TEMPERATURE: u32 = 0x0003_0006;
++pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
++pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
++
++/// Clocks the firmware knows, by id.
++pub const CLOCKS: &[(u32, &str)] = &[
++    (1, "emmc"),
++    (2, "uart"),
++    (3, "arm"),
++    (4, "core"),
++    (5, "v3d"),
++    (6, "h264"),
++    (7, "isp"),
++    (8, "sdram"),
++    (9, "pixel"),
++    (10, "pwm"),
++];
++
++pub struct Mailbox {
++    regs: *mut u32,
++    buf: Dma<[u32; BUF_WORDS]>,
++}
++
++impl Mailbox {
++    /// `regs` points at the mailbox block (MAIL0_READ).
++    pub fn new(regs: *mut u32) -> syscall::Result<Self> {
++        Ok(Self {
++            regs,
++            buf: Dma::new([0; BUF_WORDS])?,
++        })
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    /// One property call with a single tag. `request` fills the start of the
++    /// value buffer, which has room for `response_words` words of answer.
++    /// Returns the answer, as long as the firmware says it is.
++    pub fn property(&mut self, tag: u32, request: &[u32], response_words: usize) -> Result<Vec<u32>, String> {
++        let value_words = request.len().max(response_words);
++        let total = 6 + value_words;
++        if total > BUF_WORDS {
++            return Err(format!("tag 0x{tag:08x}: message too long"));
++        }
++        let buf = &mut *self.buf;
++        buf.fill(0);
++        buf[0] = (total * 4) as u32;
++        buf[1] = REQUEST;
++        buf[2] = tag;
++        buf[3] = (value_words * 4) as u32;
++        buf[4] = REQUEST;
++        buf[5..5 + request.len()].copy_from_slice(request);
++        // buf[5 + value_words] stays 0: the end tag.
++
++        let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
++        // The buffer is uncached; make sure it is written before the
++        // firmware hears about it.
++        fence(Ordering::SeqCst);
++        let deadline = Instant::now() + TIMEOUT;
++        while self.read(MAIL1_STATUS) & STATUS_FULL != 0 {
++            if Instant::now() > deadline {
++                return Err("mailbox stays full".into());
++            }
++            std::hint::spin_loop();
++        }
++        self.write(MAIL1_WRITE, bus | CHANNEL_PROPERTY);
++        loop {
++            while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
++                if Instant::now() > deadline {
++                    return Err(format!("tag 0x{tag:08x}: no answer from the firmware"));
++                }
++                std::hint::spin_loop();
++            }
++            // Answers to other channels are not ours; drop them.
++            if self.read(MAIL0_READ) == bus | CHANNEL_PROPERTY {
++                break;
++            }
++        }
++        fence(Ordering::SeqCst);
++
++        let buf = &*self.buf;
++        if buf[1] != RESPONSE_OK {
++            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
++        }
++        if buf[4] & TAG_RESPONSE == 0 {
++            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
++        }
++        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        Ok(buf[5..5 + len.min(value_words)].to_vec())
++    }
++
++    /// A tag that takes an id and answers with the id and one value, such as
++    /// a clock rate or a temperature.
++    pub fn value_of(&mut self, tag: u32, id: u32) -> Result<u32, String> {
++        match self.property(tag, &[id], 2)?[..] {
++            [_, value] => Ok(value),
++            _ => Err(format!("tag 0x{tag:08x}: short answer")),
++        }
++    }
++}
+diff --git a/init.initfs.d/40_bcm2835-mboxd.service b/init.initfs.d/40_bcm2835-mboxd.service
+new file mode 100644
+index 0000000..f4e81f0
+--- /dev/null
++++ b/init.initfs.d/40_bcm2835-mboxd.service
+@@ -0,0 +1,8 @@
++[unit]
++description = "BCM2835 mailbox: firmware properties (temperature, clocks, board)"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "bcm2835-mboxd"
++type = { scheme = "mbox" }
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index d9e2dab..7753fbf 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -4,6 +4,7 @@ requires_weak = [
+     "10_lived.service",
+     "20_graphics.target",
+     "40_ps2d.service",
++    "40_bcm2835-mboxd.service",
+     "40_bcm2835-sdhcid.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+-- 
+2.54.0 (Apple Git-157)
+
