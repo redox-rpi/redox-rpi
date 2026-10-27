@@ -1,0 +1,9 @@
+[package]
+name = "sigregs"
+description = "Check that a signal handler leaves every register of the interrupted code unchanged (aarch64)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

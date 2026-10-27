@@ -215,7 +215,7 @@ for name in bootloader base relibc; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot timesync; do
+for tool in devshd reboot sigregs timesync; do
     mkdir -p "$REDOX/recipes/other/$tool"
     cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
 [source]
