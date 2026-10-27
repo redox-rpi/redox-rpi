@@ -74,6 +74,20 @@ printed.
   Writes from `/scheme/rand`, which gives 14 MB/s, so the 1 MiB rate is
   partly the random source.
 
+Comparison on the same Pi and card (2026-10-27), writes from
+`/scheme/rand` with `conv=fsync`, reads of 8 MiB right after a restart:
+
+| | `bcm2835-sdhcid` | sdhost, 25 MHz target | sdhost, high speed |
+|---|---|---|---|
+| write, 1 MiB per call | 2.7 MB/s | 4.4 MB/s | 6.7 MB/s |
+| write, 64 KiB per call | 1.7 MB/s | 2.0 MB/s | 3.2 MB/s |
+| write, 4 KiB per call | 114 kB/s | 130 kB/s | 181 kB/s |
+| write 8 MiB, 1 MiB per call | 2.9 MB/s | | 5.7 MB/s |
+| read 8 MiB from the card | 4.5 MB/s | | 13 MB/s |
+
+The sdhost read rate comes from its statistics (16,432 blocks in 648 ms),
+the sdhcid one from `dd`.
+
 The clock divider assumes a 400 MHz core clock, the most the firmware may
 switch to; the firmware reports 250 MHz on this Pi, so the card runs at
 31 MHz instead of 50. Reading the real core clock (mailbox,

@@ -1,0 +1,15 @@
+# Redox image for the Raspberry Pi Zero 2 W, booted over the network
+# (scripts/netboot.sh --board zero2w): the Pi 3B+ network-boot image, made
+# small enough for the Zero's 512 MB RAM.
+#
+# Build with scripts/build-image.sh --zero2w.
+
+include = ["raspi3bp.toml"]
+
+[general]
+# U-Boot unpacks the whole image into RAM, to at most 128 MiB on the Zero
+# (scripts/netboot.sh), and the Redox bootloader copies the RedoxFS partition
+# once more. The live bootloader comes over the network, so the EFI partition
+# only needs to exist. The Pi 3B+ image uses about 81 MiB of its RedoxFS.
+filesystem_size = 128
+efi_partition_size = 8

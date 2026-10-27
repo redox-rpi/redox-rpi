@@ -86,6 +86,67 @@ changes, run `scripts/netboot.sh` with the new one and make a new card.
 `boot.scr` fetches `redox/netboot.scr` from the server, so changes to the boot
 script also only need `scripts/netboot.sh`, not a new card.
 
+## What the Pi loads
+
+Three places decide it:
+
+| Where | What it decides | Changed by |
+|---|---|---|
+| `boot.scr` on the SD card | server address and TFTP directory (`<dir>/netboot.scr`) | a new card (`make-sdcard.sh --dir`) |
+| `<dir>/` on the server | the image (`harddrive.img.gz`), the bootloader, `netboot.scr` | `scripts/netboot.sh --dir <dir>` |
+| U-Boot variables | `redox_dir`, `redox_server`, `redox_http`, the RAM addresses | `setenv` on the serial console before `netboot.scr` runs |
+
+So the normal way to change what a Pi boots is to run `scripts/netboot.sh`
+with another image: every card that names that directory boots it on the
+next power cycle. Boards that need different images get different
+directories: the Pi 3B+ uses `redox/`, the Zero 2 W `redox-zero2w/`. The
+manifest of the image in a directory is `<dir>/manifest.toml`
+([versioning.md](versioning.md)).
+
+To boot another directory once, without a new card, stop U-Boot's countdown
+on the serial console and run:
+
+```
+setenv redox_dir backup/; usb start; dhcp; setenv serverip <server-ip>
+tftpboot ${scriptaddr} redox/netboot.scr; source ${scriptaddr}
+```
+
+## Pi Zero 2 W
+
+The Zero has 512 MB RAM and no Ethernet of its own: U-Boot reaches the
+network through the RTL8152 on the Ethernet/USB hub HAT. It gets its own
+image, 128 MiB instead of 256, and its own directory:
+
+```sh
+scripts/build-image.sh --zero2w
+scripts/netboot.sh --server <server-ip> --board zero2w --tftp-dir /srv/tftp
+scripts/make-sdcard.sh --tftp-dir /srv/tftp --dir redox-zero2w \
+    --boot-size 32 --data-size 0 --out build/sdcard-netboot-zero2w.img
+```
+
+The card is 32 MiB, small enough for a 64 MB SD card, with no data
+partition. The same card boots a Pi 3 as well, with the Zero's image.
+
+Tested in QEMU's `virt` machine with `-m 512` and the Zero's RAM addresses
+(`redox_img_addr`/`redox_gz_addr` 128 and 256 MiB above the start of RAM):
+it boots to `redox login:`.
+
+On a real Zero 2 W, U-Boot gets DHCP and loads `netboot.scr` over TFTP
+through the HAT's RTL8152, but the HTTP transfer of the image fails with
+`Rx: failed to receive: -5` from U-Boot's r8152 driver. So `--board zero2w`
+loads everything over TFTP (`--tftp-only`, `redox_http none`): slower, about
+a minute for the image.
+
+TFTP with U-Boot's default 1468-byte blocks failed the same way on the
+Zero, after a few dozen KiB of the image. The driver receives into a
+2048-byte buffer (`RTL8152_AGG_BUF_SZ`), and the adapter packs frames that
+arrive close together into one USB transfer; two full-size frames do not
+fit. `--board zero2w` therefore also sets `tftpblocksize 512`
+(`--tftp-blocksize`). With it, a real Zero 2 W loaded the whole image and
+booted Redox to the login prompt (2026-10-27). It is slow: many minutes for
+the 42 MB image, at times only a few KB/s, not timed exactly. A larger
+receive buffer in U-Boot's driver would allow full blocks and HTTP again.
+
 The Redox system itself runs from RAM and starts fresh on every boot; keep
 anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:
 Redox does not follow symlinks into another scheme. Mounting a RedoxFS
@@ -205,8 +266,11 @@ sudo loginctl enable-linger "$USER"   # keep it running without a login
 
 - The bootloader's resolution menu still waits for **Enter** on the serial
   console.
-- RAM: the unpacked image (256 MiB, half of it the EFI partition) sits at
-  256 MiB, the compressed one after it, and the bootloader copies the
-  126 MiB RedoxFS once more. That fits the Pi 3B+ (1 GB), but not the
-  Zero 2 W (512 MB). The Zero needs a smaller image (EFI partition) or a
-  transfer of the RedoxFS partition only.
+- RAM: the unpacked image (256 MiB) sits at 256 MiB, the compressed one
+  after it, and the bootloader copies the 222 MiB RedoxFS once more. That
+  fits the Pi 3B+ (1 GB), but not the Zero 2 W (512 MB), which gets the
+  128 MiB image (`--board zero2w`, see above). Transferring only the
+  RedoxFS partition would save more.
+- On the Zero 2 W, Redox has no network driver for the HAT's RTL8152 yet
+  (experiment `rtl8152`, branch `rtl8152`): without it, only the serial
+  console reaches the shell.
