@@ -116,6 +116,9 @@ def main():
         )
         info["build_id"] = release.get("BUILD_ID", release.get("VERSION", "?")).strip('"')
         info["built"] = release.get("BUILD", "?").strip('"')
+        # Images built before the short build IDs name the experiments in
+        # the ID itself and have no EXPERIMENTS line.
+        info["experiments"] = release.get("EXPERIMENTS", "").strip('"')
         check("version", info["build_id"] != "?", info["build_id"])
 
         libc = sh.run("sha256sum /usr/lib/libc.so")
@@ -171,6 +174,8 @@ def main():
             f.write(f"\n## {date}: `{info.get('build_id', '?')}`\n\n")
             f.write(f"Built {info.get('built', '?')}, `libc.so` `{info.get('libc', '?')[:16]}…`, "
                     f"real Pi 3B+ over netboot.")
+            if info.get("experiments"):
+                f.write(f" Experiments: {', '.join(f'`{x}`' for x in info['experiments'].split())}.")
             if args.note:
                 f.write(f" {args.note}")
             f.write("\n\n| Check | Result | Detail |\n|---|---|---|\n")

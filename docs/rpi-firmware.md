@@ -1,4 +1,4 @@
-# Experiment: rpi-firmwared, Raspberry Pi firmware properties
+# rpi-firmwared, Raspberry Pi firmware properties
 
 Named after the Linux driver `raspberrypi-firmware` (the old name was
 `bcm2835-mboxd`, experiment `mailbox-driver`).
@@ -14,9 +14,13 @@ interface) and serves the answers as text files, read fresh on every open:
 | `/scheme/rpi-firmware/clocks` | One line per clock: name, current rate, maximum rate (Hz) |
 | `/scheme/rpi-firmware/board` | `key value` lines: revision, model, memory, serial, firmware, memory split, maximum temperature |
 
-```bash
-scripts/build-image.sh --experiment rpi-firmware
-```
+Part of every image since base patch
+[`0018`](../patches/base/0018-rpi-firmwared-Raspberry-Pi-firmware-properties-over-.patch);
+until then it was the experiment `rpi-firmware` (the results below are
+from that time). The patch is numbered after the sdhost driver (experiment
+`sdhost-driver`, which keeps `0017` for when it becomes a default patch),
+and its changes to `Cargo.toml`, `Makefile` and `40_drivers.target` stay
+clear of sdhost's lines, so both apply with and without each other.
 
 Starts from the initfs, so other drivers (sdhost's clock divider) can ask
 for the real core clock later.
@@ -28,11 +32,15 @@ Raspberry Pi 3 Model B`) and all four files answer. QEMU reports fixed
 values: revision `0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz,
 core 350 MHz, no throttling, serial 0. On the real Pi 3B+ see below.
 
+**As a default patch in QEMU** (build `v0.1.0-alpha-59-gecabf31`, network
+boot image without experiments, 2026-10-27): starts from the initfs, all
+four files answer with QEMU's values as above.
+
 **Result on the real Pi 3B+** (netboot, build
 `v0.1.0-alpha-51-g3d7e351+ldso-diagnostics+rpi-firmware`, 2026-10-27): all
 four files answer with real values: Raspberry Pi 3 Model B+ (revision
 `0x00a020d3`), 1 GiB, 58.5 °C, ARM 600 MHz (max 1.4 GHz), **core 250 MHz**
 (max 400 MHz), no throttling. The standard checks pass as with the
-diagnostics image alone ([report](../../../docs/test-reports.md)). The core
+diagnostics image alone ([report](test-reports.md)). The core
 clock confirms that sdhost's divider, which assumes 400 MHz, runs the card
 slower than planned; with this driver it can ask for the real rate.

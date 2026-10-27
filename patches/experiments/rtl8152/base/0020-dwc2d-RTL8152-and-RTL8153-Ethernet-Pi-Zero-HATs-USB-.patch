@@ -1,4 +1,4 @@
-From 9f56780ec02b8e033264cf6f406f8ab61d6904eb Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 27 Oct 2026 09:08:22 +0100
 Subject: [PATCH] dwc2d: RTL8152 and RTL8153 Ethernet (Pi Zero HATs, USB
@@ -17,7 +17,7 @@ on a Pi 3B+.
  create mode 100644 drivers/usb/dwc2d/src/rtl8152.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 4baf0c0..0b0dd57 100644
+index 4baf0c02..0b0dd579 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,7 +2,7 @@
@@ -126,7 +126,7 @@ index 4baf0c0..0b0dd57 100644
                              println!("dwc2d: LAN7800 at address {}", device.address);
 diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
 new file mode 100644
-index 0000000..1f3e2a8
+index 00000000..1f3e2a88
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/rtl8152.rs
 @@ -0,0 +1,1030 @@
@@ -1160,6 +1160,3 @@ index 0000000..1f3e2a8
 +        Ok(len)
 +    }
 +}
--- 
-2.54.0 (Apple Git-157)
-

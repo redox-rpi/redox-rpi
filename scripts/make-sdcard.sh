@@ -3,7 +3,7 @@
 # boot (default) or with Redox on the card (--local).
 #
 # Network boot:
-# Partition 1 (FAT32, 63 MiB) holds the Raspberry Pi firmware, our U-Boot,
+# Partition 1 (FAT32, 63 MiB; --boot-size) holds the Raspberry Pi firmware, our U-Boot,
 # config.txt and a boot script. Redox itself comes from the TFTP server on
 # every boot (see scripts/netboot.sh), so a new build needs no new card.
 # Partition 2 is a RedoxFS data partition that Redox mounts at /scheme/data, for
@@ -20,9 +20,18 @@
 # scripts/netboot.sh --server <ip>.
 #
 # Usage:
-#   scripts/make-sdcard.sh [--tftp-dir <dir>] [--out <file>] [--data-size <MiB>]
+#   scripts/make-sdcard.sh [--tftp-dir <dir>] [--dir <name>] [--out <file>]
+#                          [--boot-size <MiB>] [--data-size <MiB>]
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #
+#   --dir <name>       the directory of scripts/netboot.sh --dir whose boot.scr
+#                      goes on the card (default redox; redox-zero2w for the
+#                      Zero 2 W image)
+#   --boot-size <MiB>  size of the boot area, partition 1 plus the first MiB
+#                      (default 64). The files need about 12 MiB; below 48 the
+#                      partition is FAT16, which the Pi firmware reads as well.
+#                      With --data-size 0 this is the whole image: 32 fits a
+#                      64 MB card.
 #   --data-size <MiB>  size of the data partition (default 960, 0 for none).
 #                      RedoxFS does not grow with the card, so pick the size
 #                      you want to use.
@@ -51,12 +60,15 @@ DATA_UUID="7265646f-7872-7069-2d64-617461000001"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tftp="$ROOT/build/tftp"
+dir=redox
 out="$ROOT/build/sdcard-netboot.img"
 data_mib=960
 image=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
+        --dir) dir="$2"; shift 2 ;;
+        --boot-size) BOOT_MIB="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
         --data-size) data_mib="$2"; shift 2 ;;
         --local) image="$2"; shift 2 ;;
@@ -65,7 +77,7 @@ while [ $# -gt 0 ]; do
 done
 
 uboot="$ROOT/build/u-boot/u-boot.bin"
-bootscr="$tftp/redox/boot.scr"
+bootscr="$tftp/$dir/boot.scr"
 [ -f "$uboot" ] || { echo "$uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
 if [ -n "$image" ]; then
     [ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh --sdcard" >&2; exit 1; }
@@ -75,7 +87,7 @@ if [ -n "$image" ]; then
     data_mib=$(((root_sectors + 2047) / 2048))
     [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-redox.img"
 else
-    [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip>" >&2; exit 1; }
+    [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 fi
 
 cache="$ROOT/build/firmware/$FIRMWARE_TAG"
@@ -92,12 +104,14 @@ if [ -z "$image" ] && [ "$data_mib" -gt 0 ] && [ ! -x "$tool" ]; then
 fi
 
 # MBR, since the Pi boot ROM reads MBR only: FAT32 boot partition from 1 MiB
-# to 64 MiB, then the data or root partition (type da, "non-FS data"; Redox
+# to 64 MiB (FAT16 below 48 MiB, see --boot-size), then the data or root partition (type da, "non-FS data"; Redox
 # finds its filesystems by content).
+# FAT32 needs at least about 33 MiB; a smaller partition gets FAT16.
+if [ "$BOOT_MIB" -ge 48 ]; then fat32=-F; fat_type=c; else fat32=; fat_type=e; fi
 rm -f "$out"
 truncate -s "$((BOOT_MIB + data_mib))M" "$out"
 {
-    echo "start=2048, size=$(((BOOT_MIB - 1) * 2048)), type=c, bootable"
+    echo "start=2048, size=$(((BOOT_MIB - 1) * 2048)), type=$fat_type, bootable"
     [ "$data_mib" -eq 0 ] || echo "start=$((BOOT_MIB * 2048)), type=da"
 } | sfdisk -q "$out"
 
@@ -105,7 +119,7 @@ truncate -s "$((BOOT_MIB + data_mib))M" "$out"
 fat="$out.fat"
 rm -f "$fat"
 truncate -s "$((BOOT_MIB - 1))M" "$fat"
-mformat -i "$fat" -F -v REDOXBOOT ::
+mformat -i "$fat" $fat32 -v REDOXBOOT ::
 
 for file in "${FIRMWARE_FILES[@]}"; do
     [ "$(dirname "$file")" = . ] || mmd -i "$fat" -D s "::$(dirname "$file")" 2>/dev/null || true

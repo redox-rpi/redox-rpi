@@ -52,13 +52,49 @@ printed.
   `disk.sdhost` with partitions `0p0` and `0p1`. Read through it: the
   partition table matches the SD image the card was made from (except the
   disk signature, new on every `make-sdcard.sh` run), the FAT boot sector is
-  valid (`REDOXBOOT`, `FAT32`). 8 MiB read in 1.85 s, 4.5 MB/s. Not tested
-  yet: writing, and starting it at boot.
+  valid (`REDOXBOOT`, `FAT32`). 8 MiB read in 1.85 s, 4.5 MB/s. Writing
+  and starting at boot: see [`sdhost-boot`](../sdhost-boot/README.md).
 - Real Pi 3B+, 2026-10-27, started at boot instead of `bcm2835-sdhcid`
   (commit `2c66e72`): the Pi did not come back on the network. Likely cause:
   without `disk.mmc`, mounting the data partition (`60_data.service`) waits
   forever and blocks the boot before devshd. Not confirmed, no console log.
   Hence the manual start.
 
-The clock divider assumes a 400 MHz core clock; at 250 MHz the card only
-runs slower. The mailbox experiment can provide the real rate.
+- **High speed mode** (patch `0018`, real Pi 3B+, 2026-10-27, build
+  `v0.1.0-alpha-61-g90ef0ee+ldso-diagnostics+sdhost-driver+sdhost-boot+sdhost-stats`): the card switches to high speed, the driver aims at 50 MHz.
+  8 MiB written, the Pi restarted, the same SHA-256 read back from the card.
+
+  | | 25 MHz target (15.6 MHz) | 50 MHz target (31 MHz) |
+  |---|---|---|
+  | write, 1 MiB per call, `conv=fsync` | 4.4 MB/s | 6.7 MB/s |
+  | write, 64 KiB per call | 2.0 MB/s | 3.2 MB/s |
+  | write, 4 KiB per call | 130 kB/s | 181 kB/s |
+  | read 8 MiB after a restart (from the card) | 4.5 MB/s | 13 MB/s |
+
+  Writes from `/scheme/rand`, which gives 14 MB/s, so the 1 MiB rate is
+  partly the random source.
+
+Comparison on the same Pi and card (2026-10-27), writes from
+`/scheme/rand` with `conv=fsync`, reads of 8 MiB right after a restart:
+
+| | `bcm2835-sdhcid` | sdhost, 25 MHz target | sdhost, high speed |
+|---|---|---|---|
+| write, 1 MiB per call | 2.7 MB/s | 4.4 MB/s | 6.7 MB/s |
+| write, 64 KiB per call | 1.7 MB/s | 2.0 MB/s | 3.2 MB/s |
+| write, 4 KiB per call | 114 kB/s | 130 kB/s | 181 kB/s |
+| write 8 MiB, 1 MiB per call | 2.9 MB/s | | 5.7 MB/s |
+| read 8 MiB from the card | 4.5 MB/s | | 13 MB/s |
+
+The sdhost read rate comes from its statistics (16,432 blocks in 648 ms),
+the sdhcid one from `dd`.
+
+The clock divider assumes a 400 MHz core clock, the most the firmware may
+switch to; the firmware reports 250 MHz on this Pi, so the card runs at
+31 MHz instead of 50. Reading the real core clock (mailbox,
+`rpi-firmware`) and following its changes could give the rest.
+
+Small writes are slow because of RedoxFS, not the driver: the statistics
+(`sdhost-stats`) show that 1 MiB written in 4 KiB calls sent about 2600
+write requests with 74,000 blocks (37 MB) to the card, 36 times the data.
+The driver moved them at bus speed; a third of the time was the card
+programming. See task T16.

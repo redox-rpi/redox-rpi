@@ -29,8 +29,10 @@ LAN7800 driver it polls and has no interrupt endpoint.
   The network scheme is then `network.usb_rtl8152`; the LAN7800 stays
   initialized but unused.
 
-Patch `0017` conflicts with the other experiments that patch `dwc2d` or add
-a base patch `0017` (`dwc2-interrupts`, `sdhost-driver`, `rpi-firmware`).
+Patch `0020` applies after the default patches (including `rpi-firmwared`,
+base `0018`) and after `sdhost-driver`, so `--experiment sdhost-driver
+--experiment rtl8152` builds (release candidate v0.2.0-alpha). It still
+conflicts with `dwc2-interrupts`, which also changes `dwc2d`.
 
 ## Result
 

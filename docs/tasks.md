@@ -138,14 +138,60 @@ the serial console (`logs/serial.log` on the build host):
 
 ## Hardware
 
+### T18: No `pcid` and `audiod` on the Pi (QEMU, then Pi)
+
+The Pi 3B+ and the Zero 2 W have no PCI bus and never will, and there is no
+sound driver yet. Still, every boot starts `pcid-spawner`, whose `pcid`
+panics ("not yet implemented: Pci::CfgAccess::read on this architecture"),
+and `audiod`, which stops with "No such device". Both fill the console with
+errors that hide real ones. No PCI detection is needed: leave them out of
+the Pi images.
+
+- **Look at:** in base, `init.initfs.d/40_pcid-spawner-initfs.service` and
+  its line in `40_drivers.target`, `init.d/00_pcid-spawner.service` in
+  `00_base.target`, the `audiod` service, and `init.d/10_smolnetd.service`,
+  which waits for `pcid-spawner`.
+- **Do:** an experiment with a base patch that drops these services, on a
+  branch. `audiod` comes back with a sound driver (Audio on the
+  [wish list](../ROADMAP.md#wish-list-help-wanted)).
+- **Done when:** a Pi 3B+ boots without these messages, network, USB
+  keyboard and `scripts/pi-test.py` work as before, and the result is in
+  [test-reports.md](test-reports.md).
+
 ### T6: sdhost SD driver on the real Pi (Pi with serial console)
 
-Experiment `sdhost-driver` works in QEMU. A netboot image with it did not
-come back on the network on a real Pi 3B+.
+Done 2026-10-27: with `sdhost-driver` and `sdhost-boot` the Pi boots with
+sdhost and writes correctly ([results](../patches/experiments/sdhost-boot/README.md#results)).
+Open: read the real core clock instead of assuming 400 MHz (31 MHz now,
+50 MHz possible), see the
+[sdhost-driver README](../patches/experiments/sdhost-driver/README.md#results).
 
-- **Do:** build with `--experiment sdhost-driver`, boot it on a Pi with the
-  serial console attached, find where it stops.
-- **Done when:** the boot log is in the issue and, ideally, a fixed patch.
+### T16: RedoxFS writes 36 times the data for small writes (QEMU, then Pi)
+
+Writing 1 MiB in 4 KiB calls to `/scheme/data` sent about 74,000 blocks
+(37 MB) to the SD card; 1 MiB calls write at bus speed
+([statistics](../patches/experiments/sdhost-stats/README.md#results)).
+
+- **Look at:** what RedoxFS writes per transaction (node, block list, tree,
+  allocator log, header), in the `redoxfs` recipe. Count the writes per
+  4 KiB `write` call, in QEMU with `sdhost-stats` or with a counter in the
+  disk scheme.
+- **Done when:** the writes per small `write` call are explained, with an
+  experiment patch that lowers them, or the reason it cannot be lower.
+
+### T17: USB hotplug (QEMU, then Pi 3B+ or Zero 2 W)
+
+A USB device plugged in after boot is not detected, on every board: `dwc2d`
+enumerates the devices once at start and does not watch the root port.
+Seen with a keyboard on the Zero 2 W ([test reports](test-reports.md)); the
+Pi 3B+ is the same, its keyboard and LAN7800 sit behind the onboard hub.
+
+- **Look at:** `dwc2d` in base, the port connect and change interrupts
+  (`HPRT0`, `GINTSTS.PRTINT`), and the hub status change endpoint for
+  devices behind a hub. Branch `dwc2-interrupts` adds interrupt handling and
+  is the place to start.
+- **Done when:** a keyboard plugged in after boot types, and unplugging and
+  plugging it again works, on a real Pi.
 
 ### T7: Power off and reboot (QEMU, then Pi)
 
@@ -160,6 +206,21 @@ Same SoC as the Pi 3, 512 MB RAM, no onboard Ethernet. See
 [ROADMAP.md](../ROADMAP.md), phase for the Zero 2 W.
 
 - **Done when:** the image boots to a login prompt on a Zero 2 W.
+
+State: the unchanged `v0.1.0-alpha` SD card image boots on a Zero 2 W, and a
+USB keyboard works when plugged in before boot
+([test reports](test-reports.md)). Open:
+- **USB hotplug:** see T17, the same on the Pi 3B+.
+- **Network:** no driver for the HAT's RTL8152 on `main` yet (experiment
+  `rtl8152` on branch `rtl8152`). The unchanged image already sees the chip:
+  `0bda:8152` at high speed on port 4 of the HAT's hub (`1a40:0101`), bulk
+  endpoints 0x81/0x02 with 512 bytes, as the driver expects. The CDC
+  Ethernet search then fails on the chip's second configuration
+  (`GET_DESCRIPTOR` config index 1, wLength 512: `Timeout("channel halt")`);
+  the experiment claims the chip before that search runs.
+- **Network boot:** works on a real Zero with a 128 MiB image and a small
+  U-Boot card ([netboot](netboot.md#pi-zero-2-w)), but only over TFTP with
+  512-byte blocks and slowly. Faster: [T19](#t19-fast-network-boot-on-the-zero-2-w-zero-2-w-with-the-ethernetusb-hat).
 
 ## Boot
 
@@ -183,6 +244,27 @@ the devicetree, which also says where the initramfs is.
 - **Done when:** a Pi 3B+ boots from the SD card without U-Boot and the
   Redox bootloader to the login prompt, and `scripts/pi-test.py` passes as
   with the U-Boot image.
+
+### T19: Fast network boot on the Zero 2 W (Zero 2 W with the Ethernet/USB HAT)
+
+U-Boot's r8152 driver receives into a 2048-byte buffer
+(`RTL8152_AGG_BUF_SZ` in `drivers/usb/eth/r8152.h`). On a real Zero 2 W
+the image transfer over the HAT's RTL8152 fails with
+`Rx: failed to receive: -5`, over HTTP and over TFTP with full 1468-byte
+blocks. With 512-byte TFTP blocks the whole image arrives, but it takes
+many minutes ([test report](test-reports.md), [netboot](netboot.md#pi-zero-2-w)).
+The likely cause: the adapter packs frames that arrive close together into
+one USB transfer, and two full-size frames do not fit. Linux uses 16 KiB.
+
+- **Do:** a U-Boot patch (on a branch, in `scripts/build-uboot.sh`'s patch
+  series) that raises the buffer and the matching `USB_RX_EARLY_SIZE`,
+  then a new Zero card, and `netboot.sh --board zero2w` back to full blocks
+  and HTTP. Check U-Boot `master` first; we build v2026.10.
+- **Open questions:** whether DWC2 on the Zero copes with 16 KiB bulk
+  transfers (`CONFIG_USB_DWC2_BUFFER_SIZE` is 64 KiB); whether to report
+  the bug to U-Boot (mailing list, `u-boot@lists.denx.de`) once confirmed.
+- **Done when:** a Zero 2 W loads the image over HTTP and boots to the
+  login prompt, with the load time in the test report.
 
 ## Tooling
 

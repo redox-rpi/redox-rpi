@@ -13,6 +13,10 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
+Numbers may have a gap: `base/0017` is kept for the sdhost driver
+(experiment `sdhost-driver`), which becomes a default patch after its boot
+test; `base/0018` (`rpi-firmwared`) applies with and without it.
+
 The upstream commits the patches apply to are in
 [`config/upstream.lock`](../config/upstream.lock). See
 [docs/versioning.md](../docs/versioning.md).

@@ -18,4 +18,14 @@ scripts/build-image.sh --experiment ldso-diagnostics --experiment sdhost-driver 
 
 ## Results
 
-None yet.
+2026-10-27, real Pi 3B+, `v0.1.0-alpha-61-g90ef0ee+ldso-diagnostics+sdhost-driver+sdhost-boot+sdhost-stats`: works. While `dd` wrote 1 MiB in 4 KiB
+calls with `conv=fsync`:
+
+```text
+bcm2835-sdhostd: 31 s: read 0 requests 0 blocks 0 ms; write 524 requests 15968 blocks 959 ms, 278 ms of it busy
+bcm2835-sdhostd: 5 s: read 288 requests 3952 blocks 197 ms; write 1763 requests 49072 blocks 4034 ms, 1414 ms of it busy
+bcm2835-sdhostd: 36 s: read 127 requests 1016 blocks 63 ms; write 307 requests 9152 blocks 571 ms, 162 ms of it busy
+```
+
+About 74,000 blocks (37 MB) for 1 MiB of data. Details in the
+[sdhost-driver README](../sdhost-driver/README.md#results).

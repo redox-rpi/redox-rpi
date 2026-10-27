@@ -39,11 +39,23 @@ versions and hashes.
 ## Build ID
 
 ```text
-v0.1.0-alpha-12-g1a2b3c4+ldso-diagnostics-dirty.0f3e9a1b2c4d
-└─ git describe ────────┘└─ experiments ─┘└─ unrecorded changes
+v0.1.0-alpha-61-g90ef0ee+xd025-dirty.0f3e9a1b2c4d
+└─ git describe ───────┘└exp┘└─ unrecorded changes
 ```
 
+- `+x` and four hex digits: a hash of the experiments, sorted, so the same
+  set gives the same ID in any order. Without experiments the part is left
+  out. Which experiments they are is in the manifest, in
+  `EXPERIMENTS` in `/etc/redox-rpi-release`, and on the line below the build
+  ID above the login prompt.
+- `-dirty.` and a hash: only with `--allow-dirty`.
+
 It is shown above the login prompt and in `/etc/redox-rpi-release`.
+
+Images built before 2026-10-28 have the experiment names in the ID itself,
+for example `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`. The
+scripts treat both forms the same way: they find a manifest by the hash of
+`harddrive.img`, not by its name.
 
 ## Manifest
 
@@ -65,7 +77,7 @@ The build writes the manifest twice:
 On the Pi:
 
 ```bash
-cat /etc/redox-rpi-release
+cat /etc/redox-rpi-release      # build ID and experiments
 cat /etc/redox-rpi-manifest
 sha256sum /usr/lib/libc.so
 ```

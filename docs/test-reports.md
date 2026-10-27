@@ -166,3 +166,62 @@ Not caused by sdhost, seen during this test:
 - `reboot` crashed at start four times in a row (`brk`, see T12);
   `echo reset > /scheme/sys/kstop` restarted the Pi.
 
+## 2026-10-27: `v0.1.0-alpha-61-g90ef0ee+ldso-diagnostics+sdhost-driver+sdhost-boot+sdhost-stats`
+
+Real Pi 3B+ over netboot, serial console. sdhost in high speed mode, with
+transfer statistics.
+
+| Check | Result | Detail |
+|---|---|---|
+| card init | pass | `SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz` (31 MHz at the 250 MHz core clock) |
+| write 1 MiB calls, fsync | pass | 4 MiB in 0.62 s, 6.7 MB/s (before: 4.4 MB/s) |
+| write 64 KiB calls, fsync | pass | 4 MiB in 1.3 s, 3.2 MB/s (before: 2.0 MB/s) |
+| write 4 KiB calls, fsync | pass | 1 MiB in 5.8 s, 181 kB/s (before: 130 kB/s); 37 MB sent to the card, see T16 |
+| write, restart, read back | pass | 8 MiB, SHA-256 `fc2479e005e51b28074dfde9e3da3bda18deb479fc67019f345467169b78d20c` before and after the restart |
+| read from the card | pass | 8 MiB in 0.65 s, 13 MB/s |
+
+## 2026-10-27: release `v0.1.0-alpha` SD card image on a Pi Zero 2 W
+
+The unchanged release image `redox-rpi-v0.1.0-alpha-pi3bplus.img.xz`
+([release notes](releases/v0.1.0-alpha.md)), flashed and booted on a real
+Raspberry Pi Zero 2 W by a person, without a serial console. Not a
+`pi-test.py` run.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot | pass | boots the Pi 3B+ image unchanged |
+| USB keyboard | pass | works when plugged in before boot |
+| USB keyboard hotplug | **fail** | a keyboard plugged in after boot is not detected |
+| network | – | none, expected: the Zero has no Ethernet of its own, and Redox has no driver for the HAT's RTL8152 yet |
+
+## 2026-10-27: `v0.1.0-alpha-63-g23a4826+ldso-diagnostics`, network boot on a Pi Zero 2 W
+
+The Zero 2 W image (`build-image.sh --zero2w`, 128 MiB) booted over the
+network from a 32 MiB U-Boot card (`make-sdcard.sh --dir redox-zero2w`),
+through the RTL8152 on the Ethernet/USB HAT. Watched on a monitor by a
+person, without a serial console. Not a `pi-test.py` run.
+
+| Check | Result | Detail |
+|---|---|---|
+| U-Boot DHCP, `netboot.scr` over TFTP | pass | |
+| image over HTTP | **fail** | `Rx: failed to receive: -5` from U-Boot's r8152 driver |
+| image over TFTP, 1468-byte blocks | **fail** | same error after a few dozen KiB |
+| image over TFTP, 512-byte blocks | pass | the whole 42 MB arrive; slow, many minutes, not timed |
+| boot to login | pass | logged in as root |
+| network in Redox | – | none, expected: no RTL8152 driver yet |
+
+## 2026-10-27: `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, speed of `bcm2835-sdhcid`
+
+Real Pi 3B+ over netboot, the same card and the same `dd` runs as for
+sdhost in high speed mode, to compare the two drivers.
+
+| Check | Result | Detail |
+|---|---|---|
+| write 1 MiB calls, fsync | pass | 4 MiB in 1.57 s, 2.7 MB/s (sdhost: 6.7 MB/s) |
+| write 64 KiB calls, fsync | pass | 4 MiB in 2.53 s, 1.7 MB/s (sdhost: 3.2 MB/s) |
+| write 4 KiB calls, fsync | pass | 1 MiB in 9.2 s, 114 kB/s (sdhost: 181 kB/s) |
+| write 8 MiB, restart, read back | pass | SHA-256 `f611ca802560f2ced9628a84f134df3757367235848026cae11d5c8ef3b5b12a` before and after the restart |
+| read from the card | pass | 8 MiB in 1.85 s, 4.5 MB/s (sdhost: 13 MB/s) |
+
+`uptime` printed nothing twice in a row; `date` (the clock starts at
+1970-01-01 on every boot) gave the uptime instead.

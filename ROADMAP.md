@@ -96,7 +96,7 @@ automated testing in CI later.
 | # | Step | Done when … |
 |---|---|---|
 | 4.1 | ✅ Bring up all 4 cores: `spin-table` and BCM2836 IPIs (`patches/kernel/`) | 4 CPUs online (QEMU ✅, real Pi 3B+ ✅) |
-| 4.2 | 🟡 Watchdog: ✅ `reboot` (`tools/reboot`); 🟡 firmware driver `rpi-firmwared` (over the VideoCore mailbox) for temperature, clocks and board data (experiment `rpi-firmware`, works in QEMU); `poweroff` still missing | `reboot` and `poweroff` work, `/scheme/rpi-firmware` on the real Pi |
+| 4.2 | 🟡 Watchdog: ✅ `reboot` (`tools/reboot`); ✅ firmware driver `rpi-firmwared` (over the VideoCore mailbox) for temperature, clocks and board data (base patch `0018`, [tested on the real Pi](docs/rpi-firmware.md)); `poweroff` still missing | `reboot` and `poweroff` work, `/scheme/rpi-firmware` on the real Pi |
 | 4.3 | Minimal "server" profile (low RAM, no GUI) | Runs stable for 24 h |
 
 ## Phase 5: Networking over Ethernet
@@ -108,7 +108,7 @@ automated testing in CI later.
 | 5.3 | ✅ USB hub support behind DWC2 (QEMU; real Pi 3B+: both hubs found) | Devices behind the onboard/HAT hub are enumerated |
 | 5.3a | ✅ Bulk transfers and a CDC Ethernet adapter in `dwc2d`: DHCP and `ping` in QEMU | Network stack works over USB |
 | 5.4 | ✅ Ethernet driver for the Pi 3B+ chip (LAN7800 `0424:7800`) in `dwc2d`: DHCP address, TCP answers from the LAN (2026-10-26) | `ping` and TCP from the Pi 3 |
-| 5.5 | 🟡 Ethernet driver for the HAT's chip: RTL8152 `0bda:8152` behind a FE1.1s hub (experiment `rtl8152`: builds, QEMU unaffected; hardware test queued, first on a Pi 3B+ with a USB adapter) | `ping` and TCP from the Zero 2 W |
+| 5.5 | 🟡 Ethernet driver for the HAT's chip: RTL8152 `0bda:8152` behind a FE1.1s hub (experiment `rtl8152` on branch `rtl8152`, also for the RTL8153: a real RTL8153B passed through to QEMU gets DHCP and answers `ping`; Pi test queued) | `ping` and TCP from the Zero 2 W |
 
 ## Phase 6: Real server and release
 
@@ -134,8 +134,9 @@ from GPL-licensed drivers (Linux) is not.
 | **Keyboard layouts** | `dwc2d` maps USB keys to a US layout. German and other layouts | small |
 | **RTC / time** | The Pi has no clock: files are dated 1970/Jan 1. 🟡 NTP client `tools/timesync` with build time and saved time as fallback (experiment `timesync`, works in QEMU); next: `clock_settime` in relibc | small |
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
-| **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from `/scheme/rpi-firmware` (experiment `rpi-firmware`) | small |
+| **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
 | **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
+| **Audio** | A sound driver for the Pi: HDMI audio (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM), plus `audiod`, Redox' sound daemon, working on aarch64 on top of it. Until then `audiod` stays out of the image (T18) | medium to large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |
