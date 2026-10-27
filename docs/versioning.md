@@ -36,6 +36,17 @@ versions and hashes.
 - `--allow-dirty` builds anyway: the build ID gets `-dirty.<hash>` and the
   differences are saved as `build/manifests/<image>-<build ID>.diff`.
 
+## Combining experiments
+
+Experiments are applied after the default patches, in the order of the
+`--experiment` options; the base patch numbers in
+[patches/README.md](../patches/README.md) say which order works. The release candidate v0.2.0-alpha is:
+
+```bash
+scripts/build-image.sh [--sdcard] --experiment ldso-diagnostics \
+    --experiment timesync --experiment sdhost-driver --experiment rtl8152
+```
+
 ## Build ID
 
 ```text

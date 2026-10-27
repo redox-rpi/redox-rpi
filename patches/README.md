@@ -13,9 +13,23 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
-Numbers may have a gap: `base/0017` is kept for the sdhost driver
-(experiment `sdhost-driver`), which becomes a default patch after its boot
-test; `base/0018` (`rpi-firmwared`) applies with and without it.
+Experiments are applied after the default patches, in the order of the
+`--experiment` options; their files get an `exp-<name>-` prefix in the
+recipe, so equal numbers do not collide. The base patch numbers say what
+each one expects to come before it:
+
+| Number | Where | What |
+|---|---|---|
+| `0001`–`0016`, `0018` | `base/` | default patches; `0018` is `rpi-firmwared` |
+| `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
+| `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
+| `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
+| `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
+
+Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
+v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
+`dwc2-interrupts` (branch `dwc2-interrupts`) still has its own `0017` and
+conflicts with `rtl8152`.
 
 The upstream commits the patches apply to are in
 [`config/upstream.lock`](../config/upstream.lock). See
