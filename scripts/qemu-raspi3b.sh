@@ -18,6 +18,12 @@
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest
+#   --usb-host <vid:pid>
+#                     pass this USB device of the host through to the guest,
+#                     alone on the root port (no USB keyboard, no --usb-net):
+#                     QEMU's hub is full speed, and dwc2d has no split bulk
+#                     transfers. Needs read-write access to the device node
+#                     (udev rule, see patches/experiments/rtl8152/README.md)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
 #   --test            boot without user input and exit 0 once every --expect
@@ -53,6 +59,7 @@ uboot=""
 run=()
 sd_size=""
 usb_net=no
+usb_host=""
 monitor=(-monitor none)
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -65,6 +72,7 @@ while [ $# -gt 0 ]; do
         --sd-size) sd_size="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
+        --usb-host) usb_host="$2"; shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -136,7 +144,16 @@ qemu=(qemu-system-aarch64
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
     -display none "${monitor[@]}"
-    -usb -device usb-kbd)
+    -usb)
+if [ -n "$usb_host" ]; then
+    if [ "$usb_net" = yes ]; then
+        echo "--usb-host and --usb-net do not go together" >&2
+        exit 1
+    fi
+    qemu+=(-device "usb-host,vendorid=0x${usb_host%%:*},productid=0x${usb_host##*:}")
+else
+    qemu+=(-device usb-kbd)
+fi
 if [ "$usb_net" = yes ]; then
     # Host port 12323 reaches devshd (port 2323) in the guest.
     qemu+=(-netdev user,id=usbnet,hostfwd=tcp::12323-:2323 -device usb-net,netdev=usbnet)

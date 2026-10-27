@@ -1,22 +1,23 @@
-From d7f315d0dd034a7227309c3865e9266a9f8ec344 Mon Sep 17 00:00:00 2001
+From 9f56780ec02b8e033264cf6f406f8ab61d6904eb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 27 Oct 2026 09:08:22 +0100
-Subject: [PATCH] dwc2d: RTL8152 Ethernet (Pi Zero Ethernet/USB hub HATs, USB
- adapters)
+Subject: [PATCH] dwc2d: RTL8152 and RTL8153 Ethernet (Pi Zero HATs, USB
+ adapters and hubs)
 
 Polled driver for the Realtek RTL8152 (0bda:8152, chip versions 4C00
-and 4C10), written with FreeBSD's if_ure (BSD-2-Clause) as reference
-for the register map and initialization order. Exposed as
-network.usb_rtl8152. A plugged-in RTL8152 wins over the onboard
-LAN7800, so it can be tested on a Pi 3B+.
+and 4C10) and RTL8153 (0bda:8153, 5C00-5C30 and RTL8153B 6000/6010),
+written with FreeBSD's if_ure (BSD-2-Clause) as reference for the
+register map and initialization order. Exposed as network.usb_rtl8152.
+A plugged-in RTL815x wins over the onboard LAN7800, so it can be tested
+on a Pi 3B+.
 ---
- drivers/usb/dwc2d/src/main.rs    |  25 +-
- drivers/usb/dwc2d/src/rtl8152.rs | 596 +++++++++++++++++++++++++++++++
- 2 files changed, 620 insertions(+), 1 deletion(-)
+ drivers/usb/dwc2d/src/main.rs    |   25 +-
+ drivers/usb/dwc2d/src/rtl8152.rs | 1030 ++++++++++++++++++++++++++++++
+ 2 files changed, 1054 insertions(+), 1 deletion(-)
  create mode 100644 drivers/usb/dwc2d/src/rtl8152.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 4baf0c0..4f00677 100644
+index 4baf0c0..0b0dd57 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,7 +2,7 @@
@@ -24,7 +25,7 @@ index 4baf0c0..4f00677 100644
  //!
  //! Brings up the controller, enumerates the devices behind the root port and
 -//! hubs, and runs network adapters (CDC Ethernet, LAN7800) and a boot
-+//! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152) and a boot
++//! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153) and a boot
  //! protocol keyboard directly in this process. It does not offer the USB
  //! scheme to class drivers yet.
  
@@ -107,16 +108,16 @@ index 4baf0c0..4f00677 100644
                  let mut network = None;
                  let mut keyboard = None;
                  for device in bus.devices.clone() {
-+                    // A plugged-in RTL8152 wins over the onboard LAN7800.
++                    // A plugged-in RTL8152 or RTL8153 wins over the onboard LAN7800.
 +                    if !matches!(network, Some((NetFunction::Rtl8152(_), _))) {
 +                        if let Some(function) = rtl8152::find(&mut bus, &device) {
-+                            println!("dwc2d: RTL8152 at address {}", device.address);
++                            println!("dwc2d: RTL815x at address {}", device.address);
 +                            match rtl8152::init(&mut bus, &function) {
 +                                Ok(mac) => {
 +                                    network = Some((NetFunction::Rtl8152(function), mac));
 +                                    continue;
 +                                }
-+                                Err(err) => println!("dwc2d: RTL8152: {err:?}"),
++                                Err(err) => println!("dwc2d: RTL815x: {err:?}"),
 +                            }
 +                        }
 +                    }
@@ -125,17 +126,18 @@ index 4baf0c0..4f00677 100644
                              println!("dwc2d: LAN7800 at address {}", device.address);
 diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
 new file mode 100644
-index 0000000..e4e0b7c
+index 0000000..1f3e2a8
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/rtl8152.rs
-@@ -0,0 +1,596 @@
+@@ -0,0 +1,1030 @@
 +//! Realtek RTL8152 USB 10/100 Ethernet, as on the Ethernet/USB hub HATs for
-+//! the Raspberry Pi Zero and on many USB adapters.
++//! the Raspberry Pi Zero and on many USB adapters, and its gigabit sibling
++//! RTL8153 (in many USB-C hubs).
 +//!
 +//! Written with FreeBSD's if_ure (BSD-2-Clause) as reference for the
 +//! register map and the initialization order. Polled, no interrupt endpoint.
-+//! Only the RTL8152 (chip versions 4C00 and 4C10); the RTL8153 needs a
-+//! different initialization.
++//! Chip versions 4C00/4C10 (RTL8152), 5C00-5C30 (RTL8153) and 6000/6010
++//! (RTL8153B); not the RTL8156.
 +
 +use std::collections::VecDeque;
 +use std::thread::sleep;
@@ -151,6 +153,7 @@ index 0000000..e4e0b7c
 +
 +pub const VENDOR_REALTEK: u16 = 0x0BDA;
 +pub const PRODUCT_RTL8152: u16 = 0x8152;
++pub const PRODUCT_RTL8153: u16 = 0x8153;
 +
 +/// All register access goes through this vendor request; wValue is the
 +/// register address, wIndex the register space and the byte enables.
@@ -169,9 +172,11 @@ index 0000000..e4e0b7c
 +// PLA registers
 +const PLA_IDR: u16 = 0xC000;
 +const PLA_RCR: u16 = 0xC010;
++const PLA_RMS: u16 = 0xC016;
 +const PLA_RXFIFO_CTRL0: u16 = 0xC0A0;
 +const PLA_RXFIFO_CTRL1: u16 = 0xC0A4;
 +const PLA_RXFIFO_CTRL2: u16 = 0xC0A8;
++const PLA_DMY_REG0: u16 = 0xC0B0;
 +const PLA_FMC: u16 = 0xC0B4;
 +const PLA_TEREDO_CFG: u16 = 0xC0BC;
 +const PLA_MAR0: u16 = 0xCD00;
@@ -179,15 +184,25 @@ index 0000000..e4e0b7c
 +const PLA_BACKUP: u16 = 0xD000;
 +const PLA_TEREDO_TIMER: u16 = 0xD2CC;
 +const PLA_REALWOW_TIMER: u16 = 0xD2E8;
++const PLA_SUSPEND_FLAG: u16 = 0xD38A;
++const PLA_INDICATE_FLAG: u16 = 0xD38C;
++const PLA_EXTRA_STATUS: u16 = 0xD398;
 +const PLA_LED_FEATURE: u16 = 0xDD92;
++const PLA_BOOT_CTRL: u16 = 0xE004;
 +const PLA_GPHY_INTR_IMR: u16 = 0xE022;
 +const PLA_MAC_PWR_CTRL: u16 = 0xE0C0;
++const PLA_MAC_PWR_CTRL2: u16 = 0xE0CA;
++const PLA_MAC_PWR_CTRL3: u16 = 0xE0CC;
++const PLA_MAC_PWR_CTRL4: u16 = 0xE0CE;
 +const PLA_WDT6_CTRL: u16 = 0xE428;
 +const PLA_TCR0: u16 = 0xE610;
 +const PLA_TCR1: u16 = 0xE612;
++const PLA_MTPS: u16 = 0xE615;
 +const PLA_TXFIFO_CTRL: u16 = 0xE618;
++const PLA_RSTTALLY: u16 = 0xE800;
 +const PLA_CR: u16 = 0xE813;
 +const PLA_CRWECR: u16 = 0xE81C;
++const PLA_CONFIG34: u16 = 0xE820;
 +const PLA_PHY_PWR: u16 = 0xE84C;
 +const PLA_OOB_CTRL: u16 = 0xE84F;
 +const PLA_CPCR: u16 = 0xE854;
@@ -197,20 +212,55 @@ index 0000000..e4e0b7c
 +const PLA_PHYSTATUS: u16 = 0xE908;
 +
 +// USB registers
++const USB_USB2PHY: u16 = 0xB41E;
++const USB_SSPHYLINK2: u16 = 0xB428;
++const USB_U2P3_CTRL: u16 = 0xB460;
++const USB_CSR_DUMMY1: u16 = 0xB464;
++const USB_CSR_DUMMY2: u16 = 0xB466;
++const USB_CONNECT_TIMER: u16 = 0xCBF8;
++const USB_MSC_TIMER: u16 = 0xCBFC;
++const USB_BURST_SIZE: u16 = 0xCFC0;
++const USB_LPM_CONFIG: u16 = 0xCFD8;
 +const USB_USB_CTRL: u16 = 0xD406;
 +const USB_TX_AGG: u16 = 0xD40A;
 +const USB_RX_BUF_TH: u16 = 0xD40C;
++const USB_LPM_CTRL: u16 = 0xD41A;
++const USB_RX_EARLY_AGG: u16 = 0xD42C;
++const USB_RX_EARLY_SIZE: u16 = 0xD42E;
++/// RTL8152 and RTL8153: PM_CTRL_STATUS; RTL8153B: RX_EXTRA_AGG_TMR.
 +const USB_PM_CTRL_STATUS: u16 = 0xD432;
++const USB_RX_EXTRA_AGG_TMR: u16 = 0xD432;
 +const USB_TX_DMA: u16 = 0xD434;
++const USB_UPT_RXDMA_OWN: u16 = 0xD437;
++const USB_TOLERANCE: u16 = 0xD490;
++const USB_BMU_RESET: u16 = 0xD4B0;
++const USB_U1U2_TIMER: u16 = 0xD4DA;
 +const USB_UPS_CTRL: u16 = 0xD800;
++const USB_POWER_CUT: u16 = 0xD80A;
++const USB_MISC_0: u16 = 0xD81A;
++const USB_AFE_CTRL2: u16 = 0xD824;
++const USB_WDT11_CTRL: u16 = 0xE43C;
 +
 +// PHY registers, reached through the OCP window
 +const OCP_ALDPS_CONFIG: u16 = 0x2010;
 +const OCP_BASE_MII: u16 = 0xA400;
++const OCP_PHY_STATUS: u16 = 0xA420;
++const OCP_POWER_CFG: u16 = 0xA430;
++const OCP_EEE_CFG: u16 = 0xA432;
++const OCP_SRAM_ADDR: u16 = 0xA436;
++const OCP_SRAM_DATA: u16 = 0xA438;
++const OCP_DOWN_SPEED: u16 = 0xA442;
++const OCP_ADC_CFG: u16 = 0xBC06;
++const SRAM_LPF_CFG: u16 = 0x8012;
++const SRAM_10M_AMP1: u16 = 0x8080;
++const SRAM_10M_AMP2: u16 = 0x8082;
++const SRAM_IMPEDANCE: u16 = 0x8084;
 +/// Bit 8 of this register reads as set once ALDPS is off.
 +const OCP_ALDPS_STATE: u16 = 0xE000;
 +const MII_BMCR: u16 = 0;
 +const MII_ANAR: u16 = 4;
++/// 1000BASE-T control.
++const MII_GTCR: u16 = 9;
 +
 +const RCR_AAP: u32 = 0x01;
 +const RCR_APM: u32 = 0x02;
@@ -220,15 +270,27 @@ index 0000000..e4e0b7c
 +const RXFIFO_THR1_NORMAL: u32 = 0x0008_0002;
 +const RXFIFO_THR2_FULL: u32 = 0x60;
 +const RXFIFO_THR2_HIGH: u32 = 0x38;
++const RXFIFO_THR2_NORMAL: u32 = 0x00A0;
 +const RXFIFO_THR3_FULL: u32 = 0x78;
 +const RXFIFO_THR3_HIGH: u32 = 0x48;
++const RXFIFO_THR3_NORMAL: u32 = 0x0110;
 +const TXFIFO_THR_NORMAL: u32 = 0x0040_0008;
++const TXFIFO_THR_NORMAL2: u32 = 0x0100_0008;
++const ECM_ALDPS: u32 = 0x0002;
 +const FMC_FCR_MCU_EN: u32 = 0x0001;
 +const WDT6_SET_MODE: u32 = 0x0010;
 +const TCR0_AUTO_FIFO: u32 = 0x0080;
 +const VERSION_MASK: u32 = 0x7CF0;
 +const VERSION_4C00: u32 = 0x4C00;
 +const VERSION_4C10: u32 = 0x4C10;
++const VERSION_5C00: u32 = 0x5C00;
++const VERSION_5C10: u32 = 0x5C10;
++const VERSION_5C20: u32 = 0x5C20;
++const VERSION_5C30: u32 = 0x5C30;
++const VERSION_6000: u32 = 0x6000;
++const VERSION_6010: u32 = 0x6010;
++const MTPS_JUMBO: u32 = 192;
++const TALLY_RESET: u32 = 0x0001;
 +const CR_RST: u32 = 0x10;
 +const CR_RE: u32 = 0x08;
 +const CR_TE: u32 = 0x04;
@@ -247,6 +309,71 @@ index 0000000..e4e0b7c
 +const TX_10M_IDLE_EN: u32 = 0x0080;
 +const PFM_PWM_SWITCH: u32 = 0x0040;
 +const D3_CLK_GATED_EN: u32 = 0x0000_4000;
++const ALDPS_SPDWN_RATIO: u32 = 0x0F87;
++const MAC_CLK_SPDWN_EN: u32 = 0x8000;
++const EEE_SPDWN_RATIO: u32 = 0x8007;
++const PLA_MCU_SPDWN_EN: u32 = 0x4000;
++const PKT_AVAIL_SPDWN_EN: u32 = 0x0100;
++const SUSPEND_SPDWN_EN: u32 = 0x0004;
++const U1U2_SPDWN_EN: u32 = 0x0002;
++const L1_SPDWN_EN: u32 = 0x0001;
++const PWRSAVE_SPDWN_EN: u32 = 0x1000;
++const RXDV_SPDWN_EN: u32 = 0x0800;
++const TX10MIDLE_EN: u32 = 0x0100;
++const TP100_SPDWN_EN: u32 = 0x0020;
++const TP500_SPDWN_EN: u32 = 0x0010;
++const TP1000_SPDWN_EN: u32 = 0x0008;
++const EEE_SPDWN_EN: u32 = 0x0001;
++const LINK_OFF_WAKE_EN: u32 = 0x0008;
++const LINK_CHG_EVENT: u32 = 0x01;
++const UPCOMING_RUNTIME_D3: u32 = 0x01;
++const POLL_LINK_CHG: u32 = 0x0001;
++const LINK_CHANGE_FLAG: u32 = 0x0100;
++const CUR_LINK_OK: u32 = 0x8000;
++const AUTOLOAD_DONE: u32 = 0x0002;
++const USB2PHY_SUSPEND: u32 = 0x0001;
++const USB2PHY_L1: u32 = 0x0002;
++const PWD_DN_SCALE_MASK: u32 = 0x3FFE;
++const DYNAMIC_BURST: u32 = 0x0001;
++const EP4_FULL_FC: u32 = 0x0001;
++const LPM_U1U2_EN: u32 = 0x0001;
++const RX_THR_B: u32 = 0x0001_0001;
++const BMU_RESET_EP_IN: u32 = 0x01;
++const BMU_RESET_EP_OUT: u32 = 0x02;
++const OWN_UPDATE: u32 = 0x01;
++const OWN_CLEAR: u32 = 0x02;
++const TIMER11_EN: u32 = 0x0001;
++const FIFO_EMPTY_1FB: u32 = 0x30;
++const LPM_TIMER_500MS: u32 = 0x04;
++const LPM_TIMER_500US: u32 = 0x0C;
++const ROK_EXIT_LPM: u32 = 0x02;
++const SEN_VAL_MASK: u32 = 0xF800;
++const SEN_VAL_NORMAL: u32 = 0xA000;
++const SEL_RXIDLE: u32 = 0x0100;
++const U2P3_ENABLE: u32 = 0x0001;
++const PWR_EN: u32 = 0x0001;
++const PHASE2_EN: u32 = 0x0008;
++const UPS_EN: u32 = 0x0010;
++const USP_PREWAKE: u32 = 0x0020;
++const PCUT_STATUS: u32 = 0x0001;
++const PHY_STAT_MASK: u16 = 0x0007;
++const PHY_STAT_EXT_INIT: u16 = 2;
++const PHY_STAT_LAN_ON: u16 = 3;
++const PHY_STAT_PWRDN: u16 = 5;
++const EEE_CLKDIV_EN: u16 = 0x8000;
++const EN_ALDPS: u16 = 0x0004;
++const EN_10M_PLLOFF: u16 = 0x0001;
++const CTAP_SHORT_EN: u16 = 0x0040;
++const EN_10M_BGOFF: u16 = 0x0080;
++const CKADSEL_L: u16 = 0x0100;
++const ADC_EN: u16 = 0x0080;
++const EN_EMI_L: u16 = 0x0040;
++const BMCR_PDOWN: u16 = 1 << 11;
++/// 1000BASE-T full and half duplex.
++const GTCR_ADV_1000: u16 = 0x0300;
++/// RX coalescing at high speed and slower, in microseconds.
++const COALESCE_HIGH: u32 = 250_000;
++const COALESCE_SLOW: u32 = 524_280;
 +const MCU_CLK_RATIO: u32 = 0x0701_0F07;
 +const MCU_CLK_RATIO_MASK: u32 = 0x0F0F_0F0F;
 +const GPHY_STS_MSK: u32 = 0x0001;
@@ -256,6 +383,7 @@ index 0000000..e4e0b7c
 +const PHYSTATUS_FDX: u32 = 0x0001;
 +const PHYSTATUS_LINK: u32 = 0x0002;
 +const PHYSTATUS_100MBPS: u32 = 0x0008;
++const PHYSTATUS_1000MBPS: u32 = 0x0010;
 +const TX_AGG_MAX_THRESHOLD: u32 = 0x03;
 +const RX_THR_HIGH: u32 = 0x7A12_0180;
 +const TEST_MODE_DISABLE: u32 = 0x0000_0001;
@@ -282,14 +410,43 @@ index 0000000..e4e0b7c
 +const TX_LS: u32 = 1 << 30;
 +const ETHER_HDR_LEN: usize = 14;
 +const ETHER_CRC_LEN: usize = 4;
++/// Largest frame with header, CRC and a VLAN tag.
++const MAX_FRAME_LEN: u32 = 1500 + 14 + 4 + 4;
 +/// Shortest frame without CRC; the driver pads shorter ones.
 +const ETHER_MIN_LEN: usize = 60;
 +
 +const RX_CHANNEL: usize = 1;
 +const TX_CHANNEL: usize = 2;
-+/// One bulk IN transfer can carry several frames (RX aggregation).
-+const RX_BUF_SIZE: usize = 16 * 1024;
++/// One bulk IN transfer can carry several frames (RX aggregation); 16 KiB
++/// on the RTL8152, up to 32 KiB on the RTL8153.
++const RX_BUF_SIZE: usize = 32 * 1024;
 +const TX_BUF_SIZE: usize = 2048;
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++enum Chip {
++    Rtl8152,
++    Rtl8153,
++    Rtl8153B,
++}
++
++impl Chip {
++    fn from_version(version: u32) -> Option<Self> {
++        match version {
++            VERSION_4C00 | VERSION_4C10 => Some(Self::Rtl8152),
++            VERSION_5C00 | VERSION_5C10 | VERSION_5C20 | VERSION_5C30 => Some(Self::Rtl8153),
++            VERSION_6000 | VERSION_6010 => Some(Self::Rtl8153B),
++            _ => None,
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Self::Rtl8152 => "RTL8152",
++            Self::Rtl8153 => "RTL8153",
++            Self::Rtl8153B => "RTL8153B",
++        }
++    }
++}
 +
 +pub struct Rtl8152Function {
 +    pub address: u8,
@@ -302,15 +459,15 @@ index 0000000..e4e0b7c
 +    max_packet_out: u16,
 +}
 +
-+/// Recognize an RTL8152 and find the bulk endpoints of its first
++/// Recognize an RTL8152 or RTL8153 and find the bulk endpoints of its first
 +/// configuration (the vendor one; the second is CDC ECM).
 +pub fn find(bus: &mut Bus, device: &Device) -> Option<Rtl8152Function> {
-+    if device.vendor != VENDOR_REALTEK || device.product != PRODUCT_RTL8152 {
++    if device.vendor != VENDOR_REALTEK || !matches!(device.product, PRODUCT_RTL8152 | PRODUCT_RTL8153) {
 +        return None;
 +    }
 +    // Bulk transfers through a transaction translator are not supported.
 +    if device.tt.is_some() {
-+        println!("dwc2d: RTL8152 at address {} is not high speed, skipped", device.address);
++        println!("dwc2d: RTL815x at address {} is not high speed, skipped", device.address);
 +        return None;
 +    }
 +    let config = bus
@@ -396,6 +553,16 @@ index 0000000..e4e0b7c
 +        self.write_part(reg, space, BYTE_EN_BYTE, reg & 3, value & 0xFF)
 +    }
 +
++    fn set1(&mut self, reg: u16, space: u16, bits: u32) -> Result<(), Error> {
++        let value = self.read1(reg, space)?;
++        self.write1(reg, space, value | bits)
++    }
++
++    fn clear1(&mut self, reg: u16, space: u16, bits: u32) -> Result<(), Error> {
++        let value = self.read1(reg, space)?;
++        self.write1(reg, space, value & !bits)
++    }
++
 +    fn set2(&mut self, reg: u16, space: u16, bits: u32) -> Result<(), Error> {
 +        let value = self.read2(reg, space)?;
 +        self.write2(reg, space, value | bits)
@@ -429,6 +596,16 @@ index 0000000..e4e0b7c
 +        self.write2((addr & 0x0FFF) | 0xB000, MCU_TYPE_PLA, u32::from(value))
 +    }
 +
++    fn ocp_update(&mut self, addr: u16, clear: u16, set: u16) -> Result<(), Error> {
++        let value = self.ocp_read(addr)?;
++        self.ocp_write(addr, (value & !clear) | set)
++    }
++
++    fn sram_write(&mut self, addr: u16, value: u16) -> Result<(), Error> {
++        self.ocp_write(OCP_SRAM_ADDR, addr)?;
++        self.ocp_write(OCP_SRAM_DATA, value)
++    }
++
 +    fn mii_read(&mut self, reg: u16) -> Result<u16, Error> {
 +        self.ocp_read(OCP_BASE_MII + reg * 2)
 +    }
@@ -447,6 +624,50 @@ index 0000000..e4e0b7c
 +            }
 +        }
 +        Ok(())
++    }
++
++    fn enable_aldps(&mut self) -> Result<(), Error> {
++        self.ocp_update(OCP_POWER_CFG, 0, EN_ALDPS)
++    }
++
++    /// Wait until the PHY state is `desired`, or for 0 any settled state.
++    /// Like FreeBSD, go on after a timeout.
++    fn wait_phy(&mut self, desired: u16) -> Result<u16, Error> {
++        let start = Instant::now();
++        loop {
++            let state = self.ocp_read(OCP_PHY_STATUS)? & PHY_STAT_MASK;
++            let done = if desired != 0 {
++                state == desired
++            } else {
++                matches!(state, PHY_STAT_LAN_ON | PHY_STAT_PWRDN | PHY_STAT_EXT_INIT)
++            };
++            if done {
++                return Ok(state);
++            }
++            if start.elapsed() > Duration::from_secs(2) {
++                println!("dwc2d: RTL815x PHY state {state}, still waiting for {desired}, going on");
++                return Ok(state);
++            }
++            sleep(Duration::from_millis(10));
++        }
++    }
++
++    /// Wait until the chip has loaded its configuration from the efuse.
++    fn wait_autoload(&mut self) -> Result<(), Error> {
++        let start = Instant::now();
++        while self.read2(PLA_BOOT_CTRL, MCU_TYPE_PLA)? & AUTOLOAD_DONE == 0 {
++            if start.elapsed() > Duration::from_secs(2) {
++                println!("dwc2d: RTL815x autoload not done, going on");
++                break;
++            }
++            sleep(Duration::from_millis(10));
++        }
++        Ok(())
++    }
++
++    /// The USB link power tolerance, six bytes of `value`.
++    fn write_tolerance(&mut self, value: u8) -> Result<(), Error> {
++        self.write_mem(USB_TOLERANCE, MCU_TYPE_USB | BYTE_EN_SIX_BYTES, &[value; 8])
 +    }
 +
 +    fn reset(&mut self) -> Result<(), Error> {
@@ -490,8 +711,8 @@ index 0000000..e4e0b7c
 +        self.write4(PLA_TXFIFO_CTRL, MCU_TYPE_PLA, TXFIFO_THR_NORMAL)
 +    }
 +
-+    /// One-time chip setup (power, clocks, aggregation), then a NIC reset.
-+    fn chip_init(&mut self, version: u32) -> Result<(), Error> {
++    /// One-time RTL8152 setup (power, clocks, aggregation), then a NIC reset.
++    fn init_8152(&mut self, version: u32) -> Result<(), Error> {
 +        self.disable_aldps()?;
 +        if version == VERSION_4C00 {
 +            self.clear2(PLA_LED_FEATURE, MCU_TYPE_PLA, LED_MODE_MASK)?;
@@ -514,6 +735,182 @@ index 0000000..e4e0b7c
 +        self.write4(USB_RX_BUF_TH, MCU_TYPE_USB, RX_THR_HIGH)?;
 +        self.write4(USB_TX_DMA, MCU_TYPE_USB, TEST_MODE_DISABLE | TX_SIZE_ADJUST1)
 +    }
++
++    /// One-time RTL8153 setup: USB and PHY power, then a NIC reset.
++    fn init_8153(&mut self, version: u32) -> Result<(), Error> {
++        self.disable_aldps()?;
++        self.write_tolerance(0x00)?;
++        self.wait_autoload()?;
++        let state = self.ocp_read(OCP_PHY_STATUS)? & PHY_STAT_MASK;
++        if state != PHY_STAT_LAN_ON && state != PHY_STAT_PWRDN {
++            self.wait_phy(PHY_STAT_LAN_ON)?;
++        }
++        self.clear2(USB_U2P3_CTRL, MCU_TYPE_USB, U2P3_ENABLE)?;
++
++        if version == VERSION_5C10 {
++            let value = self.read2(USB_SSPHYLINK2, MCU_TYPE_USB)? & !PWD_DN_SCALE_MASK;
++            self.write2(USB_SSPHYLINK2, MCU_TYPE_USB, value | (96 << 1))?;
++            self.set1(USB_USB2PHY, MCU_TYPE_USB, USB2PHY_L1 | USB2PHY_SUSPEND)?;
++        } else if version == VERSION_5C20 {
++            self.clear1(PLA_DMY_REG0, MCU_TYPE_PLA, ECM_ALDPS)?;
++        }
++        if version == VERSION_5C20 || version == VERSION_5C30 {
++            let mut value = self.read1(USB_CSR_DUMMY1, MCU_TYPE_USB)?;
++            if self.read2(USB_BURST_SIZE, MCU_TYPE_USB)? == 0 {
++                value &= !DYNAMIC_BURST;
++            } else {
++                value |= DYNAMIC_BURST;
++            }
++            self.write1(USB_CSR_DUMMY1, MCU_TYPE_USB, value)?;
++        }
++        self.set1(USB_CSR_DUMMY2, MCU_TYPE_USB, EP4_FULL_FC)?;
++        self.clear2(USB_WDT11_CTRL, MCU_TYPE_USB, TIMER11_EN)?;
++        self.clear2(PLA_LED_FEATURE, MCU_TYPE_PLA, LED_MODE_MASK)?;
++
++        // Never super speed behind a DWC2.
++        let timer = if version == VERSION_5C10 { LPM_TIMER_500MS } else { LPM_TIMER_500US };
++        self.write1(USB_LPM_CTRL, MCU_TYPE_USB, timer | FIFO_EMPTY_1FB | ROK_EXIT_LPM)?;
++        let afe = self.read2(USB_AFE_CTRL2, MCU_TYPE_USB)? & !SEN_VAL_MASK;
++        self.write2(USB_AFE_CTRL2, MCU_TYPE_USB, afe | SEN_VAL_NORMAL | SEL_RXIDLE)?;
++        self.write2(USB_CONNECT_TIMER, MCU_TYPE_USB, 0x0001)?;
++        self.clear2(USB_POWER_CUT, MCU_TYPE_USB, PWR_EN | PHASE2_EN)?;
++        self.clear2(USB_MISC_0, MCU_TYPE_USB, PCUT_STATUS)?;
++        self.write_tolerance(0xFF)?;
++
++        self.write2(PLA_MAC_PWR_CTRL, MCU_TYPE_PLA, ALDPS_SPDWN_RATIO)?;
++        self.write2(PLA_MAC_PWR_CTRL2, MCU_TYPE_PLA, EEE_SPDWN_RATIO)?;
++        self.write2(
++            PLA_MAC_PWR_CTRL3,
++            MCU_TYPE_PLA,
++            PKT_AVAIL_SPDWN_EN | SUSPEND_SPDWN_EN | U1U2_SPDWN_EN | L1_SPDWN_EN,
++        )?;
++        self.write2(
++            PLA_MAC_PWR_CTRL4,
++            MCU_TYPE_PLA,
++            PWRSAVE_SPDWN_EN
++                | RXDV_SPDWN_EN
++                | TX10MIDLE_EN
++                | TP100_SPDWN_EN
++                | TP500_SPDWN_EN
++                | TP1000_SPDWN_EN
++                | EEE_SPDWN_EN,
++        )?;
++        self.set_u2p3(version)?;
++        self.write_tolerance(0x00)?;
++
++        self.disable_aldps()?;
++        if matches!(version, VERSION_5C00 | VERSION_5C10 | VERSION_5C20) {
++            self.ocp_write(OCP_ADC_CFG, CKADSEL_L | ADC_EN | EN_EMI_L)?;
++        }
++        if version == VERSION_5C00 {
++            self.ocp_update(OCP_EEE_CFG, CTAP_SHORT_EN, 0)?;
++        }
++        self.ocp_update(OCP_POWER_CFG, 0, EEE_CLKDIV_EN)?;
++        self.ocp_update(OCP_DOWN_SPEED, 0, EN_10M_BGOFF)?;
++        self.ocp_update(OCP_POWER_CFG, 0, EN_10M_PLLOFF)?;
++        self.sram_write(SRAM_IMPEDANCE, 0x0B13)?;
++        self.set2(PLA_PHY_PWR, MCU_TYPE_PLA, PFM_PWM_SWITCH)?;
++        self.sram_write(SRAM_LPF_CFG, 0xF70F)?;
++        self.sram_write(SRAM_10M_AMP1, 0x00AF)?;
++        self.sram_write(SRAM_10M_AMP2, 0x0208)?;
++
++        self.nic_reset()?;
++        self.clear2(USB_USB_CTRL, MCU_TYPE_USB, RX_AGG_DISABLE | RX_ZERO_EN)?;
++        self.set_u2p3(version)?;
++        self.write_tolerance(0xFF)
++    }
++
++    /// USB 2 power saving (U2P3): off on the first two RTL8153 versions.
++    fn set_u2p3(&mut self, version: u32) -> Result<(), Error> {
++        if matches!(version, VERSION_5C00 | VERSION_5C10) {
++            self.clear2(USB_U2P3_CTRL, MCU_TYPE_USB, U2P3_ENABLE)
++        } else {
++            self.set2(USB_U2P3_CTRL, MCU_TYPE_USB, U2P3_ENABLE)
++        }
++    }
++
++    /// One-time RTL8153B setup: no USB power saving, PHY on.
++    fn init_8153b(&mut self) -> Result<(), Error> {
++        self.disable_aldps()?;
++        self.clear2(USB_LPM_CONFIG, MCU_TYPE_USB, LPM_U1U2_EN)?;
++        self.wait_autoload()?;
++        self.wait_phy(0)?;
++        let bmcr = self.mii_read(MII_BMCR)?;
++        if bmcr & BMCR_PDOWN != 0 {
++            self.mii_write(MII_BMCR, bmcr & !BMCR_PDOWN)?;
++        }
++        self.wait_phy(PHY_STAT_LAN_ON)?;
++
++        self.clear2(USB_U2P3_CTRL, MCU_TYPE_USB, U2P3_ENABLE)?;
++        // MSC timer 32760 ms, U1/U2/L1 idle timer 500 us.
++        self.write2(USB_MSC_TIMER, MCU_TYPE_USB, 0x0FFF)?;
++        self.write2(USB_U1U2_TIMER, MCU_TYPE_USB, 500)?;
++        self.clear2(USB_POWER_CUT, MCU_TYPE_USB, PWR_EN)?;
++        self.clear2(USB_MISC_0, MCU_TYPE_USB, PCUT_STATUS)?;
++        self.clear1(USB_POWER_CUT, MCU_TYPE_USB, UPS_EN | USP_PREWAKE)?;
++        self.clear1(0xCFFF, MCU_TYPE_USB, 0x01)?;
++
++        // No wake on queued packets or link changes, no runtime suspend.
++        // FreeBSD reaches these PLA registers through the USB space.
++        self.clear1(PLA_INDICATE_FLAG, MCU_TYPE_USB, UPCOMING_RUNTIME_D3)?;
++        self.clear1(PLA_SUSPEND_FLAG, MCU_TYPE_USB, LINK_CHG_EVENT)?;
++        self.clear2(PLA_EXTRA_STATUS, MCU_TYPE_USB, LINK_CHANGE_FLAG)?;
++        self.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_CONFIG)?;
++        self.clear2(PLA_CONFIG34, MCU_TYPE_USB, LINK_OFF_WAKE_EN)?;
++        self.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_NORMAL)?;
++
++        let mut extra = self.read2(PLA_EXTRA_STATUS, MCU_TYPE_PLA)?;
++        if self.read2(PLA_PHYSTATUS, MCU_TYPE_PLA)? & PHYSTATUS_LINK != 0 {
++            extra |= CUR_LINK_OK;
++        } else {
++            extra &= !CUR_LINK_OK;
++        }
++        self.write2(PLA_EXTRA_STATUS, MCU_TYPE_PLA, extra | POLL_LINK_CHG)?;
++
++        self.set2(PLA_MAC_PWR_CTRL2, MCU_TYPE_USB, MAC_CLK_SPDWN_EN)?;
++        self.clear2(PLA_MAC_PWR_CTRL3, MCU_TYPE_PLA, PLA_MCU_SPDWN_EN)?;
++        self.clear2(USB_USB_CTRL, MCU_TYPE_USB, RX_AGG_DISABLE | RX_ZERO_EN)?;
++        self.set2(PLA_RSTTALLY, MCU_TYPE_USB, TALLY_RESET)
++    }
++
++    fn nic_reset_8153b(&mut self) -> Result<(), Error> {
++        self.clear2(USB_LPM_CONFIG, MCU_TYPE_USB, LPM_U1U2_EN)?;
++        self.clear2(USB_U2P3_CTRL, MCU_TYPE_USB, U2P3_ENABLE)?;
++        self.disable_aldps()?;
++        self.set2(PLA_MISC_1, MCU_TYPE_PLA, RXDY_GATED_EN)?;
++        self.clear2(PLA_TEREDO_CFG, MCU_TYPE_PLA, TEREDO_SEL | TEREDO_RS_EVENT_MASK | OOB_TEREDO_EN)?;
++        self.write2(PLA_WDT6_CTRL, MCU_TYPE_PLA, WDT6_SET_MODE)?;
++        self.write2(PLA_REALWOW_TIMER, MCU_TYPE_PLA, 0)?;
++        self.write4(PLA_TEREDO_TIMER, MCU_TYPE_PLA, 0)?;
++        let rcr = self.read4(PLA_RCR, MCU_TYPE_PLA)?;
++        self.write4(PLA_RCR, MCU_TYPE_PLA, rcr & !RCR_ACPT_ALL)?;
++        self.reset()?;
++
++        // Reset the buffer management unit of both bulk endpoints.
++        self.clear1(USB_BMU_RESET, MCU_TYPE_USB, BMU_RESET_EP_IN | BMU_RESET_EP_OUT)?;
++        self.set1(USB_BMU_RESET, MCU_TYPE_USB, BMU_RESET_EP_IN | BMU_RESET_EP_OUT)?;
++
++        self.clear1(PLA_OOB_CTRL, MCU_TYPE_PLA, NOW_IS_OOB)?;
++        self.clear2(PLA_SFF_STS_7, MCU_TYPE_PLA, MCU_BORW_EN)?;
++        self.wait1(PLA_OOB_CTRL, |v| v & LINK_LIST_READY != 0, "link list")?;
++        self.set2(PLA_SFF_STS_7, MCU_TYPE_PLA, RE_INIT_LL)?;
++        self.wait1(PLA_OOB_CTRL, |v| v & LINK_LIST_READY != 0, "link list reinit")?;
++
++        // No VLAN tag stripping.
++        self.clear2(0xC012, MCU_TYPE_PLA, 0x00C0)?;
++        self.write2(PLA_RMS, MCU_TYPE_PLA, MAX_FRAME_LEN)?;
++        self.write1(PLA_MTPS, MCU_TYPE_PLA, MTPS_JUMBO)?;
++        self.set2(PLA_TCR0, MCU_TYPE_PLA, TCR0_AUTO_FIFO)?;
++        self.reset()?;
++
++        self.write4(PLA_RXFIFO_CTRL0, MCU_TYPE_PLA, RXFIFO_THR1_NORMAL)?;
++        self.write2(PLA_RXFIFO_CTRL1, MCU_TYPE_PLA, RXFIFO_THR2_NORMAL)?;
++        self.write2(PLA_RXFIFO_CTRL2, MCU_TYPE_PLA, RXFIFO_THR3_NORMAL)?;
++        self.write4(USB_RX_BUF_TH, MCU_TYPE_USB, RX_THR_B)?;
++        self.write4(PLA_TXFIFO_CTRL, MCU_TYPE_PLA, TXFIFO_THR_NORMAL2)?;
++        self.clear2(PLA_MAC_PWR_CTRL3, MCU_TYPE_PLA, PLA_MCU_SPDWN_EN)?;
++        self.enable_aldps()
++    }
 +}
 +
 +fn valid_mac(mac: &[u8; 6]) -> bool {
@@ -527,10 +924,11 @@ index 0000000..e4e0b7c
 +    let mut r = Regs { bus, f };
 +
 +    let version = r.read2(PLA_TCR1, MCU_TYPE_PLA)? & VERSION_MASK;
-+    println!("dwc2d: RTL8152 chip version {:04x}", version);
-+    if version != VERSION_4C00 && version != VERSION_4C10 {
++    let Some(chip) = Chip::from_version(version) else {
++        println!("dwc2d: RTL815x chip version {:04x} not supported", version);
 +        return Err(Error::Timeout("unsupported RTL815x chip version"));
-+    }
++    };
++    println!("dwc2d: {} chip version {:04x}", chip.name(), version);
 +
 +    // The address comes from the chip's efuse.
 +    let idr = r.read_mem(PLA_IDR, MCU_TYPE_PLA, 8)?;
@@ -544,14 +942,40 @@ index 0000000..e4e0b7c
 +        mac = [0x02, 0x52, 0x65, 0x64, 0x6F, 0x78];
 +    }
 +
-+    r.chip_init(version)?;
-+    r.reset()?;
++    match chip {
++        Chip::Rtl8152 => r.init_8152(version)?,
++        Chip::Rtl8153 => r.init_8153(version)?,
++        Chip::Rtl8153B => r.init_8153b()?,
++    }
++    if chip == Chip::Rtl8153B {
++        r.nic_reset_8153b()?;
++    } else {
++        r.reset()?;
++    }
 +
 +    let mut idr = [0; 8];
 +    idr[..6].copy_from_slice(&mac);
 +    r.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_CONFIG)?;
 +    r.write_mem(PLA_IDR, MCU_TYPE_PLA | BYTE_EN_SIX_BYTES, &idr)?;
 +    r.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_NORMAL)?;
++
++    // RX aggregation on the RTL8153: how long to wait and how much to
++    // collect before a bulk IN transfer ends.
++    let early_size = RX_BUF_SIZE as u32 - (MAX_FRAME_LEN + RX_HEADER_LEN as u32 + RX_ALIGN as u32);
++    match chip {
++        Chip::Rtl8152 => {}
++        Chip::Rtl8153 => {
++            let coalesce = if f.speed == Speed::High { COALESCE_HIGH } else { COALESCE_SLOW };
++            r.write2(USB_RX_EARLY_AGG, MCU_TYPE_USB, coalesce / 8)?;
++            r.write2(USB_RX_EARLY_SIZE, MCU_TYPE_USB, early_size / 4)?;
++        }
++        Chip::Rtl8153B => {
++            r.write2(USB_RX_EARLY_AGG, MCU_TYPE_USB, 158)?;
++            r.write2(USB_RX_EXTRA_AGG_TMR, MCU_TYPE_USB, 1875)?;
++            r.write2(USB_RX_EARLY_SIZE, MCU_TYPE_USB, early_size / 8)?;
++            r.write1(USB_UPT_RXDMA_OWN, MCU_TYPE_USB, OWN_UPDATE | OWN_CLEAR)?;
++        }
++    }
 +
 +    // Reset the packet filter.
 +    r.clear2(PLA_FMC, MCU_TYPE_PLA, FMC_FCR_MCU_EN)?;
@@ -568,26 +992,37 @@ index 0000000..e4e0b7c
 +    r.write4(PLA_MAR4, MCU_TYPE_PLA, u32::MAX)?;
 +    r.write4(PLA_RCR, MCU_TYPE_PLA, rcr | RCR_APM | RCR_AB | RCR_AM)?;
 +
-+    // PHY: advertise 10/100, autonegotiate.
++    // PHY: advertise 10/100 (and 1000 on the RTL8153), autonegotiate.
 +    r.mii_write(MII_ANAR, ANAR_ALL)?;
++    if chip != Chip::Rtl8152 {
++        r.mii_write(MII_GTCR, GTCR_ADV_1000)?;
++    }
 +    let bmcr = r.mii_read(MII_BMCR)?;
 +    r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)?;
 +
 +    // Wait for the link, so DHCP does not start into a dead cable.
 +    let start = Instant::now();
 +    loop {
-+        let status = r.read1(PLA_PHYSTATUS, MCU_TYPE_PLA)?;
++        let status = r.read2(PLA_PHYSTATUS, MCU_TYPE_PLA)?;
 +        if status & PHYSTATUS_LINK != 0 {
++            let speed = if status & PHYSTATUS_1000MBPS != 0 {
++                1000
++            } else if status & PHYSTATUS_100MBPS != 0 {
++                100
++            } else {
++                10
++            };
 +            println!(
-+                "dwc2d: RTL8152 link up after {} ms, {} Mbit/s {} duplex",
++                "dwc2d: {} link up after {} ms, {} Mbit/s {} duplex",
++                chip.name(),
 +                start.elapsed().as_millis(),
-+                if status & PHYSTATUS_100MBPS != 0 { 100 } else { 10 },
++                speed,
 +                if status & PHYSTATUS_FDX != 0 { "full" } else { "half" },
 +            );
 +            break;
 +        }
 +        if start.elapsed() > Duration::from_secs(5) {
-+            println!("dwc2d: RTL8152 no link yet");
++            println!("dwc2d: {} no link yet", chip.name());
 +            break;
 +        }
 +        sleep(Duration::from_millis(100));

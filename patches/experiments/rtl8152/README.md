@@ -1,8 +1,9 @@
-# Experiment: RTL8152 Ethernet
+# Experiment: RTL8152 and RTL8153 Ethernet
 
 Driver in `dwc2d` for the Realtek RTL8152 (`0bda:8152`), the USB 10/100
 Ethernet chip on the Ethernet/USB hub HAT for the Pi Zero 2 W (behind its
-FE1.1s hub) and on many cheap USB Ethernet adapters. Roadmap step 5.5.
+FE1.1s hub) and on many cheap USB Ethernet adapters, and for its gigabit
+sibling RTL8153 (`0bda:8153`), found in many USB-C hubs. Roadmap step 5.5.
 
 ```bash
 scripts/build-image.sh --experiment rtl8152
@@ -12,18 +13,18 @@ Written with FreeBSD's `if_ure` (BSD-2-Clause) as reference for the register
 map and the initialization order; no code from Linux' `r8152.c`. Like the
 LAN7800 driver it polls and has no interrupt endpoint.
 
-- Chip versions 4C00 and 4C10 (RTL8152 and RTL8152B). Any other version
-  (RTL8153 and later share the product family but need another init) is
-  refused with `dwc2d: RTL8152: Timeout("unsupported RTL815x chip version")`.
+- Chip versions 4C00 and 4C10 (RTL8152, RTL8152B), 5C00 to 5C30 (RTL8153)
+  and 6000/6010 (RTL8153B). Any other version (RTL8156 and later) is
+  refused with `dwc2d: RTL815x chip version … not supported`.
 - MAC address from the chip's efuse (`PLA_IDR`, else `PLA_BACKUP`), else
   the locally administered `02:52:65:64:6f:78`.
-- Autonegotiation 10/100; `dwc2d` waits up to 5 s for the link before the
+- Autonegotiation 10/100, plus 1000 on the RTL8153; `dwc2d` waits up to 5 s for the link before the
   network stack starts. No link changes are reported afterwards.
 - Receives all multicast (IPv6 neighbor discovery), no promiscuous mode, no
   checksum offload, no VLAN tags.
 - The chip must hang off a high-speed hub; behind a transaction translator
   (full speed) it is skipped, because `dwc2d` has no split bulk transfers.
-- **A plugged-in RTL8152 wins over the onboard LAN7800.** That makes a test
+- **A plugged-in RTL8152 or RTL8153 wins over the onboard LAN7800.** That makes a test
   on a Pi 3B+ with a USB adapter possible before the Zero 2 W image exists.
   The network scheme is then `network.usb_rtl8152`; the LAN7800 stays
   initialized but unused.
@@ -41,6 +42,27 @@ boots to the login, enumerates hub, keyboard and CDC Ethernet as before,
 The new code compiles without warnings.
 
 **Real hardware:** not yet tested, see below.
+
+## Test with a real chip in QEMU
+
+`scripts/qemu-raspi3b.sh --usb-host 0bda:8153` hands a USB device of the
+build host to the guest, alone on the emulated DWC2's root port. QEMU's
+DWC2 model differs from the real one in timing, so this tests the chip
+init, the register access and the frame format, not the USB controller.
+
+QEMU needs read-write access to the device node. Once, on the host (sudo):
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="815[23]", MODE="0660", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/70-redox-rtl815x.rules
+sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb
+```
+
+Then, with the adapter's cable in the LAN (the guest gets its own DHCP
+address from the router, with the adapter's MAC):
+
+```bash
+scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-host 0bda:8153 --run "ls /scheme" --run "ping -c 5 192.168.178.1"
+```
 
 ## Test on hardware
 
