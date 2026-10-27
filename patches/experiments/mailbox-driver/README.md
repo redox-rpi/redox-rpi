@@ -18,4 +18,7 @@ scripts/build-image.sh --experiment mailbox-driver
 Starts from the initfs, so other drivers (sdhost's clock divider) can ask
 for the real core clock later.
 
-**Result:** see below once tested.
+**Result in QEMU** (`raspi3b`, build `v0.1.0-alpha-19-g9532b7f+mailbox-driver`,
+2026-10-27): all four files answer. QEMU reports fixed values: revision
+`0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz, core 350 MHz, no
+throttling. Not yet tested on a real Pi.
