@@ -24,6 +24,9 @@ tests on it.
    (see "Stable image" below), write the results into
    [test-reports.md](test-reports.md), mark the test **done** and move it to
    "Done".
+6. **Merge only after the Pi test:** new features and experiments live on
+   their own branch until this test passed in detail; only then do they go
+   to `main` ([CONTRIBUTING.md](../CONTRIBUTING.md#branches)).
 
 Tests that need a person at the Pi (keyboard, screen, power) say so; the
 owner then asks that person before taking the Pi.

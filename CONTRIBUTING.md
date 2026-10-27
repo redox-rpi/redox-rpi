@@ -8,6 +8,17 @@ This is an unofficial fork for the Redox OS™ operating system. Redox does
 not accept AI-generated contributions, so nothing from here goes upstream.
 Report problems with this fork here, not to the Redox OS project.
 
+## Branches
+
+New features and experiments are developed on a branch (`<topic>`, for
+example `dwc2-interrupts`). They go to `main` only after a detailed test on
+a real Pi, with the results in [docs/test-reports.md](docs/test-reports.md)
+or the experiment's README. QEMU results alone are not enough. Fixes to
+documentation and scripts may go to `main` directly.
+
+On the shared build host, do not switch the branch of the shared clone:
+build a branch in a clone of your own.
+
 ## Workflow
 
 1. **Pick a task** from [docs/tasks.md](docs/tasks.md) or the
