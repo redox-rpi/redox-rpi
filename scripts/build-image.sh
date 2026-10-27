@@ -57,11 +57,15 @@ image_name=netboot
 [ "$CONFIG_NAME" = minimal ] || image_name="$CONFIG_NAME"
 
 # One build at a time: builds share upstream/ and build/ (docs/test-plan.md).
-mkdir -p "$ROOT/build"
-exec 9> "$ROOT/build/.build-image.lock"
-if ! flock -n 9; then
-    echo "another build is running in $ROOT, waiting for it" >&2
-    flock 9
+# Under scripts/with-build-lock.sh the caller already holds the lock.
+if [ -z "${REDOX_RPI_BUILD_LOCK:-}" ]; then
+    mkdir -p "$ROOT/build"
+    exec 9> "$ROOT/build/.build-image.lock"
+    if ! flock -n 9; then
+        echo "another build is running in $ROOT, waiting for it" >&2
+        flock 9
+    fi
+    export REDOX_RPI_BUILD_LOCK=1
 fi
 
 # Commit of an upstream source from config/upstream.lock.

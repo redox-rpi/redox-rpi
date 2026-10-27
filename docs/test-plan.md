@@ -13,7 +13,11 @@ tests on it.
 2. **Take the Pi** only when your test is first in the queue and the
    previous one is marked done. Set it to **on the Pi** and commit.
 3. **Build:** `scripts/build-image.sh` waits for any other build on the
-   same host to finish (lock file `build/.build-image.lock`).
+   same host to finish (lock file `build/.build-image.lock`). Run other jobs
+   that use the build output, such as a QEMU test, under
+   `scripts/with-build-lock.sh <command>`; it takes the same lock, and a
+   `build-image.sh` inside it does not lock again. Never wrap a command in
+   `flock` on that file yourself: `build-image.sh` would wait for it forever.
 4. **Test:** stage the image, reboot the Pi, run the steps. Automated checks
    go through [`scripts/pi-test.py`](../scripts/pi-test.py).
 5. **Give the Pi back:** put the stable image back on the TFTP server
