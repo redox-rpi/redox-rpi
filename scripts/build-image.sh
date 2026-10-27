@@ -216,13 +216,20 @@ done
 
 # Our own packages, built from this repository.
 for tool in devshd reboot sigregs timesync; do
+    # sigregs is linked statically (the cargo template links dynamically):
+    # dynamically linked, it fails at start on a real Pi before it can test
+    # the signal entry (docs/tasks.md, T12).
+    build='template = "cargo"'
+    if [ "$tool" = sigregs ]; then
+        build=$'template = "custom"\nscript = "COOKBOOK_CARGO_PATH=. cookbook_cargo"'
+    fi
     mkdir -p "$REDOX/recipes/other/$tool"
     cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
 [source]
 path = "$ROOT/tools/$tool"
 
 [build]
-template = "cargo"
+$build
 EOF
 done
 
