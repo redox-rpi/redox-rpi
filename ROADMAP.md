@@ -108,7 +108,7 @@ automated testing in CI later.
 | 5.3 | ✅ USB hub support behind DWC2 (QEMU; real Pi 3B+: both hubs found) | Devices behind the onboard/HAT hub are enumerated |
 | 5.3a | ✅ Bulk transfers and a CDC Ethernet adapter in `dwc2d`: DHCP and `ping` in QEMU | Network stack works over USB |
 | 5.4 | ✅ Ethernet driver for the Pi 3B+ chip (LAN7800 `0424:7800`) in `dwc2d`: DHCP address, TCP answers from the LAN (2026-10-26) | `ping` and TCP from the Pi 3 |
-| 5.5 | 🟡 Ethernet driver for the HAT's chip: RTL8152 `0bda:8152` behind a FE1.1s hub (experiment `rtl8152`: builds, QEMU unaffected; hardware test queued, first on a Pi 3B+ with a USB adapter) | `ping` and TCP from the Zero 2 W |
+| 5.5 | 🟡 Ethernet driver for the HAT's chip: RTL8152 `0bda:8152` behind a FE1.1s hub (experiment `rtl8152` on branch `rtl8152`, also for the RTL8153: a real RTL8153B passed through to QEMU gets DHCP and answers `ping`; Pi test queued) | `ping` and TCP from the Zero 2 W |
 
 ## Phase 6: Real server and release
 
