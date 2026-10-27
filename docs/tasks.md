@@ -173,6 +173,14 @@ Same SoC as the Pi 3, 512 MB RAM, no onboard Ethernet. See
 
 - **Done when:** the image boots to a login prompt on a Zero 2 W.
 
+State: the unchanged `v0.1.0-alpha` SD card image boots on a Zero 2 W, and a
+USB keyboard works when plugged in before boot
+([test reports](test-reports.md)). Open:
+- **USB hotplug:** a keyboard plugged in after boot is not detected.
+- **Network:** no driver for the HAT's RTL8152 (experiment `rtl8152`).
+- **Network boot:** a smaller image for the 512 MB RAM (branch
+  `zero2w-netboot`, not yet tested to the end on a real Zero).
+
 ## Boot
 
 ### T15: Boot the kernel straight from the Pi firmware (Pi with serial console)

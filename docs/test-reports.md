@@ -179,3 +179,17 @@ transfer statistics.
 | write 4 KiB calls, fsync | pass | 1 MiB in 5.8 s, 181 kB/s (before: 130 kB/s); 37 MB sent to the card, see T16 |
 | write, restart, read back | pass | 8 MiB, SHA-256 `fc2479e005e51b28074dfde9e3da3bda18deb479fc67019f345467169b78d20c` before and after the restart |
 | read from the card | pass | 8 MiB in 0.65 s, 13 MB/s |
+
+## 2026-10-27: release `v0.1.0-alpha` SD card image on a Pi Zero 2 W
+
+The unchanged release image `redox-rpi-v0.1.0-alpha-pi3bplus.img.xz`
+([release notes](releases/v0.1.0-alpha.md)), flashed and booted on a real
+Raspberry Pi Zero 2 W by a person, without a serial console. Not a
+`pi-test.py` run.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot | pass | boots the Pi 3B+ image unchanged |
+| USB keyboard | pass | works when plugged in before boot |
+| USB keyboard hotplug | **fail** | a keyboard plugged in after boot is not detected |
+| network | – | none, expected: the Zero has no Ethernet of its own, and Redox has no driver for the HAT's RTL8152 yet |
