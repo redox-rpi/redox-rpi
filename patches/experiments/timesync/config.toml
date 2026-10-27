@@ -1,17 +1,18 @@
-# Image additions of the timesync experiment, included after the image's own
-# config by scripts/build-image.sh --experiment timesync.
-
 [packages]
 timesync = "source"
 
+# Named 65 so that it starts after 60_data.service (network-boot image),
+# which mounts /scheme/data with the saved time. It sets the clock from the
+# build or saved time at once and waits for the network itself.
 [[files]]
-path = "/usr/lib/init.d/20_timesync.service"
+path = "/usr/lib/init.d/65_timesync.service"
 data = """
 [unit]
-description = "Set the clock from an NTP server"
-requires_weak = ["10_net.target"]
+description = "Set the clock from the saved time and an NTP server"
+requires_weak = ["00_base.target"]
 
 [service]
 cmd = "timesync"
+args = ["-d"]
 type = "oneshot_async"
 """
