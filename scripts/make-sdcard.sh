@@ -159,6 +159,17 @@ elif [ "$data_mib" -gt 0 ]; then
     rm -f "$data"
 fi
 
+# The build manifest goes with the image it describes (docs/versioning.md).
+if [ -n "$image" ]; then
+    manifest="$(grep -l "\"harddrive.img\" = \"$(sha256sum < "$image" | cut -d' ' -f1)\"" \
+        "$ROOT"/build/manifests/*.toml 2>/dev/null | head -1 || true)"
+    if [ -n "$manifest" ]; then
+        cp "$manifest" "$out.manifest.toml"
+    else
+        echo "warning: no manifest in build/manifests/ matches $image" >&2
+    fi
+fi
+
 xz -T0 -6 -k -f "$out"
 
 echo "SD card image: $out"

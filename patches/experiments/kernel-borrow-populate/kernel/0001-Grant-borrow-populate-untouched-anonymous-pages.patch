@@ -1,0 +1,47 @@
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 74ef9e7..5607032 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -1711,12 +1711,39 @@ impl Grant {
+                 .enumerate()
+                 .take(MAX_EAGER_PAGES)
+             {
+-                let Some((phys, _)) = src_address_space
++                let phys = match src_address_space
+                     .table
+                     .utable
+                     .translate(page.start_address())
+-                else {
+-                    continue;
++                {
++                    Some((phys, _)) => phys,
++                    // Populate owned anonymous pages that were never touched now, instead of
++                    // leaving them to the lazy path of the destination's page fault handler: on
++                    // aarch64, data a scheme wrote through that path sometimes never reached the
++                    // source (redox-rpi docs/debugging-random-crashes.md).
++                    None => match src_address_space.grants.contains(page) {
++                        Some((
++                            _,
++                            info @ GrantInfo {
++                                provider: Provider::Allocated {
++                                    cow_file_ref: None, ..
++                                },
++                                ..
++                            },
++                        )) => {
++                            let src_flags = info.flags();
++                            match map_zeroed(
++                                &mut src_address_space.table.utable,
++                                page,
++                                src_flags,
++                                true,
++                            ) {
++                                Ok(frame) => frame.base(),
++                                Err(_) => continue,
++                            }
++                        }
++                        _ => continue,
++                    },
+                 };
+ 
+                 let writable = match get_page_info(Frame::containing(phys)) {
