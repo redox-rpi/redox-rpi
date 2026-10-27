@@ -1,0 +1,13 @@
+# systemd unit for config/dnsmasq-pxe-proxy.conf, see docs/netboot.md
+# ("Without SD card"). Install to /etc/systemd/system/.
+[Unit]
+Description=Proxy DHCP for the Pi firmware network boot (redox-rpi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/redox-pxe-proxy.conf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
