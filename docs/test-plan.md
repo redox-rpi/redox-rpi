@@ -46,7 +46,7 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
-| 1 | sdhost driver, started by hand next to `bcm2835-sdhcid` ([steps](../patches/experiments/sdhost-driver/README.md#manual-test-on-the-pi)) | Stephan, image from the sdhost session | `--experiment ldso-diagnostics --experiment sdhost-driver` | person at the console | next |
+| 1 | sdhost driver, started by hand next to `bcm2835-sdhcid` ([steps](../patches/experiments/sdhost-driver/README.md#manual-test-on-the-pi)) | Stephan, image from the sdhost session | `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, staged | person at the console | **on the Pi** |
 | 2 | Firmware properties: board, temperature, clocks (`/scheme/rpi-firmware`) | rpi-firmware session | `--experiment ldso-diagnostics --experiment rpi-firmware` | network only | waiting |
 | 3 | Clock from NTP: `date` after boot, `timesync -n` ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 | 4 | RTL8152 Ethernet over a USB adapter on the Pi 3B+ ([steps](../patches/experiments/rtl8152/README.md#a-pi-3b-with-a-usb-rtl8152-adapter)) | rtl8152 session | `--experiment ldso-diagnostics --experiment rtl8152` | person to plug in an RTL8152 USB adapter | waiting |
