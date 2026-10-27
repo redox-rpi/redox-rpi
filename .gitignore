@@ -7,3 +7,4 @@
 /upstream/
 /images/
 target/
+__pycache__/
