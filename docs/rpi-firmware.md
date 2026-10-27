@@ -32,6 +32,10 @@ Raspberry Pi 3 Model B`) and all four files answer. QEMU reports fixed
 values: revision `0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz,
 core 350 MHz, no throttling, serial 0. On the real Pi 3B+ see below.
 
+**As a default patch in QEMU** (build `v0.1.0-alpha-59-gecabf31`, network
+boot image without experiments, 2026-10-27): starts from the initfs, all
+four files answer with QEMU's values as above.
+
 **Result on the real Pi 3B+** (netboot, build
 `v0.1.0-alpha-51-g3d7e351+ldso-diagnostics+rpi-firmware`, 2026-10-27): all
 four files answer with real values: Raspberry Pi 3 Model B+ (revision
