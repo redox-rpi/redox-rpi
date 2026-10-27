@@ -70,7 +70,7 @@ class Shell:
             data += chunk
         read_until(self.sock, SHELL_PROMPT, 5)
         text = ANSI.sub(b"", data).decode(errors="replace")
-        lines = [l.strip("\x00 ") for l in text.replace("\r", "\n").split("\n")]
+        lines = [l.replace("\x00", "").strip() for l in text.replace("\r", "\n").split("\n")]
         if BEGIN not in lines:
             raise RuntimeError(f"no output for: {command}\n{text[-1500:]!r}")
         stop = lines.index(END) if END in lines else len(lines)

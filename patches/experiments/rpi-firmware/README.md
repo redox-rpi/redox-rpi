@@ -26,5 +26,13 @@ SD image, 2026-10-27): the driver starts from the initfs
 (`rpi-firmwared: mailbox at 0x3f00b880, revision 0x00a02082, model
 Raspberry Pi 3 Model B`) and all four files answer. QEMU reports fixed
 values: revision `0x00a02082` (Pi 3 Model B, 1 GiB), 25.0 °C, ARM 700 MHz,
-core 350 MHz, no throttling, serial 0. Not yet tested on a real Pi
-(queued in [test-plan.md](../../../docs/test-plan.md)).
+core 350 MHz, no throttling, serial 0. On the real Pi 3B+ see below.
+
+**Result on the real Pi 3B+** (netboot, build
+`v0.1.0-alpha-51-g3d7e351+ldso-diagnostics+rpi-firmware`, 2026-10-27): all
+four files answer with real values: Raspberry Pi 3 Model B+ (revision
+`0x00a020d3`), 1 GiB, 58.5 °C, ARM 600 MHz (max 1.4 GHz), **core 250 MHz**
+(max 400 MHz), no throttling. The standard checks pass as with the
+diagnostics image alone ([report](../../../docs/test-reports.md)). The core
+clock confirms that sdhost's divider, which assumes 400 MHz, runs the card
+slower than planned; with this driver it can ask for the real rate.
