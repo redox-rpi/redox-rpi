@@ -72,10 +72,14 @@ fixes it and passes in QEMU and on a real Pi.
 `ps | cat` and `ps > file` work. `reboot` showed the same: exit code 1, no
 message, it took several attempts. Seen over devshd on the Pi.
 
-- **Look at:** `ptyd` in base, how uutils `ps` handles a failed write, and
-  whether these are start failures that cannot print their message.
-- **Done when:** the cause is known and either fixed as a patch or
-  documented in [known-issues.md](known-issues.md).
+The serial console shows the cause: these are start failures, the same as
+T12. On a real Pi 3B+, `reboot` crashed twice and `ps` once, each at
+`relibc_start_v1+0xB34`, which is the `brk #1` after
+`expect("no filetable fd present")`. Details in T12.
+
+- **Look at:** T12. What is left here: why `ps` straight to the terminal
+  fails much more often than `ps | cat`.
+- **Done when:** T12 is fixed and `ps` and `reboot` work every time.
 
 ### T11: devshd sessions leave `login` processes behind (Pi or QEMU)
 
@@ -93,14 +97,42 @@ starts in QEMU and in every start on a real Pi: `relibc_start_v1` stops at
 `.expect("no filetable fd present")` in `src/start.rs` (`brk #1`,
 exception class `0x3c`, nothing printed, exit code 1). The thread fd from
 the same auxv is there, the filetable fd is not. `ld.so` found it just
-before (`src/ld_so/start.rs` has the same check). Likely the same failure
-as T5 (`reboot` and `ps` exit with 1 and print nothing) and the `brk #1`
-crashes in T1. Linked statically, `sigregs` starts every time.
+before (`src/ld_so/start.rs` has the same check). Likely the same as the
+`brk #1` crashes in T1. Linked statically, `sigregs` starts every time.
+
+**Confirmed on a real Pi as the cause of T5.** These dumps were recorded on
+the serial console (`logs/serial.log` on the build host):
+
+| Program | Image | ELR | `X17` (PLT target) |
+|---|---|---|---|
+| `reboot` | `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` | `0x1C8E08` | `0x1C82D4` |
+| `reboot` | the same image, after a new boot | `0x1C8E08` | |
+| `ps` | `v0.1.0-alpha-52-ga4ba2e3+ldso-diagnostics+sdhost-driver+sdhost-boot` | `0x1D8E08` | |
+
+- **Where:**
+  - All three have `ESR_EL1` `0xF2000001` (`brk #1`) and the same page
+    offset `0xE08`, so the crash is in `libc.so`.
+  - `X17` is `relibc_start_v1`, so the crash is at
+    `relibc_start_v1+0xB34`. In the `libc.so` from the build, that address
+    is the `brk #1` after
+    `expect_failed("no filetable fd present")` (23 bytes).
+  - The link register points into the program's own start code.
+- **Not hidden by `ldso-diagnostics`:** both images have that experiment
+  and still crash here.
+- **Depends on how the program starts:**
+  - In the same session, `ls` and `pwd` started 100 times out of 100.
+  - `ps` straight to the terminal fails most of the time, while
+    `ps | cat` rarely fails.
+  - This points to the way the program is started, more than to random
+    memory corruption.
 
 - **Do:** reproduce with the dynamically linked `sigregs` (build it with
   `template = "cargo"`, see `scripts/build-image.sh`), find out whether the
   auxv on the new stack is incomplete when `ld.so` hands over to the
   program, or whether `relibc_start_v1` reads it from the wrong place.
+  An experiment that prints the auxv in `ld.so` before the handover and in
+  `relibc_start_v1` before the `expect` shows this on the serial console.
+  Compare `ps` with `ps | cat`.
 - **Done when:** the cause is known, with an experiment patch that lets the
   dynamically linked `sigregs` start 100 times out of 100 on the Pi.
 
