@@ -1,19 +1,23 @@
-From a3ac4a6c217f67916e805e387964cfa2ebc59bb2 Mon Sep 17 00:00:00 2001
+From b6e08635f20169e1aec9eca9926a941ea5fd4a2c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 09:53:50 +0100
 Subject: [PATCH 5/5] aarch64: ignore spurious BCM2835 interrupts quietly
 
 With user space drivers, a driver on another CPU can clear its source
-between the interrupt and the read of the pending register. Return
-instead of logging two errors and enabling a line that does not exist.
+between the interrupt and the read of the pending registers, in the
+BCM2835 or already in the BCM2836 local controller. Return instead of
+logging errors and enabling a line that does not exist. Also drop the
+debug message in the BCM2835 irq_enable, which now runs for every
+acknowledged interrupt.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/arch/aarch64/device/irqchip/irq_bcm2835.rs | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ src/arch/aarch64/device/irqchip/irq_bcm2835.rs | 11 ++++++++++-
+ src/arch/aarch64/interrupt/irq.rs              |  3 +++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
 
 diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
-index a481d8a..0b2c135 100644
+index a481d8a..9f63ade 100644
 --- a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
 +++ b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
 @@ -47,6 +47,8 @@ fn ffs(num: u32) -> u32 {
@@ -37,7 +41,15 @@ index a481d8a..0b2c135 100644
          let pending_num = ffs(sources) - 1;
          let fast_irq = [
              7 + 32,
-@@ -296,6 +303,9 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
+@@ -223,7 +230,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
+     }
+ 
+     fn irq_enable(&mut self, irq_num: u32) {
+-        debug!("bcm2835 enable {} {}", irq_num, irq_num & 0x1f);
+         match irq_num {
+             num @ 0..=31 => {
+                 let val = 1 << num;
+@@ -296,6 +302,9 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
      fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
          unsafe {
              let irq = self.irq_ack();
@@ -47,6 +59,20 @@ index a481d8a..0b2c135 100644
              if let Some(virq) = self.irq_to_virq(irq)
                  && virq < 1024
              {
+diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
+index adc5b55..1331ab4 100644
+--- a/src/arch/aarch64/interrupt/irq.rs
++++ b/src/arch/aarch64/interrupt/irq.rs
+@@ -24,6 +24,9 @@ unsafe fn dispatch() {
+         && virq < 1024
+     {
+         unsafe { IRQ_CHIP.trigger_virq(virq as u32, &mut token) };
++    } else if hwirq == u32::MAX {
++        // The BCM2836 local controller found nothing pending: the source,
++        // a user space driver's device, was cleared on another CPU.
+     } else {
+         println!("unexpected irq num {}", hwirq);
+         // IDs 1020..1023 are special/spurious GIC values and must not be
 -- 
 2.54.0 (Apple Git-157)
 

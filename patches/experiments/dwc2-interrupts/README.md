@@ -20,9 +20,10 @@ Four patches:
   line through `/scheme/irq/phandle-*` failed with `EEXIST`.
   Reservations now have their own flag.
 - **kernel `0005`:** when dwc2d on another CPU clears its source between
-  the interrupt and the kernel's read of the pending register, the kernel
-  found nothing pending and logged two errors (34 times in one QEMU run).
-  It now returns quietly.
+  the interrupt and the kernel's read of the pending registers, the kernel
+  found nothing pending and logged errors (34 times in one QEMU run). It
+  now returns quietly. Also drops a debug message that `irq_enable` printed
+  for every acknowledged interrupt.
 - **base `0017`:** dwc2d opens its interrupt from the devicetree
   (`/scheme/irq/phandle-<intc>/1,9`) and enables only the channel-halted
   interrupt of the receive channel. All other transfers (sending, control
