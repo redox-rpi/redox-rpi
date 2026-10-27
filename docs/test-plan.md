@@ -32,8 +32,10 @@ Tests that need a person at the Pi (keyboard, screen, power) say so; the
 owner then asks that person before taking the Pi.
 
 Experiments that add a driver to base each carry their own patch `0017`,
-so `sdhost-driver` (with `sdhost-boot`), `rpi-firmware`, `rtl8152` and `dwc2-interrupts` cannot be combined in one
-build yet.
+so `sdhost-driver` (with `sdhost-boot`), `rtl8152` and `dwc2-interrupts`
+cannot be combined in one build yet. Each of them applies on top of the
+default patches, which include `rpi-firmwared` (base `0018`) since
+2026-10-27.
 
 ## Stable image
 

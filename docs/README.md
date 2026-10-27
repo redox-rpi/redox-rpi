@@ -19,6 +19,7 @@ the pieces fit together, how to build and test, and what we found on the way.
 | [Network boot](netboot.md) | For developers: booting a real Pi from your own build server over the network, the SD card for it |
 | [Build host](build-host.md) | Setting up the Linux build machine, building the kernel on macOS |
 | [Hardware](hardware.md) | Boards, serial console wiring, `config.txt`, Ethernet/USB topology |
+| [Firmware properties](rpi-firmware.md) | `/scheme/rpi-firmware`: temperature, clocks, throttling and board data from the Pi firmware |
 | [Versioning](versioning.md) | Pinned upstream revisions, experiments, build IDs and manifests |
 | [Test plan](test-plan.md) | Who has the test Pi now and which test comes next |
 | [Test reports](test-reports.md) | Results of the standard tests on a real Pi, per build |

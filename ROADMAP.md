@@ -96,7 +96,7 @@ automated testing in CI later.
 | # | Step | Done when … |
 |---|---|---|
 | 4.1 | ✅ Bring up all 4 cores: `spin-table` and BCM2836 IPIs (`patches/kernel/`) | 4 CPUs online (QEMU ✅, real Pi 3B+ ✅) |
-| 4.2 | 🟡 Watchdog: ✅ `reboot` (`tools/reboot`); 🟡 firmware driver `rpi-firmwared` (over the VideoCore mailbox) for temperature, clocks and board data (experiment `rpi-firmware`, works in QEMU); `poweroff` still missing | `reboot` and `poweroff` work, `/scheme/rpi-firmware` on the real Pi |
+| 4.2 | 🟡 Watchdog: ✅ `reboot` (`tools/reboot`); ✅ firmware driver `rpi-firmwared` (over the VideoCore mailbox) for temperature, clocks and board data (base patch `0018`, [tested on the real Pi](docs/rpi-firmware.md)); `poweroff` still missing | `reboot` and `poweroff` work, `/scheme/rpi-firmware` on the real Pi |
 | 4.3 | Minimal "server" profile (low RAM, no GUI) | Runs stable for 24 h |
 
 ## Phase 5: Networking over Ethernet
@@ -134,7 +134,7 @@ from GPL-licensed drivers (Linux) is not.
 | **Keyboard layouts** | `dwc2d` maps USB keys to a US layout. German and other layouts | small |
 | **RTC / time** | The Pi has no clock: files are dated 1970/Jan 1. 🟡 NTP client `tools/timesync` with build time and saved time as fallback (experiment `timesync`, works in QEMU); next: `clock_settime` in relibc | small |
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
-| **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from `/scheme/rpi-firmware` (experiment `rpi-firmware`) | small |
+| **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
 | **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
