@@ -114,7 +114,7 @@ by hand as `bcm2835-sdhostd disk.sdhost` next to `bcm2835-sdhcid`.
 | MBR | pass | partition entries match the SD image the card was made from; disk signature differs (new per `make-sdcard.sh` run) |
 | FAT boot sector | pass | `REDOXBOOT`, `FAT32` |
 | read speed | pass | 8 MiB in 1.85 s, 4.5 MB/s |
-| write | not tested | |
+| write | pass | tested with sdhost at boot, see the `sdhost-boot` report |
 
 ## 2026-10-27: `v0.1.0-alpha-51-g3d7e351+ldso-diagnostics+rpi-firmware`
 
@@ -141,3 +141,28 @@ Firmware properties read on the Pi (`/scheme/rpi-firmware`):
 In the first run right after the boot, writing to `/scheme/data` failed
 once with an I/O error and devshd dropped the connection; the run above,
 a few minutes later, passed. Not seen again.
+
+## 2026-10-27: `v0.1.0-alpha-52-ga4ba2e3+ldso-diagnostics+sdhost-driver+sdhost-boot`
+
+Real Pi 3B+ over netboot, serial console attached. `bcm2835-sdhostd`
+starts at boot instead of `bcm2835-sdhcid` and serves `disk.mmc`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | build ID as above |
+| boot | pass | 3 boots; card SDHC 15193 MiB, 4-bit bus; `/scheme/data` mounted through sdhost |
+| `libc.so` | pass | `5a6866e092653007…`, as in the rpi-firmware build |
+| write | pass | `dd if=/scheme/rand of=/scheme/data/sdhost-4m.bin bs=4096 count=1024`: 4 MiB in 33 s, 127 kB/s |
+| write across drivers | pass | SHA-256 `2fae7622263c410a294dcb08bc5248f606c41c469eb2bf13b56a5ddbc7831522` with sdhost; the same after booting `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` (`bcm2835-sdhcid` at boot) |
+| starts | pass | 0 of 50 failed |
+
+Not caused by sdhost, seen during this test:
+
+- `scripts/pi-test.py` got no output after the login, twice; the same
+  commands typed more slowly over devshd worked.
+- The network stopped twice: devshd refused connections, later the Pi did
+  not answer at all, while the serial console kept working. Once with the
+  sdhost image, once with the `bcm2835-sdhcid` image.
+- `reboot` crashed at start four times in a row (`brk`, see T12);
+  `echo reset > /scheme/sys/kstop` restarted the Pi.
+

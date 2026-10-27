@@ -41,6 +41,12 @@ Staged on the TFTP server whenever no test runs:
 `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` (0 of 300 start failures,
 [report](test-reports.md)).
 
+No copy of this image is left on the build host: staging another image
+overwrote it. Until it is rebuilt, the TFTP server has
+`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, which starts the
+same drivers (`bcm2835-sdhcid` for the card). Keep a copy of the stable
+image next to the TFTP directory once it is rebuilt.
+
 ```bash
 scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable harddrive.img>
 ```
@@ -49,7 +55,6 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
-| 6 | sdhost driver at boot instead of `bcm2835-sdhcid`, write test across drivers ([steps](../patches/experiments/sdhost-boot/README.md#test-on-the-pi-network-boot)) | sdhost session; run by the main session at the user's request, serial console attached | `--experiment ldso-diagnostics --experiment sdhost-driver --experiment sdhost-boot` | network; a person to look at the screen if the boot stops | **on the Pi** |
 | 3 | Clock from NTP and saved time: `date` after boot, `timesync -n`, `cat /scheme/data/timesync.last`; reboot with the Ethernet cable out, `date` must not be before the last run ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 | 4 | RTL8152 Ethernet over a USB adapter on the Pi 3B+ ([steps](../patches/experiments/rtl8152/README.md#a-pi-3b-with-a-usb-rtl8152-adapter)) | rtl8152 session | `--experiment ldso-diagnostics --experiment rtl8152` | person to plug in an RTL8152 USB adapter | waiting |
 | 5 | dwc2d with interrupts: `scripts/pi-test.py` standard checks plus `ps` (CPU time of `dwc2d` near 0 instead of a full core), devsh traffic over the LAN7800, typing on a USB keyboard ([experiment](https://github.com/redox-rpi/redox-rpi/tree/dwc2-interrupts/patches/experiments/dwc2-interrupts)) | dwc2-interrupts session | branch `dwc2-interrupts`, `--experiment ldso-diagnostics --experiment dwc2-interrupts` | network; a person for the keyboard check | waiting |
@@ -62,3 +67,4 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 | 2026-10-27 | Standard checks, default image | `v0.1.0-alpha-14-gf39d20b` | [report](test-reports.md): 36 of 300 start failures |
 | 2026-10-27 | sdhost driver started by hand, read test | `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` | [works](../patches/experiments/sdhost-driver/README.md#results): SDHC 15193 MiB, 4-bit, 25 MHz, partition table and FAT read correctly, 4.5 MB/s |
 | 2026-10-27 | Firmware properties (`/scheme/rpi-firmware`), standard checks | `v0.1.0-alpha-51-g3d7e351+ldso-diagnostics+rpi-firmware` | [report](test-reports.md): all four files answer (Pi 3B+, 58.5 °C, core 250 MHz); standard checks pass except `ps-tty` |
+| 2026-10-27 | sdhost driver at boot, write test across drivers | `v0.1.0-alpha-52-ga4ba2e3+ldso-diagnostics+sdhost-driver+sdhost-boot` | [works](test-reports.md): boots, 4 MiB written through sdhost read back by `bcm2835-sdhcid` with the same hash; writing 127 kB/s |

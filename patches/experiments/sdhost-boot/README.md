@@ -27,4 +27,21 @@ scripts/build-image.sh --experiment ldso-diagnostics --experiment sdhost-driver 
 
 ## Results
 
-None yet.
+2026-10-27, real Pi 3B+ over netboot, `v0.1.0-alpha-52-ga4ba2e3+ldso-diagnostics+sdhost-driver+sdhost-boot`:
+**works**. [Report](../../../docs/test-reports.md).
+
+- Boot: `bcm2835-sdhostd` finds the card (SDHC, 15193 MiB, 4-bit bus) and
+  serves `disk.mmc`; `/scheme/data` is mounted through it. Booted three
+  times, no hang. The earlier hang with sdhost at boot did not come back.
+- Write: 4 MiB from `/scheme/rand` to `/scheme/data` through sdhost, then
+  the image with `bcm2835-sdhcid` read the same SHA-256
+  (`2fae7622…31522`). A small text file also matched.
+- 50 program starts, none failed.
+- Write speed is low: 4 MiB in 33 s, 127 kB/s (reading: 4.5 MB/s). Next
+  step for the driver.
+- The firmware reports a core clock of 250 MHz, not the 400 MHz the clock
+  divider assumes, so the card runs at about 15.6 MHz instead of 25 MHz.
+
+In QEMU the image behaves like the one with `bcm2835-sdhcid`: QEMU's card
+is the network boot image itself, which has no data partition, so the
+`/scheme/data` mount fails with both drivers.
