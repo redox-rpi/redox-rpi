@@ -191,7 +191,13 @@ State: the unchanged `v0.1.0-alpha` SD card image boots on a Zero 2 W, and a
 USB keyboard works when plugged in before boot
 ([test reports](test-reports.md)). Open:
 - **USB hotplug:** see T17, the same on the Pi 3B+.
-- **Network:** no driver for the HAT's RTL8152 (experiment `rtl8152`).
+- **Network:** no driver for the HAT's RTL8152 on `main` yet (experiment
+  `rtl8152` on branch `rtl8152`). The unchanged image already sees the chip:
+  `0bda:8152` at high speed on port 4 of the HAT's hub (`1a40:0101`), bulk
+  endpoints 0x81/0x02 with 512 bytes, as the driver expects. The CDC
+  Ethernet search then fails on the chip's second configuration
+  (`GET_DESCRIPTOR` config index 1, wLength 512: `Timeout("channel halt")`);
+  the experiment claims the chip before that search runs.
 - **Network boot:** a smaller image for the 512 MB RAM (branch
   `zero2w-netboot`, not yet tested to the end on a real Zero).
 
