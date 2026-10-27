@@ -1,4 +1,4 @@
-From fc38f7a4df3e460185d7aeb5882f29e14091fc8a Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 17:24:31 +0100
 Subject: [PATCH] bcm2835-sdhostd: high speed mode, transfer statistics
@@ -18,7 +18,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 149 insertions(+), 12 deletions(-)
 
 diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
-index b72ccb6..98b26e0 100644
+index b72ccb63..98b26e08 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/host.rs
 +++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
 @@ -84,12 +84,15 @@ const FIFO_THRESHOLD: u32 = 4;
@@ -253,7 +253,7 @@ index b72ccb6..98b26e0 100644
      }
  }
 diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
-index 929f829..e112026 100644
+index 929f8297..e1120269 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/main.rs
 +++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
 @@ -103,6 +103,9 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
@@ -266,6 +266,3 @@ index 929f829..e112026 100644
      if let Err(err) = sdhost.init_card() {
          println!("bcm2835-sdhostd: no usable card: {err}");
          process::exit(1);
--- 
-2.54.0 (Apple Git-157)
-
