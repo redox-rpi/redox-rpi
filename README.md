@@ -1,4 +1,11 @@
-# redox-rpi
+# redox-rpi: Redox OS on the Raspberry Pi 3B+ and Zero 2 W
+
+**Redox OS on real Raspberry Pi 3 Model B+ hardware, with native DWC2 USB
+host and LAN7800 Ethernet drivers written in Rust.** Boots on all four
+Cortex-A53 cores (aarch64) from the SD card or over the network, with USB
+keyboard, Ethernet (DHCP, TCP) and a writable RedoxFS root filesystem.
+An unofficial, AI-assisted fork for the Redox OS™ operating system, a Rust
+microkernel OS.
 
 Bringing [Redox OS](https://www.redox-os.org/) (server profile) to the
 **Raspberry Pi 3** and **Raspberry Pi Zero 2 W**, with one kernel for both.
@@ -66,9 +73,11 @@ documentation and images.
 
 ## Contributing
 
-Issues, ideas and pull requests are welcome. Good starting points are the
-open steps in [ROADMAP.md](ROADMAP.md). Please report problems with this fork
-here, not to the Redox OS project.
+Help is welcome, also from your AI coding agent: [docs/tasks.md](docs/tasks.md)
+lists small, self-contained tasks, and [CONTRIBUTING.md](CONTRIBUTING.md)
+describes the workflow (clone, analyse, test, pull request) and how to run
+the automated tests in QEMU and on a real Pi. Please report problems with
+this fork here, not to the Redox OS project.
 
 ## License
 
