@@ -257,13 +257,17 @@ if [ "$dirty" = 1 ] && [ "$allow_dirty" = 0 ]; then
     exit 1
 fi
 
-# Build ID: the redox-rpi version, the experiments and whether the build has
-# unrecorded changes. Shown above the login prompt and in /etc/redox-rpi-release.
+# Build ID: the redox-rpi version, a short hash of the experiments and whether
+# the build has unrecorded changes. Shown above the login prompt and in
+# /etc/redox-rpi-release. The same set of experiments, in any order, gives the
+# same hash; their names are in the manifest and on the line below the ID.
 version="${VERSION:-$(git -C "$ROOT" describe --tags --always)}"
 build_id="$version"
-for exp in "${experiments[@]}"; do
-    build_id="$build_id+$exp"
-done
+exp_list=""
+if [ "${#experiments[@]}" -gt 0 ]; then
+    exp_list="$(printf '%s\n' "${experiments[@]}" | sort -u | paste -sd ' ' -)"
+    build_id="$build_id+x$(printf '%s\n' $exp_list | sha256sum | cut -c1-4)"
+fi
 dirty_sum=""
 if [ "$dirty" = 1 ]; then
     dirty_sum="$(sha256sum < "$drift_report" | cut -c1-12)"
@@ -313,6 +317,7 @@ BUILD_ID="$build_id"
 IMAGE="$image_name"
 BUILD="$build_date"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
+EXPERIMENTS="$exp_list"
 URL="https://github.com/redox-rpi/redox-rpi"
 """
 
@@ -331,7 +336,8 @@ data = """
 # \`root\`:\`password\`          #
 ##############################
 redox-rpi $build_id ($image_name, $build_date)
-
+${exp_list:+experiments: $exp_list
+}
 """
 EOF
 
