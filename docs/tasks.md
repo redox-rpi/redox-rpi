@@ -253,6 +253,9 @@ the image transfer over the HAT's RTL8152 fails with
 `Rx: failed to receive: -5`, over HTTP and over TFTP with full 1468-byte
 blocks. With 512-byte TFTP blocks the whole image arrives, but it takes
 many minutes ([test report](test-reports.md), [netboot](netboot.md#pi-zero-2-w)).
+Measured on 2026-10-27 at the server: 6 blocks per second, about 3 KB/s,
+so the 42 MB image of the `rtl8152` test would have taken 3.5 to 4 hours.
+That test was given up during the download.
 The likely cause: the adapter packs frames that arrive close together into
 one USB transfer, and two full-size frames do not fit. Linux uses 16 KiB.
 
