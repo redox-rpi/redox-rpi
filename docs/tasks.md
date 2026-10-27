@@ -159,6 +159,20 @@ Writing 1 MiB in 4 KiB calls to `/scheme/data` sent about 74,000 blocks
 - **Done when:** the writes per small `write` call are explained, with an
   experiment patch that lowers them, or the reason it cannot be lower.
 
+### T17: USB hotplug (QEMU, then Pi 3B+ or Zero 2 W)
+
+A USB device plugged in after boot is not detected, on every board: `dwc2d`
+enumerates the devices once at start and does not watch the root port.
+Seen with a keyboard on the Zero 2 W ([test reports](test-reports.md)); the
+Pi 3B+ is the same, its keyboard and LAN7800 sit behind the onboard hub.
+
+- **Look at:** `dwc2d` in base, the port connect and change interrupts
+  (`HPRT0`, `GINTSTS.PRTINT`), and the hub status change endpoint for
+  devices behind a hub. Branch `dwc2-interrupts` adds interrupt handling and
+  is the place to start.
+- **Done when:** a keyboard plugged in after boot types, and unplugging and
+  plugging it again works, on a real Pi.
+
 ### T7: Power off and reboot (QEMU, then Pi)
 
 `reboot` resets the Pi through the watchdog (kernel patch `0002`).
@@ -176,7 +190,7 @@ Same SoC as the Pi 3, 512 MB RAM, no onboard Ethernet. See
 State: the unchanged `v0.1.0-alpha` SD card image boots on a Zero 2 W, and a
 USB keyboard works when plugged in before boot
 ([test reports](test-reports.md)). Open:
-- **USB hotplug:** a keyboard plugged in after boot is not detected.
+- **USB hotplug:** see T17, the same on the Pi 3B+.
 - **Network:** no driver for the HAT's RTL8152 (experiment `rtl8152`).
 - **Network boot:** a smaller image for the 512 MB RAM (branch
   `zero2w-netboot`, not yet tested to the end on a real Zero).
