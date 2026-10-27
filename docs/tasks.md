@@ -129,6 +129,29 @@ Same SoC as the Pi 3, 512 MB RAM, no onboard Ethernet. See
 
 - **Done when:** the image boots to a login prompt on a Zero 2 W.
 
+## Boot
+
+### T15: Boot the kernel straight from the Pi firmware (Pi with serial console)
+
+Today the Pi firmware starts U-Boot, U-Boot provides UEFI for the Redox
+bootloader, and the bootloader loads the kernel and initfs from RedoxFS.
+Raspberry Pi OS skips all of that: the firmware loads the kernel itself
+(`kernel8.img`) and the initramfs (`initramfs` in `config.txt`) and passes
+the devicetree, which also says where the initramfs is.
+
+- **Do:** an experiment with a small entry stub in the kernel that does what
+  the bootloader does today: build the memory map from the devicetree, find
+  the initfs through `/chosen` (`linux,initrd-start`/`-end`), set up the
+  first page tables if the bootloader does that on aarch64 (check), and call
+  the normal kernel start. Plus a `make-sdcard.sh` mode that puts kernel and
+  initfs on the FAT partition.
+- **Keep:** U-Boot stays for network boot during development.
+- **Open questions:** kernel updates then mean writing to the FAT
+  partition; how the image updates it.
+- **Done when:** a Pi 3B+ boots from the SD card without U-Boot and the
+  Redox bootloader to the login prompt, and `scripts/pi-test.py` passes as
+  with the U-Boot image.
+
 ## Tooling
 
 ### T9: CI builds with the pinned revisions (no hardware)
