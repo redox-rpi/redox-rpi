@@ -25,6 +25,12 @@ Report problems with this fork here, not to the Redox OS project.
      [config/upstream.lock](config/upstream.lock), apply our patches with
      `git am patches/<component>/*.patch`, commit your change on top.
    - Export it with `git format-patch -1 -o patches/<component>/ --start-number <next>`.
+   - For relibc, [redox-rpi/relibc](https://github.com/redox-rpi/relibc)
+     has this ready: branch `redox-rpi` is the pinned commit plus
+     `patches/relibc/`, `upstream` the pinned commit, and `exp/<name>` each
+     relibc experiment on top of `redox-rpi`. Static and dynamic analysis
+     and tests of relibc can run there; the patch files here stay what the
+     build uses.
    - A change you are not sure about goes to
      `patches/experiments/<name>/<component>/` with a README that states the
      idea and, once tested, the result. Experiments that did not help stay

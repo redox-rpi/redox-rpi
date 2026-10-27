@@ -57,12 +57,14 @@ In relibc's `redox-rt/src/arch/aarch64.rs`, the code at label `3` in
 word belongs, so after one `pthread_kill` all signals of that thread stay
 blocked. Shown in QEMU by `sigregs thread`
 ([test reports](test-reports.md)); experiment `sigentry-thread-signals`
-fixes it and passes in QEMU.
+fixes it and passes in QEMU and on a real Pi.
 
-- **Do:** run `sigregs` on a real Pi with experiments `sigregs-test`,
-  `sigentry-by-name` and `sigentry-thread-signals`; read the patch against
-  the x86_64 version of the same function.
-- **Done when:** the Pi result is in [test-reports.md](test-reports.md).
+- **Do:** review the patch against the x86_64 version of the same
+  function (x86_64 also adds 64 to the signal number of signals sent to a
+  thread; aarch64 does not) and decide whether it becomes relibc patch
+  `0007`.
+- **Done when:** reviewed, and either moved to `patches/relibc/` or the
+  reason it stays an experiment is in its README.
 
 ### T5: Programs exit with code 1 and print nothing (QEMU or Pi)
 
@@ -84,20 +86,23 @@ After about 30 devshd sessions, 31 `login` processes were still running.
 - **Done when:** `ps | cat` shows no extra `login` after 20 sessions with
   `scripts/devsh.py`.
 
-### T12: `fork()` crashes in the parent on aarch64 (QEMU)
+### T12: Programs fail at start with "no filetable fd present" (QEMU, Pi)
 
-`sigregs process` forks a child that sends the signals. In about half of
-the runs the parent stops with a `brk` exception (class `0x3c`) inside
-`fork()`, before a child exists. It happens with and without the signal
-experiments. The kernel's dump shows x0-x4 = `0xffffffffffffffff`,
-x8 = `0x9e` and a frame pointer near the top of the stack.
+A dynamically linked `sigregs` dies before `main` in about half of the
+starts in QEMU and in every start on a real Pi: `relibc_start_v1` stops at
+`.expect("no filetable fd present")` in `src/start.rs` (`brk #1`,
+exception class `0x3c`, nothing printed, exit code 1). The thread fd from
+the same auxv is there, the filetable fd is not. `ld.so` found it just
+before (`src/ld_so/start.rs` has the same check). Likely the same failure
+as T5 (`reboot` and `ps` exit with 1 and print nothing) and the `brk #1`
+crashes in T1. Linked statically, `sigregs` starts every time.
 
-- **Do:** reproduce with a small C or Rust program that only forks (with
-  and without a signal handler installed), then look at `fork_impl` /
-  `__relibc_internal_fork_wrapper` in `redox-rt/src/arch/aarch64.rs` and
-  `fork_inner` in `redox-rt/src/proc.rs`.
-- **Done when:** the cause is known, with an experiment patch that brings
-  the crash rate to 0 in 100 runs.
+- **Do:** reproduce with the dynamically linked `sigregs` (build it with
+  `template = "cargo"`, see `scripts/build-image.sh`), find out whether the
+  auxv on the new stack is incomplete when `ld.so` hands over to the
+  program, or whether `relibc_start_v1` reads it from the wrong place.
+- **Done when:** the cause is known, with an experiment patch that lets the
+  dynamically linked `sigregs` start 100 times out of 100 on the Pi.
 
 ## Hardware
 

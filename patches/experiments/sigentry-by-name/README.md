@@ -34,4 +34,4 @@ Test: `sigregs` (experiment [`sigregs-test`](../sigregs-test)).
 
 QEMU, 2026-10-27, together with `sigentry-thread-signals`: `sigregs`
 passes 2000 signals in both modes, every register kept. Details in the
-[test reports](../../../docs/test-reports.md). Not yet on a real Pi.
+[test reports](../../../docs/test-reports.md). On a real Pi 3B+ (with `ldso-diagnostics`): 10 of 10 runs of `sigregs -n 1000` pass in both modes.

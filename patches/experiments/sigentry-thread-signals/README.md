@@ -29,4 +29,4 @@ Task T4 in [tasks.md](../../../docs/tasks.md).
 
 QEMU, 2026-10-27: `sigregs thread` passes 2000 signals; without the patch
 only 1 signal arrives and SIGUSR1 stays blocked. Details in the
-[test reports](../../../docs/test-reports.md). Not yet on a real Pi.
+[test reports](../../../docs/test-reports.md). On a real Pi 3B+: 10 of 10 runs of `sigregs thread` (1000 signals) pass.

@@ -40,5 +40,6 @@ flips a bit there.
 
 QEMU, 2026-10-27: finds the x1/x2 swap (`x1 changed` after 2-33 signals
 without relibc patch `0004`) and the blocked thread signals (label `3`).
-`process` mode is hit by a `fork()` crash in about half of the runs
-(task T12). Details in the [test reports](../../../docs/test-reports.md).
+Dynamically linked, `sigregs` often failed at start ("no filetable fd
+present", task T12), so it is now linked statically against the `libc.a`
+of our relibc recipe. Details in the [test reports](../../../docs/test-reports.md).

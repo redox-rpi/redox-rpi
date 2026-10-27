@@ -12,6 +12,12 @@ redox-rpi commit, the upstream commits, the patches and the experiments.
 | Experiments, successful or not | [`patches/experiments/<name>/`](../patches/experiments/), each with a README and its result |
 | Image contents | [`config/raspi3bp.toml`](../config/raspi3bp.toml) (network boot), [`config/raspi3bp-sdcard.toml`](../config/raspi3bp-sdcard.toml) (SD card) |
 
+For relibc the same state is also a git branch: `redox-rpi` in
+[redox-rpi/relibc](https://github.com/redox-rpi/relibc) is the pinned
+commit (branch `upstream`) plus `patches/relibc/`, and `exp/<name>` adds a
+relibc experiment. `git format-patch upstream..redox-rpi` gives the patch
+files again. The patch files in this repository are what the build uses.
+
 Packages other than the core components above come as binaries from the
 Redox package server and are not pinned; the manifest records their
 versions and hashes.
