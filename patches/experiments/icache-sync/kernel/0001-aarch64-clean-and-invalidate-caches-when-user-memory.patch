@@ -1,0 +1,122 @@
+From e5a7cd02b398318c210b546524d2969b4cf6698d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 20:29:06 +0000
+Subject: [PATCH] aarch64: clean and invalidate caches when user memory becomes
+ executable
+
+Code written through the data cache is not seen by instruction fetch until
+the data cache is cleaned to the point of unification and the instruction
+cache is invalidated. Do that when mprotect makes pages executable (ld.so)
+and when exec switches a context to its new address space, whose code was
+written through another mapping. The Cortex-A53 instruction cache is VIPT
+and may alias, so invalidate all of it (ic ialluis).
+---
+ src/context/memory.rs | 57 +++++++++++++++++++++++++++++++++++++++++++
+ src/scheme/proc.rs    |  6 +++++
+ 2 files changed, 63 insertions(+)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 74ef9e74..6c29117e 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -256,6 +256,8 @@ impl AddrSpaceWrapper {
+ 
+         let mapper = &mut guard.table.utable;
+         let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
++        #[cfg(target_arch = "aarch64")]
++        let mut synced_code = false;
+ 
+         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
+         let regions = guard
+@@ -310,9 +312,18 @@ impl AddrSpaceWrapper {
+             // think), execute-only memory is also supported.
+ 
+             grant.remap(mapper, &mut flusher, new_flags);
++            #[cfg(target_arch = "aarch64")]
++            if new_flags.has_execute() {
++                clean_dcache_to_pou(mapper, intersection);
++                synced_code = true;
++            }
+             //info!("Mprotect grant became {:#?}", grant);
+             guard.grants.insert(grant);
+         }
++        #[cfg(target_arch = "aarch64")]
++        if synced_code {
++            invalidate_icache();
++        }
+         Ok(())
+     }
+     #[must_use = "needs to notify files"]
+@@ -822,6 +833,52 @@ pub struct UserGrants {
+ }
+ 
+ #[derive(Clone, Copy)]
++/// Make code that was written through the data cache visible to instruction
++/// fetch (redox-rpi #3): clean every mapped page of `span` to the point of
++/// unification, through the kernel's linear mapping so that it works no matter
++/// which mapping the code was written through. Call [`invalidate_icache`]
++/// afterwards.
++#[cfg(target_arch = "aarch64")]
++pub fn clean_dcache_to_pou(mapper: &PageMapper, span: PageSpan) {
++    let ctr: usize;
++    unsafe { core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
++    let line = 4 << ((ctr >> 16) & 0xf);
++    for i in 0..span.count {
++        let page = VirtualAddress::new(span.base.start_address().data() + i * PAGE_SIZE);
++        let Some((phys, _)) = mapper.translate(page) else {
++            continue;
++        };
++        let start = RmmA::phys_to_virt(phys).data();
++        let mut address = start;
++        while address < start + PAGE_SIZE {
++            unsafe { core::arch::asm!("dc cvau, {}", in(reg) address, options(nostack)) };
++            address += line;
++        }
++    }
++}
++
++/// Invalidate all instruction caches of the inner shareable domain. The
++/// Cortex-A53's instruction cache is VIPT and may alias, so invalidating by
++/// address through the linear mapping is not enough.
++#[cfg(target_arch = "aarch64")]
++pub fn invalidate_icache() {
++    unsafe {
++        core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb", options(nostack));
++    }
++}
++
++/// Clean and invalidate the caches for every executable page of an address
++/// space, for code written into it from another address space (exec).
++#[cfg(target_arch = "aarch64")]
++pub fn sync_icache_addr_space(addr_space: &AddrSpace) {
++    for (base, info) in addr_space.grants.iter() {
++        if info.flags().has_execute() {
++            clean_dcache_to_pou(&addr_space.table.utable, PageSpan::new(base, info.page_count()));
++        }
++    }
++    invalidate_icache();
++}
++
+ pub struct PageSpan {
+     pub base: Page,
+     pub count: usize,
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index 4d974bf4..aaf5629d 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -450,6 +450,12 @@ impl KernelScheme for ProcScheme {
+                         arg1,
+                     },
+             } => {
++                // The program was written into `new` through another mapping
++                // (redox-rpi #3).
++                #[cfg(target_arch = "aarch64")]
++                crate::context::memory::sync_icache_addr_space(
++                    &new.acquire_read(token.downgrade()),
++                );
+                 let old_ctx = try_stop_context(context, token, |context, token| {
+                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
+                     regs.set_instr_pointer(new_ip);
+-- 
+2.53.0
+
