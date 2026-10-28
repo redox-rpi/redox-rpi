@@ -1,4 +1,4 @@
-From e5a7cd02b398318c210b546524d2969b4cf6698d Mon Sep 17 00:00:00 2001
+From 6aae4b277d485b87ec32f61b8c86bbb1e69bc45e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Wed, 28 Oct 2026 20:29:06 +0000
 Subject: [PATCH] aarch64: clean and invalidate caches when user memory becomes
@@ -16,7 +16,7 @@ and may alias, so invalidate all of it (ic ialluis).
  2 files changed, 63 insertions(+)
 
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index 74ef9e74..6c29117e 100644
+index 74ef9e74..6ffa19bf 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
 @@ -256,6 +256,8 @@ impl AddrSpaceWrapper {
@@ -47,10 +47,10 @@ index 74ef9e74..6c29117e 100644
          Ok(())
      }
      #[must_use = "needs to notify files"]
-@@ -822,6 +833,52 @@ pub struct UserGrants {
+@@ -821,6 +832,52 @@ pub struct UserGrants {
+     holes_by_size: BTreeSet<(usize, VirtualAddress)>,
  }
  
- #[derive(Clone, Copy)]
 +/// Make code that was written through the data cache visible to instruction
 +/// fetch (redox-rpi #3): clean every mapped page of `span` to the point of
 +/// unification, through the kernel's linear mapping so that it works no matter
@@ -97,9 +97,9 @@ index 74ef9e74..6c29117e 100644
 +    invalidate_icache();
 +}
 +
+ #[derive(Clone, Copy)]
  pub struct PageSpan {
      pub base: Page,
-     pub count: usize,
 diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
 index 4d974bf4..aaf5629d 100644
 --- a/src/scheme/proc.rs
