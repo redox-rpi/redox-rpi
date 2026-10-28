@@ -1,0 +1,84 @@
+From d39f7e5548d5550c6e4c031b342cad0e2576bc15 Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 23:16:26 +0000
+Subject: [PATCH] Debug: count kernel stacks, log every context exit (#31)
+
+---
+ src/context/context.rs |  7 ++++++-
+ src/syscall/process.rs | 15 +++++++++++++--
+ 2 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/src/context/context.rs b/src/context/context.rs
+index f63da921..c7bd2abe 100644
+--- a/src/context/context.rs
++++ b/src/context/context.rs
+@@ -3,7 +3,7 @@ use arrayvec::ArrayString;
+ use core::{
+     mem::{self, size_of, ManuallyDrop},
+     num::NonZeroUsize,
+-    sync::atomic::{AtomicU32, Ordering},
++    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+ };
+ use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
+ 
+@@ -599,9 +599,13 @@ pub struct Kstack {
+     /// naturally aligned, order 4
+     base: Frame,
+ }
++/// Kernel stacks that exist now (debug, #31).
++pub static LIVE_KSTACKS: AtomicUsize = AtomicUsize::new(0);
++
+ impl Kstack {
+     pub fn new() -> Result<Self, Enomem> {
+         let must_be_zero = true;
++        LIVE_KSTACKS.fetch_add(1, Ordering::Relaxed);
+         Ok(Self {
+             base: allocate_p2frame(4, must_be_zero).ok_or(Enomem)?,
+         })
+@@ -625,6 +629,7 @@ impl Drop for Kstack {
+             "trying to deallocate a currently running kstack!"
+         );
+ 
++        LIVE_KSTACKS.fetch_sub(1, Ordering::Relaxed);
+         unsafe { deallocate_p2frame(self.base, 4) }
+     }
+ }
+diff --git a/src/syscall/process.rs b/src/syscall/process.rs
+index 1db548eb..25686272 100644
+--- a/src/syscall/process.rs
++++ b/src/syscall/process.rs
+@@ -35,11 +35,14 @@ use super::usercopy::UserSliceWo;
+ ///
+ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
+     let context_lock = Arc::clone(&*context::current());
++    let exit_info;
+     let (addrspace_opt, mut close_files) = {
+         let mut context = context_lock.write(token.token());
+         let (context, token) = context.token_split();
+-        let close_files = Arc::try_unwrap(mem::take(&mut context.files))
+-            .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
++        let files = mem::take(&mut context.files);
++        let files_refs = Arc::strong_count(&files);
++        let close_files = Arc::try_unwrap(files).map_or_else(|_| FdTbl::new(), RwLock::into_inner);
++        exit_info = (context.name.clone(), context.pid, files_refs);
+         let addrspace_opt = context.set_addr_space(None, token);
+         drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
+         drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
+@@ -79,6 +82,14 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
+         drop(context_ref);
+     }
+     drop(close_files);
++    log::info!(
++        "ctxexit {} pid {} files_refs {} live_kstacks {} contexts {}",
++        exit_info.0,
++        exit_info.1,
++        exit_info.2,
++        crate::context::context::LIVE_KSTACKS.load(core::sync::atomic::Ordering::Relaxed),
++        context::contexts(token.downgrade()).len()
++    );
+     context::switch(token);
+     unreachable!();
+ }
+-- 
+2.53.0
+
