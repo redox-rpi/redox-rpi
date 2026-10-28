@@ -21,7 +21,9 @@
   signal that arrives while x18 holds a value corrupts it. 7 of 8 start
   crashes in QEMU have X18 set to an address in relibc's dynamic linker.
   Experiment [`sigentry-x18`](../../patches/experiments/sigentry-x18/README.md)
-  builds relibc with x18 reserved.
+  builds relibc with x18 reserved: 0 of 700 starts fail in QEMU (before:
+  8 of 700). Not yet tested on a real Pi. Programs and other libraries
+  still use x18.
 
 ## Next
 

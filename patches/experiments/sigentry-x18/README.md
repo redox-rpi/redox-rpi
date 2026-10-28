@@ -50,4 +50,19 @@ scripts/build-image.sh --experiment t1-memmap --experiment sigentry-x18
 
 ## Result
 
-Not run yet.
+`ld.so.1` and `libc.so.6` use x18 in 1 instruction (the `br x18` itself)
+instead of 856.
+
+QEMU, 2026-10-28, `ls` and `pwd` 300 times each, `sha256sum` 100 times,
+each with output to `/dev/null`:
+
+| Build | Starts | Failed |
+|---|---|---|
+| `v0.3.0-dev-12-g61a361f+x951b` (`t1-memmap` only) | 700 | 8 (7 with X18 in relibc code) |
+| `v0.3.0-dev-13-g8cd57b6+x4697` (`t1-memmap` + `sigentry-x18`) | 700 | 0 |
+
+At the old rate, 0 failures in 700 would happen by chance about 3 times
+in 10000. Both runs also show the known `pcid` exception at boot, which
+is unrelated.
+
+Not yet tested on a real Pi.
