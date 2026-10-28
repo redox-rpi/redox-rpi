@@ -96,3 +96,8 @@ the build agent's session.
    `redox-rpi-v<version>-pi3bplus.img.manifest.toml` and `SHA256SUMS`
    (from the release build).
 5. Update the README and `ROADMAP.md` where they name the current release.
+6. **Development tag:** right after a release `vX.Y.0` is tagged, tag the
+   next commit on `main` as `vX.(Y+1).0-dev` (annotated) and push it, so
+   development builds show `vX.(Y+1).0-dev-N-g…`
+   ([versioning.md](versioning.md#development-tags)). Tell the other
+   sessions to `git fetch --tags`.
