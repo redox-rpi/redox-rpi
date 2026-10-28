@@ -38,4 +38,15 @@ scripts/build-image.sh --experiment cpu-clock
   `arm_clock` reads `700000000`; writing `min` and `max` works, `12x`
   fails with "Invalid argument"; the other files stay read-only. The
   throttle watch stays quiet (QEMU does not report throttling).
-- Real Pi: queued as test #13.
+- **Real Pi 3B+** (test #13, build `v0.3.0-dev-31-g115d7fe+x572d`,
+  2026-10-28): the boot log shows `ARM clock 600 -> 1400 MHz`; standard
+  checks pass (0 of 300 starts failed); 50 starts take 8.2–8.7 s at 1400 MHz
+  against 16.4–17.4 s at 600 MHz. The throttle watch logs the soft
+  temperature limit and its end. **But** under continuous load, once the SoC
+  reaches about 60 °C, 3–5 % of starts crash (276 of 5100 and 128 of 4000),
+  against 5 of 4350 at 600 MHz. Details in
+  [test-reports.md](../../../docs/test-reports.md).
+- Not ready as the default. Next: a fixed 1200 MHz, below the soft
+  temperature limit (the run did not happen, devshd stopped answering), and
+  the measured clock (tag `0x30047`) in `arm_clock`, since the requested
+  rate stays at 1400 MHz while the firmware throttles.
