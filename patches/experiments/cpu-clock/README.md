@@ -1,6 +1,6 @@
 # Experiment: CPU clock and throttle watch
 
-Task [T21](../../../docs/tasks.md), planned for v0.3.0. Extends [`rpi-firmwared`](../../../docs/rpi-firmware.md)
+Issue [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21), planned for v0.3.0. Extends [`rpi-firmwared`](../../../docs/rpi-firmware.md)
 (base patch `0018`):
 
 - **ARM clock to its maximum at start.** The firmware starts the ARM cores
@@ -33,4 +33,9 @@ scripts/build-image.sh --experiment cpu-clock
 
 ## Results
 
-None yet.
+- **QEMU** (build `v0.2.0-10-gc489f0c+x097f`, 2026-10-28): the driver
+  logs `ARM clock 700 -> 700 MHz` (QEMU has a fixed ARM clock);
+  `arm_clock` reads `700000000`; writing `min` and `max` works, `12x`
+  fails with "Invalid argument"; the other files stay read-only. The
+  throttle watch stays quiet (QEMU does not report throttling).
+- Real Pi: queued as test #13.
