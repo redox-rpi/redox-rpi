@@ -55,7 +55,12 @@ on the build host:
   reaches about 60 °C, 3–5 % of starts crash (276 of 5100 and 128 of 4000),
   against 5 of 4350 at 600 MHz. Details in
   [test-reports.md](../../../docs/test-reports.md).
-- Not ready as the default. Next: a fixed 1200 MHz, below the soft
-  temperature limit (the run did not happen, devshd stopped answering), and
-  the measured clock (tag `0x30047`) in `arm_clock`, since the requested
-  rate stays at 1400 MHz while the firmware throttles.
+- **Real Pi 3B+ with the x18 fix** (test #19, build
+  `v0.3.0-dev-59-g1559bca+x9906`, experiments `sigentry-x18` and
+  `cpu-clock`, 2026-10-28): standard checks pass, and 30 minutes of start
+  loops at 1400 MHz had **0 of 7000** failures, with the soft temperature
+  limit reached as often as in #13. The crashes in #13 were the x18 bug from
+  #1, not the clock. Ready for v0.3.0 together with the x18 fix.
+- Open: the throttle watch logs every on and off of the soft limit (59 times
+  in 30 minutes); `arm_clock` shows the requested rate, not the measured
+  one (tag `0x30047`).
