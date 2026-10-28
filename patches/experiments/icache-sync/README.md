@@ -42,4 +42,13 @@ scripts/build-image.sh --experiment icache-sync
 
 ## Result
 
-Not run yet.
+QEMU, 2026-10-28, `ls` and `pwd` 300 times each, `sha256sum` 100 times,
+output to `/dev/null`:
+
+| Build | Starts | Failed | Loop time |
+|---|---|---|---|
+| `v0.3.0-dev-64-gb173d02+xdef1` (without this patch) | 700 | 0 | 238 s, 244 s |
+| `v0.3.0-dev-103-g51c4b57+xe42b` (`icache-sync`) | 700 | 0 | 258 s |
+
+QEMU cannot show whether the maintenance is needed; it only shows that
+nothing breaks and roughly what it costs. Not yet tested on a real Pi.
