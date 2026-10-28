@@ -1,19 +1,22 @@
-# Experiment: fatfsd, the FAT boot partition from Redox
+# Experiment: redox-fatfs2, the FAT boot partition from Redox
 
 With the direct firmware boot ([#15](https://github.com/redox-rpi/redox-rpi/issues/15),
 `make-sdcard.sh --direct`), the boot files `kernel8.img`, `initramfs` and
 `config.txt` are on the FAT partition of the SD card. Redox has no working
-FAT driver today: `redox-fatfs` uses the old scheme interface and does not
-start. [`tools/fatfsd`](../../../tools/fatfsd) is a small new daemon that
-serves a FAT partition as a scheme, so Redox can read and write it, for
-example to update the boot files.
+FAT driver today: `redox-fatfs` is unmaintained (last change 2020), uses the
+old scheme interface and does not start. `redox-fatfs2`
+([`tools/redox-fatfs2`](../../../tools/redox-fatfs2)) replaces it: a small
+new daemon, `fatfsd`, built on the maintained `fatfs` crate. It serves a
+FAT partition as a scheme, so Redox can read and write it, for example to
+update the boot files.
 
 ```bash
-scripts/build-image.sh --experiment fatfsd
+scripts/build-image.sh --experiment redox-fatfs2
 ```
 
 The experiment has no patches, only a [`config.toml`](config.toml) that adds
-the `fatfsd` package. There is no service yet, start it by hand:
+the `redox-fatfs2` package (binary `fatfsd`). There is no service yet,
+start it by hand:
 
 ```bash
 fatfsd /scheme/disk.mmc/0p0 boot &    # first partition of the SD card

@@ -1,4 +1,5 @@
-//! fatfsd: serves a FAT partition as a Redox scheme.
+//! fatfsd (redox-fatfs2): serves a FAT partition as a Redox scheme. It
+//! replaces the unmaintained redox-fatfs.
 //!
 //!     fatfsd <disk> <scheme>
 //!     fatfsd /scheme/disk.mmc/0p0 boot     # the Pi boot partition as /scheme/boot
