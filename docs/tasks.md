@@ -8,32 +8,42 @@ USB-serial adapter on its console.
 
 ## Stability
 
-### T1: Measure the remaining start crashes in QEMU (QEMU)
+### T1: Measure the remaining start crashes (QEMU, Pi)
 
-Dynamically linked programs still fail at start: about 2 of 100 starts in
-QEMU, 36 of 300 on a real Pi with relibc patch `0005` (`ld.so` reads a
-malformed ELF file, or `brk #1` with "no filetable fd present"). With the
-`ldso-diagnostics` experiment, which reads every byte instead of one per
-page, the Pi had 0 of 300 ([test reports](test-reports.md)).
+Most of the start crashes counted here before went away with the T12 fix
+(kernel experiment [`sigdelivery-x0`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0)).
+What is left is a different, rarer crash: a **data abort** in the program
+during start, with `ELR` around `0xC0_0000`..`0xC2_0000`.
 
-- **Do:** Build the default netboot image and run the start loop from
-  [debugging-random-crashes.md](debugging-random-crashes.md) for at least
-  1000 starts. Count failures and collect the crash dumps from
-  `images/qrun.log`. Also try an experiment that reads every 64th byte
-  (one per cache line) instead of every byte or one per page.
-- **Done when:** a table with the rates, the build IDs and the crash
-  addresses is in the task's issue.
+| Where | Build | Starts | Failed | Crashes |
+|---|---|---|---|---|
+| QEMU | `v0.2.0-9-g43f697e+x0f50` (`sigdelivery-x0`, relibc `0005`, no `ldso-diagnostics`) | 300 | 4 | data aborts, `ESR_EL1` `0x92000004`/`44`/`4F`, `ELR` `0xC046FC` (twice), `0xC02F78`, `0x1D3F94`; in `ls`, `pwd`, `ps`, `sha256sum` |
+| real Pi 3B+ | the same build | 900 | 1 | `pwd`: `ESR_EL1` `0x92000006` (read, translation fault), `FAR` `0x1281DD0`, `ELR` `0xC15C0C`, `X30` `0xC03D30` |
+| real Pi 3B+, before | `v0.1.0-alpha-14-gf39d20b` (relibc `0005`, no fix) | 300 | 36 | `ld.so` read malformed ELF files |
+
+With the fix the malformed-ELF failures are gone on the Pi. That fits a
+`read` that a signal interrupted and that returned its first argument (the
+fd) instead of the byte count, the same bug as T12; not proven.
+
+- **Do:** find out which object is mapped at `0xC0_0000` in these programs
+  (probably `ld.so` or `libc.so`; compare with the load addresses in the
+  QEMU log), disassemble the `ELR` addresses and find which pointer is bad.
+  Also try an experiment that reads every 64th byte (one per cache line)
+  instead of one per page.
+- **Done when:** the faulting code and the bad pointer are known and in the
+  task's issue.
 
 ### T2: Find the kernel cause of the start crashes (QEMU)
 
-Relibc patch `0005` (touch fresh memory before copying into it) lowers the
-crash rate but does not fix it. The lazy borrow path was ruled out
-(experiment `kernel-borrow-populate`).
+Relibc patch `0005` (touch fresh memory before copying into it) lowered the
+crash rate. Much of what it seemed to fix was T12, which depends on timing.
+The lazy borrow path was ruled out (experiment `kernel-borrow-populate`).
+What is left is T1's data abort.
 
 - **Look at:** page fault handling for anonymous memory in
   `src/context/memory.rs` of the kernel, what happens when a page is
   populated by a write fault from a scheme call in another context.
-- **Done when:** an experiment patch that brings the rate to 0 in 1000
+- **Done when:** an experiment patch that brings the T1 rate to 0 in 1000
   starts without relibc `0005`, with an explanation of why.
 
 ### T3: Instruction cache maintenance after loading code (QEMU, then Pi)
@@ -49,6 +59,8 @@ this; a real Cortex-A53 can execute stale instructions.
 - **Done when:** the experiment builds, the QEMU start loop is not worse,
   and the result on a real Pi (if you have one) is in
   [test-reports.md](test-reports.md).
+- **Note (2026-10-28):** no crash seen so far points at stale
+  instructions: the T1 crashes are data aborts, and they happen in QEMU too.
 
 ### T4: Signal mask bug in the aarch64 signal entry (Pi)
 
@@ -68,18 +80,13 @@ fixes it and passes in QEMU and on a real Pi.
 
 ### T5: Programs exit with code 1 and print nothing (QEMU or Pi)
 
-`ps` straight to the terminal often exits with code 1 and no output;
-`ps | cat` and `ps > file` work. `reboot` showed the same: exit code 1, no
-message, it took several attempts. Seen over devshd on the Pi.
+`ps` straight to the terminal often exited with code 1 and no output;
+`ps | cat` and `ps > file` worked. `reboot` showed the same. **Cause found:
+T12.** With kernel experiment [`sigdelivery-x0`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0),
+on a real Pi 3B+, `ps` straight to the terminal works 80 times out of 80
+and `reboot` 5 times out of 5 ([test reports](test-reports.md)).
 
-The serial console shows the cause: these are start failures, the same as
-T12. On a real Pi 3B+, `reboot` crashed twice and `ps` once, each at
-`relibc_start_v1+0xB34`, which is the `brk #1` after
-`expect("no filetable fd present")`. Details in T12.
-
-- **Look at:** T12. What is left here: why `ps` straight to the terminal
-  fails much more often than `ps | cat`.
-- **Done when:** T12 is fixed and `ps` and `reboot` work every time.
+- **Done when:** `sigdelivery-x0` is on `main`.
 
 ### T11: devshd sessions leave `login` processes behind (Pi or QEMU)
 
@@ -90,52 +97,49 @@ After about 30 devshd sessions, 31 `login` processes were still running.
 - **Done when:** `ps | cat` shows no extra `login` after 20 sessions with
   `scripts/devsh.py`.
 
-### T12: Programs fail at start with "no filetable fd present" (QEMU, Pi)
+### T12: Programs fail at start with exit code 1 (QEMU, Pi) — cause found
 
-A dynamically linked `sigregs` dies before `main` in about half of the
-starts in QEMU and in every start on a real Pi: `relibc_start_v1` stops at
-`.expect("no filetable fd present")` in `src/start.rs` (`brk #1`,
-exception class `0x3c`, nothing printed, exit code 1). The thread fd from
-the same auxv is there, the filetable fd is not. `ld.so` found it just
-before (`src/ld_so/start.rs` has the same check). Likely the same as the
-`brk #1` crashes in T1. Linked statically, `sigregs` starts every time.
+Dynamically linked programs died before `main` with `brk #1`, nothing
+printed, exit code 1: `ps` straight to the terminal, `reboot`,
+`timesync -n`, a dynamically linked `sigregs`.
 
-**Confirmed on a real Pi as the cause of T5.** These dumps were recorded on
-the serial console (`logs/serial.log` on the build host, archived in
-`logs/serial/` since 2026-10-28):
+**Cause:** a kernel bug on aarch64. When the kernel sets up a signal
+handler, it saves the interrupted instruction pointer and one register,
+which the signal entry in relibc restores at the end. On aarch64 that
+register is `x0`, which is also a syscall's return value. When the signal
+handler is set up *during* a syscall, `x0` still holds the first argument,
+and the program gets that back instead of the result.
 
-| Program | Image | ELR | `X17` (PLT target) |
-|---|---|---|---|
-| `reboot` | `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` | `0x1C8E08` | `0x1C82D4` |
-| `reboot` | the same image, after a new boot | `0x1C8E08` | |
-| `ps` | `v0.1.0-alpha-52-ga4ba2e3+ldso-diagnostics+sdhost-driver+sdhost-boot` | `0x1D8E08` | |
+How T12 showed it:
+- `relibc_start_v1` starts with `relibc_verify_host()`, a `SYS_YIELD`
+  with all arguments `!0` that aborts if the result is an error.
+- The shell sends SIGCONT to a new foreground job. When it arrives during
+  that yield, the yield "returns" `-1` (`EPERM`), and the program aborts.
+- This explains why `ps | cat` does not fail: no SIGCONT reaches `ps`
+  in a pipeline at that moment.
+- The compiler shares that `brk #1` with the
+  `expect("no filetable fd present")` next to it. That is why it looked
+  like a missing filetable fd (the earlier analysis here was wrong; the
+  crash dumps at `relibc_start_v1+0xB34` were right).
+- Proof: the kernel log of experiment
+  [`t12-kernel-diag`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/t12-kernel-diag) shows each failing start with
+  saved ip right after the `svc` and saved `x0` = `-1`.
 
-- **Where:**
-  - All three have `ESR_EL1` `0xF2000001` (`brk #1`) and the same page
-    offset `0xE08`, so the crash is in `libc.so`.
-  - `X17` is `relibc_start_v1`, so the crash is at
-    `relibc_start_v1+0xB34`. In the `libc.so` from the build, that address
-    is the `brk #1` after
-    `expect_failed("no filetable fd present")` (23 bytes).
-  - The link register points into the program's own start code.
-- **Not hidden by `ldso-diagnostics`:** both images have that experiment
-  and still crash here.
-- **Depends on how the program starts:**
-  - In the same session, `ls` and `pwd` started 100 times out of 100.
-  - `ps` straight to the terminal fails most of the time, while
-    `ps | cat` rarely fails.
-  - This points to the way the program is started, more than to random
-    memory corruption.
+**Fix:** kernel experiment [`sigdelivery-x0`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0) (branch
+`t12-auxv-dump`). After each syscall it checks whether ELR changed. If it
+did, it also stores the result where the signal entry restores `x0` from.
 
-- **Do:** reproduce with the dynamically linked `sigregs` (build it with
-  `template = "cargo"`, see `scripts/build-image.sh`), find out whether the
-  auxv on the new stack is incomplete when `ld.so` hands over to the
-  program, or whether `relibc_start_v1` reads it from the wrong place.
-  An experiment that prints the auxv in `ld.so` before the handover and in
-  `relibc_start_v1` before the `expect` shows this on the serial console.
-  Compare `ps` with `ps | cat`.
-- **Done when:** the cause is known, with an experiment patch that lets the
-  dynamically linked `sigregs` start 100 times out of 100 on the Pi.
+| | QEMU, `ps` 180 times | real Pi 3B+ |
+|---|---|---|
+| without the fix | 37 failed (`ps \| cat` 0) | `ps-tty` fails, `reboot` needs several attempts |
+| with the fix | 0 failed | `ps-tty` passes, `ps` 80 of 80, `reboot` 5 of 5, starts 0 of 300 |
+
+Any other syscall during which a signal arrives had the same problem, for
+example `close` (seen in the kernel log). Such failures are fixed by the
+same patch.
+
+- **Done when:** `sigdelivery-x0` is on `main` as a kernel patch. Upstream:
+  the user decides whether to report it to Redox.
 
 ## Hardware
 

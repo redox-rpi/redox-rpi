@@ -335,3 +335,46 @@ filesystem is on the card. Test #12.
 
 RedoxFS logs "No such file or directory" for `disk.mmc/0` and `0p0` while it
 looks for the root filesystem; those are not RedoxFS, it mounts `0p1` next.
+
+## 2026-10-28: `v0.2.0-9-g43f697e+xe0ce`
+
+Built 2026-10-28T07:49:07Z, `libc.so` `30bd563f098b1253…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `sigdelivery-x0`, `timesync`. Kernel experiment sigdelivery-x0 (T12 fix); the SD card in the Pi is the v0.3.0-rc1 card, without a data partition for the netboot image.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.2.0-9-g43f697e+xe0ce |
+| manifest | pass | build ID and libc.so hash match netboot-v0.2.0-9-g43f697e+xe0ce.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | **fail** | got ion: pipeline execution error: failed to redirect stdout to file '/scheme/data/pi-test.txt': No such device (os error 19) |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: `v0.2.0-9-g43f697e+x0f50`
+
+Built 2026-10-28T07:45:10Z, `libc.so` `b5b10aaf4262f509…`, real Pi 3B+ over netboot. Experiments: `sigdelivery-x0`, `timesync`. Kernel experiment sigdelivery-x0 without ldso-diagnostics (relibc 0005 only), for the T1 start rate; the SD card is the netboot card.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.2.0-9-g43f697e+x0f50 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.2.0-9-g43f697e+x0f50.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: T12 fix, further runs on the real Pi
+
+Same builds as above, run over devshd, crashes read from the serial console.
+
+| Build | Test | Result |
+|---|---|---|
+| `v0.2.0-9-g43f697e+xe0ce` | `ps` straight to the terminal | 80 of 80 with exit code 0 (20 in one session, 60 in three more) |
+| `v0.2.0-9-g43f697e+xe0ce` | `reboot` over devsh | 5 of 5 rebooted at the first attempt, no `brk` |
+| `v0.2.0-9-g43f697e+x0f50` | `pi-test.py --starts 600` | 1 of 600 failed: `pwd`, data abort (T1), `ELR` `0xC15C0C`, `FAR` `0x1281DD0` |
+
+Seen on the side, not counted as T12:
+- `ion` (PID 40, probably the shell of an earlier devsh session) ended in
+  `abort()` once (`X17` = `abort` in `libc.so`). Its message went to the
+  session, not the serial console.
+- Twice a devsh login did not get past `redox login:` (two prompts, no
+  echo); see T11.
