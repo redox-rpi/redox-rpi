@@ -31,11 +31,17 @@ candidate failed. The release itself has no suffix (see
 - The build agent builds in its own clone `~/redox-rpi-rel` on homenodellm,
   never in the shared clone `~/redox-rpi`.
 - It checks out the requested commit on a branch `release-v<version>` and
-  runs `scripts/build-image.sh` with the requested options. No
-  `--allow-dirty`: a candidate must be reproducible from its manifest.
+  runs `scripts/build-image.sh --release v<version>-rc<N>` with the
+  requested options. No `--allow-dirty`: a candidate must be reproducible
+  from its manifest.
+- `--release` puts the candidate's name above the login prompt, in
+  `/etc/redox-rpi-release` and in the manifest
+  ([versioning.md](versioning.md#release-name-in-the-image)), so a booted
+  Pi shows which candidate it runs. The first candidate with it is
+  v0.3.0-rc2.
 - The build waits for other builds on the host (`build/.build-image.lock`).
 - `devshd` stays out of candidate and release images.
-- The build ID (`git describe` plus the experiment hash) is recorded with
+- The build ID (`git describe` plus the experiment hash) is shown next to
   the candidate's name, so `v0.3.0-rc2` can be traced to an exact build.
 
 ## Results
@@ -70,9 +76,13 @@ the Pi.
 
 ## Release
 
-A candidate that passed its Pi test becomes the release, unchanged: the
-release image is the candidate's image, not a new build. Each step below
-happens only after the user approves it in the build agent's session.
+A candidate that passed its Pi test becomes the release. The release image
+is built again from the candidate's commit with the same options, only with
+`--release v<version>` instead of `--release v<version>-rc<N>`, so it gets
+the same build ID. Before it is published, it boots in QEMU and once on
+the Pi, and its manifest must list the same patches and package hashes as
+the candidate's. Each step below happens only after the user approves it in
+the build agent's session.
 
 1. **Release notes** in `docs/releases/v<version>.md`, like
    [v0.2.0](releases/v0.2.0.md): status line, what is new, what works, known
@@ -84,5 +94,5 @@ happens only after the user approves it in the build agent's session.
    with the notes as its text and three files:
    `redox-rpi-v<version>-pi3bplus.img.xz`,
    `redox-rpi-v<version>-pi3bplus.img.manifest.toml` and `SHA256SUMS`
-   (the candidate's files, renamed, with the sums computed again).
+   (from the release build).
 5. Update the README and `ROADMAP.md` where they name the current release.

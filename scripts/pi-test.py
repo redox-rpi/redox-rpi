@@ -6,7 +6,8 @@ Usage:
                        [--report docs/test-reports.md] [--note <text>]
 
 Checks, in this order:
-  version   /etc/redox-rpi-release is readable and names a build ID
+  version   /etc/redox-rpi-release is readable and names a build ID (and the
+            release name, if it has one)
   manifest  /etc/redox-rpi-manifest matches --manifest (build ID, libc hash)
   ps        ps runs and lists processes (output piped)
   ps-tty    ps writes its list straight to the terminal
@@ -119,7 +120,10 @@ def main():
         # Images built before the short build IDs name the experiments in
         # the ID itself and have no EXPERIMENTS line.
         info["experiments"] = release.get("EXPERIMENTS", "").strip('"')
-        check("version", info["build_id"] != "?", info["build_id"])
+        # Release candidates and releases also have RELEASE (v0.3.0-rc2).
+        info["release"] = release.get("RELEASE", "").strip('"')
+        title = f"{info['release']} ({info['build_id']})" if info["release"] else info["build_id"]
+        check("version", info["build_id"] != "?", title)
 
         libc = sh.run("sha256sum /usr/lib/libc.so")
         info["libc"] = libc[0].split()[0] if libc else "?"
@@ -171,7 +175,8 @@ def main():
     if args.report:
         date = datetime.date.today().isoformat()
         with open(args.report, "a") as f:
-            f.write(f"\n## {date}: `{info.get('build_id', '?')}`\n\n")
+            name = f"{info['release']}, " if info.get("release") else ""
+            f.write(f"\n## {date}: {name}`{info.get('build_id', '?')}`\n\n")
             f.write(f"Built {info.get('built', '?')}, `libc.so` `{info.get('libc', '?')[:16]}…`, "
                     f"real Pi 3B+ over netboot.")
             if info.get("experiments"):
