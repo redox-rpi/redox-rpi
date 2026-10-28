@@ -264,3 +264,53 @@ the serial console and the dnsmasq log.
 
 So a card for SD tests needs no boot files: the Pi boots from the network
 whatever is on the card.
+
+## 2026-10-27: `v0.1.0-alpha-76-g4178ec5+xbfca`
+
+Built 2026-10-27T19:39:18Z, `libc.so` `5a6866e092653007…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `rtl8152`, `sdhost-driver`, `timesync`. Release candidate v0.2.0-alpha (rc1), test #9.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.1.0-alpha-76-g4178ec5+xbfca |
+| manifest | pass | build ID and libc.so hash match netboot-v0.1.0-alpha-76-g4178ec5+xbfca.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | **fail** | 0 lines straight to the terminal, rc=1 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Manual checks on the same boot:
+
+| Check | Result | Detail |
+|---|---|---|
+| rpi-firmware | pass | `board`: Pi 3 Model B+ (revision `0x00a020d3`), 1 GiB; `temperature` 47774 (47.8 °C); `throttled` `0x00000000`; `clocks`: ARM 600 MHz (max 1400), core 250 MHz (max 400), EMMC 200 MHz |
+| timesync | pass | `timesync -n`: 20:08:02 UTC from pool.ntp.org, `date` the same as the build host; daemon running, `/scheme/data/timesync.last` written. Reboot without network not done on the Pi (passed in QEMU) |
+| sdhost by hand | **fail** | `bcm2835-sdhostd disk.sdhost &` starts and lists `0p0 0p1`, but `dd` reads nothing, later `dd` from `disk.sdhost` hangs with no output; devshd logins hang (root `redoxfs` busy). Reset over the serial console. `sdhost-driver` is left out of the release (rc2) |
+
+## 2026-10-27: `v0.1.0-alpha-76-g4178ec5+x83a0`
+
+Built 2026-10-27T20:24:20Z, `libc.so` `5a6866e092653007…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `rtl8152`, `timesync`. Release candidate v0.2.0-alpha (rc2, without sdhost-driver), test #9.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.1.0-alpha-76-g4178ec5+x83a0 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.1.0-alpha-76-g4178ec5+x83a0.toml |
+| ps | pass | 50 processes (piped) |
+| ps-tty | **fail** | 0 lines straight to the terminal, rc=1 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Manual checks on the same boot: `rpi-firmware` pass (Pi 3 Model B+, 48.3 °C,
+`throttled` `0x00000000`, ARM 600/1400 MHz, core 250/400 MHz); timesync
+pass (`date` 20:35:51 UTC, the same as the build host). rc2 is rc1 without
+`sdhost-driver`.
+
+USB keyboard: pass, login on HDMI works (keyboard plugged in before boot).
+
+Pi Zero 2 W, rc2 SD card image, with the RTL8152 Ethernet hub and a LAN
+cable, checked by the user: boots to the login, the network comes up, `date`
+shows the current time (Wed Oct 28 06:29:22 UTC 2026). `timesync -n` printed
+`2026-10-28 06:32:26 UTC from pool.ntp.org (clock not set)`, so the Zero
+reaches the internet through the RTL8152. The first three `timesync -n` runs
+printed nothing: start failures as in T12 (`timesync` is linked dynamically,
+with `/lib/ld.so.1`). The address
+was not read: the path was typed as `/schema/…` instead of `/scheme/…`.
