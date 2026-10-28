@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh" >&2; exit 1; }
 mkdir -p "$out"
+out="$(cd "$out" && pwd)"
 image="$(cd "$(dirname "$image")" && pwd)/$(basename "$image")"
 
 tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
