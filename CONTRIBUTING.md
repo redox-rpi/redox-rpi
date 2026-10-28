@@ -19,6 +19,9 @@ documentation and scripts may go to `main` directly.
 On the shared build host, do not switch the branch of the shared clone:
 build a branch in a clone of your own.
 
+Release candidates and releases are built by one build agent only; see
+[docs/release-process.md](docs/release-process.md) for how to request one.
+
 ## Workflow
 
 1. **Pick a task** from [docs/tasks.md](docs/tasks.md) or the
