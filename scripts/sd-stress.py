@@ -143,18 +143,19 @@ class SerialShell:
 
 def hashes(sh, patterns, tries=3):
     """SHA-256 of the files matching the glob `patterns` on the Pi, as
-    {path: hash}. Ion expands the globs, so the command lines stay short."""
+    {path: hash}. Ion expands the globs, so the command lines stay short.
+    A glob that prints nothing (a failed program start) is tried again."""
     result = {}
-    for _ in range(tries):
-        found = {}
-        for pattern in patterns:
+    for pattern in patterns:
+        for _ in range(tries):
+            found = {}
             for line in sh.run("sha256sum " + pattern, timeout=600):
                 match = HASH_LINE.match(line)
                 if match:
                     found[match.group(2)] = match.group(1)
-        result.update(found)
-        if found:
-            break
+            result.update(found)
+            if found:
+                break
     return result
 
 
@@ -266,7 +267,9 @@ def main():
            timeout=60 + quarter)
     log(f"write: {args.small} small files, {quarter} deleted, {quarter} new, {time.time() - t:.0f} s")
 
-    patterns = [f"{d}/*.bin", f"{d}/s*", f"{d}/t*"]
+    # One glob per first digit: at most about 110 files per sha256sum (750
+    # in one command hung the Pi on 2026-10-28).
+    patterns = [f"{d}/*.bin"] + [f"{d}/{p}{n}*" for p in "st" for n in range(1, 10)]
     reference = hashes(sh, patterns)
     expected = 1 + (args.small - quarter) + quarter
     log(f"reference: {len(reference)} hashes ({expected - len(reference)} files not written, start failures)")
