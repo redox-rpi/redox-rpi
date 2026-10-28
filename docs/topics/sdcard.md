@@ -17,10 +17,15 @@
 
 - [#6](https://github.com/redox-rpi/redox-rpi/issues/6) sdhost as the default driver: real core clock,
   experiments to base patches, a check on the Zero 2 W.
-- [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 36 times the data for small writes.
 
 ## Later
 
+- [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 28 times the data for 4 KiB writes
+  (milestone v0.4.0). The same on x86_64 as on aarch64 (QEMU,
+  `scripts/redoxfs-write-amp.py`, RedoxFS 0.9.1 `c988cb8`, the newest
+  upstream), so an upstream problem; the user reports it to Redox. Related upstream work: RedoxFS
+  [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51) and
+  [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57).
 - [#24](https://github.com/redox-rpi/redox-rpi/issues/24) a small release image that grows to the whole card on the
   first boot, with a welcome app (milestone v0.4.0).
 - sdhost with DMA instead of PIO, after the DMA plan in [#21](https://github.com/redox-rpi/redox-rpi/issues/21)

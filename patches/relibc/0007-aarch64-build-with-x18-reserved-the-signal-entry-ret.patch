@@ -1,0 +1,32 @@
+From b9f64410867b69b46ce52dbf7a542e02a933e64b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 10:45:57 +0000
+Subject: [PATCH] aarch64: build with x18 reserved, the signal entry returns
+ with br x18
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Makefile | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index f67f7af2..dfdb3082 100644
+--- a/Makefile
++++ b/Makefile
+@@ -24,6 +24,13 @@ endif
+ TARGET_HEADERS?=$(BUILD)/include
+ export CFLAGS=-I$(TARGET_HEADERS)
+ 
++# The aarch64 signal entry returns with `br x18`, so compiled code must
++# never keep a value in x18 (redox-rpi #1).
++ifeq ($(TARGET),aarch64-unknown-redox)
++export RUSTFLAGS+=-Zfixed-x18
++CFLAGS+=-ffixed-x18
++endif
++
+ PROFILE?=release
+ 
+ HEADERS_UNPARSED=$(shell find src/header -mindepth 1 -maxdepth 1 -type d -not -name "_*" $(EXCEPT_MATH) -printf "%f\n")
+-- 
+2.53.0
+

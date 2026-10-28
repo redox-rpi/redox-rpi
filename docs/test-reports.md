@@ -421,3 +421,156 @@ A first sdhcid run on `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`
 is discarded: that image still has the T12 start crash, and the Pi stopped
 responding at `sha256sum` over 750 files (power cycle needed). The script now
 hashes at most about 110 files per command.
+
+## 2026-10-28: `v0.3.0-dev-31-g115d7fe+x572d` (CPU clock, test #13)
+
+Built 2026-10-28T13:33:47Z, `libc.so` `b59ed57f5ec14068…`, real Pi 3B+ over
+netboot. Experiments `timesync`, `cpu-clock`, `rtl8152`: the stable image
+plus `cpu-clock` ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)).
+The boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-31-g115d7fe+x572d |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-31-g115d7fe+x572d.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed (at 1400 MHz, 54 s for the whole run) |
+
+Speed, same boot, clock set through `/scheme/rpi-firmware/arm_clock`, 50
+starts (`ls`, `pwd`) per round, three rounds each:
+
+| ARM clock | Time for 50 starts | Failed | Temperature after |
+|---|---|---|---|
+| 600 MHz (`min`) | 16.4, 17.4, 17.4 s | 0 | 51.0–51.5 °C |
+| 1400 MHz (`max`) | 8.3, 8.2, 8.7 s | 0 | 55.8 °C |
+
+Long run: start loops without a pause, each time after a fresh boot:
+
+| ARM clock | Duration | Starts | Failed | Temperature | Throttling |
+|---|---|---|---|---|---|
+| 1400 MHz | 30 min | 5100 | **276 (5.4 %)** | 57.5–60.1 °C | soft temperature limit reached again and again |
+| 600 MHz | 30 min | 4350 | 5 (0.1 %) | 48.3–52.6 °C | none |
+| 1400 MHz (repeat) | 20 min | 4000 | **128 (3.2 %)** | 56.4–60.1 °C | as in the first run |
+
+- At 1400 MHz the first 600–900 starts pass. Failures begin when the SoC
+  reaches about 59 °C and the firmware starts to use its soft temperature
+  limit (`throttled` bit 19 set, bit 3 on and off; on the 3B+ the firmware
+  lowers clock and voltage there). The failures are the known start crashes
+  ([#1](https://github.com/redox-rpi/redox-rpi/issues/1), [#2](https://github.com/redox-rpi/redox-rpi/issues/2)): exception
+  class `0x24` (data abort) and `0x3c` (`brk #1`), on all four cores.
+- The throttle watch works: the log shows
+  `rpi-firmwared: warning: soft temperature limit (flags 0x00080008, 60.1 °C, ARM 1400 MHz)`
+  and `rpi-firmwared: no longer throttled` each time.
+- `arm_clock` keeps showing the requested 1400 MHz while the firmware
+  throttles; the clock it really runs at is a different property (measured
+  clock, tag `0x30047`).
+- devshd sessions broke off several times during the long runs; after about
+  3 hours it gave no output any more.
+- A run at a fixed 1200 MHz (below the soft limit) was planned but did not
+  run: devshd stopped answering.
+
+Result: the full clock doubles the speed but makes the start crashes
+frequent under load. Not ready as the default; see #20.
+
+## 2026-10-28: #1 x18 fix, `v0.3.0-dev-34-g04f0123+x4d10`, 1000 starts
+
+Test #17 for [#1](https://github.com/redox-rpi/redox-rpi/issues/1): the
+stable image's experiments (`timesync`, `rtl8152`) plus
+[`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18), which builds relibc with x18 reserved. Real Pi 3B+
+over netboot, default ARM clock (600 MHz), one boot,
+`scripts/pi-test.py --starts 250` five times in a row.
+
+| Chunk | Checks | Starts | Failed |
+|---|---|---|---|
+| 1 | version, manifest, ps, ps-tty, sdcard pass | 250 | 0 |
+| 2 | devsh gave no output for the first command (`cat /etc/redox-rpi-release`); nothing started | 0 | – |
+| 3 | all pass | 250 | 0 |
+| 4 | all pass | 250 | 0 |
+| 5 | all pass | 250 | 0 |
+| **Total** | | **1000** | **0** |
+
+No `UNHANDLED EXCEPTION` on the serial console during the run. For
+comparison: the stable image without the fix had 0 of 300, and 1 of 900
+on `v0.2.0-9-g43f697e+x0f50` (T12 fix only); QEMU went from 8 of 700 to 0
+of 700 with the fix. Not tested at 1400 MHz, where the stable image fails
+3-5 % of the starts (test #13).
+
+## 2026-10-28: `v0.3.0-dev-59-g1559bca+x9906` (CPU clock with the x18 fix, test #19)
+
+Built 2026-10-28T16:53:25Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over
+netboot. Experiments `timesync`, `rtl8152`, `sigentry-x18`
+([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) and `cpu-clock`
+([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the same test as
+#13, now with the x18 fix. The boot log shows
+`rpi-firmwared: ARM clock 600 -> 1400 MHz`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-59-g1559bca+x9906 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-59-g1559bca+x9906.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Long run at 1400 MHz from a fresh boot
+(`patches/experiments/cpu-clock/clock-soak.py`, 30 minutes):
+
+| Build | Starts | Failed | Temperature | Throttling |
+|---|---|---|---|---|
+| with the x18 fix (this test) | 7000 | **0** | 56.9–60.7 °C | soft temperature limit on and off, as in #13 |
+| without it (#13) | 5100 | 276 (5.4 %) | 57.5–60.1 °C | the same |
+
+- No unhandled exception in the serial log during the run, and no devshd
+  session broke off.
+- The crashes under load in #13 were the x18 bug from #1, made more frequent
+  by load and speed, not a fault of the higher clock: with the fix the soft
+  temperature limit is reached just as often and nothing fails.
+- The throttle watch logged the soft limit 59 times in 30 minutes (each with
+  a "no longer throttled"). Correct, but a lot of lines for a state the
+  firmware handles itself.
+
+Result: **pass**. With the x18 fix, 1400 MHz is ready for v0.3.0.
+
+## 2026-10-28: `v0.3.0-dev-52-g7df70f9+xcb30` (dwc2d with interrupts, test #5)
+
+Branch `dwc2-interrupts` (7df70f9) with `--experiment timesync --experiment
+rtl8152 --experiment pi-clean-boot --experiment dwc2-interrupts`, real Pi
+3B+ over netboot. The build predates the x18 fix on `main` (e2b987b), so
+start failures of about 1 % would not have been a `dwc2d` problem; there
+were none.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-52-g7df70f9+xcb30 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-52-g7df70f9+xcb30.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | pass | 44 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+- The boot log shows `dwc2d: interrupt /scheme/irq/phandle-1/1,9`: the
+  driver waits for the controller's interrupt on the real BCM2837, through
+  the LAN7800 (`link up after 1710 ms`). No "unexpected irq" lines.
+- Network over the LAN7800: 2000 lines of output through devshd in 2 s.
+- CPU time of `dwc2d` (`ps`, user + system): 2.85 s in 62 s with nothing
+  to do, about 5 % of one core. The polling driver keeps one core busy all
+  the time (4 min 21 s in about 80 s in QEMU, see the experiment's README).
+  The rest is mostly the keyboard: 100 polls per second, each a split
+  transaction through the hub that waits by spinning.
+- USB keyboard: the maintainer logged in on the HDMI console, ran `ls`
+  and `ps`; both worked.
+- `pi-clean-boot` (#18): no `pcid`, `pcid-spawner`, `audiod` or `rtcd`
+  messages in the boot log.
+- First boot with the Anker 565 hub plugged in but no cable on it: `dwc2d`
+  took the hub's RTL8153B as the network adapter (it is preferred over the
+  LAN7800), had no link, `dhcpd` timed out and did not retry when the
+  cable was plugged in later. Netbooting through the hub, U-Boot's r8152
+  driver fails the HTTP download (`Rx: failed to receive: -5`). Passed on
+  to test #4.
+- Afterwards, on the stable image, devshd logins hung (#11), so the
+  polling driver's CPU time was not measured on the Pi.
+
+Result: **pass**.
