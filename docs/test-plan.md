@@ -80,6 +80,29 @@ with `scripts/pi-test.py`: all checks pass, 0 of 300 starts failed
 points to it.
 <!-- /stable-image -->
 
+### Nightly update
+
+**The Pi may reboot at night.** Every night at 03:30 UTC the build host runs
+[`scripts/update-stable.sh`](../scripts/update-stable.sh) (systemd user
+timer `redox-stable.timer`, [config/redox-stable.timer](../config/redox-stable.timer)):
+
+1. It stops if `patches/`, `config/`, `scripts/` and `tools/` on
+   `origin/main` are unchanged since the stable image's commit, or if a test
+   in the queue is marked **on the Pi**. A test that runs over night must be
+   marked so.
+2. It builds `origin/main` in `~/redox-rpi-stable` with the options in
+   [config/stable-image.conf](../config/stable-image.conf), stages it,
+   resets the Pi and runs `scripts/pi-test.py`.
+3. Pass: the image becomes the stable image. The script backs it up, updates
+   the block above, appends the report to [test-reports.md](test-reports.md)
+   and pushes both to `main`.
+4. Fail: the previous stable image is staged again, and the issue "Nightly:
+   main fails on the Pi" (`topic:ci`, `needs:pi`) gets the build ID and the
+   failing checks.
+
+Logs: `~/redox-rpi/logs/stable/<date>.log` on the build host. Run it by hand
+with `scripts/update-stable.sh --force --no-push` (no commit, no issue).
+
 To restore the stable image after a test:
 
 ```bash
