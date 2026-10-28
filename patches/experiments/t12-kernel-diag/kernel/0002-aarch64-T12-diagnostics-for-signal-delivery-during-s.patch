@@ -1,24 +1,27 @@
-From 996dd5f8adfd0ed9588be660a08e742ebb8fb663 Mon Sep 17 00:00:00 2001
+From 3edc2f5b9d7bae66aedd57fc59b6f892baf9ee8f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 07:32:58 +0000
 Subject: [PATCH] aarch64: T12 diagnostics for signal delivery during syscalls
 
 ---
- src/arch/aarch64/interrupt/exception.rs | 21 +++++++++++++++++++++
- src/context/signal.rs                   |  7 +++++++
- 2 files changed, 28 insertions(+)
+ src/arch/aarch64/interrupt/exception.rs | 24 ++++++++++++++++++++++++
+ src/context/signal.rs                   | 10 ++++++++++
+ 2 files changed, 34 insertions(+)
 
 diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
-index c6ec44b1..36673132 100644
+index c6ec44b1..7dfb7fc3 100644
 --- a/src/arch/aarch64/interrupt/exception.rs
 +++ b/src/arch/aarch64/interrupt/exception.rs
-@@ -197,6 +197,27 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
+@@ -197,6 +197,30 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
                      scratch.x5, &mut token,
                  );
                  stack.scratch.x0 = ret;
 +                // Diagnostics (redox-rpi, T12)
 +                let nr = stack.scratch.x8;
-+                if nr == 158 && stack.scratch.x1 == !0 {
++                if nr == 158
++                    && stack.scratch.x1 == !0
++                    && (ret != 0 || stack.scratch.x0 != 0 || stack.iret.elr_el1 != elr)
++                {
 +                    let regs_addr = {
 +                        let context_lock = crate::context::current();
 +                        let mut context = context_lock.write(token.token());
@@ -41,23 +44,33 @@ index c6ec44b1..36673132 100644
                      // A signal handler was set up during the syscall.
                      crate::context::signal::set_saved_syscall_ret(ret, &mut token);
 diff --git a/src/context/signal.rs b/src/context/signal.rs
-index cd6215c6..787668a7 100644
+index cd6215c6..82e8202c 100644
 --- a/src/context/signal.rs
 +++ b/src/context/signal.rs
-@@ -66,6 +66,13 @@ pub fn signal_handler(token: &mut CleanLockToken) {
-     }
- 
+@@ -68,6 +68,7 @@ pub fn signal_handler(token: &mut CleanLockToken) {
      let sigh_instr_ptr = st.user_handler.get();
+ 
+     let mut context = context.upgrade();
++    let ctx_name = context.name.clone();
+     let Some(regs) = context.regs_mut() else {
+         // TODO: is this even reachable?
+         trace!("No registers, returning");
+@@ -76,6 +77,15 @@ pub fn signal_handler(token: &mut CleanLockToken) {
+ 
+     let ip = regs.instr_pointer();
+     let archdep_reg = regs.sig_archdep_reg();
 +    // Diagnostics (redox-rpi, T12)
 +    error!(
-+        "t12diag: deliver, pending {:#x}, inside syscall {}, handler {:#x}",
-+        thread_ctl.currently_pending_unblocked(proc_ctl),
++        "t12diag: deliver to {}, inside syscall {}, saved ip {:#x} x0 {:#x}, handler {:#x}",
++        ctx_name,
 +        crate::percpu::PercpuBlock::current().inside_syscall.get(),
++        ip,
++        archdep_reg,
 +        sigh_instr_ptr
 +    );
  
-     let mut context = context.upgrade();
-     let Some(regs) = context.regs_mut() else {
+     regs.set_instr_pointer(sigh_instr_ptr);
+ 
 -- 
 2.53.0
 
