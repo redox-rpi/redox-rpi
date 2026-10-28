@@ -153,11 +153,14 @@ Redox does not follow symlinks into another scheme. Mounting a RedoxFS
 partition by path and finding the data again after a reboot is tested in
 QEMU; the netboot card's own layout only on real hardware.
 
-## Without SD card (firmware network boot, untested)
+## Without SD card (firmware network boot)
 
 The Pi 3B+ boot ROM can network-boot by itself when there is no SD card in
 it: it fetches the Pi firmware over TFTP, the firmware loads U-Boot, and
-U-Boot continues as above. Not yet tried on our Pi.
+U-Boot continues as above. Tested on our Pi 3B+ with the build server on
+Wi-Fi ([test report](test-reports.md)): it boots to the login prompt
+without card, and with the netboot card back in it boots from the card as
+before.
 
 ```
 Boot ROM ─ DHCP (router + dnsmasq proxy) ─ TFTP bootcode.bin
@@ -197,12 +200,14 @@ To test: take the SD card out, power on, and watch
 files the Pi asks for. If it asks for `<serial>/start.elf`, the files can go
 there instead with `--serial <serial>`, so each Pi gets its own.
 
-Open:
+Notes:
 
-- The 3B+ ships with network boot enabled in its OTP; whether ours boots
-  this way has to be tried.
-- The boot ROM's network code is known to be picky. With a card that holds
-  only `bootcode.bin` the newer code from that file does the network boot.
+- Our Pi fetched everything from the TFTP root; it needed neither a
+  `<serial>/` directory nor a card with only `bootcode.bin`. If a Pi's boot
+  ROM gives up, such a card lets the newer network code from that file do
+  the network boot.
+- Without card there is no data partition: `/scheme/data` is missing
+  (`RedoxFS: IO ERROR` at boot).
 - Later (T15) `u-boot.bin` can be replaced by the Redox kernel and initfs.
 
 ## Testing the flow in QEMU

@@ -266,18 +266,6 @@ one USB transfer, and two full-size frames do not fit. Linux uses 16 KiB.
 - **Done when:** a Zero 2 W loads the image over HTTP and boots to the
   login prompt, with the load time in the test report.
 
-### T20: Network boot without SD card (Pi 3B+ with serial console)
-
-`scripts/netboot-firmware.sh` and the dnsmasq proxy let the Pi firmware boot
-from the network without SD card ([netboot.md](netboot.md#without-sd-card-firmware-network-boot-untested)).
-
-- **Do:** boot a Pi 3B+ without card that way; note which files it fetches
-  and whether a card with only `bootcode.bin` is needed.
-- **Done when:** the Pi reaches the login prompt without SD card, with the
-  result in [test-reports.md](test-reports.md).
-
-## Tooling
-
 ### T9: CI builds with the pinned revisions (no hardware)
 
 `.github/workflows/qemu-boot.yml` builds the latest upstream kernel, not the
