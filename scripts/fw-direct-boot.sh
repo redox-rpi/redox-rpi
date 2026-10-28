@@ -77,6 +77,7 @@ if [ "$test" = no ]; then
 fi
 
 log="$out/qemu-test.log"
+rm -f "$log"
 started=$SECONDS
 "${qemu[@]}" -serial file:"$log" -serial null &
 pid=$!
