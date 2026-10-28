@@ -1,0 +1,50 @@
+From cccab33b5cee56174067506326393023318e74bc Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 07:32:58 +0000
+Subject: [PATCH] aarch64: T12 diagnostics for signal delivery during syscalls
+
+---
+ src/arch/aarch64/interrupt/exception.rs | 8 ++++++++
+ src/context/signal.rs                   | 7 +++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
+index c6ec44b1..95b7493c 100644
+--- a/src/arch/aarch64/interrupt/exception.rs
++++ b/src/arch/aarch64/interrupt/exception.rs
+@@ -197,6 +197,14 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
+                     scratch.x5, &mut token,
+                 );
+                 stack.scratch.x0 = ret;
++                // Diagnostics (redox-rpi, T12)
++                let nr = stack.scratch.x8;
++                if nr == 158 && ret != 0 {
++                    error!("t12diag: SYS_YIELD returned {:#x}, elr changed: {}", ret, stack.iret.elr_el1 != elr);
++                }
++                if stack.iret.elr_el1 != elr {
++                    error!("t12diag: handler set up during syscall {} (ret {:#x})", nr, ret);
++                }
+                 if stack.iret.elr_el1 != elr {
+                     // A signal handler was set up during the syscall.
+                     crate::context::signal::set_saved_syscall_ret(ret, &mut token);
+diff --git a/src/context/signal.rs b/src/context/signal.rs
+index cd6215c6..787668a7 100644
+--- a/src/context/signal.rs
++++ b/src/context/signal.rs
+@@ -66,6 +66,13 @@ pub fn signal_handler(token: &mut CleanLockToken) {
+     }
+ 
+     let sigh_instr_ptr = st.user_handler.get();
++    // Diagnostics (redox-rpi, T12)
++    error!(
++        "t12diag: deliver, pending {:#x}, inside syscall {}, handler {:#x}",
++        thread_ctl.currently_pending_unblocked(proc_ctl),
++        crate::percpu::PercpuBlock::current().inside_syscall.get(),
++        sigh_instr_ptr
++    );
+ 
+     let mut context = context.upgrade();
+     let Some(regs) = context.regs_mut() else {
+-- 
+2.53.0
+
