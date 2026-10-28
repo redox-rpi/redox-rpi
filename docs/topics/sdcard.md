@@ -18,4 +18,6 @@
 
 ## Later
 
+- sdhost with DMA instead of PIO, after the DMA plan in [#21](https://github.com/redox-rpi/redox-rpi/issues/21)
+  (milestone v0.4.0).
 - sdhost for the card frees the Arasan controller for Wi-Fi.
