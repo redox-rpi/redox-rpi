@@ -1,0 +1,59 @@
+From 488e4b127215fd5b35120b516b4f0e289f9d869f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 21:08:48 +0100
+Subject: [PATCH] cpu_stats: keep CPU times in nanoseconds
+
+Each switch added its time in whole milliseconds and dropped the rest, so
+a CPU that switches every few microseconds looked almost idle in
+sys:stat. Keep nanoseconds and show milliseconds as before.
+
+Refs redox-rpi/redox-rpi#23
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/cpu_stats.rs | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/src/cpu_stats.rs b/src/cpu_stats.rs
+index aa02fd4..41fd818 100644
+--- a/src/cpu_stats.rs
++++ b/src/cpu_stats.rs
+@@ -27,13 +27,13 @@ pub enum CpuState {
+ /// Per-cpu statistics
+ #[derive(Debug, Default)]
+ pub struct CpuStats {
+-    /// Number of ticks spent on userspace contexts
++    /// Nanoseconds spent on userspace contexts
+     user: AtomicU64,
+-    /// Number of ticks spent on Niced userspace contexts
++    /// Nanoseconds spent on niced userspace contexts
+     nice: AtomicU64,
+-    /// Number of ticks spent on kernel contexts
++    /// Nanoseconds spent on kernel contexts
+     kernel: AtomicU64,
+-    /// Number of ticks spent idle
++    /// Nanoseconds spent idle
+     idle: AtomicU64,
+     /// Number of times the CPU handled an interrupt
+     irq: AtomicU64,
+@@ -61,13 +61,13 @@ impl CpuStats {
+ }
+ 
+ pub struct CpuStatsData {
+-    /// Number of ticks spent on userspace contexts
++    /// Nanoseconds spent on userspace contexts
+     pub user: u64,
+-    /// Number of ticks spent on Niced userspace contexts
++    /// Nanoseconds spent on niced userspace contexts
+     pub nice: u64,
+-    /// Number of ticks spent on kernel contexts
++    /// Nanoseconds spent on kernel contexts
+     pub kernel: u64,
+-    /// Number of ticks spent idle
++    /// Nanoseconds spent idle
+     pub idle: u64,
+     /// Number of times the CPU handled an interrupt
+     pub irq: u64,
+-- 
+2.54.0 (Apple Git-157)
+

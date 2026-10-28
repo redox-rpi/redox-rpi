@@ -38,6 +38,12 @@ Base patch `0023` adds a governor thread to `rpi-firmwared`, like Linux's
 - The mode is not kept across a reboot: `rpi-firmwared` starts from the
   initfs, before `/etc` is there. A line in an init script can set it.
 
+Kernel patch `0008` fixes the CPU times in `sys:stat`: each context switch
+added its time in whole milliseconds and dropped the rest, so a CPU that
+switches every few microseconds (many system calls, such as the start loop)
+looked almost idle. The kernel now keeps nanoseconds and still shows
+milliseconds.
+
 `rpi-firmwared` leaves its namespace after start (`setrens(0, 0)`), so it
 opens `/scheme/sys` before that and opens `stat` inside it for each sample
 (the kernel builds the text once per open).
@@ -56,4 +62,13 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
 
 ## Results
 
-- Not tested yet.
+- **QEMU** (build `v0.3.0-dev-92-g663bbe4+xc99c`, without kernel `0008`,
+  2026-10-28): the `governor` file reads as above; writing `performance`,
+  `powersave` and `ondemand` works and counts switches, `bogus` fails with
+  "Invalid argument", writing `arm_clock` sets mode `fixed`. QEMU has a
+  fixed 700 MHz clock (min = max). The load stays at 100 % even when the
+  shell is idle: in QEMU `dwc2d` and `bcm2835-sdhcid` poll without pause
+  (40 s and 47 s of CPU time after a minute), so ondemand rightly stays at
+  `max` there. Only the real Pi can show the switch to `min`. The same run
+  showed the millisecond rounding (one CPU with 220000 switches in 5 s
+  counted 0.6 s), hence kernel `0008`.
