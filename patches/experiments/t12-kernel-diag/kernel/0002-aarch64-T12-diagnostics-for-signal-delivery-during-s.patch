@@ -1,23 +1,36 @@
-From cccab33b5cee56174067506326393023318e74bc Mon Sep 17 00:00:00 2001
+From 996dd5f8adfd0ed9588be660a08e742ebb8fb663 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 07:32:58 +0000
 Subject: [PATCH] aarch64: T12 diagnostics for signal delivery during syscalls
 
 ---
- src/arch/aarch64/interrupt/exception.rs | 8 ++++++++
- src/context/signal.rs                   | 7 +++++++
- 2 files changed, 15 insertions(+)
+ src/arch/aarch64/interrupt/exception.rs | 21 +++++++++++++++++++++
+ src/context/signal.rs                   |  7 +++++++
+ 2 files changed, 28 insertions(+)
 
 diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
-index c6ec44b1..95b7493c 100644
+index c6ec44b1..36673132 100644
 --- a/src/arch/aarch64/interrupt/exception.rs
 +++ b/src/arch/aarch64/interrupt/exception.rs
-@@ -197,6 +197,14 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
+@@ -197,6 +197,27 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
                      scratch.x5, &mut token,
                  );
                  stack.scratch.x0 = ret;
 +                // Diagnostics (redox-rpi, T12)
 +                let nr = stack.scratch.x8;
++                if nr == 158 && stack.scratch.x1 == !0 {
++                    let regs_addr = {
++                        let context_lock = crate::context::current();
++                        let mut context = context_lock.write(token.token());
++                        context.regs_mut().map_or(0, |r| r as *mut _ as usize)
++                    };
++                    let (x0_now, elr_now) = (stack.scratch.x0, stack.iret.elr_el1);
++                    let frame = stack as *mut _ as usize;
++                    error!(
++                        "t12diag: verify yield ret {:#x} x0 {:#x} elr {:#x} -> {:#x}, frame {:#x}, regs_mut {:#x}",
++                        ret, x0_now, elr, elr_now, frame, regs_addr
++                    );
++                }
 +                if nr == 158 && ret != 0 {
 +                    error!("t12diag: SYS_YIELD returned {:#x}, elr changed: {}", ret, stack.iret.elr_el1 != elr);
 +                }
