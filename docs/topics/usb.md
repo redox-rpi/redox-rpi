@@ -10,7 +10,8 @@
 ## In progress
 
 - Branch `dwc2-interrupts`: interrupts instead of polling (CPU time in QEMU
-  1.5 s instead of 4 min 21 s); Pi test #5 queued.
+  1.5 s instead of 4 min 21 s), rebased onto `rtl8152`; image
+  `v0.3.0-dev-52-g7df70f9+xcb30` ready for Pi test #5.
 
 ## Next
 
