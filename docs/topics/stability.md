@@ -28,7 +28,13 @@
   closed the connection without `exit`, two threads each, so every dropped
   devsh call left a session behind. devshd now hangs up such a session
   (SIGHUP to the terminal's foreground group, then SIGKILL). QEMU: 6
-  dropped sessions leave nothing. Waiting for the Pi test.
+  dropped sessions leave nothing; real Pi (#21): 13 dropped sessions
+  leave nothing. Ready to merge.
+
+- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
+  `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
+  writes to the port, getty no longer panics on a full PTY) passes in
+  QEMU; Pi test #22.
 
 ## Next
 
