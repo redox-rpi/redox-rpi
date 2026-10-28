@@ -21,6 +21,8 @@
 
 ## Later
 
+- [#24](https://github.com/redox-rpi/redox-rpi/issues/24) a small release image that grows to the whole card on the
+  first boot, with a welcome app (milestone v0.4.0).
 - sdhost with DMA instead of PIO, after the DMA plan in [#21](https://github.com/redox-rpi/redox-rpi/issues/21)
   (milestone v0.4.0).
 - sdhost for the card frees the Arasan controller for Wi-Fi.
