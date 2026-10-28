@@ -41,6 +41,23 @@ The main hurdles:
 
 ---
 
+## Next release: v0.3.0, stable on the Pi
+
+v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
+
+1. **Start crashes** ([T1–T3, T12](docs/tasks.md#stability)): up to 12 % of
+   program starts fail on the Pi. Done when 1000 starts in a row work.
+2. **sdhost as the default SD driver** ([T6](docs/tasks.md), [T16](docs/tasks.md)):
+   2.5 to 2.9 times faster than `bcm2835-sdhcid`; also fix RedoxFS writing
+   36 times the data for small writes.
+3. **USB hotplug** ([T17](docs/tasks.md)): a keyboard or network adapter
+   plugged in after boot is found.
+4. **Clean boot** ([T18](docs/tasks.md)): no `pcid` and `audiod` on the Pi.
+
+If there is time: boot straight from the Pi firmware without an SD card
+([T15](docs/tasks.md)), CI builds with the pinned revisions ([T9](docs/tasks.md)).
+Not planned for v0.3.0: `poweroff` (T7) and an own Zero 2 W image (T8).
+
 ## Phase 0: Build environment
 
 | # | Step | Done when … |
