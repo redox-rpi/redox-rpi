@@ -234,3 +234,9 @@ pass (`date` 20:35:51 UTC, the same as the build host). rc2 is rc1 without
 `sdhost-driver`.
 
 USB keyboard: pass, login on HDMI works (keyboard plugged in before boot).
+
+Pi Zero 2 W, rc2 SD card image, with the RTL8152 Ethernet hub and a LAN
+cable, checked by the user: boots to the login, the network comes up, `date`
+shows the current time. `cat /scheme/netcfg/ifaces/eth0/addr/list` was
+reported as not found, although netstack serves exactly this path; the IP
+address is not confirmed yet.
