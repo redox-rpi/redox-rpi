@@ -392,3 +392,32 @@ Built 2026-10-28T11:35:57Z, `libc.so` `d4f0dedd5403751a…`, real Pi 3B+ over ne
 | ps-tty | pass | 45 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## 2026-10-28: SD card stress test (#15), sdhcid and sdhost on the same commit
+
+`scripts/sd-stress.py` on a real Pi 3B+ over netboot, data partition on the
+netboot card (SDHC, 15193 MiB): a 256 MiB file, 1000 files of 4 KiB with 250
+deleted and 250 new, then 5 restarts (`echo reset > /scheme/sys/kstop`), each
+followed by a SHA-256 check of every file and 32 MiB more. Commands over the
+serial console. Both images are 24fbb96 with `timesync` and `rtl8152`; the
+sdhost image adds `sdhost-driver` and `sdhost-boot` (high speed, about 31 MHz).
+
+| | `bcm2835-sdhcid` (`+x9f76`) | `bcm2835-sdhostd` (`+x6d3c`) |
+|---|---|---|
+| 256 MiB from `/scheme/rand` | 3.2 MB/s | 5.7 MB/s |
+| 1000 small files, 250 replaced | 580 s | 555 s |
+| 32 MiB per cycle | 2.6–3.4 MB/s | 4.0–6.5 MB/s |
+| checks (after writing, 5 restarts) | 6 of 6: 0 missing, 0 changed | 6 of 6: 0 missing, 0 changed |
+| back after a restart | 55–80 s | 50–55 s |
+| files at the end, time | 1006, 37 min | 1006, 28 min |
+| result | **pass** | **pass** |
+
+The small files take the same time with both drivers: RedoxFS limits them
+([#16](https://github.com/redox-rpi/redox-rpi/issues/16)), not the driver.
+The script labels the sdhost run "sdhcid": `ps` cuts the process name, fixed
+in the script afterwards.
+
+A first sdhcid run on `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`
+is discarded: that image still has the T12 start crash, and the Pi stopped
+responding at `sha256sum` over 750 files (power cycle needed). The script now
+hashes at most about 110 files per command.
