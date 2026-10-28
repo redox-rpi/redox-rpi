@@ -1,5 +1,9 @@
 # Experiment: CPU clock and throttle watch
 
+**Now default:** base patch [`0021`](../../base/0021-rpi-firmwared-ARM-clock-to-its-maximum-arm_clock-fil.patch)
+since v0.3.0 (2026-10-28), after Pi test #19. This page keeps the history and
+the test scripts; `--experiment cpu-clock` adds nothing any more.
+
 Issue [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21), planned for v0.3.0. Extends [`rpi-firmwared`](../../../docs/rpi-firmware.md)
 (base patch `0018`):
 
@@ -17,9 +21,6 @@ Issue [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21), planned for
   and logs each change, like Linux's `raspberrypi-hwmon`:
   `rpi-firmwared: warning: undervoltage (flags 0x00050005, 61.2 °C, ARM 600 MHz)`.
 
-```bash
-scripts/build-image.sh --experiment cpu-clock
-```
 
 ## Test on the Pi
 
