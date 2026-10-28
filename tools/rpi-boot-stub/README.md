@@ -24,9 +24,12 @@ stub does what the Redox bootloader does on aarch64 before the jump:
    initfs, then, at the next 4 KiB boundary, an optional RedoxFS image. With
    one, it becomes the live disk (`DISK_LIVE_ADDR`, `DISK_LIVE_SIZE`,
    `REDOXFS_UUID` in the environment), as with `bootloader-live.efi`.
-4. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
+4. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
+   words `NAME=value` with an upper-case `NAME` go into the environment,
+   the firmware's own lower-case Linux options do not.
+5. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
    and at `PHYS_OFFSET`, the kernel at `KERNEL_OFFSET`.
-5. MMU on and the jump to the kernel's entry point with `KernelArgs`.
+6. MMU on and the jump to the kernel's entry point with `KernelArgs`.
 
 The kernel ELF is built into the stub (`REDOX_KERNEL` at build time); the
 kernel's linker script makes the file a flat image, so it runs in place.
@@ -51,5 +54,7 @@ and `-dtb`.
   up through the spin table, the root filesystem comes from the live disk.
 - Real Pi: not tried yet. Needs `config.txt` with `kernel=kernel8.img`,
   `initramfs initramfs followkernel` and the same overlays as today.
-- Not done yet: the Ethernet MAC address and the kernel command line from
-  the firmware (U-Boot provides the MAC today), a `make-sdcard.sh` mode.
+- Command line: `NAME=value` words reach the environment (QEMU
+  `--append`).
+- Not done yet: the Ethernet MAC address without U-Boot (see #15), a
+  `make-sdcard.sh` mode.

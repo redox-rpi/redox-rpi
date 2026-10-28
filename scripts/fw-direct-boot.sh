@@ -16,7 +16,10 @@
 #
 # Usage:
 #   scripts/fw-direct-boot.sh [--image <harddrive.img>] [--out <dir>]
-#                             [--qemu] [--test]
+#                             [--qemu] [--test] [--append <command line>]
+#
+#   --append  command line for QEMU (cmdline.txt on a Pi); NAME=value words
+#             with an upper-case NAME become Redox environment variables
 
 set -euo pipefail
 
@@ -25,12 +28,14 @@ image="$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img"
 out="$ROOT/build/fw-direct"
 qemu=no
 test=no
+append=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
         --qemu) qemu=yes; shift ;;
         --test) qemu=yes; test=yes; shift ;;
+        --append) append="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -71,6 +76,7 @@ fdtput -t s "$out/qemu.dtb" /soc/mmc@7e202000 status disabled
 qemu=(qemu-system-aarch64 -M raspi3b -smp 4 -m 1024
     -kernel "$out/kernel8.img" -initrd "$out/initramfs" -dtb "$out/qemu.dtb"
     -display none -usb -device usb-kbd)
+[ -z "$append" ] || qemu+=(-append "$append")
 if [ "$test" = no ]; then
     echo "Exit with Ctrl-A X."
     exec "${qemu[@]}" -serial mon:stdio -serial null

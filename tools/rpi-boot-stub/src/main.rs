@@ -441,6 +441,22 @@ unsafe fn boot(dtb_addr: u64) -> ! {
         }
         let _ = writeln!(env);
     }
+    // The command line (cmdline.txt, after the firmware's own Linux options)
+    // is in /chosen bootargs. Words of the form NAME=value with an upper-case
+    // NAME are Redox environment variables, as with the bootloader's
+    // environment editor; the firmware's lower-case Linux options are left out.
+    if let Some(bootargs) = chosen.property("bootargs").and_then(|p| p.as_str()) {
+        for word in bootargs.split_ascii_whitespace() {
+            if let Some((name, _)) = word.split_once('=') {
+                if !name.is_empty()
+                    && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+                {
+                    println!("rpi-boot-stub: from the command line: {}", word);
+                    let _ = writeln!(env, "{}", word);
+                }
+            }
+        }
+    }
 
     unsafe {
         let args = &mut *addr_of_mut!(ARGS);
