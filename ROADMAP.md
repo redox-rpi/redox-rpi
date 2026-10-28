@@ -49,9 +49,9 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 
 1. **Start crashes** ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)–[#3](https://github.com/redox-rpi/redox-rpi/issues/3), [#12](https://github.com/redox-rpi/redox-rpi/issues/12)): up to 12 % of
    program starts fail on the Pi. Done when 1000 starts in a row work.
-2. **sdhost as the default SD driver** ([#6](https://github.com/redox-rpi/redox-rpi/issues/6), [#16](https://github.com/redox-rpi/redox-rpi/issues/16)):
-   2.5 to 2.9 times faster than `bcm2835-sdhcid`; also fix RedoxFS writing
-   36 times the data for small writes.
+2. **sdhost as the default SD driver** ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)):
+   2.5 to 2.9 times faster than `bcm2835-sdhcid`. RedoxFS writing 36 times
+   the data for small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)) moves to v0.4.0.
 3. **USB hotplug** ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)): a keyboard or network adapter
    plugged in after boot is found.
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
