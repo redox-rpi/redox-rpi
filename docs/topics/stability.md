@@ -31,10 +31,15 @@ Nothing at the moment.
   x18, so the signal entry can still corrupt it there. Either reserve x18
   in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
   rebuilt) or return from the signal entry without clobbering a register.
-- [#2](https://github.com/redox-rpi/redox-rpi/issues/2) its kernel cause; [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance.
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd leaves `login` processes behind.
 
 ## Later
 
+- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance after loading code (v0.4.0): no
+  known failure needs it.
+- Relibc patch `0005` (ld.so touches fresh memory) may be dropped: QEMU
+  has 0 of 1400 failed starts without it
+  ([experiment](https://github.com/redox-rpi/redox-rpi/tree/t2-no-populate/patches/experiments/no-ldso-populate)),
+  so [#2](https://github.com/redox-rpi/redox-rpi/issues/2) is closed; needs a Pi test first.
 - Prebuilt programs from Redox' aarch64 packages (bash, vim, curl …) stop
   with `brk` at start ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
