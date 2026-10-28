@@ -16,4 +16,5 @@
 ## Next
 
 - [#15](https://github.com/redox-rpi/redox-rpi/issues/15) boot the kernel straight from the Pi firmware, without
-  U-Boot.
+  U-Boot (milestone v0.4.0). Can be prepared in QEMU (`raspi3b` loads a
+  kernel directly) before a Pi is needed.
