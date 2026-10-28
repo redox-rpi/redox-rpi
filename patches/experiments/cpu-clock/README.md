@@ -1,6 +1,6 @@
 # Experiment: CPU clock and throttle watch
 
-Planned for v0.3.0. Extends [`rpi-firmwared`](../../../docs/rpi-firmware.md)
+Task [T21](../../../docs/tasks.md), planned for v0.3.0. Extends [`rpi-firmwared`](../../../docs/rpi-firmware.md)
 (base patch `0018`):
 
 - **ARM clock to its maximum at start.** The firmware starts the ARM cores
