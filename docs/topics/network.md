@@ -14,4 +14,6 @@
 
 ## Later
 
-- SSH and Wi-Fi ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
+- [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi on the Pi 3B+ and Zero 2 W (milestone v0.6.0); it would be the
+  first Wi-Fi in Redox.
+- SSH and Bluetooth ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
