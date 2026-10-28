@@ -248,3 +248,19 @@ the card and switched the Pi on. Not a `pi-test.py` run.
 
 TFTP requests are not logged (`tftpd-hpa` without `--verbose`), so the exact
 files the firmware fetched are not recorded.
+
+## 2026-10-28: `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, network boot with a card without `bootcode.bin`
+
+Real Pi 3B+, the same setup as the network boot without card above. In it
+an old Raspberry Pi OS card (now labelled `redox-dev`) whose `bootcode.bin`
+was renamed to `bootcode.bin.off`. Switched on by a person; boot log from
+the serial console and the dnsmasq log.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot ROM skips the card and network-boots | pass | PXE request from `b8:27:eb:08:e0:aa` at 06:52 |
+| boot to login | pass | `redox login:` |
+| data partition | – | `redoxfs` cannot mount `/scheme/disk.mmc/0p1`, expected: partition 2 of that card is a Linux filesystem, not RedoxFS |
+
+So a card for SD tests needs no boot files: the Pi boots from the network
+whatever is on the card.

@@ -206,6 +206,10 @@ Notes:
   `<serial>/` directory nor a card with only `bootcode.bin`. If a Pi's boot
   ROM gives up, such a card lets the newer network code from that file do
   the network boot.
+- A card without `bootcode.bin` works like no card: the boot ROM skips it
+  and boots from the network (tested, [test report](test-reports.md)). So a
+  card for SD driver tests needs no boot files and may be rewritten freely;
+  rename `bootcode.bin` on a normal card to try it.
 - Without card there is no data partition: `/scheme/data` is missing
   (`RedoxFS: IO ERROR` at boot).
 - Later (T15) `u-boot.bin` can be replaced by the Redox kernel and initfs.
