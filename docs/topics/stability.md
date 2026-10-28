@@ -23,7 +23,12 @@
 
 ## In progress
 
-Nothing at the moment.
+- [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
+  `devshd-hangup`): devshd kept `login` and the shell running when a client
+  closed the connection without `exit`, two threads each, so every dropped
+  devsh call left a session behind. devshd now hangs up such a session
+  (SIGHUP to the terminal's foreground group, then SIGKILL). QEMU: 6
+  dropped sessions leave nothing. Waiting for the Pi test.
 
 ## Next
 
@@ -31,7 +36,6 @@ Nothing at the moment.
   x18, so the signal entry can still corrupt it there. Either reserve x18
   in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
   rebuilt) or return from the signal entry without clobbering a register.
-- [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd leaves `login` processes behind.
 
 ## Later
 
