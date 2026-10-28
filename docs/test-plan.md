@@ -46,6 +46,10 @@ and:
   its owner have been silent for more than 15 minutes (a hung Pi);
 - tells the maintainer early, in one sentence, when the next test needs a
   person at the Pi (card, power, keyboard, cables), and bundles such steps;
+- has every test that needs a person prepared before the person comes:
+  images built and their build IDs in the queue, so the person never waits
+  for a build; the steps for one visit are bundled into as few boots as
+  possible;
 - decides the order when the Pi becomes free: tests for the current
   milestone ([v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1))
   first, then by queue number; it names the next owner.
