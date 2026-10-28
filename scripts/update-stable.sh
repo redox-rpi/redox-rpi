@@ -50,9 +50,10 @@ SERIAL_DEV=/dev/ttyUSB0
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
 ISSUE_TITLE="Nightly: main fails on the Pi"
-# Seconds from the reset to "redox-rpi: network boot", and to the login prompt.
+# Seconds from the reset to "redox-rpi: network boot", and to the login prompt
+# (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
 RESET_TIMEOUT=120
-BOOT_TIMEOUT=900
+BOOT_TIMEOUT=1500
 
 force=0
 push=1
