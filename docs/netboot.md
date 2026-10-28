@@ -153,6 +153,63 @@ Redox does not follow symlinks into another scheme. Mounting a RedoxFS
 partition by path and finding the data again after a reboot is tested in
 QEMU; the netboot card's own layout only on real hardware.
 
+## Without SD card (firmware network boot)
+
+The Pi 3B+ boot ROM can network-boot by itself when there is no SD card in
+it: it fetches the Pi firmware over TFTP, the firmware loads U-Boot, and
+U-Boot continues as above. Tested on our Pi 3B+ with the build server on
+Wi-Fi ([test report](test-reports.md)): it boots to the login prompt
+without card, and with the netboot card back in it boots from the card as
+before.
+
+```
+Boot ROM ─ DHCP (router + dnsmasq proxy) ─ TFTP bootcode.bin
+  → bootcode.bin ─ TFTP start.elf, config.txt, devicetree, u-boot.bin
+  → U-Boot (u-boot-net) ─ TFTP redox/netboot.scr → as above
+```
+
+This only adds files to the TFTP root and does not change `redox/`: a Pi
+with the netboot SD card in it keeps booting from the card, so it does not
+get in the way of other tests.
+
+```sh
+scripts/build-uboot.sh rpi-net <server-ip>
+scripts/netboot-firmware.sh --tftp-dir /srv/tftp
+```
+
+`rpi-net` is U-Boot with the steps of `boot.scr` built in as its boot
+command, since without a card there is no `boot.scr`.
+
+The boot ROM waits for a DHCP answer with "Raspberry Pi Boot" in it, which
+a home router does not send. dnsmasq adds it as a **proxy DHCP server** next
+to the router: it hands out no addresses and answers only PXE requests from
+Pi network adapters ([`config/dnsmasq-pxe-proxy.conf`](../config/dnsmasq-pxe-proxy.conf);
+change `dhcp-range` to your network). U-Boot and Redox send no PXE requests
+and are not affected. One-time setup on the build server:
+
+```sh
+sudo apt-get install -y dnsmasq-base
+sudo install -m 644 config/dnsmasq-pxe-proxy.conf /etc/redox-pxe-proxy.conf
+sudo install -m 644 config/redox-pxe-proxy.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now redox-pxe-proxy.service
+```
+
+To test: take the SD card out, power on, and watch
+`journalctl -fu redox-pxe-proxy -u tftpd-hpa`. The TFTP log shows which
+files the Pi asks for. If it asks for `<serial>/start.elf`, the files can go
+there instead with `--serial <serial>`, so each Pi gets its own.
+
+Notes:
+
+- Our Pi fetched everything from the TFTP root; it needed neither a
+  `<serial>/` directory nor a card with only `bootcode.bin`. If a Pi's boot
+  ROM gives up, such a card lets the newer network code from that file do
+  the network boot.
+- Without card there is no data partition: `/scheme/data` is missing
+  (`RedoxFS: IO ERROR` at boot).
+- Later (T15) `u-boot.bin` can be replaced by the Redox kernel and initfs.
+
 ## Testing the flow in QEMU
 
 ```sh

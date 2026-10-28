@@ -12,9 +12,15 @@
 #
 # Usage:
 #   scripts/build-uboot.sh [rpi|qemu]    (default: rpi)
+#   scripts/build-uboot.sh rpi-net <server-ip>
 #
 # Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/,
 # or build/u-boot-qemu/u-boot.bin for qemu.
+#
+# rpi-net builds build/u-boot-net/u-boot.bin for a Pi without SD card, which
+# the Pi firmware loads over TFTP (scripts/netboot-firmware.sh). There is no
+# boot.scr then, so its boot command fetches redox/netboot.scr from
+# <server-ip> itself.
 
 set -euo pipefail
 
@@ -24,6 +30,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/upstream/u-boot"
 case "${1:-rpi}" in
     rpi) DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot" ;;
+    rpi-net)
+        DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot-net"
+        server="${2:?rpi-net needs the server address}" ;;
     qemu) DEFCONFIG=qemu_arm64_defconfig; OUT="$ROOT/build/u-boot-qemu" ;;
     *) echo "unknown target: $1" >&2; exit 1 ;;
 esac
@@ -38,9 +47,18 @@ if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
 fi
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
+fragments=("$ROOT/config/u-boot.config")
+if [ -n "${server:-}" ]; then
+    # The same steps as boot.scr from scripts/netboot.sh.
+    cat > "$OUT/net.config" <<EOF
+CONFIG_USE_BOOTCOMMAND=y
+CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; tftpboot \${scriptaddr} redox/netboot.scr && source \${scriptaddr}"
+EOF
+    fragments+=("$OUT/net.config")
+fi
 make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" "$DEFCONFIG"
 "$SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT/obj" \
-    "$OUT/obj/.config" "$ROOT/config/u-boot.config"
+    "$OUT/obj/.config" "${fragments[@]}"
 make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
 make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
 

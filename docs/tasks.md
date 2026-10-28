@@ -269,8 +269,6 @@ one USB transfer, and two full-size frames do not fit. Linux uses 16 KiB.
 - **Done when:** a Zero 2 W loads the image over HTTP and boots to the
   login prompt, with the load time in the test report.
 
-## Tooling
-
 ### T9: CI builds with the pinned revisions (no hardware)
 
 `.github/workflows/qemu-boot.yml` builds the latest upstream kernel, not the

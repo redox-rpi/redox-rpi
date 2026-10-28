@@ -47,18 +47,11 @@
 
 set -euo pipefail
 
-# Raspberry Pi firmware release, see github.com/raspberrypi/firmware/tags
-FIRMWARE_TAG="1.20260915"
-FIRMWARE_URL="https://raw.githubusercontent.com/raspberrypi/firmware/$FIRMWARE_TAG/boot"
-FIRMWARE_FILES=(
-    bootcode.bin start.elf fixup.dat start_cd.elf fixup_cd.dat LICENCE.broadcom
-    bcm2710-rpi-3-b.dtb bcm2710-rpi-3-b-plus.dtb bcm2710-rpi-zero-2-w.dtb
-    overlays/disable-bt.dtbo overlays/mmc.dtbo
-)
 BOOT_MIB=64
 DATA_UUID="7265646f-7872-7069-2d64-617461000001"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/scripts/rpi-firmware.sh"
 tftp="$ROOT/build/tftp"
 dir=redox
 out="$ROOT/build/sdcard-netboot.img"
@@ -90,13 +83,8 @@ else
     [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 fi
 
-cache="$ROOT/build/firmware/$FIRMWARE_TAG"
-for file in "${FIRMWARE_FILES[@]}"; do
-    if [ ! -f "$cache/$file" ]; then
-        mkdir -p "$(dirname "$cache/$file")"
-        curl -fsSL -o "$cache/$file" "$FIRMWARE_URL/$file"
-    fi
-done
+fetch_firmware "$ROOT"
+cache="$firmware_cache"
 
 tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 if [ -z "$image" ] && [ "$data_mib" -gt 0 ] && [ ! -x "$tool" ]; then
