@@ -53,6 +53,9 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 3. **USB hotplug** ([T17](docs/tasks.md)): a keyboard or network adapter
    plugged in after boot is found.
 4. **Clean boot** ([T18](docs/tasks.md)): no `pcid` and `audiod` on the Pi.
+5. **Full CPU speed** ([T21](docs/tasks.md)): the ARM clock at 1.4 GHz
+   instead of 600 MHz, set through the firmware, with a warning on
+   undervoltage or overheating.
 
 If there is time: boot straight from the Pi firmware without an SD card
 ([T15](docs/tasks.md)), CI builds with the pinned revisions ([T9](docs/tasks.md)).
@@ -154,6 +157,8 @@ from GPL-licensed drivers (Linux) is not.
 | **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
 | **Zero 2 W Ethernet** | RTL8152 USB Ethernet driver in `dwc2d` (behind the HAT's FE1.1s hub) | medium |
 | **Audio** | A sound driver for the Pi: HDMI audio (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM), plus `audiod`, Redox' sound daemon, working on aarch64 on top of it. Until then `audiod` stays out of the image (T18) | medium to large |
+| **More firmware services** | `rpi-firmwared` only reads model, memory, clocks, temperature and throttling. Linux also uses the firmware for: power domains (USB, SD on and off, tag `0x28001`; helps `poweroff` and a clean USB reset), the GPIO expander (power LED on the 3B+), the DMA channel mask (`0x60001`, once drivers use DMA) and the display (EDID, resolution, framebuffer; U-Boot sets it up today). See [rpi-firmware.md](docs/rpi-firmware.md) | small each |
+| **VCHIQ** | The second VideoCore channel: sound over HDMI and the jack, camera, video decoding. Needed for Audio | large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |

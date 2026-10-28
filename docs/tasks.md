@@ -158,12 +158,28 @@ the Pi images.
   keyboard and `scripts/pi-test.py` work as before, and the result is in
   [test-reports.md](test-reports.md).
 
+### T21: CPU clock and throttling watch through the firmware (Pi)
+
+The Pi runs at 600 MHz of its 1.4 GHz: nothing asks the firmware for a
+higher ARM clock. Linux does this with `raspberrypi-cpufreq`.
+
+- **Do:** on branch `cpu-clock` (experiment `cpu-clock`), let
+  `rpi-firmwared` set the ARM clock with the firmware's "set clock rate"
+  call (tag `0x38002`). Also poll `throttled` (tag `0x30046`) and log a
+  warning when undervoltage or overheating is reported, as Linux'
+  `raspberrypi-hwmon` does: a higher clock means more heat and current.
+- **Done when:** the Pi runs at its maximum ARM clock, the start loop and a
+  build or test time are measured before and after, a throttling warning is
+  shown when it happens, and the result is in [test-reports.md](test-reports.md).
+  Driver docs: [rpi-firmware.md](rpi-firmware.md).
+
 ### T6: sdhost SD driver on the real Pi (Pi with serial console)
 
 Done 2026-10-27: with `sdhost-driver` and `sdhost-boot` the Pi boots with
 sdhost and writes correctly ([results](../patches/experiments/sdhost-boot/README.md#results)).
-Open: read the real core clock instead of assuming 400 MHz (31 MHz now,
-50 MHz possible), see the
+Open: read the real core clock from `/scheme/rpi-firmware` instead of
+assuming 400 MHz (the Pi 3B+ has 250 MHz; 31 MHz card clock now, 50 MHz
+possible), see the
 [sdhost-driver README](../patches/experiments/sdhost-driver/README.md#results).
 
 ### T16: RedoxFS writes 36 times the data for small writes (QEMU, then Pi)
@@ -244,6 +260,10 @@ the devicetree, which also says where the initramfs is.
 - **Done when:** a Pi 3B+ boots from the SD card without U-Boot and the
   Redox bootloader to the login prompt, and `scripts/pi-test.py` passes as
   with the U-Boot image.
+
+Without U-Boot, two things it does today must come from the firmware
+instead: the Ethernet MAC address (tag `0x10003`, U-Boot writes it into the
+devicetree) and the kernel command line from `cmdline.txt` (tag `0x50001`).
 
 ### T19: Fast network boot on the Zero 2 W (Zero 2 W with the Ethernet/USB HAT)
 
