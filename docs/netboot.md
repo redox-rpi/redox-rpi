@@ -271,6 +271,16 @@ systemctl --user enable --now redox-http.service
 sudo loginctl enable-linger "$USER"   # keep it running without a login
 ```
 
+### SD card images for download
+
+SD card images to test, such as release candidates, go to
+`/srv/tftp/sdcard/` on the build server, not to anyone's own computer.
+The same HTTP server offers them at
+`http://homenodellm:8080/sdcard/<name>.img.xz`, so SwiftFlash
+(`SwiftFlashCLI`) or `curl` flashes them straight from there. Put the
+manifest (`<name>.img.manifest.toml`) and a `SHA256SUMS` next to each image.
+Name release candidates `redox-rpi-v<version>-rc<N>.img.xz`.
+
 ## Limits
 
 - The bootloader's resolution menu still waits for **Enter** on the serial
