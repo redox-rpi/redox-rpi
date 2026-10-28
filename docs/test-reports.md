@@ -378,3 +378,17 @@ Seen on the side, not counted as T12:
   session, not the serial console.
 - Twice a devsh login did not get past `redox login:` (two prompts, no
   echo); see T11.
+
+
+## 2026-10-28: `v0.3.0-dev-15-g24fbb96+x9f76`
+
+Built 2026-10-28T11:35:57Z, `libc.so` `d4f0dedd5403751a…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Stable network-boot image, bcm2835-sdhcid. A first run stopped at the first check: devshd gave no output for `cat /etc/redox-rpi-release`; it answered again a minute later.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-15-g24fbb96+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-15-g24fbb96+x9f76.toml |
+| ps | pass | 45 processes (piped) |
+| ps-tty | pass | 45 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |

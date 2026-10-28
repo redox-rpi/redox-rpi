@@ -70,19 +70,25 @@ it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
 
 ## Stable image
 
+<!-- stable-image: written by scripts/update-stable.sh -->
 Staged on the TFTP server whenever no test runs:
-`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, which starts
-`bcm2835-sdhcid` for the card. A copy is in
-`/srv/tftp/backup-v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver/`;
-copy its files into `/srv/tftp/redox/` to restore it. The image
-`v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` (0 of 300 start failures,
-[report](test-reports.md)) was the stable one before; no copy of it is left.
+`v0.3.0-dev-15-g24fbb96+x9f76` (`main` 24fbb96, `--experiment timesync
+--experiment rtl8152`, SD card through `bcm2835-sdhcid`), tested 2026-10-28
+with `scripts/pi-test.py`: all checks pass, 0 of 300 starts failed
+([report](test-reports.md)). A copy is in
+`/srv/tftp/backup-v0.3.0-dev-15-g24fbb96+x9f76/`, and `/srv/tftp/stable`
+points to it.
+<!-- /stable-image -->
 
-To stage a newly built stable image instead:
+To restore the stable image after a test:
 
 ```bash
-scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable harddrive.img>
+cp -p /srv/tftp/stable/* /srv/tftp/redox/
 ```
+
+Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
+`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` (until
+2026-10-28, still with the T12 start failures).
 
 ## Queue
 
