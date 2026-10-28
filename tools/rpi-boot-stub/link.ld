@@ -17,6 +17,7 @@ SECTIONS {
         *(.rodata*)
     }
     .data : ALIGN(4096) {
+        LONG(0)     /* makes .data PROGBITS even if it holds only .bss */
         *(.data*)
         *(.bss*)
         *(COMMON)
