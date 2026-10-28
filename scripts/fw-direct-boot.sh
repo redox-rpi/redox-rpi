@@ -44,7 +44,9 @@ tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 "$tool" "$image" get usr/lib/boot/initfs "$out/initfs"
 
 stub="$ROOT/tools/rpi-boot-stub"
-REDOX_KERNEL="$out/kernel" cargo build --release --manifest-path "$stub/Cargo.toml"
+# Cargo reads the stub's .cargo/config.toml (target, linker script) only
+# when it runs in the stub's directory.
+(cd "$stub" && REDOX_KERNEL="$out/kernel" cargo build --release)
 aarch64-linux-gnu-objcopy -O binary \
     "$stub/target/aarch64-unknown-none/release/rpi-boot-stub" "$out/kernel8.img"
 
