@@ -20,11 +20,25 @@ is left alone.
 
 ```bash
 scripts/build-image.sh --sdcard --experiment timesync --experiment rtl8152 --experiment grow-root
-scripts/make-sdcard.sh --local upstream/redox/build/aarch64/sdcard/harddrive.img --out build/grow.img
+scripts/make-sdcard.sh --local upstream/redox/build/aarch64/sdcard/harddrive.img --small --out build/grow.img
 ```
+
+`--small` shrinks the root RedoxFS to its contents (`redoxfs-resize min`) and
+makes the root partition just as large: a 149 MiB image (23 MiB as `.xz`).
 
 Needs the sdhost base patches (branch `sdhost-default`).
 
 ## Results
 
-None yet.
+QEMU `raspi3b`, `v0.3.0-dev-81-g5ceb150+x9922` (2026-10-28):
+
+- 1.1 GB image (990 MiB partition) on a 2 GiB card: first boot extends the
+  partition to 1984 MiB and restarts; the second boot grows the RedoxFS to
+  1.94 GiB (84 MiB used) and logs in; a third boot changes nothing.
+- `--small` image (85 MiB partition) on a 4 GiB card: partition to
+  4032 MiB, RedoxFS to 3.94 GiB, then 200 MiB written with `conv=fsync`
+  (3.1 MB/s) and hashed.
+- First try: `redoxfs-resize` got `ENOLCK` because `growfs` still held the
+  whole disk open; it closes it now.
+
+On the Pi: queue row #25 in `docs/test-plan.md`.
