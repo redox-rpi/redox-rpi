@@ -33,14 +33,36 @@ looked like a missing filetable fd. The register dumps match: `x8` = 158
 In the aarch64 syscall path (`src/arch/aarch64/interrupt/exception.rs`),
 remember `ELR_EL1` before the syscall. If it changed, a signal handler was
 set up during the syscall: store the result in `saved_archdep_reg` as well
-(`set_saved_syscall_ret` in `src/context/signal.rs`).
+(`set_saved_syscall_ret` in `src/context/signal.rs`). ELR is read with
+`read_volatile`: `stack` is a `&mut`, and the signal code changes the frame
+through `Context::regs_mut`, so the compiler folded a plain comparison
+away (the first version of this patch did nothing because of that).
 
 ## Build
 
 ```bash
-scripts/build-image.sh --experiment ldso-diagnostics --experiment timesync --experiment t12-auxv-dump --experiment sigdelivery-x0
+scripts/build-image.sh --experiment ldso-diagnostics --experiment timesync --experiment sigdelivery-x0
 ```
 
 ## Result
 
-Not run yet.
+How the cause was found: experiment `t12-kernel-diag` logged every signal
+delivery. Each start of `ps` that crashed got SIGCONT (pending `0x20000`)
+from the shell during the `SYS_YIELD` of `relibc_verify_host`, with saved
+ip `0x1bb9dc` (after the `svc`) and saved `x0` = `-1`.
+
+QEMU raspi3b, `ps` started 60 times each way, same experiments as v0.2.0
+(`ldso-diagnostics`, `timesync`):
+
+| Build | `ps > /dev/null` | `ps` to the console | `ps \| cat` |
+|---|---|---|---|
+| `v0.2.0-5-gd1f913a+xee90` (first version, check optimized away) | 19 of 60 failed | 35 of 60 | 0 of 60 |
+| `v0.2.0-4-g8405d0c+xfc05` (without fix, 40 each) | 15 of 40 | 18 of 40 | 0 of 40 |
+| `v0.2.0-9-g43f697e+xe0ce` (this fix) | **0 of 60** | **0 of 60** | 0 of 60 |
+
+Without `ldso-diagnostics` (`v0.2.0-9-g43f697e+x0f50`, relibc `0005`
+only), 4 of 300 starts still failed, but differently: data aborts
+(`ESR_EL1` `0x92000004`/`44`/`4F`), `ELR` `0xC046FC` twice and `0xC02F78`
+in `pwd`, `ls`, `ps`, `sha256sum`. That is T1, a separate bug.
+
+Real Pi: test #11 in [test-plan.md](../../../docs/test-plan.md).

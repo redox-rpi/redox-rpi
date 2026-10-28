@@ -40,4 +40,10 @@ QEMU's log.
 
 ## Result
 
-Not run yet.
+QEMU (`v0.2.0-4-g8405d0c+xfc05`): no `brk #0x7a` in 76 failed starts. The
+crash was never at this `expect`: the registers show `x30` still in the
+program's start code, `x8` = 158 and `x0`..`x4` = `-1`. The jump to the
+`brk #1` came from `relibc_verify_host` right at the top of
+`relibc_start_v1`, whose abort shares that `brk #1`. Cause and fix: see
+[`sigdelivery-x0`](../sigdelivery-x0/README.md). This experiment is not
+needed any more.
