@@ -66,5 +66,10 @@ times, and looks for the complete output line in
 - QEMU `raspi3b`, `v0.3.0-dev-65-gb6c92b4+xe9c4` (kernel and getty
   patch): 5 of 5 complete, no crash.
 - QEMU cannot show the lost characters themselves: its PL011 takes input
-  from the host only while the FIFO has room. The real Pi test is #22 in
-  the [test plan](../../../docs/test-plan.md).
+  from the host only while the FIFO has room.
+- QEMU `raspi3b`, `v0.3.0-dev-94-gb1fcbe1+xe9c4` (merged with `main`,
+  patches renumbered): 5 of 5.
+- Real Pi 3B+, `v0.3.0-dev-94-gb1fcbe1+xe9c4`, test #22 on 2026-10-28:
+  `serial-input-test.sh 20` **20 of 20** lines of 200 characters
+  complete at full speed; `scripts/pi-test.py` all checks pass, 0 of 300
+  starts failed. [Report](../../../docs/test-reports.md).

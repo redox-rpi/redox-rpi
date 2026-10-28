@@ -574,3 +574,25 @@ were none.
   polling driver's CPU time was not measured on the Pi.
 
 Result: **pass**.
+
+## 2026-10-28: `v0.3.0-dev-94-gb1fcbe1+xe9c4`
+
+Built 2026-10-28T19:56:45Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `timesync`. Experiment serial-rx (#28) on the stable base: serial-input-test.sh 20 of 20 lines of 200 characters complete. First pi-test.py attempt got no devsh output (#11), second attempt below
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-94-gb1fcbe1+xe9c4 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-94-gb1fcbe1+xe9c4.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Serial console: `patches/experiments/serial-rx/serial-input-test.sh 20`
+wrote 20 lines of `echo` plus 200 characters, each in one piece at
+115200 baud: **20 of 20 complete**. Login with `root` and the password at
+normal speed worked, and the reset command at the end, sent in one piece,
+arrived complete (before: cut off after 25 characters). No crash on the
+console except the known `pcid` panic (no `pi-clean-boot` in this image).
+The first `pi-test.py` attempt got no answer from devsh (#11); the second
+attempt is the table above.
