@@ -65,4 +65,7 @@ At the old rate, 0 failures in 700 would happen by chance about 3 times
 in 10000. Both runs also show the known `pcid` exception at boot, which
 is unrelated.
 
-Not yet tested on a real Pi.
+Real Pi 3B+, 2026-10-28 (test #17), `v0.3.0-dev-34-g04f0123+x4d10` (the
+stable image's experiments plus `sigentry-x18`), 600 MHz: all
+`pi-test.py` checks pass, **0 of 1000 starts failed**, no exception on
+the serial console ([report](../../../docs/test-reports.md)).
