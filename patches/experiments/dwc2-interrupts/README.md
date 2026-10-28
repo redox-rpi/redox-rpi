@@ -50,5 +50,11 @@ messages. Compared with the polling driver, both measured with `ps` about
 The remaining CPU time is mostly the keyboard: 100 polls per second,
 each a split transaction that spins until the hub answers.
 
-Not tested on a real Pi yet (test `#5` in
-[test-plan.md](../../../docs/test-plan.md)).
+**Result on a real Pi 3B+ (2026-10-28, test #5,
+`v0.3.0-dev-52-g7df70f9+xcb30` with `timesync`, `rtl8152`, `pi-clean-boot`):**
+pass. `dwc2d` waits for the interrupt through the LAN7800, the
+`scripts/pi-test.py` standard checks pass (0 of 300 starts failed), 2000
+lines through devshd take 2 s, and the USB keyboard works on the HDMI
+console. With nothing to do, `dwc2d` uses about 5 % of one core (2.85 s
+in 62 s) instead of a full core; most of it is the keyboard polling
+([test report](../../../docs/test-reports.md)).
