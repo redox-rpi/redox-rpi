@@ -98,12 +98,12 @@ from GPL-licensed drivers (Linux) is not.
 | **VCHIQ** | The second VideoCore channel: sound over HDMI and the jack, camera, video decoding. Needed for Audio | large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI), [#25](https://github.com/redox-rpi/redox-rpi/issues/25) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
-| **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |
+| **Wi-Fi** | CYW43455 (Pi 3B+) and CYW43436 (Zero 2 W) over SDIO, firmware blob, WPA2; planned for v0.6.0 in [#26](https://github.com/redox-rpi/redox-rpi/issues/26) | large |
+| **Bluetooth** | Same chips, over the PL011 UART that is the serial console today; no Bluetooth stack in Redox yet | large |
 
 ## Later / optional
 
-- **Wi-Fi** (CYW43436/CYW43438 over SDIO, firmware blob, WPA2): a large
-  project of its own
+- **Wi-Fi**: milestone v0.6.0, [#26](https://github.com/redox-rpi/redox-rpi/issues/26)
 - USB gadget mode (Ethernet over the Zero 2 W's USB cable, no HAT needed)
 
 ---
