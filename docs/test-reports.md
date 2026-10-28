@@ -513,3 +513,24 @@ queued (test plan #14, issue #18).
 
 `ps` on the serial console crashed once (`/usr/bin/ps`, ESR `F2000001`):
 the known T12 crash, not related to this change.
+
+## 2026-10-28: `v0.3.0-dev-49-g832e1b5+x6256`
+
+Built 2026-10-28T16:53:40Z, `libc.so` `b18e9900eeeacfe1…`, real Pi 3B+ over netboot. Experiments: `pi-clean-boot`, `rtl8152`, `timesync`. Experiment pi-clean-boot (#18) on the stable base: boot log without pcid, pcid-spawner, audiod and rtcd
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-49-g832e1b5+x6256 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-49-g832e1b5+x6256.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Boot log on the serial console: no line from `pcid`, `pcid-spawner`,
+`audiod` or `rtcd` (before: the `pcid` panic with register dump, "No such
+device" from both `pcid-spawner` and from `audiod`). LAN7800 link up, the
+USB keyboard found (`dwc2d: keyboard at address 5`), DHCP and NTP answered,
+devshd up. `ps` shows none of the four, `/scheme` has `ip` and `netcfg` but
+no `pci` and no `audio`. Typing on the USB keyboard is not checked yet: the
+user checks it later together with test #5.

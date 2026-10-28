@@ -41,4 +41,11 @@ about ACPI, PSCI, the GPIO interrupt controller and the PL031 clock, and
 
 ## Results
 
-QEMU and the real Pi: see [test-reports.md](../../../docs/test-reports.md).
+- QEMU `raspi3b`, `v0.2.0-14-g5978d1a+x5b60`: none of the errors, network
+  up, 40 of 40 starts.
+- Real Pi 3B+, `v0.3.0-dev-49-g832e1b5+x6256` (the stable image's
+  experiments `timesync` and `rtl8152` plus this one): none of the errors
+  in the boot log, network up, `scripts/pi-test.py` all checks pass, 0 of
+  300 starts failed. Typing on the USB keyboard is still to be checked.
+
+Details in [test-reports.md](../../../docs/test-reports.md).

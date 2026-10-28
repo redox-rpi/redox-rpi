@@ -14,10 +14,10 @@
   [`pi-clean-boot`](../../patches/experiments/pi-clean-boot/README.md)
   on branch `pi-clean-boot`. init units get `condition_board_not`; the
   two `pcid-spawner` units and `audiod` do not start on `raspi3bp`, `hwd`
-  does not start `pcid`, and `rtcd` runs on x86 only. In QEMU the boot log
-  has none of their errors, the network comes up and 40 of 40 starts
-  pass. Waits for the Pi test (#14 in the
-  [test plan](../test-plan.md)).
+  does not start `pcid`, and `rtcd` runs on x86 only. On a Pi 3B+ (test
+  #14, 2026-10-28) the boot log has none of their errors, the network
+  comes up and `scripts/pi-test.py` passes with 0 of 300 failed starts.
+  Open: typing on the USB keyboard, then the merge to `main`.
 
 - [#15](https://github.com/redox-rpi/redox-rpi/issues/15) boot the kernel straight from the Pi firmware, without
   U-Boot and the Redox bootloader (milestone v0.4.0), branch
