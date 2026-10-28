@@ -225,3 +225,26 @@ sdhost in high speed mode, to compare the two drivers.
 
 `uptime` printed nothing twice in a row; `date` (the clock starts at
 1970-01-01 on every boot) gave the uptime instead.
+
+## 2026-10-28: `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, network boot without SD card
+
+Real Pi 3B+ (`b8:27:eb:08:e0:aa`) without SD card, test #10 of the
+[test plan](test-plan.md). Branch `firmware-netboot` (`7fbb950`): the TFTP
+root holds the Pi firmware and U-Boot built with
+`scripts/build-uboot.sh rpi-net 192.168.178.120`
+(`scripts/netboot-firmware.sh`), and dnsmasq runs as a proxy DHCP server
+next to the FritzBox (`config/dnsmasq-pxe-proxy.conf`). The build host is on
+Wi-Fi. Serial console and the dnsmasq log were recorded; a person pulled
+the card and switched the Pi on. Not a `pi-test.py` run.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot ROM PXE request reaches the proxy | pass | `PXEClient:Arch:00000:UNDI:002001` from `b8:27:eb:08:e0:aa`, answered with "Raspberry Pi Boot"; the address came from the FritzBox |
+| firmware and U-Boot over TFTP | pass | from the TFTP root; no `<serial>/` directory and no card with `bootcode.bin` needed |
+| U-Boot without card | pass | `Bad device specification mmc 0` (no environment), then its built-in boot command loads `redox/netboot.scr` |
+| image over HTTP, boot to login | pass | "image loaded over HTTP", `redox login:` |
+| data partition | – | `RedoxFS: IO ERROR`, expected: there is no card |
+| netboot card back in | pass | no PXE request; U-Boot runs `boot.scr` from the card (`mmc@7e300000.bootdev.part_1`), boots to `redox login:`, devshd answers on port 2323 |
+
+TFTP requests are not logged (`tftpd-hpa` without `--verbose`), so the exact
+files the firmware fetched are not recorded.
