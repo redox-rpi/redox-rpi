@@ -473,3 +473,26 @@ Long run: start loops without a pause, each time after a fresh boot:
 
 Result: the full clock doubles the speed but makes the start crashes
 frequent under load. Not ready as the default; see #20.
+
+## 2026-10-28: #1 x18 fix, `v0.3.0-dev-34-g04f0123+x4d10`, 1000 starts
+
+Test #17 for [#1](https://github.com/redox-rpi/redox-rpi/issues/1): the
+stable image's experiments (`timesync`, `rtl8152`) plus
+[`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18), which builds relibc with x18 reserved. Real Pi 3B+
+over netboot, default ARM clock (600 MHz), one boot,
+`scripts/pi-test.py --starts 250` five times in a row.
+
+| Chunk | Checks | Starts | Failed |
+|---|---|---|---|
+| 1 | version, manifest, ps, ps-tty, sdcard pass | 250 | 0 |
+| 2 | devsh gave no output for the first command (`cat /etc/redox-rpi-release`); nothing started | 0 | – |
+| 3 | all pass | 250 | 0 |
+| 4 | all pass | 250 | 0 |
+| 5 | all pass | 250 | 0 |
+| **Total** | | **1000** | **0** |
+
+No `UNHANDLED EXCEPTION` on the serial console during the run. For
+comparison: the stable image without the fix had 0 of 300, and 1 of 900
+on `v0.2.0-9-g43f697e+x0f50` (T12 fix only); QEMU went from 8 of 700 to 0
+of 700 with the fix. Not tested at 1400 MHz, where the stable image fails
+3-5 % of the starts (test #13).
