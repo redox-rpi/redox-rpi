@@ -101,7 +101,8 @@ before (`src/ld_so/start.rs` has the same check). Likely the same as the
 `brk #1` crashes in T1. Linked statically, `sigregs` starts every time.
 
 **Confirmed on a real Pi as the cause of T5.** These dumps were recorded on
-the serial console (`logs/serial.log` on the build host):
+the serial console (`logs/serial.log` on the build host, archived in
+`logs/serial/` since 2026-10-28):
 
 | Program | Image | ELR | `X17` (PLT target) |
 |---|---|---|---|

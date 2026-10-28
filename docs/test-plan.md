@@ -37,6 +37,21 @@ cannot be combined in one build yet. Each of them applies on top of the
 default patches, which include `rpi-firmwared` (base `0018`) since
 2026-10-27.
 
+## Serial console
+
+The Pi's serial console is on `/dev/ttyUSB0` of the build host (115200
+baud). A systemd user service, `redox-serial.service`, records everything
+it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
+
+- **Read** from that file (`tail -f`, `tail -c`), never from the device: a
+  second reader on `/dev/ttyUSB0` takes bytes away from the log.
+- **Type** with `printf '...\r' > /dev/ttyUSB0`, but only after the new
+  boot's `redox login:` has appeared. Keys sent earlier reach the Redox
+  bootloader ('e' opens its environment editor).
+- **Old output:** `redox-serial-rotate.timer` moves the log every night at
+  03:17 UTC to `~/redox-rpi/logs/serial/serial-<date>.log.gz` and deletes
+  archives older than 14 days. Copy what a report needs into the report.
+
 ## Stable image
 
 Staged on the TFTP server whenever no test runs:
