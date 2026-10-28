@@ -10,12 +10,10 @@
 ## In progress
 
 - [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21) set the ARM clock to 1.4 GHz instead of 600 MHz and
-  warn on undervoltage or overheating; branch `cpu-clock`. Pi test #13
-  (2026-10-28): 1400 MHz works and starts are twice as fast, the warnings
-  work, but under load start crashes go from 0.1 % to 3–5 % once the SoC
-  reaches the soft temperature limit (about 60 °C). Stays an experiment;
-  next: a fixed lower clock (1200 MHz) below that limit
-  ([report](../test-reports.md)).
+  warn on undervoltage or overheating; branch `cpu-clock`. Pi tests: 1400 MHz
+  makes starts twice as fast. Under load, #13 had 3–5 % start crashes; with
+  the x18 fix from #1, #19 had 0 of 7000 (2026-10-28). Goes to main together
+  with the x18 fix ([report](../test-reports.md)).
 
 ## Later
 

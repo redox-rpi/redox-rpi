@@ -20,8 +20,10 @@
 
 ## Later
 
-- [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 36 times the data for small writes
-  (milestone v0.4.0). Related upstream work: RedoxFS
+- [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 28 times the data for 4 KiB writes
+  (milestone v0.4.0). The same on x86_64 as on aarch64 (QEMU,
+  `scripts/redoxfs-write-amp.py`, RedoxFS 0.9.1 `c988cb8`, the newest
+  upstream), so an upstream problem; the user reports it to Redox. Related upstream work: RedoxFS
   [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51) and
   [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57).
 - [#24](https://github.com/redox-rpi/redox-rpi/issues/24) a small release image that grows to the whole card on the
