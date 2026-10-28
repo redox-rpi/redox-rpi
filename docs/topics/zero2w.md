@@ -30,7 +30,7 @@ the Zero. Each one gets an issue when someone takes it on.
    ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)) on the Zero too:
    its board is smaller, it gets hot sooner and throttles earlier than the
    Pi 3B+. Small, once #20 is on `main`.
-4. **Wi-Fi** (CYW43436 over SDIO, firmware blob, WPA2). Once sdhost reads
+4. **Wi-Fi**, [#26](https://github.com/redox-rpi/redox-rpi/issues/26) (milestone v0.6.0) (CYW43436 over SDIO, firmware blob, WPA2). Once sdhost reads
    the SD card ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)), the
    second SD controller (the one `bcm2835-sdhcid` drives today) is free for
    the Wi-Fi chip, as on Linux. It helps the Pi 3B+ too. Large.
