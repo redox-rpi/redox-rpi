@@ -496,3 +496,40 @@ comparison: the stable image without the fix had 0 of 300, and 1 of 900
 on `v0.2.0-9-g43f697e+x0f50` (T12 fix only); QEMU went from 8 of 700 to 0
 of 700 with the fix. Not tested at 1400 MHz, where the stable image fails
 3-5 % of the starts (test #13).
+
+## 2026-10-28: `v0.3.0-dev-59-g1559bca+x9906` (CPU clock with the x18 fix, test #19)
+
+Built 2026-10-28T16:53:25Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over
+netboot. Experiments `timesync`, `rtl8152`, `sigentry-x18`
+([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) and `cpu-clock`
+([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the same test as
+#13, now with the x18 fix. The boot log shows
+`rpi-firmwared: ARM clock 600 -> 1400 MHz`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-59-g1559bca+x9906 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-59-g1559bca+x9906.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Long run at 1400 MHz from a fresh boot
+(`patches/experiments/cpu-clock/clock-soak.py`, 30 minutes):
+
+| Build | Starts | Failed | Temperature | Throttling |
+|---|---|---|---|---|
+| with the x18 fix (this test) | 7000 | **0** | 56.9–60.7 °C | soft temperature limit on and off, as in #13 |
+| without it (#13) | 5100 | 276 (5.4 %) | 57.5–60.1 °C | the same |
+
+- No unhandled exception in the serial log during the run, and no devshd
+  session broke off.
+- The crashes under load in #13 were the x18 bug from #1, made more frequent
+  by load and speed, not a fault of the higher clock: with the fix the soft
+  temperature limit is reached just as often and nothing fails.
+- The throttle watch logged the soft limit 59 times in 30 minutes (each with
+  a "no longer throttled"). Correct, but a lot of lines for a state the
+  firmware handles itself.
+
+Result: **pass**. With the x18 fix, 1400 MHz is ready for v0.3.0.
