@@ -14,11 +14,8 @@
   Builds and works in QEMU (`/scheme/rpi-firmware/arm_clock` reads and
   sets the clock); the real clock change needs the Pi.
 
-## Next
-
-- [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off.
-
 ## Later
 
+- [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).
 - Power domains, GPIO expander, DMA channel mask, display, VCHIQ
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
