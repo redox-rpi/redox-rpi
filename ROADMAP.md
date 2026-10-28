@@ -58,7 +58,8 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
 5. **Full CPU speed** ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the ARM clock at 1.4 GHz
    instead of 600 MHz, set through the firmware, with a warning on
-   undervoltage or overheating.
+   undervoltage or overheating. ✅ Done (base patch `0021`, Pi tests #13
+   and #19).
 6. **Reliable test access** ([#11](https://github.com/redox-rpi/redox-rpi/issues/11), [#28](https://github.com/redox-rpi/redox-rpi/issues/28)): `devshd` logins that hang,
    and the serial console dropping characters on fast input.
 

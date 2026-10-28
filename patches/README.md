@@ -20,7 +20,7 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018` | `base/` | default patches; `0018` is `rpi-firmwared` |
+| `0001`–`0016`, `0018`, `0021` | `base/` | default patches; `0018` is `rpi-firmwared`, `0021` its ARM clock and throttle watch (after the experiments' `0017`–`0020`, which it does not touch) |
 | `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
