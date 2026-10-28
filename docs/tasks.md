@@ -19,7 +19,7 @@ that name in its title:
 | T5 | [#5 Programs exit with code 1 and print nothing](https://github.com/redox-rpi/redox-rpi/issues/5) | [stability](topics/stability.md) | Pi |
 | T6 | [#6 sdhost as the default SD driver](https://github.com/redox-rpi/redox-rpi/issues/6) | [sdcard](topics/sdcard.md) | Pi |
 | T7 | [#7 Power off and reboot](https://github.com/redox-rpi/redox-rpi/issues/7) | [firmware](topics/firmware.md) | QEMU, Pi |
-| T8 | [#8 Raspberry Pi Zero 2 W board variant](https://github.com/redox-rpi/redox-rpi/issues/8) | [zero2w](topics/zero2w.md) | Zero 2 W |
+| T8 | [#8 Raspberry Pi Zero 2 W board variant](https://github.com/redox-rpi/redox-rpi/issues/8) (closed) | [zero2w](topics/zero2w.md) | Zero 2 W |
 | T9 | [#9 CI builds with the pinned revisions](https://github.com/redox-rpi/redox-rpi/issues/9) | [ci](topics/ci.md) | none |
 | T10 | [#10 Start loop in `pi-test.py` with crash details](https://github.com/redox-rpi/redox-rpi/issues/10) | [ci](topics/ci.md) | QEMU, Pi |
 | T11 | [#11 devshd sessions leave `login` processes behind](https://github.com/redox-rpi/redox-rpi/issues/11) | [stability](topics/stability.md) | Pi |

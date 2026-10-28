@@ -15,4 +15,6 @@
 
 ## Later
 
+- [#22](https://github.com/redox-rpi/redox-rpi/issues/22) `timerd`: run services at set times, with
+  cron-format schedules and catch-up after a restart (milestone v0.4.0).
 - An I2C clock module (DS3231) for boots without a network.
