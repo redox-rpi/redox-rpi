@@ -11,6 +11,8 @@
 
 - [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21) set the ARM clock to 1.4 GHz instead of 600 MHz and
   warn on undervoltage or overheating; branch `cpu-clock`, Pi test #13.
+  Builds and works in QEMU (`/scheme/rpi-firmware/arm_clock` reads and
+  sets the clock); the real clock change needs the Pi.
 
 ## Next
 
