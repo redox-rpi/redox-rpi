@@ -1,4 +1,4 @@
-From d39f7e5548d5550c6e4c031b342cad0e2576bc15 Mon Sep 17 00:00:00 2001
+From 42acbc8462297b3f2f70dd969ad863eff7359872 Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 23:16:26 +0000
 Subject: [PATCH] Debug: count kernel stacks, log every context exit (#31)
@@ -44,7 +44,7 @@ index f63da921..c7bd2abe 100644
      }
  }
 diff --git a/src/syscall/process.rs b/src/syscall/process.rs
-index 1db548eb..25686272 100644
+index 1db548eb..6e0fd101 100644
 --- a/src/syscall/process.rs
 +++ b/src/syscall/process.rs
 @@ -35,11 +35,14 @@ use super::usercopy::UserSliceWo;
@@ -68,7 +68,7 @@ index 1db548eb..25686272 100644
          drop(context_ref);
      }
      drop(close_files);
-+    log::info!(
++    info!(
 +        "ctxexit {} pid {} files_refs {} live_kstacks {} contexts {}",
 +        exit_info.0,
 +        exit_info.1,
