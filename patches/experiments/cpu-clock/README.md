@@ -31,6 +31,15 @@ scripts/build-image.sh --experiment cpu-clock
 4. Leave it running for 30 minutes: no new errors, `throttled` without
    bit 0 (undervoltage); a warning in the log if a bit was set.
 
+Scripts used for the tests on the Pi, run from a clone of this repository
+on the build host:
+
+- `clock-timing.py <repo> <pi> [rounds]`: 50 starts at `min`, then at
+  `max`, repeated, with temperature and `throttled`.
+- `clock-soak.py <repo> <pi> [minutes] [clock]`: start loops without a
+  pause for the given time (optionally at a fixed clock), failures,
+  temperature and `throttled` after each round of 50.
+
 ## Results
 
 - **QEMU** (build `v0.2.0-10-gc489f0c+x097f`, 2026-10-28): the driver
