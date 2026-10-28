@@ -21,7 +21,7 @@ which is 1.4 ms of input. The rest is lost.
 ## Change
 
 Kernel patch
-[`0004`](kernel/0004-aarch64-keep-PL011-input-while-the-kernel-writes-to-.patch):
+[`0007`](kernel/0007-aarch64-keep-PL011-input-while-the-kernel-writes-to-.patch):
 while `send()` waits for the transmit FIFO, it moves received bytes into a
 stash of 1 KiB in the `SerialPort`. It does this only while the receive
 FIFO is at or above its trigger level (8 of 16), so a few bytes stay in
@@ -36,7 +36,7 @@ reading the console without forwarding ion's output, so ion stopped
 reading. Before, the lost characters hid this.
 
 Base patch
-[`0022`](base/0022-getty-keep-input-the-PTY-does-not-take-yet-instead-o.patch):
+[`0023`](base/0023-getty-keep-input-the-PTY-does-not-take-yet-instead-o.patch):
 getty keeps the input the PTY did not take, stops reading the console
 until it is taken, and keeps forwarding the output meanwhile. While input
 is pending it polls with a 10 ms timeout to retry it.
@@ -66,5 +66,5 @@ times, and looks for the complete output line in
 - QEMU `raspi3b`, `v0.3.0-dev-65-gb6c92b4+xe9c4` (kernel and getty
   patch): 5 of 5 complete, no crash.
 - QEMU cannot show the lost characters themselves: its PL011 takes input
-  from the host only while the FIFO has room. The real Pi test is #19 in
+  from the host only while the FIFO has room. The real Pi test is #22 in
   the [test plan](../../../docs/test-plan.md).

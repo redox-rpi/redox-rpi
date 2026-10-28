@@ -533,3 +533,44 @@ Long run at 1400 MHz from a fresh boot
   firmware handles itself.
 
 Result: **pass**. With the x18 fix, 1400 MHz is ready for v0.3.0.
+
+## 2026-10-28: `v0.3.0-dev-52-g7df70f9+xcb30` (dwc2d with interrupts, test #5)
+
+Branch `dwc2-interrupts` (7df70f9) with `--experiment timesync --experiment
+rtl8152 --experiment pi-clean-boot --experiment dwc2-interrupts`, real Pi
+3B+ over netboot. The build predates the x18 fix on `main` (e2b987b), so
+start failures of about 1 % would not have been a `dwc2d` problem; there
+were none.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-52-g7df70f9+xcb30 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-52-g7df70f9+xcb30.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | pass | 44 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+- The boot log shows `dwc2d: interrupt /scheme/irq/phandle-1/1,9`: the
+  driver waits for the controller's interrupt on the real BCM2837, through
+  the LAN7800 (`link up after 1710 ms`). No "unexpected irq" lines.
+- Network over the LAN7800: 2000 lines of output through devshd in 2 s.
+- CPU time of `dwc2d` (`ps`, user + system): 2.85 s in 62 s with nothing
+  to do, about 5 % of one core. The polling driver keeps one core busy all
+  the time (4 min 21 s in about 80 s in QEMU, see the experiment's README).
+  The rest is mostly the keyboard: 100 polls per second, each a split
+  transaction through the hub that waits by spinning.
+- USB keyboard: the maintainer logged in on the HDMI console, ran `ls`
+  and `ps`; both worked.
+- `pi-clean-boot` (#18): no `pcid`, `pcid-spawner`, `audiod` or `rtcd`
+  messages in the boot log.
+- First boot with the Anker 565 hub plugged in but no cable on it: `dwc2d`
+  took the hub's RTL8153B as the network adapter (it is preferred over the
+  LAN7800), had no link, `dhcpd` timed out and did not retry when the
+  cable was plugged in later. Netbooting through the hub, U-Boot's r8152
+  driver fails the HTTP download (`Rx: failed to receive: -5`). Passed on
+  to test #4.
+- Afterwards, on the stable image, devshd logins hung (#11), so the
+  polling driver's CPU time was not measured on the Pi.
+
+Result: **pass**.

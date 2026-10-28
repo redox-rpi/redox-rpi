@@ -23,13 +23,17 @@
 
 ## In progress
 
-- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input: the
-  kernel cannot take the PL011 receive interrupt while it writes to the
-  port, and the 16-byte receive FIFO overflows. Experiment
-  [`serial-rx`](https://github.com/redox-rpi/redox-rpi/tree/serial-rx/patches/experiments/serial-rx)
-  on branch `serial-rx`: the kernel keeps the input during writes, and
-  getty no longer panics when the PTY does not take input at once. Passes
-  in QEMU; Pi test #19.
+- [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
+  `devshd-hangup`): devshd kept `login` and the shell running when a client
+  closed the connection without `exit`, two threads each, so every dropped
+  devsh call left a session behind. devshd now hangs up such a session
+  (SIGHUP to the terminal's foreground group, then SIGKILL). QEMU: 6
+  dropped sessions leave nothing. Waiting for the Pi test.
+
+- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
+  `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
+  writes to the port, getty no longer panics on a full PTY) passes in
+  QEMU; Pi test #22.
 
 ## Next
 
@@ -37,10 +41,14 @@
   x18, so the signal entry can still corrupt it there. Either reserve x18
   in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
   rebuilt) or return from the signal entry without clobbering a register.
-- [#2](https://github.com/redox-rpi/redox-rpi/issues/2) its kernel cause; [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance.
-- [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd leaves `login` processes behind.
 
 ## Later
 
+- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance after loading code (v0.4.0): no
+  known failure needs it.
+- Relibc patch `0005` (ld.so touches fresh memory) may be dropped: QEMU
+  has 0 of 1400 failed starts without it
+  ([experiment](https://github.com/redox-rpi/redox-rpi/tree/t2-no-populate/patches/experiments/no-ldso-populate)),
+  so [#2](https://github.com/redox-rpi/redox-rpi/issues/2) is closed; needs a Pi test first.
 - Prebuilt programs from Redox' aarch64 packages (bash, vim, curl …) stop
   with `brk` at start ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

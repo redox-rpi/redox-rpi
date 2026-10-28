@@ -31,11 +31,11 @@ tests on it.
 Tests that need a person at the Pi (keyboard, screen, power) say so; the
 owner then asks that person before taking the Pi.
 
-Experiments that add a driver to base each carry their own patch `0017`,
-so `sdhost-driver` (with `sdhost-boot`), `rtl8152` and `dwc2-interrupts`
-cannot be combined in one build yet. Each of them applies on top of the
-default patches, which include `rpi-firmwared` (base `0018`) since
-2026-10-27.
+Experiment patches are numbered by what they apply after; see
+[patches/README.md](../patches/README.md) for the numbers and the
+combinations that build (for example `rtl8152` + `pi-clean-boot` +
+`dwc2-interrupts`, in this order). Each applies on top of the default
+patches.
 
 ## Coordination
 
@@ -98,15 +98,17 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
-| 16 | First run of the nightly stable image by hand: `scripts/update-stable.sh --force --ref origin/nightly-stable` builds, stages, resets the Pi, runs `scripts/pi-test.py` and promotes or restores ([branch](https://github.com/redox-rpi/redox-rpi/tree/nightly-stable)) | build agent | branch `nightly-stable`, `config/stable-image.conf` | network, serial console | waiting: the run is blocked by the agent's permission settings |
+| 16 | First run of the nightly stable image by hand: `scripts/update-stable.sh --force --ref origin/nightly-stable` builds, stages, resets the Pi, runs `scripts/pi-test.py` and promotes or restores ([branch](https://github.com/redox-rpi/redox-rpi/tree/nightly-stable)) | build agent | branch `nightly-stable`, `config/stable-image.conf` | network, serial console | waiting: blocked by the agent's permission settings |
 | 4 | RTL8152/RTL8153 Ethernet on the Pi 3B+, with the Anker 565 hub (RTL8153B, works in QEMU with the real chip) or an RTL8152 adapter ([steps](https://github.com/redox-rpi/redox-rpi/tree/rtl8152/patches/experiments/rtl8152#a-pi-3b-with-a-usb-rtl8152-or-rtl8153-adapter)) | rtl8152 session | branch `rtl8152`, `--experiment ldso-diagnostics --experiment rtl8152` | person to plug the hub into the Pi (USB-C to USB-A adapter) and a LAN cable | waiting |
-| 5 | dwc2d with interrupts: `scripts/pi-test.py` standard checks plus `ps` (CPU time of `dwc2d` near 0 instead of a full core), devsh traffic over the LAN7800, typing on a USB keyboard ([experiment](https://github.com/redox-rpi/redox-rpi/tree/dwc2-interrupts/patches/experiments/dwc2-interrupts)) | dwc2-interrupts session | branch `dwc2-interrupts`, `--experiment ldso-diagnostics --experiment dwc2-interrupts` | network; a person for the keyboard check | waiting |
+| 22 | Serial console input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)): boot, log in as root on the serial console, then `patches/experiments/serial-rx/serial-input-test.sh 20` (writes 20 lines of 200 characters at full speed to `/dev/ttyUSB0`, checks the output in the serial log; done when 20 of 20 are complete); `scripts/pi-test.py` standard checks ([experiment](https://github.com/redox-rpi/redox-rpi/tree/serial-rx/patches/experiments/serial-rx)) | serial-rx session | branch `serial-rx` merged with `main`, the stable image's experiments plus `--experiment serial-rx` | network, serial console (writes to it) | waiting |
 | 18 | v0.4.0, #15 direct firmware boot without U-Boot: flash `scripts/make-sdcard.sh --direct <harddrive.img>` (firmware, `kernel8.img` = `tools/rpi-boot-stub`, initramfs); the serial log shows the `rpi-boot-stub:` lines, the kernel start and `redox login:`; the `dwc2d` line has the board MAC `b8:27:eb:…`, not the fallback `02:52:65:64:6f:78`; `scripts/pi-test.py` standard checks; `/scheme/data` from the card. Afterwards the netboot card goes back in | boot session (#15) | branch `fw-direct-boot`, `make-sdcard.sh --direct` | serial console (read `~/redox-rpi/logs/serial.log`, no typing before `redox login:`); the user to swap the SD card | waiting, after all v0.3.0 tests |
+| 21 | [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd hangs up sessions whose client went away: `scripts/pi-test.py` standard checks, then 20 devsh sessions, 10 of them closed without `exit` (half with `sleep 600` running); `ps | cat` shows no extra `login`, `ion` or `sleep`, and new logins still work (QEMU: 6 dropped sessions leave nothing, [branch](https://github.com/redox-rpi/redox-rpi/tree/devshd-hangup)) | t1 session | branch `devshd-hangup`, `--experiment timesync --experiment rtl8152`, built as `v0.3.0-dev-77-g6bcd0fb+x9f76` | network | **on the Pi** (2026-10-28) |
 
 ## Done
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
+| 2026-10-28 | #5 dwc2d with interrupts, with `pi-clean-boot` (#18), keyboard by the maintainer | `v0.3.0-dev-52-g7df70f9+xcb30` | [report](test-reports.md): all pass, 0 of 300 starts failed, `dwc2d` about 5 % of a core instead of a full one |
 | 2026-10-28 | #20 CPU clock at 1400 MHz with the #1 x18 fix (#19) | `v0.3.0-dev-59-g1559bca+x9906` | [report](test-reports.md): **pass**, standard checks pass, 0 of 7000 starts failed in 30 minutes at 1400 MHz (without the fix, #13: 276 of 5100) |
 | 2026-10-28 | #14: T18 clean boot ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), experiment `pi-clean-boot` on the stable base | `v0.3.0-dev-49-g832e1b5+x6256` | [works](https://github.com/redox-rpi/redox-rpi/blob/pi-clean-boot/docs/test-reports.md): no `pcid`, `pcid-spawner`, `audiod` or `rtcd` in the boot log, network up, `pi-test.py` all pass, 0 of 300 starts failed; USB keyboard typing still to check (user, with #5). Stable image back |
 | 2026-10-28 | #1 start crash fix (#17): relibc built with x18 reserved, experiment [`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18), on top of the stable image's experiments, 600 MHz | `v0.3.0-dev-34-g04f0123+x4d10` | [report](test-reports.md): all checks pass, **0 of 1000 starts failed**, no exception on the serial console (stable image: 0 of 300, before the T12 fix 1 of 900). One chunk lost its devsh connection before starting anything; counted apart. Stable image restored |
