@@ -13,15 +13,15 @@
 
 ## In progress
 
-- Nothing.
+- [#23](https://github.com/redox-rpi/redox-rpi/issues/23) the CPU clock follows the load (v0.4.0): experiment
+  [`cpu-ondemand`](../../patches/experiments/cpu-ondemand/README.md), base
+  patch `0023`, branch `cpu-ondemand`. Waits for its Pi test.
 
 ## Later
 
 - Throttle watch: fewer lines for the soft temperature limit (59 in 30
   minutes under load); show the measured ARM clock (tag `0x30047`) next to
   the requested one.
-- [#23](https://github.com/redox-rpi/redox-rpi/issues/23) the CPU clock follows the load, like Linux `ondemand`:
-  600 MHz when idle, 1400 MHz under load (milestone v0.4.0).
 - [#21](https://github.com/redox-rpi/redox-rpi/issues/21) a common DMA plan for the Pi, including the BCM2835 DMA
   controller and the firmware's channel mask (milestone v0.4.0).
 - [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).

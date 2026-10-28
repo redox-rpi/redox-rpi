@@ -1,0 +1,375 @@
+From bfd658f1a2ce812ce5018ac75f2bb51a4ba139d8 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 20:59:15 +0100
+Subject: [PATCH] rpi-firmwared: governor, the ARM clock follows the load
+
+Every 100 ms the governor reads the per-CPU times from sys:stat. Above
+50 % load on the busiest CPU it sets the maximum clock, after 2 s below
+30 % the minimum. /scheme/rpi-firmware/governor shows mode, target,
+load and clock changes; writing ondemand, performance or powersave sets
+the mode. Writing arm_clock stops the governor (mode fixed).
+
+Refs redox-rpi/redox-rpi#23
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/rpi-firmwared/src/governor.rs | 228 ++++++++++++++++++++++++++
+ drivers/rpi-firmwared/src/main.rs     |  45 ++++-
+ 2 files changed, 266 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/rpi-firmwared/src/governor.rs
+
+diff --git a/drivers/rpi-firmwared/src/governor.rs b/drivers/rpi-firmwared/src/governor.rs
+new file mode 100644
+index 0000000..672c67b
+--- /dev/null
++++ b/drivers/rpi-firmwared/src/governor.rs
+@@ -0,0 +1,228 @@
++//! CPU clock governor: the ARM clock follows the load, like Linux's
++//! `ondemand`.
++//!
++//! Every 100 ms it reads the per-CPU times from `sys:stat` and takes the load
++//! of the busiest CPU (all cores share one clock). Above `UP_LOAD` percent it
++//! sets the maximum clock; after `DOWN_SAMPLES` samples in a row below
++//! `DOWN_LOAD` percent it goes back to the minimum. The firmware still lowers
++//! the clock on its own when the SoC gets hot or the voltage drops.
++
++use std::sync::{Arc, Mutex};
++use std::thread;
++use std::time::Duration;
++
++use crate::mbox::*;
++
++const SAMPLE: Duration = Duration::from_millis(100);
++const UP_LOAD: u64 = 50;
++const DOWN_LOAD: u64 = 30;
++/// 2 seconds below `DOWN_LOAD` before the clock goes down.
++const DOWN_SAMPLES: u32 = 20;
++
++#[derive(Clone, Copy, PartialEq)]
++pub enum Mode {
++    /// The clock follows the load.
++    Ondemand,
++    /// Always the maximum.
++    Performance,
++    /// Always the minimum.
++    Powersave,
++    /// A rate written to `arm_clock`; the governor leaves it alone.
++    Fixed,
++}
++
++impl Mode {
++    pub fn parse(name: &str) -> Option<Self> {
++        match name {
++            "ondemand" => Some(Mode::Ondemand),
++            "performance" => Some(Mode::Performance),
++            "powersave" => Some(Mode::Powersave),
++            _ => None,
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Mode::Ondemand => "ondemand",
++            Mode::Performance => "performance",
++            Mode::Powersave => "powersave",
++            Mode::Fixed => "fixed",
++        }
++    }
++}
++
++#[derive(Clone, Copy, PartialEq)]
++enum Target {
++    Min,
++    Max,
++}
++
++pub struct Governor {
++    pub mode: Mode,
++    target: Option<Target>,
++    /// Load of the busiest CPU in the last sample, in percent.
++    load: u64,
++    switches: u64,
++    min: u32,
++    max: u32,
++}
++
++impl Governor {
++    pub fn new(mbox: &mut Mailbox) -> Self {
++        let min = mbox.value_of(TAG_GET_MIN_CLOCK_RATE, CLOCK_ARM).unwrap_or(0);
++        let max = mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).unwrap_or(0);
++        Self {
++            mode: Mode::Ondemand,
++            // The driver starts at the maximum (see `arm_clock_max`).
++            target: Some(Target::Max),
++            load: 0,
++            switches: 0,
++            min,
++            max,
++        }
++    }
++
++    /// The contents of `/scheme/rpi-firmware/governor`.
++    pub fn status(&self) -> String {
++        let target = match (self.mode, self.target) {
++            (Mode::Fixed, _) | (_, None) => "-",
++            (_, Some(Target::Min)) => "min",
++            (_, Some(Target::Max)) => "max",
++        };
++        format!(
++            "mode {}\ntarget {target}\nload {}\nswitches {}\nmin {}\nmax {}\n",
++            self.mode.name(),
++            self.load,
++            self.switches,
++            self.min,
++            self.max
++        )
++    }
++
++    /// Sets the mode; `performance` and `powersave` take effect at once.
++    pub fn set_mode(&mut self, mode: Mode, mbox: &mut Mailbox) -> Result<(), String> {
++        self.mode = mode;
++        match mode {
++            Mode::Performance => self.go(Target::Max, mbox),
++            Mode::Powersave => self.go(Target::Min, mbox),
++            Mode::Fixed => {
++                self.target = None;
++                Ok(())
++            }
++            Mode::Ondemand => Ok(()),
++        }
++    }
++
++    fn go(&mut self, target: Target, mbox: &mut Mailbox) -> Result<(), String> {
++        if self.target == Some(target) {
++            return Ok(());
++        }
++        let rate = match target {
++            Target::Min => self.min,
++            Target::Max => self.max,
++        };
++        mbox.set_clock(CLOCK_ARM, rate)?;
++        self.target = Some(target);
++        self.switches += 1;
++        Ok(())
++    }
++}
++
++/// Busy and total time per CPU, from the `cpuN user nice kernel idle ...`
++/// lines of `sys:stat` (milliseconds).
++fn cpu_times(stat: &str) -> Vec<(u64, u64)> {
++    stat.lines()
++        .filter_map(|line| {
++            let mut fields = line.split_whitespace();
++            let name = fields.next()?;
++            // "cpu" alone is the sum of all CPUs.
++            name.strip_prefix("cpu")?.parse::<u32>().ok()?;
++            let values: Vec<u64> = fields.take(4).filter_map(|v| v.parse().ok()).collect();
++            let [user, nice, kernel, idle] = values[..] else {
++                return None;
++            };
++            Some((user + nice + kernel, user + nice + kernel + idle))
++        })
++        .collect()
++}
++
++fn read_stat(sys: &libredox::Fd) -> Option<String> {
++    // The kernel builds the text once per open, so open it every time.
++    let fd = sys.openat("stat", libredox::flag::O_RDONLY, 0).ok()?;
++    let mut buf = vec![0u8; 4096];
++    let mut len = 0;
++    loop {
++        if len == buf.len() {
++            buf.resize(len * 2, 0);
++        }
++        match fd.read(&mut buf[len..]) {
++            Ok(0) => break,
++            Ok(n) => len += n,
++            Err(_) => return None,
++        }
++    }
++    buf.truncate(len);
++    String::from_utf8(buf).ok()
++}
++
++/// Runs the governor; `sys` is `/scheme/sys`, opened before the driver left
++/// its namespace.
++pub fn run(sys: libredox::Fd, governor: Arc<Mutex<Governor>>, mbox: Arc<Mutex<Mailbox>>) {
++    let mut last: Vec<(u64, u64)> = Vec::new();
++    let mut quiet = 0;
++    loop {
++        thread::sleep(SAMPLE);
++        let Some(now) = read_stat(&sys).map(|stat| cpu_times(&stat)) else {
++            continue;
++        };
++        let load = now
++            .iter()
++            .zip(&last)
++            .map(|(&(busy, total), &(busy0, total0))| {
++                let total = total.saturating_sub(total0);
++                if total == 0 {
++                    0
++                } else {
++                    busy.saturating_sub(busy0) * 100 / total
++                }
++            })
++            .max()
++            .unwrap_or(0);
++        last = now;
++
++        let mut governor = governor.lock().unwrap();
++        governor.load = load;
++        if governor.mode != Mode::Ondemand {
++            continue;
++        }
++        let target = if load > UP_LOAD {
++            quiet = 0;
++            Target::Max
++        } else {
++            if load < DOWN_LOAD {
++                quiet += 1;
++            } else {
++                quiet = 0;
++            }
++            if quiet >= DOWN_SAMPLES {
++                Target::Min
++            } else {
++                continue;
++            }
++        };
++        if let Err(err) = governor.go(target, &mut mbox.lock().unwrap()) {
++            eprintln!("rpi-firmwared: governor: {err}");
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::cpu_times;
++
++    #[test]
++    fn parses_per_cpu_lines() {
++        let stat = "cpu  10 0 5 85 3\ncpu0 4 0 2 44 1 7\ncpu1 6 0 3 41 2 9\nIRQs 3 1 2\nboot_time: 1\n";
++        assert_eq!(cpu_times(stat), vec![(6, 50), (9, 50)]);
++    }
++}
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 4a7a018..b351fad 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -14,11 +14,15 @@
+ //!   maximum rate in Hz
+ //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+-//!   in Hz, `max` or `min` sets it
++//!   in Hz, `max` or `min` sets it and stops the governor (mode `fixed`)
++//! - `/scheme/rpi-firmware/governor`: mode, target, load and number of clock
++//!   changes of the governor; writing `ondemand`, `performance` or
++//!   `powersave` sets the mode
+ //!
+-//! At start it sets the ARM clock to its maximum; the firmware lowers it by
+-//! itself when the SoC gets too hot or the supply voltage too low. A thread
+-//! checks the throttling flags every few seconds and logs when they change.
++//! At start it sets the ARM clock to its maximum; then the governor
++//! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
++//! when the SoC gets too hot or the supply voltage too low. A thread checks
++//! the throttling flags every few seconds and logs when they change.
+ 
+ use std::fmt::Write as _;
+ use std::process;
+@@ -35,8 +39,11 @@ use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTD
+ use syscall::schemev2::NewFdFlags;
+ use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
+ 
++mod governor;
+ mod mbox;
+ 
++use governor::{Governor, Mode};
++
+ use mbox::*;
+ 
+ /// Bus address of the mailbox on all BCM283x, used if the devicetree has no
+@@ -44,9 +51,9 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "temperature", "throttled"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock"];
++const WRITABLE: &[&str] = &["arm_clock", "governor"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -60,11 +67,16 @@ enum Handle {
+ 
+ struct FirmwareScheme {
+     mbox: Arc<Mutex<Mailbox>>,
++    // Lock order: the governor before the mailbox.
++    governor: Arc<Mutex<Governor>>,
+     handles: HandleMap<Handle>,
+ }
+ 
+ impl FirmwareScheme {
+     fn contents(&mut self, name: &str) -> Result<String> {
++        if name == "governor" {
++            return Ok(self.governor.lock().unwrap().status());
++        }
+         let mut text = String::new();
+         let mbox = &mut *self.mbox.lock().unwrap();
+         match name {
+@@ -100,8 +112,15 @@ impl FirmwareScheme {
+     }
+ 
+     fn set(&mut self, name: &str, value: &str) -> Result<()> {
++        let governor = &mut *self.governor.lock().unwrap();
+         let mbox = &mut *self.mbox.lock().unwrap();
+         match name {
++            "governor" => {
++                let mode = Mode::parse(value).ok_or(Error::new(EINVAL))?;
++                governor.set_mode(mode, mbox).map_err(log)?;
++                println!("rpi-firmwared: governor {value}");
++                Ok(())
++            }
+             "arm_clock" => {
+                 let rate = match value {
+                     "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
+@@ -109,7 +128,8 @@ impl FirmwareScheme {
+                     hz => hz.parse().map_err(|_| Error::new(EINVAL))?,
+                 };
+                 let rate = mbox.set_clock(CLOCK_ARM, rate).map_err(log)?;
+-                println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
++                governor.set_mode(Mode::Fixed, mbox).map_err(log)?;
++                println!("rpi-firmwared: ARM clock {} MHz, governor off", rate / 1_000_000);
+                 Ok(())
+             }
+             _ => Err(Error::new(EROFS)),
+@@ -408,8 +428,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+     } as *mut u32;
+     let mbox = Mailbox::new(regs).expect("rpi-firmwared: failed to allocate the message buffer");
+     let mbox = Arc::new(Mutex::new(mbox));
++    let governor = Arc::new(Mutex::new(Governor::new(&mut mbox.lock().unwrap())));
+     let mut scheme = FirmwareScheme {
+         mbox: mbox.clone(),
++        governor: governor.clone(),
+         handles: HandleMap::new(),
+     };
+     match scheme.contents("board") {
+@@ -420,6 +442,15 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         Err(_) => println!("rpi-firmwared: mailbox at 0x{phys:08x} does not answer"),
+     }
+     arm_clock_max(&mut mbox.lock().unwrap());
++    // The governor reads sys:stat; open the scheme before leaving the
++    // namespace.
++    match libredox::Fd::open("/scheme/sys", libredox::flag::O_DIRECTORY | libredox::flag::O_RDONLY, 0) {
++        Ok(sys) => {
++            let mbox = mbox.clone();
++            thread::spawn(move || governor::run(sys, governor, mbox));
++        }
++        Err(err) => eprintln!("rpi-firmwared: no governor, cannot open /scheme/sys: {err}"),
++    }
+     thread::spawn(move || watch_throttling(mbox));
+ 
+     let socket = Socket::create().expect("rpi-firmwared: failed to create the rpi-firmware scheme");
+-- 
+2.54.0 (Apple Git-157)
+
