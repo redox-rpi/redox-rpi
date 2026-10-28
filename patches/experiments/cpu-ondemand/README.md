@@ -72,3 +72,8 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
   `max` there. Only the real Pi can show the switch to `min`. The same run
   showed the millisecond rounding (one CPU with 220000 switches in 5 s
   counted 0.6 s), hence kernel `0008`.
+- **QEMU with kernel `0008`** (build `v0.3.0-dev-93-g2d1a2e4+xc99c`,
+  2026-10-28): the CPU that runs the polling `bcm2835-sdhcid` now shows
+  4124 ms busy in a 4.1 s sample (100 %), the others 0–25 %. The governor
+  stays at `max` in ondemand, as expected while a driver polls;
+  `powersave` gives `target min`. Ready for the Pi test.
