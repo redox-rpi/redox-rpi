@@ -10,12 +10,15 @@
 ## In progress
 
 - [#20](https://github.com/redox-rpi/redox-rpi/issues/20) (T21) set the ARM clock to 1.4 GHz instead of 600 MHz and
-  warn on undervoltage or overheating; branch `cpu-clock`, Pi test #13.
-  Builds and works in QEMU (`/scheme/rpi-firmware/arm_clock` reads and
-  sets the clock); the real clock change needs the Pi.
+  warn on undervoltage or overheating; branch `cpu-clock`. Pi tests: 1400 MHz
+  makes starts twice as fast. Under load, #13 had 3–5 % start crashes; with
+  the x18 fix from #1, #19 had 0 of 7000 (2026-10-28). Goes to main together
+  with the x18 fix ([report](../test-reports.md)).
 
 ## Later
 
+- [#23](https://github.com/redox-rpi/redox-rpi/issues/23) the CPU clock follows the load, like Linux `ondemand`:
+  600 MHz when idle, 1400 MHz under load (milestone v0.4.0).
 - [#21](https://github.com/redox-rpi/redox-rpi/issues/21) a common DMA plan for the Pi, including the BCM2835 DMA
   controller and the firmware's channel mask (milestone v0.4.0).
 - [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).
