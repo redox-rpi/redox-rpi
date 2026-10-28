@@ -65,4 +65,10 @@ only), 4 of 300 starts still failed, but differently: data aborts
 (`ESR_EL1` `0x92000004`/`44`/`4F`), `ELR` `0xC046FC` twice and `0xC02F78`
 in `pwd`, `ls`, `ps`, `sha256sum`. That is T1, a separate bug.
 
-Real Pi: test #11 in [test-plan.md](../../../docs/test-plan.md).
+Real Pi 3B+ (test #11, 2026-10-28, [test reports](../../../docs/test-reports.md)):
+
+- `v0.2.0-9-g43f697e+xe0ce` (with `ldso-diagnostics`): `pi-test.py` passes
+  `ps-tty` for the first time; `ps` straight to the terminal 80 of 80;
+  `reboot` 5 of 5 at the first attempt; starts 0 of 300.
+- `v0.2.0-9-g43f697e+x0f50` (without `ldso-diagnostics`): all checks pass;
+  1 of 900 starts failed, a data abort (T1), not T12.
