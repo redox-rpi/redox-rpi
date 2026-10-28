@@ -30,7 +30,8 @@ daily image `redox_server_aarch64_2026-10-24_565`.
   present`. Cause: relibc's aarch64 signal entry swapped the registers x1 and
   x2 of the interrupted code on every signal. Fixed in our relibc patch
   `0004`; v0.2.0 started 300 of 300 programs on a real Pi 3B+. Rare start
-  failures remain (T12). The hunt is written up in
+  failures remained (#12: a signal during a syscall, fixed by kernel patch
+  `0003` on 2026-10-28; a rarer data abort is #1). The hunt is written up in
   [debugging-random-crashes.md](debugging-random-crashes.md).
 
 ## Milestone: USB keyboard on a real Pi 3B+ (2026-10-26)
