@@ -18,5 +18,6 @@
 
 ## Later
 
-- Mass storage, keyboard layouts, `lsusb`
+- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
+- Keyboard layouts, `lsusb`
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

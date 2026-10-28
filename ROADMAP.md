@@ -49,9 +49,9 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 
 1. **Start crashes** ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)–[#3](https://github.com/redox-rpi/redox-rpi/issues/3), [#12](https://github.com/redox-rpi/redox-rpi/issues/12)): up to 12 % of
    program starts fail on the Pi. Done when 1000 starts in a row work.
-2. **sdhost as the default SD driver** ([#6](https://github.com/redox-rpi/redox-rpi/issues/6), [#16](https://github.com/redox-rpi/redox-rpi/issues/16)):
-   2.5 to 2.9 times faster than `bcm2835-sdhcid`; also fix RedoxFS writing
-   36 times the data for small writes.
+2. **sdhost as the default SD driver** ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)):
+   2.5 to 2.9 times faster than `bcm2835-sdhcid`. RedoxFS writing 36 times
+   the data for small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)) moves to v0.4.0.
 3. **USB hotplug** ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)): a keyboard or network adapter
    plugged in after boot is found.
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
@@ -59,9 +59,8 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
    instead of 600 MHz, set through the firmware, with a warning on
    undervoltage or overheating.
 
-If there is time: boot straight from the Pi firmware without an SD card
-([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), CI builds with the pinned revisions ([#9](https://github.com/redox-rpi/redox-rpi/issues/9)).
-Not planned for v0.3.0: `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later). The Zero 2 W needs no image of its own: the Pi 3B+ image runs on it ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed).
+If there is time: CI builds with the pinned revisions ([#9](https://github.com/redox-rpi/redox-rpi/issues/9)).
+Not planned for v0.3.0: booting the kernel straight from the Pi firmware, without U-Boot ([#15](https://github.com/redox-rpi/redox-rpi/issues/15), v0.4.0), `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later). The Zero 2 W needs no image of its own: the Pi 3B+ image runs on it ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed).
 Progress: milestone [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
 
 ## Topics
@@ -97,14 +96,14 @@ from GPL-licensed drivers (Linux) is not.
 | **Audio** | A sound driver for the Pi: HDMI audio (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM), plus `audiod`, Redox' sound daemon, working on aarch64 on top of it. Until then `audiod` stays out of the image (T18) | medium to large |
 | **More firmware services** | `rpi-firmwared` only reads model, memory, clocks, temperature and throttling. Linux also uses the firmware for: power domains (USB, SD on and off, tag `0x28001`; helps `poweroff` and a clean USB reset), the GPIO expander (power LED on the 3B+), the DMA channel mask (`0x60001`, once drivers use DMA) and the display (EDID, resolution, framebuffer; U-Boot sets it up today). See [rpi-firmware.md](docs/rpi-firmware.md) | small each |
 | **VCHIQ** | The second VideoCore channel: sound over HDMI and the jack, camera, video decoding. Needed for Audio | large |
-| **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI) | medium |
+| **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI), [#25](https://github.com/redox-rpi/redox-rpi/issues/25) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
-| **Wi-Fi** | CYW43438 over SDIO, firmware blob, WPA2 | large |
+| **Wi-Fi** | CYW43455 (Pi 3B+) and CYW43436 (Zero 2 W) over SDIO, firmware blob, WPA2; planned for v0.6.0 in [#26](https://github.com/redox-rpi/redox-rpi/issues/26) | large |
+| **Bluetooth** | Same chips, over the PL011 UART that is the serial console today; no Bluetooth stack in Redox yet | large |
 
 ## Later / optional
 
-- **Wi-Fi** (CYW43436/CYW43438 over SDIO, firmware blob, WPA2): a large
-  project of its own
+- **Wi-Fi**: milestone v0.6.0, [#26](https://github.com/redox-rpi/redox-rpi/issues/26)
 - USB gadget mode (Ethernet over the Zero 2 W's USB cable, no HAT needed)
 
 ---
