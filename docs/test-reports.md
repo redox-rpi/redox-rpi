@@ -237,6 +237,8 @@ USB keyboard: pass, login on HDMI works (keyboard plugged in before boot).
 
 Pi Zero 2 W, rc2 SD card image, with the RTL8152 Ethernet hub and a LAN
 cable, checked by the user: boots to the login, the network comes up, `date`
-shows the current time. `cat /scheme/netcfg/ifaces/eth0/addr/list` was
-reported as not found, although netstack serves exactly this path; the IP
-address is not confirmed yet.
+shows the current time (Wed Oct 28 06:29:22 UTC 2026). `timesync -n` printed
+`2026-10-28 06:32:26 UTC from pool.ntp.org (clock not set)`, so the Zero
+reaches the internet through the RTL8152. The first three `timesync -n` runs
+printed nothing (a start failure like T12, or no NTP answer yet). The address
+was not read: the path was typed as `/schema/…` instead of `/scheme/…`.
