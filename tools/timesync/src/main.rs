@@ -24,6 +24,9 @@ use std::time::{Duration, Instant};
 
 const DEFAULT_SERVERS: &[&str] = &["pool.ntp.org", "time.cloudflare.com"];
 const TIME_OFFSET: &str = "/scheme/sys/update_time_offset";
+/// Written after the first answer from a server, for `timerd`. /tmp is new
+/// at each boot.
+const SYNCED: &str = "/tmp/timesync.synced";
 const RELEASE: &str = "/etc/redox-rpi-release";
 /// Where the time is saved: the SD card's data partition (network boot,
 /// where the root filesystem is lost at reboot), else the root filesystem.
@@ -196,6 +199,7 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
                         return Err(format!("cannot set the clock through {TIME_OFFSET}: {err}"));
                     }
                     println!("timesync: clock set to {} UTC from {server}", format_utc(unix));
+                    let _ = fs::write(SYNCED, format!("{unix}\n"));
                     return Ok(unix);
                 }
                 Err(err) => last_error = format!("{server}: {err}"),
