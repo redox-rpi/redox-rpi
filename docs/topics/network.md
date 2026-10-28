@@ -14,4 +14,7 @@
 
 ## Later
 
-- SSH and Wi-Fi ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
+- [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi on the Pi 3B+ and Zero 2 W (milestone v0.6.0); it would be the
+  first Wi-Fi in Redox.
+- [#27](https://github.com/redox-rpi/redox-rpi/issues/27) IPv6 in `netstack` (milestone v0.6.0); Matter runs over IPv6.
+- SSH and Bluetooth ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

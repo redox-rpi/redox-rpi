@@ -379,6 +379,124 @@ Seen on the side, not counted as T12:
 - Twice a devsh login did not get past `redox login:` (two prompts, no
   echo); see T11.
 
+
+## 2026-10-28: `v0.3.0-dev-15-g24fbb96+x9f76`
+
+Built 2026-10-28T11:35:57Z, `libc.so` `d4f0dedd5403751a…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Stable network-boot image, bcm2835-sdhcid. A first run stopped at the first check: devshd gave no output for `cat /etc/redox-rpi-release`; it answered again a minute later.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-15-g24fbb96+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-15-g24fbb96+x9f76.toml |
+| ps | pass | 45 processes (piped) |
+| ps-tty | pass | 45 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: SD card stress test (#15), sdhcid and sdhost on the same commit
+
+`scripts/sd-stress.py` on a real Pi 3B+ over netboot, data partition on the
+netboot card (SDHC, 15193 MiB): a 256 MiB file, 1000 files of 4 KiB with 250
+deleted and 250 new, then 5 restarts (`echo reset > /scheme/sys/kstop`), each
+followed by a SHA-256 check of every file and 32 MiB more. Commands over the
+serial console. Both images are 24fbb96 with `timesync` and `rtl8152`; the
+sdhost image adds `sdhost-driver` and `sdhost-boot` (high speed, about 31 MHz).
+
+| | `bcm2835-sdhcid` (`+x9f76`) | `bcm2835-sdhostd` (`+x6d3c`) |
+|---|---|---|
+| 256 MiB from `/scheme/rand` | 3.2 MB/s | 5.7 MB/s |
+| 1000 small files, 250 replaced | 580 s | 555 s |
+| 32 MiB per cycle | 2.6–3.4 MB/s | 4.0–6.5 MB/s |
+| checks (after writing, 5 restarts) | 6 of 6: 0 missing, 0 changed | 6 of 6: 0 missing, 0 changed |
+| back after a restart | 55–80 s | 50–55 s |
+| files at the end, time | 1006, 37 min | 1006, 28 min |
+| result | **pass** | **pass** |
+
+The small files take the same time with both drivers: RedoxFS limits them
+([#16](https://github.com/redox-rpi/redox-rpi/issues/16)), not the driver.
+The script labels the sdhost run "sdhcid": `ps` cuts the process name, fixed
+in the script afterwards.
+
+A first sdhcid run on `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`
+is discarded: that image still has the T12 start crash, and the Pi stopped
+responding at `sha256sum` over 750 files (power cycle needed). The script now
+hashes at most about 110 files per command.
+
+## 2026-10-28: `v0.3.0-dev-31-g115d7fe+x572d` (CPU clock, test #13)
+
+Built 2026-10-28T13:33:47Z, `libc.so` `b59ed57f5ec14068…`, real Pi 3B+ over
+netboot. Experiments `timesync`, `cpu-clock`, `rtl8152`: the stable image
+plus `cpu-clock` ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)).
+The boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-31-g115d7fe+x572d |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-31-g115d7fe+x572d.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed (at 1400 MHz, 54 s for the whole run) |
+
+Speed, same boot, clock set through `/scheme/rpi-firmware/arm_clock`, 50
+starts (`ls`, `pwd`) per round, three rounds each:
+
+| ARM clock | Time for 50 starts | Failed | Temperature after |
+|---|---|---|---|
+| 600 MHz (`min`) | 16.4, 17.4, 17.4 s | 0 | 51.0–51.5 °C |
+| 1400 MHz (`max`) | 8.3, 8.2, 8.7 s | 0 | 55.8 °C |
+
+Long run: start loops without a pause, each time after a fresh boot:
+
+| ARM clock | Duration | Starts | Failed | Temperature | Throttling |
+|---|---|---|---|---|---|
+| 1400 MHz | 30 min | 5100 | **276 (5.4 %)** | 57.5–60.1 °C | soft temperature limit reached again and again |
+| 600 MHz | 30 min | 4350 | 5 (0.1 %) | 48.3–52.6 °C | none |
+| 1400 MHz (repeat) | 20 min | 4000 | **128 (3.2 %)** | 56.4–60.1 °C | as in the first run |
+
+- At 1400 MHz the first 600–900 starts pass. Failures begin when the SoC
+  reaches about 59 °C and the firmware starts to use its soft temperature
+  limit (`throttled` bit 19 set, bit 3 on and off; on the 3B+ the firmware
+  lowers clock and voltage there). The failures are the known start crashes
+  ([#1](https://github.com/redox-rpi/redox-rpi/issues/1), [#2](https://github.com/redox-rpi/redox-rpi/issues/2)): exception
+  class `0x24` (data abort) and `0x3c` (`brk #1`), on all four cores.
+- The throttle watch works: the log shows
+  `rpi-firmwared: warning: soft temperature limit (flags 0x00080008, 60.1 °C, ARM 1400 MHz)`
+  and `rpi-firmwared: no longer throttled` each time.
+- `arm_clock` keeps showing the requested 1400 MHz while the firmware
+  throttles; the clock it really runs at is a different property (measured
+  clock, tag `0x30047`).
+- devshd sessions broke off several times during the long runs; after about
+  3 hours it gave no output any more.
+- A run at a fixed 1200 MHz (below the soft limit) was planned but did not
+  run: devshd stopped answering.
+
+Result: the full clock doubles the speed but makes the start crashes
+frequent under load. Not ready as the default; see #20.
+
+## 2026-10-28: #1 x18 fix, `v0.3.0-dev-34-g04f0123+x4d10`, 1000 starts
+
+Test #17 for [#1](https://github.com/redox-rpi/redox-rpi/issues/1): the
+stable image's experiments (`timesync`, `rtl8152`) plus
+[`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18), which builds relibc with x18 reserved. Real Pi 3B+
+over netboot, default ARM clock (600 MHz), one boot,
+`scripts/pi-test.py --starts 250` five times in a row.
+
+| Chunk | Checks | Starts | Failed |
+|---|---|---|---|
+| 1 | version, manifest, ps, ps-tty, sdcard pass | 250 | 0 |
+| 2 | devsh gave no output for the first command (`cat /etc/redox-rpi-release`); nothing started | 0 | – |
+| 3 | all pass | 250 | 0 |
+| 4 | all pass | 250 | 0 |
+| 5 | all pass | 250 | 0 |
+| **Total** | | **1000** | **0** |
+
+No `UNHANDLED EXCEPTION` on the serial console during the run. For
+comparison: the stable image without the fix had 0 of 300, and 1 of 900
+on `v0.2.0-9-g43f697e+x0f50` (T12 fix only); QEMU went from 8 of 700 to 0
+of 700 with the fix. Not tested at 1400 MHz, where the stable image fails
+3-5 % of the starts (test #13).
+
 ## 2026-10-28: `v0.2.0-14-g5978d1a+x5b60` (experiment `pi-clean-boot`, T18), QEMU
 
 Branch `pi-clean-boot`, `--experiment ldso-diagnostics --experiment

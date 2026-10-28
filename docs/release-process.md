@@ -87,8 +87,12 @@ the build agent's session.
 1. **Release notes** in `docs/releases/v<version>.md`, like
    [v0.2.0](releases/v0.2.0.md): status line, what is new, what works, known
    issues, install steps, and "Built from" with the build ID and
-   experiments.
-2. **Merge** the `release-v<version>` branch into `main`.
+   experiments. "What is new" may link the closed issues of the release's
+   [milestone](https://github.com/redox-rpi/redox-rpi/milestones) (v0.3.0 is
+   milestone 1).
+2. **Merge** the `release-v<version>` branch into `main`. Only maintainers
+   merge ([CONTRIBUTING.md](../CONTRIBUTING.md#merging)): the build agent
+   does it as the maintainer account, after the user's approval.
 3. **Tag** `v<version>` on the merge commit and push the tag.
 4. **GitHub pre-release** `v<version>` (while the status is experimental)
    with the notes as its text and three files:
@@ -96,6 +100,8 @@ the build agent's session.
    `redox-rpi-v<version>-pi3bplus.img.manifest.toml` and `SHA256SUMS`
    (from the release build).
 5. Update the README and `ROADMAP.md` where they name the current release.
+   **Close the milestone** `v<version>`; issues still open in it move to
+   the next milestone or lose theirs.
 6. **Development tag:** right after a release `vX.Y.0` is tagged, tag the
    next commit on `main` as `vX.(Y+1).0-dev` (annotated) and push it, so
    development builds show `vX.(Y+1).0-dev-N-g…`

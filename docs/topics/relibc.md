@@ -7,7 +7,10 @@
   pinned commit, `redox-rpi` adds our patches, `exp/<name>` each experiment.
   The patch files here are what the build uses.
 - Patch `0004` fixed the x1/x2 swap in the signal entry; CI runs `sigregs`
-  on Linux.
+  on Linux. Reported upstream as
+  [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309):
+  once upstream has the fix and `config/upstream.lock` points past it, drop
+  `0004`.
 
 ## Next
 

@@ -37,6 +37,22 @@ cannot be combined in one build yet. Each of them applies on top of the
 default patches, which include `rpi-firmwared` (base `0018`) since
 2026-10-27.
 
+## Coordination
+
+The maintainer's coordinator session watches the queue every 10 minutes
+and:
+
+- reports a test that is marked **on the Pi** while the serial console and
+  its owner have been silent for more than 15 minutes (a hung Pi);
+- tells the maintainer early, in one sentence, when the next test needs a
+  person at the Pi (card, power, keyboard, cables), and bundles such steps;
+- decides the order when the Pi becomes free: tests for the current
+  milestone ([v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1))
+  first, then by queue number; it names the next owner.
+
+The rules above stay as they are: each owner takes and returns the Pi
+itself.
+
 ## Serial console
 
 The Pi's serial console is on `/dev/ttyUSB0` of the build host (115200
@@ -54,33 +70,43 @@ it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
 
 ## Stable image
 
+<!-- stable-image: written by scripts/update-stable.sh -->
 Staged on the TFTP server whenever no test runs:
-`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, which starts
-`bcm2835-sdhcid` for the card. A copy is in
-`/srv/tftp/backup-v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver/`;
-copy its files into `/srv/tftp/redox/` to restore it. The image
-`v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` (0 of 300 start failures,
-[report](test-reports.md)) was the stable one before; no copy of it is left.
+`v0.3.0-dev-15-g24fbb96+x9f76` (`main` 24fbb96, `--experiment timesync
+--experiment rtl8152`, SD card through `bcm2835-sdhcid`), tested 2026-10-28
+with `scripts/pi-test.py`: all checks pass, 0 of 300 starts failed
+([report](test-reports.md)). A copy is in
+`/srv/tftp/backup-v0.3.0-dev-15-g24fbb96+x9f76/`, and `/srv/tftp/stable`
+points to it.
+<!-- /stable-image -->
 
-To stage a newly built stable image instead:
+To restore the stable image after a test:
 
 ```bash
-scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable harddrive.img>
+cp -p /srv/tftp/stable/* /srv/tftp/redox/
 ```
+
+Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
+`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` (until
+2026-10-28, still with the T12 start failures).
 
 ## Queue
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
+| 16 | First run of the nightly stable image by hand: `scripts/update-stable.sh --force --ref origin/nightly-stable` builds, stages, resets the Pi, runs `scripts/pi-test.py` and promotes or restores ([branch](https://github.com/redox-rpi/redox-rpi/tree/nightly-stable)) | build agent | branch `nightly-stable`, `config/stable-image.conf` | network, serial console | waiting: the run is blocked by the agent's permission settings |
 | 4 | RTL8152/RTL8153 Ethernet on the Pi 3B+, with the Anker 565 hub (RTL8153B, works in QEMU with the real chip) or an RTL8152 adapter ([steps](https://github.com/redox-rpi/redox-rpi/tree/rtl8152/patches/experiments/rtl8152#a-pi-3b-with-a-usb-rtl8152-or-rtl8153-adapter)) | rtl8152 session | branch `rtl8152`, `--experiment ldso-diagnostics --experiment rtl8152` | person to plug the hub into the Pi (USB-C to USB-A adapter) and a LAN cable | waiting |
 | 5 | dwc2d with interrupts: `scripts/pi-test.py` standard checks plus `ps` (CPU time of `dwc2d` near 0 instead of a full core), devsh traffic over the LAN7800, typing on a USB keyboard ([experiment](https://github.com/redox-rpi/redox-rpi/tree/dwc2-interrupts/patches/experiments/dwc2-interrupts)) | dwc2-interrupts session | branch `dwc2-interrupts`, `--experiment ldso-diagnostics --experiment dwc2-interrupts` | network; a person for the keyboard check | waiting |
-| 13 | T21 CPU clock and throttle watch: boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`; `scripts/pi-test.py` standard checks; `time` the start loop with `echo min` and `echo max` to `/scheme/rpi-firmware/arm_clock` in the same boot; temperature and `throttled` after 30 minutes at full clock, warnings in the log if a bit was set ([steps](https://github.com/redox-rpi/redox-rpi/tree/cpu-clock/patches/experiments/cpu-clock#test-on-the-pi)) | rpi-firmware session | branch `cpu-clock`, `--experiment ldso-diagnostics --experiment cpu-clock` | network only | waiting |
-| 14 | T18 clean boot: the boot log on the serial console has no `pcid` panic, no `pcid-spawner` and no `audiod` errors; network up (DHCP address, devshd), typing on the USB keyboard works, `scripts/pi-test.py` standard checks as before (QEMU: 40 of 40 starts, [report](test-reports.md)) ([experiment](https://github.com/redox-rpi/redox-rpi/tree/pi-clean-boot/patches/experiments/pi-clean-boot)) | clean-boot session | branch `pi-clean-boot`, `--experiment ldso-diagnostics --experiment pi-clean-boot`; built as `v0.2.0-14-g5978d1a+x5b60` in `~/redox-rpi-t18` | network, serial console; a person for the keyboard check | waiting |
+| 14 | T18 clean boot: the boot log on the serial console has no `pcid` panic, no `pcid-spawner` and no `audiod` errors; network up (DHCP address, devshd), typing on the USB keyboard works, `scripts/pi-test.py` standard checks as before (QEMU: 40 of 40 starts, [report](test-reports.md)) ([experiment](https://github.com/redox-rpi/redox-rpi/tree/pi-clean-boot/patches/experiments/pi-clean-boot)) | clean-boot session | branch `pi-clean-boot` merged with `main`, `--experiment timesync --experiment rtl8152 --experiment pi-clean-boot` (the stable image plus pi-clean-boot), built in `~/redox-rpi-t18` | network, serial console; keyboard check later by the user, with #5 | **on the Pi** (2026-10-28) |
+| 18 | v0.4.0, #15 direct firmware boot without U-Boot: flash `scripts/make-sdcard.sh --direct <harddrive.img>` (firmware, `kernel8.img` = `tools/rpi-boot-stub`, initramfs); the serial log shows the `rpi-boot-stub:` lines, the kernel start and `redox login:`; the `dwc2d` line has the board MAC `b8:27:eb:…`, not the fallback `02:52:65:64:6f:78`; `scripts/pi-test.py` standard checks; `/scheme/data` from the card. Afterwards the netboot card goes back in | boot session (#15) | branch `fw-direct-boot`, `make-sdcard.sh --direct` | serial console (read `~/redox-rpi/logs/serial.log`, no typing before `redox login:`); the user to swap the SD card | waiting, after all v0.3.0 tests |
 
 ## Done
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
+| 2026-10-28 | #1 start crash fix (#17): relibc built with x18 reserved, experiment [`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18), on top of the stable image's experiments, 600 MHz | `v0.3.0-dev-34-g04f0123+x4d10` | [report](test-reports.md): all checks pass, **0 of 1000 starts failed**, no exception on the serial console (stable image: 0 of 300, before the T12 fix 1 of 900). One chunk lost its devsh connection before starting anything; counted apart. Stable image restored |
+| 2026-10-28 | T21 CPU clock and throttle watch (#13, [#20](https://github.com/redox-rpi/redox-rpi/issues/20)) | `v0.3.0-dev-31-g115d7fe+x572d` | [report](test-reports.md): 600 -> 1400 MHz works, starts 2x faster, standard checks pass, throttle warnings work; but under load at 1400 MHz 3–5 % of starts crash (600 MHz: 0.1 %), not ready as default |
+| 2026-10-28 | SD card stress test (#15, [#6](https://github.com/redox-rpi/redox-rpi/issues/6)): 256 MiB, 1000 small files, 5 restarts, every file checked | `v0.3.0-dev-15-g24fbb96+x9f76` (sdhcid), `v0.3.0-dev-15-g24fbb96+x6d3c` (sdhost) | [report](test-reports.md): both pass, 0 missing, 0 changed; 256 MiB at 3.2 MB/s (sdhcid) and 5.7 MB/s (sdhost); a first run on alpha-28 discarded |
 | 2026-10-28 | T12 fix (#11), kernel experiment [`sigdelivery-x0`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0) | `v0.2.0-9-g43f697e+xe0ce`, then `v0.2.0-9-g43f697e+x0f50` (without `ldso-diagnostics`) | [report](test-reports.md): `ps-tty` passes for the first time, `ps` 80 of 80, `reboot` 5 of 5; without `ldso-diagnostics` all checks pass and 1 of 900 starts fails (T1, data abort). Stable image restored |
 | 2026-10-28 | Clock from NTP and saved time (#3), covered by the release tests #9 and #12 | `v0.1.0-alpha-76-g4178ec5+x83a0`, v0.3.0-rc1 | [report](test-reports.md): NTP time matches the build host, `/scheme/data/timesync.last` written; on the v0.3.0-rc1 SD card the boot set the build time, then the saved time, then pool.ntp.org |
 | 2026-10-28 | Release candidate v0.2.0 on the Pi 3B+ and Zero 2 W (#9), released as v0.2.0 | `v0.1.0-alpha-76-g4178ec5+x83a0` (rc2) | [report](test-reports.md): 0 of 300 start failures, rpi-firmware, timesync and USB keyboard pass, `ps-tty` fails (T12). rc1 with `sdhost-driver`: sdhost by hand hung, so rc2 leaves it out |

@@ -32,6 +32,12 @@ v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
 `dwc2-interrupts` (branch `dwc2-interrupts`) still has its own `0017` and
 conflicts with `rtl8152`.
 
+Reported upstream (drop the patch once the pinned commit has the fix):
+
+| Patch | Upstream report |
+|---|---|
+| `relibc/0004` x1/x2 swap in the aarch64 signal entry | [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309) |
+
 The upstream commits the patches apply to are in
 [`config/upstream.lock`](../config/upstream.lock). See
 [docs/versioning.md](../docs/versioning.md).

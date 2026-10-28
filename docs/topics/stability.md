@@ -6,19 +6,25 @@
   signal entry, which crashed every third program before v0.1.0; see
   [debugging-random-crashes.md](../debugging-random-crashes.md).
 - v0.2.0: 300 of 300 starts on a real Pi 3B+ with `ldso-diagnostics`.
+- Kernel patch `0003` (2026-10-28, [#12](https://github.com/redox-rpi/redox-rpi/issues/12), [#5](https://github.com/redox-rpi/redox-rpi/issues/5)): on aarch64, a
+  signal that arrived during a syscall made the syscall return its first
+  argument. Programs started from the shell died in `relibc_verify_host`
+  (`ps` to the terminal, `reboot`). On a real Pi: `ps` 80 of 80,
+  `reboot` 5 of 5, 1 failed start in 900 without `ldso-diagnostics`
+  (before: 36 of 300). [Details](../../patches/experiments/sigdelivery-x0/README.md).
 
 ## In progress
 
-- **Signal delivery during a syscall** ([#12](https://github.com/redox-rpi/redox-rpi/issues/12), [#5](https://github.com/redox-rpi/redox-rpi/issues/5)): on
-  aarch64, a signal that arrived during a syscall made the syscall return
-  its first argument. Kernel experiment `sigdelivery-x0` on branch
-  `t12-auxv-dump` fixes it on a real Pi: `ps` 80 of 80, `reboot` 5 of 5,
-  1 failed start in 900 without `ldso-diagnostics` (before: 36 of 300).
-  Next: to `main` as kernel patch `0003`.
+- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) (branch
+  `t1-data-abort`): likely cause found. relibc's aarch64 signal entry
+  returns with `br x18`, but the Redox target does not reserve x18, so a
+  signal that arrives while x18 holds a value corrupts it. Experiment
+  [`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18) builds relibc with x18 reserved: QEMU 0 of 700
+  starts fail (before 8 of 700), real Pi 0 of 1000 at 600 MHz. Programs and
+  other libraries still use x18.
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) the remaining rare start crash (a data abort, 1 in 900 on the Pi).
 - [#2](https://github.com/redox-rpi/redox-rpi/issues/2) its kernel cause; [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance.
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd leaves `login` processes behind.
 
