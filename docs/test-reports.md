@@ -240,5 +240,6 @@ cable, checked by the user: boots to the login, the network comes up, `date`
 shows the current time (Wed Oct 28 06:29:22 UTC 2026). `timesync -n` printed
 `2026-10-28 06:32:26 UTC from pool.ntp.org (clock not set)`, so the Zero
 reaches the internet through the RTL8152. The first three `timesync -n` runs
-printed nothing (a start failure like T12, or no NTP answer yet). The address
+printed nothing: start failures as in T12 (`timesync` is linked dynamically,
+with `/lib/ld.so.1`). The address
 was not read: the path was typed as `/schema/…` instead of `/scheme/…`.
