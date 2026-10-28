@@ -33,8 +33,9 @@
 
 - [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
   `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
-  writes to the port, getty no longer panics on a full PTY) passes in
-  QEMU; Pi test #22.
+  writes to the port, getty no longer panics on a full PTY) passes on a
+  Pi 3B+ (test #22): 20 of 20 lines of 200 characters at full speed,
+  `pi-test.py` all checks pass. Waits for the merge to `main`.
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
