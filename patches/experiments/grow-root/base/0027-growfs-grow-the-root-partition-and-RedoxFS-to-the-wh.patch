@@ -1,4 +1,4 @@
-From 586ecc3c1e72d55b6ec70fb05c50c61ef0e21950 Mon Sep 17 00:00:00 2001
+From 684e16f8e2bee668318a457c76078adc61f7e72a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Wed, 28 Oct 2026 21:05:24 +0100
 Subject: [PATCH] growfs: grow the root partition and RedoxFS to the whole SD
@@ -15,10 +15,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.toml                         |   1 +
  Makefile                           |   6 +-
  drivers/storage/growfs/Cargo.toml  |   8 ++
- drivers/storage/growfs/src/main.rs | 167 +++++++++++++++++++++++++++++
+ drivers/storage/growfs/src/main.rs | 170 +++++++++++++++++++++++++++++
  init.initfs.d/45_growfs.service    |  10 ++
  init.initfs.d/50_rootfs.service    |   2 +-
- 6 files changed, 192 insertions(+), 2 deletions(-)
+ 6 files changed, 195 insertions(+), 2 deletions(-)
  create mode 100644 drivers/storage/growfs/Cargo.toml
  create mode 100644 drivers/storage/growfs/src/main.rs
  create mode 100644 init.initfs.d/45_growfs.service
@@ -75,10 +75,10 @@ index 0000000..e7be148
 +workspace = true
 diff --git a/drivers/storage/growfs/src/main.rs b/drivers/storage/growfs/src/main.rs
 new file mode 100644
-index 0000000..b2c3a1f
+index 0000000..5b9e226
 --- /dev/null
 +++ b/drivers/storage/growfs/src/main.rs
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,170 @@
 +//! Grow the root partition and its RedoxFS to the whole SD card.
 +//!
 +//! Runs in the initfs before the root filesystem is mounted, on every boot.
@@ -125,31 +125,31 @@ index 0000000..b2c3a1f
 +
 +fn main() {
 +    let wanted = env::args().nth(1).filter(|uuid| !uuid.is_empty() && !uuid.starts_with('$'));
-+    let mut disk = match OpenOptions::new().read(true).write(true).open(DISK) {
++    let disk = match OpenOptions::new().read(true).write(true).open(DISK) {
 +        Ok(disk) => disk,
 +        // No SD card driver or no card: nothing to grow.
 +        Err(_) => process::exit(0),
 +    };
-+    if let Err(err) = run(&mut disk, wanted.as_deref()) {
++    if let Err(err) = run(disk, wanted.as_deref()) {
 +        println!("growfs: {err}");
 +    }
 +}
 +
-+fn run(disk: &mut File, wanted: Option<&str>) -> Result<(), String> {
++fn run(mut disk: File, wanted: Option<&str>) -> Result<(), String> {
 +    let disk_sectors = disk
 +        .seek(SeekFrom::End(0))
 +        .map_err(|err| format!("disk size: {err}"))?
 +        / SECTOR;
 +
 +    let mut mbr = [0u8; SECTOR as usize];
-+    read_at(disk, 0, &mut mbr)?;
++    read_at(&mut disk, 0, &mut mbr)?;
 +    if mbr[510..512] != [0x55, 0xaa] {
 +        return Ok(());
 +    }
 +    let Some(part) = last_partition(&mbr) else {
 +        return Ok(());
 +    };
-+    let Some(fs) = redoxfs_header(disk, part.start * SECTOR)? else {
++    let Some(fs) = redoxfs_header(&mut disk, part.start * SECTOR)? else {
 +        return Ok(());
 +    };
 +    if let Some(wanted) = wanted {
@@ -171,7 +171,7 @@ index 0000000..b2c3a1f
 +        );
 +        let entry = 446 + part.index * 16;
 +        mbr[entry + 12..entry + 16].copy_from_slice(&(new_sectors as u32).to_le_bytes());
-+        write_at(disk, 0, &mbr)?;
++        write_at(&mut disk, 0, &mbr)?;
 +        disk.sync_all().map_err(|err| format!("sync: {err}"))?;
 +        restart();
 +    }
@@ -185,6 +185,9 @@ index 0000000..b2c3a1f
 +            fs.size >> 20,
 +            part_bytes >> 20
 +        );
++        // The disk driver locks the whole disk while a partition is open
++        // and the other way round.
++        drop(disk);
 +        match Command::new("redoxfs-resize").arg(&path).arg("max").status() {
 +            Ok(status) if status.success() => {}
 +            Ok(status) => return Err(format!("redoxfs-resize failed: {status}")),
