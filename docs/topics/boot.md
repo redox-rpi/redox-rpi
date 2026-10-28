@@ -17,8 +17,10 @@
   U-Boot and the Redox bootloader (milestone v0.4.0), branch
   `fw-direct-boot`: `tools/rpi-boot-stub` as `kernel8.img` wraps the
   unchanged kernel; boots to the login prompt in QEMU `raspi3b`
-  (`scripts/fw-direct-boot.sh --test`). Next: MAC address and command line
-  from the firmware, then a Pi test with the serial console.
+  (`scripts/fw-direct-boot.sh --test`). `NAME=value` words of the
+  command line (`cmdline.txt`) go into the environment. The MAC address
+  probably comes from the firmware's devicetree; to check at the first Pi
+  test with the serial console.
 
 ## Next
 
