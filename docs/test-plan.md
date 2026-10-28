@@ -37,6 +37,22 @@ cannot be combined in one build yet. Each of them applies on top of the
 default patches, which include `rpi-firmwared` (base `0018`) since
 2026-10-27.
 
+## Coordination
+
+The maintainer's coordinator session watches the queue every 10 minutes
+and:
+
+- reports a test that is marked **on the Pi** while the serial console and
+  its owner have been silent for more than 15 minutes (a hung Pi);
+- tells the maintainer early, in one sentence, when the next test needs a
+  person at the Pi (card, power, keyboard, cables), and bundles such steps;
+- decides the order when the Pi becomes free: tests for the current
+  milestone ([v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1))
+  first, then by queue number; it names the next owner.
+
+The rules above stay as they are: each owner takes and returns the Pi
+itself.
+
 ## Serial console
 
 The Pi's serial console is on `/dev/ttyUSB0` of the build host (115200
