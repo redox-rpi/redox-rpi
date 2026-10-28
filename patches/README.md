@@ -25,6 +25,7 @@ each one expects to come before it:
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
+| `0022` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28) |
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.

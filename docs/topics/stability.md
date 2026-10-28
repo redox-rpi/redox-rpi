@@ -23,7 +23,13 @@
 
 ## In progress
 
-Nothing at the moment.
+- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input: the
+  kernel cannot take the PL011 receive interrupt while it writes to the
+  port, and the 16-byte receive FIFO overflows. Experiment
+  [`serial-rx`](https://github.com/redox-rpi/redox-rpi/tree/serial-rx/patches/experiments/serial-rx)
+  on branch `serial-rx`: the kernel keeps the input during writes, and
+  getty no longer panics when the PTY does not take input at once. Passes
+  in QEMU; Pi test #19.
 
 ## Next
 

@@ -28,19 +28,43 @@ FIFO is at or above its trigger level (8 of 16), so a few bytes stay in
 the FIFO. Those make the receive timeout interrupt come after the write,
 and `receive()` hands the stash to the debug scheme first, then the FIFO.
 
+With the input kept, a second problem showed up in QEMU: `getty`
+panicked with "failed to write master PTY: Operation would block" and
+the console was gone. ptyd refuses input with `EWOULDBLOCK` while the
+program (ion) has not read enough of the earlier input, and getty kept
+reading the console without forwarding ion's output, so ion stopped
+reading. Before, the lost characters hid this.
+
+Base patch
+[`0022`](base/0022-getty-keep-input-the-PTY-does-not-take-yet-instead-o.patch):
+getty keeps the input the PTY did not take, stops reading the console
+until it is taken, and keeps forwarding the output meanwhile. While input
+is pending it polls with a 10 ms timeout to retry it.
+
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment serial-rx
 ```
 
-QEMU does not show the problem: its PL011 takes input from the host only
-when the FIFO has room. QEMU checks only that the console still works.
-
 ## Test on the Pi
 
-Send a line of 200 characters at full speed to `/dev/ttyUSB0`, 20 times,
-and compare what the shell echoes (for example `echo <200 characters>`).
-Done when all 20 arrive complete.
+Log in as root on the serial console, then on the build host:
+
+```bash
+patches/experiments/serial-rx/serial-input-test.sh 20
+```
+
+It writes `echo S01<200 characters>` to `/dev/ttyUSB0` in one piece, 20
+times, and looks for the complete output line in
+`~/redox-rpi/logs/serial.log`. Done when 20 of 20 are complete.
 
 ## Results
 
-See [test-reports.md](../../../docs/test-reports.md).
+- QEMU `raspi3b`, `v0.3.0-dev-64-g00378e4+xe9c4` (kernel patch only):
+  5 commands with 200 characters each, sent as one line of 1030
+  characters. getty panicked after the login, then ion; 0 of 5 ran, 3 of
+  3 runs. The stable image without the patches: 5 of 5.
+- QEMU `raspi3b`, `v0.3.0-dev-65-gb6c92b4+xe9c4` (kernel and getty
+  patch): 5 of 5 complete, no crash.
+- QEMU cannot show the lost characters themselves: its PL011 takes input
+  from the host only while the FIFO has room. The real Pi test is #19 in
+  the [test plan](../../../docs/test-plan.md).
