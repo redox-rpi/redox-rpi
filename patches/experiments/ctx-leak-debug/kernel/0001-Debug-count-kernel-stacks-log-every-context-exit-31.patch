@@ -1,12 +1,13 @@
-From 42acbc8462297b3f2f70dd969ad863eff7359872 Mon Sep 17 00:00:00 2001
+From d385d36a8135ec0d37aa8d87d30817695ee37c5f Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 23:16:26 +0000
 Subject: [PATCH] Debug: count kernel stacks, log every context exit (#31)
 
 ---
  src/context/context.rs |  7 ++++++-
- src/syscall/process.rs | 15 +++++++++++++--
- 2 files changed, 19 insertions(+), 3 deletions(-)
+ src/scheme/proc.rs     | 20 ++++++++++++++++++++
+ src/syscall/process.rs | 18 ++++++++++++++++--
+ 3 files changed, 42 insertions(+), 3 deletions(-)
 
 diff --git a/src/context/context.rs b/src/context/context.rs
 index f63da921..c7bd2abe 100644
@@ -43,8 +44,39 @@ index f63da921..c7bd2abe 100644
          unsafe { deallocate_p2frame(self.base, 4) }
      }
  }
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index 4d974bf4..1f011af8 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -439,6 +439,26 @@ impl KernelScheme for ProcScheme {
+             .remove(&id)
+             .ok_or(Error::new(EBADF))?;
+ 
++        {
++            let ctx = handle.context.read(token.token());
++            if ctx.status.is_dead() {
++                let kind = match handle.kind {
++                    ContextHandle::Status { .. } => "status",
++                    ContextHandle::OpenViaDup => "thread",
++                    ContextHandle::Attr => "attrs",
++                    ContextHandle::Authority => "authority",
++                    _ => "other",
++                };
++                info!(
++                    "proc close {} of dead ctx {} {} refs {}",
++                    kind,
++                    ctx.debug_id,
++                    ctx.name,
++                    Arc::strong_count(&handle.context)
++                );
++            }
++        }
++
+         match handle {
+             Handle {
+                 context,
 diff --git a/src/syscall/process.rs b/src/syscall/process.rs
-index 1db548eb..6e0fd101 100644
+index 1db548eb..5430004c 100644
 --- a/src/syscall/process.rs
 +++ b/src/syscall/process.rs
 @@ -35,11 +35,14 @@ use super::usercopy::UserSliceWo;
@@ -60,21 +92,31 @@ index 1db548eb..6e0fd101 100644
 +        let files = mem::take(&mut context.files);
 +        let files_refs = Arc::strong_count(&files);
 +        let close_files = Arc::try_unwrap(files).map_or_else(|_| FdTbl::new(), RwLock::into_inner);
-+        exit_info = (context.name.clone(), context.pid, files_refs);
++        exit_info = (context.name.clone(), context.pid, files_refs, context.debug_id);
          let addrspace_opt = context.set_addr_space(None, token);
          drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
          drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
-@@ -79,6 +82,14 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
+@@ -68,6 +71,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
+             token,
+         );
+     }
++    let refs_at_exit = Arc::strong_count(&context_lock);
+     {
+         let context_ref = ContextRef(context_lock);
+         if !context::contexts_mut(token.downgrade()).remove(&context_ref) {
+@@ -79,6 +83,16 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
          drop(context_ref);
      }
      drop(close_files);
 +    info!(
-+        "ctxexit {} pid {} files_refs {} live_kstacks {} contexts {}",
++        "ctxexit {} {} pid {} files_refs {} live_kstacks {} contexts {} refs {}",
++        exit_info.3,
 +        exit_info.0,
 +        exit_info.1,
 +        exit_info.2,
 +        crate::context::context::LIVE_KSTACKS.load(core::sync::atomic::Ordering::Relaxed),
-+        context::contexts(token.downgrade()).len()
++        context::contexts(token.downgrade()).len(),
++        refs_at_exit
 +    );
      context::switch(token);
      unreachable!();
