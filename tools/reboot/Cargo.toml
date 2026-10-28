@@ -1,6 +1,6 @@
 [package]
 name = "reboot"
-description = "Restart a Redox system through the kernel's kstop interface"
+description = "Restart or power off a Redox system through the kernel's kstop interface"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

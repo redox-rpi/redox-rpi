@@ -1,0 +1,97 @@
+From ce31ca6d8fca327029b8006d0e89e0cdb9765919 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 21:02:37 +0100
+Subject: [PATCH] aarch64: power off the Raspberry Pi 3 through the BCM2835
+ watchdog
+
+kstop halted the CPU when PSCI was missing, so the board kept running
+the firmware's last state. Like Linux, mark partition 63 in PM_RSTS and
+reset through the watchdog: the firmware then halts until the power is
+cut.
+
+Refs redox-rpi/redox-rpi#7
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/device/bcm2835_wdt.rs | 30 +++++++++++++++++++++++++-
+ src/arch/aarch64/stop.rs               |  4 ++++
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/src/arch/aarch64/device/bcm2835_wdt.rs b/src/arch/aarch64/device/bcm2835_wdt.rs
+index ef8d8b8..c6174db 100644
+--- a/src/arch/aarch64/device/bcm2835_wdt.rs
++++ b/src/arch/aarch64/device/bcm2835_wdt.rs
+@@ -1,8 +1,12 @@
+-//! Reset through the BCM2835 power management watchdog.
++//! Reset and power off through the BCM2835 power management watchdog.
+ //!
+ //! The Raspberry Pi 3 firmware has no PSCI, so `psci::system_reset` cannot
+ //! restart the board. The watchdog of the power management block can: arm it
+ //! with a short timeout and select a full reset.
++//!
++//! There is no real power off either. Like Linux, `power_off` marks the boot
++//! partition as 63 in `PM_RSTS` before the reset; the firmware then halts
++//! instead of starting again, until the power is cut.
+ 
+ use crate::dtb::{get_mmio_address, Fdt};
+ use core::{
+@@ -11,10 +15,14 @@ use core::{
+ };
+ 
+ const PM_RSTC: usize = 0x1c;
++const PM_RSTS: usize = 0x20;
+ const PM_WDOG: usize = 0x24;
+ const PM_PASSWORD: u32 = 0x5a00_0000;
+ const PM_RSTC_WRCFG_CLR: u32 = 0xffff_ffcf;
+ const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x0000_0020;
++/// Partition 63 in the scattered partition bits of `PM_RSTS`: the firmware
++/// halts.
++const PM_RSTS_RASPBERRYPI_HALT: u32 = 0x555;
+ 
+ /// Virtual base address of the watchdog, 0 if the board has none.
+ static BASE: AtomicUsize = AtomicUsize::new(0);
+@@ -41,6 +49,26 @@ pub unsafe fn reset() {
+     if base == 0 {
+         return;
+     }
++    unsafe { restart(base) }
++}
++
++/// Halt the board in the firmware. Returns only if there is no watchdog.
++pub unsafe fn power_off() {
++    let base = BASE.load(Ordering::Acquire);
++    if base == 0 {
++        return;
++    }
++    unsafe {
++        let rsts = read_volatile((base + PM_RSTS) as *const u32);
++        write_volatile(
++            (base + PM_RSTS) as *mut u32,
++            PM_PASSWORD | rsts | PM_RSTS_RASPBERRYPI_HALT,
++        );
++        restart(base)
++    }
++}
++
++unsafe fn restart(base: usize) -> ! {
+     unsafe {
+         write_volatile((base + PM_WDOG) as *mut u32, PM_PASSWORD | 10);
+         let rstc = read_volatile((base + PM_RSTC) as *const u32);
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 42b9cb2..6a8978a 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -39,6 +39,10 @@ pub unsafe fn emergency_reset() -> ! {
+ 
+ pub unsafe fn kstop(_token: &mut CleanLockToken) -> ! {
+     println!("kstop");
++    // Boards without PSCI, like the Raspberry Pi 3, halt in the firmware.
++    if !psci::available() {
++        unsafe { bcm2835_wdt::power_off() };
++    }
+     match psci::system_off() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_OFF", error),
+-- 
+2.54.0 (Apple Git-157)
+
