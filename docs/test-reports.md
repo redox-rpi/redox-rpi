@@ -232,3 +232,5 @@ Manual checks on the same boot: `rpi-firmware` pass (Pi 3 Model B+, 48.3 °C,
 `throttled` `0x00000000`, ARM 600/1400 MHz, core 250/400 MHz); timesync
 pass (`date` 20:35:51 UTC, the same as the build host). rc2 is rc1 without
 `sdhost-driver`.
+
+USB keyboard: pass, login on HDMI works (keyboard plugged in before boot).
