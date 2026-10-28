@@ -15,11 +15,16 @@
 
 ## In progress
 
-Nothing at the moment.
+- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) (branch
+  `t1-data-abort`): likely cause found. relibc's aarch64 signal entry
+  returns with `br x18`, but the Redox target does not reserve x18, so a
+  signal that arrives while x18 holds a value corrupts it. 7 of 8 start
+  crashes in QEMU have X18 set to an address in relibc's dynamic linker.
+  Experiment [`sigentry-x18`](../../patches/experiments/sigentry-x18/README.md)
+  builds relibc with x18 reserved.
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) the remaining rare start crash (a data abort, 1 in 900 on the Pi).
 - [#2](https://github.com/redox-rpi/redox-rpi/issues/2) its kernel cause; [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance.
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) devshd leaves `login` processes behind.
 
