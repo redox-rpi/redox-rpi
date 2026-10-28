@@ -1,19 +1,19 @@
-From 638a95971146af92c0aa57883c4684031d64acc1 Mon Sep 17 00:00:00 2001
+From f08051ae202f100f3927566b98184a8cef71990b Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 07:29:45 +0000
 Subject: [PATCH] aarch64: keep the syscall result when a signal handler is set
  up during the syscall
 
 ---
- src/arch/aarch64/interrupt/exception.rs |  5 +++++
+ src/arch/aarch64/interrupt/exception.rs | 10 ++++++++++
  src/context/signal.rs                   | 14 ++++++++++++++
- 2 files changed, 19 insertions(+)
+ 2 files changed, 24 insertions(+)
 
 diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
-index 793a6191..c6ec44b1 100644
+index 793a6191..29ac806c 100644
 --- a/src/arch/aarch64/interrupt/exception.rs
 +++ b/src/arch/aarch64/interrupt/exception.rs
-@@ -190,12 +190,17 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
+@@ -190,12 +190,22 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
          match code {
              0b010101 => {
                  let scratch = &stack.scratch;
@@ -24,7 +24,12 @@ index 793a6191..c6ec44b1 100644
                      scratch.x5, &mut token,
                  );
                  stack.scratch.x0 = ret;
-+                if stack.iret.elr_el1 != elr {
++                // `signal_handler` changes ELR through `Context::regs_mut`, not
++                // through `stack`, so read it volatile: a plain read may be
++                // folded into `elr`.
++                let elr_now =
++                    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(stack.iret.elr_el1)) };
++                if elr_now != elr {
 +                    // A signal handler was set up during the syscall.
 +                    crate::context::signal::set_saved_syscall_ret(ret, &mut token);
 +                }
