@@ -9,8 +9,9 @@
 
 ## In progress
 
-- Branch `dwc2-interrupts`: interrupts instead of polling (CPU time in QEMU
-  1.5 s instead of 4 min 21 s); Pi test #5 queued.
+- Branch `dwc2-interrupts`: interrupts instead of polling. Passed on the
+  real Pi (test #5, `v0.3.0-dev-52-g7df70f9+xcb30`): `dwc2d` uses about
+  5 % of a core instead of a full one; waiting for the merge into `main`.
 
 ## Next
 

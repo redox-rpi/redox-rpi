@@ -49,6 +49,7 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 
 1. **Start crashes** ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)–[#3](https://github.com/redox-rpi/redox-rpi/issues/3), [#12](https://github.com/redox-rpi/redox-rpi/issues/12)): up to 12 % of
    program starts fail on the Pi. Done when 1000 starts in a row work.
+   Reached on 2026-10-28: 0 of 1000 starts failed with the x18 fix in relibc.
 2. **sdhost as the default SD driver** ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)):
    2.5 to 2.9 times faster than `bcm2835-sdhcid`. RedoxFS writing 36 times
    the data for small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)) moves to v0.4.0.
@@ -57,8 +58,11 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
 5. **Full CPU speed** ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the ARM clock at 1.4 GHz
    instead of 600 MHz, set through the firmware, with a warning on
-   undervoltage or overheating.
+   undervoltage or overheating. ✅ Done (base patch `0021`, Pi tests #13
+   and #19).
 
+In parallel, not blocking the release: `devshd` logins that hang ([#11](https://github.com/redox-rpi/redox-rpi/issues/11); `devshd` is a
+test tool and not in release images) and the serial console dropping characters on fast input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)).
 If there is time: CI builds with the pinned revisions ([#9](https://github.com/redox-rpi/redox-rpi/issues/9)).
 Not planned for v0.3.0: booting the kernel straight from the Pi firmware, without U-Boot ([#15](https://github.com/redox-rpi/redox-rpi/issues/15), v0.4.0), `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later). The Zero 2 W needs no image of its own: the Pi 3B+ image runs on it ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed).
 Progress: milestone [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).

@@ -1,5 +1,9 @@
 # Experiment: sigentry-x18, relibc built with x18 reserved
 
+**Now relibc patch [`0007`](../../relibc/) (2026-10-28), applied by
+default.** This page keeps the history. `--experiment sigentry-x18` adds
+nothing any more.
+
 For [#1](https://github.com/redox-rpi/redox-rpi/issues/1): rare data
 aborts at program start.
 
@@ -37,7 +41,7 @@ Experiment [`t1-memmap`](../t1-memmap), QEMU, 700 starts, 8 crashes:
 
 ## The change
 
-relibc patch `0001` builds relibc (libc.so, ld.so, crt objects, and core,
+The patch builds relibc (libc.so, ld.so, crt objects, and core,
 alloc and compiler_builtins through `build-std`) with `-Zfixed-x18`, and
 its C parts with `-ffixed-x18`. Programs and other libraries still use
 x18, so this only covers crashes in relibc code. A complete fix needs

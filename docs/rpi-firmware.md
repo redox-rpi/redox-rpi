@@ -13,6 +13,19 @@ interface) and serves the answers as text files, read fresh on every open:
 | `/scheme/rpi-firmware/throttled` | Throttling flags as hex (bit 0 undervoltage, 1 frequency capped, 2 throttled, 3 soft temperature limit; bits 16–19 the same since boot) |
 | `/scheme/rpi-firmware/clocks` | One line per clock: name, current rate, maximum rate (Hz) |
 | `/scheme/rpi-firmware/board` | `key value` lines: revision, model, memory, serial, firmware, memory split, maximum temperature |
+| `/scheme/rpi-firmware/arm_clock` | ARM clock in Hz (the requested rate); writing a rate in Hz, `max` or `min` sets it |
+
+**ARM clock and throttle watch** (base patch
+[`0021`](../patches/base/0021-rpi-firmwared-ARM-clock-to-its-maximum-arm_clock-fil.patch),
+[#20](https://github.com/redox-rpi/redox-rpi/issues/20)): at start the driver
+sets the ARM clock to the firmware's maximum (600 -> 1400 MHz on the 3B+),
+which makes program starts twice as fast. The firmware raises the voltage
+itself and lowers clock and voltage again at its temperature limits (soft
+limit about 60 °C on the 3B+). A thread reads the throttling flags every 5
+seconds and logs each change, for example
+`rpi-firmwared: warning: soft temperature limit (flags 0x00080008, 60.1 °C, ARM 1400 MHz)`
+and `rpi-firmwared: no longer throttled`. Tests and history:
+[experiment `cpu-clock`](../patches/experiments/cpu-clock/README.md).
 
 Part of every image since base patch
 [`0018`](../patches/base/0018-rpi-firmwared-Raspberry-Pi-firmware-properties-over-.patch);
