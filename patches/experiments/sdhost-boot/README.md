@@ -1,5 +1,9 @@
 # Experiment: start the sdhost driver at boot
 
+> **Now default.** Since branch `sdhost-default` ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) these patches are
+> base patches `0022`–`0025`, and every image boots with `bcm2835-sdhostd`.
+> This README keeps the history of the experiment.
+
 Builds on [`sdhost-driver`](../sdhost-driver/README.md): `bcm2835-sdhostd`
 replaces `bcm2835-sdhcid` in the initfs services and serves the card as
 `disk.mmc`, so the data partition (network boot) or the root filesystem

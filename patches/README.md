@@ -20,14 +20,14 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0021` | `base/` | default patches; `0018` is `rpi-firmwared`, `0021` its ARM clock and throttle watch (after the experiments' `0017`–`0020`, which it does not touch) |
-| `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
-| `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
-| `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
+| `0001`–`0016`, `0018`, `0021`–`0025` | `base/` | default patches; `0018` is `rpi-firmwared`, `0021` its ARM clock and throttle watch, `0022`–`0025` the sdhost driver (`bcm2835-sdhostd`), started at boot instead of `bcm2835-sdhcid` |
+| `0026` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
 
-Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
-v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
+Combinations that build: `sdhost-stats`, `rtl8152`, each with
+`ldso-diagnostics` and `timesync`. The experiments `sdhost-driver` and
+`sdhost-boot` are base patches now (`0022`–`0025`); their READMEs keep the
+test history.
 `dwc2-interrupts` (branch `dwc2-interrupts`) still has its own `0017` and
 conflicts with `rtl8152`.
 

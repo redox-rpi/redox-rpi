@@ -1,7 +1,7 @@
-From 48fbbf6e6756584566ae64fbd2c690aeaa7f3efb Mon Sep 17 00:00:00 2001
+From 846d3aaf43d738defb2cd1f79d71dd6de44e189f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 27 Oct 2026 13:58:58 +0100
-Subject: [PATCH] Start bcm2835-sdhostd at boot instead of bcm2835-sdhcid
+Subject: [PATCH 24/25] Start bcm2835-sdhostd at boot instead of bcm2835-sdhcid
 
 The card slot goes to the sdhost controller; sdhostd serves it as
 disk.mmc, so everything that mounts from disk.mmc stays the same.
@@ -31,7 +31,7 @@ index 8c05462..c494796 100644
 +cmd = "bcm2835-sdhostd"
  type = "notify"
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index d9e2dab..8099bbe 100644
+index 8741d3d..89351d0 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -4,7 +4,7 @@ requires_weak = [
