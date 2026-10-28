@@ -33,9 +33,7 @@ owner then asks that person before taking the Pi.
 
 Experiment patches are numbered by what they apply after; see
 [patches/README.md](../patches/README.md) for the numbers and the
-combinations that build (for example `rtl8152` + `pi-clean-boot` +
-`dwc2-interrupts`, in this order). Each applies on top of the default
-patches.
+combinations that build. Each applies on top of the default patches.
 
 ## Coordination
 

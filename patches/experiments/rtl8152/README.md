@@ -1,17 +1,19 @@
-# Experiment: RTL8152 and RTL8153 Ethernet
+# RTL8152 and RTL8153 Ethernet (was experiment `rtl8152`)
+
+**Default since 2026-10-28:** base `0020` (moved to `patches/base/`) are now default patches and in every
+image. `--experiment rtl8152` is still accepted and does nothing, so older
+commands keep working. This page stays as the driver's documentation.
 
 Driver in `dwc2d` for the Realtek RTL8152 (`0bda:8152`), the USB 10/100
 Ethernet chip on the Ethernet/USB hub HAT for the Pi Zero 2 W (behind its
 FE1.1s hub) and on many cheap USB Ethernet adapters, and for its gigabit
 sibling RTL8153 (`0bda:8153`), found in many USB-C hubs. Roadmap step 5.5.
 
-```bash
-scripts/build-image.sh --experiment rtl8152
-```
 
 Written with FreeBSD's `if_ure` (BSD-2-Clause) as reference for the register
-map and the initialization order; no code from Linux' `r8152.c`. Like the
-LAN7800 driver it polls and has no interrupt endpoint.
+map and the initialization order; no code from Linux' `r8152.c`. It receives
+through the controller interrupt like the LAN7800 driver (base `0022`) and
+uses no interrupt endpoint.
 
 - Chip versions 4C00 and 4C10 (RTL8152, RTL8152B), 5C00 to 5C30 (RTL8153)
   and 6000/6010 (RTL8153B). Any other version (RTL8156 and later) is
