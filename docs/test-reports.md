@@ -574,3 +574,26 @@ were none.
   polling driver's CPU time was not measured on the Pi.
 
 Result: **pass**.
+
+## 2026-10-28: devshd hang-up (#11), `v0.3.0-dev-77-g6bcd0fb+x9f76`
+
+Test #21 for [#11](https://github.com/redox-rpi/redox-rpi/issues/11): the
+stable image's experiments (`timesync`, `rtl8152`) on branch
+[`devshd-hangup`](https://github.com/redox-rpi/redox-rpi/tree/devshd-hangup), where devshd sends SIGHUP to the terminal's
+foreground process group (then SIGKILL) when a client closes the
+connection without `exit`. Real Pi 3B+ over netboot, 600 MHz, one boot.
+
+| Step | Result |
+|---|---|
+| `scripts/pi-test.py` | version, manifest, ps, ps-tty, sdcard pass; 0 of 300 starts failed |
+| 10 clean devsh sessions (`echo`, `exit`) | all work, about 1.3 s each |
+| 3 dropped sessions (logged in, socket closed) | nothing left behind |
+| 10 dropped sessions, 5 of them with `sleep 600` running | nothing left behind |
+| `ps` afterwards | only the serial console's `login` processes, the current session and devshd with 4 threads |
+
+The first run of the session script stopped silently after the third
+dropped session (no error output was kept); the Pi was clean at that
+point, and the repeat with 10 dropped sessions ran through. Before the fix,
+in QEMU, each dropped session left a `login`, an `ion` and two devshd
+threads behind. The reset over devsh needed 2 tries before the test and
+1 after it.
