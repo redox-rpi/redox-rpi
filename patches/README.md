@@ -30,8 +30,8 @@ each one expects to come before it:
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
-`rtl8152` + `pi-clean-boot` + `dwc2-interrupts` (branch `dwc2-interrupts`,
-in this order).
+`rtl8152` + `pi-clean-boot` + `dwc2-interrupts`, in this order (test #5 on
+the Pi).
 
 Reported upstream (drop the patch once the pinned commit has the fix):
 
