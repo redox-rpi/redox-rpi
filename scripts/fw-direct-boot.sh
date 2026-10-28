@@ -77,12 +77,13 @@ if [ "$test" = no ]; then
 fi
 
 log="$out/qemu-test.log"
+started=$SECONDS
 "${qemu[@]}" -serial file:"$log" -serial null &
 pid=$!
 trap 'kill $pid 2>/dev/null || true' EXIT
 for _ in $(seq 1 180); do
-    if tr -d '\000' < "$log" 2>/dev/null | grep -aq 'redox login:'; then
-        echo "PASS: login prompt after $SECONDS s ($log)"
+    if [ -f "$log" ] && tr -d '\000' < "$log" | grep -aq 'redox login:'; then
+        echo "PASS: login prompt $((SECONDS - started)) s after the start of QEMU ($log)"
         exit 0
     fi
     kill -0 $pid 2>/dev/null || break
