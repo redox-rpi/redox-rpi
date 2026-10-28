@@ -249,7 +249,8 @@ def main():
     d = args.dir
     sh = connect()
     build = next((l.split("=", 1)[1].strip('"') for l in sh.run("cat /etc/redox-rpi-release") if l.startswith("BUILD_ID=")), "?")
-    driver = "sdhost" if any("bcm2835-sdhostd" in l for l in sh.run("ps | grep sdh")) else "sdhcid"
+    # ps cuts long names ("/scheme/initfs/bin/bcm2835-sdhci"), so match a prefix.
+    driver = "sdhost" if any("sdhos" in l for l in sh.run("ps | grep sdh")) else "sdhcid"
     log(f"build {build}, driver {driver}")
 
     sh.run(f"rm -r {d}", timeout=300)
