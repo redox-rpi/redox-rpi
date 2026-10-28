@@ -1,8 +1,9 @@
 /* The Pi firmware and QEMU load kernel8.img at 0x80000 (text_offset in the
  * arm64 Image header). Everything the stub needs at run time lies between
- * __start and __end, page tables and stack included. .bss is part of .data,
- * so kernel8.img contains it as zeros and a loader that places the
- * initramfs right after the file does not overwrite it. */
+ * __start and __end, page tables and stack included. The stub keeps its
+ * zero-initialised statics in .data (src/main.rs), so kernel8.img contains
+ * them and a loader that places the initramfs right after the file does
+ * not overwrite them. */
 ENTRY(_start)
 
 SECTIONS {
@@ -17,7 +18,6 @@ SECTIONS {
         *(.rodata*)
     }
     .data : ALIGN(4096) {
-        LONG(0)     /* makes .data PROGBITS even if it holds only .bss */
         *(.data*)
         *(.bss*)
         *(COMMON)

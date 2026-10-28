@@ -55,16 +55,27 @@ static KERNEL: Aligned<[u8; KERNEL_LEN]> = Aligned(*include_bytes!(env!("REDOX_K
 #[repr(C, align(4096))]
 struct Table([u64; 512]);
 
+// The zero-initialised statics below go to a .data section, not .bss, so
+// kernel8.img contains them (see link.ld).
+
 const EMPTY: Table = Table([0; 512]);
 
+#[link_section = ".data.zeroed"]
 static mut L0: Table = EMPTY;
+#[link_section = ".data.zeroed"]
 static mut L1_IDENTITY: Table = EMPTY;
+#[link_section = ".data.zeroed"]
 static mut L2_IDENTITY: [Table; IDENTITY_GIB] = [EMPTY; IDENTITY_GIB];
+#[link_section = ".data.zeroed"]
 static mut L1_KERNEL: Table = EMPTY;
+#[link_section = ".data.zeroed"]
 static mut L2_KERNEL: Table = EMPTY;
+#[link_section = ".data.zeroed"]
 static mut L3_KERNEL: [Table; 4] = [EMPTY; 4];
 
+#[link_section = ".data.zeroed"]
 static mut STACK: Aligned<[u8; STACK_SIZE]> = Aligned([0; STACK_SIZE]);
+#[link_section = ".data.zeroed"]
 static mut ENV: Aligned<[u8; ENV_SIZE]> = Aligned([0; ENV_SIZE]);
 
 /// Same layout as `KernelArgs` in the kernel (src/startup/mod.rs).
@@ -84,6 +95,7 @@ struct KernelArgs {
     bootstrap_size: u64,
 }
 
+#[link_section = ".data.zeroed"]
 static mut ARGS: KernelArgs = KernelArgs {
     kernel_base: 0,
     kernel_size: 0,
@@ -112,7 +124,9 @@ const AREA_FREE: u64 = 1;
 const AREA_RESERVED: u64 = 3;
 const MAX_AREAS: usize = 32;
 
+#[link_section = ".data.zeroed"]
 static mut AREAS: [Area; MAX_AREAS] = [Area { base: 0, size: 0, kind: 0 }; MAX_AREAS];
+#[link_section = ".data.zeroed"]
 static mut AREA_COUNT: usize = 0;
 
 extern "C" {
