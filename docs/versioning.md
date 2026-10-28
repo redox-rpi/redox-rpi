@@ -40,12 +40,23 @@ versions and hashes.
 
 Experiments are applied after the default patches, in the order of the
 `--experiment` options; the base patch numbers in
-[patches/README.md](../patches/README.md) say which order works. The release candidate v0.2.0-alpha is:
+[patches/README.md](../patches/README.md) say which order works. The release candidate v0.2.0 is:
 
 ```bash
 scripts/build-image.sh [--sdcard] --experiment ldso-diagnostics \
     --experiment timesync --experiment sdhost-driver --experiment rtl8152
 ```
+
+## Release names
+
+- Releases are named `v0.x.y`, without `-alpha` or another suffix. Until
+  1.0, a release with new features raises `x` (v0.2.0 → v0.3.0), a release
+  with only fixes raises `y` (v0.2.0 → v0.2.1).
+- Test candidates get `-rcN` (v0.2.0-rc2). The suffix appears only on test
+  images, never on a release or its tag.
+- How mature the release is, is said once in the release notes and in the
+  README, for example: "Status: experimental (alpha)".
+- v0.1.0-alpha keeps its name; it was the last release with the suffix.
 
 ## Build ID
 

@@ -18,10 +18,11 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 
 ## Status
 
-🚧 Alpha. Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
+🚧 **Status: experimental (alpha). Boots on the Pi 3B+ and Zero 2 W, not for
+daily use.** Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
 with all four cores, a USB keyboard, Ethernet and a writable root
-filesystem. About every third program still fails at start (a Redox bug on
-aarch64, [under investigation](docs/debugging-random-crashes.md)). See
+filesystem; the same image boots on a Zero 2 W. A few programs still fail at
+start now and then ([T12](docs/tasks.md)). See
 [docs/status.md](docs/status.md), [docs/known-issues.md](docs/known-issues.md)
 and [ROADMAP.md](ROADMAP.md).
 
