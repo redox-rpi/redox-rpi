@@ -421,3 +421,55 @@ A first sdhcid run on `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`
 is discarded: that image still has the T12 start crash, and the Pi stopped
 responding at `sha256sum` over 750 files (power cycle needed). The script now
 hashes at most about 110 files per command.
+
+## 2026-10-28: `v0.3.0-dev-31-g115d7fe+x572d` (CPU clock, test #13)
+
+Built 2026-10-28T13:33:47Z, `libc.so` `b59ed57f5ec14068…`, real Pi 3B+ over
+netboot. Experiments `timesync`, `cpu-clock`, `rtl8152`: the stable image
+plus `cpu-clock` ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)).
+The boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-31-g115d7fe+x572d |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-31-g115d7fe+x572d.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed (at 1400 MHz, 54 s for the whole run) |
+
+Speed, same boot, clock set through `/scheme/rpi-firmware/arm_clock`, 50
+starts (`ls`, `pwd`) per round, three rounds each:
+
+| ARM clock | Time for 50 starts | Failed | Temperature after |
+|---|---|---|---|
+| 600 MHz (`min`) | 16.4, 17.4, 17.4 s | 0 | 51.0–51.5 °C |
+| 1400 MHz (`max`) | 8.3, 8.2, 8.7 s | 0 | 55.8 °C |
+
+Long run: start loops without a pause, each time after a fresh boot:
+
+| ARM clock | Duration | Starts | Failed | Temperature | Throttling |
+|---|---|---|---|---|---|
+| 1400 MHz | 30 min | 5100 | **276 (5.4 %)** | 57.5–60.1 °C | soft temperature limit reached again and again |
+| 600 MHz | 30 min | 4350 | 5 (0.1 %) | 48.3–52.6 °C | none |
+| 1400 MHz (repeat) | 20 min | 4000 | **128 (3.2 %)** | 56.4–60.1 °C | as in the first run |
+
+- At 1400 MHz the first 600–900 starts pass. Failures begin when the SoC
+  reaches about 59 °C and the firmware starts to use its soft temperature
+  limit (`throttled` bit 19 set, bit 3 on and off; on the 3B+ the firmware
+  lowers clock and voltage there). The failures are the known start crashes
+  ([#1](https://github.com/redox-rpi/redox-rpi/issues/1), [#2](https://github.com/redox-rpi/redox-rpi/issues/2)): exception
+  class `0x24` (data abort) and `0x3c` (`brk #1`), on all four cores.
+- The throttle watch works: the log shows
+  `rpi-firmwared: warning: soft temperature limit (flags 0x00080008, 60.1 °C, ARM 1400 MHz)`
+  and `rpi-firmwared: no longer throttled` each time.
+- `arm_clock` keeps showing the requested 1400 MHz while the firmware
+  throttles; the clock it really runs at is a different property (measured
+  clock, tag `0x30047`).
+- devshd sessions broke off several times during the long runs; after about
+  3 hours it gave no output any more.
+- A run at a fixed 1200 MHz (below the soft limit) was planned but did not
+  run: devshd stopped answering.
+
+Result: the full clock doubles the speed but makes the start crashes
+frequent under load. Not ready as the default; see #20.
