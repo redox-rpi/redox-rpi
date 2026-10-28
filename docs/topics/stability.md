@@ -18,12 +18,10 @@
 - [#1](https://github.com/redox-rpi/redox-rpi/issues/1) (branch
   `t1-data-abort`): likely cause found. relibc's aarch64 signal entry
   returns with `br x18`, but the Redox target does not reserve x18, so a
-  signal that arrives while x18 holds a value corrupts it. 7 of 8 start
-  crashes in QEMU have X18 set to an address in relibc's dynamic linker.
-  Experiment [`sigentry-x18`](../../patches/experiments/sigentry-x18/README.md)
-  builds relibc with x18 reserved: 0 of 700 starts fail in QEMU (before:
-  8 of 700). Not yet tested on a real Pi. Programs and other libraries
-  still use x18.
+  signal that arrives while x18 holds a value corrupts it. Experiment
+  [`sigentry-x18`](https://github.com/redox-rpi/redox-rpi/tree/t1-data-abort/patches/experiments/sigentry-x18) builds relibc with x18 reserved: QEMU 0 of 700
+  starts fail (before 8 of 700), real Pi 0 of 1000 at 600 MHz. Programs and
+  other libraries still use x18.
 
 ## Next
 
