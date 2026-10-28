@@ -61,7 +61,7 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
 
 If there is time: boot straight from the Pi firmware without an SD card
 ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), CI builds with the pinned revisions ([#9](https://github.com/redox-rpi/redox-rpi/issues/9)).
-Not planned for v0.3.0: `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later) and an own Zero 2 W image ([#8](https://github.com/redox-rpi/redox-rpi/issues/8)).
+Not planned for v0.3.0: `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later). The Zero 2 W needs no image of its own: the Pi 3B+ image runs on it ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed).
 Progress: milestone [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
 
 ## Topics
