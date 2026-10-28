@@ -24,8 +24,8 @@ the power brought the board back.
   `shutdown` to `kstop`. It is installed in every image, also without
   this experiment; there it only stops the CPU, as before.
 
-QEMU's `raspi3b` does not model partition 63: there the watchdog reset is
-a reboot. So QEMU only shows that the kernel takes the new path.
+QEMU's `raspi3b` models partition 63: with the mark, the watchdog reset
+ends QEMU instead of restarting the guest.
 
 ## Test on the Pi
 
@@ -39,4 +39,7 @@ Needs a person to cut and reconnect the power at the end.
 
 ## Results
 
-- Not tested yet.
+- **QEMU** (build `v0.3.0-dev-95-gf6e2070+x7098`, 2026-10-28):
+  `/usr/bin/poweroff` is installed next to `reboot`; `poweroff` prints
+  `kstop` and QEMU exits (a reset would have started U-Boot again). Ready
+  for the Pi test.
