@@ -37,6 +37,21 @@ cannot be combined in one build yet. Each of them applies on top of the
 default patches, which include `rpi-firmwared` (base `0018`) since
 2026-10-27.
 
+## Serial console
+
+The Pi's serial console is on `/dev/ttyUSB0` of the build host (115200
+baud). A systemd user service, `redox-serial.service`, records everything
+it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
+
+- **Read** from that file (`tail -f`, `tail -c`), never from the device: a
+  second reader on `/dev/ttyUSB0` takes bytes away from the log.
+- **Type** with `printf '...\r' > /dev/ttyUSB0`, but only after the new
+  boot's `redox login:` has appeared. Keys sent earlier reach the Redox
+  bootloader ('e' opens its environment editor).
+- **Old output:** `redox-serial-rotate.timer` moves the log every night at
+  03:17 UTC to `~/redox-rpi/logs/serial/serial-<date>.log.gz` and deletes
+  archives older than 14 days. Copy what a report needs into the report.
+
 ## Stable image
 
 Staged on the TFTP server whenever no test runs:
@@ -57,16 +72,17 @@ scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable
 
 | # | Test | Owner | Image | Needs | Status |
 |---|---|---|---|---|---|
-| 11 | T12 fix on the real Pi, first by priority (user, 2026-10-28): kernel experiment `sigdelivery-x0` (QEMU: `ps` 180 of 180, before 143 of 180). `scripts/pi-test.py` standard checks incl. `ps-tty`, then `ps` 100 times straight to the terminal, `reboot` 5 times; second image without `ldso-diagnostics` for the T1 start rate ([experiment](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0)) | crash session | branch `t12-auxv-dump`, `--experiment ldso-diagnostics --experiment timesync --experiment sigdelivery-x0`, then `--experiment timesync --experiment sigdelivery-x0` | network, serial console | image `v0.2.0-9-g43f697e+xe0ce` staged on the TFTP server (2026-10-28); waits until the v0.3.0-rc1 SD card test is over and the netboot card is back |
-| 3 | Clock from NTP and saved time: `date` after boot, `timesync -n`, `cat /scheme/data/timesync.last`; reboot with the Ethernet cable out, `date` must not be before the last run ([experiment](../patches/experiments/timesync/README.md)) | timesync session | `--experiment ldso-diagnostics --experiment timesync` | network only | waiting |
 | 4 | RTL8152/RTL8153 Ethernet on the Pi 3B+, with the Anker 565 hub (RTL8153B, works in QEMU with the real chip) or an RTL8152 adapter ([steps](https://github.com/redox-rpi/redox-rpi/tree/rtl8152/patches/experiments/rtl8152#a-pi-3b-with-a-usb-rtl8152-or-rtl8153-adapter)) | rtl8152 session | branch `rtl8152`, `--experiment ldso-diagnostics --experiment rtl8152` | person to plug the hub into the Pi (USB-C to USB-A adapter) and a LAN cable | waiting |
 | 5 | dwc2d with interrupts: `scripts/pi-test.py` standard checks plus `ps` (CPU time of `dwc2d` near 0 instead of a full core), devsh traffic over the LAN7800, typing on a USB keyboard ([experiment](https://github.com/redox-rpi/redox-rpi/tree/dwc2-interrupts/patches/experiments/dwc2-interrupts)) | dwc2-interrupts session | branch `dwc2-interrupts`, `--experiment ldso-diagnostics --experiment dwc2-interrupts` | network; a person for the keyboard check | waiting |
 | 13 | T21 CPU clock and throttle watch: boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`; `scripts/pi-test.py` standard checks; `time` the start loop with `echo min` and `echo max` to `/scheme/rpi-firmware/arm_clock` in the same boot; temperature and `throttled` after 30 minutes at full clock, warnings in the log if a bit was set ([steps](https://github.com/redox-rpi/redox-rpi/tree/cpu-clock/patches/experiments/cpu-clock#test-on-the-pi)) | rpi-firmware session | branch `cpu-clock`, `--experiment ldso-diagnostics --experiment cpu-clock` | network only | waiting |
+| 14 | T18 clean boot: the boot log on the serial console has no `pcid` panic, no `pcid-spawner` and no `audiod` errors; network up (DHCP address, devshd), typing on the USB keyboard works, `scripts/pi-test.py` standard checks as before (QEMU: 40 of 40 starts, [report](test-reports.md)) ([experiment](https://github.com/redox-rpi/redox-rpi/tree/pi-clean-boot/patches/experiments/pi-clean-boot)) | clean-boot session | branch `pi-clean-boot`, `--experiment ldso-diagnostics --experiment pi-clean-boot`; built as `v0.2.0-14-g5978d1a+x5b60` in `~/redox-rpi-t18` | network, serial console; a person for the keyboard check | waiting |
 
 ## Done
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
+| 2026-10-28 | T12 fix (#11), kernel experiment [`sigdelivery-x0`](https://github.com/redox-rpi/redox-rpi/tree/t12-auxv-dump/patches/experiments/sigdelivery-x0) | `v0.2.0-9-g43f697e+xe0ce`, then `v0.2.0-9-g43f697e+x0f50` (without `ldso-diagnostics`) | [report](test-reports.md): `ps-tty` passes for the first time, `ps` 80 of 80, `reboot` 5 of 5; without `ldso-diagnostics` all checks pass and 1 of 900 starts fails (T1, data abort). Stable image restored |
+| 2026-10-28 | Clock from NTP and saved time (#3), covered by the release tests #9 and #12 | `v0.1.0-alpha-76-g4178ec5+x83a0`, v0.3.0-rc1 | [report](test-reports.md): NTP time matches the build host, `/scheme/data/timesync.last` written; on the v0.3.0-rc1 SD card the boot set the build time, then the saved time, then pool.ntp.org |
 | 2026-10-28 | Release candidate v0.2.0 on the Pi 3B+ and Zero 2 W (#9), released as v0.2.0 | `v0.1.0-alpha-76-g4178ec5+x83a0` (rc2) | [report](test-reports.md): 0 of 300 start failures, rpi-firmware, timesync and USB keyboard pass, `ps-tty` fails (T12). rc1 with `sdhost-driver`: sdhost by hand hung, so rc2 leaves it out |
 | 2026-10-27 | Standard checks, diagnostics image | `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` | [report](test-reports.md): all pass except `ps-tty` |
 | 2026-10-27 | Standard checks, default image | `v0.1.0-alpha-14-gf39d20b` | [report](test-reports.md): 36 of 300 start failures |

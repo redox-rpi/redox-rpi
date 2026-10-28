@@ -8,7 +8,7 @@
 #
 # Usage:
 #   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
-#                          [--allow-dirty]
+#                          [--release <name>] [--allow-dirty]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
@@ -18,6 +18,9 @@
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches, and its config.toml (packages, files) if it has one
+#   --release     name of a release or release candidate (v0.3.0-rc2): shown
+#                 above the login prompt, as RELEASE in /etc/redox-rpi-release
+#                 and as release in the manifest (docs/release-process.md)
 #   --allow-dirty build even with uncommitted changes to patches/, config/,
 #                 scripts/ or tools/, or with recipe sources that differ from
 #                 their pinned commit plus patches; the differences are saved
@@ -42,6 +45,7 @@ CONFIG_NAME=minimal
 CONFIG="$ROOT/config/raspi3bp.toml"
 experiments=()
 allow_dirty=0
+release=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --sdcard)
@@ -55,6 +59,10 @@ while [ $# -gt 0 ]; do
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }
             experiments+=("$2")
+            shift 2 ;;
+        --release)
+            [[ "${2:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]] || { echo "--release needs a name like v0.3.0 or v0.3.0-rc2" >&2; exit 1; }
+            release="$2"
             shift 2 ;;
         --allow-dirty) allow_dirty=1; shift ;;
         -*) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -282,12 +290,16 @@ if [ "$dirty" = 1 ]; then
     build_id="$build_id-dirty.$dirty_sum"
 fi
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# A release or candidate name goes in front of the build ID on the console.
+title="$build_id"
+[ -n "$release" ] && title="$release ($build_id)"
 
 # Manifest: everything that decides what is in the image.
 manifest_head="$(mktemp)"
 {
     echo "# redox-rpi build manifest, written by scripts/build-image.sh"
     echo "build_id = \"$build_id\""
+    [ -n "$release" ] && echo "release = \"$release\""
     echo "image = \"$image_name\""
     echo "config = \"config/$(basename "$CONFIG")\""
     echo "built = \"$build_date\""
@@ -322,7 +334,8 @@ data = """
 NAME="redox-rpi, for the Redox OS operating system"
 VERSION="$version"
 BUILD_ID="$build_id"
-IMAGE="$image_name"
+${release:+RELEASE=\"$release\"
+}IMAGE="$image_name"
 BUILD="$build_date"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 EXPERIMENTS="$exp_list"
@@ -343,7 +356,7 @@ data = """
 # \`user\`                     #
 # \`root\`:\`password\`          #
 ##############################
-redox-rpi $build_id ($image_name, $build_date)
+redox-rpi $title ($image_name, $build_date)
 ${exp_list:+experiments: $exp_list
 }
 """

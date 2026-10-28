@@ -74,6 +74,34 @@ v0.1.0-alpha-61-g90ef0ee+xd025-dirty.0f3e9a1b2c4d
 
 It is shown above the login prompt and in `/etc/redox-rpi-release`.
 
+## Release name in the image
+
+Release candidates and releases are built with `--release <name>`, for
+example `--release v0.3.0-rc2`. The name then appears in the image too, not
+only in the file name:
+
+- above the login prompt: `redox-rpi v0.3.0-rc2 (v0.3.0-dev-7-g1a2b3c4+x5d6e)`;
+- `RELEASE="v0.3.0-rc2"` in `/etc/redox-rpi-release`, next to `BUILD_ID`;
+- `release = "v0.3.0-rc2"` in both manifests.
+
+The build ID stays the same with or without the name. Without `--release`
+nothing changes. Only the build agent passes it
+([release-process.md](release-process.md)).
+
+## Development tags
+
+Right after a release `vX.Y.0` is tagged, the next commit on `main` gets the
+annotated tag `vX.(Y+1).0-dev`, for example `v0.3.0-dev` after v0.2.0. The
+build ID of a development build then names the release it works towards:
+`v0.3.0-dev-12-g1a2b3c4` instead of `v0.2.0-12-g1a2b3c4`.
+
+- A branch cut before the `-dev` tag keeps `v0.2.0-N` until it merges
+  `main`.
+- Clones need `git fetch --tags` to see the tag.
+- Candidates still show their name through `--release`:
+  `v0.3.0-rc2 (v0.3.0-dev-12-g…)`.
+- A `-dev` tag is never released and gets no GitHub release.
+
 Images built before 2026-10-28 have the experiment names in the ID itself,
 for example `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`. The
 scripts treat both forms the same way: they find a manifest by the hash of
@@ -99,7 +127,7 @@ The build writes the manifest twice:
 On the Pi:
 
 ```bash
-cat /etc/redox-rpi-release      # build ID and experiments
+cat /etc/redox-rpi-release      # build ID, experiments, release name
 cat /etc/redox-rpi-manifest
 sha256sum /usr/lib/libc.so
 ```

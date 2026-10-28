@@ -1,4 +1,4 @@
-# Experiment: pi-clean-boot, no PCI and audio services on the Pi (T18)
+# Experiment: pi-clean-boot, no PCI and audio services on the Pi (#18)
 
 The Raspberry Pi 3B+ and the Zero 2 W have no PCI bus, and there is no
 sound driver for them yet. Still every boot started these services, and
@@ -36,7 +36,8 @@ line (Audio on the [wish list](../../../ROADMAP.md#wish-list-help-wanted)).
 
 Other boot messages on the Pi are not services and stay: kernel warnings
 about ACPI, PSCI, the GPIO interrupt controller and the PL031 clock, and
-`randd` without an entropy source. See T18 in [tasks.md](../../../docs/tasks.md).
+`randd` without an entropy source. See [issue #18](https://github.com/redox-rpi/redox-rpi/issues/18) and the
+[boot topic](../../../docs/topics/boot.md).
 
 ## Results
 
