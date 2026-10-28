@@ -314,3 +314,110 @@ reaches the internet through the RTL8152. The first three `timesync -n` runs
 printed nothing: start failures as in T12 (`timesync` is linked dynamically,
 with `/lib/ld.so.1`). The address
 was not read: the path was typed as `/schema/…` instead of `/scheme/…`.
+
+## 2026-10-28: `v0.2.0-5-gd679bfb+xed14` (v0.3.0-rc1, SD card image)
+
+Real Pi 3B+, SD card image `redox-rpi-v0.3.0-rc1.img.xz` written by the
+user, serial console. Experiments `ldso-diagnostics`, `timesync`, `rtl8152`,
+`sdhost-driver`, `sdhost-boot`: sdhost is the only SD driver and the root
+filesystem is on the card. Test #12.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | `v0.2.0-5-gd679bfb+xed14`, image `sdcard` |
+| boot | pass | 2 boots to the login; one Enter at the bootloader's resolution screen |
+| SD driver | pass | `bcm2835-sdhostd`: SDHC/SDXC card, 30475 MiB, 4-bit bus, high speed (a different card than before); no `bcm2835-sdhcid` process |
+| root filesystem | pass | mounted from `/scheme/disk.mmc/0p1` |
+| write to the root | pass | 8 MiB from `/scheme/rand` with `conv=fsync` to `/home/root`, 3.7 MB/s |
+| after a restart | pass | SHA-256 `4182ec12a9acfb56f8050f5ac1e4611c4538ba30dacb9ec186580758af348ca1` before and after |
+| starts | pass | 0 of 100 failed |
+| network, clock | pass | LAN7800 link up, timesync: build time, then saved time, then pool.ntp.org |
+
+RedoxFS logs "No such file or directory" for `disk.mmc/0` and `0p0` while it
+looks for the root filesystem; those are not RedoxFS, it mounts `0p1` next.
+
+## 2026-10-28: `v0.2.0-9-g43f697e+xe0ce`
+
+Built 2026-10-28T07:49:07Z, `libc.so` `30bd563f098b1253…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `sigdelivery-x0`, `timesync`. Kernel experiment sigdelivery-x0 (T12 fix); the SD card in the Pi is the v0.3.0-rc1 card, without a data partition for the netboot image.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.2.0-9-g43f697e+xe0ce |
+| manifest | pass | build ID and libc.so hash match netboot-v0.2.0-9-g43f697e+xe0ce.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | **fail** | got ion: pipeline execution error: failed to redirect stdout to file '/scheme/data/pi-test.txt': No such device (os error 19) |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: `v0.2.0-9-g43f697e+x0f50`
+
+Built 2026-10-28T07:45:10Z, `libc.so` `b5b10aaf4262f509…`, real Pi 3B+ over netboot. Experiments: `sigdelivery-x0`, `timesync`. Kernel experiment sigdelivery-x0 without ldso-diagnostics (relibc 0005 only), for the T1 start rate; the SD card is the netboot card.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.2.0-9-g43f697e+x0f50 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.2.0-9-g43f697e+x0f50.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: T12 fix, further runs on the real Pi
+
+Same builds as above, run over devshd, crashes read from the serial console.
+
+| Build | Test | Result |
+|---|---|---|
+| `v0.2.0-9-g43f697e+xe0ce` | `ps` straight to the terminal | 80 of 80 with exit code 0 (20 in one session, 60 in three more) |
+| `v0.2.0-9-g43f697e+xe0ce` | `reboot` over devsh | 5 of 5 rebooted at the first attempt, no `brk` |
+| `v0.2.0-9-g43f697e+x0f50` | `pi-test.py --starts 600` | 1 of 600 failed: `pwd`, data abort (T1), `ELR` `0xC15C0C`, `FAR` `0x1281DD0` |
+
+Seen on the side, not counted as T12:
+- `ion` (PID 40, probably the shell of an earlier devsh session) ended in
+  `abort()` once (`X17` = `abort` in `libc.so`). Its message went to the
+  session, not the serial console.
+- Twice a devsh login did not get past `redox login:` (two prompts, no
+  echo); see T11.
+
+
+## 2026-10-28: `v0.3.0-dev-15-g24fbb96+x9f76`
+
+Built 2026-10-28T11:35:57Z, `libc.so` `d4f0dedd5403751a…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Stable network-boot image, bcm2835-sdhcid. A first run stopped at the first check: devshd gave no output for `cat /etc/redox-rpi-release`; it answered again a minute later.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-15-g24fbb96+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-15-g24fbb96+x9f76.toml |
+| ps | pass | 45 processes (piped) |
+| ps-tty | pass | 45 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-10-28: SD card stress test (#15), sdhcid and sdhost on the same commit
+
+`scripts/sd-stress.py` on a real Pi 3B+ over netboot, data partition on the
+netboot card (SDHC, 15193 MiB): a 256 MiB file, 1000 files of 4 KiB with 250
+deleted and 250 new, then 5 restarts (`echo reset > /scheme/sys/kstop`), each
+followed by a SHA-256 check of every file and 32 MiB more. Commands over the
+serial console. Both images are 24fbb96 with `timesync` and `rtl8152`; the
+sdhost image adds `sdhost-driver` and `sdhost-boot` (high speed, about 31 MHz).
+
+| | `bcm2835-sdhcid` (`+x9f76`) | `bcm2835-sdhostd` (`+x6d3c`) |
+|---|---|---|
+| 256 MiB from `/scheme/rand` | 3.2 MB/s | 5.7 MB/s |
+| 1000 small files, 250 replaced | 580 s | 555 s |
+| 32 MiB per cycle | 2.6–3.4 MB/s | 4.0–6.5 MB/s |
+| checks (after writing, 5 restarts) | 6 of 6: 0 missing, 0 changed | 6 of 6: 0 missing, 0 changed |
+| back after a restart | 55–80 s | 50–55 s |
+| files at the end, time | 1006, 37 min | 1006, 28 min |
+| result | **pass** | **pass** |
+
+The small files take the same time with both drivers: RedoxFS limits them
+([#16](https://github.com/redox-rpi/redox-rpi/issues/16)), not the driver.
+The script labels the sdhost run "sdhcid": `ps` cuts the process name, fixed
+in the script afterwards.
+
+A first sdhcid run on `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`
+is discarded: that image still has the T12 start crash, and the Pi stopped
+responding at `sha256sum` over 750 files (power cycle needed). The script now
+hashes at most about 110 files per command.

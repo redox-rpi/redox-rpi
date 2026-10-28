@@ -60,5 +60,10 @@ cat /var/lib/timesync.last /scheme/data/timesync.last
      08:46:44 UTC from the build time`.
 
 The service starts after the login prompt appears, so log lines from early
-boot still carry 1970 timestamps. Not yet tested on a real Pi
-([test plan](../../../docs/test-plan.md), test 3).
+boot still carry 1970 timestamps.
+
+**Result on the real Pi** (2026-10-27/28, [test reports](../../../docs/test-reports.md)):
+part of v0.2.0. NTP time matches the build host and the daemon writes
+`/scheme/data/timesync.last` (Pi 3B+, netboot). On the v0.3.0-rc1 SD card
+the boot set the build time, then the saved time, then the time from
+`pool.ntp.org`. Also works on the Zero 2 W through an RTL8152 adapter.

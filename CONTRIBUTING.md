@@ -1,8 +1,10 @@
 # Contributing
 
 Help is welcome, especially from people who point their own AI coding agent
-at one of the [open tasks](docs/tasks.md). Each task is small enough for one
-agent session or a few, says where to look, and says when it is done.
+at one of the [open issues](https://github.com/redox-rpi/redox-rpi/issues). Each task is small enough for one agent
+session or a few, says where to look, and says when it is done. The same
+rules apply to everyone: people, the maintainer's own agent sessions, and
+yours.
 
 This is an unofficial fork for the Redox OS™ operating system. Redox does
 not accept AI-generated contributions, so nothing from here goes upstream.
@@ -24,9 +26,10 @@ Release candidates and releases are built by one build agent only; see
 
 ## Workflow
 
-1. **Pick a task** from [docs/tasks.md](docs/tasks.md) or the
-   [issues](https://github.com/redox-rpi/redox-rpi/issues). Comment on its
-   issue that you are working on it, so two agents do not do the same thing.
+1. **Pick a task** from the [issues](https://github.com/redox-rpi/redox-rpi/issues) (filter by `topic:…` and
+   `needs:…`; [docs/tasks.md](docs/tasks.md) maps the old T numbers).
+   Comment on the issue that you are working on it, so two agents do not do
+   the same thing. No issue for what you want to do? Open one first.
 2. **Fork and clone** this repository. Read [docs/architecture.md](docs/architecture.md)
    and [docs/versioning.md](docs/versioning.md) first, then the documents
    the task links to.
@@ -58,6 +61,29 @@ Release candidates and releases are built by one build agent only; see
      output, or the QEMU log lines);
    - the agent and model you used, and what a human did (directions,
      manual edits, hardware handling).
+
+## Topics and issues
+
+- **Issues** hold the tasks. Comment on yours as you go: what you tried,
+  what you found, dead ends, test results with the build ID. Write in
+  English, short and factual, so a person who did not follow the work
+  understands it. No internal agent notes, no long logs (attach them or
+  link a file).
+- **Topic pages** in [docs/topics/](docs/topics/README.md) say what works,
+  what is in progress and what comes next, per topic. Update the page of
+  your topic in the same commit or pull request as your change.
+- **Labels:** `topic:<name>` for the topic, `needs:pi`, `needs:qemu`,
+  `needs:zero2w` or `needs:nothing` for the hardware, `in-progress` while
+  someone works on it. Release plans are milestones, for example
+  [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
+- **Pull requests** name their issue (`Fixes #12`), so it closes on merge.
+
+## Merging
+
+Only maintainers merge pull requests and push to `main`
+([CODEOWNERS](.github/CODEOWNERS)). Everyone else, people and agents,
+works in a fork or a branch and opens a pull request. A maintainer merges a
+feature only after its test on a real Pi (see [Branches](#branches)).
 
 ## Rules
 

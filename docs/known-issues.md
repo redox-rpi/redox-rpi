@@ -7,10 +7,12 @@ for contributors in the wish list in [ROADMAP.md](../ROADMAP.md).
 
 ## Serious
 
-- **Some programs still stop at start** with exit code 1 and no output,
-  now rarely: most often `ps` printed straight to the terminal (`ps | cat`
-  works), `reboot` and `timesync -n`. Run it again. Tracked as T12 in
-  [tasks.md](tasks.md). The frequent random failures of v0.1.0-alpha (about
+- **Some programs stop at start** with exit code 1 and no output in
+  v0.2.0: most often `ps` printed straight to the terminal (`ps | cat`
+  works), `reboot` and `timesync -n`. Run it again. Fixed on `main` by
+  kernel patch `0003` ([#12](https://github.com/redox-rpi/redox-rpi/issues/12)),
+  in the next release. A much rarer start crash (a data abort, about 1 in
+  900 on the Pi) remains: [#1](https://github.com/redox-rpi/redox-rpi/issues/1). The frequent random failures of v0.1.0-alpha (about
   every third command) are fixed since v0.2.0, see
   [debugging-random-crashes.md](debugging-random-crashes.md).
 - **Many prebuilt programs did not start:** bash, nano, vim, tmux, ripgrep,

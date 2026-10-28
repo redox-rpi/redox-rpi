@@ -22,7 +22,7 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 daily use.** Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
 with all four cores, a USB keyboard, Ethernet and a writable root
 filesystem; the same image boots on a Zero 2 W. A few programs still fail at
-start now and then ([T12](docs/tasks.md)). See
+start now and then ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)). See
 [docs/status.md](docs/status.md), [docs/known-issues.md](docs/known-issues.md)
 and [ROADMAP.md](ROADMAP.md).
 
