@@ -314,3 +314,24 @@ reaches the internet through the RTL8152. The first three `timesync -n` runs
 printed nothing: start failures as in T12 (`timesync` is linked dynamically,
 with `/lib/ld.so.1`). The address
 was not read: the path was typed as `/schema/…` instead of `/scheme/…`.
+
+## 2026-10-28: `v0.2.0-5-gd679bfb+xed14` (v0.3.0-rc1, SD card image)
+
+Real Pi 3B+, SD card image `redox-rpi-v0.3.0-rc1.img.xz` written by the
+user, serial console. Experiments `ldso-diagnostics`, `timesync`, `rtl8152`,
+`sdhost-driver`, `sdhost-boot`: sdhost is the only SD driver and the root
+filesystem is on the card. Test #12.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | `v0.2.0-5-gd679bfb+xed14`, image `sdcard` |
+| boot | pass | 2 boots to the login; one Enter at the bootloader's resolution screen |
+| SD driver | pass | `bcm2835-sdhostd`: SDHC/SDXC card, 30475 MiB, 4-bit bus, high speed (a different card than before); no `bcm2835-sdhcid` process |
+| root filesystem | pass | mounted from `/scheme/disk.mmc/0p1` |
+| write to the root | pass | 8 MiB from `/scheme/rand` with `conv=fsync` to `/home/root`, 3.7 MB/s |
+| after a restart | pass | SHA-256 `4182ec12a9acfb56f8050f5ac1e4611c4538ba30dacb9ec186580758af348ca1` before and after |
+| starts | pass | 0 of 100 failed |
+| network, clock | pass | LAN7800 link up, timesync: build time, then saved time, then pool.ntp.org |
+
+RedoxFS logs "No such file or directory" for `disk.mmc/0` and `0p0` while it
+looks for the root filesystem; those are not RedoxFS, it mounts `0p1` next.
