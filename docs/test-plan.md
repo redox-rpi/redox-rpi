@@ -40,14 +40,14 @@ default patches, which include `rpi-firmwared` (base `0018`) since
 ## Stable image
 
 Staged on the TFTP server whenever no test runs:
+`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, which starts
+`bcm2835-sdhcid` for the card. A copy is in
+`/srv/tftp/backup-v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver/`;
+copy its files into `/srv/tftp/redox/` to restore it. The image
 `v0.1.0-alpha-14-gf39d20b+ldso-diagnostics` (0 of 300 start failures,
-[report](test-reports.md)).
+[report](test-reports.md)) was the stable one before; no copy of it is left.
 
-No copy of this image is left on the build host: staging another image
-overwrote it. Until it is rebuilt, the TFTP server has
-`v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver`, which starts the
-same drivers (`bcm2835-sdhcid` for the card). Keep a copy of the stable
-image next to the TFTP directory once it is rebuilt.
+To stage a newly built stable image instead:
 
 ```bash
 scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image <stable harddrive.img>
