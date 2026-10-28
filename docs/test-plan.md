@@ -101,7 +101,8 @@ timer `redox-stable.timer`, [config/redox-stable.timer](../config/redox-stable.t
    failing checks.
 
 Logs: `~/redox-rpi/logs/stable/<date>.log` on the build host. Run it by hand
-with `scripts/update-stable.sh --force --no-push` (no commit, no issue).
+with `scripts/update-stable.sh --force` after taking the Pi in the queue
+(`--force` skips both checks; `--no-push`: no commit, no issue).
 
 To restore the stable image after a test:
 

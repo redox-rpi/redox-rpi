@@ -9,7 +9,8 @@
 #   scripts/update-stable.sh [--force] [--no-push] [--ref <ref>]
 #
 #   --force     build and test even if nothing that goes into the image
-#               changed since the current stable image
+#               changed since the current stable image, and even if a test
+#               is marked "on the Pi" (for a run by hand that took the Pi)
 #   --no-push   do not commit, push or open an issue; print what would be done
 #   --ref       build this ref instead of origin/main (for testing the script)
 #
@@ -87,7 +88,7 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
 fi
 
 # 2. Is the Pi free?
-if grep -q '\*\*on the Pi\*\*' docs/test-plan.md; then
+if [ "$force" = 0 ] && grep -q '\*\*on the Pi\*\*' docs/test-plan.md; then
     log "a test is on the Pi (docs/test-plan.md), not touching it; next try tomorrow"
     grep '\*\*on the Pi\*\*' docs/test-plan.md | cut -c1-200
     exit 0
@@ -164,16 +165,16 @@ else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
 fi
 
+# The token never appears on a command line, in a URL or in .git/config:
+# the credential helper and curl read it from the file.
 git_push() {
-    local token
-    token="$(cat "$TOKEN_FILE")"
     git -c credential.helper= \
-        -c "credential.helper=!f() { echo username=x-access-token; echo password=$token; }; f" \
+        -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
         push -q origin HEAD:main
 }
 
 github() {
-    curl -fsS -H "Authorization: Bearer $(cat "$TOKEN_FILE")" \
+    curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' < "$TOKEN_FILE")") \
         -H "Accept: application/vnd.github+json" "$@"
 }
 
