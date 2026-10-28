@@ -30,6 +30,11 @@
   (SIGHUP to the terminal's foreground group, then SIGKILL). QEMU: 6
   dropped sessions leave nothing. Waiting for the Pi test.
 
+- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
+  `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
+  writes to the port, getty no longer panics on a full PTY) passes in
+  QEMU; Pi test #22.
+
 ## Next
 
 - [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
