@@ -157,6 +157,24 @@ the Pi images.
 - **Done when:** a Pi 3B+ boots without these messages, network, USB
   keyboard and `scripts/pi-test.py` work as before, and the result is in
   [test-reports.md](test-reports.md).
+- **Survey** (2026-10-28, Pi serial log of the stable image and QEMU log of
+  v0.3.0-rc1). Services that fail or do nothing on the Pi:
+  - `pcid`, started by `hwd` in initfs (not by a unit): panics, 60 lines
+    with a register dump;
+  - `pcid-spawner --initfs` (initfs) and `pcid-spawner` (rootfs): "No such
+    device (os error 19)", "failed with exit status: 1";
+  - `audiod` (rootfs): "No such device", "exited without notifying
+    readiness";
+  - `rtcd` (initfs): silent, reads the clock on x86 only.
+
+  `ps2d` already has `condition_architecture = ["x86", "x86_64"]`, and no
+  other x86 driver is started. Not services, so they stay: kernel warnings
+  (no ACPI RSDP, no PSCI node, no driver for the GPIO interrupt controller,
+  no PL031 clock), `randd` without an entropy source, and the data
+  partition mount (`60_data.service`) when the card has none.
+- **Status:** experiment
+  [`pi-clean-boot`](https://github.com/redox-rpi/redox-rpi/tree/pi-clean-boot/patches/experiments/pi-clean-boot)
+  on branch `pi-clean-boot`, waiting for the Pi test.
 
 ### T21: CPU clock and throttling watch through the firmware (Pi)
 

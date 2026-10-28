@@ -335,3 +335,20 @@ filesystem is on the card. Test #12.
 
 RedoxFS logs "No such file or directory" for `disk.mmc/0` and `0p0` while it
 looks for the root filesystem; those are not RedoxFS, it mounts `0p1` next.
+
+## 2026-10-28: `v0.2.0-14-g5978d1a+x5b60` (experiment `pi-clean-boot`, T18), QEMU
+
+Branch `pi-clean-boot`, `--experiment ldso-diagnostics --experiment
+pi-clean-boot`, QEMU `raspi3b` with the USB network card. Real Pi test
+queued (test plan #14).
+
+| Check | Result | Detail |
+|---|---|---|
+| no `pcid` panic | pass | no `pcid` line in the boot log; before: panic with register dump |
+| no `pcid-spawner` errors | pass | neither in initfs nor in rootfs; before: "No such device (os error 19)" twice |
+| no `audiod` error | pass | before: "audiod: No such device" |
+| network | pass | `netstack` and `dhcpd` start, eth0 `10.0.2.15/24`, devshd reachable over TCP; `/scheme` has `ip`, `tcp`, `netcfg`, no `pci`, no `audio` |
+| starts | pass | `scripts/qemu-run.sh` loop: 40 of 40 `ls` and `pwd` |
+
+`ps` on the serial console crashed once (`/usr/bin/ps`, ESR `F2000001`):
+the known T12 crash, not related to this change.
