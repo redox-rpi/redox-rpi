@@ -846,3 +846,57 @@ Extra checks over devsh, with the ARM at 1400 MHz:
   SIGUSR1 still blocked; #4 fix not in this image).
 - Serial log: no exception except the known `pcid` panic at boot (this
   base has no clean boot yet).
+
+## 2026-10-29: `v0.3.0-dev-15-g24fbb96+x9f76`
+
+Built 2026-10-28T11:35:57Z, `libc.so` `d4f0dedd5403751a…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. test 48 (#10 start loop with crash details), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-15-g24fbb96+x9f76 |
+| manifest | pass | present in the image |
+| ps | pass | 48 processes (piped) |
+| ps-tty | pass | 48 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | **fail** | 3 of 1000 failed: ls exit 1 (1×); pwd exit 1 (2×) |
+
+Failed starts:
+
+- starts 151–200: `pwd`, exit 1, last serial lines:
+
+  ```
+  kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100010)
+  FAR_EL1: 0xc5778b
+  ELR_EL1: 0000000000C5778B
+  ESR_EL1: 000000008A000000
+  kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 258, NAME /usr/bin/pwd, CONTEXT 0xfffffe8000156630
+  ```
+- starts 701–750: `pwd`, exit 1, last serial lines:
+
+  ```
+  kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100010)
+  FAR_EL1: 0x1
+  ELR_EL1: 0000000000000001
+  ESR_EL1: 000000008A000000
+  kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 793, NAME /usr/bin/pwd, CONTEXT 0xfffffe8000156630
+  ```
+- starts 751–800: `ls`, exit 1, last serial lines:
+
+  ```
+  kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100100)
+  FAR_EL1: 0x1281dd0
+  ELR_EL1: 0000000000C15C0C
+  ESR_EL1: 0000000092000006
+  kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #3, PID 833, NAME /usr/bin/ls, CONTEXT 0xfffffe8000156630
+  ```
+
+Test 48 ([#10](https://github.com/redox-rpi/redox-rpi/issues/10)):
+`scripts/pi-test.py` from branch `t10-start-loop` (e904958) with
+`--starts 1000 --serial-log ~/redox-rpi/logs/serial.log`, against the
+stable image already on the Pi, without a reset. **Pass** for #10: the run
+finished in 9 minutes, and each of the 3 failed starts is listed with its
+program, exit status and the crash dump from the serial log (PID and NAME
+match the program). None of the 3 printed anything, so the "messages" part
+stayed empty. The failures themselves are the known start crashes of the
+stable image (#1, no x18 fix; ARM at 1400 MHz), not a problem of the
+script.
