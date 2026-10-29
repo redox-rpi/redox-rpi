@@ -77,3 +77,12 @@ filesystem with `conv=fsync` (`v0.3.0-dev-166-g403f6c1+x8cc4` against
 | 1000 bytes | 98.0 s | 1.6 s |
 
 Both copies have the source's SHA-256.
+
+With patch `0003` (timer), QEMU, `v0.3.0-dev-172-g80279b9+x8cc4`: the
+copies at `bs=4k conv=fsync` 0.52 s and at `bs=1000` 0.91 s, all SHA-256
+equal on the guest and on the host. `ion -c "echo one; echo two; echo three;
+read x" > t.txt` left waiting on `read`, QEMU killed some seconds later: the
+card has all three lines (14 bytes), although the file was never closed and
+nothing else came to the filesystem. Two mistakes on the way: an empty
+socket answers `EAGAIN` (11), not `EWOULDBLOCK` (41, a separate number on
+Redox), and `/scheme/event` gives a queue only for an open with `O_CREAT`.
