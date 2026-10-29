@@ -111,7 +111,7 @@ check "block 2048 written" bash -c "dd if='$stick' bs=512 skip=2048 count=1 stat
 # same name, which needs the old one gone from the namespace.
 monitor "drive_add 0 if=none,id=stick2,file=$stick,format=raw" \
     "device_add usb-storage,drive=stick2,id=stick1,port=1.3" > /dev/null
-check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/') -ge 2 ] && exit 0; sleep 1; done; exit 1"
+check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/.*/0:') -ge 2 ] && exit 0; sleep 1; done; exit 1"
 check "same scheme name" bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage $scheme/0:') -ge 2 ]"
 check "block 2048 read after plugging in again" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
 
@@ -138,8 +138,8 @@ tr -d '\r' < "$log" | grep -aE "dwc2d: mass storage" | tail -4 | sed 's/^/      
 reader_re=$(printf '%s' "$reader" | sed 's/[.+]/\\&/g')
 check "reader slot 0 found" bash -c "tr -d '\r' < '$log' | grep -aqE 'dwc2d: mass storage $reader_re/0: .*, 8 MiB'"
 check "empty slot 1 left out" bash -c "tr -d '\r' < '$log' | grep -aqE 'LUN 1: Timeout\(\"no medium\"\)'"
-check "reader slot 0 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'head -c 64 $reader/0' 2>/dev/null | grep -aq 'CARD0-$marker'"
-check "reader slot 2 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'head -c 64 $reader/2' 2>/dev/null | grep -aq 'CARD2-$marker'"
+check "reader slot 0 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/0 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD0-$marker'"
+check "reader slot 2 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/2 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD2-$marker'"
 check "stick read next to the reader" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
 monitor "device_del reader" > /dev/null
 check "reader removed" wait_log "dwc2d: mass storage $reader_re removed" 10

@@ -1,4 +1,4 @@
-From 51abbb8a539df79171fa556c4ae2c70b4929275b Mon Sep 17 00:00:00 2001
+From 76559790a93bc9dd2c5d212f927cde26a3cd3948 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:09:09 +0100
 Subject: [PATCH] dwc2d: card readers (one disk per LUN with a card) and
@@ -18,8 +18,8 @@ log names the scheme when a device is removed.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/usb/dwc2d/src/main.rs    |  53 ++++++-----
- drivers/usb/dwc2d/src/storage.rs | 147 +++++++++++++++++++++----------
- 2 files changed, 131 insertions(+), 69 deletions(-)
+ drivers/usb/dwc2d/src/storage.rs | 154 ++++++++++++++++++++++---------
+ 2 files changed, 138 insertions(+), 69 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
 index 930aca9..689851a 100644
@@ -139,7 +139,7 @@ index 930aca9..689851a 100644
                      }
                  }
 diff --git a/drivers/usb/dwc2d/src/storage.rs b/drivers/usb/dwc2d/src/storage.rs
-index 260a380..4724b4d 100644
+index 260a380..ba2eb8b 100644
 --- a/drivers/usb/dwc2d/src/storage.rs
 +++ b/drivers/usb/dwc2d/src/storage.rs
 @@ -3,8 +3,11 @@
@@ -188,7 +188,7 @@ index 260a380..4724b4d 100644
      block_size: u32,
      blocks: u64,
      /// Vendor and product from INQUIRY, for the log.
-@@ -148,78 +159,116 @@ enum Status {
+@@ -148,78 +159,118 @@ enum Status {
      Failed,
  }
  
@@ -266,6 +266,7 @@ index 260a380..4724b4d 100644
  
          // A stick reports "not ready" for a while after power-on.
          let mut ready = false;
++        let mut sense = (0, 0, 0);
          for _ in 0..50 {
 -            if let Status::Passed(_) = stick.command(&[TEST_UNIT_READY, 0, 0, 0, 0, 0], false, 0)? {
 +            if let Status::Passed(_) = b.command(lun, &[TEST_UNIT_READY, 0, 0, 0, 0, 0], false, 0)? {
@@ -273,13 +274,14 @@ index 260a380..4724b4d 100644
                  break;
              }
 -            stick.request_sense()?;
-+            let (key, asc, _) = b.request_sense(lun)?;
-+            if key == SENSE_NOT_READY && asc == ASC_MEDIUM_NOT_PRESENT {
++            sense = b.request_sense(lun)?;
++            if sense.0 == SENSE_NOT_READY && sense.1 == ASC_MEDIUM_NOT_PRESENT {
 +                return Err(Error::Timeout("no medium"));
 +            }
              std::thread::sleep(Duration::from_millis(100));
          }
          if !ready {
++            println!("dwc2d: mass storage LUN {lun}: not ready, sense {:02x}/{:02x}/{:02x}", sense.0, sense.1, sense.2);
              return Err(Error::Timeout("stick not ready"));
          }
  
@@ -338,7 +340,7 @@ index 260a380..4724b4d 100644
  
      fn phase(&self, dir_in: bool, buf_phys: usize, len: usize) -> Phase {
          Phase {
-@@ -278,7 +327,7 @@ impl Stick {
+@@ -278,7 +329,7 @@ impl Stick {
  
      /// Run one SCSI command. The data stage uses `self.data`: filled by the
      /// caller for `dir_in == false`, by the stick otherwise.
@@ -347,7 +349,7 @@ index 260a380..4724b4d 100644
          let tag = self.tag;
          self.tag = self.tag.wrapping_add(1);
          let mut cbw = [0u8; CBW_LEN];
-@@ -286,6 +335,7 @@ impl Stick {
+@@ -286,6 +337,7 @@ impl Stick {
          cbw[4..8].copy_from_slice(&tag.to_le_bytes());
          cbw[8..12].copy_from_slice(&(len as u32).to_le_bytes());
          cbw[12] = if dir_in { 0x80 } else { 0 };
@@ -355,7 +357,7 @@ index 260a380..4724b4d 100644
          cbw[14] = cdb.len() as u8;
          cbw[15..15 + cdb.len()].copy_from_slice(cdb);
          *self.cbw = cbw;
-@@ -338,13 +388,16 @@ impl Stick {
+@@ -338,13 +390,21 @@ impl Stick {
  
      /// Fetch the sense data after a failed command, which also clears it.
      /// Returns sense key, additional sense code and qualifier.
@@ -363,6 +365,11 @@ index 260a380..4724b4d 100644
 -        match self.command(&[REQUEST_SENSE, 0, 0, 0, 18, 0], true, 18)? {
 +    fn request_sense(&mut self, lun: u8) -> Result<(u8, u8, u8), Error> {
 +        match self.command(lun, &[REQUEST_SENSE, 0, 0, 0, 18, 0], true, 18)? {
++            // Descriptor format (SPC-3 4.5.2).
++            Status::Passed(len) if len >= 4 && self.data[0] & 0x7E == 0x72 => {
++                Ok((self.data[1] & 0xF, self.data[2], self.data[3]))
++            }
++            // Fixed format.
              Status::Passed(len) if len >= 14 => Ok((self.data[2] & 0xF, self.data[12], self.data[13])),
              _ => Ok((0, 0, 0)),
          }
@@ -374,7 +381,7 @@ index 260a380..4724b4d 100644
      /// A READ or WRITE command for `count` blocks at `lba`.
      fn rw_cdb(write: bool, lba: u64, count: u32) -> ([u8; 16], usize) {
          let mut cdb = [0u8; 16];
-@@ -368,6 +421,8 @@ impl Stick {
+@@ -368,6 +428,8 @@ impl Stick {
          let block = self.block_size as usize;
          let per_chunk = MAX_TRANSFER / block * block;
          let mut done = 0;
@@ -383,7 +390,7 @@ index 260a380..4724b4d 100644
          while done < total {
              let len = (total - done).min(per_chunk);
              if len % block != 0 {
-@@ -376,13 +431,13 @@ impl Stick {
+@@ -376,13 +438,13 @@ impl Stick {
              let at = lba + (done / block) as u64;
              let (cdb, cdb_len) = Self::rw_cdb(write, at, (len / block) as u32);
              if let Some(out) = out {
@@ -401,7 +408,7 @@ index 260a380..4724b4d 100644
                      return Err(SysError::new(EIO));
                  }
                  // The stick does not answer at all: most likely unplugged.
-@@ -392,7 +447,7 @@ impl Stick {
+@@ -392,7 +454,7 @@ impl Stick {
                  }
              }
              if let Some(buf) = buf.as_mut() {
@@ -410,7 +417,7 @@ index 260a380..4724b4d 100644
              }
              done += len;
          }
-@@ -400,13 +455,13 @@ impl Stick {
+@@ -400,13 +462,13 @@ impl Stick {
      }
  }
  
