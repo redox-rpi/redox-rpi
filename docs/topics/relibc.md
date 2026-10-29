@@ -16,6 +16,10 @@
 
 - [#4](https://github.com/redox-rpi/redox-rpi/issues/4) signal mask bug after `pthread_kill` (experiment
   `sigentry-thread-signals` passes on the Pi; needs a review).
+- [#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs (bash, vim, …): start fine on main in QEMU
+  (experiment `prebuilt-programs`); the signal return overwrites x18,
+  which these programs use, fixed by experiment `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)). Next:
+  recheck with that fix and on the Pi.
 - [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on Redox in CI; [#14](https://github.com/redox-rpi/redox-rpi/issues/14) deeper analysis.
 
 ## Later
