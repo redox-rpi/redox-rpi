@@ -1,4 +1,4 @@
-From ef20a0c0e27fc18bd4d07865b06c081c1a2682ed Mon Sep 17 00:00:00 2001
+From cea7c890ff213c049940d82d809e2248280260d9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 50/53] netstack: several network adapters, also ones that
@@ -13,19 +13,19 @@ is the first source address for smoltcp.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- netstack/src/adapters.rs          | 130 ++++++++++++++++++++++++++++++
- netstack/src/main.rs              |  87 +++++++++-----------
- netstack/src/scheme/mod.rs        |  32 +++++---
+ netstack/src/adapters.rs          | 132 ++++++++++++++++++++++++++++++
+ netstack/src/main.rs              |  87 ++++++++------------
+ netstack/src/scheme/mod.rs        |  32 ++++++--
  netstack/src/scheme/netcfg/mod.rs | 120 ++++++++++++++++++++++++---
- 4 files changed, 298 insertions(+), 71 deletions(-)
+ 4 files changed, 300 insertions(+), 71 deletions(-)
  create mode 100644 netstack/src/adapters.rs
 
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
 new file mode 100644
-index 0000000..b246677
+index 0000000..5e7583f
 --- /dev/null
 +++ b/netstack/src/adapters.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,132 @@
 +//! Network adapters: the `network.*` schemes the drivers register.
 +//!
 +//! netstack looks for them at start and again from time to time, so an
@@ -122,8 +122,10 @@ index 0000000..b246677
 +            for entry in DirentIter::new(&buf[..n]) {
 +                let Ok((header, name)) = entry else { break };
 +                last = Some(header.next_opaque_id);
++                // The name can carry NUL padding up to the entry's length.
++                let name = name.split(|&b| b == 0).next().unwrap_or_default();
 +                if let Ok(name) = std::str::from_utf8(name) {
-+                    names.push(name.to_string());
++                    names.push(name.trim_end().to_string());
 +                }
 +            }
 +            match last {

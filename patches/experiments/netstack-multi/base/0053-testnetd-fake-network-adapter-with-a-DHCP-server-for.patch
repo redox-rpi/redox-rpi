@@ -1,4 +1,4 @@
-From 8cdf1b86b585a43ed18435d2ad61a4ed7f828fa8 Mon Sep 17 00:00:00 2001
+From 7fac8ebf58dc580e3a4287b0e713bc20e9c7760d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 53/53] testnetd: fake network adapter with a DHCP server, for
@@ -15,9 +15,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.toml                            |   1 +
  Makefile                              |   2 +
  drivers/net/testnetd/Cargo.toml       |  16 ++
- drivers/net/testnetd/src/main.rs      | 129 ++++++++++++
+ drivers/net/testnetd/src/main.rs      | 131 ++++++++++++
  drivers/net/testnetd/src/responder.rs | 283 ++++++++++++++++++++++++++
- 5 files changed, 431 insertions(+)
+ 5 files changed, 433 insertions(+)
  create mode 100644 drivers/net/testnetd/Cargo.toml
  create mode 100644 drivers/net/testnetd/src/main.rs
  create mode 100644 drivers/net/testnetd/src/responder.rs
@@ -71,10 +71,10 @@ index 0000000..49459b3
 +workspace = true
 diff --git a/drivers/net/testnetd/src/main.rs b/drivers/net/testnetd/src/main.rs
 new file mode 100644
-index 0000000..a9b4580
+index 0000000..32432d3
 --- /dev/null
 +++ b/drivers/net/testnetd/src/main.rs
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,131 @@
 +//! testnetd: a fake network adapter for netstack tests.
 +//!
 +//! It registers `network.test0` (or the scheme named as the first argument,
@@ -155,11 +155,13 @@ index 0000000..a9b4580
 +        .nth(1)
 +        .unwrap_or_else(|| "network.test0".to_string());
 +
-+    if std::env::var_os("INIT_NOTIFY").is_none() {
++    // A login shell may have an INIT_NOTIFY of its own, so the daemon run
++    // is marked with a variable of ours.
++    if std::env::var_os("TESTNETD_DAEMON").is_none() {
 +        // Started from a shell: run again with a readiness pipe, as init would.
 +        let exe = std::env::current_exe().expect("testnetd: no executable path");
 +        let mut cmd = Command::new(exe);
-+        cmd.arg(&scheme);
++        cmd.arg(&scheme).env("TESTNETD_DAEMON", "1");
 +        #[allow(deprecated)]
 +        daemon::Daemon::spawn(cmd);
 +        println!("testnetd: {scheme} registered, counters in {LOG}");
