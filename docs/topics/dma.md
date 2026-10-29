@@ -191,8 +191,10 @@ is aborted (`CS.ABORT`, then `CS.RESET`) the same way.
 ## In progress
 
 - This plan, branch `dma-plan`; waits for review.
-- Prototype: sdhost with DMA in QEMU, experiment `sdhost-dma` on branch
-  `dma-plan` (step 1: fixed channel 4, bounce buffer, polling).
+- Prototype: experiment `sdhost-dma` on branch `sdhost-dma` (step 1:
+  fixed channel 4, bounce buffer, polling). In QEMU, writes and reads of
+  random files match the card image
+  ([results](https://github.com/redox-rpi/redox-rpi/blob/sdhost-dma/patches/experiments/sdhost-dma/README.md#results)).
   QEMU copies a whole control block at once and ignores DREQ pacing, so
   the timing and the drain words need the real Pi.
 
