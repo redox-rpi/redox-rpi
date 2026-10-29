@@ -1,4 +1,4 @@
-From e6c5b8b75a5fece52692edb3ed907ca9b3383f5d Mon Sep 17 00:00:00 2001
+From ca0042bc33b8c167fec3feec9e98bb909db4670e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:51:43 +0100
 Subject: [PATCH] dwc2d: USB serial adapters as the scheme usb-serial (CDC-ACM,
@@ -34,8 +34,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  drivers/usb/dwc2d/src/dwc2.rs      |  31 +-
  drivers/usb/dwc2d/src/enumerate.rs |  16 +
  drivers/usb/dwc2d/src/main.rs      |  59 +-
- drivers/usb/dwc2d/src/serial.rs    | 894 +++++++++++++++++++++++++++++
- 5 files changed, 998 insertions(+), 4 deletions(-)
+ drivers/usb/dwc2d/src/serial.rs    | 897 +++++++++++++++++++++++++++++
+ 5 files changed, 1001 insertions(+), 4 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/serial.rs
 
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
@@ -300,10 +300,10 @@ index 28cc7aa..9f04d02 100644
          }
 diff --git a/drivers/usb/dwc2d/src/serial.rs b/drivers/usb/dwc2d/src/serial.rs
 new file mode 100644
-index 0000000..207be7b
+index 0000000..d742c96
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/serial.rs
-@@ -0,0 +1,894 @@
+@@ -0,0 +1,897 @@
 +//! USB serial adapters: CDC-ACM, FTDI, CP210x and CH340/CH341, as the
 +//! scheme `usb-serial`. Zigbee and Thread coordinator sticks and many
 +//! Arduino boards are one of these.
@@ -329,13 +329,16 @@ index 0000000..207be7b
 +use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 +use syscall::schemev2::NewFdFlags;
 +use syscall::{
-+    Error, EventFlags, Result as SysResult, Stat, EACCES, EAGAIN, EBUSY, EINVAL, EIO, ENODEV, ENOENT, EWOULDBLOCK,
++    Error, EventFlags, Result, Stat, EACCES, EAGAIN, EBUSY, EINVAL, EIO, ENODEV, ENOENT, EWOULDBLOCK,
 +    MODE_DIR, MODE_FILE,
 +};
 +
 +use crate::dwc2::{Dwc2, Error as UsbError, Phase, Speed};
 +use crate::enumerate::{Bus, Device};
 +use crate::regs::*;
++
++/// `Result` here is the scheme's (the macro needs it so).
++type UsbResult<T> = std::result::Result<T, UsbError>;
 +
 +const REQ_GET_DESCRIPTOR: u8 = 0x06;
 +const REQ_SET_CONFIGURATION: u8 = 0x09;
@@ -498,7 +501,7 @@ index 0000000..207be7b
 +}
 +
 +impl SerialFunction {
-+    fn out(&self, bus: &mut Bus, request_type: u8, request: u8, value: u16, index: u16, data: &[u8]) -> Result<(), UsbError> {
++    fn out(&self, bus: &mut Bus, request_type: u8, request: u8, value: u16, index: u16, data: &[u8]) -> UsbResult<()> {
 +        if data.is_empty() {
 +            bus.request(self.address, self.max_packet0, self.speed, request_type, request, value, index, 0)
 +                .map(|_| ())
@@ -507,12 +510,12 @@ index 0000000..207be7b
 +        }
 +    }
 +
-+    fn vendor_in(&self, bus: &mut Bus, request: u8, value: u16, index: u16, len: u16) -> Result<Vec<u8>, UsbError> {
++    fn vendor_in(&self, bus: &mut Bus, request: u8, value: u16, index: u16, len: u16) -> UsbResult<Vec<u8>> {
 +        bus.request(self.address, self.max_packet0, self.speed, 0xC0, request, value, index, len)
 +    }
 +
 +    /// Configure the device and set the line.
-+    pub fn init(&self, bus: &mut Bus, line: &Line) -> Result<(), UsbError> {
++    pub fn init(&self, bus: &mut Bus, line: &Line) -> UsbResult<()> {
 +        bus.request(self.address, self.max_packet0, self.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(self.configuration), 0, 0)?;
 +        let index = u16::from(self.interface);
 +        match self.kind {
@@ -532,7 +535,7 @@ index 0000000..207be7b
 +        self.set_line(bus, line)
 +    }
 +
-+    pub fn set_line(&self, bus: &mut Bus, line: &Line) -> Result<(), UsbError> {
++    pub fn set_line(&self, bus: &mut Bus, line: &Line) -> UsbResult<()> {
 +        let index = u16::from(self.interface);
 +        let data_bits = line.data_bits.clamp(5, 8);
 +        match self.kind {
@@ -593,7 +596,7 @@ index 0000000..207be7b
 +    }
 +
 +    /// Raise or drop DTR and RTS.
-+    pub fn set_lines(&self, bus: &mut Bus, on: bool) -> Result<(), UsbError> {
++    pub fn set_lines(&self, bus: &mut Bus, on: bool) -> UsbResult<()> {
 +        let index = u16::from(self.interface);
 +        match self.kind {
 +            Kind::CdcAcm => self.out(bus, 0x21, 0x22, if on { 3 } else { 0 }, index, &[]),
@@ -690,7 +693,7 @@ index 0000000..207be7b
 +}
 +
 +impl SerialData {
-+    fn port(&mut self, id: u64) -> SysResult<&mut Port> {
++    fn port(&mut self, id: u64) -> Result<&mut Port> {
 +        self.ports.iter_mut().find(|p| p.id == id).ok_or(Error::new(ENODEV))
 +    }
 +
@@ -766,7 +769,7 @@ index 0000000..207be7b
 +        true
 +    }
 +
-+    fn write(&mut self, id: u64, buf: &[u8]) -> SysResult<usize> {
++    fn write(&mut self, id: u64, buf: &[u8]) -> Result<usize> {
 +        let hc = self.hc.clone();
 +        let log = self.log;
 +        let tx_phys = self.tx_buf.physical();
@@ -848,7 +851,7 @@ index 0000000..207be7b
 +        _flags: usize,
 +        _fcntl_flags: u32,
 +        ctx: &CallerCtx,
-+    ) -> SysResult<ResourceOpenResult<SerialResource>> {
++    ) -> Result<ResourceOpenResult<SerialResource>> {
 +        if ctx.uid != 0 {
 +            return Err(Error::new(EACCES));
 +        }
@@ -884,7 +887,7 @@ index 0000000..207be7b
 +        data: &mut SerialData,
 +        mut buf: DirentBuf<&'buf mut [u8]>,
 +        opaque_offset: u64,
-+    ) -> SysResult<DirentBuf<&'buf mut [u8]>> {
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
 +        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
 +        for (i, port) in data.ports.iter().enumerate().skip(skip) {
 +            buf.entry(DirEntry {
@@ -897,11 +900,11 @@ index 0000000..207be7b
 +        Ok(buf)
 +    }
 +
-+    fn fpath(&mut self, _data: &mut SerialData, _w: &mut FpathWriter) -> SysResult<()> {
++    fn fpath(&mut self, _data: &mut SerialData, _w: &mut FpathWriter) -> Result<()> {
 +        Ok(())
 +    }
 +
-+    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> Result<()> {
 +        stat.st_mode = MODE_DIR | 0o700;
 +        Ok(())
 +    }
@@ -946,7 +949,7 @@ index 0000000..207be7b
 +    termios
 +}
 +
-+fn line_of(termios: &[u8], old: &Line) -> SysResult<Line> {
++fn line_of(termios: &[u8], old: &Line) -> Result<Line> {
 +    let cflag = u32::from_ne_bytes(termios.get(8..12).ok_or(Error::new(EINVAL))?.try_into().unwrap());
 +    let baud = match SPEEDS.get((cflag & CBAUD) as usize) {
 +        Some(0) | None => old.baud,
@@ -968,7 +971,7 @@ index 0000000..207be7b
 +    type SchemeData = SerialData;
 +    type ResourceEnum = SerialResource;
 +
-+    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], _offset: u64, fcntl_flags: u32) -> SysResult<usize> {
++    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], _offset: u64, fcntl_flags: u32) -> Result<usize> {
 +        let port = data.port(self.id)?;
 +        if port.rx.is_empty() {
 +            return Err(Error::new(if fcntl_flags & O_NONBLOCK as u32 != 0 { EAGAIN } else { EWOULDBLOCK }));
@@ -980,16 +983,16 @@ index 0000000..207be7b
 +        Ok(n)
 +    }
 +
-+    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
 +        data.write(self.id, buf)
 +    }
 +
-+    fn fevent(&mut self, data: &mut SerialData, _flags: EventFlags) -> SysResult<EventFlags> {
++    fn fevent(&mut self, data: &mut SerialData, _flags: EventFlags) -> Result<EventFlags> {
 +        let ready = data.port(self.id).is_ok_and(|p| !p.rx.is_empty());
 +        Ok(if ready { EventFlags::EVENT_READ } else { EventFlags::empty() })
 +    }
 +
-+    fn call(&mut self, data: &mut SerialData, payload: &mut [u8], metadata: &[u64], _ctx: &CallerCtx) -> SysResult<usize> {
++    fn call(&mut self, data: &mut SerialData, payload: &mut [u8], metadata: &[u64], _ctx: &CallerCtx) -> Result<usize> {
 +        const REQ_READ: u64 = 0;
 +        const REQ_WRITE: u64 = 1;
 +        let (Some(&verb), Some(&request)) = (metadata.first(), metadata.get(1)) else {
@@ -1013,12 +1016,12 @@ index 0000000..207be7b
 +        }
 +    }
 +
-+    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> SysResult<()> {
++    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> Result<()> {
 +        w.push_str(&data.port(self.id)?.name);
 +        Ok(())
 +    }
 +
-+    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> Result<()> {
 +        stat.st_mode = MODE_FILE | 0o600;
 +        Ok(())
 +    }
@@ -1048,7 +1051,7 @@ index 0000000..207be7b
 +    type SchemeData = SerialData;
 +    type ResourceEnum = SerialResource;
 +
-+    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> Result<usize> {
 +        let port = data.port(self.id)?;
 +        let text = format!("{}\n", port.pending_line.unwrap_or(port.line).baud);
 +        let bytes = text.as_bytes();
@@ -1058,7 +1061,7 @@ index 0000000..207be7b
 +        Ok(n)
 +    }
 +
-+    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> Result<usize> {
 +        let baud: u32 = std::str::from_utf8(buf)
 +            .ok()
 +            .and_then(|s| s.trim().parse().ok())
@@ -1069,13 +1072,13 @@ index 0000000..207be7b
 +        Ok(buf.len())
 +    }
 +
-+    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> SysResult<()> {
++    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> Result<()> {
 +        w.push_str(&data.port(self.id)?.name);
 +        w.push_str("/baud");
 +        Ok(())
 +    }
 +
-+    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> Result<()> {
 +        stat.st_mode = MODE_FILE | 0o600;
 +        Ok(())
 +    }
