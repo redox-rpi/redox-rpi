@@ -57,3 +57,20 @@ without `conv=fsync`, gives the same SHA-256 every time; 300 `echo >> log`
 appends give 300 lines. The same files read from the card image on the host
 (`tools/redoxfs-file`) match. A QEMU that was killed in the middle of a copy
 in 1000-byte calls left an exact prefix of the source on the card.
+
+Pi test #46 (2026-10-29, `v0.3.0-dev-164-g2ce732b+x8cc4`, patch `0001`
+only): 1 MiB in 4 KiB calls with `fsync` 0.4 s, against 10.1 s on the
+stable image and the same card; copies and appends intact, also after a
+reset. A file-to-file copy in small blocks was still slow (1 MiB at
+`bs=4k` 12 s), because every read of the source cut the run.
+
+With patch `0002`, QEMU, 1 MiB copied from a file to a file on the same
+filesystem with `conv=fsync` (`v0.3.0-dev-166-g403f6c1+x8cc4` against
+`v0.3.0-dev-164-g2ce732b+x8cc4`):
+
+| Block size | `0001` only | `0001` + `0002` |
+|---|---|---|
+| 4 KiB | 28.9 s | 0.94 s |
+| 1000 bytes | 98.0 s | 1.6 s |
+
+Both copies have the source's SHA-256.
