@@ -1,0 +1,274 @@
+From 813dd2c51d0325f3d5ede8b4745ab0a284b41175 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 15:36:35 +0000
+Subject: [PATCH] bcm2835-sdhostd: sleep until the DMA channel interrupt
+ instead of polling
+
+Pi test #42 found the driver busy for 80 % of a write and 90 % of a read
+with DMA: it polled CS.END. It now sets TI.INTEN and waits on the
+channel interrupt (dma4 in the devicetree) through the irq scheme, with a
+10 ms timer for the sdhost checks and the timeout. Without the interrupt
+it polls as before.
+---
+ drivers/storage/bcm2835-sdhostd/src/dma.rs | 175 ++++++++++++++++++++-
+ 1 file changed, 174 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/dma.rs b/drivers/storage/bcm2835-sdhostd/src/dma.rs
+index f31f8dd3..7de9d6d4 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/dma.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/dma.rs
+@@ -1,14 +1,21 @@
+ //! The BCM2835 DMA controller, moving sdhost's data between its FIFO and an
+ //! uncached bounce buffer (docs/topics/dma.md in redox-rpi, step 1: one fixed
+-//! channel, polling for the end).
++//! channel). The driver sleeps until the channel's interrupt, or polls when
++//! it has none.
+ //!
+ //! A transfer is one control block. sdhost paces it through its DREQ line
+ //! (13), so the controller only reads SDDATA when the FIFO holds data and
+ //! only writes it when there is room.
+ 
+ use std::fmt;
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Write};
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::io::AsRawFd;
+ use std::time::{Duration, Instant};
+ 
++use event::{EventFlags, RawEventQueue};
++
+ use common::dma::Dma;
+ use fdt::Fdt;
+ 
+@@ -41,6 +48,7 @@ const CS_RESET: u32 = 1 << 31;
+ const CS_PRIORITY: u32 = 8 << 16 | 15 << 20;
+ 
+ // TI, in the control block
++const TI_INTEN: u32 = 1 << 0;
+ const TI_WAIT_RESP: u32 = 1 << 3;
+ const TI_DEST_INC: u32 = 1 << 4;
+ const TI_DEST_DREQ: u32 = 1 << 6;
+@@ -58,6 +66,9 @@ pub const BOUNCE_SIZE: usize = 128 * 512;
+ /// sdhost waits for the card, so a transfer may take as long as the card
+ /// needs for 64 KiB.
+ const TIMEOUT: Duration = Duration::from_secs(2);
++/// While it waits for the interrupt, the driver checks sdhost this often
++/// (the kernel's timer runs at 100 Hz, so less is not possible).
++const CHECK_EVERY: Duration = Duration::from_millis(10);
+ 
+ /// One control block; the controller needs them aligned to 32 bytes.
+ #[repr(C, align(32))]
+@@ -105,6 +116,53 @@ pub struct SdDma {
+     ram_bus_offset: usize,
+     /// Bus address of SDDATA.
+     sddata: u32,
++    /// The channel's interrupt; without it the driver polls.
++    irq: Option<IrqWait>,
++    /// The interrupt read from the irq scheme, written back (which unmasks
++    /// the line) once the channel's INT is cleared.
++    pending_ack: Option<[u8; 8]>,
++}
++
++/// Waiting for the channel's interrupt, with a timer for the checks and the
++/// timeout. Opened before the driver leaves its namespace.
++struct IrqWait {
++    queue: RawEventQueue,
++    irq: File,
++    timer: File,
++}
++
++const EVENT_IRQ: usize = 1;
++const EVENT_TIMER: usize = 2;
++
++impl IrqWait {
++    fn open(path: &str) -> std::io::Result<Self> {
++        let irq = OpenOptions::new().read(true).write(true).open(path)?;
++        let timer = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .custom_flags(syscall::O_NONBLOCK as i32)
++            .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))?;
++        let queue = RawEventQueue::new().map_err(std::io::Error::other)?;
++        queue
++            .subscribe(irq.as_raw_fd() as usize, EVENT_IRQ, EventFlags::READ)
++            .map_err(std::io::Error::other)?;
++        queue
++            .subscribe(timer.as_raw_fd() as usize, EVENT_TIMER, EventFlags::READ)
++            .map_err(std::io::Error::other)?;
++        Ok(Self { queue, irq, timer })
++    }
++
++    /// Let the timer fire `after` from now.
++    fn arm(&mut self, after: Duration) {
++        let mut time = syscall::TimeSpec::default();
++        if self.timer.read(&mut time).is_err() {
++            return;
++        }
++        let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++        time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++        time.tv_nsec = (nsec % 1_000_000_000) as i32;
++        let _ = self.timer.write(&time);
++    }
+ }
+ 
+ // The channel and the buffers belong to this driver alone.
+@@ -150,6 +208,23 @@ impl SdDma {
+                 .assume_init()
+         };
+ 
++        let irq = match channel_irq(fdt) {
++            Some(path) => match IrqWait::open(&path) {
++                Ok(wait) => {
++                    println!("bcm2835-sdhostd: DMA interrupt {path}");
++                    Some(wait)
++                }
++                Err(err) => {
++                    println!("bcm2835-sdhostd: cannot use DMA interrupt {path} ({err}), polling");
++                    None
++                }
++            },
++            None => {
++                println!("bcm2835-sdhostd: no DMA interrupt in the devicetree, polling");
++                None
++            }
++        };
++
+         let dma = SdDma {
+             regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
+             page,
+@@ -157,6 +232,8 @@ impl SdDma {
+             bounce,
+             ram_bus_offset: ram_bus_offset(fdt),
+             sddata: sddata_bus as u32,
++            irq,
++            pending_ack: None,
+         };
+         let enable = dma.page_reg(ENABLE);
+         dma.set_page_reg(ENABLE, enable | 1 << CHANNEL);
+@@ -203,6 +280,7 @@ impl SdDma {
+         mut check: impl FnMut() -> bool,
+     ) -> Result<(), DmaError> {
+         assert!(len > 0 && len <= BOUNCE_SIZE && len % 4 == 0);
++        let ti = if self.irq.is_some() { ti | TI_INTEN } else { ti };
+         *self.cb = ControlBlock {
+             ti,
+             source,
+@@ -219,6 +297,10 @@ impl SdDma {
+         self.set_reg(CONBLK_AD, cb_bus);
+         self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
+ 
++        if self.irq.is_some() {
++            return self.wait_irq(check);
++        }
++
+         let start = Instant::now();
+         loop {
+             let cs = self.reg(CS);
+@@ -245,6 +327,65 @@ impl SdDma {
+         }
+     }
+ 
++    /// Sleep until the channel's interrupt, waking every `CHECK_EVERY` to
++    /// run `check` and to look for the timeout.
++    fn wait_irq(&mut self, mut check: impl FnMut() -> bool) -> Result<(), DmaError> {
++        let start = Instant::now();
++        let result = loop {
++            // A short transfer may already be done.
++            let cs = self.reg(CS);
++            if cs & CS_ERROR != 0 {
++                let debug = self.reg(DEBUG);
++                self.reset();
++                break Err(DmaError::Controller { cs, debug });
++            }
++            if cs & CS_END != 0 {
++                // Clear END and INT before unmasking the line below, or
++                // the level interrupt comes straight back.
++                self.set_reg(CS, CS_END | CS_INT);
++                barrier();
++                break Ok(());
++            }
++            if !check() {
++                self.reset();
++                break Err(DmaError::Aborted);
++            }
++            if start.elapsed() > TIMEOUT {
++                let remaining = self.reg(TXFR_LEN);
++                self.reset();
++                break Err(DmaError::Timeout { cs, remaining });
++            }
++            // Not ours (the channel has not ended): unmask again.
++            self.ack_irq();
++            let wait = self.irq.as_mut().unwrap();
++            wait.arm(CHECK_EVERY);
++            let Some(Ok(event)) = wait.queue.next() else {
++                continue;
++            };
++            if event.user_data == EVENT_IRQ {
++                let mut irq = [0; 8];
++                if wait.irq.read(&mut irq).unwrap_or(0) == irq.len() {
++                    // The line stays masked until this is written back,
++                    // after the next round has looked at CS.
++                    self.pending_ack = Some(irq);
++                }
++            } else {
++                // Consume the timer event.
++                let mut time = syscall::TimeSpec::default();
++                let _ = wait.timer.read(&mut time);
++            }
++        };
++        self.ack_irq();
++        result
++    }
++
++    /// Unmask the interrupt line after the channel's INT was cleared.
++    fn ack_irq(&mut self) {
++        if let (Some(irq), Some(wait)) = (self.pending_ack.take(), self.irq.as_mut()) {
++            let _ = wait.irq.write(&irq);
++        }
++    }
++
+     /// Stop whatever the channel does and clear its errors.
+     fn reset(&self) {
+         if self.reg(CS) & CS_ACTIVE != 0 {
+@@ -282,6 +423,38 @@ const fn TI_PERMAP(dreq: u32) -> u32 {
+     dreq << TI_PERMAP_SHIFT
+ }
+ 
++/// The irq scheme path of this channel's interrupt: the `dma<CHANNEL>` entry
++/// of the controller's `interrupts`, under its interrupt parent.
++fn channel_irq(fdt: &Fdt) -> Option<String> {
++    let node = fdt.find_compatible(&["brcm,bcm2835-dma"])?;
++    let cells = |name: &str, node: fdt::node::FdtNode| -> Option<Vec<u32>> {
++        let value = node.property(name)?.value;
++        Some(
++            value
++                .chunks_exact(4)
++                .map(|cell| u32::from_be_bytes([cell[0], cell[1], cell[2], cell[3]]))
++                .collect(),
++        )
++    };
++    let names = node.property("interrupt-names")?.value;
++    let wanted = format!("dma{CHANNEL}");
++    let index = names
++        .split(|&b| b == 0)
++        .position(|name| name == wanted.as_bytes())?;
++    let phandle = [Some(node), fdt.find_node("/soc"), fdt.find_node("/")]
++        .into_iter()
++        .flatten()
++        .find_map(|n| cells("interrupt-parent", n))?
++        .first()
++        .copied()?;
++    let parent = fdt.find_phandle(phandle)?;
++    let count = cells("#interrupt-cells", parent)?.first().copied()? as usize;
++    let spec = cells("interrupts", node)?;
++    let spec = spec.get(index * count..(index + 1) * count)?;
++    let spec: Vec<String> = spec.iter().map(u32::to_string).collect();
++    Some(format!("/scheme/irq/phandle-{}/{}", phandle, spec.join(",")))
++}
++
+ /// Bus address minus physical address of RAM, from the first entry of
+ /// `/soc`'s dma-ranges (one cell each for bus address, physical address and
+ /// size on the BCM283x).
+-- 
+2.53.0
+
