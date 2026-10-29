@@ -1,0 +1,229 @@
+From 5eac412ce1b41f61a5198a111bf2bd28ecfa2b13 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 17:12:25 +0000
+Subject: [PATCH] Write collected data at the latest 2 s after it came in
+ (redox-rpi #16)
+
+A program that writes a little and keeps the file open would otherwise
+leave the data in memory until its next request. The scheme socket is
+now non-blocking; with no request waiting, redoxfs sleeps on an event
+queue with the socket and a monotonic timer set to when the collected
+data is due.
+---
+ src/mount/redox/mod.rs    | 114 +++++++++++++++++++++++++++++++++++---
+ src/mount/redox/scheme.rs |  16 +++++-
+ 2 files changed, 121 insertions(+), 9 deletions(-)
+
+diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
+index 70156b0..b9251a4 100644
+--- a/src/mount/redox/mod.rs
++++ b/src/mount/redox/mod.rs
+@@ -2,9 +2,16 @@ use redox_scheme::{
+     scheme::{Op, SchemeState, SchemeSync},
+     RequestKind, Response, SignalBehavior, Socket,
+ };
+-use std::io;
++use std::fs::{File, OpenOptions};
++use std::io::{self, Read, Write};
++use std::os::fd::AsRawFd;
+ use std::path::Path;
+ use std::sync::atomic::Ordering;
++use std::time::{Duration, Instant};
++
++use syscall::data::{Event, TimeSpec};
++use syscall::error::EWOULDBLOCK;
++use syscall::flag::EventFlags;
+ 
+ use crate::{Disk, FileSystem, IS_UMT};
+ 
+@@ -13,6 +20,64 @@ use self::scheme::FileScheme;
+ pub mod resource;
+ pub mod scheme;
+ 
++/// Collected writes go to the disk at the latest this long after they came
++/// in, also when the program writes nothing more and keeps the file open.
++const FLUSH_AFTER: Duration = Duration::from_secs(2);
++
++/// Sleeping until the next request or until collected writes are due.
++struct Wakeup {
++    queue: File,
++    timer: File,
++    /// When the timer was last set to fire.
++    armed: Option<Instant>,
++}
++
++impl Wakeup {
++    fn open() -> io::Result<Self> {
++        let queue = OpenOptions::new().read(true).write(true).open("/scheme/event")?;
++        let timer = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))?;
++        let mut wakeup = Self { queue, timer, armed: None };
++        wakeup.watch(wakeup.timer.as_raw_fd() as usize)?;
++        Ok(wakeup)
++    }
++
++    fn watch(&mut self, fd: usize) -> io::Result<()> {
++        let event = Event { id: fd, flags: EventFlags::EVENT_READ, data: 0 };
++        self.queue.write(&event)?;
++        Ok(())
++    }
++
++    /// Let the timer fire at `at`, once.
++    fn arm(&mut self, at: Instant) {
++        if self.armed == Some(at) {
++            return;
++        }
++        let after = at.saturating_duration_since(Instant::now());
++        let mut time = TimeSpec::default();
++        if self.timer.read(&mut time).is_err() {
++            return;
++        }
++        let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++        time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++        time.tv_nsec = (nsec % 1_000_000_000) as i32;
++        if self.timer.write(&time).is_ok() {
++            self.armed = Some(at);
++        }
++    }
++
++    /// Sleep until a request comes, the timer fires or a signal arrives.
++    fn wait(&mut self) -> io::Result<()> {
++        let mut event = Event::default();
++        match self.queue.read(&mut event) {
++            Err(err) if err.kind() != io::ErrorKind::Interrupted => Err(err),
++            _ => Ok(()),
++        }
++    }
++}
++
+ //FIXME: mut callback is not mut
+ #[allow(unused_mut)]
+ 
+@@ -23,7 +88,18 @@ where
+     F: FnOnce(&Path) -> T,
+ {
+     let mountpoint = mountpoint.as_ref();
+-    let socket = Socket::create()?;
++    // Without the timer, collected writes wait for the next request.
++    let mut wakeup = match Wakeup::open() {
++        Ok(wakeup) => Some(wakeup),
++        Err(err) => {
++            log::warn!("no timer for collected writes: {}", err);
++            None
++        }
++    };
++    let socket = if wakeup.is_some() { Socket::nonblock()? } else { Socket::create()? };
++    if let Some(wakeup) = wakeup.as_mut() {
++        wakeup.watch(socket.inner().raw())?;
++    }
+ 
+     let scheme_name = format!("{}", mountpoint.display());
+     let mounted_path = format!("/scheme/{}", mountpoint.display());
+@@ -40,7 +116,25 @@ where
+     let res = callback(Path::new(&mounted_path));
+ 
+     while IS_UMT.load(Ordering::SeqCst) == 0 {
+-        let req = match socket.next_request(SignalBehavior::Restart)? {
++        let next = match socket.next_request(SignalBehavior::Restart) {
++            Err(err) if err.errno == EWOULDBLOCK => {
++                let Some(wakeup) = wakeup.as_mut() else {
++                    return Err(err.into());
++                };
++                if let Some(since) = scheme.pending_since() {
++                    let due = since + FLUSH_AFTER;
++                    if Instant::now() >= due {
++                        scheme.flush_pending();
++                        continue;
++                    }
++                    wakeup.arm(due);
++                }
++                wakeup.wait()?;
++                continue;
++            }
++            next => next?,
++        };
++        let req = match next {
+             None => break,
+             Some(req) => {
+                 match req.kind() {
+@@ -82,11 +176,15 @@ where
+         let caller = req.caller();
+         let response = match req.op() {
+             Ok(op) => {
+-                let flush = match &op {
+-                    Op::Write(_) => false,
+-                    Op::Read(read) => scheme.read_needs_flush(read.fd),
+-                    _ => true,
+-                };
++                let due = scheme
++                    .pending_since()
++                    .is_some_and(|since| since.elapsed() >= FLUSH_AFTER);
++                let flush = due
++                    || match &op {
++                        Op::Write(_) => false,
++                        Op::Read(read) => scheme.read_needs_flush(read.fd),
++                        _ => true,
++                    };
+                 if flush {
+                     scheme.flush_pending();
+                 }
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index 13717e5..eae3a99 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -3,7 +3,7 @@ use std::marker::PhantomData;
+ use std::mem;
+ use std::str;
+ use std::sync::atomic::{AtomicUsize, Ordering};
+-use std::time::{SystemTime, UNIX_EPOCH};
++use std::time::{Instant, SystemTime, UNIX_EPOCH};
+ 
+ use alloc::borrow::Cow;
+ use libredox::Fd;
+@@ -98,6 +98,8 @@ struct PendingWrite {
+     offset: u64,
+     /// Data from `offset - data.len()` on, not yet written.
+     data: Vec<u8>,
++    /// When the first byte of `data` came in.
++    since: Instant,
+ }
+ 
+ pub struct FileScheme<'sock, D: Disk> {
+@@ -175,6 +177,14 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+         }
+     }
+ 
++    /// When the oldest collected data not yet written came in.
++    pub fn pending_since(&self) -> Option<Instant> {
++        self.pending
++            .as_ref()
++            .filter(|pending| !pending.data.is_empty())
++            .map(|pending| pending.since)
++    }
++
+     /// Whether a read of handle `id` has to wait for the collected data:
+     /// only a read of the same file does. Copying a file reads the source
+     /// between the writes to the copy, and those reads must not cut the
+@@ -1027,6 +1037,9 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+         let small = (buf.len() as u64) < RECORD_SIZE;
+         if let Some(pending) = self.pending.as_mut() {
+             if small && pending.id == id && pending.offset == offset {
++                if pending.data.is_empty() {
++                    pending.since = Instant::now();
++                }
+                 pending.data.extend_from_slice(buf);
+                 pending.offset += buf.len() as u64;
+                 // Write when a record is complete or enough has come together.
+@@ -1049,6 +1062,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+                 id,
+                 offset: offset + written as u64,
+                 data: Vec::new(),
++                since: Instant::now(),
+             });
+         }
+         Ok(written)
+-- 
+2.53.0
+

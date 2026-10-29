@@ -34,9 +34,12 @@ A failed write of collected data is logged and returned by the next
 
 The on-disk format does not change.
 
-Not yet: a timer. Data a program wrote and then left open without any
-further request to the filesystem stays in memory (at most 128 KiB per
-filesystem) until the next request of any program to that filesystem.
+Collected data goes to the disk at the latest 2 s after it came in
+(patch `0003`), also when the program writes nothing more and keeps the
+file open: the scheme socket is non-blocking, and with no request waiting
+redoxfs sleeps on an event queue with the socket and a monotonic timer. If
+the timer cannot be opened it logs `no timer for collected writes` and
+works as before, where such data waited for the next request.
 
 ## Results
 
