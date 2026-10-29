@@ -179,12 +179,15 @@ fn tls_error(e: rustls::Error) -> io::Error {
 
 /// A certificate "not valid yet" or "expired" usually means the clock is
 /// wrong: the Pi starts at the image's build time or the last saved time.
+/// An unknown issuer usually means a broker with its own CA.
 #[cfg(feature = "tls")]
 fn add_time_hint(e: io::Error) -> io::Error {
     let text = e.to_string();
     let lower = text.to_lowercase();
     if lower.contains("notvalidyet") || lower.contains("not valid yet") || lower.contains("expired") {
         io::Error::new(e.kind(), format!("{text} (is the clock right? check with date -u)"))
+    } else if text.contains("UnknownIssuer") {
+        io::Error::new(e.kind(), format!("{text} (give the broker's CA certificate with --cafile)"))
     } else {
         e
     }

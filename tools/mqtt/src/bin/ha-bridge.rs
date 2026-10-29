@@ -254,14 +254,15 @@ fn main() {
 
 /// One connection of the service; returns when it breaks.
 fn serve(bridge: &Bridge, common: &Common) -> std::io::Result<()> {
-    let mut client = mqtt::Client::connect(&common.address(), &common.options)?;
+    let mut client = mqtt::Client::connect(&common.address(), &common.mqtt_options())?;
     client.publish(&bridge.availability(), b"online", QoS::AtLeastOnce, true)?;
     let values = read_values();
     let count = bridge.announce(&mut client, &values)?;
     bridge.publish_values(&mut client, &values)?;
     let status = format!("{}/status", bridge.prefix);
     client.subscribe(&[(&status, QoS::AtLeastOnce)])?;
-    eprintln!("{NAME}: {count} sensors announced on {} as {}", common.address(), bridge.base());
+    let tls = if common.uses_tls() { " (TLS)" } else { "" };
+    eprintln!("{NAME}: {count} sensors announced on {}{tls} as {}", common.address(), bridge.base());
     loop {
         let message = client.recv()?;
         if message.topic == status && message.payload == b"online" {
