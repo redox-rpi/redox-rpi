@@ -1,0 +1,721 @@
+From c12c8ca7a5fcd66de8ee138e788d4e350ea66b56 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:53:56 +0100
+Subject: [PATCH 31/31] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
+
+GPIO 34-39 to the Arasan controller (the SD card stays on sdhost),
+power-cycle through rpi-firmwared's wifi_power, SDIO card init (CMD5,
+CMD3, CMD7), CCCR and CIS, function 1, the ALP clock, and the ChipCommon
+chip ID over CMD52 and CMD53, also at 25 MHz on four data lines. Prints
+the results and exits; no network interface yet.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                            |   1 +
+ Makefile                              |   1 +
+ drivers/net/bcm2835-sdiod/Cargo.toml  |  12 +
+ drivers/net/bcm2835-sdiod/src/host.rs | 279 +++++++++++++++++++++
+ drivers/net/bcm2835-sdiod/src/main.rs | 346 ++++++++++++++++++++++++++
+ init.d/50_bcm2835-sdiod.service       |   8 +
+ 6 files changed, 647 insertions(+)
+ create mode 100644 drivers/net/bcm2835-sdiod/Cargo.toml
+ create mode 100644 drivers/net/bcm2835-sdiod/src/host.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/main.rs
+ create mode 100644 init.d/50_bcm2835-sdiod.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 4bded67..6b1e8ed 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -47,6 +47,7 @@ members = [
+     "drivers/input/ps2d",
+     "drivers/input/usbhidd",
+ 
++    "drivers/net/bcm2835-sdiod",
+     "drivers/net/driver-network",
+     "drivers/net/e1000d",
+     "drivers/net/ixgbed",
+diff --git a/Makefile b/Makefile
+index 263a5c4..f7ed03e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,6 +32,7 @@ endif
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+ 	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
++	DRIVERS_BINS += bcm2835-sdiod
+ endif
+ 
+ # For testing/benchmarking only
+diff --git a/drivers/net/bcm2835-sdiod/Cargo.toml b/drivers/net/bcm2835-sdiod/Cargo.toml
+new file mode 100644
+index 0000000..edd284a
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/Cargo.toml
+@@ -0,0 +1,12 @@
++[package]
++name = "bcm2835-sdiod"
++description = "Raspberry Pi 3B+ Wi-Fi chip over SDIO (probe)"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../../common" }
++
++[lints]
++workspace = true
+diff --git a/drivers/net/bcm2835-sdiod/src/host.rs b/drivers/net/bcm2835-sdiod/src/host.rs
+new file mode 100644
+index 0000000..dd82689
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/host.rs
+@@ -0,0 +1,279 @@
++//! The BCM2835 Arasan SDHCI controller ("EMMC") as an SDIO host.
++//!
++//! Register layout and command encoding as in `bcm2835-sdhcid`, which drives
++//! the same controller for an SD card; this is a separate copy so the SD
++//! drivers stay untouched. Only what an SDIO probe needs: commands with a
++//! 48-bit response, CMD52 (one byte) and CMD53 (a few bytes, one block, read
++//! by the CPU).
++
++use std::thread;
++use std::time::{Duration, Instant};
++
++// Register offsets in bytes.
++const BLKSIZECNT: usize = 0x04;
++const ARG1: usize = 0x08;
++const CMDTM: usize = 0x0c;
++const RESP0: usize = 0x10;
++const DATA: usize = 0x20;
++const STATUS: usize = 0x24;
++const CONTROL0: usize = 0x28;
++const CONTROL1: usize = 0x2c;
++const INTERRUPT: usize = 0x30;
++const IRPT_MASK: usize = 0x34;
++const IRPT_EN: usize = 0x38;
++const SLOTISR_VER: usize = 0xfc;
++
++// CMDTM: index in bits 24-29, then flags.
++const CMD_ISDATA: u32 = 1 << 21;
++const CMD_RSPNS_48: u32 = 2 << 16;
++const CMD_RSPNS_48_BUSY: u32 = 3 << 16;
++const CMD_CRCCHK_EN: u32 = 1 << 19;
++const CMD_IXCHK_EN: u32 = 1 << 20;
++const TM_DAT_DIR_READ: u32 = 1 << 4;
++
++const SR_DAT_INHIBIT: u32 = 1 << 1;
++const SR_CMD_INHIBIT: u32 = 1 << 0;
++
++const C0_HCTL_DWIDTH: u32 = 1 << 1;
++
++const C1_SRST_HC: u32 = 1 << 24;
++const C1_SRST_CMD: u32 = 1 << 25;
++const C1_SRST_DATA: u32 = 1 << 26;
++const C1_TOUNIT_MAX: u32 = 0xe << 16;
++const C1_CLK_EN: u32 = 1 << 2;
++const C1_CLK_STABLE: u32 = 1 << 1;
++const C1_CLK_INTLEN: u32 = 1 << 0;
++
++const INT_CMD_DONE: u32 = 1 << 0;
++const INT_DATA_DONE: u32 = 1 << 1;
++const INT_READ_RDY: u32 = 1 << 5;
++const INT_ERROR: u32 = 1 << 15;
++const INT_CMD_TIMEOUT: u32 = 1 << 16;
++const INT_ERROR_MASK: u32 = 0x017f_8000;
++
++/// What went wrong with a command.
++#[derive(Debug)]
++pub enum CmdError {
++    /// No response: no card, or the card does not know the command.
++    Timeout,
++    /// Error interrupt flags (CRC, end bit, index, data errors).
++    Flags(u32),
++    /// The controller stayed busy.
++    Busy,
++}
++
++pub struct Host {
++    base: *mut u32,
++    /// Clock the firmware feeds the controller, in Hz.
++    base_clock: u32,
++    /// Current SD clock, for the write spacing.
++    sd_clock: u32,
++}
++
++impl Host {
++    /// `base` is the mapped register block, `base_clock` the EMMC clock.
++    pub fn new(base: *mut u32, base_clock: u32) -> Self {
++        Host {
++            base,
++            base_clock,
++            sd_clock: 100_000,
++        }
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.base.add(offset / 4).read_volatile() }
++    }
++
++    /// Writes a register, then waits four SD clock cycles: the BCM2835's
++    /// Arasan controller can lose a write that follows another too closely
++    /// (see bcm2835-sdhcid and Linux' sdhci-iproc).
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.base.add(offset / 4).write_volatile(value) };
++        spin(Duration::from_nanos(4_000_000_000 / self.sd_clock.max(1) as u64 + 1000));
++    }
++
++    pub fn version(&self) -> u32 {
++        self.read(SLOTISR_VER)
++    }
++
++    /// Resets the controller and starts the clock at `freq` Hz.
++    pub fn reset(&mut self, freq: u32) -> Result<(), &'static str> {
++        self.write(CONTROL0, 0);
++        self.write(CONTROL1, self.read(CONTROL1) | C1_SRST_HC);
++        if !wait_until(Duration::from_millis(100), || self.read(CONTROL1) & C1_SRST_HC == 0) {
++            return Err("controller reset did not finish");
++        }
++        self.write(CONTROL1, self.read(CONTROL1) | C1_CLK_INTLEN | C1_TOUNIT_MAX);
++        self.set_clock(freq)?;
++        // Report every flag in INTERRUPT, but raise no interrupt line: this
++        // driver polls.
++        self.write(IRPT_MASK, 0xffff_ffff);
++        self.write(IRPT_EN, 0);
++        Ok(())
++    }
++
++    /// Sets the SD clock to at most `freq` Hz and returns what it is.
++    /// The controller reports spec version 3: SD clock = base / (2 * d),
++    /// d with 10 bits.
++    pub fn set_clock(&mut self, freq: u32) -> Result<u32, &'static str> {
++        if !wait_until(Duration::from_millis(100), || {
++            self.read(STATUS) & (SR_CMD_INHIBIT | SR_DAT_INHIBIT) == 0
++        }) {
++            return Err("controller busy before clock change");
++        }
++        self.write(CONTROL1, self.read(CONTROL1) & !C1_CLK_EN);
++        let d = self.base_clock.div_ceil(2 * freq).clamp(1, 0x3ff);
++        let divider = (d & 0xff) << 8 | (d >> 8 & 3) << 6;
++        self.write(CONTROL1, self.read(CONTROL1) & 0xffff_003f | divider);
++        if !wait_until(Duration::from_millis(100), || self.read(CONTROL1) & C1_CLK_STABLE != 0) {
++            return Err("clock did not become stable");
++        }
++        self.write(CONTROL1, self.read(CONTROL1) | C1_CLK_EN);
++        self.sd_clock = self.base_clock / (2 * d);
++        thread::sleep(Duration::from_millis(2));
++        Ok(self.sd_clock)
++    }
++
++    pub fn set_bus_width_4(&mut self, on: bool) {
++        let c0 = self.read(CONTROL0);
++        self.write(CONTROL0, if on { c0 | C0_HCTL_DWIDTH } else { c0 & !C0_HCTL_DWIDTH });
++    }
++
++    /// Clears the command and data lines after an error.
++    fn reset_lines(&mut self) {
++        self.write(CONTROL1, self.read(CONTROL1) | C1_SRST_CMD | C1_SRST_DATA);
++        wait_until(Duration::from_millis(10), || {
++            self.read(CONTROL1) & (C1_SRST_CMD | C1_SRST_DATA) == 0
++        });
++    }
++
++    /// Sends command `index` with `flags` (response type) and `arg`, waits
++    /// for it and returns RESP0.
++    pub fn command(&mut self, index: u32, flags: u32, arg: u32) -> Result<u32, CmdError> {
++        if !wait_until(Duration::from_millis(100), || self.read(STATUS) & SR_CMD_INHIBIT == 0) {
++            self.reset_lines();
++            return Err(CmdError::Busy);
++        }
++        self.write(INTERRUPT, self.read(INTERRUPT));
++        self.write(ARG1, arg);
++        self.write(CMDTM, index << 24 | flags);
++        self.wait_flag(INT_CMD_DONE)?;
++        Ok(self.read(RESP0))
++    }
++
++    /// Waits for `flag` in INTERRUPT and clears it; errors clear everything.
++    fn wait_flag(&mut self, flag: u32) -> Result<(), CmdError> {
++        let mut flags = 0;
++        wait_until(Duration::from_millis(500), || {
++            flags = self.read(INTERRUPT);
++            flags & (flag | INT_ERROR | INT_ERROR_MASK) != 0
++        });
++        if flags & (INT_ERROR | INT_ERROR_MASK) != 0 {
++            self.write(INTERRUPT, flags);
++            self.reset_lines();
++            return Err(if flags & INT_CMD_TIMEOUT != 0 {
++                CmdError::Timeout
++            } else {
++                CmdError::Flags(flags)
++            });
++        }
++        if flags & flag == 0 {
++            self.reset_lines();
++            return Err(CmdError::Timeout);
++        }
++        self.write(INTERRUPT, flag);
++        Ok(())
++    }
++
++    /// CMD52 (IO_RW_DIRECT): reads (or with `write`, writes) one byte of
++    /// function `func` at `addr`. Returns the R5 response: flags in bits
++    /// 8-15, the byte in bits 0-7.
++    pub fn cmd52(&mut self, func: u32, addr: u32, write: Option<u8>) -> Result<u32, CmdError> {
++        let mut arg = (func & 7) << 28 | (addr & 0x1_ffff) << 9;
++        if let Some(byte) = write {
++            arg |= 1 << 31 | 1 << 27 | byte as u32; // write, read after write
++        }
++        self.command(52, RSP_48_CHECKED, arg)
++    }
++
++    /// CMD52 read that fails on error flags in the response.
++    pub fn read_byte(&mut self, func: u32, addr: u32) -> Result<u8, String> {
++        let r5 = self.cmd52(func, addr, None).map_err(|e| format!("CMD52 F{func} 0x{addr:05x}: {e:?}"))?;
++        check_r5(r5).map_err(|e| format!("CMD52 F{func} 0x{addr:05x}: {e}"))?;
++        Ok(r5 as u8)
++    }
++
++    pub fn write_byte(&mut self, func: u32, addr: u32, byte: u8) -> Result<u8, String> {
++        let r5 = self
++            .cmd52(func, addr, Some(byte))
++            .map_err(|e| format!("CMD52 write F{func} 0x{addr:05x}: {e:?}"))?;
++        check_r5(r5).map_err(|e| format!("CMD52 write F{func} 0x{addr:05x}: {e}"))?;
++        Ok(r5 as u8)
++    }
++
++    /// CMD53 (IO_RW_EXTENDED) read in byte mode, incrementing address:
++    /// `buf.len()` bytes (a multiple of 4, at most 512) of function `func`
++    /// from `addr`.
++    pub fn cmd53_read(&mut self, func: u32, addr: u32, buf: &mut [u8]) -> Result<(), String> {
++        let len = buf.len() as u32;
++        assert!(len > 0 && len <= 512 && len % 4 == 0);
++        if !wait_until(Duration::from_millis(100), || self.read(STATUS) & SR_DAT_INHIBIT == 0) {
++            self.reset_lines();
++            return Err("CMD53: data lines busy".into());
++        }
++        self.write(BLKSIZECNT, 1 << 16 | len);
++        // Byte count 512 is written as 0.
++        let arg = (func & 7) << 28 | 1 << 26 | (addr & 0x1_ffff) << 9 | (len & 0x1ff);
++        let r5 = self
++            .command(53, RSP_48_CHECKED | CMD_ISDATA | TM_DAT_DIR_READ, arg)
++            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: {e:?}"))?;
++        check_r5(r5).map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: {e}"))?;
++        self.wait_flag(INT_READ_RDY)
++            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: no data: {e:?}"))?;
++        for chunk in buf.chunks_mut(4) {
++            chunk.copy_from_slice(&self.read(DATA).to_le_bytes());
++        }
++        self.wait_flag(INT_DATA_DONE)
++            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: transfer did not end: {e:?}"))?;
++        Ok(())
++    }
++}
++
++/// Response types for `command`. R4 (CMD5) has no CRC and no index, the
++/// others have both.
++pub const RSP_NONE: u32 = 0;
++pub const RSP_48: u32 = CMD_RSPNS_48;
++pub const RSP_48_CHECKED: u32 = CMD_RSPNS_48 | CMD_CRCCHK_EN | CMD_IXCHK_EN;
++pub const RSP_48_BUSY_CHECKED: u32 = CMD_RSPNS_48_BUSY | CMD_CRCCHK_EN | CMD_IXCHK_EN;
++
++/// The error flags of an R5 response (SDIO spec 5.2): COM_CRC_ERROR,
++/// ILLEGAL_COMMAND, ERROR, FUNCTION_NUMBER, OUT_OF_RANGE.
++fn check_r5(r5: u32) -> Result<(), String> {
++    let flags = r5 >> 8 & 0xff;
++    if flags & 0xcb != 0 {
++        Err(format!("R5 flags 0x{flags:02x}"))
++    } else {
++        Ok(())
++    }
++}
++
++/// Polls `done` until it is true or `timeout` passed; returns the last result.
++pub fn wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
++    let start = Instant::now();
++    loop {
++        if done() {
++            return true;
++        }
++        if start.elapsed() > timeout {
++            return done();
++        }
++        thread::yield_now();
++    }
++}
++
++fn spin(duration: Duration) {
++    let start = Instant::now();
++    while start.elapsed() < duration {
++        std::hint::spin_loop();
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/main.rs b/drivers/net/bcm2835-sdiod/src/main.rs
+new file mode 100644
+index 0000000..0ec3b87
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/main.rs
+@@ -0,0 +1,346 @@
++//! First steps towards Wi-Fi on the Raspberry Pi 3B+: talk to the CYW43455
++//! over SDIO.
++//!
++//! The Pi 3B+ wires its Wi-Fi chip to GPIO 34-39, which ALT3 connects to the
++//! Arasan SDHCI controller ("EMMC"). The SD card uses the other controller,
++//! sdhost, on GPIO 48-53 (ALT0), so the Arasan is free for SDIO.
++//!
++//! This probe powers the chip up, initialises the SDIO card, reads the CCCR
++//! and CIS, enables function 1, wakes the backplane clock and reads the
++//! ChipCommon chip ID over CMD52 and CMD53. It prints what it finds and
++//! exits; there is no network interface yet.
++
++use std::fs;
++use std::process;
++use std::thread;
++use std::time::Duration;
++
++use fdt::Fdt;
++
++mod host;
++
++use host::{wait_until, Host, RSP_48, RSP_48_BUSY_CHECKED, RSP_48_CHECKED, RSP_NONE};
++
++/// SDIO common registers (CCCR), function 0.
++const CCCR_REVISION: u32 = 0x00;
++const CCCR_IOEX: u32 = 0x02;
++const CCCR_IORX: u32 = 0x03;
++const CCCR_BUS_IF: u32 = 0x07;
++const CCCR_CAPABILITY: u32 = 0x08;
++const CCCR_CIS_PTR: u32 = 0x09;
++
++/// Broadcom function 1 registers (brcmfmac's sdio.h has the same names).
++const SBSDIO_FUNC1_SBADDRLOW: u32 = 0x1000a;
++const SBSDIO_FUNC1_SBADDRMID: u32 = 0x1000b;
++const SBSDIO_FUNC1_SBADDRHIGH: u32 = 0x1000c;
++const SBSDIO_FUNC1_CHIPCLKCSR: u32 = 0x1000e;
++const SBSDIO_FORCE_ALP: u8 = 0x01;
++const SBSDIO_ALP_AVAIL_REQ: u8 = 0x08;
++const SBSDIO_FORCE_HW_CLKREQ_OFF: u8 = 0x20;
++const SBSDIO_ALP_AVAIL: u8 = 0x40;
++/// Backplane window offsets: the low 15 bits address inside the 32 KiB
++/// window; this bit asks for a 32-bit access.
++const SBSDIO_SB_OFT_ADDR_MASK: u32 = 0x7fff;
++const SBSDIO_SB_ACCESS_2_4B_FLAG: u32 = 0x8000;
++
++/// ChipCommon, the first core on the backplane; its first register is the
++/// chip ID.
++const CHIPCOMMON_BASE: u32 = 0x1800_0000;
++
++/// Broadcom's SDIO vendor ID.
++const VENDOR_BROADCOM: u16 = 0x02d0;
++
++const GPFSEL_ALT3: u32 = 7;
++
++fn main() {
++    common::init();
++    if let Err(err) = probe() {
++        println!("bcm2835-sdiod: {err}");
++        println!("bcm2835-sdiod: FAILED");
++        process::exit(1);
++    }
++}
++
++fn probe() -> Result<(), String> {
++    let dtb = fs::read("/scheme/kernel.dtb").map_err(|e| format!("no devicetree: {e}"))?;
++    let fdt = Fdt::new(&dtb).map_err(|e| format!("bad devicetree: {e:?}"))?;
++    let emmc_phys = emmc_address(&fdt).ok_or("no brcm,bcm2835-sdhci in the devicetree")?;
++    println!("bcm2835-sdiod: EMMC at 0x{emmc_phys:08x}");
++
++    // GPIO sits 1 MiB below EMMC on all BCM283x.
++    let gpio = Gpio(map(emmc_phys - 0x10_0000, 0x1000)?);
++    if (48..=53).any(|pin| gpio.function(pin) == GPFSEL_ALT3) {
++        return Err("the SD card is on the Arasan controller (GPIO 48-53 ALT3); \
++                    SDIO needs sdhost for the card"
++            .into());
++    }
++
++    power_cycle();
++
++    // Wi-Fi CLK, CMD, DAT0-3 on GPIO 34-39 to the Arasan, pull-ups on CMD
++    // and DAT0-3 (like the sdio overlay of the Pi firmware).
++    for pin in 34..=39 {
++        gpio.set_function(pin, GPFSEL_ALT3);
++    }
++    gpio.pull_up(0x1f << (35 - 32));
++    println!(
++        "bcm2835-sdiod: GPFSEL3 0x{:08x} GPFSEL4 0x{:08x} GPFSEL5 0x{:08x}",
++        gpio.read(0x0c),
++        gpio.read(0x10),
++        gpio.read(0x14)
++    );
++
++    let base_clock = emmc_clock();
++    let emmc = map(emmc_phys, 0x100)?;
++    let mut host = Host::new(emmc as *mut u32, base_clock);
++    println!(
++        "bcm2835-sdiod: base clock {base_clock} Hz, SLOTISR_VER 0x{:08x}",
++        host.version()
++    );
++    host.reset(400_000)?;
++
++    let rca = init_card(&mut host)?;
++    println!("bcm2835-sdiod: card selected, RCA 0x{rca:04x}");
++
++    let revision = host.read_byte(0, CCCR_REVISION)?;
++    let capability = host.read_byte(0, CCCR_CAPABILITY)?;
++    println!("bcm2835-sdiod: CCCR revision 0x{revision:02x}, capability 0x{capability:02x}");
++    match read_manfid(&mut host) {
++        Ok((vendor, device)) => {
++            println!("bcm2835-sdiod: CIS vendor 0x{vendor:04x} device 0x{device:04x}");
++            if vendor != VENDOR_BROADCOM {
++                println!("bcm2835-sdiod: not a Broadcom chip");
++            }
++        }
++        Err(err) => println!("bcm2835-sdiod: no MANFID: {err}"),
++    }
++
++    enable_function1(&mut host)?;
++    wake_backplane(&mut host)?;
++    set_window(&mut host, CHIPCOMMON_BASE)?;
++
++    let mut bytes = [0u8; 4];
++    for (i, byte) in bytes.iter_mut().enumerate() {
++        *byte = host.read_byte(1, (CHIPCOMMON_BASE & SBSDIO_SB_OFT_ADDR_MASK) + i as u32)?;
++    }
++    let chipid52 = u32::from_le_bytes(bytes);
++    report("CMD52", chipid52);
++
++    let offset = CHIPCOMMON_BASE & SBSDIO_SB_OFT_ADDR_MASK | SBSDIO_SB_ACCESS_2_4B_FLAG;
++    host.cmd53_read(1, offset, &mut bytes)?;
++    let chipid53 = u32::from_le_bytes(bytes);
++    report("CMD53", chipid53);
++
++    // The same read at full speed on four data lines.
++    let bus = host.read_byte(0, CCCR_BUS_IF)?;
++    host.write_byte(0, CCCR_BUS_IF, bus & !0x03 | 0x02)?;
++    host.set_bus_width_4(true);
++    let clock = host.set_clock(25_000_000)?;
++    host.cmd53_read(1, offset, &mut bytes)?;
++    let fast = u32::from_le_bytes(bytes);
++    println!("bcm2835-sdiod: at {clock} Hz, 4 bits:");
++    report("CMD53", fast);
++
++    if chipid52 & 0xffff != 0x4345 || chipid53 != chipid52 || fast != chipid52 {
++        return Err("chip IDs differ or are not CYW43455".into());
++    }
++    println!("bcm2835-sdiod: OK");
++    Ok(())
++}
++
++fn report(how: &str, chipid: u32) {
++    println!(
++        "bcm2835-sdiod: {how} chipid 0x{chipid:08x}: chip 0x{:04x} rev {} cores {}",
++        chipid & 0xffff,
++        chipid >> 16 & 0xf,
++        chipid >> 24 & 0xf
++    );
++}
++
++/// The CPU address of the Arasan controller, from its devicetree node and
++/// the /soc ranges (as in bcm2835-sdhcid).
++fn emmc_address(fdt: &Fdt) -> Option<usize> {
++    let node = fdt.find_compatible(&["brcm,bcm2835-sdhci"])?;
++    let addr = node.reg()?.next()?.starting_address as usize;
++    let Some(mut ranges) = fdt.find_node("/soc").and_then(|n| n.ranges()) else {
++        return Some(addr);
++    };
++    let range = ranges.find(|r| r.child_bus_address <= addr && addr - r.child_bus_address < r.size)?;
++    Some(range.parent_bus_address + (addr - range.child_bus_address))
++}
++
++fn map(phys: usize, len: usize) -> Result<*mut (), String> {
++    unsafe { common::physmap(phys, len, common::Prot::RW, common::MemoryType::DeviceMemory) }
++        .map_err(|e| format!("cannot map 0x{phys:08x}: {e:?}"))
++}
++
++/// Switches WL_REG_ON off and on, so the chip starts from reset.
++fn power_cycle() {
++    const PATH: &str = "/scheme/rpi-firmware/wifi_power";
++    match fs::read_to_string(PATH) {
++        Ok(state) => println!("bcm2835-sdiod: wifi_power was {}", state.trim()),
++        Err(err) => {
++            println!("bcm2835-sdiod: no {PATH} ({err}), going on without power control");
++            return;
++        }
++    }
++    if let Err(err) = fs::write(PATH, "0") {
++        println!("bcm2835-sdiod: wifi_power 0: {err}");
++    }
++    thread::sleep(Duration::from_millis(20));
++    if let Err(err) = fs::write(PATH, "1") {
++        println!("bcm2835-sdiod: wifi_power 1: {err}");
++    }
++    // brcmfmac waits for the chip's internal regulators after power-on.
++    thread::sleep(Duration::from_millis(150));
++}
++
++/// The EMMC clock from rpi-firmwared, a line "emmc <rate> <max>".
++fn emmc_clock() -> u32 {
++    let rate = fs::read_to_string("/scheme/rpi-firmware/clocks").ok().and_then(|text| {
++        text.lines().find_map(|line| {
++            let mut words = line.split_whitespace();
++            (words.next() == Some("emmc")).then(|| words.next()?.parse().ok())?
++        })
++    });
++    rate.unwrap_or_else(|| {
++        // The Pi 3 firmware's default.
++        println!("bcm2835-sdiod: EMMC clock unknown, assuming 200 MHz");
++        200_000_000
++    })
++}
++
++/// CMD0, CMD5 until the card is ready, CMD3, CMD7. Returns the RCA.
++fn init_card(host: &mut Host) -> Result<u16, String> {
++    let _ = host.command(0, RSP_NONE, 0);
++    thread::sleep(Duration::from_millis(1));
++
++    // CMD5 with argument 0 asks for the OCR; then again with the voltage
++    // window until the card says it is ready.
++    let ocr = host
++        .command(5, RSP_48, 0)
++        .map_err(|e| format!("CMD5: {e:?} (no SDIO card answers)"))?;
++    println!("bcm2835-sdiod: CMD5 R4 0x{ocr:08x}, {} functions", ocr >> 28 & 7);
++    let window = ocr & 0x00ff_ffff;
++    if window == 0 {
++        return Err(format!("card offers no voltage (R4 0x{ocr:08x})"));
++    }
++    let mut r4 = 0;
++    let ready = wait_until(Duration::from_secs(1), || {
++        r4 = host.command(5, RSP_48, window).unwrap_or(0);
++        if r4 & 1 << 31 == 0 {
++            thread::sleep(Duration::from_millis(10));
++        }
++        r4 & 1 << 31 != 0
++    });
++    if !ready {
++        return Err(format!("card not ready after CMD5 (R4 0x{r4:08x})"));
++    }
++
++    let r6 = host.command(3, RSP_48_CHECKED, 0).map_err(|e| format!("CMD3: {e:?}"))?;
++    let rca = (r6 >> 16) as u16;
++    host.command(7, RSP_48_BUSY_CHECKED, (rca as u32) << 16)
++        .map_err(|e| format!("CMD7: {e:?}"))?;
++    Ok(rca)
++}
++
++/// Walks the common CIS for the MANFID tuple (0x20): vendor and device ID.
++fn read_manfid(host: &mut Host) -> Result<(u16, u16), String> {
++    let mut ptr = 0;
++    for i in 0..3 {
++        ptr |= (host.read_byte(0, CCCR_CIS_PTR + i)? as u32) << (8 * i);
++    }
++    for _ in 0..32 {
++        let code = host.read_byte(0, ptr)?;
++        if code == 0xff {
++            break;
++        }
++        let len = host.read_byte(0, ptr + 1)? as u32;
++        if code == 0x20 && len >= 4 {
++            let mut b = [0u8; 4];
++            for (i, byte) in b.iter_mut().enumerate() {
++                *byte = host.read_byte(0, ptr + 2 + i as u32)?;
++            }
++            return Ok((u16::from_le_bytes([b[0], b[1]]), u16::from_le_bytes([b[2], b[3]])));
++        }
++        ptr += 2 + len;
++    }
++    Err(format!("not found in the CIS at 0x{ptr:05x}"))
++}
++
++fn enable_function1(host: &mut Host) -> Result<(), String> {
++    let ioe = host.read_byte(0, CCCR_IOEX)?;
++    host.write_byte(0, CCCR_IOEX, ioe | 0x02)?;
++    let mut ior = 0;
++    let ready = wait_until(Duration::from_millis(500), || {
++        ior = host.read_byte(0, CCCR_IORX).unwrap_or(0);
++        ior & 0x02 != 0
++    });
++    if !ready {
++        return Err(format!("function 1 not ready (IORx 0x{ior:02x})"));
++    }
++    println!("bcm2835-sdiod: function 1 ready");
++    Ok(())
++}
++
++/// Asks for the ALP clock, which the backplane needs before any core
++/// register answers, then forces it on.
++fn wake_backplane(host: &mut Host) -> Result<(), String> {
++    host.write_byte(1, SBSDIO_FUNC1_CHIPCLKCSR, SBSDIO_FORCE_HW_CLKREQ_OFF | SBSDIO_ALP_AVAIL_REQ)?;
++    let mut csr = 0;
++    let ready = wait_until(Duration::from_millis(100), || {
++        csr = host.read_byte(1, SBSDIO_FUNC1_CHIPCLKCSR).unwrap_or(0);
++        csr & SBSDIO_ALP_AVAIL != 0
++    });
++    if !ready {
++        return Err(format!("no ALP clock (CHIPCLKCSR 0x{csr:02x})"));
++    }
++    host.write_byte(1, SBSDIO_FUNC1_CHIPCLKCSR, SBSDIO_FORCE_HW_CLKREQ_OFF | SBSDIO_FORCE_ALP)?;
++    println!("bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x{csr:02x})");
++    Ok(())
++}
++
++/// Points the 32 KiB function 1 window at backplane address `addr`.
++fn set_window(host: &mut Host, addr: u32) -> Result<(), String> {
++    host.write_byte(1, SBSDIO_FUNC1_SBADDRLOW, (addr >> 8) as u8 & 0x80)?;
++    host.write_byte(1, SBSDIO_FUNC1_SBADDRMID, (addr >> 16) as u8)?;
++    host.write_byte(1, SBSDIO_FUNC1_SBADDRHIGH, (addr >> 24) as u8)?;
++    Ok(())
++}
++
++struct Gpio(*mut ());
++
++impl Gpio {
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { (self.0 as *mut u32).add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { (self.0 as *mut u32).add(offset / 4).write_volatile(value) }
++    }
++
++    /// GPFSELn holds the function of GPIO 10n..10n+9, three bits each.
++    fn function(&self, pin: usize) -> u32 {
++        self.read(pin / 10 * 4) >> (pin % 10 * 3) & 7
++    }
++
++    fn set_function(&self, pin: usize, function: u32) {
++        let offset = pin / 10 * 4;
++        let shift = pin % 10 * 3;
++        self.write(offset, self.read(offset) & !(7 << shift) | function << shift);
++    }
++
++    /// Pull-up on the GPIO 32-53 pins in `mask` (bit 0 = GPIO 32): set
++    /// GPPUD, clock it into the pins with GPPUDCLK1, then clear both.
++    fn pull_up(&self, mask: u32) {
++        const GPPUD: usize = 0x94;
++        const GPPUDCLK1: usize = 0x9c;
++        const PULL_UP: u32 = 2;
++        self.write(GPPUD, PULL_UP);
++        thread::sleep(Duration::from_micros(10));
++        self.write(GPPUDCLK1, mask);
++        thread::sleep(Duration::from_micros(10));
++        self.write(GPPUD, 0);
++        self.write(GPPUDCLK1, 0);
++    }
++}
+diff --git a/init.d/50_bcm2835-sdiod.service b/init.d/50_bcm2835-sdiod.service
+new file mode 100644
+index 0000000..9707656
+--- /dev/null
++++ b/init.d/50_bcm2835-sdiod.service
+@@ -0,0 +1,8 @@
++[unit]
++description = "Raspberry Pi 3B+ Wi-Fi chip probe over SDIO"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "/usr/lib/drivers/bcm2835-sdiod"
++type = "oneshot_async"
+-- 
+2.54.0 (Apple Git-157)
+

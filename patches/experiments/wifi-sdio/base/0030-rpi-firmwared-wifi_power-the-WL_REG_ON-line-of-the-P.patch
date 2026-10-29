@@ -1,0 +1,108 @@
+From e651a2b86a97c6df171653f59531ccd19df35d81 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:50:01 +0100
+Subject: [PATCH 30/31] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
+ 3B+ Wi-Fi chip
+
+The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,
+firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
+1, writing 0 or 1 sets it. Pi 3B+ only.
+---
+ drivers/rpi-firmwared/src/main.rs | 40 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs |  2 ++
+ 2 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 4a7a018..dc7f624 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -15,6 +15,10 @@
+ //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+ //!   in Hz, `max` or `min` sets it
++//! - `/scheme/rpi-firmware/wifi_power`: the WL_REG_ON line of the Pi 3B+
++//!   Wi-Fi chip, `1` (on) or `0` (off); writing sets it. Like the power LED
++//!   it hangs on the firmware's GPIO expander. Other boards do not have
++//!   this file.
+ //!
+ //! At start it sets the ARM clock to its maximum; the firmware lowers it by
+ //! itself when the SoC gets too hot or the supply voltage too low. A thread
+@@ -44,9 +48,9 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled", "wifi_power"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock"];
++const WRITABLE: &[&str] = &["arm_clock", "wifi_power"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -94,6 +98,16 @@ impl FirmwareScheme {
+                 }
+             }
+             "board" => board(mbox, &mut text),
++            "wifi_power" => {
++                let gpio = wifi_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                // The firmware answers 0 in the first word on success, then
++                // the state (raspberrypi-exp-gpio in Linux).
++                let state = match mbox.property(TAG_GET_GPIO_STATE, &[gpio, 0], 2).map_err(log)?[..] {
++                    [0, state] => state,
++                    _ => return Err(log(format!("Wi-Fi power: firmware refused GPIO {gpio}"))),
++                };
++                writeln!(text, "{state}").unwrap();
++            }
+             _ => return Err(Error::new(ENOENT)),
+         }
+         Ok(text)
+@@ -112,11 +126,33 @@ impl FirmwareScheme {
+                 println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
+                 Ok(())
+             }
++            "wifi_power" => {
++                let gpio = wifi_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let state = match value {
++                    "1" => 1,
++                    "0" => 0,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
++                    [0, _] => Ok(()),
++                    _ => Err(log(format!("Wi-Fi power: firmware refused GPIO {gpio}"))),
++                }
++            }
+             _ => Err(Error::new(EROFS)),
+         }
+     }
+ }
+ 
++/// The firmware GPIO of WL_REG_ON: pin 1 of the GPIO expander (128 + 1) on
++/// the Pi 3B+ (`wifi_pwrseq` in Linux's devicetree). High powers the chip.
++fn wifi_power_gpio(mbox: &mut Mailbox) -> Option<u32> {
++    let [revision] = mbox.property(TAG_BOARD_REVISION, &[], 1).ok()?[..] else {
++        return None;
++    };
++    // New-style code (bit 23), type 0x0d: Pi 3 Model B+.
++    (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(129)
++}
++
+ /// Sets the ARM clock to its maximum and says from what to what.
+ fn arm_clock_max(mbox: &mut Mailbox) {
+     let before = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM);
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 737398e..506220e 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -44,6 +44,8 @@ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
+ pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
+ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
++pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
++pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
+-- 
+2.54.0 (Apple Git-157)
+
