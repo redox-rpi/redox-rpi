@@ -18,10 +18,11 @@
   throttling, uptime and memory as a Home Assistant device, sends the
   values every minute through `timerd`, and keeps an availability topic
   with a last will ([README](../../patches/experiments/ha-bridge/README.md)).
-  Passed in QEMU against mosquitto.
+  Passed in QEMU against mosquitto; Pi test #65 queued.
 
 ## Next
 
+- Check `ha-bridge` against a real Home Assistant.
 - Let other recipes use the library (now only by copying `src/lib.rs`).
 
 ## Later
