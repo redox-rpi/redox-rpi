@@ -1,0 +1,258 @@
+From 77e18ada2c4449333c67027c4f395b57699d20b9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 09:37:01 +0000
+Subject: [PATCH] inputd: German keyboard layout (de) with AltGr
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+inputd -K de switches to it. AltGr gives @ € { [ ] } \ ~ | ² ³ µ; the
+dead keys ^ ´ ` type their character at once. Layouts without an AltGr
+table ignore AltGr as before.
+---
+ Cargo.lock                   |  15 ++++++
+ drivers/inputd/src/keymap.rs | 102 +++++++++++++++++++++++++++++++++--
+ drivers/inputd/src/main.rs   |   9 +++-
+ 3 files changed, 120 insertions(+), 6 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 3823eb23..b0713b70 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -729,7 +729,9 @@ dependencies = [
+  "daemon",
+  "driver-network",
+  "fdt 0.2.0-alpha1",
++ "inputd",
+  "libredox",
++ "orbclient",
+  "redox_syscall 0.9.5",
+ ]
+ 
+@@ -2196,6 +2198,19 @@ dependencies = [
+  "serde_derive",
+ ]
+ 
++[[package]]
++name = "rpi-firmwared"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+ name = "rtcd"
+ version = "0.1.0"
+diff --git a/drivers/inputd/src/keymap.rs b/drivers/inputd/src/keymap.rs
+index 27d54751..b3eb5a85 100644
+--- a/drivers/inputd/src/keymap.rs
++++ b/drivers/inputd/src/keymap.rs
+@@ -340,6 +340,83 @@ mod keymaps {
+         (orbclient::K_SLASH, ['-', '_']),
+         (orbclient::K_SPACE, [' ', ' ']),
+     ];
++
++    // German (T1). The dead keys ^, ´ and ` type their character at once.
++    pub static DE: [(u8, [char; 2]); 54] = [
++        (orbclient::K_ESC, ['\0', '\0']),
++        (orbclient::K_1, ['1', '!']),
++        (orbclient::K_2, ['2', '"']),
++        (orbclient::K_3, ['3', '§']),
++        (orbclient::K_4, ['4', '$']),
++        (orbclient::K_5, ['5', '%']),
++        (orbclient::K_6, ['6', '&']),
++        (orbclient::K_7, ['7', '/']),
++        (orbclient::K_8, ['8', '(']),
++        (orbclient::K_9, ['9', ')']),
++        (orbclient::K_0, ['0', '=']),
++        (orbclient::K_MINUS, ['ß', '?']),
++        (orbclient::K_EQUALS, ['´', '`']),
++        (orbclient::K_BKSP, ['\0', '\0']),
++        (orbclient::K_TAB, ['\t', '\t']),
++        (orbclient::K_Q, ['q', 'Q']),
++        (orbclient::K_W, ['w', 'W']),
++        (orbclient::K_E, ['e', 'E']),
++        (orbclient::K_R, ['r', 'R']),
++        (orbclient::K_T, ['t', 'T']),
++        (orbclient::K_Y, ['z', 'Z']),
++        (orbclient::K_U, ['u', 'U']),
++        (orbclient::K_I, ['i', 'I']),
++        (orbclient::K_O, ['o', 'O']),
++        (orbclient::K_P, ['p', 'P']),
++        (orbclient::K_BRACE_OPEN, ['ü', 'Ü']),
++        (orbclient::K_BRACE_CLOSE, ['+', '*']),
++        (orbclient::K_ENTER, ['\0', '\0']),
++        (orbclient::K_CTRL, ['\0', '\0']),
++        (orbclient::K_A, ['a', 'A']),
++        (orbclient::K_S, ['s', 'S']),
++        (orbclient::K_D, ['d', 'D']),
++        (orbclient::K_F, ['f', 'F']),
++        (orbclient::K_G, ['g', 'G']),
++        (orbclient::K_H, ['h', 'H']),
++        (orbclient::K_J, ['j', 'J']),
++        (orbclient::K_K, ['k', 'K']),
++        (orbclient::K_L, ['l', 'L']),
++        (orbclient::K_SEMICOLON, ['ö', 'Ö']),
++        (orbclient::K_QUOTE, ['ä', 'Ä']),
++        (orbclient::K_TICK, ['^', '°']),
++        // The # key left of Enter
++        (orbclient::K_BACKSLASH, ['#', '\'']),
++        // The < > key right of the left Shift (scancode 0x56)
++        (0x56, ['<', '>']),
++        (orbclient::K_Z, ['y', 'Y']),
++        (orbclient::K_X, ['x', 'X']),
++        (orbclient::K_C, ['c', 'C']),
++        (orbclient::K_V, ['v', 'V']),
++        (orbclient::K_B, ['b', 'B']),
++        (orbclient::K_N, ['n', 'N']),
++        (orbclient::K_M, ['m', 'M']),
++        (orbclient::K_COMMA, [',', ';']),
++        (orbclient::K_PERIOD, ['.', ':']),
++        (orbclient::K_SLASH, ['-', '_']),
++        (orbclient::K_SPACE, [' ', ' ']),
++    ];
++
++    pub static DE_ALTGR: [(u8, char); 14] = [
++        (orbclient::K_2, '²'),
++        (orbclient::K_3, '³'),
++        (orbclient::K_7, '{'),
++        (orbclient::K_8, '['),
++        (orbclient::K_9, ']'),
++        (orbclient::K_0, '}'),
++        (orbclient::K_MINUS, '\\'),
++        (orbclient::K_Q, '@'),
++        (orbclient::K_E, '€'),
++        (orbclient::K_BRACE_CLOSE, '~'),
++        (0x56, '|'),
++        (orbclient::K_M, 'µ'),
++        (orbclient::K_ENTER, '\0'),
++        (orbclient::K_SPACE, ' '),
++    ];
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq)]
+@@ -351,11 +428,12 @@ pub enum KeymapKind {
+     Azerty,
+     Bepo,
+     IT,
++    DE,
+ }
+ 
+ impl From<usize> for KeymapKind {
+     fn from(value: usize) -> Self {
+-        if value > (KeymapKind::IT as usize) {
++        if value > (KeymapKind::DE as usize) {
+             KeymapKind::US
+         } else {
+             // SAFETY: Checked above
+@@ -379,6 +457,7 @@ impl FromStr for KeymapKind {
+             "azerty" => KeymapKind::Azerty,
+             "bepo" => KeymapKind::Bepo,
+             "it" => KeymapKind::IT,
++            "de" => KeymapKind::DE,
+             &_ => return Err(ParseKeymapError(())),
+         };
+ 
+@@ -395,6 +474,7 @@ impl Display for KeymapKind {
+             KeymapKind::Azerty => "azerty",
+             KeymapKind::Bepo => "bepo",
+             KeymapKind::IT => "it",
++            KeymapKind::DE => "de",
+         };
+         f.write_str(s)
+     }
+@@ -402,6 +482,8 @@ impl Display for KeymapKind {
+ 
+ pub struct KeymapData {
+     pub keymap_hash: HashMap<u8, [char; 2]>,
++    /// Characters with AltGr; empty for layouts that ignore AltGr
++    pub altgr_hash: HashMap<u8, char>,
+     pub kind: KeymapKind,
+ }
+ 
+@@ -414,17 +496,29 @@ impl KeymapData {
+             KeymapKind::Azerty => HashMap::from(keymaps::AZERTY),
+             KeymapKind::Bepo => HashMap::from(keymaps::BEPO),
+             KeymapKind::IT => HashMap::from(keymaps::IT),
++            KeymapKind::DE => HashMap::from(keymaps::DE),
++        };
++        let altgr_hash = match kind {
++            KeymapKind::DE => HashMap::from(keymaps::DE_ALTGR),
++            _ => HashMap::new(),
+         };
+ 
+-        Self { keymap_hash, kind }
++        Self {
++            keymap_hash,
++            altgr_hash,
++            kind,
++        }
+     }
+ 
+     pub fn get_kind(&self) -> KeymapKind {
+         self.kind
+     }
+ 
+-    // TODO: AltGr, Numlock
+-    pub fn get_char(&self, scancode: u8, shift: bool) -> char {
++    // TODO: Numlock
++    pub fn get_char(&self, scancode: u8, shift: bool, altgr: bool) -> char {
++        if altgr && !self.altgr_hash.is_empty() {
++            return self.altgr_hash.get(&scancode).copied().unwrap_or('\0');
++        }
+         if let Some(c) = self.keymap_hash.get(&scancode) {
+             if shift {
+                 c[1]
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 4d849c8f..64c17de3 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -84,6 +84,7 @@ struct InputScheme<'a> {
+     active_keymap: KeymapData,
+     lshift: bool,
+     rshift: bool,
++    altgr: bool,
+ 
+     has_new_events: bool,
+     pending_activate: Option<usize>,
+@@ -105,6 +106,7 @@ impl<'a> InputScheme<'a> {
+             active_keymap: KeymapData::new(KeymapKind::US),
+             lshift: false,
+             rshift: false,
++            altgr: false,
+             has_new_events: false,
+             pending_activate: None,
+         }
+@@ -428,10 +430,13 @@ impl SchemeSync for InputScheme<'_> {
+                     orbclient::K_RIGHT_SHIFT => {
+                         self.rshift = key_event.pressed;
+                     }
++                    orbclient::K_ALT_GR => {
++                        self.altgr = key_event.pressed;
++                    }
+ 
+                     key => {
+                         let shift = self.lshift | self.rshift;
+-                        let ev = self.active_keymap.get_char(key, shift);
++                        let ev = self.active_keymap.get_char(key, shift, self.altgr);
+                         key_event.character = ev;
+                         events.to_mut()[i] = key_event.to_event();
+                     }
+@@ -707,7 +712,7 @@ fn main() {
+             // List available keymaps
+             "--keymaps" => {
+                 // TODO: configurable KeymapKind using files
+-                for key in ["dvorak", "us", "gb", "azerty", "bepo", "it"] {
++                for key in ["dvorak", "us", "gb", "azerty", "bepo", "it", "de"] {
+                     println!("{}", key);
+                 }
+             }
+-- 
+2.53.0
+

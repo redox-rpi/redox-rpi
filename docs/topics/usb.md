@@ -13,7 +13,10 @@
 
 ## In progress
 
-- Nothing right now.
+- [#36](https://github.com/redox-rpi/redox-rpi/issues/36) keyboard layouts, German first (milestone v0.5.0): experiment
+  [`keyboard-de`](../../patches/experiments/keyboard-de/) on branch
+  `keyboard-layouts` adds a `de` map with AltGr to `inputd`; switch with
+  `inputd -K de`. QEMU test `test-keymap.sh`. Next: pick the layout at boot.
 
 ## Next
 
@@ -22,5 +25,5 @@
 ## Later
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
-- Keyboard layouts, `lsusb`
+- More keyboard layouts, `lsusb`
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

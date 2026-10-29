@@ -40,6 +40,7 @@ each one expects to come before it:
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
+| `0025` | `experiments/keyboard-de/base/` | German keyboard layout in `inputd` (any order with the others) |
 | `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
 | `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
 
