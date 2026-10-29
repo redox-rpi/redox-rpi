@@ -143,7 +143,7 @@ check "adapter found" wait_more "dwc2d: serial /scheme/usb-serial/[0-9.]+: FTDI"
 name=$(port_name)
 dev=/scheme/usb-serial/$name
 tr -d '\r' < "$log" | grep -a "dwc2d: serial /scheme" | tail -1 | sed 's/^/      /'
-check "port listed" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme/usb-serial' 2>/dev/null | grep -aq '$name'"
+check "port listed" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme/usb-serial' 2>/dev/null | tr -d '\\r' | grep -axq '$name'"
 
 echo "== write and read"
 devsh "echo hello-from-redox > $dev" > /dev/null
@@ -180,7 +180,7 @@ echo "== unplug and plug in again"
 n=$(count "dwc2d: serial [0-9.]+ removed")
 unplug 0
 check "adapter removed" wait_more "dwc2d: serial [0-9.]+ removed" 10 "$n"
-check "port gone from the list" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme/usb-serial' 2>/dev/null | grep -aq '$name'"
+check "port gone from the list" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme/usb-serial' 2>/dev/null | tr -d '\\r' | grep -axq '$name'"
 n=$(count "dwc2d: serial /scheme/usb-serial/[0-9.]+: FTDI")
 : > "$received"
 plug 1 1.3
