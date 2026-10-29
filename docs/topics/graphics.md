@@ -189,8 +189,19 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   the firmware scales it to the monitor's mode from power-on. QEMU:
   handover and a switch from 640x480 to 1280x720 at runtime work.
 - **Without a monitor:** the display counts as connected at the firmware's
-  fallback size, `rpi-fbd` logs `no EDID`, and the boot goes on. A monitor
-  plugged in later gets that mode.
+  fallback size, `rpi-fbd` logs `no EDID`, and the boot goes on.
+- **Monitor turned on after power-on (user finding 2026-10-29):** no
+  picture. The firmware switches HDMI on only when a monitor answers at
+  power-on, and nothing in Redox can switch it on later: the documented
+  property interface has no HDMI or hotplug tag, only the EDID. Fix on the
+  branch: `hdmi_force_hotplug=1` in `config/config.txt` (netboot and SD
+  images), so HDMI is always on; a monitor on at power-on still gets its
+  own mode, one turned on later gets the firmware's fallback mode. A fixed
+  mode (`hdmi_group`/`hdmi_mode`, commented out there) would give every
+  monitor that size, but loses the native 1920x1200 of the test monitor.
+  Pi check in #34. Real hotplug (new mode for a new monitor) needs the
+  display hardware itself (step 2); `rpi-fbd` could at most notice a new
+  monitor by polling the EDID.
 - **Pi test #34** in the [queue](../test-plan.md), image built. The screen
   checks need a person and wait for another visit.
 
