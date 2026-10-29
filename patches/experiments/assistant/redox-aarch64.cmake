@@ -1,6 +1,6 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
-set(TC /home/zehrer/redox-rpi/upstream/redox/prefix/aarch64-unknown-redox/gcc-install/bin)
+set(TC /home/zehrer/redox-rpi-assistant/upstream/redox/prefix/aarch64-unknown-redox/gcc-install/bin)
 set(CMAKE_C_COMPILER ${TC}/aarch64-unknown-redox-gcc)
 set(CMAKE_CXX_COMPILER ${TC}/aarch64-unknown-redox-g++)
 set(CMAKE_AR ${TC}/aarch64-unknown-redox-ar)
