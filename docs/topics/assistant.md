@@ -187,12 +187,12 @@ git).
   toolchain's older relibc. Memory: 96 MiB used before, 137 MiB after
   (of 912 MiB). Speed in QEMU (one host core emulating four): 0.19 tokens
   per second reading, 0.04 writing; says nothing about the Pi.
-- Pi test #48 in the [queue](../test-plan.md): the SD card image, with a
+- Pi test #51 in the [queue](../test-plan.md): the SD card image, with a
   person to swap the card.
 
 ## Next
 
-- Pi test #48: `llama-bench` for real speed, `free` while the model runs.
+- Pi test #51: `llama-bench` for real speed, `free` while the model runs.
 - A Pi test without a person: the network-boot image with llama.cpp, and
   the model on the netboot card's data partition (`/scheme/data`). llama.cpp
   can download it itself over plain HTTP from the build host (`-mu`,
