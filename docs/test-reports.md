@@ -1664,3 +1664,58 @@ end: mode ondemand target max load 100 switches 354 min 600000000 max 1400000000
   `rpi-firmwared` 9 s), so something keeps a CPU busy and the governor
   sees load. 
 - Standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-189-gd5ac445+x02a9`
+
+Built 2026-10-29T14:17:39Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over netboot. Experiments: `hwinfo`, `timesync`, `usb-hotplug`. test 32 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35) lsusb and hwinfo), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-189-gd5ac445+x02a9 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 32 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35)), branch `hwinfo`. Output over devsh:
+
+```
+### lsusb  (0.3 s)
+Bus 001 Device 001: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 002: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 003: ID 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+) (USB 2.10, high speed)
+Bus 001 Device 004: ID 05e3:0610 hub (USB 2.00, high speed)
+Bus 001 Device 005: ID 04d9:0006 keyboard, HID (USB 2.00, low speed)
+### lsusb -t  (0.3 s)
+root port: address 1, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 2, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 3, 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+), high speed
+port 2: address 4, 05e3:0610 hub, high speed
+port 1: address 5, 04d9:0006 keyboard, HID, low speed
+### hwinfo  (5.1 s)
+build        v0.3.0-dev-189-gd5ac445+x02a9
+experiments  hwinfo timesync usb-hotplug
+model        Raspberry Pi 3 Model B+
+revision     0x00a020d3
+serial       00000000ed08e0aa
+memory       1 GiB
+ARM memory   998 MiB
+GPU memory   16 MiB
+firmware     0x6aa809d0
+CPUs         4
+ARM clock    1400 MHz (max 1400 MHz)
+clocks       emmc 200 MHz, uart 48 MHz, core 250 MHz, v3d 250 MHz, h264 250 MHz, isp 250 MHz, sdram 400 MHz
+temperature  56.9 °C
+throttling   0x00000000 (none now)
+USB          5 devices (lsusb for the list)
+```
+
+- `lsusb`, `lsusb -t`, `lsusb -v`: both 3B+ hubs `0424:2514`, the LAN7800
+  `0424:7800`, plus a `05e3:0610` hub and a `04d9:0006` keyboard; the tree
+  matches dwc2d's boot log; `-v` lists the interfaces: **pass**.
+- `hwinfo`: Raspberry Pi 3 Model B+, 1 GiB (998 MiB ARM, 16 MiB GPU), 4
+  CPUs, ARM 1400 MHz, the other clocks the same as `/scheme/rpi-firmware/clocks`,
+  56.9 °C (`temperature` a moment later 55843), throttling none: **pass**.
+- Standard checks pass, 0 of 300 starts failed. The optional plug test
+  with a person was not done.
