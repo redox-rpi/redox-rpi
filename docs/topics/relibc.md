@@ -39,7 +39,15 @@
   sigaltstack was never used. Fixed in experiment `sigsegv` (branch
   `t-sigsegv`, relibc `exp/sigsegv`): `sigsegv`, `stackoverflow` and,
   with `sigentry-thread-signals`, `sigaltstack` pass in QEMU, no new
-  failures. Not yet on the Pi.
+  failures. Pi test #68 queued.
+- Timer signals: relibc's timer thread (`timer_settime`, `alarm`) did not
+  block signals and could take the `SIGALRM` it sent to the process, so a
+  thread waiting in `sem_wait` was not interrupted (`time/timer`). Fixed
+  in experiment `timer-sigmask` (branch `t-timer-sigmask`), not
+  aarch64-specific.
+- `stdio/fscanf_offby1` and `stdio/ungetc_ftell` were test bugs: they rely
+  on x86_64's argument evaluation order. Fixed in relibc-tests patch
+  `0004` (branch `t-test-order`).
 - The static tests and statically linked C programs link the toolchain's
   `libc.a` (prefix sysroot, built 2026-10-24), not the relibc of the
   build: our relibc patches do not reach them. Fix for the tests (branch
