@@ -19,6 +19,12 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
 - [`0027`](base/0027-rpi-fbd-blits-with-the-DMA-controller-prototype.patch)
   (branch `graphics-fb3`, prototype for step 2): blits with the DMA
   controller.
+- [`0028`](base/0028-rpi-fbd-remember-only-the-frame-s-own-damage-for-the.patch),
+  [`0029`](base/0029-rpi-fbd-shadow-buffers-when-dumb-buffers-are-uncache.patch)
+  (branch `graphics-gui`): double buffering copied the whole screen after
+  a while (damage union that only grew), shadow buffers for clients when
+  dumb buffers are uncached, `drawbench`; see
+  [experiment `orbital`](../orbital/README.md).
 
 ## What `rpi-fbd` does
 
