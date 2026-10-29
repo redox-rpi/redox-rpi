@@ -1,0 +1,127 @@
+From 8d7c481ee57efa56ae6c0dcb2b1e76a70cc4d7e6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:46:27 +0000
+Subject: [PATCH] redox: clock_settime(CLOCK_REALTIME) and settimeofday
+
+clock_settime returned ENOSYS on Redox, and settimeofday did not exist.
+The kernel keeps the real time as boot time plus monotonic time and takes
+a new boot time written to /scheme/sys/update_time_offset (root only), so
+clock_settime computes the boot time from the new time and writes it.
+Other clocks give EINVAL, a non-root caller EPERM. settimeofday calls
+clock_settime and ignores the obsolete time zone argument.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/sys_time/mod.rs | 31 +++++++++++++++++++++++++++++--
+ src/platform/redox/mod.rs  | 37 +++++++++++++++++++++++++++++++++----
+ 2 files changed, 62 insertions(+), 6 deletions(-)
+
+diff --git a/src/header/sys_time/mod.rs b/src/header/sys_time/mod.rs
+index 28cc560b..c06f1a18 100644
+--- a/src/header/sys_time/mod.rs
++++ b/src/header/sys_time/mod.rs
+@@ -9,10 +9,14 @@
+ use crate::{
+     c_str::CStr,
+     error::ResultExt,
+-    header::{sys_select::timeval, time::timespec},
++    header::{
++        errno::EINVAL,
++        sys_select::timeval,
++        time::{CLOCK_REALTIME, timespec},
++    },
+     out::Out,
+     platform::{
+-        Pal, PalSignal, Sys,
++        self, Pal, PalSignal, Sys,
+         types::{c_char, c_int, c_long},
+     },
+ };
+@@ -92,6 +96,29 @@ pub unsafe extern "C" fn gettimeofday(tp: *mut timeval, tzp: *mut timezone) -> c
+         .or_minus_one_errno()
+ }
+ 
++/// Non-POSIX, see <https://man7.org/linux/man-pages/man2/settimeofday.2.html>.
++///
++/// Sets the real-time clock through [`clock_settime()`](crate::header::time::clock_settime).
++/// The time zone argument is obsolete and ignored, as on Linux; `tv` may be
++/// null to set only that.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn settimeofday(tv: *const timeval, _tz: *const timezone) -> c_int {
++    let Some(tv) = (unsafe { tv.as_ref() }) else {
++        return 0;
++    };
++    if !(0..1_000_000).contains(&tv.tv_usec) {
++        platform::ERRNO.set(EINVAL);
++        return -1;
++    }
++    let ts = timespec {
++        tv_sec: tv.tv_sec,
++        tv_nsec: c_long::from(tv.tv_usec) * 1000,
++    };
++    unsafe { Sys::clock_settime(CLOCK_REALTIME, &ts) }
++        .map(|()| 0)
++        .or_minus_one_errno()
++}
++
+ // `select()` declared in `sys/select.h`, as specified in modern POSIX
+ 
+ /// See <https://pubs.opengroup.org/onlinepubs/9699919799/functions/getitimer.html>.
+diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
+index f2b73427..073938d8 100644
+--- a/src/platform/redox/mod.rs
++++ b/src/platform/redox/mod.rs
+@@ -29,8 +29,8 @@ use crate::{
+     fs::File,
+     header::{
+         errno::{
+-            EBADF, EBADFD, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EMFILE, ENAMETOOLONG, ENOENT,
+-            ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP,
++            EACCES, EBADF, EBADFD, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EMFILE, ENAMETOOLONG,
++            ENOENT, ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP, EPERM,
+         },
+         fcntl::{
+             self, AT_EACCESS, AT_EMPTY_PATH, AT_FDCWD, AT_REMOVEDIR, AT_SYMLINK_FOLLOW, F_GETLK,
+@@ -232,8 +232,37 @@ impl Pal for Sys {
+     }
+ 
+     unsafe fn clock_settime(clk_id: clockid_t, tp: *const timespec) -> Result<()> {
+-        todo_skip!(0, "clock_settime({}, {:p}): not implemented", clk_id, tp);
+-        Err(Errno(ENOSYS))
++        // Only the real-time clock can be set. The kernel keeps it as the boot
++        // time plus the monotonic time, and takes a new boot time, in
++        // nanoseconds since 1970, written to /scheme/sys/update_time_offset
++        // (root only).
++        if clk_id != CLOCK_REALTIME {
++            return Err(Errno(EINVAL));
++        }
++        let tp = unsafe { tp.as_ref() }.ok_or(Errno(EFAULT))?;
++        if tp.tv_sec < 0 || !(0..1_000_000_000).contains(&tp.tv_nsec) {
++            return Err(Errno(EINVAL));
++        }
++        let mut since_boot = redox_timespec::default();
++        syscall::clock_gettime(syscall::CLOCK_MONOTONIC, &mut since_boot)?;
++        let new = i128::from(tp.tv_sec) * 1_000_000_000 + i128::from(tp.tv_nsec);
++        let since_boot =
++            i128::from(since_boot.tv_sec) * 1_000_000_000 + i128::from(since_boot.tv_nsec);
++        let boot = u128::try_from(new - since_boot).map_err(|_| Errno(EINVAL))?;
++
++        let file = File::open(
++            c"/scheme/sys/update_time_offset".into(),
++            fcntl::O_WRONLY | fcntl::O_CLOEXEC,
++        )
++        .map_err(|err| match err.0 {
++            EACCES => Errno(EPERM),
++            _ => err,
++        })?;
++        let bytes = boot.to_ne_bytes();
++        match Sys::write(*file, &bytes)? {
++            n if n == bytes.len() => Ok(()),
++            _ => Err(Errno(EIO)),
++        }
+     }
+ 
+     fn close(fd: c_int) -> Result<()> {
+-- 
+2.53.0
+
