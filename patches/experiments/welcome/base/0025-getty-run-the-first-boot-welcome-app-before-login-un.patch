@@ -1,0 +1,55 @@
+From a49b0ef97c2d28c561dcdbca8f99ef9e96a34976 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 15:32:06 +0000
+Subject: [PATCH] getty: run the first-boot welcome app before login until it
+ is done
+
+While /usr/bin/welcome exists and /etc/welcome.done does not, the first
+program getty starts on its console is the welcome app; login follows
+when it exits (#24).
+---
+ getty/src/main.rs | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/getty/src/main.rs b/getty/src/main.rs
+index 4c7ecbd2..b18b599d 100644
+--- a/getty/src/main.rs
++++ b/getty/src/main.rs
+@@ -232,6 +232,10 @@ fn tty_columns_lines(tty: &mut File) -> Result<(u16, u16), Box<dyn Error>> {
+     res
+ }
+ 
++/// First-boot setup program, run before login while `WELCOME_DONE` is missing
++const WELCOME: &str = "/usr/bin/welcome";
++const WELCOME_DONE: &str = "/etc/welcome.done";
++
+ fn daemon(tty: &mut File, clear: bool, contain: bool, stderr: &mut Stderr) {
+     let (columns, lines) = tty_columns_lines(tty).unwrap_or((DEFAULT_COLS, DEFAULT_LINES));
+ 
+@@ -258,6 +262,11 @@ fn daemon(tty: &mut File, clear: bool, contain: bool, stderr: &mut Stderr) {
+         )
+         .expect("getty: failed to fevent master PTY");
+ 
++    // First-boot setup: until it marks itself done, the first program on
++    // each console is the welcome app instead of login
++    let mut first = std::fs::exists(WELCOME).unwrap_or(false)
++        && !std::fs::exists(WELCOME_DONE).unwrap_or(false);
++
+     loop {
+         if clear {
+             let _ = tty.write_all(b"\x1Bc");
+@@ -277,7 +286,10 @@ fn daemon(tty: &mut File, clear: bool, contain: bool, stderr: &mut Stderr) {
+             .open(&pty)
+             .expect("getty: failed to open slave stderr");
+ 
+-        let mut command = if contain {
++        let mut command = if first {
++            first = false;
++            Command::new(WELCOME)
++        } else if contain {
+             Command::new("contain_login")
+         } else {
+             Command::new("login")
+-- 
+2.53.0
+
