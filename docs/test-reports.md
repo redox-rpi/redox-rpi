@@ -1444,3 +1444,35 @@ bcm2835-sdiod: FAILED
   run with `standard` (609312 bytes in 301 ms): the same `data frame of 0
   bytes`, `FAILED`.
 - `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-187-g0f28c70+x0042`
+
+Built 2026-10-29T14:16:08Z, `libc.so` `bd047155ea800b72…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `sshd`, `timesync`. test 59 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-187-g0f28c70+x0042 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 59 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45)), branch
+`sshd`. **Fail**: sshd does not start, so no SSH login could be tried.
+
+- Boot log: no `ssh-keygen: generating new host keys`. `sshd-keys` runs
+  `ssh-keygen -A -f /scheme/data`, which takes about a minute (RSA) and then
+  logs `Unable to move /scheme/data/etc/ssh/ssh_host_{rsa,ecdsa,ed25519,mldsa44_ed25519}_key.pub
+  into position: No such file or directory`; init: `sshd-keys failed with
+  exit status: 1`; then `sshd: no hostkeys available -- exiting.`
+- `/scheme/data/etc/ssh` holds all eight key files under their temporary
+  names (`ssh_host_ed25519_key.XXXXz37Ax9`, …), never renamed.
+- Cause: `rename` does not work on `/scheme/data`. `echo x > /scheme/data/t59c;
+  mv /scheme/data/t59c /scheme/data/t59d` gives `mv: No such file or
+  directory (os error 2)` (also with relative names, also in
+  `/scheme/data/etc/ssh`); the same in `/tmp` works. **The stable image
+  `v0.3.0-dev-15-g24fbb96+x9f76` has the same `mv` failure on
+  `/scheme/data`**, so it is not new in this branch.
+- `/scheme/data` was mounted; standard checks pass, 0 of 300 starts failed
+  (devshd). The temporary key files were deleted afterwards.
