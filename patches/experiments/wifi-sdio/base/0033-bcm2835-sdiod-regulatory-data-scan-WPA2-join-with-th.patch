@@ -1,4 +1,4 @@
-From 2d91084762f829a536a2bee4603b69e577763f7e Mon Sep 17 00:00:00 2001
+From 56456114081197ec463a5a1911e285af495584c1 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 15:43:40 +0100
 Subject: [PATCH 33/33] bcm2835-sdiod: regulatory data, scan, WPA2 join with
@@ -22,8 +22,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  drivers/net/bcm2835-sdiod/src/scan.rs    | 233 +++++++++++++++++++++++
  drivers/net/bcm2835-sdiod/src/sdpcm.rs   |  29 ++-
  drivers/net/bcm2835-sdiod/src/station.rs | 230 ++++++++++++++++++++++
- drivers/net/bcm2835-sdiod/src/wifi.rs    | 226 +++++++++++++++++-----
- 6 files changed, 840 insertions(+), 59 deletions(-)
+ drivers/net/bcm2835-sdiod/src/wifi.rs    | 232 +++++++++++++++++-----
+ 6 files changed, 846 insertions(+), 59 deletions(-)
  create mode 100644 drivers/net/bcm2835-sdiod/src/event.rs
  create mode 100644 drivers/net/bcm2835-sdiod/src/scan.rs
  create mode 100644 drivers/net/bcm2835-sdiod/src/station.rs
@@ -767,7 +767,7 @@ index 0000000..fd51ede
 +    a.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
 +}
 diff --git a/drivers/net/bcm2835-sdiod/src/wifi.rs b/drivers/net/bcm2835-sdiod/src/wifi.rs
-index 870da12..fedde5f 100644
+index 870da12..6097477 100644
 --- a/drivers/net/bcm2835-sdiod/src/wifi.rs
 +++ b/drivers/net/bcm2835-sdiod/src/wifi.rs
 @@ -8,9 +8,11 @@
@@ -830,7 +830,7 @@ index 870da12..fedde5f 100644
  }
  
  impl Control {
-@@ -142,80 +177,162 @@ impl Control {
+@@ -142,80 +177,168 @@ impl Control {
              seq: 0,
              max_seq: 4,
              id: 0,
@@ -967,19 +967,9 @@ index 870da12..fedde5f 100644
 +                return Ok(None);
              }
 -            if status & I_HMB_FRAME_IND == 0 {
--                continue;
 +            if !self.pump(bus)? {
 +                thread::sleep(Duration::from_millis(2));
-             }
--            // Read frames until the firmware has no more.
--            while let Some(frame) = self.read_frame(bus)? {
--                let parsed = sdpcm::parse(&frame)?;
--                self.max_seq = parsed.max_seq;
--                if parsed.channel != sdpcm::CHANNEL_CONTROL {
--                    let channel = match parsed.channel {
--                        sdpcm::CHANNEL_EVENT => "event",
--                        sdpcm::CHANNEL_DATA => "data",
--                        _ => "other",
++            }
 +        }
 +    }
 +
@@ -1002,6 +992,20 @@ index 870da12..fedde5f 100644
 +        while let Some(frame) = self.read_frame(bus)? {
 +            let parsed = sdpcm::parse(&frame)?;
 +            self.max_seq = parsed.max_seq;
++            // A frame without payload only updates the credit (max_seq);
++            // the firmware sends one right after it starts (#63).
++            if parsed.payload.is_empty() {
+                 continue;
+             }
+-            // Read frames until the firmware has no more.
+-            while let Some(frame) = self.read_frame(bus)? {
+-                let parsed = sdpcm::parse(&frame)?;
+-                self.max_seq = parsed.max_seq;
+-                if parsed.channel != sdpcm::CHANNEL_CONTROL {
+-                    let channel = match parsed.channel {
+-                        sdpcm::CHANNEL_EVENT => "event",
+-                        sdpcm::CHANNEL_DATA => "data",
+-                        _ => "other",
 +            match parsed.channel {
 +                sdpcm::CHANNEL_CONTROL => {
 +                    let reply = sdpcm::parse_reply(parsed.payload)?;
@@ -1015,23 +1019,25 @@ index 870da12..fedde5f 100644
 -                        parsed.payload.len()
 -                    );
 -                    continue;
--                }
++                    self.replies.push((reply.id, result));
+                 }
 -                let reply = sdpcm::parse_reply(parsed.payload)?;
 -                if reply.id != self.id {
 -                    println!("bcm2835-sdiod: reply {} while waiting for {}", reply.id, self.id);
 -                    continue;
-+                    self.replies.push((reply.id, result));
-                 }
+-                }
 -                if let Some(status) = reply.status {
 -                    return Err(format!("firmware error {}", status as i32));
-+                sdpcm::CHANNEL_EVENT => {
-+                    let ether = event::ether_frame(parsed.payload)?;
-+                    match event::parse(ether) {
+-                }
+-                return Ok(reply.data.to_vec());
++                sdpcm::CHANNEL_EVENT => match event::ether_frame(parsed.payload) {
++                    Ok(ether) => match event::parse(ether) {
 +                        Some(e) => self.events.push_back(e),
 +                        None => println!("bcm2835-sdiod: event channel frame that is no event"),
-+                    }
-                 }
--                return Ok(reply.data.to_vec());
++                    },
++                    // A broken event frame is no reason to stop.
++                    Err(e) => println!("bcm2835-sdiod: event channel: {e}"),
++                },
 +                sdpcm::CHANNEL_DATA => self.data_frames += 1,
 +                other => println!("bcm2835-sdiod: frame on channel {other}, {} bytes", parsed.payload.len()),
              }
@@ -1041,7 +1047,7 @@ index 870da12..fedde5f 100644
      }
  
      /// Reads one frame from function 2, or `None` when there is none.
-@@ -262,3 +379,14 @@ impl Control {
+@@ -262,3 +385,14 @@ impl Control {
          Ok(())
      }
  }
