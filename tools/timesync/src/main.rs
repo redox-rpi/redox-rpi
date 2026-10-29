@@ -12,14 +12,18 @@
 //! Usage: `timesync [-n | -d] [server]...` (default: pool.ntp.org time.cloudflare.com).
 //! `-n` only prints the time without setting the clock.
 //! `-d` keeps running: asks the servers again and saves the time every hour.
-//! Tries the servers in turn until one answers, for up to a minute, because
-//! DHCP may still be running when it starts.
+//! Waits until DHCP has set a default route, then tries the servers in turn
+//! until one answers, for up to a minute. With `-d` it tries again every 30
+//! seconds until the first answer: Redox' DNS lookup has no timeout, so a
+//! lookup before the network is up would wait forever.
 
 use std::fs;
 use std::io;
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::process;
-use std::thread::sleep;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 const DEFAULT_SERVERS: &[&str] = &["pool.ntp.org", "time.cloudflare.com"];
@@ -38,6 +42,14 @@ const EARLIEST: u64 = 1_767_225_600;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 const GIVE_UP_AFTER: Duration = Duration::from_secs(60);
 const RESYNC_EVERY: Duration = Duration::from_secs(3600);
+/// With `-d`, until the first answer.
+const RETRY_EVERY: Duration = Duration::from_secs(30);
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Lookups that never returned; no new ones beyond this.
+const MAX_STUCK_LOOKUPS: usize = 4;
+static PENDING_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+/// Routes set by DHCP (`default via …`), from smolnetd.
+const ROUTES: &str = "/scheme/netcfg/route/list";
 
 fn clock_ns(clock: libc::clockid_t) -> u128 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -61,13 +73,41 @@ fn set_clock(unix_ns: u128, at_monotonic: u128) -> io::Result<()> {
     fs::write(TIME_OFFSET, boot.to_ne_bytes())
 }
 
+/// The server's IPv4 address. The lookup runs in its own thread, so a lookup
+/// that never returns does not hang timesync.
+fn resolve(server: &str) -> io::Result<SocketAddr> {
+    if let Ok(ip) = server.parse::<Ipv4Addr>() {
+        return Ok((ip, 123).into());
+    }
+    if PENDING_LOOKUPS.load(Ordering::SeqCst) >= MAX_STUCK_LOOKUPS {
+        return Err(io::Error::new(io::ErrorKind::TimedOut, "earlier DNS lookups still hang"));
+    }
+    PENDING_LOOKUPS.fetch_add(1, Ordering::SeqCst);
+    let (tx, rx) = mpsc::channel();
+    let name = server.to_string();
+    thread::spawn(move || {
+        let addr = (name.as_str(), 123).to_socket_addrs().map(|mut a| a.find(SocketAddr::is_ipv4));
+        PENDING_LOOKUPS.fetch_sub(1, Ordering::SeqCst);
+        let _ = tx.send(addr);
+    });
+    match rx.recv_timeout(LOOKUP_TIMEOUT) {
+        Ok(Ok(Some(addr))) => Ok(addr),
+        Ok(Ok(None)) => Err(io::Error::new(io::ErrorKind::NotFound, "no IPv4 address")),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "DNS lookup timed out")),
+    }
+}
+
+/// Whether there is a default route, that is, DHCP is done. True where
+/// smolnetd's route list cannot be read (other systems).
+fn network_up() -> bool {
+    fs::read_to_string(ROUTES).map_or(true, |routes| routes.contains("default"))
+}
+
 /// Ask one server. Returns the Unix time in nanoseconds and the monotonic
 /// clock at the moment the answer arrived.
 fn query(server: &str) -> io::Result<(u128, u128)> {
-    let addr = (server, 123)
-        .to_socket_addrs()?
-        .find(|a| a.is_ipv4())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no IPv4 address"))?;
+    let addr = resolve(server)?;
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_read_timeout(Some(QUERY_TIMEOUT))?;
     // Leap indicator 0, version 4, mode 3 (client).
@@ -185,8 +225,12 @@ fn restore() {
 /// Ask the servers in turn, for up to a minute. Returns the time it set.
 fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
     let start = Instant::now();
-    let mut last_error = String::new();
+    let mut last_error = String::from("no default route (DHCP not done)");
     while start.elapsed() < GIVE_UP_AFTER {
+        if !network_up() {
+            sleep(Duration::from_secs(1));
+            continue;
+        }
         for server in servers {
             match query(server) {
                 Ok((unix_ns, at_monotonic)) => {
@@ -227,9 +271,17 @@ fn main() {
     if !dry_run {
         restore();
     }
-    let result = sync(&servers, dry_run);
+    let mut result = sync(&servers, dry_run);
     if let Err(err) = &result {
         eprintln!("timesync: {err}");
+    }
+    if daemon && result.is_err() {
+        eprintln!("timesync: trying again every {} s", RETRY_EVERY.as_secs());
+        save_time();
+        while result.is_err() {
+            sleep(RETRY_EVERY);
+            result = sync(&servers, false);
+        }
     }
     if dry_run {
         process::exit(i32::from(result.is_err()));
