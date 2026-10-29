@@ -49,3 +49,10 @@ second shows the first sender.
 QEMU, 2026-10-27: `sigregs thread` passes 2000 signals; without the patch
 only 1 signal arrives and SIGUSR1 stays blocked. Details in the
 [test reports](../../../docs/test-reports.md). On a real Pi 3B+: 10 of 10 runs of `sigregs thread` (1000 signals) pass.
+
+QEMU, 2026-10-29, review patch `0002`:
+
+| Build | `sigregs sender` | `thread -n 3000` | `process -n 3000` |
+|---|---|---|---|
+| `v0.3.0-dev-139-g307beae+xffb7-dirty` (only `0001`) | FAIL twice: the child's signal shows the thread's sender (si_pid 38, expected 39) | PASS | PASS |
+| `v0.3.0-dev-139-g307beae+xae3b` (`0001` and `0002`) | PASS twice | PASS | PASS |
