@@ -1,0 +1,3 @@
+# The MQTT tools mqtt-pub and mqtt-sub (tools/mqtt).
+[packages]
+mqtt = "source"
