@@ -1,7 +1,7 @@
 # Experiment: start the sdhost driver at boot
 
 > **Now default.** Since branch `sdhost-default` ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) these patches are
-> base patches `0022`–`0025`, and every image boots with `bcm2835-sdhostd`.
+> base patches `0025`–`0028`, and every image boots with `bcm2835-sdhostd`.
 > This README keeps the history of the experiment.
 
 Builds on [`sdhost-driver`](../sdhost-driver/README.md): `bcm2835-sdhostd`

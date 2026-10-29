@@ -20,6 +20,13 @@
   0 of 1000 at 600 MHz and 0 of 7000 at 1400 MHz (before, #13: 276 of
   5100). [Details](../../patches/experiments/sigentry-x18/README.md).
   Programs and other libraries still use x18, see Next.
+- Base `0024` and kernel `0007` (2026-10-29, [#28](https://github.com/redox-rpi/redox-rpi/issues/28), [#32](https://github.com/redox-rpi/redox-rpi/issues/32)): fast input on
+  the serial console no longer loses characters (the kernel keeps PL011
+  input while it writes to the port), and getty no longer panics when the
+  shell reads late (it keeps the input and retries). Real Pi: 20 of 20
+  lines of 200 characters at full speed; QEMU: a line of 1050 characters
+  4 of 7 runs panicked before, 0 after.
+  [Details](../../patches/experiments/serial-rx/README.md).
 
 ## In progress
 
@@ -31,11 +38,6 @@
   dropped sessions leave nothing; real Pi (#21): 13 dropped sessions
   leave nothing. Ready to merge.
 
-- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
-  `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
-  writes to the port, getty no longer panics on a full PTY) passes on a
-  Pi 3B+ (test #22): 20 of 20 lines of 200 characters at full speed,
-  `pi-test.py` all checks pass. Waits for the merge to `main`.
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
@@ -48,6 +50,9 @@
   x18, so the signal entry can still corrupt it there. Either reserve x18
   in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
   rebuilt) or return from the signal entry without clobbering a register.
+  The second is on branch `t1-sigreturn` (experiment `sigreturn-svc`,
+  kernel and relibc): QEMU passes `sigregs` with x18 and 0 of 700 starts;
+  Pi test #36 queued.
 
 ## Later
 
