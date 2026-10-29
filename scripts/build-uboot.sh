@@ -4,8 +4,9 @@
 #
 # Uses the upstream release below with rpi_arm64_defconfig, which takes the
 # devicetree from the Pi firmware instead of embedding one, plus the options
-# in config/u-boot.config. U-Boot is GPL-2.0; this script and the pinned tag
-# are the corresponding source for any u-boot.bin we distribute.
+# in config/u-boot.config, with the fixes in patches/u-boot/ applied on top.
+# U-Boot is GPL-2.0; this script, the pinned tag and those patches are the
+# corresponding source for any u-boot.bin we distribute.
 #
 # Needs: make, gcc-aarch64-linux-gnu, bison, flex, bc, swig, libssl-dev,
 # libgnutls28-dev, python3-pyelftools, device-tree-compiler.
@@ -43,8 +44,16 @@ if [ ! -d "$SRC" ]; then
 fi
 if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
-    git -C "$SRC" checkout -q "$UBOOT_TAG"
+    git -C "$SRC" checkout -q -f "$UBOOT_TAG"
 fi
+# Our fixes to U-Boot, each applied once (skipped if already in the tree).
+for patch in "$ROOT"/patches/u-boot/*.patch; do
+    [ -e "$patch" ] || continue
+    if ! git -C "$SRC" apply --reverse --check "$patch" 2>/dev/null; then
+        git -C "$SRC" apply "$patch"
+        echo "u-boot: applied $(basename "$patch")"
+    fi
+done
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
 fragments=("$ROOT/config/u-boot.config")
