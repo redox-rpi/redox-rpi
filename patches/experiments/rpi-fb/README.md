@@ -14,6 +14,8 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   only `rpi-firmwared` uses the mailbox.
 - [`0025`](base/0025-rpi-fbd-Raspberry-Pi-display-through-the-firmware.patch):
   the new driver `rpi-fbd` (initfs, after `rpi-firmwared`).
+- [`0026`](base/0026-rpi-fbd-EDID-polling-double-buffering-screen-blankin.patch)
+  (branch `graphics-fb2`): EDID polling, double buffering, screen blanking.
 
 ## What `rpi-fbd` does
 
