@@ -24,10 +24,16 @@
   probably comes from the firmware's devicetree; to check at the first Pi
   test with the serial console. `make-sdcard.sh --direct` writes a card
   for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md).
+- FAT boot partition from Redox (#15): `redox-fatfs2` on branch
+  `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
+  `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
+  (MIT), e.g. `fatfsd /scheme/disk.mmc/0p0 boot`. In QEMU (2026-10-28) it
+  lists, reads, writes, creates directories and removes files on the
+  direct-boot card; the host sees the changes with mtools. Open: file dates
+  are 0, no rename, no service yet.
 
 ## Next
 
-- FAT boot partition from Redox, for kernel updates and `config.txt`
-  (#15): `redox-fatfs` builds but uses the old scheme interface and does not
-  run; port it or write a small daemon on the `fatfs` crate (decision open,
-  see the issue).
+- `fatfsd` at boot: a service that mounts the boot partition, once the Pi
+  test #18 shows the SD card's scheme name; then kernel and `config.txt`
+  updates from Redox (#15).

@@ -13,6 +13,20 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
+## Patch numbers
+
+- **On a branch, new patches stay an experiment:**
+  `patches/experiments/<name>/<component>/`. Their numbers there may
+  repeat other branches' numbers; the `exp-<name>-` prefix keeps them
+  apart.
+- **A number in `base/`, `kernel/`, `relibc/` and the other default
+  directories is given only at the merge to `main`**, by whoever merges:
+  the next free number in that directory, in the order the patches must
+  apply. The merger moves the files (`git mv`), updates the table below and
+  checks that the default build still boots (QEMU, then the nightly run).
+- A branch that already moved its patches to a default directory keeps
+  them there; the merger renumbers them if the numbers are taken.
+
 Experiments are applied after the default patches, in the order of the
 `--experiment` options; their files get an `exp-<name>-` prefix in the
 recipe, so equal numbers do not collide. The base patch numbers say what
@@ -25,6 +39,7 @@ each one expects to come before it:
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
+| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment (the number is taken by `base/0023` since `dwc2-default`; renumbered at its merge) |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,
