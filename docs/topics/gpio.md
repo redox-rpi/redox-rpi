@@ -13,8 +13,12 @@
 - [#39](https://github.com/redox-rpi/redox-rpi/issues/39) I2C driver for the BSC controllers (v0.8.0), on top
   of `gpio`, as the base for a DS3231 clock module (with the
   [time](time.md) topic) and sensors.
+- [#42](https://github.com/redox-rpi/redox-rpi/issues/42) SPI driver `bcm2835-spid` for SPI0 and the `spi` tool
+  (v0.8.0): experiment [`spi`](../../patches/experiments/spi/README.md),
+  branch `spi`, on top of `gpio`.
 
 ## Later
 
-- GPIO edge events (interrupts), SPI, PWM (also for the 3B+ headphone
+- SPI1 and SPI2 (the auxiliary SPI), SPI with DMA.
+- GPIO edge events (interrupts), PWM (also for the 3B+ headphone
   jack), 1-Wire.
