@@ -31,6 +31,13 @@ tests on it.
 Tests that need a person at the Pi (keyboard, screen, power) say so; the
 owner then asks that person before taking the Pi.
 
+Automated tests (network, serial console, `pi-test.py`; no person, no
+card swap, no power switching) need no extra OK from the maintainer: when
+the coordinator names the owner, staging the image, rebooting the Pi over
+the serial console and restoring the stable image are part of the test
+(maintainer, 2026-10-29). Switching the Shelly plug still needs the
+maintainer's OK.
+
 Experiment patches are numbered by what they apply after; see
 [patches/README.md](../patches/README.md) for the numbers and the
 combinations that build. Each applies on top of the default patches.
