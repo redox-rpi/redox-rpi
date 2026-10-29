@@ -1,4 +1,4 @@
-From 74624db7346b7294ca3bea5fae641abb9b0cee31 Mon Sep 17 00:00:00 2001
+From 41d51d986fc5839241c043cf9eca9808607feb76 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
@@ -23,9 +23,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.lock                         |   1 +
  drivers/usb/dwc2d/Cargo.toml       |   1 +
  drivers/usb/dwc2d/src/enumerate.rs |  16 ++
- drivers/usb/dwc2d/src/main.rs      |  70 ++++-
+ drivers/usb/dwc2d/src/main.rs      |  75 +++++-
  drivers/usb/dwc2d/src/storage.rs   | 419 +++++++++++++++++++++++++++++
- 5 files changed, 504 insertions(+), 3 deletions(-)
+ 5 files changed, 509 insertions(+), 3 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/storage.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -80,7 +80,7 @@ index 01cac8d..c265e6f 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..8b710cc 100644
+index 28cc7aa..930aca9 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -220,25 +220,30 @@ index 28cc7aa..8b710cc 100644
              Source::Time => {
                  timer.fired();
                  let mut next = None;
-@@ -579,6 +629,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -579,6 +629,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
 +                    // Dropping the scheme makes open handles fail; its name
-+                    // stays in the namespace until unlinked, and a stick
-+                    // plugged into the same port again needs it.
++                    // stays in the namespace until unlinked there, and a
++                    // stick plugged into the same port again needs it.
++                    // (Unlinking the path would ask the scheme itself.)
 +                    if disk.as_ref().is_some_and(|d| d.address == address) {
-+                        let d = disk.take().unwrap();
-+                        let _ = events.unsubscribe(d.scheme.event_handle().raw());
-+                        if let Err(err) = std::fs::remove_file(format!("/scheme/{}", d.name)) {
-+                            println!("dwc2d: mass storage: /scheme/{} stays: {err}", d.name);
++                        let UsbDisk { name, scheme, .. } = disk.take().unwrap();
++                        let _ = events.unsubscribe(scheme.event_handle().raw());
++                        drop(scheme);
++                        let unlinked = libredox::call::getns().map_err(|e| e.to_string()).and_then(|ns| {
++                            syscall::unlinkat(ns, format!("/scheme/{name}"), 0).map_err(|e| e.to_string())
++                        });
++                        if let Err(err) = unlinked {
++                            println!("dwc2d: mass storage: /scheme/{name} stays: {err}");
 +                        }
 +                        println!("dwc2d: mass storage removed");
 +                    }
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -590,6 +651,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -590,6 +656,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                              keyboard = Keyboard::new(hc.clone(), f);
                              timer.arm(Duration::ZERO);
                          }
