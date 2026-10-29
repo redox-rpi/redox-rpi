@@ -1052,3 +1052,11 @@ Same branch, now with `config.toml` (`/etc/init.d/05_keymap.service`
 runs `inputd -K de`). `test-keymap.sh` no longer switches the layout on
 the serial console: the login and the typed line come out German from
 boot, the file holds `zyß@{[]}\~|#öäü€"§'<>`. **Pass.**
+
+## 2026-10-29: `v0.3.0-dev-239-g43c6882+x9ea9` (dead keys, layout from /etc/keymap, #36), QEMU
+
+Branch `keyboard-layouts`: base `0026` adds dead keys and `inputd
+--keymap-file`; the boot unit reads `/etc/keymap` (`de`). `test-keymap.sh`
+types the earlier line plus ´ e, Shift+´ a, ^ o, ´ space, ^ x: the file
+holds `zyß@{[]}\~|#öäü€"§'<>éàô´^x`. **Pass.** The German layout comes from
+`/etc/keymap` at boot, without `inputd -K` by hand.
