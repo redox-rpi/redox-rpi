@@ -959,3 +959,34 @@ on the same card right after:
   blocks of 512 from `/scheme/rand` 0.5 s, or from `/tmp` 1.0 s. So it is
   slow only when reads and writes on RedoxFS take turns.
 - Serial log: only the known `pcid` panic at boot.
+
+## 2026-10-29: `v0.3.0-dev-186-gb11ec12+x4e3e`
+
+Built 2026-10-29T12:30:31Z, `libc.so` `da6936b2d6a81fd7…`, real Pi 3B+ over netboot. Experiments: `pkg-hold`, `timesync`. test 52 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44) pkg hold list), Pi test agent, before pkg
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-186-gb11ec12+x4e3e |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 52 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44)), branch
+`pkg-hold`. Extra checks over devsh, after `timesync` set the clock from
+pool.ntp.org:
+
+- `/etc/pkg/hold` lists `base`, `base-initfs`, `bootloader`, `kernel`,
+  `relibc`, `pkgutils`.
+- `pkg update --yes kernel relibc base pkgutils` (0.5 s) and
+  `pkg install --yes kernel relibc` (0.1 s) print `<name> is held
+  (etc/pkg/hold), keeping the installed version` for each, exit 0.
+- SHA-256 of `/usr/lib/boot/kernel` (`21af7677…`), `/usr/lib/libc.so`
+  (`da6936b2…`) and `/usr/bin/pkg` (`0c314836…`) are the same before,
+  after the update and after installing nano: **pass**.
+- `pkg install --yes nano`: 214 files, 27 s (QEMU about 9 minutes), exit 0;
+  `nano --version` gives GNU nano 9.2: **pass**.
+- `scripts/pi-test.py` standard checks again afterwards: all pass, 0 of 300
+  starts failed, 47 processes.
+- No exception in the serial log.
