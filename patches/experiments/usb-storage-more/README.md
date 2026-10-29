@@ -21,10 +21,18 @@ follow-up of #25.
 
 ## Tests
 
-- **QEMU** (`scripts/test-usb-storage.sh`): the stick checks of
-  `usb-storage`, then a card reader (QEMU's `usb-bot`, plugged in with
-  `attached=false` and `qom-set … attached true` so all LUNs are there
-  first) with cards in LUN 0 (8 MiB) and LUN 2 (4 MiB) and an empty CD
-  slot as LUN 1, next to the stick: both cards and the stick are read,
-  the empty slot is left out, the reader is unplugged and the stick still
-  works.
+- **QEMU** (`scripts/test-usb-storage.sh`, `v0.3.0-dev-190-g6eb26f0+x85e9`),
+  **18 of 18 pass**, twice: the stick checks of `usb-storage`, then a card
+  reader (QEMU's `usb-bot`, plugged in with `attached=false` and `qom-set
+  … attached true` so all LUNs are there first) with cards in LUN 0
+  (8 MiB) and LUN 2 (4 MiB) and a CD drive without a disc as LUN 1, next
+  to the stick: both cards and the stick are read, LUN 1 gets no disk, the
+  reader is unplugged and the stick still works.
+  - QEMU answers REQUEST SENSE for a LUN other than 0 with "LUN not
+    supported", even for a LUN that INQUIRY reports, so dwc2d decides
+    that a LUN is absent only from INQUIRY's peripheral qualifier. In
+    QEMU the empty LUN 1 is therefore left out only after the 5 s a stick
+    may take to get ready; a real reader says "medium not present" and
+    the slot is left out at once (checked on the Pi).
+- **Pi**: test #71 in docs/test-plan.md, with a person (card reader with
+  one card and a stick, unplugging the stick during a long `dd`).
