@@ -1,9 +1,10 @@
-From 6589bd2fa3c364e3398480fac1c22ba3d7f5d4b5 Mon Sep 17 00:00:00 2001
+From 3ad870abbade91d97f022e9d92e87329c107649e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:05 +0100
 Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
 
-smoltcp skips NDP and SLAAC on an IP medium, so the Ethernet link does them
+smoltcp answers echo requests again (auto-icmp-echo-reply, IPv4 and IPv6),
+so the addresses can be checked with ping. It skips NDP and SLAAC on an IP medium, so the Ethernet link does them
 itself, like ARP: it answers neighbor solicitations for its addresses,
 resolves IPv6 next hops with solicitations to the solicited-node group,
 maps IPv6 multicast to 33:33 MACs, sends router solicitations and takes a
@@ -15,19 +16,19 @@ loopback device. The router sends IPv6 packets with the source address
 smoltcp chose. No duplicate address detection, no lifetimes beyond zero,
 no IPv6 sockets in relibc yet.
 ---
- netstack/Cargo.toml               |   2 +-
+ netstack/Cargo.toml               |   3 +-
  netstack/src/link/ethernet.rs     | 435 +++++++++++++++++++++++++-----
  netstack/src/link/mod.rs          |  16 +-
  netstack/src/router/mod.rs        |  45 +++-
  netstack/src/scheme/mod.rs        |  87 +++++-
  netstack/src/scheme/netcfg/mod.rs |  24 +-
- 6 files changed, 531 insertions(+), 78 deletions(-)
+ 6 files changed, 532 insertions(+), 78 deletions(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
-index f965d19..c71d7d5 100644
+index f965d19..06ee2dc 100644
 --- a/netstack/Cargo.toml
 +++ b/netstack/Cargo.toml
-@@ -27,7 +27,7 @@ default-features = false
+@@ -27,9 +27,10 @@ default-features = false
  features = [
      "std",
      "medium-ethernet", "medium-ip",
@@ -35,7 +36,10 @@ index f965d19..c71d7d5 100644
 +    "proto-ipv4", "proto-ipv6", "multicast",
      "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
      "iface-max-addr-count-8",
++    "auto-icmp-echo-reply",
      "log"
+ ]
+ #For debugging: "log", "verbose"
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
 index b778a21..fe60b84 100644
 --- a/netstack/src/link/ethernet.rs
