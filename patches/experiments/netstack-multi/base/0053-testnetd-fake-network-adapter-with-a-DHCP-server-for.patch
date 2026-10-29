@@ -1,4 +1,4 @@
-From a315dc3f58353cb2aeebfd4bbceafc1f840f0956 Mon Sep 17 00:00:00 2001
+From 775311dbcc7341eb09cfbfa99dab3f87057d1de3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 53/53] testnetd: fake network adapter with a DHCP server, for

@@ -1,4 +1,4 @@
-From 40c61eee4433188a4c88a14692a004b42234cc65 Mon Sep 17 00:00:00 2001
+From a94106b826bfcaabe00adde7fc2c26203f5c2db9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 52/53] dhcpd: lease on every interface, one default route
