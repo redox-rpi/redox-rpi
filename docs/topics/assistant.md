@@ -163,7 +163,7 @@ git).
 
 - llama.cpp `7df8b87` cross-compiled with the Redox gcc, static, against
   the toolchain's relibc (not yet ours), with the three changes above
-  ([patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/llama-cpp-redox.patch)).
+  ([patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/llama-cpp/redox.patch)).
 - First QEMU run (`raspi3b`, 1 GiB): the v0.2.0-5 SD image
   (`v0.2.0-5-gd679bfb+xed14`) with `llama-*` in `/usr/bin` and Qwen3 0.6B
   Q4_0 in `/home/user/models`, copied in with the host's `redoxfs` FUSE

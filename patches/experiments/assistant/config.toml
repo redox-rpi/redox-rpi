@@ -1,0 +1,6 @@
+# llama.cpp and the Qwen3 0.6B model (#43). Only for the SD-card image
+# (--sdcard): the network-boot image is loaded into RAM and holds at most
+# 256 MiB.
+[packages]
+llama-cpp = "source"
+qwen3-model = "source"

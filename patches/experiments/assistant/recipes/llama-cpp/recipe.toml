@@ -1,0 +1,25 @@
+# llama.cpp, static, linked against our relibc. Only the command-line
+# programs needed to test a model; no server, no downloads.
+[source]
+git = "https://github.com/ggml-org/llama.cpp.git"
+rev = "7df8b876b91208a86a6d792e1140b3deec14535b"
+patches = ["redox.patch"]
+
+[build]
+template = "custom"
+dependencies = ["relibc"]
+script = """
+generate_cookbook_cmake_file "$GNU_TARGET" "$GNU_TARGET-" "$COOKBOOK_SYSROOT" cross_file.cmake
+"${COOKBOOK_CMAKE}" "${COOKBOOK_SOURCE}" -GNinja -Wno-dev \
+    -DCMAKE_TOOLCHAIN_FILE=cross_file.cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8-a -DGGML_OPENMP=OFF \
+    -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_SUBPROCESS=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF
+"${COOKBOOK_NINJA}" -j"${COOKBOOK_MAKE_JOBS}" llama-simple llama-completion llama-bench
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+for bin in llama-simple llama-completion llama-bench; do
+    cp "bin/$bin" "${COOKBOOK_STAGE}/usr/bin/"
+done
+"""

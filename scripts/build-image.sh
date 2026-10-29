@@ -255,6 +255,19 @@ $build
 EOF
 done
 
+# Experiments may bring whole recipes (patches/experiments/<name>/recipes/),
+# copied fresh into recipes/other on every run.
+for exp in "${experiments[@]}"; do
+    for recipe in "$ROOT/patches/experiments/$exp/recipes/"*/; do
+        [ -d "$recipe" ] || continue
+        name="$(basename "$recipe")"
+        dest="$REDOX/recipes/other/$name"
+        mkdir -p "$dest"
+        find "$dest" -maxdepth 1 -type f -delete
+        cp "$recipe"* "$dest/"
+    done
+done
+
 # Uncommitted changes to anything that goes into the image.
 repo_changes="$(git -C "$ROOT" status --porcelain -- patches config scripts tools)"
 if [ -n "$repo_changes" ]; then
