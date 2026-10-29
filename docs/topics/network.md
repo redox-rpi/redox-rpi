@@ -15,8 +15,10 @@
   work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
   with a repeated fd, `ld.so` and login shells), `procmgr` (SIGCHLD of a
   child that dropped its privileges) and OpenSSH (no `chroot`, PTY
-  without owner). Pi test #59 queued. Open: Ctrl-C (no controlling
-  terminal, also over devshd).
+  without owner). Pi test #59 failed: no host keys, because rename does
+  not work on `/scheme/data`; the keys are now made in `/etc/ssh` and
+  copied there, rerun queued as #81. Ctrl-C while a program starts:
+  [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (branch `netstack-multi`, experiment `netstack-multi`, Pi test #74):
