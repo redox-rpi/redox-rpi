@@ -15,7 +15,10 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 extern "C" {
     fn grantpt(fd: libc::c_int) -> libc::c_int;
@@ -57,11 +60,17 @@ fn serve(stream: TcpStream) -> io::Result<()> {
         .env("TTY", &tty)
         .spawn()?;
 
-    // Network to terminal.
+    // Network to terminal. When the client goes away without logging out,
+    // hang up the session; otherwise login and the shell would wait for
+    // input forever.
     let mut from_net = stream.try_clone()?;
     let mut to_pty = master.try_clone()?;
+    let login_pid = child.id() as libc::pid_t;
+    let done = Arc::new(AtomicBool::new(false));
+    let net_done = done.clone();
     thread::spawn(move || {
         let _ = io::copy(&mut from_net, &mut to_pty);
+        hang_up(&to_pty, login_pid, &net_done);
     });
 
     // Terminal to network, until login and the shell are gone.
@@ -77,9 +86,34 @@ fn serve(stream: TcpStream) -> io::Result<()> {
     });
 
     let _ = child.wait();
+    done.store(true, Ordering::SeqCst);
     let _ = stream.shutdown(Shutdown::Both);
     let _ = copier.join();
     Ok(())
+}
+
+/// End a session whose client is gone: SIGHUP to the terminal's foreground
+/// process group (the shell, which moves itself into its own group, or the
+/// program it runs), then SIGKILL to that group and to `login` if they are
+/// still there after a few seconds.
+fn hang_up(master: &File, login_pid: libc::pid_t, done: &AtomicBool) {
+    let fd = master.as_raw_fd();
+    for round in 0..6 {
+        if done.load(Ordering::SeqCst) {
+            return;
+        }
+        let signal = if round < 3 { libc::SIGHUP } else { libc::SIGKILL };
+        let pgrp = unsafe { libc::tcgetpgrp(fd) };
+        unsafe {
+            if pgrp > 0 {
+                libc::kill(-pgrp, signal);
+            }
+            if round >= 3 {
+                libc::kill(login_pid, signal);
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
 }
 
 fn main() {
