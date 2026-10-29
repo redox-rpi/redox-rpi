@@ -35,7 +35,9 @@
   `serial-rx` (the kernel keeps the input while it
   writes to the port, getty no longer panics on a full PTY) passes on a
   Pi 3B+ (test #22): 20 of 20 lines of 200 characters at full speed,
-  `pi-test.py` all checks pass. On `main` as experiment `serial-rx` since 2026-10-29.
+  `pi-test.py` all checks pass. On `main` as experiment `serial-rx` since 2026-10-29;
+  branch `serial-rx-base` makes it default patches (base `0024`, kernel
+  `0007`), which also fixes [#32](https://github.com/redox-rpi/redox-rpi/issues/32) (getty panic on a long line).
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to

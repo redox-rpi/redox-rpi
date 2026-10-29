@@ -1,4 +1,9 @@
-# Experiment: serial-rx, no lost characters on the serial console (#28)
+# No lost characters on the serial console (#28, was experiment `serial-rx`)
+
+**Default since 2026-10-29:** base `0024` and kernel `0007` (moved to
+`patches/base/` and `patches/kernel/`) are in every image. They also fix
+the getty panic of #32. `--experiment serial-rx` is still accepted and does
+nothing. This page stays as the patches' documentation.
 
 Text sent quickly to the Pi's serial console lost characters: a command
 sent in one piece arrived cut off after about 25 characters. Typing one
@@ -21,7 +26,7 @@ which is 1.4 ms of input. The rest is lost.
 ## Change
 
 Kernel patch
-[`0007`](kernel/0007-aarch64-keep-PL011-input-while-the-kernel-writes-to-.patch):
+[`0007`](../../kernel/0007-aarch64-keep-PL011-input-while-the-kernel-writes-to-.patch):
 while `send()` waits for the transmit FIFO, it moves received bytes into a
 stash of 1 KiB in the `SerialPort`. It does this only while the receive
 FIFO is at or above its trigger level (8 of 16), so a few bytes stay in
@@ -36,13 +41,13 @@ reading the console without forwarding ion's output, so ion stopped
 reading. Before, the lost characters hid this.
 
 Base patch
-[`0023`](base/0023-getty-keep-input-the-PTY-does-not-take-yet-instead-o.patch):
+[`0024`](../../base/0024-getty-keep-input-the-PTY-does-not-take-yet-instead-o.patch):
 getty keeps the input the PTY did not take, stops reading the console
 until it is taken, and keeps forwarding the output meanwhile. While input
 is pending it polls with a 10 ms timeout to retry it.
 
 ```bash
-scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment serial-rx
+scripts/build-image.sh --experiment timesync --experiment rtl8152
 ```
 
 ## Test on the Pi
