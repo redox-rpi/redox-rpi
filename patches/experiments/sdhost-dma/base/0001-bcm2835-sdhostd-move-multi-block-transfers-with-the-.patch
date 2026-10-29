@@ -1,0 +1,610 @@
+From 7b2f66ca7922b7c66e002682429f4152c80b6018 Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 10:14:11 +0000
+Subject: [PATCH] bcm2835-sdhostd: move multi-block transfers with the BCM2835
+ DMA controller
+
+Channel 4 (if the devicetree mask leaves it free), one control block per
+transfer paced by sdhost's DREQ 13, through a 64 KiB uncached bounce
+buffer; polling for the end. Single blocks, the last 3 words of a
+multi-block read (as Linux does) and the retry after a failed transfer
+move through the FIFO with the CPU. SDHOSTD_NO_DMA turns DMA off.
+---
+ drivers/storage/bcm2835-sdhostd/src/dma.rs  | 309 ++++++++++++++++++++
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 116 ++++++--
+ drivers/storage/bcm2835-sdhostd/src/main.rs |  29 +-
+ 3 files changed, 430 insertions(+), 24 deletions(-)
+ create mode 100644 drivers/storage/bcm2835-sdhostd/src/dma.rs
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/dma.rs b/drivers/storage/bcm2835-sdhostd/src/dma.rs
+new file mode 100644
+index 00000000..f31f8dd3
+--- /dev/null
++++ b/drivers/storage/bcm2835-sdhostd/src/dma.rs
+@@ -0,0 +1,309 @@
++//! The BCM2835 DMA controller, moving sdhost's data between its FIFO and an
++//! uncached bounce buffer (docs/topics/dma.md in redox-rpi, step 1: one fixed
++//! channel, polling for the end).
++//!
++//! A transfer is one control block. sdhost paces it through its DREQ line
++//! (13), so the controller only reads SDDATA when the FIFO holds data and
++//! only writes it when there is room.
++
++use std::fmt;
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++use fdt::Fdt;
++
++/// Bus address of the controller on all BCM283x, if the devicetree has none.
++const DMA_BUS_ADDR: usize = 0x7e00_7000;
++/// The channel this driver owns (docs/topics/dma.md, channel table).
++const CHANNEL: usize = 4;
++const CHANNEL_SIZE: usize = 0x100;
++/// RAM as the controller sees it when the devicetree has no dma-ranges: the
++/// alias that bypasses the VideoCore L2 cache.
++const RAM_BUS_OFFSET: usize = 0xc000_0000;
++
++// Channel registers, as byte offsets.
++const CS: usize = 0x00;
++const CONBLK_AD: usize = 0x04;
++const TXFR_LEN: usize = 0x14;
++const DEBUG: usize = 0x20;
++/// Global register: one enable bit per channel.
++const ENABLE: usize = 0xff0;
++
++// CS
++const CS_ACTIVE: u32 = 1 << 0;
++const CS_END: u32 = 1 << 1;
++const CS_INT: u32 = 1 << 2;
++const CS_ERROR: u32 = 1 << 8;
++const CS_WAIT_FOR_OUTSTANDING_WRITES: u32 = 1 << 28;
++const CS_ABORT: u32 = 1 << 30;
++const CS_RESET: u32 = 1 << 31;
++/// AXI priority 8, panic priority 15, as Linux uses.
++const CS_PRIORITY: u32 = 8 << 16 | 15 << 20;
++
++// TI, in the control block
++const TI_WAIT_RESP: u32 = 1 << 3;
++const TI_DEST_INC: u32 = 1 << 4;
++const TI_DEST_DREQ: u32 = 1 << 6;
++const TI_SRC_INC: u32 = 1 << 8;
++const TI_SRC_DREQ: u32 = 1 << 10;
++const TI_PERMAP_SHIFT: u32 = 16;
++/// sdhost's DREQ line (`dmas = <&dma 13>` in the devicetree).
++const DREQ_SDHOST: u32 = 13;
++
++// DEBUG; each bit is cleared by writing 1
++const DEBUG_ERRORS: u32 = 0x7;
++
++/// The largest transfer: one sdhost command moves at most 128 blocks.
++pub const BOUNCE_SIZE: usize = 128 * 512;
++/// sdhost waits for the card, so a transfer may take as long as the card
++/// needs for 64 KiB.
++const TIMEOUT: Duration = Duration::from_secs(2);
++
++/// One control block; the controller needs them aligned to 32 bytes.
++#[repr(C, align(32))]
++struct ControlBlock {
++    ti: u32,
++    source: u32,
++    dest: u32,
++    len: u32,
++    stride: u32,
++    next: u32,
++    _reserved: [u32; 2],
++}
++
++#[derive(Debug)]
++pub enum DmaError {
++    /// CS.ERROR with the DEBUG register.
++    Controller { cs: u32, debug: u32 },
++    Timeout { cs: u32, remaining: u32 },
++    /// The check the caller passed failed, e.g. a CRC error of the card.
++    Aborted,
++}
++
++impl fmt::Display for DmaError {
++    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
++        match self {
++            DmaError::Controller { cs, debug } => {
++                write!(f, "DMA error (CS 0x{cs:08x}, DEBUG 0x{debug:08x})")
++            }
++            DmaError::Timeout { cs, remaining } => {
++                write!(f, "DMA timeout (CS 0x{cs:08x}, {remaining} bytes left)")
++            }
++            DmaError::Aborted => write!(f, "DMA aborted"),
++        }
++    }
++}
++
++pub struct SdDma {
++    /// The channel's registers.
++    regs: *mut u32,
++    /// The controller's register page, for ENABLE.
++    page: *mut u32,
++    cb: Dma<ControlBlock>,
++    bounce: Dma<[u8; BOUNCE_SIZE]>,
++    /// Added to a physical RAM address to get its bus address.
++    ram_bus_offset: usize,
++    /// Bus address of SDDATA.
++    sddata: u32,
++}
++
++// The channel and the buffers belong to this driver alone.
++unsafe impl Send for SdDma {}
++
++impl SdDma {
++    /// Set up the channel. `sddata_bus` is the bus address of sdhost's data
++    /// register. Fails if the devicetree does not leave the channel free.
++    pub fn new(fdt: &Fdt, sddata_bus: usize) -> Result<Self, String> {
++        let node = fdt.find_compatible(&["brcm,bcm2835-dma"]);
++        let mask = node
++            .and_then(|node| node.property("brcm,dma-channel-mask"))
++            .and_then(|prop| prop.as_usize())
++            .ok_or("no brcm,dma-channel-mask in the devicetree")?;
++        if mask & 1 << CHANNEL == 0 {
++            return Err(format!("channel {CHANNEL} not free (mask 0x{mask:x})"));
++        }
++        let bus_addr = node
++            .and_then(|node| node.reg())
++            .and_then(|mut reg| reg.next())
++            .map(|reg| reg.starting_address as usize)
++            .unwrap_or(DMA_BUS_ADDR);
++        let phys = crate::soc_phys(fdt, bus_addr);
++
++        let page = unsafe {
++            common::physmap(phys, 0x1000, common::Prot::RW, common::MemoryType::DeviceMemory)
++                .map_err(|err| format!("failed to map the controller: {err:?}"))?
++                as *mut u32
++        };
++        let cb = Dma::new(ControlBlock {
++            ti: 0,
++            source: 0,
++            dest: 0,
++            len: 0,
++            stride: 0,
++            next: 0,
++            _reserved: [0; 2],
++        })
++        .map_err(|err| format!("failed to allocate the control block: {err}"))?;
++        let bounce = unsafe {
++            Dma::<[u8; BOUNCE_SIZE]>::zeroed()
++                .map_err(|err| format!("failed to allocate the bounce buffer: {err}"))?
++                .assume_init()
++        };
++
++        let dma = SdDma {
++            regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
++            page,
++            cb,
++            bounce,
++            ram_bus_offset: ram_bus_offset(fdt),
++            sddata: sddata_bus as u32,
++        };
++        let enable = dma.page_reg(ENABLE);
++        dma.set_page_reg(ENABLE, enable | 1 << CHANNEL);
++        dma.reset();
++        println!("bcm2835-sdhostd: DMA channel {CHANNEL} at 0x{phys:08x}");
++        Ok(dma)
++    }
++
++    pub fn bounce(&mut self) -> &mut [u8; BOUNCE_SIZE] {
++        &mut self.bounce
++    }
++
++    /// Move `len` bytes from the FIFO into the bounce buffer. `check` runs
++    /// while waiting and stops the transfer when it fails.
++    pub fn read(&mut self, len: usize, check: impl FnMut() -> bool) -> Result<(), DmaError> {
++        let dest = self.bus(self.bounce.physical());
++        self.run(
++            TI_PERMAP(DREQ_SDHOST) | TI_SRC_DREQ | TI_DEST_INC | TI_WAIT_RESP,
++            self.sddata,
++            dest,
++            len,
++            check,
++        )
++    }
++
++    /// Move `len` bytes from the bounce buffer into the FIFO.
++    pub fn write(&mut self, len: usize, check: impl FnMut() -> bool) -> Result<(), DmaError> {
++        let source = self.bus(self.bounce.physical());
++        self.run(
++            TI_PERMAP(DREQ_SDHOST) | TI_DEST_DREQ | TI_SRC_INC | TI_WAIT_RESP,
++            source,
++            self.sddata,
++            len,
++            check,
++        )
++    }
++
++    fn run(
++        &mut self,
++        ti: u32,
++        source: u32,
++        dest: u32,
++        len: usize,
++        mut check: impl FnMut() -> bool,
++    ) -> Result<(), DmaError> {
++        assert!(len > 0 && len <= BOUNCE_SIZE && len % 4 == 0);
++        *self.cb = ControlBlock {
++            ti,
++            source,
++            dest,
++            len: len as u32,
++            stride: 0,
++            next: 0,
++            _reserved: [0; 2],
++        };
++        let cb_bus = self.bus(self.cb.physical());
++        // The control block and the bounce buffer are uncached, but the
++        // writes may still sit in a write buffer.
++        barrier();
++        self.set_reg(CONBLK_AD, cb_bus);
++        self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
++
++        let start = Instant::now();
++        loop {
++            let cs = self.reg(CS);
++            if cs & CS_ERROR != 0 {
++                let debug = self.reg(DEBUG);
++                self.reset();
++                return Err(DmaError::Controller { cs, debug });
++            }
++            if cs & CS_END != 0 {
++                self.set_reg(CS, CS_END | CS_INT);
++                barrier();
++                return Ok(());
++            }
++            if !check() {
++                self.reset();
++                return Err(DmaError::Aborted);
++            }
++            if start.elapsed() > TIMEOUT {
++                let remaining = self.reg(TXFR_LEN);
++                self.reset();
++                return Err(DmaError::Timeout { cs, remaining });
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Stop whatever the channel does and clear its errors.
++    fn reset(&self) {
++        if self.reg(CS) & CS_ACTIVE != 0 {
++            self.set_reg(CS, CS_ABORT);
++            let start = Instant::now();
++            while self.reg(CS) & CS_ACTIVE != 0 && start.elapsed() < Duration::from_millis(10) {}
++        }
++        self.set_reg(CS, CS_RESET);
++        self.set_reg(DEBUG, DEBUG_ERRORS);
++    }
++
++    fn bus(&self, phys: usize) -> u32 {
++        (phys + self.ram_bus_offset) as u32
++    }
++
++    fn reg(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn set_reg(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    fn page_reg(&self, offset: usize) -> u32 {
++        unsafe { self.page.add(offset / 4).read_volatile() }
++    }
++
++    fn set_page_reg(&self, offset: usize, value: u32) {
++        unsafe { self.page.add(offset / 4).write_volatile(value) }
++    }
++}
++
++#[allow(non_snake_case)]
++const fn TI_PERMAP(dreq: u32) -> u32 {
++    dreq << TI_PERMAP_SHIFT
++}
++
++/// Bus address minus physical address of RAM, from the first entry of
++/// `/soc`'s dma-ranges (one cell each for bus address, physical address and
++/// size on the BCM283x).
++fn ram_bus_offset(fdt: &Fdt) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.property("dma-ranges"))
++        .filter(|prop| prop.value.len() >= 12)
++        .map(|prop| {
++            let cell = |i: usize| u32::from_be_bytes(prop.value[i * 4..i * 4 + 4].try_into().unwrap());
++            (cell(0) as usize).wrapping_sub(cell(1) as usize)
++        })
++        .unwrap_or(RAM_BUS_OFFSET)
++}
++
++/// Make the CPU's writes to normal memory visible before the device
++/// register write that starts the controller, and the controller's writes
++/// visible before the CPU reads the buffer.
++fn barrier() {
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("dsb sy", options(nostack, preserves_flags));
++    }
++    #[cfg(not(target_arch = "aarch64"))]
++    std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
++}
+diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
+index 1b5b27d8..7c71c9db 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/host.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
+@@ -1,15 +1,20 @@
+ //! The sdhost controller and the SD card protocol on top of it.
+ //!
+-//! sdhost has no DMA in this driver and no interrupts: a command goes into
+-//! SDARG/SDCMD, the controller clears SDCMD_NEW when the card answered, and
+-//! data moves through a 16-word FIFO in SDDATA. Every wait below has a time
+-//! limit, so a card that stops answering gives an error instead of a hang.
++//! sdhost has no interrupts in this driver: a command goes into SDARG/SDCMD,
++//! the controller clears SDCMD_NEW when the card answered, and data moves
++//! through a 16-word FIFO in SDDATA. Transfers of more than one block go
++//! through the BCM2835 DMA controller when it is set up (dma.rs); single
++//! blocks, and the retry after a failed transfer, move through the FIFO with
++//! the CPU. Every wait below has a time limit, so a card that stops
++//! answering gives an error instead of a hang.
+ 
+ use std::fmt;
+ use std::thread;
+ use std::time::{Duration, Instant};
+ 
+ use driver_block::Disk;
++
++use crate::dma::{DmaError, SdDma};
+ use syscall::{Error, EIO};
+ 
+ // Registers, as byte offsets.
+@@ -99,6 +104,11 @@ const BLOCK_SIZE: usize = 512;
+ /// Blocks per read or write command (SDHBLC has 9 bits).
+ const MAX_BLOCKS: usize = 128;
+ const TRANSFER_ATTEMPTS: usize = 3;
++/// Up to this many blocks the CPU moves the data, as Linux does.
++const PIO_MAX_BLOCKS: usize = 1;
++/// sdhost raises its DREQ badly at the end of a multi-block read, so the
++/// last words of a read come by PIO (Linux: drain_words).
++const DRAIN_WORDS: usize = FIFO_THRESHOLD as usize - 1;
+ 
+ const CMD_TIMEOUT: Duration = Duration::from_millis(500);
+ const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
+@@ -126,6 +136,7 @@ pub enum SdError {
+     Command { index: u32, hsts: u32 },
+     Data { hsts: u32 },
+     Card(&'static str),
++    Dma(DmaError),
+ }
+ 
+ impl fmt::Display for SdError {
+@@ -137,6 +148,7 @@ impl fmt::Display for SdError {
+             }
+             SdError::Data { hsts } => write!(f, "data transfer failed, SDHSTS 0x{hsts:03x}"),
+             SdError::Card(what) => write!(f, "{what}"),
++            SdError::Dma(err) => write!(f, "{err}"),
+         }
+     }
+ }
+@@ -156,6 +168,9 @@ pub struct SdHost {
+     /// The SD clock aimed at, at that core clock.
+     clock: u32,
+     stats: Option<Stats>,
++    dma: Option<SdDma>,
++    /// The last transfer failed: move the retry with the CPU.
++    pio_retry: bool,
+ }
+ 
+ /// Transfer counts and times, printed every few seconds when the driver
+@@ -230,9 +245,16 @@ impl SdHost {
+             size: 0,
+             clock: 0,
+             stats: None,
++            dma: None,
++            pio_retry: false,
+         }
+     }
+ 
++    /// Move transfers of more than one block with DMA.
++    pub fn set_dma(&mut self, dma: SdDma) {
++        self.dma = Some(dma);
++    }
++
+     /// Count transfers and print the counts every few seconds.
+     pub fn enable_stats(&mut self) {
+         self.stats = Some(Stats::new());
+@@ -548,12 +570,28 @@ impl SdHost {
+         }
+     }
+ 
+-    fn read_blocks(&mut self, block: u64, buffer: &mut [u8]) -> SdResult<()> {
+-        let blocks = buffer.len() / BLOCK_SIZE;
+-        self.set_reg(SDHBCT, BLOCK_SIZE as u32);
+-        self.set_reg(SDHBLC, blocks as u32);
+-        let index = if blocks == 1 { 17 } else { 18 };
+-        self.command(index, self.card_address(block), Response::Short, Data::Read)?;
++    /// The DMA channel, taken out for one transfer of `blocks` blocks, if
++    /// that transfer should use it.
++    fn dma_for(&mut self, blocks: usize) -> Option<SdDma> {
++        if blocks > PIO_MAX_BLOCKS && !self.pio_retry {
++            self.dma.take()
++        } else {
++            None
++        }
++    }
++
++    fn data_ok(&self) -> bool {
++        self.reg(SDHSTS) & HSTS_DATA_ERRORS == 0
++    }
++
++    fn dma_error(&self, err: DmaError) -> SdError {
++        match err {
++            DmaError::Aborted => SdError::Data { hsts: self.reg(SDHSTS) },
++            err => SdError::Dma(err),
++        }
++    }
++
++    fn read_pio(&self, buffer: &mut [u8]) -> SdResult<()> {
+         self.pio(
+             buffer.len() / 4,
+             |i, value| {
+@@ -561,7 +599,41 @@ impl SdHost {
+                 0
+             },
+             true,
+-        )?;
++        )
++    }
++
++    /// A multi-block read: DMA into the bounce buffer for all but the last
++    /// DRAIN_WORDS words, which come by PIO.
++    fn read_dma(&self, dma: &mut SdDma, buffer: &mut [u8]) -> SdResult<()> {
++        let len = buffer.len() - DRAIN_WORDS * 4;
++        dma.read(len, || self.data_ok()).map_err(|err| self.dma_error(err))?;
++        buffer[..len].copy_from_slice(&dma.bounce()[..len]);
++        self.read_pio(&mut buffer[len..])
++    }
++
++    fn write_dma(&self, dma: &mut SdDma, buffer: &[u8]) -> SdResult<()> {
++        let len = buffer.len();
++        dma.bounce()[..len].copy_from_slice(buffer);
++        dma.write(len, || self.data_ok()).map_err(|err| self.dma_error(err))?;
++        if !self.data_ok() {
++            return Err(SdError::Data { hsts: self.reg(SDHSTS) });
++        }
++        Ok(())
++    }
++
++    fn read_blocks(&mut self, block: u64, buffer: &mut [u8]) -> SdResult<()> {
++        let blocks = buffer.len() / BLOCK_SIZE;
++        self.set_reg(SDHBCT, BLOCK_SIZE as u32);
++        self.set_reg(SDHBLC, blocks as u32);
++        let index = if blocks == 1 { 17 } else { 18 };
++        self.command(index, self.card_address(block), Response::Short, Data::Read)?;
++        if let Some(mut dma) = self.dma_for(blocks) {
++            let result = self.read_dma(&mut dma, buffer);
++            self.dma = Some(dma);
++            result?;
++        } else {
++            self.read_pio(buffer)?;
++        }
+         self.wait_transfer_complete()?;
+         if blocks > 1 {
+             self.command(12, 0, Response::ShortBusy, Data::None)?;
+@@ -575,11 +647,17 @@ impl SdHost {
+         self.set_reg(SDHBLC, blocks as u32);
+         let index = if blocks == 1 { 24 } else { 25 };
+         self.command(index, self.card_address(block), Response::Short, Data::Write)?;
+-        self.pio(
+-            buffer.len() / 4,
+-            |i, _| u32::from_le_bytes(buffer[i * 4..i * 4 + 4].try_into().unwrap()),
+-            false,
+-        )?;
++        if let Some(mut dma) = self.dma_for(blocks) {
++            let result = self.write_dma(&mut dma, buffer);
++            self.dma = Some(dma);
++            result?;
++        } else {
++            self.pio(
++                buffer.len() / 4,
++                |i, _| u32::from_le_bytes(buffer[i * 4..i * 4 + 4].try_into().unwrap()),
++                false,
++            )?;
++        }
+         self.wait_transfer_complete()?;
+         let busy = Instant::now();
+         if blocks > 1 {
+@@ -596,6 +674,7 @@ impl SdHost {
+     /// and get controller and card back into data and transfer state. If
+     /// that fails too, set everything up again.
+     fn recover(&mut self) {
++        self.pio_retry = true;
+         self.set_reg(SDHSTS, HSTS_CLEAR);
+         let edm = self.reg(SDEDM);
+         if !matches!(edm & EDM_FSM_MASK, FSM_IDENTMODE | FSM_DATAMODE) {
+@@ -630,7 +709,10 @@ impl SdHost {
+             let mut attempt = 1;
+             loop {
+                 match transfer(self, lba, &mut buffer, offset..end) {
+-                    Ok(()) => break,
++                    Ok(()) => {
++                        self.pio_retry = false;
++                        break;
++                    }
+                     Err(err) => {
+                         println!("bcm2835-sdhostd: {what} of block {lba}: {err}");
+                         self.recover();
+diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
+index 7725b894..112710a6 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/main.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
+@@ -16,11 +16,14 @@ use driver_block::{DiskScheme, ExecutorTrait, TrivialExecutor};
+ use event::{EventFlags, RawEventQueue};
+ use fdt::Fdt;
+ 
++mod dma;
+ mod host;
+ 
+ /// Bus address of sdhost on all BCM283x, used if the devicetree has no node.
+ const SDHOST_BUS_ADDR: usize = 0x7e20_2000;
+ const SDHOST_SIZE: usize = 0x100;
++/// SDDATA, for the DMA controller.
++const SDDATA_OFFSET: usize = 0x40;
+ /// GPIO sits 8 KiB below sdhost.
+ const GPIO_OFFSET: usize = 0x2000;
+ 
+@@ -48,15 +51,19 @@ fn main() {
+     daemon::Daemon::new(|daemon_handle| daemon(Some(daemon_handle)));
+ }
+ 
+-/// The CPU physical address of sdhost, from the devicetree. The node is
+-/// there even when an overlay (`dtoverlay=mmc`) disabled it.
+-fn sdhost_phys(fdt: &Fdt) -> usize {
+-    let bus_addr = fdt
+-        .find_compatible(&["brcm,bcm2835-sdhost"])
++/// The bus address of sdhost, from the devicetree. The node is there even
++/// when an overlay (`dtoverlay=mmc`) disabled it.
++fn sdhost_bus(fdt: &Fdt) -> usize {
++    fdt.find_compatible(&["brcm,bcm2835-sdhost"])
+         .and_then(|node| node.reg())
+         .and_then(|mut reg| reg.next())
+         .map(|reg| reg.starting_address as usize)
+-        .unwrap_or(SDHOST_BUS_ADDR);
++        .unwrap_or(SDHOST_BUS_ADDR)
++}
++
++/// The CPU physical address of a peripheral's bus address, through the
++/// ranges of `/soc`.
++fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
+     fdt.find_node("/soc")
+         .and_then(|soc| soc.ranges())
+         .and_then(|mut ranges| {
+@@ -130,7 +137,8 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+         process::exit(0);
+     }
+     let fdt = Fdt::new(&dtb_data).unwrap();
+-    let phys = sdhost_phys(&fdt);
++    let bus = sdhost_bus(&fdt);
++    let phys = soc_phys(&fdt, bus);
+     println!("bcm2835-sdhostd: controller at 0x{phys:08x}");
+ 
+     let regs = unsafe {
+@@ -148,6 +156,13 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+     if env::var_os("SDHOSTD_STATS").is_some() {
+         sdhost.enable_stats();
+     }
++    if env::var_os("SDHOSTD_NO_DMA").is_none() {
++        // The buffers come from the memory scheme, so before setrens.
++        match dma::SdDma::new(&fdt, bus + SDDATA_OFFSET) {
++            Ok(dma) => sdhost.set_dma(dma),
++            Err(err) => println!("bcm2835-sdhostd: no DMA ({err}), moving all data with the CPU"),
++        }
++    }
+     if let Err(err) = sdhost.init_card() {
+         println!("bcm2835-sdhostd: no usable card: {err}");
+         process::exit(1);
+-- 
+2.53.0
+
