@@ -1,3 +1,11 @@
-# The MQTT tools mqtt-pub and mqtt-sub (tools/mqtt).
+# The MQTT tools mqtt-pub, mqtt-sub and ha-bridge (tools/mqtt).
 [packages]
 mqtt = "source"
+
+# The default broker of all MQTT tools: 10.0.2.2 is the build host as QEMU's
+# user network sees it. On a Pi: echo <broker address> > /etc/mqtt-host
+[[files]]
+path = "/etc/mqtt-host"
+data = """
+10.0.2.2
+"""

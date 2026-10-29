@@ -2,8 +2,8 @@
 //!
 //! No crates from crates.io, only `std`, so it builds for Redox like the
 //! other tools here. It speaks MQTT 3.1.1 over plain TCP: connect (with
-//! user name and password), publish with QoS 0 or 1 and retain, subscribe,
-//! ping and disconnect. No TLS, no QoS 2, no MQTT 5.
+//! user name, password and last will), publish with QoS 0 or 1 and retain,
+//! subscribe, ping and disconnect. No TLS, no QoS 2, no MQTT 5.
 //!
 //! ```no_run
 //! let mut client = mqtt::Client::connect("broker.local:1883", &mqtt::Options::new("demo"))?;
@@ -66,6 +66,18 @@ pub struct Options {
     pub clean_session: bool,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Published by the broker when the connection breaks without a
+    /// DISCONNECT, for example when the Pi loses power.
+    pub will: Option<Will>,
+}
+
+/// A last will: see [`Options::will`].
+#[derive(Clone, Debug)]
+pub struct Will {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: QoS,
+    pub retain: bool,
 }
 
 impl Options {
@@ -76,6 +88,7 @@ impl Options {
             clean_session: true,
             username: None,
             password: None,
+            will: None,
         }
     }
 }
@@ -299,6 +312,12 @@ fn connect_body(options: &Options) -> Vec<u8> {
     if options.clean_session {
         flags |= 0x02;
     }
+    if let Some(will) = &options.will {
+        flags |= 0x04 | (will.qos as u8) << 3;
+        if will.retain {
+            flags |= 0x20;
+        }
+    }
     if options.username.is_some() {
         flags |= 0x80;
     }
@@ -308,6 +327,11 @@ fn connect_body(options: &Options) -> Vec<u8> {
     body.push(flags);
     body.extend_from_slice(&options.keep_alive.to_be_bytes());
     put_str(&mut body, &options.client_id).unwrap();
+    if let Some(will) = &options.will {
+        put_str(&mut body, &will.topic).unwrap();
+        body.extend_from_slice(&(will.payload.len() as u16).to_be_bytes());
+        body.extend_from_slice(&will.payload);
+    }
     if let Some(username) = &options.username {
         put_str(&mut body, username).unwrap();
     }
@@ -466,6 +490,15 @@ mod tests {
             packet,
             [0x10, 20, 0, 4, b'M', b'Q', b'T', b'T', 4, 0xc2, 0, 60, 0, 2, b'p', b'i', 0, 1, b'u', 0, 1, b'p']
         );
+    }
+
+    #[test]
+    fn connect_with_will() {
+        let mut options = Options::new("pi");
+        options.will = Some(Will { topic: "a/s".into(), payload: b"off".to_vec(), qos: QoS::AtLeastOnce, retain: true });
+        let body = connect_body(&options);
+        assert_eq!(body[7], 0x02 | 0x04 | 0x08 | 0x20);
+        assert_eq!(&body[10..], &[0, 2, b'p', b'i', 0, 3, b'a', b'/', b's', 0, 3, b'o', b'f', b'f']);
     }
 
     #[test]

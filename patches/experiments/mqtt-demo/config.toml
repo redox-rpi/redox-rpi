@@ -1,13 +1,6 @@
 # Demo: timerd publishes the temperature and uptime to an MQTT broker every
 # minute. Use with --experiment timesync --experiment timerd --experiment
-# mqtt. The broker is in /etc/mqtt-host: 10.0.2.2, the build host as QEMU's
-# user network sees it. On a Pi: echo <broker> > /etc/mqtt-host
-
-[[files]]
-path = "/etc/mqtt-host"
-data = """
-10.0.2.2
-"""
+# mqtt. The broker is the one in /etc/mqtt-host (experiment mqtt).
 
 [[files]]
 path = "/etc/timer.d/mqtt-temperature.toml"
