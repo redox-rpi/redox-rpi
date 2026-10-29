@@ -652,3 +652,35 @@ arrived complete (before: cut off after 25 characters). No crash on the
 console except the known `pcid` panic (no `pi-clean-boot` in this image).
 The first `pi-test.py` attempt got no answer from devsh (#11); the second
 attempt is the table above.
+
+## 2026-10-29: `v0.3.0-dev-93-g2143ad7+x1044` (timerd, test #27)
+
+Built 2026-10-28T20:16:41Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test` (two
+test timers: `date` every minute, `uname -a` every 2 minutes with
+`persistent = true`). Issue [#22](https://github.com/redox-rpi/redox-rpi/issues/22).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 43 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| timers run | pass | both test timers on schedule, each `exited with code 0`; `timerd -l` shows next and last run; last runs in `/scheme/data/timerd/` |
+| waits for timesync | pass | boot 3: `timerd: clock set by timesync, 2026-10-29 10:47:41 UTC`, timers from 10:48 |
+| catch-up | pass | after `echo 1793000000 > /scheme/data/timerd/test-catchup` and a reset: `test-catchup: starting uname (missed since 2026-10-26 07:33:20 UTC)` once; `test-minute` did not catch up |
+| without NTP time | pass | boots 1 and 2: `timerd: no time from timesync after 300 s, going on with …`, then the timers ran on the saved time |
+
+**timesync hangs when the network comes up late** (boots 1 and 2): DHCP was
+not done when `timesync` started (`No route found for destination:
+9.9.9.9`, the DNS server). `timesync` then printed nothing more, neither a
+time nor "no time server answered", and did not write
+`/tmp/timesync.synced`; `timesync -n` by hand got the time. Its DNS lookup
+probably waits forever. The clock stayed 72 minutes behind (saved time).
+In boot 3 the network was up in time and everything worked. Not a `timerd`
+problem; needs a fix in `timesync` (a timeout around the lookup).
+
+Boot 1 also looked hung after 3 minutes: no log output, no echo on the
+serial console, devshd unreachable ("No route to host"); power-cycled with
+the user's permission. Boot 2 with the same image did not hang, so the
+cause is unclear.
