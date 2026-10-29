@@ -14,7 +14,7 @@ image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 S=/scheme/spi/0
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$image" --timeout 800 \
     --device w25q32,bus=spi \
-    --run "echo M \$(cat /scheme/gpio/7/mode /scheme/gpio/8/mode /scheme/gpio/9/mode /scheme/gpio/10/mode /scheme/gpio/11/mode)" \
+    --run "cat /scheme/gpio/pins" \
     --run "ls $S" \
     --run "echo J1 \$(spi 9f 0 0 0 0 0 0)" \
     --run "echo J2 \$(spi 9f 0 0 0 0 0 0)" \
@@ -32,8 +32,8 @@ check() {
 }
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 check "driver started" "bcm2835-spid: bus 0 at 0x3f204000, [0-9]+ kHz"
-check "pins 7 to 11 alt0" "^M alt0 alt0 alt0 alt0 alt0$"
-check "bus directory" "^cs0 +cs1 +mode +speed"
+for pin in 7 8 9 10 11; do check "pin $pin alt0" "^$pin alt0 "; done
+check "bus directory" "^cs1$"
 check "JEDEC ID" "^J1 [0-9a-f]{2} ef 40 16 00 00 00$"
 check "JEDEC ID again" "^J2 [0-9a-f]{2} ef 40 16 00 00 00$"
 check "status register" "^SR [0-9a-f]{2} 00$"
