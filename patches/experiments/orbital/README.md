@@ -64,6 +64,31 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
   so 30 to 57 frames per second, set by QEMU's slow DMA model; not a Pi
   number. Back on Orbital with `inputd -A 3`.
 - QEMU shows red and blue swapped (its pixel order quirk, as before).
+- `v0.3.0-dev-195-g671b427+xdf3e` (terminal and keyboard round):
+  - **Keyboard:** `dwc2d`'s keyboard events reach Orbital and the focused
+    window without changes: `echo Hi` (with Shift) typed into `orbterm`
+    ran and printed `Hi`. Super-F12 shows Orbital's FPS counter (12 FPS,
+    94% CPU in QEMU). In one run, keys typed after a lone Super press were
+    lost (QEMU's key timing during a busy desktop; check on the Pi). Left
+    Super works as Orbital's Super key; `dwc2d` sends right Super as a
+    different code, which Orbital ignores.
+  - **Terminal:** the launcher's Super-T starts `cosmic-term`, which is
+    not in the image; `config.toml` links `/usr/bin/cosmic-term` to
+    `orbterm` (not yet seen working in QEMU: no run reached a ready
+    desktop in time). `orbterm` started from the serial shell works.
+  - **Terminal speed:** `ls -R /usr` (679 lines) takes 5.6 s in `orbterm`
+    against 2.7 to 3.0 s to `/dev/null`, so about 4 ms per line for
+    drawing. `orbterm` draws each character through `rusttype` with no
+    glyph cache, scrolls in its own window buffer and sends the whole
+    window on every update (1024x600, 2.4 MB): about 18 frames during the
+    listing, 1.2 s of DMA blits in QEMU. Faster terminals need changes in
+    upstream `orbterm`/`orbfont` (glyph cache, damage of the changed rows
+    only), not in `rpi-fbd`.
+  - **Memory:** 194 MiB used with the login window plus `orbterm`
+    (`orbterm` 6 MB), against 140 MiB without Orbital.
+  - **No mouse:** Super-Numpad-0 turns on Orbital's mouse keys (numpad
+    8/4/6/2 move, 5 left click, 1 right click), a stopgap until `dwc2d`
+    has a mouse.
 
 ## What is missing
 
