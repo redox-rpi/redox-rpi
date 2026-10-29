@@ -38,6 +38,13 @@ the serial console and restoring the stable image are part of the test
 (maintainer, 2026-10-29). Switching the Shelly plug still needs the
 maintainer's OK.
 
+Since 2026-10-29 a **Pi test agent** session on the build host runs the
+automated tests in the order the coordinator sets. Owners queue their test
+with the image built and the checks written in the row, then go on with
+other work; they don't take the Pi themselves for automated tests. The
+agent reports each result to the coordinator and the owner. Tests that need
+a person stay with their owner.
+
 Experiment patches are numbered by what they apply after; see
 [patches/README.md](../patches/README.md) for the numbers and the
 combinations that build. Each applies on top of the default patches.
