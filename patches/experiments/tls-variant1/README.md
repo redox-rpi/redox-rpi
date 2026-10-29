@@ -39,4 +39,14 @@ scripts/build-image.sh --experiment relibc-tests --experiment tls-variant1
 
 ## Results
 
-Not run yet.
+QEMU, 2026-10-29, `v0.3.0-dev-150-ge231651+x44a9` (with `relibc-tests`):
+
+| Test | Before | With the patch |
+|---|---|---|
+| `tls_probe` | program TLS 0, library TLS 0, two addresses for one variable | `exe_var` 33 at `tp + 0x40`, `lib_gd` 11 at `tp + 0x50`, `lib_ie` 22 at `tp + 0x54`, program and library agree |
+| `tls_shared` | FAIL | PASS, main thread and new thread |
+| `tls_align`, dynamic | FAIL | PASS |
+| `tls_align`, static | FAIL | FAIL: the static tests link the toolchain's `libc.a`, not this build's (see [`relibc-tests`](../relibc-tests)) |
+
+The rest of the suite is unchanged (no new failures); the image boots and
+`errno` (libc's own TLS) still works.
