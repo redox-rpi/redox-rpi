@@ -923,3 +923,39 @@ Test 37 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)), branch
   45, without this fix, got only 1 of 3000 signals here.
 - `sigregs process -n 3000`: pass, all registers kept (79 s).
 - No exception in the serial log during the run.
+
+## 2026-10-29: `v0.3.0-dev-164-g2ce732b+x8cc4`
+
+Built 2026-10-29T11:11:56Z, `libc.so` `08e0353fe25191f9…`, real Pi 3B+ over netboot. Experiments: `redoxfs-write-coalesce`. test 46 ([#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS write coalescing), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-164-g2ce732b+x8cc4 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 46 ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)), branch
+`t16-write-amp`, experiment `redoxfs-write-coalesce`. Extra checks over
+devsh on `/scheme/data`, against the stable image `v0.3.0-dev-15-g24fbb96+x9f76`
+on the same card right after:
+
+| `dd` to `/scheme/data`, 1 MiB, `conv=fsync` | this image | stable |
+|---|---|---|
+| `if=/scheme/rand bs=4096 count=256` | 0.40, 0.44, 0.38, 0.39 s | 10.07, 10.23 s |
+| `if=/scheme/rand bs=1048576 count=1` | 0.37, 0.30, 0.27, 0.27 s | 0.31, 0.30 s |
+
+- The 4 KiB run now takes about as long as the 1 MiB run (about 25 times
+  faster than stable): **pass**.
+- A 1 MiB random file copied with `bs=4k`, `bs=1000` and `bs=512` has the
+  source's SHA-256, also after `echo reset > /scheme/sys/kstop`: **pass**.
+- 300 `echo line $i >> log` give 300 lines, also after the reset: **pass**.
+- Found, not caused by the fix: copying a file to another file on
+  `/scheme/data` with small blocks stays slow, 1 MiB with `bs=4k` in 11.9 s
+  (stable 12.7 s), `bs=1000` in 45 s, `bs=512` in 86 s (stable 94 s). Each
+  half alone is fast: reading the file with `bs=512` 0.6 s, writing 2048
+  blocks of 512 from `/scheme/rand` 0.5 s, or from `/tmp` 1.0 s. So it is
+  slow only when reads and writes on RedoxFS take turns.
+- Serial log: only the known `pcid` panic at boot.
