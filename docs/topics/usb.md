@@ -4,8 +4,8 @@
 
 - `dwc2d`, a DWC2 USB host driver in base: hubs, split transactions for low-
   and full-speed devices behind the Pi 3B+'s hubs, bulk transfers.
-- Experiment `dwc2-interrupts` (with `rtl8152`): `dwc2d` waits for the
-  controller's interrupt instead of polling, about 5 % of a core instead
+- `dwc2d` waits for the controller's interrupt instead of polling (base
+  `0022`, kernel `0004`–`0006`), about 5 % of a core instead
   of a full one on a real Pi (test #5,
   [#29](https://github.com/redox-rpi/redox-rpi/issues/29)).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
@@ -13,17 +13,66 @@
 
 ## In progress
 
+<<<<<<< HEAD
 - [#36](https://github.com/redox-rpi/redox-rpi/issues/36) keyboard layouts, German first (milestone v0.5.0): experiment
   [`keyboard-de`](../../patches/experiments/keyboard-de/) on branch
   `keyboard-layouts` adds a `de` map with AltGr to `inputd`; switch with
-  `inputd -K de`. An image with the experiment types German from boot (`/etc/init.d/05_keymap.service`). QEMU test `test-keymap.sh`. Next: Pi test with a German keyboard.
+  `inputd -K de`. Dead keys (´ e → é). An image with the experiment types German from boot; the layout is set in `/etc/keymap`. QEMU test `test-keymap.sh`. Next: Pi test with a German keyboard.
+=======
+- [#17](https://github.com/redox-rpi/redox-rpi/issues/17) hotplug, branch
+  [`usb-hotplug`](https://github.com/redox-rpi/redox-rpi/tree/usb-hotplug),
+  experiment `usb-hotplug` on top of `dwc2-default`. dwc2d rescans the
+  root port and all hub ports every second. A keyboard or network adapter
+  plugged in later is used, and the network moves to the best adapter
+  (RTL815x with a link, else LAN7800, else RTL815x without a link, else CDC
+  Ethernet), keeping its MAC address and lease. `dhcpd` tries again until
+  the server answers. A test command (`/tmp/dwc2d-cycle`) switches a hub
+  port off and on for tests without a person. QEMU: 16 of 16 checks of
+  `scripts/test-hotplug.sh` pass. Pi test #35 is queued: part A automated
+  with `scripts/pi-hotplug-test.sh`, part B with a person, bundled with
+  the Anker hub test #4.
+- `dwc2-default`: RTL8152 and dwc2 interrupts as default patches, merged
+  with main; first in the rc2 merge order, waits for the Pi test.
+
+- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
+  branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
+  (on `usb-hotplug`), experiment `usb-storage` (base `0033` there).
+  `dwc2d` serves a stick (bulk-only transport, SCSI) as the driver-block
+  disk scheme `disk.usb-dwc2+<ports>-scsi`; the boot session's `fatfsd`
+  mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
+  write, unplug, plug in again); not yet on the Pi.
+
+- [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
+  tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
+  (on `usb-hotplug`), experiment `usb-mouse` (base `0035` there). Events go
+  to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
+  passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
+  visit as #50.
+- [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
+  adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
+  branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
+  (on `usb-hotplug`), experiment `usb-serial` (base `0036` there). Each is
+  `/scheme/usb-serial/<ports>` with a `baud` file and termios calls,
+  hotplug. **QEMU passes** (`scripts/test-usb-serial.sh`, 15/15 with
+  QEMU's FTDI); Pi test #62 with a person, same visit as #50 and #56.
+  relibc's `cfsetospeed` still returns EINVAL on Redox (relibc topic).
+- LAN7800 receives all multicast (mDNS, IPv6 neighbor discovery; #27,
+  #37), branch [`lan78xx-multicast`](https://github.com/redox-rpi/redox-rpi/tree/lan78xx-multicast),
+  experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
+  QEMU (no LAN7800 there); the Pi check rides on the network session's
+  test #47.
+>>>>>>> origin/main
 
 ## Next
 
-- [#17](https://github.com/redox-rpi/redox-rpi/issues/17) hotplug: devices plugged in after boot.
+- A Pi test of USB sticks (high-speed stick on the 3B+ hub).
 
 ## Later
 
+<<<<<<< HEAD
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
 - More keyboard layouts, `lsusb`
+=======
+- Keyboard layouts, `lsusb`
+>>>>>>> origin/main
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

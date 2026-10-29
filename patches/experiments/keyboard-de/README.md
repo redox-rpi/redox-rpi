@@ -18,14 +18,19 @@ Base patch
   sends);
 - AltGr: @ € { [ ] } \ ~ | ² ³ µ. `inputd` keeps the right Alt key's state;
   layouts without an AltGr table ignore it as before;
-- the dead keys ^ ´ ` type their character at once (no é from ´ e yet).
+- dead keys (base patch
+  [`0026`](base/0026-inputd-dead-keys-for-the-German-layout-keymap-from-a.patch)):
+  ´, ` and ^ wait for the next key. With a vowel they make á é í ó ú ý,
+  à è ì ò ù, â ê î ô û (and capitals); with space they type themselves;
+  with any other key they type themselves and then that key.
 
 An image built with this experiment types German from boot: its
-[`config.toml`](config.toml) adds `/etc/init.d/05_keymap.service`, which
-runs `inputd -K de` once the root file system is up (inputd itself starts
-in the initfs with US). On an SD card image, edit the unit for another
-layout (`inputd --keymaps` lists them) or remove it. Switch on the running
-system:
+[`config.toml`](config.toml) adds `/etc/keymap` with `de` and a unit that
+runs `inputd --keymap-file /etc/keymap` once the root file system is up
+(inputd itself starts in the initfs with US). To change the layout, write
+another name to `/etc/keymap` (`inputd --keymaps` lists them); on an SD
+card image it stays for the next boot. Without the file the layout stays
+US. Switch on the running system:
 
 ```bash
 inputd -K us
@@ -39,7 +44,8 @@ patches/experiments/keyboard-de/test-keymap.sh [image]
 
 It boots the image (German from boot), logs in on the console with
 QEMU's USB keyboard, types `cat > /home/root/de.txt` and the line
-`zyß@{[]}\~|#öäü€"§'<>` (then Ctrl-D) as the keys of a German keyboard,
+`zyß@{[]}\~|#öäü€"§'<>éàô´^x` (then Ctrl-D; the last six from the dead
+keys) as the keys of a German keyboard,
 and checks the file. The characters go to `cat`, not to ion, which
 rejects `[` even in quotes. It needs no network port.
 

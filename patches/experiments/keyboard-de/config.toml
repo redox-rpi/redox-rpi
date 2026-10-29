@@ -1,15 +1,23 @@
-# German layout from boot: inputd starts with US in the initfs; this unit
-# switches it once the root file system is up, before the consoles' getty.
-# In /etc/init.d, so on an SD card image it can be edited to another
-# layout (inputd --keymaps lists them) or removed.
+# German layout from boot. inputd starts with US in the initfs; this unit
+# sets the layout named in /etc/keymap once the root file system is up,
+# before the consoles' getty. To change it, write another name to
+# /etc/keymap (inputd --keymaps lists them); without the file the layout
+# stays US.
 [[files]]
-path = "/etc/init.d/05_keymap.service"
+path = "/usr/lib/init.d/05_keymap.service"
 data = """
 [unit]
-description = "Keyboard layout"
+description = "Keyboard layout from /etc/keymap"
 
 [service]
 cmd = "inputd"
-args = ["-K", "de"]
+args = ["--keymap-file", "/etc/keymap"]
 type = "oneshot"
+"""
+
+[[files]]
+path = "/etc/keymap"
+data = """
+# Keyboard layout, read at boot: us, gb, de, dvorak, azerty, bepo, it
+de
 """

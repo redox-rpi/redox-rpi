@@ -1,16 +1,15 @@
-# Experiment: dwc2d with interrupts
+# dwc2d with interrupts (was experiment `dwc2-interrupts`)
+
+**Default since 2026-10-28:** base `0022` and kernel `0004`–`0006` (moved to `patches/base/` and `patches/kernel/`) are now default patches and in every
+image. `--experiment dwc2-interrupts` is still accepted and does nothing, so older
+commands keep working. This page stays as the driver's documentation.
 
 dwc2d waits for events instead of yielding in a busy loop: the controller
 interrupt for received frames, requests on the network scheme, and a timer
 for the keyboard (every 10 ms, plus key repeat).
 
-```bash
-scripts/build-image.sh --experiment rtl8152 --experiment dwc2-interrupts
-```
-
-The base patch applies after `rtl8152` (base `0020`), which changes the same
-file; give `--experiment rtl8152` first. It does not need `pi-clean-boot`
-(base `0021`) but works with it.
+The base patch applies after the RTL8152 driver (base `0020`), which
+changes the same file.
 
 Four patches:
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Check the German keyboard layout (#36) in QEMU: the image switches inputd to
-# `de` at boot (config.toml); type on QEMU's USB keyboard at the console's
+# `de` at boot (/etc/keymap, config.toml); type on QEMU's USB keyboard at the console's
 # login prompt, and compare the file the typed command wrote. Needs an image built
 # with --experiment keyboard-de. Uses no network port, so it can run while
 # other QEMU tests use port 12323.
@@ -55,9 +55,10 @@ sleep 4
 # them), then Ctrl-D
 sendkeys c a t spc shift-less spc shift-7 h o m e shift-7 r o o t shift-7 d e dot t x t ret
 sleep 1
-# zyß@{[]}\~|#öäü€"§'<>
+# zyß@{[]}\~|#öäü€"§'<> and the dead keys: ´e `a ^o ´space ^x give éàô´^x
 sendkeys y z minus alt_r-q alt_r-7 alt_r-8 alt_r-9 alt_r-0 alt_r-minus alt_r-bracket_right alt_r-less \
-    backslash semicolon apostrophe bracket_left alt_r-e shift-2 shift-3 shift-backslash less shift-less ret ctrl-d
+    backslash semicolon apostrophe bracket_left alt_r-e shift-2 shift-3 shift-backslash less shift-less \
+    equal e shift-equal a grave_accent o equal spc grave_accent x ret ctrl-d
 sleep 2
 # What the screen shows, for a failure.
 python3 - "$socket" "$ROOT/images/qemu-keymap.ppm" <<'PYEOF'
@@ -69,7 +70,7 @@ time.sleep(2)
 PYEOF
 
 wait $qemu || { cat "$out"; echo "FAIL: QEMU run, see $log"; exit 1; }
-expected='zyß@{[]}\~|#öäü€"§'"'"'<>'
+expected='zyß@{[]}\~|#öäü€"§'"'"'<>éàô´^x'
 if tr -d '\r' < "$log" | grep -aqxF "$expected"; then
     echo "PASS: German layout typed $expected"
 else
