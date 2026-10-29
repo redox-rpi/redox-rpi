@@ -18,7 +18,6 @@
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 /// Programs in step 1 have this long to end after SIGTERM.
@@ -69,6 +68,16 @@ fn processes() -> Vec<Process> {
         .collect()
 }
 
+/// Waits by yielding the CPU until the time is up. Not `sleep`: in QEMU a
+/// 100 ms `nanosleep` in this tool never came back (the same happened to a
+/// 10 µs one in `bcm2835-gpiod`); the clock itself is fine.
+fn pause(time: Duration) {
+    let end = Instant::now() + time;
+    while Instant::now() < end {
+        std::thread::yield_now();
+    }
+}
+
 fn base_name(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
 }
@@ -78,7 +87,7 @@ fn signal(pid: u32, signal: i32) {
 }
 
 /// Step 1. Returns how many ended on SIGTERM and how many needed SIGKILL.
-fn stop_programs(report: &mut Report) -> (usize, usize) {
+fn stop_programs() -> (usize, usize) {
     let me = std::process::id();
     let programs: Vec<Process> = processes()
         .into_iter()
@@ -86,22 +95,17 @@ fn stop_programs(report: &mut Report) -> (usize, usize) {
         .filter(|p| !p.name.starts_with("/scheme/initfs/") && !KEEP.contains(&base_name(&p.name)))
         .collect();
     let targets: BTreeSet<u32> = programs.iter().map(|p| p.pid).collect();
-    report.say(&format!("SIGTERM to {} programs", targets.len()));
     for p in &programs {
-        report.say(&format!("SIGTERM {} {}", p.pid, p.name));
         signal(p.pid, libc::SIGTERM);
     }
-    report.say("waiting");
     let alive = || -> BTreeSet<u32> {
         processes().into_iter().map(|p| p.pid).filter(|pid| targets.contains(pid)).collect()
     };
     let deadline = Instant::now() + GRACE;
     let mut left = alive();
     while !left.is_empty() && Instant::now() < deadline {
-        sleep(Duration::from_millis(100));
-        report.say("slept");
+        pause(Duration::from_millis(100));
         left = alive();
-        report.say(&format!("{} left", left.len()));
     }
     for &pid in &left {
         signal(pid, libc::SIGKILL);
@@ -136,12 +140,11 @@ pub fn kstop(tool: &'static str, request: &str) -> ! {
         tool,
         console: OpenOptions::new().write(true).open("/scheme/debug").ok(),
     };
-    report.say("stopping programs");
-    let (stopped, killed) = stop_programs(&mut report);
+    let (stopped, killed) = stop_programs();
     report.say(&format!("{stopped} programs stopped, {killed} killed"));
     let filesystems = close_file_systems();
     report.say(&format!("{filesystems} file systems closed"));
-    sleep(SETTLE);
+    pause(SETTLE);
     report.say(&format!("{request} through kstop"));
     let result = OpenOptions::new()
         .write(true)
