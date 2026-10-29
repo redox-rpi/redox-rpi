@@ -2,7 +2,8 @@
 
 For people who know macOS, Windows or a Linux shell, but not Redox. It
 covers the redox-rpi image on a Raspberry Pi 3 Model B+ (or in QEMU).
-Every command here was tried on the stable image
+To get the image onto an SD card and boot it first, see
+[getting started](getting-started.md). Every command here was tried on the stable image
 `v0.3.0-dev-15-g24fbb96+x9f76` in QEMU (2026-10-29), except the keys of the
 full-screen programs `kibi` and `less`, which come from their
 documentation. Things that are missing or behave differently are listed

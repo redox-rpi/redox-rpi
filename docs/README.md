@@ -7,6 +7,7 @@ the pieces fit together, how to build and test, and what we found on the way.
 
 | Page | What it explains |
 |---|---|
+| [Getting started](getting-started.md) | From the download to the first login: what you need, writing the SD card, serial console or screen, first boot, first commands, reporting problems |
 | [User guide](user-guide.md) | Using the image: logging in, the Ion shell, schemes, network, time, `pkg`, reboot, logs |
 | [Time](time.md) | The clock at boot, `timesync`, setting the time by hand, time zones, timers (`timerd`), the DS3231 clock module |
 | [Smart home](smarthome.md) | MQTT with `mqtt-pub` and `mqtt-sub`, the Pi in Home Assistant with `ha-bridge` |
