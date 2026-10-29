@@ -76,4 +76,9 @@ that their GND lands on pin 6, VCC on pin 1).
 
 ## Results
 
-- Not tested yet.
+- QEMU, image `v0.3.0-dev-146-g5a7fc2c+x630f` (gpio and i2c together):
+  all 9 checks of `qemu-check.sh` pass: `bus 1 at 0x3f804000, 100 kHz
+  (core 350 MHz)`, the scan finds only 68, the year reads `26`, RAM
+  written at 08 reads back, 0x50 gives "No such device or address". The
+  DS1338 wraps at 0x40, so `i2c dump 68` repeats its registers there.
+- Pi test: queued as #39 (needs the DS3231 wired).
