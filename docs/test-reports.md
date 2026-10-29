@@ -1756,3 +1756,48 @@ Test 68 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13)), branch
 - Serial log: no `UNHANDLED EXCEPTION` except the known `pcid` panic at
   boot (the exceptions the tests cause on purpose now arrive as signals).
 - Standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-217-g1d028a4+x19b9`
+
+Built 2026-10-29T15:07:19Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `boot-time`, `rtl8152`, `timesync`. test 69 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, second round), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-217-g1d028a4+x19b9 |
+| manifest | pass | present in the image |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 69 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), branch
+`boot-time` 1d028a4, image `~/t18-work/image-bt5/`, staged with
+`~/t18-work/bt5-stage/scripts/netboot.sh` (boot-time `netboot.cmd`, the
+image's own bootloader with the 1 s wait, md5 `ce0d8b09…`). Three boots,
+timelines in `~/t18-work/tl-pi-bt5-{1,2,3}.txt` on homenodellm:
+
+| Seconds | boot 1 (devsh reset) | boot 2 (serial reset) | boot 3 (devsh reset) |
+|---|---|---|---|
+| `kreset` | about 1.6 | 5.19 | 1.56 |
+| kernel starts | 19.52 | 22.74 | 19.07 |
+| `switchroot to /usr` | 22.38 | 26.47 | 21.98 |
+| `redox login:` | **23.34** | **27.32** | **22.89** |
+| `redox login:` after `kreset` | about 21.7 | 22.1 | 21.3 |
+| `40_dwc2d.service ready after` | 6283 ms | 6252 ms | 6199 ms |
+| network | **none**: `dhcpd: Can't open /scheme/netcfg/ifaces/eth0/mac` | yes | yes |
+
+- `init: switchroot to /usr` now comes before `40_dwc2d.service ready`
+  (dwc2d is ready about 4 s after the login prompt, at init 6.5–7.3 s):
+  **pass**. Login about 6.5 s earlier than test 53's boot-time image
+  (29.05–29.51 s from the reset, about 27.3 s after `kreset`).
+- **Fail**: in boot 1 `dhcpd` started before dwc2d had made `eth0` and gave
+  up (`Can't open /scheme/netcfg/ifaces/eth0/mac`), so the Pi had no network
+  and devsh never answered (reset over the serial console). Boots 2 and 3
+  got their address. So `dhcpd` (and what needs the network) must still
+  wait for the adapter, or retry.
+- First devsh answer: not measured exactly; in boots 2 and 3 devsh answered
+  within a minute of the reset.
+- Standard checks pass (boot 3), 0 of 300 starts failed. Other units of
+  100 ms or more: `40_rpi-firmwared` 852 ms, `40_hwd` about 445 ms,
+  `40_bcm2835-sdhcid` about 445 ms, `00_ptyd` about 158 ms, `60_data`
+  413–433 ms.
