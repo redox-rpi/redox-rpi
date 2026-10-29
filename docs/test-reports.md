@@ -1618,3 +1618,49 @@ Test 28 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), branch
   cache maintenance itself cannot be read from this: the test 37 image at
   the same clock is even slower than this one. A like-for-like number needs
   the `t3-icache` base built once without `icache-sync`.
+
+## 2026-10-29: `v0.3.0-dev-93-g2d1a2e4+xc99c`
+
+Built 2026-10-28T20:09:08Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over netboot. Experiments: `cpu-ondemand`, `rtl8152`, `timesync`. test 25 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23) CPU clock follows the load), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-93-g2d1a2e4+xc99c |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 25 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), branch `cpu-ondemand`. Boot log: `rpi-firmwared: ARM clock 600 -> 1400 MHz`. `ondemand-check.py <repo> <pi> 2 30` (from `cpu-ondemand`), first lines:
+
+```
+idle: mode ondemand target max load 100 switches 16 min 600000000 max 1400000000 1400000000
+ondemand: 50 starts in 8.1 s, 0 failed; now mode ondemand target max load 100 switches 18 min 600000000 max 1400000000 1400000000
+performance: 50 starts in 8.3 s, 0 failed; now mode performance target max load 61 switches 18 min 600000000 max 1400000000 1400000000
+powersave: 50 starts in 16.0 s, 0 failed; now mode powersave target min load 100 switches 19 min 600000000 max 1400000000 600000000
+ondemand: 50 starts in 8.1 s, 0 failed; now mode ondemand target max load 83 switches 22 min 600000000 max 1400000000 1400000000
+performance: 50 starts in 11.7 s, 0 failed; now mode performance target max load 97 switches 22 min 600000000 max 1400000000 1400000000
+powersave: 50 starts in 16.0 s, 0 failed; now mode powersave target min load 92 switches 23 min 600000000 max 1400000000 600000000
+after timing: mode ondemand target max load 81 switches 26 min 600000000 max 1400000000 1400000000
+soak: 0 of 50 starts failed; mode ondemand target max load 99 switches 30 min 600000000 max 1400000000 1400000000
+…
+soak: 0 of 6500 starts failed; mode ondemand target max load 100 switches 354 min 600000000 max 1400000000 1400000000
+end: mode ondemand target max load 100 switches 354 min 600000000 max 1400000000 1400000000 ['59610', '0x00080008']
+```
+
+- Timed 50 starts: ondemand 8.1 and 8.1 s, performance 8.3 and 11.7 s,
+  powersave 16.0 and 16.0 s (600 MHz): **pass**.
+- Soak, 30 minutes of rounds of 50 starts with 3 s pauses: **0 of 6500
+  starts failed**, switches grew from 30 to 354: **pass**. The serial log
+  has `rpi-firmwared: no longer throttled` 94 times (soft temperature
+  limit, about 60 °C, `throttled 0x00080008` at the end) and no exception
+  except the known `pcid` panic.
+- **Fail: idle does not go to the minimum.** The first `idle` line has
+  `target max load 100`, 1400 MHz. Checked by hand after the soak: after
+  `sleep 10` and `sleep 30` with nothing else running, still `target max`,
+  load 72–100, 1400 MHz, and 30 more switches during the 30 s. `ps`: the
+  initfs `redoxfs` (PID 20) had 14 min 11 s CPU time (`netstack` 1 min,
+  `rpi-firmwared` 9 s), so something keeps a CPU busy and the governor
+  sees load. 
+- Standard checks pass, 0 of 300 starts failed.
