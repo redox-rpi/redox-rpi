@@ -4,7 +4,9 @@
 #
 # 1. With the USB network card: unplug the USB keyboard, plug a new one in
 #    and type on it at the login prompt; plug in a second network card and
-#    unplug the first, then reach devshd through the second one.
+#    switch the first one's hub port off and on through /tmp/dwc2d-cycle
+#    (the test command for the real Pi, scripts/pi-hotplug-test.sh): the
+#    network moves to the second card; then unplug the first card.
 # 2. Without a network card: once the system is up, plug one in; dhcpd must
 #    configure the network and devshd must answer.
 #
@@ -19,7 +21,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 socket="$ROOT/images/qemu-monitor.sock"
-log="$ROOT/images/qemu-hotplug.log"
 failed=0
 read -r port1 port2 <<< "${HOTPLUG_PORTS:-12323 12399}"
 
@@ -72,7 +73,7 @@ qom_path() {
     local i path
     for i in 0 1 2 3 4 5; do
         path="/machine/peripheral-anon/device[$i]"
-        if monitor "qom-get $path type" | grep -qx "$1"; then
+        if monitor "qom-get $path type" | grep -q "\"$1\""; then
             echo "$path"
             return
         fi
@@ -107,7 +108,10 @@ wait_devsh() {
     return 1
 }
 
+# Each boot has its own serial log: $1 is its number.
 boot() {
+    log="$ROOT/images/qemu-hotplug-$1.log"
+    shift
     rm -f "$socket" "$log"
     QEMU_DEVSH_PORT=$port1 timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" "$@" --monitor "$socket" --image "$image" \
         < /dev/null > "$log" 2>&1 &
@@ -127,7 +131,7 @@ stop() {
 trap 'stop' EXIT
 
 echo "== boot 1: keyboard and network card hotplug"
-boot --usb-net
+boot 1 --usb-net
 if ! wait_devsh $port1 60; then
     echo "FAIL: devshd did not answer"
     exit 1
@@ -156,16 +160,30 @@ net=$(qom_path usb-net)
 monitor "netdev_add user,id=hpnet,hostfwd=tcp::$port2-:2323" \
     "device_add usb-net,netdev=hpnet,id=hpnet0" > /dev/null
 check "second network card found" wait_log "dwc2d: CDC Ethernet at address 4" 10
-lines=$(tr -d '\r' < "$log" | grep -ac "dwc2d: network on the adapter")
-monitor "device_del $net" > /dev/null
-check "first network card unplugged" wait_log "device at address 3 removed" 10
+check "network stays on the first card" wait_devsh $port1 5
+
+# The test command for the real Pi: switch the active card's hub port off
+# and on. QEMU's hub powers its ports together, so dwc2d forgets and resets
+# the card; the network moves to the second card meanwhile. (Unplugging the
+# active card with device_del would crash QEMU: its dwc2 asserts on a
+# device removed while a channel still has a transfer pending to it.)
+moves=$(tr -d '\r' < "$log" | grep -ac "dwc2d: network on the adapter")
+devsh $port1 "echo network > /tmp/dwc2d-cycle" > /dev/null
+check "network port switched off and on" wait_log "dwc2d: cycle: hub 1 port 2 power on" 15
 check "network moved to the second card" \
-    bash -c "sleep 3; [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: network on the adapter') -gt $lines ]"
-check "devshd through the second card" wait_devsh $port2 10
+    bash -c "sleep 2; [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: network on the adapter') -gt $moves ]"
+check "devshd through the second card" wait_devsh $port2 20
+check "first card found again" \
+    bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'hub 1 port 2: device connected') -ge 2 ]"
+
+# Unplugging the card not in use is safe in QEMU.
+monitor "device_del $net" > /dev/null
+check "first card unplugged" wait_log "dwc2d: hub 1 port 2: device at address [0-9]+ removed" 10
+check "devshd still through the second card" wait_devsh $port2 10
 stop
 
 echo "== boot 2: network card plugged in after boot"
-boot
+boot 2
 check "dhcpd keeps trying without a card" wait_log "dhcpd: .*trying again" 240
 monitor "netdev_add user,id=hpnet,hostfwd=tcp::$port1-:2323" \
     "device_add usb-net,netdev=hpnet,id=hpnet0" > /dev/null

@@ -14,14 +14,16 @@
 ## In progress
 
 - [#17](https://github.com/redox-rpi/redox-rpi/issues/17) hotplug, branch
-  [`usb-hotplug`](https://github.com/redox-rpi/redox-rpi/tree/usb-hotplug)
-  (on `dwc2-default`), experiment `usb-hotplug`: base `0030` rescans the root port and all hub ports
-  every second; a keyboard or network adapter plugged in later is used,
-  and the network moves to the best adapter (RTL815x with a link, else
-  LAN7800, else RTL815x without a link, else CDC Ethernet), keeping its MAC
-  address and lease. Base `0031`: `dhcpd` tries again until the server
-  answers. QEMU: `scripts/test-hotplug.sh`. Pi test queued, bundled with
-  the Anker hub test (#4).
+  [`usb-hotplug`](https://github.com/redox-rpi/redox-rpi/tree/usb-hotplug),
+  experiment `usb-hotplug` (base `0030`–`0032` there). dwc2d rescans the
+  root port and all hub ports every second. A keyboard or network adapter
+  plugged in later is used, and the network moves to the best adapter
+  (RTL815x with a link, else LAN7800, else RTL815x without a link, else CDC
+  Ethernet), keeping its MAC address and lease. `dhcpd` tries again until
+  the server answers. A test command (`/tmp/dwc2d-cycle`) switches a hub
+  port off and on for tests without a person. **Pi test #35 passed**
+  ([report](../test-reports.md)); the merge waits for the maintainer's OK
+  (after the sdhost step of rc2). The Anker hub steps stay with test #4.
 - [#35](https://github.com/redox-rpi/redox-rpi/issues/35) `lsusb` and `hwinfo` (v0.7.0): experiment
   [`hwinfo`](../../patches/experiments/hwinfo/README.md), branch `hwinfo`
   (after `usb-hotplug`); `dwc2d` lists its devices in
@@ -30,10 +32,11 @@
 ## Next
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks on
-  `dwc2d` (bulk-only transport, SCSI), with the Bootloader? session for the
-  FAT side.
+  `dwc2d` (bulk-only transport, SCSI) as a driver-block disk scheme
+  `disk.usb-dwc2+<port>-scsi`; the boot session's `fatfsd` mounts it.
 
 ## Later
 
+- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
 - Keyboard layouts, `lsusb`
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

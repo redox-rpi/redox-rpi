@@ -1,0 +1,146 @@
+From 3cba2ab378ab4edcae7c6448ebf58082f7cd7ac7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:00:06 +0100
+Subject: [PATCH] dwc2d: switch a hub port off and on on request, for hotplug
+ tests
+
+A test without a person writes `network`, `keyboard` or `<hub> <port>`
+to /tmp/dwc2d-cycle. The next rescan switches that hub port's power off,
+waits until the port reports the disconnection (at most 2 s), forgets the
+device, and switches the power on again; the rescans after it find the
+device anew. A hub that powers its ports only together leaves the device
+connected; it is then forgotten and reset, which runs the same code in
+dwc2d without the electrical removal. The log says which one happened,
+and the hub line now says whether the hub switches power per port.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 54 +++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs      | 32 +++++++++++++++++-
+ 2 files changed, 84 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 06ebceb..01cac8d 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -270,7 +270,11 @@ impl Bus {
+         let desc = self.request(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71)?;
+         let ports = u16::from(desc[2]);
+         let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
+-        println!("dwc2d: {indent}hub at address {hub}: {ports} ports");
++        // wHubCharacteristics, bits 1:0: 00 all ports powered together,
++        // 01 each port on its own.
++        let per_port_power = desc[3] & 0x3 == 0x1;
++        let power = if per_port_power { "per port" } else { "ganged" };
++        println!("dwc2d: {indent}hub at address {hub}: {ports} ports, power switching {power}");
+         let this = Hub { address: hub, max_packet, speed, depth, tt: hub_tt, ports };
+         self.hubs.push(this);
+ 
+@@ -390,6 +394,54 @@ impl Bus {
+         self.enumerate(speed, 0, None, None)
+     }
+ 
++    /// For tests without a person: switch the power of a hub port off and on
++    /// again, so its device goes away and comes back as if unplugged. The
++    /// next [`Bus::scan`]s see both. Where the hub cannot switch the port
++    /// off on its own (ganged power), the device stays connected; then it
++    /// is forgotten and reset instead, which runs the same code in dwc2d
++    /// but not the electrical removal.
++    pub fn cycle_port(&mut self, hub_address: u8, port: u16, removed: &mut Vec<u8>) -> Result<(), Error> {
++        let Some(hub) = self.hubs.iter().find(|h| h.address == hub_address).copied() else {
++            println!("dwc2d: cycle: no hub at address {hub_address}");
++            return Ok(());
++        };
++        let (a, mp, sp) = (hub.address, hub.max_packet, hub.speed);
++        println!("dwc2d: cycle: hub {a} port {port} power off");
++        self.request(a, mp, sp, 0x23, REQ_CLEAR_FEATURE, PORT_POWER, port, 0)?;
++        let start = Instant::now();
++        let mut gone = false;
++        while start.elapsed() < Duration::from_secs(2) {
++            sleep(Duration::from_millis(100));
++            let (status, _) = self.port_status(a, mp, sp, port)?;
++            if status & PORT_STAT_CONNECTION == 0 {
++                gone = true;
++                break;
++            }
++        }
++        if gone {
++            println!("dwc2d: cycle: hub {a} port {port} disconnected after {} ms", start.elapsed().as_millis());
++        } else {
++            println!("dwc2d: cycle: hub {a} port {port} still connected, forgetting its device instead");
++        }
++        // Forget the device now, whether or not the hub reported the change.
++        let slot = Some((a, port));
++        if let Some(address) = self.devices.iter().find(|d| d.parent == slot).map(|d| d.address) {
++            println!("dwc2d: hub {a} port {port}: device at address {address} removed");
++            self.remove(address, removed);
++        }
++        self.failed.remove(&slot);
++        sleep(Duration::from_millis(500));
++        println!("dwc2d: cycle: hub {a} port {port} power on");
++        self.request(a, mp, sp, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
++        // The next scan finds the device again.
++        Ok(())
++    }
++
++    /// The hub and port a device is plugged into.
++    pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
++        self.devices.iter().find(|d| d.address == address)?.parent
++    }
++
+     /// Leave the root port alone until its device is unplugged: it failed
+     /// to enumerate.
+     pub fn give_up_root(&mut self) {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 3972850..1f4de46 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -385,6 +385,10 @@ impl Timer {
+ 
+ /// How often to look for devices plugged in or removed.
+ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
++/// A test without a person writes a port to this file; the next rescan
++/// switches it off and on (see [`Bus::cycle_port`]): `network` or
++/// `keyboard` for the port of the device in use, or `<hub address> <port>`.
++const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ /// How long a network adapter found at boot may wait for its link, so DHCP
+ /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
+ /// can take longer than 5 s. Adapters plugged in later do not wait: their
+@@ -536,7 +540,33 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             Source::Hotplug => {
+                 hotplug.fired();
+-                let changes = bus.scan();
++                let mut cycled = Vec::new();
++                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
++                    let _ = std::fs::remove_file(CYCLE_REQUEST);
++                    let net = scheme.adapter_mut();
++                    let request = request.trim();
++                    let port = match request {
++                        "network" => net.active.and_then(|a| bus.port_of(a)),
++                        "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
++                        _ => {
++                            let mut words = request.split_whitespace().map(str::parse::<u16>);
++                            match (words.next(), words.next()) {
++                                (Some(Ok(hub)), Some(Ok(port))) if hub <= 127 => Some((hub as u8, port)),
++                                _ => None,
++                            }
++                        }
++                    };
++                    match port {
++                        Some((hub, port)) => {
++                            if let Err(err) = bus.cycle_port(hub, port, &mut cycled) {
++                                println!("dwc2d: cycle: {err:?}");
++                            }
++                        }
++                        None => println!("dwc2d: cycle: no port for {request:?}"),
++                    }
++                }
++                let mut changes = bus.scan();
++                changes.removed.extend(cycled);
+                 let net = scheme.adapter_mut();
+                 for &address in &changes.removed {
+                     net.remove(address);
+-- 
+2.54.0 (Apple Git-157)
+

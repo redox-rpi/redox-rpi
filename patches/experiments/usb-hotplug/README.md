@@ -1,7 +1,8 @@
 # USB hotplug (experiment `usb-hotplug`)
 
 [#17](https://github.com/redox-rpi/redox-rpi/issues/17). Applies after the
-default patches of branch `dwc2-default` (base `0020`, `0022`, `0023`).
+default patches (base `0020`, `0022`, `0023` from `dwc2-default`, on main
+since 403aac5).
 
 - **base `0030`:** `dwc2d` asks the root port and every port of every hub
   for connection changes once a second. A new device is reset and
@@ -24,6 +25,17 @@ default patches of branch `dwc2-default` (base `0020`, `0022`, `0023`).
   configured, and reports only the first failure. A cable or adapter
   plugged in after boot gets an address.
 
+- **base `0032`:** a test command for hotplug without a person: write
+  `network`, `keyboard` or `<hub address> <port>` to `/tmp/dwc2d-cycle`,
+  and the next rescan switches that hub port off and on. A hub that powers
+  its ports only together (ganged) keeps the device connected; dwc2d then
+  forgets and resets it, which runs the same code without the electrical
+  removal. The log says which one happened, and the hub line says
+  `power switching per port` or `ganged`. On the real Pi:
+  `scripts/pi-hotplug-test.sh <pi address>` cycles the network adapter's
+  port three times and checks the log and devshd (`KEYBOARD=1` adds the
+  keyboard's port).
+
 Build: `scripts/build-image.sh --experiment usb-hotplug`.
 
 QEMU check: `scripts/test-hotplug.sh [image]` boots twice. First it
@@ -32,3 +44,11 @@ in a second network card, unplugs the first and reaches devshd through the
 second. Then it boots without a network card and plugs one in later: dhcpd
 must configure it. `HOTPLUG_PORTS="<a> <b>"` picks the host ports when
 12323 is taken by another QEMU.
+
+**Result on a real Pi 3B+ (2026-10-29, test #35,
+`v0.3.0-dev-148-g54f7433+x657a`): pass.** Standard checks pass (0 of 300
+starts failed). The Pi's hubs switch power per port: 3 of 3 power cycles
+of the LAN7800's port, network back after 7–10 s. The keyboard was
+unplugged and plugged into 4 ports, found each time. With the cable pulled
+during boot, dhcpd configured the network after 4 attempts
+([report](../../../docs/test-reports.md)).
