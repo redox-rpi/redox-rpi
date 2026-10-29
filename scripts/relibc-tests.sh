@@ -8,10 +8,9 @@
 # machine and runs /usr/share/relibc-tests/run.ion on the serial console.
 # Needs no Pi. Run from the build host, in your own clone:
 #
-#   scripts/relibc-tests.sh [--ref <ref>] [--experiment <name>]...
-#                           [--image <file>] [--expected <file>] [--issue]
+#   scripts/relibc-tests.sh [--experiment <name>]... [--image <file>]
+#                           [--expected <file>] [--issue]
 #
-#   --ref         check out this ref first (detached), e.g. origin/main
 #   --experiment  build with this experiment as well (repeatable)
 #   --image       test this image instead of building one; it must have been
 #                 built with --experiment relibc-tests
@@ -24,6 +23,9 @@
 # Tests on the list that passed are reported as fixed but do not fail the
 # run: remove them from the list. The result is written to
 # build/relibc-tests/<build ID>.txt, the serial log next to it.
+#
+# Nightly: config/redox-relibc-tests.service checks out origin/main in
+# ~/redox-rpi-relibc-tests and runs this script with --issue.
 
 set -euo pipefail
 
@@ -34,14 +36,12 @@ ISSUE_TITLE="Nightly: relibc tests differ from the expected failures"
 # The suite took 404 s in QEMU on 2026-10-29; boot about 70 s.
 TIMEOUT=2400
 
-ref=""
 image=""
 expected="$ROOT/config/relibc-tests-expected.txt"
 issue=0
 experiments=(--experiment relibc-tests)
 while [ $# -gt 0 ]; do
     case "$1" in
-        --ref) ref="$2"; shift 2 ;;
         --experiment) experiments+=(--experiment "$2"); shift 2 ;;
         --image) image="$(readlink -f "$2")"; shift 2 ;;
         --expected) expected="$(readlink -f "$2")"; shift 2 ;;
@@ -53,11 +53,6 @@ done
 log() { echo "$(date -u +%H:%M:%S) $*"; }
 
 cd "$ROOT"
-if [ -n "$ref" ]; then
-    git fetch -q --tags --prune origin
-    git checkout -q --detach "$ref"
-    log "$ref is $(git describe --tags) ($(git rev-parse --short HEAD))"
-fi
 out="$ROOT/build/relibc-tests"
 mkdir -p "$out"
 
