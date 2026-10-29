@@ -10,10 +10,11 @@
 
 ## In progress
 
-- [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
-  `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,
-  2026-10-28): no errors from these services, network up, `pi-test.py`
-  passes. Open: typing on the USB keyboard, then the merge.
+- [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: passed on a
+  Pi 3B+ as experiment `pi-clean-boot` (tests #14 and #5, 2026-10-28,
+  keyboard checked in #5). Branch `clean-boot-default` makes it the
+  default base patch `0030`: passes in QEMU and on the Pi (test #33,
+  2026-10-29). Merged to main 2026-10-29 as base `0030`, ahead of sdhost (rc2 step 3).
 
 - [#15](https://github.com/redox-rpi/redox-rpi/issues/15) boot the kernel straight from the Pi firmware, without
   U-Boot and the Redox bootloader (milestone v0.4.0), branch

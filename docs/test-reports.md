@@ -1108,3 +1108,36 @@ scripts `udp-echo.py` and `mdns-query.py` from `mdns6`:
   `mdns-query.py redox-rpi.local` over IPv4: A plus both AAAA as
   additional records: **pass** (the LAN7800 takes `33:33:00:00:00:fb`).
 - Standard checks pass; only the known `pcid` panic in the serial log.
+
+
+## 2026-10-29: `v0.3.0-dev-129-g6917241+x9f76` (clean boot as the default patch, #18), QEMU
+
+Branch `clean-boot-default`: base `0024` (was experiment `pi-clean-boot`; base `0030` on main)
+on main, with `timesync` and `rtl8152`. QEMU `raspi3b`, serial console,
+no network card (`scripts/qemu-raspi3b.sh --run ps`).
+
+- Login reached, `/etc/redox-rpi-release` shows the build ID.
+- No `pcid`, `pcid-spawner`, `audiod` or `rtcd` line in the console and
+  no such process in `ps`; no `pcid` panic.
+- `netstack` "exited without notifying readiness": this run has no network
+  card. The Pi test (#33) checks the network.
+
+## 2026-10-29: #33, `v0.3.0-dev-129-g6917241+x9f76` (clean boot as the default patch, #18), real Pi
+
+Same image as the QEMU check above, real Pi 3B+ over netboot.
+
+Boot log: none of the `pcid` panic, `pcid-spawner`, `audiod` or `rtcd`
+lines; no other failed service. `dwc2d: LAN78xx link up`, DHCP bound to
+192.168.178.148. `ps` over devsh: no `pcid`, `audiod` or `rtcd` process.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-129-g6917241+x9f76 |
+| manifest | pass | present in the image |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Stable image `v0.3.0-dev-15-g24fbb96+x9f76` staged again afterwards and
+booted to the login prompt.
