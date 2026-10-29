@@ -1,0 +1,8 @@
+[package]
+name = "i2c"
+description = "Look at I2C devices through /scheme/i2c: scan the bus, read and write registers"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
