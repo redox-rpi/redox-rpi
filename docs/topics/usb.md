@@ -16,7 +16,7 @@
 - [#36](https://github.com/redox-rpi/redox-rpi/issues/36) keyboard layouts, German first (milestone v0.5.0): experiment
   [`keyboard-de`](../../patches/experiments/keyboard-de/) on branch
   `keyboard-layouts` adds a `de` map with AltGr to `inputd`; switch with
-  `inputd -K de`. QEMU test `test-keymap.sh`. Next: pick the layout at boot.
+  `inputd -K de`. An image with the experiment types German from boot (`/etc/init.d/05_keymap.service`). QEMU test `test-keymap.sh`. Next: Pi test with a German keyboard.
 
 ## Next
 

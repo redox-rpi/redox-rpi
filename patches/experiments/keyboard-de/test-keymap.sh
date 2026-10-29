@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Check the German keyboard layout (#36) in QEMU: switch inputd to `de` over
-# the serial console, type on QEMU's USB keyboard at the console's login
-# prompt, and compare the file the typed command wrote. Needs an image built
+# Check the German keyboard layout (#36) in QEMU: the image switches inputd to
+# `de` at boot (config.toml); type on QEMU's USB keyboard at the console's
+# login prompt, and compare the file the typed command wrote. Needs an image built
 # with --experiment keyboard-de. Uses no network port, so it can run while
 # other QEMU tests use port 12323.
 #
@@ -18,16 +18,16 @@ out="$ROOT/images/qemu-keymap.out"
 mkdir -p "$ROOT/images"
 rm -f "$socket" "$log"
 
-# The serial console switches the layout, then waits while the USB keyboard
-# types, then shows the file.
+# The serial console only waits while the USB keyboard types, then shows the
+# file.
 "$ROOT/scripts/qemu-raspi3b.sh" --monitor "$socket" --image "$image" --timeout 600 \
-    --run "inputd -K de" --run "sleep 150" --run "cat /home/root/de.txt" \
+    --run "sleep 150" --run "cat /home/root/de.txt" \
     < /dev/null > "$out" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null || true' EXIT
 
 # The serial console logs in before the boot ends; type once the rootfs
-# services (devshd comes late) are up and the layout is switched.
+# services (devshd comes late, after the keymap unit) are up.
 for _ in $(seq 300); do
     grep -aq "sleep 150" "$log" 2>/dev/null && grep -aq "devshd" "$log" && break
     sleep 2

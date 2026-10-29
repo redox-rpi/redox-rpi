@@ -20,13 +20,16 @@ Base patch
   layouts without an AltGr table ignore it as before;
 - the dead keys ^ ´ ` type their character at once (no é from ´ e yet).
 
-Switch on the running system:
+An image built with this experiment types German from boot: its
+[`config.toml`](config.toml) adds `/etc/init.d/05_keymap.service`, which
+runs `inputd -K de` once the root file system is up (inputd itself starts
+in the initfs with US). On an SD card image, edit the unit for another
+layout (`inputd --keymaps` lists them) or remove it. Switch on the running
+system:
 
 ```bash
-inputd -K de
+inputd -K us
 ```
-
-A setting that picks the layout at boot comes next.
 
 ## Test in QEMU
 
@@ -34,7 +37,7 @@ A setting that picks the layout at boot comes next.
 patches/experiments/keyboard-de/test-keymap.sh [image]
 ```
 
-It runs `inputd -K de` on the serial console, logs in on the console with
+It boots the image (German from boot), logs in on the console with
 QEMU's USB keyboard, types `cat > /home/root/de.txt` and the line
 `zyß@{[]}\~|#öäü€"§'<>` (then Ctrl-D) as the keys of a German keyboard,
 and checks the file. The characters go to `cat`, not to ion, which
