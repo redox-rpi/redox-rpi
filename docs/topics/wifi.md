@@ -190,9 +190,25 @@ The Wi-Fi password for the test network is a secret: it goes into the
 image on homenodellm at build time, never into the repository or a test
 log.
 
+## In progress
+
+Step 1 on branch `wifi` (on top of `sdhost-ctxleak`), experiment
+[`wifi-sdio`](../../patches/experiments/wifi-sdio/README.md):
+
+- `rpi-firmwared` gets `/scheme/rpi-firmware/wifi_power`, WL_REG_ON on
+  firmware expander GPIO 129 (base `0030`).
+- `bcm2835-sdiod` (base `0031`), a probe that runs once at boot: GPIO 34-39
+  to the Arasan, SDIO init at 400 kHz, CCCR and CIS, function 1, ALP
+  clock, and the ChipCommon chip ID over CMD52 and CMD53, then again at
+  25 MHz on 4 data lines. It refuses to run when the SD card is on the
+  Arasan (GPIO 48-53 ALT3).
+- QEMU (no Wi-Fi chip): starts and stops with a CMD5 timeout, the card on
+  sdhost keeps working. Pi test #57 is queued for the Pi test agent
+  (image `v0.3.0-dev-216-gfb78c4a+xd4e7`).
+
 ## Next
 
-Not started. Milestones, each a Pi test:
+Milestones, each a Pi test:
 
 1. After #6: the SDIO driver enumerates the chip and reads chip ID 0x4345.
 2. Firmware (minimal file) and NVRAM loaded, the "ver" iovar answers;
