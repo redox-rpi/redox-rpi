@@ -1,0 +1,34 @@
+# Shorter dwc2d boot (experiment `dwc2d-boottime`)
+
+Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
+--experiment dwc2d-boottime`), which it needs: devices that connect late
+are found by the hotplug rescan. Issue: #47 (boot time).
+
+On the Pi 3B+, `40_dwc2d.service` took 6.2 s until ready (test 53),
+which is 60 % of the time from kernel start to `redox login:`:
+
+| From the boot log (test 53) | Time |
+|---|---|
+| controller, root port reset | 0.25 s |
+| hub 1 (4 ports): wait for empty ports to connect | 1.2 s |
+| hub 2 (3 ports): the same | 1.15 s |
+| hub 4 (4 ports, the Anker hub): the same | 1.2 s |
+| LAN7800 bring-up, then waiting for its link | 0.15 s + 1.71 s |
+
+- **base `0037`:** a hub takes the ports that are connected after
+  power-good and moves on, instead of waiting a second for each empty
+  port to connect. The network adapters start without waiting for their
+  link. dwc2d then waits for the first link (up to 10 s, as before) and
+  runs the hotplug rescan meanwhile, so devices that connect late and the
+  LAN7800's autonegotiation overlap. Without a network adapter it looks
+  for late devices for 1 s. The adapter whose MAC address the network
+  stack keeps is picked after that wait, by link, as before. The LAN7800's
+  link is now followed after boot too, like the RTL815x's.
+  - dwc2d prints `devices ready after N ms` when it reports ready.
+  - Expected on the Pi: about 2.2 s instead of 6.2 s (bounded by the
+    LAN7800's autonegotiation).
+
+## Tests
+
+- **QEMU**: `scripts/test-hotplug.sh` and the boot time to `devices
+  ready`.
