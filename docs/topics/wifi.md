@@ -206,6 +206,76 @@ Step 1 on branch `wifi` (on top of `sdhost-ctxleak`), experiment
   sdhost keeps working. Pi test #57 is queued for the Pi test agent
   (image `v0.3.0-dev-216-gfb78c4a+xd4e7`).
 
+Step 2 is written and waits for a good #57 (same branch and experiment,
+base `0032`, about 700 lines with tests). It builds and its unit tests
+pass; nothing of it has run against the chip yet.
+
+### Step 2: firmware start, version and MAC address
+
+**Firmware files.** Recipe `wifi-firmware` (in the experiment's `recipes/`
+directory; `build-image.sh` copies experiment recipes into the cookbook)
+downloads at build time, from pinned commits, and checks SHA-256:
+
+| File on the image (`/usr/lib/firmware/brcm/`) | From |
+|---|---|
+| `cyfmac43455-sdio-minimal.bin`, `-standard.bin`, `cyfmac43455-sdio.clm_blob` | RPi-Distro/firmware-nonfree `c91cd28`, `debian/config/brcm80211/cypress/` |
+| `brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt` | same, `brcm/brcmfmac43455-sdio.txt` (the 3B+ name is a link to it) |
+| `LICENCE.cypress` | linux-firmware tag `20250311` (firmware-nonfree has no copy) |
+
+The driver loads the minimal firmware (in-chip supplicant, see WPA2);
+`bcm2835-sdiod standard` takes the other one.
+
+**Sequence** (`bcm2835-sdiod` after the chip ID; as in OpenBSD's bwfm(4)
+and Linux' brcmfmac, both ISC, no code taken):
+
+1. Block sizes: function 1 64 bytes, function 2 512 bytes (FBR `0x110`,
+   `0x210`).
+2. Cores: ChipCommon register `0xfc` points to the enumeration ROM; it
+   lists each core with its register and wrapper address. Needed: ARM CR4
+   (`0x83e`), 802.11 (`0x812`), SDIO device (`0x829`).
+3. RAM: the CR4's bank registers give the size (expected 800 KiB); the base
+   is fixed per chip, `0x198000` for the 43455.
+4. Hold the ARM (wrapper IOCTL CPUHALT), reset the 802.11 core with PHY
+   reset and clock.
+5. Write the firmware at the RAM base with CMD53 in 64-byte blocks through
+   the 32 KiB backplane window; read it back. At 25 MHz, 4 bits, PIO.
+6. NVRAM: the text file reduced to `key=value` entries with NULs, padded,
+   plus a length word; written at the very end of RAM.
+7. Write the firmware's first word (its reset vector) to address 0,
+   release the ARM.
+8. Request the HT clock (CHIPCLKCSR `0x10`, wait for `0x80`), send the SDPCM
+   protocol version 4 through the to-chip mailbox, enable function 2 and
+   wait until it is ready: the firmware runs.
+9. Control channel (BCDC over SDPCM on function 2): a frame is a 4-byte
+   length header, an 8-byte SDPCM header (sequence, channel 0 = control,
+   data offset, the firmware's credit) and a 16-byte BCDC header (command,
+   length, request ID). `WLC_GET_VAR` (262) with `ver` gives the firmware
+   version string, with `cur_etheraddr` the MAC address. Replies are found
+   by polling the SDIO core's interrupt status for "frame indication" and
+   reading function 2 (64 bytes first, then the rest).
+
+**Pass on the Pi:** the log shows the cores, `firmware written … and read
+back`, `HT clock on`, `function 2 ready`, a version line like
+`wl0: … version 7.45.…` and a MAC address `b8:27:eb:…` (or `dc:a6:32:…`).
+
+**Open questions the Pi test answers:**
+
+- The NVRAM file has a fixed `macaddr=b8:27:eb:74:f2:6c`. Linux shows a
+  different address per Pi, so the chip's OTP probably wins; the MAC line
+  tells.
+- Left out for now, added if the firmware does not come up: the
+  save/restore and "keep SDIO on" (KSO) setup brcmfmac does for chips with
+  save/restore, the 43455's F2 watermark and MES busy control values, and
+  the CLM blob (only needed before a scan, step 3).
+- Speed: PIO register writes have a spacing delay; the download time is
+  printed. 50 MHz high-speed mode later.
+
+### Step 3 after that
+
+Load the CLM blob (`clmload` iovar in 1400-byte pieces), firmware events
+on channel 1, `escan` and its results, then join (step 4 of the list
+below).
+
 ## Next
 
 Milestones, each a Pi test:
