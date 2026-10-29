@@ -630,3 +630,104 @@ MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
 
 The memory fix holds on the Pi: the workload that ended #23 in a panic ran
 through. Rerun the cycles with the devshd hangup fix included.
+
+## 2026-10-28: `v0.3.0-dev-94-gb1fcbe1+xe9c4`
+
+Built 2026-10-28T19:56:45Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `timesync`. Experiment serial-rx (#28) on the stable base: serial-input-test.sh 20 of 20 lines of 200 characters complete. First pi-test.py attempt got no devsh output (#11), second attempt below
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-94-gb1fcbe1+xe9c4 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-94-gb1fcbe1+xe9c4.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Serial console: `patches/experiments/serial-rx/serial-input-test.sh 20`
+wrote 20 lines of `echo` plus 200 characters, each in one piece at
+115200 baud: **20 of 20 complete**. Login with `root` and the password at
+normal speed worked, and the reset command at the end, sent in one piece,
+arrived complete (before: cut off after 25 characters). No crash on the
+console except the known `pcid` panic (no `pi-clean-boot` in this image).
+The first `pi-test.py` attempt got no answer from devsh (#11); the second
+attempt is the table above.
+
+## 2026-10-29: `v0.3.0-dev-93-g2143ad7+x1044` (timerd, test #27)
+
+Built 2026-10-28T20:16:41Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test` (two
+test timers: `date` every minute, `uname -a` every 2 minutes with
+`persistent = true`). Issue [#22](https://github.com/redox-rpi/redox-rpi/issues/22).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 43 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| timers run | pass | both test timers on schedule, each `exited with code 0`; `timerd -l` shows next and last run; last runs in `/scheme/data/timerd/` |
+| waits for timesync | pass | boot 3: `timerd: clock set by timesync, 2026-10-29 10:47:41 UTC`, timers from 10:48 |
+| catch-up | pass | after `echo 1793000000 > /scheme/data/timerd/test-catchup` and a reset: `test-catchup: starting uname (missed since 2026-10-26 07:33:20 UTC)` once; `test-minute` did not catch up |
+| without NTP time | pass | boots 1 and 2: `timerd: no time from timesync after 300 s, going on with …`, then the timers ran on the saved time |
+
+**timesync hangs when the network comes up late** (boots 1 and 2): DHCP was
+not done when `timesync` started (`No route found for destination:
+9.9.9.9`, the DNS server). `timesync` then printed nothing more, neither a
+time nor "no time server answered", and did not write
+`/tmp/timesync.synced`; `timesync -n` by hand got the time. Its DNS lookup
+probably waits forever. The clock stayed 72 minutes behind (saved time).
+In boot 3 the network was up in time and everything worked. Not a `timerd`
+problem; needs a fix in `timesync` (a timeout around the lookup).
+
+Boot 1 also looked hung after 3 minutes: no log output, no echo on the
+serial console, devshd unreachable ("No route to host"); power-cycled with
+the user's permission. Boot 2 with the same image did not hang, so the
+cause is unclear.
+
+## 2026-10-29: `v0.3.0-dev-148-g54f7433+x657a`, USB hotplug (#35, [#17](https://github.com/redox-rpi/redox-rpi/issues/17))
+
+Branch `usb-hotplug` (`dwc2-default` + main + `--experiment usb-hotplug`),
+real Pi 3B+ over netboot, the maintainer at the Pi for part B. **Pass.**
+
+Part A, automated:
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-148-g54f7433+x657a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-148-g54f7433+x657a.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| hubs | info | hub 1 (4 ports) and hub 2 (3 ports, the LAN7515's) switch power per port; the external hub with the keyboard (05e3:0610) is ganged |
+| port cycles | pass | `scripts/pi-hotplug-test.sh 192.168.178.148 3`: 3 of 3 times the LAN7800's port (hub 2 port 1) lost power, disconnected after 102–104 ms, was found again and took the network back; devshd answered after 7, 9 and 10 s |
+| dwc2d CPU | info | 2.84 s user + 2.98 s system after boot, `pi-test.py` and the 300 starts |
+
+Part B, with a person:
+
+| Check | Result | Detail |
+|---|---|---|
+| keyboard hotplug | pass | the keyboard behind its external hub unplugged and plugged into 4 different ports (hub 1 ports 3 and 2, hub 2 ports 3 and 2): each time `keyboard removed`, then the hub and `keyboard at address 5` again; typing on the HDMI console worked each time |
+| DHCP retry | pass | LAN cable pulled during the Redox boot: `LAN78xx no link yet`, `dhcpd: failed to receive offer … trying again every 7s`; cable back after `redox login:`: `dhcpd: configured after 4 attempts`, devshd answers |
+
+Not tested: the Anker hub (RTL8153B) steps; they stay with test #4. Stable
+image restored afterwards.
+
+## 2026-10-29: `v0.3.0-dev-95-g0d47c4f+x43ba` (timesync with late DHCP, test #41)
+
+Built 2026-10-29T11:05:15Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test`,
+`late-dhcp` (starts `dhcpd` 90 seconds late). Checks the fix for the
+`timesync` hang found in test #27
+([#22](https://github.com/redox-rpi/redox-rpi/issues/22)).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 46 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| late DHCP | pass | `no time server answered within a minute (last: no default route (DHCP not done))`, `trying again every 30 s`, then `clock set to 2026-10-29 11:49:31 UTC from pool.ntp.org` |
+| timerd | pass | `timerd: clock set by timesync` one second later; `test-catchup` caught up its run missed since test #27 |
+| clock | pass | `date` the same as the build host to the second; `/tmp/timesync.synced` exists |
