@@ -1,7 +1,7 @@
 From dca9f5b2206d2026a16d7960474e10c42b2afc8d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:23:23 +0100
-Subject: [PATCH 48/48] bcm2835-btuartd: a read with nothing received returns 0
+Subject: [PATCH 48/49] bcm2835-btuartd: a read with nothing received returns 0
  bytes, not EAGAIN
 
 The blocking scheme handler parks a request that answers EAGAIN and
