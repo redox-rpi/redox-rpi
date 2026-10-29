@@ -22,6 +22,7 @@
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest
+#                     (another port with QEMU_DEVSH_PORT=<port>)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
@@ -30,6 +31,8 @@
 #                     (udev rule, see patches/experiments/rtl8152/README.md)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
+#   --qmp <path>      QMP on this Unix socket, e.g. for absolute pointer
+#                     events (`input-send-event`)
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -66,6 +69,7 @@ sd_size=""
 usb_net=no
 usb_host=""
 monitor=(-monitor none)
+qmp=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -80,6 +84,7 @@ while [ $# -gt 0 ]; do
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
+        --qmp) qmp=(-qmp "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -153,7 +158,7 @@ qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
-    -display none "${monitor[@]}"
+    -display none "${monitor[@]}" ${qmp[@]+"${qmp[@]}"}
     -usb)
 if [ -n "$usb_host" ]; then
     if [ "$usb_net" = yes ]; then
@@ -166,7 +171,7 @@ else
 fi
 if [ "$usb_net" = yes ]; then
     # Host port 12323 reaches devshd (port 2323) in the guest.
-    qemu+=(-netdev user,id=usbnet,hostfwd=tcp::12323-:2323 -device usb-net,netdev=usbnet)
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${QEMU_DEVSH_PORT:-12323}-:2323" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
