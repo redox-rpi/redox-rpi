@@ -1,4 +1,4 @@
-From d71a5c6e8a177620518db400b063b69045c4443e Mon Sep 17 00:00:00 2001
+From ebea6e36190805d7431e81f7834056e71ca3d153 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:59:57 +0100
 Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
