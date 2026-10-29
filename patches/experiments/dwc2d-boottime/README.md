@@ -30,5 +30,8 @@ which is 60 % of the time from kernel start to `redox login:`:
 
 ## Tests
 
-- **QEMU**: `scripts/test-hotplug.sh` and the boot time to `devices
-  ready`.
+- **QEMU** (`v0.3.0-dev-176-g752ac70+x8057`): `devices ready after`
+  461, 477 and 521 ms (before: 1.6 s until ready); `scripts/test-hotplug.sh`
+  15 of 15, three times.
+- **Pi**: test #67 in docs/test-plan.md (Pi test agent): two timed boots
+  as in test 53, standard checks, `scripts/pi-hotplug-test.sh`.
