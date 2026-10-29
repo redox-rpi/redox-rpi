@@ -4,12 +4,13 @@ Issue [#35](https://github.com/redox-rpi/redox-rpi/issues/35), planned for
 v0.7.0 (ROADMAP wish list: `lsusb` and hardware info).
 
 ```bash
-scripts/build-image.sh --experiment rtl8152 --experiment hwinfo
+scripts/build-image.sh --experiment usb-hotplug --experiment hwinfo
 ```
 
-- **Base patch `0024`** (after `rtl8152`, base `0020`): `dwc2d` keeps what
-  it learns during enumeration and serves it read-only as
-  `/scheme/usb.dwc2/devices`, one line per device:
+- **Base patch** (numbered at merge; after the experiment `usb-hotplug`,
+  agreed with the USB session): `dwc2d` keeps what it learns during
+  enumeration and serves it read-only as `/scheme/usb.dwc2/devices`, one
+  line per device:
 
   ```
   address hub port vendor product class usb speed interfaces
@@ -18,10 +19,9 @@ scripts/build-image.sh --experiment rtl8152 --experiment hwinfo
   ```
 
   `hub` and `port` are 0 for the device on the root port; `interfaces`
-  lists class, subclass and protocol of each interface. `dwc2d` enumerates
-  once at boot, so a device plugged in later does not show up (no hotplug
-  yet). The rest of `dwc2d` is unchanged; the call is one line after the
-  enumeration.
+  lists class, subclass and protocol of each interface. `dwc2d` replaces
+  the list after the boot enumeration and after each hotplug scan that
+  found a change (two lines in `main.rs`); each open reads the current list.
 - **[`tools/hwinfo`](../../../tools/hwinfo)**, package `hwinfo` with two
   programs:
   - `lsusb` lists the devices like Linux's `lsusb`. There is no usb.ids
@@ -42,7 +42,9 @@ this experiment installs it.
 
 1. Boot, `scripts/pi-test.py` standard checks.
 2. `lsusb`, `lsusb -t`, `lsusb -v`: on a Pi 3B+ the hubs `0424:2514` and the
-   LAN7800 `0424:7800`, plus whatever is plugged in (keyboard).
+   LAN7800 `0424:7800`, plus whatever is plugged in (keyboard). With a
+   person: plug a keyboard in and out, `lsusb` follows within a few
+   seconds.
 3. `hwinfo`: Pi 3 Model B+, 1 GiB, 4 CPUs, clocks and temperature like
    `/scheme/rpi-firmware`.
 
@@ -57,3 +59,5 @@ this experiment installs it.
   and 2 USB devices. Two fixes after this run, in the next build: the CPU
   count included the sum line (5 instead of 4), and QEMU's keyboard showed
   as "QEMU USB device" instead of "keyboard".
+- Moved on top of `usb-hotplug` (2026-10-29) at the request of the USB
+  session: uses its `parent` field, updates the list on hotplug.

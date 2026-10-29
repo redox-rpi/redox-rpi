@@ -13,6 +13,20 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
+## Patch numbers
+
+- **On a branch, new patches stay an experiment:**
+  `patches/experiments/<name>/<component>/`. Their numbers there may
+  repeat other branches' numbers; the `exp-<name>-` prefix keeps them
+  apart.
+- **A number in `base/`, `kernel/`, `relibc/` and the other default
+  directories is given only at the merge to `main`**, by whoever merges:
+  the next free number in that directory, in the order the patches must
+  apply. The merger moves the files (`git mv`), updates the table below and
+  checks that the default build still boots (QEMU, then the nightly run).
+- A branch that already moved its patches to a default directory keeps
+  them there; the merger renumbers them if the numbers are taken.
+
 Experiments are applied after the default patches, in the order of the
 `--experiment` options; their files get an `exp-<name>-` prefix in the
 recipe, so equal numbers do not collide. The base patch numbers say what
@@ -20,20 +34,18 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0021` | `base/` | default patches; `0018` is `rpi-firmwared`, `0021` its ARM clock and throttle watch (after the experiments' `0017`–`0020`, which it does not touch) |
+| `0001`–`0016`, `0018`, `0020`–`0023` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link |
 | `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
-| `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
-| `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
-| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
-| `0024` | `experiments/hwinfo/base/` | `dwc2d` lists its devices in `/scheme/usb.dwc2/devices`, for `lsusb` (after `rtl8152`) |
+| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment (the number is taken by `base/0023` since `dwc2-default`; renumbered at its merge) |
+| (at merge) | `experiments/hwinfo/base/` | `dwc2d` lists its devices in `/scheme/usb.dwc2/devices`, for `lsusb` (after `usb-hotplug`) |
 
-Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
-v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
-`rtl8152` + `pi-clean-boot` + `dwc2-interrupts`, in this order (test #5 on
-the Pi).
+Experiments apply after all default patches. Combinations that build:
+`sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,
+`timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
+default patches now; the names are still accepted and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
 
