@@ -6,11 +6,13 @@
 # Runs on the build host from its own clone (default ~/redox-rpi-stable),
 # started by the systemd user timer redox-stable.timer, or by hand:
 #
-#   scripts/update-stable.sh [--force] [--no-push] [--ref <ref>]
+#   scripts/update-stable.sh [--force] [--taken <N>] [--no-push] [--ref <ref>]
 #
 #   --force     build and test even if nothing that goes into the image
-#               changed since the current stable image, and even if a test
-#               is marked "on the Pi" (for a run by hand that took the Pi)
+#               changed since the current stable image
+#   --taken <N> for a run by hand: test N in docs/test-plan.md is this run
+#               and marked "on the Pi"; any other test on the Pi still stops
+#               the script
 #   --no-push   do not commit, push or open an issue; print what would be done
 #   --ref       build this ref instead of origin/main (for testing the script)
 #
@@ -58,11 +60,13 @@ BOOT_TIMEOUT=1500
 force=0
 push=1
 ref=origin/main
+taken=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --force) force=1; shift ;;
         --no-push) push=0; shift ;;
         --ref) ref="$2"; shift 2 ;;
+        --taken) taken="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -89,14 +93,21 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
 fi
 
 # 2. Is the Pi free?
-if [ "$force" = 0 ] && grep -q '\*\*on the Pi\*\*' docs/test-plan.md; then
-    log "a test is on the Pi (docs/test-plan.md), not touching it; next try tomorrow"
-    grep '\*\*on the Pi\*\*' docs/test-plan.md | cut -c1-200
+on_pi="$(grep '^| .*\*\*on the Pi\*\*' docs/test-plan.md | grep -v "^| $taken |" || true)"
+[ -z "$taken" ] && on_pi="$(grep '^| .*\*\*on the Pi\*\*' docs/test-plan.md || true)"
+if [ -n "$on_pi" ]; then
+    log "a test is on the Pi (docs/test-plan.md), not touching it"
+    echo "$on_pi" | cut -c1-200
     exit 0
+fi
+if [ -n "$taken" ] && ! grep -q "^| $taken |.*\*\*on the Pi\*\*" docs/test-plan.md; then
+    log "test $taken is not marked on the Pi in docs/test-plan.md ($ref); take the Pi first"
+    exit 1
 fi
 
 # 3. Build.
-read -r -a options < <(grep -v '^#' config/stable-image.conf | tr '\n' ' ')
+# One option per word; the file may end without a newline.
+mapfile -t options < <(grep -v '^#' config/stable-image.conf | tr -s ' \t' '\n' | grep -v '^$')
 log "building with: ${options[*]}"
 scripts/build-image.sh "${options[@]}"
 image="$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img"
