@@ -39,6 +39,7 @@ each one expects to come before it:
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
+| `0003` | `experiments/boot-time/bootloader/` | the bootloader's mode selection waits 1 s instead of 5 (#47) |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,

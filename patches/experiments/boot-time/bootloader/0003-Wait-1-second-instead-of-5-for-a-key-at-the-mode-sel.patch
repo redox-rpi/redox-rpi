@@ -1,0 +1,37 @@
+From 8905cf1aa9e98f33eb69535936aa2741c6c90e53 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 12:58:20 +0000
+Subject: [PATCH] Wait 1 second instead of 5 for a key at the mode selection
+
+On a network-booted Raspberry Pi nobody presses a key here, so the wait
+is 4 seconds of every boot. A key within the second still switches to the
+normal selection, and e and l still work in that time (#47).
+---
+ src/main.rs | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index 217903d..503bb81 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -112,7 +112,7 @@ pub struct KernelArgs {
+ pub(crate) const KERNEL_PATH: &str = "usr/lib/boot/kernel";
+ 
+ /// How long the mode selection waits for a key before it continues.
+-const AUTO_SELECT_SECONDS: u64 = 5;
++const AUTO_SELECT_SECONDS: u64 = 1;
+ 
+ fn select_mode(
+     os: &impl Os,
+@@ -170,7 +170,7 @@ fn select_mode(
+     }
+     println!("Press e to edit boot environment");
+     println!(
+-        "Continuing with the selected mode in {} seconds",
++        "Continuing with the selected mode in {} s",
+         AUTO_SELECT_SECONDS
+     );
+     println!();
+-- 
+2.53.0
+

@@ -10,6 +10,13 @@
 
 ## In progress
 
+- [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time (v0.4.0), branch `boot-time`: QEMU timeline 37.5 s to
+  `redox login:`; the bootloader waits 5 s at the mode selection and U-Boot
+  counts down 2 s on every boot. Experiment
+  [`boot-time`](../../patches/experiments/boot-time/) waits 1 s in the
+  bootloader, `config/netboot.cmd` no longer asks DHCP twice. Next: the Pi
+  timeline.
+
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
   `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,
   2026-10-28): no errors from these services, network up, `pi-test.py`
