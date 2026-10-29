@@ -55,4 +55,13 @@ MAC `01:00:5e:01:02:03` and ends with `result: igmp yes, udp from guest yes`.
 
 ## Result
 
-Not run yet.
+**QEMU** (2026-10-29, build `v0.3.0-dev-140-g37fba2f+x027e`, the commands
+above): **pass**. The guest printed `mcast: joined 239.1.2.3`, received
+`hello 40` and `hello 41 from the host` from 10.0.3.2, `mcast: left
+239.1.2.3` and sent its three datagrams. The host script saw an IGMP v2
+report for 239.1.2.3 to `01:00:5e:01:02:03`, the IGMP leave to 224.0.0.2
+(`01:00:5e:00:00:02`) and `10.0.3.15:49152 -> 239.1.2.3:5001` to
+`01:00:5e:01:02:03`, and ended with `result: igmp yes, udp from guest yes`.
+DHCP broadcasts still go out as before.
+
+**Real Pi:** not tested yet.
