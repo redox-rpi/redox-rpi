@@ -30,9 +30,14 @@ Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
 
 ## Tests
 
-- **QEMU** (`scripts/test-usb-serial.sh`): QEMU's `usb-serial` (an FTDI
-  FT232) plugged in after boot with its other end on a Unix socket; write
-  and read, speed set to 9600, port switched off and on, unplugged and
-  plugged in again. CDC-ACM, CP210x and CH340 have no QEMU device; they
-  share the scheme and the transfer code and differ only in their setup
-  requests, checked on the Pi.
+- **QEMU** (`scripts/test-usb-serial.sh`), **15 of 15 pass**: QEMU's
+  `usb-serial` (an FTDI FT232) plugged in after boot with its other end on
+  a Unix socket; listed, write and read, speed set to 9600 (a bad value
+  is refused), port switched off and on, unplugged and plugged in again.
+  QEMU's DWC2 model goes on retrying a halted channel's NAKed packet and
+  aborts once the device is gone; dwc2d replaces that packet with a SETUP
+  when a port is closed (`Dwc2::abandon`, as `halt_device` does on
+  removal), which is harmless on the Pi. CDC-ACM, CP210x and CH340 have
+  no QEMU device; they share the scheme and the transfer code and differ
+  only in their setup requests, checked on the Pi.
+- **Pi**: test #57 in docs/test-plan.md, with a person and a stick.
