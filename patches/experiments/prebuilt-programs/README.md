@@ -26,4 +26,12 @@ them through the image's `libc.so`.
   `sigregs-test`) fails: the signal return overwrites x18, and these
   gcc-built programs use x18. The fix is in [#1](https://github.com/redox-rpi/redox-rpi/issues/1)'s experiment
   `sigreturn-svc`, to be rechecked with these programs.
+- QEMU, build `v0.3.0-dev-143-gd6d2b70+xab7f` (this branch merged with
+  `t1-sigreturn`; experiments `prebuilt-programs`, `sigreturn-svc`,
+  `sigregs-test`, `serial-rx`): the same 180 starts all exit 0; 4 runs of the
+  bash loop (1600 child processes) before the time limit, all exit 0;
+  `sigregs process -n 2000` (x18 checked) passes. `sigregs thread` still
+  fails with the signal mask bug [#4](https://github.com/redox-rpi/redox-rpi/issues/4), whose fix is not in this build.
+  Without `serial-rx` the long test command line made getty panic
+  (`failed to write master PTY: WouldBlock`, #28).
 - Not tested on the Pi yet.
