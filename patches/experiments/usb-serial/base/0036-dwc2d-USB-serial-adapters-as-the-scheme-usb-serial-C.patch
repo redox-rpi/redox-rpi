@@ -1,4 +1,4 @@
-From ca0042bc33b8c167fec3feec9e98bb909db4670e Mon Sep 17 00:00:00 2001
+From 967421b863c4da4ca682dee6a5823931a3620652 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:51:43 +0100
 Subject: [PATCH] dwc2d: USB serial adapters as the scheme usb-serial (CDC-ACM,
@@ -31,11 +31,11 @@ port off and on.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/usb/dwc2d/Cargo.toml       |   2 +
- drivers/usb/dwc2d/src/dwc2.rs      |  31 +-
+ drivers/usb/dwc2d/src/dwc2.rs      |  79 ++-
  drivers/usb/dwc2d/src/enumerate.rs |  16 +
  drivers/usb/dwc2d/src/main.rs      |  59 +-
  drivers/usb/dwc2d/src/serial.rs    | 897 +++++++++++++++++++++++++++++
- 5 files changed, 1001 insertions(+), 4 deletions(-)
+ 5 files changed, 1028 insertions(+), 25 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/serial.rs
 
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
@@ -55,10 +55,71 @@ index de3a4ea..f95b19d 100644
  redox_syscall = { workspace = true, features = ["std"] }
  
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 279d8eb..2b0ba8e 100644
+index 279d8eb..9c98524 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -316,6 +316,19 @@ impl Dwc2 {
+@@ -166,33 +166,39 @@ impl Dwc2 {
+     /// get it too. On real hardware it is harmless: the device is about to
+     /// be reset, or is gone and the packet times out.
+     pub fn halt_device(&self, address: u8) {
+-        let mut setup = None;
+         for ch in 0..self.channels {
+             let value = self.read(hcchar(ch));
+-            if (value >> HCCHAR_DEVADDR_SHIFT) & 0x7F != u32::from(address) {
+-                continue;
++            if (value >> HCCHAR_DEVADDR_SHIFT) & 0x7F == u32::from(address) {
++                self.abandon(ch);
+             }
+-            self.halt(ch);
+-            // GET_STATUS of the device; no data or status stage follows.
+-            let buf = setup.get_or_insert_with(|| {
+-                Dma::new([0x80u8, 0x00, 0, 0, 0, 0, 2, 0]).expect("dwc2d: DMA allocation failed")
+-            });
+-            let phase = Phase {
+-                dev_addr: address,
+-                endpoint: 0,
+-                dir_in: false,
+-                ep_type: EPTYPE_CONTROL,
+-                max_packet: 8,
+-                low_speed: false,
+-                pid: PID_SETUP,
+-                buf_phys: buf.physical(),
+-                len: 8,
+-            };
+-            let _ = self.packet(ch, &phase, 0, Duration::from_millis(10));
+-            self.halt(ch);
+         }
+     }
+ 
++    /// Halt a channel whose transfer is no longer wanted, so that QEMU does
++    /// not go on retrying it (see [`Self::halt_device`]): a receive that
++    /// stays armed while the adapter NAKs, when its program is done.
++    pub fn abandon(&self, ch: usize) {
++        let address = ((self.read(hcchar(ch)) >> HCCHAR_DEVADDR_SHIFT) & 0x7F) as u8;
++        self.halt(ch);
++        // GET_STATUS of the device; no data or status stage follows.
++        let Ok(buf) = Dma::new([0x80u8, 0x00, 0, 0, 0, 0, 2, 0]) else {
++            return;
++        };
++        let phase = Phase {
++            dev_addr: address,
++            endpoint: 0,
++            dir_in: false,
++            ep_type: EPTYPE_CONTROL,
++            max_packet: 8,
++            low_speed: false,
++            pid: PID_SETUP,
++            buf_phys: buf.physical(),
++            len: 8,
++        };
++        let _ = self.packet(ch, &phase, 0, Duration::from_millis(10));
++        self.halt(ch);
++    }
++
+     /// Whether a device is connected to the root port.
+     pub fn root_connected(&self) -> bool {
+         self.read(HPRT0) & HPRT0_CONN_STS != 0
+@@ -316,6 +322,19 @@ impl Dwc2 {
          phase: &Phase,
          tt: (u8, u8),
          timeout: Duration,
@@ -78,7 +139,7 @@ index 279d8eb..2b0ba8e 100644
      ) -> Result<Option<(usize, u32)>, Error> {
          let periodic = phase.ep_type == EPTYPE_INTERRUPT;
          let split = HCSPLT_SPLTENA
-@@ -364,7 +377,7 @@ impl Dwc2 {
+@@ -364,7 +383,7 @@ impl Dwc2 {
                      // The hub has no result yet.
                      continue;
                  }
@@ -87,7 +148,7 @@ index 279d8eb..2b0ba8e 100644
                      return Ok(None);
                  }
                  // NAK from the device or a transaction error: start over.
-@@ -398,6 +411,22 @@ impl Dwc2 {
+@@ -398,6 +417,22 @@ impl Dwc2 {
          }
      }
  
@@ -300,7 +361,7 @@ index 28cc7aa..9f04d02 100644
          }
 diff --git a/drivers/usb/dwc2d/src/serial.rs b/drivers/usb/dwc2d/src/serial.rs
 new file mode 100644
-index 0000000..d742c96
+index 0000000..98548fb
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/serial.rs
 @@ -0,0 +1,897 @@
@@ -1037,7 +1098,7 @@ index 0000000..d742c96
 +        // The next program starts with what comes after it opens the port.
 +        port.rx.clear();
 +        if std::mem::take(&mut port.armed) {
-+            data.hc.halt(RX_CHANNEL);
++            data.hc.abandon(RX_CHANNEL);
 +        }
 +    }
 +}
@@ -1156,7 +1217,7 @@ index 0000000..d742c96
 +        if let Some(index) = data.ports.iter().position(|p| p.f.address == address) {
 +            let port = data.ports.remove(index);
 +            if port.armed {
-+                data.hc.halt(RX_CHANNEL);
++                data.hc.abandon(RX_CHANNEL);
 +            }
 +            println!("dwc2d: serial {} removed", port.name);
 +        }

@@ -151,7 +151,7 @@ sleep 1
 check "write reaches the far end" grep -aq "hello-from-redox" "$received"
 # head blocks until the bytes come; they are sent while it waits.
 (sleep 3; printf 'pong-from-far\n' > "$send") &
-out=$(devsh "head -c 14 $dev")
+out=$(devsh "head -c 14 $dev" | tr -d '\0')
 check "read from the far end" grep -aq "pong-from-far" <<< "$out"
 
 echo "== speed"
@@ -160,7 +160,8 @@ n=$(count "dwc2d: serial $name: 9600 baud, 8N1")
 devsh "echo 9600 > $dev/baud" > /dev/null
 check "speed set to 9600" wait_more "dwc2d: serial $name: 9600 baud, 8N1" 5 "$n"
 check "speed reads 9600" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat $dev/baud' 2>/dev/null | grep -aq 9600"
-check "bad speed refused" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'echo fast > $dev/baud && echo accepted' 2>/dev/null | grep -aq accepted"
+devsh "echo fast > $dev/baud" > /dev/null
+check "bad speed refused" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat $dev/baud' 2>/dev/null | grep -aq 9600"
 
 echo "== port switched off and on"
 # The test command for the real Pi; QEMU's hub powers its ports together,
