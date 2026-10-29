@@ -25,6 +25,7 @@ use std::collections::VecDeque;
 use std::io::{self, BufReader, Read};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -37,6 +38,9 @@ pub const DEFAULT_PORT: u16 = 1883;
 pub const DEFAULT_TLS_PORT: u16 = 8883;
 /// Redox' DNS lookup has no timeout of its own.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// For the TCP connection and the broker's CONNACK together. On Redox a
+/// connection to an address nobody answers (a broker that is not there)
+/// never fails by itself.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 const CONNECT: u8 = 1;
@@ -138,7 +142,15 @@ impl Client {
     /// On Redox a refused connection shows only at the first write, so the
     /// address is added to errors from here.
     fn handshake(address: &str, options: &Options) -> io::Result<Client> {
-        let link = Arc::new(Mutex::new(open(address, options)?));
+        let (sock, host) = open(address, options)?;
+        let watchdog = Watchdog::start(&sock, CONNECT_TIMEOUT)?;
+        let result = Client::login(sock, &host, options);
+        watchdog.stop(result)
+    }
+
+    /// TLS handshake if asked, then CONNECT and CONNACK.
+    fn login(sock: TcpStream, host: &str, options: &Options) -> io::Result<Client> {
+        let link = Arc::new(Mutex::new(start_link(sock, host, options)?));
         let mut client = Client {
             reader: BufReader::new(Link::reader(&link)?),
             writer: link,
@@ -268,20 +280,66 @@ impl Client {
     }
 }
 
-/// Resolves and connects, both with a timeout, then starts TLS if asked.
-fn open(address: &str, options: &Options) -> io::Result<Link> {
+/// Shuts the connection down if the login takes longer than `timeout`, so a
+/// blocked read or write returns: on Redox the connect returns at once and a
+/// missing answer blocks the first read. (No socket timeouts: they would
+/// have to be taken back on every handle afterwards.)
+struct Watchdog {
+    done: mpsc::Sender<()>,
+    fired: Arc<AtomicBool>,
+    timeout: Duration,
+}
+
+impl Watchdog {
+    fn start(stream: &TcpStream, timeout: Duration) -> io::Result<Watchdog> {
+        let sock = stream.try_clone()?;
+        let (done, wait) = mpsc::channel::<()>();
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = fired.clone();
+        thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = wait.recv_timeout(timeout) {
+                flag.store(true, Ordering::SeqCst);
+                let _ = sock.shutdown(std::net::Shutdown::Both);
+            }
+        });
+        Ok(Watchdog { done, fired, timeout })
+    }
+
+    fn stop(self, result: io::Result<Client>) -> io::Result<Client> {
+        let _ = self.done.send(());
+        let timed_out = |e: &io::Error| {
+            self.fired.load(Ordering::SeqCst)
+                || e.kind() == io::ErrorKind::TimedOut
+        };
+        match result {
+            Ok(client) => Ok(client),
+            Err(e) if timed_out(&e) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("no answer from the broker within {} s", self.timeout.as_secs()),
+            )),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Resolves and connects, both with a timeout; the port depends on TLS.
+/// Returns the socket and the host part of the address.
+fn open(address: &str, options: &Options) -> io::Result<(TcpStream, String)> {
     #[cfg(feature = "tls")]
     let port = if options.tls.is_some() { DEFAULT_TLS_PORT } else { DEFAULT_PORT };
     #[cfg(not(feature = "tls"))]
     let port = { let _ = options; DEFAULT_PORT };
     let (host, has_port) = split_host(address);
     let address = if has_port { address.to_string() } else { format!("{address}:{port}") };
-    let sock = connect_tcp(&address)?;
+    Ok((connect_tcp(&address)?, host.to_string()))
+}
+
+fn start_link(sock: TcpStream, host: &str, options: &Options) -> io::Result<Link> {
     #[cfg(feature = "tls")]
     if let Some(tls) = &options.tls {
         return Link::tls(sock, host, tls);
     }
-    let _ = host;
+    let _ = (host, options);
     Ok(Link::plain(sock))
 }
 
