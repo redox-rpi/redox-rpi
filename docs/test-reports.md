@@ -788,3 +788,31 @@ Branch `serial-rx-base`: base `0024` and kernel `0007` on main after
   a dead console; experiment image `v0.3.0-dev-94-gb1fcbe1+xe9c4` 7 of 7
   complete.
 - The known `pcid` panic is still there (clean boot is not merged yet).
+
+
+## 2026-10-29: `v0.3.0-dev-139-g66f7cba+x0002`
+
+Built 2026-10-29T10:30:39Z, `libc.so` `454e580b0fb8d86b…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `sigregs-test`, `sigreturn-svc`, `timesync`. test 36 (#1 sigreturn-svc), ARM at 1400 MHz
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-139-g66f7cba+x0002 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-139-g66f7cba+x0002.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 1000 failed |
+
+Test 36 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), branch
+`t1-sigreturn`, experiment `sigreturn-svc`: the signal entry returns
+through `svc #0x5352`. Extra checks over devsh:
+
+- `sigregs process -n 3000`: pass, all registers including x18 kept.
+- `sigregs thread -n 3000`: **fail** in 3 of 3 runs (also with `-n 300`):
+  only 1 signal arrives, then none for 5 s, and SIGUSR1 stays blocked.
+  QEMU passes it. Test 45 already expects this without the #4 fix; test 37
+  checks the image with patch `0002`.
+- No exception in the serial log during the run.
+- The CPU ran at 1400 MHz (`rpi-firmwared` raises the clock at boot), not
+  600 MHz as the plan row says. Under this load at 1400 MHz test 21 saw
+  3-5 % failed starts; here 0 of 1000.
