@@ -51,6 +51,31 @@ is kernel and system together. `config.txt` names the slot that starts.
    cycle (or the watchdog, once there is one) starts `config.txt` again:
    the old slot.
 
+## QEMU test (2026-10-29)
+
+Image X v0.3.0-dev-208-g12e108b+xe113 on a `make-sdcard.sh --direct` card;
+Y is the same build with `-y` added to its BUILD_ID, published with
+`publish-rpi-update.sh`. QEMU has no Pi firmware, so the tryboot start is
+played by booting slot b's files with `qemu-raspi3b.sh --direct <dir>
+--append REDOX_RPI_TRYBOOT=1`.
+
+1. Slot a: `status` sees the server build; `fetch` writes `kernel8-b.img`
+   and the 245 MiB `initramfs-b` (about 11 minutes, ~370 KB/s through
+   fatfsd), both match `SHA256SUMS` on the host. `try` reboots; QEMU
+   ignores the flag, so slot a comes back and the service says "not a
+   tryboot start". `config.txt` still names slot a: the fallback state.
+2. Tryboot start of slot b: `REDOX_RPI_TRYBOOT=1` in `/scheme/sys/env`,
+   BUILD_ID `…-y`, the service prints "slot b committed", `config.txt`
+   names slot b, `tryboot.txt` and `cmdline-try.txt` are gone.
+3. Normal start of that card: slot b from `config.txt`, nothing to commit.
+
+Found on the way: one write per TCP segment made fatfsd walk the cluster
+chain for every 1.5 KiB (11 KB/s, slower with every MiB). Fixed in both:
+rpi-update writes whole MiB, fatfsd keeps files open per handle.
+
+The firmware side (does the Pi start `tryboot.txt` once after the flag,
+and `config.txt` again after a reset) can only be tested on a Pi.
+
 ## Services
 
 - `66_boot-fat.service`: `fatfsd /scheme/disk.mmc/0p0 boot`.

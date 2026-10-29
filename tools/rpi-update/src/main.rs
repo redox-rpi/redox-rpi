@@ -173,7 +173,15 @@ fn status(url: Option<&String>) -> io::Result<()> {
     if let Ok(t) = fs::read_to_string(boot("tryboot.txt")) {
         println!("tryboot.txt: slot {}", slot_of(&t).map_or("?", |i| ["a", "b"][i]));
     }
-    println!("running: {}", if in_tryboot() { "tryboot (not committed)" } else { "config.txt" });
+    let pending = fs::metadata(boot("tryboot.txt")).is_ok();
+    println!(
+        "running: {}",
+        match (in_tryboot(), pending) {
+            (true, true) => "tryboot start, not committed yet",
+            (true, false) => "tryboot start, committed",
+            (false, _) => "config.txt",
+        }
+    );
     if let Ok(rel) = fs::read_to_string("/etc/redox-rpi-release") {
         if let Some(id) = rel.lines().find_map(|l| l.strip_prefix("BUILD_ID=")) {
             println!("this build: {}", id.trim_matches('"'));
@@ -259,7 +267,10 @@ fn commit() -> io::Result<()> {
         }
         thread::sleep(Duration::from_secs(1));
     }
-    let t = fs::read_to_string(boot("tryboot.txt"))?;
+    let Ok(t) = fs::read_to_string(boot("tryboot.txt")) else {
+        println!("no tryboot.txt, already committed");
+        return Ok(());
+    };
     let slot = slot_of(&t).ok_or_else(|| io::Error::other("tryboot.txt starts no known slot"))?;
     let config = fs::read_to_string(boot("config.txt"))?;
     fs::write(boot("config.txt"), config_for(&config, slot, None))?;
