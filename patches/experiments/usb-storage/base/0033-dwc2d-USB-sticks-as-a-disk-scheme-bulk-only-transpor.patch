@@ -1,4 +1,4 @@
-From 758dfe537b457dc05ffff54291ee0054f2d5c39f Mon Sep 17 00:00:00 2001
+From 16e6f5900d6bfd6df33364bc52f7cb48412e735c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
@@ -80,7 +80,7 @@ index 01cac8d..c265e6f 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1f4de46..35b2903 100644
+index 28cc7aa..af99959 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -210,7 +210,7 @@ index 1f4de46..35b2903 100644
              Source::Time => {
                  timer.fired();
                  let mut next = None;
-@@ -574,6 +623,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -579,6 +628,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
@@ -223,7 +223,7 @@ index 1f4de46..35b2903 100644
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -585,6 +640,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -590,6 +645,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                              keyboard = Keyboard::new(hc.clone(), f);
                              timer.arm(Duration::ZERO);
                          }
