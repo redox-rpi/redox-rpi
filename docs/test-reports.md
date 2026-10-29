@@ -696,29 +696,6 @@ console except the known `pcid` panic (no `pi-clean-boot` in this image).
 The first `pi-test.py` attempt got no answer from devsh (#11); the second
 attempt is the table above.
 
-<<<<<<< HEAD
-## 2026-10-29: `v0.3.0-dev-141-g3fd1bba+x9ea9` (German keyboard layout, #36), QEMU
-
-Branch `keyboard-layouts`, experiment `keyboard-de` with `timesync` and
-`rtl8152`. QEMU `raspi3b`, USB keyboard through the QEMU monitor
-(`patches/experiments/keyboard-de/test-keymap.sh`).
-
-- `inputd -K de` on the serial console, then login on the console with
-  the USB keyboard: `root`, `password` unchanged.
-- Typed as German key positions: `cat > /home/root/de.txt` and
-  `zyß@{[]}\~|#öäü€"§'<>`. The file holds exactly that line: z and y
-  swapped, umlauts, ß, AltGr for @ { [ ] } \ ~ | €, the < > key. **Pass.**
-- An earlier attempt with `echo '…'` failed in ion ("`[` is out of place"
-  even in single quotes), not in the layout: the screen showed the line
-  typed correctly.
-
-## 2026-10-29: `v0.3.0-dev-143-ge940bf6+x9ea9` (German layout from boot, #36), QEMU
-
-Same branch, now with `config.toml` (`/etc/init.d/05_keymap.service`
-runs `inputd -K de`). `test-keymap.sh` no longer switches the layout on
-the serial console: the login and the typed line come out German from
-boot, the file holds `zyß@{[]}\~|#öäü€"§'<>`. **Pass.**
-=======
 ## 2026-10-29: `v0.3.0-dev-93-g2143ad7+x1044` (timerd, test #27)
 
 Built 2026-10-28T20:16:41Z, real Pi 3B+ over netboot, branch `timerd`.
@@ -1053,4 +1030,25 @@ reset (`echo reset > /scheme/sys/kstop` over devsh); timelines in
   ms, `60_data.service` 367/377 ms.
 - `redox-rpi v0.3.0-dev-214-g67fdc06+x19b9` in the log; standard checks
   pass, 0 of 300 starts failed. Only the known `pcid` panic in the log.
->>>>>>> origin/main
+
+## 2026-10-29: `v0.3.0-dev-141-g3fd1bba+x9ea9` (German keyboard layout, #36), QEMU
+
+Branch `keyboard-layouts`, experiment `keyboard-de` with `timesync` and
+`rtl8152`. QEMU `raspi3b`, USB keyboard through the QEMU monitor
+(`patches/experiments/keyboard-de/test-keymap.sh`).
+
+- `inputd -K de` on the serial console, then login on the console with
+  the USB keyboard: `root`, `password` unchanged.
+- Typed as German key positions: `cat > /home/root/de.txt` and
+  `zyß@{[]}\~|#öäü€"§'<>`. The file holds exactly that line: z and y
+  swapped, umlauts, ß, AltGr for @ { [ ] } \ ~ | €, the < > key. **Pass.**
+- An earlier attempt with `echo '…'` failed in ion ("`[` is out of place"
+  even in single quotes), not in the layout: the screen showed the line
+  typed correctly.
+
+## 2026-10-29: `v0.3.0-dev-143-ge940bf6+x9ea9` (German layout from boot, #36), QEMU
+
+Same branch, now with `config.toml` (`/etc/init.d/05_keymap.service`
+runs `inputd -K de`). `test-keymap.sh` no longer switches the layout on
+the serial console: the login and the typed line come out German from
+boot, the file holds `zyß@{[]}\~|#öäü€"§'<>`. **Pass.**

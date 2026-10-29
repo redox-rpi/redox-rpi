@@ -39,12 +39,7 @@ each one expects to come before it:
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
-<<<<<<< HEAD
-| `0025` | `experiments/keyboard-de/base/` | German keyboard layout in `inputd` (any order with the others) |
-| `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
-| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
-=======
->>>>>>> origin/main
+| `0025`, `0026` | `experiments/keyboard-de/base/` | German keyboard layout, dead keys and `--keymap-file` in `inputd` (any order with the others) |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,

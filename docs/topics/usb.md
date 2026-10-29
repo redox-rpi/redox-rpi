@@ -13,12 +13,10 @@
 
 ## In progress
 
-<<<<<<< HEAD
 - [#36](https://github.com/redox-rpi/redox-rpi/issues/36) keyboard layouts, German first (milestone v0.5.0): experiment
   [`keyboard-de`](../../patches/experiments/keyboard-de/) on branch
   `keyboard-layouts` adds a `de` map with AltGr to `inputd`; switch with
   `inputd -K de`. Dead keys (´ e → é). An image with the experiment types German from boot; the layout is set in `/etc/keymap`. QEMU test `test-keymap.sh`. Next: Pi test with a German keyboard.
-=======
 - [#17](https://github.com/redox-rpi/redox-rpi/issues/17) hotplug, branch
   [`usb-hotplug`](https://github.com/redox-rpi/redox-rpi/tree/usb-hotplug),
   experiment `usb-hotplug` on top of `dwc2-default`. dwc2d rescans the
@@ -61,7 +59,6 @@
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
   QEMU (no LAN7800 there); the Pi check rides on the network session's
   test #47.
->>>>>>> origin/main
 
 ## Next
 
@@ -69,10 +66,5 @@
 
 ## Later
 
-<<<<<<< HEAD
-- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
 - More keyboard layouts, `lsusb`
-=======
-- Keyboard layouts, `lsusb`
->>>>>>> origin/main
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
