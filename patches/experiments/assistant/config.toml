@@ -4,3 +4,5 @@
 [packages]
 llama-cpp = "source"
 qwen3-model = "source"
+# The tool layer (tools/assistant): show_time, list_files, make_folder.
+assistant = "source"
