@@ -1,4 +1,4 @@
-From b4c6b8fa076351313d427fbbebca4a00873a63f3 Mon Sep 17 00:00:00 2001
+From 84e93f12159433d1052025fa522b404b31e76316 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 17:12:25 +0000
 Subject: [PATCH] Write collected data at the latest 2 s after it came in
@@ -10,12 +10,12 @@ now non-blocking; with no request waiting, redoxfs sleeps on an event
 queue with the socket and a monotonic timer set to when the collected
 data is due.
 ---
- src/mount/redox/mod.rs    | 135 ++++++++++++++++++++++++++++++++++++--
+ src/mount/redox/mod.rs    | 140 ++++++++++++++++++++++++++++++++++++--
  src/mount/redox/scheme.rs |  16 ++++-
- 2 files changed, 143 insertions(+), 8 deletions(-)
+ 2 files changed, 148 insertions(+), 8 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index 70156b0..c2913ce 100644
+index 70156b0..170cf09 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
 @@ -2,9 +2,16 @@ use redox_scheme::{
@@ -36,7 +36,7 @@ index 70156b0..c2913ce 100644
  
  use crate::{Disk, FileSystem, IS_UMT};
  
-@@ -13,6 +20,80 @@ use self::scheme::FileScheme;
+@@ -13,6 +20,85 @@ use self::scheme::FileScheme;
  pub mod resource;
  pub mod scheme;
  
@@ -54,7 +54,12 @@ index 70156b0..c2913ce 100644
 +
 +impl Wakeup {
 +    fn open() -> io::Result<Self> {
-+        let queue = OpenOptions::new().read(true).write(true).open("/scheme/event")?;
++        // Like relibc: only an open with O_CREAT makes a new queue.
++        let queue = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .create(true)
++            .open("/scheme/event")?;
 +        let timer = OpenOptions::new()
 +            .read(true)
 +            .write(true)
@@ -117,7 +122,7 @@ index 70156b0..c2913ce 100644
  //FIXME: mut callback is not mut
  #[allow(unused_mut)]
  
-@@ -23,6 +104,14 @@ where
+@@ -23,6 +109,14 @@ where
      F: FnOnce(&Path) -> T,
  {
      let mountpoint = mountpoint.as_ref();
@@ -132,7 +137,7 @@ index 70156b0..c2913ce 100644
      let socket = Socket::create()?;
  
      let scheme_name = format!("{}", mountpoint.display());
-@@ -37,10 +126,38 @@ where
+@@ -37,10 +131,38 @@ where
          &mut scheme,
      )?;
  
@@ -172,7 +177,7 @@ index 70156b0..c2913ce 100644
              None => break,
              Some(req) => {
                  match req.kind() {
-@@ -82,11 +199,15 @@ where
+@@ -82,11 +204,15 @@ where
          let caller = req.caller();
          let response = match req.op() {
              Ok(op) => {
