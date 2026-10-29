@@ -21,6 +21,9 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
   replaced the first). sshd polls its socket twice, for input and output;
   with nothing to write the socket was not watched at all, and the reply
   that opens a session never left.
+- relibc `0004`: `ld.so` finds a program whose argv[0] starts with "-"
+  (a login shell, "-ion"); it looks the program up by argv[0] and stopped
+  with "failed to locate '-ion'".
 - base `0024` (after the default base patches): `procmgr` sends SIGCHLD
   for an exited process without the permission check of `kill()`. The
   pre-authentication child runs as user `sshd`; its SIGCHLD to the root
@@ -65,5 +68,9 @@ Work in progress.
   the session ends at once: `chmod(/scheme/pty/N, 0600) failed: Operation
   not supported on transport endpoint` (OpenSSH `0002`). The main `sshd`
   process used 10 minutes of CPU in 30 minutes, to be checked.
+- QEMU, `v0.3.0-dev-185-g891ef54+x0042` (with OpenSSH `0002`): a login
+  with a terminal shows the motd, then `[ld.so]: failed to locate '-ion'`
+  (relibc `0004`). Also logged: `ioctl TIOCSCTTY` not implemented, "could
+  not set controlling tty".
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.
