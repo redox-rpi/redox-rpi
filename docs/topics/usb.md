@@ -21,7 +21,7 @@
   (RTL815x with a link, else LAN7800, else RTL815x without a link, else CDC
   Ethernet), keeping its MAC address and lease. `dhcpd` tries again until
   the server answers. A test command (`/tmp/dwc2d-cycle`) switches a hub
-  port off and on for tests without a person. QEMU: 16 of 16 checks of
+  port off and on for tests without a person. QEMU: 15 of 15 checks of
   `scripts/test-hotplug.sh` pass. Pi test #35 is queued: part A automated
   with `scripts/pi-hotplug-test.sh`, part B with a person, bundled with
   the Anker hub test #4.
@@ -55,6 +55,14 @@
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
   QEMU (no LAN7800 there); the Pi check rides on the network session's
   test #47.
+
+- `dwc2d` boot time (#47): branch [`dwc2d-boottime`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-boottime)
+  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0037` there).
+  Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
+  waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
+  what is connected, and the link wait overlaps with rescans. QEMU: ready
+  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15; Pi test
+  #67 (Pi test agent).
 
 ## Next
 
