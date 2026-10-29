@@ -1,18 +1,18 @@
-From a49b0ef97c2d28c561dcdbca8f99ef9e96a34976 Mon Sep 17 00:00:00 2001
+From a24dc066986b86e1715a4bda002992eaf22ee828 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 15:32:06 +0000
-Subject: [PATCH] getty: run the first-boot welcome app before login until it
- is done
+Subject: [PATCH] getty: run the first-boot welcome app instead of login until
+ it is done
 
-While /usr/bin/welcome exists and /etc/welcome.done does not, the first
-program getty starts on its console is the welcome app; login follows
-when it exits (#24).
+While /usr/bin/welcome exists and /etc/welcome.done does not, getty
+starts welcome --login on its console; the welcome app runs login itself
+(exec) when it is done (#24).
 ---
- getty/src/main.rs | 14 +++++++++++++-
- 1 file changed, 13 insertions(+), 1 deletion(-)
+ getty/src/main.rs | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/getty/src/main.rs b/getty/src/main.rs
-index 4c7ecbd2..b18b599d 100644
+index 4c7ecbd2..536c19b2 100644
 --- a/getty/src/main.rs
 +++ b/getty/src/main.rs
 @@ -232,6 +232,10 @@ fn tty_columns_lines(tty: &mut File) -> Result<(u16, u16), Box<dyn Error>> {
@@ -30,22 +30,25 @@ index 4c7ecbd2..b18b599d 100644
          )
          .expect("getty: failed to fevent master PTY");
  
-+    // First-boot setup: until it marks itself done, the first program on
-+    // each console is the welcome app instead of login
++    // First-boot setup: until it marks itself done, the program on each
++    // console is the welcome app, which then runs login
 +    let mut first = std::fs::exists(WELCOME).unwrap_or(false)
 +        && !std::fs::exists(WELCOME_DONE).unwrap_or(false);
 +
      loop {
          if clear {
              let _ = tty.write_all(b"\x1Bc");
-@@ -277,7 +286,10 @@ fn daemon(tty: &mut File, clear: bool, contain: bool, stderr: &mut Stderr) {
+@@ -277,7 +286,13 @@ fn daemon(tty: &mut File, clear: bool, contain: bool, stderr: &mut Stderr) {
              .open(&pty)
              .expect("getty: failed to open slave stderr");
  
 -        let mut command = if contain {
 +        let mut command = if first {
 +            first = false;
-+            Command::new(WELCOME)
++            // It runs login itself when it is done (exec, the same process)
++            let mut command = Command::new(WELCOME);
++            command.arg("--login");
++            command
 +        } else if contain {
              Command::new("contain_login")
          } else {

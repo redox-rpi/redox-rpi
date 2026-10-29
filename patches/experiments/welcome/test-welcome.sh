@@ -43,11 +43,10 @@ answer "Name of this computer" "pi-test"
 answer "root password" ""
 answer "Wi-Fi network name" "TestNet"
 answer "Passphrase" "secret123"
-answer "Press Enter for the login" ""
 
 wait $qemu || { cat "$out"; echo "FAIL: QEMU run, see $log"; exit 1; }
 cp "$log" "$ROOT/images/qemu-welcome-1.log"
-tr -d '\r' < "$log" | sed -n '/Welcome to Redox/,$p' | grep -av '^\s*$' | tail -40
+tr -d '\r' < "$log" | sed -n '/Welcome to Redox OS on/,$p' | grep -av '^\s*$' | tail -40
 
 fail=0
 check() {
@@ -68,7 +67,7 @@ cp "$ROOT/images/run.img" "$second"
 rm -f "$log"
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$second" --timeout 600 --run "cat /etc/hostname" \
     < /dev/null > "$out" 2>&1 || { cat "$out"; echo "FAIL: second boot"; exit 1; }
-if grep -aq "Welcome to Redox" "$log"; then
+if grep -aq "Welcome to Redox OS on the Raspberry Pi" "$log"; then
     echo "FAIL: the welcome app ran again"; fail=1
 fi
 check '^pi-test'

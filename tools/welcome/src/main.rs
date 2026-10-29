@@ -5,11 +5,13 @@
 //!
 //! Every console shows the welcome; the setup runs on the first one where
 //! someone presses Enter. The others go on to `login` when Enter is pressed
-//! there.
+//! there. With `--login` (from getty) it becomes `login` when it is done,
+//! in the same process, so getty sees one program.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, Write};
 use std::os::unix::fs::{symlink, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -21,25 +23,38 @@ const ZONEINFO: &str = "/usr/share/zoneinfo";
 const HOSTNAME: &str = "/etc/hostname";
 const WIFI: &str = "/etc/net/wifi";
 
-const USAGE: &str = "welcome [--force]
+const USAGE: &str = "welcome [--force] [--login]
 First-boot setup: keyboard layout, time zone, hostname, root password and
 Wi-Fi. getty runs it before login until /etc/welcome.done exists.
-  --force   run even when the setup is marked done (from a shell)";
+  --force   run even when the setup is marked done (from a shell)
+  --login   run login when done (getty)";
 
 /// End of input (Ctrl-D): stop without marking the setup done
 struct Eof;
 
 fn main() -> ExitCode {
     let mut force = false;
+    let mut login = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--force" => force = true,
+            "--login" => login = true,
             _ => {
                 eprintln!("{USAGE}");
                 return ExitCode::from(if arg == "--help" { 0 } else { 2 });
             }
         }
     }
+    let code = run(force);
+    if login {
+        let err = Command::new("login").exec();
+        eprintln!("welcome: cannot run login: {err}");
+        return ExitCode::FAILURE;
+    }
+    code
+}
+
+fn run(force: bool) -> ExitCode {
     if !force && Path::new(DONE).exists() {
         return ExitCode::SUCCESS;
     }
@@ -75,8 +90,7 @@ fn main() -> ExitCode {
             }
             println!();
             println!("Done. Log in as root. To change these settings later, run welcome --force.");
-            println!("Press Enter for the login prompt.");
-            let _ = read_line();
+            println!();
             ExitCode::SUCCESS
         }
         Err(Eof) => {
