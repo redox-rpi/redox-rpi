@@ -206,9 +206,9 @@ Step 1 on branch `wifi` (on top of `sdhost-ctxleak`), experiment
   sdhost keeps working. Pi test #57 is queued for the Pi test agent
   (image `v0.3.0-dev-216-gfb78c4a+xd4e7`).
 
-Step 2 is written and waits for a good #57 (same branch and experiment,
-base `0032`, about 700 lines with tests). It builds and its unit tests
-pass; nothing of it has run against the chip yet.
+Step 2 (base `0032`, Pi test #60 after #57) and steps 3–4 (base `0033`,
+scan and WPA2 join) are written. They build and their unit tests pass;
+nothing of them has run against the chip yet.
 
 ### Step 2: firmware start, version and MAC address
 
@@ -270,11 +270,56 @@ back`, `HT clock on`, `function 2 ready`, a version line like
 - Speed: PIO register writes have a spacing delay; the download time is
   printed. 50 MHz high-speed mode later.
 
-### Step 3 after that
+### Steps 3 and 4: scan and join (base `0033`, written, not run)
 
-Load the CLM blob (`clmload` iovar in 1400-byte pieces), firmware events
-on channel 1, `escan` and its results, then join (step 4 of the list
-below).
+After `ver` and `cur_etheraddr` the probe goes on:
+
+1. **CLM blob:** `clmload` in chunks of 1400 bytes (12-byte header: flags
+   with handler version 1, begin/end, type 2 = CLM, length, CRC unused),
+   then `clmload_status` must be 0. Firmware 7.45 scans no channels
+   without it.
+2. **Events and radio:** read `event_msgs` (18 bytes), add SET_SSID, JOIN,
+   AUTH, DEAUTH(_IND), ASSOC, DISASSOC(_IND), LINK, PSK_SUP, ESCAN_RESULT,
+   write it back; `roam_off` 1 like Pi OS; `WLC_UP`.
+3. **Scan:** `escan` (version 1, start, any SSID/BSSID, active, firmware
+   default times, all channels). ESCAN_RESULT events with status 8 carry
+   BSS descriptions; status 0 ends the scan. The log lists BSSID, channel,
+   dBm, security (RSN IE = WPA2, WPA vendor IE, privacy bit = WEP) and name.
+   The BSS description is parsed in its naturally aligned layout, with a
+   packed layout as fallback (the sources disagree; the Pi test shows
+   which one the firmware sends).
+4. **Join** (only with `/etc/net/wifi`, `ssid=` and `psk=`): infrastructure
+   mode, open authentication, AES, WPA2-PSK, `sup_wpa` 1, the passphrase
+   with `WLC_SET_WSEC_PMK` (the firmware derives the key and does the
+   4-way handshake), then `WLC_SET_SSID`. Success is LINK with the up
+   flag and PSK_SUP status 6 (keyed); DEAUTH, a failed SET_SSID or another
+   PSK_SUP status end it with the reason in the log. `sup_wpa` failing
+   means the firmware has no supplicant (the standard file).
+
+Events and data frames: channel 1 and 2 payloads start with a 4-byte BCDC
+data header, then an Ethernet frame; events have ethertype 0x886c, a
+Broadcom header and a 48-byte big-endian event message.
+
+Pi test: the scan needs no person (it should list the Fritz!Box). The join
+needs the network name and passphrase on the Pi, so it waits for the
+maintainer.
+
+### Step 5: network interface, needs a netstack change first
+
+Sending and receiving Ethernet frames is ready in the frame code (data
+header on channel 2). What blocks `network.wlan0`:
+
+- `netstack` looks for `network.*` schemes once, when it starts
+  (`10_smolnetd.service`), and takes the first one. A Wi-Fi driver that
+  joins after boot is never seen, and with the LAN7800 present `netstack`
+  would not take Wi-Fi anyway.
+- `daemon::Daemon` needs init's notify pipe, so the probe could not
+  run by hand any more; the driver should split into the boot daemon and
+  a small tool (scan, join) that talks to it.
+
+So the order is: `netstack` with several adapters (or at least picking up
+adapters that appear later, plus a setting for which one to use), then
+the daemon with `network.wlan0`, then `dhcpd` on it.
 
 ## Next
 
