@@ -1,4 +1,4 @@
-From ed57f20a88384ff4a06652f624142abd57debdc7 Mon Sep 17 00:00:00 2001
+From 4f93e8fff01a424fb494512e9c658c47f122ee08 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 10:48:13 +0100
 Subject: [PATCH] dwc2d: list the USB devices in /scheme/usb.dwc2/devices
@@ -93,7 +93,7 @@ index 01cac8d..6b8e3e0 100644
      let mut pos = 0;
      while pos + 2 <= config.len() && config[pos] >= 2 {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1f4de46..1d7d355 100644
+index 28cc7aa..db6ea43 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -4,7 +4,8 @@
@@ -114,7 +114,7 @@ index 1f4de46..1d7d355 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -567,6 +569,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -572,6 +574,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
                  let mut changes = bus.scan();
                  changes.removed.extend(cycled);
@@ -124,7 +124,7 @@ index 1f4de46..1d7d355 100644
                  let net = scheme.adapter_mut();
                  for &address in &changes.removed {
                      net.remove(address);
-@@ -613,6 +618,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+@@ -618,6 +623,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
          match bus.enumerate_root() {
              Ok(()) => {
                  println!("dwc2d: {} device(s) enumerated", bus.devices.len());
