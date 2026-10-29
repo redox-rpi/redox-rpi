@@ -1,0 +1,87 @@
+From 9aa1ab6338758673132c26892de948336698babd Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:14:19 +0100
+Subject: [PATCH] netstack: IPv6 multicast groups for programs
+
+IPV6_JOIN_GROUP and IPV6_LEAVE_GROUP join and leave IPv6 groups on the
+interface, counted like the IPv4 ones; smoltcp sends the MLD reports.
+Other IPPROTO_IPV6 options are accepted and ignored.
+---
+ netstack/src/scheme/socket.rs | 35 ++++++++++++++++++++++++++++++++---
+ 1 file changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
+index 5e2ae77..1386d7e 100644
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -13,7 +13,7 @@ use redox_scheme::scheme::{register_scheme_inner, Op, SchemeSync};
+ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::HandleMap;
+ use smoltcp::socket::AnySocket;
+-use smoltcp::wire::Ipv4Address;
++use smoltcp::wire::{IpAddress, Ipv4Address, Ipv6Address};
+ use syscall::data::TimeSpec;
+ use syscall::flag::{EVENT_READ, EVENT_WRITE};
+ use syscall::schemev2::NewFdFlags;
+@@ -34,12 +34,15 @@ const SO_SNDBUF: usize = 7;
+ const IPPROTO_IP: u64 = 0;
+ const IP_ADD_MEMBERSHIP: usize = 35;
+ const IP_DROP_MEMBERSHIP: usize = 36;
++const IPPROTO_IPV6: u64 = 41;
++const IPV6_JOIN_GROUP: usize = 20;
++const IPV6_LEAVE_GROUP: usize = 21;
+ 
+ pub struct Context {
+     pub iface: Interface,
+     pub route_table: Rc<RefCell<RouteTable>>,
+-    /// Joined IPv4 multicast groups and how many joins each has
+-    pub multicast_groups: BTreeMap<Ipv4Address, usize>,
++    /// Joined multicast groups and how many joins each has
++    pub multicast_groups: BTreeMap<IpAddress, usize>,
+ }
+ 
+ pub struct NullFile {
+@@ -474,7 +477,30 @@ where
+         if !group.is_multicast() || group.is_broadcast() {
+             return Err(SyscallError::new(EINVAL));
+         }
++        self.join_or_leave(IpAddress::Ipv4(group), join)
++    }
+ 
++    /// Socket options of level IPPROTO_IPV6, the same for IPv6 groups;
++    /// smoltcp sends the MLD reports. Other options (IPV6_V6ONLY,
++    /// IPV6_MULTICAST_HOPS, ...) are accepted and ignored.
++    fn set_ipv6_option(&mut self, name: usize, payload: &[u8]) -> SyscallResult<usize> {
++        let join = match name {
++            IPV6_JOIN_GROUP => true,
++            IPV6_LEAVE_GROUP => false,
++            _ => return Ok(0),
++        };
++        // struct ipv6_mreq: the group, then the interface index
++        let Some(group) = payload.get(..16) else {
++            return Err(SyscallError::new(EINVAL));
++        };
++        let group = Ipv6Address::from(<[u8; 16]>::try_from(group).unwrap());
++        if !group.is_multicast() {
++            return Err(SyscallError::new(EINVAL));
++        }
++        self.join_or_leave(IpAddress::Ipv6(group), join)
++    }
++
++    fn join_or_leave(&mut self, group: IpAddress, join: bool) -> SyscallResult<usize> {
+         let mut iface = self.context.iface.borrow_mut();
+         let groups = &mut self.context.multicast_groups;
+         if join {
+@@ -517,6 +543,9 @@ where
+             SocketCall::SetSockOpt if metadata.get(2) == Some(&IPPROTO_IP) => {
+                 self.set_ip_option(metadata[1] as usize, payload)
+             }
++            SocketCall::SetSockOpt if metadata.get(2) == Some(&IPPROTO_IPV6) => {
++                self.set_ipv6_option(metadata[1] as usize, payload)
++            }
+             SocketCall::SetSockOpt => {
+                 // currently not used
+                 // self.handle_setsockopt(id, metadata[1] as i32, &payload)
+-- 
+2.54.0 (Apple Git-157)
+
