@@ -1,4 +1,4 @@
-From cf37f696667b5a5f14729ae924edc2ab3e960800 Mon Sep 17 00:00:00 2001
+From 68ae5479f79d8a28a1a5bfe3af54fa4f54d49747 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:00:06 +0100
 Subject: [PATCH] dwc2d: switch a hub port off and on on request, for hotplug
@@ -15,27 +15,53 @@ and the hub line now says whether the hub switches power per port.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/dwc2d/src/dwc2.rs      | 11 ++++++
+ drivers/usb/dwc2d/src/dwc2.rs      | 37 ++++++++++++++++++++
  drivers/usb/dwc2d/src/enumerate.rs | 55 +++++++++++++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs      | 37 +++++++++++++++++++-
- 3 files changed, 101 insertions(+), 2 deletions(-)
+ 3 files changed, 127 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 0f4dfe3..533c036 100644
+index 0f4dfe3..db0bedb 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -155,6 +155,17 @@ impl Dwc2 {
+@@ -155,6 +155,43 @@ impl Dwc2 {
          self.write(hcint(ch), u32::MAX);
      }
  
 +    /// Halt every channel with a transfer to a device, before the device is
-+    /// reset or forgotten: a transmit that timed out may still be enabled.
++    /// reset or forgotten: a receive or a transmit that timed out may still
++    /// be enabled.
++    ///
++    /// QEMU's DWC2 marks a halted channel halted but goes on retrying the
++    /// packet it NAKed, and aborts once the device is gone after its reset.
++    /// A SETUP packet on the channel, which a device always takes, replaces
++    /// that packet. On real hardware it is harmless: the device is about to
++    /// be reset, or is gone and the packet times out.
 +    pub fn halt_device(&self, address: u8) {
++        let mut setup = None;
 +        for ch in 0..self.channels {
 +            let value = self.read(hcchar(ch));
-+            if value & HCCHAR_CHENA != 0 && (value >> HCCHAR_DEVADDR_SHIFT) & 0x7F == u32::from(address) {
-+                self.halt(ch);
++            if value & HCCHAR_CHENA == 0 || (value >> HCCHAR_DEVADDR_SHIFT) & 0x7F != u32::from(address) {
++                continue;
 +            }
++            self.halt(ch);
++            // GET_STATUS of the device; no data or status stage follows.
++            let buf = setup.get_or_insert_with(|| {
++                Dma::new([0x80u8, 0x00, 0, 0, 0, 0, 2, 0]).expect("dwc2d: DMA allocation failed")
++            });
++            let phase = Phase {
++                dev_addr: address,
++                endpoint: 0,
++                dir_in: false,
++                ep_type: EPTYPE_CONTROL,
++                max_packet: 8,
++                low_speed: false,
++                pid: PID_SETUP,
++                buf_phys: buf.physical(),
++                len: 8,
++            };
++            let _ = self.packet(ch, &phase, 0, Duration::from_millis(10));
++            self.halt(ch);
 +        }
 +    }
 +
