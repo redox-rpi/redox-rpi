@@ -44,6 +44,7 @@ mosquitto 2.0.22 on the build host, topics watched with `mosquitto_sub`
 | QEMU frozen (`kill -STOP`, like a hang) | broker published `offline` (retained) after 41 s |
 | QEMU thawed | the service noticed the broken connection, connected again 30 s later: `online` |
 | QEMU killed | `offline` at once |
+| `/etc/mqtt-host` set to a wrong host, connection broken, then fixed (build `v0.3.0-dev-104-g439640d+x3029`) | `offline`; 20 s after the fix `online` again, without a restart |
 
 On the Mac, `ha-bridge --remove` cleared all retained topics. Not tested
 yet: a real Home Assistant (the topics and fields follow its MQTT
