@@ -20,3 +20,10 @@ scripts/relibc-tests.sh --experiment timer-sigmask
 ```
 
 ## Results
+
+QEMU raspi3b, `scripts/relibc-tests.sh --experiment timer-sigmask`,
+`v0.3.0-dev-222-g398fbc3+xc933` (2026-10-29), three runs: 23 failures,
+`time/timer` passes every time (before: fails every time), none new.
+`stdio/mutex` also passed in all three, but it uses no signals: it fails
+or passes depending on the build (passed with the #4/#14 fixes too), so it
+is marked flaky in the list rather than counted as fixed.
