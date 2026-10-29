@@ -1043,3 +1043,31 @@ Built 2026-10-29T12:45:26Z, `libc.so` `f4c29e0c5fc7c368…`, real Pi 3B+ over ne
 | ps-tty | pass | 43 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+Test 47 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27),
+[#37](https://github.com/redox-rpi/redox-rpi/issues/37)), branch
+`net-pi-test`. Extra checks; homenodellm is on Wi-Fi (`wlp13s0`) and has no
+`ping`, so the pings used an unprivileged ICMP socket from Python:
+
+- `/scheme/netcfg/ifaces/eth0/addr/list`: `192.168.178.148/24`,
+  `fe80::ba27:ebff:fe08:e0aa/64`, `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64`
+  (SLAAC from the Fritz!Box's ULA prefix). **No global `2a02:…` address**,
+  also after 9.5 minutes, and no IPv6 default route in
+  `/scheme/netcfg/route/list`. The Fritz!Box does send router
+  advertisements with the global prefix: homenodellm has
+  `2a02:590:1507:c201::/64 proto ra` and `fdeb:d4ef:a7ac::/64 proto ra`,
+  with the default route via `fe80::b6fc:7dff:fe53:b289`. So the Pi takes
+  the ULA prefix from the same advertisements and leaves out the global
+  one and the default router.
+- Ping from homenodellm: `fe80::ba27:ebff:fe08:e0aa%wlp13s0` 3 of 3
+  (2–4 ms), `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa` 3 of 3; no global
+  address to ping.
+- `mdns-query.py redox-rpi.local`: `A 192.168.178.148` from the Pi (ttl
+  120), also from the Fritz!Box's cache. `mdns-query.py _devsh._tcp.local
+  PTR`: `redox-rpi._devsh._tcp.local`; asked for SRV: `port 2323 target
+  redox-rpi.local`, TXT empty: **pass**.
+- Standard checks pass; only the known `pcid` panic in the serial log.
+- Afterwards the first boot of the stable image had no network: `dwc2d: 1
+  device(s) enumerated` (the LAN7800 behind the hub was not found),
+  `smoltcpd: no network adapter found`. A second reset over the serial
+  console found all 5 devices.
