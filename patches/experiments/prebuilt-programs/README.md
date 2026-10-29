@@ -34,4 +34,8 @@ them through the image's `libc.so`.
   fails with the signal mask bug [#4](https://github.com/redox-rpi/redox-rpi/issues/4), whose fix is not in this build.
   Without `serial-rx` the long test command line made getty panic
   (`failed to write master PTY: WouldBlock`, #28).
-- Not tested on the Pi yet.
+- Real Pi, test plan #45, `v0.3.0-dev-144-g2e6f4f9+x9c38` (branch
+  `prebuilt-sigreturn`, with `sigreturn-svc`): standard checks pass, 0 of
+  300 starts failed; 9 programs × 50 starts, 450 of 450 exit 0; bash loop
+  5 of 5; `sigregs process` passes, `sigregs thread` fails as expected
+  (#4 not in the image). Report on main 944f0f2.
