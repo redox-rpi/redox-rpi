@@ -59,4 +59,8 @@ Needs a person to look at the LEDs; the jumper wire step is optional.
 
 ## Results
 
-- Not tested yet.
+- QEMU, image `v0.3.0-dev-146-g5a7fc2c+x630f` (gpio and i2c together):
+  all 10 checks of `qemu-check.sh` pass. The first run hung on writing a
+  pull: a 10 µs `nanosleep` in the driver did not come back; base patch 3
+  spins instead.
+- Pi test: queued as #38.
