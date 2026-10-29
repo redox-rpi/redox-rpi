@@ -13,6 +13,9 @@ hold list:
 - `pkg install` and `pkg update` leave an installed package from the list
   alone and print `<name> is held (etc/pkg/hold), keeping the installed version`.
 - Packages that are not installed yet can still be installed.
+- A line `name remote` (the remote's host, as `pkg info` shows it) still
+  takes new versions of that package from that one remote. The experiment
+  `pkg-repo` uses this for our own repository.
 
 The image gets `/etc/pkg/hold` with `base`, `base-initfs`, `bootloader`,
 `kernel`, `relibc` and `pkgutils`. Without `pkgutils` in the list, an update

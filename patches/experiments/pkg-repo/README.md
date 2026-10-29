@@ -28,7 +28,11 @@ This experiment adds `/etc/pkg.d/40_redox-rpi` with
   (pkgutils has no multi-repository update yet), so it updates our
   packages from our repository and leaves upstream packages alone.
 
-Use it together with `pkg-hold`:
+It also replaces the hold list of `pkg-hold` with entries like
+`kernel 192.168.178.120`: our patched packages are updated from our
+repository and never from `static.redox-os.org`.
+
+Use it together with `pkg-hold`, listed after it:
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment pkg-hold --experiment pkg-repo

@@ -1,57 +1,64 @@
-From c812af3d8be54c084b3b37ca70ff86bd01b25c5c Mon Sep 17 00:00:00 2001
+From 6624163d6d73da8c863ccf7a5ea3395b074d4d06 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 12:29:41 +0000
 Subject: [PATCH] pkg: keep packages listed in /etc/pkg/hold
 
 A system with its own builds of some packages (kernel, relibc, base)
-lists them in /etc/pkg/hold. pkg install and pkg update then keep the
-installed version of these packages instead of the remote one.
+lists them in /etc/pkg/hold, one per line. pkg install and pkg update
+then keep the installed version of these packages instead of the remote
+one. A line "name remote" still takes new versions from that one remote,
+e.g. the system's own repository.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- pkg-lib/src/library.rs | 39 ++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 38 insertions(+), 1 deletion(-)
+ pkg-lib/src/library.rs | 58 +++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 1 deletion(-)
 
 diff --git a/pkg-lib/src/library.rs b/pkg-lib/src/library.rs
-index 2bd6ea9..7d644ed 100644
+index 2bd6ea9..1fd0ab0 100644
 --- a/pkg-lib/src/library.rs
 +++ b/pkg-lib/src/library.rs
-@@ -3,7 +3,7 @@ use crate::callback::Callback;
- use crate::package::{PackageInfo, PackageName, RemotePackage};
+@@ -1,6 +1,6 @@
+ use crate::backend::{Backend, Error};
+ use crate::callback::Callback;
+-use crate::package::{PackageInfo, PackageName, RemotePackage};
++use crate::package::{PackageInfo, PackageName, RemoteName, RemotePackage};
  use crate::repo_manager::RepoManager;
  use crate::{sorensen, LibraryBuilder, PackageState};
--use std::collections::{btree_map, BTreeMap};
-+use std::collections::{btree_map, BTreeMap, BTreeSet};
- use std::{cell::RefCell, cmp::Ordering, path::Path, rc::Rc};
- 
- pub struct Library {
-@@ -12,6 +12,25 @@ pub struct Library {
+ use std::collections::{btree_map, BTreeMap};
+@@ -12,6 +12,31 @@ pub struct Library {
      cached_info: BTreeMap<PackageName, RemotePackage>,
      backend: Box<dyn Backend>,
      callback: Rc<RefCell<dyn Callback>>,
 +    /// installed packages that `install` and `update` leave alone
-+    held: BTreeSet<PackageName>,
++    held: BTreeMap<PackageName, Option<RemoteName>>,
 +}
 +
-+/// Packages to keep as installed, one name per line (`#` starts a comment):
-+/// for a system whose own builds of some packages must not be replaced by
-+/// the remote versions.
++/// Packages to keep as installed, one per line (`#` starts a comment), for a
++/// system whose own builds of some packages must not be replaced by the
++/// remote versions. `name` keeps the installed version; `name remote` (the
++/// remote's host, as `pkg info` shows it) still takes new versions from that
++/// one remote.
 +const HOLD_PATH: &str = "etc/pkg/hold";
 +
-+fn read_held(install_path: &Path) -> BTreeSet<PackageName> {
++fn read_held(install_path: &Path) -> BTreeMap<PackageName, Option<RemoteName>> {
 +    let path = install_path.join(HOLD_PATH);
 +    let Ok(data) = std::fs::read_to_string(&path) else {
-+        return BTreeSet::new();
++        return BTreeMap::new();
 +    };
-+    data.lines()
-+        .map(|line| line.split('#').next().unwrap_or("").trim())
-+        .filter(|name| !name.is_empty())
-+        .filter_map(|name| PackageName::new(name).ok())
-+        .collect()
++    let mut held = BTreeMap::new();
++    for line in data.lines() {
++        let mut words = line.split('#').next().unwrap_or("").split_whitespace();
++        let Some(Ok(name)) = words.next().map(PackageName::new) else {
++            continue;
++        };
++        held.insert(name, words.next().map(str::to_string));
++    }
++    held
  }
  
  impl Library {
-@@ -21,12 +40,14 @@ impl Library {
+@@ -21,12 +46,14 @@ impl Library {
          remotes_fn: impl Fn(&mut RepoManager) -> Result<(), Error>, // TODO: move to builder
      ) -> Result<Self, Error> {
          let callback = builder.callback.clone();
@@ -66,31 +73,44 @@ index 2bd6ea9..7d644ed 100644
          })
      }
  
-@@ -81,6 +102,7 @@ impl Library {
+@@ -81,6 +108,7 @@ impl Library {
      }
  
      pub fn install(&mut self, packages: Vec<PackageName>) -> Result<(), Error> {
-+        let packages = self.without_held(packages);
++        let packages = self.without_held(packages)?;
          self.callback.borrow_mut().fetch_start(packages.len());
          self.install_inner(packages.clone(), 100)?;
          self.package_state.mark_as_manual(true, &packages);
-@@ -129,6 +151,21 @@ impl Library {
+@@ -129,6 +157,34 @@ impl Library {
          Ok(())
      }
  
-+    /// Drops installed packages listed in /etc/pkg/hold, with a note.
-+    fn without_held(&self, packages: Vec<PackageName>) -> Vec<PackageName> {
-+        packages
-+            .into_iter()
-+            .filter(|p| {
-+                let keep = !(self.held.contains(p)
-+                    && self.package_state.installed.contains_key(p));
-+                if !keep {
-+                    eprintln!("{} is held ({}), keeping the installed version", p.as_str(), HOLD_PATH);
++    /// Drops installed packages listed in /etc/pkg/hold, with a note, unless
++    /// the entry names the remote the new version would come from.
++    fn without_held(&mut self, packages: Vec<PackageName>) -> Result<Vec<PackageName>, Error> {
++        let mut keep = Vec::new();
++        for p in packages {
++            if let Some(allowed) = self.held.get(&p).cloned() {
++                if self.package_state.installed.contains_key(&p) {
++                    let remote = match self.cached_info.entry(p.clone()) {
++                        btree_map::Entry::Occupied(e) => e.get().remote.clone(),
++                        btree_map::Entry::Vacant(e) => {
++                            e.insert(self.backend.get_package_detail(&p)?).remote.clone()
++                        }
++                    };
++                    if allowed.as_ref() != Some(&remote) {
++                        eprintln!(
++                            "{} is held ({}), keeping the installed version",
++                            p.as_str(),
++                            HOLD_PATH
++                        );
++                        continue;
++                    }
 +                }
-+                keep
-+            })
-+            .collect()
++            }
++            keep.push(p);
++        }
++        Ok(keep)
 +    }
 +
      /// if packages is empty then update all installed packages
