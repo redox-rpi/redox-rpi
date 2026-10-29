@@ -61,8 +61,10 @@
   Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
   waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
   what is connected, and the link wait overlaps with rescans. QEMU: ready
-  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15; Pi test
-  #67 (Pi test agent).
+  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15. **Pi test
+  #67 passes**: ready after 3.3 s instead of 6.2 s (2.1 s of it is the
+  LAN7800's link), kernel to login 7.4 s instead of 10.3 s, hotplug 15/15.
+  Merges with `usb-hotplug` once #35 passes.
 
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
