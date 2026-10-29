@@ -1,4 +1,4 @@
-From 303392299f8ba6b61dfe13bff7b0fb94096d5a2d Mon Sep 17 00:00:00 2001
+From ea87aad9b1c8588dbd735f94cd30a7cebc99abe5 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:08:06 +0000
 Subject: [PATCH] ld.so: aarch64 static TLS layout as the linker expects
@@ -23,9 +23,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/ld_so/dso.rs    | 14 +++++++++++---
  src/ld_so/linker.rs |  4 ++--
- src/ld_so/mod.rs    | 12 +++++-------
+ src/ld_so/mod.rs    | 19 +++++++++++--------
  src/ld_so/tcb.rs    | 44 +++++++++++++++++++++++++++++++++++---------
- 4 files changed, 53 insertions(+), 21 deletions(-)
+ 4 files changed, 59 insertions(+), 22 deletions(-)
 
 diff --git a/src/ld_so/dso.rs b/src/ld_so/dso.rs
 index b840714d..e5947be0 100644
@@ -103,10 +103,10 @@ index 77c96072..46784190 100644
  
              tcb_masters.push(master);
 diff --git a/src/ld_so/mod.rs b/src/ld_so/mod.rs
-index 0bf42bf1..6a9ec8ba 100644
+index 0bf42bf1..55174779 100644
 --- a/src/ld_so/mod.rs
 +++ b/src/ld_so/mod.rs
-@@ -101,18 +101,16 @@ fn static_init(
+@@ -101,18 +101,21 @@ fn static_init(
          let vsize = (p_memsz + voff).div_ceil(page_size) * page_size;
  
          if p_type == elf::PT_TLS {
@@ -121,12 +121,18 @@ index 0bf42bf1..6a9ec8ba 100644
                  STATIC_TCB_MASTER.ptr = p_vaddr as *const u8;
                  STATIC_TCB_MASTER.image_size = p_filesz;
 -                STATIC_TCB_MASTER.offset = valign;
+-
+-                let tcb = Tcb::new(vsize).expect("failed to allocate TCB");
 +                STATIC_TCB_MASTER.offset = offset;
 +                STATIC_TCB_MASTER.segment_size = p_memsz;
- 
--                let tcb = Tcb::new(vsize).expect("failed to allocate TCB");
-+                let tcb = Tcb::new(vsize.max(STATIC_TCB_MASTER.static_end()))
-+                    .expect("failed to allocate TCB");
++
++                // On aarch64 the block may start after an alignment gap.
++                let size = if cfg!(target_arch = "aarch64") {
++                    vsize.max(offset + p_memsz)
++                } else {
++                    vsize
++                };
++                let tcb = Tcb::new(size).expect("failed to allocate TCB");
                  tcb.masters_ptr = ptr::addr_of_mut!(STATIC_TCB_MASTER);
                  tcb.masters_len = mem::size_of::<Master>();
                  tcb.copy_masters().expect("failed to copy TLS master data");
