@@ -29,3 +29,14 @@ scripts/build-image.sh --experiment timesync --experiment pkg-hold
 
 To remove a package from the list, edit `/etc/pkg/hold`; `pkg update` then
 installs the upstream version.
+
+## Updates that replace files
+
+Patch 0003 fixes `pkg update` itself. Upstream (pkgutils fe21bfd with
+pkgar 0.2.4) replaced no file without `--nocheck`: pkgar's
+`replace_diff` takes each path out of its map before it looks it up, so
+every file of the new version counts as new, and the install step skips
+files that exist ("already exists"). `/etc/pkg/packages.toml` still
+recorded the new version. With 0003 an update skips files whose content
+is the same, replaces files the old version installed when they are
+unchanged on disk, and leaves files changed locally alone.
