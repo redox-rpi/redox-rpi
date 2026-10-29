@@ -24,7 +24,6 @@ fn state() {
         println!("isatty(0)    = {}", libc::isatty(0));
         println!("pid          = {}", libc::getpid());
         println!("pgrp         = {}", libc::getpgrp());
-        println!("sid          = {}", libc::getsid(0));
         let fg = libc::tcgetpgrp(0);
         if fg < 0 {
             println!("tcgetpgrp(0) = -1 ({})", errno());
