@@ -1,4 +1,4 @@
-From 16e6f5900d6bfd6df33364bc52f7cb48412e735c Mon Sep 17 00:00:00 2001
+From 0bf120a16e47884de7d1f2c15ca91376d444578e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
@@ -23,9 +23,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.lock                         |   1 +
  drivers/usb/dwc2d/Cargo.toml       |   1 +
  drivers/usb/dwc2d/src/enumerate.rs |  16 ++
- drivers/usb/dwc2d/src/main.rs      |  62 ++++-
+ drivers/usb/dwc2d/src/main.rs      |  64 ++++-
  drivers/usb/dwc2d/src/storage.rs   | 419 +++++++++++++++++++++++++++++
- 5 files changed, 497 insertions(+), 2 deletions(-)
+ 5 files changed, 498 insertions(+), 3 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/storage.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -80,7 +80,7 @@ index 01cac8d..c265e6f 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..af99959 100644
+index 28cc7aa..a6b7e0c 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -196,6 +196,15 @@ index 28cc7aa..af99959 100644
  
      // The receive channel's halt raises the controller's interrupt; without
      // it, fall back to a timer that polls.
+@@ -510,7 +552,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .expect("dwc2d: failed to subscribe to the scheme");
+ 
+     scheme.tick().expect("dwc2d: network scheme failed");
+-    for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++    for event in events.iter().map(|e| e.expect("dwc2d: failed to get event")) {
+         match event.user_data {
+             Source::Irq => {
+                 let file = irq_file.as_mut().unwrap();
 @@ -523,6 +565,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
              }
