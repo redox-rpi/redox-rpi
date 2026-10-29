@@ -35,10 +35,15 @@ patches/experiments/keyboard-de/test-keymap.sh [image]
 ```
 
 It runs `inputd -K de` on the serial console, logs in on the console with
-QEMU's USB keyboard, types `echo 'zyß@{[]}\~|#öäü€"§' > /home/root/de.txt`
-as the keys of a German keyboard, and checks the file. It needs no
-network port.
+QEMU's USB keyboard, types `cat > /home/root/de.txt` and the line
+`zyß@{[]}\~|#öäü€"§'<>` (then Ctrl-D) as the keys of a German keyboard,
+and checks the file. The characters go to `cat`, not to ion, which
+rejects `[` even in quotes. It needs no network port.
 
 ## Results
 
-See [test-reports.md](../../../docs/test-reports.md).
+- QEMU `raspi3b`, `v0.3.0-dev-141-g3fd1bba+x9ea9` (with `timesync`,
+  `rtl8152`): `test-keymap.sh` passes, every character as on a German
+  keyboard, AltGr included.
+
+Details in [test-reports.md](../../../docs/test-reports.md).

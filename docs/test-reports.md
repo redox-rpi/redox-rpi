@@ -652,3 +652,18 @@ arrived complete (before: cut off after 25 characters). No crash on the
 console except the known `pcid` panic (no `pi-clean-boot` in this image).
 The first `pi-test.py` attempt got no answer from devsh (#11); the second
 attempt is the table above.
+
+## 2026-10-29: `v0.3.0-dev-141-g3fd1bba+x9ea9` (German keyboard layout, #36), QEMU
+
+Branch `keyboard-layouts`, experiment `keyboard-de` with `timesync` and
+`rtl8152`. QEMU `raspi3b`, USB keyboard through the QEMU monitor
+(`patches/experiments/keyboard-de/test-keymap.sh`).
+
+- `inputd -K de` on the serial console, then login on the console with
+  the USB keyboard: `root`, `password` unchanged.
+- Typed as German key positions: `cat > /home/root/de.txt` and
+  `zyß@{[]}\~|#öäü€"§'<>`. The file holds exactly that line: z and y
+  swapped, umlauts, ß, AltGr for @ { [ ] } \ ~ | €, the < > key. **Pass.**
+- An earlier attempt with `echo '…'` failed in ion ("`[` is out of place"
+  even in single quotes), not in the layout: the screen showed the line
+  typed correctly.
