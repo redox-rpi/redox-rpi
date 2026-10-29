@@ -22,10 +22,22 @@ path = "/usr/lib/redox-rpi/sshd-keys"
 mode = 0o755
 data = """
 #!/usr/bin/ion
+# Host keys live on the data partition, so they stay the same across new
+# images. ssh-keygen writes each key under a temporary name and renames it,
+# and /scheme/data has no rename: make the keys in /etc/ssh, copy them over.
 if test -d /scheme/data
     mkdir -p /scheme/data/etc/ssh
-    ssh-keygen -A -f /scheme/data
-    cp -p /scheme/data/etc/ssh/ssh_host_* /etc/ssh/
+    for type in [rsa ecdsa ed25519]
+        if test -f /scheme/data/etc/ssh/ssh_host_${type}_key
+            cp -p /scheme/data/etc/ssh/ssh_host_${type}_key /scheme/data/etc/ssh/ssh_host_${type}_key.pub /etc/ssh/
+        end
+    end
+    ssh-keygen -A
+    for type in [rsa ecdsa ed25519]
+        if not test -f /scheme/data/etc/ssh/ssh_host_${type}_key
+            cp -p /etc/ssh/ssh_host_${type}_key /etc/ssh/ssh_host_${type}_key.pub /scheme/data/etc/ssh/
+        end
+    end
 else
     ssh-keygen -A
 end
