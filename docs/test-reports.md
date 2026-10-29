@@ -630,3 +630,15 @@ MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
 
 The memory fix holds on the Pi: the workload that ended #23 in a panic ran
 through. Rerun the cycles with the devshd hangup fix included.
+
+## 2026-10-29: `v0.3.0-dev-129-g6917241+x9f76` (clean boot as the default patch, #18), QEMU
+
+Branch `clean-boot-default`: base `0024` (was experiment `pi-clean-boot`)
+on main, with `timesync` and `rtl8152`. QEMU `raspi3b`, serial console,
+no network card (`scripts/qemu-raspi3b.sh --run ps`).
+
+- Login reached, `/etc/redox-rpi-release` shows the build ID.
+- No `pcid`, `pcid-spawner`, `audiod` or `rtcd` line in the console and
+  no such process in `ps`; no `pcid` panic.
+- `netstack` "exited without notifying readiness": this run has no network
+  card. The Pi test (#33) checks the network.
