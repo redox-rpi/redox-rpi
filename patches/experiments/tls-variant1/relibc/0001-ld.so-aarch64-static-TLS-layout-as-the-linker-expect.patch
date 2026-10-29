@@ -1,0 +1,212 @@
+From 303392299f8ba6b61dfe13bff7b0fb94096d5a2d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:08:06 +0000
+Subject: [PATCH] ld.so: aarch64 static TLS layout as the linker expects
+ (variant I)
+
+The static TLS blocks were placed like on x86_64. On aarch64 the linker
+puts the first block at align_up(16, p_align) from the thread pointer and
+each further block at the next aligned offset after the previous one, and
+R_AARCH64_TLS_TPREL and static TLSDESC are offsets above the thread
+pointer.
+
+Before: thread-local data of the executable aligned to more than 16 lost
+its initial values, initial-exec TLS of shared libraries pointed below
+the thread pointer, and static TLSDESC was 16 bytes off (tests tls_align,
+tls_shared, tls_probe).
+
+Now Master::static_offset gives each block its start in the static TLS
+area (16 bytes above the thread pointer) and static_end the area used up
+to it; TPREL and static TLSDESC add 16. Other architectures unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ld_so/dso.rs    | 14 +++++++++++---
+ src/ld_so/linker.rs |  4 ++--
+ src/ld_so/mod.rs    | 12 +++++-------
+ src/ld_so/tcb.rs    | 44 +++++++++++++++++++++++++++++++++++---------
+ 4 files changed, 53 insertions(+), 21 deletions(-)
+
+diff --git a/src/ld_so/dso.rs b/src/ld_so/dso.rs
+index b840714d..e5947be0 100644
+--- a/src/ld_so/dso.rs
++++ b/src/ld_so/dso.rs
+@@ -11,6 +11,8 @@ use object::{
+ };
+ 
+ #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
++#[cfg(target_arch = "aarch64")]
++use super::tcb::TLS_TCB_SIZE;
+ use super::tcb::Tcb;
+ use super::{
+     debug::{_r_debug, RTLDDebug},
+@@ -424,7 +426,7 @@ impl DSO {
+                     image_size: usize::try_from(ph.p_filesz(NativeEndian))
+                         .expect("always within bounds"),
+                     segment_size: memsz,
+-                    offset: (tls_offset + memsz).next_multiple_of(align),
++                    offset: Master::static_offset(tls_offset, memsz, align),
+                 }
+             })
+             .unwrap();
+@@ -807,7 +809,7 @@ impl DSO {
+                         image_size: usize::try_from(ph.p_filesz(endian))
+                             .expect("always within bounds"),
+                         segment_size: memsz,
+-                        offset: (tls_offset + memsz).next_multiple_of(align),
++                        offset: Master::static_offset(tls_offset, memsz, align),
+                     });
+                     log::trace!("  tcb master {:x?}", tcb_master);
+                 }
+@@ -1199,6 +1201,9 @@ impl DSO {
+             })) as usize;
+         } else {
+             *resolver = __tlsdesc_static as *const () as usize;
++            // The resolver returns an offset from the thread pointer.
++            #[cfg(target_arch = "aarch64")]
++            let tls_offset = tls_offset + TLS_TCB_SIZE;
+             *descriptor = sym + tls_offset + reloc.addend.unwrap_or_default();
+         }
+     }
+@@ -1290,7 +1295,10 @@ impl DSO {
+                     0
+                 };
+ 
+-                set_usize(if reloc.kind == RelocationKind::TPOFF {
++                set_usize(if cfg!(target_arch = "aarch64") {
++                    // Variant I: offset from the thread pointer, above it.
++                    a + b + tls_obj.tls_offset + TLS_TCB_SIZE
++                } else if reloc.kind == RelocationKind::TPOFF {
+                     (a + b).wrapping_sub(tls_obj.tls_offset)
+                 } else {
+                     tls_obj.tls_offset.wrapping_sub(a + b)
+diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
+index 77c96072..46784190 100644
+--- a/src/ld_so/linker.rs
++++ b/src/ld_so/linker.rs
+@@ -849,7 +849,7 @@ impl Linker {
+                 );
+             }
+ 
+-            self.tls_size = master.offset;
++            self.tls_size = master.static_end();
+             self.next_tls_module_id += 1;
+             self.next_object_id += 1;
+ 
+@@ -910,7 +910,7 @@ impl Linker {
+ 
+         if let Some(master) = tcb_master {
+             if !dlopened {
+-                self.tls_size = master.offset; // => aligned ph.p_memsz
++                self.tls_size = master.static_end(); // => aligned ph.p_memsz
+             }
+ 
+             tcb_masters.push(master);
+diff --git a/src/ld_so/mod.rs b/src/ld_so/mod.rs
+index 0bf42bf1..6a9ec8ba 100644
+--- a/src/ld_so/mod.rs
++++ b/src/ld_so/mod.rs
+@@ -101,18 +101,16 @@ fn static_init(
+         let vsize = (p_memsz + voff).div_ceil(page_size) * page_size;
+ 
+         if p_type == elf::PT_TLS {
+-            let valign = if p_align > 0 {
+-                p_memsz.div_ceil(p_align) * p_align
+-            } else {
+-                p_memsz
+-            };
++            let offset = Master::static_offset(0, p_memsz, p_align.max(1));
+ 
+             unsafe {
+                 STATIC_TCB_MASTER.ptr = p_vaddr as *const u8;
+                 STATIC_TCB_MASTER.image_size = p_filesz;
+-                STATIC_TCB_MASTER.offset = valign;
++                STATIC_TCB_MASTER.offset = offset;
++                STATIC_TCB_MASTER.segment_size = p_memsz;
+ 
+-                let tcb = Tcb::new(vsize).expect("failed to allocate TCB");
++                let tcb = Tcb::new(vsize.max(STATIC_TCB_MASTER.static_end()))
++                    .expect("failed to allocate TCB");
+                 tcb.masters_ptr = ptr::addr_of_mut!(STATIC_TCB_MASTER);
+                 tcb.masters_len = mem::size_of::<Master>();
+                 tcb.copy_masters().expect("failed to copy TLS master data");
+diff --git a/src/ld_so/tcb.rs b/src/ld_so/tcb.rs
+index c64a8037..492996c7 100644
+--- a/src/ld_so/tcb.rs
++++ b/src/ld_so/tcb.rs
+@@ -30,7 +30,41 @@ pub struct Master {
+     pub offset: usize,
+ }
+ 
++/// Thread control block size above the thread pointer in the aarch64 TLS
++/// layout (variant I): the static TLS area starts 16 bytes after it.
++#[cfg(target_arch = "aarch64")]
++pub const TLS_TCB_SIZE: usize = 16;
++
+ impl Master {
++    /// Offset in the static TLS area of a block of `memsz` bytes aligned to
++    /// `align`, placed after `start` bytes of earlier blocks.
++    ///
++    /// On aarch64 the linker puts the first block at `align_up(16, align)`
++    /// from the thread pointer and each further one at the next aligned
++    /// offset after the previous one; the area starts 16 bytes after the
++    /// thread pointer, so the offset is the block's start. On the other
++    /// architectures it is the block's end, counted backwards.
++    pub fn static_offset(start: usize, memsz: usize, align: usize) -> usize {
++        #[cfg(target_arch = "aarch64")]
++        {
++            let _ = memsz;
++            (TLS_TCB_SIZE + start).next_multiple_of(align) - TLS_TCB_SIZE
++        }
++        #[cfg(not(target_arch = "aarch64"))]
++        {
++            (start + memsz).next_multiple_of(align)
++        }
++    }
++
++    /// Bytes of the static TLS area used up to and including this block.
++    pub fn static_end(&self) -> usize {
++        if cfg!(target_arch = "aarch64") {
++            self.offset + self.segment_size
++        } else {
++            self.offset
++        }
++    }
++
+     /// The initial data for this TLS region
+     pub unsafe fn data(&self) -> &'static [u8] {
+         unsafe { slice::from_raw_parts(self.ptr, self.image_size) }
+@@ -152,19 +186,14 @@ impl Tcb {
+         if let Some(tls) = unsafe { self.tls() }
+             && let Some(masters) = self.masters()
+         {
+-            for (i, master) in masters.iter().skip(self.num_copied_masters).enumerate() {
++            for master in masters.iter().skip(self.num_copied_masters) {
+                 if master.image_size == 0 {
+                     continue;
+                 }
+ 
+-                let master_idx = self.num_copied_masters + i;
+                 let range = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+                     // x86{_64} TLS layout is backwards
+                     self.tls_len - master.offset..self.tls_len - master.offset + master.image_size
+-                } else if cfg!(target_arch = "aarch64") {
+-                    // AArch64 p_vaddr is ignored for first master, this is experimentally determined
+-                    let start = if master_idx == 0 { 0 } else { master.offset };
+-                    start..start + master.image_size
+                 } else {
+                     master.offset..master.offset + master.image_size
+                 };
+@@ -233,9 +262,6 @@ impl Tcb {
+                     let offset = if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+                         // x86{_64} TLS layout is backwards
+                         self.tls_len - master.offset
+-                    } else if cfg!(target_arch = "aarch64") {
+-                        // AArch64 p_vaddr is ignored for first master
+-                        if i == 0 { 0 } else { master.offset }
+                     } else {
+                         master.offset
+                     };
+-- 
+2.53.0
+
