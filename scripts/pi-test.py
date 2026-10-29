@@ -3,6 +3,7 @@
 
 Usage:
     scripts/pi-test.py <host> [--port 2323] [--manifest <file>] [--starts 300]
+                       [--serial-log <file>] [--serial-lines 15]
                        [--report docs/test-reports.md] [--note <text>]
 
 Checks, in this order:
@@ -13,7 +14,10 @@ Checks, in this order:
   ps-tty    ps writes its list straight to the terminal
   sdcard    a file written to /scheme/data (SD card) reads back the same
   starts    dynamically linked programs (ls, pwd) start --starts times;
-            every start that fails is counted
+            for every start that fails, the report lists the program, its
+            exit status, what it printed, and the crash dump lines the
+            serial console logged meanwhile (with --serial-log, e.g.
+            ~/redox-rpi/logs/serial.log, or images/qrun.log under QEMU)
 
 Prints a summary and, with --report, appends it to that Markdown file.
 Exits with 1 if a check failed.
@@ -22,7 +26,9 @@ Exits with 1 if a check failed.
 import argparse
 import datetime
 import hashlib
+import os
 import re
+import signal
 import socket
 import sys
 import time
@@ -102,6 +108,55 @@ class Shell:
         self.sock.close()
 
 
+def serial_size(path):
+    """Current size of the serial log, to read only what comes after it."""
+    try:
+        return os.path.getsize(path) if path else None
+    except OSError:
+        return None
+
+
+# Lines of a kernel crash dump worth quoting; the registers and the stack
+# walk in between stay in the serial log.
+CRASH_LINE = re.compile(
+    r"grant was not|FATAL|(FAR|ELR|ESR)_EL1|UNHANDLED EXCEPTION|panicked|SIG[A-Z]{3,}"
+)
+
+
+def serial_tail(path, start, count):
+    """What the serial log got after offset `start`, without terminal escape
+    sequences: the key lines of crash dumps if there are any, else the last
+    lines. At most `count` lines."""
+    if start is None:
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            # A smaller file was rotated or truncated: read it from the start.
+            f.seek(start if f.tell() >= start else 0)
+            data = f.read()
+    except OSError:
+        return []
+    text = ANSI.sub(b"", data).replace(b"\x00", b"").decode(errors="replace")
+    lines = [l.rstrip() for l in text.replace("\r", "\n").split("\n") if l.strip()]
+    return ([l for l in lines if CRASH_LINE.search(l)] or lines)[-count:]
+
+
+def describe_status(status):
+    """Ion's $? as text; above 128 it is a signal number plus 128. A program
+    the kernel ends for an exception shows exit 1 in QEMU, so the serial
+    lines tell crashes apart."""
+    if not status.isdigit():
+        return "exit status unknown"
+    code = int(status)
+    if code > 128:
+        try:
+            return f"exit {code}, signal {code - 128} ({signal.Signals(code - 128).name})"
+        except ValueError:
+            return f"exit {code}, signal {code - 128}"
+    return f"exit {code}"
+
+
 def parse_manifest(path):
     values = {}
     for line in open(path):
@@ -117,12 +172,15 @@ def main():
     ap.add_argument("--port", type=int, default=2323)
     ap.add_argument("--manifest")
     ap.add_argument("--starts", type=int, default=300)
+    ap.add_argument("--serial-log", help="serial console log to quote when a start fails")
+    ap.add_argument("--serial-lines", type=int, default=15)
     ap.add_argument("--report")
     ap.add_argument("--note", default="")
     args = ap.parse_args()
 
     results = []  # (check, ok, detail)
     info = {}
+    crashes = []  # failed starts: starts (range), program, status, messages, serial
 
     def check(name, ok, detail):
         results.append((name, ok, detail))
@@ -167,25 +225,53 @@ def main():
         )
         check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {'; '.join(out[:2]) or 'nothing'}")
 
-        failures, errors, done = 0, set(), 0
+        done, others = 0, set()
         per_run = 25  # iterations per command line, 2 starts each
         while done < args.starts:
             n = min(per_run, (args.starts - done + 1) // 2)
+            mark = serial_size(args.serial_log)
             out = sh.run(
-                f"for i in 1..={n}; ls / > /dev/null || echo FAILED ls; pwd > /dev/null || echo FAILED pwd; end",
+                f"for i in 1..={n}; ls / > /dev/null || echo FAILED ls $?; pwd > /dev/null || echo FAILED pwd $?; end",
                 timeout=300,
             )
+            # A failing program prints its messages before the FAILED line.
+            messages, batch = [], []
             for l in out:
                 if l.startswith("FAILED"):
-                    failures += 1
+                    _, program, *status = l.split()
+                    batch.append({"starts": f"{done + 1}–{done + 2 * n}", "program": program,
+                                  "status": describe_status(status[0] if status else ""),
+                                  "messages": messages})
+                    messages = []
                 elif l and not l.startswith("/"):
-                    errors.add(l[:100])
+                    messages.append(l[:200])
+            others.update(messages)
+            if batch:
+                time.sleep(2)  # the crash dump reaches the serial log a bit later
+                # One command line covers 50 starts: its serial lines go to
+                # the first failure, the others point to it.
+                batch[0]["serial"] = serial_tail(args.serial_log, mark, args.serial_lines)
+                for c in batch[1:]:
+                    c["serial"], c["same_as"] = [], True
+                crashes.extend(batch)
             done += 2 * n
-        detail = f"{failures} of {done} failed"
-        if errors:
-            detail += "; messages: " + "; ".join(f'"{e}"' for e in sorted(errors)[:5])
-        check("starts", failures == 0, detail)
-        info["starts"] = (failures, done)
+        detail = f"{len(crashes)} of {done} failed"
+        if crashes:
+            counts = {}
+            for c in crashes:
+                key = f"{c['program']} {c['status']}"
+                counts[key] = counts.get(key, 0) + 1
+            detail += ": " + "; ".join(f"{k} ({v}×)" for k, v in sorted(counts.items()))
+        if others:
+            detail += "; other messages: " + "; ".join(f'"{e[:100]}"' for e in sorted(others)[:5])
+        check("starts", not crashes, detail)
+        for c in crashes:
+            print(f"  starts {c['starts']}: {c['program']}, {c['status']}", flush=True)
+            for l in c["messages"]:
+                print(f"    says: {l}", flush=True)
+            for l in c["serial"]:
+                print(f"    serial: {l}", flush=True)
+        info["starts"] = (len(crashes), done)
     finally:
         sh.close()
 
@@ -205,6 +291,23 @@ def main():
             for name, ok, detail in results:
                 detail = detail.replace("|", "\\|")
                 f.write(f"| {name} | {'pass' if ok else '**fail**'} | {detail} |\n")
+            if crashes:
+                f.write("\nFailed starts:\n\n")
+                for c in crashes[:20]:
+                    f.write(f"- starts {c['starts']}: `{c['program']}`, {c['status']}")
+                    if c["messages"]:
+                        f.write("; printed: " + "; ".join(f'"{m}"' for m in c["messages"][:3]))
+                    if "same_as" in c:
+                        f.write("; serial lines as above\n")
+                        continue
+                    if not c["serial"]:
+                        f.write("; no serial log lines\n")
+                        continue
+                    f.write(", last serial lines:\n\n  ```\n")
+                    f.write("".join(f"  {l}\n" for l in c["serial"]))
+                    f.write("  ```\n")
+                if len(crashes) > 20:
+                    f.write(f"- … and {len(crashes) - 20} more\n")
     sys.exit(0 if passed else 1)
 
 
