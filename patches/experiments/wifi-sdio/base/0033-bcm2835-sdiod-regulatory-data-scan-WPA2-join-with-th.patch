@@ -1,8 +1,8 @@
-From 886642a631ff7d461d3425c6582b292348633571 Mon Sep 17 00:00:00 2001
+From 2d91084762f829a536a2bee4603b69e577763f7e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 15:43:40 +0100
-Subject: [PATCH] bcm2835-sdiod: regulatory data, scan, WPA2 join with the
- firmware supplicant
+Subject: [PATCH 33/33] bcm2835-sdiod: regulatory data, scan, WPA2 join with
+ the firmware supplicant
 
 After the firmware answers: load the CLM blob (clmload in 1400-byte
 chunks), turn on the join, link, supplicant and scan events, roam_off,

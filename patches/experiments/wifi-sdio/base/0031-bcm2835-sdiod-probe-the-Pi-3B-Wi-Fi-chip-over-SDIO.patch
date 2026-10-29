@@ -1,7 +1,7 @@
-From c12c8ca7a5fcd66de8ee138e788d4e350ea66b56 Mon Sep 17 00:00:00 2001
+From cbc9cca9f17a8c83db4bba8e00268be3360d47a1 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:53:56 +0100
-Subject: [PATCH 31/31] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
+Subject: [PATCH 31/33] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
 
 GPIO 34-39 to the Arasan controller (the SD card stays on sdhost),
 power-cycle through rpi-firmwared's wifi_power, SDIO card init (CMD5,

@@ -1,8 +1,8 @@
-From d4972704ef26eecf232bd311fc446ca137cb9345 Mon Sep 17 00:00:00 2001
+From 0addd724e8bd8bdad567b4226c2d7b4421c67170 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 15:23:04 +0100
-Subject: [PATCH] bcm2835-sdiod: start the Wi-Fi firmware, read its version and
- MAC address
+Subject: [PATCH 32/33] bcm2835-sdiod: start the Wi-Fi firmware, read its
+ version and MAC address
 
 After the chip ID: list the backplane cores from the enumeration ROM,
 read the ARM CR4's RAM size, hold the ARM, write firmware and NVRAM (read

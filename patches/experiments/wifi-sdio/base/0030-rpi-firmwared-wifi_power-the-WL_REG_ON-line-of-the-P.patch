@@ -1,19 +1,19 @@
-From e651a2b86a97c6df171653f59531ccd19df35d81 Mon Sep 17 00:00:00 2001
+From e96161d0406c6017f7c89e8bb576ac910db21126 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:50:01 +0100
-Subject: [PATCH 30/31] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
+Subject: [PATCH 30/33] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
  3B+ Wi-Fi chip
 
 The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,
 firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
 1, writing 0 or 1 sets it. Pi 3B+ only.
 ---
- drivers/rpi-firmwared/src/main.rs | 40 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/main.rs | 43 +++++++++++++++++++++++++++++--
  drivers/rpi-firmwared/src/mbox.rs |  2 ++
- 2 files changed, 40 insertions(+), 2 deletions(-)
+ 2 files changed, 43 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..dc7f624 100644
+index 4a7a018..e9a735b 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -15,6 +15,10 @@
@@ -56,7 +56,7 @@ index 4a7a018..dc7f624 100644
              _ => return Err(Error::new(ENOENT)),
          }
          Ok(text)
-@@ -112,11 +126,33 @@ impl FirmwareScheme {
+@@ -112,11 +126,36 @@ impl FirmwareScheme {
                  println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
                  Ok(())
              }
@@ -67,8 +67,11 @@ index 4a7a018..dc7f624 100644
 +                    "0" => 0,
 +                    _ => return Err(Error::new(EINVAL)),
 +                };
++                // Only the first word (0 = done) matters; the firmware may
++                // answer with a shorter value than it was sent (#60: the pin
++                // changed, but `[0, _]` alone made the write fail).
 +                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
-+                    [0, _] => Ok(()),
++                    [] | [0, ..] => Ok(()),
 +                    _ => Err(log(format!("Wi-Fi power: firmware refused GPIO {gpio}"))),
 +                }
 +            }
