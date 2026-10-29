@@ -15,7 +15,8 @@
 ## Next
 
 - [#4](https://github.com/redox-rpi/redox-rpi/issues/4) signal mask bug after `pthread_kill` (experiment
-  `sigentry-thread-signals` passes on the Pi; needs a review).
+  `sigentry-thread-signals`; reviewed against x86_64 on branch
+  `t4-thread-signals`, which adds patch `0002` and `sigregs sender`).
 - [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on Redox in CI; [#14](https://github.com/redox-rpi/redox-rpi/issues/14) deeper analysis.
 
 ## Later
