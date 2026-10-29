@@ -84,6 +84,7 @@ server.bind(("127.0.0.1", port))
 server.listen(1)
 log.write(f"listening on {port}\n")
 conn, _ = server.accept()
+log.write("connected\n")
 state = {"minidriver": False, "records": 0, "build": 0}
 buf = b""
 while True:

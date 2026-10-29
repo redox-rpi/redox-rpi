@@ -1,7 +1,7 @@
 From 06e71698c4e3b5c182a9131662ef5ab446e40295 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:11:39 +0100
-Subject: [PATCH 45/46] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
+Subject: [PATCH 45/47] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
  Bluetooth chip
 
 BT_ON hangs on the firmware's GPIO expander (pin 0, firmware GPIO 128),
