@@ -36,6 +36,12 @@
   mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
   write, unplug, plug in again); not yet on the Pi.
 
+- [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
+  tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
+  (on `usb-hotplug`), experiment `usb-mouse` (base `0035` there). Events go
+  to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
+  passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
+  visit as #50.
 - LAN7800 receives all multicast (mDNS, IPv6 neighbor discovery; #27,
   #37), branch [`lan78xx-multicast`](https://github.com/redox-rpi/redox-rpi/tree/lan78xx-multicast),
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
