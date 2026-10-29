@@ -18,6 +18,7 @@
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 /// Programs in step 1 have this long to end after SIGTERM.
@@ -28,8 +29,9 @@ const SETTLE: Duration = Duration::from_secs(1);
 /// Programs not from the initfs that step 1 leaves running.
 const KEEP: &[&str] = &["ptyd", "redoxfs"];
 
-/// Reports go to the terminal and to the serial console (`/scheme/debug`,
-/// opened before anything stops): the terminal may close in step 1.
+/// Reports go to the serial console (`/scheme/debug`). Not to the terminal:
+/// it is a pty that `getty` holds, and once step 1 has ended `getty`, a
+/// write to it never returns.
 struct Report {
     tool: &'static str,
     console: Option<File>,
@@ -37,9 +39,19 @@ struct Report {
 
 impl Report {
     fn say(&mut self, text: &str) {
-        eprintln!("{}: {text}", self.tool);
         if let Some(console) = &mut self.console {
             let _ = writeln!(console, "{}: {text}", self.tool);
+        }
+    }
+}
+
+/// Points standard input, output and error at `/scheme/null`, away from
+/// the terminal.
+fn leave_terminal() {
+    if let Ok(null) = OpenOptions::new().read(true).write(true).open("/scheme/null") {
+        use std::os::fd::AsRawFd;
+        for fd in 0..3 {
+            unsafe { libc::dup2(null.as_raw_fd(), fd) };
         }
     }
 }
@@ -68,16 +80,6 @@ fn processes() -> Vec<Process> {
         .collect()
 }
 
-/// Waits by yielding the CPU until the time is up. Not `sleep`: in QEMU a
-/// 100 ms `nanosleep` in this tool never came back (the same happened to a
-/// 10 µs one in `bcm2835-gpiod`); the clock itself is fine.
-fn pause(time: Duration) {
-    let end = Instant::now() + time;
-    while Instant::now() < end {
-        std::thread::yield_now();
-    }
-}
-
 fn base_name(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
 }
@@ -104,7 +106,7 @@ fn stop_programs() -> (usize, usize) {
     let deadline = Instant::now() + GRACE;
     let mut left = alive();
     while !left.is_empty() && Instant::now() < deadline {
-        pause(Duration::from_millis(100));
+        sleep(Duration::from_millis(100));
         left = alive();
     }
     for &pid in &left {
@@ -129,7 +131,8 @@ fn close_file_systems() -> usize {
 /// `shutdown`) to `kstop`. Returns only if the kernel did not stop.
 pub fn kstop(tool: &'static str, request: &str) -> ! {
     // Step 1 ends the shell and the terminal this tool runs in: leave their
-    // session, and ignore what they send on the way out.
+    // session, ignore what they send on the way out, and write no more to
+    // the terminal.
     unsafe {
         libc::setsid();
         for sig in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM, libc::SIGPIPE] {
@@ -140,11 +143,13 @@ pub fn kstop(tool: &'static str, request: &str) -> ! {
         tool,
         console: OpenOptions::new().write(true).open("/scheme/debug").ok(),
     };
+    eprintln!("{tool}: stopping the system, the rest is on the serial console");
+    leave_terminal();
     let (stopped, killed) = stop_programs();
     report.say(&format!("{stopped} programs stopped, {killed} killed"));
     let filesystems = close_file_systems();
     report.say(&format!("{filesystems} file systems closed"));
-    pause(SETTLE);
+    sleep(SETTLE);
     report.say(&format!("{request} through kstop"));
     let result = OpenOptions::new()
         .write(true)
