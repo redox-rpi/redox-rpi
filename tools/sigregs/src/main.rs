@@ -10,9 +10,11 @@
 //!
 //! Two modes: `process` sends the signals with kill() from a child
 //! process, `thread` with pthread_kill() from another thread. They take
-//! different paths in the signal entry. Without an argument both run.
+//! different paths in the signal entry. A third mode, `sender`, checks
+//! si_pid of one signal from another thread and one from a child process.
+//! Without an argument all three run.
 //!
-//! Usage: sigregs [process|thread] [-n <signals>]
+//! Usage: sigregs [process|thread|sender] [-n <signals>]
 //! Exit code 0 if every mode passed.
 
 use std::{
@@ -250,6 +252,65 @@ fn run(mode: &str, count: u64, start_sender: impl FnOnce() -> Box<dyn FnOnce()>)
     ok
 }
 
+/// si_pid of the last SIGUSR2, for the `sender` mode; 0 until one arrives.
+static LAST_PID: AtomicU64 = AtomicU64::new(0);
+
+extern "C" fn on_sigusr2(_: libc::c_int, info: *mut libc::siginfo_t, _: *mut libc::c_void) {
+    LAST_PID.store(unsafe { (*info).si_pid() } as u64, Ordering::SeqCst);
+}
+
+/// Waits up to 2 s for a SIGUSR2 and returns its si_pid, or None.
+fn wait_sigusr2() -> Option<u64> {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(2) {
+        match LAST_PID.swap(0, Ordering::SeqCst) {
+            0 => thread::sleep(Duration::from_millis(1)),
+            pid => return Some(pid),
+        }
+    }
+    None
+}
+
+/// `sender` mode: si_pid of a signal sent to this thread with pthread_kill()
+/// must be our pid, then that of a signal from a child process the child's
+/// pid. The thread signal goes first, so a stale sender shows as our pid.
+fn sender() -> bool {
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_sigusr2
+            as extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void)
+            as usize;
+        action.sa_flags = libc::SA_SIGINFO;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut());
+    }
+    let me = unsafe { libc::getpid() } as u64;
+    LAST_PID.store(0, Ordering::SeqCst);
+    unsafe { libc::pthread_kill(libc::pthread_self(), libc::SIGUSR2) };
+    let from_thread = wait_sigusr2();
+
+    let child = match unsafe { libc::fork() } {
+        0 => unsafe {
+            libc::kill(me as libc::pid_t, libc::SIGUSR2);
+            libc::_exit(0)
+        },
+        child => child as u64,
+    };
+    let from_child = wait_sigusr2();
+    unsafe { libc::waitpid(child as libc::pid_t, std::ptr::null_mut(), 0) };
+
+    if from_thread == Some(me) && from_child == Some(child) {
+        println!("PASS sender: si_pid {me} from the thread, {child} from the child");
+        true
+    } else {
+        println!(
+            "FAIL sender: si_pid {from_thread:?} from the thread (expected {me}), \
+             {from_child:?} from the child (expected {child})"
+        );
+        false
+    }
+}
+
 fn process_sender() -> Box<dyn FnOnce()> {
     let parent = unsafe { libc::getpid() };
     match unsafe { libc::fork() } {
@@ -292,15 +353,15 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-n" => count = args.next().and_then(|n| n.parse().ok()).expect("-n <signals>"),
-            "process" | "thread" => modes.push(arg),
+            "process" | "thread" | "sender" => modes.push(arg),
             _ => {
-                eprintln!("usage: sigregs [process|thread] [-n <signals>]");
+                eprintln!("usage: sigregs [process|thread|sender] [-n <signals>]");
                 std::process::exit(2);
             }
         }
     }
     if modes.is_empty() {
-        modes = vec!["process".into(), "thread".into()];
+        modes = vec!["process".into(), "thread".into(), "sender".into()];
     }
 
     unsafe {
@@ -312,11 +373,11 @@ fn main() {
 
     let mut passed = true;
     for mode in &modes {
-        let sender: fn() -> Box<dyn FnOnce()> = match mode.as_str() {
-            "process" => process_sender,
-            _ => thread_sender,
+        passed &= match mode.as_str() {
+            "process" => run(mode, count, process_sender),
+            "thread" => run(mode, count, thread_sender),
+            _ => sender(),
         };
-        passed &= run(mode, count, sender);
     }
     std::process::exit(if passed { 0 } else { 1 });
 }
