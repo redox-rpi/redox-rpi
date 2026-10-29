@@ -46,4 +46,14 @@ scripts/build-image.sh --experiment sigreturn-svc --experiment sigregs-test
 
 ## Result
 
-Not run yet.
+QEMU, 2026-10-29, with `sigregs-test` and `sigentry-thread-signals`:
+
+| Build | `sigregs process -n 3000` | `sigregs thread -n 3000` | 700 starts (`ls`, `pwd`, `sha256sum`) |
+|---|---|---|---|
+| `v0.3.0-dev-137-g6988886+xae3b` (without) | FAIL, x18 changed after 3 signals | FAIL, x18 changed after 2 signals | 0 failed |
+| `v0.3.0-dev-138-ge543996+xbb89` (with) | PASS | PASS | 0 failed |
+
+A first run with the experiment showed the same FAIL because `sigregs` was
+not relinked against the new `libc.a` (fixed in `build-image.sh`, e543996).
+The sigregs binary of the passing build has `svc #0x5352` twice and no
+`br x18`. Both builds show the known `pcid` exception under QEMU.
