@@ -4,8 +4,8 @@
 
 - `dwc2d`, a DWC2 USB host driver in base: hubs, split transactions for low-
   and full-speed devices behind the Pi 3B+'s hubs, bulk transfers.
-- Experiment `dwc2-interrupts` (with `rtl8152`): `dwc2d` waits for the
-  controller's interrupt instead of polling, about 5 % of a core instead
+- `dwc2d` waits for the controller's interrupt instead of polling (base
+  `0022`, kernel `0004`–`0006`), about 5 % of a core instead
   of a full one on a real Pi (test #5,
   [#29](https://github.com/redox-rpi/redox-rpi/issues/29)).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
