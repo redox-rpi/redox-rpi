@@ -1,0 +1,20 @@
+# rinfer: Qwen3 GGUF inference in Rust with candle (Hugging Face), static,
+# linked against our relibc. Test program for #43: loads the model, answers
+# one prompt, prints the speed. candle's quantized NEON code needs the
+# dotprod extension (SDOT), which the Pi 3's Cortex-A53 lacks:
+# sdot-fallback.patch adds an exact NEON fallback.
+[source]
+git = "https://github.com/huggingface/candle.git"
+rev = "12bb5d1f6350f4ea9827d9086f213feec1f0af6a"
+patches = ["sdot-fallback.patch"]
+
+[build]
+template = "custom"
+dependencies = ["relibc"]
+script = """
+rm -rf rinfer
+cp -r "${COOKBOOK_RECIPE}/rinfer" rinfer
+sed -i "s#\\.\\./candle/#${COOKBOOK_SOURCE}/#" rinfer/Cargo.toml
+export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib -C target-cpu=cortex-a53"
+"${COOKBOOK_CARGO}" install --locked --path rinfer --root "${COOKBOOK_STAGE}/usr" -j "${COOKBOOK_MAKE_JOBS}"
+"""

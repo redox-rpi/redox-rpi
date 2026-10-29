@@ -263,8 +263,8 @@ for exp in "${experiments[@]}"; do
         name="$(basename "$recipe")"
         dest="$REDOX/recipes/other/$name"
         mkdir -p "$dest"
-        find "$dest" -maxdepth 1 -type f -delete
-        cp "$recipe"* "$dest/"
+        find "$dest" -mindepth 1 -maxdepth 1 ! -name source ! -name target -exec rm -rf {} +
+        cp -r "$recipe"* "$dest/"
     done
 done
 

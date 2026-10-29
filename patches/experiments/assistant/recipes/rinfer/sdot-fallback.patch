@@ -1,0 +1,66 @@
+diff --git a/candle-core/src/quantized/neon.rs b/candle-core/src/quantized/neon.rs
+index d7fe760..6e9b392 100644
+--- a/candle-core/src/quantized/neon.rs
++++ b/candle-core/src/quantized/neon.rs
+@@ -21,6 +21,7 @@ use core::arch::arm::*;
+ use core::arch::aarch64::*;
+ 
+ #[inline]
++#[cfg(target_feature = "dotprod")]
+ #[target_feature(enable = "dotprod")]
+ unsafe fn vdotq_s32(a: int8x16_t, b: int8x16_t) -> int32x4_t {
+     let mut acc: int32x4_t = vdupq_n_s32(0);
+@@ -36,6 +37,7 @@ unsafe fn vdotq_s32(a: int8x16_t, b: int8x16_t) -> int32x4_t {
+ 
+ /// Two SDOT ops into one accumulator
+ #[inline]
++#[cfg(target_feature = "dotprod")]
+ #[target_feature(enable = "dotprod")]
+ unsafe fn vdotq_s32_pair(a0: int8x16_t, b0: int8x16_t, a1: int8x16_t, b1: int8x16_t) -> int32x4_t {
+     let mut acc: int32x4_t = vdupq_n_s32(0);
+@@ -55,6 +57,7 @@ unsafe fn vdotq_s32_pair(a0: int8x16_t, b0: int8x16_t, a1: int8x16_t, b1: int8x1
+ /// Accumulating SDOT: acc += dot4(a, b) for each lane.
+ #[cfg(target_arch = "aarch64")]
+ #[inline]
++#[cfg(target_feature = "dotprod")]
+ #[target_feature(enable = "dotprod")]
+ unsafe fn sdot_acc(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+     let mut out = acc;
+@@ -68,6 +71,37 @@ unsafe fn sdot_acc(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
+     out
+ }
+ 
++// Without the dotprod extension (Cortex-A53, A72: Raspberry Pi 3 and 4) SDOT
++// is an illegal instruction. The fallback below gives the same result in
++// every lane (lane i = sum of the products of bytes 4i..4i+3), so callers
++// that rely on the lane layout stay correct: widening multiply to 16 bits,
++// pairwise add to 32 bits, pairwise add again.
++#[cfg(all(target_arch = "aarch64", not(target_feature = "dotprod")))]
++#[inline(always)]
++unsafe fn sdot_fallback(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
++    let lo = vmull_s8(vget_low_s8(a), vget_low_s8(b));
++    let hi = vmull_high_s8(a, b);
++    vaddq_s32(acc, vpaddq_s32(vpaddlq_s16(lo), vpaddlq_s16(hi)))
++}
++
++#[cfg(all(target_arch = "aarch64", not(target_feature = "dotprod")))]
++#[inline(always)]
++unsafe fn vdotq_s32(a: int8x16_t, b: int8x16_t) -> int32x4_t {
++    sdot_fallback(vdupq_n_s32(0), a, b)
++}
++
++#[cfg(all(target_arch = "aarch64", not(target_feature = "dotprod")))]
++#[inline(always)]
++unsafe fn vdotq_s32_pair(a0: int8x16_t, b0: int8x16_t, a1: int8x16_t, b1: int8x16_t) -> int32x4_t {
++    sdot_fallback(sdot_fallback(vdupq_n_s32(0), a0, b0), a1, b1)
++}
++
++#[cfg(all(target_arch = "aarch64", not(target_feature = "dotprod")))]
++#[inline(always)]
++unsafe fn sdot_acc(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
++    sdot_fallback(acc, a, b)
++}
++
+ #[cfg(target_arch = "aarch64")]
+ #[inline(always)]
+ unsafe fn sdot_laneq_s32<const LANE: i32>(acc: int32x4_t, a: int8x16_t, b: int8x16_t) -> int32x4_t {
