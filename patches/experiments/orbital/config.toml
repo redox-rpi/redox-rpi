@@ -1,0 +1,23 @@
+# Experiment orbital (#33): Redox's desktop, Orbital, on rpi-fbd. Same
+# packages and start file as upstream's config/desktop-minimal.toml.
+# Build together with --experiment rpi-fb.
+
+[packages]
+orbdata = {}
+orbital = {}
+orbterm = {}
+orbutils = {}
+
+# Orbital on VT 3, with the login window and then the launcher.
+[[files]]
+path = "/usr/lib/init.d/20_orbital"
+data = """
+requires_weak 10_net.target 20_audiod.service
+nowait VT=3 orbital orblogin launcher
+"""
+
+# Stay on Orbital's VT instead of switching to the text console on VT 2.
+[[files]]
+path = "/usr/lib/init.d/30_console_switch"
+data = """
+"""
