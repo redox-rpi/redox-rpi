@@ -5,9 +5,10 @@
 //!     fatfsd /scheme/disk.mmc/0p0 boot     # the Pi boot partition as /scheme/boot
 //!
 //! The FAT code is the `fatfs` crate; this file only binds it to the scheme
-//! interface of `redox-scheme`, the way redoxfs does. Handles keep a path and
-//! reopen the file in the crate for each call, so no crate object has to
-//! outlive a request. fatfsd stays in the foreground, start it with `&`.
+//! interface of `redox-scheme`, the way redoxfs does. Handles keep a path;
+//! a file handle also keeps the crate's file open with its position, so
+//! sequential reads and writes do not walk the cluster chain again. fatfsd
+//! stays in the foreground, start it with `&`.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -36,6 +37,9 @@ struct Disk {
     file: File,
     pos: u64,
     block: Vec<u8>,
+    /// The block number `block` holds. fatfsd is the only writer, so it
+    /// stays valid; the FAT is read entry by entry.
+    cached: Option<u64>,
 }
 
 /// errno of a disk that went away, e.g. an unplugged USB stick.
@@ -50,13 +54,19 @@ impl Disk {
             n @ 512..=65536 if n.is_power_of_two() => n as usize,
             _ => 512,
         };
-        Ok(Disk { file, pos: 0, block: vec![0; size] })
+        Ok(Disk { file, pos: 0, block: vec![0; size], cached: None })
     }
 
     fn read_block(&mut self, n: u64) -> io::Result<()> {
+        if self.cached == Some(n) {
+            return Ok(());
+        }
+        self.cached = None;
         let size = self.block.len() as u64;
         self.file.seek(SeekFrom::Start(n * size))?;
-        self.file.read_exact(&mut self.block)
+        self.file.read_exact(&mut self.block)?;
+        self.cached = Some(n);
+        Ok(())
     }
 
     fn check(res: io::Result<()>) -> io::Result<()> {
@@ -100,8 +110,10 @@ impl Write for Disk {
             }
             self.block[skip..skip + n].copy_from_slice(&buf[done..done + n]);
             let start = pos - skip as u64;
+            self.cached = None;
             let res = self.file.seek(SeekFrom::Start(start)).and_then(|_| self.file.write_all(&self.block));
             Disk::check(res)?;
+            self.cached = Some(start / size as u64);
             done += n;
         }
         self.pos += done as u64;
@@ -127,14 +139,18 @@ impl Seek for Disk {
     }
 }
 
+type FatFile = fatfs::File<'static, Disk>;
+
 enum Handle {
     Root,
     Dir(String),
-    File { path: String, writable: bool },
+    /// `open`: the crate's file and its position, opened at first use.
+    File { path: String, writable: bool, open: Option<(FatFile, u64)> },
 }
 
 struct FatScheme {
-    fs: FileSystem<Disk>,
+    /// Leaked, so open files (which borrow it) can live in the handles.
+    fs: &'static FileSystem<Disk>,
     name: String,
     handles: BTreeMap<usize, Handle>,
     next_id: usize,
@@ -207,8 +223,44 @@ impl FatScheme {
 
     fn file_path(&self, id: usize) -> Result<(&str, bool)> {
         match self.handles.get(&id).ok_or(Error::new(EBADF))? {
-            Handle::File { path, writable } => Ok((path, *writable)),
+            Handle::File { path, writable, .. } => Ok((path, *writable)),
             _ => Err(Error::new(EISDIR)),
+        }
+    }
+
+    /// The handle's open file, seeked to `offset`, and the position it got:
+    /// fatfs stops at the end of the file.
+    fn file_at(&mut self, id: usize, offset: u64) -> Result<(&mut FatFile, u64)> {
+        let fs = self.fs;
+        let Some(Handle::File { path, open, .. }) = self.handles.get_mut(&id) else {
+            return Err(Error::new(EISDIR));
+        };
+        if open.is_none() {
+            *open = Some((fs.root_dir().open_file(path).map_err(io_err)?, 0));
+        }
+        let (file, pos) = open.as_mut().unwrap();
+        if *pos != offset {
+            *pos = file.seek(SeekFrom::Start(offset)).map_err(io_err)?;
+        }
+        Ok((file, *pos))
+    }
+
+    fn advance(&mut self, id: usize, n: u64) {
+        if let Some(Handle::File { open: Some((_, pos)), .. }) = self.handles.get_mut(&id) {
+            *pos += n;
+        }
+    }
+
+    /// Closes the open files of `path` in all handles, before it is truncated
+    /// or removed: an open file keeps its first cluster and would write to
+    /// freed clusters. They reopen at their next use.
+    fn close_files(&mut self, path: &str) {
+        for handle in self.handles.values_mut() {
+            if let Handle::File { path: p, open, .. } = handle {
+                if p.eq_ignore_ascii_case(path) {
+                    *open = None;
+                }
+            }
         }
     }
 
@@ -243,11 +295,12 @@ impl SchemeSync for FatScheme {
             Ok((false, _)) => {
                 let writable = flags & O_ACCMODE != O_RDONLY;
                 if flags & O_TRUNC != 0 && writable {
+                    self.close_files(&path);
                     let mut file = self.fs.root_dir().open_file(&path).map_err(io_err)?;
                     file.truncate().map_err(io_err)?;
                     file.flush().map_err(io_err)?;
                 }
-                Handle::File { path, writable }
+                Handle::File { path, writable, open: None }
             }
             Err(err) if err.errno == ENOENT && flags & O_CREAT != 0 => {
                 let root = self.fs.root_dir();
@@ -256,7 +309,7 @@ impl SchemeSync for FatScheme {
                     Handle::Dir(path)
                 } else {
                     root.create_file(&path).map_err(io_err)?.flush().map_err(io_err)?;
-                    Handle::File { path, writable: flags & O_ACCMODE != O_RDONLY }
+                    Handle::File { path, writable: flags & O_ACCMODE != O_RDONLY, open: None }
                 }
             }
             Err(err) => return Err(err),
@@ -273,6 +326,7 @@ impl SchemeSync for FatScheme {
         if is_dir != (flags & AT_REMOVEDIR != 0) {
             return Err(Error::new(if is_dir { EISDIR } else { ENOTDIR }));
         }
+        self.close_files(&path);
         self.fs.root_dir().remove(&path).map_err(io_err)
     }
 
@@ -284,17 +338,21 @@ impl SchemeSync for FatScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let (path, _) = self.file_path(id)?;
-        let mut file = self.fs.root_dir().open_file(path).map_err(io_err)?;
-        file.seek(SeekFrom::Start(offset)).map_err(io_err)?;
+        let (file, _) = self.file_at(id, offset)?;
         let mut done = 0;
+        let mut res = Ok(());
         while done < buf.len() {
-            match file.read(&mut buf[done..]).map_err(io_err)? {
-                0 => break,
-                n => done += n,
+            match file.read(&mut buf[done..]) {
+                Ok(0) => break,
+                Ok(n) => done += n,
+                Err(err) => {
+                    res = Err(io_err(err));
+                    break;
+                }
             }
         }
-        Ok(done)
+        self.advance(id, done as u64);
+        res.map(|_| done)
     }
 
     fn write(
@@ -305,19 +363,26 @@ impl SchemeSync for FatScheme {
         _fcntl_flags: u32,
         _ctx: &CallerCtx,
     ) -> Result<usize> {
-        let (path, writable) = self.file_path(id)?;
+        let (_, writable) = self.file_path(id)?;
         if !writable {
             return Err(Error::new(EBADF));
         }
-        let mut file = self.fs.root_dir().open_file(path).map_err(io_err)?;
-        // Seeking past the end is not possible in fatfs; fill the gap.
-        let len = file.seek(SeekFrom::End(0)).map_err(io_err)?;
-        if offset > len {
-            file.write_all(&vec![0; (offset - len) as usize]).map_err(io_err)?;
+        let (file, pos) = self.file_at(id, offset)?;
+        // Writing past the end: fill the gap.
+        let res = (|| {
+            if pos < offset {
+                file.write_all(&vec![0; (offset - pos) as usize])?;
+            }
+            file.write_all(buf)?;
+            file.flush()
+        })();
+        if res.is_err() {
+            // Position unknown after a failed write: reopen next time.
+            let path = self.path(id)?.to_string();
+            self.close_files(&path);
         }
-        file.seek(SeekFrom::Start(offset)).map_err(io_err)?;
-        file.write_all(buf).map_err(io_err)?;
-        file.flush().map_err(io_err)?;
+        res.map_err(io_err)?;
+        self.advance(id, offset.max(pos) - pos + buf.len() as u64);
         Ok(buf.len())
     }
 
@@ -331,7 +396,9 @@ impl SchemeSync for FatScheme {
         if !writable {
             return Err(Error::new(EBADF));
         }
-        let mut file = self.fs.root_dir().open_file(path).map_err(io_err)?;
+        let path = path.to_string();
+        self.close_files(&path);
+        let mut file = self.fs.root_dir().open_file(&path).map_err(io_err)?;
         let old = file.seek(SeekFrom::End(0)).map_err(io_err)?;
         if len < old {
             file.seek(SeekFrom::Start(len)).map_err(io_err)?;
@@ -411,7 +478,7 @@ impl SchemeSync for FatScheme {
 fn run(disk: &str, name: &str) -> io::Result<()> {
     let disk_file = Disk::open(disk)?;
     let block = disk_file.block.len();
-    let fs = FileSystem::new(disk_file, FsOptions::new())?;
+    let fs: &'static FileSystem<Disk> = Box::leak(Box::new(FileSystem::new(disk_file, FsOptions::new())?));
     eprintln!("fatfsd: {} {:?}, label {:?}, {} byte blocks", disk, fs.fat_type(), fs.volume_label(), block);
 
     let socket = Socket::create()?;
