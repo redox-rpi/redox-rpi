@@ -1510,3 +1510,43 @@ Test 58 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
 - No `RELIBC PANIC` or `exited with code 1` in the serial log. Standard
   checks pass, 0 of 300 starts failed. devsh did not answer some sessions
   in between (one `uptime` timed out).
+
+## 2026-10-29: `v0.3.0-dev-104-g439640d+x3029`
+
+Built 2026-10-29T14:41:39Z, `libc.so` `d19d472ff4ba92c2…`, real Pi 3B+ over netboot. Experiments: `ha-bridge`, `ldso-diagnostics`, `mqtt`, `timerd`, `timesync`. test 65 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) ha-bridge), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-104-g439640d+x3029 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 65 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
+`mqtt`, experiment `ha-bridge`; the same broker as test 58.
+
+- The boot took longer than the others: the `redox-rpi v…` banner came 80 s
+  after `network boot` (others about 22 s).
+- `echo 192.168.178.120 > /etc/mqtt-host`, then nothing reached the broker
+  for 2 minutes. As in test 58, the first `ha-bridge` run (PIDs 38, 42,
+  started by timerd at 17:48, before the host was set) hung, and timerd
+  logged `ha-bridge: still running, skipped this run` every minute. After
+  `kill 38 42`:
+- `redox-rpi/redox/state` once a minute, for example
+  `{"cpu_temperature":58.5,"cpu_clock":1400,"throttled":"OFF","uptime":347,"memory_free":546.2,"memory_used":25.0}`:
+  temperature and clock plausible, `throttled` OFF (firmware `0x00080008`:
+  soft temperature limit seen before, not now). `memory_free` 546 MB
+  matches `free` (548 MB free), but `memory_used` 25.0 does not match
+  `free`'s 170–198 MB used.
+- **Missing**: no `redox-rpi/redox/availability online` and none of the six
+  `homeassistant/…/config` topics, neither live nor retained (a fresh
+  `mosquitto_sub -t 'homeassistant/#'` got nothing). After `mosquitto_pub -t
+  homeassistant/status -m online` the configs did not come either.
+- **Missing**: after `echo reset > /scheme/sys/kstop` no `availability
+  offline` (last will) within 2 minutes.
+- Standard checks pass, 0 of 300 starts failed.
+- Probably the same cause as test 58: discovery and the last will are sent
+  only by the first run, which hung before `/etc/mqtt-host` was set.
+  Afterwards the broker was stopped and the stable image restored.
