@@ -713,3 +713,21 @@ Part B, with a person:
 
 Not tested: the Anker hub (RTL8153B) steps; they stay with test #4. Stable
 image restored afterwards.
+
+## 2026-10-29: `v0.3.0-dev-95-g0d47c4f+x43ba` (timesync with late DHCP, test #41)
+
+Built 2026-10-29T11:05:15Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test`,
+`late-dhcp` (starts `dhcpd` 90 seconds late). Checks the fix for the
+`timesync` hang found in test #27
+([#22](https://github.com/redox-rpi/redox-rpi/issues/22)).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 46 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| late DHCP | pass | `no time server answered within a minute (last: no default route (DHCP not done))`, `trying again every 30 s`, then `clock set to 2026-10-29 11:49:31 UTC from pool.ntp.org` |
+| timerd | pass | `timerd: clock set by timesync` one second later; `test-catchup` caught up its run missed since test #27 |
+| clock | pass | `date` the same as the build host to the second; `/tmp/timesync.synced` exists |
