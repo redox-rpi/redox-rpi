@@ -1141,3 +1141,52 @@ lines; no other failed service. `dwc2d: LAN78xx link up`, DHCP bound to
 
 Stable image `v0.3.0-dev-15-g24fbb96+x9f76` staged again afterwards and
 booted to the login prompt.
+
+## 2026-10-29: `v0.3.0-dev-122-g74a1e24+x607a`
+
+Built 2026-10-29T10:18:15Z, `libc.so` `08e0353fe25191f9…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `sdhost-dma`, `timesync`. test 42 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21) sdhost with DMA), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-122-g74a1e24+x607a |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 42 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), branch
+`sdhost-dma`. Boot log: `bcm2835-sdhostd: DMA channel 4 at 0x3f007000`,
+`SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`,
+`serving /scheme/disk.mmc`; no `DMA error`, `DMA timeout` or `no DMA`, no
+`bcm2835-sdhcid`.
+
+| 256 MiB on `/scheme/data`, `bs=1048576` | time | MB/s | CPU time of `bcm2835-sdhostd` |
+|---|---|---|---|
+| write `conv=fsync` (run 1) | 37.8 s | 7.1 | 45.3 s for write and read together |
+| write `conv=fsync` (run 2) | 30.3 s | 8.8 | +23.7 s (45.30 → 69.02 s) |
+| read (run 2) | 15.1 s | 18 | +13.7 s (69.02 → 82.72 s) |
+| `sd-stress.py` write | | 6.9 | |
+
+With DMA the driver still uses the CPU for about 80 % of the write time
+and 90 % of the read time (it looks like it waits for DMA by polling). For
+comparison, #30 with PIO wrote at 7.9 MB/s (`sd-stress.py`); no CPU time was
+noted there.
+
+`scripts/sd-stress.py --cycles 2 --serial-log ~/redox-rpi/logs/serial.log`
+(main with 56e2df4):
+
+- write: 256 MiB at 6.9 MB/s; 1000 small files, 250 deleted, 250 new,
+  358 s.
+- verify: 1001 files, 0 missing, 0 changed: **pass**.
+- cycle 1: reset, login prompt after 28 s, then **`/scheme/data not mounted
+  within 300 s`**, and the script stopped (fail). When I looked right after,
+  at 5 min 50 s uptime, `/scheme/data` was mounted with all 1001 files
+  (270 MB), and the script's own check (`ls /scheme` shows `data`) passed.
+  So either the mount took more than about 5 minutes, or the devsh session
+  stopped answering during the wait; the log does not say which. Test 30
+  saw a similar late mount after a reset ("two minutes later all 1002 files
+  were there"). The boot log of that boot looks like a normal one.
+- Afterwards: standard checks pass, 0 of 300 starts failed; `free` used
+  145 MB (138 MB after boot, 203 MB right after the 256 MiB runs). Test
+  files deleted.
