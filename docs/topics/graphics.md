@@ -252,6 +252,27 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
     for 512x512 in `drawbench`), so the real number comes from the Pi
     test #54. The login to desktop takes 1 to 3 minutes in QEMU (its
     emulated CPU), to be timed on the Pi.
+  - **Keyboard and terminal** (`v0.3.0-dev-195-g671b427+xdf3e`):
+    `dwc2d`'s existing keyboard events reach Orbital and the terminal
+    window without changes (`echo Hi` typed in `orbterm` ran; Super-F12
+    shows Orbital's FPS counter). The launcher's Super-T asks for
+    `cosmic-term`, which is not packaged; the image links it to `orbterm`.
+    Without a mouse, Super-Numpad-0 turns on Orbital's mouse keys.
+  - **Terminal speed:** about 4 ms per output line for drawing (`ls -R
+    /usr`, 679 lines: 5.6 s in `orbterm`, 2.7–3.0 s to `/dev/null`).
+    `orbterm` renders each character with `rusttype` without a glyph
+    cache and sends its whole window (1024x600, 2.4 MB) on every update;
+    the DMA blits are not the limit. A faster terminal is upstream work in
+    `orbterm`/`orbfont` (glyph cache, only the changed rows as damage).
+  - **Memory with a terminal:** 194 MiB used (login window plus
+    `orbterm`); the biggest part is the decoded background picture (84
+    MB in `background`).
+  - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
+    the display size (probably 1920x1080, then single buffered with
+    `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
+    mouse) for #54. Once the user has signed in, screenshots from it can
+    replace the person for the screen checks of #34, #43, #44 and #54
+    (see the test plan rows).
 
 ## Next
 
@@ -262,7 +283,8 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   benchmark, CPU against DMA. If DMA wins, cached dumb buffers with cache
   maintenance (DMA plan step 2, a kernel change) are the next gain.
 - Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
-  login to desktop time, frame rate with `drawbench`, memory.
+  login to desktop time, frame rate with `drawbench`, terminal speed,
+  memory. With the NanoKVM most screen checks need no person.
 - For a usable desktop: a USB mouse in `dwc2d` (boot protocol, like the
   keyboard: about 300 lines, estimate a few hours plus a Pi test with a
   mouse), then keyboard and mouse at the same time (more host channels,
@@ -283,6 +305,7 @@ on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 | Step 2 prototype: DMA blits (`graphics-fb3`), with a benchmark | 2–4 weeks | 35 minutes, half of it three builds and QEMU | 350 (`dma.rs`, 200 of them copied from `bcm2835-sdhostd`), 240 (driver) |
 | Orbital on `rpi-fbd` (`graphics-gui`): login window on screen | not estimated | 20 minutes (a config file, binary packages) | 25 (config) |
 | … then input, memory, frame rate, two `rpi-fbd` fixes, `drawbench` | not estimated | 1 hour more, most of it QEMU runs (each 5 to 15 minutes, the emulated desktop is slow) | 20 (driver), 3 (Makefile) |
+| … keyboard in Orbital, terminal window, its speed and memory | not estimated | 1.5 hours, almost all QEMU runs (keys get lost while the emulated desktop is busy) | 5 (config: `cosmic-term` link) |
 
 So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
 it went fast: every part had a template in Redox (`vesad` for the
