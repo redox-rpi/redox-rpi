@@ -11,15 +11,16 @@ scripts/build-image.sh --experiment timesync --experiment timerd \
     --experiment mqtt --experiment mqtt-demo
 ```
 
-- **`mqtt`** adds the `mqtt` package, which has both tools.
+- **`mqtt`** adds the `mqtt` package (`mqtt-pub`, `mqtt-sub`, `ha-bridge`)
+  and `/etc/mqtt-host`, the default broker of all three: `10.0.2.2`, the
+  build host as QEMU's user network sees it. On a Pi:
+  `echo 192.168.178.120 > /etc/mqtt-host`.
 - **`mqtt-demo`** adds two `timerd` timers that publish every minute:
   - `redox-rpi/temperature`, the SoC temperature in m°C from
     `/scheme/rpi-firmware/temperature`;
   - `redox-rpi/uptime`, the output of `uptime`.
-
-  The broker is in `/etc/mqtt-host`, the default for all MQTT tools:
-  `10.0.2.2`, the build host as QEMU's user network sees it. On a Pi:
-  `echo 192.168.178.120 > /etc/mqtt-host`.
+- **`ha-bridge`**: Home Assistant discovery, see
+  [its README](../ha-bridge/README.md).
 
 ## Results
 

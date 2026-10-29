@@ -13,6 +13,12 @@
   `mqtt-demo` (a `timerd` timer publishes the temperature and uptime every
   minute, [README](../../patches/experiments/mqtt/README.md)). Passed in
   QEMU against mosquitto; Pi test #58 queued.
+- Home Assistant MQTT discovery: `ha-bridge` (in `tools/mqtt`, experiment
+  `ha-bridge`, same branch) announces CPU temperature, CPU clock,
+  throttling, uptime and memory as a Home Assistant device, sends the
+  values every minute through `timerd`, and keeps an availability topic
+  with a last will ([README](../../patches/experiments/ha-bridge/README.md)).
+  Passed in QEMU against mosquitto.
 
 ## Next
 
@@ -21,6 +27,5 @@
 ## Later
 
 - TLS (needs a TLS library that builds for Redox).
-- A service that publishes GPIO inputs and switches GPIO outputs by MQTT
-  (with the `gpio` topic).
-- Home Assistant MQTT discovery, so the Pi shows up by itself.
+- GPIO inputs as binary sensors in `ha-bridge`, and GPIO outputs as
+  switches, once the Firmware session's GPIO driver is on `main`.
