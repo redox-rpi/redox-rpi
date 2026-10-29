@@ -1,4 +1,4 @@
-From 1c103dfd0244a2af0cd17169fc3c8e049ec86f59 Mon Sep 17 00:00:00 2001
+From ed57f20a88384ff4a06652f624142abd57debdc7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 10:48:13 +0100
 Subject: [PATCH] dwc2d: list the USB devices in /scheme/usb.dwc2/devices
@@ -36,7 +36,7 @@ index de3a4ea..f0359ab 100644
  
  [lints]
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 06ebceb..89676dc 100644
+index 01cac8d..6b8e3e0 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -54,6 +54,11 @@ pub struct Device {
@@ -70,7 +70,7 @@ index 06ebceb..89676dc 100644
  
          if class == CLASS_HUB && depth < MAX_HUB_DEPTH {
              let configuration = config.get(5).copied().unwrap_or(1);
-@@ -473,6 +483,21 @@ impl Bus {
+@@ -525,6 +535,21 @@ impl Bus {
      }
  }
  
@@ -93,7 +93,7 @@ index 06ebceb..89676dc 100644
      let mut pos = 0;
      while pos + 2 <= config.len() && config[pos] >= 2 {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 3972850..34f5d62 100644
+index 1f4de46..1d7d355 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -4,7 +4,8 @@
@@ -114,17 +114,17 @@ index 3972850..34f5d62 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -537,6 +539,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-             Source::Hotplug => {
-                 hotplug.fired();
-                 let changes = bus.scan();
+@@ -567,6 +569,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+                 let mut changes = bus.scan();
+                 changes.removed.extend(cycled);
 +                if !changes.added.is_empty() || !changes.removed.is_empty() {
 +                    usbinfo::set(&bus.devices);
 +                }
                  let net = scheme.adapter_mut();
                  for &address in &changes.removed {
                      net.remove(address);
-@@ -583,6 +588,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+@@ -613,6 +618,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
          match bus.enumerate_root() {
              Ok(()) => {
                  println!("dwc2d: {} device(s) enumerated", bus.devices.len());
