@@ -1,4 +1,4 @@
-From 070e7710da00d7a0a8889f6c532cabbdea10b603 Mon Sep 17 00:00:00 2001
+From 6589bd2fa3c364e3398480fac1c22ba3d7f5d4b5 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:05 +0100
 Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
@@ -16,12 +16,12 @@ smoltcp chose. No duplicate address detection, no lifetimes beyond zero,
 no IPv6 sockets in relibc yet.
 ---
  netstack/Cargo.toml               |   2 +-
- netstack/src/link/ethernet.rs     | 424 +++++++++++++++++++++++++-----
+ netstack/src/link/ethernet.rs     | 435 +++++++++++++++++++++++++-----
  netstack/src/link/mod.rs          |  16 +-
  netstack/src/router/mod.rs        |  45 +++-
  netstack/src/scheme/mod.rs        |  87 +++++-
  netstack/src/scheme/netcfg/mod.rs |  24 +-
- 6 files changed, 520 insertions(+), 78 deletions(-)
+ 6 files changed, 531 insertions(+), 78 deletions(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
 index f965d19..c71d7d5 100644
@@ -37,7 +37,7 @@ index f965d19..c71d7d5 100644
      "iface-max-addr-count-8",
      "log"
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index b778a21..28a871d 100644
+index b778a21..fe60b84 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -4,26 +4,30 @@ use std::fs::File;
@@ -50,7 +50,7 @@ index b778a21..28a871d 100644
  use smoltcp::wire::{
      ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
 -    EthernetRepr, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr,
-+    EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Cidr,
++    EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
 +    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags, NdiscPrefixInfoFlags,
 +    NdiscRepr, RawHardwareAddress,
  };
@@ -74,14 +74,13 @@ index b778a21..28a871d 100644
          tries: u32,
          silent_until: Instant,
      },
-@@ -33,6 +37,18 @@ type PacketBuffer = smoltcp::storage::PacketBuffer<'static, IpAddress>;
+@@ -33,6 +37,29 @@ type PacketBuffer = smoltcp::storage::PacketBuffer<'static, IpAddress>;
  
  const EMPTY_MAC: EthernetAddress = EthernetAddress([0; 6]);
  
 +/// IPv6 state of the link: the link-local address from the MAC address, and
 +/// what stateless address autoconfiguration (RFC 4862) learned from router
 +/// advertisements.
-+#[derive(Default)]
 +struct Ipv6State {
 +    link_local: Option<Ipv6Address>,
 +    global: Option<Ipv6Cidr>,
@@ -90,10 +89,22 @@ index b778a21..28a871d 100644
 +    next_solicitation: Instant,
 +}
 +
++impl Default for Ipv6State {
++    fn default() -> Self {
++        Self {
++            link_local: None,
++            global: None,
++            router: None,
++            solicitations: 0,
++            next_solicitation: Instant::ZERO,
++        }
++    }
++}
++
  pub struct EthernetLink {
      name: Rc<str>,
      neighbor_cache: BTreeMap<IpAddress, Neighbor>,
-@@ -43,6 +59,38 @@ pub struct EthernetLink {
+@@ -43,6 +70,38 @@ pub struct EthernetLink {
      network_file: File,
      hardware_address: Option<EthernetAddress>,
      ip_address: Option<Ipv4Cidr>,
@@ -132,7 +143,7 @@ index b778a21..28a871d 100644
  }
  
  impl EthernetLink {
-@@ -54,6 +102,10 @@ impl EthernetLink {
+@@ -54,6 +113,10 @@ impl EthernetLink {
      const NEIGHBOR_LIVE_TIME: Duration = Duration::from_secs(60);
      const ARP_SILENCE_TIME: Duration = Duration::from_secs(1);
  
@@ -143,7 +154,7 @@ index b778a21..28a871d 100644
      pub fn new(name: &str, network_file: File) -> Self {
          let waiting_packets = PacketBuffer::new(
              vec![PacketMetadata::EMPTY; Self::MAX_WAITING_PACKET_COUNT],
-@@ -70,6 +122,7 @@ impl EthernetLink {
+@@ -70,6 +133,7 @@ impl EthernetLink {
              output_buffer: Vec::with_capacity(Self::MTU),
              arp_state: Default::default(),
              neighbor_cache: Default::default(),
@@ -151,7 +162,7 @@ index b778a21..28a871d 100644
          }
      }
  
-@@ -102,6 +155,43 @@ impl EthernetLink {
+@@ -102,6 +166,43 @@ impl EthernetLink {
          }
      }
  
@@ -195,7 +206,7 @@ index b778a21..28a871d 100644
      fn process_arp(&mut self, packet: &[u8], now: Instant) {
          let Some(hardware_address) = self.hardware_address else {
              return;
-@@ -173,19 +263,163 @@ impl EthernetLink {
+@@ -173,19 +274,163 @@ impl EthernetLink {
                          EthernetProtocol::Arp,
                      );
                  }
@@ -205,11 +216,12 @@ index b778a21..28a871d 100644
 +                    source_hardware_addr,
 +                    now,
 +                );
-+            }
-+            _ => {}
-+        }
-+    }
-+
+             }
+             _ => {}
+         }
+     }
+ 
+-    fn check_waiting_packets(&mut self, ip: Ipv4Address, mac: EthernetAddress, now: Instant) {
 +    /// Handles NDP messages (RFC 4861) here, like ARP: smoltcp ignores them
 +    /// on an IP medium. Returns false for packets the IP layer should get.
 +    fn process_ndisc(&mut self, packet: &[u8], now: Instant) -> bool {
@@ -306,9 +318,9 @@ index b778a21..28a871d 100644
 +                    "{}: router advertisement from {}: router {:?}, address {:?}",
 +                    self.name, src, self.ipv6.router, self.ipv6.global
 +                );
-             }
-             _ => {}
-         }
++            }
++            _ => {}
++        }
 +        true
 +    }
 +
@@ -348,9 +360,8 @@ index b778a21..28a871d 100644
 +                lladdr: Some(mac.into()),
 +            },
 +        );
-     }
- 
--    fn check_waiting_packets(&mut self, ip: Ipv4Address, mac: EthernetAddress, now: Instant) {
++    }
++
 +    fn check_waiting_packets(&mut self, ip: IpAddress, mac: EthernetAddress, now: Instant) {
          let mut waiting_packets =
              std::mem::replace(&mut self.waiting_packets, PacketBuffer::new(vec![], vec![]));
@@ -363,7 +374,7 @@ index b778a21..28a871d 100644
                      self.arp_state = ArpState::Discovering {
                          target: *dst,
                          tries: 0,
-@@ -205,18 +439,18 @@ impl EthernetLink {
+@@ -205,18 +450,18 @@ impl EthernetLink {
                  mac,
                  packet.len(),
                  |buf| buf.copy_from_slice(packet),
@@ -386,7 +397,7 @@ index b778a21..28a871d 100644
                      self.arp_state = ArpState::Discovering {
                          target: *dst,
                          tries: 0,
-@@ -251,7 +485,6 @@ impl EthernetLink {
+@@ -251,7 +496,6 @@ impl EthernetLink {
          };
          buf.copy_from_slice(packet);
  
@@ -394,7 +405,7 @@ index b778a21..28a871d 100644
          if let ArpState::Discovered = self.arp_state {
              self.arp_state = ArpState::Discovering {
                  target: next_hop,
-@@ -263,15 +496,13 @@ impl EthernetLink {
+@@ -263,15 +507,13 @@ impl EthernetLink {
          }
      }
  
@@ -412,7 +423,7 @@ index b778a21..28a871d 100644
          match self.arp_state {
              ArpState::Discovered => {}
              ArpState::Discovering { silent_until, .. } if silent_until > now => {}
-@@ -283,23 +514,50 @@ impl EthernetLink {
+@@ -283,23 +525,50 @@ impl EthernetLink {
                  ref mut tries,
                  ref mut silent_until,
              } => {
@@ -477,7 +488,7 @@ index b778a21..28a871d 100644
              }
          }
      }
-@@ -307,31 +565,43 @@ impl EthernetLink {
+@@ -307,31 +576,43 @@ impl EthernetLink {
  
  impl LinkDevice for EthernetLink {
      fn send(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
@@ -536,7 +547,7 @@ index b778a21..28a871d 100644
              );
              return;
          }
-@@ -344,12 +614,7 @@ impl LinkDevice for EthernetLink {
+@@ -344,12 +625,7 @@ impl LinkDevice for EthernetLink {
                      self.handle_missing_neighbor(next_hop, packet, now)
                  } else {
                      let mac = e.get().hardware_address;
@@ -550,7 +561,7 @@ index b778a21..28a871d 100644
                  }
              }
          }
-@@ -362,17 +627,22 @@ impl LinkDevice for EthernetLink {
+@@ -362,17 +638,22 @@ impl LinkDevice for EthernetLink {
  
          let mut input_buffer = std::mem::replace(&mut self.input_buffer, Vec::new());
          loop {
@@ -583,7 +594,7 @@ index b778a21..28a871d 100644
              let Ok(repr) = EthernetRepr::parse(&packet) else {
                  debug!("Dropped incomming frame on {} (Malformed)", self.name);
                  continue;
-@@ -392,7 +662,18 @@ impl LinkDevice for EthernetLink {
+@@ -392,7 +673,18 @@ impl LinkDevice for EthernetLink {
              match repr.ethertype {
                  EthernetProtocol::Ipv4 => {
                      self.input_buffer = input_buffer;
@@ -603,7 +614,7 @@ index b778a21..28a871d 100644
                  }
                  EthernetProtocol::Arp => self.process_arp(packet.payload(), now),
                  _ => continue,
-@@ -414,7 +695,11 @@ impl LinkDevice for EthernetLink {
+@@ -414,7 +706,11 @@ impl LinkDevice for EthernetLink {
      }
  
      fn set_mac_address(&mut self, addr: EthernetAddress) {
@@ -616,7 +627,7 @@ index b778a21..28a871d 100644
      }
  
      fn ip_address(&self) -> Option<IpCidr> {
-@@ -422,7 +707,16 @@ impl LinkDevice for EthernetLink {
+@@ -422,7 +718,16 @@ impl LinkDevice for EthernetLink {
      }
  
      fn set_ip_address(&mut self, addr: IpCidr) {
