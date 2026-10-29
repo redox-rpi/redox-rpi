@@ -1,4 +1,4 @@
-From 8b8520b6465aab820b9c998f9bebb817f3ddf385 Mon Sep 17 00:00:00 2001
+From ae934bf6c37f50e2925656d320dccd633c7067eb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:26:02 +0100
 Subject: [PATCH] socket, netdb: AF_INET6 sockets, AAAA lookups, IPv6 name
@@ -10,14 +10,14 @@ and returns sockaddr_in6. The resolver tries every name server, IPv4 or
 IPv6 from /etc/net/dns, then those from /scheme/netcfg/resolv/nameserver6,
 with a 5 s timeout each, and closes its socket.
 ---
- src/header/netdb/lookup.rs   | 270 +++++++++++++++++++++--------------
+ src/header/netdb/lookup.rs   | 271 +++++++++++++++++++++--------------
  src/header/netdb/mod.rs      |  59 ++++++--
  src/header/netdb/redox.rs    |  21 ++-
  src/platform/redox/socket.rs |  70 ++++++++-
- 4 files changed, 287 insertions(+), 133 deletions(-)
+ 4 files changed, 288 insertions(+), 133 deletions(-)
 
 diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
-index 361aa8aa..48d02419 100644
+index 361aa8aa..4ae98ba2 100644
 --- a/src/header/netdb/lookup.rs
 +++ b/src/header/netdb/lookup.rs
 @@ -1,4 +1,5 @@
@@ -78,8 +78,9 @@ index 361aa8aa..48d02419 100644
 +        return Ok(vec![HostAddr::V6(in6_addr {
 +            s6_addr: addr.octets(),
 +        })]);
-+    }
-+
+     }
+ 
+-    let dns_string = get_dns_server()?;
 +    let mut addrs = Vec::new();
 +    let mut last_err = None;
 +    if family != AF_INET6 {
@@ -104,9 +105,8 @@ index 361aa8aa..48d02419 100644
 +            })),
 +            Err(err) => last_err = Some(err),
 +        }
-     }
- 
--    let dns_string = get_dns_server()?;
++    }
++
 +    match last_err {
 +        Some(err) if addrs.is_empty() => Err(err),
 +        _ => Ok(addrs),
@@ -134,7 +134,7 @@ index 361aa8aa..48d02419 100644
      let mut timespec = timespec::default();
      Sys::clock_gettime(
          time::constants::CLOCK_REALTIME,
-@@ -44,128 +119,103 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -44,128 +119,104 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
          transaction_id: tid,
          flags: 0x0100,
          queries: vec![DnsQuery {
@@ -201,6 +201,8 @@ index 361aa8aa..48d02419 100644
 -    Sys::sendto(sock, &packet_data, 0, None)?;
 +    let sock = Sys::socket(domain, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
 +    let result = (|| {
++        let _ = Sys::connect(sock, &dest)?;
++
 +        // Don't wait forever for a server that does not answer
 +        let timeout = timeval {
 +            tv_sec: 5,
@@ -212,7 +214,6 @@ index 361aa8aa..48d02419 100644
 +        let _ = Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout_bytes);
  
 -    let mut buf = vec![0u8; 65536];
-+        let _ = Sys::connect(sock, &dest)?;
 +        Sys::sendto(sock, packet_data, 0, None)?;
  
 -    let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
