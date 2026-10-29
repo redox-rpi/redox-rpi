@@ -50,6 +50,7 @@ about ACPI, PSCI, the GPIO interrupt controller and the PL031 clock, and
   300 starts failed.
 - Real Pi 3B+, test #5 with `dwc2-interrupts`: all pass, keyboard checked.
 - As base `0024`, QEMU `raspi3b`, `v0.3.0-dev-129-g6917241+x9f76`: none of
-  the errors; Pi test #33.
+  the errors. Real Pi 3B+, same image, test #33: none of the errors,
+  network up, `scripts/pi-test.py` all checks pass, 0 of 300 starts failed.
 
 Details in [test-reports.md](../../../docs/test-reports.md).
