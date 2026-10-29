@@ -1,5 +1,8 @@
 # Smart home
 
+User docs, with examples: [docs/smarthome.md](../smarthome.md) (branch
+`docs-time-smarthome`).
+
 ## State
 
 - Nothing on `main` yet.
