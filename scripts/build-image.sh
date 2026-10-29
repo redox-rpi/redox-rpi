@@ -231,7 +231,7 @@ for name in bootloader base relibc; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot sigregs timerd timesync; do
+for tool in devshd reboot sigregs timerd timesync zoneinfo; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
@@ -243,6 +243,14 @@ dependencies = ["relibc"]
 script = """
 export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
 COOKBOOK_CARGO_PATH=. cookbook_cargo
+"""'
+    fi
+    # zoneinfo is data only: the time zone files for /usr/share/zoneinfo.
+    if [ "$tool" = zoneinfo ]; then
+        build='template = "custom"
+script = """
+mkdir -p "${COOKBOOK_STAGE}/usr/share"
+cp -r "${COOKBOOK_SOURCE}/share/zoneinfo" "${COOKBOOK_STAGE}/usr/share/"
 """'
     fi
     mkdir -p "$REDOX/recipes/other/$tool"

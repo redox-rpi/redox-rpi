@@ -14,6 +14,10 @@
   restart; waits for `timesync`. Branch `timerd`, experiments `timerd` and
   `timerd-test` ([README](../../patches/experiments/timerd/README.md)).
 
+- [#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zones:
+  `/etc/localtime` and zone files (package `zoneinfo`), `timerd` in local
+  time. Branch `timezone` (on top of `timerd`), experiment `timezone`.
+
 ## Next
 
 - `clock_settime` / `settimeofday` in relibc, so other programs can set the
@@ -56,7 +60,12 @@ args = ["-c", "df >> /scheme/data/df.log"]
 
 Things to know:
 
-- **UTC:** schedules are in UTC; Redox has no time zones yet.
+- **Local time:** schedules are in the system's local time if a zone is
+  set (`/etc/localtime`, experiment `timezone`,
+  [#46](https://github.com/redox-rpi/redox-rpi/issues/46)), else UTC.
+  `utc = true` in `[timer]` keeps a timer in UTC. When the clocks go
+  forward, times in the skipped hour do not run; when they go back, a time
+  in the repeated hour runs once.
 - **One run at a time:** a run is skipped while the previous one of the
   same timer still runs.
 - **Clock:** the first run waits for `timesync` (at most five minutes),

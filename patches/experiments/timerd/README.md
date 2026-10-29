@@ -20,7 +20,7 @@ a file in `/etc` replaces one of the same name there):
 ```toml
 [timer]
 description = "Nightly backup"
-schedule = "30 3 * * *"   # minute hour day month weekday, in UTC
+schedule = "30 3 * * *"   # minute hour day month weekday, local time
 persistent = true         # run once at start if a run was missed
 
 [service]
@@ -32,7 +32,11 @@ envs = { LANG = "C" }
 - **Schedule:** the five cron fields with `*`, numbers, ranges `1-5`,
   steps `*/10` and lists `0,30`, or `@hourly`, `@daily`, `@weekly`,
   `@monthly`, `@yearly`. When both day fields are set, either one is enough,
-  as in cron. Times are in UTC: Redox has no time zones set up yet.
+  as in cron. Times are in local time if the image has a time zone
+  (experiment [`timezone`](../timezone/README.md)), else UTC; `utc = true`
+  in `[timer]` keeps a timer in UTC. When the clocks go forward, times in
+  the skipped hour do not run; when they go back, a time in the repeated
+  hour runs once.
 - **Waits for the clock:** the Pi has no battery-backed clock. `timerd`
   starts its schedule only after `timesync` has the time from an NTP server
   (it writes `/tmp/timesync.synced`), at most five minutes. Then it goes on
