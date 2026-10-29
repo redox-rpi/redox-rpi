@@ -10,6 +10,13 @@
 
 ## Next
 
+- [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):
+  OpenSSH from source; key and password login and an interactive shell
+  work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
+  with a repeated fd, `ld.so` and login shells), `procmgr` (SIGCHLD of a
+  child that dropped its privileges) and OpenSSH (no `chroot`, PTY
+  without owner). Pi test #59 queued. Open: Ctrl-C (no controlling
+  terminal, also over devshd).
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 
 ## Later
