@@ -98,14 +98,16 @@ sleep 1
 
 monitor "device_del stick0" > /dev/null
 check "stick removed" wait_log "dwc2d: mass storage removed" 10
-check "scheme gone" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme' 2>/dev/null | grep -q 'disk.usb-dwc2'"
+check "disk gone" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls -l $scheme/' 2>/dev/null | grep -aqE ' 16777216 .* 0\b'"
 
 # QEMU writes through to the image file.
 check "block 2048 written" bash -c "dd if='$stick' bs=512 skip=2048 count=1 status=none | grep -aq '$marker'"
 
-# The same port again: the scheme gets the same name.
+# The same port (QEMU's hub is on root port 1) again: the scheme gets the
+# same name, which needs the old one gone from the namespace.
 monitor "drive_add 0 if=none,id=stick2,file=$stick,format=raw" \
-    "device_add usb-storage,drive=stick2,id=stick1" > /dev/null
+    "device_add usb-storage,drive=stick2,id=stick1,port=1.3" > /dev/null
 check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/') -ge 2 ] && exit 0; sleep 1; done; exit 1"
+check "same scheme name" bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage $scheme:') -ge 2 ]"
 check "block 2048 read after plugging in again" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
 exit $failed
