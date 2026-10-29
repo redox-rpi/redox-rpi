@@ -6,7 +6,7 @@ Joins the multicast group of QEMU's socket netdev (`qemu-raspi3b.sh
 
 - answers the guest's router solicitation with a router advertisement for
   2001:db8:1::/64 (on-link, autonomous), repeated every 10 s; without a
-  solicitation the first one goes out after 60 s;
+  solicitation the first one goes out after 240 s;
 - answers neighbor solicitations for its own addresses;
 - asks for the guest's SLAAC address with a neighbor solicitation;
 - pings the guest's link-local and SLAAC address (ICMPv6 echo).
@@ -103,7 +103,7 @@ def main():
             "echo reply link-local": False, "echo reply SLAAC": False}
     guest_mac = None
     end, next_probe, seq = time.time() + args.seconds, 0, 0
-    next_ra = time.time() + 60
+    next_ra = time.time() + 240
     while time.time() < end and not all(seen.values()):
         now = time.time()
         if now >= next_ra:
