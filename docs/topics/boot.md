@@ -14,8 +14,9 @@
   `redox login:`; the bootloader waits 5 s at the mode selection and U-Boot
   counts down 2 s on every boot. Experiment
   [`boot-time`](../../patches/experiments/boot-time/) waits 1 s in the
-  bootloader, `config/netboot.cmd` no longer asks DHCP twice. Next: the Pi
-  timeline.
+  bootloader, `config/netboot.cmd` no longer asks DHCP twice, init recreates
+  `/tmp` itself instead of starting `rm` and `mkdir`, and init reports slow
+  units. Next: the Pi timeline (test #53).
 
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
   `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,
