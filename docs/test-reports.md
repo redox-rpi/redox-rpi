@@ -1550,3 +1550,36 @@ Test 65 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
 - Probably the same cause as test 58: discovery and the last will are sent
   only by the first run, which hung before `/etc/mqtt-host` was set.
   Afterwards the broker was stopped and the stable image restored.
+
+## 2026-10-29: `v0.3.0-dev-98-g723b343+x7f63`
+
+Built 2026-10-29T14:48:42Z, `libc.so` `100761987443777d…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timerd`, `timesync`. test 66 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51) clock_settime and timesync -s), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-98-g723b343+x7f63 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 66 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)), branch
+`clock-settime` (relibc `0008`, `timesync -s`). All **pass**:
+
+- Serial log: `timesync: clock set to 2026-10-29 18:00:18 UTC from
+  pool.ntp.org` (after the saved time).
+- `timesync -s "2030-01-02 03:04:05"`: `clock set to 2030-01-02 03:04:05 UTC
+  by hand`, exit 0; `date -u` `Wed Jan  2 03:04:05 UTC 2030`; `touch /tmp/x`
+  gives `Jan  2 03:04`.
+- `timesync -s '@1793282730'`: `2026-10-29 14:05:30 UTC by hand`, exit 0.
+- `timesync`: first `from the build time` (the clock was before the build
+  time), then `2026-10-29 18:02:05 UTC from pool.ntp.org`, exit 0; `date -u`
+  18:02:06, the same second as homenodellm.
+- `timesync -s 2030`: `-s wants 'YYYY-MM-DD HH:MM[:SS]' (UTC) or
+  @<seconds>, not "2030"`, exit 2.
+- `/scheme/data/timesync.last` afterwards holds the NTP time (18:02), only
+  its file date is 2 Jan 2030 from the test; the stable image booted with
+  the right time from it.
+- Standard checks pass, 0 of 300 starts failed (every program with the
+  changed C library).
