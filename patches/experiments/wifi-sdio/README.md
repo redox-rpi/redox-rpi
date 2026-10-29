@@ -25,6 +25,18 @@ which frees the Arasan controller for the Wi-Fi chip.
   - starts the ARM, waits for the HT clock and function 2,
   - asks the firmware over the SDPCM/BCDC control channel for `ver` and
     `cur_etheraddr`.
+- base `0033`: then it loads the regulatory data (CLM blob), brings the
+  radio up, scans and lists the networks (BSSID, channel, dBm, security,
+  name). With `/etc/net/wifi`:
+
+  ```
+  ssid=<network name>
+  psk=<passphrase, 8 to 63 characters; leave the line out for an open network>
+  ```
+
+  it joins that network, WPA2-PSK through the firmware's own supplicant
+  (minimal firmware only), and waits for `link up` and `WPA2 keys in place`.
+  No network interface yet: the probe exits after that.
 - recipe `wifi-firmware` (in `recipes/`, added by `config.toml`):
   downloads firmware, CLM blob, NVRAM file and `LICENCE.cypress` from
   pinned commits of RPi-Distro/firmware-nonfree and linux-firmware, checks
@@ -44,4 +56,5 @@ Build: `--experiment wifi-sdio` on top of branch `sdhost-ctxleak`. The
 recipe needs network access on the build host (curl).
 
 Pi tests: #57 (chip ID, image from commit `fb78c4a`, before `0032`),
-then the firmware start (see `docs/test-plan.md`).
+#60 (firmware start, `7d69076`, before `0033`), then scan (see
+`docs/test-plan.md`).
