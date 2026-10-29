@@ -1,0 +1,357 @@
+From a4fe402cf09c3cb46974986012f3f7ee65d9e05b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:35:45 +0100
+Subject: [PATCH] dwc2d: list the enumerated devices in
+ /scheme/usb.dwc2/devices
+
+Each device's address, hub port, IDs, class, USB version, speed and
+interfaces, one line per device, read-only, for lsusb.
+
+Refs redox-rpi/redox-rpi#35
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                         |   4 +
+ drivers/usb/dwc2d/Cargo.toml       |   2 +
+ drivers/usb/dwc2d/src/enumerate.rs |  33 ++++++
+ drivers/usb/dwc2d/src/main.rs      |   5 +-
+ drivers/usb/dwc2d/src/usbinfo.rs   | 178 +++++++++++++++++++++++++++++
+ 5 files changed, 221 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/usb/dwc2d/src/usbinfo.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 3823eb2..3a1611c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -729,8 +729,12 @@ dependencies = [
+  "daemon",
+  "driver-network",
+  "fdt 0.2.0-alpha1",
++ "inputd",
+  "libredox",
++ "orbclient",
++ "redox-scheme",
+  "redox_syscall 0.9.5",
++ "scheme-utils",
+ ]
+ 
+ [[package]]
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index 32515bc..288ea44 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -10,9 +10,11 @@ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
+ driver-network = { path = "../../net/driver-network" }
+ inputd = { path = "../../inputd" }
++scheme-utils = { path = "../../../scheme-utils" }
+ 
+ libredox.workspace = true
+ orbclient.workspace = true
++redox-scheme.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+ 
+ [lints]
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 2710053..4077ddf 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -50,6 +50,14 @@ pub struct Device {
+     /// Hub address and port of the transaction translator, for a full- or
+     /// low-speed device behind a high-speed hub.
+     pub tt: Option<(u8, u8)>,
++    /// Hub address and port the device is plugged into; `None` on the root
++    /// port.
++    pub port: Option<(u8, u8)>,
++    /// USB version from the device descriptor, e.g. 0x0200.
++    pub usb: u16,
++    /// Class, subclass and protocol of each interface of the first
++    /// configuration.
++    pub interfaces: Vec<(u8, u8, u8)>,
+ }
+ 
+ pub struct Bus<'a> {
+@@ -61,6 +69,8 @@ pub struct Bus<'a> {
+     tts: HashMap<u8, (u8, u8)>,
+     /// Transaction translator of the device being enumerated at address 0.
+     new_device_tt: Option<(u8, u8)>,
++    /// Hub port of the device being enumerated at address 0.
++    new_device_port: Option<(u8, u8)>,
+     pub devices: Vec<Device>,
+ }
+ 
+@@ -73,6 +83,7 @@ impl<'a> Bus<'a> {
+             data: Dma::new([0; 512]).expect("dwc2d: DMA allocation failed"),
+             tts: HashMap::new(),
+             new_device_tt: None,
++            new_device_port: None,
+             devices: Vec::new(),
+         }
+     }
+@@ -191,6 +202,9 @@ impl<'a> Bus<'a> {
+             configurations: d[17],
+             depth,
+             tt,
++            port: self.new_device_port.take(),
++            usb: u16::from_le_bytes([d[2], d[3]]),
++            interfaces: Vec::new(),
+         };
+         println!(
+             "dwc2d: {indent}address {}: {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {:?} speed",
+@@ -201,6 +215,9 @@ impl<'a> Bus<'a> {
+ 
+         let config = self.request(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_CONFIGURATION) << 8, 0, 512)?;
+         print_configuration(&indent, &config);
++        if let Some(device) = self.devices.last_mut() {
++            device.interfaces = interfaces(&config);
++        }
+ 
+         if class == CLASS_HUB && depth < MAX_HUB_DEPTH {
+             let configuration = config.get(5).copied().unwrap_or(1);
+@@ -290,6 +307,7 @@ impl<'a> Bus<'a> {
+                 hub_tt
+             };
+             println!("dwc2d: {indent}hub {hub} port {port}: device connected");
++            self.new_device_port = Some((hub, port as u8));
+             if let Err(err) = self.enumerate(child_speed, depth + 1, child_tt) {
+                 println!("dwc2d: {indent}hub {hub} port {port}: {err:?}");
+             }
+@@ -298,6 +316,21 @@ impl<'a> Bus<'a> {
+     }
+ }
+ 
++/// Class, subclass and protocol of each interface descriptor (alternate
++/// setting 0) in a configuration.
++fn interfaces(config: &[u8]) -> Vec<(u8, u8, u8)> {
++    let mut found = Vec::new();
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        if desc[1] == 4 && desc.len() >= 9 && desc[3] == 0 {
++            found.push((desc[5], desc[6], desc[7]));
++        }
++        pos += desc.len();
++    }
++    found
++}
++
+ fn print_configuration(indent: &str, config: &[u8]) {
+     let mut pos = 0;
+     while pos + 2 <= config.len() && config[pos] >= 2 {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 0b0dd57..ee8298e 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -4,7 +4,8 @@
+ //! Brings up the controller, enumerates the devices behind the root port and
+ //! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153) and a boot
+ //! protocol keyboard directly in this process. It does not offer the USB
+-//! scheme to class drivers yet.
++//! scheme to class drivers yet; `/scheme/usb.dwc2/devices` lists what it
++//! found, for `lsusb` (`usbinfo.rs`).
+ 
+ use std::process;
+ 
+@@ -17,6 +18,7 @@ mod hid;
+ mod lan78xx;
+ mod regs;
+ mod rtl8152;
++mod usbinfo;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+@@ -270,6 +272,7 @@ fn enumerate(
+                         }
+                     }
+                 }
++                usbinfo::serve(&bus.devices);
+                 return Ok((network, keyboard));
+             }
+             Err(err) if attempt < ATTEMPTS => {
+diff --git a/drivers/usb/dwc2d/src/usbinfo.rs b/drivers/usb/dwc2d/src/usbinfo.rs
+new file mode 100644
+index 0000000..4460e83
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/usbinfo.rs
+@@ -0,0 +1,178 @@
++//! `/scheme/usb.dwc2/devices`: the devices found during enumeration, for
++//! `lsusb`. Read-only, one line per device:
++//!
++//! ```text
++//! address hub port vendor product class usb speed interfaces
++//! 2 1 1 0424 7800 ff 0210 high ff.00.ff
++//! ```
++//!
++//! `hub` and `port` are 0 for the device on the root port. Numbers are
++//! hexadecimal except address, hub and port; `interfaces` lists class,
++//! subclass and protocol of each interface, separated by commas, or `-`.
++
++use std::fmt::Write as _;
++use std::thread;
++
++use redox_scheme::scheme::{register_sync_scheme, SchemeSync};
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EBADF, EISDIR, ENOENT, ENOTDIR, EROFS};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
++
++use crate::dwc2::Speed;
++use crate::enumerate::Device;
++
++const SCHEME: &str = "usb.dwc2";
++
++/// Serves the device list from its own thread.
++pub fn serve(devices: &[Device]) {
++    let text = format(devices);
++    thread::spawn(move || {
++        let socket = match Socket::create() {
++            Ok(socket) => socket,
++            Err(err) => return eprintln!("dwc2d: cannot create the {SCHEME} scheme: {err}"),
++        };
++        let mut scheme = InfoScheme {
++            devices: text.into_bytes(),
++            handles: HandleMap::new(),
++        };
++        if let Err(err) = register_sync_scheme(&socket, SCHEME, &mut scheme) {
++            return eprintln!("dwc2d: cannot register the {SCHEME} scheme: {err}");
++        }
++        let handler = Blocking::new(Box::new(socket), 16);
++        if let Err(err) = handler.process_requests_blocking(scheme) {
++            eprintln!("dwc2d: {SCHEME} scheme failed: {err}");
++        }
++    });
++}
++
++fn format(devices: &[Device]) -> String {
++    let mut text = String::new();
++    for device in devices {
++        let (hub, port) = device.port.unwrap_or((0, 0));
++        let speed = match device.speed {
++            Speed::High => "high",
++            Speed::Full => "full",
++            Speed::Low => "low",
++        };
++        let interfaces: Vec<String> = device
++            .interfaces
++            .iter()
++            .map(|(class, subclass, protocol)| format!("{class:02x}.{subclass:02x}.{protocol:02x}"))
++            .collect();
++        let interfaces = if interfaces.is_empty() { "-".to_string() } else { interfaces.join(",") };
++        let _ = writeln!(
++            text,
++            "{} {hub} {port} {:04x} {:04x} {:02x} {:04x} {speed} {interfaces}",
++            device.address, device.vendor, device.product, device.class, device.usb
++        );
++    }
++    text
++}
++
++enum Handle {
++    Root,
++    Dir,
++    File,
++}
++
++struct InfoScheme {
++    devices: Vec<u8>,
++    handles: HandleMap<Handle>,
++}
++
++impl SchemeSync for InfoScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        let handle = match path.trim_matches('/') {
++            "" => Handle::Dir,
++            "devices" if flags & O_WRONLY != 0 => return Err(Error::new(EROFS)),
++            "devices" => Handle::File,
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        if !matches!(self.handles.get(id)?, Handle::File) {
++            return Err(Error::new(EISDIR));
++        }
++        let data = &self.devices;
++        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++        let len = buf.len().min(data.len() - start);
++        buf[..len].copy_from_slice(&data[start..start + len]);
++        Ok(len)
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        if !matches!(self.handles.get(id)?, Handle::Dir) {
++            return Err(Error::new(ENOTDIR));
++        }
++        if opaque_offset == 0 {
++            buf.entry(DirEntry {
++                inode: 0,
++                name: "devices",
++                kind: DirentKind::Regular,
++                next_opaque_id: 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = self.devices.len() as u64;
++            }
++            Handle::Dir | Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File => Ok(self.devices.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, SCHEME, |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,51 @@
+# Experiment: lsusb and hwinfo
+
+Issue [#35](https://github.com/redox-rpi/redox-rpi/issues/35), planned for
+v0.7.0 (ROADMAP wish list: `lsusb` and hardware info).
+
+```bash
+scripts/build-image.sh --experiment rtl8152 --experiment hwinfo
+```
+
+- **Base patch `0024`** (after `rtl8152`, base `0020`): `dwc2d` keeps what
+  it learns during enumeration and serves it read-only as
+  `/scheme/usb.dwc2/devices`, one line per device:
+
+  ```
+  address hub port vendor product class usb speed interfaces
+  1 0 0 0424 2514 09 0200 high 09.00.02
+  4 3 1 0424 7800 ff 0210 high ff.00.ff
+  ```
+
+  `hub` and `port` are 0 for the device on the root port; `interfaces`
+  lists class, subclass and protocol of each interface. `dwc2d` enumerates
+  once at boot, so a device plugged in later does not show up (no hotplug
+  yet). The rest of `dwc2d` is unchanged; the call is one line after the
+  enumeration.
+- **[`tools/hwinfo`](../../../tools/hwinfo)**, package `hwinfo` with two
+  programs:
+  - `lsusb` lists the devices like Linux's `lsusb`. There is no usb.ids
+    database: a short table names the Pi's own chips (hubs, LAN7800,
+    LAN9514, RTL8152/8153, QEMU's devices); other devices are described by
+    their class or interface classes (`keyboard, HID`). `lsusb -t` shows
+    the hub tree, `-v` adds the interfaces.
+  - `hwinfo` shows the build and experiments, model, revision, serial,
+    memory (ARM and GPU share), firmware, CPU count, ARM clock and its
+    maximum, the governor if there is one (#23), other clocks, temperature,
+    the throttling flags in words, and the number of USB devices. Sources
+    that are missing are left out.
+
+The package is built for every image (`scripts/build-image.sh`), but only
+this experiment installs it.
+
+## Test on the Pi
+
+1. Boot, `scripts/pi-test.py` standard checks.
+2. `lsusb`, `lsusb -t`, `lsusb -v`: on a Pi 3B+ the hubs `0424:2514` and the
+   LAN7800 `0424:7800`, plus whatever is plugged in (keyboard).
+3. `hwinfo`: Pi 3 Model B+, 1 GiB, 4 CPUs, clocks and temperature like
+   `/scheme/rpi-firmware`.
+
+## Results
+
+- Not tested yet.

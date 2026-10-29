@@ -13,7 +13,9 @@
 
 ## In progress
 
-- Nothing right now.
+- [#35](https://github.com/redox-rpi/redox-rpi/issues/35) `lsusb` and `hwinfo` (v0.7.0): experiment
+  [`hwinfo`](../../patches/experiments/hwinfo/README.md), branch `hwinfo`;
+  `dwc2d` lists its devices in `/scheme/usb.dwc2/devices` (base `0024`).
 
 ## Next
 
