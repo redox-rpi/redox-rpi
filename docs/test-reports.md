@@ -1309,3 +1309,77 @@ bcm2835-sdiod: OK
   `1`, and the chip answered.
 - `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed; no
   `bcm2835-sdhostd` errors. Only the known `pcid` panic in the log.
+
+## 2026-10-29: `v0.3.0-dev-218-g7d69076+xd4e7`
+
+Built 2026-10-29T14:24:37Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 60 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 2, firmware), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-218-g7d69076+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 60 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi`, experiment `wifi-sdio`. Every `bcm2835-sdiod:` line of the boot (minimal firmware):
+
+```
+bcm2835-sdiod: EMMC at 0x3f300000
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: core 0x800 rev 51 at 0x18000000, wrapper 0x18100000
+bcm2835-sdiod: core 0x812 rev 54 at 0x18001000, wrapper 0x18101000
+bcm2835-sdiod: core 0x83e rev 9 at 0x18002000, wrapper 0x18102000
+bcm2835-sdiod: core 0x83c rev 14 at 0x18003000, wrapper 0x18103000
+bcm2835-sdiod: core 0x829 rev 21 at 0x18004000, wrapper 0x18104000
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 298 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: event frame (channel 1), 0 bytes
+bcm2835-sdiod: firmware version: wl0: Nov  1 2021 00:37:12 version 7.45.241 (1a2f2fa CY) FWID 01-5209c09
+bcm2835-sdiod: mailbox from the firmware 0x00040002
+bcm2835-sdiod: MAC address b8:27:eb:5d:b5:ff
+bcm2835-sdiod: OK
+```
+
+Then over devsh as root, `/usr/lib/drivers/bcm2835-sdiod standard` (exit 0), lines that differ from the boot:
+
+```
+bcm2835-sdiod: wifi_power was 1
+bcm2835-sdiod: standard firmware, 609309 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (609312 bytes in 303 ms) and read back
+bcm2835-sdiod: firmware version: wl0: Aug 29 2023 01:47:08 version 7.45.265 (28bca26 CY) FWID 01-b677b91b
+```
+
+- **Pass**: chip ID OK; cores 0x83e, 0x812, 0x829 (and 0x800, 0x83c);
+  RAM 0x00198000, 800 KiB; minimal firmware 548728 bytes written in 298 ms
+  and read back; NVRAM written; ARM started; HT clock on; function 2 ready,
+  firmware running; `firmware version: wl0: Nov  1 2021 … version 7.45.241`;
+  MAC address `b8:27:eb:5d:b5:ff`; last line `OK`.
+- Between `ARM started` and `OK`: mailbox `0x00040008`, one event frame
+  (channel 1, 0 bytes), the version, mailbox `0x00040002`, the MAC.
+- Standard firmware: 609312 bytes in 303 ms, version 7.45.265 (Aug 29
+  2023), same MAC, `OK`: **pass**.
+- Writing `wifi_power` still gives `I/O error (os error 5)` (as in test 57).
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
