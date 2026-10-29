@@ -1030,3 +1030,16 @@ reset (`echo reset > /scheme/sys/kstop` over devsh); timelines in
   ms, `60_data.service` 367/377 ms.
 - `redox-rpi v0.3.0-dev-214-g67fdc06+x19b9` in the log; standard checks
   pass, 0 of 300 starts failed. Only the known `pcid` panic in the log.
+
+## 2026-10-29: `v0.3.0-dev-203-g6cfdbe3+xf552`
+
+Built 2026-10-29T12:45:26Z, `libc.so` `f4c29e0c5fc7c368…`, real Pi 3B+ over netboot. Experiments: `ipv6`, `lan78xx-multicast`, `mdns`, `multicast`, `rtl8152`, `timesync`. test 47 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27) IPv6, [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-203-g6cfdbe3+xf552 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
