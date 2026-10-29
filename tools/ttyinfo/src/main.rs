@@ -5,6 +5,7 @@
 //! ttyinfo fg N       first make this process the foreground group of the
 //!                    terminal (setpgid + tcsetpgrp), then wait N seconds
 //! ttyinfo killpg     send SIGINT to our own process group
+//! ttyinfo sleep N    sleep N seconds with SIGINT left as it came (no handler)
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -41,8 +42,24 @@ fn state() {
                 t.c_lflag & libc::ICANON != 0,
                 t.c_lflag & libc::ECHO != 0
             );
-            println!("VINTR        = {:#x}", t.c_cc[libc::VINTR]);
+            // The libc crate's termios has a c_line byte before c_cc that
+            // relibc's has not: index c_cc one lower to read VINTR.
+            println!("VINTR        = {:#x}", t.c_cc[libc::VINTR - 1]);
         }
+        let mut old: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGINT, std::ptr::null(), &mut old);
+        let disp = match old.sa_sigaction {
+            libc::SIG_DFL => "default".to_string(),
+            libc::SIG_IGN => "ignored".to_string(),
+            h => format!("handler {:#x}", h),
+        };
+        let mut mask: libc::sigset_t = std::mem::zeroed();
+        libc::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
+        println!(
+            "SIGINT       = {}, blocked={}",
+            disp,
+            libc::sigismember(&mask, libc::SIGINT) == 1
+        );
     }
 }
 
@@ -91,6 +108,12 @@ fn main() {
             std::thread::sleep(Duration::from_millis(200));
             println!("got SIGINT: {}", GOT_SIGINT.load(Ordering::SeqCst));
         },
+        Some("sleep") => {
+            state();
+            println!("sleeping {} s", secs(1));
+            std::thread::sleep(Duration::from_secs(secs(1)));
+            println!("ttyinfo: slept to the end");
+        }
         Some(other) => {
             eprintln!("ttyinfo: unknown command {}", other);
             std::process::exit(2);
