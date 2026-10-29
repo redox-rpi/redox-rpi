@@ -42,6 +42,7 @@ each one expects to come before it:
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
 | `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
 | `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
+| (at merge) | `experiments/gpio/base/` | `bcm2835-gpiod` GPIO driver; `rpi-firmwared` `power_led` (#38) |
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.

@@ -1,0 +1,111 @@
+From d0ba5dd808c61fffb9a8f9d907c210710c3be1d9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:11:20 +0100
+Subject: [PATCH 41/41] rpi-firmwared: power_led, the 3B+ power LED through the
+ firmware GPIO expander
+
+Refs redox-rpi/redox-rpi#38
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/rpi-firmwared/src/main.rs | 41 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs |  2 ++
+ 2 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 4a7a018..95959f1 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -15,6 +15,10 @@
+ //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+ //!   in Hz, `max` or `min` sets it
++//! - `/scheme/rpi-firmware/power_led`: the red power LED of the Pi 3B+,
++//!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
++//!   expander, so only the firmware can switch it. Other boards do not have
++//!   this file.
+ //!
+ //! At start it sets the ARM clock to its maximum; the firmware lowers it by
+ //! itself when the SoC gets too hot or the supply voltage too low. A thread
+@@ -44,9 +48,9 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock"];
++const WRITABLE: &[&str] = &["arm_clock", "power_led"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -72,6 +76,17 @@ impl FirmwareScheme {
+                 let value = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM).map_err(log)?;
+                 writeln!(text, "{value}").unwrap();
+             }
++            "power_led" => {
++                let gpio = power_led_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                // The firmware answers 0 in the first word on success, then
++                // the state (raspberrypi-exp-gpio in Linux).
++                let state = match mbox.property(TAG_GET_GPIO_STATE, &[gpio, 0], 2).map_err(log)?[..] {
++                    [0, state] => state,
++                    _ => return Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
++                };
++                // Active low: the LED is on when the pin is low.
++                writeln!(text, "{}", if state == 0 { "on" } else { "off" }).unwrap();
++            }
+             "temperature" => {
+                 let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
+                 writeln!(text, "{value}").unwrap();
+@@ -102,6 +117,18 @@ impl FirmwareScheme {
+     fn set(&mut self, name: &str, value: &str) -> Result<()> {
+         let mbox = &mut *self.mbox.lock().unwrap();
+         match name {
++            "power_led" => {
++                let gpio = power_led_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let state = match value {
++                    "on" => 0,
++                    "off" => 1,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
++                    [0, _] => Ok(()),
++                    _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
++                }
++            }
+             "arm_clock" => {
+                 let rate = match value {
+                     "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
+@@ -207,6 +234,16 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
+     }
+ }
+ 
++/// The firmware GPIO of the power LED: pin 2 of the GPIO expander (128 + 2)
++/// on the Pi 3B+, the only board where it is known (Linux's devicetree).
++fn power_led_gpio(mbox: &mut Mailbox) -> Option<u32> {
++    let [revision] = mbox.property(TAG_BOARD_REVISION, &[], 1).ok()?[..] else {
++        return None;
++    };
++    // New-style code (bit 23), type 0x0d: Pi 3 Model B+.
++    (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(130)
++}
++
+ /// Model and memory size from a new-style revision code (bit 23 set):
+ /// bits 4-11 are the type, bits 20-22 the memory size.
+ fn decode_revision(revision: u32) -> Option<(&'static str, &'static str)> {
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 737398e..506220e 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -44,6 +44,8 @@ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
+ pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
+ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
++pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
++pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
+-- 
+2.54.0 (Apple Git-157)
+
