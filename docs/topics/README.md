@@ -17,6 +17,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Boot | [boot.md](boot.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 | Pi Zero 2 W | [zero2w.md](zero2w.md) | [topic:zero2w](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Azero2w) |
 | CI and tests | [ci.md](ci.md) | [topic:ci](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aci) |
+| Smart home, MQTT | [smarthome.md](smarthome.md) | [topic:smarthome](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Asmarthome) |
 
 Each page has the same sections: **State** (on `main` and tested on a real
 Pi), **In progress** (branch, experiment, Pi test number), **Next**
