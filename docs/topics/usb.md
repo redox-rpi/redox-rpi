@@ -42,6 +42,14 @@
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
   visit as #50.
+- [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
+  adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
+  branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
+  (on `usb-hotplug`), experiment `usb-serial` (base `0036` there). Each is
+  `/scheme/usb-serial/<ports>` with a `baud` file and termios calls,
+  hotplug. **QEMU passes** (`scripts/test-usb-serial.sh`, 15/15 with
+  QEMU's FTDI); Pi test #62 with a person, same visit as #50 and #56.
+  relibc's `cfsetospeed` still returns EINVAL on Redox (relibc topic).
 - LAN7800 receives all multicast (mDNS, IPv6 neighbor discovery; #27,
   #37), branch [`lan78xx-multicast`](https://github.com/redox-rpi/redox-rpi/tree/lan78xx-multicast),
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
