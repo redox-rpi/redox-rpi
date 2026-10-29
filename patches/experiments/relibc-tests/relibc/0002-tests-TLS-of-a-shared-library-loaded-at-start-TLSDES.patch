@@ -1,0 +1,118 @@
+From dc462c2dc9ce00a930053dd93e7346e94981fb17 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:50:52 +0000
+Subject: [PATCH 2/3] tests: TLS of a shared library loaded at start (TLSDESC
+ and initial exec)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/Makefile                                |  4 ++
+ tests/Makefile.tests.mk                       |  3 +-
+ tests/expected/bins_dynamic/tls_shared.stdout |  3 ++
+ tests/libtlsshared.c                          |  9 +++++
+ tests/tls_shared.c                            | 38 +++++++++++++++++++
+ 5 files changed, 56 insertions(+), 1 deletion(-)
+ create mode 100644 tests/expected/bins_dynamic/tls_shared.stdout
+ create mode 100644 tests/libtlsshared.c
+ create mode 100644 tests/tls_shared.c
+
+diff --git a/tests/Makefile b/tests/Makefile
+index 186cbbd9..b4828d37 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -176,6 +176,10 @@ $(BUILD)/bins_dynamic/dlfcn: dlfcn.c $(BUILD)/bins_dynamic/sharedlib.so $(BUILD)
+ 	mkdir -p "$$(dirname "$@")"
+ 	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS)
+ 
++$(BUILD)/bins_dynamic/tls_shared: tls_shared.c $(BUILD)/bins_dynamic/libtlsshared.so $(DEPS)
++	mkdir -p "$$(dirname "$@")"
++	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS) -L $(BUILD)/bins_dynamic -ltlsshared
++
+ $(BUILD)/bins_dynamic/dlopen_scopes: dlopen_scopes.c $(BUILD)/bins_dynamic/libfoobar.so $(BUILD)/bins_dynamic/libfoo.so $(DEPS)
+ 	mkdir -p "$$(dirname "$@")"
+ 	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS)
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index 69aa7864..11daa924 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -351,7 +351,8 @@ endif
+ # Tests that only working with when ld.so exist
+ DYNAMIC_ONLY_EXPECT_NAMES=\
+ 	dlfcn \
+-	dlopen_scopes
++	dlopen_scopes \
++	tls_shared
+ 
+ # Tests that may produce different result when ld.so absent
+ STATIC_CHECK_EXPECT_NAMES=\
+diff --git a/tests/expected/bins_dynamic/tls_shared.stdout b/tests/expected/bins_dynamic/tls_shared.stdout
+new file mode 100644
+index 00000000..0c3a6340
+--- /dev/null
++++ b/tests/expected/bins_dynamic/tls_shared.stdout
+@@ -0,0 +1,3 @@
++main: gd 11 11, ie 22 22, same address 1 1
++thread: gd 11 11, ie 22 22, same address 1 1
++main: gd 2 2, ie 3 3, same address 1 1
+diff --git a/tests/libtlsshared.c b/tests/libtlsshared.c
+new file mode 100644
+index 00000000..fdabc622
+--- /dev/null
++++ b/tests/libtlsshared.c
+@@ -0,0 +1,9 @@
++// Thread-local data in a shared library that is loaded at start, so it
++// lives in the static TLS block (tls_shared.c).
++_Thread_local int lib_gd = 11;
++__attribute__((tls_model("initial-exec"))) _Thread_local int lib_ie = 22;
++
++int lib_get_gd(void) { return lib_gd; }
++int lib_get_ie(void) { return lib_ie; }
++int *lib_addr_gd(void) { return &lib_gd; }
++int *lib_addr_ie(void) { return &lib_ie; }
+diff --git a/tests/tls_shared.c b/tests/tls_shared.c
+new file mode 100644
+index 00000000..dda821b7
+--- /dev/null
++++ b/tests/tls_shared.c
+@@ -0,0 +1,38 @@
++#include <pthread.h>
++#include <stdio.h>
++
++// Thread-local data of a shared library loaded at start: general dynamic
++// (TLSDESC on aarch64) and initial exec (R_AARCH64_TLS_TPREL). Both must
++// read the library's initial values, in every thread, and give each thread
++// its own copy.
++extern _Thread_local int lib_gd;
++extern __attribute__((tls_model("initial-exec"))) _Thread_local int lib_ie;
++int lib_get_gd(void);
++int lib_get_ie(void);
++int *lib_addr_gd(void);
++int *lib_addr_ie(void);
++
++static void check(const char *who) {
++    printf("%s: gd %d %d, ie %d %d, same address %d %d\n", who, lib_gd,
++           lib_get_gd(), lib_ie, lib_get_ie(), &lib_gd == lib_addr_gd(),
++           &lib_ie == lib_addr_ie());
++}
++
++static void *thread_main(void *arg) {
++    (void)arg;
++    check("thread");
++    lib_gd = 1;
++    lib_ie = 1;
++    return NULL;
++}
++
++int main(void) {
++    check("main");
++    lib_gd = 2;
++    lib_ie = 3;
++    pthread_t thread;
++    pthread_create(&thread, NULL, thread_main, NULL);
++    pthread_join(thread, NULL);
++    check("main");
++    return 0;
++}
+-- 
+2.53.0
+
