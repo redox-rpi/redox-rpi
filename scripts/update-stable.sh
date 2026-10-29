@@ -182,7 +182,7 @@ passed=0
 if reset_pi; then
     log "running scripts/pi-test.py"
     if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" \
-        --note "Nightly stable image test (scripts/update-stable.sh)." | tee "$output"; then
+        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
         passed=1
     fi
 else
@@ -250,7 +250,8 @@ fi
 # 6. Fail: back to the stable image, and tell people.
 log "$build_id failed on the Pi"
 restore_stable
-failed="$(grep -E '^FAIL ' "$output" || true)"
+# The failing checks, or the end of the output if pi-test.py stopped early.
+failed="$(grep -E '^FAIL ' "$output" || tail -n 4 "$output" | cut -c1-300)"
 body="Build \`$build_id\` ($ref ${head:0:7}, options \`$(grep -v '^#' config/stable-image.conf | tr '\n' ' ')\`) failed on the real Pi on $(date -u +%Y-%m-%d).
 
 Failing checks:
