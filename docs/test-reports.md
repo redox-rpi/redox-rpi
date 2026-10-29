@@ -990,3 +990,43 @@ pool.ntp.org:
 - `scripts/pi-test.py` standard checks again afterwards: all pass, 0 of 300
   starts failed, 47 processes.
 - No exception in the serial log.
+
+## 2026-10-29: `v0.3.0-dev-214-g67fdc06+x19b9`
+
+Built 2026-10-29T13:54:46Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `boot-time`, `rtl8152`, `timesync`. test 53 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-214-g67fdc06+x19b9 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 53 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), branch
+`boot-time` (`~/redox-rpi-t18` 43102e8, image `~/t18-work/image-bt3/`, staged
+with that tree's `netboot.sh`, so the new `netboot.cmd` asks DHCP once).
+Four boots, each timed with `boot-timeline.py` on the serial log from the
+reset (`echo reset > /scheme/sys/kstop` over devsh); timelines in
+`~/t18-work/tl-pi-{stable-1,stable-2,bt-1,bt-2}.txt` on homenodellm.
+
+| Seconds from reset | stable-1 | stable-2 | bt-1 | bt-2 |
+|---|---|---|---|---|
+| U-Boot banner | 4.18 | 3.96 | 4.21 | 3.76 |
+| DHCP bound | 11.57 | 11.40 | 11.66 | 11.17 |
+| image loaded over HTTP | 15.39 | 15.21 | 15.42 | 14.97 |
+| bootloader mode menu | 17.70 | 17.56 | 17.77 | 17.33 |
+| kernel starts | 23.41 | 23.25 | 19.48 | 19.03 |
+| `redox login:` | **33.75** | **33.70** | **29.51** | **29.05** |
+
+- About 4.5 s faster, almost all from the bootloader wait (`in 5 seconds`
+  → `Continuing with the selected mode in 1 s`). The second DHCP that the
+  stable image asks costs only 0.1 s on the Pi (bound twice at 11.57 and
+  11.67 s); the boot-time image asks once.
+- Kernel start to `redox login:` about 10 s in both.
+- Units of 100 ms or more (same in both boots): `40_dwc2d.service ready
+  after 6176 ms`, `40_hwd.service` 338/339 ms, `fbcond@2.service` 122/102
+  ms, `60_data.service` 367/377 ms.
+- `redox-rpi v0.3.0-dev-214-g67fdc06+x19b9` in the log; standard checks
+  pass, 0 of 300 starts failed. Only the known `pcid` panic in the log.
