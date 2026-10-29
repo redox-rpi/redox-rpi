@@ -1,4 +1,4 @@
-From 76559790a93bc9dd2c5d212f927cde26a3cd3948 Mon Sep 17 00:00:00 2001
+From b59f6ae6f95f66a90dde65ecfbe0f535e029bbfb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:09:09 +0100
 Subject: [PATCH] dwc2d: card readers (one disk per LUN with a card) and
@@ -17,9 +17,9 @@ log names the scheme when a device is removed.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/dwc2d/src/main.rs    |  53 ++++++-----
- drivers/usb/dwc2d/src/storage.rs | 154 ++++++++++++++++++++++---------
- 2 files changed, 138 insertions(+), 69 deletions(-)
+ drivers/usb/dwc2d/src/main.rs    |  53 +++++-----
+ drivers/usb/dwc2d/src/storage.rs | 164 ++++++++++++++++++++++---------
+ 2 files changed, 148 insertions(+), 69 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
 index 930aca9..689851a 100644
@@ -139,7 +139,7 @@ index 930aca9..689851a 100644
                      }
                  }
 diff --git a/drivers/usb/dwc2d/src/storage.rs b/drivers/usb/dwc2d/src/storage.rs
-index 260a380..ba2eb8b 100644
+index 260a380..d766173 100644
 --- a/drivers/usb/dwc2d/src/storage.rs
 +++ b/drivers/usb/dwc2d/src/storage.rs
 @@ -3,8 +3,11 @@
@@ -188,7 +188,7 @@ index 260a380..ba2eb8b 100644
      block_size: u32,
      blocks: u64,
      /// Vendor and product from INQUIRY, for the log.
-@@ -148,78 +159,118 @@ enum Status {
+@@ -148,78 +159,128 @@ enum Status {
      Failed,
  }
  
@@ -215,6 +215,9 @@ index 260a380..ba2eb8b 100644
 +/// Sense key NOT READY with "medium not present": an empty card slot.
 +const SENSE_NOT_READY: u8 = 0x02;
 +const ASC_MEDIUM_NOT_PRESENT: u8 = 0x3A;
++/// Sense key ILLEGAL REQUEST with "logical unit not supported".
++const SENSE_ILLEGAL_REQUEST: u8 = 0x05;
++const ASC_LUN_NOT_SUPPORTED: u8 = 0x25;
 +
 +/// Configure the stick or reader and set up each LUN that has a medium.
 +/// Waits up to a few seconds for a stick that is not ready yet after it
@@ -241,7 +244,7 @@ index 260a380..ba2eb8b 100644
 +            Ok(l) => luns.push(l),
 +            // A reader with one slot and no card has no disk; the reader
 +            // itself is fine.
-+            Err(err) if max_lun > 0 || matches!(err, Error::Timeout("no medium")) => {
++            Err(err) if max_lun > 0 || matches!(err, Error::Timeout("no medium" | "no such LUN")) => {
 +                println!("dwc2d: mass storage at address {} LUN {lun}: {err:?}", bot.borrow().f.address)
 +            }
 +            Err(err) => return Err(err),
@@ -249,14 +252,18 @@ index 260a380..ba2eb8b 100644
 +    }
 +    Ok(luns)
 +}
-+
+ 
+-        if let Status::Passed(len) = stick.command(&[INQUIRY, 0, 0, 0, 36, 0], true, 36)? {
 +impl Lun {
 +    fn new(bot: Rc<RefCell<Bot>>, lun: u8) -> Result<Self, Error> {
 +        let mut this = Self { bot, lun, block_size: 0, blocks: 0, name: String::new() };
 +        let mut b = this.bot.borrow_mut();
- 
--        if let Status::Passed(len) = stick.command(&[INQUIRY, 0, 0, 0, 36, 0], true, 36)? {
++
 +        if let Status::Passed(len) = b.command(lun, &[INQUIRY, 0, 0, 0, 36, 0], true, 36)? {
++            // Peripheral qualifier 3: no device at this LUN.
++            if len >= 1 && b.data[0] >> 5 == 3 {
++                return Err(Error::Timeout("no such LUN"));
++            }
              if len >= 32 {
                  let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
 -                stick.name = format!("{} {}", text(&stick.data[8..16]), text(&stick.data[16..32]));
@@ -277,6 +284,9 @@ index 260a380..ba2eb8b 100644
 +            sense = b.request_sense(lun)?;
 +            if sense.0 == SENSE_NOT_READY && sense.1 == ASC_MEDIUM_NOT_PRESENT {
 +                return Err(Error::Timeout("no medium"));
++            }
++            if sense.0 == SENSE_ILLEGAL_REQUEST && sense.1 == ASC_LUN_NOT_SUPPORTED {
++                return Err(Error::Timeout("no such LUN"));
 +            }
              std::thread::sleep(Duration::from_millis(100));
          }
@@ -340,7 +350,7 @@ index 260a380..ba2eb8b 100644
  
      fn phase(&self, dir_in: bool, buf_phys: usize, len: usize) -> Phase {
          Phase {
-@@ -278,7 +329,7 @@ impl Stick {
+@@ -278,7 +339,7 @@ impl Stick {
  
      /// Run one SCSI command. The data stage uses `self.data`: filled by the
      /// caller for `dir_in == false`, by the stick otherwise.
@@ -349,7 +359,7 @@ index 260a380..ba2eb8b 100644
          let tag = self.tag;
          self.tag = self.tag.wrapping_add(1);
          let mut cbw = [0u8; CBW_LEN];
-@@ -286,6 +337,7 @@ impl Stick {
+@@ -286,6 +347,7 @@ impl Stick {
          cbw[4..8].copy_from_slice(&tag.to_le_bytes());
          cbw[8..12].copy_from_slice(&(len as u32).to_le_bytes());
          cbw[12] = if dir_in { 0x80 } else { 0 };
@@ -357,7 +367,7 @@ index 260a380..ba2eb8b 100644
          cbw[14] = cdb.len() as u8;
          cbw[15..15 + cdb.len()].copy_from_slice(cdb);
          *self.cbw = cbw;
-@@ -338,13 +390,21 @@ impl Stick {
+@@ -338,13 +400,21 @@ impl Stick {
  
      /// Fetch the sense data after a failed command, which also clears it.
      /// Returns sense key, additional sense code and qualifier.
@@ -381,7 +391,7 @@ index 260a380..ba2eb8b 100644
      /// A READ or WRITE command for `count` blocks at `lba`.
      fn rw_cdb(write: bool, lba: u64, count: u32) -> ([u8; 16], usize) {
          let mut cdb = [0u8; 16];
-@@ -368,6 +428,8 @@ impl Stick {
+@@ -368,6 +438,8 @@ impl Stick {
          let block = self.block_size as usize;
          let per_chunk = MAX_TRANSFER / block * block;
          let mut done = 0;
@@ -390,7 +400,7 @@ index 260a380..ba2eb8b 100644
          while done < total {
              let len = (total - done).min(per_chunk);
              if len % block != 0 {
-@@ -376,13 +438,13 @@ impl Stick {
+@@ -376,13 +448,13 @@ impl Stick {
              let at = lba + (done / block) as u64;
              let (cdb, cdb_len) = Self::rw_cdb(write, at, (len / block) as u32);
              if let Some(out) = out {
@@ -408,7 +418,7 @@ index 260a380..ba2eb8b 100644
                      return Err(SysError::new(EIO));
                  }
                  // The stick does not answer at all: most likely unplugged.
-@@ -392,7 +454,7 @@ impl Stick {
+@@ -392,7 +464,7 @@ impl Stick {
                  }
              }
              if let Some(buf) = buf.as_mut() {
@@ -417,7 +427,7 @@ index 260a380..ba2eb8b 100644
              }
              done += len;
          }
-@@ -400,13 +462,13 @@ impl Stick {
+@@ -400,13 +472,13 @@ impl Stick {
      }
  }
  

@@ -116,8 +116,8 @@ check "same scheme name" bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: ma
 check "block 2048 read after plugging in again" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
 
 # A card reader next to the stick: LUN 0 and 2 have a card (8 and 4 MiB),
-# LUN 1 is an empty CD slot. QEMU attaches the reader only once all its
-# LUNs are there.
+# LUN 1 is a CD drive without a disc (an empty slot). QEMU attaches the
+# reader only once all its LUNs are there.
 echo "== card reader"
 truncate -s 0 "$card0" "$card2"
 truncate -s 8M "$card0"
@@ -127,7 +127,8 @@ printf '%s' "CARD2-$marker" | dd of="$card2" conv=notrunc status=none
 monitor "device_add usb-bot,id=reader,attached=false" \
     "drive_add 0 if=none,id=card0,file=$card0,format=raw" \
     "device_add scsi-hd,bus=reader.0,lun=0,drive=card0" \
-    "device_add scsi-cd,bus=reader.0,lun=1" \
+    "drive_add 0 if=none,id=cd1" \
+    "device_add scsi-cd,bus=reader.0,lun=1,drive=cd1" \
     "drive_add 0 if=none,id=card2,file=$card2,format=raw" \
     "device_add scsi-hd,bus=reader.0,lun=2,drive=card2" \
     "qom-set reader attached true" > /dev/null
