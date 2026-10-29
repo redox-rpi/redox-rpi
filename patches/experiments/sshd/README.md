@@ -4,9 +4,16 @@ For [#45](https://github.com/redox-rpi/redox-rpi/issues/45). Builds
 OpenSSH 10.5p1 from Redox' recipe `net/openssh` (it is not in Redox'
 prebuilt aarch64 repository) and starts `sshd` on port 22.
 
-- `91_sshd-keys.service` runs `ssh-keygen -A` at boot: it makes the host
-  keys that are missing, so only the first boot of an image takes time
-  (about 2 minutes in QEMU, mostly RSA).
+- `91_sshd-keys.service` runs `/usr/lib/redox-rpi/sshd-keys` at boot: it
+  makes the host keys that are missing (`ssh-keygen -A`, about 2 minutes in
+  QEMU, mostly RSA). With the SD card's data partition mounted
+  (`/scheme/data`, network-boot image) the keys are kept there and copied
+  to `/etc/ssh`, so they stay the same across boots; otherwise they are made
+  in `/etc/ssh`.
+- Root logs in with a key only (OpenSSH default `PermitRootLogin
+  prohibit-password`); put the public key into
+  `/home/root/.ssh/authorized_keys`. Users with a password can log in with
+  it.
 - `92_sshd.service` starts `/usr/bin/sshd -D -e` (sshd needs its absolute
   path to re-execute itself for each connection).
 - User `sshd` and `/var/empty` for privilege separation.
@@ -72,5 +79,13 @@ Work in progress.
   with a terminal shows the motd, then `[ld.so]: failed to locate '-ion'`
   (relibc `0004`). Also logged: `ioctl TIOCSCTTY` not implemented, "could
   not set controlling tty".
+- QEMU, `v0.3.0-dev-186-g9106a62+x0042` (with relibc `0004`): key
+  login, password login (root, with `-o PermitRootLogin=yes` for the test)
+  and an interactive shell work: prompt, commands, backspace, `exit`.
+  **Ctrl-C does not interrupt** a running program; it does not over devshd
+  either: the shell gets no controlling terminal (`ioctl TIOCSCTTY` is not
+  implemented in relibc) and no foreground process group, so ptyd has
+  no one to send SIGINT to. `ion` panics when the session's PTY goes away
+  (after the connection closed).
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.

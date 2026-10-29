@@ -14,17 +14,32 @@ directory = true
 mode = 0o755
 
 # Host keys are made at the first boot (ssh-keygen -A only creates missing
-# keys), then sshd starts.
+# keys). The network-boot image's root lives in memory, so the keys are kept
+# on the SD card's data partition when it is mounted (60_data.service), or
+# clients would see a new host key after every boot.
+[[files]]
+path = "/usr/lib/redox-rpi/sshd-keys"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+if test -d /scheme/data
+    mkdir -p /scheme/data/etc/ssh
+    ssh-keygen -A -f /scheme/data
+    cp -p /scheme/data/etc/ssh/ssh_host_* /etc/ssh/
+else
+    ssh-keygen -A
+end
+"""
+
 [[files]]
 path = "/usr/lib/init.d/91_sshd-keys.service"
 data = """
 [unit]
 description = "Create missing SSH host keys"
-requires_weak = ["00_base.target"]
+requires_weak = ["60_data.service"]
 
 [service]
-cmd = "/usr/bin/ssh-keygen"
-args = ["-A"]
+cmd = "/usr/lib/redox-rpi/sshd-keys"
 type = "oneshot"
 """
 
