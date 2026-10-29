@@ -27,6 +27,7 @@ each one expects to come before it:
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
 | `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
+| `0023`, `0024` | `experiments/rpi-fb/base/` | `rpi-firmwared` property file and the display driver `rpi-fbd` ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
