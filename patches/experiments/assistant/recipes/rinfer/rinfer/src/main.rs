@@ -132,8 +132,21 @@ fn main() -> anyhow::Result<()> {
     let eos = tokenizer.token_to_id("<|im_end|>");
 
     let t1 = Instant::now();
-    let input = Tensor::new(tokens.as_slice(), &device)?.unsqueeze(0)?;
-    let logits = model.forward(&input, 0)?.squeeze(0)?;
+    // RINFER_STEP: feed the prompt one token at a time and print each
+    // step's time, to see progress where a step is slow (QEMU).
+    let logits = if std::env::var_os("RINFER_STEP").is_some() {
+        let mut last = None;
+        for (pos, &t) in tokens.iter().enumerate() {
+            let ts = Instant::now();
+            let input = Tensor::new(&[t], &device)?.unsqueeze(0)?;
+            last = Some(model.forward(&input, pos)?.squeeze(0)?);
+            println!("step {pos}: {:.1} s", ts.elapsed().as_secs_f32());
+        }
+        last.expect("empty prompt")
+    } else {
+        let input = Tensor::new(tokens.as_slice(), &device)?.unsqueeze(0)?;
+        model.forward(&input, 0)?.squeeze(0)?
+    };
     let mut next = lp.sample(&logits)?;
     let prompt_s = t1.elapsed().as_secs_f32();
 
