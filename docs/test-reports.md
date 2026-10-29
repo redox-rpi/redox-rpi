@@ -713,3 +713,17 @@ Part B, with a person:
 
 Not tested: the Anker hub (RTL8153B) steps; they stay with test #4. Stable
 image restored afterwards.
+
+## 2026-10-29: `v0.3.0-dev-164-gf8f70a5+x9f76` (serial-rx as default patches, #28, #32), QEMU
+
+Branch `serial-rx-base`: base `0024` and kernel `0007` on main after
+`dwc2-default`, with `timesync` and `rtl8152`. QEMU `raspi3b`,
+`qemu-raspi3b.sh --run` types one line of 5 × `echo <200 characters>`
+(about 1050 characters) on the serial console.
+
+- 3 of 3 runs: login, all 5 lines complete, no getty panic.
+- For #32, the same test before: stable `v0.3.0-dev-15-g24fbb96+x9f76`
+  4 of 7 runs with `getty: failed to write master PTY: ... WouldBlock` and
+  a dead console; experiment image `v0.3.0-dev-94-gb1fcbe1+xe9c4` 7 of 7
+  complete.
+- The known `pcid` panic is still there (clean boot is not merged yet).

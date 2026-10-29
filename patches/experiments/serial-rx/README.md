@@ -78,3 +78,7 @@ times, and looks for the complete output line in
   `serial-input-test.sh 20` **20 of 20** lines of 200 characters
   complete at full speed; `scripts/pi-test.py` all checks pass, 0 of 300
   starts failed. [Report](../../../docs/test-reports.md).
+- As base `0024` and kernel `0007`, QEMU `raspi3b`,
+  `v0.3.0-dev-164-gf8f70a5+x9f76`: a line of about 1050 characters on the
+  serial console, 3 of 3 runs complete, no getty panic (#32; stable: 4 of
+  7 runs panicked).
