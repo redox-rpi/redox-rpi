@@ -4,7 +4,9 @@
 #
 # 1. With the USB network card: unplug the USB keyboard, plug a new one in
 #    and type on it at the login prompt; plug in a second network card and
-#    unplug the first, then reach devshd through the second one.
+#    unplug the first, then reach devshd through the second one; switch its
+#    hub port off and on through /tmp/dwc2d-cycle (the test command for the
+#    real Pi, scripts/pi-hotplug-test.sh).
 # 2. Without a network card: once the system is up, plug one in; dhcpd must
 #    configure the network and devshd must answer.
 #
@@ -162,6 +164,13 @@ check "first network card unplugged" wait_log "device at address 3 removed" 10
 check "network moved to the second card" \
     bash -c "sleep 3; [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: network on the adapter') -gt $lines ]"
 check "devshd through the second card" wait_devsh $port2 10
+# The test command for the real Pi: switch the network card's port off and on.
+found=$(tr -d '\r' < "$log" | grep -ac "dwc2d: CDC Ethernet at address")
+devsh $port2 "echo network > /tmp/dwc2d-cycle" > /dev/null
+check "network port switched off and on" wait_log "dwc2d: cycle: hub 1 port [0-9]+ power on" 15
+check "network card found again" \
+    bash -c "sleep 5; [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: CDC Ethernet at address') -gt $found ]"
+check "devshd after the port cycle" wait_devsh $port2 20
 stop
 
 echo "== boot 2: network card plugged in after boot"

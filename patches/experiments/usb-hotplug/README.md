@@ -24,6 +24,17 @@ default patches of branch `dwc2-default` (base `0020`, `0022`, `0023`).
   configured, and reports only the first failure. A cable or adapter
   plugged in after boot gets an address.
 
+- **base `0032`:** a test command for hotplug without a person: write
+  `network`, `keyboard` or `<hub address> <port>` to `/tmp/dwc2d-cycle`,
+  and the next rescan switches that hub port off and on. A hub that powers
+  its ports only together (ganged) keeps the device connected; dwc2d then
+  forgets and resets it, which runs the same code without the electrical
+  removal. The log says which one happened, and the hub line says
+  `power switching per port` or `ganged`. On the real Pi:
+  `scripts/pi-hotplug-test.sh <pi address>` cycles the network adapter's
+  port three times and checks the log and devshd (`KEYBOARD=1` adds the
+  keyboard's port).
+
 Build: `scripts/build-image.sh --experiment usb-hotplug`.
 
 QEMU check: `scripts/test-hotplug.sh [image]` boots twice. First it
