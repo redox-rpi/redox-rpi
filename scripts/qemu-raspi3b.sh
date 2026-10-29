@@ -19,6 +19,8 @@
 #                     scripts/fw-direct-boot.sh in <dir> (issue #15), loaded
 #                     the way the Pi firmware does; --image is then only the
 #                     SD card, e.g. build/sdcard-direct.img
+#   --append <words>  with --direct: the kernel command line (cmdline.txt on
+#                     a Pi), e.g. REDOX_RPI_TRYBOOT=1 for a tryboot start
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest
@@ -62,6 +64,7 @@ expect=()
 timeout=900
 uboot=""
 direct=""
+append=""
 run=()
 sd_size=""
 usb_net=no
@@ -78,6 +81,7 @@ while [ $# -gt 0 ]; do
         --sd-size) sd_size="$2"; shift 2 ;;
         --uboot) uboot="$2"; shift 2 ;;
         --direct) uboot=direct; direct="$(cd "$2" && pwd)"; shift 2 ;;
+        --append) append="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
@@ -108,6 +112,7 @@ case "$uboot" in
         fdtput -t s qemu-3bp.dtb /soc/mmc@7e202000 status disabled
         if [ "$uboot" = direct ]; then
             firmware=(-kernel "$direct/kernel8.img" -initrd "$direct/initramfs" -dtb qemu-3bp.dtb)
+            [ -z "$append" ] || firmware+=(-append "$append")
         else
             firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
         fi

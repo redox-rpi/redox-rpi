@@ -1,0 +1,9 @@
+[package]
+name = "rpi-update"
+description = "Update kernel and system of a direct-boot SD card from the build host, with the firmware's tryboot as fallback"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+sha2 = "0.10"

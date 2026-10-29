@@ -1,0 +1,40 @@
+[packages]
+redox-fatfs2 = "source"
+rpi-update = "source"
+
+# The FAT partition of the SD card (direct boot, make-sdcard.sh --direct) at
+# /scheme/boot. fatfsd stays in the foreground and serves the scheme.
+[[files]]
+path = "/usr/lib/init.d/66_boot-fat.service"
+data = """
+[unit]
+description = "FAT boot partition of the SD card at /scheme/boot"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "fatfsd"
+args = ["/scheme/disk.mmc/0p0", "boot"]
+type = "oneshot_async"
+"""
+
+# After a tryboot start of a new slot: the system came up this far, so it
+# stays. Without a tryboot start this does nothing.
+[[files]]
+path = "/usr/lib/init.d/90_rpi-update-commit.service"
+data = """
+[unit]
+description = "Keep the new slot after a tryboot start"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "rpi-update"
+args = ["commit"]
+type = "oneshot_async"
+"""
+
+[[files]]
+path = "/etc/rpi-update.conf"
+data = """
+# Directory written by scripts/publish-rpi-update.sh on the build host.
+url=http://192.168.178.120:8080/update
+"""
