@@ -92,16 +92,17 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
     exit 0
 fi
 
-# 2. Is the Pi free?
-on_pi="$(grep '^| .*\*\*on the Pi\*\*' docs/test-plan.md | grep -v "^| $taken |" || true)"
-[ -z "$taken" ] && on_pi="$(grep '^| .*\*\*on the Pi\*\*' docs/test-plan.md || true)"
+# 2. Is the Pi free? The queue is the test plan on main, whatever --ref is.
+queue="$(git show origin/main:docs/test-plan.md)"
+on_pi="$(grep '^| .*\*\*on the Pi\*\*' <<< "$queue" || true)"
+[ -n "$taken" ] && on_pi="$(grep -v "^| $taken |" <<< "$on_pi" || true)"
 if [ -n "$on_pi" ]; then
-    log "a test is on the Pi (docs/test-plan.md), not touching it"
+    log "a test is on the Pi (docs/test-plan.md on main), not touching it"
     echo "$on_pi" | cut -c1-200
     exit 0
 fi
-if [ -n "$taken" ] && ! grep -q "^| $taken |.*\*\*on the Pi\*\*" docs/test-plan.md; then
-    log "test $taken is not marked on the Pi in docs/test-plan.md ($ref); take the Pi first"
+if [ -n "$taken" ] && ! grep -q "^| $taken |.*\*\*on the Pi\*\*" <<< "$queue"; then
+    log "test $taken is not marked on the Pi in docs/test-plan.md on main; take the Pi first"
     exit 1
 fi
 
