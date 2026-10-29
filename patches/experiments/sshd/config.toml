@@ -23,7 +23,7 @@ description = "Create missing SSH host keys"
 requires_weak = ["00_base.target"]
 
 [service]
-cmd = "ssh-keygen"
+cmd = "/usr/bin/ssh-keygen"
 args = ["-A"]
 type = "oneshot"
 """
@@ -36,7 +36,7 @@ description = "OpenSSH server on TCP port 22"
 requires_weak = ["10_net.target", "91_sshd-keys.service"]
 
 [service]
-cmd = "sshd"
+cmd = "/usr/bin/sshd"
 args = ["-D", "-e"]
 type = "oneshot_async"
 """
