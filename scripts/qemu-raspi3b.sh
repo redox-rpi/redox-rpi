@@ -24,6 +24,11 @@
 #                     QEMU's hub is full speed, and dwc2d has no split bulk
 #                     transfers. Needs read-write access to the device node
 #                     (udev rule, see patches/experiments/rtl8152/README.md)
+#   --mini-uart <spec>
+#                     connect the mini UART (where the Pi's Bluetooth chip
+#                     sits) to this QEMU character device instead of
+#                     nothing, e.g. tcp:127.0.0.1:12399 for a fake
+#                     controller (patches/experiments/bluetooth/)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
 #   --test            boot without user input and exit 0 once every --expect
@@ -61,6 +66,7 @@ sd_size=""
 usb_net=no
 usb_host=""
 monitor=(-monitor none)
+mini_uart=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -73,6 +79,7 @@ while [ $# -gt 0 ]; do
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
+        --mini-uart) mini_uart="$2"; shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -111,6 +118,10 @@ case "$uboot" in
     *) echo "unknown U-Boot: $uboot" >&2; exit 1 ;;
 esac
 echo "U-Boot: $uboot"
+# The mini UART is the second serial port of the raspi machines.
+if [ -n "$mini_uart" ]; then
+    extra_serial=(-serial "$mini_uart")
+fi
 
 if [ -z "$image" ]; then
     name="$(curl -fsSL "$DAILY_URL/" | grep -oE 'redox_server_aarch64_[0-9-]+_[0-9]+_livedisk\.iso\.zst' | sort -u | tail -1)"

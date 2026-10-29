@@ -1,0 +1,96 @@
+From 06e71698c4e3b5c182a9131662ef5ab446e40295 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:11:39 +0100
+Subject: [PATCH 45/46] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
+ Bluetooth chip
+
+BT_ON hangs on the firmware's GPIO expander (pin 0, firmware GPIO 128),
+so only the firmware can switch it. Reading gives 0 or 1, writing 0 or 1
+sets it. Pi 3B+ only.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/rpi-firmwared/src/main.rs | 38 +++++++++++++++++++++++++++++--
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 95959f1..a08b8fe 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -19,6 +19,9 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
++//! - `/scheme/rpi-firmware/bt_power`: the BT_ON line of the Pi 3B+
++//!   Bluetooth chip, `1` (on) or `0` (off); writing sets it. Also on the
++//!   GPIO expander; other boards do not have this file.
+ //!
+ //! At start it sets the ARM clock to its maximum; the firmware lowers it by
+ //! itself when the SoC gets too hot or the supply voltage too low. A thread
+@@ -48,9 +51,9 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "bt_power", "clocks", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "bt_power", "power_led"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -87,6 +90,14 @@ impl FirmwareScheme {
+                 // Active low: the LED is on when the pin is low.
+                 writeln!(text, "{}", if state == 0 { "on" } else { "off" }).unwrap();
+             }
++            "bt_power" => {
++                let gpio = bt_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let state = match mbox.property(TAG_GET_GPIO_STATE, &[gpio, 0], 2).map_err(log)?[..] {
++                    [0, state] => state,
++                    _ => return Err(log(format!("Bluetooth power: firmware refused GPIO {gpio}"))),
++                };
++                writeln!(text, "{state}").unwrap();
++            }
+             "temperature" => {
+                 let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
+                 writeln!(text, "{value}").unwrap();
+@@ -129,6 +140,18 @@ impl FirmwareScheme {
+                     _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
+                 }
+             }
++            "bt_power" => {
++                let gpio = bt_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let state = match value {
++                    "1" => 1,
++                    "0" => 0,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
++                    [0, _] => Ok(()),
++                    _ => Err(log(format!("Bluetooth power: firmware refused GPIO {gpio}"))),
++                }
++            }
+             "arm_clock" => {
+                 let rate = match value {
+                     "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
+@@ -244,6 +267,17 @@ fn power_led_gpio(mbox: &mut Mailbox) -> Option<u32> {
+     (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(130)
+ }
+ 
++/// The firmware GPIO of BT_ON: pin 0 of the GPIO expander (128 + 0) on the
++/// Pi 3B+ (`shutdown-gpios` of the bluetooth node in Linux's devicetree).
++/// High powers the Bluetooth half of the chip.
++fn bt_power_gpio(mbox: &mut Mailbox) -> Option<u32> {
++    let [revision] = mbox.property(TAG_BOARD_REVISION, &[], 1).ok()?[..] else {
++        return None;
++    };
++    // New-style code (bit 23), type 0x0d: Pi 3 Model B+.
++    (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(128)
++}
++
+ /// Model and memory size from a new-style revision code (bit 23 set):
+ /// bits 4-11 are the type, bits 20-22 the memory size.
+ fn decode_revision(revision: u32) -> Option<(&'static str, &'static str)> {
+-- 
+2.54.0 (Apple Git-157)
+

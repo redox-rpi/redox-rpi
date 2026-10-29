@@ -17,7 +17,8 @@
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
-#                 patches, and its config.toml (packages, files) if it has one
+#                 patches, its config.toml (packages, files) if it has one,
+#                 and the recipes in its recipes/ directory
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md)
@@ -231,7 +232,7 @@ for name in bootloader base relibc; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot sigregs timesync; do
+for tool in bt devshd reboot sigregs timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
@@ -253,6 +254,17 @@ path = "$ROOT/tools/$tool"
 [build]
 $build
 EOF
+done
+
+# Recipes an experiment brings along (patches/experiments/<name>/recipes/),
+# such as a package that downloads firmware.
+for exp in "${experiments[@]}"; do
+    for recipe in "$ROOT/patches/experiments/$exp/recipes"/*/; do
+        [ -f "$recipe/recipe.toml" ] || continue
+        name="$(basename "$recipe")"
+        rm -rf "$REDOX/recipes/other/$name"
+        cp -r "$recipe" "$REDOX/recipes/other/$name"
+    done
 done
 
 # Uncommitted changes to anything that goes into the image.
