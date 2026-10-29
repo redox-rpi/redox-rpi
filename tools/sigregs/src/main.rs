@@ -4,7 +4,7 @@
 //! The main thread loads a known pattern into x1-x17, x19-x29 and v0-v31
 //! and checks them in a loop while signals arrive. The handler overwrites
 //! all of them. A register that differs after a signal shows a bug in the
-//! signal entry or return. Not checked: x18 (the signal entry may use it),
+//! signal entry or return. x18 is checked on Redox only. Not checked:
 //! x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
 //! sp.
 //!
@@ -136,6 +136,20 @@ macro_rules! check_loop {
     };
 }
 
+// On Redox, x18 is an ordinary register and must survive a signal too
+// (redox-rpi #1); on macOS the system owns it.
+#[cfg(target_os = "redox")]
+check_loop!(
+    ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29;
+    vectors:
+        0 x1 x8 1 x2 x9 2 x3 x10 3 x4 x11 4 x5 x12 5 x6 x13 6 x7 x14 7 x8 x15
+        8 x9 x16 9 x10 x17 10 x11 x19 11 x12 x20 12 x13 x21 13 x14 x22
+        14 x15 x23 15 x16 x24 16 x17 x25 17 x19 x26 18 x20 x27 19 x21 x28
+        20 x22 x29 21 x23 x1 22 x24 x2 23 x25 x3 24 x26 x4 25 x27 x5
+        26 x28 x6 27 x29 x7 28 x1 x20 29 x2 x21 30 x3 x22 31 x4 x23
+);
+
+#[cfg(not(target_os = "redox"))]
 check_loop!(
     ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 19 20 21 22 23 24 25 26 27 28 29;
     vectors:
