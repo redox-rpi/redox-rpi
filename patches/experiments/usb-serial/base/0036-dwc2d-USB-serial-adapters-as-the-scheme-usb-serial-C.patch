@@ -1,4 +1,4 @@
-From 0624aa7cdd338206a7947fe76481468943327f73 Mon Sep 17 00:00:00 2001
+From e6c5b8b75a5fece52692edb3ed907ca9b3383f5d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:51:43 +0100
 Subject: [PATCH] dwc2d: USB serial adapters as the scheme usb-serial (CDC-ACM,
@@ -34,8 +34,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  drivers/usb/dwc2d/src/dwc2.rs      |  31 +-
  drivers/usb/dwc2d/src/enumerate.rs |  16 +
  drivers/usb/dwc2d/src/main.rs      |  59 +-
- drivers/usb/dwc2d/src/serial.rs    | 883 +++++++++++++++++++++++++++++
- 5 files changed, 987 insertions(+), 4 deletions(-)
+ drivers/usb/dwc2d/src/serial.rs    | 894 +++++++++++++++++++++++++++++
+ 5 files changed, 998 insertions(+), 4 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/serial.rs
 
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
@@ -300,10 +300,10 @@ index 28cc7aa..9f04d02 100644
          }
 diff --git a/drivers/usb/dwc2d/src/serial.rs b/drivers/usb/dwc2d/src/serial.rs
 new file mode 100644
-index 0000000..8a98e39
+index 0000000..207be7b
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/serial.rs
-@@ -0,0 +1,883 @@
+@@ -0,0 +1,894 @@
 +//! USB serial adapters: CDC-ACM, FTDI, CP210x and CH340/CH341, as the
 +//! scheme `usb-serial`. Zigbee and Thread coordinator sticks and many
 +//! Arduino boards are one of these.
@@ -407,6 +407,9 @@ index 0000000..8a98e39
 +    /// The interface requests go to: CDC-ACM's control interface, the
 +    /// serial interface otherwise.
 +    interface: u8,
++    /// FTDI chips with more than one port (or the H series) take the port
++    /// in the request index, A being 1; 0 for the others.
++    ftdi_port: u16,
 +    ep_in: u8,
 +    ep_out: u8,
 +    mps_in: u16,
@@ -483,6 +486,10 @@ index 0000000..8a98e39
 +        configuration,
 +        kind,
 +        interface,
++        ftdi_port: match (kind, device.product) {
++            (Kind::Ftdi, 0x6010 | 0x6011 | 0x6014) => u16::from(data_interface) + 1,
++            _ => 0,
++        },
 +        ep_in,
 +        ep_out,
 +        mps_in,
@@ -511,8 +518,8 @@ index 0000000..8a98e39
 +        match self.kind {
 +            Kind::Ftdi => {
 +                // Reset, no flow control.
-+                self.out(bus, 0x40, 0x00, 0, 0, &[])?;
-+                self.out(bus, 0x40, 0x02, 0, 0, &[])?;
++                self.out(bus, 0x40, 0x00, 0, self.ftdi_port, &[])?;
++                self.out(bus, 0x40, 0x02, 0, self.ftdi_port, &[])?;
 +            }
 +            // Enable the interface.
 +            Kind::Cp210x => self.out(bus, 0x41, 0x00, 1, index, &[])?,
@@ -544,14 +551,16 @@ index 0000000..8a98e39
 +            }
 +            Kind::Ftdi => {
 +                let divisor = ftdi_divisor(line.baud).ok_or(UsbError::Stall)?;
-+                self.out(bus, 0x40, 0x03, divisor as u16, (divisor >> 16) as u16, &[])?;
++                let high = (divisor >> 16) as u16;
++                let index = if self.ftdi_port != 0 { high << 8 | self.ftdi_port } else { high };
++                self.out(bus, 0x40, 0x03, divisor as u16, index, &[])?;
 +                let parity: u16 = match line.parity {
 +                    Parity::None => 0,
 +                    Parity::Odd => 1,
 +                    Parity::Even => 2,
 +                };
 +                let stop: u16 = if line.two_stop_bits { 2 } else { 0 };
-+                self.out(bus, 0x40, 0x04, u16::from(data_bits) | parity << 8 | stop << 11, 0, &[])
++                self.out(bus, 0x40, 0x04, u16::from(data_bits) | parity << 8 | stop << 11, self.ftdi_port, &[])
 +            }
 +            Kind::Cp210x => {
 +                self.out(bus, 0x41, 0x1E, 0, index, &line.baud.to_le_bytes())?;
@@ -588,10 +597,10 @@ index 0000000..8a98e39
 +        let index = u16::from(self.interface);
 +        match self.kind {
 +            Kind::CdcAcm => self.out(bus, 0x21, 0x22, if on { 3 } else { 0 }, index, &[]),
-+            Kind::Ftdi => self.out(bus, 0x40, 0x01, if on { 0x0303 } else { 0x0300 }, 0, &[]),
++            Kind::Ftdi => self.out(bus, 0x40, 0x01, if on { 0x0303 } else { 0x0300 }, self.ftdi_port, &[]),
 +            Kind::Cp210x => self.out(bus, 0x41, 0x07, if on { 0x0303 } else { 0x0300 }, index, &[]),
 +            // The modem control bits are inverted: DTR 0x20, RTS 0x40.
-+            Kind::Ch34x => self.out(bus, 0x40, 0xA4, if on { !0x60u16 & 0xFF } else { 0xFF }, 0, &[]),
++            Kind::Ch34x => self.out(bus, 0x40, 0xA4, if on { !0x60u16 } else { !0u16 }, 0, &[]),
 +        }
 +    }
 +
@@ -627,7 +636,7 @@ index 0000000..8a98e39
 +fn ch34x_divisor(baud: u32) -> Option<u16> {
 +    const CLOCK: u32 = 48_000_000;
 +    let clock_div = |ps: u32, fact: u32| 1u32 << (12 - 3 * ps - fact);
-+    let speed = baud.clamp(46, 2_000_000);
++    let speed = baud.clamp(46, 3_000_000);
 +    let mut fact = 1;
 +    let ps = (0..=3u32).rev().find(|&ps| speed > CLOCK / (clock_div(ps, 1) * 512))?;
 +    let mut div_clock = clock_div(ps, fact);
@@ -1015,15 +1024,17 @@ index 0000000..8a98e39
 +    }
 +
 +    fn on_close(self, data: &mut SerialData) {
-+        if let Ok(port) = data.port(self.id) {
-+            port.open = port.open.saturating_sub(1);
-+            if port.open == 0 && port.armed {
-+                data.hc.halt(RX_CHANNEL);
-+                if let Ok(port) = data.port(self.id) {
-+                    port.armed = false;
-+                    port.rx.clear();
-+                }
-+            }
++        let Ok(port) = data.port(self.id) else {
++            return;
++        };
++        port.open = port.open.saturating_sub(1);
++        if port.open > 0 {
++            return;
++        }
++        // The next program starts with what comes after it opens the port.
++        port.rx.clear();
++        if std::mem::take(&mut port.armed) {
++            data.hc.halt(RX_CHANNEL);
 +        }
 +    }
 +}
