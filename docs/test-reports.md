@@ -667,3 +667,10 @@ Branch `keyboard-layouts`, experiment `keyboard-de` with `timesync` and
 - An earlier attempt with `echo '…'` failed in ion ("`[` is out of place"
   even in single quotes), not in the layout: the screen showed the line
   typed correctly.
+
+## 2026-10-29: `v0.3.0-dev-143-ge940bf6+x9ea9` (German layout from boot, #36), QEMU
+
+Same branch, now with `config.toml` (`/etc/init.d/05_keymap.service`
+runs `inputd -K de`). `test-keymap.sh` no longer switches the layout on
+the serial console: the login and the typed line come out German from
+boot, the file holds `zyß@{[]}\~|#öäü€"§'<>`. **Pass.**

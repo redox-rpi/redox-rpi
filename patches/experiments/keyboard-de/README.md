@@ -48,5 +48,7 @@ rejects `[` even in quotes. It needs no network port.
 - QEMU `raspi3b`, `v0.3.0-dev-141-g3fd1bba+x9ea9` (with `timesync`,
   `rtl8152`): `test-keymap.sh` passes, every character as on a German
   keyboard, AltGr included.
+- QEMU `raspi3b`, `v0.3.0-dev-143-ge940bf6+x9ea9` (German from boot, no
+  `inputd -K` by hand): `test-keymap.sh` passes the same way.
 
 Details in [test-reports.md](../../../docs/test-reports.md).
