@@ -8,6 +8,8 @@ the pieces fit together, how to build and test, and what we found on the way.
 | Page | What it explains |
 |---|---|
 | [User guide](user-guide.md) | Using the image: logging in, the Ion shell, schemes, network, time, `pkg`, reboot, logs |
+| [Time](time.md) | The clock at boot, `timesync`, setting the time by hand, time zones, timers (`timerd`), the DS3231 clock module |
+| [Smart home](smarthome.md) | MQTT with `mqtt-pub` and `mqtt-sub`, the Pi in Home Assistant with `ha-bridge` |
 | [Architecture](architecture.md) | The boot chain from power-on to the shell, every component and where it comes from |
 | [Status and findings](status.md) | What works, what does not, bugs found and fixed |
 | [Roadmap](../ROADMAP.md) | The step-by-step plan |

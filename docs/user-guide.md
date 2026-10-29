@@ -159,7 +159,9 @@ env TZ=CET-1CEST,M3.5.0,M10.5.0/3 date
 Zone names such as `Europe/Berlin` and a system-wide setting
 (`/etc/localtime`) come with
 [#46](https://github.com/redox-rpi/redox-rpi/issues/46) (planned for
-v0.5.0).
+v0.5.0). `date -s` cannot set the clock on Redox; `timesync -s` can
+([#51](https://github.com/redox-rpi/redox-rpi/issues/51)). All of it, with
+examples: [time.md](time.md).
 
 ## Timers (`timerd`)
 
@@ -179,8 +181,16 @@ cmd = "backup"
 args = ["--all"]
 ```
 
-`timerd -l` lists the timers with their next and last run. See
-[docs/topics/time.md](topics/time.md) for details.
+`timerd -l` lists the timers with their next and last run. Schedules,
+examples and what to watch out for: [time.md](time.md#timers-running-commands-at-set-times).
+
+## Smart home (MQTT)
+
+`mqtt-pub` and `mqtt-sub` send and receive MQTT messages, and
+`ha-bridge` shows the Pi's temperature, clock, memory and uptime in Home
+Assistant ([#49](https://github.com/redox-rpi/redox-rpi/issues/49), planned
+for v0.8.0, not in the stable image yet). How to set them up:
+[smarthome.md](smarthome.md).
 
 ## Installing programs (`pkg`)
 

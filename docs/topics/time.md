@@ -1,5 +1,7 @@
 # Time
 
+User docs, with examples: [docs/time.md](../time.md).
+
 ## State
 
 - The Pi has no battery-backed clock. `tools/timesync` (experiment
