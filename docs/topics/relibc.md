@@ -11,6 +11,9 @@
   [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309):
   once upstream has the fix and `config/upstream.lock` points past it, drop
   `0004`.
+- Pointers for further upstream reports (TLS layout, x18 signal return,
+  thread signals, getty) are in [docs/upstream/](../upstream/); the
+  maintainer writes and sends the reports.
 
 ## Next
 
