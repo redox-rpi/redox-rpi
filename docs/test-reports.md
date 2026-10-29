@@ -816,3 +816,33 @@ through `svc #0x5352`. Extra checks over devsh:
 - The CPU ran at 1400 MHz (`rpi-firmwared` raises the clock at boot), not
   600 MHz as the plan row says. Under this load at 1400 MHz test 21 saw
   3-5 % failed starts; here 0 of 1000.
+
+## 2026-10-29: `v0.3.0-dev-144-g2e6f4f9+x9c38`
+
+Built 2026-10-29T11:53:44Z, `libc.so` `070b096e3e3d4be2…`, real Pi 3B+ over netboot. Experiments: `prebuilt-programs`, `rtl8152`, `serial-rx`, `sigregs-test`, `sigreturn-svc`, `timesync`. test 45 ([#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-144-g2e6f4f9+x9c38 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 45, branch `prebuilt-sigreturn` (`prebuilt-programs` + `t1-sigreturn`).
+Extra checks over devsh, with the ARM at 1400 MHz:
+
+- 50 starts each of `bash -c true`, `nano --version`, `vim --version`,
+  `find /usr/bin -name ls`, `gawk 'BEGIN{}'`, `tmux -V`, `rg --version`,
+  `curl --version`, `wget --version`: 450 of 450 exit 0 (tmux 3.6a,
+  nano 9.2).
+- `bash -c 'for j in $(seq 1 200); do true; /usr/bin/true; x=$(echo a); done'`
+  5 times: 5 of 5 exit 0 (3000 bash children). The first devsh session
+  gave no output for this command, and `pi-test.py`'s retry ran it again
+  in a new session; no `bash` was left over afterwards.
+- `sigregs process -n 3000`: pass, all registers kept.
+- `sigregs thread -n 3000`: fail as expected (only 1 of 3000 signals,
+  SIGUSR1 still blocked; #4 fix not in this image).
+- Serial log: no exception except the known `pcid` panic at boot (this
+  base has no clean boot yet).
