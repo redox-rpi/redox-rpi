@@ -44,6 +44,15 @@
   executable and at exec. QEMU: 0 of 700 starts fail, loop 6-8 % slower.
   No known failure needs it; waiting for the Pi test.
 
+- [#55](https://github.com/redox-rpi/redox-rpi/issues/55) (v0.7.0, branch `pty-sigint`): a Ctrl-C while a
+  program was still starting was lost, so Ctrl-C often seemed not to work
+  (over SSH a start can take seconds). Ion handed the terminal to the
+  program only after the exec, and procmgr dropped a signal that arrived
+  while ld.so loaded the program. Experiment
+  [`pty-sigint`](https://github.com/redox-rpi/redox-rpi/tree/pty-sigint/patches/experiments/pty-sigint)
+  patches Ion, procmgr and relibc. QEMU: SSH 22 of 22, devsh 10 of 10.
+  Pi test #80 queued.
+
 ## Next
 
 - [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
