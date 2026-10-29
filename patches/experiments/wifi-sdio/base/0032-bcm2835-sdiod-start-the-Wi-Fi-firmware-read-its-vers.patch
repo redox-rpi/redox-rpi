@@ -1,0 +1,1211 @@
+From d4972704ef26eecf232bd311fc446ca137cb9345 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 15:23:04 +0100
+Subject: [PATCH] bcm2835-sdiod: start the Wi-Fi firmware, read its version and
+ MAC address
+
+After the chip ID: list the backplane cores from the enumeration ROM,
+read the ARM CR4's RAM size, hold the ARM, write firmware and NVRAM (read
+back to check), start the ARM, wait for the HT clock and function 2, and
+send two firmware commands over the SDPCM/BCDC control channel: "ver"
+and "cur_etheraddr". Firmware and NVRAM come from
+/usr/lib/firmware/brcm (package wifi-firmware); without them the probe
+stops after the chip ID as before.
+
+CMD53 now also writes and uses block mode. The layout of the enumeration
+ROM, NVRAM block and frames follows OpenBSD's bwfm(4) and Linux'
+brcmfmac (both ISC); unit tests for those three parts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/net/bcm2835-sdiod/src/bus.rs   |  95 +++++++++
+ drivers/net/bcm2835-sdiod/src/chip.rs  | 165 ++++++++++++++++
+ drivers/net/bcm2835-sdiod/src/erom.rs  | 152 ++++++++++++++
+ drivers/net/bcm2835-sdiod/src/host.rs  |  93 +++++++--
+ drivers/net/bcm2835-sdiod/src/main.rs  |  68 ++++++-
+ drivers/net/bcm2835-sdiod/src/nvram.rs |  67 +++++++
+ drivers/net/bcm2835-sdiod/src/sdpcm.rs | 157 +++++++++++++++
+ drivers/net/bcm2835-sdiod/src/wifi.rs  | 264 +++++++++++++++++++++++++
+ 8 files changed, 1043 insertions(+), 18 deletions(-)
+ create mode 100644 drivers/net/bcm2835-sdiod/src/bus.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/chip.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/erom.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/nvram.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/sdpcm.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/wifi.rs
+
+diff --git a/drivers/net/bcm2835-sdiod/src/bus.rs b/drivers/net/bcm2835-sdiod/src/bus.rs
+new file mode 100644
+index 0000000..83746ea
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/bus.rs
+@@ -0,0 +1,95 @@
++//! The chip's backplane seen through SDIO function 1.
++//!
++//! Function 1 shows a 32 KiB window of the 32-bit backplane address space;
++//! three registers pick the window. Offsets inside it with bit 15 set make
++//! 32-bit accesses, which core registers need. Memory transfers go in 64-byte
++//! blocks (function 1's block size) and never cross a window.
++
++use crate::host::{Data, Host};
++
++const SBSDIO_FUNC1_SBADDRLOW: u32 = 0x1000a;
++const SBSDIO_FUNC1_SBADDRMID: u32 = 0x1000b;
++const SBSDIO_FUNC1_SBADDRHIGH: u32 = 0x1000c;
++const SB_OFT_ADDR_MASK: u32 = 0x7fff;
++const SB_ACCESS_2_4B_FLAG: u32 = 0x8000;
++const WINDOW: u32 = 0x8000;
++
++/// Function 1 block size.
++pub const F1_BLOCK: u32 = 64;
++/// At most this much per CMD53 (the block count has 9 bits).
++const MAX_BLOCKS: u32 = 256;
++
++pub struct Bus {
++    pub host: Host,
++    window: Option<u32>,
++}
++
++impl Bus {
++    pub fn new(host: Host) -> Self {
++        Bus { host, window: None }
++    }
++
++    fn set_window(&mut self, addr: u32) -> Result<(), String> {
++        let base = addr & !SB_OFT_ADDR_MASK;
++        if self.window == Some(base) {
++            return Ok(());
++        }
++        self.window = None;
++        self.host.write_byte(1, SBSDIO_FUNC1_SBADDRLOW, (base >> 8) as u8 & 0x80)?;
++        self.host.write_byte(1, SBSDIO_FUNC1_SBADDRMID, (base >> 16) as u8)?;
++        self.host.write_byte(1, SBSDIO_FUNC1_SBADDRHIGH, (base >> 24) as u8)?;
++        self.window = Some(base);
++        Ok(())
++    }
++
++    pub fn read32(&mut self, addr: u32) -> Result<u32, String> {
++        let mut b = [0u8; 4];
++        self.read_mem(addr, &mut b)?;
++        Ok(u32::from_le_bytes(b))
++    }
++
++    pub fn write32(&mut self, addr: u32, value: u32) -> Result<(), String> {
++        self.write_mem(addr, &value.to_le_bytes())
++    }
++
++    pub fn read_mem(&mut self, addr: u32, buf: &mut [u8]) -> Result<(), String> {
++        self.transfer(addr, buf.len(), |host, offset, range, block| {
++            host.cmd53(1, offset, Data::Read(&mut buf[range]), block)
++        })
++    }
++
++    pub fn write_mem(&mut self, addr: u32, data: &[u8]) -> Result<(), String> {
++        self.transfer(addr, data.len(), |host, offset, range, block| {
++            host.cmd53(1, offset, Data::Write(&data[range]), block)
++        })
++    }
++
++    /// Splits `len` bytes at `addr` (both multiples of 4) into CMD53s that
++    /// stay inside one window: block mode for whole blocks, byte mode for
++    /// the rest.
++    fn transfer(
++        &mut self,
++        addr: u32,
++        len: usize,
++        mut op: impl FnMut(&mut Host, u32, std::ops::Range<usize>, Option<u32>) -> Result<(), String>,
++    ) -> Result<(), String> {
++        assert!(addr % 4 == 0 && len % 4 == 0);
++        let mut done = 0usize;
++        while done < len {
++            let at = addr + done as u32;
++            self.set_window(at)?;
++            let in_window = (WINDOW - (at & SB_OFT_ADDR_MASK)) as usize;
++            let left = (len - done).min(in_window);
++            let offset = at & SB_OFT_ADDR_MASK | SB_ACCESS_2_4B_FLAG;
++            let blocks = (left as u32 / F1_BLOCK).min(MAX_BLOCKS);
++            let (n, block) = if blocks > 0 {
++                ((blocks * F1_BLOCK) as usize, Some(F1_BLOCK))
++            } else {
++                (left, None)
++            };
++            op(&mut self.host, offset, done..done + n, block)?;
++            done += n;
++        }
++        Ok(())
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/chip.rs b/drivers/net/bcm2835-sdiod/src/chip.rs
+new file mode 100644
+index 0000000..bf2d8fd
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/chip.rs
+@@ -0,0 +1,165 @@
++//! Cores on the chip's backplane: finding them, resetting them, and the
++//! RAM of the ARM Cortex-R4 that runs the firmware.
++
++use std::thread;
++use std::time::Duration;
++
++use crate::bus::Bus;
++use crate::erom::{self, Core, CORE_80211, CORE_ARM_CR4, CORE_CHIPCOMMON, CORE_SDIO_DEV};
++use crate::host::wait_until;
++
++const CHIPCOMMON_BASE: u32 = 0x1800_0000;
++/// ChipCommon register with the address of the enumeration ROM.
++const CC_EROMPTR: u32 = 0xfc;
++
++// Wrapper registers (AI backplane).
++const AI_IOCTL: u32 = 0x408;
++const AI_RESETCTRL: u32 = 0x800;
++const IOCTL_CLK: u32 = 0x1;
++const IOCTL_FGC: u32 = 0x2;
++const RESETCTRL_RESET: u32 = 0x1;
++
++/// ARM CR4 wrapper IOCTL: hold the CPU.
++const ARMCR4_IOCTL_CPUHALT: u32 = 0x20;
++// ARM CR4 core registers: bank count and per-bank size.
++const ARMCR4_CAP: u32 = 0x04;
++const ARMCR4_BANKIDX: u32 = 0x40;
++const ARMCR4_BANKINFO: u32 = 0x44;
++const ARMCR4_BSZ_MASK: u32 = 0x7f;
++const ARMCR4_BLK_1K: u32 = 0x200;
++
++// 802.11 core wrapper IOCTL.
++const D11_IOCTL_PHYCLOCKEN: u32 = 0x4;
++const D11_IOCTL_PHYRESET: u32 = 0x8;
++
++pub struct Chip {
++    pub cr4: Core,
++    pub d11: Core,
++    pub sdio: Core,
++    /// Backplane address and size of the firmware's RAM.
++    pub rambase: u32,
++    pub ramsize: u32,
++}
++
++impl Chip {
++    /// Reads the enumeration ROM and the RAM size.
++    pub fn attach(bus: &mut Bus, chipid: u32) -> Result<Chip, String> {
++        let erom_addr = bus.read32(CHIPCOMMON_BASE + CC_EROMPTR)?;
++        let mut words = Vec::new();
++        for i in 0..1024 {
++            let w = bus.read32(erom_addr + 4 * i)?;
++            words.push(w);
++            if w & 0xf == 0xf {
++                break;
++            }
++        }
++        let cores = erom::parse(&words);
++        for c in &cores {
++            println!(
++                "bcm2835-sdiod: core 0x{:03x} rev {} at 0x{:08x}, wrapper 0x{:08x}",
++                c.id, c.rev, c.base, c.wrap
++            );
++        }
++        let find = |id: u16| {
++            cores
++                .iter()
++                .copied()
++                .find(|c| c.id == id)
++                .ok_or(format!("no core 0x{id:03x} in the EROM at 0x{erom_addr:08x}"))
++        };
++        find(CORE_CHIPCOMMON)?;
++        let (cr4, d11, sdio) = (find(CORE_ARM_CR4)?, find(CORE_80211)?, find(CORE_SDIO_DEV)?);
++        let id = chipid as u16;
++        // Where the CR4's RAM starts on the backplane depends on the chip.
++        let rambase = match id {
++            0x4345 => 0x0019_8000,
++            _ => return Err(format!("RAM base of chip 0x{id:04x} unknown")),
++        };
++        let ramsize = cr4_ramsize(bus, &cr4)?;
++        println!("bcm2835-sdiod: RAM 0x{rambase:08x}, {} KiB", ramsize / 1024);
++        Ok(Chip {
++            cr4,
++            d11,
++            sdio,
++            rambase,
++            ramsize,
++        })
++    }
++
++    /// Holds the ARM and resets the 802.11 core, for a firmware download.
++    pub fn set_passive(&self, bus: &mut Bus) -> Result<(), String> {
++        let halted = bus.read32(self.cr4.wrap + AI_IOCTL)? & ARMCR4_IOCTL_CPUHALT;
++        core_reset(bus, &self.cr4, halted, ARMCR4_IOCTL_CPUHALT, ARMCR4_IOCTL_CPUHALT)?;
++        core_reset(
++            bus,
++            &self.d11,
++            D11_IOCTL_PHYRESET | D11_IOCTL_PHYCLOCKEN,
++            D11_IOCTL_PHYCLOCKEN,
++            D11_IOCTL_PHYCLOCKEN,
++        )
++    }
++
++    /// Writes the reset vector to address 0 and lets the ARM run.
++    pub fn set_active(&self, bus: &mut Bus, reset_vector: u32) -> Result<(), String> {
++        bus.write32(0, reset_vector)?;
++        core_reset(bus, &self.cr4, ARMCR4_IOCTL_CPUHALT, 0, 0)
++    }
++}
++
++fn cr4_ramsize(bus: &mut Bus, cr4: &Core) -> Result<u32, String> {
++    let cap = bus.read32(cr4.base + ARMCR4_CAP)?;
++    let banks = (cap & 0xf) + (cap >> 4 & 0xf);
++    let mut size = 0;
++    for idx in 0..banks {
++        bus.write32(cr4.base + ARMCR4_BANKIDX, idx)?;
++        let info = bus.read32(cr4.base + ARMCR4_BANKINFO)?;
++        let unit = if info & ARMCR4_BLK_1K != 0 { 1024 } else { 8192 };
++        size += ((info & ARMCR4_BSZ_MASK) + 1) * unit;
++    }
++    if size == 0 {
++        return Err(format!("ARM CR4 reports no RAM (cap 0x{cap:08x})"));
++    }
++    Ok(size)
++}
++
++/// Puts a core into reset with clocks forced on; `prereset` and `reset`
++/// are core-specific IOCTL bits before and during the reset.
++fn core_disable(bus: &mut Bus, core: &Core, prereset: u32, reset: u32) -> Result<(), String> {
++    if bus.read32(core.wrap + AI_RESETCTRL)? & RESETCTRL_RESET == 0 {
++        bus.write32(core.wrap + AI_IOCTL, prereset | IOCTL_FGC | IOCTL_CLK)?;
++        bus.read32(core.wrap + AI_IOCTL)?;
++        bus.write32(core.wrap + AI_RESETCTRL, RESETCTRL_RESET)?;
++        thread::sleep(Duration::from_micros(20));
++        let mut ctl = 0;
++        if !wait_until(Duration::from_millis(10), || {
++            ctl = bus.read32(core.wrap + AI_RESETCTRL).unwrap_or(0);
++            ctl & RESETCTRL_RESET != 0
++        }) {
++            return Err(format!("core 0x{:03x} does not enter reset", core.id));
++        }
++    }
++    bus.write32(core.wrap + AI_IOCTL, reset | IOCTL_FGC | IOCTL_CLK)?;
++    bus.read32(core.wrap + AI_IOCTL)?;
++    Ok(())
++}
++
++/// Resets a core and takes it out of reset with its clock on;
++/// `postreset` are the IOCTL bits afterwards.
++fn core_reset(bus: &mut Bus, core: &Core, prereset: u32, reset: u32, postreset: u32) -> Result<(), String> {
++    core_disable(bus, core, prereset, reset)?;
++    let mut ctl = RESETCTRL_RESET;
++    for _ in 0..50 {
++        bus.write32(core.wrap + AI_RESETCTRL, 0)?;
++        ctl = bus.read32(core.wrap + AI_RESETCTRL)?;
++        if ctl & RESETCTRL_RESET == 0 {
++            break;
++        }
++        thread::sleep(Duration::from_micros(40));
++    }
++    if ctl & RESETCTRL_RESET != 0 {
++        return Err(format!("core 0x{:03x} stays in reset", core.id));
++    }
++    bus.write32(core.wrap + AI_IOCTL, postreset | IOCTL_CLK)?;
++    bus.read32(core.wrap + AI_IOCTL)?;
++    Ok(())
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/erom.rs b/drivers/net/bcm2835-sdiod/src/erom.rs
+new file mode 100644
+index 0000000..0d11227
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/erom.rs
+@@ -0,0 +1,152 @@
++//! The enumeration ROM of a Broadcom AI ("AXI") backplane: the list of
++//! cores, with the address of each core's registers and of its wrapper
++//! (reset and clock control).
++//!
++//! Each core starts with two component descriptors (designer, part number,
++//! class; revision and the number of ports and wrappers), followed by
++//! master port descriptors and address descriptors. The table ends with an
++//! end-of-table entry. Layout as documented in OpenBSD's bwfm(4) and
++//! Linux' brcmfmac (both ISC).
++
++const DESC_TYPE_MASK: u32 = 0xf;
++const DESC_COMPONENT: u32 = 0x1;
++const DESC_ADDRESS: u32 = 0x5;
++const DESC_ADDRSIZE_GT32: u32 = 0x8;
++const DESC_EOT: u32 = 0xf;
++
++const SLAVE_TYPE_SLAVE: u32 = 0;
++const SLAVE_TYPE_SWRAP: u32 = 2;
++const SLAVE_TYPE_MWRAP: u32 = 3;
++const SLAVE_SIZE_DESC: u32 = 3;
++
++pub const CORE_CHIPCOMMON: u16 = 0x800;
++pub const CORE_80211: u16 = 0x812;
++pub const CORE_SDIO_DEV: u16 = 0x829;
++pub const CORE_ARM_CR4: u16 = 0x83e;
++
++/// Broadcom's designer code. ARM's (0x43b) entries are bus components.
++const DESIGNER_BROADCOM: u32 = 0x4bf;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Core {
++    pub id: u16,
++    pub rev: u8,
++    /// Backplane address of the core's registers.
++    pub base: u32,
++    /// Backplane address of its wrapper.
++    pub wrap: u32,
++}
++
++/// Parses the EROM entries (32-bit words, read from the chip until and
++/// including the end-of-table entry).
++pub fn parse(words: &[u32]) -> Vec<Core> {
++    let mut cores = Vec::new();
++    let mut i = 0;
++    let next = |i: &mut usize| -> Option<u32> {
++        let w = *words.get(*i)?;
++        *i += 1;
++        Some(w)
++    };
++    while let Some(a) = next(&mut i) {
++        match a & DESC_TYPE_MASK {
++            DESC_EOT => break,
++            DESC_COMPONENT => {}
++            _ => continue,
++        }
++        let Some(b) = next(&mut i) else { break };
++        if b & DESC_TYPE_MASK != DESC_COMPONENT {
++            continue;
++        }
++        let designer = a >> 20;
++        let id = (a >> 8 & 0xfff) as u16;
++        let rev = (b >> 24) as u8;
++        let master_wraps = b >> 14 & 0x1f;
++        let slave_wraps = b >> 19 & 0x1f;
++
++        let mut base = None;
++        let mut wrap = None;
++        // The descriptors of this core run until the next component.
++        while let Some(&d) = words.get(i) {
++            let kind = d & DESC_TYPE_MASK;
++            if kind == DESC_COMPONENT || kind == DESC_EOT {
++                break;
++            }
++            i += 1;
++            if kind != DESC_ADDRESS {
++                continue;
++            }
++            if d & DESC_ADDRSIZE_GT32 != 0 {
++                i += 1; // upper half of the address
++            }
++            if d >> 4 & 3 == SLAVE_SIZE_DESC {
++                let size = next(&mut i).unwrap_or(0);
++                if size & DESC_ADDRSIZE_GT32 != 0 {
++                    i += 1;
++                }
++            }
++            let addr = d & 0xffff_f000;
++            let port = d >> 8 & 0xf;
++            match d >> 6 & 3 {
++                SLAVE_TYPE_SLAVE if port == 0 && base.is_none() => base = Some(addr),
++                SLAVE_TYPE_MWRAP if master_wraps > 0 && wrap.is_none() => wrap = Some(addr),
++                SLAVE_TYPE_SWRAP if master_wraps == 0 && wrap.is_none() => wrap = Some(addr),
++                _ => {}
++            }
++        }
++        if designer != DESIGNER_BROADCOM || master_wraps + slave_wraps == 0 {
++            continue;
++        }
++        if let (Some(base), Some(wrap)) = (base, wrap) {
++            cores.push(Core { id, rev, base, wrap });
++        }
++    }
++    cores
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn comp_a(designer: u32, id: u32) -> u32 {
++        designer << 20 | id << 8 | DESC_COMPONENT
++    }
++    fn comp_b(rev: u32, mwraps: u32, swraps: u32) -> u32 {
++        rev << 24 | swraps << 19 | mwraps << 14 | DESC_COMPONENT
++    }
++    fn addr(a: u32, kind: u32, port: u32) -> u32 {
++        a | port << 8 | kind << 6 | DESC_ADDRESS
++    }
++
++    #[test]
++    fn two_cores_and_a_bridge() {
++        let words = [
++            // ChipCommon: one master port, slave at 0x18000000, master wrapper.
++            comp_a(DESIGNER_BROADCOM, 0x800),
++            comp_b(43, 1, 0),
++            0x0000_0103, // master port descriptor (type 3)
++            addr(0x1800_0000, SLAVE_TYPE_SLAVE, 0),
++            addr(0x1810_0000, SLAVE_TYPE_MWRAP, 0),
++            // A bus component of another designer: skipped.
++            comp_a(0x43b, 0x367),
++            comp_b(0, 0, 1),
++            addr(0x1810_9000, SLAVE_TYPE_SWRAP, 0),
++            // ARM CR4 with a sized second slave region and slave wrapper only.
++            comp_a(DESIGNER_BROADCOM, 0x83e),
++            comp_b(7, 0, 1),
++            addr(0x1800_2000, SLAVE_TYPE_SLAVE, 0),
++            addr(0x0000_0000, SLAVE_TYPE_SLAVE, 1) | SLAVE_SIZE_DESC << 4,
++            0x0000_8000, // size descriptor
++            addr(0x1810_2000, SLAVE_TYPE_SWRAP, 0),
++            DESC_EOT,
++            comp_a(DESIGNER_BROADCOM, 0x812), // after the end: ignored
++        ];
++        let cores = parse(&words);
++        assert_eq!(
++            cores,
++            [
++                Core { id: 0x800, rev: 43, base: 0x1800_0000, wrap: 0x1810_0000 },
++                Core { id: 0x83e, rev: 7, base: 0x1800_2000, wrap: 0x1810_2000 },
++            ]
++        );
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/host.rs b/drivers/net/bcm2835-sdiod/src/host.rs
+index dd82689..70ce25a 100644
+--- a/drivers/net/bcm2835-sdiod/src/host.rs
++++ b/drivers/net/bcm2835-sdiod/src/host.rs
+@@ -30,6 +30,8 @@ const CMD_RSPNS_48_BUSY: u32 = 3 << 16;
+ const CMD_CRCCHK_EN: u32 = 1 << 19;
+ const CMD_IXCHK_EN: u32 = 1 << 20;
+ const TM_DAT_DIR_READ: u32 = 1 << 4;
++const TM_MULTI_BLOCK: u32 = 1 << 5;
++const TM_BLKCNT_EN: u32 = 1 << 1;
+ 
+ const SR_DAT_INHIBIT: u32 = 1 << 1;
+ const SR_CMD_INHIBIT: u32 = 1 << 0;
+@@ -46,18 +48,34 @@ const C1_CLK_INTLEN: u32 = 1 << 0;
+ 
+ const INT_CMD_DONE: u32 = 1 << 0;
+ const INT_DATA_DONE: u32 = 1 << 1;
++const INT_WRITE_RDY: u32 = 1 << 4;
+ const INT_READ_RDY: u32 = 1 << 5;
+ const INT_ERROR: u32 = 1 << 15;
+ const INT_CMD_TIMEOUT: u32 = 1 << 16;
+ const INT_ERROR_MASK: u32 = 0x017f_8000;
+ 
++/// The data of a CMD53 transfer.
++pub enum Data<'a> {
++    Read(&'a mut [u8]),
++    Write(&'a [u8]),
++}
++
++impl Data<'_> {
++    fn len(&self) -> usize {
++        match self {
++            Data::Read(buf) => buf.len(),
++            Data::Write(buf) => buf.len(),
++        }
++    }
++}
++
+ /// What went wrong with a command.
+ #[derive(Debug)]
+ pub enum CmdError {
+     /// No response: no card, or the card does not know the command.
+     Timeout,
+     /// Error interrupt flags (CRC, end bit, index, data errors).
+-    Flags(u32),
++    Flags(#[allow(dead_code)] u32), // shown through Debug
+     /// The controller stayed busy.
+     Busy,
+ }
+@@ -215,26 +233,69 @@ impl Host {
+     /// `buf.len()` bytes (a multiple of 4, at most 512) of function `func`
+     /// from `addr`.
+     pub fn cmd53_read(&mut self, func: u32, addr: u32, buf: &mut [u8]) -> Result<(), String> {
+-        let len = buf.len() as u32;
+-        assert!(len > 0 && len <= 512 && len % 4 == 0);
++        self.cmd53(func, addr, Data::Read(buf), None)
++    }
++
++    /// CMD53 with incrementing address. Without `block`, byte mode: one
++    /// transfer of up to 512 bytes. With `block`, block mode: the length is
++    /// a multiple of the function's block size `block` (set in its FBR), at
++    /// most 511 blocks. Lengths are multiples of 4: the data port is 32 bits.
++    pub fn cmd53(&mut self, func: u32, addr: u32, mut data: Data, block: Option<u32>) -> Result<(), String> {
++        let len = data.len() as u32;
++        let what = |e: &dyn std::fmt::Debug| format!("CMD53 F{func} 0x{addr:05x} {len} bytes: {e:?}");
++        let (size, count) = match block {
++            None => {
++                assert!(len > 0 && len <= 512 && len % 4 == 0);
++                (len, 1)
++            }
++            Some(size) => {
++                assert!(len > 0 && len % size == 0 && len / size <= 511 && size % 4 == 0);
++                (size, len / size)
++            }
++        };
+         if !wait_until(Duration::from_millis(100), || self.read(STATUS) & SR_DAT_INHIBIT == 0) {
+             self.reset_lines();
+-            return Err("CMD53: data lines busy".into());
++            return Err(what(&"data lines busy"));
+         }
+-        self.write(BLKSIZECNT, 1 << 16 | len);
+-        // Byte count 512 is written as 0.
+-        let arg = (func & 7) << 28 | 1 << 26 | (addr & 0x1_ffff) << 9 | (len & 0x1ff);
+-        let r5 = self
+-            .command(53, RSP_48_CHECKED | CMD_ISDATA | TM_DAT_DIR_READ, arg)
+-            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: {e:?}"))?;
+-        check_r5(r5).map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: {e}"))?;
+-        self.wait_flag(INT_READ_RDY)
+-            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: no data: {e:?}"))?;
+-        for chunk in buf.chunks_mut(4) {
+-            chunk.copy_from_slice(&self.read(DATA).to_le_bytes());
++        self.write(BLKSIZECNT, count << 16 | size);
++        let write = matches!(data, Data::Write(_));
++        // Byte mode: count 512 is written as 0. Block mode: the block count.
++        let mut arg = (func & 7) << 28 | 1 << 26 | (addr & 0x1_ffff) << 9;
++        arg |= match block {
++            None => len & 0x1ff,
++            Some(_) => 1 << 27 | count,
++        };
++        if write {
++            arg |= 1 << 31;
++        }
++        let mut flags = RSP_48_CHECKED | CMD_ISDATA;
++        if !write {
++            flags |= TM_DAT_DIR_READ;
++        }
++        if count > 1 {
++            flags |= TM_MULTI_BLOCK | TM_BLKCNT_EN;
++        }
++        let r5 = self.command(53, flags, arg).map_err(|e| what(&e))?;
++        check_r5(r5).map_err(|e| what(&e))?;
++        for chunk in 0..count as usize {
++            let range = chunk * size as usize..(chunk + 1) * size as usize;
++            match &mut data {
++                Data::Read(buf) => {
++                    self.wait_flag(INT_READ_RDY).map_err(|e| what(&("no data", e)))?;
++                    for word in buf[range].chunks_mut(4) {
++                        word.copy_from_slice(&self.read(DATA).to_le_bytes());
++                    }
++                }
++                Data::Write(buf) => {
++                    self.wait_flag(INT_WRITE_RDY).map_err(|e| what(&("not ready for data", e)))?;
++                    for word in buf[range].chunks(4) {
++                        self.write(DATA, u32::from_le_bytes(word.try_into().unwrap()));
++                    }
++                }
++            }
+         }
+         self.wait_flag(INT_DATA_DONE)
+-            .map_err(|e| format!("CMD53 F{func} 0x{addr:05x}: transfer did not end: {e:?}"))?;
++            .map_err(|e| what(&("transfer did not end", e)))?;
+         Ok(())
+     }
+ }
+diff --git a/drivers/net/bcm2835-sdiod/src/main.rs b/drivers/net/bcm2835-sdiod/src/main.rs
+index 0ec3b87..5c6118d 100644
+--- a/drivers/net/bcm2835-sdiod/src/main.rs
++++ b/drivers/net/bcm2835-sdiod/src/main.rs
+@@ -7,8 +7,14 @@
+ //!
+ //! This probe powers the chip up, initialises the SDIO card, reads the CCCR
+ //! and CIS, enables function 1, wakes the backplane clock and reads the
+-//! ChipCommon chip ID over CMD52 and CMD53. It prints what it finds and
+-//! exits; there is no network interface yet.
++//! ChipCommon chip ID over CMD52 and CMD53. With the firmware files in
++//! `/usr/lib/firmware/brcm` (package `wifi-firmware`) it then lists the
++//! cores, downloads firmware and NVRAM, starts the firmware and asks it for
++//! its version and MAC address. It prints what it finds and exits; there is
++//! no network interface yet.
++//!
++//! `bcm2835-sdiod standard` loads the standard firmware instead of the
++//! minimal one.
+ 
+ use std::fs;
+ use std::process;
+@@ -17,8 +23,16 @@ use std::time::Duration;
+ 
+ use fdt::Fdt;
+ 
++mod bus;
++mod chip;
++mod erom;
+ mod host;
++mod nvram;
++mod sdpcm;
++mod wifi;
+ 
++use bus::Bus;
++use chip::Chip;
+ use host::{wait_until, Host, RSP_48, RSP_48_BUSY_CHECKED, RSP_48_CHECKED, RSP_NONE};
+ 
+ /// SDIO common registers (CCCR), function 0.
+@@ -52,6 +66,12 @@ const VENDOR_BROADCOM: u16 = 0x02d0;
+ 
+ const GPFSEL_ALT3: u32 = 7;
+ 
++const FIRMWARE_DIR: &str = "/usr/lib/firmware/brcm";
++const NVRAM_FILE: &str = "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt";
++
++/// Function block sizes, in the FBR of each function.
++const FBR_BLOCK_SIZE: [u32; 3] = [0, 0x110, 0x210];
++
+ fn main() {
+     common::init();
+     if let Err(err) = probe() {
+@@ -144,6 +164,50 @@ fn probe() -> Result<(), String> {
+     if chipid52 & 0xffff != 0x4345 || chipid53 != chipid52 || fast != chipid52 {
+         return Err("chip IDs differ or are not CYW43455".into());
+     }
++    println!("bcm2835-sdiod: chip ID OK");
++
++    for (func, size) in [(1, bus::F1_BLOCK), (2, wifi::F2_BLOCK)] {
++        host.write_byte(0, FBR_BLOCK_SIZE[func], size as u8)?;
++        host.write_byte(0, FBR_BLOCK_SIZE[func] + 1, (size >> 8) as u8)?;
++    }
++    let mut bus = Bus::new(host);
++    let chip = Chip::attach(&mut bus, chipid52)?;
++
++    let variant = std::env::args().nth(1).unwrap_or("minimal".into());
++    let fw_path = format!("{FIRMWARE_DIR}/cyfmac43455-sdio-{variant}.bin");
++    let nvram_path = format!("{FIRMWARE_DIR}/{NVRAM_FILE}");
++    let (firmware, nvram_text) = match (fs::read(&fw_path), fs::read(&nvram_path)) {
++        (Ok(fw), Ok(nv)) => (fw, nv),
++        (fw, nv) => {
++            for (path, result) in [(&fw_path, fw.err()), (&nvram_path, nv.err())] {
++                if let Some(err) = result {
++                    println!("bcm2835-sdiod: no {path}: {err}");
++                }
++            }
++            println!("bcm2835-sdiod: stopping after the chip ID");
++            println!("bcm2835-sdiod: OK");
++            return Ok(());
++        }
++    };
++    let nvram = nvram::prepare(&nvram_text);
++    println!(
++        "bcm2835-sdiod: {variant} firmware, {} bytes; NVRAM {} bytes",
++        firmware.len(),
++        nvram.len()
++    );
++    wifi::download(&mut bus, &chip, &firmware, &nvram)?;
++    wifi::wait_ready(&mut bus, &chip)?;
++
++    let mut control = wifi::Control::new(&chip);
++    let ver = control.get_var(&mut bus, "ver", 256)?;
++    let ver = String::from_utf8_lossy(ver.split(|&b| b == 0).next().unwrap_or(&[]));
++    println!("bcm2835-sdiod: firmware version: {}", ver.trim());
++    let mac = control.get_var(&mut bus, "cur_etheraddr", 16)?;
++    if mac.len() < 6 {
++        return Err(format!("cur_etheraddr: {} bytes", mac.len()));
++    }
++    let mac: Vec<String> = mac[..6].iter().map(|b| format!("{b:02x}")).collect();
++    println!("bcm2835-sdiod: MAC address {}", mac.join(":"));
+     println!("bcm2835-sdiod: OK");
+     Ok(())
+ }
+diff --git a/drivers/net/bcm2835-sdiod/src/nvram.rs b/drivers/net/bcm2835-sdiod/src/nvram.rs
+new file mode 100644
+index 0000000..66e12af
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/nvram.rs
+@@ -0,0 +1,67 @@
++//! The board settings ("NVRAM") file, made ready for the chip.
++//!
++//! The file is text, one `key=value` per line with `#` comments. The chip
++//! wants the entries NUL-terminated one after another, an extra NUL, zeros
++//! to a multiple of 4 bytes, and a last 32-bit word with the length in words
++//! in the low half and its complement in the high half. The firmware finds
++//! the block by that word at the very end of its RAM.
++
++/// Converts the NVRAM text into the block the chip reads.
++pub fn prepare(text: &[u8]) -> Vec<u8> {
++    let mut out = Vec::new();
++    for line in text.split(|&b| b == b'\n') {
++        let line = trim(line);
++        if line.is_empty() || line[0] == b'#' || !line.contains(&b'=') {
++            continue;
++        }
++        out.extend_from_slice(line);
++        out.push(0);
++    }
++    out.push(0);
++    while out.len() % 4 != 0 {
++        out.push(0);
++    }
++    let words = (out.len() / 4) as u32;
++    out.extend_from_slice(&(!words << 16 | words & 0xffff).to_le_bytes());
++    out
++}
++
++fn trim(mut line: &[u8]) -> &[u8] {
++    while let [first, rest @ ..] = line {
++        if !first.is_ascii_whitespace() {
++            break;
++        }
++        line = rest;
++    }
++    while let [rest @ .., last] = line {
++        if !last.is_ascii_whitespace() {
++            break;
++        }
++        line = rest;
++    }
++    line
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn entries_padding_token() {
++        let text = b"# comment\r\nsromrev=11\r\n\n  boardtype=0x6e4  \nnoequals\n#macaddr=1\nxtalfreq=37400\n";
++        let out = prepare(text);
++        let body = b"sromrev=11\0boardtype=0x6e4\0xtalfreq=37400\0\0";
++        assert_eq!(&out[..body.len()], body);
++        // 44 bytes of entries are 11 words; padded already.
++        assert_eq!(out.len(), 44 + 4);
++        assert_eq!(&out[44..], &(0xfff4_000bu32).to_le_bytes());
++    }
++
++    #[test]
++    fn pads_to_words() {
++        let out = prepare(b"a=1\n");
++        // "a=1\0\0" is 5 bytes, padded to 8: 2 words.
++        assert_eq!(&out[..8], b"a=1\0\0\0\0\0");
++        assert_eq!(&out[8..], &(0xfffd_0002u32).to_le_bytes());
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/sdpcm.rs b/drivers/net/bcm2835-sdiod/src/sdpcm.rs
+new file mode 100644
+index 0000000..193b3f2
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/sdpcm.rs
+@@ -0,0 +1,157 @@
++//! Frames on SDIO function 2: the SDPCM header and, on the control
++//! channel, the BCDC header of a firmware command ("dcmd").
++//!
++//! An SDPCM frame starts with a 4-byte hardware header (length and its
++//! complement) and an 8-byte software header: sequence number, channel,
++//! next length, data offset, flow control and the highest sequence number
++//! the firmware takes (its credit). Control frames carry a 16-byte BCDC
++//! header (command, length, flags with request ID, status) and the command
++//! data. Layout as in OpenBSD's bwfm(4) and Linux' brcmfmac (both ISC).
++
++pub const HEADER_LEN: usize = 12;
++pub const BCDC_LEN: usize = 16;
++
++pub const CHANNEL_CONTROL: u8 = 0;
++pub const CHANNEL_EVENT: u8 = 1;
++pub const CHANNEL_DATA: u8 = 2;
++
++const BCDC_FLAG_ERROR: u32 = 0x01;
++const BCDC_FLAG_SET: u32 = 0x02;
++
++/// Firmware commands.
++pub const WLC_GET_VAR: u32 = 262;
++
++/// A control frame for command `cmd` with request ID `id`. `data` goes out
++/// as is (for WLC_GET_VAR: the variable name, a NUL and room for the
++/// answer). The frame is padded to a multiple of 4 bytes.
++pub fn control_frame(seq: u8, id: u16, cmd: u32, set: bool, data: &[u8]) -> Vec<u8> {
++    let len = HEADER_LEN + BCDC_LEN + data.len();
++    let mut f = Vec::with_capacity(len + 3);
++    f.extend_from_slice(&(len as u16).to_le_bytes());
++    f.extend_from_slice(&(!(len as u16)).to_le_bytes());
++    f.extend_from_slice(&[seq, CHANNEL_CONTROL, 0, HEADER_LEN as u8, 0, 0, 0, 0]);
++    let flags = (id as u32) << 16 | if set { BCDC_FLAG_SET } else { 0 };
++    for word in [cmd, data.len() as u32, flags, 0] {
++        f.extend_from_slice(&word.to_le_bytes());
++    }
++    f.extend_from_slice(data);
++    while f.len() % 4 != 0 {
++        f.push(0);
++    }
++    f
++}
++
++/// The hardware header: the frame length, or `None` for no frame (0) or a
++/// broken header.
++pub fn frame_len(head: &[u8]) -> Option<usize> {
++    let len = u16::from_le_bytes([head[0], head[1]]);
++    let check = u16::from_le_bytes([head[2], head[3]]);
++    if len == 0 || len ^ check != 0xffff || (len as usize) < HEADER_LEN {
++        return None;
++    }
++    Some(len as usize)
++}
++
++#[derive(Debug, PartialEq, Eq)]
++pub struct Frame<'a> {
++    pub seq: u8,
++    pub channel: u8,
++    /// Highest sequence number the firmware takes now.
++    pub max_seq: u8,
++    pub payload: &'a [u8],
++}
++
++/// Splits a received frame (`frame_len` bytes) into header and payload.
++pub fn parse(frame: &[u8]) -> Result<Frame<'_>, String> {
++    let len = frame_len(frame).ok_or("bad frame header")?;
++    if len > frame.len() {
++        return Err(format!("frame of {len} bytes, only {} read", frame.len()));
++    }
++    let offset = frame[7] as usize;
++    if offset < HEADER_LEN || offset > len {
++        return Err(format!("data offset {offset} in a frame of {len} bytes"));
++    }
++    Ok(Frame {
++        seq: frame[4],
++        channel: frame[5] & 0x0f,
++        max_seq: frame[9],
++        payload: &frame[offset..len],
++    })
++}
++
++#[derive(Debug, PartialEq, Eq)]
++pub struct Reply<'a> {
++    pub cmd: u32,
++    pub id: u16,
++    /// Firmware error code when it failed (negative values as u32).
++    pub status: Option<u32>,
++    pub data: &'a [u8],
++}
++
++/// The BCDC header and data of a control frame's payload.
++pub fn parse_reply(payload: &[u8]) -> Result<Reply<'_>, String> {
++    if payload.len() < BCDC_LEN {
++        return Err(format!("control reply of {} bytes", payload.len()));
++    }
++    let word = |i: usize| u32::from_le_bytes(payload[i * 4..i * 4 + 4].try_into().unwrap());
++    let (cmd, len, flags, status) = (word(0), word(1) as usize, word(2), word(3));
++    let data = &payload[BCDC_LEN..];
++    Ok(Reply {
++        cmd,
++        id: (flags >> 16) as u16,
++        status: (flags & BCDC_FLAG_ERROR != 0).then_some(status),
++        data: &data[..len.min(data.len())],
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn get_var_frame() {
++        let mut data = b"ver\0".to_vec();
++        data.resize(8, 0);
++        let f = control_frame(3, 1, WLC_GET_VAR, false, &data);
++        assert_eq!(f.len(), 36);
++        assert_eq!(&f[..4], &[36, 0, !36u8, 0xff]);
++        assert_eq!(&f[4..12], &[3, 0, 0, 12, 0, 0, 0, 0]);
++        assert_eq!(&f[12..16], &262u32.to_le_bytes());
++        assert_eq!(&f[16..20], &8u32.to_le_bytes());
++        assert_eq!(&f[20..24], &0x0001_0000u32.to_le_bytes());
++        assert_eq!(&f[28..32], b"ver\0");
++        assert_eq!(frame_len(&f), Some(36));
++    }
++
++    #[test]
++    fn pads_odd_lengths() {
++        let f = control_frame(0, 2, WLC_GET_VAR, true, b"abcde");
++        assert_eq!(frame_len(&f), Some(33));
++        assert_eq!(f.len(), 36);
++        assert_eq!(&f[20..24], &0x0002_0002u32.to_le_bytes());
++    }
++
++    #[test]
++    fn reply_round_trip() {
++        // A reply looks like a request with the answer in the data.
++        let mut f = control_frame(0, 7, WLC_GET_VAR, false, b"wl0: version 7.45\0\0\0");
++        f[9] = 0x14; // credit
++        let frame = parse(&f).unwrap();
++        assert_eq!((frame.seq, frame.channel, frame.max_seq), (0, CHANNEL_CONTROL, 0x14));
++        let reply = parse_reply(frame.payload).unwrap();
++        assert_eq!((reply.cmd, reply.id, reply.status), (WLC_GET_VAR, 7, None));
++        assert!(reply.data.starts_with(b"wl0: version 7.45\0"));
++    }
++
++    #[test]
++    fn error_reply_and_bad_headers() {
++        let mut f = control_frame(0, 9, WLC_GET_VAR, false, b"xxxx");
++        f[20] |= 1; // error flag
++        f[24..28].copy_from_slice(&(-23i32 as u32).to_le_bytes());
++        let reply = parse_reply(parse(&f).unwrap().payload).unwrap();
++        assert_eq!(reply.status, Some(-23i32 as u32));
++        assert_eq!(frame_len(&[0, 0, 0xff, 0xff]), None);
++        assert_eq!(frame_len(&[36, 0, 0, 0]), None);
++        assert_eq!(frame_len(&[8, 0, 0xf7, 0xff]), None);
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/wifi.rs b/drivers/net/bcm2835-sdiod/src/wifi.rs
+new file mode 100644
+index 0000000..870da12
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/wifi.rs
+@@ -0,0 +1,264 @@
++//! Starting the firmware and talking to it.
++//!
++//! The sequence of OpenBSD's bwfm(4) and Linux' brcmfmac (both ISC): hold
++//! the ARM, write the firmware to the start of its RAM and the NVRAM block
++//! to the end, write the reset vector, let the ARM run, ask for the HT
++//! clock, tell the firmware our protocol version, enable function 2 and
++//! wait until the firmware says it is ready. After that, firmware commands
++//! go over function 2 as SDPCM control frames (see `sdpcm`).
++
++use std::thread;
++use std::time::{Duration, Instant};
++
++use crate::bus::Bus;
++use crate::chip::Chip;
++use crate::host::{wait_until, Data};
++use crate::sdpcm;
++
++// Function 1 registers.
++const SBSDIO_WATERMARK: u32 = 0x10008;
++const SBSDIO_FUNC1_FRAMECTRL: u32 = 0x1000d;
++const SBSDIO_FUNC1_CHIPCLKCSR: u32 = 0x1000e;
++const SBSDIO_FUNC1_RFRAMEBCLO: u32 = 0x1001b;
++const SBSDIO_FUNC1_RFRAMEBCHI: u32 = 0x1001c;
++const SFC_RF_TERM: u8 = 0x01;
++const SBSDIO_HT_AVAIL_REQ: u8 = 0x10;
++const SBSDIO_HT_AVAIL: u8 = 0x80;
++const F2_WATERMARK: u8 = 8;
++
++// SDIO device core registers.
++const SD_INTSTATUS: u32 = 0x20;
++const SD_HOSTINTMASK: u32 = 0x24;
++const SD_TOSBMAILBOX: u32 = 0x40;
++const SD_TOSBMAILBOXDATA: u32 = 0x48;
++const SD_TOHOSTMAILBOXDATA: u32 = 0x4c;
++/// Interrupt status: the firmware has a frame for us / a mailbox message.
++const I_HMB_FRAME_IND: u32 = 1 << 6;
++const I_HMB_HOST_INT: u32 = 1 << 7;
++const I_HMB_SW_MASK: u32 = 0xf0;
++const SMB_INT_ACK: u32 = 1 << 1;
++/// SDPCM protocol version, sent in the to-chip mailbox data.
++const SDPCM_PROT_VERSION: u32 = 4;
++const SMB_DATA_VERSION_SHIFT: u32 = 16;
++
++// CCCR.
++const CCCR_IOEX: u32 = 0x02;
++const CCCR_IORX: u32 = 0x03;
++const CCCR_IOABORT: u32 = 0x06;
++const FUNC2: u8 = 0x04;
++
++/// Function 2 address for frames (a FIFO; the offset is what brcmfmac uses).
++const F2_ADDR: u32 = 0x8000;
++/// Function 2 block size.
++pub const F2_BLOCK: u32 = 512;
++/// The first read of a frame; the rest follows once the length is known.
++const FIRST_READ: usize = 64;
++
++/// Writes firmware and NVRAM and starts the ARM.
++pub fn download(bus: &mut Bus, chip: &Chip, firmware: &[u8], nvram: &[u8]) -> Result<(), String> {
++    if firmware.len() < 4 || firmware.len() as u32 + nvram.len() as u32 > chip.ramsize {
++        return Err(format!(
++            "firmware ({} bytes) and NVRAM ({} bytes) do not fit into {} bytes of RAM",
++            firmware.len(),
++            nvram.len(),
++            chip.ramsize
++        ));
++    }
++    chip.set_passive(bus)?;
++
++    let mut image = firmware.to_vec();
++    image.resize(firmware.len().next_multiple_of(4), 0);
++    let start = Instant::now();
++    bus.write_mem(chip.rambase, &image)?;
++    let written = start.elapsed();
++    let mut back = vec![0u8; image.len()];
++    bus.read_mem(chip.rambase, &mut back)?;
++    if let Some(at) = image.iter().zip(&back).position(|(a, b)| a != b) {
++        return Err(format!("firmware read back differs at byte {at}"));
++    }
++    println!(
++        "bcm2835-sdiod: firmware written ({} bytes in {} ms) and read back",
++        image.len(),
++        written.as_millis()
++    );
++
++    let nvram_addr = chip.rambase + chip.ramsize - nvram.len() as u32;
++    bus.write_mem(nvram_addr, nvram)?;
++    let mut back = vec![0u8; nvram.len()];
++    bus.read_mem(nvram_addr, &mut back)?;
++    if back != nvram {
++        return Err("NVRAM read back differs".into());
++    }
++    println!("bcm2835-sdiod: NVRAM written at 0x{nvram_addr:08x} ({} bytes)", nvram.len());
++
++    bus.write32(chip.sdio.base + SD_INTSTATUS, 0xffff_ffff)?;
++    let reset_vector = u32::from_le_bytes(firmware[..4].try_into().unwrap());
++    chip.set_active(bus, reset_vector)?;
++    println!("bcm2835-sdiod: ARM started, reset vector 0x{reset_vector:08x}");
++    Ok(())
++}
++
++/// Waits for the HT clock and function 2: the firmware is up.
++pub fn wait_ready(bus: &mut Bus, chip: &Chip) -> Result<(), String> {
++    bus.host.write_byte(1, SBSDIO_FUNC1_CHIPCLKCSR, SBSDIO_HT_AVAIL_REQ)?;
++    let mut csr = 0;
++    if !wait_until(Duration::from_secs(2), || {
++        csr = bus.host.read_byte(1, SBSDIO_FUNC1_CHIPCLKCSR).unwrap_or(0);
++        csr & SBSDIO_HT_AVAIL != 0
++    }) {
++        return Err(format!("no HT clock after the firmware start (CHIPCLKCSR 0x{csr:02x})"));
++    }
++    println!("bcm2835-sdiod: HT clock on (CHIPCLKCSR 0x{csr:02x})");
++
++    bus.write32(chip.sdio.base + SD_TOSBMAILBOXDATA, SDPCM_PROT_VERSION << SMB_DATA_VERSION_SHIFT)?;
++    let ioe = bus.host.read_byte(0, CCCR_IOEX)?;
++    bus.host.write_byte(0, CCCR_IOEX, ioe | FUNC2)?;
++    let mut ior = 0;
++    if !wait_until(Duration::from_secs(3), || {
++        ior = bus.host.read_byte(0, CCCR_IORX).unwrap_or(0);
++        ior & FUNC2 != 0
++    }) {
++        return Err(format!("function 2 not ready: the firmware did not start (IORx 0x{ior:02x})"));
++    }
++    bus.write32(chip.sdio.base + SD_HOSTINTMASK, I_HMB_SW_MASK)?;
++    bus.host.write_byte(1, SBSDIO_WATERMARK, F2_WATERMARK)?;
++    println!("bcm2835-sdiod: function 2 ready, firmware running");
++    Ok(())
++}
++
++/// The control channel: firmware commands and their replies.
++pub struct Control {
++    sdio_base: u32,
++    seq: u8,
++    /// Highest sequence number the firmware takes, from its last frame.
++    max_seq: u8,
++    id: u16,
++}
++
++impl Control {
++    pub fn new(chip: &Chip) -> Self {
++        Control {
++            sdio_base: chip.sdio.base,
++            seq: 0,
++            max_seq: 4,
++            id: 0,
++        }
++    }
++
++    /// Reads firmware variable `name` (WLC_GET_VAR) into at most `len`
++    /// bytes.
++    pub fn get_var(&mut self, bus: &mut Bus, name: &str, len: usize) -> Result<Vec<u8>, String> {
++        let mut data = name.as_bytes().to_vec();
++        data.push(0);
++        data.resize(data.len().max(len), 0);
++        self.command(bus, sdpcm::WLC_GET_VAR, false, &data)
++            .map_err(|e| format!("{name}: {e}"))
++    }
++
++    fn command(&mut self, bus: &mut Bus, cmd: u32, set: bool, data: &[u8]) -> Result<Vec<u8>, String> {
++        self.id = self.id.wrapping_add(1);
++        let credit = self.max_seq.wrapping_sub(self.seq);
++        if credit == 0 || credit & 0x80 != 0 {
++            println!(
++                "bcm2835-sdiod: no credit (seq {}, max {}), sending anyway",
++                self.seq, self.max_seq
++            );
++        }
++        let frame = sdpcm::control_frame(self.seq, self.id, cmd, set, data);
++        self.seq = self.seq.wrapping_add(1);
++        if frame.len() > F2_BLOCK as usize {
++            return Err(format!("control frame of {} bytes", frame.len()));
++        }
++        bus.host.cmd53(2, F2_ADDR, Data::Write(&frame), None)?;
++
++        let deadline = Instant::now() + Duration::from_secs(3);
++        while Instant::now() < deadline {
++            let status = bus.read32(self.sdio_base + SD_INTSTATUS)?;
++            if status & (I_HMB_FRAME_IND | I_HMB_HOST_INT) == 0 {
++                thread::sleep(Duration::from_millis(1));
++                continue;
++            }
++            bus.write32(self.sdio_base + SD_INTSTATUS, status & (I_HMB_FRAME_IND | I_HMB_HOST_INT))?;
++            if status & I_HMB_HOST_INT != 0 {
++                let mail = bus.read32(self.sdio_base + SD_TOHOSTMAILBOXDATA)?;
++                bus.write32(self.sdio_base + SD_TOSBMAILBOX, SMB_INT_ACK)?;
++                println!("bcm2835-sdiod: mailbox from the firmware 0x{mail:08x}");
++            }
++            if status & I_HMB_FRAME_IND == 0 {
++                continue;
++            }
++            // Read frames until the firmware has no more.
++            while let Some(frame) = self.read_frame(bus)? {
++                let parsed = sdpcm::parse(&frame)?;
++                self.max_seq = parsed.max_seq;
++                if parsed.channel != sdpcm::CHANNEL_CONTROL {
++                    let channel = match parsed.channel {
++                        sdpcm::CHANNEL_EVENT => "event",
++                        sdpcm::CHANNEL_DATA => "data",
++                        _ => "other",
++                    };
++                    println!(
++                        "bcm2835-sdiod: {channel} frame (channel {}), {} bytes",
++                        parsed.channel,
++                        parsed.payload.len()
++                    );
++                    continue;
++                }
++                let reply = sdpcm::parse_reply(parsed.payload)?;
++                if reply.id != self.id {
++                    println!("bcm2835-sdiod: reply {} while waiting for {}", reply.id, self.id);
++                    continue;
++                }
++                if let Some(status) = reply.status {
++                    return Err(format!("firmware error {}", status as i32));
++                }
++                return Ok(reply.data.to_vec());
++            }
++        }
++        Err("no reply from the firmware".into())
++    }
++
++    /// Reads one frame from function 2, or `None` when there is none.
++    fn read_frame(&mut self, bus: &mut Bus) -> Result<Option<Vec<u8>>, String> {
++        let mut frame = vec![0u8; FIRST_READ];
++        bus.host.cmd53(2, F2_ADDR, Data::Read(&mut frame), None)?;
++        if frame[..4] == [0; 4] {
++            return Ok(None);
++        }
++        let Some(len) = sdpcm::frame_len(&frame) else {
++            println!("bcm2835-sdiod: bad frame header {:02x?}", &frame[..4]);
++            self.abort_read(bus)?;
++            return Ok(None);
++        };
++        if len > FIRST_READ {
++            let rest = (len - FIRST_READ).next_multiple_of(4);
++            frame.resize(FIRST_READ + rest, 0);
++            let mut done = FIRST_READ;
++            while done < frame.len() {
++                let left = frame.len() - done;
++                let (n, block) = if left >= F2_BLOCK as usize {
++                    (left / F2_BLOCK as usize * F2_BLOCK as usize, Some(F2_BLOCK))
++                } else {
++                    (left, None)
++                };
++                bus.host.cmd53(2, F2_ADDR, Data::Read(&mut frame[done..done + n]), block)?;
++                done += n;
++            }
++        }
++        Ok(Some(frame))
++    }
++
++    /// Drops the rest of a frame the firmware is sending.
++    fn abort_read(&mut self, bus: &mut Bus) -> Result<(), String> {
++        bus.host.write_byte(0, CCCR_IOABORT, 2)?;
++        bus.host.write_byte(1, SBSDIO_FUNC1_FRAMECTRL, SFC_RF_TERM)?;
++        for _ in 0..10 {
++            let hi = bus.host.read_byte(1, SBSDIO_FUNC1_RFRAMEBCHI)?;
++            let lo = bus.host.read_byte(1, SBSDIO_FUNC1_RFRAMEBCLO)?;
++            if hi == 0 && lo == 0 {
++                break;
++            }
++        }
++        Ok(())
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+

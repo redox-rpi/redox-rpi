@@ -1,0 +1,35 @@
+# Firmware, regulatory data and board settings of the Pi 3B+ Wi-Fi chip
+# (CYW43455), for bcm2835-sdiod. Downloaded at build time from pinned
+# commits and checked; never kept in this repository (Cypress licence, see
+# patches/experiments/wifi-sdio/README.md).
+#
+# Installed to /usr/lib/firmware/brcm/:
+#   cyfmac43455-sdio-minimal.bin   firmware with the in-chip WPA supplicant
+#   cyfmac43455-sdio-standard.bin  firmware Raspberry Pi OS uses
+#   cyfmac43455-sdio.clm_blob      regulatory data
+#   brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt  NVRAM (board settings)
+#   LICENCE.cypress
+[build]
+template = "custom"
+script = """
+NONFREE=https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/c91cd2804cf7463aab913e7247c176049f16bbd6/debian/config/brcm80211
+LINUXFW=https://gitlab.com/kernel-firmware/linux-firmware/-/raw/20250311
+fetch() {
+    curl -sSfL --retry 3 -o "$2" "$1"
+    echo "$3  $2" | sha256sum -c -
+}
+fetch "$NONFREE/cypress/cyfmac43455-sdio-minimal.bin" cyfmac43455-sdio-minimal.bin \
+    3075cb0bdc4b28ed4f08e01b1a216d0ebc70f4022d9d3272a4a43b3c90456e60
+fetch "$NONFREE/cypress/cyfmac43455-sdio-standard.bin" cyfmac43455-sdio-standard.bin \
+    d608f866582519c0a28d86db43040f4f1b98dd1d153e72e9752586546b4a36c3
+fetch "$NONFREE/cypress/cyfmac43455-sdio.clm_blob" cyfmac43455-sdio.clm_blob \
+    9823842cae9fb9a5dd1e5fb31f595516ec7deee341354bef30bb3026eee29cc1
+# The board file for the 3B+ is a link to this one.
+fetch "$NONFREE/brcm/brcmfmac43455-sdio.txt" "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt" \
+    ca709be81a78bdb6932936374f39943acbd7af07fae6151011127599a3ce9e3d
+fetch "$LINUXFW/LICENCE.cypress" LICENCE.cypress \
+    ae0db6cc4db33941148df0f67de53e76a77b1b5a46b3165edb7040aa2750015f
+mkdir -p "${COOKBOOK_STAGE}/usr/lib/firmware/brcm"
+cp cyfmac43455-sdio-* "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt" LICENCE.cypress \
+    "${COOKBOOK_STAGE}/usr/lib/firmware/brcm/"
+"""

@@ -17,12 +17,31 @@ which frees the Arasan controller for the Wi-Fi chip.
   - reads the ChipCommon chip ID at `0x18000000` with CMD52 (bytes) and
     CMD53 (4 bytes), then again with CMD53 at 25 MHz on 4 data lines.
 
+- base `0032`: after the chip ID (`bcm2835-sdiod: chip ID OK`) it
+  - lists the backplane cores from the enumeration ROM and reads the
+    ARM CR4's RAM size,
+  - holds the ARM, writes firmware (the minimal one; `bcm2835-sdiod
+    standard` for the other) and the NVRAM block, reads both back,
+  - starts the ARM, waits for the HT clock and function 2,
+  - asks the firmware over the SDPCM/BCDC control channel for `ver` and
+    `cur_etheraddr`.
+- recipe `wifi-firmware` (in `recipes/`, added by `config.toml`):
+  downloads firmware, CLM blob, NVRAM file and `LICENCE.cypress` from
+  pinned commits of RPi-Distro/firmware-nonfree and linux-firmware, checks
+  their SHA-256 and installs them to `/usr/lib/firmware/brcm/`. The files
+  are under the Cypress licence (redistribution in binary form, for
+  Cypress chips only, no changes); they never go into this repository.
+
 It prints lines starting with `bcm2835-sdiod:` and ends with
-`bcm2835-sdiod: OK` (chip `0x4345` read the same three times) or
-`bcm2835-sdiod: FAILED` and the reason. No network interface yet, no
-firmware download.
+`bcm2835-sdiod: OK` or `bcm2835-sdiod: FAILED` and the reason. Without the
+firmware files it stops after the chip ID (still `OK`). No network
+interface yet.
 
 In QEMU the Arasan has no card behind it, so the probe ends with a CMD5
 timeout.
 
-Build: `--experiment wifi-sdio` on top of branch `sdhost-ctxleak`.
+Build: `--experiment wifi-sdio` on top of branch `sdhost-ctxleak`. The
+recipe needs network access on the build host (curl).
+
+Pi tests: #57 (chip ID, image from commit `fb78c4a`, before `0032`),
+then the firmware start (see `docs/test-plan.md`).
