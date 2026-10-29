@@ -15,8 +15,13 @@
 
 ## Next
 
-- [#6](https://github.com/redox-rpi/redox-rpi/issues/6) sdhost as the default driver: real core clock,
-  experiments to base patches, a check on the Zero 2 W.
+- [#6](https://github.com/redox-rpi/redox-rpi/issues/6) sdhost as the default driver, branch `sdhost-default`:
+  `sdhost-driver` and `sdhost-boot` are base patches `0022`–`0024`, and
+  `0025` divides the SD clock for the firmware's highest core clock (from
+  `rpi-firmwared`) instead of a fixed 400 MHz. Passes in QEMU
+  (`v0.3.0-dev-76-g13092c5+x9f76`). Pi tests queued: #23 network boot,
+  #24 SD card image on the Pi 3B+ and Zero 2 W (needs the user). Merge to
+  main after those.
 
 ## Later
 

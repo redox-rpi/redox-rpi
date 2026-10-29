@@ -533,3 +533,100 @@ Long run at 1400 MHz from a fresh boot
   firmware handles itself.
 
 Result: **pass**. With the x18 fix, 1400 MHz is ready for v0.3.0.
+
+## 2026-10-28: `v0.3.0-dev-52-g7df70f9+xcb30` (dwc2d with interrupts, test #5)
+
+Branch `dwc2-interrupts` (7df70f9) with `--experiment timesync --experiment
+rtl8152 --experiment pi-clean-boot --experiment dwc2-interrupts`, real Pi
+3B+ over netboot. The build predates the x18 fix on `main` (e2b987b), so
+start failures of about 1 % would not have been a `dwc2d` problem; there
+were none.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-52-g7df70f9+xcb30 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-52-g7df70f9+xcb30.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | pass | 44 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+- The boot log shows `dwc2d: interrupt /scheme/irq/phandle-1/1,9`: the
+  driver waits for the controller's interrupt on the real BCM2837, through
+  the LAN7800 (`link up after 1710 ms`). No "unexpected irq" lines.
+- Network over the LAN7800: 2000 lines of output through devshd in 2 s.
+- CPU time of `dwc2d` (`ps`, user + system): 2.85 s in 62 s with nothing
+  to do, about 5 % of one core. The polling driver keeps one core busy all
+  the time (4 min 21 s in about 80 s in QEMU, see the experiment's README).
+  The rest is mostly the keyboard: 100 polls per second, each a split
+  transaction through the hub that waits by spinning.
+- USB keyboard: the maintainer logged in on the HDMI console, ran `ls`
+  and `ps`; both worked.
+- `pi-clean-boot` (#18): no `pcid`, `pcid-spawner`, `audiod` or `rtcd`
+  messages in the boot log.
+- First boot with the Anker 565 hub plugged in but no cable on it: `dwc2d`
+  took the hub's RTL8153B as the network adapter (it is preferred over the
+  LAN7800), had no link, `dhcpd` timed out and did not retry when the
+  cable was plugged in later. Netbooting through the hub, U-Boot's r8152
+  driver fails the HTTP download (`Rx: failed to receive: -5`). Passed on
+  to test #4.
+- Afterwards, on the stable image, devshd logins hung (#11), so the
+  polling driver's CPU time was not measured on the Pi.
+
+Result: **pass**.
+
+## 2026-10-28: devshd hang-up (#11), `v0.3.0-dev-77-g6bcd0fb+x9f76`
+
+Test #21 for [#11](https://github.com/redox-rpi/redox-rpi/issues/11): the
+stable image's experiments (`timesync`, `rtl8152`) on branch
+[`devshd-hangup`](https://github.com/redox-rpi/redox-rpi/tree/devshd-hangup), where devshd sends SIGHUP to the terminal's
+foreground process group (then SIGKILL) when a client closes the
+connection without `exit`. Real Pi 3B+ over netboot, 600 MHz, one boot.
+
+| Step | Result |
+|---|---|
+| `scripts/pi-test.py` | version, manifest, ps, ps-tty, sdcard pass; 0 of 300 starts failed |
+| 10 clean devsh sessions (`echo`, `exit`) | all work, about 1.3 s each |
+| 3 dropped sessions (logged in, socket closed) | nothing left behind |
+| 10 dropped sessions, 5 of them with `sleep 600` running | nothing left behind |
+| `ps` afterwards | only the serial console's `login` processes, the current session and devshd with 4 threads |
+
+The first run of the session script stopped silently after the third
+dropped session (no error output was kept); the Pi was clean at that
+point, and the repeat with 10 dropped sessions ran through. Before the fix,
+in QEMU, each dropped session left a `login`, an `ion` and two devshd
+threads behind. The reset over devsh needed 2 tries before the test and
+1 after it.
+
+## 2026-10-29: #30, `v0.3.0-dev-80-g8bba533+x197a` (sdhost default + kernel memory fix), real Pi
+
+Rerun of #23 ([#6](https://github.com/redox-rpi/redox-rpi/issues/6),
+[#31](https://github.com/redox-rpi/redox-rpi/issues/31)): branch
+`sdhost-ctxleak` = `sdhost-default` + experiment `ctx-leak-fix`, with
+`timesync` and `rtl8152`. Built 2026-10-28T23:31:57Z, real Pi 3B+ over
+netboot, 15 GB SDHC card.
+
+#23 (`v0.3.0-dev-76-g13092c5+x9f76`, same without the fix) had ended in the
+kernel panic `not yet implemented: oom` while `sd-stress.py` wrote the 250
+new small files: the kernel kept ~76 KB per `dd` run (#31).
+
+Boot log: `rpi-firmwared` (ARM clock 600 -> 1400 MHz) before
+`bcm2835-sdhostd: core clock 250 MHz, up to 400 MHz`, `SDHC/SDXC card, 15193
+MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
+`bcm2835-sdhcid`; `/scheme/data` mounted.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-80-g8bba533+x197a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-80-g8bba533+x197a.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| memory | pass | `free` used 141 MB after boot, 143 MB after the 300 starts (743 MB total) |
+| sd-stress write | pass | 256 MiB at 7.9 MB/s; 1000 small files, 250 deleted, 250 new, 328 s; no `oom` |
+| sd-stress verify | pass | 1001 files, 0 missing, 0 changed |
+| sd-stress cycles | **stopped** | restart 1 done (back after 89 s), then no devsh answer from 08:25 UTC: the devshd hang ([#11](https://github.com/redox-rpi/redox-rpi/issues/11)), whose fix is not in this image. The Pi itself was alive (local console login). Stopped at the maintainer's request |
+
+The memory fix holds on the Pi: the workload that ended #23 in a panic ran
+through. Rerun the cycles with the devshd hangup fix included.

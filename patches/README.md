@@ -23,13 +23,14 @@ each one expects to come before it:
 | `0001`–`0016`, `0018`, `0021`–`0025` | `base/` | default patches; `0018` is `rpi-firmwared`, `0021` its ARM clock and throttle watch, `0022`–`0025` the sdhost driver (`bcm2835-sdhostd`), started at boot instead of `bcm2835-sdhcid` |
 | `0026` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
+| `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
+| `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
 
 Combinations that build: `sdhost-stats`, `rtl8152`, each with
-`ldso-diagnostics` and `timesync`. The experiments `sdhost-driver` and
-`sdhost-boot` are base patches now (`0022`–`0025`); their READMEs keep the
-test history.
-`dwc2-interrupts` (branch `dwc2-interrupts`) still has its own `0017` and
-conflicts with `rtl8152`.
+`ldso-diagnostics` and `timesync`. `rtl8152` + `pi-clean-boot` +
+`dwc2-interrupts`, in this order (test #5 on the Pi). The experiments
+`sdhost-driver` and `sdhost-boot` are base patches now (`0022`–`0025`);
+their READMEs keep the test history.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
 
