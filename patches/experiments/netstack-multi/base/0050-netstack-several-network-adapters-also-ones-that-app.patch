@@ -1,0 +1,593 @@
+From ef20a0c0e27fc18bd4d07865b06c081c1a2682ed Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:20:08 +0100
+Subject: [PATCH 50/53] netstack: several network adapters, also ones that
+ appear after start
+
+netstack opens every network.* scheme at start and looks again every
+2 s, so an adapter that comes up later (Wi-Fi, USB Ethernet plugged in)
+gets its own interface: network.wlan* become wlanN, the others ethN,
+wired ones first. netcfg lists the interfaces in ifaces/ and tells its
+readers when one is added. The address of the default route's interface
+is the first source address for smoltcp.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/adapters.rs          | 130 ++++++++++++++++++++++++++++++
+ netstack/src/main.rs              |  87 +++++++++-----------
+ netstack/src/scheme/mod.rs        |  32 +++++---
+ netstack/src/scheme/netcfg/mod.rs | 120 ++++++++++++++++++++++++---
+ 4 files changed, 298 insertions(+), 71 deletions(-)
+ create mode 100644 netstack/src/adapters.rs
+
+diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
+new file mode 100644
+index 0000000..b246677
+--- /dev/null
++++ b/netstack/src/adapters.rs
+@@ -0,0 +1,130 @@
++//! Network adapters: the `network.*` schemes the drivers register.
++//!
++//! netstack looks for them at start and again from time to time, so an
++//! adapter that comes up after boot (a Wi-Fi driver that joins a network,
++//! USB Ethernet plugged in later) gets its own interface. The `/scheme`
++//! directory is opened once before netstack enters the null namespace;
++//! later lookups go through that handle.
++
++use std::collections::BTreeSet;
++
++use libredox::flag::{O_DIRECTORY, O_NONBLOCK, O_RDONLY, O_RDWR};
++use libredox::Fd;
++use smoltcp::wire::EthernetAddress;
++use syscall::dirent::DirentIter;
++
++pub struct Adapter {
++    /// The driver's scheme, such as `network.usb_lan78xx`.
++    pub scheme: String,
++    /// The interface name: `eth0`, `eth1`, …, `wlan0` for `network.wlan*`.
++    pub name: String,
++    pub file: Fd,
++    pub mac: EthernetAddress,
++}
++
++pub struct Adapters {
++    root: Option<Fd>,
++    /// Schemes already in use, or that failed to open (logged once).
++    seen: BTreeSet<String>,
++    eth: usize,
++    wlan: usize,
++}
++
++impl Adapters {
++    pub fn new() -> Self {
++        let root = Fd::open("/scheme", O_DIRECTORY | O_RDONLY, 0)
++            .map_err(|e| warn!("cannot open /scheme ({e}); no adapters after start"))
++            .ok();
++        Adapters {
++            root,
++            seen: BTreeSet::new(),
++            eth: 0,
++            wlan: 0,
++        }
++    }
++
++    /// Opens the adapters that appeared since the last call. Wired ones
++    /// come first, so the first Ethernet adapter stays `eth0`.
++    pub fn scan(&mut self) -> Vec<Adapter> {
++        let mut new: Vec<String> = self
++            .list()
++            .into_iter()
++            .filter(|s| s.starts_with("network") && !self.seen.contains(s))
++            .collect();
++        new.sort_by_key(|s| (is_wlan(s), s.clone()));
++        let mut adapters = Vec::new();
++        for scheme in new {
++            self.seen.insert(scheme.clone());
++            match self.open(&scheme) {
++                Ok((file, mac)) => {
++                    let name = if is_wlan(&scheme) {
++                        self.wlan += 1;
++                        format!("wlan{}", self.wlan - 1)
++                    } else {
++                        self.eth += 1;
++                        format!("eth{}", self.eth - 1)
++                    };
++                    info!("adapter {scheme} as {name}, MAC {mac}");
++                    adapters.push(Adapter { scheme, name, file, mac });
++                }
++                Err(e) => warn!("cannot use adapter {scheme}: {e}"),
++            }
++        }
++        adapters
++    }
++
++    /// Names in `/scheme`.
++    fn list(&self) -> Vec<String> {
++        let Some(root) = &self.root else {
++            return Vec::new();
++        };
++        let mut names = Vec::new();
++        let mut buf = [0u8; 4096];
++        let mut opaque = 0;
++        loop {
++            let n = match libredox::call::getdents(root.raw(), &mut buf, opaque) {
++                Ok(0) => break,
++                Ok(n) => n,
++                Err(e) => {
++                    warn!("cannot list /scheme: {e}");
++                    break;
++                }
++            };
++            let mut last = None;
++            for entry in DirentIter::new(&buf[..n]) {
++                let Ok((header, name)) = entry else { break };
++                last = Some(header.next_opaque_id);
++                if let Ok(name) = std::str::from_utf8(name) {
++                    names.push(name.to_string());
++                }
++            }
++            match last {
++                Some(next) if next != opaque => opaque = next,
++                _ => break,
++            }
++        }
++        names
++    }
++
++    fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress), String> {
++        let open = |path: &str, flags: i32| -> Result<Fd, String> {
++            match &self.root {
++                Some(root) => root.openat(path, flags, 0),
++                None => Fd::open(&format!("/scheme/{path}"), flags, 0),
++            }
++            .map_err(|e| format!("open {path}: {e}"))
++        };
++        let file = open(scheme, O_RDWR | O_NONBLOCK)?;
++        let mac_file = open(&format!("{scheme}/mac"), O_RDONLY)?;
++        let mut mac = [0u8; 6];
++        let n = mac_file.read(&mut mac).map_err(|e| format!("read {scheme}/mac: {e}"))?;
++        if n != 6 {
++            return Err(format!("{scheme}/mac: {n} bytes"));
++        }
++        Ok((file, EthernetAddress::from_bytes(&mac)))
++    }
++}
++
++fn is_wlan(scheme: &str) -> bool {
++    scheme.starts_with("network.wlan")
++}
+diff --git a/netstack/src/main.rs b/netstack/src/main.rs
+index 084c3d3..87395f9 100644
+--- a/netstack/src/main.rs
++++ b/netstack/src/main.rs
+@@ -2,15 +2,15 @@
+ extern crate log;
+ use std::process;
+ 
+-use anyhow::{anyhow, bail, Context, Result};
++use anyhow::{anyhow, Context, Result};
+ use event::{EventFlags, EventQueue};
+-use libredox::flag::{O_NONBLOCK, O_RDWR};
++use libredox::flag::O_RDWR;
+ use libredox::Fd;
+ use redox_scheme::Socket;
+-use smoltcp::wire::EthernetAddress;
+-
++use crate::adapters::Adapters;
+ use crate::scheme::Smolnetd;
+ 
++mod adapters;
+ mod buffer_pool;
+ mod error;
+ mod link;
+@@ -19,48 +19,15 @@ mod port_set;
+ mod router;
+ mod scheme;
+ 
+-fn get_network_adapter() -> Result<String> {
+-    use std::fs;
+-
+-    let mut adapters = vec![];
+-
+-    for entry_res in fs::read_dir("/scheme")? {
+-        let Ok(entry) = entry_res else {
+-            continue;
+-        };
+-
+-        let Ok(scheme) = entry.file_name().into_string() else {
+-            continue;
+-        };
+-
+-        if !scheme.starts_with("network") {
+-            continue;
+-        }
+-
+-        adapters.push(scheme);
+-    }
+-
+-    if adapters.is_empty() {
+-        bail!("no network adapter found");
+-    } else {
+-        let adapter = adapters.remove(0);
+-        if !adapters.is_empty() {
+-            // FIXME allow using multiple network adapters at the same time
+-            warn!("Multiple network adapters found. Only {adapter} will be used");
+-        }
+-        Ok(adapter)
+-    }
+-}
++/// How often netstack looks for adapters that came up after it started.
++const ADAPTER_SCAN: std::time::Duration = std::time::Duration::from_secs(2);
+ 
+ fn run(daemon: daemon::Daemon) -> Result<()> {
+-    let adapter = get_network_adapter()?;
+-    trace!("opening {adapter}:");
+-    let network_fd = Fd::open(&format!("/scheme/{adapter}"), O_RDWR | O_NONBLOCK, 0)
+-        .map_err(|e| anyhow!("failed to open {adapter}: {e}"))?;
+-
+-    let hardware_addr = std::fs::read(format!("/scheme/{adapter}/mac"))
+-        .map(|mac_address| EthernetAddress::from_bytes(&mac_address))
+-        .context("failed to get mac address from network adapter")?;
++    let mut adapters = Adapters::new();
++    let first = adapters.scan();
++    if first.is_empty() {
++        warn!("no network adapter yet");
++    }
+ 
+     trace!("opening ip scheme socket");
+     let ip_fd = Socket::nonblock()
+@@ -102,9 +69,11 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+ 
+     daemon.ready();
+ 
+-    event_queue
+-        .subscribe(network_fd.raw(), EventSource::Network, EventFlags::READ)
+-        .map_err(|e| anyhow!("failed to listen to network events: {:?}", e))?;
++    for adapter in &first {
++        event_queue
++            .subscribe(adapter.file.raw(), EventSource::Network, EventFlags::READ)
++            .map_err(|e| anyhow!("failed to listen to network events: {:?}", e))?;
++    }
+ 
+     event_queue
+         .subscribe(time_fd.raw(), EventSource::Time, EventFlags::READ)
+@@ -147,8 +116,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+         .context("failed to listen to netcfg scheme events")?;
+ 
+     let mut smolnetd = Smolnetd::new(
+-        network_fd,
+-        hardware_addr,
++        first,
+         ip_fd,
+         udp_fd,
+         tcp_fd,
+@@ -160,6 +128,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+ 
+     libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+ 
++    let mut last_scan = std::time::Instant::now();
+     let all = {
+         use EventSource::*;
+         [Network, Time, IpScheme, UdpScheme, IcmpScheme, NetcfgScheme].map(Ok)
+@@ -167,11 +136,27 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+ 
+     for event_res in all
+         .into_iter()
+-        .chain(event_queue.map(|r| r.map(|e| e.user_data)))
++        .chain(event_queue.iter().map(|r| r.map(|e| e.user_data)))
+     {
+         match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
+             EventSource::Network => smolnetd.on_network_scheme_event(),
+-            EventSource::Time => smolnetd.on_time_event(),
++            EventSource::Time => {
++                if last_scan.elapsed() >= ADAPTER_SCAN {
++                    last_scan = std::time::Instant::now();
++                    for adapter in adapters.scan() {
++                        if let Err(e) = event_queue.subscribe(
++                            adapter.file.raw(),
++                            EventSource::Network,
++                            EventFlags::READ,
++                        ) {
++                            error!("cannot listen to {}: {:?}", adapter.scheme, e);
++                            continue;
++                        }
++                        smolnetd.add_adapter(adapter);
++                    }
++                }
++                smolnetd.on_time_event()
++            }
+             EventSource::IpScheme => smolnetd.on_ip_scheme_event(),
+             EventSource::UdpScheme => smolnetd.on_udp_scheme_event(),
+             EventSource::TcpScheme => smolnetd.on_tcp_scheme_event(),
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index c7d7916..e5cd6d3 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -14,7 +14,7 @@ use smoltcp::phy::Tracer;
+ use smoltcp::socket::AnySocket;
+ use smoltcp::time::{Duration, Instant};
+ use smoltcp::wire::{
+-    EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address,
++    HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address,
+ };
+ use syscall::data::TimeSpec;
+ use syscall::{self, Error as SyscallError};
+@@ -24,6 +24,7 @@ use self::ip::IpScheme;
+ use self::netcfg::NetCfgScheme;
+ use self::tcp::TcpScheme;
+ use self::udp::UdpScheme;
++use crate::adapters::Adapter;
+ use crate::error::{Error, Result};
+ use crate::link::ethernet::EthernetLink;
+ use crate::link::loopback::LoopbackDevice;
+@@ -55,6 +56,7 @@ fn getcfg(key: &str) -> Result<String> {
+ 
+ pub struct Smolnetd {
+     router_device: Tracer<Router>,
++    devices: Rc<RefCell<DeviceList>>,
+     iface: Interface,
+     time_file: File,
+ 
+@@ -75,8 +77,7 @@ impl Smolnetd {
+     pub const MAX_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
+ 
+     pub fn new(
+-        network_file: Fd,
+-        hardware_addr: EthernetAddress,
++        adapters: Vec<Adapter>,
+         ip_file: Socket,
+         udp_file: Socket,
+         tcp_file: Socket,
+@@ -119,15 +120,13 @@ impl Smolnetd {
+             "127.0.0.1".parse().unwrap(),
+         ));
+ 
+-        let mut eth0 = EthernetLink::new("eth0", unsafe {
+-            File::from_raw_fd(network_file.into_raw() as RawFd)
+-        });
+-        eth0.set_mac_address(hardware_addr);
+-
+         devices.borrow_mut().push(loopback);
+-        devices.borrow_mut().push(eth0);
++        for adapter in adapters {
++            devices.borrow_mut().push(ethernet_link(adapter));
++        }
+ 
+         Ok(Smolnetd {
++            devices: Rc::clone(&devices),
+             iface: Rc::clone(&iface),
+             router_device: network_device,
+             socket_set: Rc::clone(&socket_set),
+@@ -170,6 +169,13 @@ impl Smolnetd {
+         })
+     }
+ 
++    /// Takes an adapter that appeared after start.
++    pub fn add_adapter(&mut self, adapter: Adapter) {
++        let name = adapter.name.clone();
++        self.devices.borrow_mut().push(ethernet_link(adapter));
++        self.netcfg_scheme.interface_added(&name);
++    }
++
+     pub fn on_network_scheme_event(&mut self) -> Result<()> {
+         self.poll()?;
+         Ok(())
+@@ -275,6 +281,14 @@ impl Smolnetd {
+     }
+ }
+ 
++fn ethernet_link(adapter: Adapter) -> EthernetLink {
++    let mut link = EthernetLink::new(&adapter.name, unsafe {
++        File::from_raw_fd(adapter.file.into_raw() as RawFd)
++    });
++    link.set_mac_address(adapter.mac);
++    link
++}
++
+ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Result<()> {
+     let fevent_response = Response::post_fevent(id, flags);
+     match socket.write_response(fevent_response, SignalBehavior::Restart) {
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index f344e28..1e0780b 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -120,6 +120,7 @@ fn mk_root_node(
+                 |cur_value| {
+                     if let Some(route) = cur_value.take() {
+                         route_table.borrow_mut().insert_rule(route);
++                        prefer_default_source(&iface, &route_table.borrow());
+                         notifier.borrow_mut().schedule_notify("route/list");
+                         Ok(())
+                     } else {
+@@ -145,6 +146,7 @@ fn mk_root_node(
+                 |cur_value| {
+                     if let Some(cidr) = *cur_value {
+                         route_table.borrow_mut().remove_rule(cidr);
++                        prefer_default_source(&iface, &route_table.borrow());
+                         notifier.borrow_mut().schedule_notify("route/list");
+                         Ok(())
+                     } else {
+@@ -154,11 +156,25 @@ fn mk_root_node(
+             },
+         },
+         "ifaces" => {
+-            "eth0" => {
++            val IfacesNode::new_ref(iface.clone(), notifier.clone(), route_table.clone(), devices.clone())
++        }
++    }
++}
++
++/// The `ifaces/<name>` directory of one interface.
++fn mk_iface_node(
++    name: Rc<str>,
++    iface: Interface,
++    notifier: NotifierRef,
++    route_table: Rc<RefCell<RouteTable>>,
++    devices: Rc<RefCell<DeviceList>>,
++) -> CfgNodeRef {
++    cfg_node! {
++
+                 "mac" => {
+-                    rw [iface, notifier, devices] (Option<EthernetAddress>, None)
++                    rw [iface, notifier, devices, name] (Option<EthernetAddress>, None)
+                     || {
+-                        match devices.borrow().get("eth0") {
++                        match devices.borrow().get(&name) {
+                             Some(dev) => {
+                                 match dev.mac_address() {
+                                     Some(addr) => format!("{addr}\n"),
+@@ -183,9 +199,9 @@ fn mk_root_node(
+                     }
+                     |cur_value| {
+                         if let Some(mac) = *cur_value {
+-                            if let Some(dev) = devices.borrow_mut().get_mut("eth0") {
++                            if let Some(dev) = devices.borrow_mut().get_mut(&name) {
+                                 dev.set_mac_address(mac);
+-                                notifier.borrow_mut().schedule_notify("ifaces/eth0/mac");
++                                notifier.borrow_mut().schedule_notify(&format!("ifaces/{name}/mac"));
+                             }
+                         }
+                         Ok(())
+@@ -193,9 +209,9 @@ fn mk_root_node(
+                 },
+                 "addr" => {
+                     "list" => {
+-                        ro [devices]
++                        ro [devices, name]
+                         || {
+-                            let res = match devices.borrow().get("eth0") {
++                            let res = match devices.borrow().get(&name) {
+                                 Some(dev) => {
+                                     match dev.ip_address() {
+                                         Some(addr) => format!("{addr}\n"),
+@@ -208,7 +224,7 @@ fn mk_root_node(
+                         }
+                     },
+                     "set" => {
+-                        wo [iface, notifier, devices, route_table] (Option<IpCidr>, None)
++                        wo [iface, notifier, devices, route_table, name] (Option<IpCidr>, None)
+                         |cur_value, line| {
+                             if cur_value.is_none() {
+                                 let cidr = IpCidr::from_str(line)
+@@ -225,7 +241,7 @@ fn mk_root_node(
+                         |cur_value| {
+                             // TODO: Multiple IPs
+                             if let Some(cidr) = cur_value.take() {
+-                                if let Some(dev) = devices.borrow_mut().get_mut("eth0") {
++                                if let Some(dev) = devices.borrow_mut().get_mut(&name) {
+ 
+                                     let mut route_table = route_table.borrow_mut();
+                                     if let Some(old_addr) = dev.ip_address() {
+@@ -250,18 +266,90 @@ fn mk_root_node(
+                                     let network_cidr = IpCidr::Ipv4(v4_cidr.network());
+                                     route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()))
+                                 }
+-                                notifier.borrow_mut().schedule_notify("ifaces/eth0/addr/list");
++                                notifier.borrow_mut().schedule_notify(&format!("ifaces/{name}/addr/list"));
+                                 notifier.borrow_mut().schedule_notify("route/list");
+                             }
++                            prefer_default_source(&iface, &route_table.borrow());
+                             Ok(())
+                         }
+                     },
+                 }
+-            }
++    }
++}
++
++/// `ifaces`: one directory per network device; devices can appear while
++/// netstack runs.
++struct IfacesNode {
++    iface: Interface,
++    notifier: NotifierRef,
++    route_table: Rc<RefCell<RouteTable>>,
++    devices: Rc<RefCell<DeviceList>>,
++}
++
++impl IfacesNode {
++    fn new_ref(
++        iface: Interface,
++        notifier: NotifierRef,
++        route_table: Rc<RefCell<RouteTable>>,
++        devices: Rc<RefCell<DeviceList>>,
++    ) -> CfgNodeRef {
++        Rc::new(RefCell::new(IfacesNode {
++            iface,
++            notifier,
++            route_table,
++            devices,
++        }))
++    }
++}
++
++impl CfgNode for IfacesNode {
++    fn is_dir(&self) -> bool {
++        true
++    }
++
++    fn read(&self) -> String {
++        let names: Vec<String> = self
++            .devices
++            .borrow()
++            .iter()
++            .map(|dev| dev.name().to_string())
++            .filter(|name| name != "loopback")
++            .collect();
++        names.join("\n")
++    }
++
++    fn open(&self, file: &str) -> Option<CfgNodeRef> {
++        let name = Rc::clone(self.devices.borrow().get(file)?.name());
++        if name.as_ref() == "loopback" {
++            return None;
+         }
++        Some(mk_iface_node(
++            name,
++            Rc::clone(&self.iface),
++            Rc::clone(&self.notifier),
++            Rc::clone(&self.route_table),
++            Rc::clone(&self.devices),
++        ))
+     }
+ }
+ 
++/// smoltcp takes the first address as source for destinations outside all
++/// local subnets; make that the address of the default route's interface,
++/// so the source matches the interface the router sends from.
++fn prefer_default_source(iface: &Interface, route_table: &RouteTable) {
++    let Some(src) = route_table.lookup_src_addr(&IpAddress::v4(8, 8, 8, 8)) else {
++        return;
++    };
++    iface.borrow_mut().update_ip_addrs(|addrs| {
++        if let Some(pos) = addrs.iter().position(|cidr| cidr.address() == src) {
++            if pos != 0 {
++                let cidr = addrs.remove(pos);
++                let _ = addrs.insert(0, cidr);
++            }
++        }
++    });
++}
++
+ struct DNSConfig {
+     name_server: Ipv4Address,
+ }
+@@ -364,6 +452,16 @@ impl NetCfgScheme {
+         })
+     }
+ 
++    /// Tells readers of `ifaces` (dhcpd) that a device was added.
++    pub fn interface_added(&mut self, name: &str) {
++        debug!("netcfg: interface {name} added");
++        self.inner.notifier.borrow_mut().schedule_notify("ifaces");
++        let fds_to_notify = self.inner.notifier.borrow_mut().get_notified_fds();
++        for fd in fds_to_notify {
++            let _ = post_fevent(self.handler.socket(), fd, syscall::EVENT_READ.bits());
++        }
++    }
++
+     pub fn on_scheme_event(&mut self) -> Result<()> {
+         loop {
+             match self
+-- 
+2.54.0 (Apple Git-157)
+
