@@ -1266,3 +1266,46 @@ over devsh; timelines in `~/dwc2boot-work/tl-pi-{1,2}.txt` on homenodellm.
   15 checks pass, run twice; port off, disconnected after 104 ms, LAN7800
   found again, link up, devshd answers again each cycle.
   `KEYBOARD=1 … 1`: keyboard removed and found again: **pass**.
+
+## 2026-10-29: `v0.3.0-dev-216-gfb78c4a+xd4e7`
+
+Built 2026-10-29T13:55:43Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 57 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi SDIO probe), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-216-gfb78c4a+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 57 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi`, experiment `wifi-sdio`. Every `bcm2835-sdiod:` line from the serial log:
+
+```
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: OK
+```
+
+- **Pass**: `bcm2835-sdiod: OK`; `CMD5 R4 0x30ffff00, 3 functions`; `CIS
+  vendor 0x02d0`; `function 1 ready`; `ALP clock on`; the three `chipid`
+  lines (CMD52, CMD53, CMD53 at 25 MHz 4 bits) all `chip 0x4345 rev 6`.
+- Odd: writing `wifi_power` (0 and 1) gave `I/O error (os error 5)`, and it
+  "was 0" before; afterwards `cat /scheme/rpi-firmware/wifi_power` gives
+  `1`, and the chip answered.
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed; no
+  `bcm2835-sdhostd` errors. Only the known `pcid` panic in the log.
