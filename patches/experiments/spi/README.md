@@ -1,16 +1,13 @@
 # Experiment: SPI
 
 Issue [#42](https://github.com/redox-rpi/redox-rpi/issues/42), planned for
-v0.8.0. Builds on the [gpio](../gpio/README.md) experiment (#38), so both
-go in:
+v0.8.0. Builds on the [gpio](../gpio/README.md) (#38) and
+[i2c](../i2c/README.md) (#39) experiments (its patch adds the driver next
+to `bcm2835-i2cd` in the same lines), so all three go in:
 
 ```bash
-scripts/build-image.sh --experiment gpio --experiment spi
+scripts/build-image.sh --experiment gpio --experiment i2c --experiment spi
 ```
-
-Not together with the `i2c` experiment yet: both patches add their driver
-to the same lines (Makefile, workspace, drivers target). The merge puts
-them side by side.
 
 - **Base patch, `bcm2835-spid`** (new driver in the initfs, after
   `bcm2835-gpiod` and `rpi-firmwared`): SPI0 (header pins 19 MOSI, 21

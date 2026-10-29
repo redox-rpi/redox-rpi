@@ -1,4 +1,4 @@
-From e1e774eed28bce593cc8066b5231c22622a9601e Mon Sep 17 00:00:00 2001
+From 9593451ca468391e020a57f5288a39856fba98ce Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:52:27 +0100
 Subject: [PATCH] bcm2835-spid: SPI0 of the Raspberry Pi as a scheme
@@ -25,27 +25,27 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-spid.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 283616f..8710e30 100644
+index 0f8a865..cb81cf6 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -55,6 +55,7 @@ members = [
-     "drivers/net/virtio-netd",
+@@ -56,6 +56,7 @@ members = [
  
      "drivers/bcm2835-gpiod",
+     "drivers/bcm2835-i2cd",
 +    "drivers/bcm2835-spid",
      "drivers/rpi-firmwared",
      "drivers/redoxerd",
  
 diff --git a/Makefile b/Makefile
-index b3d89d3..cdaaf57 100644
+index c7d812c..8720740 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
  
  ifeq ($(TARGET),aarch64-unknown-redox)
--	INITFS_BINS += rpi-firmwared bcm2835-gpiod
-+	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-spid
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
  endif
  
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
@@ -511,13 +511,13 @@ index 0000000..a26e918
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8bf7bac..88a3634 100644
+index 27c880f..31aab52 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -5,6 +5,7 @@ requires_weak = [
-     "20_graphics.target",
+@@ -6,6 +6,7 @@ requires_weak = [
      "40_ps2d.service",
      "40_bcm2835-gpiod.service",
+     "41_bcm2835-i2cd.service",
 +    "41_bcm2835-spid.service",
      "40_bcm2835-sdhcid.service",
      "40_dwc2d.service",
