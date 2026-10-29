@@ -1071,3 +1071,40 @@ Test 47 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27),
   device(s) enumerated` (the LAN7800 behind the hub was not found),
   `smoltcpd: no network adapter found`. A second reset over the serial
   console found all 5 devices.
+
+## 2026-10-29: `v0.3.0-dev-209-ga15774d+xf552`
+
+Built 2026-10-29T13:25:24Z, `libc.so` `f4f18ab1a43e88c1…`, real Pi 3B+ over netboot. Experiments: `ipv6`, `lan78xx-multicast`, `mdns`, `multicast`, `rtl8152`, `timesync`. test 55 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27) IPv6 steps 3–4, [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS over IPv6), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-209-ga15774d+xf552 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 55 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27),
+[#37](https://github.com/redox-rpi/redox-rpi/issues/37)), branch `mdns6`,
+scripts `udp-echo.py` and `mdns-query.py` from `mdns6`:
+
+- Addresses: `fe80::ba27:ebff:fe08:e0aa/64` and the ULA
+  `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64`; **no global `2a02:…` address
+  and no IPv6 default route**, as in test 47.
+- `/scheme/netcfg/resolv/nameserver6`: `fdeb:d4ef:a7ac:0:b6fc:7dff:fe53:b289`
+  (the Fritz!Box, from RDNSS): **pass**.
+- `net6 resolve example.com` in 0.22 s: two IPv4 and two IPv6 addresses
+  (`2606:4700:10::ac42:93f3`, `2606:4700:10::6814:179a`): **pass**.
+- `net6 udp`: to homenodellm's ULA `[fdeb:…:4a45:e6ff:fea0:b063]:7777`
+  and to `192.168.178.120:7777` the reply comes back (the echo saw the Pi's
+  ULA and IPv4 address): **pass**. To homenodellm's global
+  `[2a02:590:1507:c201:4a45:e6ff:fea0:b063]:7777`: `receive: Connection
+  timed out`, nothing reached the echo (no global address or IPv6 route on
+  the Pi).
+- Ping from homenodellm to the Pi's ULA: 3 of 3; no `2a02` address to ping.
+- `mdns-query.py redox-rpi.local AAAA -6 wlp13s0`: the Pi answers over
+  IPv6 with AAAA `fe80::…` and `fdeb:…` plus A `192.168.178.148`;
+  `mdns-query.py redox-rpi.local` over IPv4: A plus both AAAA as
+  additional records: **pass** (the LAN7800 takes `33:33:00:00:00:fb`).
+- Standard checks pass; only the known `pcid` panic in the serial log.
