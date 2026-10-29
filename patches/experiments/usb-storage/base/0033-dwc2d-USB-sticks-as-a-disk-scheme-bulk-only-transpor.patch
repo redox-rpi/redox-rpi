@@ -1,4 +1,4 @@
-From 41d51d986fc5839241c043cf9eca9808607feb76 Mon Sep 17 00:00:00 2001
+From 169840e437a9595bf968fc3821efd5f5cb622429 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
@@ -53,10 +53,10 @@ index de3a4ea..0e10948 100644
  inputd = { path = "../../inputd" }
  
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 01cac8d..c265e6f 100644
+index 1b97738..ff4dc66 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
-@@ -437,6 +437,22 @@ impl Bus {
+@@ -438,6 +438,22 @@ impl Bus {
          Ok(())
      }
  
