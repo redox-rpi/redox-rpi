@@ -34,15 +34,14 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0028` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6) |
+| `0001`–`0016`, `0018`, `0020`–`0028`, `0030` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` leaves out `pcid`, `pcid-spawner`, `audiod` and `rtcd`, which the Pi has no hardware for (was experiment `pi-clean-boot`; #18) |
 | `0001`–`0008` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31) |
 | `0029` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
-| `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
 
 Experiments apply after all default patches. Combinations that build:
-`sdhost-stats`, `pi-clean-boot`, `timesync`, `ldso-diagnostics`.
-`rtl8152`, `dwc2-interrupts`, `serial-rx`, `sdhost-driver`, `sdhost-boot`
-and `ctx-leak-fix` are default patches now; the names are still accepted
+`sdhost-stats`, `timesync`, `ldso-diagnostics`. `rtl8152`,
+`dwc2-interrupts`, `serial-rx`, `sdhost-driver`, `sdhost-boot`,
+`ctx-leak-fix` and `pi-clean-boot` are default patches now; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
