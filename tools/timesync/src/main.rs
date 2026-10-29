@@ -6,6 +6,9 @@
 //! `/etc/redox-rpi-release`) and the time saved by an earlier run. Then it
 //! asks NTP servers (SNTP, RFC 4330) for the time and saves it.
 //!
+//! A DS3231 real-time clock on I2C (experiment `i2c`), if there is one,
+//! comes first at start, and gets the NTP time after each answer.
+//!
 //! The clock is set by writing the boot time, in nanoseconds since 1970, to
 //! the kernel's `/scheme/sys/update_time_offset`. Needs root.
 //!
@@ -17,11 +20,13 @@
 //! seconds until the first answer: Redox' DNS lookup has no timeout, so a
 //! lookup before the network is up would wait forever.
 
+mod rtc;
+
 use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
@@ -47,6 +52,8 @@ const RETRY_EVERY: Duration = Duration::from_secs(30);
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Lookups that never returned; no new ones beyond this.
 const MAX_STUCK_LOOKUPS: usize = 4;
+/// "RTC set" is reported only the first time.
+static RTC_REPORTED: AtomicBool = AtomicBool::new(false);
 static PENDING_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
 /// Routes set by DHCP (`default via …`), from smolnetd.
 const ROUTES: &str = "/scheme/netcfg/route/list";
@@ -134,19 +141,23 @@ fn query(server: &str) -> io::Result<(u128, u128)> {
     Ok((ns, received))
 }
 
-/// "YYYY-MM-DD HH:MM:SS" in UTC (days to civil date after Howard Hinnant).
-fn format_utc(unix: u64) -> String {
-    let days = (unix / 86_400) as i64;
-    let secs = unix % 86_400;
+/// (year, month, day) of a day count since 1970 (after Howard Hinnant).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+/// "YYYY-MM-DD HH:MM:SS" in UTC.
+fn format_utc(unix: u64) -> String {
+    let (year, month, day) = civil_from_days((unix / 86_400) as i64);
+    let secs = unix % 86_400;
     format!(
         "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}",
         secs / 3600,
@@ -155,7 +166,18 @@ fn format_utc(unix: u64) -> String {
     )
 }
 
-/// Unix time of "YYYY-MM-DDTHH:MM:SSZ" (civil date to days, Howard Hinnant).
+/// Days since 1970 of a civil date (after Howard Hinnant).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Unix time of "YYYY-MM-DDTHH:MM:SSZ".
 fn parse_utc(s: &str) -> Option<u64> {
     let num = |range: std::ops::Range<usize>| s.get(range)?.parse::<i64>().ok();
     if s.len() != 20 || !s.ends_with('Z') {
@@ -163,14 +185,7 @@ fn parse_utc(s: &str) -> Option<u64> {
     }
     let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
     let (hour, minute, second) = (num(11..13)?, num(14..16)?, num(17..19)?);
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    u64::try_from(days * 86_400 + hour * 3600 + minute * 60 + second).ok()
+    u64::try_from(days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second).ok()
 }
 
 /// The image's build time from `BUILD="…"` in the release file.
@@ -202,10 +217,25 @@ fn save_time() {
     eprintln!("timesync: cannot save the time to {}", SAVED.join(" or "));
 }
 
-/// Move the clock forward to the build time or the saved time, whichever is
-/// newer, if it is behind both.
+/// The RTC's time, None (with a message) if it has none that is valid.
+fn rtc_time() -> Option<u64> {
+    match rtc::read() {
+        Ok(time) => time,
+        Err(err) => {
+            eprintln!("timesync: not using the RTC: {err}");
+            None
+        }
+    }
+}
+
+/// Move the clock forward to the newest of the RTC, the build time and the
+/// saved time, if it is behind it.
 fn restore() {
-    let candidates = [(build_time(), "the build time"), (saved_time(), "the saved time")];
+    let candidates = [
+        (rtc_time(), "the RTC"),
+        (build_time(), "the build time"),
+        (saved_time(), "the saved time"),
+    ];
     let Some((floor, source)) = candidates
         .iter()
         .filter_map(|(time, source)| Some((time.as_ref().copied()?, *source)))
@@ -244,6 +274,15 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
                     }
                     println!("timesync: clock set to {} UTC from {server}", format_utc(unix));
                     let _ = fs::write(SYNCED, format!("{unix}\n"));
+                    match rtc::write(realtime_secs()) {
+                        Ok(true) => {
+                            if !RTC_REPORTED.swap(true, Ordering::SeqCst) {
+                                println!("timesync: RTC set");
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(err) => eprintln!("timesync: cannot set the RTC: {err}"),
+                    }
                     return Ok(unix);
                 }
                 Err(err) => last_error = format!("{server}: {err}"),
@@ -268,7 +307,11 @@ fn main() {
         args.iter().map(String::as_str).collect()
     };
 
-    if !dry_run {
+    if dry_run {
+        if let Some(time) = rtc_time() {
+            println!("timesync: RTC {} UTC", format_utc(time));
+        }
+    } else {
         restore();
     }
     let mut result = sync(&servers, dry_run);
