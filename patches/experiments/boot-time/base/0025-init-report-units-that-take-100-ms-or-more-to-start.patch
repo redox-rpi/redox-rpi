@@ -1,0 +1,94 @@
+From 836220c78ff2f781be8db80e23345d28801fd438 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 13:47:56 +0000
+Subject: [PATCH] init: report units that take 100 ms or more to start
+
+Each line gives the time since init started its first unit and how long
+the unit took until init went on (#47, boot time).
+---
+ Cargo.lock            | 16 ++++++++++++++++
+ init/src/scheduler.rs | 19 +++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 3823eb23..c6be138e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -729,7 +729,10 @@ dependencies = [
+  "daemon",
+  "driver-network",
+  "fdt 0.2.0-alpha1",
++ "inputd",
+  "libredox",
++ "orbclient",
++ "redox_event",
+  "redox_syscall 0.9.5",
+ ]
+ 
+@@ -2196,6 +2199,19 @@ dependencies = [
+  "serde_derive",
+ ]
+ 
++[[package]]
++name = "rpi-firmwared"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+ name = "rtcd"
+ version = "0.1.0"
+diff --git a/init/src/scheduler.rs b/init/src/scheduler.rs
+index d42a4e57..23540a9d 100644
+--- a/init/src/scheduler.rs
++++ b/init/src/scheduler.rs
+@@ -1,4 +1,6 @@
+ use std::collections::VecDeque;
++use std::sync::OnceLock;
++use std::time::{Duration, Instant};
+ 
+ use crate::InitConfig;
+ use crate::unit::{Unit, UnitId, UnitKind, UnitStore};
+@@ -80,7 +82,14 @@ impl Scheduler {
+     }
+ }
+ 
++/// When init started its first unit
++static FIRST_START: OnceLock<Instant> = OnceLock::new();
++
++/// Units that take longer than this to start are reported with their time
++const SLOW_START: Duration = Duration::from_millis(100);
++
+ fn run(unit: &mut Unit, config: &mut InitConfig) {
++    let first = *FIRST_START.get_or_init(Instant::now);
+     match &unit.kind {
+         UnitKind::LegacyScript { script } => {
+             for cmd in script.clone() {
+@@ -102,7 +111,17 @@ fn run(unit: &mut Unit, config: &mut InitConfig) {
+                     service.cmd,
+                 );
+             }
++            let start = Instant::now();
+             service.spawn(&config.envs);
++            let took = start.elapsed();
++            if took >= SLOW_START {
++                eprintln!(
++                    "init: [{:.2} s] {} ready after {} ms",
++                    first.elapsed().as_secs_f64(),
++                    unit.id.0,
++                    took.as_millis(),
++                );
++            }
+         }
+         UnitKind::Target {} => {
+             if config.log_debug {
+-- 
+2.53.0
+
