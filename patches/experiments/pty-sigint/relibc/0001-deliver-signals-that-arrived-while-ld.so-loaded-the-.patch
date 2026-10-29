@@ -1,0 +1,15 @@
+--- a/src/platform/mod.rs
++++ b/src/platform/mod.rs
+@@ -365,6 +365,12 @@
+         &[redox_protocols::protocol::ProcCall::SyncSigPctl as u64],
+     )
+     .expect("failed to sync signal pctl");
++    // procmgr has moved signals that arrived while ld.so loaded the program
++    // into our control struct. Setting the mask again delivers a pending
++    // unblocked one now; otherwise it would wait for the next signal.
++    if let Ok(mask) = redox_rt::signal::get_sigmask() {
++        let _ = redox_rt::signal::set_sigmask(Some(mask), None);
++    }
+ 
+     if let (Some(cwd_ptr), Some(cwd_len), Some(cwd_fd)) = (
+         get_auxv(&auxvs, AT_REDOX_INITIAL_CWD_PTR),
