@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # QEMU check for the poweroff experiment (#7): `poweroff` stops the programs
-# started after boot, closes the file systems and halts through the
+# started after boot and halts through the
 # watchdog; QEMU models the halt (partition 63) and exits instead of
 # restarting. The run script then reports "QEMU exited", which is the
 # expected end here.
@@ -20,7 +20,6 @@ check() {
     if grep -qE "$2" <<< "$log"; then echo "PASS: $1"; else echo "FAIL: $1"; failed=1; fi
 }
 check "programs stopped" "^poweroff: [1-9][0-9]* programs stopped, [0-9]+ killed"
-check "file systems closed" "^poweroff: [1-9][0-9]* file systems closed"
 check "reached kstop" "^poweroff: shutdown through kstop"
 if grep -q "QEMU exited" "$ROOT/images/qemu-poweroff.out"; then echo "PASS: QEMU halted"; else echo "FAIL: QEMU halted"; failed=1; fi
 if grep -qE "did not shutdown|poweroff: .*(error|denied)" <<< "$log"; then echo "FAIL: poweroff error"; failed=1; fi

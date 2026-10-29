@@ -1,19 +1,17 @@
-//! Shared code of `reboot` and `poweroff`: stop the session programs,
-//! close the file systems and ask the kernel to stop through
-//! `/scheme/sys/kstop`. Needs root.
+//! Shared code of `reboot` and `poweroff`: stop the programs started after
+//! boot and ask the kernel to stop through `/scheme/sys/kstop`. Needs root.
 //!
 //! Redox has no shutdown sequence in `init`, and `sync()` does nothing in
-//! relibc (RedoxFS writes each change through to the disk). So the tools do
-//! it themselves, in this order:
+//! relibc. RedoxFS needs none: each change is a transaction that writes its
+//! blocks and then a new header before the call returns. So the tools:
 //!
-//! 1. SIGTERM to the programs started after boot (from `/usr/bin` and
-//!    elsewhere, not from the initfs): shells, `login`, `getty`, `devshd`,
-//!    `timesync`, network daemons. After 5 seconds SIGKILL to those still
-//!    there. Kept: drivers and daemons from the initfs, `ptyd`, and RedoxFS.
-//! 2. SIGTERM to each RedoxFS: it unmounts after the next request (which a
-//!    `stat` of `/` sends to the root), committing its allocator.
-//! 3. A second of rest, so the SD card can finish writing.
-//! 4. `kstop`.
+//! 1. Send SIGTERM to the programs started after boot (not from the
+//!    initfs): shells, `login`, `getty`, `devshd`, `timesync`, network
+//!    daemons, so they can save what they hold. After 5 seconds SIGKILL to
+//!    those still there. Kept: drivers and daemons from the initfs, `ptyd`,
+//!    and RedoxFS.
+//! 2. Wait a second, so the SD card can finish writing.
+//! 3. Write to `kstop`.
 
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
@@ -21,7 +19,7 @@ use std::io::Write;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// Programs in step 1 have this long to end after SIGTERM.
+/// Programs have this long to end after SIGTERM.
 const GRACE: Duration = Duration::from_secs(5);
 /// Rest before `kstop` for the SD card.
 const SETTLE: Duration = Duration::from_secs(1);
@@ -115,18 +113,6 @@ fn stop_programs() -> (usize, usize) {
     (targets.len() - left.len(), left.len())
 }
 
-/// Step 2. Returns how many RedoxFS processes were asked to unmount.
-fn close_file_systems() -> usize {
-    let filesystems: Vec<u32> =
-        processes().into_iter().filter(|p| base_name(&p.name) == "redoxfs").map(|p| p.pid).collect();
-    for &pid in &filesystems {
-        signal(pid, libc::SIGTERM);
-    }
-    // RedoxFS notices the signal only after its next request.
-    let _ = std::fs::metadata("/");
-    filesystems.len()
-}
-
 /// Stops the system as described above and writes `request` (`reset` or
 /// `shutdown`) to `kstop`. Returns only if the kernel did not stop.
 pub fn kstop(tool: &'static str, request: &str) -> ! {
@@ -147,8 +133,6 @@ pub fn kstop(tool: &'static str, request: &str) -> ! {
     leave_terminal();
     let (stopped, killed) = stop_programs();
     report.say(&format!("{stopped} programs stopped, {killed} killed"));
-    let filesystems = close_file_systems();
-    report.say(&format!("{filesystems} file systems closed"));
     sleep(SETTLE);
     report.say(&format!("{request} through kstop"));
     let result = OpenOptions::new()
