@@ -40,4 +40,4 @@ Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
   removal), which is harmless on the Pi. CDC-ACM, CP210x and CH340 have
   no QEMU device; they share the scheme and the transfer code and differ
   only in their setup requests, checked on the Pi.
-- **Pi**: test #57 in docs/test-plan.md, with a person and a stick.
+- **Pi**: test #62 in docs/test-plan.md, with a person and a stick.
