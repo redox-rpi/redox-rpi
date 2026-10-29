@@ -1,4 +1,4 @@
-From 813dd2c51d0325f3d5ede8b4745ab0a284b41175 Mon Sep 17 00:00:00 2001
+From ba6b99a5ec0a05d6f0971522dc3f13f050773e69 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 15:36:35 +0000
 Subject: [PATCH] bcm2835-sdhostd: sleep until the DMA channel interrupt
@@ -10,11 +10,11 @@ channel interrupt (dma4 in the devicetree) through the irq scheme, with a
 10 ms timer for the sdhost checks and the timeout. Without the interrupt
 it polls as before.
 ---
- drivers/storage/bcm2835-sdhostd/src/dma.rs | 175 ++++++++++++++++++++-
- 1 file changed, 174 insertions(+), 1 deletion(-)
+ drivers/storage/bcm2835-sdhostd/src/dma.rs | 176 ++++++++++++++++++++-
+ 1 file changed, 175 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/storage/bcm2835-sdhostd/src/dma.rs b/drivers/storage/bcm2835-sdhostd/src/dma.rs
-index f31f8dd3..7de9d6d4 100644
+index f31f8dd3..44a43815 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/dma.rs
 +++ b/drivers/storage/bcm2835-sdhostd/src/dma.rs
 @@ -1,14 +1,21 @@
@@ -58,7 +58,7 @@ index f31f8dd3..7de9d6d4 100644
  
  /// One control block; the controller needs them aligned to 32 bytes.
  #[repr(C, align(32))]
-@@ -105,6 +116,53 @@ pub struct SdDma {
+@@ -105,6 +116,54 @@ pub struct SdDma {
      ram_bus_offset: usize,
      /// Bus address of SDDATA.
      sddata: u32,
@@ -82,7 +82,8 @@ index f31f8dd3..7de9d6d4 100644
 +
 +impl IrqWait {
 +    fn open(path: &str) -> std::io::Result<Self> {
-+        let irq = OpenOptions::new().read(true).write(true).open(path)?;
++        // The irq scheme reserves the line only for an open with O_CREAT.
++        let irq = OpenOptions::new().read(true).write(true).create(true).open(path)?;
 +        let timer = OpenOptions::new()
 +            .read(true)
 +            .write(true)
@@ -112,7 +113,7 @@ index f31f8dd3..7de9d6d4 100644
  }
  
  // The channel and the buffers belong to this driver alone.
-@@ -150,6 +208,23 @@ impl SdDma {
+@@ -150,6 +209,23 @@ impl SdDma {
                  .assume_init()
          };
  
@@ -136,7 +137,7 @@ index f31f8dd3..7de9d6d4 100644
          let dma = SdDma {
              regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
              page,
-@@ -157,6 +232,8 @@ impl SdDma {
+@@ -157,6 +233,8 @@ impl SdDma {
              bounce,
              ram_bus_offset: ram_bus_offset(fdt),
              sddata: sddata_bus as u32,
@@ -145,7 +146,7 @@ index f31f8dd3..7de9d6d4 100644
          };
          let enable = dma.page_reg(ENABLE);
          dma.set_page_reg(ENABLE, enable | 1 << CHANNEL);
-@@ -203,6 +280,7 @@ impl SdDma {
+@@ -203,6 +281,7 @@ impl SdDma {
          mut check: impl FnMut() -> bool,
      ) -> Result<(), DmaError> {
          assert!(len > 0 && len <= BOUNCE_SIZE && len % 4 == 0);
@@ -153,7 +154,7 @@ index f31f8dd3..7de9d6d4 100644
          *self.cb = ControlBlock {
              ti,
              source,
-@@ -219,6 +297,10 @@ impl SdDma {
+@@ -219,6 +298,10 @@ impl SdDma {
          self.set_reg(CONBLK_AD, cb_bus);
          self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
  
@@ -164,7 +165,7 @@ index f31f8dd3..7de9d6d4 100644
          let start = Instant::now();
          loop {
              let cs = self.reg(CS);
-@@ -245,6 +327,65 @@ impl SdDma {
+@@ -245,6 +328,65 @@ impl SdDma {
          }
      }
  
@@ -230,7 +231,7 @@ index f31f8dd3..7de9d6d4 100644
      /// Stop whatever the channel does and clear its errors.
      fn reset(&self) {
          if self.reg(CS) & CS_ACTIVE != 0 {
-@@ -282,6 +423,38 @@ const fn TI_PERMAP(dreq: u32) -> u32 {
+@@ -282,6 +424,38 @@ const fn TI_PERMAP(dreq: u32) -> u32 {
      dreq << TI_PERMAP_SHIFT
  }
  
