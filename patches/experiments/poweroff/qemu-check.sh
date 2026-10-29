@@ -12,6 +12,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$image" --timeout 800 \
+    --expect "redox login:" --expect "devshd:" \
     --run "poweroff" > "$ROOT/images/qemu-poweroff.out" 2>&1
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
 failed=0
