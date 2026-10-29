@@ -98,22 +98,44 @@ driver small compared to a SoftMAC chip.
 
 ### WPA2
 
-Two ways:
+Which firmware has a supplicant, checked offline on 2026-10-29 from the
+build tag at the end of each file (the feature list the firmware was
+built with) in RPi-Distro/firmware-nonfree:
 
-- **Firmware supplicant (preferred).** Linux `brcmfmac` uses it when the
-  firmware answers the `sup_wpa` iovar (its `FWSUP` feature): the host
-  sets the passphrase (`wsec_pmk`) and the chip does the 4-way handshake
-  itself. Then WPA2 costs almost nothing extra. Whether the Pi's
-  `cyfmac43455-sdio-standard.bin` has it is **unknown**; it is the first
-  thing to ask the chip once the "ver" iovar answers (step 2). WPA3-SAE
-  would need the `sae` feature on top.
-- **Host supplicant (fallback).** If the firmware has no supplicant, the
-  driver must pass EAPOL frames up and something must do PBKDF2 for the
-  PMK, the 4-way and group handshakes, and install the keys with iovars.
+| File | Version | Build tag features | Firmware supplicant |
+|---|---|---|---|
+| `cyfmac43455-sdio-standard.bin` | 7.45.265 (2023-08-29) | `…-mfp-…-gtkoe-roamprof-txbf-ve-extsae-dpp-sr-okc-bpd` | **no** (`idsup` missing); `extsae` means SAE done by the host |
+| `cyfmac43455-sdio-minimal.bin` | 7.45.241 (2021-11-01) | `…-wl11u-wfds-mfp-wowlpf-idsup-idauth-maxclients-…` | **yes**: `idsup` (in-dongle supplicant, what `sup_wpa` reports) and `idauth` |
+
+- Raspberry Pi OS installs both and picks **standard** by default
+  (`update-alternatives`, priority 50 against 10 for minimal).
+- It also loads `brcmfmac` with `feature_disable=0x282000`. In the Linux
+  feature list that is bit 13 `FWSUP`, bit 19 `SAE` and bit 21
+  `DUMP_OBSS`: Pi OS switches the firmware supplicant off even where it
+  exists and always uses host `wpa_supplicant`. Why is not documented
+  (the same file also turns roaming off "for WLAN stability").
+- The iovar name `sup_wpa` itself is not in either file; the iovar tables
+  are in the chip's ROM ("roml" in the tag). So the build tag is the
+  evidence, and the real answer comes from asking the chip in step 2.
+
+Two ways, then:
+
+- **Firmware supplicant with the minimal file (cheapest).** The host sets
+  the passphrase (`wsec_pmk`) and the chip does the 4-way handshake
+  itself, so WPA2-PSK costs almost nothing extra. The price: the older
+  2021 firmware, no WPA3 (no SAE in that file), and a path Pi OS avoids,
+  so stability problems would be ours to find.
+- **Host supplicant with the standard file (what Pi OS does).** The
+  driver passes EAPOL frames up, and something does PBKDF2 for the PMK,
+  the 4-way and group handshakes, and installs the keys with iovars.
   Porting `wpa_supplicant` (BSD licence) to Redox means its driver
   interface, nl80211-free, plus relibc gaps; a small Rust handshake of our
   own is likely less work: **800–1200 lines** (PBKDF2-SHA1, HMAC, AES key
-  wrap from existing crates).
+  wrap from existing crates). WPA3-SAE later through `extsae` (the host
+  does SAE, the firmware the rest).
+
+Plan: start with the minimal file and the firmware supplicant to get a
+first WPA2 join quickly, then decide on the host supplicant once it runs.
 
 ### Netstack
 
@@ -151,8 +173,8 @@ No code from GPL sources (CONTRIBUTING.md).
 | Scan and join, firmware WPA2 | 400–600 | days |
 | Network adapter | 150–300 | days |
 | Settings tool | 200–300 | days |
-| **Sum with firmware supplicant** | **about 3000–4000** | **1–2 months** |
-| Host supplicant, if needed | 800–1200 | +2–3 weeks |
+| **Sum with firmware supplicant (minimal file)** | **about 3000–4000** | **1–2 months** |
+| Host supplicant (standard file, WPA3 later) | 800–1200 | +2–3 weeks |
 | `netstack` with several adapters | 300–600 | +1–2 weeks |
 
 These estimates are calendar time in the style of the other pages. The
@@ -173,7 +195,8 @@ log.
 Not started. Milestones, each a Pi test:
 
 1. After #6: the SDIO driver enumerates the chip and reads chip ID 0x4345.
-2. Firmware and NVRAM loaded, the "ver" iovar answers; check `sup_wpa`.
+2. Firmware (minimal file) and NVRAM loaded, the "ver" iovar answers;
+   `sup_wpa` reads 1.
 3. A scan lists the networks around the test Pi.
 4. Join the Fritz!Box over WPA2 with the firmware supplicant, `dhcpd`
    gets an address, `scripts/pi-test.py` runs over Wi-Fi (Ethernet cable
@@ -193,7 +216,8 @@ Not started. Milestones, each a Pi test:
 - Linux device tree: `arch/arm/boot/dts/broadcom/bcm2837-rpi-3-b-plus.dts`,
   `bcm283x-rpi-wifi-bt.dtsi` (wiring only, no code taken)
 - [RPi-Distro/firmware-nonfree](https://github.com/RPi-Distro/firmware-nonfree)
-  (firmware files, `LICENCE.cypress`)
+  (firmware files, `LICENCE.cypress`, `debian/config/defines.toml` for the
+  standard/minimal choice, `debian/rpi-brcmfmac.conf`)
 - [OpenBSD bwfm(4)](https://man.openbsd.org/bwfm.4), `sys/dev/sdmmc/if_bwfm_sdio.c`,
   `sys/dev/ic/bwfm.c` (ISC)
 - Linux `drivers/net/wireless/broadcom/brcm80211/brcmfmac/` (ISC), feature
