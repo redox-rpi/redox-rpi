@@ -1476,3 +1476,37 @@ Test 59 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45)), branch
   `/scheme/data`**, so it is not new in this branch.
 - `/scheme/data` was mounted; standard checks pass, 0 of 300 starts failed
   (devshd). The temporary key files were deleted afterwards.
+
+## 2026-10-29: `v0.3.0-dev-100-g0a85e1e+xd656`
+
+Built 2026-10-29T14:09:20Z, `libc.so` `d19d472ff4ba92c2…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `mqtt`, `mqtt-demo`, `timerd`, `timesync`. test 58 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) MQTT), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-100-g0a85e1e+xd656 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 59 processes (piped) |
+| ps-tty | pass | 59 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 58 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
+`mqtt`; mosquitto on homenodellm (`~/mqtt-broker/pi-test-broker.sh`).
+
+- `echo 192.168.178.120 > /etc/mqtt-host`; `mqtt-pub -t redox/pi/hello -q 1
+  -m hello` exit 0, the broker has `redox/pi/hello hello`: **pass**.
+- `mosquitto_pub … -t redox/cmd/x -m to-pi` while `mqtt-sub -t 'redox/cmd/#'
+  -q 1 -v -C 1` runs on the Pi: prints `redox/cmd/x to-pi`, exit 0: **pass**.
+- `cat /scheme/rpi-firmware/temperature`: 58533.
+- **Found**: the two demo timers published nothing for 8 minutes. Their
+  first `mqtt-pub` runs (PIDs 41 and 44, started at boot, before
+  `/etc/mqtt-host` was set, so to the default host 10.0.2.2) hung and never
+  ended, and timerd logged `mqtt-uptime: still running, skipped this run`
+  (and the same for `mqtt-temperature`) every minute. `timerd -l` over devsh
+  also hung then. After `kill 41 44` both timers published once a minute:
+  `redox-rpi/temperature 56920`, `redox-rpi/uptime 11m 56s`, and so on;
+  `timerd -l` shows both with a last run. So `mqtt-pub` needs a connect
+  timeout (or the demo should wait for `/etc/mqtt-host`).
+- No `RELIBC PANIC` or `exited with code 1` in the serial log. Standard
+  checks pass, 0 of 300 starts failed. devsh did not answer some sessions
+  in between (one `uptime` timed out).
