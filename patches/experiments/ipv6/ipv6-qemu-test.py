@@ -9,11 +9,16 @@ Joins the multicast group of QEMU's socket netdev (`qemu-raspi3b.sh
   solicitation the first one goes out after 240 s;
 - answers neighbor solicitations for its own addresses;
 - asks for the guest's SLAAC address with a neighbor solicitation;
-- pings the guest's link-local and SLAAC address (ICMPv6 echo).
+- pings the guest's link-local and SLAAC address (ICMPv6 echo);
+- names itself as DNS server in the advertisement (RDNSS) and answers DNS
+  queries over IPv6: `matter.test` AAAA 2001:db8:1::99, no A record;
+- echoes UDP datagrams to port 7 of its IPv6 addresses.
 
 Exit code 0 when it saw a router solicitation, a neighbor advertisement
 from the guest for its SLAAC address and echo replies from both addresses
-within --seconds.
+within --seconds; with --udp also an AAAA query and a UDP echo over IPv6
+(`net6 resolve matter.test`, `net6 udp [2001:db8:1::1]:7 hello` in the
+guest).
 """
 
 import argparse
@@ -33,6 +38,8 @@ def eui64(prefix, mac):
 HOST_LL = eui64(bytes.fromhex("fe80" + "00" * 14), HOST_MAC)
 HOST_GLOBAL = PREFIX[:15] + b"\x01"
 ALL_NODES = bytes.fromhex("ff020000000000000000000000000001")
+DNS_NAME = "matter.test"
+DNS_AAAA = PREFIX[:15] + b"\x99"
 
 
 def checksum(data):
@@ -59,7 +66,33 @@ def router_advert():
     body = struct.pack("!BBHBBHII", 134, 0, 0, 64, 0, 1800, 0, 0)
     prefix = struct.pack("!BBBBIII", 3, 4, 64, 0xC0, 86400, 14400, 0) + PREFIX
     sllao = struct.pack("!BB", 1, 1) + HOST_MAC
-    return icmp6_frame(mcast_mac(ALL_NODES), HOST_LL, ALL_NODES, body + prefix + sllao)
+    rdnss = struct.pack("!BBHI", 25, 3, 0, 1800) + HOST_GLOBAL
+    return icmp6_frame(mcast_mac(ALL_NODES), HOST_LL, ALL_NODES, body + prefix + sllao + rdnss)
+
+
+def udp6_frame(dst_mac, src, dst, sport, dport, payload):
+    udp = struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload
+    pseudo = src + dst + struct.pack("!I3xB", len(udp), 17)
+    udp = udp[:6] + struct.pack("!H", checksum(pseudo + udp) or 0xFFFF) + udp[8:]
+    ip = struct.pack("!IHBB", 6 << 28, len(udp), 17, 64) + src + dst
+    return dst_mac + HOST_MAC + b"\x86\xdd" + ip + udp
+
+
+def dns_answer(query):
+    """Answer for a DNS query, and its name and type."""
+    i, labels = 12, []
+    while i < len(query) and query[i]:
+        labels.append(query[i + 1:i + 1 + query[i]].decode(errors="replace"))
+        i += 1 + query[i]
+    qtype = struct.unpack("!H", query[i + 1:i + 3])[0]
+    name = ".".join(labels)
+    question = query[12:i + 5]
+    answers = b""
+    if name == DNS_NAME and qtype == 28:
+        answers = b"\xc0\x0c" + struct.pack("!HHIH", 28, 1, 60, 16) + DNS_AAAA
+    rcode = 0 if name == DNS_NAME else 3
+    header = query[:2] + struct.pack("!HHHHH", 0x8180 | rcode, 1, 1 if answers else 0, 0, 0)
+    return header + question + answers, name, qtype
 
 
 def neighbor_advert(dst_mac, dst, target):
@@ -86,6 +119,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--socket", default="239.255.77.77:17777")
     ap.add_argument("--seconds", type=int, default=900)
+    ap.add_argument("--udp", action="store_true", help="also require a DNS query and a UDP echo")
     args = ap.parse_args()
     group, port = args.socket.rsplit(":", 1)
     port = int(port)
@@ -101,6 +135,8 @@ def main():
 
     seen = {"router solicitation": False, "neighbor advert for SLAAC address": False,
             "echo reply link-local": False, "echo reply SLAAC": False}
+    if args.udp:
+        seen.update({"AAAA query over IPv6": False, "UDP echo over IPv6": False})
     guest_mac = None
     end, next_probe, seq = time.time() + args.seconds, 0, 0
     next_ra = time.time() + 240
@@ -130,6 +166,22 @@ def main():
             continue
         ip = frame[14:]
         src, dst, nh = ip[8:24], ip[24:40], ip[6]
+        if nh == 17 and dst in (HOST_LL, HOST_GLOBAL):
+            sport, dport = struct.unpack("!HH", ip[40:44])
+            payload = ip[48:40 + struct.unpack("!H", ip[44:46])[0]]
+            if dport == 53:
+                answer, name, qtype = dns_answer(payload)
+                print(f"DNS query from [{ntop(src)}]:{sport} for {name} type {qtype}", flush=True)
+                if name == DNS_NAME and qtype == 28:
+                    seen["AAAA query over IPv6"] = True
+                send(udp6_frame(frame[6:12], dst, src, 53, sport, answer))
+            elif dport == 7:
+                print(f"UDP echo from [{ntop(src)}]:{sport}: {payload!r}", flush=True)
+                seen["UDP echo over IPv6"] = True
+                send(udp6_frame(frame[6:12], dst, src, 7, sport, payload))
+            else:
+                print(f"UDP from [{ntop(src)}]:{sport} to port {dport}", flush=True)
+            continue
         if nh != 58:
             print(f"IPv6 next header {nh} from {ntop(src)} to {ntop(dst)}", flush=True)
             continue
