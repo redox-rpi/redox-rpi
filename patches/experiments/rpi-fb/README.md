@@ -16,6 +16,9 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   the new driver `rpi-fbd` (initfs, after `rpi-firmwared`).
 - [`0026`](base/0026-rpi-fbd-EDID-polling-double-buffering-screen-blankin.patch)
   (branch `graphics-fb2`): EDID polling, double buffering, screen blanking.
+- [`0027`](base/0027-rpi-fbd-blits-with-the-DMA-controller-prototype.patch)
+  (branch `graphics-fb3`, prototype for step 2): blits with the DMA
+  controller.
 
 ## What `rpi-fbd` does
 
@@ -73,9 +76,51 @@ mode. Real hotplug would need EDID polling (not done).
   nothing triggers it yet; the DPMS property of driver-graphics is
   read-only.
 
+### Branch `graphics-fb3` (patch `0027`, prototype)
+
+Step 2 of the graphics topic starts with the copy from the client's dumb
+buffer to the screen, done by the DMA controller instead of the CPU. It
+follows the DMA plan of #21 (`docs/topics/dma.md` on branch `dma-plan`):
+
+- **Channel 5**, the framebuffer's in the plan's channel table, checked
+  against `brcm,dma-channel-mask` in the devicetree. `rpi-fbd` sets only
+  its own bit in the shared ENABLE register and resets only its own
+  channel.
+- **One control block in 2D mode** per frame: the damaged rectangle as
+  rows of the same length, with the gap to the next row in the source and
+  in the screen (STRIDE). 128-bit accesses when everything is on 16 bytes.
+  No DREQ (memory to memory); `rpi-fbd` polls for the end, 500 ms timeout.
+- **Row count:** at start a test blit of two rows between two small
+  buffers shows whether the controller moves YLENGTH rows or one more;
+  the log says `2D mode moves YLENGTH rows` or `YLENGTH+1 rows`. QEMU
+  moves one more. The datasheet is not clear and the errata page was not
+  reachable, so the Pi test answers it.
+- **Dumb buffers** are DMA memory (`common::dma::Dma`, physically
+  contiguous, uncached on aarch64), so the controller has a bus address
+  for them (physical address plus the offset from `/soc`'s
+  `dma-ranges`). A buffer larger than the largest free contiguous block
+  falls back to normal memory and the CPU copy.
+- A controller error or timeout logs it and goes back to the CPU for good.
+- The register code is a copy of `bcm2835-sdhostd`'s `dma.rs` (branch
+  `sdhost-dma`); the SD session agreed. Both move into a common crate once
+  both drivers work on the Pi.
+- `RPI_FB_DMA=off` copies with the CPU. `RPI_FB_BENCH=1` measures at
+  start (full screen, 10 rounds): drawing (fill, a console scroll) in
+  normal and in uncached memory, the blit with the CPU from both, and the
+  blit with DMA; then it logs the blits every 5 seconds.
+
+The open question is the trade: uncached dumb buffers make the client's
+drawing slower (every read goes to RAM), DMA makes the blit cheaper for
+the CPU. Only the Pi can say which wins; QEMU models neither caches nor
+the controller's speed. Cached dumb buffers need cache maintenance before
+each blit, which user space cannot do today (DMA plan step 2, a kernel
+change).
+
 ### Not done
 
 - Waiting for the vertical blank before the next frame after a flip.
+- DMA blits that run while the client draws on (interrupt or a later
+  check instead of polling), and cached dumb buffers.
 - A new HDMI mode for a monitor turned on later (needs the display
   hardware itself, step 2).
 - `vesad` keeps writing to the old buffer until the handover; after a
@@ -105,6 +150,15 @@ mode. Real hotplug would need EDID polling (not done).
   only the "no change" side of the polling runs; blanking has no trigger.
   Keys on QEMU's USB keyboard did not show on any console (not checked
   further).
+- QEMU, branch `graphics-fb3`, `v0.3.0-dev-189-gb7fe574+xb2e2`
+  (2026-10-29): `rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves
+  YLENGTH+1 rows`, handover, login; with `RPI_FB=1280x720` the screen is
+  correct, every frame blitted by DMA. `RPI_FB_DMA=off`: CPU blits, login,
+  screen correct. `RPI_FB_BENCH=1` at 640x480 (QEMU, so only a check that
+  it runs): fill 717 / 700 MB/s (normal / uncached), CPU blit 521 / 1089
+  MB/s, DMA blit 53 MB/s. QEMU runs the controller byte by byte and
+  treats uncached memory as normal, so none of this says anything about
+  the Pi.
 - The image above was built at commit `ae30bad`, when the patches were
   still numbered `0023` and `0024` (same content).
 - Real Pi: queued in [docs/test-plan.md](../../../docs/test-plan.md).
