@@ -15,6 +15,13 @@ fn main() -> anyhow::Result<()> {
     let path = args.get(1).expect("model path");
     let prompt = args.get(2).map(String::as_str).unwrap_or("The capital of France is");
     let n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(16);
+    // candle sizes its thread pool from RAYON_NUM_THREADS or the CPU count,
+    // which Redox does not report (candle then uses one thread). The Pi 3
+    // has four cores.
+    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(4);
+        std::env::set_var("RAYON_NUM_THREADS", n.to_string());
+    }
     println!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
 
     let t0 = Instant::now();

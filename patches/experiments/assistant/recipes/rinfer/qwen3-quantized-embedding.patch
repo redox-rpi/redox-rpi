@@ -1,0 +1,95 @@
+diff --git a/candle-transformers/src/models/quantized_qwen3.rs b/candle-transformers/src/models/quantized_qwen3.rs
+index 3fa0044..ea4c07a 100644
+--- a/candle-transformers/src/models/quantized_qwen3.rs
++++ b/candle-transformers/src/models/quantized_qwen3.rs
+@@ -13,10 +13,50 @@ use candle::{DType, Device, Result, Storage, Tensor};
+ use candle_nn::attention::cpu_flash::causal::causal_decode_f32_interleaved;
+ use candle_nn::attention::{flash_attn, AttnMask};
+ use candle_nn::kv_cache::{ConcatKvCache, InterleavedKvCache, RawInterleavedKvCache};
+-use candle_nn::{Activation, Embedding, Module};
++use candle_nn::{Activation, Module};
+ use std::io::{Read, Seek};
+ use std::sync::Arc;
+ 
++/// Token embedding that stays quantized: only the rows of the tokens in
++/// the input are dequantized. Dequantizing the whole table (151936 x 1024
++/// for Qwen3 0.6B) takes 622 MB as f32, more than a 1 GiB board can spare.
++#[derive(Clone)]
++struct QEmbedding {
++    weight: Arc<QTensor>,
++    hidden_size: usize,
++}
++
++impl std::fmt::Debug for QEmbedding {
++    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
++        write!(f, "QEmbedding({:?}, {})", self.weight.dtype(), self.hidden_size)
++    }
++}
++
++impl QEmbedding {
++    fn forward(&self, ids: &Tensor) -> Result<Tensor> {
++        let (b, l) = ids.dims2()?;
++        let dtype = self.weight.dtype();
++        let device = self.weight.device();
++        let row_bytes = self.hidden_size / dtype.block_size() * dtype.type_size();
++        let data = self.weight.data()?;
++        let mut rows = Vec::with_capacity(b * l);
++        for id in ids.flatten_all()?.to_vec1::<u32>()? {
++            let start = id as usize * row_bytes;
++            let raw = data
++                .get(start..start + row_bytes)
++                .ok_or_else(|| candle::Error::Msg(format!("token id {id} out of range")))?;
++            let row = candle::quantized::ggml_file::qtensor_from_ggml(
++                dtype,
++                raw,
++                vec![self.hidden_size],
++                &device,
++            )?;
++            rows.push(row.dequantize(&device)?);
++        }
++        Tensor::stack(&rows, 0)?.reshape((b, l, self.hidden_size))
++    }
++}
++
+ pub struct Gguf<R: Read + Seek> {
+     ct: gguf_file::Content,
+     reader: R,
+@@ -449,7 +489,7 @@ impl LayerWeights {
+ 
+ #[derive(Debug, Clone)]
+ pub struct ModelWeights {
+-    embed_tokens: Embedding,
++    embed_tokens: QEmbedding,
+     layers: Vec<LayerWeights>,
+     norm: RmsNorm,
+     lm_head: QMatMul,
+@@ -489,8 +529,11 @@ impl ModelWeights {
+             None => DType::F16,
+         };
+ 
+-        let embed_tensor = gg.tensor("token_embd.weight")?;
+-        let embed_tokens = Embedding::new(embed_tensor.dequantize(device)?, hidden_size);
++        let embed_tensor = Arc::new(gg.tensor("token_embd.weight")?);
++        let embed_tokens = QEmbedding {
++            weight: embed_tensor.clone(),
++            hidden_size,
++        };
+ 
+         let rotary = Arc::new(RotaryEmbedding::new(
+             dtype,
+@@ -516,11 +559,12 @@ impl ModelWeights {
+ 
+         let norm = gg.rms_norm("output_norm.weight", rms_norm_eps)?;
+         // Load output projection tensor, falling back to tied embeddings like gemma3
++        // (shares the quantized table instead of reading it a second time).
+         let lm_head_tensor = match gg.tensor("output.weight") {
+-            Ok(tensor) => tensor,
+-            Err(_) => gg.tensor("token_embd.weight")?,
++            Ok(tensor) => Arc::new(tensor),
++            Err(_) => embed_tensor,
+         };
+-        let lm_head = QMatMul::from_weights(lm_head_tensor.into())?;
++        let lm_head = QMatMul::from_weights(lm_head_tensor)?;
+         let span = tracing::span!(tracing::Level::TRACE, "model");
+         let span_output = tracing::span!(tracing::Level::TRACE, "output");
+         Ok(Self {
