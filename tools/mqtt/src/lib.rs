@@ -100,6 +100,18 @@ pub struct Client {
 impl Client {
     /// Connects to `address` ("host" or "host:port") and logs in.
     pub fn connect(address: &str, options: &Options) -> io::Result<Client> {
+        Client::handshake(address, options).map_err(|e| {
+            if e.to_string().contains(address) {
+                e
+            } else {
+                io::Error::new(e.kind(), format!("{address}: {e}"))
+            }
+        })
+    }
+
+    /// On Redox a refused connection shows only at the first write, so the
+    /// address is added to errors from here.
+    fn handshake(address: &str, options: &Options) -> io::Result<Client> {
         let stream = open(address)?;
         let mut client = Client {
             writer: Arc::new(Mutex::new(stream.try_clone()?)),

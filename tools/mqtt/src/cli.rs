@@ -1,10 +1,12 @@
 //! Options shared by mqtt-pub and mqtt-sub (included by both).
 
 use std::env;
+use std::fs;
 use std::process;
 
-/// Broker and login options. The broker defaults to `$MQTT_HOST` and
-/// `$MQTT_PORT`, else localhost:1883.
+/// Broker and login options. The broker defaults to `$MQTT_HOST`, else the
+/// first line of `/etc/mqtt-host`, else localhost; the port to `$MQTT_PORT`,
+/// else 1883.
 pub struct Common {
     pub host: String,
     pub port: u16,
@@ -13,10 +15,13 @@ pub struct Common {
     pub topics: Vec<String>,
 }
 
+/// The default broker for all MQTT tools on this system.
+const HOST_FILE: &str = "/etc/mqtt-host";
+
 impl Common {
     pub fn new(name: &str) -> Common {
         Common {
-            host: env::var("MQTT_HOST").unwrap_or_else(|_| "localhost".into()),
+            host: env::var("MQTT_HOST").ok().or_else(host_file).unwrap_or_else(|| "localhost".into()),
             port: env::var("MQTT_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(mqtt::DEFAULT_PORT),
             options: mqtt::Options::new(&format!("{name}-{}", process::id())),
             qos: mqtt::QoS::AtMostOnce,
@@ -61,8 +66,14 @@ impl Common {
     }
 }
 
+fn host_file() -> Option<String> {
+    let text = fs::read_to_string(HOST_FILE).ok()?;
+    let host = text.lines().next()?.trim();
+    (!host.is_empty()).then(|| host.to_string())
+}
+
 pub const COMMON_USAGE: &str = "\
-  -h host     broker (default $MQTT_HOST, else localhost)
+  -h host     broker (default $MQTT_HOST, else /etc/mqtt-host, else localhost)
   -p port     port (default $MQTT_PORT, else 1883)
   -q 0|1      QoS (default 0)
   -i id       client id (default <tool>-<pid>)

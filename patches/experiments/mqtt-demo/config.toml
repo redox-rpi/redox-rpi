@@ -1,7 +1,13 @@
 # Demo: timerd publishes the temperature and uptime to an MQTT broker every
 # minute. Use with --experiment timesync --experiment timerd --experiment
-# mqtt. The broker is 10.0.2.2, the host as QEMU's user network sees it;
-# on a Pi, change MQTT_HOST in both files.
+# mqtt. The broker is in /etc/mqtt-host: 10.0.2.2, the build host as QEMU's
+# user network sees it. On a Pi: echo <broker> > /etc/mqtt-host
+
+[[files]]
+path = "/etc/mqtt-host"
+data = """
+10.0.2.2
+"""
 
 [[files]]
 path = "/etc/timer.d/mqtt-temperature.toml"
@@ -13,7 +19,6 @@ schedule = "* * * * *"
 [service]
 cmd = "mqtt-pub"
 args = ["-t", "redox-rpi/temperature", "-f", "/scheme/rpi-firmware/temperature"]
-envs = { MQTT_HOST = "10.0.2.2" }
 """
 
 [[files]]
@@ -26,5 +31,4 @@ schedule = "* * * * *"
 [service]
 cmd = "ion"
 args = ["-c", "mqtt-pub -t redox-rpi/uptime -m \\"$(uptime)\\""]
-envs = { MQTT_HOST = "10.0.2.2" }
 """
