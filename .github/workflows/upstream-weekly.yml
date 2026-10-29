@@ -1,0 +1,56 @@
+name: Latest upstream
+
+# Once a week: do our patches still apply to the newest upstream sources, and
+# does the newest upstream kernel with our patches still boot in QEMU
+# raspi3b? A red run means config/upstream.lock cannot be moved forward
+# without refreshing patches; the pinned builds are not affected.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  # Also when a pull request changes what this checks.
+  pull_request:
+    paths:
+      - config/upstream.lock
+      - patches/**
+      - scripts/check-patches.sh
+      - scripts/build-kernel.sh
+      - .github/workflows/upstream-weekly.yml
+  workflow_dispatch:
+
+jobs:
+  raspi3b:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm zstd
+
+      - name: Check patches on the latest upstream
+        run: scripts/check-patches.sh --latest
+
+      - name: Build kernel (latest upstream)
+        if: always()
+        run: scripts/build-kernel.sh --latest
+
+      - name: Build redoxfs-file
+        run: cargo build --release --manifest-path tools/redoxfs-file/Cargo.toml
+
+      - name: Boot in QEMU raspi3b
+        run: |
+          scripts/qemu-raspi3b.sh --test --timeout 2400 --usb-net \
+            --kernel upstream/kernel/build/aarch64/kernel \
+            --expect "irq_bcm2836:INFO" \
+            --expect "CPU activation complete: 4 CPUs online" \
+            --expect "redox login:"
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-raspi3b-latest-log
+          path: images/qemu-test.log
