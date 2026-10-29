@@ -1583,3 +1583,38 @@ Test 66 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)), branch
   the right time from it.
 - Standard checks pass, 0 of 300 starts failed (every program with the
   changed C library).
+
+## 2026-10-29: `v0.3.0-dev-104-g3f88563+x508a`
+
+Built 2026-10-28T20:36:54Z, `libc.so` `f97ca1fa2be411ab…`, real Pi 3B+ over netboot. Experiments: `icache-sync`, `rtl8152`, `timesync`. test 28 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3) icache sync), ARM at 1400 MHz, Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-104-g3f88563+x508a |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 1000 failed |
+
+Test 28 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), branch
+`t3-icache`, experiment `icache-sync`.
+
+- `scripts/pi-test.py --starts 1000`: **0 of 1000 failed**, no exception in
+  the serial log (only the known `pcid` panic).
+- Not at 600 MHz as the row asks: this image raises the ARM clock at boot
+  (`rpi-firmwared: ARM clock 600 -> 1400 MHz`, `clocks`: `arm 1400000000`),
+  and without `cpu-ondemand` there is no `arm_clock` file to set 600 MHz.
+- Start loop on the Pi, `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`,
+  two runs each:
+
+  | Image | ARM | 500 starts |
+  |---|---|---|
+  | this image (`icache-sync`) | 1400 MHz | 88.5 s, 90.6 s |
+  | stable `v0.3.0-dev-15-g24fbb96+x9f76` | 600 MHz | 162.5 s, 162.2 s |
+  | test 37 image `v0.3.0-dev-140-g55bd363+x68b9` (no `icache-sync`) | 1400 MHz | 127.0 s, 136.1 s |
+
+  None of these is the same build without the patch, so the cost of the
+  cache maintenance itself cannot be read from this: the test 37 image at
+  the same clock is even slower than this one. A like-for-like number needs
+  the `t3-icache` base built once without `icache-sync`.
