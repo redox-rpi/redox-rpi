@@ -58,8 +58,9 @@ COPIED = re.compile(r"copied, ([0-9.]+) s, (.+)$")
 BOOT_TIMEOUT = 300
 # From the reset command to the kernel's "kreset" on the console.
 RESET_TIMEOUT = 120
-# From the new boot's login prompt to the filesystem of --dir.
-MOUNT_TIMEOUT = 300
+# From the new boot's login prompt to the filesystem of --dir. A card
+# with much data written before an unclean reset can take minutes.
+MOUNT_TIMEOUT = 600
 
 
 class Shell:
@@ -249,19 +250,41 @@ def connect_devshd(host, port):
             time.sleep(5)
 
 
-def wait_for_mount(sh, path, log):
+def wait_for_mount(sh, connect, path, log):
     """Wait until the scheme of `path` (/scheme/data for /scheme/data/stress)
-    exists: devshd starts before the filesystem on the card is mounted."""
+    exists: devshd starts before the filesystem on the card is mounted.
+    Each check after the first logs in again, so a shell that stopped
+    answering does not look like a missing filesystem. Returns the shell
+    that saw it."""
     parts = path.split("/")
     if len(parts) < 3 or parts[1] != "scheme":
-        return
+        return sh
     scheme = parts[2]
     start = time.time()
-    while not any(scheme in line.split() for line in sh.run("ls /scheme")):
+    answered = silent = 0
+    while True:
+        out = []
+        try:
+            if sh is None:
+                sh = connect()
+            out = sh.run("ls /scheme", timeout=30)
+        except OSError:
+            pass
+        if any(scheme in line.split() for line in out):
+            log(f"/scheme/{scheme} there after {time.time() - start:.0f} s more")
+            return sh
+        if any("null" in line.split() for line in out):
+            answered += 1
+        else:
+            silent += 1
         if time.time() - start > MOUNT_TIMEOUT:
-            raise SystemExit(f"/scheme/{scheme} not mounted within {MOUNT_TIMEOUT} s")
-        time.sleep(5)
-    log(f"/scheme/{scheme} there after {time.time() - start:.0f} s more")
+            raise SystemExit(
+                f"/scheme/{scheme} not mounted within {MOUNT_TIMEOUT} s "
+                f"({answered} checks listed /scheme without it, {silent} got no answer)")
+        if sh is not None:
+            sh.close()
+            sh = None
+        time.sleep(10)
 
 
 def main():
@@ -295,8 +318,7 @@ def main():
                 sh = connect_devshd(args.host, args.port)
         else:
             sh = wait_for_devshd(args.host, args.port, log)
-        wait_for_mount(sh, d, log)
-        return sh
+        return wait_for_mount(sh, connect, d, log)
 
     lines = []
 
