@@ -1,4 +1,9 @@
-# Experiment: pi-clean-boot, no PCI and audio services on the Pi (#18)
+# No PCI and audio services on the Pi (#18, was experiment `pi-clean-boot`)
+
+**Default since 2026-10-29:** base `0024` (moved to `patches/base/`) is in
+every image. `--experiment pi-clean-boot` is still accepted and does
+nothing, so older commands keep working. This page stays as the patch's
+documentation.
 
 The Raspberry Pi 3B+ and the Zero 2 W have no PCI bus, and there is no
 sound driver for them yet. Still every boot started these services, and
@@ -12,12 +17,8 @@ their errors hid real ones in the console:
 | `audiod` | rootfs | "No such device", "exited without notifying readiness" |
 | `rtcd` | initfs | nothing: it reads the clock on x86 only (no message) |
 
-```bash
-scripts/build-image.sh --experiment pi-clean-boot
-```
-
 The base patch
-[`0021`](base/0021-Leave-out-pcid-pcid-spawner-audiod-and-rtcd-on-the-R.patch)
+[`0024`](../../base/0024-Leave-out-pcid-pcid-spawner-audiod-and-rtcd-on-the-R.patch)
 - adds `condition_board_not` to init units, the opposite of upstream's
   `condition_board`: the unit does not start when the image is built for
   one of the listed boards (`BOARD`, `raspi3bp` for both Pis);
