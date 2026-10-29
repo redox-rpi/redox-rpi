@@ -1,19 +1,19 @@
-From d0ba5dd808c61fffb9a8f9d907c210710c3be1d9 Mon Sep 17 00:00:00 2001
+From 94f8ccbbfbeda8e14cd21a26e40a0a0775c4b5dc Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:11:20 +0100
-Subject: [PATCH 41/41] rpi-firmwared: power_led, the 3B+ power LED through the
+Subject: [PATCH] rpi-firmwared: power_led, the 3B+ power LED through the
  firmware GPIO expander
 
 Refs redox-rpi/redox-rpi#38
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/rpi-firmwared/src/main.rs | 41 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/main.rs | 42 +++++++++++++++++++++++++++++--
  drivers/rpi-firmwared/src/mbox.rs |  2 ++
- 2 files changed, 41 insertions(+), 2 deletions(-)
+ 2 files changed, 42 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..95959f1 100644
+index 4a7a018..a12c59e 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -15,6 +15,10 @@
@@ -57,7 +57,7 @@ index 4a7a018..95959f1 100644
              "temperature" => {
                  let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
                  writeln!(text, "{value}").unwrap();
-@@ -102,6 +117,18 @@ impl FirmwareScheme {
+@@ -102,6 +117,19 @@ impl FirmwareScheme {
      fn set(&mut self, name: &str, value: &str) -> Result<()> {
          let mbox = &mut *self.mbox.lock().unwrap();
          match name {
@@ -69,14 +69,15 @@ index 4a7a018..95959f1 100644
 +                    _ => return Err(Error::new(EINVAL)),
 +                };
 +                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
-+                    [0, _] => Ok(()),
++                    // Some firmware answers with fewer than two words.
++                    [] | [0, ..] => Ok(()),
 +                    _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
 +                }
 +            }
              "arm_clock" => {
                  let rate = match value {
                      "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
-@@ -207,6 +234,16 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
+@@ -207,6 +235,16 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
      }
  }
  
