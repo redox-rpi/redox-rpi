@@ -1,0 +1,21 @@
+[packages]
+mdnsd = "source"
+
+[[files]]
+path = "/etc/hostname"
+data = "redox-rpi"
+
+# Answer as redox-rpi.local and announce the development shell. Needs the
+# multicast experiment (IP_ADD_MEMBERSHIP).
+[[files]]
+path = "/usr/lib/init.d/91_mdnsd.service"
+data = """
+[unit]
+description = "Multicast DNS responder (redox-rpi.local)"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "mdnsd"
+args = ["_devsh._tcp:2323"]
+type = "oneshot_async"
+"""

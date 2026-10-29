@@ -1,0 +1,9 @@
+[package]
+name = "mdnsd"
+description = "Multicast DNS responder: answers for <hostname>.local and announces services with DNS-SD"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
