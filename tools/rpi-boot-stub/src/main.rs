@@ -241,6 +241,8 @@ macro_rules! println {
     }};
 }
 
+mod fb;
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("rpi-boot-stub: {}", info);
@@ -375,6 +377,19 @@ unsafe fn boot(dtb_addr: u64) -> ! {
         bytes_at(initrd, 8) == b"RedoxFtw",
         "the initramfs does not start with a Redox initfs"
     );
+    // Ask for the framebuffer before the memory areas: the firmware takes it
+    // from its own memory, which should not overlap /memory, but if it does,
+    // the kernel must not hand it out.
+    let bootargs = chosen.property("bootargs").and_then(|p| p.as_str());
+    let framebuffer = fb::setup(fb::Request::from_bootargs(bootargs));
+    match &framebuffer {
+        Some(f) => println!(
+            "rpi-boot-stub: framebuffer {}x{} stride {} at {:#x}",
+            f.width, f.height, f.stride, f.base
+        ),
+        None => println!("rpi-boot-stub: no framebuffer from the firmware"),
+    }
+
     let initfs_size = read_u64_le(initrd + 0x0c);
     assert!(initfs_size <= initrd_len, "initfs larger than the initramfs");
     let live_base = initrd + align_up(initfs_size);
@@ -399,6 +414,9 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     reserve(0, image_end);
     reserve(dtb_addr, dtb_addr + dtb_size);
     reserve(initrd_start.min(initrd), initrd_used_end);
+    if let Some(f) = &framebuffer {
+        reserve(f.base, align_up(f.base + f.size));
+    }
     for r in fdt.memory_reservations() {
         let start = r.address() as u64;
         reserve(start, start + r.size() as u64);
@@ -441,11 +459,20 @@ unsafe fn boot(dtb_addr: u64) -> ! {
         }
         let _ = writeln!(env);
     }
+    // As the bootloader does; below 8 GiB the framebuffer is already mapped
+    // at PHYS_OFFSET by the page tables below.
+    if let Some(f) = &framebuffer {
+        let _ = writeln!(env, "FRAMEBUFFER_ADDR={:016x}", f.base);
+        let _ = writeln!(env, "FRAMEBUFFER_VIRT={:016x}", f.base + PHYS_OFFSET);
+        let _ = writeln!(env, "FRAMEBUFFER_WIDTH={:016x}", f.width);
+        let _ = writeln!(env, "FRAMEBUFFER_HEIGHT={:016x}", f.height);
+        let _ = writeln!(env, "FRAMEBUFFER_STRIDE={:016x}", f.stride);
+    }
     // The command line (cmdline.txt, after the firmware's own Linux options)
     // is in /chosen bootargs. Words of the form NAME=value with an upper-case
     // NAME are Redox environment variables, as with the bootloader's
     // environment editor; the firmware's lower-case Linux options are left out.
-    if let Some(bootargs) = chosen.property("bootargs").and_then(|p| p.as_str()) {
+    if let Some(bootargs) = bootargs {
         for word in bootargs.split_ascii_whitespace() {
             if let Some((name, _)) = word.split_once('=') {
                 if !name.is_empty()

@@ -27,9 +27,18 @@ stub does what the Redox bootloader does on aarch64 before the jump:
 4. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
    words `NAME=value` with an upper-case `NAME` go into the environment,
    the firmware's own lower-case Linux options do not.
-5. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
+5. A framebuffer from the firmware through the mailbox property interface
+   ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), `src/fb.rs`):
+   the size the firmware chose for the display (from the monitor's EDID, or
+   its fallback without one), 32 bits per pixel, the same pixel order as
+   U-Boot. It goes into `FRAMEBUFFER_ADDR`, `_VIRT`, `_WIDTH`, `_HEIGHT`
+   and `_STRIDE` like the bootloader's, so `vesad`, `fbcond` and the
+   kernel's boot messages use it unchanged. `RPI_FB=1280x720` in
+   `cmdline.txt` asks for another size, `RPI_FB=off` for none. Without an
+   answer from the firmware the boot goes on without a screen.
+6. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
    and at `PHYS_OFFSET`, the kernel at `KERNEL_OFFSET`.
-6. MMU on and the jump to the kernel's entry point with `KernelArgs`.
+7. MMU on and the jump to the kernel's entry point with `KernelArgs`.
 
 The kernel ELF is built into the stub (`REDOX_KERNEL` at build time); the
 kernel's linker script makes the file a flat image, so it runs in place.
@@ -56,5 +65,11 @@ and `-dtb`.
   `initramfs initramfs followkernel` and the same overlays as today.
 - Command line: `NAME=value` words reach the environment (QEMU
   `--append`).
+- Framebuffer (2026-10-29, QEMU): 640x480 by default (QEMU's display
+  size), 1280x720 with `RPI_FB=1280x720`; `vesad` and `fbcond` show the
+  boot log and the login prompt on it. `RPI_FB=off` boots without one
+  (`vesad: No boot framebuffer`). QEMU shows red and blue swapped, on the
+  U-Boot path too: its model reads the pixel order the other way round
+  from the real firmware.
 - Not done yet: the Ethernet MAC address without U-Boot (see #15), a
   `make-sdcard.sh` mode.

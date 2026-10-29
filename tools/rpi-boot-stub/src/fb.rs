@@ -9,7 +9,10 @@
 //!
 //! Tags: https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 
+use core::fmt::Write;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
+
+use crate::Uart;
 
 /// VideoCore mailbox of the BCM2837 (Pi 3, 3B+, Zero 2 W).
 const MBOX: usize = 0x3F00_B880;
