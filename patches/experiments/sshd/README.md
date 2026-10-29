@@ -16,6 +16,11 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0002`: `setgroups` succeeds for root (the kernel has no
   supplementary groups); it returned ENOSYS and the privilege separation
   child exits on that.
+- relibc `0003`: `poll`/`ppoll` merge entries that repeat an fd into one
+  epoll registration (Redox keeps one per fd; the second `EPOLL_CTL_ADD`
+  replaced the first). sshd polls its socket twice, for input and output;
+  with nothing to write the socket was not watched at all, and the reply
+  that opens a session never left.
 - base `0024` (after the default base patches): `procmgr` sends SIGCHLD
   for an exited process without the permission check of `kill()`. The
   pre-authentication child runs as user `sshd`; its SIGCHLD to the root
@@ -47,5 +52,9 @@ Work in progress.
 - QEMU, `v0.3.0-dev-182-g934d057+x0042` (relibc `0001`, `0002`, OpenSSH
   `0001`): key login is accepted ("Accepted publickey for root"), then the
   session hangs: the SIGCHLD of the `sshd` child is refused (base `0024`).
+- QEMU, `v0.3.0-dev-183-g19dcace+x0042` (with base `0024`): no SIGCHLD
+  error; after the login sshd queues the session-open reply (type 91) but
+  never sends it, and `sshd-session` spins at about half a core (relibc
+  `0003`).
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.
