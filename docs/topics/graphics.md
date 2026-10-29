@@ -204,12 +204,66 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   monitor by polling the EDID.
 - **Pi test #34** in the [queue](../test-plan.md), image built. The screen
   checks need a person and wait for another visit.
+- **Branch [`graphics-fb2`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb2)**
+  (on `graphics-fb`, so #34 stays as queued), patch `0026`, works in QEMU
+  (`v0.3.0-dev-179-gc7d38dd+xb2e2`, homenodellm
+  `~/redox-rpi-graphics/keep/`):
+  - **EDID polling** every 5 seconds: a monitor that comes or goes is
+    logged and clients get a hotplug event. It does not give the monitor a
+    new HDMI mode (the firmware keeps the one from power-on), and whether
+    the firmware reads the EDID again later is only known after a Pi test.
+  - **Double buffering** with the firmware's virtual offset, when two
+    screens fit into half of the GPU memory: with `gpu_mem=16` up to about
+    1280x800, so **not at the test monitor's 1920x1200** (that needs
+    `gpu_mem=32`, 16 MiB less RAM for Redox).
+  - **Screen blanking** when a client sets no mode; nothing in Redox does
+    that yet.
 
 ## Next
 
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
-- Hotplug by polling the EDID, screen blanking, double buffering with the
-  virtual offset.
+- A Pi test for `graphics-fb2` after #34: monitor turned on after boot
+  (is `monitor connected` logged?), and double buffering at 1280x720
+  (`RPI_FB=1280x720`).
+
+## Effort: estimate and what it took
+
+The estimates above were made before any code. What step 1 really took,
+in agent time on 2026-10-29 (from the commit times; one session, builds
+on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
+
+| Piece | Estimate | Took, to working in QEMU | Lines |
+|---|---|---|---|
+| Boot stub framebuffer (#15 small step) | 1–2 days | 20 minutes | 210 (stub) |
+| `rpi-fbd` first version: firmware calls, EDID, mode change, handover from `vesad`; `rpi-firmwared` property file | part of 1–2 weeks | 1 hour, with a QEMU test that types into the bootloader | 650 (driver), 70 (`rpi-firmwared`) |
+| Monitor turned on later: diagnosis and `config.txt` fix | not planned | 10 minutes | 14 |
+| EDID polling, double buffering, blanking (`graphics-fb2`) | part of 1–2 weeks | 40 minutes, half of it build and QEMU | 220 |
+
+So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
+it went fast: every part had a template in Redox (`vesad` for the
+adapter, `virtio-gpud` for modes and hotplug, `rpi-firmwared` for the
+mailbox, the stub for the boot side), the firmware does the hard part
+(HDMI timing), and QEMU emulates the framebuffer tags.
+
+What is **not** in that time, and where the rest of the estimate goes:
+
+- **The Pi tests.** Nothing of this has run on a real Pi yet. #34 waits
+  behind the v0.3.0 tests in the queue, and its screen checks need a
+  person at the Pi (the user travels). Calendar time until step 1 is
+  tested: days to weeks, set by the queue and visits, not by the code.
+- **What QEMU cannot show:** QEMU has no EDID tag, swaps red and blue,
+  scales nothing, and never tears. The EDID on the real firmware
+  (`start_cd.elf` with `gpu_mem=16`), the colours, the scaling and the
+  flip timing are unknown until the Pi test; each surprise costs a
+  build-and-test round (about an hour with the queue free, plus a
+  person for anything on the screen).
+
+What this says about the other steps: the time of step 1 came from
+reusing templates and letting the firmware do the hardware. Steps 2 and
+3 have neither (no Redox driver programs display hardware or a GPU, and
+their main work is debugging registers on the real Pi with someone
+watching the screen), so their estimates stay as they are, unchecked:
+DMA blits 2–4 weeks, own display driver 2–3 months, V3D 6+ months.
 
 ## Later
 
