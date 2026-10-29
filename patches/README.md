@@ -40,6 +40,7 @@ each one expects to come before it:
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
 | `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment (the number is taken by `base/0023` since `dwc2-default`; renumbered at its merge) |
+| `0024`, `0025` | `experiments/rpi-fb/base/` | `rpi-firmwared` property file and the display driver `rpi-fbd` ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,

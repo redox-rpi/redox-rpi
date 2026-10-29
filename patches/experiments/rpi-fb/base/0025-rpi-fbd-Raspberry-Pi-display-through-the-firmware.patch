@@ -1,7 +1,7 @@
 From 3bb810927b60202583342ae5fef9deaee42e1e32 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 09:37:49 +0000
-Subject: [PATCH 24/24] rpi-fbd: Raspberry Pi display through the firmware
+Subject: [PATCH 25/25] rpi-fbd: Raspberry Pi display through the firmware
 
 A display driver for the framebuffer that the Pi firmware scans out. It
 asks the firmware, through rpi-firmwared, for a framebuffer of the size a
