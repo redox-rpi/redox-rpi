@@ -43,6 +43,14 @@ fn throttled(flags: u32) -> String {
     format!("0x{flags:08x} ({text})")
 }
 
+/// `cpu0 ...`, `cpu1 ...`, not the `cpu ...` sum of all CPUs.
+fn is_cpu_line(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .and_then(|name| name.strip_prefix("cpu"))
+        .is_some_and(|n| n.parse::<u32>().is_ok())
+}
+
 fn row(key: &str, value: impl AsRef<str>) {
     println!("{key:<12} {}", value.as_ref());
 }
@@ -89,10 +97,7 @@ fn main() {
     }
 
     if let Some(stat) = read("/scheme/sys/stat") {
-        let cpus = stat
-            .lines()
-            .filter(|l| l.strip_prefix("cpu").and_then(|r| r.split_whitespace().next()).is_some_and(|n| n.parse::<u32>().is_ok()))
-            .count();
+        let cpus = stat.lines().filter(|l| is_cpu_line(l)).count();
         row("CPUs", cpus.to_string());
     }
 
@@ -149,6 +154,12 @@ mod tests {
         assert_eq!(throttled(0), "0x00000000 (none now)");
         assert_eq!(throttled(0x0008_0008), "0x00080008 (now: soft temperature limit; since boot: soft temperature limit)");
         assert_eq!(throttled(0x0005_0000), "0x00050000 (none now; since boot: undervoltage, throttled)");
+    }
+
+    #[test]
+    fn counts_cpus() {
+        let stat = "cpu  10 0 5 85 3\ncpu0 4 0 2 44 1 7\ncpu1 6 0 3 41 2 9\nIRQs 3 1 2\n";
+        assert_eq!(stat.lines().filter(|l| is_cpu_line(l)).count(), 2);
     }
 
     #[test]

@@ -74,7 +74,6 @@ pub fn device_name(vendor: u16, product: u16) -> Option<&'static str> {
         (0x0bda, 0x8153) => "Realtek RTL8153 Gigabit Ethernet",
         (0x1a40, 0x0101) => "Terminus FE1.1s hub",
         (0x0525, 0xa4a2) => "Linux CDC Ethernet gadget",
-        (0x0627, 0x0001) => "QEMU USB device",
         (0x0409, 0x55aa) => "QEMU USB hub",
         _ => return None,
     })

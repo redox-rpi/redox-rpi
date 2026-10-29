@@ -26,7 +26,7 @@ scripts/build-image.sh --experiment rtl8152 --experiment hwinfo
   programs:
   - `lsusb` lists the devices like Linux's `lsusb`. There is no usb.ids
     database: a short table names the Pi's own chips (hubs, LAN7800,
-    LAN9514, RTL8152/8153, QEMU's devices); other devices are described by
+    LAN9514, RTL8152/8153, QEMU's hub); other devices are described by
     their class or interface classes (`keyboard, HID`). `lsusb -t` shows
     the hub tree, `-v` adds the interfaces.
   - `hwinfo` shows the build and experiments, model, revision, serial,
@@ -48,4 +48,12 @@ this experiment installs it.
 
 ## Results
 
-- Not tested yet.
+- **QEMU** (build `v0.3.0-dev-137-gde37ec5+xbec7`, 2026-10-29): `ls
+  /scheme/usb.dwc2` shows `devices`, with QEMU's hub (`0409:55aa`, address
+  1, root port) and keyboard (`0627:0001`, hub 1 port 1, interface
+  `03.01.01`). `lsusb`, `-t` and `-v` print them as above; an unknown
+  argument gives the usage. `hwinfo` shows the build, Raspberry Pi 3 Model
+  B, 1 GiB (960 MiB ARM, 64 MiB GPU), the clocks, 25.0 °C, no throttling
+  and 2 USB devices. Two fixes after this run, in the next build: the CPU
+  count included the sum line (5 instead of 4), and QEMU's keyboard showed
+  as "QEMU USB device" instead of "keyboard".
