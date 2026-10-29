@@ -33,7 +33,7 @@ check() {
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 check "driver started" "bcm2835-spid: bus 0 at 0x3f204000, [0-9]+ kHz"
 for pin in 7 8 9 10 11; do check "pin $pin alt0" "^$pin alt0 "; done
-check "bus directory" "^cs1$"
+check "bus directory" "^cs0[[:space:]]+cs1[[:space:]]+mode[[:space:]]+speed"
 check "JEDEC ID" "^J1 [0-9a-f]{2} ef 40 16 00 00 00$"
 check "JEDEC ID again" "^J2 [0-9a-f]{2} ef 40 16 00 00 00$"
 check "status register" "^SR [0-9a-f]{2} 00$"

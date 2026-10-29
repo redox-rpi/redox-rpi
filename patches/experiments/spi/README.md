@@ -64,4 +64,11 @@ Needs a person to put one jumper wire, power off: **pin 19 (MOSI) to pin
 
 ## Results
 
-- Not tested yet.
+- QEMU, image `v0.3.0-dev-145-gf08c7c0+x7b09` (gpio and spi): all checks
+  of `qemu-check.sh` pass: `bus 0 at 0x3f204000, 1000 kHz (core 350
+  MHz)`, GPIO 7 to 11 in alt0, JEDEC ID `00 ef 40 16 00 00 00` twice,
+  status `00`, speed 500000 and mode 3 set, mode 4 refused, a 4096-byte
+  transfer ends (the flash answers garbage to it, as expected). The
+  bus-directory pattern was fixed after the run and checked against its
+  log.
+- Pi test: queued as #40.
