@@ -266,8 +266,9 @@ impl Client {
 }
 
 /// Shuts the connection down if the login takes longer than `timeout`, so a
-/// blocked read or write returns. Socket timeouts alone are not enough: on
-/// Redox the connect returns at once and a missing answer blocks later.
+/// blocked read or write returns: on Redox the connect returns at once and a
+/// missing answer blocks the first read. (No socket timeouts: they would
+/// have to be taken back on every handle afterwards.)
 struct Watchdog {
     done: mpsc::Sender<()>,
     fired: Arc<AtomicBool>,
@@ -276,8 +277,6 @@ struct Watchdog {
 
 impl Watchdog {
     fn start(stream: &TcpStream, timeout: Duration) -> io::Result<Watchdog> {
-        let _ = stream.set_read_timeout(Some(timeout));
-        let _ = stream.set_write_timeout(Some(timeout));
         let sock = stream.try_clone()?;
         let (done, wait) = mpsc::channel::<()>();
         let fired = Arc::new(AtomicBool::new(false));
@@ -295,14 +294,10 @@ impl Watchdog {
         let _ = self.done.send(());
         let timed_out = |e: &io::Error| {
             self.fired.load(Ordering::SeqCst)
-                || matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)
+                || e.kind() == io::ErrorKind::TimedOut
         };
         match result {
-            Ok(client) => {
-                let _ = client.reader.get_ref().set_read_timeout(None);
-                let _ = client.reader.get_ref().set_write_timeout(None);
-                Ok(client)
-            }
+            Ok(client) => Ok(client),
             Err(e) if timed_out(&e) => Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!("no answer from the broker within {} s", self.timeout.as_secs()),
