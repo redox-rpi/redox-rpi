@@ -243,10 +243,8 @@ fn open(address: &str) -> io::Result<TcpStream> {
             other => other,
         };
         match result {
-            Ok(stream) => {
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
-            }
+            // No set_nodelay: relibc logs an unknown option on each connect.
+            Ok(stream) => return Ok(stream),
             Err(e) => last = io::Error::new(e.kind(), format!("{addr}: {e}")),
         }
     }
