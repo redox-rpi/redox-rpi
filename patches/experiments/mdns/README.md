@@ -18,14 +18,23 @@ Needs the [`multicast`](../multicast) experiment first (joining
   Announces all records twice at start and whenever the address changes.
   Queries from port 5353 get a multicast answer, one-shot queries from
   other ports a unicast answer with their ID and question.
+- **IPv6** (branch `mdns6`, needs the [`ipv6`](../ipv6) experiment):
+  the same socket joins `ff02::fb`, answers AAAA queries with every IPv6
+  address of `eth0` (link-local and SLAAC), sends answers to the group of
+  the family the query came in on, adds the other family's address records
+  as additional records (RFC 6762 section 6.2) and announces on both
+  groups. Without IPv6 in netstack it logs that and stays IPv4 only.
+- [`mdns-query.py`](mdns-query.py): one-shot query from the build host
+  (`mdns-query.py redox-rpi.local AAAA -6 wlp13s0`), for the Pi tests:
+  homenodellm has no avahi.
 - `config.toml`: hostname `redox-rpi` (`/etc/hostname`) and the service
   `91_mdnsd.service`, which announces devsh. devshd is for development
   images only, so a release image would announce other services.
 
 Not done yet: probing for name conflicts (RFC 6762 section 8), goodbye
-packets at shutdown, known-answer suppression, AAAA records (with IPv6,
-#27). On a Pi 3B+, the LAN7800 multicast filter in `dwc2d` must pass
-224.0.0.251 (`01:00:5e:00:00:fb`).
+packets at shutdown, known-answer suppression. On a Pi 3B+, the LAN7800
+multicast filter in `dwc2d` must pass `01:00:5e:00:00:fb` and
+`33:33:00:00:00:fb`: experiment `lan78xx-multicast` (dwc2d session).
 
 ## Test in QEMU
 
@@ -35,7 +44,7 @@ asks for `redox-rpi.local` (A, from port 5353 and from port 40000) and
 `_devsh._tcp.local` (PTR), and answers ARP.
 
 ```bash
-patches/experiments/mdns/mdns-qemu-test.py --seconds 850 &
+patches/experiments/mdns/mdns-qemu-test.py --seconds 850 &   # --ipv6: AAAA over IPv6 too
 scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-net-socket 239.255.77.77:17777 \
     --run 'echo 10.0.3.15/24 > /scheme/netcfg/ifaces/eth0/addr/set' --run 'sleep 40'
 ```
@@ -54,6 +63,15 @@ the stack had no route for 224.0.0.251 and dropped every answer. The
 multicast experiment now adds `224.0.0.0/4 dev eth0` when eth0 gets its
 address.
 
-**Real Pi:** not tested yet. Then from the build host: `ping
-redox-rpi.local`, `avahi-resolve -n redox-rpi.local`, `avahi-browse -r
-_devsh._tcp`.
+**QEMU, IPv6** (2026-10-29, branch `mdns6`, build
+`v0.3.0-dev-160-gd2c8e48+x919d`, `--experiment multicast --experiment ipv6
+--experiment mdns`): **pass**, `mdns-qemu-test.py --ipv6`: `result:
+multicast A yes, unicast A yes, SRV 2323 yes, multicast AAAA over IPv6 yes,
+unicast AAAA over IPv6 yes`. `mdnsd: redox-rpi.local is 10.0.3.15,
+fe80::5054:ff:fe12:3457`; the answer to the AAAA query from port 5353 went
+to `[ff02::fb]:5353`, the one from port 40000 to
+`[fe80::5054:ff:fe12:3499]:40000` with its ID, both with the A record as
+additional record; IPv4 answers carry the AAAA record the same way.
+
+**Real Pi:** not tested yet. Test #47 (step 2 of IPv6, IPv4 mDNS) and a
+second test for this branch are in the [queue](../../../docs/test-plan.md).
