@@ -4,8 +4,9 @@
 Joins the multicast group of QEMU's socket netdev (`qemu-raspi3b.sh
 --usb-net-socket`) and plays an IPv6 router on the guest's link:
 
-- answers the guest's router solicitation (and repeats every 10 s) with a
-  router advertisement for 2001:db8:1::/64 (on-link, autonomous);
+- answers the guest's router solicitation with a router advertisement for
+  2001:db8:1::/64 (on-link, autonomous), repeated every 10 s; without a
+  solicitation the first one goes out after 60 s;
 - answers neighbor solicitations for its own addresses;
 - asks for the guest's SLAAC address with a neighbor solicitation;
 - pings the guest's link-local and SLAAC address (ICMPv6 echo).
@@ -101,7 +102,8 @@ def main():
     seen = {"router solicitation": False, "neighbor advert for SLAAC address": False,
             "echo reply link-local": False, "echo reply SLAAC": False}
     guest_mac = None
-    end, next_ra, next_probe, seq = time.time() + args.seconds, 0, 0, 0
+    end, next_probe, seq = time.time() + args.seconds, 0, 0
+    next_ra = time.time() + 60
     while time.time() < end and not all(seen.values()):
         now = time.time()
         if now >= next_ra:
@@ -119,7 +121,12 @@ def main():
             frame = s.recv(2048)
         except socket.timeout:
             continue
-        if frame[6:12] == HOST_MAC or frame[12:14] != b"\x86\xdd" or len(frame) < 58:
+        if frame[6:12] == HOST_MAC:
+            continue
+        if guest_mac is None and frame[6] & 1 == 0:
+            guest_mac = frame[6:12]
+            print(f"guest MAC {guest_mac.hex(':')}", flush=True)
+        if frame[12:14] != b"\x86\xdd" or len(frame) < 58:
             continue
         ip = frame[14:]
         src, dst, nh = ip[8:24], ip[24:40], ip[6]
@@ -134,6 +141,7 @@ def main():
             seen["router solicitation"] = True
             print(f"router solicitation from {ntop(src)} ({mac.hex(':')})", flush=True)
             send(router_advert())
+            next_ra = time.time() + 10
         elif kind == 135:
             target = icmp[8:24]
             print(f"neighbor solicitation from {ntop(src)} for {ntop(target)}", flush=True)
