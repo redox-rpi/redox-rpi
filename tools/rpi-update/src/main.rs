@@ -26,7 +26,7 @@
 //! initramfs, SHA256SUMS and BUILD_ID. Plain HTTP on the home network.
 
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::os::unix::fs::FileExt;
 use std::process;
@@ -144,13 +144,15 @@ fn http_text(url: &str) -> io::Result<String> {
 
 /// Downloads `url` to `dest`, returns the SHA-256 in hex.
 fn download(url: &str, dest: &str) -> io::Result<String> {
-    let mut file = fs::File::create(dest)?;
+    // Whole MiB writes: each write makes fatfsd find the offset in the FAT
+    // again, and TCP reads are often a single 1.5 KiB segment.
+    let mut file = BufWriter::with_capacity(1 << 20, fs::File::create(dest)?);
     let mut hash = Sha256::new();
     let size = http_get(url, |b| {
         hash.update(b);
         file.write_all(b)
     })?;
-    file.sync_all()?;
+    file.into_inner().map_err(|e| e.into_error())?.sync_all()?;
     eprintln!("rpi-update: {url}: {} MiB", size >> 20);
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
