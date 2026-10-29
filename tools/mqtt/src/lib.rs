@@ -22,6 +22,7 @@ use std::collections::VecDeque;
 use std::io::{self, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
@@ -29,6 +30,9 @@ use std::time::Duration;
 pub const DEFAULT_PORT: u16 = 1883;
 /// Redox' DNS lookup has no timeout of its own.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// For the TCP connection and the broker's CONNACK together. On Redox a
+/// connection to an address nobody answers (a broker that is not there)
+/// never fails by itself.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 const CONNECT: u8 = 1;
@@ -126,6 +130,12 @@ impl Client {
     /// address is added to errors from here.
     fn handshake(address: &str, options: &Options) -> io::Result<Client> {
         let stream = open(address)?;
+        let watchdog = Watchdog::start(&stream, CONNECT_TIMEOUT)?;
+        let result = Client::login(stream, options);
+        watchdog.stop(result)
+    }
+
+    fn login(stream: TcpStream, options: &Options) -> io::Result<Client> {
         let mut client = Client {
             writer: Arc::new(Mutex::new(stream.try_clone()?)),
             reader: BufReader::new(stream),
@@ -252,6 +262,53 @@ impl Client {
             self.send(PUBACK << 4, &id.to_be_bytes())?;
         }
         Ok(message)
+    }
+}
+
+/// Shuts the connection down if the login takes longer than `timeout`, so a
+/// blocked read or write returns. Socket timeouts alone are not enough: on
+/// Redox the connect returns at once and a missing answer blocks later.
+struct Watchdog {
+    done: mpsc::Sender<()>,
+    fired: Arc<AtomicBool>,
+    timeout: Duration,
+}
+
+impl Watchdog {
+    fn start(stream: &TcpStream, timeout: Duration) -> io::Result<Watchdog> {
+        let _ = stream.set_read_timeout(Some(timeout));
+        let _ = stream.set_write_timeout(Some(timeout));
+        let sock = stream.try_clone()?;
+        let (done, wait) = mpsc::channel::<()>();
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = fired.clone();
+        thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = wait.recv_timeout(timeout) {
+                flag.store(true, Ordering::SeqCst);
+                let _ = sock.shutdown(std::net::Shutdown::Both);
+            }
+        });
+        Ok(Watchdog { done, fired, timeout })
+    }
+
+    fn stop(self, result: io::Result<Client>) -> io::Result<Client> {
+        let _ = self.done.send(());
+        let timed_out = |e: &io::Error| {
+            self.fired.load(Ordering::SeqCst)
+                || matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)
+        };
+        match result {
+            Ok(client) => {
+                let _ = client.reader.get_ref().set_read_timeout(None);
+                let _ = client.reader.get_ref().set_write_timeout(None);
+                Ok(client)
+            }
+            Err(e) if timed_out(&e) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("no answer from the broker within {} s", self.timeout.as_secs()),
+            )),
+            Err(e) => Err(e),
+        }
     }
 }
 
