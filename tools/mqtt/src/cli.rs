@@ -9,6 +9,8 @@ use std::process;
 /// else 1883.
 pub struct Common {
     pub host: String,
+    /// True when `-h` was given; else `host` is the default.
+    pub host_given: bool,
     pub port: u16,
     pub options: mqtt::Options,
     pub qos: mqtt::QoS,
@@ -21,7 +23,8 @@ const HOST_FILE: &str = "/etc/mqtt-host";
 impl Common {
     pub fn new(name: &str) -> Common {
         Common {
-            host: env::var("MQTT_HOST").ok().or_else(host_file).unwrap_or_else(|| "localhost".into()),
+            host: default_host(),
+            host_given: false,
             port: env::var("MQTT_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(mqtt::DEFAULT_PORT),
             options: mqtt::Options::new(&format!("{name}-{}", process::id())),
             qos: mqtt::QoS::AtMostOnce,
@@ -33,7 +36,10 @@ impl Common {
     pub fn parse(&mut self, flag: &str, args: &mut impl Iterator<Item = String>, usage: &str) -> bool {
         let mut value = || args.next().unwrap_or_else(|| fail(&format!("{flag} needs a value"), usage));
         match flag {
-            "-h" => self.host = value(),
+            "-h" => {
+                self.host = value();
+                self.host_given = true;
+            }
             "-p" => self.port = value().parse().unwrap_or_else(|_| fail("bad port", usage)),
             "-t" => self.topics.push(value()),
             "-q" => {
@@ -64,6 +70,10 @@ impl Common {
         mqtt::Client::connect(&self.address(), &self.options)
             .unwrap_or_else(|e| die(name, &e.to_string()))
     }
+}
+
+pub fn default_host() -> String {
+    env::var("MQTT_HOST").ok().or_else(host_file).unwrap_or_else(|| "localhost".into())
 }
 
 fn host_file() -> Option<String> {

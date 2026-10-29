@@ -239,6 +239,10 @@ fn main() {
             common.options.will =
                 Some(Will { topic: bridge.availability(), payload: b"offline".to_vec(), qos: QoS::AtLeastOnce, retain: true });
             loop {
+                // /etc/mqtt-host may have changed since the last try.
+                if !common.host_given {
+                    common.host = cli::default_host();
+                }
                 if let Err(e) = serve(&bridge, &common) {
                     eprintln!("{NAME}: {e}; trying again in {} s", RETRY_EVERY.as_secs());
                 }
