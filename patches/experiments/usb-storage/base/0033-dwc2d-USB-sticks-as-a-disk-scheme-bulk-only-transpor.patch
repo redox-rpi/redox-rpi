@@ -1,4 +1,4 @@
-From 169840e437a9595bf968fc3821efd5f5cb622429 Mon Sep 17 00:00:00 2001
+From 96ac78a24c218c949c23a22de0218c110109e32a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
