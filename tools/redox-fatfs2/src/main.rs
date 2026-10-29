@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::MetadataExt;
 use std::process;
 
 use fatfs::{Dir, FileSystem, FsOptions};
@@ -19,7 +20,7 @@ use redox_scheme::scheme::{register_sync_scheme, SchemeState, SchemeSync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::error::{
-    Error, Result, EBADF, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ENOTEMPTY,
+    Error, Result, EBADF, EEXIST, EINVAL, EIO, EISDIR, ENODEV, ENOENT, ENOTDIR, ENOTEMPTY, ENXIO,
 };
 use syscall::flag::{
     AT_REMOVEDIR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY, O_EXCL, O_RDONLY, O_STAT,
@@ -28,31 +29,57 @@ use syscall::flag::{
 use syscall::schemev2::NewFdFlags;
 use syscall::data::Stat;
 
-const SECTOR: u64 = 512;
-
-/// The disk device with byte access on top of whole-sector reads and writes.
+/// The disk device with byte access on top of whole-block reads and writes.
+/// The block size is the device's `st_blksize` (512 on SD cards and most USB
+/// sticks, 4096 on some).
 struct Disk {
     file: File,
     pos: u64,
+    block: Vec<u8>,
+}
+
+/// errno of a disk that went away, e.g. an unplugged USB stick.
+fn is_gone(err: &io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(ENODEV) | Some(ENXIO))
 }
 
 impl Disk {
-    fn sector(&mut self, n: u64, buf: &mut [u8; SECTOR as usize]) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(n * SECTOR))?;
-        self.file.read_exact(buf)
+    fn open(path: &str) -> io::Result<Disk> {
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let size = match file.metadata()?.blksize() {
+            n @ 512..=65536 if n.is_power_of_two() => n as usize,
+            _ => 512,
+        };
+        Ok(Disk { file, pos: 0, block: vec![0; size] })
+    }
+
+    fn read_block(&mut self, n: u64) -> io::Result<()> {
+        let size = self.block.len() as u64;
+        self.file.seek(SeekFrom::Start(n * size))?;
+        self.file.read_exact(&mut self.block)
+    }
+
+    fn check(res: io::Result<()>) -> io::Result<()> {
+        if let Err(err) = &res {
+            if is_gone(err) {
+                eprintln!("fatfsd: the disk is gone ({err}), exiting");
+                process::exit(0);
+            }
+        }
+        res
     }
 }
 
 impl Read for Disk {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let size = self.block.len();
         let mut done = 0;
-        let mut sector = [0; SECTOR as usize];
         while done < buf.len() {
             let pos = self.pos + done as u64;
-            let skip = (pos % SECTOR) as usize;
-            let n = (SECTOR as usize - skip).min(buf.len() - done);
-            self.sector(pos / SECTOR, &mut sector)?;
-            buf[done..done + n].copy_from_slice(&sector[skip..skip + n]);
+            let skip = (pos % size as u64) as usize;
+            let n = (size - skip).min(buf.len() - done);
+            Disk::check(self.read_block(pos / size as u64))?;
+            buf[done..done + n].copy_from_slice(&self.block[skip..skip + n]);
             done += n;
         }
         self.pos += done as u64;
@@ -62,18 +89,19 @@ impl Read for Disk {
 
 impl Write for Disk {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let size = self.block.len();
         let mut done = 0;
-        let mut sector = [0; SECTOR as usize];
         while done < buf.len() {
             let pos = self.pos + done as u64;
-            let skip = (pos % SECTOR) as usize;
-            let n = (SECTOR as usize - skip).min(buf.len() - done);
-            if n < SECTOR as usize {
-                self.sector(pos / SECTOR, &mut sector)?;
+            let skip = (pos % size as u64) as usize;
+            let n = (size - skip).min(buf.len() - done);
+            if n < size {
+                Disk::check(self.read_block(pos / size as u64))?;
             }
-            sector[skip..skip + n].copy_from_slice(&buf[done..done + n]);
-            self.file.seek(SeekFrom::Start(pos / SECTOR * SECTOR))?;
-            self.file.write_all(&sector)?;
+            self.block[skip..skip + n].copy_from_slice(&buf[done..done + n]);
+            let start = pos - skip as u64;
+            let res = self.file.seek(SeekFrom::Start(start)).and_then(|_| self.file.write_all(&self.block));
+            Disk::check(res)?;
             done += n;
         }
         self.pos += done as u64;
@@ -381,9 +409,10 @@ impl SchemeSync for FatScheme {
 }
 
 fn run(disk: &str, name: &str) -> io::Result<()> {
-    let file = OpenOptions::new().read(true).write(true).open(disk)?;
-    let fs = FileSystem::new(Disk { file, pos: 0 }, FsOptions::new())?;
-    eprintln!("fatfsd: {} {:?}, label {:?}", disk, fs.fat_type(), fs.volume_label());
+    let disk_file = Disk::open(disk)?;
+    let block = disk_file.block.len();
+    let fs = FileSystem::new(disk_file, FsOptions::new())?;
+    eprintln!("fatfsd: {} {:?}, label {:?}, {} byte blocks", disk, fs.fat_type(), fs.volume_label(), block);
 
     let socket = Socket::create()?;
     let mut scheme = FatScheme { fs, name: name.to_string(), handles: BTreeMap::new(), next_id: 1 };

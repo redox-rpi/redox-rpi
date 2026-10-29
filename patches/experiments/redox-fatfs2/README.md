@@ -32,7 +32,13 @@ echo test > /scheme/boot/test.txt
   0.12, `SchemeSync`, as in redoxfs).
 - Each open file or directory is a path. Every read or write opens the file
   in the crate again, so no crate object lives across requests.
-- The disk is read and written in whole 512-byte sectors.
+- The disk is read and written in whole blocks of the device's block size
+  (`st_blksize` from driver-block: 512 bytes on SD cards and most USB
+  sticks, 4096 on some).
+- When the disk goes away (`ENODEV` or `ENXIO`, e.g. an unplugged USB
+  stick), fatfsd exits and its scheme disappears.
+- Any Redox disk scheme works, e.g. a USB stick from `usbscsid` as
+  `fatfsd /scheme/disk.usb-<…>-scsi/0p0 usb0` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)).
 - Supported: open, create, read, write, truncate, `stat`, directory
   listing, unlink and rmdir. Not supported: rename, timestamps (the crate's
   `chrono` feature is off), permissions (FAT has none, files show as 0644,
