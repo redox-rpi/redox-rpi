@@ -46,11 +46,13 @@ ends QEMU instead of restarting the guest.
 Needs a person to cut and reconnect the power at the end.
 
 1. Boot, `scripts/pi-test.py` standard checks (also checks `reboot`).
-2. `poweroff` over devsh. The serial log shows `poweroff: N programs
+2. Over devsh: `echo before-poweroff > /home/root/poweroff-mark`, then
+   `poweroff`. The serial log shows `poweroff: N programs
    stopped, M killed` and `poweroff: shutdown through kstop`, then `kstop`,
    nothing after it; the green LED stays off, the Ethernet LEDs go out, and ping gets no
    answer for 2 minutes.
-3. Cut the power and reconnect it: the Pi boots normally.
+3. Cut the power and reconnect it: the Pi boots normally, and
+   `cat /home/root/poweroff-mark` gives `before-poweroff`.
 
 ## Results
 
