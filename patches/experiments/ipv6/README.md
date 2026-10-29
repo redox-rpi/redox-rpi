@@ -45,15 +45,23 @@ Step 3, base `0026`–`0027` and relibc `0002`, so programs can use IPv6:
   applied only to plain reads and writes; `recvfrom` with an address (as
   std's `recv_from` does) is a `recvmsg` call and waited forever. That is
   an upstream bug, not IPv6 specific.
+- **IPv6 multicast for programs** (step 4, base `0028`, relibc `0003`):
+  `IPV6_JOIN_GROUP`/`IPV6_LEAVE_GROUP` join groups on the interface,
+  counted like the IPv4 ones, and smoltcp sends the MLDv2 reports. relibc
+  passes `IPPROTO_IPV6` options to netstack like `IPPROTO_IP`; netstack
+  accepts and ignores the others (`IPV6_V6ONLY`, `IPV6_MULTICAST_HOPS`,
+  ...). Tested through `mdnsd` on branch `mdns6`.
+- `udp-echo.py`: UDP echo on the build host for the Pi test
+  (`net6 udp [<host>]:7777 hello`).
 - `tools/net6`: `net6 resolve <name>`, `net6 udp <[addr]:port> <text>`,
   `net6 tcp <[addr]:port> <text>`, all through std and relibc.
 
 Not done yet: duplicate address detection, address and router lifetimes
 (only lifetime 0 removes), more than one prefix, DHCPv6, redirects, static
 IPv6 addresses through netcfg, scope IDs (`%eth0`; there is only one
-interface), `gethostbyname2(AF_INET6)`, `getnameinfo` for IPv6, IPv6
-multicast for programs (`IPV6_JOIN_GROUP`, MLD), which mDNS over IPv6 and
-Matter need next. The DHCP name server still only goes to
+interface), `gethostbyname2(AF_INET6)`, `getnameinfo` for IPv6,
+`IPV6_PKTINFO` (which address a packet came to), `IPV6_V6ONLY` (sockets
+take both families anyway). The DHCP name server still only goes to
 `/scheme/netcfg/resolv/nameserver`, which relibc does not read (it reads
 `/etc/net/dns`, 9.9.9.9 by default): an older gap, not changed here.
 
