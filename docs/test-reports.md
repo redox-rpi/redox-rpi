@@ -533,3 +533,258 @@ Long run at 1400 MHz from a fresh boot
   firmware handles itself.
 
 Result: **pass**. With the x18 fix, 1400 MHz is ready for v0.3.0.
+
+## 2026-10-28: `v0.3.0-dev-52-g7df70f9+xcb30` (dwc2d with interrupts, test #5)
+
+Branch `dwc2-interrupts` (7df70f9) with `--experiment timesync --experiment
+rtl8152 --experiment pi-clean-boot --experiment dwc2-interrupts`, real Pi
+3B+ over netboot. The build predates the x18 fix on `main` (e2b987b), so
+start failures of about 1 % would not have been a `dwc2d` problem; there
+were none.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-52-g7df70f9+xcb30 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-52-g7df70f9+xcb30.toml |
+| ps | pass | 44 processes (piped) |
+| ps-tty | pass | 44 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+- The boot log shows `dwc2d: interrupt /scheme/irq/phandle-1/1,9`: the
+  driver waits for the controller's interrupt on the real BCM2837, through
+  the LAN7800 (`link up after 1710 ms`). No "unexpected irq" lines.
+- Network over the LAN7800: 2000 lines of output through devshd in 2 s.
+- CPU time of `dwc2d` (`ps`, user + system): 2.85 s in 62 s with nothing
+  to do, about 5 % of one core. The polling driver keeps one core busy all
+  the time (4 min 21 s in about 80 s in QEMU, see the experiment's README).
+  The rest is mostly the keyboard: 100 polls per second, each a split
+  transaction through the hub that waits by spinning.
+- USB keyboard: the maintainer logged in on the HDMI console, ran `ls`
+  and `ps`; both worked.
+- `pi-clean-boot` (#18): no `pcid`, `pcid-spawner`, `audiod` or `rtcd`
+  messages in the boot log.
+- First boot with the Anker 565 hub plugged in but no cable on it: `dwc2d`
+  took the hub's RTL8153B as the network adapter (it is preferred over the
+  LAN7800), had no link, `dhcpd` timed out and did not retry when the
+  cable was plugged in later. Netbooting through the hub, U-Boot's r8152
+  driver fails the HTTP download (`Rx: failed to receive: -5`). Passed on
+  to test #4.
+- Afterwards, on the stable image, devshd logins hung (#11), so the
+  polling driver's CPU time was not measured on the Pi.
+
+Result: **pass**.
+
+## 2026-10-28: devshd hang-up (#11), `v0.3.0-dev-77-g6bcd0fb+x9f76`
+
+Test #21 for [#11](https://github.com/redox-rpi/redox-rpi/issues/11): the
+stable image's experiments (`timesync`, `rtl8152`) on branch
+[`devshd-hangup`](https://github.com/redox-rpi/redox-rpi/tree/devshd-hangup), where devshd sends SIGHUP to the terminal's
+foreground process group (then SIGKILL) when a client closes the
+connection without `exit`. Real Pi 3B+ over netboot, 600 MHz, one boot.
+
+| Step | Result |
+|---|---|
+| `scripts/pi-test.py` | version, manifest, ps, ps-tty, sdcard pass; 0 of 300 starts failed |
+| 10 clean devsh sessions (`echo`, `exit`) | all work, about 1.3 s each |
+| 3 dropped sessions (logged in, socket closed) | nothing left behind |
+| 10 dropped sessions, 5 of them with `sleep 600` running | nothing left behind |
+| `ps` afterwards | only the serial console's `login` processes, the current session and devshd with 4 threads |
+
+The first run of the session script stopped silently after the third
+dropped session (no error output was kept); the Pi was clean at that
+point, and the repeat with 10 dropped sessions ran through. Before the fix,
+in QEMU, each dropped session left a `login`, an `ion` and two devshd
+threads behind. The reset over devsh needed 2 tries before the test and
+1 after it.
+
+## 2026-10-29: #30, `v0.3.0-dev-80-g8bba533+x197a` (sdhost default + kernel memory fix), real Pi
+
+Rerun of #23 ([#6](https://github.com/redox-rpi/redox-rpi/issues/6),
+[#31](https://github.com/redox-rpi/redox-rpi/issues/31)): branch
+`sdhost-ctxleak` = `sdhost-default` + experiment `ctx-leak-fix`, with
+`timesync` and `rtl8152`. Built 2026-10-28T23:31:57Z, real Pi 3B+ over
+netboot, 15 GB SDHC card.
+
+#23 (`v0.3.0-dev-76-g13092c5+x9f76`, same without the fix) had ended in the
+kernel panic `not yet implemented: oom` while `sd-stress.py` wrote the 250
+new small files: the kernel kept ~76 KB per `dd` run (#31).
+
+Boot log: `rpi-firmwared` (ARM clock 600 -> 1400 MHz) before
+`bcm2835-sdhostd: core clock 250 MHz, up to 400 MHz`, `SDHC/SDXC card, 15193
+MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
+`bcm2835-sdhcid`; `/scheme/data` mounted.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-80-g8bba533+x197a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-80-g8bba533+x197a.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| memory | pass | `free` used 141 MB after boot, 143 MB after the 300 starts (743 MB total) |
+| sd-stress write | pass | 256 MiB at 7.9 MB/s; 1000 small files, 250 deleted, 250 new, 328 s; no `oom` |
+| sd-stress verify | pass | 1001 files, 0 missing, 0 changed |
+| sd-stress cycles | **stopped** | restart 1 done (back after 89 s), then no devsh answer from 08:25 UTC: the devshd hang ([#11](https://github.com/redox-rpi/redox-rpi/issues/11)), whose fix is not in this image. The Pi itself was alive (local console login). Stopped at the maintainer's request |
+
+The memory fix holds on the Pi: the workload that ended #23 in a panic ran
+through. Rerun the cycles with the devshd hangup fix included.
+
+## 2026-10-29: #30 rerun, `v0.3.0-dev-120-g5ffb097+x197a` (sdhost default + kernel memory fix + devshd fix), real Pi
+
+Rerun of the stopped first run above with the devshd fix
+([#11](https://github.com/redox-rpi/redox-rpi/issues/11)) merged in:
+branch `sdhost-ctxleak` 5ffb097 + experiment `ctx-leak-fix`, with
+`timesync` and `rtl8152`. Real Pi 3B+ over netboot, 15 GB SDHC card.
+
+Boot log: `rpi-firmwared` (ARM clock 600 -> 1400 MHz) before
+`bcm2835-sdhostd: core clock 250 MHz, up to 400 MHz`, `SDHC/SDXC card, 15193
+MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
+`bcm2835-sdhcid` after the reset; `/scheme/data` mounted.
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and libc.so hash match the manifest |
+| ps, ps-tty, sdcard | pass | 42 processes; write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| memory | pass | `free` used 120 MB after boot, 120 MB after three `sd-stress.py` runs and their restarts (743 MB total) |
+| sd-stress write | pass | 256 MiB at 7.7, 7.4 and 7.2 MB/s in three runs; 1000 small files, 250 deleted, 250 new, about 320 s each; no `oom` |
+| data after a restart | pass | two real restarts in different runs, each followed by a SHA-256 check of all 1001 files: 0 missing, 0 changed; a third restart left all 1002 files in place (not hashed) |
+| sd-stress result | fail (test harness) | see below; no data was lost |
+
+Why `sd-stress.py` reported **fail** although the data survived:
+
+1. Run 1: after `echo reset > /scheme/sys/kstop`, devshd went on
+   answering during the shutdown, so the script checked the dying system
+   (`/scheme/data` already gone: 1001 missing), and its second "restart" went
+   to the same shutdown. Only one real reset happened; the check after it
+   found all 1001 files unchanged.
+2. Run 3 (with a local copy that waits for `kreset` on the console first):
+   restart 1 passed. After restart 2, devshd answered 30 s after the reset,
+   before `/scheme/data` was mounted, so all 1002 files were "missing"
+   and the 32 MiB write failed; two minutes later all 1002 files were there.
+   (Run 2 only timed out in the local copy's own wait.)
+
+Afterwards devshd stopped accepting connections once (the console still
+worked): the Pi was reset from the serial console and the stable image
+`v0.3.0-dev-15-g24fbb96+x9f76` restaged.
+
+Follow-ups for `scripts/sd-stress.py`: wait for the new boot (console
+`kreset`, or a changed `uptime`) instead of devshd going away, and wait for
+`/scheme/data` before checking.
+
+## 2026-10-28: `v0.3.0-dev-94-gb1fcbe1+xe9c4`
+
+Built 2026-10-28T19:56:45Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `timesync`. Experiment serial-rx (#28) on the stable base: serial-input-test.sh 20 of 20 lines of 200 characters complete. First pi-test.py attempt got no devsh output (#11), second attempt below
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-94-gb1fcbe1+xe9c4 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-94-gb1fcbe1+xe9c4.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Serial console: `patches/experiments/serial-rx/serial-input-test.sh 20`
+wrote 20 lines of `echo` plus 200 characters, each in one piece at
+115200 baud: **20 of 20 complete**. Login with `root` and the password at
+normal speed worked, and the reset command at the end, sent in one piece,
+arrived complete (before: cut off after 25 characters). No crash on the
+console except the known `pcid` panic (no `pi-clean-boot` in this image).
+The first `pi-test.py` attempt got no answer from devsh (#11); the second
+attempt is the table above.
+
+## 2026-10-29: `v0.3.0-dev-93-g2143ad7+x1044` (timerd, test #27)
+
+Built 2026-10-28T20:16:41Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test` (two
+test timers: `date` every minute, `uname -a` every 2 minutes with
+`persistent = true`). Issue [#22](https://github.com/redox-rpi/redox-rpi/issues/22).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 43 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| timers run | pass | both test timers on schedule, each `exited with code 0`; `timerd -l` shows next and last run; last runs in `/scheme/data/timerd/` |
+| waits for timesync | pass | boot 3: `timerd: clock set by timesync, 2026-10-29 10:47:41 UTC`, timers from 10:48 |
+| catch-up | pass | after `echo 1793000000 > /scheme/data/timerd/test-catchup` and a reset: `test-catchup: starting uname (missed since 2026-10-26 07:33:20 UTC)` once; `test-minute` did not catch up |
+| without NTP time | pass | boots 1 and 2: `timerd: no time from timesync after 300 s, going on with …`, then the timers ran on the saved time |
+
+**timesync hangs when the network comes up late** (boots 1 and 2): DHCP was
+not done when `timesync` started (`No route found for destination:
+9.9.9.9`, the DNS server). `timesync` then printed nothing more, neither a
+time nor "no time server answered", and did not write
+`/tmp/timesync.synced`; `timesync -n` by hand got the time. Its DNS lookup
+probably waits forever. The clock stayed 72 minutes behind (saved time).
+In boot 3 the network was up in time and everything worked. Not a `timerd`
+problem; needs a fix in `timesync` (a timeout around the lookup).
+
+Boot 1 also looked hung after 3 minutes: no log output, no echo on the
+serial console, devshd unreachable ("No route to host"); power-cycled with
+the user's permission. Boot 2 with the same image did not hang, so the
+cause is unclear.
+
+## 2026-10-29: `v0.3.0-dev-148-g54f7433+x657a`, USB hotplug (#35, [#17](https://github.com/redox-rpi/redox-rpi/issues/17))
+
+Branch `usb-hotplug` (`dwc2-default` + main + `--experiment usb-hotplug`),
+real Pi 3B+ over netboot, the maintainer at the Pi for part B. **Pass.**
+
+Part A, automated:
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-148-g54f7433+x657a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-148-g54f7433+x657a.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| hubs | info | hub 1 (4 ports) and hub 2 (3 ports, the LAN7515's) switch power per port; the external hub with the keyboard (05e3:0610) is ganged |
+| port cycles | pass | `scripts/pi-hotplug-test.sh 192.168.178.148 3`: 3 of 3 times the LAN7800's port (hub 2 port 1) lost power, disconnected after 102–104 ms, was found again and took the network back; devshd answered after 7, 9 and 10 s |
+| dwc2d CPU | info | 2.84 s user + 2.98 s system after boot, `pi-test.py` and the 300 starts |
+
+Part B, with a person:
+
+| Check | Result | Detail |
+|---|---|---|
+| keyboard hotplug | pass | the keyboard behind its external hub unplugged and plugged into 4 different ports (hub 1 ports 3 and 2, hub 2 ports 3 and 2): each time `keyboard removed`, then the hub and `keyboard at address 5` again; typing on the HDMI console worked each time |
+| DHCP retry | pass | LAN cable pulled during the Redox boot: `LAN78xx no link yet`, `dhcpd: failed to receive offer … trying again every 7s`; cable back after `redox login:`: `dhcpd: configured after 4 attempts`, devshd answers |
+
+Not tested: the Anker hub (RTL8153B) steps; they stay with test #4. Stable
+image restored afterwards.
+
+## 2026-10-29: `v0.3.0-dev-95-g0d47c4f+x43ba` (timesync with late DHCP, test #41)
+
+Built 2026-10-29T11:05:15Z, real Pi 3B+ over netboot, branch `timerd`.
+Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test`,
+`late-dhcp` (starts `dhcpd` 90 seconds late). Checks the fix for the
+`timesync` hang found in test #27
+([#22](https://github.com/redox-rpi/redox-rpi/issues/22)).
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and `libc.so` hash match |
+| ps, ps-tty | pass | 46 processes |
+| sdcard | pass | |
+| starts | pass | 0 of 100 failed |
+| late DHCP | pass | `no time server answered within a minute (last: no default route (DHCP not done))`, `trying again every 30 s`, then `clock set to 2026-10-29 11:49:31 UTC from pool.ntp.org` |
+| timerd | pass | `timerd: clock set by timesync` one second later; `test-catchup` caught up its run missed since test #27 |
+| clock | pass | `date` the same as the build host to the second; `/tmp/timesync.synced` exists |
+
+## 2026-10-29: `v0.3.0-dev-164-gf8f70a5+x9f76` (serial-rx as default patches, #28, #32), QEMU
+
+Branch `serial-rx-base`: base `0024` and kernel `0007` on main after
+`dwc2-default`, with `timesync` and `rtl8152`. QEMU `raspi3b`,
+`qemu-raspi3b.sh --run` types one line of 5 × `echo <200 characters>`
+(about 1050 characters) on the serial console.
+
+- 3 of 3 runs: login, all 5 lines complete, no getty panic.
+- For #32, the same test before: stable `v0.3.0-dev-15-g24fbb96+x9f76`
+  4 of 7 runs with `getty: failed to write master PTY: ... WouldBlock` and
+  a dead console; experiment image `v0.3.0-dev-94-gb1fcbe1+xe9c4` 7 of 7
+  complete.
+- The known `pcid` panic is still there (clean boot is not merged yet).

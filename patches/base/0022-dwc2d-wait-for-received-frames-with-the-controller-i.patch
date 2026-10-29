@@ -1,0 +1,347 @@
+From 4afd53f1ffd0b5c0c55ef3d7d8f018d0629e85b6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 27 Oct 2026 09:05:52 +0100
+Subject: [PATCH] dwc2d: wait for received frames with the controller interrupt
+
+Enable the channel-halted interrupt of the receive channel only and
+replace the yield loop with an event queue over the IRQ, the network
+scheme and a timer for the keyboard. Without an IRQ the timer polls
+every 10 ms.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/Cargo.toml  |   1 +
+ drivers/usb/dwc2d/src/dwc2.rs |  12 ++-
+ drivers/usb/dwc2d/src/hid.rs  |  13 ++-
+ drivers/usb/dwc2d/src/main.rs | 178 ++++++++++++++++++++++++++++++----
+ drivers/usb/dwc2d/src/regs.rs |   3 +
+ 5 files changed, 187 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index 32515bc..de3a4ea 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -13,6 +13,7 @@ inputd = { path = "../../inputd" }
+ 
+ libredox.workspace = true
+ orbclient.workspace = true
++redox_event.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+ 
+ [lints]
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 16406d1..316df76 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -121,8 +121,9 @@ impl Dwc2 {
+         })?;
+ 
+         self.write(HCFG, HCFG_FSLSPCLKSEL_30_60_MHZ);
+-        // Polling for now: no interrupts, DMA on.
++        // No interrupts until enable_rx_interrupt(), DMA on.
+         self.write(GINTMSK, 0);
++        self.write(HAINTMSK, 0);
+         self.write(GAHBCFG, GAHBCFG_DMA_EN);
+ 
+         for ch in 0..self.channels {
+@@ -132,6 +133,15 @@ impl Dwc2 {
+         Ok(())
+     }
+ 
++    /// Raise the controller's interrupt when channel `ch` halts. Only that
++    /// channel: all other transfers wait for their channel by polling.
++    pub fn enable_rx_interrupt(&self, ch: usize) {
++        self.write(hcintmsk(ch), HCINT_CH_HLTD);
++        self.write(HAINTMSK, 1 << ch);
++        self.write(GINTMSK, GINTSTS_HCHINT);
++        self.write(GAHBCFG, self.read(GAHBCFG) | GAHBCFG_GLBL_INTR_EN);
++    }
++
+     fn write_port(&self, set: u32, clear: u32) {
+         let value = self.read(HPRT0) & !HPRT0_W1C;
+         self.write(HPRT0, (value | set) & !clear);
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index b765485..c881ad8 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -136,7 +136,18 @@ impl Keyboard {
+ 
+     /// Fetch a report when the poll interval has passed and send the key
+     /// changes. Errors are dropped: the next poll tries again.
+-    pub fn poll(&mut self) {
++    /// Poll the keyboard and repeat a held key when due. Returns the time
++    /// until the next call is due.
++    pub fn poll(&mut self) -> Duration {
++        self.poll_now();
++        let next = match self.repeat {
++            Some((_, at)) => self.next_poll.min(at),
++            None => self.next_poll,
++        };
++        next.saturating_duration_since(Instant::now())
++    }
++
++    fn poll_now(&mut self) {
+         let now = Instant::now();
+         if let Some((key, at)) = self.repeat {
+             if now >= at {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 0b0dd57..b18633d 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -6,7 +6,12 @@
+ //! protocol keyboard directly in this process. It does not offer the USB
+ //! scheme to class drivers yet.
+ 
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Write};
++use std::os::fd::AsRawFd;
++use std::os::unix::fs::OpenOptionsExt;
+ use std::process;
++use std::time::Duration;
+ 
+ use fdt::Fdt;
+ 
+@@ -22,6 +27,7 @@ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+ use ecm::{Ecm, EcmFunction};
+ use enumerate::Bus;
++use event::{user_data, EventQueue};
+ use hid::Keyboard;
+ use lan78xx::{Lan78xx, Lan78xxFunction};
+ use rtl8152::{Rtl8152, Rtl8152Function};
+@@ -74,6 +80,11 @@ impl NetworkAdapter for UsbNet {
+     }
+ }
+ 
++/// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
++const RX_CHANNEL: usize = 1;
++/// How often to look for received frames without an interrupt.
++const POLL_FALLBACK: Duration = Duration::from_millis(10);
++
+ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+ }
+@@ -128,6 +139,74 @@ fn find_controller(fdt: &Fdt) -> Option<(usize, usize)> {
+     Some((addr, size))
+ }
+ 
++/// The controller's interrupt as an irq scheme path: the interrupt parent's
++/// phandle and the first specifier of `interrupts` (the firmware may add a
++/// second one for its own use).
++fn find_irq(fdt: &Fdt) -> Option<String> {
++    let node = fdt.find_compatible(&["brcm,bcm2708-usb", "brcm,bcm2835-usb", "snps,dwc2"])?;
++    let cells = |name: &str, node: fdt::node::FdtNode| -> Option<Vec<u32>> {
++        let value = node.property(name)?.value;
++        Some(
++            value
++                .chunks_exact(4)
++                .map(|cell| u32::from_be_bytes([cell[0], cell[1], cell[2], cell[3]]))
++                .collect(),
++        )
++    };
++    // interrupt-parent is inherited, usually from /soc.
++    let phandle = [Some(node), fdt.find_node("/soc"), fdt.find_node("/")]
++        .into_iter()
++        .flatten()
++        .find_map(|n| cells("interrupt-parent", n))?
++        .first()
++        .copied()?;
++    let parent = fdt.find_phandle(phandle)?;
++    let count = cells("#interrupt-cells", parent)?.first().copied()? as usize;
++    let spec = cells("interrupts", node)?;
++    let spec = spec.get(..count)?;
++    let spec: Vec<String> = spec.iter().map(u32::to_string).collect();
++    Some(format!("/scheme/irq/phandle-{}/{}", phandle, spec.join(",")))
++}
++
++/// A one-shot timer on the monotonic clock, delivered as an event.
++struct Timer(File);
++
++impl Timer {
++    fn new() -> std::io::Result<Self> {
++        OpenOptions::new()
++            .read(true)
++            .write(true)
++            .custom_flags(syscall::O_NONBLOCK as i32)
++            .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))
++            .map(Self)
++    }
++
++    fn arm(&mut self, after: Duration) {
++        let mut time = syscall::TimeSpec::default();
++        if self.0.read(&mut time).is_err() {
++            return;
++        }
++        let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++        time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++        time.tv_nsec = (nsec % 1_000_000_000) as i32;
++        let _ = self.0.write(&time);
++    }
++
++    /// Consume the event.
++    fn fired(&mut self) {
++        let mut time = syscall::TimeSpec::default();
++        let _ = self.0.read(&mut time);
++    }
++}
++
++user_data! {
++    enum Source {
++        Irq,
++        Scheme,
++        Time,
++    }
++}
++
+ fn main() {
+     daemon::Daemon::new(daemon);
+ }
+@@ -161,24 +240,66 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         }
+     };
+     let mut keyboard = keyboard.and_then(|f| Keyboard::new(hc.clone(), f));
++
++    // Printing from here on can block for good: nobody may read our stdout
++    // after boot. Errors before the loop go to stderr while it still works.
++    let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
++    let mut timer = None;
++    if keyboard.is_some() {
++        match Timer::new() {
++            Ok(mut t) => {
++                events
++                    .subscribe(t.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++                    .expect("dwc2d: failed to subscribe to the timer");
++                t.arm(Duration::ZERO);
++                timer = Some(t);
++            }
++            Err(err) => eprintln!("dwc2d: no timer for the keyboard: {err}"),
++        }
++    }
++
+     let Some((function, mac)) = network else {
+         daemon.ready();
+-        // See below for why this loop yields instead of sleeping.
+-        if let Some(keyboard) = keyboard.as_mut() {
+-            loop {
+-                keyboard.poll();
+-                std::thread::yield_now();
++        for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++            if let (Source::Time, Some(t), Some(k)) = (event.user_data, timer.as_mut(), keyboard.as_mut()) {
++                t.fired();
++                t.arm(k.poll());
+             }
+         }
+-        loop {
+-            std::thread::sleep(std::time::Duration::from_secs(3600));
+-        }
++        unreachable!()
+     };
+ 
+     println!(
+         "dwc2d: network adapter {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+     );
++    // The receive channel's halt raises the controller's interrupt; without
++    // it, fall back to a timer that polls.
++    let irq_path = Fdt::new(&dtb).ok().and_then(|fdt| find_irq(&fdt));
++    let mut irq_file = irq_path.as_ref().and_then(|path| {
++        File::create(path)
++            .inspect_err(|err| eprintln!("dwc2d: cannot open {path}: {err}"))
++            .ok()
++    });
++    match (&irq_file, &irq_path) {
++        (Some(file), Some(path)) => {
++            events
++                .subscribe(file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ)
++                .expect("dwc2d: failed to subscribe to the IRQ");
++            hc.enable_rx_interrupt(RX_CHANNEL);
++            println!("dwc2d: interrupt {path}");
++        }
++        _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
++    }
++    if irq_file.is_none() && timer.is_none() {
++        let mut t = Timer::new().expect("dwc2d: failed to open /scheme/time");
++        events
++            .subscribe(t.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++            .expect("dwc2d: failed to subscribe to the timer");
++        t.arm(Duration::ZERO);
++        timer = Some(t);
++    }
++
+     let name = match function {
+         NetFunction::Ecm(_) => "network.usb_ecm",
+         NetFunction::Lan78xx(_) => "network.usb_lan78xx",
+@@ -193,18 +314,39 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         daemon,
+         name.to_string(),
+     );
+-    // No interrupts yet: poll for received frames and scheme requests.
+-    // Two things learned the hard way: printing from here on can block for
+-    // good (nobody may read our stdout after boot), and so does sleeping
+-    // once init has switched to the real root filesystem. Yielding costs a
+-    // busy core until the driver uses interrupts.
+-    loop {
+-        scheme.tick().expect("dwc2d: network scheme failed");
+-        if let Some(keyboard) = keyboard.as_mut() {
+-            keyboard.poll();
++    events
++        .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
++        .expect("dwc2d: failed to subscribe to the scheme");
++
++    scheme.tick().expect("dwc2d: network scheme failed");
++    for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++        match event.user_data {
++            Source::Irq => {
++                let file = irq_file.as_mut().unwrap();
++                let mut irq = [0; 8];
++                if file.read(&mut irq).unwrap_or(0) == irq.len() {
++                    // tick() takes the received frame and clears the
++                    // channel's interrupt; only then unmask the line.
++                    scheme.tick().expect("dwc2d: network scheme failed");
++                    let _ = file.write(&irq);
++                }
++            }
++            Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
++            Source::Time => {
++                let t = timer.as_mut().unwrap();
++                t.fired();
++                let mut next = POLL_FALLBACK;
++                if irq_file.is_none() {
++                    scheme.tick().expect("dwc2d: network scheme failed");
++                }
++                if let Some(k) = keyboard.as_mut() {
++                    next = next.min(k.poll());
++                }
++                t.arm(next);
++            }
+         }
+-        std::thread::yield_now();
+     }
++    unreachable!()
+ }
+ 
+ /// Enumerate all devices; returns a network function, initialized, with its
+diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
+index fc7eaa2..afca2ca 100644
+--- a/drivers/usb/dwc2d/src/regs.rs
++++ b/drivers/usb/dwc2d/src/regs.rs
+@@ -26,6 +26,8 @@ pub const GRSTCTL_TXF_NUM_ALL: u32 = 0x10 << 6;
+ pub const GRSTCTL_AHB_IDLE: u32 = 1 << 31;
+ 
+ pub const GINTSTS_CUR_MODE_HOST: u32 = 1 << 0;
++/// GINTSTS/GINTMSK: a host channel has an interrupt (see HAINT).
++pub const GINTSTS_HCHINT: u32 = 1 << 25;
+ 
+ /// GHWCFG2 bits 14..=17: number of host channels minus one.
+ pub const GHWCFG2_NUM_HOST_CHAN_SHIFT: u32 = 14;
+@@ -35,6 +37,7 @@ pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
+ pub const HCFG: usize = 0x400;
+ pub const HFIR: usize = 0x404;
+ pub const HFNUM: usize = 0x408;
++pub const HAINTMSK: usize = 0x418;
+ pub const HPRT0: usize = 0x440;
+ 
+ /// PHY clock for full/low speed: 30/60 MHz (UTMI+ PHY, as on the Pi).
+-- 
+2.54.0 (Apple Git-157)
+
