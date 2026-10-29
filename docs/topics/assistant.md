@@ -181,13 +181,22 @@ git).
   hangs after identify, `virtio-blkd` crashes, AHCI is not bootable.
 - **Image with the experiment** `assistant` (recipes for llama.cpp, linked
   against our relibc, and the model): `v0.3.0-dev-156-gb366886+x18f5`
-  (SD card). QEMU run in progress.
+  (SD card). **QEMU `raspi3b`, 2026-10-29: clean run.** "The capital of
+  France is Paris. The capital of France is also the capital of the", no
+  crash, no exception, normal exit. So the thread crash came from the
+  toolchain's older relibc. Memory: 96 MiB used before, 137 MiB after
+  (of 912 MiB). Speed in QEMU (one host core emulating four): 0.19 tokens
+  per second reading, 0.04 writing; says nothing about the Pi.
+- Pi test #48 in the [queue](../test-plan.md): the SD card image, with a
+  person to swap the card.
 
 ## Next
 
-- QEMU run of `+x18f5`: do the worker threads still crash with our relibc?
-- Then a Pi test in the [queue](../test-plan.md): `llama-bench` for real
-  speed, `free` for memory.
+- Pi test #48: `llama-bench` for real speed, `free` while the model runs.
+- A Pi test without a person: the network-boot image with llama.cpp, and
+  the model on the netboot card's data partition (`/scheme/data`). llama.cpp
+  can download it itself over plain HTTP from the build host (`-mu`,
+  cpp-httplib is built in); untested.
 
 ## Later
 
