@@ -21,7 +21,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 socket="$ROOT/images/qemu-monitor.sock"
-log="$ROOT/images/qemu-hotplug.log"
 failed=0
 read -r port1 port2 <<< "${HOTPLUG_PORTS:-12323 12399}"
 
@@ -109,7 +108,10 @@ wait_devsh() {
     return 1
 }
 
+# Each boot has its own serial log: $1 is its number.
 boot() {
+    log="$ROOT/images/qemu-hotplug-$1.log"
+    shift
     rm -f "$socket" "$log"
     QEMU_DEVSH_PORT=$port1 timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" "$@" --monitor "$socket" --image "$image" \
         < /dev/null > "$log" 2>&1 &
@@ -129,7 +131,7 @@ stop() {
 trap 'stop' EXIT
 
 echo "== boot 1: keyboard and network card hotplug"
-boot --usb-net
+boot 1 --usb-net
 if ! wait_devsh $port1 60; then
     echo "FAIL: devshd did not answer"
     exit 1
@@ -174,7 +176,7 @@ check "devshd after the port cycle" wait_devsh $port2 20
 stop
 
 echo "== boot 2: network card plugged in after boot"
-boot
+boot 2
 check "dhcpd keeps trying without a card" wait_log "dhcpd: .*trying again" 240
 monitor "netdev_add user,id=hpnet,hostfwd=tcp::$port1-:2323" \
     "device_add usb-net,netdev=hpnet,id=hpnet0" > /dev/null
