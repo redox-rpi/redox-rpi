@@ -1,4 +1,4 @@
-From 6ead20db33ea02e8dfbb73e6a58c2de8c7bf2e49 Mon Sep 17 00:00:00 2001
+From cf37f696667b5a5f14729ae924edc2ab3e960800 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:00:06 +0100
 Subject: [PATCH] dwc2d: switch a hub port off and on on request, for hotplug
@@ -15,12 +15,35 @@ and the hub line now says whether the hub switches power per port.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/dwc2d/src/enumerate.rs | 54 +++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/dwc2.rs      | 11 ++++++
+ drivers/usb/dwc2d/src/enumerate.rs | 55 +++++++++++++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs      | 37 +++++++++++++++++++-
- 2 files changed, 89 insertions(+), 2 deletions(-)
+ 3 files changed, 101 insertions(+), 2 deletions(-)
 
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 0f4dfe3..533c036 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -155,6 +155,17 @@ impl Dwc2 {
+         self.write(hcint(ch), u32::MAX);
+     }
+ 
++    /// Halt every channel with a transfer to a device, before the device is
++    /// reset or forgotten: a transmit that timed out may still be enabled.
++    pub fn halt_device(&self, address: u8) {
++        for ch in 0..self.channels {
++            let value = self.read(hcchar(ch));
++            if value & HCCHAR_CHENA != 0 && (value >> HCCHAR_DEVADDR_SHIFT) & 0x7F == u32::from(address) {
++                self.halt(ch);
++            }
++        }
++    }
++
+     /// Whether a device is connected to the root port.
+     pub fn root_connected(&self) -> bool {
+         self.read(HPRT0) & HPRT0_CONN_STS != 0
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 06ebceb..01cac8d 100644
+index 06ebceb..1b97738 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -270,7 +270,11 @@ impl Bus {
@@ -36,7 +59,15 @@ index 06ebceb..01cac8d 100644
          let this = Hub { address: hub, max_packet, speed, depth, tt: hub_tt, ports };
          self.hubs.push(this);
  
-@@ -390,6 +394,54 @@ impl Bus {
+@@ -375,6 +379,7 @@ impl Bus {
+         for child in children {
+             self.remove(child, removed);
+         }
++        self.hc.halt_device(address);
+         self.devices.retain(|d| d.address != address);
+         self.hubs.retain(|h| h.address != address);
+         self.tts.remove(&address);
+@@ -390,6 +395,54 @@ impl Bus {
          self.enumerate(speed, 0, None, None)
      }
  
