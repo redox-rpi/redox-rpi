@@ -36,6 +36,12 @@
   mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
   write, unplug, plug in again); not yet on the Pi.
 
+- LAN7800 receives all multicast (mDNS, IPv6 neighbor discovery; #27,
+  #37), branch [`lan78xx-multicast`](https://github.com/redox-rpi/redox-rpi/tree/lan78xx-multicast),
+  experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
+  QEMU (no LAN7800 there); the Pi check rides on the network session's
+  test #47.
+
 ## Next
 
 - A Pi test of USB sticks (high-speed stick on the 3B+ hub).
