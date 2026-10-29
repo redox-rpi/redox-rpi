@@ -1,0 +1,42 @@
+[packages]
+openssh = "source"
+
+# Privilege separation: sshd runs the pre-auth part as this user, chrooted
+# to /var/empty.
+[users.sshd]
+password = ""
+shell = "/usr/bin/false"
+
+[[files]]
+path = "/var/empty"
+data = ""
+directory = true
+mode = 0o755
+
+# Host keys are made at the first boot (ssh-keygen -A only creates missing
+# keys), then sshd starts.
+[[files]]
+path = "/usr/lib/init.d/91_sshd-keys.service"
+data = """
+[unit]
+description = "Create missing SSH host keys"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "ssh-keygen"
+args = ["-A"]
+type = "oneshot"
+"""
+
+[[files]]
+path = "/usr/lib/init.d/92_sshd.service"
+data = """
+[unit]
+description = "OpenSSH server on TCP port 22"
+requires_weak = ["10_net.target", "91_sshd-keys.service"]
+
+[service]
+cmd = "sshd"
+args = ["-D", "-e"]
+type = "oneshot_async"
+"""

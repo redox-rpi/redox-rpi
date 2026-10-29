@@ -17,7 +17,8 @@
 #   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
-#                     host port 12323 forwards to devshd in the guest
+#                     host port 12323 forwards to devshd in the guest,
+#                     12222 to sshd (QEMU_DEVSH_PORT, QEMU_SSH_PORT)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
@@ -155,8 +156,9 @@ else
     qemu+=(-device usb-kbd)
 fi
 if [ "$usb_net" = yes ]; then
-    # Host port 12323 reaches devshd (port 2323) in the guest.
-    qemu+=(-netdev user,id=usbnet,hostfwd=tcp::12323-:2323 -device usb-net,netdev=usbnet)
+    # Host port 12323 reaches devshd (port 2323) in the guest, 12222 sshd
+    # (port 22). QEMU_DEVSH_PORT and QEMU_SSH_PORT change the host ports.
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${QEMU_DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${QEMU_SSH_PORT:-12222}-:22" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
