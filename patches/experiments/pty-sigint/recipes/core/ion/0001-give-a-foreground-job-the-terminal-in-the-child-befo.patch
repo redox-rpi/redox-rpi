@@ -1,4 +1,4 @@
-From e5d8894efdac0f2b03a2b254f13a87e8a778fbd5 Mon Sep 17 00:00:00 2001
+From 72e32d3094121ca3f0769e3b547dfc329e416379 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 15:35:08 +0000
 Subject: [PATCH] Give a foreground job the terminal in the child before exec
@@ -8,21 +8,31 @@ then. On Redox an exec can take a second or more, and a Ctrl-C typed in
 that time reaches the shell, which ignores it, instead of the new job.
 The child now calls tcsetpgrp itself right after setpgid, like bash, while
 SIGTTOU is still blocked; the parent keeps its call.
+
+The child also resets SIGHUP, SIGINT and SIGTERM to their default action
+before that: until the exec is done it runs the shell's handlers, which
+would only note the signal and let the program start anyway.
 ---
- src/lib/shell/pipe_exec/mod.rs | 11 ++++++++++-
- 1 file changed, 10 insertions(+), 1 deletion(-)
+ src/lib/shell/pipe_exec/mod.rs | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
 
 diff --git a/src/lib/shell/pipe_exec/mod.rs b/src/lib/shell/pipe_exec/mod.rs
-index eb03ff2..64c3d64 100644
+index eb03ff2..73e7c64 100644
 --- a/src/lib/shell/pipe_exec/mod.rs
 +++ b/src/lib/shell/pipe_exec/mod.rs
-@@ -517,10 +517,19 @@ fn spawn_proc(
+@@ -517,10 +517,25 @@ fn spawn_proc(
              command.stderr(stderr.map_or_else(Stdio::inherit, Into::into));
  
              let grp = *group;
 +            let grab_tty = shell.opts().grab_tty;
              unsafe {
                  command.pre_exec(move || {
++                    // Until the exec is done, this child still runs the
++                    // shell's handlers, which only note a signal for the
++                    // shell. A Ctrl-C while the program loads must stop it.
++                    for sig in [Signal::SIGHUP, Signal::SIGINT, Signal::SIGTERM] {
++                        let _ = signal::signal(sig, signal::SigHandler::SigDfl);
++                    }
 +                    let pgid = grp.unwrap_or_else(Pid::this);
 +                    let _ = unistd::setpgid(Pid::this(), pgid);
 +                    // Take the terminal here too, not only in the parent after
