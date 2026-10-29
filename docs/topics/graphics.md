@@ -35,9 +35,10 @@ What this means:
   back to composite video or a default mode, and the boot goes on (the
   network tests run headless). To check with `hdmi_force_hotplug` off and
   no cable.
-- **Direct boot (#15):** `rpi-boot-stub` sets up no framebuffer, so `vesad`
-  prints `No boot framebuffer` and there is no picture. Only the serial
-  console works there.
+- **Direct boot (#15):** `rpi-boot-stub` on `fw-direct-boot` sets up no
+  framebuffer, so `vesad` prints `No boot framebuffer` and there is no
+  picture. Only the serial console works there (fixed on `graphics-fb`,
+  see In progress).
 - **Speed:** all drawing is done by the CPU in software, into memory the
   firmware set aside. `gpu_mem=16` in `config.txt` leaves the VideoCore
   just 16 MiB; enough for a 1920x1200 framebuffer (9 MiB), not for 3D.
@@ -167,14 +168,41 @@ What Redox would need:
 Every hobby system stopped at step 1 or took the closed firmware GL path.
 Only Linux has an open display and 3D driver, written with Broadcom's help.
 
+## In progress
+
+Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
+(on `fw-direct-boot`), started 2026-10-29:
+
+- **Boot stub framebuffer (small step, done in QEMU):** `rpi-boot-stub`
+  asks the firmware for a 32-bit framebuffer of the display size it chose
+  (same pixel order and alpha mode as U-Boot) and passes it in the
+  `FRAMEBUFFER_*` variables. `vesad`, `fbcond` and the kernel's boot
+  messages use it unchanged, so direct boot (#15) has a screen.
+  `RPI_FB=1280x720` in `cmdline.txt` picks another size, `RPI_FB=off`
+  none. QEMU: login prompt on screen at 640x480 and 1280x720.
+- **`rpi-fbd`, step 1 driver (first version, works in QEMU):** experiment
+  [`rpi-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb/patches/experiments/rpi-fb).
+  It talks to the firmware through a new `property` file of
+  `rpi-firmwared` (only one process uses the mailbox), reads the EDID,
+  offers the display size, the EDID modes and common sizes, and takes the
+  console over from `vesad`. A mode change allocates a new framebuffer;
+  the firmware scales it to the monitor's mode from power-on. QEMU:
+  handover and a switch from 640x480 to 1280x720 at runtime work.
+- **Without a monitor:** the display counts as connected at the firmware's
+  fallback size, `rpi-fbd` logs `no EDID`, and the boot goes on. A monitor
+  plugged in later gets that mode.
+- **Pi test #34** in the [queue](../test-plan.md), image built. The screen
+  checks need a person and wait for another visit.
+
 ## Next
 
-- Step 1 small version for #15: framebuffer from `rpi-boot-stub`.
-- Check the boot without a monitor, and with a monitor plugged in later.
+- Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
+- Hotplug by polling the EDID, screen blanking, double buffering with the
+  virtual offset.
 
 ## Later
 
-- Step 1 full driver, then DMA blits once #21 is done.
+- DMA blits once #21 is done.
 - Steps 2 (own display driver) and 3 (V3D) only if upstream Redox grows a
   3D path, or if someone wants to do it as a project of its own.
 
