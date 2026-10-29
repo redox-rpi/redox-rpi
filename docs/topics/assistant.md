@@ -161,18 +161,33 @@ started 2026-10-29. Clone on homenodellm: `~/redox-rpi-assistant`,
 llama.cpp and models in `~/assistant-work` (model files stay there, not in
 git).
 
-- llama.cpp `7df8b87` cross-compiled with the Redox gcc, static, against
-  the toolchain's relibc (not yet ours), with the three changes above
+- llama.cpp `7df8b87` cross-compiled with the Redox gcc, static, with the
+  three changes above
   ([patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/llama-cpp/redox.patch)).
-- First QEMU run (`raspi3b`, 1 GiB): the v0.2.0-5 SD image
-  (`v0.2.0-5-gd679bfb+xed14`) with `llama-*` in `/usr/bin` and Qwen3 0.6B
-  Q4_0 in `/home/user/models`, copied in with the host's `redoxfs` FUSE
-  mount.
+- **First QEMU run (`raspi3b`, 1 GiB), 2026-10-29: the model answers on
+  Redox.** The v0.2.0-5 SD image (`v0.2.0-5-gd679bfb+xed14`) with a hand
+  build linked against the toolchain's relibc, Qwen3 0.6B Q4_0 copied in
+  with the host's `redoxfs` FUSE mount. `llama-simple` loaded the model
+  (359 MiB buffer, 28 MiB context for 256 tokens, 3 MiB working buffer)
+  and wrote "The capital of France is **Paris**. The capital of France".
+  Redox itself used 104 MiB of 932 MiB at the shell.
+- **But the four worker threads crashed:** `futex_wake` in relibc
+  (`src/sync/mod.rs:103`) got `EFAULT` and panicked, in every worker; the
+  main thread went on and wrote the answer. That relibc is older than our
+  kernel (`Using old SYS_OPENAT_INTO`), so the next run uses ours.
+- QEMU is no measure of speed: loading the 382 MB file through the emulated
+  SD controller took about 25 minutes (170 to 290 KB/s). QEMU `virt` would
+  be faster but did not boot the upstream server image with 1 GiB: NVMe
+  hangs after identify, `virtio-blkd` crashes, AHCI is not bootable.
+- **Image with the experiment** `assistant` (recipes for llama.cpp, linked
+  against our relibc, and the model): `v0.3.0-dev-156-gb366886+x18f5`
+  (SD card). QEMU run in progress.
 
 ## Next
 
-- Results of the QEMU run; then the recipe (step 2) and a Pi test in the
-  [queue](../test-plan.md) once an image is built.
+- QEMU run of `+x18f5`: do the worker threads still crash with our relibc?
+- Then a Pi test in the [queue](../test-plan.md): `llama-bench` for real
+  speed, `free` for memory.
 
 ## Later
 
