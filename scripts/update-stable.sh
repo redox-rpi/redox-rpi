@@ -127,10 +127,10 @@ reset_pi() {
         # shell is already open there, "root" and "password" only fail.
         log "no reset through devshd, trying the serial console"
         start="$(stat -c %s "$SERIAL_LOG")"
-        printf '\r' > "$SERIAL_DEV"; sleep 2
-        printf 'root\r' > "$SERIAL_DEV"; sleep 3
-        printf 'password\r' > "$SERIAL_DEV"; sleep 5
-        printf 'echo reset > /scheme/sys/kstop\r' > "$SERIAL_DEV"
+        serial_type ''; sleep 2
+        serial_type root; sleep 3
+        serial_type password; sleep 5
+        serial_type 'echo reset > /scheme/sys/kstop'
         wait_serial "$start" 'redox-rpi: network boot' "$RESET_TIMEOUT" ||
             { log "the Pi did not reset"; return 1; }
     fi
@@ -138,6 +138,17 @@ reset_pi() {
         { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
     # devshd starts shortly before the prompt; give the network a moment.
     sleep 20
+}
+
+# Type a line on the serial console, one character every 0.15 s, then Enter:
+# the console drops characters that come faster (#28).
+serial_type() {
+    local text=$1 i
+    for ((i = 0; i < ${#text}; i++)); do
+        printf '%s' "${text:i:1}" > "$SERIAL_DEV"
+        sleep 0.15
+    done
+    printf '\r' > "$SERIAL_DEV"
 }
 
 # Wait until <pattern> appears in the serial log after byte <start>.

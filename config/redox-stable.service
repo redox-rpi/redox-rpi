@@ -7,5 +7,8 @@ Description=Build, test and promote the redox-rpi stable network-boot image
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -lc 'source ~/.cargo/env 2>/dev/null; mkdir -p ~/redox-rpi/logs/stable && exec ~/redox-rpi-stable/scripts/update-stable.sh >> ~/redox-rpi/logs/stable/$(date -u +%%Y-%%m-%%d).log 2>&1'
+# The script checks out origin/main in its clone, which may change the file
+# while bash reads it, so the service runs a copy (the script deletes it).
+# For systemd, $$ is a literal $.
+ExecStart=/bin/bash -lc 'source ~/.cargo/env 2>/dev/null; mkdir -p ~/redox-rpi/logs/stable; copy=$$(mktemp); cp ~/redox-rpi-stable/scripts/update-stable.sh "$$copy"; UPDATE_STABLE_ROOT=~/redox-rpi-stable exec bash "$$copy" >> ~/redox-rpi/logs/stable/$$(date -u +%%Y-%%m-%%d).log 2>&1'
 TimeoutStartSec=3h
