@@ -4,8 +4,8 @@
 
 - `dwc2d`, a DWC2 USB host driver in base: hubs, split transactions for low-
   and full-speed devices behind the Pi 3B+'s hubs, bulk transfers.
-- Experiment `dwc2-interrupts` (with `rtl8152`): `dwc2d` waits for the
-  controller's interrupt instead of polling, about 5 % of a core instead
+- `dwc2d` waits for the controller's interrupt instead of polling (base
+  `0022`, kernel `0004`–`0006`), about 5 % of a core instead
   of a full one on a real Pi (test #5,
   [#29](https://github.com/redox-rpi/redox-rpi/issues/29)).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
@@ -28,14 +28,31 @@
 - `dwc2-default`: RTL8152 and dwc2 interrupts as default patches, merged
   with main; first in the rc2 merge order, waits for the Pi test.
 
+- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
+  branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
+  (on `usb-hotplug`), experiment `usb-storage` (base `0033` there).
+  `dwc2d` serves a stick (bulk-only transport, SCSI) as the driver-block
+  disk scheme `disk.usb-dwc2+<ports>-scsi`; the boot session's `fatfsd`
+  mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
+  write, unplug, plug in again); not yet on the Pi.
+
+- [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
+  tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
+  (on `usb-hotplug`), experiment `usb-mouse` (base `0035` there). Events go
+  to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
+  passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
+  visit as #50.
+- LAN7800 receives all multicast (mDNS, IPv6 neighbor discovery; #27,
+  #37), branch [`lan78xx-multicast`](https://github.com/redox-rpi/redox-rpi/tree/lan78xx-multicast),
+  experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
+  QEMU (no LAN7800 there); the Pi check rides on the network session's
+  test #47.
+
 ## Next
 
-- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks on
-  `dwc2d` (bulk-only transport, SCSI) as a driver-block disk scheme
-  `disk.usb-dwc2+<port>-scsi`; the boot session's `fatfsd` mounts it.
+- A Pi test of USB sticks (high-speed stick on the 3B+ hub).
 
 ## Later
 
-- [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks (mass storage), milestone v0.5.0 or v0.6.0.
 - Keyboard layouts, `lsusb`
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
