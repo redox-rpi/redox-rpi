@@ -14,5 +14,17 @@ dtoverlay=disable-bt
 # Wi-Fi uses that controller otherwise and is unavailable.
 dtoverlay=mmc
 
-# Leave as much RAM as possible to Redox; there is no graphics driver yet.
+# Leave as much RAM as possible to Redox. 16 MiB of GPU memory hold a
+# 1920x1200 framebuffer (rpi-fbd, issue #33), not 3D.
 gpu_mem=16
+
+# HDMI on even when no monitor answers at power-on (switched off, or plugged
+# in later). Without it the firmware leaves HDMI off and a monitor turned on
+# later stays black: nothing in Redox can enable HDMI afterwards (#33). A
+# monitor that is on at power-on still gets its own mode from its EDID.
+hdmi_force_hotplug=1
+# A fixed mode instead of the monitor's own, for example 1920x1080 at 60 Hz
+# (hdmi_group=1 hdmi_mode=16) or 1280x720 at 60 Hz (hdmi_group=1
+# hdmi_mode=4). Then also a monitor off at power-on gets that mode.
+#hdmi_group=1
+#hdmi_mode=16
