@@ -1,9 +1,10 @@
 //! mqtt: a small MQTT 3.1.1 client in plain Rust, for Redox.
 //!
-//! No crates from crates.io, only `std`, so it builds for Redox like the
-//! other tools here. It speaks MQTT 3.1.1 over plain TCP: connect (with
-//! user name, password and last will), publish with QoS 0 or 1 and retain,
-//! subscribe, ping and disconnect. No TLS, no QoS 2, no MQTT 5.
+//! It speaks MQTT 3.1.1 over plain TCP, or over TLS with the feature `tls`
+//! (on by default, rustls with ring): connect (with user name, password and
+//! last will), publish with QoS 0 or 1 and retain, subscribe, ping and
+//! disconnect. No QoS 2, no MQTT 5, no client certificates. Without `tls`
+//! it needs only `std`.
 //!
 //! ```no_run
 //! let mut client = mqtt::Client::connect("broker.local:1883", &mqtt::Options::new("demo"))?;
@@ -18,15 +19,22 @@
 //! A thread sends a ping every half keep-alive interval, so a client that
 //! publishes only now and then stays connected.
 
+mod link;
+
 use std::collections::VecDeque;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufReader, Read};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(feature = "tls")]
+pub use link::Tls;
+use link::{Link, LinkReader};
+
 pub const DEFAULT_PORT: u16 = 1883;
+pub const DEFAULT_TLS_PORT: u16 = 8883;
 /// Redox' DNS lookup has no timeout of its own.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -69,6 +77,9 @@ pub struct Options {
     /// Published by the broker when the connection breaks without a
     /// DISCONNECT, for example when the Pi loses power.
     pub will: Option<Will>,
+    /// TLS instead of plain TCP; the default port is then 8883.
+    #[cfg(feature = "tls")]
+    pub tls: Option<Tls>,
 }
 
 /// A last will: see [`Options::will`].
@@ -89,6 +100,8 @@ impl Options {
             username: None,
             password: None,
             will: None,
+            #[cfg(feature = "tls")]
+            tls: None,
         }
     }
 }
@@ -103,8 +116,8 @@ pub struct Message {
 }
 
 pub struct Client {
-    writer: Arc<Mutex<TcpStream>>,
-    reader: BufReader<TcpStream>,
+    writer: Arc<Mutex<Link>>,
+    reader: BufReader<LinkReader>,
     next_id: u16,
     /// Messages that came in while waiting for an acknowledgement.
     queued: VecDeque<Message>,
@@ -125,10 +138,10 @@ impl Client {
     /// On Redox a refused connection shows only at the first write, so the
     /// address is added to errors from here.
     fn handshake(address: &str, options: &Options) -> io::Result<Client> {
-        let stream = open(address)?;
+        let link = Arc::new(Mutex::new(open(address, options)?));
         let mut client = Client {
-            writer: Arc::new(Mutex::new(stream.try_clone()?)),
-            reader: BufReader::new(stream),
+            reader: BufReader::new(Link::reader(&link)?),
+            writer: link,
             next_id: 1,
             queued: VecDeque::new(),
         };
@@ -208,8 +221,8 @@ impl Client {
 
     pub fn disconnect(self) -> io::Result<()> {
         self.send(DISCONNECT << 4, &[])?;
-        let stream = self.writer.lock().unwrap();
-        stream.shutdown(std::net::Shutdown::Both)
+        let result = self.writer.lock().unwrap().shutdown();
+        result
     }
 
     fn packet_id(&mut self) -> u16 {
@@ -255,12 +268,37 @@ impl Client {
     }
 }
 
-/// Resolves and connects, both with a timeout.
-fn open(address: &str) -> io::Result<TcpStream> {
-    let has_port = !address.ends_with(']')
-        && address.rsplit_once(':').is_some_and(|(_, port)| port.parse::<u16>().is_ok());
-    let address = if has_port { address.to_string() } else { format!("{address}:{DEFAULT_PORT}") };
-    let addrs = resolve(&address)?;
+/// Resolves and connects, both with a timeout, then starts TLS if asked.
+fn open(address: &str, options: &Options) -> io::Result<Link> {
+    #[cfg(feature = "tls")]
+    let port = if options.tls.is_some() { DEFAULT_TLS_PORT } else { DEFAULT_PORT };
+    #[cfg(not(feature = "tls"))]
+    let port = { let _ = options; DEFAULT_PORT };
+    let (host, has_port) = split_host(address);
+    let address = if has_port { address.to_string() } else { format!("{address}:{port}") };
+    let sock = connect_tcp(&address)?;
+    #[cfg(feature = "tls")]
+    if let Some(tls) = &options.tls {
+        return Link::tls(sock, host, tls);
+    }
+    let _ = host;
+    Ok(Link::plain(sock))
+}
+
+/// The host part of "host", "host:port", "[v6]" or "[v6]:port", and whether
+/// a port was given.
+fn split_host(address: &str) -> (&str, bool) {
+    if let Some((host, tail)) = address.strip_prefix('[').and_then(|rest| rest.split_once(']')) {
+        return (host, tail.strip_prefix(':').is_some_and(|port| port.parse::<u16>().is_ok()));
+    }
+    match address.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && port.parse::<u16>().is_ok() => (host, true),
+        _ => (address, false),
+    }
+}
+
+fn connect_tcp(address: &str) -> io::Result<TcpStream> {
+    let addrs = resolve(address)?;
     let mut last = io::Error::new(io::ErrorKind::NotFound, format!("{address}: no address"));
     for addr in addrs {
         let result = match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
@@ -292,7 +330,7 @@ fn resolve(address: &str) -> io::Result<Vec<SocketAddr>> {
 }
 
 /// Sends PINGREQ every half keep-alive interval until the client is gone.
-fn start_pings(writer: Weak<Mutex<TcpStream>>, keep_alive: u16) {
+fn start_pings(writer: Weak<Mutex<Link>>, keep_alive: u16) {
     let every = Duration::from_millis(u64::from(keep_alive) * 500);
     thread::spawn(move || loop {
         thread::sleep(every);
@@ -514,6 +552,15 @@ mod tests {
         assert!(message.retain);
         assert_eq!(message.qos, QoS::AtLeastOnce);
         assert!(parse_publish(PUBLISH << 4 | 0b0100, &body).is_err());
+    }
+
+    #[test]
+    fn hosts() {
+        assert_eq!(split_host("broker"), ("broker", false));
+        assert_eq!(split_host("broker:8883"), ("broker", true));
+        assert_eq!(split_host("10.0.2.2:1883"), ("10.0.2.2", true));
+        assert_eq!(split_host("[::1]:8883"), ("::1", true));
+        assert_eq!(split_host("[::1]"), ("::1", false));
     }
 
     #[test]
