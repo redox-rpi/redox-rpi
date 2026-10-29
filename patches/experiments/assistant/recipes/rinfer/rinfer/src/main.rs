@@ -1,6 +1,6 @@
 //! Minimal Qwen3 GGUF inference with candle, for testing on Redox.
 //! Usage: rinfer <model.gguf> <prompt> [tokens]
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use candle::quantized::gguf_file;
@@ -9,6 +9,25 @@ use candle::{Device, Tensor};
 use candle_transformers::generation::{LogitsProcessor, Sampling};
 use candle_transformers::models::quantized_qwen3::ModelWeights;
 use tokenizers::Tokenizer;
+
+/// Reads at most 1 MiB per call. candle reads each tensor with one
+/// `read_exact`, up to 127 MB for the token table; RedoxFS then allocates a
+/// buffer of the same size, and the extra copies ran the 1 GiB Pi (QEMU) out
+/// of memory.
+struct ChunkedReader<R>(R);
+
+impl<R: Read> Read for ChunkedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(1 << 20);
+        self.0.read(&mut buf[..n])
+    }
+}
+
+impl<R: Seek> Seek for ChunkedReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.0.seek(pos)
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -25,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     println!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
 
     let t0 = Instant::now();
-    let mut file = std::fs::File::open(path)?;
+    let mut file = ChunkedReader(std::fs::File::open(path)?);
     let content = gguf_file::Content::read(&mut file)?;
     let tokenizer = Tokenizer::from_gguf(&content)?;
     let device = Device::Cpu;
