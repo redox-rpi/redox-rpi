@@ -39,11 +39,17 @@ experiment): 395 test runs, 15 fail.
 | Test | Result | Cause |
 |---|---|---|
 | `tls_align` (static, dynamic) | initial values 0 | aarch64 TLS layout in `ld.so`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14), experiment `tls-variant1` |
-| `sigaction` | second handler not called after `raise` | thread signal blocks all signals, [#4](https://github.com/redox-rpi/redox-rpi/issues/4) (to check with `sigentry-thread-signals`) |
-| `sys_select/pselect` | SIGILL | signal path, to check |
+| `sigaction` | second handler not called after `raise` | thread signal blocks all signals, [#4](https://github.com/redox-rpi/redox-rpi/issues/4): passes with `sigentry-thread-signals` |
+| `sys_select/pselect` | SIGILL | [#4](https://github.com/redox-rpi/redox-rpi/issues/4): passes with `sigentry-thread-signals` |
 | `sigaltstack` | panic (`brk`) | sigaltstack not implemented on aarch64 (`arch_pre` is a TODO) |
 | `stdio/mutex` | `ftrylockfile` succeeds in another thread | to check; passed in the next run |
 | `time/timer` | `sem_wait` EINVAL | to check |
 | `stdio/fscanf_offby1`, `stdio/ungetc_ftell` | off by one | to check (also on x86_64?) |
 | `stdio/popen`, `stdlib/system`, `unistd/exec` | no shell or program not found | image |
 | `sys_socket/getsockopt`, `recv`, `recvfrom` | `socket` ENODEV | no network in QEMU |
+
+With `tls-variant1` and `sigentry-thread-signals`
+(`v0.3.0-dev-153-g866cfa5+xca65`): 11 fail. `tls_align` (dynamic),
+`sigaction` and `pselect` pass; left are the static `tls_align`
+(toolchain `libc.a`), `sigaltstack`, `time/timer`, the two off-by-one
+stdio tests and the six image/network ones.
