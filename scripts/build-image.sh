@@ -223,8 +223,13 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: pin them and add our patches to their [source] section.
-for name in bootloader base relibc; do
+# pkgutils only when an experiment patches it (pkg-hold); otherwise the
+# image takes the upstream binary.
+for name in bootloader base relibc pkgutils; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
+    if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
+        continue
+    fi
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
         "$REDOX/recipes/core/$name/recipe.toml"
