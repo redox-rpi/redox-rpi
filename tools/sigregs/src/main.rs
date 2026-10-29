@@ -4,15 +4,16 @@
 //! The main thread loads a known pattern into x1-x17, x19-x29 and v0-v31
 //! and checks them in a loop while signals arrive. The handler overwrites
 //! all of them. A register that differs after a signal shows a bug in the
-//! signal entry or return. Not checked: x18 (the signal entry may use it),
-//! x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
-//! sp.
+//! signal entry or return. With `--x18` it also checks x18: relibc's
+//! aarch64 signal entry overwrites it, although neither Redox' Rust target
+//! nor its gcc reserve x18. Not checked: x30 (scratch register of the loop),
+//! x0 (points to `STATE`), nzcv and sp.
 //!
 //! Two modes: `process` sends the signals with kill() from a child
 //! process, `thread` with pthread_kill() from another thread. They take
 //! different paths in the signal entry. Without an argument both run.
 //!
-//! Usage: sigregs [process|thread] [-n <signals>]
+//! Usage: sigregs [process|thread] [-n <signals>] [--x18]
 //! Exit code 0 if every mode passed.
 
 use std::{
@@ -34,12 +35,15 @@ struct State {
     abort: AtomicU64,
     /// Scratch for the check loop.
     scratch: AtomicU64,
+    /// Nonzero: check x18 too.
+    check_x18: AtomicU64,
 }
 
 static STATE: State = State {
     remaining: AtomicU64::new(0),
     abort: AtomicU64::new(0),
     scratch: AtomicU64::new(0),
+    check_x18: AtomicU64::new(0),
 };
 
 const ABORTED: u64 = 1000;
@@ -77,6 +81,7 @@ macro_rules! check_loop {
             // Integer registers: their own pattern. Vector register vN: the
             // patterns of two integer registers, a different pair for each.
             $(pattern!(concat!("x", $n), $n),)*
+            pattern!("x18", 18),
             $(
                 "    fmov d", $v, ", ", stringify!($lo), "\n",
                 "    mov v", $v, ".d[1], ", stringify!($hi), "\n",
@@ -84,6 +89,13 @@ macro_rules! check_loop {
             "1:\n",
             // On a difference, x30 gets the register number: N for xN,
             // 100 + N for the low and 200 + N for the high half of vN.
+            "    ldr x30, [x0, #24]\n", // check_x18
+            "    cbz x30, 2f\n",
+            pattern!("x30", 18),
+            "    cmp x18, x30\n",
+            "    mov x30, #18\n",
+            "    b.ne 9f\n",
+            "2:\n",
             $(
                 pattern!("x30", $n),
                 "    cmp x", $n, ", x30\n",
@@ -292,9 +304,10 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-n" => count = args.next().and_then(|n| n.parse().ok()).expect("-n <signals>"),
+            "--x18" => STATE.check_x18.store(1, Ordering::SeqCst),
             "process" | "thread" => modes.push(arg),
             _ => {
-                eprintln!("usage: sigregs [process|thread] [-n <signals>]");
+                eprintln!("usage: sigregs [process|thread] [-n <signals>] [--x18]");
                 std::process::exit(2);
             }
         }
