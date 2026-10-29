@@ -4,16 +4,15 @@
 //! The main thread loads a known pattern into x1-x17, x19-x29 and v0-v31
 //! and checks them in a loop while signals arrive. The handler overwrites
 //! all of them. A register that differs after a signal shows a bug in the
-//! signal entry or return. With `--x18` it also checks x18: relibc's
-//! aarch64 signal entry overwrites it, although neither Redox' Rust target
-//! nor its gcc reserve x18. Not checked: x30 (scratch register of the loop),
-//! x0 (points to `STATE`), nzcv and sp.
+//! signal entry or return. x18 is checked on Redox only. Not checked:
+//! x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
+//! sp.
 //!
 //! Two modes: `process` sends the signals with kill() from a child
 //! process, `thread` with pthread_kill() from another thread. They take
 //! different paths in the signal entry. Without an argument both run.
 //!
-//! Usage: sigregs [process|thread] [-n <signals>] [--x18]
+//! Usage: sigregs [process|thread] [-n <signals>]
 //! Exit code 0 if every mode passed.
 
 use std::{
@@ -35,15 +34,12 @@ struct State {
     abort: AtomicU64,
     /// Scratch for the check loop.
     scratch: AtomicU64,
-    /// Nonzero: check x18 too.
-    check_x18: AtomicU64,
 }
 
 static STATE: State = State {
     remaining: AtomicU64::new(0),
     abort: AtomicU64::new(0),
     scratch: AtomicU64::new(0),
-    check_x18: AtomicU64::new(0),
 };
 
 const ABORTED: u64 = 1000;
@@ -81,7 +77,6 @@ macro_rules! check_loop {
             // Integer registers: their own pattern. Vector register vN: the
             // patterns of two integer registers, a different pair for each.
             $(pattern!(concat!("x", $n), $n),)*
-            pattern!("x18", 18),
             $(
                 "    fmov d", $v, ", ", stringify!($lo), "\n",
                 "    mov v", $v, ".d[1], ", stringify!($hi), "\n",
@@ -89,13 +84,6 @@ macro_rules! check_loop {
             "1:\n",
             // On a difference, x30 gets the register number: N for xN,
             // 100 + N for the low and 200 + N for the high half of vN.
-            "    ldr x30, [x0, #24]\n", // check_x18
-            "    cbz x30, 2f\n",
-            pattern!("x30", 18),
-            "    cmp x18, x30\n",
-            "    mov x30, #18\n",
-            "    b.ne 9f\n",
-            "2:\n",
             $(
                 pattern!("x30", $n),
                 "    cmp x", $n, ", x30\n",
@@ -148,6 +136,20 @@ macro_rules! check_loop {
     };
 }
 
+// On Redox, x18 is an ordinary register and must survive a signal too
+// (redox-rpi #1); on macOS the system owns it.
+#[cfg(target_os = "redox")]
+check_loop!(
+    ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29;
+    vectors:
+        0 x1 x8 1 x2 x9 2 x3 x10 3 x4 x11 4 x5 x12 5 x6 x13 6 x7 x14 7 x8 x15
+        8 x9 x16 9 x10 x17 10 x11 x19 11 x12 x20 12 x13 x21 13 x14 x22
+        14 x15 x23 15 x16 x24 16 x17 x25 17 x19 x26 18 x20 x27 19 x21 x28
+        20 x22 x29 21 x23 x1 22 x24 x2 23 x25 x3 24 x26 x4 25 x27 x5
+        26 x28 x6 27 x29 x7 28 x1 x20 29 x2 x21 30 x3 x22 31 x4 x23
+);
+
+#[cfg(not(target_os = "redox"))]
 check_loop!(
     ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 19 20 21 22 23 24 25 26 27 28 29;
     vectors:
@@ -304,10 +306,9 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-n" => count = args.next().and_then(|n| n.parse().ok()).expect("-n <signals>"),
-            "--x18" => STATE.check_x18.store(1, Ordering::SeqCst),
             "process" | "thread" => modes.push(arg),
             _ => {
-                eprintln!("usage: sigregs [process|thread] [-n <signals>] [--x18]");
+                eprintln!("usage: sigregs [process|thread] [-n <signals>]");
                 std::process::exit(2);
             }
         }
