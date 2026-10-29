@@ -1,4 +1,4 @@
-From 0bf120a16e47884de7d1f2c15ca91376d444578e Mon Sep 17 00:00:00 2001
+From 74624db7346b7294ca3bea5fae641abb9b0cee31 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
 Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
@@ -23,9 +23,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.lock                         |   1 +
  drivers/usb/dwc2d/Cargo.toml       |   1 +
  drivers/usb/dwc2d/src/enumerate.rs |  16 ++
- drivers/usb/dwc2d/src/main.rs      |  64 ++++-
+ drivers/usb/dwc2d/src/main.rs      |  70 ++++-
  drivers/usb/dwc2d/src/storage.rs   | 419 +++++++++++++++++++++++++++++
- 5 files changed, 498 insertions(+), 3 deletions(-)
+ 5 files changed, 504 insertions(+), 3 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/storage.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -80,7 +80,7 @@ index 01cac8d..c265e6f 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..a6b7e0c 100644
+index 28cc7aa..8b710cc 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -132,7 +132,7 @@ index 28cc7aa..a6b7e0c 100644
      if let Some(f) = hid::find(bus, device) {
          return match hid::init(bus, &f) {
              Ok(()) => {
-@@ -401,9 +410,37 @@ user_data! {
+@@ -401,9 +410,38 @@ user_data! {
          Scheme,
          Time,
          Hotplug,
@@ -143,6 +143,7 @@ index 28cc7aa..a6b7e0c 100644
 +/// A USB stick and the disk scheme that serves it.
 +struct UsbDisk {
 +    address: u8,
++    name: String,
 +    scheme: DiskScheme<Stick>,
 +}
 +
@@ -160,17 +161,17 @@ index 28cc7aa..a6b7e0c 100644
 +        stick.size() / (1024 * 1024),
 +        driver_block::Disk::block_size(&stick)
 +    );
-+    let scheme = DiskScheme::new(None, name, [(0, stick)].into(), &FuturesExecutor);
++    let scheme = DiskScheme::new(None, name.clone(), [(0, stick)].into(), &FuturesExecutor);
 +    events
 +        .subscribe(scheme.event_handle().raw(), Source::Disk, event::EventFlags::READ)
 +        .expect("dwc2d: failed to subscribe to the disk scheme");
-+    Some(UsbDisk { address, scheme })
++    Some(UsbDisk { address, name, scheme })
 +}
 +
  fn main() {
      daemon::Daemon::new(daemon);
  }
-@@ -439,6 +476,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -439,6 +477,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      };
      let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
      let mut keyboard = None;
@@ -179,7 +180,7 @@ index 28cc7aa..a6b7e0c 100644
      for device in bus.devices.clone() {
          match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
              Some(Found::Net(adapter, mac, link)) => {
-@@ -451,6 +490,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -451,6 +491,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  net.adapters.push((adapter, link));
              }
              Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
@@ -187,7 +188,7 @@ index 28cc7aa..a6b7e0c 100644
              _ => {}
          }
      }
-@@ -470,6 +510,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -470,6 +511,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      // stdout goes to logd from here on; rescans print only when something
      // changes.
      let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
@@ -196,7 +197,7 @@ index 28cc7aa..a6b7e0c 100644
  
      // The receive channel's halt raises the controller's interrupt; without
      // it, fall back to a timer that polls.
-@@ -510,7 +552,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -510,7 +553,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          .expect("dwc2d: failed to subscribe to the scheme");
  
      scheme.tick().expect("dwc2d: network scheme failed");
@@ -205,7 +206,7 @@ index 28cc7aa..a6b7e0c 100644
          match event.user_data {
              Source::Irq => {
                  let file = irq_file.as_mut().unwrap();
-@@ -523,6 +565,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -523,6 +566,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
              }
              Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
@@ -219,20 +220,25 @@ index 28cc7aa..a6b7e0c 100644
              Source::Time => {
                  timer.fired();
                  let mut next = None;
-@@ -579,6 +628,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -579,6 +629,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
-+                    // Dropping the scheme takes it away; open handles fail.
++                    // Dropping the scheme makes open handles fail; its name
++                    // stays in the namespace until unlinked, and a stick
++                    // plugged into the same port again needs it.
 +                    if disk.as_ref().is_some_and(|d| d.address == address) {
 +                        let d = disk.take().unwrap();
 +                        let _ = events.unsubscribe(d.scheme.event_handle().raw());
++                        if let Err(err) = std::fs::remove_file(format!("/scheme/{}", d.name)) {
++                            println!("dwc2d: mass storage: /scheme/{} stays: {err}", d.name);
++                        }
 +                        println!("dwc2d: mass storage removed");
 +                    }
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -590,6 +645,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -590,6 +651,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                              keyboard = Keyboard::new(hc.clone(), f);
                              timer.arm(Duration::ZERO);
                          }

@@ -2,7 +2,7 @@
 # Check USB sticks in dwc2d (experiment usb-storage) in QEMU: plug a stick
 # in through QEMU's monitor after boot, read its first block through the
 # disk scheme, copy it to block 2048, check the copy in the image on the
-# host, and unplug the stick again.
+# host, unplug the stick, and plug it in again.
 #
 # Needs an image built with --experiment usb-hotplug --experiment
 # usb-storage. The host port for devshd is 12323, or STORAGE_PORT=<port>.
@@ -87,9 +87,13 @@ scheme=$(tr -d '\r' < "$log" | grep -aoE "/scheme/disk\.usb-dwc2\+[0-9.]+-scsi" 
 echo "      $scheme"
 tr -d '\r' < "$log" | grep -aE "dwc2d: mass storage" | sed 's/^/      /'
 
-check "scheme lists the whole disk" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls $scheme' 2>/dev/null | grep -qx '0'"
-check "first block read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 count=1' 2>/dev/null | grep -aq '$marker'"
-devsh "dd if=$scheme/0 of=$scheme/0 bs=512 count=1 seek=2048" > /dev/null
+# devsh output is a terminal's: escape sequences around the lines, and a
+# raw block's NUL bytes would go through it too, so only look at the start.
+check "scheme lists the whole disk" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls -l $scheme/' 2>/dev/null | grep -aqE ' 16777216 .* 0\b'"
+check "first block read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
+# The disk scheme opens a disk once for writing at a time, so the copy goes
+# through a file.
+devsh "dd if=$scheme/0 of=/tmp/block0 bs=512 count=1; dd if=/tmp/block0 of=$scheme/0 bs=512 seek=2048 conv=notrunc" > /dev/null
 sleep 1
 
 monitor "device_del stick0" > /dev/null
@@ -98,4 +102,10 @@ check "scheme gone" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 
 
 # QEMU writes through to the image file.
 check "block 2048 written" bash -c "dd if='$stick' bs=512 skip=2048 count=1 status=none | grep -aq '$marker'"
+
+# The same port again: the scheme gets the same name.
+monitor "drive_add 0 if=none,id=stick2,file=$stick,format=raw" \
+    "device_add usb-storage,drive=stick2,id=stick1" > /dev/null
+check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/') -ge 2 ] && exit 0; sleep 1; done; exit 1"
+check "block 2048 read after plugging in again" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
 exit $failed
