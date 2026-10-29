@@ -210,12 +210,35 @@ git).
   timings) in `~/assistant-work/rinfer`. Reading candle showed the `sdot`
   problem above: its NEON dot products for Q4_0, Q8_0 and the K formats
   need `dotprod`, which the A53 lacks (only its repacking path checks at
-  runtime). Not built for Redox yet.
+  runtime). Not built for Redox yet: building candle means cargo runs
+  build scripts of about 100 crates.io packages on the build host, which
+  waits for the maintainer's OK. Without it, the next step is our own
+  dependency-free loop (step 2b).
+- **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
+  plain Rust with no crates (264 KB static binary for Redox). It runs tool
+  calls in the form Qwen3 writes them
+  (`<tool_call>{"name": ..., "arguments": {...}}</tool_call>`); without a
+  model they are typed by hand (`assistant --call '…'`, or `/call` in the
+  interactive mode). Tools: `show_time` and `list_files` (look only), and
+  `make_folder` (changes something, so it asks `[y/N]` first). Only listed
+  tools and arguments are accepted, arguments must be text, paths are
+  taken from the home folder and may not leave it or pass a link, and
+  every call goes to `~/.assistant.log`. Unit tests on the build host;
+  in the image `v0.3.0-dev-161-g5b7ccbc+x18f5` (SD card) in QEMU
+  `raspi3b`: all tools work, `n` leaves nothing changed, `y` creates the
+  folder, `/etc` and an unknown `run_shell` tool are refused, the log has
+  all six calls. Missing: the namespace sandbox (needs the
+  `redox_syscall` crate or a raw system call) and the grammar mask, which
+  comes with the model runtime.
 
 ## Next
 
-- Build `rinfer` for Redox, add the `sdot` fallback to candle, run it in
-  QEMU `raspi3b`, then put it into the experiment next to llama.cpp.
+- Rust model runtime: with the maintainer's OK build `rinfer` (candle)
+  for Redox with the `sdot` fallback, else start our own loop; run it in
+  QEMU `raspi3b` and measure memory, speed and size, then put it into the
+  experiment next to llama.cpp.
+- Connect the model to the tool layer: tool descriptions in the system
+  prompt, the grammar mask while a tool call is written.
 - Pi test #51: `llama-bench` for real speed, `free` while the model runs.
 - A Pi test without a person: the network-boot image with llama.cpp, and
   the model on the netboot card's data partition (`/scheme/data`). llama.cpp

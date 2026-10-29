@@ -84,7 +84,8 @@ pub fn run(call: &Value, ctx: &mut Context) -> Result<String, String> {
         Ok(_) => "ok".to_string(),
         Err(e) => format!("refused: {e}"),
     };
-    log(ctx, &format!("{name} {args} -> {outcome}"));
+    let what = if args.is_empty() { name.to_string() } else { format!("{name} {args}") };
+    log(ctx, &format!("{what} -> {outcome}"));
     result
 }
 
