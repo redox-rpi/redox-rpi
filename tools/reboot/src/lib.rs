@@ -99,6 +99,7 @@ fn stop_programs(report: &mut Report) -> (usize, usize) {
     let mut left = alive();
     while !left.is_empty() && Instant::now() < deadline {
         sleep(Duration::from_millis(100));
+        report.say("slept");
         left = alive();
         report.say(&format!("{} left", left.len()));
     }
