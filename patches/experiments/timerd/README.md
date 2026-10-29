@@ -77,4 +77,9 @@ to Redox later, by a person.
    300 s, going on with 2026-10-28 20:05:45 UTC` (the build time plus
    five minutes), then both timers ran on schedule.
 
-Not yet tested on a real Pi ([test plan](../../../docs/test-plan.md)).
+**Real Pi 3B+** (network boot, same build, 2026-10-29, test #27,
+[report](../../../docs/test-reports.md)): both timers run on schedule, `timerd`
+waits for `timesync` and catches up a missed run after a reset; standard
+checks pass, 0 of 100 starts failed. When DHCP was late, `timesync` hung
+without setting the clock or writing `/tmp/timesync.synced`; `timerd` then
+went on after 5 minutes with the saved time, as intended.
