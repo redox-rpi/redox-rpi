@@ -1,4 +1,4 @@
-From 2542d1beed0d2a54bbacceea7ae652a88f1d9883 Mon Sep 17 00:00:00 2001
+From 070e7710da00d7a0a8889f6c532cabbdea10b603 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:05 +0100
 Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
@@ -881,10 +881,10 @@ index c7d7916..b64e8f3 100644
              let mut iter_limit = 10usize;
              let mut iface = self.iface.borrow_mut();
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index f344e28..c628917 100644
+index 9921e53..554dafd 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
-@@ -197,10 +197,17 @@ fn mk_root_node(
+@@ -201,10 +201,17 @@ fn mk_root_node(
                          || {
                              let res = match devices.borrow().get("eth0") {
                                  Some(dev) => {
@@ -903,7 +903,7 @@ index f344e28..c628917 100644
                                  }
                                  None => "Device not found\n".into(),
                              };
-@@ -213,7 +220,8 @@ fn mk_root_node(
+@@ -217,7 +224,8 @@ fn mk_root_node(
                              if cur_value.is_none() {
                                  let cidr = IpCidr::from_str(line)
                                      .map_err(|_| SyscallError::new(syscall::EINVAL))?;
@@ -913,7 +913,7 @@ index f344e28..c628917 100644
                                      return Err(SyscallError::new(syscall::EINVAL));
                                  }
                                  *cur_value = Some(cidr);
-@@ -229,8 +237,10 @@ fn mk_root_node(
+@@ -233,8 +241,10 @@ fn mk_root_node(
  
                                      let mut route_table = route_table.borrow_mut();
                                      if let Some(old_addr) = dev.ip_address() {
@@ -925,8 +925,8 @@ index f344e28..c628917 100644
 +                                        };
  
                                          route_table.remove_rule(old_network);
-                                         route_table.change_src(old_addr.address(), cidr.address());
-@@ -246,8 +256,10 @@ fn mk_root_node(
+                                         route_table.remove_rule(ipv4_multicast());
+@@ -251,8 +261,10 @@ fn mk_root_node(
                                      // job to find give this source.
                                      iface.borrow_mut().update_ip_addrs(|addrs| addrs.insert(0, cidr).unwrap());
  
@@ -936,9 +936,9 @@ index f344e28..c628917 100644
 +                                        IpCidr::Ipv4(v4_cidr) => IpCidr::Ipv4(v4_cidr.network()),
 +                                        other => other,
 +                                    };
-                                     route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()))
-                                 }
-                                 notifier.borrow_mut().schedule_notify("ifaces/eth0/addr/list");
+                                     route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()));
+                                     // Multicast groups (mDNS, SSDP) are reached on this link even
+                                     // without a default route.
 -- 
 2.54.0 (Apple Git-157)
 
