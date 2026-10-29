@@ -88,7 +88,19 @@ bytes. QEMU's board is a 3B, so there is no `bt_power` file there; the
 real power switch, flow control and the baud rate from the core clock can
 only be tested on the Pi.
 
+Result with `v0.3.0-dev-151-g13c2757+x7d9f`: 18 of 18 pass. The firmware
+upload (323 records) takes 16 s in QEMU. Two problems found on the way,
+both in the driver's scheme thread:
+
+- A timed wait (Condvar, then a 1 ms sleep) never came back there, as in
+  `bcm2835-gpiod`. Reads now poll with yields. The RX thread's sleep works;
+  the driver checks it at start.
+- Answering EAGAIN makes the blocking scheme handler park the read for
+  good. An empty read now returns 0 bytes.
+
 ## Test on the Pi
+
+Queued as test-plan row 79 for the Pi test agent.
 
 Serial console only, no wiring. Phones or other Bluetooth devices nearby
 make the scans more telling. Steps:
