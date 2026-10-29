@@ -1,40 +1,47 @@
 //! mdnsd: a small multicast DNS responder (RFC 6762) with DNS-SD (RFC 6763).
 //!
-//! Answers queries for `<hostname>.local` (A record, the address of `eth0`)
-//! and announces services, so other machines in the LAN find the Pi without
+//! Answers queries for `<hostname>.local` (A record, the IPv4 address of
+//! `eth0`, and AAAA records, its IPv6 addresses) and announces services, so other machines in the LAN find the Pi without
 //! a fixed address: `ping redox-rpi.local`, `avahi-browse -r _devsh._tcp`.
 //!
 //! Usage: `mdnsd [-n <hostname>] [<service type>:<port>]...`, for example
 //! `mdnsd _devsh._tcp:2323`. The hostname defaults to `/etc/hostname`.
 //! Each service is announced as `<hostname>.<service type>.local`.
 //!
-//! The address comes from `/scheme/netcfg/ifaces/eth0/addr/list` and is
-//! checked every few seconds; at start and whenever it changes, mdnsd
-//! announces its records twice. Queries from port 5353 get a multicast
-//! answer, others (one-shot resolvers) a unicast answer to the sender.
+//! One socket on port 5353 listens on 224.0.0.251 and ff02::fb (netstack
+//! has one port space for IPv4 and IPv6). The addresses come from
+//! `/scheme/netcfg/ifaces/eth0/addr/list` and are checked every few
+//! seconds; at start and whenever they change, mdnsd announces its records
+//! twice, on both groups. Queries from port 5353 get a multicast answer on
+//! the group they came in on, others (one-shot resolvers) a unicast answer
+//! to the sender.
 //!
 //! Not done yet: probing for name conflicts (RFC 6762 section 8), goodbye
-//! packets at shutdown, known-answer suppression, AAAA records.
+//! packets at shutdown, known-answer suppression.
 
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket};
 use std::os::fd::AsRawFd;
 use std::process;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 const MDNS_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+const MDNS_GROUP6: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb);
 const MDNS_PORT: u16 = 5353;
 
 // Values of relibc's netinet/in.h (the libc crate has none for Redox).
 const IPPROTO_IP: libc::c_int = 0;
 const IP_ADD_MEMBERSHIP: libc::c_int = 35;
+const IPPROTO_IPV6: libc::c_int = 41;
+const IPV6_JOIN_GROUP: libc::c_int = 20;
 
 const TYPE_A: u16 = 1;
 const TYPE_PTR: u16 = 12;
 const TYPE_TXT: u16 = 16;
+const TYPE_AAAA: u16 = 28;
 const TYPE_SRV: u16 = 33;
 const TYPE_ANY: u16 = 255;
 const CLASS_IN: u16 = 1;
@@ -57,6 +64,7 @@ struct Responder {
     instance: String, // "redox-rpi", the service instance name
     services: Vec<Service>,
     addr: Option<Ipv4Addr>,
+    addrs6: Vec<Ipv6Addr>,
 }
 
 /// A DNS name as lowercase labels.
@@ -109,6 +117,30 @@ impl Responder {
         })
     }
 
+    fn aaaa_records(&self) -> Vec<Record> {
+        self.addrs6
+            .iter()
+            .map(|addr| Record {
+                name: self.host.clone(),
+                kind: TYPE_AAAA,
+                unique: true,
+                ttl: TTL_HOST,
+                data: addr.octets().to_vec(),
+            })
+            .collect()
+    }
+
+    /// The address records: A, then AAAA.
+    fn address_records(&self) -> Vec<Record> {
+        let mut records: Vec<Record> = self.a_record().into_iter().collect();
+        records.extend(self.aaaa_records());
+        records
+    }
+
+    fn has_address(&self) -> bool {
+        self.addr.is_some() || !self.addrs6.is_empty()
+    }
+
     /// The records of one service: PTR type -> instance, SRV, TXT.
     fn service_records(&self, service: &Service) -> [Record; 3] {
         let kind = format!("{}.local", service.kind);
@@ -123,12 +155,17 @@ impl Responder {
         ]
     }
 
-    /// Answers for one question; the A record is added by the caller when an
-    /// SRV record names this host.
+    /// Answers for one question; the address records are added by the
+    /// caller as additional records.
     fn answer(&self, qname: &[String], qtype: u16, answers: &mut Vec<Record>) {
         let any = qtype == TYPE_ANY;
-        if qname == labels(&self.host).as_slice() && (any || qtype == TYPE_A) {
-            answers.extend(self.a_record());
+        if qname == labels(&self.host).as_slice() {
+            if any || qtype == TYPE_A {
+                answers.extend(self.a_record());
+            }
+            if any || qtype == TYPE_AAAA {
+                answers.extend(self.aaaa_records());
+            }
         }
         if qname == labels("_services._dns-sd._udp.local").as_slice() && (any || qtype == TYPE_PTR) {
             for service in &self.services {
@@ -153,7 +190,7 @@ impl Responder {
 
     /// All records, for announcements.
     fn all_records(&self) -> Vec<Record> {
-        let mut records: Vec<Record> = self.a_record().into_iter().collect();
+        let mut records = self.address_records();
         for service in &self.services {
             records.extend(self.service_records(service));
         }
@@ -200,9 +237,26 @@ fn read_name(msg: &[u8], mut pos: usize) -> Option<(Vec<String>, usize)> {
     None
 }
 
-fn eth0_address() -> Option<Ipv4Addr> {
-    let list = fs::read_to_string("/scheme/netcfg/ifaces/eth0/addr/list").ok()?;
-    list.lines().find_map(|line| line.split('/').next()?.trim().parse().ok())
+/// The IPv4 address and the IPv6 addresses of eth0.
+fn eth0_addresses() -> (Option<Ipv4Addr>, Vec<Ipv6Addr>) {
+    let list = fs::read_to_string("/scheme/netcfg/ifaces/eth0/addr/list").unwrap_or_default();
+    let addrs = || list.lines().filter_map(|line| line.split('/').next());
+    let v4 = addrs()
+        .find_map(|a| a.trim().parse::<Ipv4Addr>().ok())
+        .filter(|a| !a.is_unspecified());
+    let v6 = addrs()
+        .filter_map(|a| a.trim().parse::<Ipv6Addr>().ok())
+        .filter(|a| !a.is_unspecified() && !a.is_loopback())
+        .collect();
+    (v4, v6)
+}
+
+/// The mDNS group of the family of `from`.
+fn group_of(from: SocketAddr) -> SocketAddr {
+    match from {
+        SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(MDNS_GROUP, MDNS_PORT)),
+        SocketAddr::V6(_) => SocketAddr::V6(SocketAddrV6::new(MDNS_GROUP6, MDNS_PORT, 0, 0)),
+    }
 }
 
 fn handle_query(responder: &Responder, socket: &UdpSocket, msg: &[u8], from: SocketAddr) {
@@ -230,9 +284,16 @@ fn handle_query(responder: &Responder, socket: &UdpSocket, msg: &[u8], from: Soc
     if answers.is_empty() {
         return;
     }
-    let mut additional = Vec::new();
-    if answers.iter().any(|r| r.kind == TYPE_SRV || r.kind == TYPE_PTR) && !answers.iter().any(|r| r.kind == TYPE_A) {
+    // RFC 6762 section 6.2: with an SRV or PTR answer, and with an A or AAAA
+    // answer, the other address records go along as additional records.
+    let mut additional: Vec<Record> = Vec::new();
+    let has = |kind| answers.iter().any(|r: &Record| r.kind == kind);
+    let names_host = has(TYPE_SRV) || has(TYPE_PTR) || has(TYPE_A) || has(TYPE_AAAA);
+    if names_host && !has(TYPE_A) {
         additional.extend(responder.a_record());
+    }
+    if names_host && !has(TYPE_AAAA) {
+        additional.extend(responder.aaaa_records());
     }
     let reply = if unicast {
         // One-shot resolver (RFC 6762 section 6.7): its ID and questions back.
@@ -240,7 +301,7 @@ fn handle_query(responder: &Responder, socket: &UdpSocket, msg: &[u8], from: Soc
     } else {
         message(0, &[], 0, &answers, &additional)
     };
-    let to = if unicast { from } else { SocketAddr::V4(SocketAddrV4::new(MDNS_GROUP, MDNS_PORT)) };
+    let to = if unicast { from } else { group_of(from) };
     if let Err(e) = socket.send_to(&reply, to) {
         eprintln!("mdnsd: answer to {to}: {e}");
     }
@@ -249,29 +310,49 @@ fn handle_query(responder: &Responder, socket: &UdpSocket, msg: &[u8], from: Soc
 fn announce(responder: &Responder, socket: &UdpSocket) {
     let records = responder.all_records();
     let msg = message(0, &[], 0, &records, &[]);
+    let mut groups = Vec::new();
+    if responder.addr.is_some() {
+        groups.push(SocketAddr::V4(SocketAddrV4::new(MDNS_GROUP, MDNS_PORT)));
+    }
+    if !responder.addrs6.is_empty() {
+        groups.push(SocketAddr::V6(SocketAddrV6::new(MDNS_GROUP6, MDNS_PORT, 0, 0)));
+    }
     for i in 0..2 {
         if i > 0 {
             sleep(Duration::from_secs(1));
         }
-        if let Err(e) = socket.send_to(&msg, SocketAddrV4::new(MDNS_GROUP, MDNS_PORT)) {
-            eprintln!("mdnsd: announcement: {e}");
+        for &group in &groups {
+            if let Err(e) = socket.send_to(&msg, group) {
+                eprintln!("mdnsd: announcement to {group}: {e}");
+            }
         }
     }
 }
 
-fn join(socket: &UdpSocket) -> io::Result<()> {
-    let mut mreq = [0u8; 8];
-    mreq[..4].copy_from_slice(&MDNS_GROUP.octets());
+fn setsockopt(socket: &UdpSocket, level: libc::c_int, name: libc::c_int, value: &[u8]) -> io::Result<()> {
     let ret = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
-            IPPROTO_IP,
-            IP_ADD_MEMBERSHIP,
-            mreq.as_ptr().cast(),
-            mreq.len() as libc::socklen_t,
+            level,
+            name,
+            value.as_ptr().cast(),
+            value.len() as libc::socklen_t,
         )
     };
     if ret == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+/// Joins 224.0.0.251 (struct ip_mreq) and ff02::fb (struct ipv6_mreq).
+fn join(socket: &UdpSocket) -> io::Result<()> {
+    let mut mreq = [0u8; 8];
+    mreq[..4].copy_from_slice(&MDNS_GROUP.octets());
+    setsockopt(socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq)?;
+    let mut mreq6 = [0u8; 20];
+    mreq6[..16].copy_from_slice(&MDNS_GROUP6.octets());
+    if let Err(e) = setsockopt(socket, IPPROTO_IPV6, IPV6_JOIN_GROUP, &mreq6) {
+        eprintln!("mdnsd: cannot join {MDNS_GROUP6}, IPv4 only: {e}");
+    }
+    Ok(())
 }
 
 fn usage() -> ! {
@@ -303,6 +384,7 @@ fn main() {
         instance: hostname,
         services,
         addr: None,
+        addrs6: Vec::new(),
     };
 
     let socket = match UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MDNS_PORT))
@@ -315,25 +397,35 @@ fn main() {
         }
     };
     let _ = socket.set_read_timeout(Some(ADDRESS_CHECK));
-    println!("mdnsd: {} on {MDNS_GROUP}:{MDNS_PORT}, {} services", responder.host, responder.services.len());
+    println!(
+        "mdnsd: {} on {MDNS_GROUP} and {MDNS_GROUP6} port {MDNS_PORT}, {} services",
+        responder.host,
+        responder.services.len()
+    );
 
     let mut buf = [0u8; 1500];
     let mut next_check = Instant::now();
     loop {
         if Instant::now() >= next_check {
             next_check = Instant::now() + ADDRESS_CHECK;
-            let addr = eth0_address().filter(|a| !a.is_unspecified());
-            if addr != responder.addr {
+            let (addr, addrs6) = eth0_addresses();
+            if addr != responder.addr || addrs6 != responder.addrs6 {
                 responder.addr = addr;
-                if let Some(addr) = addr {
-                    println!("mdnsd: {} is {addr}", responder.host);
+                responder.addrs6 = addrs6;
+                if responder.has_address() {
+                    let list: Vec<String> = addr
+                        .iter()
+                        .map(ToString::to_string)
+                        .chain(responder.addrs6.iter().map(ToString::to_string))
+                        .collect();
+                    println!("mdnsd: {} is {}", responder.host, list.join(", "));
                     announce(&responder, &socket);
                 }
             }
         }
         match socket.recv_from(&mut buf) {
             Ok((len, from)) => {
-                if responder.addr.is_some() {
+                if responder.has_address() {
                     handle_query(&responder, &socket, &buf[..len], from);
                 }
             }

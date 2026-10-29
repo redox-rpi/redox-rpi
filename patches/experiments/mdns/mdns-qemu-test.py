@@ -10,9 +10,15 @@ answers the guest's ARP requests and, every two seconds, asks:
 3. `redox-rpi.local` A, from port 40000 (one-shot query: unicast answer
    to 10.0.3.2:40000 with the same ID expected).
 
+With --ipv6 it also asks over IPv6, from fe80::5054:ff:fe12:3499 to
+ff02::fb: `redox-rpi.local` AAAA from port 5353 (multicast answer to
+ff02::fb expected) and from port 40000 (unicast answer expected), and
+answers the guest's neighbor solicitations.
+
 It prints every mDNS response of the guest. Exit code 0 when it saw the
 A record with --expect-addr (multicast and unicast) and an SRV record with
-port 2323 within --seconds.
+port 2323 within --seconds; with --ipv6 also a link-local AAAA record over
+IPv6, multicast and unicast.
 """
 
 import argparse
@@ -24,6 +30,8 @@ import time
 HOST_MAC = bytes.fromhex("525400123499")
 HOST_IP = socket.inet_aton("10.0.3.2")
 MDNS = "224.0.0.251"
+HOST_LL = bytes.fromhex("fe80000000000000") + bytes([0x52 ^ 2, 0x54, 0x00, 0xFF, 0xFE, 0x12, 0x34, 0x99])
+MDNS6 = bytes.fromhex("ff0200000000000000000000000000fb")
 
 
 def checksum(data):
@@ -49,6 +57,23 @@ def udp_frame(dst_mac, dst_ip, sport, dport, payload):
     ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + ulen, 0, 0, 255, 17, 0, HOST_IP, dst)
     ip = ip[:10] + struct.pack("!H", checksum(ip)) + ip[12:]
     return dst_mac + HOST_MAC + b"\x08\x00" + ip + udp
+
+
+def udp6_frame(dst_mac, dst, sport, dport, payload):
+    udp = struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload
+    pseudo = HOST_LL + dst + struct.pack("!I3xB", len(udp), 17)
+    udp = udp[:6] + struct.pack("!H", checksum(pseudo + udp) or 0xFFFF) + udp[8:]
+    ip = struct.pack("!IHBB", 6 << 28, len(udp), 17, 255) + HOST_LL + dst
+    return dst_mac + HOST_MAC + b"\x86\xdd" + ip + udp
+
+
+def neighbor_advert(dst_mac, dst, target):
+    icmp = (struct.pack("!BBHI", 136, 0, 0, 0x60000000) + target
+            + struct.pack("!BB", 2, 1) + HOST_MAC)
+    pseudo = target + dst + struct.pack("!I3xB", len(icmp), 58)
+    icmp = icmp[:2] + struct.pack("!H", checksum(pseudo + icmp)) + icmp[4:]
+    ip = struct.pack("!IHBB", 6 << 28, len(icmp), 58, 255) + target + dst
+    return dst_mac + HOST_MAC + b"\x86\xdd" + ip + icmp
 
 
 def query(qid, name, qtype):
@@ -83,13 +108,15 @@ def records(msg):
         rdata = msg[pos + 10:pos + 10 + rdlen]
         if rtype == 1:
             value = socket.inet_ntoa(rdata)
+        elif rtype == 28:
+            value = socket.inet_ntop(socket.AF_INET6, rdata)
         elif rtype == 33:
             value = f"port {struct.unpack('!H', rdata[4:6])[0]} target {read_name(msg, pos + 16)[0]}"
         elif rtype == 12:
             value = read_name(msg, pos + 10)[0]
         else:
             value = rdata.hex()
-        out.append((name, {1: "A", 12: "PTR", 16: "TXT", 33: "SRV"}.get(rtype, rtype), ttl, value))
+        out.append((name, {1: "A", 12: "PTR", 16: "TXT", 28: "AAAA", 33: "SRV"}.get(rtype, rtype), ttl, value))
         pos += 10 + rdlen
     return out
 
@@ -99,6 +126,7 @@ def main():
     ap.add_argument("--socket", default="239.255.77.77:17777")
     ap.add_argument("--expect-addr", default="10.0.3.15")
     ap.add_argument("--seconds", type=int, default=900)
+    ap.add_argument("--ipv6", action="store_true", help="also query over IPv6 for AAAA")
     args = ap.parse_args()
     group, port = args.socket.rsplit(":", 1)
     port = int(port)
@@ -112,6 +140,8 @@ def main():
     s.settimeout(0.2)
 
     seen = {"multicast A": False, "unicast A": False, "SRV 2323": False}
+    if args.ipv6:
+        seen.update({"multicast AAAA over IPv6": False, "unicast AAAA over IPv6": False})
     end, next_ask, qid = time.time() + args.seconds, 0, 0x4242
     while time.time() < end and not all(seen.values()):
         if time.time() >= next_ask:
@@ -121,6 +151,10 @@ def main():
                                           (40000, "redox-rpi.local", 1, qid)):
                 s.sendto(udp_frame(mac_for(MDNS), MDNS, sport, 5353, query(i, name, qtype)),
                          (group, port))
+            if args.ipv6:
+                for sport, i in ((5353, 0), (40000, qid + 1)):
+                    s.sendto(udp6_frame(b"\x33\x33" + MDNS6[12:], MDNS6, sport, 5353,
+                                        query(i, "redox-rpi.local", 28)), (group, port))
         try:
             frame = s.recv(2048)
         except socket.timeout:
@@ -134,6 +168,29 @@ def main():
                      + HOST_MAC + HOST_IP + guest_mac + guest_ip)
             s.sendto(reply, (group, port))
             print(f"ARP reply to {socket.inet_ntoa(guest_ip)}", flush=True)
+            continue
+        if etype == b"\x86\xdd":
+            ip6 = frame[14:]
+            src6, dst6, nh = ip6[8:24], ip6[24:40], ip6[6]
+            if nh == 58 and ip6[40] == 135 and ip6[48:64] == HOST_LL:
+                s.sendto(neighbor_advert(frame[6:12], src6, HOST_LL), (group, port))
+                print(f"neighbor advert to {socket.inet_ntop(socket.AF_INET6, src6)}", flush=True)
+            if nh != 17:
+                continue
+            sport, dport = struct.unpack("!HH", ip6[40:44])
+            if sport != 5353:
+                continue
+            msg = ip6[48:]
+            dst = socket.inet_ntop(socket.AF_INET6, dst6)
+            rid = struct.unpack("!H", msg[:2])[0]
+            recs = records(msg)
+            print(f"IPv6 response to [{dst}]:{dport} id {rid:#x}: {recs}", flush=True)
+            for name, rtype, _, value in recs:
+                if rtype == "AAAA" and value.startswith("fe80:") and name == "redox-rpi.local":
+                    if dst6 == MDNS6:
+                        seen["multicast AAAA over IPv6"] = True
+                    elif dport == 40000 and rid == qid + 1:
+                        seen["unicast AAAA over IPv6"] = True
             continue
         if etype != b"\x08\x00":
             continue
