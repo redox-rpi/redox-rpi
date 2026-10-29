@@ -218,13 +218,26 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
     `gpu_mem=32`, 16 MiB less RAM for Redox).
   - **Screen blanking** when a client sets no mode; nothing in Redox does
     that yet.
+- **Branch [`graphics-fb3`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb3)**
+  (on `graphics-fb2`), patch `0027`, **step 2 prototype: DMA blits**, works
+  in QEMU (`v0.3.0-dev-189-gb7fe574+xb2e2`). Built on the DMA plan of #21:
+  channel 5, one 2D control block per frame, dumb buffers in uncached DMA
+  memory, the register code copied from `bcm2835-sdhostd` (to move into a
+  common crate later, agreed with the SD session). A test blit at start
+  finds out whether the controller moves YLENGTH rows or one more (QEMU:
+  one more). `RPI_FB_DMA=off` copies with the CPU, `RPI_FB_BENCH=1`
+  measures drawing and blits both ways. QEMU cannot say whether it pays
+  off: uncached dumb buffers make drawing slower, DMA makes the blit
+  cheaper; Pi test #44.
 
 ## Next
 
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
-- A Pi test for `graphics-fb2` after #34: monitor turned on after boot
-  (is `monitor connected` logged?), and double buffering at 1280x720
-  (`RPI_FB=1280x720`).
+- Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
+  boot (is `monitor connected` logged?), and double buffering at 1280x720.
+- Pi test #44 (`graphics-fb3`), same visit: the DMA row count and the
+  benchmark, CPU against DMA. If DMA wins, cached dumb buffers with cache
+  maintenance (DMA plan step 2, a kernel change) are the next gain.
 
 ## Effort: estimate and what it took
 
@@ -238,6 +251,7 @@ on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 | `rpi-fbd` first version: firmware calls, EDID, mode change, handover from `vesad`; `rpi-firmwared` property file | part of 1–2 weeks | 1 hour, with a QEMU test that types into the bootloader | 650 (driver), 70 (`rpi-firmwared`) |
 | Monitor turned on later: diagnosis and `config.txt` fix | not planned | 10 minutes | 14 |
 | EDID polling, double buffering, blanking (`graphics-fb2`) | part of 1–2 weeks | 40 minutes, half of it build and QEMU | 220 |
+| Step 2 prototype: DMA blits (`graphics-fb3`), with a benchmark | 2–4 weeks | 35 minutes, half of it three builds and QEMU | 350 (`dma.rs`, 200 of them copied from `bcm2835-sdhostd`), 240 (driver) |
 
 So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
 it went fast: every part had a template in Redox (`vesad` for the
@@ -259,15 +273,27 @@ What is **not** in that time, and where the rest of the estimate goes:
   person for anything on the screen).
 
 What this says about the other steps: the time of step 1 came from
-reusing templates and letting the firmware do the hardware. Steps 2 and
-3 have neither (no Redox driver programs display hardware or a GPU, and
-their main work is debugging registers on the real Pi with someone
-watching the screen), so their estimates stay as they are, unchecked:
-DMA blits 2–4 weeks, own display driver 2–3 months, V3D 6+ months.
+reusing templates and letting the firmware do the hardware.
+
+The DMA blit prototype checked the first estimate of step 2. It had a
+template too (the SD session's DMA code for #21, same controller), and
+QEMU emulates the 2D mode, so the code took 35 minutes instead of 2–4
+weeks. What is still open is not code: whether DMA pays off at all (only
+the Pi's numbers say), the real controller's row count in 2D mode, and,
+if it pays off, cached dumb buffers, which need cache maintenance from
+user space (a kernel change, DMA plan step 2, shared with #21). New
+estimate for DMA blits: **a few days** of calendar time, set by the Pi
+test and that kernel change, not by the driver.
+
+The other two estimates stay as they are, unchecked: own display driver
+2–3 months, V3D 6+ months. Neither has a template in Redox, and their
+main work is debugging registers on the real Pi with someone watching
+the screen.
 
 ## Later
 
-- DMA blits once #21 is done.
+- DMA blits beyond the prototype once #21's common DMA code and cache
+  maintenance exist.
 - Steps 2 (own display driver) and 3 (V3D) only if upstream Redox grows a
   3D path, or if someone wants to do it as a project of its own.
 
