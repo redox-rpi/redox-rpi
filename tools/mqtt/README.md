@@ -5,12 +5,15 @@ and `mqtt-sub`, which work like mosquitto's `mosquitto_pub` and
 `mosquitto_sub` ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)),
 and `ha-bridge`, which shows the Pi's sensors in Home Assistant.
 
-It uses only `std`, with no crates from crates.io, so it builds for Redox
-like the other tools here and needs no port of a C library.
+TLS uses [rustls](https://github.com/rustls/rustls) with `ring`, from
+Redox' fork of `ring` (as Redox' `pkgutils` does), so it needs no port of a
+C library. Without the Cargo feature `tls` (on by default) the crate uses
+only `std`.
 
-**Supported:** MQTT 3.1.1 over TCP. Connect with a user name, password and
-last will, publish with QoS 0 or 1 and retain, subscribe with `+` and `#`, and keep-alive
-pings. **Not supported:** TLS, QoS 2, MQTT 5.
+**Supported:** MQTT 3.1.1 over TCP or TLS (1.2 and 1.3). Connect with a
+user name, password and last will, publish with QoS 0 or 1 and retain,
+subscribe with `+` and `#`, and keep-alive pings. **Not supported:** client
+certificates, QoS 2, MQTT 5.
 
 ## Tools
 
@@ -25,7 +28,10 @@ mqtt-sub -t home/pi/cmd -C 1          # wait for one message, then exit
 | Option | Tool | Meaning |
 |---|---|---|
 | `-h host` | both | broker (default `$MQTT_HOST`, else the first line of `/etc/mqtt-host`, else `localhost`) |
-| `-p port` | both | port (default `$MQTT_PORT`, else 1883) |
+| `-p port` | both | port (default `$MQTT_PORT`, else 8883 with TLS, 1883 without) |
+| `--tls` | both | TLS, with the CA from `$MQTT_CAFILE`, `/etc/mqtt-ca.crt`, `/etc/ssl/certs/ca-certificates.crt` or the built-in Mozilla roots, in this order |
+| `--cafile file` | both | TLS, trusting the CA certificates in this PEM file |
+| `--no-tls` | both | plain TCP even if a CA file is set |
 | `-t topic` | both | topic; `mqtt-sub` takes several filters |
 | `-q 0\|1` | both | QoS (default 0) |
 | `-i id` | both | client id (default `<tool>-<pid>`) |
@@ -41,6 +47,43 @@ mqtt-sub -t home/pi/cmd -C 1          # wait for one message, then exit
 | `-C count` | sub | exit after this many messages |
 
 Exit code 1 on a network or broker error, 2 on bad options.
+
+## TLS
+
+TLS is on with `--tls` or `--cafile`, and by default when `$MQTT_CAFILE` is
+set or `/etc/mqtt-ca.crt` exists. So for a broker with its own CA (the
+usual case at home), one file sets it for all tools, as root:
+
+```sh
+cat > /etc/mqtt-ca.crt     # paste the broker's ca.crt, then Ctrl-D
+```
+
+The broker's certificate must name the address given with `-h` (or in
+`/etc/mqtt-host`): a DNS name or an IP address in its subjectAltName. A
+broker with a certificate from a public CA (Let's Encrypt) works with
+`--tls` and the built-in roots.
+
+**The clock must be right first.** A certificate is valid from a start
+date; the Pi has no clock that runs while it is off and boots at the
+image's build time or the last time `timesync` saved. Until `timesync` has
+the time from the network, a broker certificate issued after that time is
+"not valid yet":
+
+```
+mqtt-pub: 10.0.2.2:8883: invalid peer certificate: certificate not valid yet: … (is the clock right? check with date -u)
+```
+
+In practice: `ha-bridge -d` tries again every 30 s, so it connects once
+`timesync` has set the clock; `timerd` waits for `timesync` before it runs
+timers; by hand, check `date -u` first. Without a network time server, set
+the clock by hand (`timesync -s`, branch `clock-settime`) or use a DS3231
+module (branch `ds3231`). A certificate issued before the image was built
+works from the first second.
+
+Other errors: `UnknownIssuer` means the CA file is missing or wrong
+(`--cafile`); `certificate not valid for name` means the certificate does
+not name that address; `unexpected end of file` usually means a plain MQTT
+port (1883) with TLS.
 
 ## ha-bridge: Home Assistant
 
@@ -91,7 +134,9 @@ options.will = Some(mqtt::Will {
     qos: mqtt::QoS::AtLeastOnce,
     retain: true,
 });
-let mut client = mqtt::Client::connect("192.168.178.120:1883", &options)?;
+// TLS (feature `tls`): the default port becomes 8883.
+options.tls = Some(mqtt::Tls { ca_file: Some("/etc/mqtt-ca.crt".into()), server_name: None });
+let mut client = mqtt::Client::connect("192.168.178.120", &options)?;
 client.publish("home/pi/state", b"on", mqtt::QoS::AtLeastOnce, true)?;
 client.subscribe(&[("home/pi/cmd", mqtt::QoS::AtMostOnce)])?;
 loop {
@@ -112,4 +157,6 @@ then, a service can run `mqtt-pub`, or copy `src/lib.rs`.
 
 `cargo test` checks the packet encoding. Results against mosquitto 2.0.22
 on the Mac and in QEMU are in
-[patches/experiments/mqtt/README.md](../../patches/experiments/mqtt/README.md).
+[patches/experiments/mqtt/README.md](../../patches/experiments/mqtt/README.md),
+for TLS in
+[patches/experiments/mqtt-tls-test/README.md](../../patches/experiments/mqtt-tls-test/README.md).
