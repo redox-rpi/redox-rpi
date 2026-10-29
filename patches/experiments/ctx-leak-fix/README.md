@@ -1,5 +1,8 @@
 # ctx-leak-fix
 
+> **Now default:** kernel patch `0008` on branch `sdhost-ctxleak`. This README
+> keeps the cause and the test history.
+
 Fix for [#31](https://github.com/redox-rpi/redox-rpi/issues/31): the kernel
 kept about 76 KB after each run of a program with a thread that ends itself
 (`dd` from coreutils), and ran out of memory after about 1500 runs (Pi test

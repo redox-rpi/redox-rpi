@@ -1,0 +1,14 @@
+# Nightly stable image (scripts/update-stable.sh, docs/test-plan.md).
+# Install on the build host as a systemd user unit:
+#   cp config/redox-stable.service config/redox-stable.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now redox-stable.timer
+[Unit]
+Description=Build, test and promote the redox-rpi stable network-boot image
+
+[Service]
+Type=oneshot
+# The script checks out origin/main in its clone, which may change the file
+# while bash reads it, so the service runs a copy (the script deletes it).
+# For systemd, $$ is a literal $.
+ExecStart=/bin/bash -lc 'source ~/.cargo/env 2>/dev/null; mkdir -p ~/redox-rpi/logs/stable; copy=$$(mktemp); cp ~/redox-rpi-stable/scripts/update-stable.sh "$$copy"; UPDATE_STABLE_ROOT=~/redox-rpi-stable exec bash "$$copy" >> ~/redox-rpi/logs/stable/$$(date -u +%%Y-%%m-%%d).log 2>&1'
+TimeoutStartSec=3h
