@@ -1,4 +1,4 @@
-From 7b2f66ca7922b7c66e002682429f4152c80b6018 Mon Sep 17 00:00:00 2001
+From 8f43959779d4bec422c5870bf19fa8acd2d4fe88 Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 10:14:11 +0000
 Subject: [PATCH] bcm2835-sdhostd: move multi-block transfers with the BCM2835
@@ -332,7 +332,7 @@ index 00000000..f31f8dd3
 +    std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
 +}
 diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
-index 1b5b27d8..7c71c9db 100644
+index 1b5b27d8..7cc585b3 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/host.rs
 +++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
 @@ -1,15 +1,20 @@
@@ -460,14 +460,14 @@ index 1b5b27d8..7c71c9db 100644
 +
 +    /// A multi-block read: DMA into the bounce buffer for all but the last
 +    /// DRAIN_WORDS words, which come by PIO.
-+    fn read_dma(&self, dma: &mut SdDma, buffer: &mut [u8]) -> SdResult<()> {
++    fn read_with_dma(&self, dma: &mut SdDma, buffer: &mut [u8]) -> SdResult<()> {
 +        let len = buffer.len() - DRAIN_WORDS * 4;
 +        dma.read(len, || self.data_ok()).map_err(|err| self.dma_error(err))?;
 +        buffer[..len].copy_from_slice(&dma.bounce()[..len]);
 +        self.read_pio(&mut buffer[len..])
 +    }
 +
-+    fn write_dma(&self, dma: &mut SdDma, buffer: &[u8]) -> SdResult<()> {
++    fn write_with_dma(&self, dma: &mut SdDma, buffer: &[u8]) -> SdResult<()> {
 +        let len = buffer.len();
 +        dma.bounce()[..len].copy_from_slice(buffer);
 +        dma.write(len, || self.data_ok()).map_err(|err| self.dma_error(err))?;
@@ -484,7 +484,7 @@ index 1b5b27d8..7c71c9db 100644
 +        let index = if blocks == 1 { 17 } else { 18 };
 +        self.command(index, self.card_address(block), Response::Short, Data::Read)?;
 +        if let Some(mut dma) = self.dma_for(blocks) {
-+            let result = self.read_dma(&mut dma, buffer);
++            let result = self.read_with_dma(&mut dma, buffer);
 +            self.dma = Some(dma);
 +            result?;
 +        } else {
@@ -503,7 +503,7 @@ index 1b5b27d8..7c71c9db 100644
 -            false,
 -        )?;
 +        if let Some(mut dma) = self.dma_for(blocks) {
-+            let result = self.write_dma(&mut dma, buffer);
++            let result = self.write_with_dma(&mut dma, buffer);
 +            self.dma = Some(dma);
 +            result?;
 +        } else {
