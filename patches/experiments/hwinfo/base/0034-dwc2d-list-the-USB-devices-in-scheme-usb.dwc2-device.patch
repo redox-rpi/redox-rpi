@@ -1,4 +1,4 @@
-From 4f93e8fff01a424fb494512e9c658c47f122ee08 Mon Sep 17 00:00:00 2001
+From cb67c76559d05cddf1f1071ded5e9e7b2e915162 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 10:48:13 +0100
 Subject: [PATCH] dwc2d: list the USB devices in /scheme/usb.dwc2/devices
@@ -36,7 +36,7 @@ index de3a4ea..f0359ab 100644
  
  [lints]
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 01cac8d..6b8e3e0 100644
+index 1b97738..7c4d311 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -54,6 +54,11 @@ pub struct Device {
@@ -70,7 +70,7 @@ index 01cac8d..6b8e3e0 100644
  
          if class == CLASS_HUB && depth < MAX_HUB_DEPTH {
              let configuration = config.get(5).copied().unwrap_or(1);
-@@ -525,6 +535,21 @@ impl Bus {
+@@ -526,6 +536,21 @@ impl Bus {
      }
  }
  
