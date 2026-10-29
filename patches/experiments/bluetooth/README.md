@@ -40,7 +40,7 @@ the current rate again. If the firmware throttles the core clock
 
   | Path | Read | Write |
   |---|---|---|
-  | `/scheme/btuart/data` | received bytes (waits up to 100 ms, then EAGAIN) | sends the bytes |
+  | `/scheme/btuart/data` | received bytes (waits up to 100 ms, then 0 bytes) | sends the bytes |
   | `/scheme/btuart/baud` | baud rate (115200 at start) | sets it |
   | `/scheme/btuart/clock` | core clock in Hz | sets it, reprograms the baud rate |
 
