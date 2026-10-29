@@ -36,7 +36,8 @@ router and DNS 10.0.9.1). `/tmp/testnetd.log` holds its counters:
 ```bash
 scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-net \
   --run '/usr/lib/drivers/testnetd' --run 'sleep 12' \
-  --run 'cat /scheme/netcfg/ifaces' --run 'cat /scheme/netcfg/route/list' \
+  --run 'cat /scheme/netcfg/ifaces/eth0/addr/list /scheme/netcfg/ifaces/eth1/addr/list' \
+  --run 'cat /scheme/netcfg/route/list' \
   --run 'ping -c 3 10.0.9.1' --run 'ping -c 3 10.0.2.2' \
   --run 'cat /tmp/testnetd.log'
 ```

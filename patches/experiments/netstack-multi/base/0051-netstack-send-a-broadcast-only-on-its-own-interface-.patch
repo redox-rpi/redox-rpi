@@ -1,4 +1,4 @@
-From 620ffb1cf33a442d77e021a433d4eb1bd5dd1ffa Mon Sep 17 00:00:00 2001
+From b27bfd9a3bfb6a96a77e3c5e5737cd387b3f3792 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 51/53] netstack: send a broadcast only on its own interface,
