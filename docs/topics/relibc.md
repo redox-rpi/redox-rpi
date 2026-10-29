@@ -34,6 +34,12 @@
   in experiment `tls-variant1` (branch `t14-tls-layout`), QEMU passes.
   None of today's packages uses the affected TLS forms. Also:
   sigaltstack is not implemented on aarch64.
+- No signal for exceptions on aarch64: relibc registered no exception
+  handler, so a bad memory access ended the process without SIGSEGV, and
+  sigaltstack was never used. Fixed in experiment `sigsegv` (branch
+  `t-sigsegv`, relibc `exp/sigsegv`): `sigsegv`, `stackoverflow` and,
+  with `sigentry-thread-signals`, `sigaltstack` pass in QEMU, no new
+  failures. Not yet on the Pi.
 - The static tests and statically linked C programs link the toolchain's
   `libc.a` (prefix sysroot, built 2026-10-24), not the relibc of the
   build: our relibc patches do not reach them. Fix for the tests (branch
