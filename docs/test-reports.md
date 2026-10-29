@@ -574,3 +574,81 @@ were none.
   polling driver's CPU time was not measured on the Pi.
 
 Result: **pass**.
+
+## 2026-10-28: devshd hang-up (#11), `v0.3.0-dev-77-g6bcd0fb+x9f76`
+
+Test #21 for [#11](https://github.com/redox-rpi/redox-rpi/issues/11): the
+stable image's experiments (`timesync`, `rtl8152`) on branch
+[`devshd-hangup`](https://github.com/redox-rpi/redox-rpi/tree/devshd-hangup), where devshd sends SIGHUP to the terminal's
+foreground process group (then SIGKILL) when a client closes the
+connection without `exit`. Real Pi 3B+ over netboot, 600 MHz, one boot.
+
+| Step | Result |
+|---|---|
+| `scripts/pi-test.py` | version, manifest, ps, ps-tty, sdcard pass; 0 of 300 starts failed |
+| 10 clean devsh sessions (`echo`, `exit`) | all work, about 1.3 s each |
+| 3 dropped sessions (logged in, socket closed) | nothing left behind |
+| 10 dropped sessions, 5 of them with `sleep 600` running | nothing left behind |
+| `ps` afterwards | only the serial console's `login` processes, the current session and devshd with 4 threads |
+
+The first run of the session script stopped silently after the third
+dropped session (no error output was kept); the Pi was clean at that
+point, and the repeat with 10 dropped sessions ran through. Before the fix,
+in QEMU, each dropped session left a `login`, an `ion` and two devshd
+threads behind. The reset over devsh needed 2 tries before the test and
+1 after it.
+
+## 2026-10-29: #30, `v0.3.0-dev-80-g8bba533+x197a` (sdhost default + kernel memory fix), real Pi
+
+Rerun of #23 ([#6](https://github.com/redox-rpi/redox-rpi/issues/6),
+[#31](https://github.com/redox-rpi/redox-rpi/issues/31)): branch
+`sdhost-ctxleak` = `sdhost-default` + experiment `ctx-leak-fix`, with
+`timesync` and `rtl8152`. Built 2026-10-28T23:31:57Z, real Pi 3B+ over
+netboot, 15 GB SDHC card.
+
+#23 (`v0.3.0-dev-76-g13092c5+x9f76`, same without the fix) had ended in the
+kernel panic `not yet implemented: oom` while `sd-stress.py` wrote the 250
+new small files: the kernel kept ~76 KB per `dd` run (#31).
+
+Boot log: `rpi-firmwared` (ARM clock 600 -> 1400 MHz) before
+`bcm2835-sdhostd: core clock 250 MHz, up to 400 MHz`, `SDHC/SDXC card, 15193
+MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
+`bcm2835-sdhcid`; `/scheme/data` mounted.
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-80-g8bba533+x197a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-80-g8bba533+x197a.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| memory | pass | `free` used 141 MB after boot, 143 MB after the 300 starts (743 MB total) |
+| sd-stress write | pass | 256 MiB at 7.9 MB/s; 1000 small files, 250 deleted, 250 new, 328 s; no `oom` |
+| sd-stress verify | pass | 1001 files, 0 missing, 0 changed |
+| sd-stress cycles | **stopped** | restart 1 done (back after 89 s), then no devsh answer from 08:25 UTC: the devshd hang ([#11](https://github.com/redox-rpi/redox-rpi/issues/11)), whose fix is not in this image. The Pi itself was alive (local console login). Stopped at the maintainer's request |
+
+The memory fix holds on the Pi: the workload that ended #23 in a panic ran
+through. Rerun the cycles with the devshd hangup fix included.
+
+## 2026-10-28: `v0.3.0-dev-94-gb1fcbe1+xe9c4`
+
+Built 2026-10-28T19:56:45Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `timesync`. Experiment serial-rx (#28) on the stable base: serial-input-test.sh 20 of 20 lines of 200 characters complete. First pi-test.py attempt got no devsh output (#11), second attempt below
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-94-gb1fcbe1+xe9c4 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-94-gb1fcbe1+xe9c4.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Serial console: `patches/experiments/serial-rx/serial-input-test.sh 20`
+wrote 20 lines of `echo` plus 200 characters, each in one piece at
+115200 baud: **20 of 20 complete**. Login with `root` and the password at
+normal speed worked, and the reset command at the end, sent in one piece,
+arrived complete (before: cut off after 25 characters). No crash on the
+console except the known `pcid` panic (no `pi-clean-boot` in this image).
+The first `pi-test.py` attempt got no answer from devsh (#11); the second
+attempt is the table above.

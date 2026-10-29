@@ -28,12 +28,19 @@
   closed the connection without `exit`, two threads each, so every dropped
   devsh call left a session behind. devshd now hangs up such a session
   (SIGHUP to the terminal's foreground group, then SIGKILL). QEMU: 6
-  dropped sessions leave nothing. Waiting for the Pi test.
+  dropped sessions leave nothing; real Pi (#21): 13 dropped sessions
+  leave nothing. Ready to merge.
 
 - [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
-  `serial-rx` on branch `serial-rx` (the kernel keeps the input while it
-  writes to the port, getty no longer panics on a full PTY) passes in
-  QEMU; Pi test #22.
+  `serial-rx` (the kernel keeps the input while it
+  writes to the port, getty no longer panics on a full PTY) passes on a
+  Pi 3B+ (test #22): 20 of 20 lines of 200 characters at full speed,
+  `pi-test.py` all checks pass. On `main` as experiment `serial-rx` since 2026-10-29.
+- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
+  cache and invalidated the instruction cache after user code was loaded.
+  Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
+  executable and at exec. QEMU: 0 of 700 starts fail, loop 6-8 % slower.
+  No known failure needs it; waiting for the Pi test.
 
 ## Next
 
@@ -44,8 +51,6 @@
 
 ## Later
 
-- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) instruction cache maintenance after loading code (v0.4.0): no
-  known failure needs it.
 - Relibc patch `0005` (ld.so touches fresh memory) may be dropped: QEMU
   has 0 of 1400 failed starts without it
   ([experiment](https://github.com/redox-rpi/redox-rpi/tree/t2-no-populate/patches/experiments/no-ldso-populate)),

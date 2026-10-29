@@ -7,6 +7,11 @@
 - Tests on the real Pi go through a shared queue,
   [test-plan.md](../test-plan.md), and `scripts/pi-test.py`; results are in
   [test-reports.md](../test-reports.md).
+- Every night at 03:30 UTC the build host builds `main`, tests it on the Pi
+  with `scripts/pi-test.py` and makes it the stable network-boot image if it
+  passes; a failure goes to the issue "Nightly: main fails on the Pi"
+  ([test-plan.md](../test-plan.md#nightly-update)). The Pi may reboot at
+  night.
 
 ## Next
 
