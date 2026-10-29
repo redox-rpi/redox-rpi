@@ -13,12 +13,17 @@
   commands at set times from cron-format timer files, with catch-up after a
   restart; waits for `timesync`. Branch `timerd`, experiments `timerd` and
   `timerd-test` ([README](../../patches/experiments/timerd/README.md)).
+- [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
+  and `settimeofday` in relibc (patch `0008`): programs can set the clock;
+  `timesync` uses it and gets `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` to set
+  the clock by hand. Branch `clock-settime` (on `timerd`); passed in QEMU,
+  Pi test #66 queued.
 
 ## Next
 
-- `clock_settime` / `settimeofday` in relibc, so other programs can set the
-  time.
 - Move `timesync` from an experiment into the default images.
+- `date -s` on Redox: uutils' `date` has the setting turned off for Redox;
+  with #51 it can call `clock_settime` (needs uutils built from source).
 
 ## Later
 
