@@ -12,11 +12,12 @@ without ARP; the router sends multicast on the route's device, not through
 its gateway. Memberships are counted per scheme and not left when a socket
 closes.
 ---
- netstack/Cargo.toml           |  2 +-
- netstack/src/link/ethernet.rs | 20 ++++++++++--
- netstack/src/router/mod.rs    |  5 +--
- netstack/src/scheme/socket.rs | 57 ++++++++++++++++++++++++++++++++++-
- 4 files changed, 78 insertions(+), 6 deletions(-)
+ netstack/Cargo.toml               |  2 +-
+ netstack/src/link/ethernet.rs     | 20 +++++++++--
+ netstack/src/router/mod.rs        |  5 +--
+ netstack/src/scheme/netcfg/mod.rs | 10 +++++-
+ netstack/src/scheme/socket.rs     | 57 ++++++++++++++++++++++++++++++-
+ 5 files changed, 87 insertions(+), 7 deletions(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
 index 520f7d9..f965d19 100644
@@ -86,6 +87,41 @@ index 3cfd0a2..e3d19e9 100644
                      };
  
                      let mut devices = self.devices.borrow_mut();
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index f344e28..9921e53 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -34,6 +34,10 @@ fn gateway_cidr() -> IpCidr {
+     IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0)
+ }
+ 
++fn ipv4_multicast() -> IpCidr {
++    "224.0.0.0/4".parse().unwrap()
++}
++
+ fn parse_route(value: &str, route_table: &RouteTable) -> SyscallResult<Rule> {
+     let mut parts = value.split_whitespace();
+     let cidr_str = parts.next().ok_or(SyscallError::new(syscall::EINVAL))?;
+@@ -233,6 +237,7 @@ fn mk_root_node(
+                                         let old_network = IpCidr::Ipv4(old_v4_cidr.network());
+ 
+                                         route_table.remove_rule(old_network);
++                                        route_table.remove_rule(ipv4_multicast());
+                                         route_table.change_src(old_addr.address(), cidr.address());
+                                         iface.borrow_mut().update_ip_addrs(|addrs| addrs.retain(|addr| *addr != old_addr))
+                                     }
+@@ -248,7 +253,10 @@ fn mk_root_node(
+ 
+                                     let IpCidr::Ipv4(v4_cidr) = cidr;
+                                     let network_cidr = IpCidr::Ipv4(v4_cidr.network());
+-                                    route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()))
++                                    route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()));
++                                    // Multicast groups (mDNS, SSDP) are reached on this link even
++                                    // without a default route.
++                                    route_table.insert_rule(Rule::new(ipv4_multicast(), None, dev.name().clone(), cidr.address()))
+                                 }
+                                 notifier.borrow_mut().schedule_notify("ifaces/eth0/addr/list");
+                                 notifier.borrow_mut().schedule_notify("route/list");
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
 index 2251f6f..254bce8 100644
 --- a/netstack/src/scheme/socket.rs
