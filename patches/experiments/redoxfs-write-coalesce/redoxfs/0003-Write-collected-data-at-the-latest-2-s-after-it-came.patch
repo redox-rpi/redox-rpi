@@ -1,4 +1,4 @@
-From 84e93f12159433d1052025fa522b404b31e76316 Mon Sep 17 00:00:00 2001
+From fdfa73a7bc73a382b18214bc304019c3482fde1f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 17:12:25 +0000
 Subject: [PATCH] Write collected data at the latest 2 s after it came in
@@ -15,7 +15,7 @@ data is due.
  2 files changed, 148 insertions(+), 8 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index 70156b0..170cf09 100644
+index 70156b0..f733e8e 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
 @@ -2,9 +2,16 @@ use redox_scheme::{
@@ -31,7 +31,7 @@ index 70156b0..170cf09 100644
 +use std::time::{Duration, Instant};
 +
 +use syscall::data::{Event, TimeSpec};
-+use syscall::error::EWOULDBLOCK;
++use syscall::error::{EAGAIN, EWOULDBLOCK};
 +use syscall::flag::EventFlags;
  
  use crate::{Disk, FileSystem, IS_UMT};
@@ -114,7 +114,7 @@ index 70156b0..170cf09 100644
 +    libredox::call::fcntl(fd, syscall::F_SETFL, flags)?;
 +    match next {
 +        Ok(next) => Ok(Some(next)),
-+        Err(err) if err.errno == EWOULDBLOCK => Ok(None),
++        Err(err) if err.errno == EAGAIN || err.errno == EWOULDBLOCK => Ok(None),
 +        Err(err) => Err(err.into()),
 +    }
 +}
