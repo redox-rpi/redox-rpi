@@ -25,3 +25,16 @@ scripts/relibc-tests.sh --experiment sigsegv
 ```
 
 ## Results
+
+QEMU raspi3b, `scripts/relibc-tests.sh` (2026-10-29):
+
+| Build | Experiments | Failures | Fixed |
+|---|---|---|---|
+| `v0.3.0-dev-218-gb8567d6+x2fad` | relibc-tests (the list) | 25 | |
+| `v0.3.0-dev-221-g6f7c5c6+x3e10` | + sigsegv | 23 | `signals/sigsegv`, `signals/stackoverflow` |
+| `v0.3.0-dev-225-gd069268+x7e8c` | + sigsegv + sigentry-thread-signals (local merge with `t4-thread-signals`) | 17 | the two above, `sigaltstack`, and the five #4 tests |
+
+`sigaltstack` needs both: it `raise`s SIGUSR2 from its own handler, a
+signal sent to the thread, which is only delivered with
+`sigentry-thread-signals` ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)).
+No new failures. The patches apply together.
