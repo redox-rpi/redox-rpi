@@ -631,6 +631,49 @@ MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
 The memory fix holds on the Pi: the workload that ended #23 in a panic ran
 through. Rerun the cycles with the devshd hangup fix included.
 
+## 2026-10-29: #30 rerun, `v0.3.0-dev-120-g5ffb097+x197a` (sdhost default + kernel memory fix + devshd fix), real Pi
+
+Rerun of the stopped first run above with the devshd fix
+([#11](https://github.com/redox-rpi/redox-rpi/issues/11)) merged in:
+branch `sdhost-ctxleak` 5ffb097 + experiment `ctx-leak-fix`, with
+`timesync` and `rtl8152`. Real Pi 3B+ over netboot, 15 GB SDHC card.
+
+Boot log: `rpi-firmwared` (ARM clock 600 -> 1400 MHz) before
+`bcm2835-sdhostd: core clock 250 MHz, up to 400 MHz`, `SDHC/SDXC card, 15193
+MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no
+`bcm2835-sdhcid` after the reset; `/scheme/data` mounted.
+
+| Check | Result | Detail |
+|---|---|---|
+| version, manifest | pass | build ID and libc.so hash match the manifest |
+| ps, ps-tty, sdcard | pass | 42 processes; write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| memory | pass | `free` used 120 MB after boot, 120 MB after three `sd-stress.py` runs and their restarts (743 MB total) |
+| sd-stress write | pass | 256 MiB at 7.7, 7.4 and 7.2 MB/s in three runs; 1000 small files, 250 deleted, 250 new, about 320 s each; no `oom` |
+| data after a restart | pass | two real restarts in different runs, each followed by a SHA-256 check of all 1001 files: 0 missing, 0 changed; a third restart left all 1002 files in place (not hashed) |
+| sd-stress result | fail (test harness) | see below; no data was lost |
+
+Why `sd-stress.py` reported **fail** although the data survived:
+
+1. Run 1: after `echo reset > /scheme/sys/kstop`, devshd went on
+   answering during the shutdown, so the script checked the dying system
+   (`/scheme/data` already gone: 1001 missing), and its second "restart" went
+   to the same shutdown. Only one real reset happened; the check after it
+   found all 1001 files unchanged.
+2. Run 3 (with a local copy that waits for `kreset` on the console first):
+   restart 1 passed. After restart 2, devshd answered 30 s after the reset,
+   before `/scheme/data` was mounted, so all 1002 files were "missing"
+   and the 32 MiB write failed; two minutes later all 1002 files were there.
+   (Run 2 only timed out in the local copy's own wait.)
+
+Afterwards devshd stopped accepting connections once (the console still
+worked): the Pi was reset from the serial console and the stable image
+`v0.3.0-dev-15-g24fbb96+x9f76` restaged.
+
+Follow-ups for `scripts/sd-stress.py`: wait for the new boot (console
+`kreset`, or a changed `uptime`) instead of devshd going away, and wait for
+`/scheme/data` before checking.
+
 ## 2026-10-28: `v0.3.0-dev-94-gb1fcbe1+xe9c4`
 
 Built 2026-10-28T19:56:45Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `timesync`. Experiment serial-rx (#28) on the stable base: serial-input-test.sh 20 of 20 lines of 200 characters complete. First pi-test.py attempt got no devsh output (#11), second attempt below
@@ -745,3 +788,31 @@ Branch `serial-rx-base`: base `0024` and kernel `0007` on main after
   a dead console; experiment image `v0.3.0-dev-94-gb1fcbe1+xe9c4` 7 of 7
   complete.
 - The known `pcid` panic is still there (clean boot is not merged yet).
+
+
+## 2026-10-29: `v0.3.0-dev-139-g66f7cba+x0002`
+
+Built 2026-10-29T10:30:39Z, `libc.so` `454e580b0fb8d86b…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `sigregs-test`, `sigreturn-svc`, `timesync`. test 36 (#1 sigreturn-svc), ARM at 1400 MHz
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-139-g66f7cba+x0002 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-139-g66f7cba+x0002.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 1000 failed |
+
+Test 36 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), branch
+`t1-sigreturn`, experiment `sigreturn-svc`: the signal entry returns
+through `svc #0x5352`. Extra checks over devsh:
+
+- `sigregs process -n 3000`: pass, all registers including x18 kept.
+- `sigregs thread -n 3000`: **fail** in 3 of 3 runs (also with `-n 300`):
+  only 1 signal arrives, then none for 5 s, and SIGUSR1 stays blocked.
+  QEMU passes it. Test 45 already expects this without the #4 fix; test 37
+  checks the image with patch `0002`.
+- No exception in the serial log during the run.
+- The CPU ran at 1400 MHz (`rpi-firmwared` raises the clock at boot), not
+  600 MHz as the plan row says. Under this load at 1400 MHz test 21 saw
+  3-5 % failed starts; here 0 of 1000.
