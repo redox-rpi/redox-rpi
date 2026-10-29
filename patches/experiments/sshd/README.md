@@ -13,6 +13,14 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0001`: `setitimer(ITIMER_REAL)` and `getitimer` on top of the
   POSIX timer that `alarm()` uses. Without it sshd closes every connection
   ("login grace time setitimer failed").
+- relibc `0002`: `setgroups` succeeds for root (the kernel has no
+  supplementary groups); it returned ENOSYS and the privilege separation
+  child exits on that.
+- `recipes/net/openssh/0001`: no `chroot` on Redox (relibc's `chroot`
+  always fails with EPERM); the pre-authentication child changes into
+  `/var/empty` and drops its privileges to user `sshd`, but keeps the
+  whole file system. A Redox namespace could take the place of the
+  chroot later.
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment serial-rx --experiment sshd
@@ -27,4 +35,9 @@ Work in progress.
   host keys are made; sshd started by hand listens on port 22 but closes
   every connection: "login grace time setitimer failed". The service
   failed with "sshd requires execution with an absolute path".
-- relibc logs `setgroups` and `madvise` as not implemented; sshd goes on.
+- QEMU, `v0.3.0-dev-181-g35d1df3+x0042` (with relibc `0001`): the
+  service starts sshd; a connection gets through key exchange, then the
+  pre-authentication child stops: `chroot("/var/empty"): Operation not
+  permitted`.
+- relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
+  `setsockopt(IP_TOS)` as not implemented; sshd goes on.

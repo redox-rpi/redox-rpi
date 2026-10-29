@@ -1,0 +1,32 @@
+sshd-auth: no chroot on Redox, keep dropping privileges
+
+Redox has no chroot(); relibc returns EPERM, so the pre-authentication
+child exited with "chroot(\"/var/empty\"): Operation not permitted" and
+every connection closed. On Redox the child now changes into /var/empty
+and drops its privileges to the sshd user as before, without a new root.
+
+--- a/sshd-auth.c
++++ b/sshd-auth.c
+@@ -186,12 +186,22 @@
+ #endif
+ 	/* Demote the child */
+ 	if (privsep_chroot) {
++#ifdef __redox__
++		/*
++		 * Redox has no chroot(): the child keeps the file system and
++		 * only drops its privileges below.
++		 */
++		if (chdir(_PATH_PRIVSEP_CHROOT_DIR) == -1)
++			fatal("chdir(\"%s\"): %s", _PATH_PRIVSEP_CHROOT_DIR,
++			    strerror(errno));
++#else
+ 		/* Change our root directory */
+ 		if (chroot(_PATH_PRIVSEP_CHROOT_DIR) == -1)
+ 			fatal("chroot(\"%s\"): %s", _PATH_PRIVSEP_CHROOT_DIR,
+ 			    strerror(errno));
+ 		if (chdir("/") == -1)
+ 			fatal("chdir(\"/\"): %s", strerror(errno));
++#endif
+ 
+ 		/*
+ 		 * Drop our privileges

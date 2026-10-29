@@ -17,7 +17,8 @@
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
-#                 patches, and its config.toml (packages, files) if it has one
+#                 patches (recipes/<category>/<recipe>/ for recipes outside
+#                 core), and its config.toml (packages, files) if it has one
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md)
@@ -230,6 +231,63 @@ for name in bootloader base relibc; do
         "$REDOX/recipes/core/$name/recipe.toml"
 done
 
+# Other recipes patched by an experiment: patches/experiments/<name>/recipes/
+# <category>/<recipe>/*.patch go into that recipe's [source] patches, after
+# its own. Recipes patched by the previous run are reset first, so an
+# experiment left out leaves no patch behind.
+extra_list="$REDOX/.redox-rpi-recipes"
+if [ -f "$extra_list" ]; then
+    while read -r rel; do
+        git -C "$REDOX" checkout -q -- "recipes/$rel"
+        rm -f "$REDOX/recipes/$rel"/exp-*.patch
+    done < "$extra_list"
+fi
+: > "$extra_list"
+recipe_dirs() {
+    local exp
+    for exp in "${experiments[@]}"; do
+        [ -d "$ROOT/patches/experiments/$exp/recipes" ] || continue
+        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n')
+    done | sed 's|^\./||' | sort -u
+}
+extra_patch_files() {
+    local exp patch
+    for exp in "${experiments[@]}"; do
+        for patch in "$ROOT/patches/experiments/$exp/recipes/$1"/*.patch; do
+            [ -e "$patch" ] && echo "$patch"
+        done
+    done
+    return 0
+}
+while read -r rel; do
+    [ -n "$rel" ] || continue
+    recipe="$REDOX/recipes/$rel"
+    [ -f "$recipe/recipe.toml" ] || { echo "no recipe recipes/$rel" >&2; exit 1; }
+    echo "$rel" >> "$extra_list"
+    mapfile -t files < <(extra_patch_files "$rel")
+    stamp="$recipe/.redox-rpi-patches"
+    sum="$(for patch in "${files[@]}"; do recipe_patch_name "$patch"; cat "$patch"; done | sha256sum | cut -d' ' -f1)"
+    if [ "$(cat "$stamp" 2>/dev/null)" != "$sum" ]; then
+        rm -rf "$recipe/source" "$recipe/target"
+        echo "$sum" > "$stamp"
+    fi
+    names=""
+    for patch in "${files[@]}"; do
+        cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
+        names="$names\"$(recipe_patch_name "$patch")\", "
+    done
+    if grep -q '^patches = \[' "$recipe/recipe.toml"; then
+        # Append to a one-line list, or before the "]" of a multi-line one.
+        awk -v add="$names" '
+            open && /^]/ { print "    " add; open = 0 }
+            /^patches = \[/ { if (/]/) sub(/]/, add "]"); else open = 1 }
+            { print }' "$recipe/recipe.toml" > "$recipe/recipe.toml.new"
+        mv "$recipe/recipe.toml.new" "$recipe/recipe.toml"
+    else
+        sed -i "0,/^\[source\]/s//[source]\npatches = [ $names]/" "$recipe/recipe.toml"
+    fi
+done < <(recipe_dirs)
+
 # Our own packages, built from this repository.
 for tool in devshd reboot sigregs timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
@@ -315,6 +373,11 @@ manifest_head="$(mktemp)"
     echo "[patches]"
     for name in fdt kernel bootloader base relibc; do
         patch_files "$name" | while read -r patch; do
+            echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
+        done
+    done
+    recipe_dirs | while read -r rel; do
+        extra_patch_files "$rel" | while read -r patch; do
             echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
         done
     done
