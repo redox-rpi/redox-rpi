@@ -37,11 +37,14 @@ const TAG_SET_PHYSICAL_SIZE: u32 = 0x0004_8003;
 const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
 const TAG_SET_DEPTH: u32 = 0x0004_8005;
 const TAG_SET_PIXEL_ORDER: u32 = 0x0004_8006;
+const TAG_SET_ALPHA_MODE: u32 = 0x0004_8007;
 const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
 
 /// Pixel order 1 ("RGB" in the firmware's words) gives the byte order
 /// B, G, R, x in memory: a little-endian 0x00RRGGBB, what Redox draws.
 const PIXEL_ORDER_RGB: u32 = 1;
+/// The top byte of a pixel is not alpha: Redox leaves it at any value.
+const ALPHA_IGNORED: u32 = 2;
 /// When the firmware reports no display size.
 const DEFAULT_SIZE: (u32, u32) = (1024, 768);
 const MAX_SIZE: u32 = 4096;
@@ -171,6 +174,7 @@ pub fn setup(request: Request) -> Option<Framebuffer> {
     msg.tag(TAG_SET_VIRTUAL_OFFSET, &[0, 0], 2);
     let depth = msg.tag(TAG_SET_DEPTH, &[32], 1);
     let order = msg.tag(TAG_SET_PIXEL_ORDER, &[PIXEL_ORDER_RGB], 1);
+    msg.tag(TAG_SET_ALPHA_MODE, &[ALPHA_IGNORED], 1);
     let alloc = msg.tag(TAG_ALLOCATE, &[4096], 2);
     let pitch = msg.tag(TAG_GET_PITCH, &[], 1);
     if !msg.call() {
