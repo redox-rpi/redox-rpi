@@ -1,0 +1,1 @@
+# Known failures of relibc's test suite in QEMU (scripts/relibc-tests.sh, #13).
