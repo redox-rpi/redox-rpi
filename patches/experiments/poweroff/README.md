@@ -45,7 +45,7 @@ ends QEMU instead of restarting the guest.
 
 Needs a person to cut and reconnect the power at the end.
 
-1. Boot, `scripts/pi-test.py` standard checks (also checks `reboot`).
+1. Boot, `scripts/pi-test.py` standard checks.
 2. Over devsh: `echo before-poweroff > /home/root/poweroff-mark`, then
    `poweroff`. The serial log shows `poweroff: N programs
    stopped, M killed` and `poweroff: shutdown through kstop`, then `kstop`,
