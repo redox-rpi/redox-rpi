@@ -1719,3 +1719,40 @@ USB          5 devices (lsusb for the list)
   56.9 °C (`temperature` a moment later 55843), throttling none: **pass**.
 - Standard checks pass, 0 of 300 starts failed. The optional plug test
   with a person was not done.
+
+## 2026-10-29: `v0.3.0-dev-228-g5d21b70+x29ce`
+
+Built 2026-10-29T15:06:10Z, `libc.so` `447cc92099c9a1d9…`, real Pi 3B+ over netboot. Experiments: `relibc-tests`, `rtl8152`, `sigentry-thread-signals`, `sigregs-test`, `sigsegv`, `timesync`. test 68 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13) sigsegv and relibc tests), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-228-g5d21b70+x29ce |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 68 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13)), branch
+`t-sigsegv-pi` (`sigsegv` + `sigentry-thread-signals`).
+
+- `sigregs sender` (si_pid 371 from the thread, 372 from the child),
+  `sigregs thread -n 3000`, `sigregs process -n 3000`: all **pass**.
+- `ion /usr/share/relibc-tests/run.ion` over devsh: finished
+  (`RELIBC-TESTS rc=1`), output saved on homenodellm in
+  `~/pitest-tools/t68-relibc-tests.txt`. `scripts/relibc-tests-compare.py`
+  from `t-sigsegv-pi` with `config/relibc-tests-expected.txt`:
+  `SUMMARY v0.3.0-dev-228-g5d21b70+x29ce: 319 tests, 11 failed (11 known,
+  0 flaky, 0 new), 14 fixed`, exit 0: **pass**.
+  - FIXED: `netdb/getaddrinfo`, `pthread/rwlock_randtest`, `sigaction`,
+    **`sigaltstack`**, `signals/sigpause-revert`, `signals/sigprocmask-3`,
+    **`signals/sigsegv`**, `signals/sigset-5`, **`signals/stackoverflow`**,
+    `sys_select/pselect`, `sys_socket/getpeername`, `sys_socket/getsockopt`,
+    `sys_socket/recv`, `sys_socket/recvfrom` (QEMU: 8 fixed; on the Pi the
+    socket and netdb tests pass too).
+  - Known failures: `stdio/fscanf_offby1`, `stdio/mutex`, `stdio/popen`,
+    `stdio/ungetc_ftell`, `stdlib/system`, `time/timer`, `tls_align`
+    (dynamic and static), `tls_shared`, `unistd/exec`.
+- Serial log: no `UNHANDLED EXCEPTION` except the known `pcid` panic at
+  boot (the exceptions the tests cause on purpose now arrive as signals).
+- Standard checks pass, 0 of 300 starts failed.
