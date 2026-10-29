@@ -78,7 +78,7 @@ fn signal(pid: u32, signal: i32) {
 }
 
 /// Step 1. Returns how many ended on SIGTERM and how many needed SIGKILL.
-fn stop_programs() -> (usize, usize) {
+fn stop_programs(report: &mut Report) -> (usize, usize) {
     let me = std::process::id();
     let targets: BTreeSet<u32> = processes()
         .into_iter()
@@ -86,6 +86,7 @@ fn stop_programs() -> (usize, usize) {
         .filter(|p| !p.name.starts_with("/scheme/initfs/") && !KEEP.contains(&base_name(&p.name)))
         .map(|p| p.pid)
         .collect();
+    report.say(&format!("SIGTERM to {} programs", targets.len()));
     for &pid in &targets {
         signal(pid, libc::SIGTERM);
     }
@@ -119,17 +120,20 @@ fn close_file_systems() -> usize {
 /// Stops the system as described above and writes `request` (`reset` or
 /// `shutdown`) to `kstop`. Returns only if the kernel did not stop.
 pub fn kstop(tool: &'static str, request: &str) -> ! {
-    // The terminal may go away with the programs in step 1.
+    // Step 1 ends the shell and the terminal this tool runs in: leave their
+    // session, and ignore what they send on the way out.
     unsafe {
-        libc::signal(libc::SIGHUP, libc::SIG_IGN);
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+        libc::setsid();
+        for sig in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM, libc::SIGPIPE] {
+            libc::signal(sig, libc::SIG_IGN);
+        }
     }
     let mut report = Report {
         tool,
         console: OpenOptions::new().write(true).open("/scheme/debug").ok(),
     };
     report.say("stopping programs");
-    let (stopped, killed) = stop_programs();
+    let (stopped, killed) = stop_programs(&mut report);
     report.say(&format!("{stopped} programs stopped, {killed} killed"));
     let filesystems = close_file_systems();
     report.say(&format!("{filesystems} file systems closed"));
