@@ -1383,3 +1383,64 @@ bcm2835-sdiod: firmware version: wl0: Aug 29 2023 01:47:08 version 7.45.265 (28b
   2023), same MAC, `OK`: **pass**.
 - Writing `wifi_power` still gives `I/O error (os error 5)` (as in test 57).
 - `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-220-gbec0fd5+xd4e7`
+
+Built 2026-10-29T14:43:58Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 63 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4, scan), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-220-gbec0fd5+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 63 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi` (bec0fd5). Every `bcm2835-sdiod:` line of the boot (the driver ran twice at boot):
+
+```
+bcm2835-sdiod: EMMC at 0x3f300000
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: core 0x800 rev 51 at 0x18000000, wrapper 0x18100000
+bcm2835-sdiod: core 0x812 rev 54 at 0x18001000, wrapper 0x18101000
+bcm2835-sdiod: core 0x83e rev 9 at 0x18002000, wrapper 0x18102000
+bcm2835-sdiod: core 0x83c rev 14 at 0x18003000, wrapper 0x18103000
+bcm2835-sdiod: core 0x829 rev 21 at 0x18004000, wrapper 0x18104000
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 272 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: data frame of 0 bytes
+bcm2835-sdiod: FAILED
+```
+
+- **Fail**: up to `function 2 ready, firmware running` and `mailbox from
+  the firmware 0x00040008` as in test 60, then `data frame of 0 bytes` and
+  `FAILED`; no `MAC address`, no CLM, no radio up, no scan. In test 60
+  (image 218-g7d69076) the same place logged `event frame (channel 1),
+  0 bytes` and went on to the version and MAC, so the 0-byte frame that
+  the firmware sends first is now taken as a data frame and ends the run.
+- Second run over devsh (`/usr/lib/drivers/bcm2835-sdiod`, exit 1) and a
+  run with `standard` (609312 bytes in 301 ms): the same `data frame of 0
+  bytes`, `FAILED`.
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
