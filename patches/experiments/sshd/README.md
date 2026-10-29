@@ -16,6 +16,11 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0002`: `setgroups` succeeds for root (the kernel has no
   supplementary groups); it returned ENOSYS and the privilege separation
   child exits on that.
+- base `0024` (after the default base patches): `procmgr` sends SIGCHLD
+  for an exited process without the permission check of `kill()`. The
+  pre-authentication child runs as user `sshd`; its SIGCHLD to the root
+  parent failed ("failed to send SIGCHLD to parent PID …: Operation not
+  permitted") and `sshd-session` waited forever after the login.
 - `recipes/net/openssh/0001`: no `chroot` on Redox (relibc's `chroot`
   always fails with EPERM); the pre-authentication child changes into
   `/var/empty` and drops its privileges to user `sshd`, but keeps the
@@ -39,5 +44,8 @@ Work in progress.
   service starts sshd; a connection gets through key exchange, then the
   pre-authentication child stops: `chroot("/var/empty"): Operation not
   permitted`.
+- QEMU, `v0.3.0-dev-182-g934d057+x0042` (relibc `0001`, `0002`, OpenSSH
+  `0001`): key login is accepted ("Accepted publickey for root"), then the
+  session hangs: the SIGCHLD of the `sshd` child is refused (base `0024`).
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.
