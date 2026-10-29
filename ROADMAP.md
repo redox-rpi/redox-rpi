@@ -84,6 +84,9 @@ when a topic needs more time.
 
 Without a release target: graphics, from a firmware framebuffer to the
 GPU ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [graphics.md](docs/topics/graphics.md)).
+Also without a release target: an assistant, a small local language model
+that answers questions about Redox and runs a few safe tools
+([#43](https://github.com/redox-rpi/redox-rpi/issues/43), [assistant.md](docs/topics/assistant.md)).
 
 ## Topics
 
@@ -99,6 +102,7 @@ GPU ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [graphics.md](docs
 | [Boot](docs/topics/boot.md) | U-Boot, SD card or network; clean boot in progress |
 | [Zero 2 W](docs/topics/zero2w.md) | Boots the Pi 3B+ image; slow network boot |
 | [CI and tests](docs/topics/ci.md) | QEMU boot in CI; Pi tests through a shared queue |
+| [Assistant](docs/topics/assistant.md) | Effort analysis; Qwen3 0.6B answers on Redox in QEMU, worker threads crash |
 
 ## Wish list: help wanted
 

@@ -1,33 +1,38 @@
-# Experiment: RTL8152 and RTL8153 Ethernet
+# RTL8152 and RTL8153 Ethernet (was experiment `rtl8152`)
+
+**Default since 2026-10-28:** base `0020` (moved to `patches/base/`) are now default patches and in every
+image. `--experiment rtl8152` is still accepted and does nothing, so older
+commands keep working. This page stays as the driver's documentation.
 
 Driver in `dwc2d` for the Realtek RTL8152 (`0bda:8152`), the USB 10/100
 Ethernet chip on the Ethernet/USB hub HAT for the Pi Zero 2 W (behind its
 FE1.1s hub) and on many cheap USB Ethernet adapters, and for its gigabit
 sibling RTL8153 (`0bda:8153`), found in many USB-C hubs. Roadmap step 5.5.
 
-```bash
-scripts/build-image.sh --experiment rtl8152
-```
 
 Written with FreeBSD's `if_ure` (BSD-2-Clause) as reference for the register
-map and the initialization order; no code from Linux' `r8152.c`. Like the
-LAN7800 driver it polls and has no interrupt endpoint.
+map and the initialization order; no code from Linux' `r8152.c`. It receives
+through the controller interrupt like the LAN7800 driver (base `0022`) and
+uses no interrupt endpoint.
 
 - Chip versions 4C00 and 4C10 (RTL8152, RTL8152B), 5C00 to 5C30 (RTL8153)
   and 6000/6010 (RTL8153B). Any other version (RTL8156 and later) is
   refused with `dwc2d: RTL815x chip version … not supported`.
 - MAC address from the chip's efuse (`PLA_IDR`, else `PLA_BACKUP`), else
   the locally administered `02:52:65:64:6f:78`.
-- Autonegotiation 10/100, plus 1000 on the RTL8153; `dwc2d` waits up to 5 s for the link before the
-  network stack starts. No link changes are reported afterwards.
+- Autonegotiation 10/100, plus 1000 on the RTL8153; `dwc2d` waits up to 5 s
+  (RTL8152) or 10 s (RTL8153, base `0023`) for the link before the network
+  stack starts. No link changes are reported afterwards.
 - Receives all multicast (IPv6 neighbor discovery), no promiscuous mode, no
   checksum offload, no VLAN tags.
 - The chip must hang off a high-speed hub; behind a transaction translator
   (full speed) it is skipped, because `dwc2d` has no split bulk transfers.
-- **A plugged-in RTL8152 or RTL8153 wins over the onboard LAN7800.** That makes a test
-  on a Pi 3B+ with a USB adapter possible before the Zero 2 W image exists.
-  The network scheme is then `network.usb_rtl8152`; the LAN7800 stays
-  initialized but unused.
+- **A plugged-in RTL8152 or RTL8153 wins over the onboard LAN7800 when it
+  has a link** (base `0023`). Without a cable on the adapter, the LAN7800
+  is used, so a hub left plugged in does not cut a Pi 3B+ off the network
+  (seen in Pi test #5). The network scheme is then `network.usb_rtl8152`;
+  the other adapter stays initialized but unused. `dhcpd` does not retry
+  when a link comes up after boot.
 
 Patch `0020` applies after the default patches (including `rpi-firmwared`,
 base `0018`) and after `sdhost-driver`, so `--experiment sdhost-driver
