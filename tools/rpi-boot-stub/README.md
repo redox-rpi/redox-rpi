@@ -30,8 +30,8 @@ stub does what the Redox bootloader does on aarch64 before the jump:
 5. A framebuffer from the firmware through the mailbox property interface
    ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), `src/fb.rs`):
    the size the firmware chose for the display (from the monitor's EDID, or
-   its fallback without one), 32 bits per pixel, the same pixel order as
-   U-Boot. It goes into `FRAMEBUFFER_ADDR`, `_VIRT`, `_WIDTH`, `_HEIGHT`
+   its fallback without one), 32 bits per pixel, the same pixel order and
+   alpha mode (ignored) as U-Boot. It goes into `FRAMEBUFFER_ADDR`, `_VIRT`, `_WIDTH`, `_HEIGHT`
    and `_STRIDE` like the bootloader's, so `vesad`, `fbcond` and the
    kernel's boot messages use it unchanged. `RPI_FB=1280x720` in
    `cmdline.txt` asks for another size, `RPI_FB=off` for none. Without an

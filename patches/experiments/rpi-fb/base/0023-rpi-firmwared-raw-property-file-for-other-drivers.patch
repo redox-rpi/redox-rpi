@@ -1,0 +1,190 @@
+From 1f20a678df1b29c2f9e851949ba6977f68ccbe48 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 09:37:48 +0000
+Subject: [PATCH 23/24] rpi-firmwared: raw property file for other drivers
+
+Other drivers (rpi-fbd) send whole property messages through
+/scheme/rpi-firmware/property, so only rpi-firmwared uses the mailbox.
+Root only. The message buffer grows to 256 words for EDID blocks.
+---
+ drivers/rpi-firmwared/src/main.rs | 36 ++++++++++++++++++++++---
+ drivers/rpi-firmwared/src/mbox.rs | 44 +++++++++++++++++++++++--------
+ 2 files changed, 66 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 4a7a018a..fc22dad4 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -16,6 +16,11 @@
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+ //!   in Hz, `max` or `min` sets it
+ //!
++//! - `/scheme/rpi-firmware/property`: raw property messages for other
++//!   drivers (`rpi-fbd`), so only this process uses the mailbox: write a
++//!   whole message (little-endian 32-bit words), read the firmware's
++//!   answer. Root only, not listed.
++//!
+ //! At start it sets the ARM clock to its maximum; the firmware lowers it by
+ //! itself when the SoC gets too hot or the supply voltage too low. A thread
+ //! checks the throttling flags every few seconds and logs when they change.
+@@ -56,6 +61,8 @@ enum Handle {
+     File(Vec<u8>),
+     /// A setting opened for writing, by file name.
+     Setting(&'static str),
++    /// The raw property interface: the answer to the last message.
++    Property(Vec<u8>),
+ }
+ 
+ struct FirmwareScheme {
+@@ -246,7 +253,7 @@ impl SchemeSync for FirmwareScheme {
+         path: &str,
+         flags: usize,
+         _fcntl_flags: u32,
+-        _ctx: &CallerCtx,
++        ctx: &CallerCtx,
+     ) -> Result<OpenResult> {
+         if !matches!(self.handles.get(dirfd)?, Handle::Root) {
+             return Err(Error::new(EACCES));
+@@ -254,6 +261,12 @@ impl SchemeSync for FirmwareScheme {
+         let path = path.trim_matches('/');
+         let handle = if path.is_empty() {
+             Handle::Dir
++        } else if path == "property" {
++            // Allocates GPU memory and changes the display: root only.
++            if ctx.uid != 0 {
++                return Err(Error::new(EACCES));
++            }
++            Handle::Property(Vec::new())
+         } else if flags & O_WRONLY != 0 {
+             // O_RDWR includes the O_WRONLY bit.
+             match WRITABLE.iter().find(|name| **name == path) {
+@@ -279,7 +292,7 @@ impl SchemeSync for FirmwareScheme {
+         _ctx: &CallerCtx,
+     ) -> Result<usize> {
+         let data = match self.handles.get(id)? {
+-            Handle::File(data) => data,
++            Handle::File(data) | Handle::Property(data) => data,
+             Handle::Setting(_) => return Err(Error::new(EBADF)),
+             _ => return Err(Error::new(EISDIR)),
+         };
+@@ -297,6 +310,19 @@ impl SchemeSync for FirmwareScheme {
+         _fcntl_flags: u32,
+         _ctx: &CallerCtx,
+     ) -> Result<usize> {
++        if let Handle::Property(_) = self.handles.get(id)? {
++            if buf.len() % 4 != 0 {
++                return Err(Error::new(EINVAL));
++            }
++            let mut msg: Vec<u32> = buf
++                .chunks_exact(4)
++                .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
++                .collect();
++            self.mbox.lock().unwrap().call(&mut msg).map_err(log)?;
++            let answer = msg.iter().flat_map(|w| w.to_le_bytes()).collect();
++            *self.handles.get_mut(id)? = Handle::Property(answer);
++            return Ok(buf.len());
++        }
+         let Handle::Setting(name) = self.handles.get(id)? else {
+             return Err(Error::new(EBADF));
+         };
+@@ -342,6 +368,10 @@ impl SchemeSync for FirmwareScheme {
+                 stat.st_size = data.len() as u64;
+             }
+             Handle::Setting(_) => stat.st_mode = 0o644 | MODE_FILE,
++            Handle::Property(data) => {
++                stat.st_mode = 0o600 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
+             Handle::Dir | Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
+         }
+         Ok(())
+@@ -349,7 +379,7 @@ impl SchemeSync for FirmwareScheme {
+ 
+     fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
+         match self.handles.get(id)? {
+-            Handle::File(data) => Ok(data.len() as u64),
++            Handle::File(data) | Handle::Property(data) => Ok(data.len() as u64),
+             _ => Ok(0),
+         }
+     }
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 737398ef..2037a931 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -27,8 +27,8 @@ const RESPONSE_OK: u32 = 0x8000_0000;
+ const TAG_RESPONSE: u32 = 1 << 31;
+ const TIMEOUT: Duration = Duration::from_secs(1);
+ 
+-/// Message buffer size in 32-bit words.
+-const BUF_WORDS: usize = 64;
++/// Message buffer size in 32-bit words; room for an EDID block (`call`).
++pub const BUF_WORDS: usize = 256;
+ 
+ // Property tags.
+ pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
+@@ -107,6 +107,22 @@ impl Mailbox {
+         buf[5..5 + request.len()].copy_from_slice(request);
+         // buf[5 + value_words] stays 0: the end tag.
+ 
++        self.send().map_err(|err| format!("tag 0x{tag:08x}: {err}"))?;
++
++        let buf = &*self.buf;
++        if buf[1] != RESPONSE_OK {
++            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
++        }
++        if buf[4] & TAG_RESPONSE == 0 {
++            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
++        }
++        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        Ok(buf[5..5 + len.min(value_words)].to_vec())
++    }
++
++    /// Hands the message in `buf` to the firmware and waits for its answer,
++    /// which the firmware writes into the same buffer.
++    fn send(&mut self) -> Result<(), String> {
+         let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
+         // The buffer is uncached; make sure it is written before the
+         // firmware hears about it.
+@@ -122,7 +138,7 @@ impl Mailbox {
+         loop {
+             while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
+                 if Instant::now() > deadline {
+-                    return Err(format!("tag 0x{tag:08x}: no answer from the firmware"));
++                    return Err("no answer from the firmware".into());
+                 }
+                 std::hint::spin_loop();
+             }
+@@ -132,16 +148,22 @@ impl Mailbox {
+             }
+         }
+         fence(Ordering::SeqCst);
++        Ok(())
++    }
+ 
+-        let buf = &*self.buf;
+-        if buf[1] != RESPONSE_OK {
+-            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
++    /// A whole property message as other drivers build it (the `property`
++    /// file): size word, request code, tags, end tag. The firmware's answer
++    /// replaces `msg`; the caller checks the response codes.
++    pub fn call(&mut self, msg: &mut [u32]) -> Result<(), String> {
++        if msg.len() < 3 || msg.len() > BUF_WORDS || msg[0] as usize != msg.len() * 4 || msg[1] != REQUEST {
++            return Err("malformed property message".into());
+         }
+-        if buf[4] & TAG_RESPONSE == 0 {
+-            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+-        }
+-        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
+-        Ok(buf[5..5 + len.min(value_words)].to_vec())
++        let buf = &mut *self.buf;
++        buf.fill(0);
++        buf[..msg.len()].copy_from_slice(msg);
++        self.send()?;
++        msg.copy_from_slice(&self.buf[..msg.len()]);
++        Ok(())
+     }
+ 
+     /// A tag that takes an id and answers with the id and one value, such as
+-- 
+2.53.0
+
