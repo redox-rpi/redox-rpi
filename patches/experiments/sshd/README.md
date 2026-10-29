@@ -31,6 +31,9 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
   `/var/empty` and drops its privileges to user `sshd`, but keeps the
   whole file system. A Redox namespace could take the place of the
   chroot later.
+- `recipes/net/openssh/0002`: a login with a terminal goes on when
+  `chown`/`chmod` of the PTY fail with EOPNOTSUPP (ptyd's PTYs have no
+  owner or mode); before, `sshd-session` exited at once.
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment serial-rx --experiment sshd
@@ -56,5 +59,11 @@ Work in progress.
   error; after the login sshd queues the session-open reply (type 91) but
   never sends it, and `sshd-session` spins at about half a core (relibc
   `0003`).
+- QEMU, `v0.3.0-dev-184-g1d6e2b6+x0042` (with relibc `0003`): **key
+  login works**, `ssh root@… 'echo; id; uname -a'` returns the output in
+  about 17 s (QEMU, including key exchange). With a terminal (`ssh -tt`)
+  the session ends at once: `chmod(/scheme/pty/N, 0600) failed: Operation
+  not supported on transport endpoint` (OpenSSH `0002`). The main `sshd`
+  process used 10 minutes of CPU in 30 minutes, to be checked.
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.

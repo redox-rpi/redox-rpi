@@ -1,0 +1,52 @@
+sshpty: go on when the PTY has no owner (Redox)
+
+The PTYs of Redox' ptyd (/scheme/pty/N) have no owner or mode; chown and
+chmod fail with EOPNOTSUPP, and pty_setowner() made that fatal: every
+login with a terminal ended at once with "chmod(/scheme/pty/N, 0600)
+failed: Operation not supported on transport endpoint". On Redox this
+error is now logged at debug level and the session goes on.
+
+--- a/sshpty.c
++++ b/sshpty.c
+@@ -158,6 +158,16 @@
+ 	(void) ioctl(ptyfd, TIOCSWINSZ, &w);
+ }
+ 
++/*
++ * Redox: the PTYs of ptyd (/scheme/pty/N) have no owner or mode, and chown
++ * and chmod fail with EOPNOTSUPP. Go on without them.
++ */
++#ifdef __redox__
++#define PTY_NO_OWNER(e)	((e) == EOPNOTSUPP)
++#else
++#define PTY_NO_OWNER(e)	0
++#endif
++
+ void
+ pty_setowner(struct passwd *pw, const char *tty)
+ {
+@@ -188,7 +198,11 @@
+ 
+ 	if (st.st_uid != pw->pw_uid || st.st_gid != gid) {
+ 		if (chown(tty, pw->pw_uid, gid) == -1) {
+-			if (errno == EROFS &&
++			if (PTY_NO_OWNER(errno))
++				debug("chown(%.100s, %u, %u) failed: %.100s",
++				    tty, (u_int)pw->pw_uid, (u_int)gid,
++				    strerror(errno));
++			else if (errno == EROFS &&
+ 			    (st.st_uid == pw->pw_uid || st.st_uid == 0))
+ 				debug("chown(%.100s, %u, %u) failed: %.100s",
+ 				    tty, (u_int)pw->pw_uid, (u_int)gid,
+@@ -202,7 +216,10 @@
+ 
+ 	if ((st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO)) != mode) {
+ 		if (chmod(tty, mode) == -1) {
+-			if (errno == EROFS &&
++			if (PTY_NO_OWNER(errno))
++				debug("chmod(%.100s, 0%o) failed: %.100s",
++				    tty, (u_int)mode, strerror(errno));
++			else if (errno == EROFS &&
+ 			    (st.st_mode & (S_IRGRP | S_IROTH)) == 0)
+ 				debug("chmod(%.100s, 0%o) failed: %.100s",
+ 				    tty, (u_int)mode, strerror(errno));
