@@ -64,6 +64,12 @@
   after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15; Pi test
   #67 (Pi test agent).
 
+- [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
+  (a disk per LUN with a card) and several sticks at once, branch
+  [`usb-storage-more`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage-more)
+  (base `0038`). **QEMU passes** (`scripts/test-usb-storage.sh` 18/18);
+  Pi test #71 with a person, same visit as #50.
+
 ## Next
 
 - A Pi test of USB sticks (high-speed stick on the 3B+ hub).
