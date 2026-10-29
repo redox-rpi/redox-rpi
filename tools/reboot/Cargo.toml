@@ -4,3 +4,6 @@ description = "Restart or power off a Redox system through the kernel's kstop in
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+
+[dependencies]
+libc = "0.2"
