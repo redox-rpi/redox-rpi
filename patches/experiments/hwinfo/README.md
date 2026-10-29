@@ -38,6 +38,10 @@ scripts/build-image.sh --experiment usb-hotplug --experiment hwinfo
 The package is built for every image (`scripts/build-image.sh`), but only
 this experiment installs it.
 
+QEMU: [`qemu-check.sh`](qemu-check.sh) runs `lsusb` and `hwinfo` over
+devsh, then plugs a second keyboard in and out through QEMU's monitor and
+checks that `lsusb` follows.
+
 ## Test on the Pi
 
 1. Boot, `scripts/pi-test.py` standard checks.
