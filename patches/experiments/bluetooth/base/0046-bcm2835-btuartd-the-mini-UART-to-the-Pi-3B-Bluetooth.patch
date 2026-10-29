@@ -1,4 +1,4 @@
-From cfefac3959464351a1185c08ddbde2c088019855 Mon Sep 17 00:00:00 2001
+From 07805a9448d43700fe8ac81fc01183856f36d554 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:13:56 +0100
 Subject: [PATCH 46/47] bcm2835-btuartd: the mini UART to the Pi 3B+ Bluetooth
