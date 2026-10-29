@@ -1223,3 +1223,46 @@ Test 61 (v0.3.0 merge candidate for [#6](https://github.com/redox-rpi/redox-rpi/
 - `free` used: 137 MB after boot, 145 MB after the first stress run, and the same check after the second run (see the commit's result line).
 - First `sd-stress.py` run (main before 3f6079c): write and verify passed (1001 files, 6.6 MB/s), then after restart 1 `/scheme/data not mounted within 300 s`; at 5 min 52 s uptime it was mounted with all files. Same as test 42.
 - Rerun with 3f6079c (above): **pass**, `/scheme/data` there 11 s and 12 s after the login prompt; 0 missing, 0 changed over 2 restarts.
+
+## 2026-10-29: `v0.3.0-dev-176-g752ac70+x8057`
+
+Built 2026-10-29T14:51:21Z, `libc.so` `94f45c69b01420be…`, real Pi 3B+ over netboot. Experiments: `dwc2d-boottime`, `usb-hotplug`. test 67 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) shorter dwc2d boot), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-176-g752ac70+x8057 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 67 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), branch
+`dwc2d-boottime`. Two boots timed with `boot-timeline.py` from the reset
+over devsh; timelines in `~/dwc2boot-work/tl-pi-{1,2}.txt` on homenodellm.
+
+| Seconds from reset | boot 1 | boot 2 |
+|---|---|---|
+| kernel starts (`Redox OS starting...`) | 23.06 | 23.16 |
+| `dwc2d: controller at` | 25.43 | 25.47 |
+| `link up on the LAN7800 at address 5` | 28.69 | 28.78 |
+| `dwc2d: devices ready after 3294 ms` | 28.69 | 28.78 |
+| `redox login:` | 30.50 | 30.58 |
+| kernel to `redox login:` | **7.44 s** | **7.42 s** |
+
+- `devices ready after 3294 ms` in both boots (test 53: 6176 ms): well
+  below, though above the expected 2000–2500 ms. About 2.1 s of it is the
+  LAN7800's link wait (`LAN7800 at address 5` at 26.63 s, link up at
+  28.69 s).
+- Kernel to login 7.4 s instead of about 10.3 s in test 53. (This image
+  still has the 5 s bootloader wait, so reset to login is 30.5 s.)
+- Devices: `hub at address 1` (4 ports, per port), `2` (3 ports, per port),
+  `3` (4 ports, ganged), `keyboard at address 4`, `LAN7800 at address 5`,
+  `network address b8:27:eb:08:e0:aa` (as before). The plan row expected
+  the Anker hub at address 4; here the third hub is at address 3. No
+  `no link yet`, `reset timed out` or `request … failed`: **pass**.
+- `scripts/pi-test.py` standard checks: pass, 0 of 300 starts failed.
+- `scripts/pi-hotplug-test.sh <pi> 3` (from `~/redox-rpi-dwc2boot`): 15 of
+  15 checks pass, run twice; port off, disconnected after 104 ms, LAN7800
+  found again, link up, devshd answers again each cycle.
+  `KEYBOARD=1 … 1`: keyboard removed and found again: **pass**.
