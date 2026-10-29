@@ -20,7 +20,7 @@ check() {
 }
 check "programs stopped" "^poweroff: [1-9][0-9]* programs stopped, [0-9]+ killed"
 check "file systems closed" "^poweroff: [1-9][0-9]* file systems closed"
-check "kernel stop" "kstop"
+check "reached kstop" "^poweroff: shutdown through kstop"
 if grep -q "QEMU exited" "$ROOT/images/qemu-poweroff.out"; then echo "PASS: QEMU halted"; else echo "FAIL: QEMU halted"; failed=1; fi
 if grep -qE "did not shutdown|poweroff: .*(error|denied)" <<< "$log"; then echo "FAIL: poweroff error"; failed=1; fi
 # After kstop nothing may start again (a reset would show U-Boot twice).

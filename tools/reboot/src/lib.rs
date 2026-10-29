@@ -16,7 +16,7 @@
 //! 4. `kstop`.
 
 use std::collections::BTreeSet;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -28,6 +28,22 @@ const SETTLE: Duration = Duration::from_secs(1);
 
 /// Programs not from the initfs that step 1 leaves running.
 const KEEP: &[&str] = &["ptyd", "redoxfs"];
+
+/// Reports go to the terminal and to the serial console (`/scheme/debug`,
+/// opened before anything stops): the terminal may close in step 1.
+struct Report {
+    tool: &'static str,
+    console: Option<File>,
+}
+
+impl Report {
+    fn say(&mut self, text: &str) {
+        eprintln!("{}: {text}", self.tool);
+        if let Some(console) = &mut self.console {
+            let _ = writeln!(console, "{}: {text}", self.tool);
+        }
+    }
+}
 
 struct Process {
     pid: u32,
@@ -102,24 +118,30 @@ fn close_file_systems() -> usize {
 
 /// Stops the system as described above and writes `request` (`reset` or
 /// `shutdown`) to `kstop`. Returns only if the kernel did not stop.
-pub fn kstop(tool: &str, request: &str) -> ! {
+pub fn kstop(tool: &'static str, request: &str) -> ! {
     // The terminal may go away with the programs in step 1.
     unsafe {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
+    let mut report = Report {
+        tool,
+        console: OpenOptions::new().write(true).open("/scheme/debug").ok(),
+    };
+    report.say("stopping programs");
     let (stopped, killed) = stop_programs();
-    eprintln!("{tool}: {stopped} programs stopped, {killed} killed");
+    report.say(&format!("{stopped} programs stopped, {killed} killed"));
     let filesystems = close_file_systems();
-    eprintln!("{tool}: {filesystems} file systems closed");
+    report.say(&format!("{filesystems} file systems closed"));
     sleep(SETTLE);
+    report.say(&format!("{request} through kstop"));
     let result = OpenOptions::new()
         .write(true)
         .open("/scheme/sys/kstop")
         .and_then(|mut kstop| kstop.write_all(request.as_bytes()));
     match result {
-        Ok(()) => eprintln!("{tool}: the kernel did not {request} the system"),
-        Err(err) => eprintln!("{tool}: {err}"),
+        Ok(()) => report.say(&format!("the kernel did not {request} the system")),
+        Err(err) => report.say(&format!("kstop: {err}")),
     }
     std::process::exit(1);
 }
