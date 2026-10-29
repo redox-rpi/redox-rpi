@@ -138,7 +138,11 @@ tr -d '\r' < "$log" | grep -aE "dwc2d: mass storage" | tail -4 | sed 's/^/      
 # The scheme name as a pattern: "+" and "." are taken literally.
 reader_re=$(printf '%s' "$reader" | sed 's/[.+]/\\&/g')
 check "reader slot 0 found" bash -c "tr -d '\r' < '$log' | grep -aqE 'dwc2d: mass storage $reader_re/0: .*, 8 MiB'"
-check "empty slot 1 left out" bash -c "tr -d '\r' < '$log' | grep -aqE 'LUN 1: Timeout\(\"no medium\"\)'"
+# QEMU answers REQUEST SENSE for a LUN other than 0 with "LUN not
+# supported" instead of "medium not present", so the slot is left out only
+# after the 5 s a stick may take to get ready; a real reader says "no
+# medium" at once.
+check "empty slot 1 left out" bash -c "tr -d '\r' < '$log' | grep -aqE 'LUN 1: Timeout' && ! tr -d '\r' < '$log' | grep -aqE 'mass storage $reader_re/1:'"
 check "reader slot 0 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/0 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD0-$marker'"
 check "reader slot 2 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/2 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD2-$marker'"
 check "stick read next to the reader" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
