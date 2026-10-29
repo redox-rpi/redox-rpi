@@ -1,0 +1,47 @@
+From 53e3f31a26fe425add3b4e3ecb1ab6bce96a3f3b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 12:44:56 +0000
+Subject: [PATCH] rpi-fbd: shadow buffers when dumb buffers are uncached; build
+ drawbench on aarch64
+
+---
+ Makefile                               | 3 +++
+ drivers/graphics/rpi-fbd/src/scheme.rs | 5 ++++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 6d60bbe5..ab90d68d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -36,6 +36,9 @@ endif
+ 
+ # For testing/benchmarking only
+ # BASE_BINS += drawbench
++ifeq ($(TARGET),aarch64-unknown-redox)
++	BASE_BINS += drawbench
++endif
+ 
+ INITFS_CARGO_ARGS = $(foreach bin,$(INITFS_BINS),-p $(bin))
+ INITFS_DRIVERS_CARGO_ARGS = $(foreach bin,$(INITFS_DRIVERS_BINS),-p $(bin))
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 1180ee3c..dcbc78ed 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -288,10 +288,13 @@ impl GraphicsAdapter for RpiAdapter {
+         (0, 4096, 0, 4096)
+     }
+ 
++    /// With DMA blits the dumb buffers are uncached, where reading is slow
++    /// (blending, scrolling): clients then draw into a shadow buffer in
++    /// normal memory and copy the changed part over.
+     fn dumb_buffer_config(&self) -> Option<DumbBufferConfig> {
+         Some(DumbBufferConfig {
+             preferred_depth: 24,
+-            prefer_shadow: false,
++            prefer_shadow: self.dma.is_some(),
+         })
+     }
+ 
+-- 
+2.53.0
+
