@@ -23,9 +23,12 @@ The scheme collects the consecutive writes of one handle: the first write
 of a run goes to the disk at once (so permission and other errors come back
 to the caller), the following ones that start where the last one ended stay
 in memory until a record is complete (128 KiB), and are written then in one
-transaction. Everything else (a read, `fstat`, `fsync`, any request on
-another handle, a non-consecutive write, closing the handle) writes the
-collected data first, so no other request sees the file without it.
+transaction. Everything else (a read of that file, `fstat`, `fsync`, any
+other request on another handle, a non-consecutive write, closing the
+handle) writes the collected data first, so no other request sees the file
+without it. Reads of other files do not (patch `0002`): a copy reads the
+source between the writes to the copy, and on the Pi (test #46) a copy in
+4 KiB blocks still took 12 s for 1 MiB while every read cut the run.
 A failed write of collected data is logged and returned by the next
 `write` or `fsync` of that handle.
 
