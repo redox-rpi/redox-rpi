@@ -16,12 +16,14 @@
 ## Next
 
 - [#6](https://github.com/redox-rpi/redox-rpi/issues/6) sdhost as the default driver, branch `sdhost-default`:
-  `sdhost-driver` and `sdhost-boot` are base patches `0022`–`0024`, and
-  `0025` divides the SD clock for the firmware's highest core clock (from
+  `sdhost-driver` and `sdhost-boot` are base patches `0025`–`0027`, and
+  `0028` divides the SD clock for the firmware's highest core clock (from
   `rpi-firmwared`) instead of a fixed 400 MHz. Passes in QEMU
-  (`v0.3.0-dev-76-g13092c5+x9f76`). Pi tests queued: #23 network boot,
-  #24 SD card image on the Pi 3B+ and Zero 2 W (needs the user). Merge to
-  main after those.
+  (`v0.3.0-dev-76-g13092c5+x9f76`). Pi test #30 (network boot, with the
+  kernel memory fix, now kernel `0008`) passed on 2026-10-29: data intact
+  over two restarts. #24 (Zero 2 W) waits for a later release. Branch
+  `sdhost-ctxleak` is up to date with main and waits for the user's OK to
+  merge.
 
 ## Later
 
