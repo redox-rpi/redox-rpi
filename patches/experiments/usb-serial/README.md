@@ -1,0 +1,38 @@
+# USB serial adapters (experiment `usb-serial`)
+
+Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
+--experiment usb-serial`). Issue: v0.8.0, topic:usb.
+
+- **base `0036`:** `dwc2d` runs USB serial adapters, the chips in Zigbee
+  and Thread coordinator sticks (SONOFF ZBDongle-P/-E, SkyConnect) and
+  many Arduino boards:
+  - CDC-ACM (any device with a communications interface 2/2 and a data
+    interface), FTDI (0403:6001/6010/6011/6014/6015), CP210x
+    (10c4:ea60/ea61/ea63/ea70/ea71/ea80) and CH340/CH341
+    (1a86:7523/5523/7522).
+  - Each is `/scheme/usb-serial/<ports>`, named by its hub ports from the
+    root like USB sticks (e.g. `1.3`); `ls /scheme/usb-serial` lists them.
+    Read and write bytes; reads block until data comes (or EAGAIN with
+    O_NONBLOCK) and raise read events.
+  - Speed: `/scheme/usb-serial/<ports>/baud` reads and takes a number;
+    `tcgetattr`/`tcsetattr` work as on a pty (speed, data bits, parity
+    and stop bits from `c_cflag`). Ports start at 115200 8N1; DTR and RTS
+    go up when a port is opened.
+  - Plugged in and out at any time (hotplug rescan); handles of an
+    unplugged adapter return ENODEV. `echo serial > /tmp/dwc2d-cycle`
+    switches its port off and on.
+  - While `/tmp/dwc2d-serial-log` exists (looked at every second), dwc2d
+    prints what is read and written.
+  - The open port is read every 5 ms on host channel 7 (keyboard 3, USB
+    sticks 4 and 5, mouse 6); a full-speed adapter behind the Pi 3B+'s
+    high-speed hub is read packet by packet through the hub's transaction
+    translator. One port is read at a time.
+
+## Tests
+
+- **QEMU** (`scripts/test-usb-serial.sh`): QEMU's `usb-serial` (an FTDI
+  FT232) plugged in after boot with its other end on a Unix socket; write
+  and read, speed set to 9600, port switched off and on, unplugged and
+  plugged in again. CDC-ACM, CP210x and CH340 have no QEMU device; they
+  share the scheme and the transfer code and differ only in their setup
+  requests, checked on the Pi.

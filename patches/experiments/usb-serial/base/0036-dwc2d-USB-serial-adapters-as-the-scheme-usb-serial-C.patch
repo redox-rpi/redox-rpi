@@ -1,0 +1,1192 @@
+From 0624aa7cdd338206a7947fe76481468943327f73 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:51:43 +0100
+Subject: [PATCH] dwc2d: USB serial adapters as the scheme usb-serial (CDC-ACM,
+ FTDI, CP210x, CH340)
+
+A CDC-ACM device (communications interface 2/2 with a data interface)
+or a known FTDI (0403:6001/6010/6011/6014/6015), CP210x (10c4:ea60...)
+or CH340/CH341 (1a86:7523/5523/7522) adapter, found at boot or plugged
+in later, becomes /scheme/usb-serial/<ports>, named by its hub ports
+from the root like USB sticks (e.g. 1.3). Zigbee and Thread coordinator
+sticks (SONOFF ZBDongle, SkyConnect) and many Arduino boards are one of
+these.
+
+Read and write the port for bytes; reads block (EWOULDBLOCK until data
+comes, EAGAIN with O_NONBLOCK) and raise read events. tcgetattr and
+tcsetattr work as on a pty: speed, data bits, parity and stop bits come
+from c_cflag. /scheme/usb-serial/<ports>/baud reads and sets the speed
+as a number. Ports start at 115200 8N1; DTR and RTS go up on open.
+Listing /scheme/usb-serial gives the ports; an unplugged adapter's
+handles return ENODEV.
+
+The open port is read on host channel 7 every 5 ms: a transfer that
+stays armed when the adapter is on the root hub or a high-speed hub,
+packet by packet through the transaction translator for a full-speed
+adapter behind a high-speed hub (Pi 3B+). Writes go out on channel 0.
+One port is read at a time. /tmp/dwc2d-serial-log makes dwc2d print
+what goes through; "serial" in /tmp/dwc2d-cycle switches the adapter's
+port off and on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/Cargo.toml       |   2 +
+ drivers/usb/dwc2d/src/dwc2.rs      |  31 +-
+ drivers/usb/dwc2d/src/enumerate.rs |  16 +
+ drivers/usb/dwc2d/src/main.rs      |  59 +-
+ drivers/usb/dwc2d/src/serial.rs    | 883 +++++++++++++++++++++++++++++
+ 5 files changed, 987 insertions(+), 4 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/serial.rs
+
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index de3a4ea..f95b19d 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -10,9 +10,11 @@ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
+ driver-network = { path = "../../net/driver-network" }
+ inputd = { path = "../../inputd" }
++scheme-utils = { path = "../../../scheme-utils" }
+ 
+ libredox.workspace = true
+ orbclient.workspace = true
++redox-scheme.workspace = true
+ redox_event.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+ 
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 279d8eb..2b0ba8e 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -316,6 +316,19 @@ impl Dwc2 {
+         phase: &Phase,
+         tt: (u8, u8),
+         timeout: Duration,
++    ) -> Result<Option<(usize, u32)>, Error> {
++        self.split(ch, phase, tt, timeout, phase.ep_type == EPTYPE_INTERRUPT)
++    }
++
++    /// [`Dwc2::split_packet`]; `nak_empty` returns `None` when the device
++    /// NAKs instead of trying again until the timeout.
++    fn split(
++        &self,
++        ch: usize,
++        phase: &Phase,
++        tt: (u8, u8),
++        timeout: Duration,
++        nak_empty: bool,
+     ) -> Result<Option<(usize, u32)>, Error> {
+         let periodic = phase.ep_type == EPTYPE_INTERRUPT;
+         let split = HCSPLT_SPLTENA
+@@ -364,7 +377,7 @@ impl Dwc2 {
+                     // The hub has no result yet.
+                     continue;
+                 }
+-                if periodic && status & HCINT_NAK != 0 {
++                if nak_empty && status & HCINT_NAK != 0 {
+                     return Ok(None);
+                 }
+                 // NAK from the device or a transaction error: start over.
+@@ -398,6 +411,22 @@ impl Dwc2 {
+         }
+     }
+ 
++    /// One packet to or from a bulk endpoint, through the hub's transaction
++    /// translator for `tt`, directly otherwise. `None` if the device NAKed:
++    /// no data to read, or no room for a write.
++    pub fn bulk_packet(
++        &self,
++        ch: usize,
++        phase: &Phase,
++        tt: Option<(u8, u8)>,
++        timeout: Duration,
++    ) -> Result<Option<(usize, u32)>, Error> {
++        if let Some(tt) = tt {
++            return self.split(ch, phase, tt, timeout, true);
++        }
++        self.interrupt_in(ch, phase, None, timeout)
++    }
++
+     /// A transfer of any length as split transactions, packet by packet.
+     fn split_transfer(&self, ch: usize, phase: &Phase, tt: (u8, u8), timeout: Duration) -> Result<usize, Error> {
+         let mps = usize::from(phase.max_packet);
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 1b97738..ff4dc66 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -438,6 +438,22 @@ impl Bus {
+         Ok(())
+     }
+ 
++    /// The ports from the root to a device, e.g. `1.3` for port 3 of the hub
++    /// on port 1 of the root hub; `0` for the device on the root port.
++    pub fn port_path(&self, address: u8) -> String {
++        let mut ports = Vec::new();
++        let mut current = address;
++        while let Some((hub, port)) = self.port_of(current) {
++            ports.push(port.to_string());
++            current = hub;
++        }
++        if ports.is_empty() {
++            return "0".to_string();
++        }
++        ports.reverse();
++        ports.join(".")
++    }
++
+     /// The hub and port a device is plugged into.
+     pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
+         self.devices.iter().find(|d| d.address == address)?.parent
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 28cc7aa..9f04d02 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -22,6 +22,7 @@ mod hid;
+ mod lan78xx;
+ mod regs;
+ mod rtl8152;
++mod serial;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+@@ -206,6 +207,8 @@ enum Found {
+     Net(Adapter, [u8; 6], bool),
+     /// A keyboard, configured.
+     Keyboard(hid::KeyboardFunction),
++    /// A USB serial adapter, set up when the scheme takes it.
++    Serial(serial::SerialFunction),
+ }
+ 
+ /// Recognize a device and bring it up. `link_wait` is how long a network
+@@ -261,7 +264,7 @@ fn probe(
+             }
+         };
+     }
+-    None
++    serial::find(bus, device).map(Found::Serial)
+ }
+ 
+ /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
+@@ -386,9 +389,11 @@ impl Timer {
+ /// How often to look for devices plugged in or removed.
+ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
+ /// A test without a person writes a port to this file; the next rescan
+-/// switches it off and on (see [`Bus::cycle_port`]): `network` or
+-/// `keyboard` for the port of the device in use, or `<hub address> <port>`.
++/// switches it off and on (see [`Bus::cycle_port`]): `network`, `keyboard`
++/// or `serial` for the port of the device in use, or `<hub address> <port>`.
+ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
++/// While this file exists, dwc2d prints what goes through serial ports.
++const SERIAL_LOG: &str = "/tmp/dwc2d-serial-log";
+ /// How long a network adapter found at boot may wait for its link, so DHCP
+ /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
+ /// can take longer than 5 s. Adapters plugged in later do not wait: their
+@@ -401,6 +406,7 @@ user_data! {
+         Scheme,
+         Time,
+         Hotplug,
++        Serial,
+     }
+ }
+ 
+@@ -439,6 +445,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
+     let mut keyboard = None;
++    let mut serial_found = Vec::new();
+     for device in bus.devices.clone() {
+         match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
+             Some(Found::Net(adapter, mac, link)) => {
+@@ -451,6 +458,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 net.adapters.push((adapter, link));
+             }
+             Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
++            Some(Found::Serial(f)) => serial_found.push(f),
+             _ => {}
+         }
+     }
+@@ -509,6 +517,18 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
+         .expect("dwc2d: failed to subscribe to the scheme");
+ 
++    // USB serial adapters, polled with the timer while a port is open.
++    let mut serial = serial::Serial::new(hc.clone());
++    if let Some(serial) = serial.as_mut() {
++        events
++            .subscribe(serial.event_handle().raw(), Source::Serial, event::EventFlags::READ)
++            .expect("dwc2d: failed to subscribe to the serial scheme");
++        for f in serial_found {
++            serial.add(&mut bus, f);
++        }
++    }
++    let mut serial_polling = false;
++
+     scheme.tick().expect("dwc2d: network scheme failed");
+     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
+         match event.user_data {
+@@ -523,6 +543,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+             }
+             Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
++            Source::Serial => {
++                let serial = serial.as_mut().unwrap();
++                serial.tick(&mut bus);
++                // A port was opened: read it from now on.
++                if serial.busy() && !serial_polling {
++                    serial_polling = true;
++                    timer.arm(Duration::ZERO);
++                }
++            }
+             Source::Time => {
+                 timer.fired();
+                 let mut next = None;
+@@ -534,6 +563,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let due = k.poll();
+                     next = Some(next.map_or(due, |n: Duration| n.min(due)));
+                 }
++                if let Some(s) = serial.as_mut().filter(|_| serial_polling) {
++                    s.tick(&mut bus);
++                    serial_polling = s.busy();
++                    if serial_polling {
++                        next = Some(next.map_or(serial::POLL_INTERVAL, |n| n.min(serial::POLL_INTERVAL)));
++                    }
++                }
+                 if let Some(next) = next {
+                     timer.arm(next);
+                 }
+@@ -548,6 +584,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let port = match request {
+                         "network" => net.active.and_then(|a| bus.port_of(a)),
+                         "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
++                        "serial" => serial
++                            .as_mut()
++                            .and_then(|s| s.data().ports.first().map(|p| p.f.address))
++                            .and_then(|a| bus.port_of(a)),
+                         _ => {
+                             let mut words = request.split_whitespace().map(str::parse::<u16>);
+                             match (words.next(), words.next()) {
+@@ -579,6 +619,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         println!("dwc2d: keyboard removed");
+                         keyboard = None;
+                     }
++                    if let Some(s) = serial.as_mut() {
++                        s.remove(address);
++                    }
+                 }
+                 for &address in &changes.added {
+                     let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+@@ -590,12 +633,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                             keyboard = Keyboard::new(hc.clone(), f);
+                             timer.arm(Duration::ZERO);
+                         }
++                        Some(Found::Serial(f)) => {
++                            if let Some(s) = serial.as_mut() {
++                                s.add(&mut bus, f);
++                            }
++                        }
+                         _ => {}
+                     }
+                 }
+                 net.refresh_links(&mut bus);
+                 net.select(&mut bus);
+                 scheme.tick().expect("dwc2d: network scheme failed");
++                if let Some(s) = serial.as_mut() {
++                    s.data().log = std::path::Path::new(SERIAL_LOG).exists();
++                    // Requests for a port that went away get their error.
++                    s.tick(&mut bus);
++                }
+                 hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
+diff --git a/drivers/usb/dwc2d/src/serial.rs b/drivers/usb/dwc2d/src/serial.rs
+new file mode 100644
+index 0000000..8a98e39
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/serial.rs
+@@ -0,0 +1,883 @@
++//! USB serial adapters: CDC-ACM, FTDI, CP210x and CH340/CH341, as the
++//! scheme `usb-serial`. Zigbee and Thread coordinator sticks and many
++//! Arduino boards are one of these.
++//!
++//! `/scheme/usb-serial/<ports>` is the port of the adapter plugged in at
++//! hub ports `<ports>` from the root (as for USB sticks, e.g. `1.3`): read
++//! and write bytes. `/scheme/usb-serial/<ports>/baud` reads and sets the
++//! speed as a number. The port also answers termios calls (`tcgetattr`,
++//! `tcsetattr`) like a pty: speed, data bits, parity and stop bits from
++//! `c_cflag`. Listing `/scheme/usb-serial` gives the ports.
++//!
++//! Settings start at 115200 baud, 8N1. The adapter is read only while a
++//! program has the port open; DTR and RTS go up when it is opened.
++
++use std::collections::VecDeque;
++use std::time::Duration;
++
++use common::dma::Dma;
++use libredox::flag::O_NONBLOCK;
++use libredox::protocol::TtyCall;
++use redox_scheme::{CallerCtx, Response, SignalBehavior, Socket};
++use scheme_utils::{resource_scheme, FpathWriter, ReadinessBased, ResourceOpenResult, ResourceSync};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::schemev2::NewFdFlags;
++use syscall::{
++    Error, EventFlags, Result as SysResult, Stat, EACCES, EAGAIN, EBUSY, EINVAL, EIO, ENODEV, ENOENT, EWOULDBLOCK,
++    MODE_DIR, MODE_FILE,
++};
++
++use crate::dwc2::{Dwc2, Error as UsbError, Phase, Speed};
++use crate::enumerate::{Bus, Device};
++use crate::regs::*;
++
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++const DESC_CONFIGURATION: u8 = 0x02;
++
++/// Receives on this channel stay armed while a port is open; writes and
++/// control requests use channel 0 between them. The keyboard has 3, USB
++/// sticks 4 and 5, the mouse 6.
++const RX_CHANNEL: usize = 7;
++const TX_CHANNEL: usize = 0;
++const RX_LEN: usize = 512;
++const TX_TIMEOUT: Duration = Duration::from_secs(2);
++/// How often an open port is read.
++pub const POLL_INTERVAL: Duration = Duration::from_millis(5);
++/// Unread bytes kept per port; older ones are dropped.
++const RX_KEEP: usize = 64 * 1024;
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum Kind {
++    CdcAcm,
++    Ftdi,
++    Cp210x,
++    Ch34x,
++}
++
++/// Known adapters that are not CDC-ACM, by vendor and product.
++fn kind_of(vendor: u16, product: u16) -> Option<Kind> {
++    Some(match (vendor, product) {
++        // FT232R/BM, FT2232, FT232H, FT230X (first port of the dual ones)
++        (0x0403, 0x6001 | 0x6010 | 0x6011 | 0x6014 | 0x6015) => Kind::Ftdi,
++        // CP2102/CP2102N/CP2104 (SONOFF ZBDongle-P, SkyConnect), CP2105, CP2108
++        (0x10C4, 0xEA60 | 0xEA61 | 0xEA63 | 0xEA70 | 0xEA71 | 0xEA80) => Kind::Cp210x,
++        // CH340, CH341
++        (0x1A86, 0x7523 | 0x5523 | 0x7522) => Kind::Ch34x,
++        _ => return None,
++    })
++}
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum Parity {
++    None,
++    Odd,
++    Even,
++}
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Line {
++    pub baud: u32,
++    pub data_bits: u8,
++    pub parity: Parity,
++    pub two_stop_bits: bool,
++}
++
++impl Default for Line {
++    fn default() -> Self {
++        Self { baud: 115_200, data_bits: 8, parity: Parity::None, two_stop_bits: false }
++    }
++}
++
++/// A serial interface and its bulk endpoints.
++#[derive(Clone, Debug)]
++pub struct SerialFunction {
++    pub address: u8,
++    speed: Speed,
++    max_packet0: u16,
++    tt: Option<(u8, u8)>,
++    configuration: u8,
++    pub kind: Kind,
++    /// The interface requests go to: CDC-ACM's control interface, the
++    /// serial interface otherwise.
++    interface: u8,
++    ep_in: u8,
++    ep_out: u8,
++    mps_in: u16,
++    mps_out: u16,
++}
++
++pub fn find(bus: &mut Bus, device: &Device) -> Option<SerialFunction> {
++    let known = kind_of(device.vendor, device.product);
++    let config = bus
++        .request(
++            device.address,
++            device.max_packet,
++            device.speed,
++            0x80,
++            REQ_GET_DESCRIPTOR,
++            u16::from(DESC_CONFIGURATION) << 8,
++            0,
++            512,
++        )
++        .ok()?;
++    let configuration = *config.get(5)?;
++
++    // CDC-ACM: a communications interface (class 2, subclass 2) and a data
++    // interface (class 10) with the bulk endpoints. The others: the first
++    // interface with a bulk IN and a bulk OUT endpoint.
++    let mut acm_control = None;
++    let mut current: Option<(u8, bool)> = None;
++    let (mut ep_in, mut ep_out) = (None, None);
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        match desc[1] {
++            4 if desc.len() >= 9 => {
++                if ep_in.is_some() && ep_out.is_some() {
++                    break;
++                }
++                let (number, class, subclass, protocol) = (desc[2], desc[5], desc[6], desc[7]);
++                // Protocol 0xFF there is RNDIS, a network adapter.
++                if class == 0x02 && subclass == 0x02 && protocol != 0xFF {
++                    acm_control = Some(number);
++                }
++                let usable = match known {
++                    Some(_) => true,
++                    None => acm_control.is_some() && class == 0x0A,
++                };
++                current = Some((number, usable));
++                (ep_in, ep_out) = (None, None);
++            }
++            5 if desc.len() >= 7 => {
++                if current.is_some_and(|(_, usable)| usable) && desc[3] & 3 == 2 {
++                    let mps = u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF;
++                    if desc[2] & 0x80 != 0 {
++                        ep_in = ep_in.or(Some((desc[2] & 0x0F, mps)));
++                    } else {
++                        ep_out = ep_out.or(Some((desc[2] & 0x0F, mps)));
++                    }
++                }
++            }
++            _ => {}
++        }
++        pos += desc.len();
++    }
++    let ((ep_in, mps_in), (ep_out, mps_out)) = (ep_in?, ep_out?);
++    let (data_interface, _) = current?;
++    let (kind, interface) = match known {
++        Some(kind) => (kind, data_interface),
++        None => (Kind::CdcAcm, acm_control?),
++    };
++    Some(SerialFunction {
++        address: device.address,
++        speed: device.speed,
++        max_packet0: device.max_packet,
++        tt: device.tt,
++        configuration,
++        kind,
++        interface,
++        ep_in,
++        ep_out,
++        mps_in,
++        mps_out,
++    })
++}
++
++impl SerialFunction {
++    fn out(&self, bus: &mut Bus, request_type: u8, request: u8, value: u16, index: u16, data: &[u8]) -> Result<(), UsbError> {
++        if data.is_empty() {
++            bus.request(self.address, self.max_packet0, self.speed, request_type, request, value, index, 0)
++                .map(|_| ())
++        } else {
++            bus.request_out(self.address, self.max_packet0, self.speed, request_type, request, value, index, data)
++        }
++    }
++
++    fn vendor_in(&self, bus: &mut Bus, request: u8, value: u16, index: u16, len: u16) -> Result<Vec<u8>, UsbError> {
++        bus.request(self.address, self.max_packet0, self.speed, 0xC0, request, value, index, len)
++    }
++
++    /// Configure the device and set the line.
++    pub fn init(&self, bus: &mut Bus, line: &Line) -> Result<(), UsbError> {
++        bus.request(self.address, self.max_packet0, self.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(self.configuration), 0, 0)?;
++        let index = u16::from(self.interface);
++        match self.kind {
++            Kind::Ftdi => {
++                // Reset, no flow control.
++                self.out(bus, 0x40, 0x00, 0, 0, &[])?;
++                self.out(bus, 0x40, 0x02, 0, 0, &[])?;
++            }
++            // Enable the interface.
++            Kind::Cp210x => self.out(bus, 0x41, 0x00, 1, index, &[])?,
++            Kind::Ch34x => {
++                let _ = self.vendor_in(bus, 0x5F, 0, 0, 2);
++                self.out(bus, 0x40, 0xA1, 0, 0, &[])?;
++            }
++            Kind::CdcAcm => {}
++        }
++        self.set_line(bus, line)
++    }
++
++    pub fn set_line(&self, bus: &mut Bus, line: &Line) -> Result<(), UsbError> {
++        let index = u16::from(self.interface);
++        let data_bits = line.data_bits.clamp(5, 8);
++        match self.kind {
++            Kind::CdcAcm => {
++                // SET_LINE_CODING (CDC PSTN 6.3.10)
++                let mut coding = [0; 7];
++                coding[..4].copy_from_slice(&line.baud.to_le_bytes());
++                coding[4] = if line.two_stop_bits { 2 } else { 0 };
++                coding[5] = match line.parity {
++                    Parity::None => 0,
++                    Parity::Odd => 1,
++                    Parity::Even => 2,
++                };
++                coding[6] = data_bits;
++                self.out(bus, 0x21, 0x20, 0, index, &coding)
++            }
++            Kind::Ftdi => {
++                let divisor = ftdi_divisor(line.baud).ok_or(UsbError::Stall)?;
++                self.out(bus, 0x40, 0x03, divisor as u16, (divisor >> 16) as u16, &[])?;
++                let parity: u16 = match line.parity {
++                    Parity::None => 0,
++                    Parity::Odd => 1,
++                    Parity::Even => 2,
++                };
++                let stop: u16 = if line.two_stop_bits { 2 } else { 0 };
++                self.out(bus, 0x40, 0x04, u16::from(data_bits) | parity << 8 | stop << 11, 0, &[])
++            }
++            Kind::Cp210x => {
++                self.out(bus, 0x41, 0x1E, 0, index, &line.baud.to_le_bytes())?;
++                let parity: u16 = match line.parity {
++                    Parity::None => 0,
++                    Parity::Odd => 1,
++                    Parity::Even => 2,
++                };
++                let stop: u16 = if line.two_stop_bits { 2 } else { 0 };
++                self.out(bus, 0x41, 0x03, stop | parity << 4 | u16::from(data_bits) << 8, index, &[])
++            }
++            Kind::Ch34x => {
++                let divisor = ch34x_divisor(line.baud).ok_or(UsbError::Stall)?;
++                // Divisor and prescaler registers (0x13, 0x12).
++                self.out(bus, 0x40, 0x9A, 0x1312, divisor | 0x80, &[])?;
++                let mut lcr: u16 = 0xC0 | u16::from(data_bits - 5);
++                match line.parity {
++                    Parity::None => {}
++                    Parity::Odd => lcr |= 0x08,
++                    Parity::Even => lcr |= 0x18,
++                }
++                if line.two_stop_bits {
++                    lcr |= 0x04;
++                }
++                // LCR registers (0x25, 0x18); old chips stall it and stay 8N1.
++                let _ = self.out(bus, 0x40, 0x9A, 0x2518, lcr, &[]);
++                Ok(())
++            }
++        }
++    }
++
++    /// Raise or drop DTR and RTS.
++    pub fn set_lines(&self, bus: &mut Bus, on: bool) -> Result<(), UsbError> {
++        let index = u16::from(self.interface);
++        match self.kind {
++            Kind::CdcAcm => self.out(bus, 0x21, 0x22, if on { 3 } else { 0 }, index, &[]),
++            Kind::Ftdi => self.out(bus, 0x40, 0x01, if on { 0x0303 } else { 0x0300 }, 0, &[]),
++            Kind::Cp210x => self.out(bus, 0x41, 0x07, if on { 0x0303 } else { 0x0300 }, index, &[]),
++            // The modem control bits are inverted: DTR 0x20, RTS 0x40.
++            Kind::Ch34x => self.out(bus, 0x40, 0xA4, if on { !0x60u16 & 0xFF } else { 0xFF }, 0, &[]),
++        }
++    }
++
++    pub fn describe(&self) -> &'static str {
++        match self.kind {
++            Kind::CdcAcm => "CDC-ACM",
++            Kind::Ftdi => "FTDI",
++            Kind::Cp210x => "CP210x",
++            Kind::Ch34x => "CH340/CH341",
++        }
++    }
++}
++
++/// The FT232BM/R baud divisor: 3 MHz in eighths (Linux ftdi_sio,
++/// ftdi_232bm_baud_base_to_divisor).
++fn ftdi_divisor(baud: u32) -> Option<u32> {
++    const FRACTION: [u32; 8] = [0, 3, 2, 4, 1, 5, 6, 7];
++    if baud == 0 || baud > 3_000_000 {
++        return None;
++    }
++    let eighths = (48_000_000 + baud) / (2 * baud);
++    let mut divisor = (eighths >> 3) | FRACTION[(eighths & 7) as usize] << 14;
++    if divisor == 1 {
++        divisor = 0;
++    } else if divisor == 0x4001 {
++        divisor = 1;
++    }
++    Some(divisor)
++}
++
++/// The CH341 prescaler and divisor (Linux ch341, ch341_get_divisor):
++/// `(0x100 - divisor) << 8 | factor << 2 | prescaler`.
++fn ch34x_divisor(baud: u32) -> Option<u16> {
++    const CLOCK: u32 = 48_000_000;
++    let clock_div = |ps: u32, fact: u32| 1u32 << (12 - 3 * ps - fact);
++    let speed = baud.clamp(46, 2_000_000);
++    let mut fact = 1;
++    let ps = (0..=3u32).rev().find(|&ps| speed > CLOCK / (clock_div(ps, 1) * 512))?;
++    let mut div_clock = clock_div(ps, fact);
++    let mut div = CLOCK / (div_clock * speed);
++    if !(9..=255).contains(&div) {
++        div /= 2;
++        div_clock *= 2;
++        fact = 0;
++    }
++    if div < 2 {
++        return None;
++    }
++    // The next divisor if its rate is closer.
++    if 16 * CLOCK / (div_clock * div) - 16 * speed >= 16 * speed - 16 * CLOCK / (div_clock * (div + 1)) {
++        div += 1;
++    }
++    // A lower base clock where the divisor is even.
++    if fact == 1 && div % 2 == 0 {
++        div /= 2;
++        fact = 0;
++    }
++    Some(((0x100 - div) << 8 | fact << 2 | ps) as u16)
++}
++
++/// An adapter plugged in, and what was read from it.
++pub struct Port {
++    /// Unique per adapter plugged in: handles of an unplugged one fail.
++    id: u64,
++    pub name: String,
++    pub f: SerialFunction,
++    pub line: Line,
++    /// A new line for the main loop to set (it owns the bus).
++    pub pending_line: Option<Line>,
++    /// DTR and RTS to raise (opened).
++    pub pending_lines: bool,
++    rx: VecDeque<u8>,
++    in_pid: u32,
++    out_pid: u32,
++    armed: bool,
++    open: usize,
++}
++
++pub struct SerialData {
++    hc: Dwc2,
++    pub ports: Vec<Port>,
++    next_id: u64,
++    rx_buf: Dma<[u8; RX_LEN]>,
++    tx_buf: Dma<[u8; RX_LEN]>,
++    /// Print what is read and written (tests without a person).
++    pub log: bool,
++}
++
++impl SerialData {
++    fn port(&mut self, id: u64) -> SysResult<&mut Port> {
++        self.ports.iter_mut().find(|p| p.id == id).ok_or(Error::new(ENODEV))
++    }
++
++    /// Read from the open port, if any. Returns whether bytes came in.
++    fn poll(&mut self) -> bool {
++        let Some(index) = self.ports.iter().position(|p| p.open > 0) else {
++            return false;
++        };
++        let hc = self.hc.clone();
++        let port = &mut self.ports[index];
++        let f = port.f.clone();
++        let phase = |len, pid, buf_phys| Phase {
++            dev_addr: f.address,
++            endpoint: f.ep_in,
++            dir_in: true,
++            ep_type: EPTYPE_BULK,
++            max_packet: f.mps_in,
++            low_speed: f.speed == Speed::Low,
++            pid,
++            buf_phys,
++            len,
++        };
++        let mut data = Vec::new();
++        match f.tt {
++            // Directly: the transfer stays armed; the controller retries
++            // while the adapter NAKs.
++            None => {
++                if !port.armed {
++                    hc.start(RX_CHANNEL, &phase(RX_LEN, port.in_pid, self.rx_buf.physical()));
++                    port.armed = true;
++                }
++                match hc.poll(RX_CHANNEL, RX_LEN) {
++                    None => {}
++                    Some(Ok((len, pid))) => {
++                        port.in_pid = pid;
++                        port.armed = false;
++                        data.extend_from_slice(&self.rx_buf[..len]);
++                    }
++                    Some(Err(_)) => port.armed = false,
++                }
++            }
++            // Through a hub's transaction translator, packet by packet.
++            Some(_) => {
++                let mps = usize::from(f.mps_in).min(RX_LEN);
++                for _ in 0..8 {
++                    match hc.bulk_packet(RX_CHANNEL, &phase(mps, port.in_pid, self.rx_buf.physical()), f.tt, Duration::from_millis(2)) {
++                        Ok(Some((len, pid))) => {
++                            port.in_pid = pid;
++                            data.extend_from_slice(&self.rx_buf[..len]);
++                            if len < mps {
++                                break;
++                            }
++                        }
++                        _ => break,
++                    }
++                }
++            }
++        }
++        if f.kind == Kind::Ftdi {
++            // Every packet starts with two status bytes.
++            let mps = usize::from(f.mps_in).max(3);
++            data = data.chunks(mps).flat_map(|c| c.get(2..).unwrap_or(&[]).to_vec()).collect();
++        }
++        if data.is_empty() {
++            return false;
++        }
++        if self.log {
++            println!("dwc2d: serial {}: read {:?}", port.name, String::from_utf8_lossy(&data));
++        }
++        port.rx.extend(data);
++        let excess = port.rx.len().saturating_sub(RX_KEEP);
++        port.rx.drain(..excess);
++        true
++    }
++
++    fn write(&mut self, id: u64, buf: &[u8]) -> SysResult<usize> {
++        let hc = self.hc.clone();
++        let log = self.log;
++        let tx_phys = self.tx_buf.physical();
++        let len = buf.len().min(RX_LEN);
++        self.tx_buf[..len].copy_from_slice(&buf[..len]);
++        let port = self.port(id)?;
++        let f = port.f.clone();
++        let mps = usize::from(f.mps_out).max(1);
++        let mut done = 0;
++        while done < len {
++            // Whole packets; a short one ends the transfer.
++            let chunk = match f.tt {
++                Some(_) => (len - done).min(mps),
++                None => len - done,
++            };
++            let phase = Phase {
++                dev_addr: f.address,
++                endpoint: f.ep_out,
++                dir_in: false,
++                ep_type: EPTYPE_BULK,
++                max_packet: f.mps_out,
++                low_speed: f.speed == Speed::Low,
++                pid: port.out_pid,
++                buf_phys: tx_phys + done,
++                len: chunk,
++            };
++            let result = match f.tt {
++                Some(_) => hc.bulk_packet(TX_CHANNEL, &phase, f.tt, TX_TIMEOUT),
++                None => hc.transfer_on(TX_CHANNEL, &phase, TX_TIMEOUT).map(Some),
++            };
++            match result {
++                Ok(Some((moved, pid))) => {
++                    port.out_pid = pid;
++                    done += moved;
++                    if moved < chunk {
++                        break;
++                    }
++                }
++                // No room in the adapter for now.
++                Ok(None) => break,
++                Err(_) => {
++                    hc.halt(TX_CHANNEL);
++                    if done == 0 {
++                        return Err(Error::new(EIO));
++                    }
++                    break;
++                }
++            }
++        }
++        if log {
++            println!("dwc2d: serial {}: wrote {:?}", port.name, String::from_utf8_lossy(&buf[..done]));
++        }
++        Ok(done)
++    }
++}
++
++resource_scheme! {
++    pub SerialScheme<>;
++    type SchemeData = SerialData;
++
++    pub enum SerialResource {
++        Root(Root),
++        Data(DataHandle),
++        Baud(BaudHandle),
++    }
++}
++
++#[derive(Debug)]
++pub struct Root;
++
++impl ResourceSync for Root {
++    type SchemeData = SerialData;
++    type ResourceEnum = SerialResource;
++
++    fn openat(
++        &mut self,
++        data: &mut SerialData,
++        path: &str,
++        _flags: usize,
++        _fcntl_flags: u32,
++        ctx: &CallerCtx,
++    ) -> SysResult<ResourceOpenResult<SerialResource>> {
++        if ctx.uid != 0 {
++            return Err(Error::new(EACCES));
++        }
++        let path = path.trim_matches('/');
++        if path.is_empty() {
++            return Ok(ResourceOpenResult::ThisScheme { data: SerialResource::Root(Root), flags: NewFdFlags::empty() });
++        }
++        let (name, file) = match path.split_once('/') {
++            Some((name, file)) => (name, Some(file)),
++            None => (path, None),
++        };
++        let open_elsewhere = data.ports.iter().any(|p| p.open > 0 && p.name != name);
++        let port = data.ports.iter_mut().find(|p| p.name == name).ok_or(Error::new(ENOENT))?;
++        let id = port.id;
++        let (resource, flags) = match file {
++            None => {
++                // One port is read at a time (one receive channel).
++                if open_elsewhere {
++                    return Err(Error::new(EBUSY));
++                }
++                port.open += 1;
++                port.pending_lines = true;
++                (SerialResource::Data(DataHandle { id }), NewFdFlags::empty())
++            }
++            Some("baud") => (SerialResource::Baud(BaudHandle { id }), NewFdFlags::POSITIONED),
++            Some(_) => return Err(Error::new(ENOENT)),
++        };
++        Ok(ResourceOpenResult::ThisScheme { data: resource, flags })
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        data: &mut SerialData,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> SysResult<DirentBuf<&'buf mut [u8]>> {
++        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
++        for (i, port) in data.ports.iter().enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: port.id,
++                name: &port.name,
++                kind: DirentKind::CharDev,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fpath(&mut self, _data: &mut SerialData, _w: &mut FpathWriter) -> SysResult<()> {
++        Ok(())
++    }
++
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++        stat.st_mode = MODE_DIR | 0o700;
++        Ok(())
++    }
++}
++
++#[derive(Debug)]
++pub struct DataHandle {
++    id: u64,
++}
++
++/// The termios bytes relibc reads and writes on Redox: c_iflag, c_oflag,
++/// c_cflag, c_lflag (u32 each) and c_cc[32].
++const TERMIOS_LEN: usize = 48;
++// c_cflag on Redox (relibc header/termios/redox.rs)
++const CBAUD: u32 = 0o37;
++const CSIZE: u32 = 0o1400;
++const CSTOPB: u32 = 0o2000;
++const CREAD: u32 = 0o4000;
++const PARENB: u32 = 0o10000;
++const PARODD: u32 = 0o20000;
++const CLOCAL: u32 = 0o100000;
++/// Speeds by their B* code: B0 to B38400, then B57600 (0o20) on.
++const SPEEDS: [u32; 31] = [
++    0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400, 57600, 115_200,
++    230_400, 460_800, 500_000, 576_000, 921_600, 1_000_000, 1_152_000, 1_500_000, 2_000_000, 2_500_000,
++    3_000_000, 3_500_000, 4_000_000,
++];
++
++fn termios_of(line: &Line) -> [u8; TERMIOS_LEN] {
++    let code = SPEEDS.iter().position(|&s| s == line.baud).unwrap_or(0o21) as u32;
++    let mut cflag = code | CREAD | CLOCAL | (u32::from(line.data_bits.clamp(5, 8) - 5) << 8);
++    if line.two_stop_bits {
++        cflag |= CSTOPB;
++    }
++    match line.parity {
++        Parity::None => {}
++        Parity::Odd => cflag |= PARENB | PARODD,
++        Parity::Even => cflag |= PARENB,
++    }
++    let mut termios = [0; TERMIOS_LEN];
++    termios[8..12].copy_from_slice(&cflag.to_ne_bytes());
++    termios
++}
++
++fn line_of(termios: &[u8], old: &Line) -> SysResult<Line> {
++    let cflag = u32::from_ne_bytes(termios.get(8..12).ok_or(Error::new(EINVAL))?.try_into().unwrap());
++    let baud = match SPEEDS.get((cflag & CBAUD) as usize) {
++        Some(0) | None => old.baud,
++        Some(&baud) => baud,
++    };
++    Ok(Line {
++        baud,
++        data_bits: 5 + ((cflag & CSIZE) >> 8) as u8,
++        parity: match (cflag & PARENB != 0, cflag & PARODD != 0) {
++            (false, _) => Parity::None,
++            (true, true) => Parity::Odd,
++            (true, false) => Parity::Even,
++        },
++        two_stop_bits: cflag & CSTOPB != 0,
++    })
++}
++
++impl ResourceSync for DataHandle {
++    type SchemeData = SerialData;
++    type ResourceEnum = SerialResource;
++
++    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], _offset: u64, fcntl_flags: u32) -> SysResult<usize> {
++        let port = data.port(self.id)?;
++        if port.rx.is_empty() {
++            return Err(Error::new(if fcntl_flags & O_NONBLOCK as u32 != 0 { EAGAIN } else { EWOULDBLOCK }));
++        }
++        let n = buf.len().min(port.rx.len());
++        for (b, byte) in buf.iter_mut().zip(port.rx.drain(..n)) {
++            *b = byte;
++        }
++        Ok(n)
++    }
++
++    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++        data.write(self.id, buf)
++    }
++
++    fn fevent(&mut self, data: &mut SerialData, _flags: EventFlags) -> SysResult<EventFlags> {
++        let ready = data.port(self.id).is_ok_and(|p| !p.rx.is_empty());
++        Ok(if ready { EventFlags::EVENT_READ } else { EventFlags::empty() })
++    }
++
++    fn call(&mut self, data: &mut SerialData, payload: &mut [u8], metadata: &[u64], _ctx: &CallerCtx) -> SysResult<usize> {
++        const REQ_READ: u64 = 0;
++        const REQ_WRITE: u64 = 1;
++        let (Some(&verb), Some(&request)) = (metadata.first(), metadata.get(1)) else {
++            return Err(Error::new(EINVAL));
++        };
++        let port = data.port(self.id)?;
++        match (TtyCall::try_from_raw(verb as usize), request) {
++            (Some(TtyCall::Termios), REQ_READ) => {
++                let termios = termios_of(port.pending_line.as_ref().unwrap_or(&port.line));
++                let n = payload.len().min(TERMIOS_LEN);
++                payload[..n].copy_from_slice(&termios[..n]);
++                Ok(n)
++            }
++            (Some(TtyCall::Termios), REQ_WRITE) => {
++                port.pending_line = Some(line_of(payload, &port.line)?);
++                Ok(payload.len())
++            }
++            // Flush, drain and the like: nothing waits in the driver.
++            (Some(_), _) => Ok(0),
++            (None, _) => Err(Error::new(EINVAL)),
++        }
++    }
++
++    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> SysResult<()> {
++        w.push_str(&data.port(self.id)?.name);
++        Ok(())
++    }
++
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++        stat.st_mode = MODE_FILE | 0o600;
++        Ok(())
++    }
++
++    fn on_close(self, data: &mut SerialData) {
++        if let Ok(port) = data.port(self.id) {
++            port.open = port.open.saturating_sub(1);
++            if port.open == 0 && port.armed {
++                data.hc.halt(RX_CHANNEL);
++                if let Ok(port) = data.port(self.id) {
++                    port.armed = false;
++                    port.rx.clear();
++                }
++            }
++        }
++    }
++}
++
++#[derive(Debug)]
++pub struct BaudHandle {
++    id: u64,
++}
++
++impl ResourceSync for BaudHandle {
++    type SchemeData = SerialData;
++    type ResourceEnum = SerialResource;
++
++    fn read(&mut self, data: &mut SerialData, buf: &mut [u8], offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++        let port = data.port(self.id)?;
++        let text = format!("{}\n", port.pending_line.unwrap_or(port.line).baud);
++        let bytes = text.as_bytes();
++        let start = (offset as usize).min(bytes.len());
++        let n = buf.len().min(bytes.len() - start);
++        buf[..n].copy_from_slice(&bytes[start..start + n]);
++        Ok(n)
++    }
++
++    fn write(&mut self, data: &mut SerialData, buf: &[u8], _offset: u64, _fcntl_flags: u32) -> SysResult<usize> {
++        let baud: u32 = std::str::from_utf8(buf)
++            .ok()
++            .and_then(|s| s.trim().parse().ok())
++            .filter(|&b| b > 0)
++            .ok_or(Error::new(EINVAL))?;
++        let port = data.port(self.id)?;
++        port.pending_line = Some(Line { baud, ..port.pending_line.unwrap_or(port.line) });
++        Ok(buf.len())
++    }
++
++    fn fpath(&mut self, data: &mut SerialData, w: &mut FpathWriter) -> SysResult<()> {
++        w.push_str(&data.port(self.id)?.name);
++        w.push_str("/baud");
++        Ok(())
++    }
++
++    fn fstat(&mut self, _data: &mut SerialData, stat: &mut Stat) -> SysResult<()> {
++        stat.st_mode = MODE_FILE | 0o600;
++        Ok(())
++    }
++}
++
++/// The scheme with its socket; the main loop drives it.
++pub struct Serial {
++    scheme: SerialScheme,
++    handler: ReadinessBased<Box<Socket>>,
++}
++
++impl Serial {
++    pub fn new(hc: Dwc2) -> Option<Self> {
++        let socket = Socket::nonblock()
++            .inspect_err(|err| println!("dwc2d: cannot create the usb-serial scheme: {err}"))
++            .ok()?;
++        let data = SerialData {
++            hc,
++            ports: Vec::new(),
++            next_id: 0,
++            rx_buf: Dma::new([0; RX_LEN]).expect("dwc2d: DMA allocation failed"),
++            tx_buf: Dma::new([0; RX_LEN]).expect("dwc2d: DMA allocation failed"),
++            log: false,
++        };
++        let mut scheme = SerialScheme::new("usb-serial".into(), data, SerialResource::Root(Root));
++        redox_scheme::scheme::register_sync_scheme(&socket, "usb-serial", &mut scheme)
++            .inspect_err(|err| println!("dwc2d: cannot register the usb-serial scheme: {err}"))
++            .ok()?;
++        Some(Self { scheme, handler: ReadinessBased::new(Box::new(socket), 16) })
++    }
++
++    pub fn event_handle(&self) -> &libredox::Fd {
++        self.handler.socket().inner()
++    }
++
++    pub fn data(&mut self) -> &mut SerialData {
++        self.scheme.scheme_data_mut()
++    }
++
++    /// Whether a port is open and so wants polls.
++    pub fn busy(&self) -> bool {
++        self.scheme.scheme_data().ports.iter().any(|p| p.open > 0)
++    }
++
++    pub fn add(&mut self, bus: &mut Bus, f: SerialFunction) {
++        let line = Line::default();
++        let name = bus.port_path(f.address);
++        match f.init(bus, &line) {
++            Ok(()) => println!("dwc2d: serial /scheme/usb-serial/{name}: {} at address {}, {} baud", f.describe(), f.address, line.baud),
++            Err(err) => {
++                println!("dwc2d: serial at address {}: {err:?}", f.address);
++                return;
++            }
++        }
++        let data = self.data();
++        let id = data.next_id;
++        data.next_id += 1;
++        data.ports.push(Port {
++            id,
++            name,
++            f,
++            line,
++            pending_line: None,
++            pending_lines: false,
++            rx: VecDeque::new(),
++            in_pid: PID_DATA0,
++            out_pid: PID_DATA0,
++            armed: false,
++            open: 0,
++        });
++    }
++
++    pub fn remove(&mut self, address: u8) {
++        let data = self.data();
++        if let Some(index) = data.ports.iter().position(|p| p.f.address == address) {
++            let port = data.ports.remove(index);
++            if port.armed {
++                data.hc.halt(RX_CHANNEL);
++            }
++            println!("dwc2d: serial {} removed", port.name);
++        }
++    }
++
++    /// Apply settings the scheme took, read the open port and answer
++    /// requests.
++    pub fn tick(&mut self, bus: &mut Bus) {
++        for port in self.scheme.scheme_data_mut().ports.iter_mut() {
++            if let Some(line) = port.pending_line.take() {
++                match port.f.set_line(bus, &line) {
++                    Ok(()) => {
++                        println!("dwc2d: serial {}: {} baud, {}{}{}", port.name, line.baud, line.data_bits,
++                            match line.parity { Parity::None => 'N', Parity::Odd => 'O', Parity::Even => 'E' },
++                            if line.two_stop_bits { 2 } else { 1 });
++                        port.line = line;
++                    }
++                    Err(err) => println!("dwc2d: serial {}: {} baud: {err:?}", port.name, line.baud),
++                }
++            }
++            if std::mem::take(&mut port.pending_lines) {
++                let _ = port.f.set_lines(bus, true);
++            }
++        }
++        let got = self.scheme.scheme_data_mut().poll();
++        let _ = self.handler.read_and_process_requests(&mut self.scheme);
++        let _ = self.handler.poll_all_requests(&mut self.scheme);
++        let _ = self.handler.write_responses();
++        if got {
++            let ids: Vec<usize> = self
++                .scheme
++                .handles()
++                .filter(|(_, r)| matches!(r, SerialResource::Data(_)))
++                .map(|(&id, _)| id)
++                .collect();
++            for id in ids {
++                let _ = self
++                    .handler
++                    .socket()
++                    .write_response(Response::post_fevent(id, EventFlags::EVENT_READ.bits()), SignalBehavior::Restart);
++            }
++        }
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+
