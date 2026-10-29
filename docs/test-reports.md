@@ -900,3 +900,26 @@ match the program). None of the 3 printed anything, so the "messages" part
 stayed empty. The failures themselves are the known start crashes of the
 stable image (#1, no x18 fix; ARM at 1400 MHz), not a problem of the
 script.
+
+## 2026-10-29: `v0.3.0-dev-140-g55bd363+x68b9`
+
+Built 2026-10-29T10:35:46Z, `libc.so` `435c647e19cf8b13…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `sigentry-thread-signals`, `sigregs-test`, `timesync`. test 37 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4) thread signals, patch 0002), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-140-g55bd363+x68b9 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 37 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)), branch
+`t4-thread-signals`, experiment `sigentry-thread-signals` with review patch
+`0002`. Extra checks over devsh, ARM at 1400 MHz:
+
+- `sigregs sender`: pass, `si_pid 50 from the thread, 51 from the child`.
+- `sigregs thread -n 3000`: pass, all registers kept (95 s). Tests 36 and
+  45, without this fix, got only 1 of 3000 signals here.
+- `sigregs process -n 3000`: pass, all registers kept (79 s).
+- No exception in the serial log during the run.
