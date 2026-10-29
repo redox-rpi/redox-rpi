@@ -65,3 +65,9 @@ checks that `lsusb` follows.
   as "QEMU USB device" instead of "keyboard".
 - Moved on top of `usb-hotplug` (2026-10-29) at the request of the USB
   session: uses its `parent` field, updates the list on hotplug.
+- **QEMU on top of `usb-hotplug`** (build `v0.3.0-dev-149-ga3a4670+x02a9`,
+  experiments `timesync usb-hotplug hwinfo`, 2026-10-29): `qemu-check.sh`
+  passes. `lsusb` lists hub, keyboard and CDC network card, `lsusb -t`
+  puts both behind hub port 1 and 2, `hwinfo` shows 4 CPUs and 3 USB
+  devices; a keyboard plugged in through the monitor shows up as address
+  4 and goes away again when unplugged.
