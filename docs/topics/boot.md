@@ -16,7 +16,9 @@
   [`boot-time`](../../patches/experiments/boot-time/) waits 1 s in the
   bootloader, `config/netboot.cmd` no longer asks DHCP twice, init recreates
   `/tmp` itself instead of starting `rm` and `mkdir`, and init reports slow
-  units. Next: the Pi timeline (test #53).
+  units. Pi (#53): 33.7 s → 29.3 s from reset to `redox login:`. Left:
+  `dwc2d` 6.2 s (about 1.2 s per USB hub and 1.7 s for the network link,
+  asked its owner), U-Boot's 2 s countdown, 3.8 s for the image over HTTP.
 
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
   `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,

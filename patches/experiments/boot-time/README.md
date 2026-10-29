@@ -55,6 +55,35 @@ The real Pi boots over the network: firmware over TFTP, then U-Boot runs
 started USB and asked DHCP again before it loaded the image over HTTP. Its
 timeline is the Pi test.
 
+### Real Pi 3B+, network boot (test #53)
+
+Stable `v0.3.0-dev-15-g24fbb96+x9f76` against `v0.3.0-dev-214-g67fdc06+x19b9`
+(this experiment), two boots each, seconds from `echo reset >
+/scheme/sys/kstop`:
+
+| Step | Stable | boot-time | Where the time goes |
+|---|---|---|---|
+| U-Boot banner | 4.0–4.2 | 3.8–4.2 | firmware (network boot of `bootcode.bin`, `start.elf`) |
+| USB start in U-Boot | –7.6 | –7.6 | 2.8 s: U-Boot finds the hubs and the LAN7800 |
+| autoboot countdown | –9.7 | –9.7 | 2 s, shared `u-boot.bin` |
+| DHCP bound | 11.4–11.6 | 11.2–11.7 | 1.7 s: U-Boot waits for the LAN7800 PHY |
+| image loaded over HTTP | 15.2–15.4 | 15.0–15.4 | 3.8 s: 42 MB `harddrive.img.gz` |
+| bootloader mode menu | 17.6–17.7 | 17.3–17.8 | unzip, bootloader start |
+| kernel starts | 23.3–23.4 | 19.0–19.5 | **the 5 s → 1 s wait** |
+| `redox login:` | **33.7** | **29.1–29.5** | 10 s in Redox, below |
+
+Inside Redox (init's report, both boots the same): `40_dwc2d.service`
+**6.2 s**, `60_data.service` 0.37 s, `40_hwd.service` 0.34 s,
+`fbcond@2.service` 0.1 s. The `/tmp` cut does not show on the Pi: the root
+file system is in RAM, so starting `rm` and `mkdir` is quick there.
+
+`dwc2d` (the USB session's driver) reports ready after enumeration and the
+network link. Of its 6.2 s: about 1.2 s per hub before the hub's first
+port shows a device (three hubs with a keyboard behind an external hub:
+3.6 s), and 1.7 s waiting for the LAN7800 link. Asked its owner.
+
+The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
+
 ## Cuts
 
 - Bootloader patch
@@ -73,6 +102,8 @@ timeline is the Pi test.
   a fast disk is smaller. `/tmp` is `drwxrwxrwt` and writable.
 - With clean boot (#18, merged last for v0.3.0) `pcid-spawner` twice and
   `audiod` go away: about 1.2 s in QEMU.
+- Pi (#53): 33.7 s → 29.3 s to `redox login:`, almost all from the
+  bootloader wait.
 - Not changed here: U-Boot's 2 s autoboot countdown. It is in the shared
   `u-boot.bin` (`scripts/build-uboot.sh`), used by every network boot, and
   takes a key on the serial console to stop U-Boot. Proposal: 1 s, after
