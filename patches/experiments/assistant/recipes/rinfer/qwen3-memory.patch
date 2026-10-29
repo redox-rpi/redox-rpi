@@ -1,8 +1,8 @@
 diff --git a/candle-transformers/src/models/quantized_qwen3.rs b/candle-transformers/src/models/quantized_qwen3.rs
-index 3fa0044..ea4c07a 100644
+index 3fa0044..b4900f8 100644
 --- a/candle-transformers/src/models/quantized_qwen3.rs
 +++ b/candle-transformers/src/models/quantized_qwen3.rs
-@@ -13,10 +13,50 @@ use candle::{DType, Device, Result, Storage, Tensor};
+@@ -13,10 +13,62 @@ use candle::{DType, Device, Result, Storage, Tensor};
  use candle_nn::attention::cpu_flash::causal::causal_decode_f32_interleaved;
  use candle_nn::attention::{flash_attn, AttnMask};
  use candle_nn::kv_cache::{ConcatKvCache, InterleavedKvCache, RawInterleavedKvCache};
@@ -51,10 +51,31 @@ index 3fa0044..ea4c07a 100644
 +    }
 +}
 +
++/// Positions the CPU key/value cache starts with, preallocated per layer as
++/// f32; it doubles when full. 4096 take 32 MiB per layer of Qwen3 0.6B,
++/// 900 MiB for its 28 layers. `CANDLE_KV_CACHE_LEN` sets a smaller start
++/// for boards without swap, where untouched memory still costs RAM.
++fn kv_cache_len() -> usize {
++    std::env::var("CANDLE_KV_CACHE_LEN")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .filter(|&n| n > 0)
++        .unwrap_or(4096)
++}
++
  pub struct Gguf<R: Read + Seek> {
      ct: gguf_file::Content,
      reader: R,
-@@ -449,7 +489,7 @@ impl LayerWeights {
+@@ -208,7 +260,7 @@ impl AttentionWeights {
+             None
+         };
+         let raw_cache = if on_cpu {
+-            Some(RawInterleavedKvCache::new(num_kv_heads, head_dim, 4096))
++            Some(RawInterleavedKvCache::new(num_kv_heads, head_dim, kv_cache_len()))
+         } else {
+             None
+         };
+@@ -449,7 +501,7 @@ impl LayerWeights {
  
  #[derive(Debug, Clone)]
  pub struct ModelWeights {
@@ -63,7 +84,7 @@ index 3fa0044..ea4c07a 100644
      layers: Vec<LayerWeights>,
      norm: RmsNorm,
      lm_head: QMatMul,
-@@ -489,8 +529,11 @@ impl ModelWeights {
+@@ -489,8 +541,11 @@ impl ModelWeights {
              None => DType::F16,
          };
  
@@ -77,7 +98,7 @@ index 3fa0044..ea4c07a 100644
  
          let rotary = Arc::new(RotaryEmbedding::new(
              dtype,
-@@ -516,11 +559,12 @@ impl ModelWeights {
+@@ -516,11 +571,12 @@ impl ModelWeights {
  
          let norm = gg.rms_norm("output_norm.weight", rms_norm_eps)?;
          // Load output projection tensor, falling back to tied embeddings like gemma3

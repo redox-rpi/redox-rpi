@@ -4,12 +4,14 @@
 # dotprod extension (SDOT), which the Pi 3's Cortex-A53 lacks:
 # sdot-fallback.patch adds an exact NEON fallback. candle's Qwen3 loader
 # turns the whole token table into f32 (622 MB) and reads it twice, which
-# runs a 1 GiB Pi out of memory: qwen3-quantized-embedding.patch keeps it
-# quantized and dequantizes only the rows of the input tokens.
+# runs a 1 GiB Pi out of memory: qwen3-memory.patch keeps it quantized and
+# dequantizes only the rows of the input tokens. It also lets
+# CANDLE_KV_CACHE_LEN set the key/value cache's starting size; candle
+# preallocates 4096 positions (900 MiB), rinfer starts with 256.
 [source]
 git = "https://github.com/huggingface/candle.git"
 rev = "12bb5d1f6350f4ea9827d9086f213feec1f0af6a"
-patches = ["sdot-fallback.patch", "qwen3-quantized-embedding.patch"]
+patches = ["sdot-fallback.patch", "qwen3-memory.patch"]
 
 [build]
 template = "custom"
