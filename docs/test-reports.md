@@ -684,3 +684,32 @@ Boot 1 also looked hung after 3 minutes: no log output, no echo on the
 serial console, devshd unreachable ("No route to host"); power-cycled with
 the user's permission. Boot 2 with the same image did not hang, so the
 cause is unclear.
+
+## 2026-10-29: `v0.3.0-dev-148-g54f7433+x657a`, USB hotplug (#35, [#17](https://github.com/redox-rpi/redox-rpi/issues/17))
+
+Branch `usb-hotplug` (`dwc2-default` + main + `--experiment usb-hotplug`),
+real Pi 3B+ over netboot, the maintainer at the Pi for part B. **Pass.**
+
+Part A, automated:
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-148-g54f7433+x657a |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-148-g54f7433+x657a.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+| hubs | info | hub 1 (4 ports) and hub 2 (3 ports, the LAN7515's) switch power per port; the external hub with the keyboard (05e3:0610) is ganged |
+| port cycles | pass | `scripts/pi-hotplug-test.sh 192.168.178.148 3`: 3 of 3 times the LAN7800's port (hub 2 port 1) lost power, disconnected after 102–104 ms, was found again and took the network back; devshd answered after 7, 9 and 10 s |
+| dwc2d CPU | info | 2.84 s user + 2.98 s system after boot, `pi-test.py` and the 300 starts |
+
+Part B, with a person:
+
+| Check | Result | Detail |
+|---|---|---|
+| keyboard hotplug | pass | the keyboard behind its external hub unplugged and plugged into 4 different ports (hub 1 ports 3 and 2, hub 2 ports 3 and 2): each time `keyboard removed`, then the hub and `keyboard at address 5` again; typing on the HDMI console worked each time |
+| DHCP retry | pass | LAN cable pulled during the Redox boot: `LAN78xx no link yet`, `dhcpd: failed to receive offer … trying again every 7s`; cable back after `redox login:`: `dhcpd: configured after 4 attempts`, devshd answers |
+
+Not tested: the Anker hub (RTL8153B) steps; they stay with test #4. Stable
+image restored afterwards.
