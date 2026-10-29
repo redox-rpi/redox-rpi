@@ -80,16 +80,18 @@ fn signal(pid: u32, signal: i32) {
 /// Step 1. Returns how many ended on SIGTERM and how many needed SIGKILL.
 fn stop_programs(report: &mut Report) -> (usize, usize) {
     let me = std::process::id();
-    let targets: BTreeSet<u32> = processes()
+    let programs: Vec<Process> = processes()
         .into_iter()
         .filter(|p| p.pid > 1 && p.pid != me)
         .filter(|p| !p.name.starts_with("/scheme/initfs/") && !KEEP.contains(&base_name(&p.name)))
-        .map(|p| p.pid)
         .collect();
+    let targets: BTreeSet<u32> = programs.iter().map(|p| p.pid).collect();
     report.say(&format!("SIGTERM to {} programs", targets.len()));
-    for &pid in &targets {
-        signal(pid, libc::SIGTERM);
+    for p in &programs {
+        report.say(&format!("SIGTERM {} {}", p.pid, p.name));
+        signal(p.pid, libc::SIGTERM);
     }
+    report.say("waiting");
     let alive = || -> BTreeSet<u32> {
         processes().into_iter().map(|p| p.pid).filter(|pid| targets.contains(pid)).collect()
     };
@@ -98,6 +100,7 @@ fn stop_programs(report: &mut Report) -> (usize, usize) {
     while !left.is_empty() && Instant::now() < deadline {
         sleep(Duration::from_millis(100));
         left = alive();
+        report.say(&format!("{} left", left.len()));
     }
     for &pid in &left {
         signal(pid, libc::SIGKILL);
