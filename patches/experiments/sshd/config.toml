@@ -27,20 +27,24 @@ data = """
 # and /scheme/data has no rename: make the keys in /etc/ssh, copy them over.
 if test -d /scheme/data
     mkdir -p /scheme/data/etc/ssh
-    for type in [rsa ecdsa ed25519]
+    for type in [rsa ecdsa ed25519 mldsa44_ed25519]
         if test -f /scheme/data/etc/ssh/ssh_host_${type}_key
-            cp -p /scheme/data/etc/ssh/ssh_host_${type}_key /scheme/data/etc/ssh/ssh_host_${type}_key.pub /etc/ssh/
+            cp /scheme/data/etc/ssh/ssh_host_${type}_key /scheme/data/etc/ssh/ssh_host_${type}_key.pub /etc/ssh/
+            chmod 600 /etc/ssh/ssh_host_${type}_key
         end
     end
     ssh-keygen -A
-    for type in [rsa ecdsa ed25519]
+    for type in [rsa ecdsa ed25519 mldsa44_ed25519]
         if not test -f /scheme/data/etc/ssh/ssh_host_${type}_key
-            cp -p /etc/ssh/ssh_host_${type}_key /etc/ssh/ssh_host_${type}_key.pub /scheme/data/etc/ssh/
+            cp /etc/ssh/ssh_host_${type}_key /etc/ssh/ssh_host_${type}_key.pub /scheme/data/etc/ssh/
+            chmod 600 /scheme/data/etc/ssh/ssh_host_${type}_key
         end
     end
 else
     ssh-keygen -A
 end
+# (cp -p would fail: Redox cannot set file times.) Success means keys exist.
+test -f /etc/ssh/ssh_host_ed25519_key
 """
 
 [[files]]

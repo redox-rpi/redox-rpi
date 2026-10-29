@@ -89,3 +89,23 @@ Work in progress.
   (after the connection closed).
 - relibc logs `madvise`, `getsockopt(IPPROTO_TCP, TCP_NODELAY)` and
   `setsockopt(IP_TOS)` as not implemented; sshd goes on.
+
+## Pi test #59 and the host key fix (2026-10-29)
+
+Pi test #59 (`v0.3.0-dev-187-g0f28c70+x0042`) failed: `ssh-keygen -A -f
+/scheme/data` made the keys but could not rename them into place ("Unable to
+move … into position"), so sshd had no host keys. Rename does not work inside
+a RedoxFS mounted at `/scheme/data` (`mv /scheme/data/a /scheme/data/b` gives
+"No such file or directory", also on the stable image; it works in `/tmp`).
+QEMU had no data partition, so the other path of the script ran there.
+
+`sshd-keys` now copies the saved keys from `/scheme/data/etc/ssh` to
+`/etc/ssh`, lets `ssh-keygen -A` make the missing ones there, and copies new
+ones back with plain `cp` (`cp -p` fails: Redox cannot set file times). It
+also saves the `mldsa44_ed25519` key of OpenSSH 10. Its exit status says
+whether the keys exist.
+
+QEMU, with a 16 MB RedoxFS image mounted as `data` (reproduces the rename
+failure): the keys go to the data partition; after deleting `/etc/ssh/ssh_host_*`
+the script brings the same keys back (same fingerprints), makes only a missing
+key type, exits 0, and SSH login works.
