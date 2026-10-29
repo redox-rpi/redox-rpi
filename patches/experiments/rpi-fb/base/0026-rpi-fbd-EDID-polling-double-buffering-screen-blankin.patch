@@ -1,4 +1,4 @@
-From 1929f5e16b059f9df706c9760b95c1c2060c1233 Mon Sep 17 00:00:00 2001
+From 6c8aa12fd714f31d46fac1a78326f6375b0e5c2d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 10:50:40 +0000
 Subject: [PATCH] rpi-fbd: EDID polling, double buffering, screen blanking
@@ -271,7 +271,7 @@ index a65b5303..60fd8c9d 100644
          (d[..3] == [0, 0, 0] && d[3] == 0xfc).then(|| {
              String::from_utf8_lossy(&d[5..18])
 diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
-index 8f55839b..d158ad4d 100644
+index 8f55839b..56fe8a1f 100644
 --- a/drivers/graphics/rpi-fbd/src/scheme.rs
 +++ b/drivers/graphics/rpi-fbd/src/scheme.rs
 @@ -34,12 +34,20 @@ pub struct RpiAdapter {
@@ -448,7 +448,7 @@ index 8f55839b..d158ad4d 100644
 +                // The back buffer missed the last frame's changes too.
 +                let damage = match (damage, self.screen.last_damage) {
 +                    (Some(now), Some(last)) if self.screen.mode.buffers == 2 => Some(union(now, last)),
-+                    (Some(now), None) if self.screen.mode.buffers == 2 => None,
++                    (Some(_), None) if self.screen.mode.buffers == 2 => None,
 +                    (damage, _) => damage,
 +                };
 +                buffer.buffer.sync(&mut self.screen, back, damage);
