@@ -1,4 +1,4 @@
-From 5eac412ce1b41f61a5198a111bf2bd28ecfa2b13 Mon Sep 17 00:00:00 2001
+From d9400595a333a9393bfff142133ed6ea2b5e7cff Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 17:12:25 +0000
 Subject: [PATCH] Write collected data at the latest 2 s after it came in
@@ -10,12 +10,12 @@ now non-blocking; with no request waiting, redoxfs sleeps on an event
 queue with the socket and a monotonic timer set to when the collected
 data is due.
 ---
- src/mount/redox/mod.rs    | 114 +++++++++++++++++++++++++++++++++++---
+ src/mount/redox/mod.rs    | 117 +++++++++++++++++++++++++++++++++++---
  src/mount/redox/scheme.rs |  16 +++++-
- 2 files changed, 121 insertions(+), 9 deletions(-)
+ 2 files changed, 125 insertions(+), 8 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index 70156b0..b9251a4 100644
+index 70156b0..1efff34 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
 @@ -2,9 +2,16 @@ use redox_scheme::{
@@ -101,11 +101,10 @@ index 70156b0..b9251a4 100644
  //FIXME: mut callback is not mut
  #[allow(unused_mut)]
  
-@@ -23,7 +88,18 @@ where
+@@ -23,6 +88,14 @@ where
      F: FnOnce(&Path) -> T,
  {
      let mountpoint = mountpoint.as_ref();
--    let socket = Socket::create()?;
 +    // Without the timer, collected writes wait for the next request.
 +    let mut wakeup = match Wakeup::open() {
 +        Ok(wakeup) => Some(wakeup),
@@ -114,14 +113,21 @@ index 70156b0..b9251a4 100644
 +            None
 +        }
 +    };
-+    let socket = if wakeup.is_some() { Socket::nonblock()? } else { Socket::create()? };
-+    if let Some(wakeup) = wakeup.as_mut() {
-+        wakeup.watch(socket.inner().raw())?;
-+    }
+     let socket = Socket::create()?;
  
      let scheme_name = format!("{}", mountpoint.display());
-     let mounted_path = format!("/scheme/{}", mountpoint.display());
-@@ -40,7 +116,25 @@ where
+@@ -37,10 +110,36 @@ where
+         &mut scheme,
+     )?;
+ 
++    // Registering needs a blocking socket; only then may it stop blocking.
++    if let Some(wakeup) = wakeup.as_mut() {
++        let fd = socket.inner().raw();
++        let flags = libredox::call::fcntl(fd, syscall::F_GETFL, 0)?;
++        libredox::call::fcntl(fd, syscall::F_SETFL, flags | syscall::O_NONBLOCK)?;
++        wakeup.watch(fd)?;
++    }
++
      let res = callback(Path::new(&mounted_path));
  
      while IS_UMT.load(Ordering::SeqCst) == 0 {
@@ -148,7 +154,7 @@ index 70156b0..b9251a4 100644
              None => break,
              Some(req) => {
                  match req.kind() {
-@@ -82,11 +176,15 @@ where
+@@ -82,11 +181,15 @@ where
          let caller = req.caller();
          let response = match req.op() {
              Ok(op) => {
