@@ -1,4 +1,4 @@
-From d9400595a333a9393bfff142133ed6ea2b5e7cff Mon Sep 17 00:00:00 2001
+From b4c6b8fa076351313d427fbbebca4a00873a63f3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 17:12:25 +0000
 Subject: [PATCH] Write collected data at the latest 2 s after it came in
@@ -10,12 +10,12 @@ now non-blocking; with no request waiting, redoxfs sleeps on an event
 queue with the socket and a monotonic timer set to when the collected
 data is due.
 ---
- src/mount/redox/mod.rs    | 117 +++++++++++++++++++++++++++++++++++---
- src/mount/redox/scheme.rs |  16 +++++-
- 2 files changed, 125 insertions(+), 8 deletions(-)
+ src/mount/redox/mod.rs    | 135 ++++++++++++++++++++++++++++++++++++--
+ src/mount/redox/scheme.rs |  16 ++++-
+ 2 files changed, 143 insertions(+), 8 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index 70156b0..1efff34 100644
+index 70156b0..c2913ce 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
 @@ -2,9 +2,16 @@ use redox_scheme::{
@@ -36,7 +36,7 @@ index 70156b0..1efff34 100644
  
  use crate::{Disk, FileSystem, IS_UMT};
  
-@@ -13,6 +20,64 @@ use self::scheme::FileScheme;
+@@ -13,6 +20,80 @@ use self::scheme::FileScheme;
  pub mod resource;
  pub mod scheme;
  
@@ -98,10 +98,26 @@ index 70156b0..1efff34 100644
 +    }
 +}
 +
++/// The next request if one is waiting: `Ok(None)` if not, `Ok(Some(None))`
++/// at the end. The socket blocks again afterwards, as the scheme's other
++/// calls on it expect.
++fn try_next_request(socket: &Socket) -> io::Result<Option<Option<redox_scheme::Request>>> {
++    let fd = socket.inner().raw();
++    let flags = libredox::call::fcntl(fd, syscall::F_GETFL, 0)?;
++    libredox::call::fcntl(fd, syscall::F_SETFL, flags | syscall::O_NONBLOCK)?;
++    let next = socket.next_request(SignalBehavior::Restart);
++    libredox::call::fcntl(fd, syscall::F_SETFL, flags)?;
++    match next {
++        Ok(next) => Ok(Some(next)),
++        Err(err) if err.errno == EWOULDBLOCK => Ok(None),
++        Err(err) => Err(err.into()),
++    }
++}
++
  //FIXME: mut callback is not mut
  #[allow(unused_mut)]
  
-@@ -23,6 +88,14 @@ where
+@@ -23,6 +104,14 @@ where
      F: FnOnce(&Path) -> T,
  {
      let mountpoint = mountpoint.as_ref();
@@ -116,45 +132,47 @@ index 70156b0..1efff34 100644
      let socket = Socket::create()?;
  
      let scheme_name = format!("{}", mountpoint.display());
-@@ -37,10 +110,36 @@ where
+@@ -37,10 +126,38 @@ where
          &mut scheme,
      )?;
  
-+    // Registering needs a blocking socket; only then may it stop blocking.
-+    if let Some(wakeup) = wakeup.as_mut() {
-+        let fd = socket.inner().raw();
-+        let flags = libredox::call::fcntl(fd, syscall::F_GETFL, 0)?;
-+        libredox::call::fcntl(fd, syscall::F_SETFL, flags | syscall::O_NONBLOCK)?;
-+        wakeup.watch(fd)?;
++    // The timer also has to see when a request comes in.
++    if let Some(waker) = wakeup.as_mut() {
++        if let Err(err) = waker.watch(socket.inner().raw()) {
++            log::warn!("no timer for collected writes: {}", err);
++            wakeup = None;
++        }
 +    }
 +
      let res = callback(Path::new(&mounted_path));
  
      while IS_UMT.load(Ordering::SeqCst) == 0 {
 -        let req = match socket.next_request(SignalBehavior::Restart)? {
-+        let next = match socket.next_request(SignalBehavior::Restart) {
-+            Err(err) if err.errno == EWOULDBLOCK => {
-+                let Some(wakeup) = wakeup.as_mut() else {
-+                    return Err(err.into());
-+                };
-+                if let Some(since) = scheme.pending_since() {
++        // With collected data waiting, look for a request without blocking,
++        // so the data can still go out in time when none comes.
++        let pending = wakeup.is_some().then(|| scheme.pending_since()).flatten();
++        let next = match pending {
++            Some(since) => match try_next_request(&socket) {
++                Ok(Some(next)) => next,
++                Ok(None) => {
 +                    let due = since + FLUSH_AFTER;
 +                    if Instant::now() >= due {
 +                        scheme.flush_pending();
-+                        continue;
++                    } else if let Some(wakeup) = wakeup.as_mut() {
++                        wakeup.arm(due);
++                        wakeup.wait()?;
 +                    }
-+                    wakeup.arm(due);
++                    continue;
 +                }
-+                wakeup.wait()?;
-+                continue;
-+            }
-+            next => next?,
++                Err(err) => return Err(err),
++            },
++            None => socket.next_request(SignalBehavior::Restart)?,
 +        };
 +        let req = match next {
              None => break,
              Some(req) => {
                  match req.kind() {
-@@ -82,11 +181,15 @@ where
+@@ -82,11 +199,15 @@ where
          let caller = req.caller();
          let response = match req.op() {
              Ok(op) => {

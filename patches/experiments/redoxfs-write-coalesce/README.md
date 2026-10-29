@@ -36,7 +36,8 @@ The on-disk format does not change.
 
 Collected data goes to the disk at the latest 2 s after it came in
 (patch `0003`), also when the program writes nothing more and keeps the
-file open: the scheme socket is non-blocking, and with no request waiting
+file open: while collected data waits, redoxfs looks for requests without
+blocking, and with none
 redoxfs sleeps on an event queue with the socket and a monotonic timer. If
 the timer cannot be opened it logs `no timer for collected writes` and
 works as before, where such data waited for the next request.
