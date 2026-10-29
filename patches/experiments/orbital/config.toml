@@ -21,3 +21,10 @@ nowait VT=3 orbital orblogin launcher
 path = "/usr/lib/init.d/30_console_switch"
 data = """
 """
+
+# The launcher opens a terminal with Super-T, but asks for cosmic-term,
+# which is large (iced) and not in this image. Give it orbterm instead.
+[[files]]
+path = "/usr/bin/cosmic-term"
+data = "orbterm"
+symlink = true
