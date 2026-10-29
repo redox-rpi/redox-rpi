@@ -1,8 +1,8 @@
-From 53e3f31a26fe425add3b4e3ecb1ab6bce96a3f3b Mon Sep 17 00:00:00 2001
+From 00419700c1edcfbe8059837c654ad9ea02abe505 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 12:44:56 +0000
-Subject: [PATCH] rpi-fbd: shadow buffers when dumb buffers are uncached; build
- drawbench on aarch64
+Subject: [PATCH 29/29] rpi-fbd: shadow buffers when dumb buffers are uncached;
+ build drawbench on aarch64
 
 ---
  Makefile                               | 3 +++
@@ -24,7 +24,7 @@ index 6d60bbe5..ab90d68d 100644
  INITFS_CARGO_ARGS = $(foreach bin,$(INITFS_BINS),-p $(bin))
  INITFS_DRIVERS_CARGO_ARGS = $(foreach bin,$(INITFS_DRIVERS_BINS),-p $(bin))
 diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
-index 1180ee3c..dcbc78ed 100644
+index 952e2681..1dcb07c0 100644
 --- a/drivers/graphics/rpi-fbd/src/scheme.rs
 +++ b/drivers/graphics/rpi-fbd/src/scheme.rs
 @@ -288,10 +288,13 @@ impl GraphicsAdapter for RpiAdapter {
