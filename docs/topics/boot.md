@@ -18,7 +18,11 @@
   `/tmp` itself instead of starting `rm` and `mkdir`, and init reports slow
   units. Pi (#53): 33.7 s → 29.3 s from reset to `redox login:`. Left:
   `dwc2d` 6.2 s (about 1.2 s per USB hub and 1.7 s for the network link,
-  asked its owner), U-Boot's 2 s countdown, 3.8 s for the image over HTTP.
+  asked its owner, who drops the hub waits in `dwc2d-boottime`), U-Boot's
+  2 s countdown, 3.8 s for the image over HTTP. New: init starts `notify`
+  services in parallel and the root file system no longer waits for USB
+  (base `0027`): QEMU init to login 6.0 s instead of 14.9 s. Pi test
+  queued.
 
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
   `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,

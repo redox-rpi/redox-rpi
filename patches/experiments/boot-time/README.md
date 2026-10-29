@@ -84,6 +84,21 @@ port shows a device (three hubs with a keyboard behind an external hub:
 
 The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
 
+### Which waits are what
+
+- Fixed waits: the bootloader's mode selection (1 s here, was 5 s),
+  U-Boot's 2 s countdown, and in `dwc2d` up to 1 s per hub for empty ports
+  (the USB session's patch `0037`, branch `dwc2d-boottime`, drops that).
+  init itself has no fixed sleeps.
+- Network: U-Boot's PHY and DHCP 1.7 s and the image over HTTP 3.8 s (Pi
+  only); `dwc2d` waiting for the LAN7800 link 1.7 s; `netstack` and
+  `dhcpd`.
+- SD card / disk: in QEMU the root file system mount (0.6–1.3 s) and the
+  first programs read from it (`sudo`, `ptyd`, `fbcond`: about 3 MiB/s).
+  On the Pi's network boot the disk is in RAM; there only `60_data`
+  (0.37 s, the data partition on the SD card) touches the card.
+- USB: `dwc2d`'s enumeration, 1.5 s in QEMU, about 4.5 s on the Pi.
+
 ## Cuts
 
 - Bootloader patch
@@ -100,6 +115,20 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
   root file system to `redox login:` 9.8 s instead of 11.3 s; the next
   program (`sudo`) now pays part of the disk reads (2.6 s), so the gain on
   a fast disk is smaller. `/tmp` is `drwxrwxrwt` and writable.
+- Base patch
+  [`0027`](base/0027-init-start-notify-services-in-parallel-wait-where-a-.patch):
+  init no longer waits for each `notify` service before it starts the next
+  unit. It waits for one where a later unit requires it (directly or
+  through a target) and when nothing else can start. `scheme` and
+  `oneshot` units still run one at a time. The root file system no longer
+  waits for `dwc2d` (it moved from `40_drivers.target` to
+  `90_initfs.target`); `netstack` does (`10_smolnetd.service`). So USB
+  enumeration and the network link overlap the mount and the `/usr`
+  units. QEMU with USB network, `v0.3.0-dev-216-gfcd1b8d+x19b9-dirty`:
+  init's first unit to `redox login:` 6.0 s (bt3: 14.9 s, on a slower
+  run). DHCP, ping and `/tmp` work.
+  On the Pi this should hide most of `dwc2d`'s 6.2 s, until the login
+  prompt; `netstack` and `devshd` still come after it.
 - With clean boot (#18, merged last for v0.3.0) `pcid-spawner` twice and
   `audiod` go away: about 1.2 s in QEMU.
 - Pi (#53): 33.7 s → 29.3 s to `redox login:`, almost all from the

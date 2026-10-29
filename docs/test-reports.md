@@ -816,3 +816,14 @@ through `svc #0x5352`. Extra checks over devsh:
 - The CPU ran at 1400 MHz (`rpi-firmwared` raises the clock at boot), not
   600 MHz as the plan row says. Under this load at 1400 MHz test 21 saw
   3-5 % failed starts; here 0 of 1000.
+
+## 2026-10-29: `v0.3.0-dev-216-gfcd1b8d+x19b9-dirty` (parallel init, #47), QEMU
+
+Branch `boot-time` with base `0027`: init starts `notify` services in
+parallel; the root file system no longer waits for `dwc2d`. QEMU `raspi3b`
+with `--usb-net`: `switchroot to /usr` right after `50_rootfs` (1.5 s after
+init's first unit), `40_dwc2d.service` ready at 2.2 s alongside the `/usr`
+units, `netstack` after it, `redox login:` 6.0 s after init's first unit
+(14.9 s with `v0.3.0-dev-214-g67fdc06+x19b9`, on a slower run). DHCP and
+`ping -c 2 10.0.2.2` pass, `/tmp` is `drwxrwxrwt`. Without a network card
+the boot ends at the login as well. **Pass.** Pi test queued.
