@@ -1,0 +1,225 @@
+From 43b5099e53cb54c8b08e97a484e4d8d6526a8e82 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 11:11:23 +0000
+Subject: [PATCH] Collect consecutive small writes of a handle into whole
+ records (redox-rpi #16)
+
+Every write call is its own transaction, which rewrites the whole record
+it touches (up to 128 KiB) plus node, tree path, allocator log and header.
+A file written in 4 KiB calls costs about 28 times its size on the disk.
+
+The scheme now keeps the consecutive writes of one handle after the first
+one in memory and writes them when a record is complete, before any other
+request, and on close.
+---
+ src/mount/redox/mod.rs    |  17 ++++++-
+ src/mount/redox/scheme.rs | 100 +++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 113 insertions(+), 4 deletions(-)
+
+diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
+index cd1462c..20d3ee0 100644
+--- a/src/mount/redox/mod.rs
++++ b/src/mount/redox/mod.rs
+@@ -1,5 +1,5 @@
+ use redox_scheme::{
+-    scheme::{SchemeState, SchemeSync},
++    scheme::{Op, SchemeState, SchemeSync},
+     RequestKind, Response, SignalBehavior, Socket,
+ };
+ use std::io;
+@@ -46,6 +46,7 @@ where
+                 match req.kind() {
+                     RequestKind::Call(r) => r,
+                     RequestKind::SendFd(sendfd_request) => {
++                        scheme.flush_pending();
+                         let result = scheme.on_sendfd(&sendfd_request);
+                         let response = Response::new(result, sendfd_request);
+ 
+@@ -60,6 +61,7 @@ where
+                         continue;
+                     }
+                     RequestKind::OnDetach { id, pid } => {
++                        scheme.flush_pending();
+                         let Ok(inode) = scheme.inode(id) else {
+                             log::warn!("RequestKind::OnDetach with invalid `id`");
+                             continue;
+@@ -75,7 +77,18 @@ where
+                 }
+             }
+         };
+-        let response = req.handle_sync(&mut scheme, &mut state);
++        // Collected writes go to the disk before any other request, so
++        // everything else (reads, stat, fsync, other handles) sees them.
++        let caller = req.caller();
++        let response = match req.op() {
++            Ok(op) => {
++                if !matches!(op, Op::Write(_)) {
++                    scheme.flush_pending();
++                }
++                op.handle_sync(caller, &mut scheme, &mut state)
++            }
++            Err(req) => Response::new(Err(syscall::Error::new(syscall::ENOSYS)), req),
++        };
+ 
+         if !socket.write_response(response, SignalBehavior::Restart)? {
+             break;
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index 5117390..d0a3a51 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -29,7 +29,7 @@ use syscall::MunmapFlags;
+ 
+ use redox_path::RedoxPath;
+ 
+-use crate::{Disk, FileSystem, Node, Transaction, TreeData, TreePtr, BLOCK_SIZE};
++use crate::{Disk, FileSystem, Node, Transaction, TreeData, TreePtr, BLOCK_SIZE, RECORD_SIZE};
+ 
+ use super::resource::{DirResource, Entry, FileMmapInfo, FileResource, Resource};
+ 
+@@ -85,6 +85,21 @@ impl<D: Disk> Handle<D> {
+     }
+ }
+ 
++/// Consecutive small writes to one handle, not yet written.
++///
++/// Every write is its own transaction, and a transaction rewrites the whole
++/// record it touches (up to `RECORD_SIZE`, 128 KiB) plus the node, the tree
++/// path to it, the allocator log and the header. Writing a file in 4 KiB
++/// calls this way sends about 28 times the data to the disk. Collecting the
++/// calls and writing whole records brings that close to 1.
++struct PendingWrite {
++    id: usize,
++    /// Where the next write of the run must start to join it.
++    offset: u64,
++    /// Data from `offset - data.len()` on, not yet written.
++    data: Vec<u8>,
++}
++
+ pub struct FileScheme<'sock, D: Disk> {
+     scheme_name: RedoxScheme<'sock>,
+     mounted_path: String,
+@@ -98,6 +113,11 @@ pub struct FileScheme<'sock, D: Disk> {
+     other_scheme_fd_map: BTreeMap<u32, Fd>,
+ 
+     proc_creds_capability: Fd,
++
++    pending: Option<PendingWrite>,
++    /// A failed write of collected data, reported by the next `write` or
++    /// `fsync` of that handle.
++    pending_error: Option<(usize, Error)>,
+ }
+ 
+ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -124,9 +144,48 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+                     0,
+                 )?
+             },
++            pending: None,
++            pending_error: None,
+         })
+     }
+ 
++    /// Write the collected data of the current run, if any. The run itself
++    /// goes on, so the next consecutive write still joins it.
++    pub fn flush_pending(&mut self) {
++        let Some(pending) = self.pending.as_mut() else {
++            return;
++        };
++        if pending.data.is_empty() {
++            return;
++        }
++        let data = mem::take(&mut pending.data);
++        let id = pending.id;
++        let offset = pending.offset - data.len() as u64;
++        let result = match Handle::get_resource_mut(self.handles.get_mut(&id)) {
++            Ok(file) => self
++                .fs
++                .tx(|tx| file.write(&mut self.fmap, &data, offset, tx))
++                .and_then(|n| if n == data.len() { Ok(()) } else { Err(Error::new(EIO)) }),
++            Err(err) => Err(err),
++        };
++        if let Err(err) = result {
++            log::error!("failed to write {} bytes at {} of handle {}: {}", data.len(), offset, id, err);
++            self.pending = None;
++            self.pending_error = Some((id, err));
++        }
++    }
++
++    /// The error of a failed write of collected data for handle `id`.
++    fn take_pending_error(&mut self, id: usize) -> Result<()> {
++        match self.pending_error {
++            Some((err_id, err)) if err_id == id => {
++                self.pending_error = None;
++                Err(err)
++            }
++            _ => Ok(()),
++        }
++    }
++
+     /// Resolve a symbolic link of given `node`. `full_path` must be non-canonicalized path from root node.
+     fn resolve_symlink<'a>(
+         scheme_name: &RedoxScheme<'sock>,
+@@ -939,8 +998,37 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+         _ctx: &CallerCtx,
+     ) -> Result<usize> {
+         // println!("Write {}, {:X} {}", id, buf.as_ptr() as usize, buf.len());
++        self.take_pending_error(id)?;
++
++        // Join the current run: the handle wrote just before this offset.
++        let small = (buf.len() as u64) < RECORD_SIZE;
++        if let Some(pending) = self.pending.as_mut() {
++            if small && pending.id == id && pending.offset == offset {
++                pending.data.extend_from_slice(buf);
++                pending.offset += buf.len() as u64;
++                // Write when a record is complete or enough has come together.
++                if pending.offset % RECORD_SIZE == 0 || pending.data.len() as u64 >= RECORD_SIZE {
++                    self.flush_pending();
++                    self.take_pending_error(id)?;
++                }
++                return Ok(buf.len());
++            }
++        }
++        self.flush_pending();
++        self.pending = None;
++
++        // The first write of a run goes to the disk at once, so its errors
++        // (no write access, a directory) come back to the caller.
+         let file = Handle::get_resource_mut(self.handles.get_mut(&id))?;
+-        self.fs.tx(|tx| file.write(&mut self.fmap, buf, offset, tx))
++        let written = self.fs.tx(|tx| file.write(&mut self.fmap, buf, offset, tx))?;
++        if small && written == buf.len() {
++            self.pending = Some(PendingWrite {
++                id,
++                offset: offset + written as u64,
++                data: Vec::new(),
++            });
++        }
++        Ok(written)
+     }
+ 
+     fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
+@@ -1085,6 +1173,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+ 
+     fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> Result<()> {
+         // println!("Fsync {}", id);
++        self.take_pending_error(id)?;
+         let file = Handle::get_resource_mut(self.handles.get_mut(&id))?;
+         let fmaps = &mut self.fmap;
+ 
+@@ -1141,6 +1230,13 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+     }
+ 
+     fn on_close(&mut self, id: usize) {
++        self.flush_pending();
++        if self.pending.as_ref().is_some_and(|pending| pending.id == id) {
++            self.pending = None;
++        }
++        if self.pending_error.is_some_and(|(err_id, _)| err_id == id) {
++            self.pending_error = None;
++        }
+         // println!("Close {}", id);
+         let Some(file) = self.handles.remove(&id) else {
+             return;
+-- 
+2.53.0
+
