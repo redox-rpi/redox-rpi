@@ -13,6 +13,20 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
+## Patch numbers
+
+- **On a branch, new patches stay an experiment:**
+  `patches/experiments/<name>/<component>/`. Their numbers there may
+  repeat other branches' numbers; the `exp-<name>-` prefix keeps them
+  apart.
+- **A number in `base/`, `kernel/`, `relibc/` and the other default
+  directories is given only at the merge to `main`**, by whoever merges:
+  the next free number in that directory, in the order the patches must
+  apply. The merger moves the files (`git mv`), updates the table below and
+  checks that the default build still boots (QEMU, then the nightly run).
+- A branch that already moved its patches to a default directory keeps
+  them there; the merger renumbers them if the numbers are taken.
+
 Experiments are applied after the default patches, in the order of the
 `--experiment` options; their files get an `exp-<name>-` prefix in the
 recipe, so equal numbers do not collide. The base patch numbers say what
@@ -27,7 +41,8 @@ each one expects to come before it:
 | `0020` | `experiments/rtl8152/base/` | RTL8152/RTL8153 Ethernet in `dwc2d` |
 | `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
 | `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
-| `0023`, `0024` | `experiments/rpi-fb/base/` | `rpi-firmwared` property file and the display driver `rpi-fbd` ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
+| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
+| `0024`, `0025` | `experiments/rpi-fb/base/` | `rpi-firmwared` property file and the display driver `rpi-fbd` ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.

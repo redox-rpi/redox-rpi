@@ -8,11 +8,11 @@ only inheriting the boot framebuffer.
 scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment rpi-fb
 ```
 
-- [`0023`](base/0023-rpi-firmwared-raw-property-file-for-other-drivers.patch):
+- [`0024`](base/0024-rpi-firmwared-raw-property-file-for-other-drivers.patch):
   `rpi-firmwared` gets a `property` file (root only, not listed): a driver
   writes a whole property message, reads back the firmware's answer. So
   only `rpi-firmwared` uses the mailbox.
-- [`0024`](base/0024-rpi-fbd-Raspberry-Pi-display-through-the-firmware.patch):
+- [`0025`](base/0025-rpi-fbd-Raspberry-Pi-display-through-the-firmware.patch):
   the new driver `rpi-fbd` (initfs, after `rpi-firmwared`).
 
 ## What `rpi-fbd` does
@@ -67,4 +67,6 @@ mode. Real hotplug would need EDID polling (not done).
     handover, login prompt.
   - QEMU shows red and blue swapped on every path, U-Boot's too: its
     model reads the pixel order the other way round from the firmware.
+- The image above was built at commit `ae30bad`, when the patches were
+  still numbered `0023` and `0024` (same content).
 - Real Pi: queued in [docs/test-plan.md](../../../docs/test-plan.md).

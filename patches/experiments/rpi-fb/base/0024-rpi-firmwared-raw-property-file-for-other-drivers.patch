@@ -1,7 +1,7 @@
 From 1f20a678df1b29c2f9e851949ba6977f68ccbe48 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 09:37:48 +0000
-Subject: [PATCH 23/24] rpi-firmwared: raw property file for other drivers
+Subject: [PATCH 24/25] rpi-firmwared: raw property file for other drivers
 
 Other drivers (rpi-fbd) send whole property messages through
 /scheme/rpi-firmware/property, so only rpi-firmwared uses the mailbox.
