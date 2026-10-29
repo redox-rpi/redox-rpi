@@ -1,0 +1,8 @@
+# pkg asks the redox-rpi repository on the build host first
+# (scripts/publish-pkg-repo.sh), then static.redox-os.org (50_redox).
+# By address: the build host's name does not resolve in QEMU.
+[[files]]
+path = "/etc/pkg.d/40_redox-rpi"
+data = """
+http://192.168.178.120:8080/pkg
+"""
