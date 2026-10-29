@@ -16,8 +16,9 @@ every file still has its hash:
           files deleted and as many new ones written (fragmentation)
   verify  the SHA-256 of every file against the hashes taken right after
           writing; the reference stays on this computer, not on the card
-  cycle   restart the Pi (echo reset > /scheme/sys/kstop), wait for devshd,
-          verify, write one more file of --cycle-mib MiB; --cycles times
+  cycle   restart the Pi (echo reset > /scheme/sys/kstop), wait for the new
+          boot and for the filesystem of --dir, verify, write one more file
+          of --cycle-mib MiB; --cycles times
 
 Deletes the test directory at the end unless --keep is given. Prints a
 summary and, with --report, appends it to that Markdown file. Exits with 1
@@ -26,10 +27,19 @@ if a file was missing or changed.
 Program starts on the Pi can still fail now and then (T12), so a command
 whose output is incomplete runs again, up to three times.
 
-devshd sometimes stops answering after a restart; --serial runs everything
-over the serial console instead. It types on the tty and reads the answers
-from --serial-log, a file that something else (for example
-`cat /dev/ttyUSB0 >> logs/serial.log`) keeps appending the console to.
+Give --serial-log, a file that something else (for example
+`cat /dev/ttyUSB0 >> logs/serial.log`) keeps appending the console to:
+after each reset the script then waits for the kernel's `kreset` and the
+new boot's `redox login:` there. devshd alone does not show a restart:
+it can answer during the shutdown, when the filesystem is already gone.
+Without --serial-log it falls back to waiting until devshd stops
+answering. Either way it then waits until the filesystem of --dir is
+mounted (devshd starts before it) and stops with an error if the Pi does
+not reset, come back or mount it in time.
+
+devshd sometimes stops answering after a restart; --serial (with
+--serial-log) runs everything over the serial console instead: it types on
+the tty and reads the answers from the log.
 """
 
 import argparse
@@ -46,6 +56,10 @@ from devsh import ANSI, SHELL_PROMPT, STEP_TIMEOUT, read_until  # noqa: E402
 HASH_LINE = re.compile(r"^([0-9a-f]{64})\s+(\S+)$")
 COPIED = re.compile(r"copied, ([0-9.]+) s, (.+)$")
 BOOT_TIMEOUT = 300
+# From the reset command to the kernel's "kreset" on the console.
+RESET_TIMEOUT = 120
+# From the new boot's login prompt to the filesystem of --dir.
+MOUNT_TIMEOUT = 300
 
 
 class Shell:
@@ -198,20 +212,56 @@ def wait_for_devshd(host, port, log):
     raise SystemExit(f"the Pi did not come back within {BOOT_TIMEOUT} s")
 
 
-def wait_for_serial(tty, log_path, log):
-    """After a reset: wait for the new boot's login prompt on the console
-    (typing earlier would reach the bootloader), then log in."""
-    start, offset = time.time(), os.path.getsize(log_path)
-    while time.time() - start < BOOT_TIMEOUT:
+def wait_for_boot(log_path, offset, log):
+    """After a reset command: wait for the kernel's "kreset" on the console
+    after `offset` (the log size before the command), then for the new
+    boot's login prompt after it."""
+    start = time.time()
+    reset_at = None
+    while True:
         with open(log_path, "rb") as f:
             f.seek(offset)
             text = f.read()
-        if b"devshd: listening" in text or b"redox login:" in text:
-            time.sleep(10)
-            log(f"back after {time.time() - start:.0f} s")
-            return SerialShell(tty, log_path)
+        if reset_at is None:
+            pos = text.find(b"kreset")
+            if pos >= 0:
+                reset_at = pos
+                log(f"reset after {time.time() - start:.0f} s")
+            elif time.time() - start > RESET_TIMEOUT:
+                raise SystemExit(f"the Pi did not reset within {RESET_TIMEOUT} s (no kreset on the console)")
+        if reset_at is not None and b"redox login:" in text[reset_at:]:
+            log(f"login prompt after {time.time() - start:.0f} s")
+            return
+        if time.time() - start > RESET_TIMEOUT + BOOT_TIMEOUT:
+            raise SystemExit(f"no login prompt within {BOOT_TIMEOUT} s after the reset")
+        time.sleep(2)
+
+
+def connect_devshd(host, port):
+    """Log in to devshd, which starts a few seconds after the login prompt."""
+    start = time.time()
+    while True:
+        try:
+            return Shell(host, port)
+        except OSError:
+            if time.time() - start > BOOT_TIMEOUT:
+                raise SystemExit(f"devshd did not answer within {BOOT_TIMEOUT} s after the login prompt")
+            time.sleep(5)
+
+
+def wait_for_mount(sh, path, log):
+    """Wait until the scheme of `path` (/scheme/data for /scheme/data/stress)
+    exists: devshd starts before the filesystem on the card is mounted."""
+    parts = path.split("/")
+    if len(parts) < 3 or parts[1] != "scheme":
+        return
+    scheme = parts[2]
+    start = time.time()
+    while not any(scheme in line.split() for line in sh.run("ls /scheme")):
+        if time.time() - start > MOUNT_TIMEOUT:
+            raise SystemExit(f"/scheme/{scheme} not mounted within {MOUNT_TIMEOUT} s")
         time.sleep(5)
-    raise SystemExit(f"the Pi did not come back within {BOOT_TIMEOUT} s")
+    log(f"/scheme/{scheme} there after {time.time() - start:.0f} s more")
 
 
 def main():
@@ -235,10 +285,18 @@ def main():
     def connect():
         return SerialShell(args.serial, args.serial_log) if args.serial else Shell(args.host, args.port)
 
-    def reconnect():
-        if args.serial:
-            return wait_for_serial(args.serial, args.serial_log, log)
-        return wait_for_devshd(args.host, args.port, log)
+    def reconnect(offset):
+        if args.serial_log:
+            wait_for_boot(args.serial_log, offset, log)
+            if args.serial:
+                time.sleep(10)
+                sh = SerialShell(args.serial, args.serial_log)
+            else:
+                sh = connect_devshd(args.host, args.port)
+        else:
+            sh = wait_for_devshd(args.host, args.port, log)
+        wait_for_mount(sh, d, log)
+        return sh
 
     lines = []
 
@@ -282,9 +340,10 @@ def main():
 
     for cycle in range(1, args.cycles + 1):
         log(f"cycle {cycle}: restart")
+        offset = os.path.getsize(args.serial_log) if args.serial_log else 0
         sh.run("echo reset > /scheme/sys/kstop", timeout=5)
         sh.close()
-        sh = reconnect()
+        sh = reconnect(offset)
         missing, changed = verify(sh, reference, patterns, log)
         failed += missing + changed
         results.append((f"restart {cycle}", len(missing), len(changed)))
