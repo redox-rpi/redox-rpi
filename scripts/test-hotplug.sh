@@ -72,7 +72,7 @@ qom_path() {
     local i path
     for i in 0 1 2 3 4 5; do
         path="/machine/peripheral-anon/device[$i]"
-        if monitor "qom-get $path type" | grep -qx "$1"; then
+        if monitor "qom-get $path type" | grep -q "\"$1\""; then
             echo "$path"
             return
         fi
