@@ -76,5 +76,10 @@
 
 ## Later
 
-- Keyboard layouts, `lsusb`
-  ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
+- `lsusb` ([#35](https://github.com/redox-rpi/redox-rpi/issues/35), firmware
+  session).
+
+Keyboard layouts are in inputd, not dwc2d:
+[#36](https://github.com/redox-rpi/redox-rpi/issues/36), branch
+[`keyboard-layouts`](https://github.com/redox-rpi/redox-rpi/tree/keyboard-layouts)
+(t18 session), Pi test #64 with a person.
