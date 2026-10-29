@@ -48,6 +48,9 @@
   x18, so the signal entry can still corrupt it there. Either reserve x18
   in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
   rebuilt) or return from the signal entry without clobbering a register.
+  The second is on branch `t1-sigreturn` (experiment `sigreturn-svc`,
+  kernel and relibc): QEMU passes `sigregs` with x18 and 0 of 700 starts;
+  Pi test #36 queued.
 
 ## Later
 
