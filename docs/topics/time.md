@@ -19,7 +19,7 @@
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
   / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
-  passed; draft pull request after #59 (v0.9.0).
+  passed; draft pull request #98, after #59 (v0.9.0).
 
 ## Next
 
