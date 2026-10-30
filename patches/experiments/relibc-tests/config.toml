@@ -1,5 +1,7 @@
 [packages]
 relibc-tests-bins = "source"
+# /bin/sh for popen, system and unistd/exec.
+dash = "source"
 
 # Runs the suite like upstream's `make run`, without make: the command
 # line comes from `make -n run IS_REDOX=1` in the package (one line, so
