@@ -1970,3 +1970,32 @@ bcm2835-sdiod: FAILED
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-151-g13c2757+x7d9f`
+
+Real Pi 3B+ over netboot. Experiments: `gpio`, `bluetooth`. test 79 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54) Bluetooth over the mini UART), Pi test agent
+
+**Fail: Bluetooth power cannot be switched, so the controller never answers.**
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-151-g13c2757+x7d9f/harddrive.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- Boot: `bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`,
+  no `a 1 ms sleep did not come back`, no `received bytes lost`.
+- `cat /scheme/rpi-firmware/bt_power`: `0`.
+- `bt up`: `power: cannot switch it (I/O error (os error 5)), going on`,
+  `uart: core clock 250000000 Hz, 115313 baud`, `bt: no answer to HCI command
+  0c03` (2.1 s). `bt_power` stays `0`.
+- `bt info`, `bt scan 10`, `bt inquiry 10`: `no answer to HCI command` 1001,
+  0c01 and 0401. `bt cmd 0c03` once more: no answer. `throttled`:
+  `0x00000000`.
+- `echo 1 > /scheme/rpi-firmware/bt_power`: `I/O error (os error 5)`, exit 1
+  (`cat` then shows 1). The serial log has one `rpi-firmwared: tag 0x00038041:
+  not supported by the firmware` per try. 0x00038041 is SET_GPIO_STATE (the
+  expander GPIO for BT and Wi-Fi power). Test 77's `wifi_power` I/O error is
+  the same problem.
+- Possible cause: `/srv/tftp/config.txt` has `gpu_mem=16`, so the Pi boots the
+  cut-down `start_cd.elf`/`fixup_cd.dat`. `start.elf` is from Sep 14 2026.
+  Whether `start_cd.elf` lacks this tag needs a check with `gpu_mem` raised (a
+  change on the shared TFTP server, so not done here).
+
+Stable image restored afterwards.
