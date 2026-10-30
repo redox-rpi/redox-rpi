@@ -4,6 +4,10 @@ name: Latest upstream
 # does the newest upstream kernel with our patches still boot in QEMU
 # raspi3b? A red run means config/upstream.lock cannot be moved forward
 # without refreshing patches; the pinned builds are not affected.
+#
+# On pull requests this check only informs: a failing step turns into a
+# warning and the job stays green, since upstream moving is not the pull
+# request's fault. The weekly run fails as before.
 
 on:
   schedule:
@@ -31,16 +35,22 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-system-arm zstd
 
       - name: Check patches on the latest upstream
+        id: patches
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: scripts/check-patches.sh --latest
 
       - name: Build kernel (latest upstream)
+        id: kernel
         if: always()
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: scripts/build-kernel.sh --latest
 
       - name: Build redoxfs-file
         run: cargo build --release --manifest-path tools/redoxfs-file/Cargo.toml
 
       - name: Boot in QEMU raspi3b
+        id: boot
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           scripts/qemu-raspi3b.sh --test --timeout 2400 --usb-net \
             --kernel upstream/kernel/build/aarch64/kernel \
@@ -54,3 +64,12 @@ jobs:
         with:
           name: qemu-raspi3b-latest-log
           path: images/qemu-test.log
+
+      - name: Warn instead of failing (pull requests)
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          for step in "patches=${{ steps.patches.outcome }}" "kernel=${{ steps.kernel.outcome }}" "boot=${{ steps.boot.outcome }}"; do
+            case "$step" in
+              *=failure) echo "::warning title=Latest upstream::${step%%=*} fails on the latest upstream (see the job summary); the pinned check decides" ;;
+            esac
+          done
