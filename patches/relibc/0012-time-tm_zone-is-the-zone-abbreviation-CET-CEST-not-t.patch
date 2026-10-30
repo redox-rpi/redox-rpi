@@ -1,8 +1,8 @@
-From e73662fa63358a5607a4dceb516e58072de703e3 Mon Sep 17 00:00:00 2001
+From ff607d75c679bfd2344ce62725c083b061c02133 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 08:19:12 +0000
-Subject: [PATCH] time: tm_zone is the zone abbreviation (CET, CEST), not the
- zone name
+Subject: [PATCH 12/12] time: tm_zone is the zone abbreviation (CET, CEST), not
+ the zone name
 
 localtime_r() put the tz database name ("Europe/Berlin") into tm_zone,
 so strftime("%Z") printed that instead of CET or CEST as other systems
