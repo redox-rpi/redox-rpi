@@ -1,10 +1,10 @@
-# llama.cpp and the Qwen3 0.6B model (#43). Only for the SD-card image
-# (--sdcard): the network-boot image is loaded into RAM and holds at most
-# 256 MiB.
+# llama.cpp, the Rust model runtime rinfer and the assistant (#43). Small
+# enough for the network-boot image; the model file itself is in the
+# experiment assistant-model (SD-card image only), or fetched with
+# `rinfer --download`.
 [packages]
 llama-cpp = "source"
 # Rust inference with candle (recipes/rinfer).
 rinfer = "source"
-qwen3-model = "source"
 # The tool layer (tools/assistant): show_time, list_files, make_folder.
 assistant = "source"

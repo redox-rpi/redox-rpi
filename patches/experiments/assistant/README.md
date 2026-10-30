@@ -1,16 +1,24 @@
 # Experiment: assistant, llama.cpp and a small model on Redox (#43)
 
-Puts llama.cpp's command-line programs and the Qwen3 0.6B model (Q4_0,
-382 MB) into the SD-card image, to test the speed and memory of a local
-language model on the Pi. See
+Puts the assistant (`tools/assistant`), the Rust model runtime `rinfer`
+(candle) and llama.cpp's command-line programs into the image, to test a
+local language model on the Pi. See
 [docs/topics/assistant.md](../../../docs/topics/assistant.md).
 
 ```bash
-scripts/build-image.sh --sdcard --experiment assistant
+scripts/build-image.sh --sdcard --experiment assistant --experiment assistant-model
+scripts/build-image.sh --experiment assistant      # network boot, without the model
 ```
 
-Only for the SD-card image: the network-boot image is loaded into RAM and
-holds at most 256 MiB.
+The model file (382 MB) comes with the experiment
+[`assistant-model`](../assistant-model), only for the SD-card image: the
+network-boot image is loaded into RAM and holds at most 256 MiB. There
+`rinfer --download` fetches it onto `/scheme/data`.
+
+- [`recipes/rinfer`](recipes/rinfer): candle with three patches (an `sdot`
+  fallback for the Cortex-A53, less memory for Qwen3, a worker pool that
+  does not hang on Redox) and the test program `rinfer`: one prompt with
+  timings, `--serve` for the assistant, `--download` for the model.
 
 - [`recipes/llama-cpp`](recipes/llama-cpp): llama.cpp `7df8b87`
   (2026-10-29) with [`redox.patch`](recipes/llama-cpp/redox.patch), built
@@ -18,8 +26,8 @@ holds at most 256 MiB.
   and `llama-bench` in `/usr/bin`.
 - [`recipes/qwen3-model`](recipes/qwen3-model): downloads the model at
   build time, checks its SHA-256 and installs it as
-  `/usr/share/assistant/models/Qwen3-0.6B-Q4_0.gguf`. The file is not in
-  git.
+  `/usr/share/assistant/models/Qwen3-0.6B-Q4_0.gguf` (with
+  `--experiment assistant-model`). The file is not in git.
 
 `scripts/build-image.sh` copies an experiment's `recipes/` into
 `recipes/other` of the Redox tree.

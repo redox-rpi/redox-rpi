@@ -1,6 +1,8 @@
 //! Minimal Qwen3 GGUF inference with candle, for testing on Redox.
 //! Usage: rinfer <model.gguf> <prompt> [tokens]
 //!        rinfer <model.gguf> --serve     (for the assistant, see serve.rs)
+//!        rinfer --download <http://host[:port]/path> <file>
+//!            fetch the model over plain HTTP, for test images without it
 mod serve;
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -102,6 +104,9 @@ impl<R: Seek> Seek for ChunkedReader<R> {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "--download" {
+        return download(&args[2], &args[3]);
+    }
     let path = args.get(1).expect("model path");
     let prompt = args.get(2).map(String::as_str).unwrap_or("The capital of France is");
     let n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(16);
@@ -192,4 +197,57 @@ fn main() -> anyhow::Result<()> {
 /// RINFER_STEP: run the prompt one token at a time.
 fn step_mode() -> bool {
     std::env::var_os("RINFER_STEP").is_some()
+}
+
+/// HTTP/1.0 GET of `url` into `file`, in 1 MiB pieces, with the length the
+/// server gives checked at the end. No TLS: meant for the build host on the
+/// home network.
+fn download(url: &str, file: &str) -> anyhow::Result<()> {
+    use std::io::BufRead;
+    let rest = url.strip_prefix("http://").ok_or_else(|| anyhow::anyhow!("only http:// URLs"))?;
+    let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
+    let addr = if host.contains(':') { host.to_string() } else { format!("{host}:80") };
+    let stream = std::net::TcpStream::connect(&addr)?;
+    let mut w = stream.try_clone()?;
+    write!(w, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")?;
+    let mut r = std::io::BufReader::with_capacity(1 << 20, stream);
+    let mut line = String::new();
+    r.read_line(&mut line)?;
+    if !line.split_whitespace().nth(1).is_some_and(|c| c == "200") {
+        anyhow::bail!("server answered: {}", line.trim());
+    }
+    let mut len = None;
+    loop {
+        line.clear();
+        r.read_line(&mut line)?;
+        let l = line.trim();
+        if l.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = l.split_once(':') {
+            if k.eq_ignore_ascii_case("content-length") {
+                len = v.trim().parse::<u64>().ok();
+            }
+        }
+    }
+    let mut out = std::fs::File::create(file)?;
+    let mut buf = vec![0u8; 1 << 20];
+    let (mut got, t) = (0u64, Instant::now());
+    loop {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])?;
+        got += n as u64;
+        if got % (32 << 20) < n as u64 {
+            eprintln!("{} MiB", got >> 20);
+        }
+    }
+    out.sync_all()?;
+    if len.is_some_and(|l| l != got) {
+        anyhow::bail!("got {got} bytes, the server said {}", len.unwrap());
+    }
+    println!("{file}: {got} bytes in {:.0} s", t.elapsed().as_secs_f32());
+    Ok(())
 }

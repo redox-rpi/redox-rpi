@@ -1,0 +1,6 @@
+# The Qwen3 0.6B model file (382 MB, recipe in ../assistant/recipes) in the
+# image, for the SD-card image only: use with --experiment assistant. The
+# network-boot image is loaded into RAM (256 MiB at most); there the model
+# goes to /scheme/data with `rinfer --download`.
+[packages]
+qwen3-model = "source"
