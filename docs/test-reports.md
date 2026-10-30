@@ -827,3 +827,11 @@ units, `netstack` after it, `redox login:` 6.0 s after init's first unit
 (14.9 s with `v0.3.0-dev-214-g67fdc06+x19b9`, on a slower run). DHCP and
 `ping -c 2 10.0.2.2` pass, `/tmp` is `drwxrwxrwt`. Without a network card
 the boot ends at the login as well. **Pass.** Pi test queued.
+
+## 2026-10-30: `v0.3.0-dev-217-g1d028a4+x19b9-dirty` (netstack ready after eth0, #47), QEMU
+
+Branch `boot-time` with base `0028`: `netstack` reports ready after
+`Smolnetd::new` has set up `eth0` and its schemes (Pi test #69 boot 1 had
+`dhcpd` fail with `Can't open /scheme/netcfg/ifaces/eth0/mac`). QEMU
+`raspi3b` with `--usb-net`, three boots: DHCP and `ping -c 1 10.0.2.2` pass
+each time, no `eth0/mac` error. **Pass.** Pi test queued.

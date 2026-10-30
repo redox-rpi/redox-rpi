@@ -129,6 +129,15 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
   run). DHCP, ping and `/tmp` work.
   On the Pi this should hide most of `dwc2d`'s 6.2 s, until the login
   prompt; `netstack` and `devshd` still come after it.
+- Pi test #69 with `0027`: `redox login:` about 21.5 s after `kreset`
+  instead of 27.3 s, but in 1 of 3 boots `dhcpd` failed (`Can't open
+  /scheme/netcfg/ifaces/eth0/mac`) and the Pi had no network. Cause:
+  `netstack` reported ready before `Smolnetd::new` set up `eth0` and its
+  schemes; with the parallel start `dhcpd` ran in that gap. Base patch
+  [`0028`](base/0028-netstack-report-ready-after-eth0-and-the-schemes-are.patch)
+  moves `daemon.ready()` after it (agreed with the Network session; its
+  `netstack-multi` makes the same move, whichever lands first). QEMU with
+  USB network: DHCP and ping in 3 of 3 boots.
 - With clean boot (#18, merged last for v0.3.0) `pcid-spawner` twice and
   `audiod` go away: about 1.2 s in QEMU.
 - Pi (#53): 33.7 s → 29.3 s to `redox login:`, almost all from the

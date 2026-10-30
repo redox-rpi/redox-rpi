@@ -21,8 +21,10 @@
   asked its owner, who drops the hub waits in `dwc2d-boottime`), U-Boot's
   2 s countdown, 3.8 s for the image over HTTP. New: init starts `notify`
   services in parallel and the root file system no longer waits for USB
-  (base `0027`): QEMU init to login 6.0 s instead of 14.9 s. Pi test
-  queued.
+  (base `0027`): QEMU init to login 6.0 s instead of 14.9 s. Pi (#69):
+  login 6 s earlier, but `dhcpd` could start before `eth0` existed
+  (`netstack` reported ready too early, fixed in base `0028`). Pi test
+  queued again.
 
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: experiment
   `pi-clean-boot` on branch `pi-clean-boot` passes on a Pi 3B+ (test #14,
