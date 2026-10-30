@@ -75,7 +75,9 @@ recipes (`sigregs` already does this).
 - `0003` `tls_probe`: prints the TLS layout relative to the thread
   pointer (no pass/fail).
 
-Limits: no shell (`sh`) in the image, no network in QEMU.
+The image has dash as `/usr/bin/sh` (`/bin/sh`) for `stdio/popen`,
+`stdlib/system` and `unistd/exec`; dash itself installs only
+`/usr/bin/dash`. Limit: no network in QEMU.
 
 ## Results
 
