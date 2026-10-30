@@ -10,7 +10,7 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment k
 ```
 
 Base patch
-[`0025`](base/0025-inputd-German-keyboard-layout-de-with-AltGr.patch)
+[`0041`](base/0041-inputd-German-keyboard-layout-de-with-AltGr.patch)
 (only `drivers/inputd`, no `dwc2d` change):
 
 - a `de` map (T1): z and y swapped, ß ü ö ä, the # key left of Enter, the
@@ -19,7 +19,7 @@ Base patch
 - AltGr: @ € { [ ] } \ ~ | ² ³ µ. `inputd` keeps the right Alt key's state;
   layouts without an AltGr table ignore it as before;
 - dead keys (base patch
-  [`0026`](base/0026-inputd-dead-keys-for-the-German-layout-keymap-from-a.patch)):
+  [`0042`](base/0042-inputd-dead-keys-for-the-German-layout-keymap-from-a.patch)):
   ´, ` and ^ wait for the next key. With a vowel they make á é í ó ú ý,
   à è ì ò ù, â ê î ô û (and capitals); with space they type themselves;
   with any other key they type themselves and then that key.
