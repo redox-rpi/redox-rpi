@@ -2997,3 +2997,42 @@ image `~/t18-work/image-bt8/harddrive.img`.
   pass: version, manifest, ps, ps-tty, `/scheme/data` write and read back,
   0 of 300 starts failed.
 - `/srv/tftp/redox` has the stable image again for the next boot.
+
+## 2026-10-30: `v0.3.0-dev-463-gac3dad4+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `ha-bridge`, `mqtt-tls-test`. test 111 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) memory with MQTT over TLS, rerun of #89), Pi test agent
+
+**Pass: free memory fell 0.21 MB a minute over 30 minutes (#89: 5.5 MB a
+minute; goal under 1).** Image
+`~/mqtt-test/keep/leak-netboot-v0.3.0-dev-463-gac3dad4+x125f.img`, manifest
+matches. TLS broker `~/mqtt-broker/pi-test-broker-tls.sh` on homenodellm.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `echo 192.168.178.120 > /etc/mqtt-host` at 18:14:07 UTC; 25 s later the
+  serial log has `ha-bridge: 6 sensors announced on 192.168.178.120:8883 (TLS)
+  as redox-rpi/redox`. The broker got the state once a minute, 37 times in
+  31 minutes.
+- Readings, one devsh command `free; cat /scheme/sys/context` every 3 minutes:
+
+| Time (UTC) | free KB | `netstack` PRIVATE | `ha-bridge` | `redoxfs` | `timerd` | `devshd` | `randd` SHARED |
+|---|---|---|---|---|---|---|---|
+| 18:14:38 | 592,640 | 3.97 MB | 8.59 MB | 34.3 MB | 5.47 MB | 11.2 MB | 128 KB |
+| 18:20:38 | 591,392 | 4.22 MB | 8.59 MB | 34.3 MB | 5.52 MB | 11.3 MB | 200 KB |
+| 18:26:38 | 590,148 | 4.59 MB | 8.59 MB | 34.3 MB | 5.57 MB | 11.3 MB | 272 KB |
+| 18:32:38 | 588,880 | 4.97 MB | 8.59 MB | 34.3 MB | 5.61 MB | 11.4 MB | 344 KB |
+| 18:38:38 | 587,624 | 5.34 MB | 8.59 MB | 34.3 MB | 5.66 MB | 11.4 MB | 416 KB |
+| 18:44:38 | 586,364 | 5.72 MB | 8.59 MB | 34.3 MB | 5.71 MB | 11.4 MB | 488 KB |
+
+- In all: 6,276 KB less free in 30 minutes, very even (about 630 KB per
+  3 minutes). The `ha-bridge` service and `redoxfs` do not grow.
+- What still grows, slowly: `netstack` PRIVATE +1.75 MB (about 58 KB a
+  minute, the biggest part), `randd` SHARED +360 KB (12 KB a minute, one
+  random read per TLS run), `timerd` +240 KB, `devshd` +200 KB (my readings),
+  `procmgr` SHARED +56 KB, `zerod` SHARED +80 KB. These add up to about 2.7 MB
+  of the 6.1 MB.
+- Since the loss is far below 1 MB a minute, I did not kill the service.
+- Reset at 18:45:16 to end the test: `redox-rpi/redox/availability offline` at
+  the broker at 18:46:02, **46 s** later (the row expected about 30 s; likely
+  the 60 s keep-alive). Broker stopped; it ran without persistence, so no
+  retained topics stay.
+- `/srv/tftp/redox` has the stable image again; stable booted to `redox login:`.
