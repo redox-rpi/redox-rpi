@@ -1,7 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 7bbc86c521451d0f568a8ed6a0f8907db1847d92 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 26 Oct 2026 21:09:55 +0100
-Subject: [PATCH] bcm2835-sdhostd: driver for the sdhost SD card controller
+Subject: [PATCH 22/25] bcm2835-sdhostd: driver for the sdhost SD card
+ controller
 
 New driver for the BCM2835 sdhost controller, the one Linux uses for the
 card slot. Routes GPIO 48-53 to it, initializes the card and serves it as
@@ -23,7 +24,7 @@ an argument it stays in the foreground instead of notifying init.
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/main.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 3823eb23..44910fdc 100644
+index 3823eb2..44910fd 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -265,6 +265,19 @@ dependencies = [
@@ -47,7 +48,7 @@ index 3823eb23..44910fdc 100644
  name = "bincode"
  version = "1.3.3"
 diff --git a/Cargo.toml b/Cargo.toml
-index 471b8778..4bded670 100644
+index 471b877..4bded67 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -59,6 +59,7 @@ members = [
@@ -59,7 +60,7 @@ index 471b8778..4bded670 100644
      "drivers/storage/ided",
      "drivers/storage/lived",          # TODO: not really a driver...
 diff --git a/Makefile b/Makefile
-index 0de28837..263a5c43 100644
+index 0de2883..263a5c4 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -31,7 +31,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
@@ -73,7 +74,7 @@ index 0de28837..263a5c43 100644
  # For testing/benchmarking only
 diff --git a/drivers/storage/bcm2835-sdhostd/Cargo.toml b/drivers/storage/bcm2835-sdhostd/Cargo.toml
 new file mode 100644
-index 00000000..b4ef26bb
+index 0000000..b4ef26b
 --- /dev/null
 +++ b/drivers/storage/bcm2835-sdhostd/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -97,7 +98,7 @@ index 00000000..b4ef26bb
 +workspace = true
 diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
 new file mode 100644
-index 00000000..b72ccb63
+index 0000000..b72ccb6
 --- /dev/null
 +++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
 @@ -0,0 +1,576 @@
@@ -679,7 +680,7 @@ index 00000000..b72ccb63
 +}
 diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
 new file mode 100644
-index 00000000..929f8297
+index 0000000..929f829
 --- /dev/null
 +++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
 @@ -0,0 +1,191 @@
@@ -874,3 +875,6 @@ index 00000000..929f8297
 +        read(0x14)
 +    );
 +}
+-- 
+2.54.0 (Apple Git-157)
+
