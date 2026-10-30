@@ -12,7 +12,8 @@
 
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
-  (branch `netstack-multi`, experiment `netstack-multi`, Pi test #74):
+  (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
+  of #68, base `0041`–`0044` once merged; Pi test #74 passed):
   netstack used to take one adapter at start and dhcpd configured only
   `eth0`, once. Now netstack opens every `network.*` scheme and looks
   again every 2 s (`wlan*` for Wi-Fi, `eth*` for the rest), dhcpd gets a
@@ -29,7 +30,11 @@
   keeps only the last prefix option of a router advertisement, and each
   advertisement replaced the router. Fixed in `ipv6` base `0029` (every
   prefix, global first; lifetime 0 ends only that router), QEMU passes
-  with a global and a ULA prefix and a second router; Pi test #85.
+  with a global and a ULA prefix and a second router; **Pi test #85
+  passed** (global address, default route, internet over IPv6). Draft PR
+  [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
+  `multicast` and `ipv6` experiments to main; whichever of #81 and #82
+  lands second gets its netstack patches rebased.
 
 ## Later
 

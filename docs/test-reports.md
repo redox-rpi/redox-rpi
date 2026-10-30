@@ -2443,3 +2443,274 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152` (today's main, the 
   had 6 of 1000 in test 92 today.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-217-g2d2f24c+xf552`
+
+Real Pi 3B+ over netboot. Experiments: `multicast`, `ipv6`, `lan78xx-multicast`, `mdns`, `rtl8152`, `timesync`. test 85 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27) IPv6 global address and default route), Pi test agent
+
+**Pass.** Image `~/redox-rpi-zrtl/keep/slaac-v0.3.0-dev-217-g2d2f24c+xf552.img`.
+The Fritz!Box's global prefix today is `2a02:590:1504:9901::/64` (homenodellm:
+`2a02:590:1504:9901:4a45:e6ff:fea0:b063`).
+
+- About a minute after boot, `eth0` addresses: `fe80::ba27:ebff:fe08:e0aa/64`,
+  **`2a02:590:1504:9901:ba27:ebff:fe08:e0aa/64`**,
+  `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64`, `192.168.178.148/24`: **pass**.
+- Routes: **`default via fe80::b6fc:7dff:fe53:b289 dev eth0 src
+  2a02:590:1504:9901:ba27:ebff:fe08:e0aa`**, plus `2a02:590:1504:9901::/64`,
+  `fdeb:d4ef:a7ac::/64` and `fe80::/64` on eth0: **pass**.
+- The serial log has no `router advertisement from …` lines (this image
+  doesn't print them). The only router seen is the Fritz!Box,
+  `fe80::b6fc:7dff:fe53:b289`.
+- `ping -6` to the Pi's global address from homenodellm: 3/3 (0.9–4.3 ms):
+  **pass**.
+- `net6 udp [2a02:…:b063]:7777 hello`: reply `hello`, and `udp-echo.py` saw
+  the Pi's `2a02:590:1504:9901:ba27:ebff:fe08:e0aa` (it timed out in test 55):
+  **pass**. To the ULA `fdeb:…:b063`: reply, echo saw the Pi's ULA: **pass**.
+- `net6 resolve example.com`: `2606:4700:10::6814:179a`,
+  `2606:4700:10::ac42:93f3` (and two IPv4 addresses). `net6 tcp
+  [2606:4700:10::6814:179a]:80 hello`: from `[2a02:…:e0aa]:49152`, reply
+  `HTTP/1.1 400 Bad Request`, `Server: cloudflare`: **pass** (internet over IPv6).
+- `/scheme/netcfg/resolv/nameserver6`: `fdeb:d4ef:a7ac:0:b6fc:7dff:fe53:b289`.
+- `mdns-query.py redox-rpi.local AAAA -6 wlp13s0`: the Pi answers with three
+  AAAA records (fe80, 2a02 and fdeb) and the A record. The Fritz!Box also
+  answers from its cache: **pass**.
+- After 10 minutes (09:25 UTC): the same addresses and routes.
+- Standard checks pass, 0 of 300 starts failed.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-218-ge3e4424+x19b9`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `boot-time`. test 84 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, third round, base `0028`), Pi test agent
+
+**Pass: network in 5 of 5 boots, login about 21.4 s after `kreset`.** Staged
+with `~/t18-work/bt6-stage/scripts/netboot.sh` (bootloader md5 `549fc80b…`).
+Afterwards the saved stable files went back into `/srv/tftp/redox`. Timelines
+are on homenodellm in `~/t18-work/tl-pi-bt6-{1..5}.txt`; each boot was a devsh
+reset (boot 1 from the stable image).
+
+| Seconds | boot 1 | boot 2 | boot 3 | boot 4 | boot 5 |
+|---|---|---|---|---|---|
+| `kreset` | 2.02 | 1.55 | 1.50 | 1.55 | 1.58 |
+| kernel starts | 18.35 | 17.31 | 17.34 | 17.28 | 17.39 |
+| `switchroot to /usr` | 22.21 | 21.15 | 21.21 | 21.13 | 21.24 |
+| `redox login:` | 23.92 | 22.91 | 22.91 | 22.88 | 22.95 |
+| **`redox login:` after `kreset`** | **21.90** | **21.36** | **21.41** | **21.33** | **21.37** |
+| `40_dwc2d.service ready after` | 8409 ms | 6741 ms | 6246 ms | 6429 ms | 6304 ms |
+| network | yes | yes | yes | yes | yes |
+
+- No `Can't open /scheme/netcfg/ifaces/eth0/mac` in any boot, and devsh
+  answered after every boot: **pass** (test 69 boot 1 had no network).
+- Login is about as fast as test 69 (21.3–22.1 s after `kreset`).
+- Standard checks pass, 0 of 300 starts failed.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-238-g03161ba+x6026`
+
+Real Pi 3B+ over netboot. Experiments: `relibc-tests`, `timesync`, `rtl8152`, `sigentry-thread-signals`, `sigsegv`, `sigregs-test`, `timer-sigmask`. test 86 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc test suite with timer-sigmask, dash and test-order fixes), Pi test agent
+
+**Pass: 319 tests, 4 failed (all known), 0 new, 14 fixed.** Image
+`~/redox-rpi-t12/build/g3-pi.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `sigregs sender`: `PASS sender: si_pid 374 from the thread, 375 from the
+  child`. `sigregs thread -n 3000`: `PASS thread: 3000 signals, all registers
+  kept` (95 s). `sigregs process -n 3000`: `PASS process: 3000 signals, all
+  registers kept` (95 s).
+- `ion /usr/share/relibc-tests/run.ion` over devsh: 51 s. Output saved on
+  homenodellm as `~/pitest-tools/relibc86.txt` (copy in
+  `~/redox-rpi-t12/build/relibc86-pi.txt`). `relibc-tests-compare.py` and
+  `config/relibc-tests-expected.txt` from `t-g3-pi`:
+  `SUMMARY v0.3.0-dev-238-g03161ba+x6026: 319 tests, 4 failed (4 known, 0
+  flaky, 0 new), 14 fixed`. No `NEW` line.
+- The 4 failures: `bins_dynamic/redox_ring_ramfs` (exit status 1),
+  `bins_static/tls_align`, `bins_dynamic/tls_align`, `bins_dynamic/tls_shared`
+  (stdout mismatch). `time/timer`, `stdio/popen`, `stdlib/system`,
+  `unistd/exec`, `stdio/fscanf_offby1`, `stdio/ungetc_ftell` and `stdio/mutex`
+  pass.
+- 14 `FIXED`, among them `netdb/getaddrinfo`, `pthread/rwlock_randtest`,
+  `sigaction`, `sigaltstack`, `signals/sigpause-revert`,
+  `signals/sigprocmask-3`, `signals/sigsegv`, `signals/sigset-5`,
+  `signals/stackoverflow`, `sys_select/pselect`, `sys_socket/getpeername`,
+  `getsockopt`, `recv`, `recvfrom`. That is more than QEMU's 8: the expected list
+  is based on QEMU's 10 failures, and the Pi fails fewer.
+
+Stable image restored afterwards.
+
+
+## 2026-10-29: `v0.3.0-dev-260-g480ba01+xda44-dirty.371f590ffeb2` (welcome app, #24), QEMU
+
+Branch `welcome-app`, experiment `welcome`. `test-welcome.sh` answers the
+first-boot questions on the serial console: layout `gb`, hostname
+`pi-test`, no new password, Wi-Fi `TestNet` / `secret123`. The files are
+written (`/etc/net/wifi` mode 600), the passphrase is not echoed, the
+login prompt follows at once. The second boot of the same card shows no
+welcome and keeps hostname `pi-test`. **Pass.** The time zone question was
+skipped (no zone files in this image). Pi test 78 passed later; the rebased branch (`v0.3.0-dev-381-g5d6d934+xda44`, patch `0040`) passes this test as well.
+
+## 2026-10-30: `v0.3.0-dev-109-ga21be68+x192b`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `mqtt-demo`, `ha-bridge`. test 88 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) retest of tests 58 and 65 with the connect fix), Pi test agent
+
+**Pass.** Broker `~/mqtt-broker/pi-test-broker.sh` (plain, 192.168.178.120:1883);
+capture saved as `~/pitest-tools/broker88.out` on homenodellm. Manifest matches.
+
+- Standard checks pass, 0 of 300 starts failed.
+- First 3 minutes, default broker 10.0.2.2: `mqtt-pub: 10.0.2.2:1883: no
+  answer from the broker within 10 s` (6×), `ha-bridge: … no answer … trying
+  again in 30 s` (the service, 5×) and `ha-bridge: … no answer …` (the timer
+  run, 3×). Every timer run ended `exited with code 1 after 10.1–10.4 s`, and
+  there was **no** `still running, skipped this run`. `timerd -l` answered at once
+  (0.3 s) with all three timers and their last runs: **pass**.
+- `echo 192.168.178.120 > /etc/mqtt-host` at 09:47:52, nothing killed. The log
+  had `ha-bridge: 6 sensors announced on 192.168.178.120:1883 as
+  redox-rpi/redox` after **40 s** (a little over the 30 s in the row: the
+  service retries every 30 s, plus the 10 s timeout). The broker got
+  `redox-rpi/redox/availability online` and the six `homeassistant/…/config`
+  topics (5 `sensor`, 1 `binary_sensor`). Once a minute it got
+  `redox-rpi/temperature`, `redox-rpi/uptime` and `redox-rpi/redox/state`
+  (the timer runs already published at 09:48:00): **pass**.
+- `mosquitto_pub … -t homeassistant/status -m online`: the six configs came
+  again (6 → 12 in the capture): **pass**.
+- `mqtt-pub -h 192.168.178.99 -t x -m x`: `no answer from the broker within
+  10 s`, exit 1, after 10.05 s: **pass**.
+- `echo reset > /scheme/sys/kstop` at 09:50:33. `redox-rpi/redox/availability
+  offline` came at 09:51:03, **about 30 s** after the reset: **pass**.
+- `free` every 3 minutes (total 745,252 KB): 09:48 562,016 KB free, 09:51
+  597,492 KB free (the 09:45 reading timed out during the standard checks).
+  No loss over 6 minutes; the row's TLS rerun (#89) is the comparison.
+
+Broker stopped, stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-115-g78c6372+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `ha-bridge`, `mqtt-tls-test`. test 89 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) rerun of test 76, MQTT over TLS with the connect fix), Pi test agent
+
+**Pass, but free memory falls about 5.5 MB a minute while ha-bridge runs over
+TLS.** Broker `~/mqtt-broker/pi-test-broker-tls.sh`; capture saved as
+`~/pitest-tools/broker89.out` on homenodellm. Manifest matches.
+
+- Standard checks pass, 0 of 300 starts failed. A first try right after the
+  boot printed nothing (probably before devsh was up); the second passed.
+- Before the broker was set (about 9 minutes): `ha-bridge: 10.0.2.2:8883: no
+  answer from the broker within 10 s; trying again in 30 s` (the service) and
+  the timer runs, each `exited with code 1 after 10.1 s`. **No** `still
+  running, skipped this run`: **pass**. `/usr/lib/init.d/75_ha-bridge.service`
+  runs `ha-bridge -d`; `ps` shows `ha-bridge` (pid 38, two threads).
+- `echo 192.168.178.120 > /etc/mqtt-host` at 10:04:04, nothing killed. `ha-bridge:
+  6 sensors announced on 192.168.178.120:8883 (TLS) as redox-rpi/redox` after
+  about 26 s. The broker got `redox-rpi/redox/availability online`, the six
+  configs, and `redox-rpi/redox/state` once a minute: **pass**.
+- `mqtt-pub -t tls/pi -m hello -q 1`: exit 0, `tls/pi hello` arrived: **pass**.
+- `echo reset > /scheme/sys/kstop` at 10:15:19, `availability offline` at
+  10:15:45, **about 27 s** later: **pass**.
+- `free` (free KB of 745,252):
+
+| time | free | |
+|---|---|---|
+| 09:58:40 | 581,704 | after boot, broker not set |
+| 10:01:49 | 506,400 | right after the standard checks |
+| 10:04:51 | 501,876 | broker just set (TLS from 10:04:30) |
+| 10:11:32 | 460,308 | |
+| 10:14:33 | 448,308 | |
+
+  From 10:04:51 to 10:14:33, 53.6 MB less in 9.7 minutes, **about 5.5 MB a
+  minute**. Test 88 (same features without TLS) stayed level, and test 76 (older
+  image) lost about 15 MB a minute. So the loss comes with the TLS connections
+  (one `ha-bridge` connection a minute plus the service's).
+
+Broker stopped, retained `tls/pi` cleared, stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-225-g9ed4e48+xd4e7`
+
+Real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `timesync`, `rtl8152`, `wifi-sdio`. test 91 part A ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4, rerun of test 77), Pi test agent
+
+**Part A (`gpu_mem=16`): pass, the Wi-Fi scan works. Part B (`gpu_mem=64`) not
+done:** my permission check blocked the change to the shared
+`/srv/tftp/config.txt`, so it needs the user's OK. The file is unchanged
+(`gpu_mem=16`). Image
+`~/redox-rpi-zrtl/keep/wifiscan4-v0.3.0-dev-225-g9ed4e48+xd4e7.img`.
+
+- Boot: `rpi-firmwared: Wi-Fi power 0, tag not marked answered` and `Wi-Fi
+  power 1, tag not marked answered`, with no `I/O error` any more. Everything test
+  60 checks up to `MAC address b8:27:eb:5d:b5:ff`, then `CLM loaded (2676 bytes,
+  2 chunks)`, `radio up`, `event other (54), status 0, reason 0, flags 0x0`,
+  `frame on channel 3, 4 bytes`, `frame on channel 3, 1396 bytes`, **`9
+  networks`**, `no /etc/net/wifi, not joining a network`, `bcm2835-sdiod: OK`:
+  **pass**.
+- Scan list (BSSIDs and the neighbours' names left out here; all `Wpa2`): the
+  Fritz!Box `zehrer.net` on ch 1 (−57 dBm) and ch 64 (−60 dBm), `zehrer.xyz`
+  on ch 1 (−58 dBm), and six other networks on ch 6 (−70, −71), 11 (−75),
+  108 (−79, −79) and 116 (−85). Channels and levels look plausible.
+- Over devsh: `echo 0 > /scheme/rpi-firmware/wifi_power; echo $?` → `0`, `cat`
+  → `0`; `echo 1 …` → `0`, `cat` → `1`: **pass** (tests 57, 60 and 77 gave I/O error).
+- `/usr/lib/drivers/bcm2835-sdiod` once more (power-cycles the chip): the same
+  lines up to `OK`, **8 networks**, the same as at boot without the weakest
+  (ch 116, −85 dBm). Levels within 1–2 dB.
+- `free`: total 743,612 KB, 606,428 KB free.
+- Standard checks on the stable image afterwards: 1 of 300 starts failed (stable's
+  known start crashes, see test 92).
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-155-g16b10cb+x7d9f`
+
+Real Pi 3B+ over netboot. Experiments: `gpio`, `bluetooth`. test 90 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54) Bluetooth, rerun of test 79 with the power switch fixed), Pi test agent
+
+**Fail: the power switch works now, but the controller still never answers.**
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-155-g16b10cb+x7d9f/harddrive.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- Boot: `bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`.
+  No `tag 0x00038041: not supported` any more, no `received bytes lost`, no
+  `a 1 ms sleep did not come back`.
+- `cat /scheme/rpi-firmware/bt_power`: `0`. `bt up` (2.4 s): **`power:
+  cycled`** (no I/O error: the fix works), `uart: core clock 250000000 Hz,
+  115313 baud`, then `bt: no answer to HCI command 0c03`. `bt_power` then reads `1`.
+- `bt info`, `bt scan 10`, `bt inquiry 10`: `no answer to HCI command` 1001,
+  0c01 and 0401.
+- `echo 0 > …/bt_power; echo 1 > …/bt_power; bt cmd 0c03`: no answer.
+- `throttled`: `0x00080000` (the soft temperature limit was reached at some
+  point since boot; the temperature is 56.9 °C, nothing throttled now).
+- Possible cause: `/srv/tftp/config.txt` has `enable_uart=1` and
+  `dtoverlay=disable-bt` (the PL011 goes to the serial console on GPIO 14/15).
+  The BT chip's UART lines (GPIO 30–33) may then not be routed to the mini
+  UART, or still be set for another function. A GPIO function readout of
+  GPIO 30–33 after `bt up` would show it.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-341-gc3ad5d3+x59c0`
+
+Real Pi 3B+ over netboot. Experiments: `multicast`, `ipv6`, `lan78xx-multicast`, `mdns`, `sshd`, `rtl8152`, `timesync`. test 96 ([#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS announces SSH), Pi test agent
+
+**Pass.** Image `~/redox-rpi-zrtl/keep/mdns-ssh-v0.3.0-dev-341-gc3ad5d3+x59c0.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `mdnsd:` lines: `redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2
+  services configured`, `redox-rpi._devsh._tcp.local port 2323 announced`,
+  `redox-rpi._ssh._tcp.local port 22 announced`, `redox-rpi.local is
+  192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1504:9901:ba27:ebff:fe08:e0aa,
+  fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa`.
+- `mdns-query.py redox-rpi.local`: A `192.168.178.148` (ttl 120) and the three
+  AAAA: **pass**.
+- `mdns-query.py _ssh._tcp.local PTR`: PTR `redox-rpi._ssh._tcp.local` (ttl
+  4500), plus A/AAAA. `redox-rpi._ssh._tcp.local SRV`: **SRV port 22 target
+  `redox-rpi.local`** (ttl 120), and `ANY` adds `TXT 00`: **pass**.
+  - Note: the PTR answer carries A/AAAA as extra records but not the SRV and
+    TXT. The Mac on the same network sends them with its PTR. Browsers that
+    ask SRV separately (avahi, dns-sd) still work. Adding them to the PTR
+    answer would save one query.
+- `_devsh._tcp.local PTR`: `redox-rpi._devsh._tcp.local`, SRV (asked
+  directly) port 2323: **pass**.
+- `_services._dns-sd._udp.local PTR`: the Pi lists `_devsh._tcp.local` and
+  `_ssh._tcp.local`: **pass**.
+- `ssh -v root@192.168.178.148` (the address from mDNS, test key put into
+  `/home/root/.ssh/authorized_keys` over devsh): `Server host key: ssh-ed25519
+  SHA256:6b9SpKQH…` (the same as test 81, kept on `/scheme/data`),
+  `Authenticated … using "publickey"`, `OK`, `Redox redox-rpi 0.5.12 …`: **pass**.
+- Idle CPU over 30 s (`ps`, there is no `top`): `mdnsd` SCHTIME +0.02 s, `sshd`
+  +0.00 s.
+
+Stable image restored afterwards.
