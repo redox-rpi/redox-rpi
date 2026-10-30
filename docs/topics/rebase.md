@@ -100,8 +100,9 @@ base `0001` and `0018` refreshed:
   runs (`uds_stream`, `uds_dgram` in `/scheme`).
 - With `sdhost-driver sdhost-boot ldso-diagnostics kernel-borrow-populate`
   as well: builds; `bcm2835-sdhostd` serves the card in QEMU.
-- New at HEAD: `inputd` logs `invalid path ''` once at boot (not with the
-  pinned commits). Not followed up; possibly the orbclient change.
+- `inputd` logs `invalid path ''` once: not new at HEAD and not from boot.
+  It shows with the pinned commits as well, right after `ls /scheme`
+  (`ls` opens the `input` scheme root with an empty path). Harmless (#1).
 - For comparison, upstream's own daily aarch64 image panics in QEMU
   `raspi3b` (`MissingRequiredProperty("interrupt-cells")` in
   `dtb/irqchip.rs`), which our `fdt` patch 0001 fixes.
@@ -113,7 +114,7 @@ base `0001` and `0018` refreshed:
 | Refresh base `0001`, `0018` (done on `rebase-study`), move the pins | 30 minutes |
 | Full build, QEMU checks (done once here) | 1 hour |
 | Pi: standard checks, `sd-stress.py`, 300 starts, network boot and SD boot | 2 hours with the Pi test agent |
-| Look at the `inputd` message; re-run the relibc tests (signal and futex changes upstream touch the code our signal patches sit in) | 1–2 hours |
+| Re-run the relibc tests (signal and futex changes upstream touch the code our signal patches sit in) | 1–2 hours |
 | Branch owners refresh their own experiments (table above) | 5–15 minutes each |
 
 Upstream moves fast in base (65 commits in a few days), so the result
