@@ -183,3 +183,8 @@ Branch `sshd-keys`, after Pi test #101.
   `/scheme/data/home/root/.ssh/authorized_keys`. QEMU, with a 16 MB RedoxFS
   mounted as `data`: key login with only that file works, `StrictModes`
   accepts it. The host keys were already kept there (Pi test #101).
+
+Pi test #120 (`v0.3.0-dev-407-g741b667+x4ec1`, 2026-10-30) passed:
+`ssh-keyscan` returns 3 keys with and without `-t`; key login with the key
+only on the data partition works, also after a reset, with the same host key
+fingerprints; `ssh-session.exp` passes. Report: `docs/test-reports.md` on main.
