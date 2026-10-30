@@ -113,7 +113,7 @@ boot() {
     log="$ROOT/images/qemu-hotplug-$1.log"
     shift
     rm -f "$socket" "$log"
-    QEMU_DEVSH_PORT=$port1 timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" "$@" --monitor "$socket" --image "$image" \
+    DEVSH_PORT=$port1 timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" "$@" --monitor "$socket" --image "$image" \
         < /dev/null > "$log" 2>&1 &
     qemu=$!
     for _ in $(seq 20); do
