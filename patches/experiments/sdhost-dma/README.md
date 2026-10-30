@@ -8,7 +8,7 @@ DMA controller, step 1 of the [DMA plan](../../../docs/topics/dma.md)
 
 Applies on main, where sdhost is the default driver (base `0025`–`0028`).
 
-Agreed with the Firmware topic, which owns the DMA plan (#30): channel 4
+Agreed with the Firmware topic, which owns the DMA plan (#21): channel 4
 is sdhost's (5 is kept for framebuffer blits, 2 and 0 for SPI or audio);
 the bus offset comes from `/soc` `dma-ranges` (fallback `0xc000_0000`);
 only bit 4 of the global enable register is changed; the DMA code stays in
