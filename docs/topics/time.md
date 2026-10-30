@@ -18,7 +18,7 @@
   (`timerd`) and #41 (`timesync` with late DHCP) passed; pull request for
   main open (v0.4.0).
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
-  / `settimeofday` in relibc (patch `0008`) and `timesync -s` to set the
+  / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
   passed.
 
