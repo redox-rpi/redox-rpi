@@ -2714,3 +2714,34 @@ Real Pi 3B+ over netboot. Experiments: `multicast`, `ipv6`, `lan78xx-multicast`,
   +0.00 s.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-362-g4ddab1f+x0937`
+
+Real Pi 3B+ over netboot. Experiments: `futex-wait-lock`, `relibc-tests`, `timesync`. test 98 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43) lost futex wakeups, kernel backport of upstream `57ccc8f` and `5805059`), Pi test agent
+
+**Pass: 40 of 40 `cond_stress` runs without a lost wakeup; relibc suite 0 new
+failures.** Image `~/redox-rpi-t12/build/futex-pi.img`. Output on homenodellm
+in `~/redox-rpi-t12/build/cond98-pi.txt` and `relibc98-pi.txt`.
+
+- **First boot: no network.** `dwc2d` panicked during USB enumeration:
+  `thread 'main' (1) panicked at drivers/usb/dwc2d/src/enumerate.rs:173:40:
+  index out of bounds: the len is 0 but the index is 7`. Then `smoltcpd: no
+  network adapter found` and `dhcpd: Can't open /scheme/netcfg/ifaces/eth0/mac`.
+  The second boot (serial-console reset) was normal (`LAN78xx link up after
+  1710 ms`). So 1 of 2 boots; this build has no `rtl8152` experiment.
+- Standard checks pass, 0 of 300 starts failed.
+- `cd /usr/share/relibc-tests; for i in 1..=40; ./bins_dynamic/pthread/cond_stress;
+  echo rc=$?; end` (247 s, about 6 s each): 40 × `rc=0`, 40 × `lost wakeups:
+  0`, no `lost wakeup after`: **pass** (QEMU without the fix: 3 of 21).
+- `ion /usr/share/relibc-tests/run.ion` (71 s), compared with
+  `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t-futex-wait-lock`: `SUMMARY v0.3.0-dev-362-g4ddab1f+x0937: 320 tests, 16
+  failed (16 known, 0 flaky, 0 new), 6 fixed`. No `NEW` line: **pass**.
+- Fixed: `netdb/getaddrinfo`, `pthread/rwlock_randtest`,
+  `sys_socket/getpeername`, `getsockopt`, `recv`, `recvfrom`. The 16 known
+  failures are the ones without the sigsegv/sigentry experiments (`sigaltstack`,
+  `signals/sigsegv`, `stackoverflow`, `sigset-5`, `sigprocmask-3`, `sigaction`,
+  `sys_select/pselect` SIGILL), plus `time/timer`, `stdio/mutex`, `fscanf_offby1`,
+  `ungetc_ftell`, `tls_align` ×2, `tls_shared` and `redox_ring_ramfs`.
+
+Stable image restored afterwards.
