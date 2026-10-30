@@ -1802,9 +1802,11 @@ timelines in `~/t18-work/tl-pi-bt5-{1,2,3}.txt` on homenodellm:
   `40_bcm2835-sdhcid` about 445 ms, `00_ptyd` about 158 ms, `60_data`
   413–433 ms.
 
-## Test 74: netstack with several adapters (2026-10-30, Pi test agent)
+## 2026-10-30: `v0.3.0-dev-261-gaca5de2+x368f`
 
-**Pass.** Build `v0.3.0-dev-261-gaca5de2+x368f` (branch `netstack-multi`),
+Real Pi 3B+ over netboot. Experiment: `netstack-multi`. test 74 ([#53](https://github.com/redox-rpi/redox-rpi/issues/53) netstack with several adapters), Pi test agent
+
+**Pass.** Branch `netstack-multi`,
 image `~/redox-rpi-zrtl/keep/nsm-v0.3.0-dev-261-gaca5de2+x368f.img`, staged
 with stable's bootloader and reset over the serial console.
 
