@@ -35,7 +35,11 @@ BEGIN, END = "PITEST-BEGIN", "PITEST-END"
 
 class Shell:
     def __init__(self, host, port):
-        self.sock = socket.create_connection((host, port), timeout=10)
+        self.host, self.port = host, port
+        self.login()
+
+    def login(self):
+        self.sock = socket.create_connection((self.host, self.port), timeout=10)
         read_until(self.sock, re.compile(rb"login: $"), STEP_TIMEOUT)
         self.sock.sendall(b"root\r")
         read_until(self.sock, re.compile(rb"password: $"), STEP_TIMEOUT)
@@ -43,9 +47,23 @@ class Shell:
         read_until(self.sock, SHELL_PROMPT, STEP_TIMEOUT)
 
     def run(self, command, timeout=120):
-        """Run one Ion command line and return its output lines. The output
-        sits between two marker lines; the echo of the typed command never
-        matches them exactly."""
+        """Run one Ion command line and return its output lines. A command
+        that gives no output is tried once more in a new session: a devsh
+        session sometimes stops answering (#11)."""
+        try:
+            return self.run_once(command, timeout)
+        except (RuntimeError, OSError) as e:
+            print(f"retry in a new session: {str(e).splitlines()[0]}", flush=True)
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.login()
+            return self.run_once(command, timeout)
+
+    def run_once(self, command, timeout):
+        """The output sits between two marker lines; the echo of the typed
+        command never matches them exactly."""
         line = f"echo {BEGIN}; {command}; echo {END}"
         self.sock.sendall(line.encode() + b"\r")
         # Ion redraws its prompt while the line is typed, so wait for the
