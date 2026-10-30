@@ -90,4 +90,4 @@ announcements carry A, AAAA, the devsh records and `_ssh._tcp.local` PTR →
 224.0.0.251 and ff02::fb. `mdns-qemu-test.py --ssh --ipv6`: `result:
 multicast A yes, unicast A yes, SRV 2323 yes, SRV 22 yes, multicast AAAA
 over IPv6 yes, unicast AAAA over IPv6 yes`. Without the file (unit test)
-the service is not announced. Pi test #95 is queued.
+the service is not announced. Pi test #96 is queued.
