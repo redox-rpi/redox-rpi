@@ -1,0 +1,39 @@
+From 4bb968b01314f3654105e904890191b6144e9531 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 06:27:19 +0000
+Subject: [PATCH] netstack: report ready after eth0 and the schemes are set up
+
+netstack reported ready before Smolnetd::new created eth0 and its
+schemes. With init starting units in parallel, dhcpd ran in that gap and
+failed with Can't open /scheme/netcfg/ifaces/eth0/mac (Pi test 69, #47).
+---
+ netstack/src/main.rs | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/netstack/src/main.rs b/netstack/src/main.rs
+index 084c3d3d..258b6ae7 100644
+--- a/netstack/src/main.rs
++++ b/netstack/src/main.rs
+@@ -100,8 +100,6 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     let event_queue = EventQueue::<EventSource>::new()
+         .map_err(|e| anyhow!("failed to create event queue: {:?}", e))?;
+ 
+-    daemon.ready();
+-
+     event_queue
+         .subscribe(network_fd.raw(), EventSource::Network, EventFlags::READ)
+         .map_err(|e| anyhow!("failed to listen to network events: {:?}", e))?;
+@@ -158,6 +156,10 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     )
+     .context("smolnetd: failed to initialize smolnetd")?;
+ 
++    // Ready only now: Smolnetd::new sets up eth0 and the schemes that dhcpd
++    // and the others open right after
++    daemon.ready();
++
+     libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+ 
+     let all = {
+-- 
+2.53.0
+

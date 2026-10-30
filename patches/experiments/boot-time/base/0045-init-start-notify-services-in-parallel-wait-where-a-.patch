@@ -1,0 +1,385 @@
+From f1d76bde22ef533380ee8fb36aa40ef216b57d0a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:56:37 +0000
+Subject: [PATCH] init: start notify services in parallel, wait where a unit
+ requires them
+
+init no longer waits for each notify service before it goes on. It waits
+for one where a later unit requires it, directly or through a target,
+and when nothing else can start. The root file system no longer waits
+for dwc2d (USB); netstack does (#47, boot time).
+---
+ init.d/10_smolnetd.service      |   2 +
+ init.initfs.d/40_drivers.target |   1 -
+ init.initfs.d/90_initfs.target  |   4 +-
+ init/src/main.rs                |   1 +
+ init/src/scheduler.rs           | 102 ++++++++++++++++++++++++++++----
+ init/src/service.rs             |  70 +++++++++++++++++-----
+ init/src/unit.rs                |   4 ++
+ 7 files changed, 154 insertions(+), 30 deletions(-)
+
+diff --git a/init.d/10_smolnetd.service b/init.d/10_smolnetd.service
+index 1ee54ad0..18ae8b0b 100644
+--- a/init.d/10_smolnetd.service
++++ b/init.d/10_smolnetd.service
+@@ -4,6 +4,8 @@
+ description = "Network stack"
+ requires_weak = [
+     "00_pcid-spawner.service",
++    # The Pi's network adapters are on USB
++    "40_dwc2d.service",
+ ]
+ 
+ [service]
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 8741d3dd..364eaf0b 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -5,7 +5,6 @@ requires_weak = [
+     "20_graphics.target",
+     "40_ps2d.service",
+     "40_bcm2835-sdhostd.service",
+-    "40_dwc2d.service",
+     "40_hwd.service",
+     "40_pcid-spawner-initfs.service",
+     "40_rpi-firmwared.service",
+diff --git a/init.initfs.d/90_initfs.target b/init.initfs.d/90_initfs.target
+index 8b567986..fec3ee6e 100644
+--- a/init.initfs.d/90_initfs.target
++++ b/init.initfs.d/90_initfs.target
+@@ -1,3 +1,5 @@
+ [unit]
+ description = "initfs finalized"
+-requires_weak = ["50_rootfs.service"]
++# dwc2d is not in 40_drivers.target: the root file system does not wait for
++# USB. netstack waits for it (10_smolnetd.service).
++requires_weak = ["50_rootfs.service", "40_dwc2d.service"]
+diff --git a/init/src/main.rs b/init/src/main.rs
+index 9081e560..4495b409 100644
+--- a/init/src/main.rs
++++ b/init/src/main.rs
+@@ -206,6 +206,7 @@ fn main() {
+     };
+ 
+     scheduler.step(&mut unit_store, &mut init_config);
++    scheduler.wait_starting();
+ 
+     libredox::call::setrens(0, 0).expect("init: failed to enter null namespace");
+ 
+diff --git a/init/src/scheduler.rs b/init/src/scheduler.rs
+index 23540a9d..3d606817 100644
+--- a/init/src/scheduler.rs
++++ b/init/src/scheduler.rs
+@@ -3,10 +3,15 @@ use std::sync::OnceLock;
+ use std::time::{Duration, Instant};
+ 
+ use crate::InitConfig;
++use crate::service::Starting;
+ use crate::unit::{Unit, UnitId, UnitKind, UnitStore};
+ 
+ pub struct Scheduler {
+     pending: VecDeque<Job>,
++    /// `notify` services that run but are not ready yet, with their start
++    /// time. init goes on with other units and waits for one of these only
++    /// where a unit requires it, directly or through a target.
++    starting: Vec<(UnitId, Instant, Starting)>,
+ }
+ 
+ struct Job {
+@@ -22,6 +27,7 @@ impl Scheduler {
+     pub fn new() -> Scheduler {
+         Scheduler {
+             pending: VecDeque::new(),
++            starting: Vec::new(),
+         }
+     }
+ 
+@@ -57,29 +63,92 @@ impl Scheduler {
+     }
+ 
+     pub fn step(&mut self, unit_store: &mut UnitStore, init_config: &mut InitConfig) {
++        // Jobs put back in a row; once all went back, wait for a service
++        let mut put_back = 0;
+         'a: loop {
++            self.poll_starting(false);
+             let Some(job) = self.pending.pop_front() else {
+                 return;
+             };
++            if put_back > self.pending.len() && !self.starting.is_empty() {
++                self.pending.push_front(job);
++                self.poll_starting(true);
++                put_back = 0;
++                continue;
++            }
+ 
+             match job.kind {
+                 JobKind::Start => {
+-                    let unit = unit_store.unit_mut(&job.unit);
++                    let unit = unit_store.unit(&job.unit);
+ 
+                     for dep in &unit.info.requires_weak {
+                         for pending_job in &self.pending {
+                             if &pending_job.unit == dep {
+                                 self.pending.push_back(job);
++                                put_back += 1;
+                                 continue 'a;
+                             }
+                         }
+                     }
++                    // A target starts nothing; units that require it wait
++                    // through it
++                    let is_target = matches!(unit.kind, UnitKind::Target {});
++                    if !is_target && self.waits_for_starting(unit_store, &unit.info.requires_weak, 0)
++                    {
++                        self.pending.push_back(job);
++                        put_back += 1;
++                        continue 'a;
++                    }
++                    put_back = 0;
+ 
+-                    run(unit, init_config);
++                    let started = Instant::now();
++                    if let Some(starting) = run(unit_store.unit_mut(&job.unit), init_config) {
++                        self.starting.push((job.unit, started, starting));
++                    }
+                 }
+             }
+         }
+     }
++
++    /// Waits until every started service is ready
++    pub fn wait_starting(&mut self) {
++        while !self.starting.is_empty() {
++            self.poll_starting(true);
++        }
++    }
++
++    /// Takes the started services that are ready off the list; with `block`
++    /// waits for one first
++    fn poll_starting(&mut self, mut block: bool) {
++        let first = *FIRST_START.get_or_init(Instant::now);
++        let mut i = 0;
++        while i < self.starting.len() {
++            let (unit, started, starting) = &mut self.starting[i];
++            if starting.ready(block) {
++                report_slow(first, unit, started.elapsed());
++                self.starting.remove(i);
++                block = false;
++            } else {
++                i += 1;
++            }
++        }
++    }
++
++    /// Whether one of `deps`, or of the targets among them, is a started
++    /// service that is not ready yet
++    fn waits_for_starting(&self, unit_store: &UnitStore, deps: &[UnitId], depth: usize) -> bool {
++        deps.iter().any(|dep| {
++            if self.starting.iter().any(|(unit, _, _)| unit == dep) {
++                return true;
++            }
++            match unit_store.get(dep) {
++                Some(unit) if depth < 8 && matches!(unit.kind, UnitKind::Target {}) => {
++                    self.waits_for_starting(unit_store, &unit.info.requires_weak, depth + 1)
++                }
++                _ => false,
++            }
++        })
++    }
+ }
+ 
+ /// When init started its first unit
+@@ -88,7 +157,18 @@ static FIRST_START: OnceLock<Instant> = OnceLock::new();
+ /// Units that take longer than this to start are reported with their time
+ const SLOW_START: Duration = Duration::from_millis(100);
+ 
+-fn run(unit: &mut Unit, config: &mut InitConfig) {
++fn report_slow(first: Instant, unit: &UnitId, took: Duration) {
++    if took >= SLOW_START {
++        eprintln!(
++            "init: [{:.2} s] {} ready after {} ms",
++            first.elapsed().as_secs_f64(),
++            unit.0,
++            took.as_millis(),
++        );
++    }
++}
++
++fn run(unit: &mut Unit, config: &mut InitConfig) -> Option<Starting> {
+     let first = *FIRST_START.get_or_init(Instant::now);
+     match &unit.kind {
+         UnitKind::LegacyScript { script } => {
+@@ -102,7 +182,7 @@ fn run(unit: &mut Unit, config: &mut InitConfig) {
+         UnitKind::Service { service } => {
+             if config.skip_cmd.contains(&service.cmd) {
+                 eprintln!("Skipping '{} {}'", service.cmd, service.args.join(" "));
+-                return;
++                return None;
+             }
+             if config.log_debug {
+                 eprintln!(
+@@ -112,16 +192,11 @@ fn run(unit: &mut Unit, config: &mut InitConfig) {
+                 );
+             }
+             let start = Instant::now();
+-            service.spawn(&config.envs);
+-            let took = start.elapsed();
+-            if took >= SLOW_START {
+-                eprintln!(
+-                    "init: [{:.2} s] {} ready after {} ms",
+-                    first.elapsed().as_secs_f64(),
+-                    unit.id.0,
+-                    took.as_millis(),
+-                );
++            let starting = service.spawn(&config.envs);
++            if starting.is_none() {
++                report_slow(first, &unit.id, start.elapsed());
+             }
++            return starting;
+         }
+         UnitKind::Target {} => {
+             if config.log_debug {
+@@ -132,4 +207,5 @@ fn run(unit: &mut Unit, config: &mut InitConfig) {
+             }
+         }
+     }
++    None
+ }
+diff --git a/init/src/service.rs b/init/src/service.rs
+index d4e79056..38114792 100644
+--- a/init/src/service.rs
++++ b/init/src/service.rs
+@@ -1,6 +1,6 @@
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::ffi::OsString;
+-use std::io::Read;
++use std::io::{PipeReader, Read};
+ use std::os::fd::{AsRawFd, RawFd};
+ use std::os::unix::process::CommandExt;
+ use std::process::Command;
+@@ -37,7 +37,9 @@ pub enum ServiceType {
+ }
+ 
+ impl Service {
+-    pub fn spawn(&self, base_envs: &BTreeMap<String, OsString>) {
++    /// Starts the service and waits until it is ready, except for a `notify`
++    /// service: that one comes back as `Starting` for the scheduler
++    pub fn spawn(&self, base_envs: &BTreeMap<String, OsString>) -> Option<Starting> {
+         let mut command = Command::new(&self.cmd);
+         command.args(self.args.iter().map(|arg| subst_env(arg)));
+         command.env_clear();
+@@ -67,21 +69,18 @@ impl Service {
+             Ok(child) => child,
+             Err(err) => {
+                 eprintln!("init: failed to execute {:?}: {}", command, err);
+-                return;
++                return None;
+             }
+         };
+         drop(write_pipe);
+ 
+         match &self.type_ {
+-            ServiceType::Notify => match read_pipe.read_exact(&mut [0]) {
+-                Ok(()) => {}
+-                Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+-                    eprintln!("init: {command:?} exited without notifying readiness");
+-                }
+-                Err(err) => {
+-                    eprintln!("init: failed to wait for {command:?}: {err}");
+-                }
+-            },
++            ServiceType::Notify => {
++                return Some(Starting {
++                    pipe: read_pipe,
++                    command: format!("{command:?}"),
++                });
++            }
+             ServiceType::Scheme(scheme) => {
+                 let mut new_fd = usize::MAX;
+ 
+@@ -95,16 +94,16 @@ impl Service {
+                         Err(err) if err.is_interrupt() => continue,
+                         Ok(0) => {
+                             eprintln!("init: {command:?} exited without notifying readiness");
+-                            return;
++                            return None;
+                         }
+                         Ok(1) => break,
+                         Ok(n) => {
+                             eprintln!("init: incorrect amount of fds {n} returned");
+-                            return;
++                            return None;
+                         }
+                         Err(err) => {
+                             eprintln!("init: failed to wait for {command:?}: {err}");
+-                            return;
++                            return None;
+                         }
+                     }
+                 }
+@@ -128,6 +127,47 @@ impl Service {
+             }
+             ServiceType::OneshotAsync => {}
+         }
++        None
++    }
++}
++
++/// A `notify` service that is running but has not reported ready yet
++pub struct Starting {
++    pipe: PipeReader,
++    command: String,
++}
++
++impl Starting {
++    /// Whether the service is ready now (or exited without saying so); waits
++    /// for it only with `block`
++    pub fn ready(&mut self, block: bool) -> bool {
++        let fd = self.pipe.as_raw_fd();
++        unsafe {
++            let flags = libc::fcntl(fd, libc::F_GETFL);
++            let flags = if block {
++                flags & !libc::O_NONBLOCK
++            } else {
++                flags | libc::O_NONBLOCK
++            };
++            libc::fcntl(fd, libc::F_SETFL, flags);
++        }
++        match self.pipe.read(&mut [0]) {
++            Ok(1) => true,
++            Ok(_) => {
++                eprintln!("init: {} exited without notifying readiness", self.command);
++                true
++            }
++            Err(err)
++                if err.kind() == io::ErrorKind::WouldBlock
++                    || err.kind() == io::ErrorKind::Interrupted =>
++            {
++                false
++            }
++            Err(err) => {
++                eprintln!("init: failed to wait for {}: {err}", self.command);
++                true
++            }
++        }
+     }
+ }
+ 
+diff --git a/init/src/unit.rs b/init/src/unit.rs
+index 98053cb2..7b147574 100644
+--- a/init/src/unit.rs
++++ b/init/src/unit.rs
+@@ -98,6 +98,10 @@ impl UnitStore {
+         self.units.get(unit).unwrap()
+     }
+ 
++    pub fn get(&self, unit: &UnitId) -> Option<&Unit> {
++        self.units.get(unit)
++    }
++
+     pub fn unit_mut(&mut self, unit: &UnitId) -> &mut Unit {
+         self.units.get_mut(unit).unwrap()
+     }
+-- 
+2.53.0
+

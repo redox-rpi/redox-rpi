@@ -10,6 +10,25 @@
 
 ## In progress
 
+- [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time (v0.4.0), branch `boot-time`: QEMU timeline 37.5 s to
+  `redox login:`; the bootloader waits 5 s at the mode selection and U-Boot
+  counts down 2 s on every boot. Experiment
+  [`boot-time`](../../patches/experiments/boot-time/) waits 1 s in the
+  bootloader, `config/netboot.cmd` no longer asks DHCP twice, init recreates
+  `/tmp` itself instead of starting `rm` and `mkdir`, and init reports slow
+  units. Pi (#53): 33.7 s → 29.3 s from reset to `redox login:`. Left:
+  `dwc2d` 6.2 s (about 1.2 s per USB hub and 1.7 s for the network link,
+  asked its owner, who drops the hub waits in `dwc2d-boottime`), U-Boot's
+  2 s countdown, 3.8 s for the image over HTTP. New: init starts `notify`
+  services in parallel and the root file system no longer waits for USB
+  (base `0045`): QEMU init to login 6.0 s instead of 14.9 s. Pi (#69):
+  login 6 s earlier, but `dhcpd` could start before `eth0` existed
+  (`netstack` reported ready too early, fixed in base `0046`). Pi (#84):
+  network in 5 of 5 boots, login 21.4 s after `kreset`. Pi (#107),
+  rerun on the build with today's main: network and SD card in 3 of 3
+  boots, login 21.0–21.2 s, standard checks pass. Pull request
+  [#85](https://github.com/redox-rpi/redox-rpi/pull/85) open.
+
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: passed on a
   Pi 3B+ as experiment `pi-clean-boot` (tests #14 and #5, 2026-10-28,
   keyboard checked in #5). Branch `clean-boot-default` makes it the
