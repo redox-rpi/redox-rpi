@@ -1836,3 +1836,46 @@ DHCP: eth1 got 10.0.9.2/24
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-218-g8deec9e+xbe97`
+
+Real Pi 3B+ over netboot. Experiments: `sdhost-dma`, `timesync`. test 75 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21) sdhost with DMA, second try: wait for the DMA interrupt), Pi test agent
+
+**Data safe, but the CPU time did not go down.** Image
+`~/redox-rpi-sd/keep/netboot-v0.3.0-dev-218-g8deec9e+xbe97.img`, manifest
+matches.
+
+- Boot log (all 4 boots): `bcm2835-sdhostd: DMA interrupt
+  /scheme/irq/phandle-1/1,20`, `DMA channel 4 at 0x3f007000`, `SDHC/SDXC card,
+  15193 MiB, 4-bit bus, high speed, up to 50 MHz`; no `cannot use DMA
+  interrupt`, `DMA error`, `DMA timeout` or `no DMA`: **pass**.
+- Standard checks pass, manifest matches, 0 of 300 starts failed.
+
+256 MiB on `/scheme/data`, `bs=1048576`, from `/dev/urandom` (it makes 256 MiB
+in 4.0 s, 68 MB/s). `ps` shows the driver as `/scheme/initfs/bin/bcm2835-sdhos`;
+both time columns are given:
+
+| | time | MB/s | ACTTIME of `bcm2835-sdhostd` | SCHTIME |
+|---|---|---|---|---|
+| write `conv=fsync` | 35.0 s | 7.7 | +28.9 s (53.53 → 82.39) | +4.3 s (13.60 → 17.94) |
+| read | 15.3 s | 18 | +14.0 s (82.39 → 96.43) | +1.1 s (17.94 → 19.06) |
+| read with `sha256sum` after the reset | 21.5 s | | +10.2 s (0.08 → 10.31) | +2.7 s |
+| test 42 write (polling) | 30.3 s | 8.8 | +23.7 s | |
+| test 42 read (polling) | 15.1 s | 18 | +13.7 s | |
+
+- The ACTTIME column (the one test 42 used) is still about 82 % of the write
+  time and 92 % of the read time, the same as with polling. If SCHTIME is the
+  real CPU time, it is 12 % and 7 %. I can't tell from here which column counts
+  waiting for the interrupt; the driver session knows.
+- Speed is the same as test 42.
+- An earlier run from `/dev/zero` wrote 256 MiB in 2.9 s (92 MB/s) and read it
+  in 0.3 s. RedoxFS probably does not store blocks of zeros, so that run is not
+  a disk measurement.
+- SHA-256 of a 256 MiB random file before and after `echo reset >
+  /scheme/sys/kstop`: `42bf6207…1c07b97` both times: **pass**.
+- `scripts/sd-stress.py --cycles 2 --serial-log ~/redox-rpi/logs/serial.log`:
+  write 7.8 MB/s, 1001 files checked after writing and 1001 and 1002 after
+  restarts 1 and 2, 0 missing, 0 changed. `/scheme/data` was there 0 s and
+  11 s after the login prompt (cycle writes 7.1 and 8.8 MB/s): **pass**.
+
+Stable image restored afterwards.
