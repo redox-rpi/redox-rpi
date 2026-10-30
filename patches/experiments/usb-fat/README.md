@@ -38,6 +38,12 @@ scripts/build-image.sh --experiment usb-hotplug --experiment usb-storage --exper
   - an inode number per path in `fstat` and `getdents`: `mv a b` compared
     them and refused with "are the same file" while they were all 0.
 
+fatfsd is also on the boot topic's branches `fw-direct-boot` and
+`rpi-update`; this branch has all of their fatfsd changes plus the ones
+above, with the same command line. Agreed with the boot topic: whichever
+merges second takes `usb-fat`'s `tools/redox-fatfs2` (`src/main.rs`,
+`Cargo.toml`) and keeps both tool lists in `scripts/build-image.sh`.
+
 ## Tests
 
 QEMU raspi3b, `scripts/test-usb-fat.sh`, 2026-10-30, build
