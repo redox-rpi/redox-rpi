@@ -36,5 +36,14 @@ Rules:
   and `/etc/pkg/hold`, so the same repositories and holds apply.
 - Plain `pkg install` still installs into `/` only, as before.
 
+Also in this experiment:
+
+- redoxfs patch 0001: rename failed with "No such file or directory" on any
+  RedoxFS mounted below `/scheme/<name>` (only the root filesystem worked),
+  and pkg renames every file it installs. Built from source and held.
+- pkgutils patch 0002: when a download fails because the certificate is
+  "not valid yet" (or expired), pkg says what year the clock is at and to
+  set the clock first, instead of only the TLS error.
+
 Without a data partition (network boot without a card) `pkg-persist`
 fails at the pkg step and `restore` does nothing.
