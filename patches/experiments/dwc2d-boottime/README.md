@@ -1,8 +1,10 @@
-# Shorter dwc2d boot (experiment `dwc2d-boottime`)
+# Shorter dwc2d boot (was experiment `dwc2d-boottime`)
 
-Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
---experiment dwc2d-boottime`), which it needs: devices that connect late
-are found by the hotplug rescan. Issue: #47 (boot time).
+Issue: #47 (boot time). **Default since the merge of this branch:** the
+patch is base `0034` in `patches/base/`, after the hotplug patches
+`0031`–`0033`, which it needs: devices that connect late are found by the
+hotplug rescan. `--experiment dwc2d-boottime` is still accepted and adds
+nothing. Below, `0037` is the number it had as an experiment.
 
 On the Pi 3B+, `40_dwc2d.service` took 6.2 s until ready (test 53),
 which is 60 % of the time from kernel start to `redox login:`:
@@ -41,14 +43,11 @@ which is 60 % of the time from kernel start to `redox login:`:
 
 ## Merge to main
 
-Merge-ready (2026-10-30), after `usb-hotplug`: this branch contains it,
-merged with main. `0037` applies unchanged (same patch ID).
+Pull request on top of `usb-hotplug`, with main merged in (2026-10-30).
+The patch applies unchanged (same patch ID).
 
-- **Number at the merge:** `git mv` to `patches/base/` right after
-  `usb-hotplug`'s three patches (`0034` if those become `0031`–`0033`),
-  and drop `--experiment dwc2d-boottime`.
 - **Proven on the Pi:** test #67 above.
-- **QEMU after the merge with main** (`v0.3.0-dev-325-g9c7ecdb+x8057`):
-  `scripts/test-hotplug.sh` 15/15; ready after 455 ms with a network card,
-  1504 ms without one (the 1 s wait for late devices).
+- **QEMU after merging main** (`v0.3.0-dev-325-g9c7ecdb+x8057`):
+  `scripts/test-hotplug.sh` 15/15. Ready after 455 ms with a network card
+  and 1504 ms without one (the 1 s wait for late devices).
 - **Still needs a person:** nothing.
