@@ -3,6 +3,12 @@ relibc-tests-bins = "source"
 # /bin/sh for popen, system and unistd/exec.
 dash = "source"
 
+# dash installs only /usr/bin/dash.
+[[files]]
+path = "/usr/bin/sh"
+data = "dash"
+symlink = true
+
 # Runs the suite like upstream's `make run`, without make: the command
 # line comes from `make -n run IS_REDOX=1` in the package (one line, so
 # that no shell needs line continuation).
