@@ -26,7 +26,7 @@ card (QEMU has no network boot), time-stamped with
 
 init starts one unit at a time and waits until it is ready (`notify`,
 `scheme` and `oneshot` units). Base patch
-[`0025`](base/0025-init-report-units-that-take-100-ms-or-more-to-start.patch)
+[`0043`](base/0043-init-report-units-that-take-100-ms-or-more-to-start.patch)
 prints each unit that takes 100 ms or more. QEMU, no network card,
 `v0.3.0-dev-213-g4e63067+x19b9` (times in s since init's first unit; QEMU
 varies by a second or more between runs):
@@ -109,14 +109,14 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
 - `config/netboot.cmd` (not an experiment, on branch `boot-time`): no second
   `usb start` and `dhcp` when `boot.scr` already has an address.
 - Base patch
-  [`0026`](base/0026-init-clear-and-recreate-tmp-itself-instead-of-with-r.patch):
+  [`0044`](base/0044-init-clear-and-recreate-tmp-itself-instead-of-with-r.patch):
   init clears and recreates `/tmp` (mode 1777) itself; the `00_tmp` script
   no longer starts `rm` and `mkdir`. QEMU, `v0.3.0-dev-214-g67fdc06+x19b9`:
   root file system to `redox login:` 9.8 s instead of 11.3 s; the next
   program (`sudo`) now pays part of the disk reads (2.6 s), so the gain on
   a fast disk is smaller. `/tmp` is `drwxrwxrwt` and writable.
 - Base patch
-  [`0027`](base/0027-init-start-notify-services-in-parallel-wait-where-a-.patch):
+  [`0045`](base/0045-init-start-notify-services-in-parallel-wait-where-a-.patch):
   init no longer waits for each `notify` service before it starts the next
   unit. It waits for one where a later unit requires it (directly or
   through a target) and when nothing else can start. `scheme` and
@@ -129,15 +129,20 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
   run). DHCP, ping and `/tmp` work.
   On the Pi this should hide most of `dwc2d`'s 6.2 s, until the login
   prompt; `netstack` and `devshd` still come after it.
-- Pi test #69 with `0027`: `redox login:` about 21.5 s after `kreset`
+- Pi test #69 with `0045`: `redox login:` about 21.5 s after `kreset`
   instead of 27.3 s, but in 1 of 3 boots `dhcpd` failed (`Can't open
   /scheme/netcfg/ifaces/eth0/mac`) and the Pi had no network. Cause:
   `netstack` reported ready before `Smolnetd::new` set up `eth0` and its
   schemes; with the parallel start `dhcpd` ran in that gap. Base patch
-  [`0028`](base/0028-netstack-report-ready-after-eth0-and-the-schemes-are.patch)
+  [`0046`](base/0046-netstack-report-ready-after-eth0-and-the-schemes-are.patch)
   moves `daemon.ready()` after it (agreed with the Network session; its
   `netstack-multi` makes the same move, whichever lands first). QEMU with
   USB network: DHCP and ping in 3 of 3 boots.
+- Pi test #84 with `0046`: network in 5 of 5 boots, `redox login:`
+  21.3–21.9 s after `kreset` (test #53 before the parallel start: 27.3 s).
+  Of that, about 15.8 s pass before the kernel starts (firmware, U-Boot,
+  the image over HTTP, the bootloader); `dwc2d` reports ready after
+  6.2–8.4 s, now beside the rest of the start.
 - With clean boot (#18, merged last for v0.3.0) `pcid-spawner` twice and
   `audiod` go away: about 1.2 s in QEMU.
 - Pi (#53): 33.7 s → 29.3 s to `redox login:`, almost all from the
