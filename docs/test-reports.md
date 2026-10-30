@@ -3262,3 +3262,30 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `pkg-hold`, `pkg-repo`, `sigr
   **`bash-ok`** after 31.6 s.
 - No panic and no unhandled exception on the serial console.
 - `/srv/tftp/redox` has the stable image again.
+
+## 2026-10-30: `v0.3.0-dev-200-gd73095c+xced2`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `dwc2-interrupts`, `rpi-fb`. test 116 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33) rpi-fb, serial only), **boot 1 only**, Pi test agent
+
+**Boot 1 passes, with one note: `rpi-fbd` could not get its 1824x984 buffer
+(`Out of memory`). Boots 2 and 3 are not done: they need typing at the
+bootloader menu (`e`), and my rules allow typing on the console only after
+`redox login:`.** Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-200-gd73095c+xced2.img`,
+manifest matches.
+
+- `rpi-fbd: EDID 256 bytes, monitor NanoKVM`
+- `rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000`
+- `rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows`
+  (YLENGTH+1, like QEMU)
+- **`rpi-fbd: dumb buffer 1824x984 in normal memory: Out of memory`**, twice
+  (once before and once after `fbcond: Performing handoff`). `free` then shows
+  591,580 KB free, so this is not the system running out. Probably the
+  allocation of one buffer that size fails, while `vc_memory` is only 16 MiB.
+- `fbcond: Performing handoff`; no `rpi-fbd` panic, no `DMA error` or
+  `DMA timeout`.
+- `cat /scheme/rpi-firmware/board`: `revision 0x00a020d3`,
+  `model Raspberry Pi 3 Model B+`, `memory 1 GiB`, firmware `0x6aa809d0`,
+  `arm_memory 0x00000000 1046478848`, `vc_memory 0x3e600000 16777216`.
+- Standard checks pass, 0 of 300 starts failed.
+- `/srv/tftp/redox` has the stable image again.
