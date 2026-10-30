@@ -147,7 +147,12 @@
          };
  
          Ok((socket_handle, listen_enpoint))
-@@ -157,9 +209,9 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -153,13 +205,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         file: &SchemeFile<Self>,
+         port_set: &mut Self::SchemeDataT,
+     ) -> SyscallResult<()> {
+-        if let SchemeFile::Socket(SocketFile { data, .. }) = *file {
++        if let SchemeFile::Socket(SocketFile { ref data, .. }) = *file {
              if let Some(endpoint) = self.local_endpoint() {
                  // Socket was connected on some port
                  port_set.release_port(endpoint.port);
@@ -231,3 +236,11 @@
                  } else {
                      SchemeFile::Socket(SocketFile::new_with_data(socket_handle, None))
                  }
+@@ -301,6 +362,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+                         ..
+                     }),
+                 ) => {
++                    let endpoint = endpoint.endpoint;
+                     if endpoint.is_specified() {
+                         write!(w, "{}", endpoint).unwrap()
+                     } else {
