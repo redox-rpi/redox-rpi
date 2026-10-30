@@ -69,6 +69,28 @@ and:
 The rules above stay as they are: each owner takes and returns the Pi
 itself.
 
+## Merging through pull requests
+
+Since 2026-10-30 every change that goes to main through a branch goes
+through a pull request (maintainer's decision):
+
+1. **Owner session:** opens a draft pull request from its branch and works
+   on it until CI is green, the Pi test passed (link to its report in
+   `docs/test-reports.md`) and the topic page is up to date. The
+   description says in plain English what changes, which issues it closes
+   (`Fixes #N`) and what still needs a person.
+2. **Coordinator:** checks green CI, the passed Pi test, no conflicts with
+   main, the next free patch numbers and no overlap with other open pull
+   requests. If all is fine it marks the pull request ready for review and
+   tells the maintainer; if not, it comments in the pull request and sends
+   it back to the owner.
+3. **Maintainer:** merges it in GitHub. The merge is the approval; nobody
+   else merges a pull request.
+
+Without a pull request, straight to main: the queue and reports
+(`docs/test-plan.md`, `docs/test-reports.md`), topic pages and other
+docs-only or script fixes.
+
 ## Serial console
 
 The Pi's serial console is on `/dev/ttyUSB0` of the build host (115200
