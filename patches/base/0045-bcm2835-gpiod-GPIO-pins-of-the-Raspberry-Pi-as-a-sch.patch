@@ -1,8 +1,11 @@
-From 5d87fc320af95dc06f4864b470f2cd482d0e3684 Mon Sep 17 00:00:00 2001
+From 074f64a0e3c5da230d1aabe81732c5b335e3f29e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:10:38 +0100
-Subject: [PATCH 40/42] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a
+Subject: [PATCH 45/48] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a
  scheme
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 /scheme/gpio/pins lists every pin with mode and level;
 /scheme/gpio/<pin>/mode, value and pull read and set one pin. The pins
@@ -11,15 +14,18 @@ of the serial console and the SD card are refused.
 Refs redox-rpi/redox-rpi#38
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Writing a pull spins for the 10 µs the pull setting needs instead of
+sleeping: a 10 µs nanosleep never came back in QEMU.
 ---
  Cargo.toml                             |   1 +
  Makefile                               |   2 +-
  drivers/bcm2835-gpiod/Cargo.toml       |  18 ++
- drivers/bcm2835-gpiod/src/gpio.rs      | 170 +++++++++++++
+ drivers/bcm2835-gpiod/src/gpio.rs      | 179 ++++++++++++++
  drivers/bcm2835-gpiod/src/main.rs      | 324 +++++++++++++++++++++++++
  init.initfs.d/40_bcm2835-gpiod.service |   8 +
  init.initfs.d/40_drivers.target        |   1 +
- 7 files changed, 523 insertions(+), 1 deletion(-)
+ 7 files changed, 532 insertions(+), 1 deletion(-)
  create mode 100644 drivers/bcm2835-gpiod/Cargo.toml
  create mode 100644 drivers/bcm2835-gpiod/src/gpio.rs
  create mode 100644 drivers/bcm2835-gpiod/src/main.rs
@@ -76,15 +82,14 @@ index 00000000..ce60ee01
 +workspace = true
 diff --git a/drivers/bcm2835-gpiod/src/gpio.rs b/drivers/bcm2835-gpiod/src/gpio.rs
 new file mode 100644
-index 00000000..4cfa52a5
+index 00000000..8128ca7a
 --- /dev/null
 +++ b/drivers/bcm2835-gpiod/src/gpio.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,179 @@
 +//! The GPIO registers of the BCM2835 and BCM2837 (BCM2835 ARM Peripherals,
 +//! chapter 6).
 +
-+use std::thread::sleep;
-+use std::time::Duration;
++use std::time::{Duration, Instant};
 +
 +pub const PINS: u32 = 54;
 +
@@ -227,11 +232,21 @@ index 00000000..4cfa52a5
 +    pub fn set_pull(&self, pin: u32, pull: Pull) {
 +        let (reg, bit) = Self::bank(GPPUDCLK0, pin);
 +        self.write(GPPUD, pull as u32);
-+        sleep(Duration::from_micros(10));
++        settle();
 +        self.write(reg, bit);
-+        sleep(Duration::from_micros(10));
++        settle();
 +        self.write(GPPUD, 0);
 +        self.write(reg, 0);
++    }
++}
++
++/// The 150 cycles the pull control signal needs to settle (BCM2835 ARM
++/// Peripherals, GPPUDCLK), as 10 µs. A spin, not a sleep: in QEMU a 10 µs
++/// `nanosleep` did not come back.
++fn settle() {
++    let end = Instant::now() + Duration::from_micros(10);
++    while Instant::now() < end {
++        std::hint::spin_loop();
 +    }
 +}
 +

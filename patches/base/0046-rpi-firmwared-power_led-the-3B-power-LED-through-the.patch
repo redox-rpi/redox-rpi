@@ -1,7 +1,7 @@
-From 33aed214c685513b701c2e726876da811a06d6eb Mon Sep 17 00:00:00 2001
+From c7ca44f3d55f6e37461413c0acf9c2bf3e42c22d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:11:20 +0100
-Subject: [PATCH 41/42] rpi-firmwared: power_led, the 3B+ power LED through the
+Subject: [PATCH 46/48] rpi-firmwared: power_led, the 3B+ power LED through the
  firmware GPIO expander
 
 Refs redox-rpi/redox-rpi#38
@@ -13,33 +13,33 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 65 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018a..75ed4c5c 100644
+index 2961555b..58758304 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
-@@ -15,6 +15,10 @@
- //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
- //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
- //!   in Hz, `max` or `min` sets it
+@@ -19,6 +19,10 @@
+ //!   changes and time at the minimum and maximum clock (ms) of the
+ //!   governor; writing `ondemand`, `performance` or
+ //!   `powersave` sets the mode
 +//! - `/scheme/rpi-firmware/power_led`: the red power LED of the Pi 3B+,
 +//!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
 +//!   expander, so only the firmware can switch it. Other boards do not have
 +//!   this file.
  //!
- //! At start it sets the ARM clock to its maximum; the firmware lowers it by
- //! itself when the SoC gets too hot or the supply voltage too low. A thread
-@@ -44,9 +48,9 @@ use mbox::*;
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -52,9 +56,9 @@ use mbox::*;
  const MBOX_BUS_ADDR: usize = 0x7e00_b880;
  const PAGE_SIZE: usize = 4096;
  
--const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled"];
-+const FILES: &[&str] = &["arm_clock", "board", "clocks", "power_led", "temperature", "throttled"];
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
  /// Files that can be written: settings.
--const WRITABLE: &[&str] = &["arm_clock"];
-+const WRITABLE: &[&str] = &["arm_clock", "power_led"];
+-const WRITABLE: &[&str] = &["arm_clock", "governor"];
++const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
  
  const THROTTLE_POLL: Duration = Duration::from_secs(5);
  
-@@ -72,6 +76,17 @@ impl FirmwareScheme {
+@@ -85,6 +89,17 @@ impl FirmwareScheme {
                  let value = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM).map_err(log)?;
                  writeln!(text, "{value}").unwrap();
              }
@@ -57,8 +57,8 @@ index 4a7a018a..75ed4c5c 100644
              "temperature" => {
                  let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
                  writeln!(text, "{value}").unwrap();
-@@ -102,6 +117,21 @@ impl FirmwareScheme {
-     fn set(&mut self, name: &str, value: &str) -> Result<()> {
+@@ -116,6 +131,21 @@ impl FirmwareScheme {
+         let governor = &mut *self.governor.lock().unwrap();
          let mbox = &mut *self.mbox.lock().unwrap();
          match name {
 +            "power_led" => {
@@ -76,10 +76,10 @@ index 4a7a018a..75ed4c5c 100644
 +                    _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
 +                }
 +            }
-             "arm_clock" => {
-                 let rate = match value {
-                     "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
-@@ -207,6 +237,16 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
+             "governor" => {
+                 let mode = Mode::parse(value).ok_or(Error::new(EINVAL))?;
+                 governor.set_mode(mode, mbox).map_err(log)?;
+@@ -228,6 +258,16 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
      }
  }
  

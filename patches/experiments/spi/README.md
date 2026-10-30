@@ -5,9 +5,10 @@ v0.8.0. Builds on the [gpio](../gpio/README.md) (#38) and
 [i2c](../i2c/README.md) (#39) experiments (its patch adds the driver next
 to `bcm2835-i2cd` in the same lines), so all three go in:
 
-```bash
-scripts/build-image.sh --experiment gpio --experiment i2c --experiment spi
-```
+**Default since PR (v0.8.0):** base patch `0048` (was `0044` here), the
+`spi` tool is in every image. The name `spi` is still accepted and does
+nothing; `qemu-check.sh` stays here. Pi test #99 passed (MISO pull, no
+wiring); #40 (jumper pin 19 to 21, loopback) waits for a visit.
 
 - **Base patch, `bcm2835-spid`** (new driver in the initfs, after
   `bcm2835-gpiod` and `rpi-firmwared`): SPI0 (header pins 19 MOSI, 21

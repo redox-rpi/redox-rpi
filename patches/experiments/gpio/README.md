@@ -3,9 +3,12 @@
 Issue [#38](https://github.com/redox-rpi/redox-rpi/issues/38), planned for
 v0.8.0.
 
-```bash
-scripts/build-image.sh --experiment gpio
-```
+**Default since PR (v0.8.0):** base patches `0045` (`bcm2835-gpiod`) and
+`0046` (`power_led`); they were `0040`–`0042` here while this was an
+experiment (the spin fix `0042` is part of `0045` now). The name `gpio` is
+still accepted by `build-image.sh` and does nothing; `qemu-check.sh` and
+`nowire-check.py` stay here. Pi test #99 passed (no wiring); #38 (LEDs
+watched by a person) waits for a visit.
 
 - **Base patch 1, `bcm2835-gpiod`** (new driver in the initfs, after
   `rpi-firmwared`): the 54 GPIO pins of the BCM2835/BCM2837 as the scheme

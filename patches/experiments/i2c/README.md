@@ -4,9 +4,10 @@ Issue [#39](https://github.com/redox-rpi/redox-rpi/issues/39), planned for
 v0.8.0. Builds on the [gpio](../gpio/README.md) experiment (#38), so both
 go in:
 
-```bash
-scripts/build-image.sh --experiment gpio --experiment i2c
-```
+**Default since PR (v0.8.0):** base patch `0047` (was `0043` here), the
+`i2c` tool is in every image. The name `i2c` is still accepted and does
+nothing; `qemu-check.sh` stays here. Pi test #99 passed (no wiring); #39
+(DS3231 module) waits for a visit.
 
 - **Base patch, `bcm2835-i2cd`** (new driver in the initfs, after
   `bcm2835-gpiod` and `rpi-firmwared`): I2C bus 1 (BSC1, header pin 3 SDA
