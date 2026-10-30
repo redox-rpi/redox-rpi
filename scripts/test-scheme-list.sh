@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Boot an image in QEMU several times and count the boots in which netstack
-# found no network.* scheme ("no network adapter found"). Meant for an image
-# built with --experiment scheme-list-stress, which registers 16 schemes
-# while netstack lists /scheme: without the experiment ns-list-snapshot
-# many boots fail, with it none should.
+# Check in QEMU that every listing of /scheme is complete while schemes are
+# registered meanwhile. Needs an image built with --experiment
+# scheme-list-stress: a test unit in init's namespace starts 40 ramfs
+# instances and lists /scheme 200 times in between. Without the experiment
+# ns-list-snapshot some listings miss the network scheme (netstack at boot
+# then sometimes finds no network adapter); with it none should.
 #
-# The host port for devshd is 12323, or DEVSH_PORT=<port>; BOOTS=<n>
-# boots (default 10).
+# The host port for devshd is 12323, or DEVSH_PORT=<port>.
 #
 # Usage:
 #   scripts/test-scheme-list.sh [image]
@@ -16,46 +16,45 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 log="$ROOT/images/qemu-scheme-list.log"
-boots=${BOOTS:-10}
 port=${DEVSH_PORT:-12323}
 failed=0
-noboot=0
 
-for i in $(seq "$boots"); do
-    rm -f "$log"
-    timeout 300 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --image "$image" \
-        < /dev/null > "$log" 2>&1 &
-    qemu=$!
-    for _ in $(seq 250); do
-        grep -aq "redox login:" "$log" && break
-        sleep 1
-    done
-    sleep 3
-    # QEMU runs below the wrapper script: find it by its devshd port.
-    pkill -f "[q]emu-system-aarch64.*hostfwd=tcp::$port-" 2>/dev/null
-    kill $qemu 2>/dev/null
-    wait $qemu 2>/dev/null
-    if ! grep -aq "redox login:" "$log"; then
-        noboot=$((noboot + 1))
-        cp "$log" "$ROOT/images/qemu-scheme-list-noboot-$i.log"
-        echo "      boot $i: no login prompt"
-    elif grep -aq "no network adapter found" "$log"; then
-        failed=$((failed + 1))
-        cp "$log" "$ROOT/images/qemu-scheme-list-fail-$i.log"
-        echo "      boot $i: netstack found no network adapter"
+devsh() {
+    python3 "$ROOT/scripts/devsh.py" 127.0.0.1 "$port" "$@" 2>/dev/null | tr -d '\r\000'
+}
+
+check() {
+    if "${@:2}"; then
+        echo "PASS: $1"
     else
-        echo "      boot $i: ok"
+        echo "FAIL: $1"
+        failed=1
     fi
-done
+}
 
-echo "$failed of $boots boots without a network adapter, $noboot without a login prompt"
-if [ "$noboot" -gt 0 ]; then
-    echo "FAIL: every boot reached the login prompt"
-    exit 1
-fi
-if [ "$failed" -eq 0 ]; then
-    echo "PASS: netstack found the network scheme in every boot"
-else
-    echo "FAIL: netstack found the network scheme in every boot"
-    exit 1
-fi
+rm -f "$log"
+DEVSH_PORT=$port timeout 900 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --image "$image" \
+    < /dev/null > "$log" 2>&1 &
+qemu=$!
+# QEMU runs below the wrapper script: stop it by its devshd port.
+trap 'pkill -f "[q]emu-system-aarch64.*hostfwd=tcp::$port-"; kill $qemu 2>/dev/null' EXIT
+
+for _ in $(seq 80); do
+    devsh "echo ready" | grep -q ready && break
+    sleep 3
+done
+check "devshd answers" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'echo ready' 2>/dev/null | grep -q ready"
+
+for _ in $(seq 60); do
+    devsh "cat /tmp/list-test.done" | grep -qE '^[0-9]+$' && break
+    sleep 5
+done
+registered=$(devsh "cat /tmp/list-test.done" | grep -E '^[0-9]+$' | tail -1)
+counts=$(devsh "cat /tmp/list-test.out" | grep -E '^[0-9]+$')
+listings=$(grep -c . <<< "$counts")
+missed=$(grep -cvx 1 <<< "$counts")
+echo "      ${registered:-0} schemes registered during $listings listings, $missed listings without exactly one network scheme"
+check "the test unit ran (40 schemes registered)" test "${registered:-0}" -eq 40
+check "200 listings" test "$listings" -eq 200
+check "every listing has the network scheme once" test "$missed" -eq 0
+exit $failed

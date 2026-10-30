@@ -18,12 +18,11 @@ said "no network adapter found" although `dwc2d` had registered
 
 ## Tests
 
-- `scripts/test-scheme-list.sh [image]` boots an image several times
-  (`BOOTS=<n>`, default 10) with QEMU's network card and counts the boots
-  in which netstack found no network scheme.
-- The test experiment `scheme-list-stress` makes the race frequent: 16
-  `ramfs` instances start without waiting right before netstack. Never in
-  a release.
+- `scripts/test-scheme-list.sh [image]` needs the test experiment
+  `scheme-list-stress` (never in a release): a unit started by init, in
+  init's namespace where netstack lives, starts 40 `ramfs` instances one
+  by one and lists `/scheme` five times after each. The script checks over
+  devsh that all 200 listings contain the network scheme exactly once.
 
 Build for the check:
 `scripts/build-image.sh --experiment scheme-list-stress` (without the fix)

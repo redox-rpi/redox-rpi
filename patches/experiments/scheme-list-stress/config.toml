@@ -1,197 +1,33 @@
-# Test only, never in a release: 16 ramfs instances start without waiting
-# (oneshot_async) right before netstack, so schemes are registered while
-# netstack lists /scheme for its network adapter, as sudo's scheme is in a
-# normal boot. Without ns-list-snapshot netstack then often finds no
-# network.* scheme. See ../ns-list-snapshot/README.md.
+# Test only, never in a release. After the network is up, a unit started by
+# init (so in init's namespace, where netstack and the drivers are) starts
+# 40 ramfs instances, one by one, each registering a scheme, and lists
+# /scheme five times after each. Every listing must contain the network
+# scheme once. Results: /tmp/list-test.out (one count per listing, 200
+# lines) and /tmp/list-test.done. scripts/test-scheme-list.sh reads them.
+# See ../ns-list-snapshot/README.md.
 
 [[files]]
-path = "/usr/lib/init.d/09_list-stress-01.service"
+path = "/usr/lib/init.d/95_list-stress.service"
 data = """
 [unit]
-description = "Scheme list stress 01 (test)"
+description = "Scheme list stress (test)"
+requires_weak = ["10_net.target"]
 
 [service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress01"]
+cmd = "ion"
+args = ["/usr/lib/list-stress.ion"]
 type = "oneshot_async"
 """
 
 [[files]]
-path = "/usr/lib/init.d/09_list-stress-02.service"
+path = "/usr/lib/list-stress.ion"
 data = """
-[unit]
-description = "Scheme list stress 02 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress02"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-03.service"
-data = """
-[unit]
-description = "Scheme list stress 03 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress03"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-04.service"
-data = """
-[unit]
-description = "Scheme list stress 04 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress04"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-05.service"
-data = """
-[unit]
-description = "Scheme list stress 05 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress05"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-06.service"
-data = """
-[unit]
-description = "Scheme list stress 06 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress06"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-07.service"
-data = """
-[unit]
-description = "Scheme list stress 07 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress07"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-08.service"
-data = """
-[unit]
-description = "Scheme list stress 08 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress08"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-09.service"
-data = """
-[unit]
-description = "Scheme list stress 09 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress09"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-10.service"
-data = """
-[unit]
-description = "Scheme list stress 10 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress10"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-11.service"
-data = """
-[unit]
-description = "Scheme list stress 11 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress11"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-12.service"
-data = """
-[unit]
-description = "Scheme list stress 12 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress12"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-13.service"
-data = """
-[unit]
-description = "Scheme list stress 13 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress13"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-14.service"
-data = """
-[unit]
-description = "Scheme list stress 14 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress14"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-15.service"
-data = """
-[unit]
-description = "Scheme list stress 15 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress15"]
-type = "oneshot_async"
-"""
-
-[[files]]
-path = "/usr/lib/init.d/09_list-stress-16.service"
-data = """
-[unit]
-description = "Scheme list stress 16 (test)"
-
-[service]
-cmd = "/scheme/initfs/bin/ramfs"
-args = ["liststress16"]
-type = "oneshot_async"
+rm -f /tmp/list-test.out /tmp/list-test.done
+for i in 1..=40
+    /scheme/initfs/bin/ramfs liststress$i &
+    for j in 1..=5
+        ls /scheme | grep -c network >> /tmp/list-test.out
+    end
+end
+ls /scheme | grep -c liststress > /tmp/list-test.done
 """
