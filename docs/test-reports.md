@@ -2941,3 +2941,98 @@ PASS: 4096-byte transfer finishes (wrong bytes expected without jumper): loopbac
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-172-gc7bee13+xb847`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `assistant`. test 106 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43) Qwen3 0.6B with `rinfer` and the assistant), Pi test agent
+
+**Fail: the first `rinfer` run never answered, and the kernel then panicked with
+`oom` and halted the Pi.** Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-172-gc7bee13+xb847.img`.
+
+- Standard checks pass, 0 of 300 starts failed. `free`: 606,764 KB free of
+  745,252. `/scheme/data`: 898 MB free.
+- `rinfer --download …partNNN /scheme/data/Qwen3-0.6B-Q4_0.gguf`: the file
+  reached the right size, **382,156,480 bytes**, at 12:08 UTC after about 26
+  minutes (from 11:42, about 0.24 MB/s). The part list was cut off by my
+  devsh tool's 1500 s timeout.
+- `rinfer /scheme/data/Qwen3-0.6B-Q4_0.gguf 'What is the capital of
+  France?' 32` (started 12:09): it printed only `neon: true, threads: 4`, and
+  no `loaded in … s` within 20 minutes. From a second devsh, `free` showed
+  550 → 535 MB free over the first 2 minutes, and `rinfer`'s PRIVATE grew
+  only 7 → 22 MB while it used 2 min 11 s of CPU (SCHTIME). So it was loading
+  the model very slowly. Later devsh calls timed out.
+- The serial log then has `KERNEL PANIC: panicked at src/memory/mod.rs:1459:34:
+  not yet implemented: oom` in a page fault of `/usr/bin/rinfer`, then the same
+  panic in `logd` and `netstack`, and `HALT`. The last serial line came at
+  about 12:50 UTC. Soft temperature warnings at 60.1 °C came often the whole
+  time. The Shelly plug is on (4.3 W). The Pi needs a power cycle (the user's
+  OK).
+- So no answer, no tokens per second, no assistant or `llama-bench` run. The
+  model file stays on `/scheme/data` for the rerun.
+- `/srv/tftp/redox` has the stable image again for the next boot.
+
+## 2026-10-30: `v0.3.0-dev-426-g5dc3790+x19b9`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `boot-time`. test 107 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, rerun of test 84 on today's main), Pi test agent
+
+**Pass: 3 of 3 boots came up with network and the SD card, `redox login:`
+about 21 s after the reset.** Staged with the owner's
+`~/t18-work/bt8-stage/scripts/netboot.sh` (bootloader md5 `1780eeee…`),
+image `~/t18-work/image-bt8/harddrive.img`.
+
+| Boot | `redox login:` after `kreset` | `40_bcm2835-sdhostd.service ready` | `40_dwc2d.service ready` |
+|---|---|---|---|
+| 1 | 21.1 s | 0.42 s (196 ms) | 6.46 s (6229 ms) |
+| 2 | 21.2 s | 0.41 s (184 ms) | 6.53 s (6267 ms) |
+| 3 | 21.0 s | 0.55 s (285 ms) | 6.51 s (6236 ms) |
+
+- In every boot the network came up: DHCP bound, no
+  `Can't open /scheme/netcfg/ifaces/eth0/mac`, devsh answered. No panic.
+- `bcm2835-sdhostd` served the card in every boot (SDHC 15193 MiB, 4-bit,
+  50 MHz).
+- Test 84 had 21.4 s; this is the same or a little faster. U-Boot plus the
+  43 MB image over HTTP take about 15 s of it.
+- Standard checks (`--manifest …netboot-v0.3.0-dev-426-g5dc3790+x19b9.toml`)
+  pass: version, manifest, ps, ps-tty, `/scheme/data` write and read back,
+  0 of 300 starts failed.
+- `/srv/tftp/redox` has the stable image again for the next boot.
+
+## 2026-10-30: `v0.3.0-dev-463-gac3dad4+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `ha-bridge`, `mqtt-tls-test`. test 111 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) memory with MQTT over TLS, rerun of #89), Pi test agent
+
+**Pass: free memory fell 0.21 MB a minute over 30 minutes (#89: 5.5 MB a
+minute; goal under 1).** Image
+`~/mqtt-test/keep/leak-netboot-v0.3.0-dev-463-gac3dad4+x125f.img`, manifest
+matches. TLS broker `~/mqtt-broker/pi-test-broker-tls.sh` on homenodellm.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `echo 192.168.178.120 > /etc/mqtt-host` at 18:14:07 UTC; 25 s later the
+  serial log has `ha-bridge: 6 sensors announced on 192.168.178.120:8883 (TLS)
+  as redox-rpi/redox`. The broker got the state once a minute, 37 times in
+  31 minutes.
+- Readings, one devsh command `free; cat /scheme/sys/context` every 3 minutes:
+
+| Time (UTC) | free KB | `netstack` PRIVATE | `ha-bridge` | `redoxfs` | `timerd` | `devshd` | `randd` SHARED |
+|---|---|---|---|---|---|---|---|
+| 18:14:38 | 592,640 | 3.97 MB | 8.59 MB | 34.3 MB | 5.47 MB | 11.2 MB | 128 KB |
+| 18:20:38 | 591,392 | 4.22 MB | 8.59 MB | 34.3 MB | 5.52 MB | 11.3 MB | 200 KB |
+| 18:26:38 | 590,148 | 4.59 MB | 8.59 MB | 34.3 MB | 5.57 MB | 11.3 MB | 272 KB |
+| 18:32:38 | 588,880 | 4.97 MB | 8.59 MB | 34.3 MB | 5.61 MB | 11.4 MB | 344 KB |
+| 18:38:38 | 587,624 | 5.34 MB | 8.59 MB | 34.3 MB | 5.66 MB | 11.4 MB | 416 KB |
+| 18:44:38 | 586,364 | 5.72 MB | 8.59 MB | 34.3 MB | 5.71 MB | 11.4 MB | 488 KB |
+
+- In all: 6,276 KB less free in 30 minutes, very even (about 630 KB per
+  3 minutes). The `ha-bridge` service and `redoxfs` do not grow.
+- What still grows, slowly: `netstack` PRIVATE +1.75 MB (about 58 KB a
+  minute, the biggest part), `randd` SHARED +360 KB (12 KB a minute, one
+  random read per TLS run), `timerd` +240 KB, `devshd` +200 KB (my readings),
+  `procmgr` SHARED +56 KB, `zerod` SHARED +80 KB. These add up to about 2.7 MB
+  of the 6.1 MB.
+- Since the loss is far below 1 MB a minute, I did not kill the service.
+- Reset at 18:45:16 to end the test: `redox-rpi/redox/availability offline` at
+  the broker at 18:46:02, **46 s** later (the row expected about 30 s; likely
+  the 60 s keep-alive). Broker stopped; it ran without persistence, so no
+  retained topics stay.
+- `/srv/tftp/redox` has the stable image again; stable booted to `redox login:`.
