@@ -26,10 +26,7 @@
 ./bins_dynamic/pthread/rwlock_randtest fail   # hangs
 ./bins_dynamic/redox_ring_ramfs fail
 
-# The image: no shell, no network in QEMU
-./bins_dynamic/stdio/popen fail
-./bins_dynamic/stdlib/system fail
-./bins_dynamic/unistd/exec fail
+# No network in QEMU
 ./bins_dynamic/netdb/getaddrinfo fail
 ./bins_dynamic/sys_socket/getpeername fail
 ./bins_dynamic/sys_socket/getsockopt fail
