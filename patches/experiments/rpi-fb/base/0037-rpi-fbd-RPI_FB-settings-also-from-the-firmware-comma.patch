@@ -1,0 +1,130 @@
+From 7fea608f8634659ec342a9a2c3295f7179979cc2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 20:44:53 +0000
+Subject: [PATCH] rpi-fbd: RPI_FB settings also from the firmware command line
+
+---
+ drivers/graphics/rpi-fbd/src/firmware.rs | 19 ++++++++++++++
+ drivers/graphics/rpi-fbd/src/main.rs     | 32 +++++++++++++++++++++---
+ 2 files changed, 47 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/graphics/rpi-fbd/src/firmware.rs b/drivers/graphics/rpi-fbd/src/firmware.rs
+index 1b9b1a22..2ce51a3f 100644
+--- a/drivers/graphics/rpi-fbd/src/firmware.rs
++++ b/drivers/graphics/rpi-fbd/src/firmware.rs
+@@ -19,6 +19,9 @@ const TAG_GET_PHYSICAL_SIZE: u32 = 0x0004_0003;
+ const TAG_GET_PITCH: u32 = 0x0004_0008;
+ const TAG_GET_EDID_BLOCK: u32 = 0x0003_0020;
+ const TAG_GET_VC_MEMORY: u32 = 0x0001_0006;
++const TAG_GET_COMMAND_LINE: u32 = 0x0005_0001;
++/// Room for the command line, in words.
++const COMMAND_LINE_WORDS: usize = 256;
+ const TAG_SET_PHYSICAL_SIZE: u32 = 0x0004_8003;
+ const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
+ const TAG_SET_DEPTH: u32 = 0x0004_8005;
+@@ -184,6 +187,22 @@ impl Firmware {
+         self.call(&mut msg) && Self::answered(&msg, i) && msg.words[i - 1] & !TAG_RESPONSE != 0
+     }
+ 
++    /// The command line the firmware read from `cmdline.txt`.
++    pub fn command_line(&self) -> Option<String> {
++        let mut msg = Message::new();
++        let i = msg.tag(TAG_GET_COMMAND_LINE, &[], COMMAND_LINE_WORDS);
++        if !self.call(&mut msg) || !Self::answered(&msg, i) {
++            return None;
++        }
++        let len = ((msg.words[i - 1] & !TAG_RESPONSE) as usize).min(COMMAND_LINE_WORDS * 4);
++        let bytes: Vec<u8> = msg.words[i..i + COMMAND_LINE_WORDS]
++            .iter()
++            .flat_map(|w| w.to_le_bytes())
++            .take(len)
++            .collect();
++        Some(String::from_utf8_lossy(&bytes).trim_end_matches('\0').to_owned())
++    }
++
+     /// Screen off (true) or on.
+     pub fn blank(&self, off: bool) -> bool {
+         let mut msg = Message::new();
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index f3a6703d..bf042d4e 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -22,6 +22,9 @@
+ //! CPU, `RPI_FB_BENCH=1` measures both at start and logs the blits every
+ //! few seconds.
+ //!
++//! The `RPI_FB*` settings come from the environment or, without typing at
++//! the bootloader menu, from the firmware's command line (`cmdline.txt`).
++//!
+ //! With two buffers it waits for the vertical blank after a flip before
+ //! drawing into the buffer that was shown, unless `RPI_FB_VSYNC=off`.
+ 
+@@ -30,6 +33,7 @@ use std::fs::{File, OpenOptions};
+ use std::io::{Read, Write};
+ use std::os::unix::fs::OpenOptionsExt;
+ use std::os::unix::io::AsRawFd;
++use std::sync::OnceLock;
+ use std::time::Duration;
+ 
+ use driver_graphics::{GraphicsAdapter, GraphicsScheme};
+@@ -57,6 +61,26 @@ fn main() {
+     daemon::Daemon::new(daemon);
+ }
+ 
++/// `name` from the environment (the bootloader's), else `name=value` from
++/// the firmware's command line (`cmdline.txt`), which can be set without
++/// typing at the bootloader menu.
++fn setting(name: &str) -> Option<String> {
++    static COMMAND_LINE: OnceLock<String> = OnceLock::new();
++    if let Ok(value) = env::var(name) {
++        return Some(value);
++    }
++    let command_line = COMMAND_LINE.get_or_init(|| {
++        Firmware::open()
++            .ok()
++            .and_then(|firmware| firmware.command_line())
++            .unwrap_or_default()
++    });
++    command_line
++        .split_whitespace()
++        .find_map(|arg| arg.strip_prefix(name)?.strip_prefix('='))
++        .map(str::to_owned)
++}
++
+ fn env_hex(name: &str) -> Option<usize> {
+     usize::from_str_radix(&env::var(name).ok()?, 16).ok()
+ }
+@@ -88,7 +112,7 @@ fn boot_framebuffer() -> Option<Mode> {
+ /// The DMA controller's framebuffer channel, unless `RPI_FB_DMA=off` or it
+ /// is not free.
+ fn blit_dma() -> Option<BlitDma> {
+-    if env::var("RPI_FB_DMA").is_ok_and(|v| v == "off") {
++    if setting("RPI_FB_DMA").is_some_and(|v| v == "off") {
+         println!("rpi-fbd: blits with the CPU (RPI_FB_DMA=off)");
+         return None;
+     }
+@@ -116,7 +140,7 @@ fn arm(time: &mut File) {
+ }
+ 
+ fn daemon(daemon: daemon::Daemon) -> ! {
+-    let rpi_fb = env::var("RPI_FB").unwrap_or_default();
++    let rpi_fb = setting("RPI_FB").unwrap_or_default();
+     if rpi_fb == "off" {
+         println!("rpi-fbd: off (RPI_FB=off)");
+         daemon.ready();
+@@ -181,10 +205,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         edid,
+         blanked: false,
+         dma: blit_dma(),
+-        vsync: !env::var("RPI_FB_VSYNC").is_ok_and(|v| v == "off"),
++        vsync: !setting("RPI_FB_VSYNC").is_some_and(|v| v == "off"),
+         stats: Default::default(),
+     };
+-    let bench = env::var_os("RPI_FB_BENCH").is_some();
++    let bench = setting("RPI_FB_BENCH").is_some();
+     if bench {
+         adapter.bench();
+     }
+-- 
+2.53.0
+

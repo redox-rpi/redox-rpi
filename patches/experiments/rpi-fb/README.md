@@ -28,6 +28,10 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
 - [`0036`](base/0036-rpi-fbd-wait-for-the-vertical-blank-after-a-page-fli.patch)
   (branch `graphics-vsync`, step 1b): waits for the vertical blank after a
   page flip; see [below](#branch-graphics-vsync-patch-0036).
+- [`0037`](base/0037-rpi-fbd-RPI_FB-settings-also-from-the-firmware-comma.patch)
+  (branch `graphics-vsync`): the `RPI_FB*` settings also from the
+  firmware's command line (`cmdline.txt`), so a test can set them without
+  typing at the bootloader menu.
 
 ## What `rpi-fbd` does
 
@@ -46,7 +50,9 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   memory with `gpu_mem=16`). A mode set by a client allocates a new
   framebuffer of that size; **the firmware scales it to the monitor's mode,
   which stays the one it chose at power-on**.
-- `RPI_FB=off` leaves the display to `vesad`. The stub reads the same
+- `RPI_FB=off` leaves the display to `vesad`. Since `0037` every
+  `RPI_FB*` setting can also go into `cmdline.txt` (as `RPI_FB=1280x720`
+  among the other words); the environment wins when both have it. The stub reads the same
   variable from `cmdline.txt`; on the U-Boot path it goes in with `e` at
   the bootloader menu.
 
