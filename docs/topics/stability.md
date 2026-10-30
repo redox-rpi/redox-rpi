@@ -58,6 +58,17 @@
   No known failure needs it: Pi test 28 had 0 of 1000 at 1400 MHz, the
   same as main without it (test 94: 0 of 3000).
 
+- [#55](https://github.com/redox-rpi/redox-rpi/issues/55) (v0.7.0, branch `pty-sigint`): a Ctrl-C while a
+  program was still starting was lost, so Ctrl-C often seemed not to work
+  (over SSH a start can take seconds). Ion handed the terminal to the
+  program only after the exec, and procmgr dropped a signal that arrived
+  while ld.so loaded the program. Experiment
+  [`pty-sigint`](https://github.com/redox-rpi/redox-rpi/tree/pty-sigint/patches/experiments/pty-sigint)
+  patches Ion, procmgr and relibc. QEMU: SSH 22 of 22, devsh 10 of 10.
+  Pi test #80 passed (2026-10-30): devsh 20 of 20. On the serial console a
+  Ctrl-C right after Enter still came only when `sleep 30` ended (open).
+  Pull request to main.
+
 ## Next
 
 - [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
