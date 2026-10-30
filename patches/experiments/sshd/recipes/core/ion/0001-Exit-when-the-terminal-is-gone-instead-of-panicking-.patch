@@ -1,0 +1,61 @@
+From 0b4cf936e024f7227e5e5bf5a241b0f9f679fcde Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 07:46:43 +0000
+Subject: [PATCH] Exit when the terminal is gone instead of panicking or
+ reading it forever
+
+When an SSH session ends, the PTY goes away under the shell. Reading it
+failed again and again, and flushing stderr fell back to println!, which
+panicked on the dead terminal and aborted ion.
+---
+ src/binary/mod.rs    |  5 ++---
+ src/binary/readln.rs | 10 +++++++++-
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/src/binary/mod.rs b/src/binary/mod.rs
+index 7fa4b8d..a1bad61 100644
+--- a/src/binary/mod.rs
++++ b/src/binary/mod.rs
+@@ -256,9 +256,8 @@ impl<'a> InteractiveShell<'a> {
+             if let Err(err) = io::stdout().flush() {
+                 eprintln!("ion: failed to flush stdio: {}", err);
+             }
+-            if let Err(err) = io::stderr().flush() {
+-                println!("ion: failed to flush stderr: {}", err);
+-            }
++            // No println here: with the terminal gone it would panic.
++            let _ = io::stderr().flush();
+             match self.readln(prep_for_exit) {
+                 Some(lines) => {
+                     for command in lines
+diff --git a/src/binary/readln.rs b/src/binary/readln.rs
+index 4e24ce0..e422168 100644
+--- a/src/binary/readln.rs
++++ b/src/binary/readln.rs
+@@ -6,7 +6,8 @@ use std::io::ErrorKind;
+ impl<'a> InteractiveShell<'a> {
+     /// Make sure to reset the fd to blocking mode
+     fn change_blocking(fd: std::os::unix::io::RawFd) {
+-        fcntl(fd, FcntlArg::F_SETFL(OFlag::O_RDWR)).unwrap();
++        // Fails when the terminal is gone; the read below notices that.
++        let _ = fcntl(fd, FcntlArg::F_SETFL(OFlag::O_RDWR));
+     }
+ 
+     /// Ion's interface to Liner's `read_line` method, which handles everything related to
+@@ -43,6 +44,13 @@ impl<'a> InteractiveShell<'a> {
+                 None
+             }
+             Err(err) => {
++                // The terminal is gone (an SSH session ended): exit like on
++                // SIGHUP instead of trying to read it again forever.
++                if !nix::unistd::isatty(0).unwrap_or(false) {
++                    let mut shell = self.shell.borrow_mut();
++                    prep_for_exit(&mut shell);
++                    std::process::exit(129)
++                }
+                 eprintln!("ion: liner: {}", err);
+                 None
+             }
+-- 
+2.53.0
+

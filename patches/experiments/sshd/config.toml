@@ -1,6 +1,8 @@
 [packages]
 openssh = "source"
 polltest = "source"
+# Patched: exits when the SSH session ends (recipes/core/ion).
+ion = "source"
 
 # Privilege separation: sshd runs the pre-auth part as this user, chrooted
 # to /var/empty.

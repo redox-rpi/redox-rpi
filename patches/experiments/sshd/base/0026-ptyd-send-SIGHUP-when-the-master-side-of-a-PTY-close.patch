@@ -58,7 +58,7 @@ index 638419dd..49d8f3e2 100644
          }
      }
  
-@@ -342,6 +346,24 @@ impl Pty {
+@@ -342,6 +346,25 @@ impl Pty {
          }
      }
  
@@ -66,6 +66,7 @@ index 638419dd..49d8f3e2 100644
 +    /// send SIGHUP and SIGCONT to the processes on this terminal, like Unix.
 +    /// Without it the shell keeps going, gets EOF and EPIPE and panics.
 +    pub fn hangup(&self) {
++        eprintln!("ptyd: pty {} hangup, SIGHUP to groups {:?}", self.id, self.seen_pgrps);
 +        for &pgrp in &self.seen_pgrps {
 +            for sig in [libredox::flag::SIGHUP, libredox::flag::SIGCONT] {
 +                let _ = libredox::call::kill(-(pgrp as isize) as usize, sig as _);
