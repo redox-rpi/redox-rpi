@@ -54,7 +54,9 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
    2.5 to 2.9 times faster than `bcm2835-sdhcid`. RedoxFS writing 36 times
    the data for small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)) moves to v0.4.0.
 3. **USB hotplug** ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)): a keyboard or network adapter
-   plugged in after boot is found.
+   plugged in after boot is found. Moved to v0.4.0 (maintainer's decision,
+   2026-10-30): it passed its Pi tests but was not merged in time for the
+   release candidates (PR #68).
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
 5. **Full CPU speed** ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the ARM clock at 1.4 GHz
    instead of 600 MHz, set through the firmware, with a warning on
@@ -66,6 +68,27 @@ test tool and not in release images) and the serial console dropping characters 
 If there is time: CI builds with the pinned revisions ([#9](https://github.com/redox-rpi/redox-rpi/issues/9)).
 Not planned for v0.3.0: booting the kernel straight from the Pi firmware, without U-Boot ([#15](https://github.com/redox-rpi/redox-rpi/issues/15), v0.4.0), `poweroff` ([#7](https://github.com/redox-rpi/redox-rpi/issues/7), v0.5.0 or later). The Zero 2 W needs no image of its own: the Pi 3B+ image runs on it ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed).
 Progress: milestone [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
+
+## Plan to v0.9
+
+Planned on 2026-10-29. Each release has a milestone; the order can change
+when a topic needs more time.
+
+| Release | Theme | Contents |
+|---|---|---|
+| v0.3.0 | Stable | sdhost as the default ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) with the kernel memory fix ([#31](https://github.com/redox-rpi/redox-rpi/issues/31)), clean boot by default ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), serial input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)) |
+| v0.4.0 | Boot and storage | USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream) |
+| v0.5.0 | Devices | `poweroff` and reboot ([#7](https://github.com/redox-rpi/redox-rpi/issues/7)), USB sticks with `redox-fatfs2` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)), `pkg install` for Pi packages, keyboard layouts |
+| v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first) |
+| v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info |
+| v0.8.0 | Smart home | What homenode and Matter need: mDNS, TLS, GPIO, I2C and SPI, the DS3231 clock |
+| v0.9.0 | Towards 1.0 | CI on every push ([#9](https://github.com/redox-rpi/redox-rpi/issues/9), [#13](https://github.com/redox-rpi/redox-rpi/issues/13)), rebase on current Redox, documentation, Bluetooth as an outlook |
+
+Without a release target: graphics, from a firmware framebuffer to the
+GPU ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [graphics.md](docs/topics/graphics.md)).
+Also without a release target: an assistant, a small local language model
+that answers questions about Redox and runs a few safe tools
+([#43](https://github.com/redox-rpi/redox-rpi/issues/43), [assistant.md](docs/topics/assistant.md)).
 
 ## Topics
 
@@ -81,6 +104,7 @@ Progress: milestone [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1)
 | [Boot](docs/topics/boot.md) | U-Boot, SD card or network; clean boot in progress |
 | [Zero 2 W](docs/topics/zero2w.md) | Boots the Pi 3B+ image; slow network boot |
 | [CI and tests](docs/topics/ci.md) | QEMU boot in CI; Pi tests through a shared queue |
+| [Assistant](docs/topics/assistant.md) | Rust runtime (candle) and llama.cpp answer in QEMU; Pi speed test #51 waits for a card swap |
 
 ## Wish list: help wanted
 

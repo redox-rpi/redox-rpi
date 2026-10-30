@@ -1,0 +1,98 @@
+From c08dc36a95ca7d7da8c97c0c265df27daa8cc92d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 19:03:38 +0000
+Subject: [PATCH] aarch64: keep PL011 input while the kernel writes to the
+ serial port
+
+The kernel writes to the PL011 with the COM1 lock held and waits for the
+transmit FIFO for each byte, so the receive interrupt cannot run during a
+write. A shell that redraws its line after each key writes long enough for
+the 16-byte receive FIFO to overflow, and fast input loses characters.
+
+While waiting for the transmit FIFO, move received bytes into a stash
+until the FIFO is below its trigger level, and hand the stash over at the
+next receive interrupt. The bytes left in the FIFO make sure the receive
+timeout interrupt comes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/devices/uart_pl011.rs | 34 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
+index ba4cceb0..555df62d 100644
+--- a/src/devices/uart_pl011.rs
++++ b/src/devices/uart_pl011.rs
+@@ -93,6 +93,11 @@ bitflags! {
+     }
+ }
+ 
++// Bytes received while the kernel writes to the port and cannot take the
++// receive interrupt: without them the 16-byte receive FIFO overflows during
++// longer writes, such as a shell redrawing its line after each key.
++const RX_STASH_SIZE: usize = 1024;
++
+ pub struct SerialPort {
+     base: usize,
+     data_reg: u8,
+@@ -111,6 +116,8 @@ pub struct SerialPort {
+     ifls: u32,
+     fifo_size: u32,
+     cts_event_walkaround: bool,
++    rx_stash: [u8; RX_STASH_SIZE],
++    rx_stash_len: usize,
+ }
+ 
+ impl SerialPort {
+@@ -133,6 +140,8 @@ impl SerialPort {
+             ifls: 0x12, // RX4_8 | TX4_8
+             fifo_size: 32,
+             cts_event_walkaround,
++            rx_stash: [0; RX_STASH_SIZE],
++            rx_stash_len: 0,
+         }
+     }
+ 
+@@ -186,7 +195,28 @@ impl SerialPort {
+         }
+     }
+ 
++    // Move received bytes into the stash while the FIFO is at or above the
++    // receive trigger level. The bytes below it stay in the FIFO, so the
++    // receive timeout interrupt still comes and receive() hands over the
++    // stash.
++    fn stash_rx(&mut self) {
++        while self.intr_stats().contains(UartRisFlags::RXIS)
++            && self.rx_stash_len < RX_STASH_SIZE
++        {
++            let c = self.read_reg(self.data_reg) as u8;
++            if c != 0 {
++                self.rx_stash[self.rx_stash_len] = c;
++                self.rx_stash_len += 1;
++            }
++        }
++    }
++
+     pub fn receive(&mut self, token: &mut CleanLockToken) {
++        for i in 0..self.rx_stash_len {
++            debug_input(self.rx_stash[i], token);
++        }
++        self.rx_stash_len = 0;
++
+         let mut flags = self.intr_stats();
+         let chk_flags = UartRisFlags::RTIS | UartRisFlags::RXIS;
+         while (flags & chk_flags).bits() != 0 {
+@@ -215,7 +245,9 @@ impl SerialPort {
+     }
+ 
+     pub fn send(&mut self, data: u8) {
+-        while !self.line_sts().contains(UartFrFlags::TXFE) {}
++        while !self.line_sts().contains(UartFrFlags::TXFE) {
++            self.stash_rx();
++        }
+         self.write_reg(self.data_reg, data as u32);
+     }
+ 
+-- 
+2.53.0
+

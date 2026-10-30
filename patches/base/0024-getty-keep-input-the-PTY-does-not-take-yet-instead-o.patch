@@ -1,0 +1,101 @@
+From 638626128369dcd23a2dea18a68a355465967c8d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 19:42:11 +0000
+Subject: [PATCH] getty: keep input the PTY does not take yet instead of
+ panicking
+
+ptyd refuses input with EWOULDBLOCK while the program has not read enough
+of the earlier input. getty then panicked ("failed to write master PTY")
+and the console was gone. Fast input on a serial console does this: getty
+keeps reading the TTY and does not forward the program's output, so the
+program stops reading.
+
+Keep the input that was not taken, stop reading the TTY until it is taken,
+and keep forwarding the output meanwhile. With input pending, poll with a
+short timeout to retry it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ getty/src/main.rs | 37 ++++++++++++++++++++++++++++---------
+ 1 file changed, 28 insertions(+), 9 deletions(-)
+
+diff --git a/getty/src/main.rs b/getty/src/main.rs
+index c6497835..4c7ecbd2 100644
+--- a/getty/src/main.rs
++++ b/getty/src/main.rs
+@@ -60,25 +60,38 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+     // tty_fd => Display
+     // master_fd => PTY
+ 
++    // Input the PTY did not take yet: ptyd refuses input while the program
++    // has not read enough of the earlier input. The TTY is read again once
++    // it is taken, and the program's output keeps flowing meanwhile.
++    let mut pending: Vec<u8> = Vec::new();
++
++    // Returns whether input is still pending
+     let mut handle_event = |event_id: mio::Token| {
+         if event_id == TTY {
+             let mut packet = [0; 4096];
+-            loop {
++            'tty: loop {
++                while !pending.is_empty() {
++                    match master.write(&pending) {
++                        Ok(count) => {
++                            pending.drain(..count);
++                        }
++                        Err(ref err) if err.kind() == ErrorKind::WouldBlock => break 'tty,
++                        Err(_) => panic!("getty: failed to write master PTY"),
++                    }
++                }
+                 let count = match tty.read(&mut packet) {
+-                    Ok(0) => return,
++                    Ok(0) => break,
+                     Ok(count) => count,
+                     Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
+                     Err(_) => panic!("getty: failed to read from TTY"),
+                 };
+-                master
+-                    .write_all(&packet[..count])
+-                    .expect("getty: failed to write master PTY");
++                pending.extend_from_slice(&packet[..count]);
+             }
+         } else if event_id == MASTER {
+             let mut packet = [0; 4096];
+             loop {
+                 let count = match master.read(&mut packet) {
+-                    Ok(0) => return,
++                    Ok(0) => break,
+                     Ok(count) => count,
+                     Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
+                     Err(_) => panic!("getty: failed to read from master TTY"),
+@@ -90,18 +103,24 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+                 }
+             }
+         }
++        !pending.is_empty()
+     };
+ 
+     handle_event(TTY);
+-    handle_event(MASTER);
++    let mut input_pending = handle_event(MASTER);
+ 
+     'events: loop {
+         let mut events = mio::Events::with_capacity(2);
++        // With input pending, retry it soon even without an event
++        let timeout = input_pending.then(|| Duration::from_millis(10));
+         event_queue
+-            .poll(&mut events, None)
++            .poll(&mut events, timeout)
+             .expect("getty: failed to read event file");
+         for event in events.iter() {
+-            handle_event(event.token());
++            input_pending = handle_event(event.token());
++        }
++        if input_pending {
++            input_pending = handle_event(TTY);
+         }
+ 
+         match process.try_wait() {
+-- 
+2.53.0
+
