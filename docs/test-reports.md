@@ -2971,3 +2971,29 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `assistant`. test 106 ([#43](
 - So no answer, no tokens per second, no assistant or `llama-bench` run. The
   model file stays on `/scheme/data` for the rerun.
 - `/srv/tftp/redox` has the stable image again for the next boot.
+
+## 2026-10-30: `v0.3.0-dev-426-g5dc3790+x19b9`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `boot-time`. test 107 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, rerun of test 84 on today's main), Pi test agent
+
+**Pass: 3 of 3 boots came up with network and the SD card, `redox login:`
+about 21 s after the reset.** Staged with the owner's
+`~/t18-work/bt8-stage/scripts/netboot.sh` (bootloader md5 `1780eeee…`),
+image `~/t18-work/image-bt8/harddrive.img`.
+
+| Boot | `redox login:` after `kreset` | `40_bcm2835-sdhostd.service ready` | `40_dwc2d.service ready` |
+|---|---|---|---|
+| 1 | 21.1 s | 0.42 s (196 ms) | 6.46 s (6229 ms) |
+| 2 | 21.2 s | 0.41 s (184 ms) | 6.53 s (6267 ms) |
+| 3 | 21.0 s | 0.55 s (285 ms) | 6.51 s (6236 ms) |
+
+- In every boot the network came up: DHCP bound, no
+  `Can't open /scheme/netcfg/ifaces/eth0/mac`, devsh answered. No panic.
+- `bcm2835-sdhostd` served the card in every boot (SDHC 15193 MiB, 4-bit,
+  50 MHz).
+- Test 84 had 21.4 s; this is the same or a little faster. U-Boot plus the
+  43 MB image over HTTP take about 15 s of it.
+- Standard checks (`--manifest …netboot-v0.3.0-dev-426-g5dc3790+x19b9.toml`)
+  pass: version, manifest, ps, ps-tty, `/scheme/data` write and read back,
+  0 of 300 starts failed.
+- `/srv/tftp/redox` has the stable image again for the next boot.
