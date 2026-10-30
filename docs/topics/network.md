@@ -11,6 +11,25 @@
 ## Next
 
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
+- [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
+  (branch `netstack-multi`, experiment `netstack-multi`, Pi test #74):
+  netstack used to take one adapter at start and dhcpd configured only
+  `eth0`, once. Now netstack opens every `network.*` scheme and looks
+  again every 2 s (`wlan*` for Wi-Fi, `eth*` for the rest), dhcpd gets a
+  lease on each interface and keeps one default route (wired before
+  Wi-Fi), DHCP broadcasts leave only on their own adapter. `testnetd` is
+  a fake adapter with a DHCP server for the tests. Passes in QEMU (USB
+  network plus testnetd started after boot) and on the Pi (test 74, LAN7800
+  plus testnetd). Since then netstack also reports ready only after netcfg
+  and the interfaces exist (test 69 race; same as boot-time base `0028`).
+  Still missing: lease renewal,
+  adapters that go away, falling back to Wi-Fi when the cable is pulled.
+- IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
+  #55: ULA address yes, global 2a02 address and default route no): smoltcp
+  keeps only the last prefix option of a router advertisement, and each
+  advertisement replaced the router. Fixed in `ipv6` base `0029` (every
+  prefix, global first; lifetime 0 ends only that router), QEMU passes
+  with a global and a ULA prefix and a second router; Pi test #85.
 
 ## Later
 
