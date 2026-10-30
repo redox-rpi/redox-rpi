@@ -8,7 +8,8 @@ answers the guest's ARP requests and, every two seconds, asks:
 1. `redox-rpi.local` A, from port 5353 (multicast answer expected),
 2. `_devsh._tcp.local` PTR, from port 5353,
 3. `redox-rpi.local` A, from port 40000 (one-shot query: unicast answer
-   to 10.0.3.2:40000 with the same ID expected).
+   to 10.0.3.2:40000 with the same ID expected),
+4. with --ssh, `_ssh._tcp.local` PTR, from port 5353.
 
 With --ipv6 it also asks over IPv6, from fe80::5054:ff:fe12:3499 to
 ff02::fb: `redox-rpi.local` AAAA from port 5353 (multicast answer to
@@ -17,7 +18,8 @@ answers the guest's neighbor solicitations.
 
 It prints every mDNS response of the guest. Exit code 0 when it saw the
 A record with --expect-addr (multicast and unicast) and an SRV record with
-port 2323 within --seconds; with --ipv6 also a link-local AAAA record over
+port 2323 within --seconds; with --ssh also an SRV record with port 22;
+with --ipv6 also a link-local AAAA record over
 IPv6, multicast and unicast.
 """
 
@@ -127,6 +129,7 @@ def main():
     ap.add_argument("--expect-addr", default="10.0.3.15")
     ap.add_argument("--seconds", type=int, default=900)
     ap.add_argument("--ipv6", action="store_true", help="also query over IPv6 for AAAA")
+    ap.add_argument("--ssh", action="store_true", help="also ask for _ssh._tcp (sshd experiment)")
     args = ap.parse_args()
     group, port = args.socket.rsplit(":", 1)
     port = int(port)
@@ -140,15 +143,18 @@ def main():
     s.settimeout(0.2)
 
     seen = {"multicast A": False, "unicast A": False, "SRV 2323": False}
+    questions = [(5353, "redox-rpi.local", 1, 0), (5353, "_devsh._tcp.local", 12, 0),
+                 (40000, "redox-rpi.local", 1, qid := 0x4242)]
+    if args.ssh:
+        seen["SRV 22"] = False
+        questions.append((5353, "_ssh._tcp.local", 12, 0))
     if args.ipv6:
         seen.update({"multicast AAAA over IPv6": False, "unicast AAAA over IPv6": False})
-    end, next_ask, qid = time.time() + args.seconds, 0, 0x4242
+    end, next_ask = time.time() + args.seconds, 0
     while time.time() < end and not all(seen.values()):
         if time.time() >= next_ask:
             next_ask = time.time() + 2
-            for sport, name, qtype, i in ((5353, "redox-rpi.local", 1, 0),
-                                          (5353, "_devsh._tcp.local", 12, 0),
-                                          (40000, "redox-rpi.local", 1, qid)):
+            for sport, name, qtype, i in questions:
                 s.sendto(udp_frame(mac_for(MDNS), MDNS, sport, 5353, query(i, name, qtype)),
                          (group, port))
             if args.ipv6:
@@ -214,6 +220,8 @@ def main():
                     seen["unicast A"] = True
             if rtype == "SRV" and value.startswith("port 2323 "):
                 seen["SRV 2323"] = True
+            if rtype == "SRV" and value.startswith("port 22 ") and "SRV 22" in seen:
+                seen["SRV 22"] = True
     print("result: " + ", ".join(f"{k} {'yes' if v else 'no'}" for k, v in seen.items()))
     sys.exit(0 if all(seen.values()) else 1)
 

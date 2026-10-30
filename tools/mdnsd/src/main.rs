@@ -4,9 +4,13 @@
 //! `eth0`, and AAAA records, its IPv6 addresses) and announces services, so other machines in the LAN find the Pi without
 //! a fixed address: `ping redox-rpi.local`, `avahi-browse -r _devsh._tcp`.
 //!
-//! Usage: `mdnsd [-n <hostname>] [<service type>:<port>]...`, for example
-//! `mdnsd _devsh._tcp:2323`. The hostname defaults to `/etc/hostname`.
-//! Each service is announced as `<hostname>.<service type>.local`.
+//! Usage: `mdnsd [-n <hostname>] [<service type>:<port>[:<path>]]...`, for
+//! example `mdnsd _devsh._tcp:2323 _ssh._tcp:22:/usr/bin/sshd`. The hostname
+//! defaults to `/etc/hostname`. Each service is announced as
+//! `<hostname>.<service type>.local`. A service with a path counts only
+//! while that file exists (checked every 30 seconds), so one configuration
+//! fits images with and without the program; mdnsd announces again when
+//! the set of services changes.
 //!
 //! One socket on port 5353 listens on 224.0.0.251 and ff02::fb (netstack
 //! has one port space for IPv4 and IPv6). The addresses come from
@@ -54,9 +58,30 @@ const TTL_OTHER: u32 = 4500;
 
 const ADDRESS_CHECK: Duration = Duration::from_secs(5);
 
+/// How often mdnsd looks whether the programs of its services are there.
+const SERVICE_CHECK: Duration = Duration::from_secs(30);
+
 struct Service {
     kind: String, // "_devsh._tcp"
     port: u16,
+    /// Announced only while this file exists.
+    needs: Option<String>,
+    up: bool,
+}
+
+impl Service {
+    fn parse(arg: &str) -> Option<Service> {
+        let mut parts = arg.splitn(3, ':');
+        let kind = parts.next()?.trim_end_matches('.').to_string();
+        let port = parts.next()?.parse().ok()?;
+        let needs = parts.next().filter(|p| !p.is_empty()).map(String::from);
+        (!kind.is_empty()).then(|| Service { kind, port, up: needs.is_none(), needs })
+    }
+
+    /// Whether the service's program is there.
+    fn present(&self) -> bool {
+        self.needs.as_ref().map_or(true, |path| fs::metadata(path).is_ok())
+    }
 }
 
 struct Responder {
@@ -168,7 +193,7 @@ impl Responder {
             }
         }
         if qname == labels("_services._dns-sd._udp.local").as_slice() && (any || qtype == TYPE_PTR) {
-            for service in &self.services {
+            for service in self.services.iter().filter(|s| s.up) {
                 let kind = format!("{}.local", service.kind);
                 answers.push(Record {
                     name: "_services._dns-sd._udp.local".into(),
@@ -179,7 +204,7 @@ impl Responder {
                 });
             }
         }
-        for service in &self.services {
+        for service in self.services.iter().filter(|s| s.up) {
             for record in self.service_records(service) {
                 if qname == labels(&record.name).as_slice() && (any || qtype == record.kind) {
                     answers.push(record);
@@ -191,7 +216,7 @@ impl Responder {
     /// All records, for announcements.
     fn all_records(&self) -> Vec<Record> {
         let mut records = self.address_records();
-        for service in &self.services {
+        for service in self.services.iter().filter(|s| s.up) {
             records.extend(self.service_records(service));
         }
         records
@@ -356,7 +381,7 @@ fn join(socket: &UdpSocket) -> io::Result<()> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: mdnsd [-n <hostname>] [<service type>:<port>]...");
+    eprintln!("usage: mdnsd [-n <hostname>] [<service type>:<port>[:<path>]]...");
     process::exit(2);
 }
 
@@ -367,9 +392,8 @@ fn main() {
     while let Some(arg) = args.next() {
         if arg == "-n" {
             hostname = Some(args.next().unwrap_or_else(|| usage()));
-        } else if let Some((kind, port)) = arg.rsplit_once(':') {
-            let port = port.parse().unwrap_or_else(|_| usage());
-            services.push(Service { kind: kind.trim_end_matches('.').to_string(), port });
+        } else if let Some(service) = Service::parse(&arg) {
+            services.push(service);
         } else {
             usage();
         }
@@ -398,14 +422,31 @@ fn main() {
     };
     let _ = socket.set_read_timeout(Some(ADDRESS_CHECK));
     println!(
-        "mdnsd: {} on {MDNS_GROUP} and {MDNS_GROUP6} port {MDNS_PORT}, {} services",
+        "mdnsd: {} on {MDNS_GROUP} and {MDNS_GROUP6} port {MDNS_PORT}, {} services configured",
         responder.host,
         responder.services.len()
     );
 
     let mut buf = [0u8; 1500];
     let mut next_check = Instant::now();
+    let mut next_service_check = Instant::now();
     loop {
+        if Instant::now() >= next_service_check {
+            next_service_check = Instant::now() + SERVICE_CHECK;
+            let mut changed = false;
+            for service in &mut responder.services {
+                let present = service.present();
+                if present != service.up {
+                    service.up = present;
+                    changed = true;
+                    let state = if present { "announced" } else { "no longer announced" };
+                    println!("mdnsd: {}.{}.local port {} {state}", responder.instance, service.kind, service.port);
+                }
+            }
+            if changed && responder.has_address() {
+                announce(&responder, &socket);
+            }
+        }
         if Instant::now() >= next_check {
             next_check = Instant::now() + ADDRESS_CHECK;
             let (addr, addrs6) = eth0_addresses();
@@ -435,5 +476,28 @@ fn main() {
                 sleep(Duration::from_secs(1));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Service;
+
+    #[test]
+    fn service_arguments() {
+        let s = Service::parse("_devsh._tcp:2323").unwrap();
+        assert_eq!((s.kind.as_str(), s.port, s.needs.is_none(), s.up), ("_devsh._tcp", 2323, true, true));
+        let s = Service::parse("_ssh._tcp.:22:/usr/bin/sshd").unwrap();
+        assert_eq!((s.kind.as_str(), s.port, s.needs.as_deref(), s.up), ("_ssh._tcp", 22, Some("/usr/bin/sshd"), false));
+        assert!(Service::parse("_ssh._tcp").is_none());
+        assert!(Service::parse("_ssh._tcp:x").is_none());
+        assert!(Service::parse(":22").is_none());
+    }
+
+    #[test]
+    fn service_present() {
+        assert!(Service::parse("_a._tcp:1").unwrap().present());
+        assert!(Service::parse("_a._tcp:1:/").unwrap().present());
+        assert!(!Service::parse("_a._tcp:1:/no/such/file").unwrap().present());
     }
 }

@@ -15,6 +15,9 @@ Needs the [`multicast`](../multicast) experiment first (joining
   `<hostname>.local` with the address of `eth0`, and PTR, SRV and TXT
   queries for the services given on the command line
   (`mdnsd _devsh._tcp:2323`), plus `_services._dns-sd._udp.local`.
+  A service written as `type:port:path` counts only while that file
+  exists; mdnsd looks every 30 seconds and announces again when the set
+  changes.
   Announces all records twice at start and whenever the address changes.
   Queries from port 5353 get a multicast answer, one-shot queries from
   other ports a unicast answer with their ID and question.
@@ -28,8 +31,10 @@ Needs the [`multicast`](../multicast) experiment first (joining
   (`mdns-query.py redox-rpi.local AAAA -6 wlp13s0`), for the Pi tests:
   homenodellm has no avahi.
 - `config.toml`: hostname `redox-rpi` (`/etc/hostname`) and the service
-  `91_mdnsd.service`, which announces devsh. devshd is for development
-  images only, so a release image would announce other services.
+  `91_mdnsd.service`, which announces `_devsh._tcp` port 2323 while
+  `/usr/bin/devshd` is on the image and `_ssh._tcp` port 22 while
+  `/usr/bin/sshd` is (the [`sshd`](../sshd) experiment, branch `sshd`).
+  So a release image without devshd announces only SSH.
 
 Not done yet: probing for name conflicts (RFC 6762 section 8), goodbye
 packets at shutdown, known-answer suppression. On a Pi 3B+, the LAN7800
@@ -41,7 +46,8 @@ multicast filter in `dwc2d` must pass `01:00:5e:00:00:fb` and
 Like the multicast test: QEMU's socket netdev, and
 [`mdns-qemu-test.py`](mdns-qemu-test.py) as a second host (10.0.3.2) that
 asks for `redox-rpi.local` (A, from port 5353 and from port 40000) and
-`_devsh._tcp.local` (PTR), and answers ARP.
+`_devsh._tcp.local` (PTR), with `--ssh` also `_ssh._tcp.local` (PTR), and
+answers ARP.
 
 ```bash
 patches/experiments/mdns/mdns-qemu-test.py --seconds 850 &   # --ipv6: AAAA over IPv6 too
