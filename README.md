@@ -8,7 +8,9 @@ An unofficial, AI-assisted fork for the Redox OS™ operating system, a Rust
 microkernel OS.
 
 Bringing [Redox OS](https://www.redox-os.org/) (server profile) to the
-**Raspberry Pi 3** and **Raspberry Pi Zero 2 W**, with one kernel for both.
+**Raspberry Pi 3 Model B+** and **Raspberry Pi Zero 2 W**, with one kernel for both.
+The Pi 3 Model B (without +) is not supported yet: it has a different
+Ethernet chip (LAN9514), see [docs/known-issues.md](docs/known-issues.md).
 
 The Zero 2 W is close to a Raspberry Pi 3 (BCM2710A1, 4× Cortex-A53, 512 MB
 RAM, no onboard Ethernet). Redox already boots on the Pi 3 Model B+, so this
@@ -65,7 +67,7 @@ documentation and images.
 
 ## Hardware you need
 
-- Raspberry Pi 3 (Model B or B+) and/or Raspberry Pi Zero 2 W (with soldered
+- Raspberry Pi 3 Model B+ and/or Raspberry Pi Zero 2 W (with soldered
   pin header)
 - For the Zero 2 W: an Ethernet/USB hub HAT for networking
 - 3.3 V USB-to-UART adapter (e.g. CP2102 or FTDI)
