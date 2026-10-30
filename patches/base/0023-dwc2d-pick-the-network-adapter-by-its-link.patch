@@ -1,0 +1,181 @@
+From ff29be2ea44682009b8f00e7cc9c5a1baef0e8ce Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 20:53:21 +0100
+Subject: [PATCH] dwc2d: pick the network adapter by its link
+
+An RTL8152 or RTL8153 used to win over the onboard LAN7800 even without
+a cable, which left a Pi 3B+ with a hub plugged in without network. Both
+drivers now report whether the link came up. The RTL815x is used when it
+has a link, otherwise the LAN7800, and the RTL815x only when there is
+nothing else. The RTL8153 gets 10 s for gigabit autonegotiation instead
+of 5 s.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 13 +++++++------
+ drivers/usb/dwc2d/src/main.rs    | 31 ++++++++++++++++++++++---------
+ drivers/usb/dwc2d/src/rtl8152.rs | 22 ++++++++++++++--------
+ 3 files changed, 43 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index 7d54d63..7de1c28 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -203,7 +203,8 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ /// receiver and transmitter. `dt_mac` is the address from the devicetree,
+ /// if any; `led_modes` the PHY's `microchip,led-modes` (one entry per LED,
+ /// at most four). Returns the MAC address in use.
+-pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_modes: &[u32]) -> Result<[u8; 6], Error> {
++/// Returns the MAC address and whether the link came up.
++pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_modes: &[u32]) -> Result<([u8; 6], bool), Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, 1, 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+@@ -288,20 +289,20 @@ pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_mod
+ 
+     // Wait for the link, so DHCP does not start into a dead cable.
+     let start = Instant::now();
+-    loop {
++    let link = loop {
+         // The link bit latches low; read twice for the current state.
+         r.mii_read(MII_BMSR)?;
+         if r.mii_read(MII_BMSR)? & BMSR_LINK != 0 {
+             println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
+-            break;
++            break true;
+         }
+         if start.elapsed() > Duration::from_secs(5) {
+             println!("dwc2d: LAN78xx no link yet");
+-            break;
++            break false;
+         }
+         sleep(Duration::from_millis(100));
+-    }
+-    Ok(mac)
++    };
++    Ok((mac, link))
+ }
+ 
+ pub struct Lan78xx {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index b18633d..5a0bc4a 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -370,33 +370,37 @@ fn enumerate(
+         match bus.enumerate(speed, 0, None) {
+             Ok(()) => {
+                 println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+-                let mut network = None;
++                // Candidates for the network adapter, with their link state.
++                let mut rtl = None;
++                let mut lan = None;
++                let mut ecm = None;
+                 let mut keyboard = None;
+                 for device in bus.devices.clone() {
+-                    // A plugged-in RTL8152 or RTL8153 wins over the onboard LAN7800.
+-                    if !matches!(network, Some((NetFunction::Rtl8152(_), _))) {
++                    if rtl.is_none() {
+                         if let Some(function) = rtl8152::find(&mut bus, &device) {
+                             println!("dwc2d: RTL815x at address {}", device.address);
+                             match rtl8152::init(&mut bus, &function) {
+-                                Ok(mac) => {
+-                                    network = Some((NetFunction::Rtl8152(function), mac));
++                                Ok((mac, link)) => {
++                                    rtl = Some((NetFunction::Rtl8152(function), mac, link));
+                                     continue;
+                                 }
+                                 Err(err) => println!("dwc2d: RTL815x: {err:?}"),
+                             }
+                         }
+                     }
+-                    if network.is_none() {
++                    if lan.is_none() {
+                         if let Some(function) = lan78xx::find(&mut bus, &device) {
+                             println!("dwc2d: LAN7800 at address {}", device.address);
+-                            let mac = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
+-                            network = Some((NetFunction::Lan78xx(function), mac));
++                            let (mac, link) = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
++                            lan = Some((NetFunction::Lan78xx(function), mac, link));
+                             continue;
+                         }
++                    }
++                    if ecm.is_none() && rtl.is_none() && lan.is_none() {
+                         if let Some(function) = ecm::find(&mut bus, &device) {
+                             println!("dwc2d: CDC Ethernet at address {}", device.address);
+                             let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
+-                            network = Some((NetFunction::Ecm(function), mac));
++                            ecm = Some((NetFunction::Ecm(function), mac));
+                             continue;
+                         }
+                     }
+@@ -412,6 +416,15 @@ fn enumerate(
+                         }
+                     }
+                 }
++                // A plugged-in RTL8152 or RTL8153 wins over the onboard
++                // LAN7800, but only with a link: an adapter without a cable
++                // would leave the Pi without network.
++                let network = match (rtl, lan) {
++                    (Some((f, mac, true)), _) => Some((f, mac)),
++                    (_, Some((f, mac, _))) => Some((f, mac)),
++                    (Some((f, mac, false)), None) => Some((f, mac)),
++                    (None, None) => ecm,
++                };
+                 return Ok((network, keyboard));
+             }
+             Err(err) if attempt < ATTEMPTS => {
+diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
+index 1f3e2a8..9c8ae8c 100644
+--- a/drivers/usb/dwc2d/src/rtl8152.rs
++++ b/drivers/usb/dwc2d/src/rtl8152.rs
+@@ -787,7 +787,8 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ 
+ /// Bring the chip up: chip setup, reset, MAC address, filters, PHY, and
+ /// enable receiver and transmitter. Returns the MAC address in use.
+-pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<[u8; 6], Error> {
++/// Returns the MAC address and whether the link came up.
++pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<([u8; 6], bool), Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(f.configuration), 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+@@ -868,9 +869,14 @@ pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<[u8; 6], Error> {
+     let bmcr = r.mii_read(MII_BMCR)?;
+     r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)?;
+ 
+-    // Wait for the link, so DHCP does not start into a dead cable.
++    // Wait for the link, so DHCP does not start into a dead cable. Gigabit
++    // autonegotiation on the RTL8153 can take longer than 5 s.
++    let wait = match chip {
++        Chip::Rtl8152 => Duration::from_secs(5),
++        _ => Duration::from_secs(10),
++    };
+     let start = Instant::now();
+-    loop {
++    let link = loop {
+         let status = r.read2(PLA_PHYSTATUS, MCU_TYPE_PLA)?;
+         if status & PHYSTATUS_LINK != 0 {
+             let speed = if status & PHYSTATUS_1000MBPS != 0 {
+@@ -887,15 +893,15 @@ pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<[u8; 6], Error> {
+                 speed,
+                 if status & PHYSTATUS_FDX != 0 { "full" } else { "half" },
+             );
+-            break;
++            break true;
+         }
+-        if start.elapsed() > Duration::from_secs(5) {
++        if start.elapsed() > wait {
+             println!("dwc2d: {} no link yet", chip.name());
+-            break;
++            break false;
+         }
+         sleep(Duration::from_millis(100));
+-    }
+-    Ok(mac)
++    };
++    Ok((mac, link))
+ }
+ 
+ pub struct Rtl8152 {
+-- 
+2.54.0 (Apple Git-157)
+
