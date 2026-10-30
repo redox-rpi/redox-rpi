@@ -50,5 +50,14 @@ QEMU raspi3b, 2026-10-29, image `v0.3.0-dev-218-g8deec9e+xbe97`
 `DMA interrupt /scheme/irq/phandle-1/1,20`; the same write test (8 MiB and
 5000000 bytes, `conv=fsync`), both SHA-256 match on the host.
 
-Open: the Pi with `0002` (test 75) (DREQ pacing, drain words, MB/s and CPU time against PIO with
+Pi 3B+, test 75 (`0002`, `v0.3.0-dev-218-g8deec9e+xbe97`): boot log shows
+the interrupt, no DMA errors; 256 MiB write 7.7 MB/s, read 18 MB/s (as with
+polling); data intact after a reset and over `sd-stress.py --cycles 2`.
+CPU time of the driver (SCHTIME, the real one): +4.3 s for the 35 s write
+(12 %), +1.1 s for the 15 s read (7 %). ACTTIME, which test 42 used, rises by
+82 % and 92 % because it also counts the time the core sits idle after the
+driver blocked: with nothing else to run, the kernel does not switch away
+from the last context.
+
+Open: SCHTIME with polling (test 87), to put a number on the saving. (DREQ pacing, drain words, MB/s and CPU time against PIO with
 `scripts/sd-stress.py`).
