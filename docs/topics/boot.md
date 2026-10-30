@@ -76,3 +76,10 @@
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
+- Packages (#44, plan in the issue): Pi test of patch 0004 (image and
+  repository from the same build; do newer upstream packages still run
+  with our pinned relibc?); installs that survive a reboot on network and
+  direct boot (`pkg --root` into the SD data partition, a boot service
+  links the files into `/`); a clear message when the clock is not set
+  yet; the nightly run publishes our repository after a passing build.
+  Whether Redox's prebuilt programs run is #40 (relibc topic).
