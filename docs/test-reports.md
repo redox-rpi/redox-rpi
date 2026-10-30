@@ -2548,3 +2548,37 @@ written (`/etc/net/wifi` mode 600), the passphrase is not echoed, the
 login prompt follows at once. The second boot of the same card shows no
 welcome and keeps hostname `pi-test`. **Pass.** The time zone question was
 skipped (no zone files in this image). Pi test 78 passed later; the rebased branch (`v0.3.0-dev-381-g5d6d934+xda44`, patch `0040`) passes this test as well.
+
+## 2026-10-30: `v0.3.0-dev-109-ga21be68+x192b`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `mqtt-demo`, `ha-bridge`. test 88 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) retest of tests 58 and 65 with the connect fix), Pi test agent
+
+**Pass.** Broker `~/mqtt-broker/pi-test-broker.sh` (plain, 192.168.178.120:1883);
+capture saved as `~/pitest-tools/broker88.out` on homenodellm. Manifest matches.
+
+- Standard checks pass, 0 of 300 starts failed.
+- First 3 minutes, default broker 10.0.2.2: `mqtt-pub: 10.0.2.2:1883: no
+  answer from the broker within 10 s` (6×), `ha-bridge: … no answer … trying
+  again in 30 s` (the service, 5×) and `ha-bridge: … no answer …` (the timer
+  run, 3×). Every timer run ended `exited with code 1 after 10.1–10.4 s`, and
+  there was **no** `still running, skipped this run`. `timerd -l` answered at once
+  (0.3 s) with all three timers and their last runs: **pass**.
+- `echo 192.168.178.120 > /etc/mqtt-host` at 09:47:52, nothing killed. The log
+  had `ha-bridge: 6 sensors announced on 192.168.178.120:1883 as
+  redox-rpi/redox` after **40 s** (a little over the 30 s in the row: the
+  service retries every 30 s, plus the 10 s timeout). The broker got
+  `redox-rpi/redox/availability online` and the six `homeassistant/…/config`
+  topics (5 `sensor`, 1 `binary_sensor`). Once a minute it got
+  `redox-rpi/temperature`, `redox-rpi/uptime` and `redox-rpi/redox/state`
+  (the timer runs already published at 09:48:00): **pass**.
+- `mosquitto_pub … -t homeassistant/status -m online`: the six configs came
+  again (6 → 12 in the capture): **pass**.
+- `mqtt-pub -h 192.168.178.99 -t x -m x`: `no answer from the broker within
+  10 s`, exit 1, after 10.05 s: **pass**.
+- `echo reset > /scheme/sys/kstop` at 09:50:33. `redox-rpi/redox/availability
+  offline` came at 09:51:03, **about 30 s** after the reset: **pass**.
+- `free` every 3 minutes (total 745,252 KB): 09:48 562,016 KB free, 09:51
+  597,492 KB free (the 09:45 reading timed out during the standard checks).
+  No loss over 6 minutes; the row's TLS rerun (#89) is the comparison.
+
+Broker stopped, stable image restored afterwards.
