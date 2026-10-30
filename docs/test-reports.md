@@ -2874,3 +2874,126 @@ log logging memory netcfg network.usb_lan78xx null pipe proc pty rand
 rpi-firmware serio shm sudo sys tcp time udp uds_dgram uds_stream zero`.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-402-g787acab+x4ec1`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 101 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server rerun with the CPU fix and the session-end fix, PR #78), Pi test agent
+
+**Pass.** Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-402-g787acab+x4ec1.img`.
+
+- Boot: no `Unable to move`, no `no hostkeys available`. No `generating new host
+  keys`, because the keys from test 81 are still on `/scheme/data/etc/ssh`, all 8
+  files, private ones `-rw-------`. Standard checks pass, 0 of 300 starts failed.
+- `polltest`: 5 × `poll N: ret 0 revents 0x0 after 2004–2010 ms; accept: Try
+  again (os error 11)`: **pass** (before the fix: `ret 1` at once).
+- `ssh root@192.168.178.148 'echo OK; id'`: `OK`, `uid=0(root) gid=0(root)`,
+  **1.23 s** including the login. `ssh-session.exp` (Pi, port 22, key file):
+  prompt, command, backspace, `exit` all ok, exit at once: **pass**.
+- `sshd` CPU (`ps`, SCHTIME): 0.43 s about 1 minute after boot, 1.81 s after
+  12 logins, 2.94 s after 22 sessions: **pass** (it doesn't grow by a second per
+  second any more).
+- 5 sessions `ssh -tt`, `echo hi` (answered `hi`), then `kill -9` of the local
+  client; and 5 sessions `sleep 40`, client killed after about 12 s. The serial
+  log has 10 lines `ptyd: pty … hangup, SIGHUP to groups [...]` (one group for
+  the prompt cases, two with `sleep`) and **no `UNHANDLED EXCEPTION`**, no
+  `panicked`. Afterwards `ps` shows no leftover `ion` or `sleep` from those
+  sessions (only devsh's own `login`/`ion`): **pass**.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-393-ga24b8b8+xcd36`
+
+Real Pi 3B+ over netboot. Branch `spi`. test 99 ([#38](https://github.com/redox-rpi/redox-rpi/issues/38), [#39](https://github.com/redox-rpi/redox-rpi/issues/39), [#42](https://github.com/redox-rpi/redox-rpi/issues/42) GPIO, I2C and SPI drivers, the part without a person or wiring), Pi test agent
+
+**Pass: 21 of 21.** Image `~/redox-rpi-cpu/keep/v0.3.0-dev-393-ga24b8b8+xcd36/harddrive.img`.
+
+- Boot: `bcm2835-gpiod: 54 pins at 0x3f200000`, `bcm2835-i2cd: bus 1 at
+  0x3f804000, 100 kHz (core 250 MHz)`, `bcm2835-spid: bus 0 at 0x3f204000,
+  1000 kHz (core 250 MHz)`.
+- Standard checks pass, 0 of 300 starts failed.
+- `patches/experiments/gpio/nowire-check.py` (branch `spi`), no jumper, so
+  the SPI part checks the MISO pull instead of the loopback:
+
+```
+PASS: GPIO 5 output 1 reads back: 1
+PASS: GPIO 5 output 0 reads back: 0
+PASS: GPIO 6 input with pull up reads 1: 1
+PASS: GPIO 6 input with pull down reads 0: 0
+PASS: GPIO 6 input with pull up reads 1: 1
+PASS: activity LED (GPIO 29) takes writes
+PASS: power_led takes off and on
+PASS: pins table has 54 rows: 54 lines
+PASS: I2C pins 2 and 3 in alt0: alt0 alt0
+PASS: i2c detect finishes: answering: none
+PASS: missing address 50 gives an error: i2c: read: No such device or address (os error 6)
+PASS: SPI pins 7-11 in alt0: alt0 alt0 alt0 alt0 alt0
+SPI: jumper pin 19 to 21 not found (['00 00 00'])
+PASS: MISO pull up, 1000000 Hz, cs0: reads ff: ff ff ff ff
+PASS: MISO pull up, 1000000 Hz, cs1: reads ff: ff ff ff ff
+PASS: MISO pull up, 10000000 Hz, cs0: reads ff: ff ff ff ff
+PASS: MISO pull up, 10000000 Hz, cs1: reads ff: ff ff ff ff
+PASS: MISO pull down, 1000000 Hz, cs0: reads 00: 00 00 00 00
+PASS: MISO pull down, 1000000 Hz, cs1: reads 00: 00 00 00 00
+PASS: MISO pull down, 10000000 Hz, cs0: reads 00: 00 00 00 00
+PASS: MISO pull down, 10000000 Hz, cs1: reads 00: 00 00 00 00
+PASS: 4096-byte transfer finishes (wrong bytes expected without jumper): loopback: 4096 bytes at 1000000 Hz, 4082 wrong spi: loopback failed (MOSI pin 19 to MISO pin 21?)
+21 of 21 checks passed
+```
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-172-gc7bee13+xb847`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `assistant`. test 106 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43) Qwen3 0.6B with `rinfer` and the assistant), Pi test agent
+
+**Fail: the first `rinfer` run never answered, and the kernel then panicked with
+`oom` and halted the Pi.** Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-172-gc7bee13+xb847.img`.
+
+- Standard checks pass, 0 of 300 starts failed. `free`: 606,764 KB free of
+  745,252. `/scheme/data`: 898 MB free.
+- `rinfer --download …partNNN /scheme/data/Qwen3-0.6B-Q4_0.gguf`: the file
+  reached the right size, **382,156,480 bytes**, at 12:08 UTC after about 26
+  minutes (from 11:42, about 0.24 MB/s). The part list was cut off by my
+  devsh tool's 1500 s timeout.
+- `rinfer /scheme/data/Qwen3-0.6B-Q4_0.gguf 'What is the capital of
+  France?' 32` (started 12:09): it printed only `neon: true, threads: 4`, and
+  no `loaded in … s` within 20 minutes. From a second devsh, `free` showed
+  550 → 535 MB free over the first 2 minutes, and `rinfer`'s PRIVATE grew
+  only 7 → 22 MB while it used 2 min 11 s of CPU (SCHTIME). So it was loading
+  the model very slowly. Later devsh calls timed out.
+- The serial log then has `KERNEL PANIC: panicked at src/memory/mod.rs:1459:34:
+  not yet implemented: oom` in a page fault of `/usr/bin/rinfer`, then the same
+  panic in `logd` and `netstack`, and `HALT`. The last serial line came at
+  about 12:50 UTC. Soft temperature warnings at 60.1 °C came often the whole
+  time. The Shelly plug is on (4.3 W). The Pi needs a power cycle (the user's
+  OK).
+- So no answer, no tokens per second, no assistant or `llama-bench` run. The
+  model file stays on `/scheme/data` for the rerun.
+- `/srv/tftp/redox` has the stable image again for the next boot.
+
+## 2026-10-30: `v0.3.0-dev-426-g5dc3790+x19b9`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `boot-time`. test 107 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, rerun of test 84 on today's main), Pi test agent
+
+**Pass: 3 of 3 boots came up with network and the SD card, `redox login:`
+about 21 s after the reset.** Staged with the owner's
+`~/t18-work/bt8-stage/scripts/netboot.sh` (bootloader md5 `1780eeee…`),
+image `~/t18-work/image-bt8/harddrive.img`.
+
+| Boot | `redox login:` after `kreset` | `40_bcm2835-sdhostd.service ready` | `40_dwc2d.service ready` |
+|---|---|---|---|
+| 1 | 21.1 s | 0.42 s (196 ms) | 6.46 s (6229 ms) |
+| 2 | 21.2 s | 0.41 s (184 ms) | 6.53 s (6267 ms) |
+| 3 | 21.0 s | 0.55 s (285 ms) | 6.51 s (6236 ms) |
+
+- In every boot the network came up: DHCP bound, no
+  `Can't open /scheme/netcfg/ifaces/eth0/mac`, devsh answered. No panic.
+- `bcm2835-sdhostd` served the card in every boot (SDHC 15193 MiB, 4-bit,
+  50 MHz).
+- Test 84 had 21.4 s; this is the same or a little faster. U-Boot plus the
+  43 MB image over HTTP take about 15 s of it.
+- Standard checks (`--manifest …netboot-v0.3.0-dev-426-g5dc3790+x19b9.toml`)
+  pass: version, manifest, ps, ps-tty, `/scheme/data` write and read back,
+  0 of 300 starts failed.
+- `/srv/tftp/redox` has the stable image again for the next boot.
