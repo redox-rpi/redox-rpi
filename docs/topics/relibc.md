@@ -40,7 +40,9 @@
   `t-sigsegv`, relibc `exp/sigsegv`): `sigsegv`, `stackoverflow` and,
   with `sigentry-thread-signals`, `sigaltstack` pass in QEMU, no new
   failures. Pi test #68 passed (2026-10-29): 11 known failures, 0 new,
-  14 fixed (also the socket tests, with network on the Pi).
+  14 fixed (also the socket tests, with network on the Pi). Branch
+  `t-sigsegv-pi` (with `sigentry-thread-signals` and `relibc-tests`),
+  pull request to main.
 - Timer signals: relibc's timer thread (`timer_settime`, `alarm`) did not
   block signals and could take the `SIGALRM` it sent to the process, so a
   thread waiting in `sem_wait` was not interrupted (`time/timer`). Fixed
