@@ -484,10 +484,12 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     // environment editor; the firmware's lower-case Linux options are left out.
     let mut tryboot = false;
     let mut watchdog_off = false;
+    let mut watchdog_dry = false;
     if let Some(bootargs) = bootargs {
         for word in bootargs.split_ascii_whitespace() {
             tryboot |= word == "REDOX_RPI_TRYBOOT=1";
             watchdog_off |= word == "REDOX_RPI_WATCHDOG=off";
+            watchdog_dry |= word == "REDOX_RPI_WATCHDOG=dry";
             if let Some((name, _)) = word.split_once('=') {
                 if !name.is_empty()
                     && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
@@ -501,9 +503,13 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     // A tryboot start of a new slot (rpi-update): if the new kernel hangs,
     // the watchdog resets the board and the firmware starts config.txt, the
     // old slot. `rpi-update watchdog` takes over in userspace until commit.
-    let watchdog = tryboot && !watchdog_off;
+    // QEMU resets as soon as the watchdog is armed: there `off` leaves it
+    // out, `dry` also lets rpi-update only log what it would write.
+    let watchdog = tryboot && !watchdog_off && !watchdog_dry;
     if watchdog {
         let _ = writeln!(env, "RPI_WATCHDOG_ARMED=1");
+    } else if tryboot && watchdog_dry {
+        let _ = writeln!(env, "RPI_WATCHDOG_ARMED=dry");
     }
 
     unsafe {
@@ -542,7 +548,7 @@ unsafe fn boot(dtb_addr: u64) -> ! {
         println!("rpi-boot-stub: tryboot start, watchdog armed for 16 s");
         unsafe { arm_watchdog() };
     } else if tryboot {
-        println!("rpi-boot-stub: tryboot start, watchdog off (REDOX_RPI_WATCHDOG=off)");
+        println!("rpi-boot-stub: tryboot start, watchdog not armed (REDOX_RPI_WATCHDOG)");
     }
     println!("rpi-boot-stub: starting the kernel at {:#x}", entry);
 

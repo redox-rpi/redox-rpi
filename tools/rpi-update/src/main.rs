@@ -51,8 +51,10 @@ const CONF: &str = "/etc/rpi-update.conf";
 const TRY_MARK: &str = "REDOX_RPI_TRYBOOT=1";
 /// SET_REBOOT_FLAGS: bit 0 makes the firmware read tryboot.txt once.
 const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
-/// Set by rpi-boot-stub when it armed the watchdog.
+/// Set by rpi-boot-stub when it armed the watchdog; `=dry` in QEMU
+/// (REDOX_RPI_WATCHDOG=dry), where only the register writes are logged.
 const WATCHDOG_MARK: &str = "RPI_WATCHDOG_ARMED=1";
+const WATCHDOG_DRY: &str = "RPI_WATCHDOG_ARMED=dry";
 /// Written by commit; the watchdog loop stops when it sees it.
 const COMMITTED: &str = "/tmp/rpi-update-committed";
 const WATCHDOG_DEADLINE: Duration = Duration::from_secs(120);
@@ -118,11 +120,19 @@ fn in_tryboot() -> bool {
     env_has(TRY_MARK)
 }
 
-/// The power management registers, mapped from /scheme/memory.
-struct Pm(*mut u32);
+fn watchdog_armed() -> bool {
+    env_has(WATCHDOG_MARK) || env_has(WATCHDOG_DRY)
+}
+
+/// The power management registers, mapped from /scheme/memory; None for
+/// a dry run.
+struct Pm(Option<*mut u32>);
 
 impl Pm {
     fn map() -> io::Result<Pm> {
+        if env_has(WATCHDOG_DRY) {
+            return Ok(Pm(None));
+        }
         let mem = fs::OpenOptions::new().read(true).write(true).open("/scheme/memory/physical@dev")?;
         let p = unsafe {
             libc::mmap(
@@ -137,15 +147,21 @@ impl Pm {
         if p == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
-        Ok(Pm(p as *mut u32))
+        Ok(Pm(Some(p as *mut u32)))
     }
 
     fn read(&self, reg: usize) -> u32 {
-        unsafe { ptr::read_volatile(self.0.add(reg / 4)) }
+        match self.0 {
+            Some(base) => unsafe { ptr::read_volatile(base.add(reg / 4)) },
+            None => 0,
+        }
     }
 
     fn write(&self, reg: usize, value: u32) {
-        unsafe { ptr::write_volatile(self.0.add(reg / 4), PM_PASSWORD | value) }
+        match self.0 {
+            Some(base) => unsafe { ptr::write_volatile(base.add(reg / 4), PM_PASSWORD | value) },
+            None => println!("watchdog (dry run): {:#x} <- {:#010x}", reg, PM_PASSWORD | value),
+        }
     }
 
     /// Restarts the countdown (Linux' bcm2835_wdt_start).
@@ -358,7 +374,7 @@ fn commit() -> io::Result<()> {
 
 /// Tells the watchdog loop that commit is done and stops the watchdog.
 fn stop_watchdog() {
-    if !env_has(WATCHDOG_MARK) {
+    if !watchdog_armed() {
         return;
     }
     let _ = fs::write(COMMITTED, "");
@@ -372,7 +388,7 @@ fn stop_watchdog() {
 }
 
 fn watchdog() -> io::Result<()> {
-    if !env_has(WATCHDOG_MARK) {
+    if !watchdog_armed() {
         println!("watchdog not armed by rpi-boot-stub, nothing to do");
         return Ok(());
     }
