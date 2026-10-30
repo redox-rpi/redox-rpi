@@ -31,4 +31,7 @@ Build: `--experiment dwc2d-netstats` on main.
 
 ## Tests
 
-- QEMU: see below.
+- QEMU (`v0.3.0-dev-482-g1ff88ec+x056b`, CDC Ethernet): the file is there
+  31 s after boot (85 frames in, 77 out, 0 errors), and after 20 devsh
+  commands it shows 795 in, 683 out, `rx_last_ms` = `uptime_ms`; no panic.
+- Pi: long idle run with readings, test plan row (#92).
