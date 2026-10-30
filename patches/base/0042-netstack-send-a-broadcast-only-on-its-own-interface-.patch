@@ -1,7 +1,7 @@
-From bb411e9c95b34ec25ea7ac65152ccdd2c48ea2c5 Mon Sep 17 00:00:00 2001
+From abcf7a062b19432ba5cab502a7f46efe34c249b8 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
-Subject: [PATCH 51/53] netstack: send a broadcast only on its own interface,
+Subject: [PATCH 42/44] netstack: send a broadcast only on its own interface,
  fix checksums
 
 A DHCP client message goes out only on the adapter whose MAC is its

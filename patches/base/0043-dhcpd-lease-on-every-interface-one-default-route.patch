@@ -1,21 +1,24 @@
-From 2fea39440faaeb9225cb7b9be3a9ce06c0b0a12e Mon Sep 17 00:00:00 2001
+From fb054d2eeddd4c6e6104cc294cc81dc6d6f3d1d6 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
-Subject: [PATCH 52/53] dhcpd: lease on every interface, one default route
+Subject: [PATCH 43/44] dhcpd: lease on every interface, one default route
 
 dhcpd watches netcfg ifaces/ and gets a lease on each interface,
 including ones that appear later, with a 5 s wait per reply and retries.
 Replies are taken only with our transaction ID and MAC. The default
 route and name server come from the first wired interface with a lease,
 else from Wi-Fi. dhcpd -i <iface> keeps the old one-shot behaviour.
+This replaces the retry loop of "dhcpd: try again until the server
+answers": an interface without a lease is asked three times, then again
+every 30 s, so a cable plugged in later still gets an address.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- dhcpd/src/main.rs | 682 +++++++++++++++++++++++++---------------------
- 1 file changed, 373 insertions(+), 309 deletions(-)
+ dhcpd/src/main.rs | 694 +++++++++++++++++++++++++---------------------
+ 1 file changed, 371 insertions(+), 323 deletions(-)
 
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
-index a215312..1eb4f1d 100644
+index 4c20be3..1eb4f1d 100644
 --- a/dhcpd/src/main.rs
 +++ b/dhcpd/src/main.rs
 @@ -1,8 +1,9 @@
@@ -25,18 +28,21 @@ index a215312..1eb4f1d 100644
 +use std::io::{ErrorKind, Read, Write};
  use std::net::{SocketAddr, UdpSocket};
 -use std::time::Duration;
--use std::{env, process, time};
+-use std::{env, thread, time};
 +use std::time::{Duration, Instant};
 +use std::{env, process, thread, time};
  
  use dhcp::Dhcp;
  
-@@ -98,28 +99,167 @@ impl MacAddr {
+@@ -98,34 +99,167 @@ impl MacAddr {
      }
  }
  
--fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
--    let current_mac = MacAddr::from_str(get_iface_cfg_value(iface, "mac")?.trim());
+-/// How long to wait for each answer of the server.
+-const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
+-/// The pause before trying again, e.g. while the cable is out or until a
+-/// network adapter is plugged in.
+-const RETRY_PAUSE: Duration = Duration::from_secs(2);
 +/// What a DHCP server gave one interface.
 +#[derive(Clone, Debug, Default, PartialEq)]
 +struct Lease {
@@ -114,11 +120,8 @@ index a215312..1eb4f1d 100644
 +    Some(reply)
 +}
  
--    let current_ip = get_iface_cfg_value(iface, "addr/list")?
--        .lines()
--        .next()
--        .map(|l| l.to_owned())
--        .unwrap_or("0.0.0.0".to_string());
+-fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+-    let current_mac = MacAddr::from_str(get_iface_cfg_value(iface, "mac")?.trim());
 +fn message(mac: &MacAddr, tid: u32, options: &[u8]) -> Dhcp {
 +    let mut chaddr = [0; 16];
 +    chaddr[..6].copy_from_slice(&mac.bytes);
@@ -144,14 +147,19 @@ index a215312..1eb4f1d 100644
 +    dhcp.options[..options.len()].copy_from_slice(options);
 +    dhcp
 +}
-+
+ 
+-    let current_ip = get_iface_cfg_value(iface, "addr/list")?
+-        .lines()
+-        .next()
+-        .map(|l| l.to_owned())
+-        .unwrap_or("0.0.0.0".to_string());
 +fn send(socket: &UdpSocket, dhcp: &Dhcp) -> Result<(), String> {
 +    let data = unsafe {
 +        std::slice::from_raw_parts((dhcp as *const Dhcp) as *const u8, size_of::<Dhcp>())
 +    };
 +    socket.send(data).map(|_| ()).map_err(|e| e.to_string())
 +}
-+
+ 
 +/// Waits up to `timeout` for a reply of type `want` (or a NAK).
 +fn receive(
 +    socket: &UdpSocket,
@@ -188,7 +196,7 @@ index a215312..1eb4f1d 100644
 +        }
 +    }
 +}
- 
++
 +/// Gets a lease for `iface` and sets its address. Routes and the name
 +/// server are left to the caller, which knows about the other interfaces.
 +fn dhcp(iface: &str, timeout: Duration, verbose: bool) -> Result<Lease, String> {
@@ -212,11 +220,11 @@ index a215312..1eb4f1d 100644
  
      let socket = try_fmt!(UdpSocket::bind(("0.0.0.0", 68)), "failed to bind udp");
      try_fmt!(
-@@ -127,345 +267,269 @@ fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+@@ -133,355 +267,269 @@ fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
          "failed to connect udp"
      );
      try_fmt!(
--        socket.set_read_timeout(Some(Duration::new(30, 0))),
+-        socket.set_read_timeout(Some(ANSWER_TIMEOUT)),
 -        "failed to set read timeout"
 +        socket.set_write_timeout(Some(timeout)),
 +        "failed to set write timeout"
@@ -224,7 +232,7 @@ index a215312..1eb4f1d 100644
 +
 +    // DHCP Message Type (Discover), End
      try_fmt!(
--        socket.set_write_timeout(Some(Duration::new(30, 0))),
+-        socket.set_write_timeout(Some(ANSWER_TIMEOUT)),
 -        "failed to set write timeout"
 +        send(&socket, &message(&mac, tid, &[53, 1, 1, 255])),
 +        "failed to send discover"
@@ -710,9 +718,13 @@ index a215312..1eb4f1d 100644
          }
      }
  
--    if let Err(err) = dhcp(iface, verbose) {
--        eprintln!("dhcpd: {err}");
--        process::exit(1);
+-    // Without a link or an adapter the server does not answer; keep trying,
+-    // so the network comes up when the cable or adapter is plugged in.
+-    // Only the first failure is reported.
+-    let mut attempts = 1;
+-    while let Err(err) = dhcp(iface, verbose) {
+-        if attempts == 1 {
+-            eprintln!("dhcpd: {err}, trying again every {}s", (ANSWER_TIMEOUT + RETRY_PAUSE).as_secs());
 +    // `-i eth0`: one interface, one attempt, as dhcpd used to work.
 +    if let Some(iface) = iface {
 +        let result = dhcp(&iface, Duration::from_secs(30), verbose)
@@ -720,7 +732,12 @@ index a215312..1eb4f1d 100644
 +        if let Err(err) = result {
 +            eprintln!("dhcpd: {err}");
 +            process::exit(1);
-+        }
+         }
+-        attempts += 1;
+-        thread::sleep(RETRY_PAUSE);
+-    }
+-    if attempts > 1 {
+-        eprintln!("dhcpd: configured after {attempts} attempts");
 +        return;
      }
 +

@@ -1,7 +1,7 @@
-From 74a66aeda0e06b8d736f18bb54921e4bd8d10a71 Mon Sep 17 00:00:00 2001
+From c86cca8ca408a2e6efdd1d10888476623e6effb7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
-Subject: [PATCH 53/53] testnetd: fake network adapter with a DHCP server, for
+Subject: [PATCH 44/44] testnetd: fake network adapter with a DHCP server, for
  netstack tests
 
 testnetd registers network.test0 (or the scheme given as argument) with

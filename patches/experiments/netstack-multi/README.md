@@ -1,12 +1,16 @@
-# Experiment: netstack-multi, several network adapters (#53)
+# Several network adapters (was experiment `netstack-multi`, #53)
+
+**Default since the merge of this branch:** the patches are base
+`0041`–`0044` in `patches/base/`. `--experiment netstack-multi` is still
+accepted and adds nothing, so older build commands keep working. The
+numbers below are the ones the patches had as an experiment: `0050` is now
+`0041`, `0051` `0042`, `0052` `0043`, `0053` `0044`. `0043` replaces the
+retry loop of base `0032` (dhcpd tries again until the server answers):
+an interface without a lease is asked three times, then again every 30 s.
 
 Until now netstack took one adapter at start (`network.*`, the first one
 found) and dhcpd configured only `eth0`, once. A second adapter (the Wi-Fi
 driver, a USB Ethernet adapter plugged in later) was never used.
-
-```bash
-scripts/build-image.sh --experiment netstack-multi
-```
 
 | Patch | What |
 |---|---|

@@ -1,7 +1,7 @@
-From 894509b9c11cb3856ad692ebd88934ba6a8470e6 Mon Sep 17 00:00:00 2001
+From 3bd14ecf8b3fe3ef3c3325d1b4cadc4c0be42f7e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
-Subject: [PATCH 50/53] netstack: several network adapters, also ones that
+Subject: [PATCH 41/44] netstack: several network adapters, also ones that
  appear after start
 
 netstack opens every network.* scheme at start and looks again every
