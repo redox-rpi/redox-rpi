@@ -78,7 +78,8 @@
 
 ## Next
 
-- A Pi test of USB sticks (high-speed stick on the 3B+ hub).
+- Pi tests of USB sticks and card readers: rows #50 and #71, one image,
+  with a person in the USB visit.
 
 ## Later
 
