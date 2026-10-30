@@ -29,6 +29,8 @@ import time
 
 HOST_MAC = bytes.fromhex("525400123499")
 PREFIX = bytes.fromhex("20010db8000100000000000000000000")
+# --ula: a unique local prefix next to the global one, as the Fritz!Box sends
+ULA = bytes.fromhex("fd000db8000200000000000000000000")
 
 
 def eui64(prefix, mac):
@@ -40,6 +42,12 @@ HOST_GLOBAL = PREFIX[:15] + b"\x01"
 ALL_NODES = bytes.fromhex("ff020000000000000000000000000001")
 DNS_NAME = "matter.test"
 DNS_AAAA = PREFIX[:15] + b"\x99"
+HOST_ULA = ULA[:15] + b"\x01"
+# A second router that announces only the ULA prefix, with router lifetime 0
+OTHER_MAC = bytes.fromhex("525400123498")
+OTHER_LL = eui64(bytes.fromhex("fe80" + "00" * 14), OTHER_MAC)
+# A host behind the router: its echo requests need the guest's default route
+OFFLINK = bytes.fromhex("20010db8009900000000000000000001")
 
 
 def checksum(data):
@@ -62,12 +70,24 @@ def icmp6_frame(dst_mac, src, dst, icmp, hop_limit=255):
     return dst_mac + HOST_MAC + b"\x86\xdd" + ip + icmp
 
 
-def router_advert():
+def prefix_option(prefix):
+    return struct.pack("!BBBBIII", 3, 4, 64, 0xC0, 86400, 14400, 0) + prefix
+
+
+def router_advert(ula=False):
     body = struct.pack("!BBHBBHII", 134, 0, 0, 64, 0, 1800, 0, 0)
-    prefix = struct.pack("!BBBBIII", 3, 4, 64, 0xC0, 86400, 14400, 0) + PREFIX
+    prefixes = prefix_option(PREFIX) + (prefix_option(ULA) if ula else b"")
     sllao = struct.pack("!BB", 1, 1) + HOST_MAC
     rdnss = struct.pack("!BBHI", 25, 3, 0, 1800) + HOST_GLOBAL
-    return icmp6_frame(mcast_mac(ALL_NODES), HOST_LL, ALL_NODES, body + prefix + sllao + rdnss)
+    return icmp6_frame(mcast_mac(ALL_NODES), HOST_LL, ALL_NODES, body + prefixes + sllao + rdnss)
+
+
+def other_router_advert():
+    """Only the ULA prefix and router lifetime 0: must not end the default route."""
+    body = struct.pack("!BBHBBHII", 134, 0, 0, 64, 0, 0, 0, 0)
+    sllao = struct.pack("!BB", 1, 1) + OTHER_MAC
+    frame = icmp6_frame(mcast_mac(ALL_NODES), OTHER_LL, ALL_NODES, body + prefix_option(ULA) + sllao)
+    return frame[:6] + OTHER_MAC + frame[12:]
 
 
 def udp6_frame(dst_mac, src, dst, sport, dport, payload):
@@ -120,6 +140,8 @@ def main():
     ap.add_argument("--socket", default="239.255.77.77:17777")
     ap.add_argument("--seconds", type=int, default=900)
     ap.add_argument("--udp", action="store_true", help="also require a DNS query and a UDP echo")
+    ap.add_argument("--ula", action="store_true",
+                    help="a ULA prefix too, a second router with lifetime 0, and a ping from off-link")
     args = ap.parse_args()
     group, port = args.socket.rsplit(":", 1)
     port = int(port)
@@ -137,13 +159,16 @@ def main():
             "echo reply link-local": False, "echo reply SLAAC": False}
     if args.udp:
         seen.update({"AAAA query over IPv6": False, "UDP echo over IPv6": False})
+    if args.ula:
+        seen.update({"echo reply ULA": False, "echo reply to off-link": False})
+    advert = lambda: [send(router_advert(args.ula))] + ([send(other_router_advert())] if args.ula else [])
     guest_mac = None
     end, next_probe, seq = time.time() + args.seconds, 0, 0
     next_ra = time.time() + 240
     while time.time() < end and not all(seen.values()):
         now = time.time()
         if now >= next_ra:
-            send(router_advert())
+            advert()
             next_ra = now + 10
         if guest_mac and now >= next_probe:
             next_probe = now + 2
@@ -153,6 +178,11 @@ def main():
             send(neighbor_solicit(guest_global, HOST_GLOBAL))
             send(echo_request(guest_mac, HOST_LL, guest_ll, seq))
             send(echo_request(guest_mac, HOST_GLOBAL, guest_global, seq))
+            if args.ula:
+                guest_ula = eui64(ULA, guest_mac)
+                send(neighbor_solicit(guest_ula, HOST_ULA))
+                send(echo_request(guest_mac, HOST_ULA, guest_ula, seq))
+                send(echo_request(guest_mac, OFFLINK, guest_global, seq))
         try:
             frame = s.recv(2048)
         except socket.timeout:
@@ -192,13 +222,13 @@ def main():
             guest_mac = mac
             seen["router solicitation"] = True
             print(f"router solicitation from {ntop(src)} ({mac.hex(':')})", flush=True)
-            send(router_advert())
+            advert()
             next_ra = time.time() + 10
         elif kind == 135:
             target = icmp[8:24]
             print(f"neighbor solicitation from {ntop(src)} for {ntop(target)}", flush=True)
             guest_mac = guest_mac or mac
-            if target in (HOST_LL, HOST_GLOBAL):
+            if target in (HOST_LL, HOST_GLOBAL, HOST_ULA):
                 send(neighbor_advert(mac, src, target))
         elif kind == 136:
             target = icmp[8:24]
@@ -210,8 +240,13 @@ def main():
                   flush=True)
             if src[:2] == b"\xfe\x80":
                 seen["echo reply link-local"] = True
+            elif dst == OFFLINK:
+                if frame[0:6] == HOST_MAC:
+                    seen["echo reply to off-link"] = True
             elif src[:8] == PREFIX[:8]:
                 seen["echo reply SLAAC"] = True
+            elif src[:8] == ULA[:8]:
+                seen["echo reply ULA"] = True
         elif kind == 143:
             print(f"MLDv2 report from {ntop(src)}", flush=True)
         else:
