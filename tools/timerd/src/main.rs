@@ -26,7 +26,10 @@
 //! relibc), UTC if no zone is set. When the clocks go back, a time in the
 //! repeated hour runs once.
 //!
-//! Usage: `timerd` (daemon, started by init) or `timerd -l` (list timers).
+//! Usage: `timerd` (daemon, started by init), `timerd -l` (list timers) or
+//! `timerd -t <seconds since 1970>...` (show times in local time, as the
+//! schedules see them; to check the time zone, for example around the
+//! summer time switch).
 
 mod cron;
 
@@ -236,12 +239,38 @@ fn list() {
     }
 }
 
+/// `timerd -t`: each time in UTC and in local time, with the UTC offset.
+fn show_times(args: impl Iterator<Item = String>) {
+    let mut any = false;
+    for arg in args {
+        let Ok(unix) = arg.trim_start_matches('@').parse::<u64>() else {
+            eprintln!("timerd: not seconds since 1970: {arg}");
+            process::exit(2);
+        };
+        let offset = local_offset(unix);
+        let sign = if offset < 0 { '-' } else { '+' };
+        println!(
+            "{} UTC = {} ({sign}{:02}:{:02})",
+            format_utc(unix),
+            format_local(unix),
+            offset.abs() / 3600,
+            offset.abs() % 3600 / 60
+        );
+        any = true;
+    }
+    if !any {
+        eprintln!("usage: timerd -t seconds...");
+        process::exit(2);
+    }
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         None => {}
         Some("-l") => return list(),
+        Some("-t") => return show_times(std::env::args().skip(2)),
         Some(_) => {
-            eprintln!("usage: timerd [-l]");
+            eprintln!("usage: timerd [-l | -t seconds...]");
             process::exit(2);
         }
     }
