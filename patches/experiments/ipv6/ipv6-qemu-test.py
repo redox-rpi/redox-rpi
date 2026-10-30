@@ -187,7 +187,7 @@ def main():
             frame = s.recv(2048)
         except socket.timeout:
             continue
-        if frame[6:12] == HOST_MAC:
+        if frame[6:12] in (HOST_MAC, OTHER_MAC):
             continue
         if guest_mac is None and frame[6] & 1 == 0:
             guest_mac = frame[6:12]
