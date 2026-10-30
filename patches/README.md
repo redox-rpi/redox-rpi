@@ -41,15 +41,9 @@ each one expects to come before it:
 | `0037`–`0039` | `redoxfs/` | small consecutive writes of a handle are collected into whole records and written at the latest after 2 s, so a copy in 4 KiB blocks writes 1.3 times its data instead of 28 times (was experiment `redoxfs-write-coalesce`, #16; on top of `0036`) |
 
 Experiments apply after all default patches. Combinations that build:
-<<<<<<< HEAD
-`sdhost-driver` (with `sdhost-boot` or `sdhost-stats`),
-`timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
-default patches now, and so are `serial-rx`, `pi-clean-boot`, `redoxfs-rename` and `redoxfs-write-coalesce`; the names are still accepted
-=======
 `sdhost-stats`, `timesync`, `ldso-diagnostics`.
 `rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
-`sdhost-boot`, `ctx-leak-fix` and `redoxfs-rename` are default patches now; the names are still accepted
->>>>>>> origin/redoxfs-rename
+`sdhost-boot`, `ctx-leak-fix`, `redoxfs-rename` and `redoxfs-write-coalesce` are default patches now; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
