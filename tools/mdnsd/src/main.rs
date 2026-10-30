@@ -213,6 +213,31 @@ impl Responder {
         }
     }
 
+    /// Additional records for `answers`. RFC 6763 section 12.1: with a
+    /// service's PTR answer go its SRV and TXT. RFC 6762 section 6.2: with
+    /// an SRV, PTR, A or AAAA answer go the address records not answered
+    /// yet. So a browser has the port and address after one query.
+    fn additional_records(&self, answers: &[Record]) -> Vec<Record> {
+        let has = |name: &str, kind: u16| answers.iter().any(|r| r.kind == kind && r.name == name);
+        let mut additional = Vec::new();
+        for service in self.services.iter().filter(|s| s.up) {
+            let [ptr, srv, txt] = self.service_records(service);
+            if has(&ptr.name, TYPE_PTR) {
+                additional.extend([srv, txt].into_iter().filter(|r| !has(&r.name, r.kind)));
+            }
+        }
+        let kinds = |kind| answers.iter().chain(&additional).any(|r: &Record| r.kind == kind);
+        if kinds(TYPE_SRV) || kinds(TYPE_PTR) || kinds(TYPE_A) || kinds(TYPE_AAAA) {
+            if !answers.iter().any(|r| r.kind == TYPE_A) {
+                additional.extend(self.a_record());
+            }
+            if !answers.iter().any(|r| r.kind == TYPE_AAAA) {
+                additional.extend(self.aaaa_records());
+            }
+        }
+        additional
+    }
+
     /// All records, for announcements.
     fn all_records(&self) -> Vec<Record> {
         let mut records = self.address_records();
@@ -309,17 +334,7 @@ fn handle_query(responder: &Responder, socket: &UdpSocket, msg: &[u8], from: Soc
     if answers.is_empty() {
         return;
     }
-    // RFC 6762 section 6.2: with an SRV or PTR answer, and with an A or AAAA
-    // answer, the other address records go along as additional records.
-    let mut additional: Vec<Record> = Vec::new();
-    let has = |kind| answers.iter().any(|r: &Record| r.kind == kind);
-    let names_host = has(TYPE_SRV) || has(TYPE_PTR) || has(TYPE_A) || has(TYPE_AAAA);
-    if names_host && !has(TYPE_A) {
-        additional.extend(responder.a_record());
-    }
-    if names_host && !has(TYPE_AAAA) {
-        additional.extend(responder.aaaa_records());
-    }
+    let additional = responder.additional_records(&answers);
     let reply = if unicast {
         // One-shot resolver (RFC 6762 section 6.7): its ID and questions back.
         message(id, &msg[12..pos], qdcount, &answers, &additional)
@@ -481,7 +496,48 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::Service;
+    use super::*;
+
+    fn responder() -> Responder {
+        Responder {
+            host: "redox-rpi.local".into(),
+            instance: "redox-rpi".into(),
+            services: vec![Service::parse("_ssh._tcp:22").unwrap(), Service::parse("_devsh._tcp:2323").unwrap()],
+            addr: Some(Ipv4Addr::new(192, 168, 178, 148)),
+            addrs6: vec!["fe80::1".parse().unwrap()],
+        }
+    }
+
+    fn kinds(records: &[Record]) -> Vec<(String, u16)> {
+        records.iter().map(|r| (r.name.clone(), r.kind)).collect()
+    }
+
+    #[test]
+    fn ptr_answer_carries_srv_txt_and_addresses() {
+        let r = responder();
+        let mut answers = Vec::new();
+        r.answer(&labels("_ssh._tcp.local"), TYPE_PTR, &mut answers);
+        assert_eq!(kinds(&answers), [("_ssh._tcp.local".to_string(), TYPE_PTR)]);
+        let extra = kinds(&r.additional_records(&answers));
+        let full = "redox-rpi._ssh._tcp.local".to_string();
+        let host = "redox-rpi.local".to_string();
+        assert_eq!(extra, [(full.clone(), TYPE_SRV), (full, TYPE_TXT), (host.clone(), TYPE_A), (host, TYPE_AAAA)]);
+    }
+
+    #[test]
+    fn no_duplicates_and_nothing_for_others() {
+        let r = responder();
+        let mut answers = Vec::new();
+        r.answer(&labels("redox-rpi._ssh._tcp.local"), TYPE_ANY, &mut answers);
+        let extra = kinds(&r.additional_records(&answers));
+        assert!(extra.iter().all(|(_, k)| *k == TYPE_A || *k == TYPE_AAAA), "{extra:?}");
+        let mut answers = Vec::new();
+        r.answer(&labels("redox-rpi.local"), TYPE_A, &mut answers);
+        assert_eq!(kinds(&r.additional_records(&answers)), [("redox-rpi.local".to_string(), TYPE_AAAA)]);
+        let mut answers = Vec::new();
+        r.answer(&labels("other.local"), TYPE_A, &mut answers);
+        assert!(answers.is_empty());
+    }
 
     #[test]
     fn service_arguments() {
