@@ -47,3 +47,21 @@ Also in this experiment:
 
 Without a data partition (network boot without a card) `pkg-persist`
 fails at the pkg step and `restore` does nothing.
+
+## QEMU test (2026-10-30)
+
+Image `v0.3.0-dev-459-gcc84a42+xc526` (`timesync`, `pkg-hold`, `pkg-repo`,
+`pkg-persist`, `sigreturn-svc`), QEMU SD card with a fourth partition made
+with `redoxfs-mkfs`, mounted by hand as `data` (in QEMU the card's second
+partition is the EFI one, so `60_data` fails there).
+
+- Before the redoxfs patch: `mv /scheme/data/a /scheme/data/b` fails with
+  "No such file or directory", and so did `pkg-persist install nano`
+  (pkg's "Renaming file" step). `mv` on the root filesystem worked.
+- With it: `mv` works; `pkg-persist install nano` installs nano, ncursesw
+  and terminfo onto the data partition, copies 214 files into `/` (2 kept
+  from the image) and `nano --version` prints GNU nano 9.2.
+- Reset: the same card with partitions 1 to 3 written back from the image
+  (QEMU's root is on the card, the Pi's is in RAM), data partition kept.
+  `/usr/bin/nano` is gone, `pkg-persist restore` copies the 214 files
+  again without network, and nano runs.
