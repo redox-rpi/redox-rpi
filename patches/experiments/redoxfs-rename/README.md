@@ -17,3 +17,18 @@ scheme; `0001` does the same for both paths of a rename.
 ```bash
 scripts/build-image.sh --experiment redoxfs-rename
 ```
+
+## Results
+
+QEMU raspi3b with a RedoxFS data partition (`qemu-raspi3b.sh --data` from
+branch `qemu-data-part`), 2026-10-30:
+
+- Without the fix (`v0.3.0-dev-212-gc9fcc6d+x12cb`): `mv` on
+  `/scheme/data` fails with `No such file or directory (os error 2)`, with
+  absolute and relative names; on the root filesystem it works.
+- With the fix (`v0.3.0-dev-311-g9dcb81b+xd71d`): absolute and relative
+  renames on `/scheme/data`, a move into a subdirectory, a move from
+  `/scheme/data` to `/home/root` (EXDEV, `mv` copies) and renames on the
+  root filesystem all work; the moved file keeps its content.
+
+On the Pi: test 83.
