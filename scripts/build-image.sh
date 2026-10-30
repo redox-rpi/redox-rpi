@@ -223,11 +223,11 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: pin them and add our patches to their [source] section.
-# pkgutils only when an experiment patches it (pkg-hold); otherwise the
-# image takes the upstream binary.
-for name in bootloader base relibc pkgutils; do
+# pkgutils and redoxfs only when an experiment patches them (pkg-hold,
+# pkg-persist); otherwise the image takes the upstream binary.
+for name in bootloader base relibc pkgutils redoxfs; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
-    if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
+    if { [ "$name" = pkgutils ] || [ "$name" = redoxfs ]; } && [ -z "$(patch_files "$name")" ]; then
         continue
     fi
     prepare_recipe "$name"

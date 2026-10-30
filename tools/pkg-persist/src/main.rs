@@ -118,7 +118,10 @@ fn copy_dir(
     for entry in fs::read_dir(dir)? {
         let src = entry?.path();
         let rel = src.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-        if SKIP.contains(&rel.as_str()) {
+        // pkg's temporary files, left behind when an install fails (pkg
+        // exits with 0 even then, so pkg-persist cannot tell otherwise).
+        let temp = src.file_name().is_some_and(|n| n.to_string_lossy().starts_with(".pkgar."));
+        if SKIP.contains(&rel.as_str()) || temp {
             continue;
         }
         let dest = target.join(&rel);

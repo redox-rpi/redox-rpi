@@ -1,5 +1,23 @@
 [packages]
 pkg-persist = "source"
+# Built from source with patches/experiments/pkg-persist/redoxfs/: rename
+# fails on /scheme/data without it, and pkg renames every file it installs.
+redoxfs = "source"
+
+# Replaces the hold list of pkg-repo (list pkg-persist after pkg-repo):
+# the same, plus redoxfs, so an update keeps the patched one.
+[[files]]
+path = "/etc/pkg/hold"
+data = """
+# Packages pkg takes only from the redox-rpi repository (patches/experiments/pkg-persist).
+base 192.168.178.120
+base-initfs 192.168.178.120
+bootloader 192.168.178.120
+kernel 192.168.178.120
+relibc 192.168.178.120
+pkgutils 192.168.178.120
+redoxfs 192.168.178.120
+"""
 
 # After 60_data has mounted the SD card's data partition: copy the packages
 # installed there with pkg-persist into the root filesystem, which is in
@@ -9,7 +27,7 @@ path = "/usr/lib/init.d/61_pkg-persist.service"
 data = """
 [unit]
 description = "Packages from the data partition"
-requires_weak = ["00_base.target"]
+requires_weak = ["00_base.target", "60_data.service"]
 
 [service]
 cmd = "pkg-persist"
