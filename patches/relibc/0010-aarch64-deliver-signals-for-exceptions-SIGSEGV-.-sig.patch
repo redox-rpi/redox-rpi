@@ -1,4 +1,4 @@
-From e47b52c7952d8f1795141c2f832734e2884f2f61 Mon Sep 17 00:00:00 2001
+From a529c3cac0995431ec07b9f579712f5d3231eb68 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:43:22 +0000
 Subject: [PATCH] aarch64: deliver signals for exceptions (SIGSEGV, ...),
@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 179 insertions(+), 21 deletions(-)
 
 diff --git a/redox-rt/src/arch/aarch64.rs b/redox-rt/src/arch/aarch64.rs
-index a489b05..a1292ba 100644
+index de94185..6fbdd95 100644
 --- a/redox-rt/src/arch/aarch64.rs
 +++ b/redox-rt/src/arch/aarch64.rs
 @@ -1,11 +1,11 @@
@@ -39,7 +39,7 @@ index a489b05..a1292ba 100644
  };
  use redox_protocols::protocol::{ProcCall, RtSigInfo};
  
-@@ -328,8 +328,21 @@ asmfunction!(__relibc_internal_sigentry: ["
+@@ -332,8 +332,21 @@ asmfunction!(__relibc_internal_sigentry: ["
      ldxp x2, x3, [x2]
      clrex
  
@@ -62,7 +62,7 @@ index a489b05..a1292ba 100644
      sub x4, x4, {REDZONE_SIZE}
      and x4, x4, -{STACK_ALIGN}
      mov sp, x4
-@@ -358,9 +371,6 @@ asmfunction!(__relibc_internal_sigentry: ["
+@@ -362,9 +375,6 @@ asmfunction!(__relibc_internal_sigentry: ["
      stp q2, q3, [sp, #-32]!
      stp q0, q1, [sp, #-32]!
  
@@ -72,7 +72,7 @@ index a489b05..a1292ba 100644
      ldr x2, [x0, #{tcb_sc_off} + {sc_saved_pc}]
      ldr x3, [x0, #{tcb_sc_off} + {sc_saved_x0}]
      stp x2, x3, [sp, #-16]!
-@@ -400,6 +410,10 @@ asmfunction!(__relibc_internal_sigentry: ["
+@@ -404,6 +414,10 @@ asmfunction!(__relibc_internal_sigentry: ["
  
      add sp, sp, #64
  
@@ -83,7 +83,7 @@ index a489b05..a1292ba 100644
      ldp x30, x29, [sp], #16
      ldp x28, x27, [sp], #16
      ldp x26, x25, [sp], #16
-@@ -475,6 +489,8 @@ asmfunction!(__relibc_internal_sigentry: ["
+@@ -479,6 +493,8 @@ asmfunction!(__relibc_internal_sigentry: ["
      sa_tmp_x5_x6 = const offset_of!(SigArea, tmp_x5_x6),
      sa_tmp_x7_x8 = const offset_of!(SigArea, tmp_x7_x8),
      sa_tmp_sp = const offset_of!(SigArea, tmp_sp),
@@ -92,7 +92,7 @@ index a489b05..a1292ba 100644
      sa_tmp_rt_inf = const offset_of!(SigArea, tmp_rt_inf),
      sa_tmp_id_inf = const offset_of!(SigArea, tmp_id_inf),
      sa_pctl = const offset_of!(SigArea, pctl),
-@@ -496,6 +512,129 @@ asmfunction!(__relibc_internal_sigentry: ["
+@@ -500,6 +516,129 @@ asmfunction!(__relibc_internal_sigentry: ["
      RTINF_SIZE = const size_of::<RtSigInfo>(),
  ]);
  
@@ -222,7 +222,7 @@ index a489b05..a1292ba 100644
  asmfunction!(__relibc_internal_rlct_clone_ret: ["
      # Load registers
      ldp x8, x0, [sp], #16
-@@ -535,18 +674,27 @@ pub unsafe fn manually_enter_trampoline() {
+@@ -539,18 +678,27 @@ pub unsafe fn manually_enter_trampoline() {
      }
  }
  

@@ -6,9 +6,6 @@
 # 2026-10-29.
 
 # Signals
-./bins_dynamic/sigaltstack fail               # passes with sigsegv + sigentry-thread-signals
-./bins_dynamic/signals/sigsegv fail           # no exception handler on aarch64; passes with sigsegv
-./bins_dynamic/signals/stackoverflow fail     # passes with sigsegv
 ./bins_dynamic/signals/kill-child flaky
 ./bins_dynamic/signals/kill-permission flaky  # hangs sometimes
 ./bins_dynamic/signals/killpg0-self flaky

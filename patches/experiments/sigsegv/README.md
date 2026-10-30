@@ -5,7 +5,10 @@ an undefined instruction or a `brk` ended the process without a signal: no
 SIGSEGV handler ran, and the kernel printed `FATAL: Not an SVC induced
 synchronous exception`. sigaltstack was accepted but never used.
 
-Relibc patch `0001` (branch `exp/sigsegv` in redox-rpi/relibc):
+Default relibc patch [`relibc/0010`](../../relibc/) now (`0001` here,
+branch `exp/sigsegv` in redox-rpi/relibc), applied after `0008` and
+`0009` without this experiment; this README keeps the history and the
+name is still accepted:
 
 - `__relibc_internal_excpentry`: the exception entry, with the same frame
   as the signal entry; it switches to the sigaltstack if the signal has
@@ -21,7 +24,7 @@ status code, which the kernel does not pass (it passes only the class).
 The kernel still prints the register dump for every such exception.
 
 ```bash
-scripts/relibc-tests.sh --experiment sigsegv
+scripts/relibc-tests.sh
 ```
 
 ## Results
@@ -38,3 +41,7 @@ QEMU raspi3b, `scripts/relibc-tests.sh` (2026-10-29):
 signal sent to the thread, which is only delivered with
 `sigentry-thread-signals` ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)).
 No new failures. The patches apply together.
+
+Real Pi 3B+, 2026-10-29: test 68 (with `sigentry-thread-signals`) passes:
+`signals/sigsegv`, `signals/stackoverflow` and `sigaltstack` pass, no new
+failure ([test reports](../../../docs/test-reports.md)).
