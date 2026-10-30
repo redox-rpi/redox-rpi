@@ -1,7 +1,7 @@
 # Experiment: IPv6 addresses, neighbor discovery, SLAAC
 
 Step 2 of [#27](https://github.com/redox-rpi/redox-rpi/issues/27) (IPv6,
-v0.6.0). Applies after the [`multicast`](../multicast) experiment.
+v0.6.0). Applies after the [`multicast`](../multicast) experiment (file `needs`, which the relibc CI reads).
 
 ```bash
 scripts/build-image.sh --experiment multicast --experiment ipv6
