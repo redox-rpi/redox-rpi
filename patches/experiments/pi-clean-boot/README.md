@@ -1,4 +1,9 @@
-# Experiment: pi-clean-boot, no PCI and audio services on the Pi (#18)
+# No PCI and audio services on the Pi (#18, was experiment `pi-clean-boot`)
+
+**Default since 2026-10-29:** base `0030` (moved to `patches/base/`) is in
+every image. `--experiment pi-clean-boot` is still accepted and does
+nothing, so older commands keep working. This page stays as the patch's
+documentation.
 
 The Raspberry Pi 3B+ and the Zero 2 W have no PCI bus, and there is no
 sound driver for them yet. Still every boot started these services, and
@@ -12,12 +17,8 @@ their errors hid real ones in the console:
 | `audiod` | rootfs | "No such device", "exited without notifying readiness" |
 | `rtcd` | initfs | nothing: it reads the clock on x86 only (no message) |
 
-```bash
-scripts/build-image.sh --experiment pi-clean-boot
-```
-
 The base patch
-[`0021`](base/0021-Leave-out-pcid-pcid-spawner-audiod-and-rtcd-on-the-R.patch)
+[`0030`](../../base/0030-Leave-out-pcid-pcid-spawner-audiod-and-rtcd-on-the-R.patch)
 - adds `condition_board_not` to init units, the opposite of upstream's
   `condition_board`: the unit does not start when the image is built for
   one of the listed boards (`BOARD`, `raspi3bp` for both Pis);
@@ -46,6 +47,10 @@ about ACPI, PSCI, the GPIO interrupt controller and the PL031 clock, and
 - Real Pi 3B+, `v0.3.0-dev-49-g832e1b5+x6256` (the stable image's
   experiments `timesync` and `rtl8152` plus this one): none of the errors
   in the boot log, network up, `scripts/pi-test.py` all checks pass, 0 of
-  300 starts failed. Typing on the USB keyboard is still to be checked.
+  300 starts failed.
+- Real Pi 3B+, test #5 with `dwc2-interrupts`: all pass, keyboard checked.
+- As base `0024` (now `0030`), QEMU `raspi3b`, `v0.3.0-dev-129-g6917241+x9f76`: none of
+  the errors. Real Pi 3B+, same image, test #33: none of the errors,
+  network up, `scripts/pi-test.py` all checks pass, 0 of 300 starts failed.
 
 Details in [test-reports.md](../../../docs/test-reports.md).

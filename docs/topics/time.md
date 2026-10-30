@@ -13,11 +13,13 @@
   commands at set times from cron-format timer files, with catch-up after a
   restart; waits for `timesync`. Branch `timerd`, experiments `timerd` and
   `timerd-test` ([README](../../patches/experiments/timerd/README.md)).
+  The same branch makes `timesync` wait for the network (default route,
+  DNS with a timeout) and retry until a server answers. Pi tests #27
+  (`timerd`) and #41 (`timesync` with late DHCP) passed; pull request #59 (v0.4.0).
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
-  and `settimeofday` in relibc (patch `0011`): programs can set the clock;
-  `timesync` uses it and gets `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` to set
-  the clock by hand. Branch `clock-settime` (on `timerd`); passed in QEMU,
-  Pi test #66 queued.
+  / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
+  clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
+  passed; draft pull request after #59 (v0.9.0).
 
 ## Next
 
