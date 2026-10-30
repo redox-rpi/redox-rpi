@@ -1,8 +1,8 @@
-From 96ac78a24c218c949c23a22de0218c110109e32a Mon Sep 17 00:00:00 2001
+From 4286968bf40cbcf13b0d9b1e434a0e37c7cec0f2 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
-Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
- SCSI)
+Subject: [PATCH 38/39] dwc2d: USB sticks as a disk scheme (bulk-only
+ transport, SCSI)
 
 A bulk-only SCSI interface (class 8, subclass 6, protocol 0x50) found at
 boot or plugged in later is set up with INQUIRY, TEST UNIT READY (up to

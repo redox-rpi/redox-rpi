@@ -6,8 +6,9 @@
 # usb-bot) with cards in slots 0 and 2 and an empty slot 1, next to the
 # stick: both are read, the reader is unplugged, the stick still works.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-storage --experiment usb-storage-more. The host port for devshd is 12323, or STORAGE_PORT=<port>.
+# Needs an image built with --experiment usb-storage --experiment
+# usb-storage-more (hotplug is base 0031-0033 on usb-hotplug). devshd port
+# 12323, or STORAGE_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-storage.sh [image]

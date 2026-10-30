@@ -1,7 +1,7 @@
-From 64c629e4da1481cee057bb683896ba86d5b757be Mon Sep 17 00:00:00 2001
+From 816302ec8422172833d03d81b292570e3b752b1c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:09:09 +0100
-Subject: [PATCH] dwc2d: card readers (one disk per LUN with a card) and
+Subject: [PATCH 39/39] dwc2d: card readers (one disk per LUN with a card) and
  several sticks at once
 
 A card reader has one logical unit per slot. GET MAX LUN gives their

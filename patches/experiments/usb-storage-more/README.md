@@ -1,11 +1,11 @@
 # Card readers and several sticks (experiment `usb-storage-more`)
 
-Applies after the experiments `usb-hotplug` and `usb-storage`
-(`--experiment usb-hotplug --experiment usb-storage --experiment
-usb-storage-more`). Issue: [#52](https://github.com/redox-rpi/redox-rpi/issues/52),
+Applies after the hotplug base patches `0031`–`0033` (branch
+`usb-hotplug`, PR #68) and the experiment `usb-storage`
+(`--experiment usb-storage --experiment usb-storage-more`). Issue: [#52](https://github.com/redox-rpi/redox-rpi/issues/52),
 follow-up of #25.
 
-- **base `0038`:** `dwc2d` asks a stick or card reader for its logical
+- **base `0039`** (was `0038` before hotplug became base `0031`–`0033`): `dwc2d` asks a stick or card reader for its logical
   units (GET MAX LUN) and sends every command to its LUN. Each LUN with a
   medium is a disk of the device's scheme under its number:
   `/scheme/disk.usb-dwc2+<ports>-scsi/<lun>`, so a stick stays `.../0` and
