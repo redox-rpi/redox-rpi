@@ -1,4 +1,4 @@
-From 9790b2650f4ebd440ef19c2eeb9245898245493a Mon Sep 17 00:00:00 2001
+From 360c49c19f1373d0e94ef45d09ae8f1378fb7458 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:51 +0100
 Subject: [PATCH] bcm2835-i2cd: I2C bus 1 of the Raspberry Pi as a scheme
@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-i2cd.service
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 3823eb2..8970a2f 100644
+index 44910fdc..a5f72da9 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -252,6 +252,32 @@ version = "0.22.1"
@@ -63,7 +63,7 @@ index 3823eb2..8970a2f 100644
  [[package]]
  name = "bcm2835-sdhcid"
  version = "0.1.0"
-@@ -729,7 +755,9 @@ dependencies = [
+@@ -742,7 +768,9 @@ dependencies = [
   "daemon",
   "driver-network",
   "fdt 0.2.0-alpha1",
@@ -73,7 +73,7 @@ index 3823eb2..8970a2f 100644
   "redox_syscall 0.9.5",
  ]
  
-@@ -2196,6 +2224,19 @@ dependencies = [
+@@ -2209,6 +2237,19 @@ dependencies = [
   "serde_derive",
  ]
  
@@ -94,7 +94,7 @@ index 3823eb2..8970a2f 100644
  name = "rtcd"
  version = "0.1.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 283616f..0f8a865 100644
+index 5d733268..d8958bce 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -55,6 +55,7 @@ members = [
@@ -106,7 +106,7 @@ index 283616f..0f8a865 100644
      "drivers/redoxerd",
  
 diff --git a/Makefile b/Makefile
-index b3d89d3..c7d812c 100644
+index 7ad0f20d..4692458f 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
@@ -120,7 +120,7 @@ index b3d89d3..c7d812c 100644
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-i2cd/Cargo.toml b/drivers/bcm2835-i2cd/Cargo.toml
 new file mode 100644
-index 0000000..f65ebaa
+index 00000000..f65ebaa2
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -144,7 +144,7 @@ index 0000000..f65ebaa
 +workspace = true
 diff --git a/drivers/bcm2835-i2cd/src/bsc.rs b/drivers/bcm2835-i2cd/src/bsc.rs
 new file mode 100644
-index 0000000..bdde046
+index 00000000..bdde046d
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/src/bsc.rs
 @@ -0,0 +1,154 @@
@@ -304,7 +304,7 @@ index 0000000..bdde046
 +}
 diff --git a/drivers/bcm2835-i2cd/src/main.rs b/drivers/bcm2835-i2cd/src/main.rs
 new file mode 100644
-index 0000000..039fe39
+index 00000000..039fe395
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/src/main.rs
 @@ -0,0 +1,308 @@
@@ -617,7 +617,7 @@ index 0000000..039fe39
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8bf7bac..27c880f 100644
+index 286d5fa0..d4f0993e 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -5,6 +5,7 @@ requires_weak = [
@@ -625,12 +625,12 @@ index 8bf7bac..27c880f 100644
      "40_ps2d.service",
      "40_bcm2835-gpiod.service",
 +    "41_bcm2835-i2cd.service",
-     "40_bcm2835-sdhcid.service",
+     "40_bcm2835-sdhostd.service",
      "40_dwc2d.service",
      "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-i2cd.service b/init.initfs.d/41_bcm2835-i2cd.service
 new file mode 100644
-index 0000000..c0b0e2c
+index 00000000..c0b0e2c4
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-i2cd.service
 @@ -0,0 +1,9 @@
@@ -644,5 +644,5 @@ index 0000000..c0b0e2c
 +cmd = "bcm2835-i2cd"
 +type = { scheme = "i2c" }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

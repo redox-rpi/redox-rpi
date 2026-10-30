@@ -1,4 +1,4 @@
-From 9593451ca468391e020a57f5288a39856fba98ce Mon Sep 17 00:00:00 2001
+From 6919a62697b14a82ef9f583916a3b97ffcb2bec3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:52:27 +0100
 Subject: [PATCH] bcm2835-spid: SPI0 of the Raspberry Pi as a scheme
@@ -25,7 +25,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-spid.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 0f8a865..cb81cf6 100644
+index d8958bce..fe176046 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -56,6 +56,7 @@ members = [
@@ -37,7 +37,7 @@ index 0f8a865..cb81cf6 100644
      "drivers/redoxerd",
  
 diff --git a/Makefile b/Makefile
-index c7d812c..8720740 100644
+index 4692458f..00c38a18 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
@@ -51,7 +51,7 @@ index c7d812c..8720740 100644
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-spid/Cargo.toml b/drivers/bcm2835-spid/Cargo.toml
 new file mode 100644
-index 0000000..e4ac465
+index 00000000..e4ac4657
 --- /dev/null
 +++ b/drivers/bcm2835-spid/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -75,7 +75,7 @@ index 0000000..e4ac465
 +workspace = true
 diff --git a/drivers/bcm2835-spid/src/main.rs b/drivers/bcm2835-spid/src/main.rs
 new file mode 100644
-index 0000000..f9698bc
+index 00000000..f9698bc2
 --- /dev/null
 +++ b/drivers/bcm2835-spid/src/main.rs
 @@ -0,0 +1,316 @@
@@ -397,7 +397,7 @@ index 0000000..f9698bc
 +}
 diff --git a/drivers/bcm2835-spid/src/spi.rs b/drivers/bcm2835-spid/src/spi.rs
 new file mode 100644
-index 0000000..a26e918
+index 00000000..a26e9189
 --- /dev/null
 +++ b/drivers/bcm2835-spid/src/spi.rs
 @@ -0,0 +1,109 @@
@@ -511,7 +511,7 @@ index 0000000..a26e918
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 27c880f..31aab52 100644
+index d4f0993e..2c05be86 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -6,6 +6,7 @@ requires_weak = [
@@ -519,12 +519,12 @@ index 27c880f..31aab52 100644
      "40_bcm2835-gpiod.service",
      "41_bcm2835-i2cd.service",
 +    "41_bcm2835-spid.service",
-     "40_bcm2835-sdhcid.service",
+     "40_bcm2835-sdhostd.service",
      "40_dwc2d.service",
      "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-spid.service b/init.initfs.d/41_bcm2835-spid.service
 new file mode 100644
-index 0000000..47a6f02
+index 00000000..47a6f02b
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-spid.service
 @@ -0,0 +1,9 @@
@@ -538,5 +538,5 @@ index 0000000..47a6f02
 +cmd = "bcm2835-spid"
 +type = { scheme = "spi" }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
