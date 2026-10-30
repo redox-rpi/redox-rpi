@@ -1,7 +1,7 @@
 # Complete /scheme listings (experiment `ns-list-snapshot`)
 
-Issue: see the pull request. Found while checking the USB hotplug pull
-request #68: in about 1 of 11 QEMU boots without a network card, netstack
+Issue: [#79](https://github.com/redox-rpi/redox-rpi/issues/79). Found while checking the USB hotplug pull
+request #68: in 1 of 36 QEMU boots, netstack
 said "no network adapter found" although `dwc2d` had registered
 `network.usb` before it reported ready.
 
@@ -39,3 +39,10 @@ system call").
   scheme once, sorted, and twice the same.
 - Pi: a normal boot with this experiment (standard checks); the race is
   too rare to show there directly.
+
+## Results
+
+- QEMU (`v0.3.0-dev-372-g6d1e186+x99f7`): `scripts/test-scheme-list.sh`
+  passes. The image before the fix fails only the order check, because
+  its listing comes in hash map order.
+- Pi: test #100 (Pi test agent), queued.
