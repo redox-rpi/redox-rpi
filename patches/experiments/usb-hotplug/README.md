@@ -1,8 +1,11 @@
-# USB hotplug (experiment `usb-hotplug`)
+# USB hotplug (was experiment `usb-hotplug`)
 
-[#17](https://github.com/redox-rpi/redox-rpi/issues/17). Applies after the
-default patches (base `0020`, `0022`, `0023` from `dwc2-default`, on main
-since 403aac5).
+[#17](https://github.com/redox-rpi/redox-rpi/issues/17). **Default since
+the merge of this branch:** the patches are base `0031`–`0033` in
+`patches/base/`. `--experiment usb-hotplug` is still accepted and adds
+nothing, so older build commands keep working. The numbers below are the
+ones the patches had as an experiment: `0030` is now `0031`, `0031` is
+`0032`, `0032` is `0033`.
 
 - **base `0030`:** `dwc2d` asks the root port and every port of every hub
   for connection changes once a second. A new device is reset and
@@ -36,7 +39,7 @@ since 403aac5).
   port three times and checks the log and devshd (`KEYBOARD=1` adds the
   keyboard's port).
 
-Build: `scripts/build-image.sh --experiment usb-hotplug`.
+Build: `scripts/build-image.sh` (default).
 
 QEMU check: `scripts/test-hotplug.sh [image]` boots twice. First it
 unplugs the USB keyboard, plugs in a new one and types on it, then plugs
@@ -52,3 +55,21 @@ of the LAN7800's port, network back after 7–10 s. The keyboard was
 unplugged and plugged into 4 ports, found each time. With the cable pulled
 during boot, dhcpd configured the network after 4 attempts
 ([report](../../../docs/test-reports.md)).
+
+## Merge to main
+
+Pull request with main merged in (2026-10-30): the patches apply unchanged
+after main's base patches and after sdhost's `0025`–`0028`; they touch
+only `dwc2d` and `dhcpd`.
+
+- **Proven on the Pi:** test #35 (`v0.3.0-dev-148-g54f7433+x657a`:
+  standard checks, 3 power cycles of the LAN7800's port, keyboard in 4
+  ports, cable pulled during boot) and test #67
+  (`v0.3.0-dev-176-g752ac70+x8057`, with `dwc2d-boottime` on top, which
+  carries the later halt and SETUP fixes in these same patches):
+  `scripts/pi-hotplug-test.sh` 15/15 twice, keyboard cycle.
+- **QEMU after merging main:** `scripts/test-hotplug.sh` 15/15 with
+  `dwc2d-boottime` (`v0.3.0-dev-325-g9c7ecdb+x8057`) and with `usb-serial`
+  (`v0.3.0-dev-332-gbf1ec19+x41ea`) on top.
+- **Still needs a person:** nothing. The Anker hub steps stay with test #4
+  (rtl8152 session).

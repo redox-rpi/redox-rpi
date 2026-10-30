@@ -1,0 +1,62 @@
+From ad56995a312cc15b4e8a47e832e2bf7b59aa586c Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 23:24:14 +0000
+Subject: [PATCH] Exit a thread that kills itself when its syscall returns
+
+A thread ends itself by writing ForceKill to its own status handle. The
+proc scheme then called exit_this_context inside the write, which does
+not return, so the file description that sys_write holds was never
+dropped. Its proc handle stayed open and kept the dead context, with its
+64 KiB kernel stack, alive: about 76 KiB per thread that exits itself.
+
+Set being_sigkilled instead; the syscall entry calls exit_this_context
+after the syscall, when the references are gone.
+---
+ src/scheme/proc.rs | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index 4d974bf4..a8049314 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -1318,8 +1318,16 @@ impl ContextHandle {
+                                     handle_notify_files(res, token);
+                                 }
+                             }
+-                            drop(context);
+-                            crate::syscall::exit_this_context(None, token);
++                            // Exit when this syscall returns, not here: exit_this_context
++                            // does not return, so the references the syscall path still
++                            // holds (the file description of this handle, and through it
++                            // the handle and this context) would never be dropped.
++                            context.write(token.token()).being_sigkilled = true;
++                            crate::percpu::PercpuBlock::current()
++                                .switch_internals
++                                .being_sigkilled
++                                .set(true);
++                            Ok(size_of::<usize>())
+                         } else {
+                             let cpu_id = {
+                                 let mut ctxt = context.write(token.token());
+@@ -1401,8 +1409,16 @@ impl ContextHandle {
+                                     handle_notify_files(res, token);
+                                 }
+                             }
+-                            drop(context);
+-                            crate::syscall::exit_this_context(None, token);
++                            // Exit when this syscall returns, not here: exit_this_context
++                            // does not return, so the references the syscall path still
++                            // holds (the file description of this handle, and through it
++                            // the handle and this context) would never be dropped.
++                            context.write(token.token()).being_sigkilled = true;
++                            crate::percpu::PercpuBlock::current()
++                                .switch_internals
++                                .being_sigkilled
++                                .set(true);
++                            Ok(size_of::<usize>())
+                         } else {
+                             Err(Error::new(EPERM))
+                         }
+-- 
+2.53.0
+

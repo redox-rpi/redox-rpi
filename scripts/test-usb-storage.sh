@@ -4,8 +4,8 @@
 # disk scheme, copy it to block 2048, check the copy in the image on the
 # host, unplug the stick, and plug it in again.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-storage. The host port for devshd is 12323, or STORAGE_PORT=<port>.
+# Needs an image built with --experiment usb-storage (hotplug is base
+# 0031-0033 on usb-hotplug). devshd port 12323, or STORAGE_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-storage.sh [image]
@@ -70,7 +70,7 @@ truncate -s 16M "$stick"
 printf '%s' "$marker" | dd of="$stick" conv=notrunc status=none
 
 rm -f "$socket" "$log"
-QEMU_DEVSH_PORT=$port timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" \
+DEVSH_PORT=$port timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" \
     --image "$image" < /dev/null > "$log" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null; sleep 1; pkill -P $qemu 2>/dev/null' EXIT

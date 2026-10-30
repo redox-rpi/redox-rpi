@@ -1,10 +1,10 @@
 # USB sticks (experiment `usb-storage`)
 
 [#25](https://github.com/redox-rpi/redox-rpi/issues/25). Applies after the
-experiment `usb-hotplug` (`--experiment usb-hotplug --experiment
-usb-storage`).
+hotplug patches, base `0031`–`0033` on branch `usb-hotplug` (PR #68):
+`--experiment usb-storage`.
 
-- **base `0033`:** `dwc2d` serves a USB stick (bulk-only transport, SCSI
+- **base `0038`** (was `0033` before hotplug became base `0031`–`0033`): `dwc2d` serves a USB stick (bulk-only transport, SCSI
   commands) as the disk scheme `disk.usb-dwc2+<ports>-scsi`, named like
   upstream's `usbscsid`. `<ports>` is the hub ports from the root, e.g.
   `1.3`, or `0` for a stick on the root port. `0` is the whole stick,
