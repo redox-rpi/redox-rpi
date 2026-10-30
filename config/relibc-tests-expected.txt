@@ -24,8 +24,7 @@
 ./bins_dynamic/tls_shared fail
 
 # stdio, time, threads
-./bins_dynamic/stdio/mutex fail               # ftrylockfile succeeds in another thread; passed once with #4 and #14 fixes
-./bins_dynamic/time/timer fail                # sem_wait EINVAL
+./bins_dynamic/stdio/mutex flaky              # ftrylockfile succeeds in another thread; fails or passes per build, not per run
 ./bins_dynamic/pthread/rwlock_randtest fail   # hangs
 ./bins_dynamic/redox_ring_ramfs fail
 

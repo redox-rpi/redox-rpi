@@ -1,0 +1,36 @@
+From 92041ce5177c994499a1b7618f37d7601a753827 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 17:00:10 +0000
+Subject: [PATCH] redox: timer thread blocks all signals
+
+timer_settime starts a thread that sends SIGEV_SIGNAL signals to the
+process. The thread inherited the caller's signal mask, so it could take
+the signal itself; a thread waiting for it in sem_wait or pause was then
+not interrupted (tests/time/timer: the second sem_wait got EINVAL, or
+the first returned 0). glibc blocks all signals in its timer thread too.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/platform/redox/timer.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/platform/redox/timer.rs b/src/platform/redox/timer.rs
+index 5e9f557..0580bb6 100644
+--- a/src/platform/redox/timer.rs
++++ b/src/platform/redox/timer.rs
+@@ -75,6 +75,12 @@ impl RlctTimer {
+ }
+ 
+ pub extern "C" fn timer_routine(arg: *mut c_void) -> *mut c_void {
++    // SIGEV_SIGNAL sends the signal to the process, so any thread that does
++    // not block it may take it, this one too. Then the thread that waits for
++    // it (sem_wait, pause, ...) is not interrupted: it sees at most what the
++    // handler did, on another thread. Block all signals here, as glibc does
++    // in its timer thread.
++    let _ = redox_rt::signal::set_sigmask(Some(!0), None);
+     let (mut timer_version, eventfd) = {
+         let timers = TIMERS.lock();
+         let Some(timer_st) = timers.get(&arg.addr()) else {
+-- 
+2.53.0
+
