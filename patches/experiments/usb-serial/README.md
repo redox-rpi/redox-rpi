@@ -41,3 +41,21 @@ Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
   no QEMU device; they share the scheme and the transfer code and differ
   only in their setup requests, checked on the Pi.
 - **Pi**: test #62 in docs/test-plan.md, with a person and a stick.
+
+## Merge to main
+
+**Not merge-ready yet: Pi test #62 needs a person.** The branch is
+otherwise up to date (2026-10-30): it contains `usb-hotplug` merged with
+main, and `0036` applies unchanged (same patch ID).
+
+- **QEMU after the merge with main** (`v0.3.0-dev-332-gbf1ec19+x41ea`):
+  `scripts/test-usb-serial.sh` 15/15 and `scripts/test-hotplug.sh` 15/15.
+- **Proven on the Pi:** nothing specific yet. The hotplug and channel code
+  it builds on passed #35 and #67.
+- **Still needs a person (#62):** plug a CP210x or CH340 stick (and FTDI or
+  CDC-ACM if at hand) into the 3B+. Then read and write through a
+  loopback jumper or the stick's own answers, set the speed, unplug and
+  plug in again. QEMU has only an FTDI model, so CDC-ACM, CP210x and CH340
+  are proven only on the Pi.
+- **Number at the merge:** `git mv` to `patches/base/` after
+  `usb-hotplug`'s patches and drop `--experiment usb-serial`.
