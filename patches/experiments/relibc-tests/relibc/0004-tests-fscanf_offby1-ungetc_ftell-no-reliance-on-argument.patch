@@ -1,0 +1,109 @@
+From 30d77b3bb18a0f1e30ae5e340a87dc4ea5d14fe9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 15:07:14 +0000
+Subject: [PATCH] tests: fscanf_offby1, ungetc_ftell: no reliance on argument
+ evaluation order
+
+Both passed getc()/fgetc() and ftell() as arguments of one printf call.
+The order in which arguments are evaluated is unspecified; gcc evaluates
+them right to left on x86_64, which the expected output assumes, and left
+to right on aarch64. Two statements, in the x86_64 order.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/stdio/fscanf_offby1.c |  7 ++++-
+ tests/stdio/ungetc_ftell.c  | 58 ++++++++++++++++++++-----------------
+ 2 files changed, 37 insertions(+), 28 deletions(-)
+
+diff --git a/tests/stdio/fscanf_offby1.c b/tests/stdio/fscanf_offby1.c
+index c8339357..943a8ac9 100644
+--- a/tests/stdio/fscanf_offby1.c
++++ b/tests/stdio/fscanf_offby1.c
+@@ -4,5 +4,10 @@ int main() {
+         FILE *f = fopen("stdio/fscanf_offby1.c", "r");
+         int x;
+         fscanf(f, "//%d", &x);
+-        printf("%d, %ld, %d\n", x, ftell(f), fgetc(f));
++        // fgetc before ftell, in two statements: the order in which
++        // function arguments are evaluated is unspecified (gcc evaluates
++        // them right to left on x86_64, left to right on aarch64).
++        int c = fgetc(f);
++        long pos = ftell(f);
++        printf("%d, %ld, %d\n", x, pos, c);
+ }
+diff --git a/tests/stdio/ungetc_ftell.c b/tests/stdio/ungetc_ftell.c
+index 10be6a30..29796ecf 100644
+--- a/tests/stdio/ungetc_ftell.c
++++ b/tests/stdio/ungetc_ftell.c
+@@ -1,37 +1,41 @@
+ #include <stdio.h>
++// ftell before getc, in two statements: the order in which function
++// arguments are evaluated is unspecified (gcc evaluates them right to left
++// on x86_64, left to right on aarch64).
++#define P() do { long pos = ftell(f); int c = getc(f); printf("%c, %ld\n", c, pos); } while (0)
+ int main() {
+ 	FILE *f = fopen("stdio/ungetc_ftell.c", "r");
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
++	P();
++	P();
++	P();
+ 	ungetc('\n', f);ungetc('d', f);
+ 	ungetc('l', f);	ungetc('r', f);
+ 	ungetc('o', f);	ungetc('w', f);
+ 	ungetc(' ', f);	ungetc('o', f);
+ 	ungetc('l', f);	ungetc('l', f);
+ 	ungetc('e', f);	ungetc('h', f);
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
+-	printf("%c, %ld\n", getc(f), ftell(f));
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
++	P();
+ }
+-- 
+2.53.0
+
