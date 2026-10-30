@@ -2231,3 +2231,31 @@ manifest matches.
 - Standard checks pass, 0 of 300 starts failed. Test files deleted.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-122-g74a1e24+x607a`
+
+Real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `sdhost-dma`, `timesync` (test 42's image, DMA with polling). test 87 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21) sdhost DMA, CPU time with polling for comparison with test 75), Pi test agent
+
+**Done: with polling, write SCHTIME is 3.4–8.6 s per 35 s; read about 1 s
+per 15 s.** Manifest matches.
+
+256 MiB from `/dev/urandom` to `/scheme/data`, `dd bs=1048576 conv=fsync`, then
+read back. Columns of `bcm2835-sdhostd` (`ps` shows `bcm2835-sdhos`):
+
+| | time | MB/s | SCHTIME | ACTTIME |
+|---|---|---|---|---|
+| write, run 1 (first after boot) | 35.0 s | 7.7 | +8.61 s (0.05 → 8.66) | +28.6 s |
+| read, run 1 | 15.1 s | 18 | +1.00 s (8.66 → 9.66) | +13.7 s |
+| write, run 2 | 35.3 s | 7.6 | +3.41 s (9.66 → 13.07) | +28.9 s |
+| read, run 2 | 15.1 s | 18 | +1.04 s (13.07 → 14.11) | +13.7 s |
+| test 75 write (interrupt) | 35.0 s | 7.7 | +4.3 s | +28.9 s |
+| test 75 read (interrupt) | 15.3 s | 18 | +1.1 s | +14.0 s |
+
+- Reads cost about 1 s of CPU in both drivers (7 % of the transfer time).
+- Writes vary: 8.6 s on the first run after boot, 3.4 s on the second. Test
+  75's single write (4.3 s) is in that range, so this data does not show that
+  the interrupt saves CPU time when writing. More runs of each would tell.
+- ACTTIME is the same in both, as expected if it also counts idle time.
+- Standard checks pass, 0 of 300 starts failed. Test file deleted.
+
+Stable image restored afterwards.
