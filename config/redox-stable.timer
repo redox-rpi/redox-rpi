@@ -1,0 +1,10 @@
+# Starts redox-stable.service every night; see that file for installing.
+[Unit]
+Description=Nightly redox-rpi stable image at 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target
