@@ -22,17 +22,40 @@
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
 - [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on Redox: experiment `relibc-tests` (branch
-  `t13-relibc-tests`) runs upstream's suite in QEMU, 395 runs, 15 fail
-  (TLS layout, signals, no shell or network in the image). Next: CI.
+  `t13-relibc-tests`) runs upstream's suite in QEMU. `scripts/relibc-tests.sh`
+  builds, runs it and compares with `config/relibc-tests-expected.txt`
+  (new failure: exit 1; fixed test reported). 319 tests, 25 known failures
+  on main, 16 with `tls-variant1` and `sigentry-thread-signals`. Nightly
+  unit for the build host ready (01:30 UTC, issue on a change), not
+  installed: needs the branch on main.
 - [#14](https://github.com/redox-rpi/redox-rpi/issues/14) deeper analysis: `ld.so` laid out static TLS like x86_64 on
   aarch64 (TLS aligned to more than 16 lost its initial values,
   initial-exec TLS of libraries pointed below the thread pointer). Fixed
   in experiment `tls-variant1` (branch `t14-tls-layout`), QEMU passes.
   None of today's packages uses the affected TLS forms. Also:
   sigaltstack is not implemented on aarch64.
+- No signal for exceptions on aarch64: relibc registered no exception
+  handler, so a bad memory access ended the process without SIGSEGV, and
+  sigaltstack was never used. Fixed in experiment `sigsegv` (branch
+  `t-sigsegv`, relibc `exp/sigsegv`): `sigsegv`, `stackoverflow` and,
+  with `sigentry-thread-signals`, `sigaltstack` pass in QEMU, no new
+  failures. Pi test #68 passed (2026-10-29): 11 known failures, 0 new,
+  14 fixed (also the socket tests, with network on the Pi).
+- Timer signals: relibc's timer thread (`timer_settime`, `alarm`) did not
+  block signals and could take the `SIGALRM` it sent to the process, so a
+  thread waiting in `sem_wait` was not interrupted (`time/timer`). Fixed
+  in experiment `timer-sigmask` (branch `t-timer-sigmask`), not
+  aarch64-specific.
+- `stdio/fscanf_offby1` and `stdio/ungetc_ftell` were test bugs: they rely
+  on x86_64's argument evaluation order. Fixed in relibc-tests patch
+  `0004` (branch `t-test-order`).
 - The static tests and statically linked C programs link the toolchain's
   `libc.a` (prefix sysroot, built 2026-10-24), not the relibc of the
-  build: our relibc patches do not reach them.
+  build: our relibc patches do not reach them. Fix for the tests (branch
+  `t13-relibc-tests`): an experiment may replace an upstream recipe;
+  `relibc-tests-bins` depends on relibc and links with
+  `-B<sysroot>/lib/ -L<sysroot>/lib`. Static `tls_align` now passes with
+  `tls-variant1`. Other static C recipes still need the same.
 
 ## Later
 
