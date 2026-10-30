@@ -94,7 +94,10 @@ too; on the Pi the window is wider.
   runs to its end (2 to 4 of 14–18 rounds at 0.01–0.03 s). Linux has the
   same race with a shorter window. A fix would be in ptyd: treat a queued
   VINTR byte as Ctrl-C when ISIG is switched on again.
-- Pi test #118 is queued.
+- Pi test #118 (2026-10-30, `v0.3.0-dev-359-ga6966cc+x810f`): on the serial
+  console, Ctrl-C 0.05–1 s after Enter, 12 of 12 stopped `sleep 40` about
+  0.1 s after the Ctrl-C (#80: about 32 s); devsh 10 of 10; standard checks
+  pass, 0 of 300 starts failed.
 
 ## Check
 

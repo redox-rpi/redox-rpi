@@ -65,9 +65,16 @@
   while ld.so loaded the program. Experiment
   [`pty-sigint`](https://github.com/redox-rpi/redox-rpi/tree/pty-sigint/patches/experiments/pty-sigint)
   patches Ion, procmgr and relibc. QEMU: SSH 22 of 22, devsh 10 of 10.
-  Pi test #80 passed (2026-10-30): devsh 20 of 20. On the serial console a
-  Ctrl-C right after Enter still came only when `sleep 30` ended (open).
-  Pull request to main.
+  Pi test #80 passed (2026-10-30): devsh 20 of 20. Pull request #71.
+- [#86](https://github.com/redox-rpi/redox-rpi/issues/86) (v0.7.0, branch `serial-ctrlc`, on top of
+  `pty-sigint`): on the serial console a Ctrl-C right after Enter came only
+  when `sleep 30` ended. Timing, not the serial path: the SIGINT reached
+  Ion's own group before the job had the terminal, and Ion only noted it.
+  Ion patch `0002` passes it on to the job. Pi test #118 passed
+  (2026-10-30): serial 12 of 12 stopped within 0.1 s, devsh 10 of 10.
+  Left: a Ctrl-C within about 0.03 s of Enter can still be read as a plain
+  byte while the line editor is in raw mode (as on Linux, shorter there).
+  Pull request open.
 
 ## Next
 
