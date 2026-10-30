@@ -1,4 +1,9 @@
-# Short USB replies (experiment `dwc2d-short-reply`)
+# Short USB replies (was experiment `dwc2d-short-reply`)
+
+**Default since PR #84:** base `0037` (moved to `patches/base/`) is in
+every image. `--experiment dwc2d-short-reply` is still accepted and does
+nothing, so older commands keep working. This page stays as the patch's
+documentation.
 
 Pi test 98 (main-based image `v0.3.0-dev-362-g4ddab1f+x0937`) found a
 `dwc2d` panic in 1 of 2 boots, and then there was no network adapter:
@@ -19,8 +24,9 @@ have the same code; `usb-hotplug` has it at line 216.
   request fails with `Error::Short` instead of panicking. A device behind
   a hub that still fails is logged and skipped; the others come up as
   before.
-- It applies on main and on top of `usb-hotplug` (base `0031`–`0033`)
-  without changes.
+- It applies on main. On top of `usb-hotplug` and `dwc2d-boottime` (base
+  `0031`–`0034`) it needs a 3-way merge in `enumerate.rs`, so whichever
+  of PR #84 and PR #68 merges second refreshes `0037` against the other.
 
 ## Tests
 
@@ -28,5 +34,8 @@ have the same code; `usb-hotplug` has it at line 216.
   network card enumerated, network up, no panic, no retry line. QEMU's
   devices never send a short reply, so the retry itself does not run
   there.
-- Pi: test #105 (Pi test agent), 5 boots, looking for the new
-  log line.
+- Pi: test 105 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-30-v030-dev-419-g65391aex1a87), Pi test agent): **5 of 5 boots without
+  a panic**, network up and the standard checks passing every time. No
+  boot printed the retry line: no short reply came, so this shows nothing
+  breaks, not that the retry catches the case (test 98 hit it in 1 of 2
+  boots).
