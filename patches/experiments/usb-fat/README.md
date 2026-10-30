@@ -48,7 +48,9 @@ merges second takes `usb-fat`'s `tools/redox-fatfs2` (`src/main.rs`,
 ## Tests
 
 QEMU raspi3b, `scripts/test-usb-fat.sh`, 2026-10-30, build
-`v0.3.0-dev-194-ge48e256+xa7bd`, all 16 checks pass. A 64 MiB stick with an
+`v0.3.0-dev-194-ge48e256+xa7bd`, all 16 checks pass; again on
+`v0.3.0-dev-449-g42dd0be+x87f5`, on `usb-storage` rebased onto the hotplug
+base patches. A 64 MiB stick with an
 MBR and a FAT32 partition made on the host with mtools, plugged in after
 boot through QEMU's monitor:
 
