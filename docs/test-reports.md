@@ -2621,3 +2621,35 @@ TLS.** Broker `~/mqtt-broker/pi-test-broker-tls.sh`; capture saved as
   (one `ha-bridge` connection a minute plus the service's).
 
 Broker stopped, retained `tls/pi` cleared, stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-225-g9ed4e48+xd4e7`
+
+Real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `timesync`, `rtl8152`, `wifi-sdio`. test 91 part A ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4, rerun of test 77), Pi test agent
+
+**Part A (`gpu_mem=16`): pass, the Wi-Fi scan works. Part B (`gpu_mem=64`) not
+done:** my permission check blocked the change to the shared
+`/srv/tftp/config.txt`, so it needs the user's OK. The file is unchanged
+(`gpu_mem=16`). Image
+`~/redox-rpi-zrtl/keep/wifiscan4-v0.3.0-dev-225-g9ed4e48+xd4e7.img`.
+
+- Boot: `rpi-firmwared: Wi-Fi power 0, tag not marked answered` and `Wi-Fi
+  power 1, tag not marked answered`, with no `I/O error` any more. Everything test
+  60 checks up to `MAC address b8:27:eb:5d:b5:ff`, then `CLM loaded (2676 bytes,
+  2 chunks)`, `radio up`, `event other (54), status 0, reason 0, flags 0x0`,
+  `frame on channel 3, 4 bytes`, `frame on channel 3, 1396 bytes`, **`9
+  networks`**, `no /etc/net/wifi, not joining a network`, `bcm2835-sdiod: OK`:
+  **pass**.
+- Scan list (BSSIDs and the neighbours' names left out here; all `Wpa2`): the
+  Fritz!Box `zehrer.net` on ch 1 (−57 dBm) and ch 64 (−60 dBm), `zehrer.xyz`
+  on ch 1 (−58 dBm), and six other networks on ch 6 (−70, −71), 11 (−75),
+  108 (−79, −79) and 116 (−85). Channels and levels look plausible.
+- Over devsh: `echo 0 > /scheme/rpi-firmware/wifi_power; echo $?` → `0`, `cat`
+  → `0`; `echo 1 …` → `0`, `cat` → `1`: **pass** (tests 57, 60 and 77 gave I/O error).
+- `/usr/lib/drivers/bcm2835-sdiod` once more (power-cycles the chip): the same
+  lines up to `OK`, **8 networks**, the same as at boot without the weakest
+  (ch 116, −85 dBm). Levels within 1–2 dB.
+- `free`: total 743,612 KB, 606,428 KB free.
+- Standard checks on the stable image afterwards: 1 of 300 starts failed (stable's
+  known start crashes, see test 92).
+
+Stable image restored afterwards.
