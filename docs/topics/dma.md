@@ -6,7 +6,8 @@ driver does not invent its own way. Plan for v0.4.0,
 
 ## State
 
-No driver uses the BCM2835 DMA controller. Data moves like this today:
+On `main`, no driver uses the BCM2835 DMA controller yet (the sdhost
+prototype below is on its own branch). Data moves like this today:
 
 - **sdhost** (SD card) moves every word through its 16-word FIFO with the
   CPU (PIO): about 8 MB/s writing, and the CPU is busy for all of it.
@@ -118,9 +119,13 @@ driver only its own channel with `physmap`.
 
 **Decision, step 1:** each driver maps the page itself and uses one fixed
 channel from this table, after checking that the channel is in the
-devicetree mask. It touches only its own channel and its own bit in the
-global enable register. Completion: poll `CS.END` (sdhost waits for the
-card anyway).
+devicetree mask (and falls back to the CPU if it is not). It touches only
+its own channel and its own bit in the global enable register
+(read-modify-write at `0xFF0`). Completion: the channel's own interrupt
+line (`dma0`–`dma14` in the devicetree, through `/scheme/irq`), with
+polling of `CS.END` as the fallback; or polling only. On the Pi, sdhost
+used the same CPU time either way (tests #75 and #87), so the interrupt is
+optional.
 
 | Channel | Driver |
 |---|---|
@@ -188,21 +193,35 @@ is aborted (`CS.ABORT`, then `CS.RESET`) the same way.
 - Needs cache maintenance step 2 for a cached back buffer; until then the
   back buffer is a `Dma` buffer (uncached), which works but draws slowly.
 
+## Prototype results (sdhost)
+
+Experiment `sdhost-dma` (SD card session, branch `sdhost-dma`, issue
+[#30](https://github.com/redox-rpi/redox-rpi/issues/30)): step 1 of this
+plan, channel 4, a 64 KiB uncached bounce buffer, PIO for single blocks and
+the last 3 words of multi-block reads.
+
+- QEMU: writes and reads of random files match the card image. QEMU copies
+  a whole control block at once and ignores DREQ pacing, so the timing and
+  the drain words needed the real Pi.
+- Pi tests #42 (polling), #75 (interrupt) and #87 (polling again, for CPU
+  time): **data safe** (hash after a reset, `sd-stress.py` 0 lost), and the
+  same speed as PIO: 256 MiB written at 7.7 MB/s, read at 18 MB/s. The card
+  limits the speed, not the CPU.
+- CPU time of `bcm2835-sdhostd` (SCHTIME) for 256 MiB: writing 3.4–8.6 s
+  per 35 s with polling and 4.3 s with the interrupt; reading about 1.0 s
+  per 15 s either way (7 %). With PIO the driver is busy for the whole
+  transfer. So DMA frees the CPU, and the interrupt adds no clear gain.
+
 ## In progress
 
-- This plan, branch `dma-plan`; waits for review.
-- Prototype: experiment `sdhost-dma` on branch `sdhost-dma` (step 1:
-  fixed channel 4, bounce buffer, polling). In QEMU, writes and reads of
-  random files match the card image
-  ([results](https://github.com/redox-rpi/redox-rpi/blob/sdhost-dma/patches/experiments/sdhost-dma/README.md#results)).
-  QEMU copies a whole control block at once and ignores DREQ pacing, so
-  the timing and the drain words need the real Pi.
+- sdhost DMA towards a PR (SD card session, #30), on this plan as it is:
+  channel 4, bus offset from `/soc` `dma-ranges` (fallback `0xC000_0000`),
+  the DMA code in one module so it can move to `common` later.
 
 ## Next
 
-- Pi test of `sdhost-dma`: `sd-stress.py`, MB/s and CPU time against PIO.
-- `common::bus::BusMap` and `common::bcm2835_dma` out of the prototype,
-  so the display driver can use them.
+- `common::bus::BusMap` and `common::bcm2835_dma` out of the sdhost driver
+  when the display driver needs them (blits, channel 5).
 - Decide cache maintenance step 2 with the graphics session.
 
 ## Later
