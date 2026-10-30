@@ -3166,3 +3166,34 @@ no answer with any flow setting
   network within a few minutes: no devsh, no ping, while the serial console
   still answered. I reset it from the serial console.
 - `/srv/tftp/redox` has the stable image again; stable booted.
+
+## 2026-10-30: `v0.3.0-dev-458-ga97f08a+x12cb`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, base `0049`. test 114 ([#88](https://github.com/redox-rpi/redox-rpi/issues/88) netstack leak per accepted TCP connection), Pi test agent
+
+**Pass: netstack grew 1.12 MB over 120 connections, and not batch by batch
+(stable: 5.25 MB for one batch of 40).** Image
+`~/redox-rpi-zrtl/keep/leak-fix-v0.3.0-dev-458-ga97f08a+x12cb.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- 120 devsh connections from homenodellm (connect to 2323, wait for
+  `login:`, close, 0.3 s apart), 3 batches of 40; every connection got
+  `login:` (0 failed). netstack PRIVATE from one devsh `cat /scheme/sys/context`:
+
+| Reading | Time (UTC) | netstack PRIVATE |
+|---|---|---|
+| start | 20:04:59 | 3.41 MB |
+| after 40 | 20:05:17 | 4.41 MB |
+| after 80 | 20:05:36 | 4.41 MB |
+| after 120 | 20:05:54 | 4.53 MB |
+| 1 min later | 20:06:56 | 4.53 MB |
+
+  The same steps as QEMU (3.41 → 4.28 → 4.28 → 4.41 MB).
+- Stable image (`v0.3.0-dev-15-g24fbb96+x9f76`) for comparison, one batch of
+  40 right after boot: 3.47 → **8.72 MB** (+5.25 MB), 8.84 MB a minute later;
+  1 of 40 connections got no `login:`.
+- Maybe related: tonight stable twice lost its network a few minutes after
+  booting (no ping, no devsh, the serial console still worked), while the test
+  images in between kept theirs. If something on the LAN opens many
+  connections to the Pi, this leak would explain it. Not checked.
+- `/srv/tftp/redox` has the stable image again; stable booted.
