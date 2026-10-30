@@ -35,3 +35,14 @@ every wait with a 1 s timeout; a timeout while the condition already
 holds is a lost wakeup and the test exits 1.
 
 ## Results
+
+QEMU raspi3b (`-smp 4`), 2026-10-30, `pthread/cond_stress` (3 s pingpong
+and 3 s parker per run):
+
+| Build | Kernel | Runs with lost wakeups |
+|---|---|---|
+| `v0.3.0-dev-359-g6e3a9f0+x2fad` | pinned, our patches | 3 of 21 (suite run and 2 of 20 single runs; 6 lost in all, mostly in the parker part) |
+| `v0.3.0-dev-360-g5e976eb+x9f6b` | first own patch (compare again under the lock) | 0 of 61 |
+| `v0.3.0-dev-361-g0b9f4c5+x9f6b` | this backport | 0 of 41 (suite run and 40 single runs) |
+
+The suite with the backport: 320 tests, 22 failures, all known, none new.
