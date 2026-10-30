@@ -17,7 +17,13 @@
   child that dropped its privileges) and OpenSSH (no `chroot`, PTY
   without owner). Pi test #59 failed: no host keys, because rename does
   not work on `/scheme/data`; the keys are now made in `/etc/ssh` and
-  copied there, rerun queued as #81. Ctrl-C while a program starts:
+  copied there. Rerun #81 passed on the Pi (2026-10-30): login in
+  1.3 s, the keys stay the same after a reset. Since then: the listening
+  `sshd` no longer uses a whole CPU (netstack reported a listening socket
+  always readable), and the shell exits cleanly when the session ends
+  (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
+  instead of panicking). Pi rerun with these queued; pull request to main.
+  Ctrl-C while a program starts:
   [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
