@@ -55,6 +55,7 @@ envs = { LANG = "C" }
 
 ```bash
 timerd -l     # timers with schedule, next and last run
+timerd -t 1792890000   # a time (seconds since 1970) in local time, as the schedules see it
 ```
 
 The cron parser is part of the tool, without a crate, so nothing new has

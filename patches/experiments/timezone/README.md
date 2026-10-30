@@ -42,9 +42,34 @@ timer file keeps one in UTC. Logs from `timesync` stay in UTC.
 | `env TZ=UTC date` | `Thu Oct 29 12:25:34 UTC 2026` |
 | `timerd` log | `clock set by timesync, 2026-10-29 13:23:07 Europe/Berlin`, timers on schedule |
 
-relibc names the zone `Europe/Berlin` where Linux says `CET`/`CEST`
-(`tm_zone` from chrono-tz). The summer time switch itself is covered by
+In this first build relibc named the zone `Europe/Berlin` where Linux says
+`CET`/`CEST` (`tm_zone`). The summer time switch itself is covered by
 `timerd`'s unit tests (`cargo test`): the skipped hour in March, the
 repeated hour in October, and midnight right after the switch.
+
+**CET/CEST in relibc:** relibc patch
+[`0012`](../../relibc/0012-time-tm_zone-is-the-zone-abbreviation-CET-CEST-not-t.patch)
+puts the abbreviation into `tm_zone` (and so into `strftime("%Z")`), as
+other systems do. `timerd -t <seconds>` shows a time as relibc's
+`localtime_r` sees it.
+
+**QEMU**, network boot, build `v0.3.0-dev-337-ge7d1cdd+x0598`
+(experiments `ldso-diagnostics timesync timerd timezone`, 2026-10-30), the
+switches of 2026 (25 October 01:00 UTC, 29 March 01:00 UTC):
+
+| UTC | `date -d '@…'` (zone file, chrono) | `timerd -t …` (relibc) |
+|---|---|---|
+| 25 Oct 00:30:00 | `Sun Oct 25 02:30:00 CEST 2026` | `2026-10-25 02:30:00 CEST (+02:00)` |
+| 25 Oct 00:59:59 | `Sun Oct 25 02:59:59 CEST 2026` | `2026-10-25 02:59:59 CEST (+02:00)` |
+| 25 Oct 01:00:00 | `Sun Oct 25 02:00:00 CET 2026` | `2026-10-25 02:00:00 CET (+01:00)` |
+| 25 Oct 01:30:00 | `Sun Oct 25 02:30:00 CET 2026` | `2026-10-25 02:30:00 CET (+01:00)` |
+| 29 Mar 00:59:59 | `Sun Mar 29 01:59:59 CET 2026` | `2026-03-29 01:59:59 CET (+01:00)` |
+| 29 Mar 01:00:00 | `Sun Mar 29 03:00:00 CEST 2026` | `2026-03-29 03:00:00 CEST (+02:00)` |
+
+Also: `date` `Fri Oct 30 09:25:11 CET 2026` against `date -u` `08:25:13
+UTC`; `env TZ=UTC timerd -t 1792890000` gives `01:00:00 UTC (+00:00)`; the
+boot log says `timerd: clock set by timesync, 2026-10-30 09:24:42 CET`.
+In Ion, `@…` must be quoted (`'@1792890000'`), else Ion reads it as an
+array.
 
 Not yet tested on a real Pi.
