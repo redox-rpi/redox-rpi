@@ -1,5 +1,14 @@
 # Experiment: sigentry-by-name, registers saved by field name
 
+**Parked since relibc `0010`:** the patch is in `relibc-before-0010/`, so
+the build and CI do not apply it. It was written on top of `0001`–`0009`
+and conflicts with `0010`: it replaces the `tmp_x1_x2`… pairs of `SigArea`
+with one `tmp` area, and `0010`'s exception entry
+(`__relibc_internal_excpentry`) still saves through those pairs and returns
+through `__relibc_internal_sigentry_restore`, which this patch removes. A
+port has to move the exception entry to the named offsets too, and needs
+a new `sigregs` run on the Pi.
+
 Relibc patch that rewrites how the aarch64 signal entry
 (`__relibc_internal_sigentry` in `redox-rt/src/arch/aarch64.rs`) saves and
 restores the interrupted code's registers.
