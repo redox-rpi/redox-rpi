@@ -3289,3 +3289,39 @@ manifest matches.
   `arm_memory 0x00000000 1046478848`, `vc_memory 0x3e600000 16777216`.
 - Standard checks pass, 0 of 300 starts failed.
 - `/srv/tftp/redox` has the stable image again.
+
+## 2026-10-30: `v0.3.0-dev-475-gbcd8e4d+xbe97`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `sdhost-dma`. test 117 ([#30](https://github.com/redox-rpi/redox-rpi/issues/30) sdhost with DMA, rebuilt on main), Pi test agent
+
+**Pass for the data: DMA comes up in all 4 boots without an error, the file
+reads back right after a reset, sd-stress passes. But the write is slower and
+uses more driver CPU than in #75.** Image
+`~/redox-rpi-sd/keep/netboot-v0.3.0-dev-475-gbcd8e4d+xbe97.img`, manifest
+matches.
+
+- Boot log (all 4 boots): `bcm2835-sdhostd: DMA interrupt
+  /scheme/irq/phandle-1/1,20`, `DMA channel 4 at 0x3f007000`,
+  `SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`; no
+  `cannot use DMA interrupt`, `DMA error`, `DMA timeout` or `no DMA`, no panic.
+- 256 MiB on `/scheme/data`, `bs=1048576`, from `/dev/urandom` (as in #75).
+  `ps` columns of `/scheme/initfs/bin/bcm2835-sdhos`:
+
+| | time | MB/s | ACTTIME | SCHTIME | #75 |
+|---|---|---|---|---|---|
+| write `conv=fsync` | 48.6 s | **5.5** | +28.6 s (1.70 → 30.34) | **+16.5 s** (0.49 → 16.96) | 7.7 MB/s, SCHTIME +4.3 s in 35 s |
+| read | 15.1 s | 18 | +13.8 s (30.34 → 44.14) | +1.0 s (16.96 → 17.98) | 18 MB/s, +1.1 s in 15 s |
+| `sha256sum` after the reset | 21.9 s | | 10.02 after boot and read | 2.90 | |
+
+- A first try with `/dev/zero` wrote at 90 MB/s and read at 858 MB/s: the
+  filesystem does not store zeros on the card, so those numbers mean nothing.
+- SHA-256 before and after `echo reset > /scheme/sys/kstop`: the same,
+  `d77d9aec746f19c5…`. File removed afterwards.
+- Standard checks pass, manifest matches, 0 of 300 starts failed.
+- `scripts/sd-stress.py --cycles 2 --serial-log …`: **pass**. 256 MiB at
+  6.6 MB/s, 1000 small files with 250 replaced in 275 s, 2 restarts, 0 missing
+  and 0 changed after each; cycles wrote 32 MiB at 4.3 and 7.0 MB/s.
+- So the driver's real CPU time (SCHTIME) during the write is about a third of
+  the write time (16.5 of 48.6 s), much more than #75's 12 %, while reading
+  stays at 7 %.
+- `/srv/tftp/redox` has the stable image again.
