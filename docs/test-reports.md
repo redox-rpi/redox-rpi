@@ -2382,3 +2382,41 @@ The crash log lines (for #1):
 {"host": "192.168.178.148", "build_id": "v0.3.0-dev-15-g24fbb96+x9f76", "libc": "d4f0dedd5403751a71d75fabd5eaf3caa5e2035b135dcde39f2c64d65b3b1815", "time": "2026-10-30T08:48:29Z", "starts": "551-600", "program": "ls", "status": "exit 1", "messages": [], "crash": {"kind": "ty=100100", "far": "0x1281dd0", "elr": "0xc15c0c", "esr": "0x92000006", "ec": "0x24", "lr": "0xc03d30", "sp": "0x7ffffffff590", "pid": 665, "cpu": 2, "name": "/usr/bin/ls", "trace": ["0xc03d30", "0xbcb654", "0xc044a0", "0xbcc6cc", "0xbcd428", "0xc2c6f0", "0xad1038"]}, "serial": ["kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100100)", "FAR_EL1: 0x1281dd0", "ELR_EL1: 0000000000C15C0C", "ESR_EL1: 0000000092000006", "kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #2, PID 665, NAME /usr/bin/ls, CONTEXT 0xfffffe800014c730"]}
 {"host": "192.168.178.148", "build_id": "v0.3.0-dev-15-g24fbb96+x9f76", "libc": "d4f0dedd5403751a71d75fabd5eaf3caa5e2035b135dcde39f2c64d65b3b1815", "time": "2026-10-30T08:48:29Z", "starts": "801-850", "program": "pwd", "status": "exit 1", "messages": [], "crash": {"kind": "ty=100100", "far": "0x1281dc8", "elr": "0xc15c0c", "esr": "0x92000006", "ec": "0x24", "lr": "0xc03d30", "sp": "0x7ffffffff590", "pid": 893, "cpu": 0, "name": "/usr/bin/pwd", "trace": ["0xc03d30", "0xbcb654", "0xc044a0", "0xbcc6cc", "0xbcd428", "0xc2c6f0", "0xad1038"]}, "serial": ["kernel::arch::aarch64::interrupt::exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100100)", "FAR_EL1: 0x1281dc8", "ELR_EL1: 0000000000C15C0C", "ESR_EL1: 0000000092000006", "kernel::context::signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 893, NAME /usr/bin/pwd, CONTEXT 0xfffffe800014c730"]}
 ```
+
+## 2026-10-30: `v0.3.0-dev-354-gc656808+x6039`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `cpu-ondemand`, `cputop`. test 93 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23) CPU clock follows the load, second round), Pi test agent. Raw output on homenodellm in `~/pitest-tools/t93/`.
+
+**Pass.** Image `~/redox-rpi-cpu/keep/v0.3.0-dev-354-gc656808+x6039/harddrive.img`.
+Boot log `rpi-firmwared: ARM clock 600 -> 1400 MHz`. Shelly read only, every
+5 s (13 readings per 60 s).
+
+| | share at min over 60 s | Shelly mean |
+|---|---|---|
+| (1) ondemand, idle, 60 s after login | **96 %** (Δ`time_min_ms` 57,996, Δ`time_max_ms` 2,371) | **3.05 W** |
+| (2) `powersave`, 60 s | (min) | **3.00 W** |
+| (3) `performance`, 60 s | (max) | **3.20 W** |
+| (7) ondemand, idle, 60 s after the start loops | **96 %** (Δ 58,063 / 2,324) | **3.01 W** |
+
+- ondemand at idle stays at the minimum clock almost all the time and uses as
+  little power as `powersave`. After load it goes back down. The power
+  difference between the two clocks at idle is small (0.2 W).
+- `target` still reads `max` with `load` 87–100 in every reading, because
+  reading the file starts a program (as the row says). The time counters show
+  the real picture.
+- (5) `cputop 30` at idle: cpu0 0 %, cpu1 0 %, cpu2 0 % (116 ms), cpu3 2 %
+  (741 ms). Busiest: `dwc2d` 2.3 %, `rpi-firmwared` 0.3 %, `netstack` 0.1 %,
+  the rest 0.0 %.
+- (6) Standard checks pass, 0 of 300 starts failed. `ondemand-check.py`, 50 starts
+  each, two rounds:
+
+| mode | round 1 | round 2 |
+|---|---|---|
+| ondemand | 8.0 s | 8.0 s |
+| performance | 7.9 s | 7.9 s |
+| powersave | 15.9 s | 15.9 s |
+
+  0 failed. ondemand is as fast as performance. End: `throttled 0x00000000`,
+  temperature 49.9 °C.
+
+Stable image restored afterwards.
