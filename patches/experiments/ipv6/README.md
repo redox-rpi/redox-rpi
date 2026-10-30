@@ -1,7 +1,7 @@
 # Experiment: IPv6 addresses, neighbor discovery, SLAAC
 
 Step 2 of [#27](https://github.com/redox-rpi/redox-rpi/issues/27) (IPv6,
-v0.6.0). Applies after the [`multicast`](../multicast) experiment.
+v0.6.0). Applies after the [`multicast`](../multicast) experiment (file `needs`, which the relibc CI reads).
 
 ```bash
 scripts/build-image.sh --experiment multicast --experiment ipv6
@@ -122,6 +122,14 @@ before the IPv6 server answers. The first build hung in that spot, which
 is how the missing `recvmsg` timeout showed up. Not tested: UDP to a
 link-local address (the script had already quit), TCP over IPv6.
 
-**Real Pi:** not tested yet. On the home network (the Fritz!Box sends
-router advertisements): the address list should show a `2a0x:` address,
-and `ping -6 <address>` from the build host should answer.
+**Real Pi:** tests #47 and #55 (2026-10-29) brought up the link-local
+and the unique local address, UDP and DNS over IPv6, but no global
+address (smoltcp kept only the last prefix). **Test #85** (2026-10-30,
+`v0.3.0-dev-217-g2d2f24c+xf552`, with base `0029`): **pass**. `eth0` has
+`fe80::…`, the Fritz!Box's global `2a02:590:1504:9901:…` and the unique
+local `fdeb:…` address, the default route goes via the Fritz!Box with the
+global address as source, `ping -6` from homenodellm answers, UDP to the
+global and the unique local address works, and `net6 tcp` reaches a
+Cloudflare server over IPv6 (internet over IPv6). Same addresses and
+routes after 10 minutes.
+[Report](../../../docs/test-reports.md#2026-10-30-v030-dev-217-g2d2f24cxf552)

@@ -21,7 +21,7 @@ Nothing on `main`. Work is on the branch `assistant` (see In progress).
 | What | Value | What it means |
 |---|---|---|
 | RAM | 1 GiB, about 990 MiB for Redox with `gpu_mem=16` | the model, its working memory and Redox must fit; **Redox has no swap** |
-| CPU | 4x Cortex-A53, 1.4 GHz, ARMv8.0 | NEON, but no `dotprod`, `i8mm` or FP16 arithmetic, so llama.cpp uses its plain NEON paths |
+| CPU | 4x Cortex-A53, 1.4 GHz, ARMv8.0 | NEON, but no `dotprod` (`sdot`), `i8mm` or FP16 arithmetic: kernels written for newer ARM cores stop with an illegal instruction |
 | Memory bandwidth | about 2 GB/s in practice (32-bit LPDDR2) | the limit for writing answers: every new word reads all the weights once |
 | GPU | VideoCore IV | not usable (see [graphics](graphics.md), step 3) |
 | Heat | throttles from 60 °C on the 3B+ | four busy cores for minutes; a heat sink helps |
@@ -33,7 +33,7 @@ would fit there.
 
 | Model | File (GGUF) | Licence | Fits 1 GiB | Notes |
 |---|---|---|---|---|
-| **Qwen3 0.6B**, Q4_0 | 382 MB | Apache 2.0 | yes | **first choice.** Instruction-tuned, knows tool calls (its chat template has `<tool_call>` blocks), "thinking" can be turned off with `/no_think`. Q4_0 has the fastest NEON code in llama.cpp on cores without `dotprod` |
+| **Qwen3 0.6B**, Q4_0 | 382 MB | Apache 2.0 | yes | **first choice.** Instruction-tuned, knows tool calls (its chat template has `<tool_call>` blocks), "thinking" can be turned off with `/no_think`. Q4_0 is the simplest 4-bit format to write a fast kernel for |
 | Qwen3 0.6B, Q4_K_M | 397 MB | Apache 2.0 | yes | a bit better quality, a bit slower on the A53 |
 | Qwen3 0.6B, Q8_0 | 639 MB | Apache 2.0 | tight | best quality of the three; leaves little for context and Redox |
 | FunctionGemma 270M | about 280 MB (8-bit) | Gemma terms | yes, also the Zero | made by Google for function calls only; weak at answering questions, meant to be fine-tuned on one's own tools |
@@ -41,12 +41,12 @@ would fit there.
 | **BitNet b1.58 2B4T** (Microsoft) | 1.19 GB (`i2_s`) | MIT | **no** | 1.58-bit weights (0.4 GB), but the word table (embedding) is stored at 16 bits; the file alone is larger than the Pi's RAM |
 
 **BitNet:** the idea fits the Pi well (ternary weights, little memory
-traffic), but the only official model does not fit in 1 GiB, and
-`bitnet.cpp` is a fork of llama.cpp whose fastest ARM kernels target newer
-cores. Porting it is the same work as llama.cpp plus its own kernels.
-Mainline llama.cpp also reads ternary models (`TQ1_0`, `TQ2_0`), so a
-smaller 1.58-bit model, if one appears, can be tried without a second
-port. Not now.
+traffic), but the only official model does not fit in 1 GiB. In Rust it
+would be a kernel of its own in the hand-written runtime below: weights
+packed 2 bits each (`TQ2_0`/`I2_S`), the dot product only adds and
+subtracts, done with NEON table lookups; 300 to 500 lines, **1 to 2
+weeks**, worth it only once a 1.58-bit model of 1B parameters or less with
+a small word table exists. Not now.
 
 ### Memory for Qwen3 0.6B Q4_0
 
@@ -55,12 +55,18 @@ port. Not now.
 | Weights | 382 MB |
 | Context (KV cache), 1024 tokens at 16 bits | 112 MiB (28 layers x 2 x 1024 values x 2 bytes per token); 56 MiB with an 8-bit cache |
 | Working buffers | about 50 to 100 MiB, less with small batches |
-| Redox with the console and network | to be measured (QEMU `free` in In progress) |
+| Redox with the console and network | about 96 MiB at the shell (QEMU `free`) |
 | **Total** | about 600 to 650 MiB, leaves room for the user's programs |
 
 Without swap and with no page cache that can drop pages, the model must
-stay fully in RAM. Whether Redox's `mmap` of a 382 MB file shares the
-pages or copies them is one of the things the QEMU run answers.
+stay fully in RAM. candle reads it into the heap (no `mmap`), which is
+fine at this size; a hand-written runtime can do the same.
+
+Measured with `rinfer` (candle) in QEMU: 468 MiB heap after loading,
+497 MiB at the peak, 674 MiB of 912 MiB used in total while it ran. Redox
+backs memory with RAM as soon as it is allocated, even if it is never
+touched (Linux does not), and runs out with a kernel panic (no swap, no
+OOM handling). So every large buffer counts, not only the ones in use.
 
 ### Speed (estimates, not measured)
 
@@ -71,36 +77,49 @@ pages or copies them is one of the things the QEMU run answers.
 - **Reading the question (prompt):** compute-bound, maybe 10 to 20 tokens
   per second on four cores. A system prompt with tool descriptions and a
   help text of 300 to 500 tokens would take **half a minute or more** on
-  every start. So the prompt state is computed once and saved to a file
-  (llama.cpp `llama_state_save_file`), and loaded at start in a second.
+  every start. So the prompt state (KV cache) is computed once and saved
+  to a file, and loaded at start in a second.
 - For comparison, published numbers for 0.5B models on a Pi 5 are 8 to 19
   tokens per second; the Pi 3 has about a third of its memory bandwidth.
 
-## Porting llama.cpp to Redox aarch64
+## Runtime: Rust
 
-llama.cpp is C and C++17 with few dependencies. What it needs from Redox:
+For Redox the runtime should be Rust, like the rest of the system. The
+choice is between an existing Rust library and a small inference loop of
+our own. llama.cpp stays as a reference for correctness and speed (see In
+progress).
+
+| | candle (Hugging Face) | mistral.rs | burn | own loop |
+|---|---|---|---|---|
+| Qwen3 GGUF | yes: `quantized_qwen3`, GGUF reader, the tokenizer from the GGUF file | yes (built on a candle fork) | no ready LLM path for GGUF; general framework | to write: GGUF reader, Qwen3 forward pass, BPE tokenizer |
+| Dependencies | about 100 crates (gemm, rayon, half, safetensors, zip, `tokenizers`) | candle plus tokio, an HTTP server, many more | large; backends (ndarray, wgpu) | `std` and maybe one regex crate |
+| Threads | rayon (std threads, so relibc pthreads) | same plus tokio | backend-specific | `std::thread`, 4 workers |
+| `mmap` | not used for GGUF (read into the heap); `memmap2` is a dependency | uses `mmap` | n/a | not needed |
+| NEON on the A53 | **breaks:** the quantized dot products use `sdot` unconditionally; needs a fallback without `dotprod` (about 30 lines, `vmull_s8`/`vpadalq_s16` as in llama.cpp) | same kernels | no hand-made quantized NEON kernels | written for ARMv8.0 NEON from the start |
+| Binary size (estimate) | 10 to 15 MB | 30 MB and more | large | 1 to 2 MB |
+| Speed (estimate) | memory-bound like llama.cpp; with the fallback maybe 60 to 90 % of it | as candle | slower (no quantized kernels) | same as llama.cpp is reachable: the work is memory-bound |
+| Effort to first answer on the Pi | **2 to 4 days** (build for Redox, the `sdot` fallback, recipe) | 1 to 2 weeks, mostly trimming | weeks | **2 to 3 weeks** |
+
+**Recommendation:** start with **candle**. The model code exists, the
+tokenizer comes from the GGUF file, and the two known problems are small:
+the `sdot` fallback (also a useful upstream patch) and building its
+dependency tree for `aarch64-unknown-redox` (relibc, static). If candle
+turns out too big or too slow on the Pi, write **our own loop**: Qwen3 is a
+plain transformer (RMSNorm, RoPE, grouped-query attention, SwiGLU), and a
+Q4_0/Q8_0-only runtime with NEON kernels for ARMv8.0 is about 1500 to 2500
+lines. It would also be the place for a BitNet kernel. mistral.rs and burn
+are not a fit for 1 GiB and an A53.
+
+What a Rust runtime needs from Redox:
 
 | Need | State on Redox |
 |---|---|
-| C++ compiler and `libstdc++` | Redox's toolchain has gcc 13.2 for `aarch64-unknown-redox` with `libstdc++.a` |
-| Threads (`std::thread`, `pthread`) | relibc has pthreads; four threads on four cores to be tested |
-| `mmap` of the model file | relibc and RedoxFS have it; sharing versus copying to be tested |
-| NEON | always there on aarch64; built for plain `armv8-a`, no feature detection at runtime (`GGML_NATIVE=OFF`) |
-| Dynamic linking | relibc's loader fails with prebuilt programs (ROADMAP wish list), so **static linking** |
-| HTTP, subprocesses | not needed: model download and server tools left out |
-
-What it took to compile (2026-10-29, llama.cpp `7df8b87`): three small
-source changes, none of them in the model code:
-
-- `vendor/cpp-httplib`: `#include <sys/time.h>` for `timeval`, and no
-  `accept4` on Redox (relibc lacks it).
-- `common/arg.cpp`, `common/download.cpp`: `<limits.h>` instead of
-  `<sys/syslimits.h>` for `PATH_MAX`.
-- `LLAMA_SUBPROCESS=OFF`: relibc has no
-  `posix_spawn_file_actions_addchdir_np`.
-
-`llama-simple`, `llama-completion` and `llama-bench` build as static
-programs of 11 to 16 MB.
+| Rust `std` for `aarch64-unknown-redox` | in the Redox prefix (rustc 1.98-dev) |
+| Threads | std threads over relibc pthreads; llama.cpp's four threads ran cleanly with our relibc in QEMU |
+| Files | plain `read`; the model is read once into memory |
+| SIMD | `core::arch::aarch64` NEON intrinsics; no runtime feature detection on Redox (`is_aarch64_feature_detected!` reports nothing), so build for `cortex-a53` and avoid `dotprod` |
+| Linking | static, against our relibc (`-L native=…/relibc/stage/usr/lib`, as `sigregs` does); relibc's dynamic loader still fails with prebuilt programs |
+| C code in crates | to avoid: `tokenizers` without `onig` and `esaxx` (feature `fancy-regex`, pure Rust) |
 
 ## A safe tool layer
 
@@ -109,9 +128,11 @@ tools, and the assistant program decides what happens.
 
 1. **Fixed tools, not a shell.** Each tool is a function in the assistant
    with typed arguments (`list_files(folder)`, `show_time()`), not a
-   command line. The model's output is held to valid tool calls by a
-   llama.cpp grammar (GBNF) that only allows the names and argument types
-   on the list, so it cannot write anything else in a tool call.
+   command line. While the model writes a tool call, the runtime masks
+   every token that would not fit the call's grammar (only the names and
+   argument types on the list, as llama.cpp's GBNF grammars do), so it
+   cannot write anything else in a tool call. In Rust this is a small
+   state machine over the tokenizer's vocabulary.
 2. **Two kinds of tools.**
    - *Look only*, run at once: time and date, uptime, free memory, disk
      space, list a folder, show the start of a text file, network address,
@@ -147,12 +168,13 @@ the prompt. This matters more for good answers than the choice of model.
 
 | Step | What | Size |
 |---|---|---|
-| 1 | llama.cpp built for Redox, the model answers in QEMU | 1 to 3 days (compiles; run in progress) |
-| 2 | A cookbook recipe linking our relibc, an experiment `assistant` that puts the model on the SD image or the data partition of the network-boot card (the network-boot image lives in RAM, 256 MiB at most); speed and memory measured on the Pi | 2 to 4 days plus a Pi slot |
-| 3 | The `assistant` program: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | 1 to 2 weeks |
+| 1 | Reference: llama.cpp built for Redox, the model answers in QEMU; recipe and SD image | done; Pi test #51 for reference numbers |
+| 2 | Rust runtime: candle built for Redox with an `sdot` fallback, a small test program, recipe in the experiment; answers in QEMU, speed against llama.cpp on the Pi | answers in QEMU (3 days); Pi test #51 for speed |
+| 2b | Only if candle is too big or slow: our own Qwen3 runtime in Rust (GGUF, Q4_0/Q8_0 NEON kernels for ARMv8.0, tokenizer) | 2 to 3 weeks |
+| 3 | The `assistant` program in Rust: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | 1 to 2 weeks |
 | 4 | Tools that change things, with confirmation; the namespace sandbox; the Redox help text and a test set of 50 to 100 questions from macOS, Windows and Linux users | 1 to 2 weeks |
 | 5 | Optional: fine-tune the model (LoRA) on the tools and the help text, off the Pi | 2 to 4 weeks |
-| 6 | Later: other models (FunctionGemma for the Zero 2 W, a small 1.58-bit model) | open |
+| 6 | Later: other models (FunctionGemma for the Zero 2 W); a Rust 1.58-bit kernel once a small BitNet model exists | open (kernel 1 to 2 weeks) |
 
 ## In progress
 
@@ -188,11 +210,64 @@ git).
   (of 912 MiB). Speed in QEMU (one host core emulating four): 0.19 tokens
   per second reading, 0.04 writing; says nothing about the Pi.
 - Pi test #51 in the [queue](../test-plan.md): the SD card image, with a
-  person to swap the card.
+  person to swap the card. Gives the llama.cpp reference numbers.
+- **Rust runtime, 2026-10-29: `rinfer` (candle `12bb5d1`) answers in
+  QEMU.** A test program in the experiment
+  ([recipe](https://github.com/redox-rpi/redox-rpi/tree/assistant/patches/experiments/assistant/recipes/rinfer)):
+  Qwen3 from the GGUF file, the tokenizer from the same file, greedy
+  decoding, timings and a heap counter. Built static against our relibc
+  with cargo; 4.9 MB binary. Three changes to candle were needed:
+  - `sdot`: candle's NEON dot products for Q4_0, Q8_0 and the K formats
+    use the `dotprod` instruction, which the A53 lacks.
+    [sdot-fallback.patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/rinfer/sdot-fallback.patch)
+    gives the same result with plain NEON (multiply-long and pairwise
+    add); the binary has no `sdot` left.
+  - The token table (151,936 x 1,024) was turned into f32, 622 MB, and
+    read twice. [qwen3-memory.patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/rinfer/qwen3-memory.patch)
+    keeps it quantized and unpacks only the rows of the input tokens; the
+    output layer shares it.
+  - The key/value cache was preallocated for 4,096 positions per layer:
+    32 MiB x 28 layers, 900 MiB. On Redox that is real memory, so the
+    first runs ended in an out-of-memory kernel panic. The same patch adds
+    `CANDLE_KV_CACHE_LEN`; `rinfer` starts with 256 positions and the
+    cache doubles when full. Heap peak on the build host: 1,337 MiB
+    before, 497 MiB after.
+  - candle sizes its thread pool from the CPU count, which Redox does not
+    report (one thread); `rinfer` sets four.
+
+  QEMU `raspi3b`, prompt "Hi" (17 tokens with the template): "Hello! How
+  can", 7 seconds per token for the prompt and for writing (0.14 to
+  0.15 tokens per second; llama.cpp in QEMU: 0.19 reading, 0.04
+  writing). QEMU speed says nothing about the Pi. Open: with the whole
+  prompt in one step (candle's normal path) a 23-token prompt did not
+  finish in 52 minutes, while one token at a time (`RINFER_STEP=1`) takes
+  2 minutes. To be checked on the Pi before looking into candle's batched
+  path.
+- **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
+  plain Rust with no crates (264 KB static binary for Redox). It runs tool
+  calls in the form Qwen3 writes them
+  (`<tool_call>{"name": ..., "arguments": {...}}</tool_call>`); without a
+  model they are typed by hand (`assistant --call '…'`, or `/call` in the
+  interactive mode). Tools: `show_time` and `list_files` (look only), and
+  `make_folder` (changes something, so it asks `[y/N]` first). Only listed
+  tools and arguments are accepted, arguments must be text, paths are
+  taken from the home folder and may not leave it or pass a link, and
+  every call goes to `~/.assistant.log`. Unit tests on the build host;
+  in the image `v0.3.0-dev-161-g5b7ccbc+x18f5` (SD card) in QEMU
+  `raspi3b`: all tools work, `n` leaves nothing changed, `y` creates the
+  folder, `/etc` and an unknown `run_shell` tool are refused, the log has
+  all six calls. Missing: the namespace sandbox (needs the
+  `redox_syscall` crate or a raw system call) and the grammar mask, which
+  comes with the model runtime.
 
 ## Next
 
-- Pi test #51: `llama-bench` for real speed, `free` while the model runs.
+- Pi test #51 with the image `v0.3.0-dev-166-g371127e+x18f5`: `rinfer`
+  against llama.cpp, tokens per second and `free`. If candle reaches about
+  2 tokens per second, it stays; if not, our own loop (step 2b).
+- Why candle's batched prompt is so slow in QEMU.
+- Connect the model to the tool layer: tool descriptions in the system
+  prompt, the grammar mask while a tool call is written.
 - A Pi test without a person: the network-boot image with llama.cpp, and
   the model on the netboot card's data partition (`/scheme/data`). llama.cpp
   can download it itself over plain HTTP from the build host (`-mu`,
@@ -207,5 +282,6 @@ git).
 - [Qwen3-0.6B GGUF files](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF) (sizes)
 - [BitNet b1.58 2B4T GGUF](https://huggingface.co/microsoft/bitnet-b1.58-2B-4T-gguf), [bitnet.cpp](https://github.com/microsoft/BitNet)
 - [FunctionGemma 270M](https://lmstudio.ai/models/google/functiongemma-270m)
+- [candle](https://github.com/huggingface/candle) (`candle-core/src/quantized/neon.rs`), [mistral.rs](https://github.com/EricLBuehler/mistral.rs), [burn](https://github.com/tracel-ai/burn)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp), [GBNF grammars](https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md)
 - Pi 5 numbers: [pi-llm](https://github.com/ravijo/pi-llm), [Stratosphere research notes](https://stratospherelinuxips.readthedocs.io/en/develop/immune/research_rpi_llm_performance.html)
