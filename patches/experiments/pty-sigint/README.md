@@ -57,6 +57,16 @@ with `sshd` and `pty-sigint-debug`):
   miss had no Ctrl-C at ptyd at all (devsh session, #11).
 - Pipelines, background jobs and normal commands work as before.
 
+Pi 3B+, test #80 (2026-10-30, `v0.3.0-dev-236-gd47707f+x810f`):
+
+- `ctrlc-test.py --rounds 20` over devsh: 20 of 20 stopped (Ctrl-C after 1 s
+  and 3 s), the shell still answers after a Ctrl-C at the prompt.
+- `ttyinfo`: `tcgetpgrp(0)` equals the program's pgrp, `ISIG`, `VINTR 0x3`.
+- Standard checks pass, 0 of 300 starts failed.
+- Open: on the serial console (not a ptyd terminal), `sleep 30` with Ctrl-C
+  right after Enter printed `ended by signal SIGINT` only after about 32 s.
+  The signal was kept but took effect only when `sleep` ended.
+
 With only the Ion patch, SSH still failed: ptyd sent SIGINT to the right group
 while the program loaded, and the signal was lost (reason 2).
 
