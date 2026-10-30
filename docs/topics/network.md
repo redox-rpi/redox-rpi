@@ -11,6 +11,52 @@
 ## Next
 
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
+- [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
+  (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
+  of #68, base `0041`–`0044` once merged; Pi test #74 passed):
+  netstack used to take one adapter at start and dhcpd configured only
+  `eth0`, once. Now netstack opens every `network.*` scheme and looks
+  again every 2 s (`wlan*` for Wi-Fi, `eth*` for the rest), dhcpd gets a
+  lease on each interface and keeps one default route (wired before
+  Wi-Fi), DHCP broadcasts leave only on their own adapter. `testnetd` is
+  a fake adapter with a DHCP server for the tests. Passes in QEMU (USB
+  network plus testnetd started after boot) and on the Pi (test 74, LAN7800
+  plus testnetd). Since then netstack also reports ready only after netcfg
+  and the interfaces exist (test 69 race; same as boot-time base `0028`).
+  Still missing: lease renewal,
+  adapters that go away, falling back to Wi-Fi when the cable is pulled.
+- IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
+  #55: ULA address yes, global 2a02 address and default route no): smoltcp
+  keeps only the last prefix option of a router advertisement, and each
+  advertisement replaced the router. Fixed in `ipv6` base `0029` (every
+  prefix, global first; lifetime 0 ends only that router), QEMU passes
+  with a global and a ULA prefix and a second router; **Pi test #85
+  passed** (global address, default route, internet over IPv6). Draft PR
+  [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
+  `multicast` and `ipv6` experiments to main; whichever of #81 and #82
+  lands second gets its netstack patches rebased.
+
+- [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
+  (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
+  firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
+  with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
+  netstack takes it as `wlan0` and dhcpd leases it. The network name and
+  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
+  chip: unit tests and a QEMU check of the settings path pass; Pi test
+  #110.
+
+- [#88](https://github.com/redox-rpi/redox-rpi/issues/88) netstack kept
+  every accepted TCP connection (2 x 64 KiB) after it was closed: a wrong
+  reference count in `dup("listen")`. Fixed in base `0049`, draft PR
+  [#90](https://github.com/redox-rpi/redox-rpi/pull/90). **Pi test 114
+  passed**: 120 devsh connections cost 1.1 MB, where stable lost 5.3 MB
+  for 40.
+- [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
+  answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
+  (each only while its program is on the image); **Pi test 96 passed**,
+  SSH works at the address mDNS gives. Draft PR
+  [#93](https://github.com/redox-rpi/redox-rpi/pull/93) on top of #82.
 
 ## Later
 
