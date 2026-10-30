@@ -2133,3 +2133,37 @@ So the always-busy CPU comes from the `dwc2d` of the old `cpu-ondemand` base
 `cpu-ondemand` on main should let the governor go down to `min`.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-193-ge4713b6+xb43c`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `pkg-hold`, `pkg-repo`. test 73 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44) our package repository and `pkg update` that replaces files), Pi test agent
+
+**Pass.** Image `~/redox-rpi-boot/keep/repoC-harddrive.img`. `/etc/pkg.d`:
+`40_redox-rpi` = `http://192.168.178.120:8080/pkg`, `50_redox` =
+`https://static.redox-os.org/pkg`.
+
+| file | before | after `pkg update --yes` |
+|---|---|---|
+| `/usr/lib/boot/kernel` | `21af7677…66158` | same |
+| `/usr/lib/libc.so` | `da6936b2…08d57` | same |
+| `/usr/bin/pkg` | `265a1682…153f6` | same |
+| `/usr/bin/reboot` | `e0bf9d74…08a56` | **`ff39315b…6e4d6`** |
+
+- `reboot --version`: `reboot 0.1.1` before, **`reboot 0.1.2`** after.
+- `pkg update --yes` (1.1 s): `Packages to update: ~ reboot`, 194 KB, `Commit
+  complete.` No `Some transactions are ignored`. pkg doesn't print which
+  repository a package came from. Only ours has reboot 0.1.2
+  (`/srv/tftp/pkg/aarch64-unknown-redox/reboot.pkgar`).
+- `pkg install --yes nano` (32 s, from upstream): `+ nano + ncursesw +
+  terminfo`, `Commit complete.`, `nano --version` gives `GNU nano, version
+  9.2`. Here pkg did print `Some transactions are ignored: usr/bin/clear, usr/bin/reset by
+  …static.redox-os.org_ncursesw.pkgar (already exists)`, from upstream ncursesw
+  and not from the update.
+- The `setsockopt(…, 6, 1, …) - unknown option` TODO lines (TCP_NODELAY) are
+  harmless.
+- Standard checks after the update and install pass, 0 of 300 starts failed.
+  I didn't run a separate standard check before the update; the boot itself
+  was normal.
+- The repository at `http://192.168.178.120:8080/pkg` can be used again.
+
+Stable image restored afterwards.
