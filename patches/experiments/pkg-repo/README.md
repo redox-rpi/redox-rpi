@@ -61,3 +61,13 @@ Image E `v0.3.0-dev-195-gb17a05f+xb43c` (`timesync`, `pkg-hold` with
   repository won, see above.
 - `ls --version` (uutils 0.11.0 from upstream) works; a second
   `pkg update --yes` has nothing to do.
+
+## Pi test (2026-10-30)
+
+Test 115 on a Pi 3B+, image `v0.3.0-dev-456-gfe96015+x204a` (this branch
+plus `sigreturn-svc` from PR #61, so that Redox's prebuilt programs keep
+x18 over signals), repository published from the same build: `pkg update
+--yes` updated the 15 upstream packages and none of ours; kernel,
+`libc.so`, `pkg` and `reboot` unchanged; afterwards 0 of 300 starts
+failed, `pkg install nano` and `pkg install bash` work, and bash ran 200
+child processes. Pass.
