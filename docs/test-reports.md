@@ -2505,3 +2505,35 @@ reset (boot 1 from the stable image).
 - Standard checks pass, 0 of 300 starts failed.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-238-g03161ba+x6026`
+
+Real Pi 3B+ over netboot. Experiments: `relibc-tests`, `timesync`, `rtl8152`, `sigentry-thread-signals`, `sigsegv`, `sigregs-test`, `timer-sigmask`. test 86 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc test suite with timer-sigmask, dash and test-order fixes), Pi test agent
+
+**Pass: 319 tests, 4 failed (all known), 0 new, 14 fixed.** Image
+`~/redox-rpi-t12/build/g3-pi.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `sigregs sender`: `PASS sender: si_pid 374 from the thread, 375 from the
+  child`. `sigregs thread -n 3000`: `PASS thread: 3000 signals, all registers
+  kept` (95 s). `sigregs process -n 3000`: `PASS process: 3000 signals, all
+  registers kept` (95 s).
+- `ion /usr/share/relibc-tests/run.ion` over devsh: 51 s. Output saved on
+  homenodellm as `~/pitest-tools/relibc86.txt` (copy in
+  `~/redox-rpi-t12/build/relibc86-pi.txt`). `relibc-tests-compare.py` and
+  `config/relibc-tests-expected.txt` from `t-g3-pi`:
+  `SUMMARY v0.3.0-dev-238-g03161ba+x6026: 319 tests, 4 failed (4 known, 0
+  flaky, 0 new), 14 fixed`. No `NEW` line.
+- The 4 failures: `bins_dynamic/redox_ring_ramfs` (exit status 1),
+  `bins_static/tls_align`, `bins_dynamic/tls_align`, `bins_dynamic/tls_shared`
+  (stdout mismatch). `time/timer`, `stdio/popen`, `stdlib/system`,
+  `unistd/exec`, `stdio/fscanf_offby1`, `stdio/ungetc_ftell` and `stdio/mutex`
+  pass.
+- 14 `FIXED`, among them `netdb/getaddrinfo`, `pthread/rwlock_randtest`,
+  `sigaction`, `sigaltstack`, `signals/sigpause-revert`,
+  `signals/sigprocmask-3`, `signals/sigsegv`, `signals/sigset-5`,
+  `signals/stackoverflow`, `sys_select/pselect`, `sys_socket/getpeername`,
+  `getsockopt`, `recv`, `recvfrom`. That is more than QEMU's 8: the expected list
+  is based on QEMU's 10 failures, and the Pi fails fewer.
+
+Stable image restored afterwards.
