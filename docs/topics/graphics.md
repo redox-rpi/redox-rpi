@@ -63,6 +63,26 @@ buffer sharing, no way to submit GPU commands. Mesa runs on Redox only as
 the software renderer (llvmpipe/OSMesa); Orbital, the desktop, composites
 on the CPU into a dumb buffer.
 
+## Step plan at a glance
+
+From the firmware's framebuffer to the GPU, each step on top of the one
+before. "Before" is the estimate written before any code, "Now" what
+QEMU showed by 2026-10-30 (details in the step sections, In progress and
+Effort below).
+
+| Step | What | Before | Now | Left, new estimate |
+|---|---|---|---|---|
+| 1a | Firmware framebuffer: `rpi-fbd` gets its buffer, modes and EDID through the mailbox (`rpi-firmwared`), boot stub framebuffer for direct boot | 1–2 weeks | works in QEMU (`graphics-fb`) | Pi test #34; a few days of calendar time |
+| 1b | Double buffering by page flip: two screens in one buffer, the mailbox's virtual offset (tag `0x00048009`) shows the finished one; EDID polling, blanking | part of 1a | works in QEMU (`graphics-fb2`, patch `0026`) | Pi test #43. Missing: waiting for the vertical blank before drawing on after a flip, and two screens at 1920x1080/1200 (need `gpu_mem` 32 or more, two 8–9 MiB screens); 1–3 days with Pi tests |
+| 2a | DMA blits: the copy to the screen by the DMA controller | 2–4 weeks | prototype in QEMU (`graphics-fb3`) | Pi test #44 decides if it pays; cached dumb buffers need cache maintenance from user space (kernel, DMA plan #21); a few days |
+| – | Desktop: Orbital on `rpi-fbd`, keyboard, terminal, mouse | not planned | works in QEMU (`graphics-gui`, `graphics-gui-mouse`) | Pi test #54 and the mouse test; faster terminal is upstream work |
+| 2b | Own display driver (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware | 2–3 months | not started | unchanged; no template in Redox, debugging on the Pi with someone at the screen (the NanoKVM helps) |
+| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | not started | unchanged; needs render nodes and buffer sharing in upstream Redox first |
+
+Steps 1 and 2a went fast because Redox had a template for every part and
+the firmware does the HDMI work; 2b and 3 have neither, so their
+estimates stand.
+
 ## Step 1: a firmware framebuffer driver
 
 A new driver (or a second scheme inside `rpi-firmwared`, which already owns
@@ -267,6 +287,16 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   - **Memory with a terminal:** 194 MiB used (login window plus
     `orbterm`); the biggest part is the decoded background picture (84
     MB in `background`).
+  - **Mouse** (branch `graphics-gui-mouse`, this work merged with the
+    USB session's `usb-mouse`, #48; image
+    `v0.3.0-dev-222-g67cef7a+xd99d`): in QEMU the pointer moves, hovering
+    shows the launcher's tooltips and the buttons arrive, with no change
+    in Orbital or `rpi-fbd`. A click on the terminal icon opened no
+    window within 90 s, because forks were very slow in that run (`getty`
+    and `bcm2835-sdhci` each used 11 to 12 minutes of CPU). Some moves
+    arrived late in these runs; that was the test helper, which did not
+    read QEMU's serial output while sending them, so `dwc2d` blocked on
+    its event log. Fixed in the helper, the moves arrive as sent.
   - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
     the display size (probably 1920x1080, then single buffered with
     `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
@@ -285,10 +315,10 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 - Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
   login to desktop time, frame rate with `drawbench`, terminal speed,
   memory. With the NanoKVM most screen checks need no person.
-- For a usable desktop: a USB mouse in `dwc2d` (boot protocol, like the
-  keyboard: about 300 lines, estimate a few hours plus a Pi test with a
-  mouse), then keyboard and mouse at the same time (more host channels,
-  hotplug from the `usb-hotplug` work).
+- For a usable desktop: the USB mouse works in QEMU (`usb-mouse` on
+  `usb-hotplug`, #48, keyboard and mouse at the same time); next is the
+  Pi test with a mouse (the NanoKVM's USB can be one) and then `usb-mouse`
+  and the graphics branches on main once their Pi tests pass.
 
 ## Effort: estimate and what it took
 
@@ -306,6 +336,7 @@ on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 | Orbital on `rpi-fbd` (`graphics-gui`): login window on screen | not estimated | 20 minutes (a config file, binary packages) | 25 (config) |
 | … then input, memory, frame rate, two `rpi-fbd` fixes, `drawbench` | not estimated | 1 hour more, most of it QEMU runs (each 5 to 15 minutes, the emulated desktop is slow) | 20 (driver), 3 (Makefile) |
 | … keyboard in Orbital, terminal window, its speed and memory | not estimated | 1.5 hours, almost all QEMU runs (keys get lost while the emulated desktop is busy) | 5 (config: `cosmic-term` link) |
+| … mouse in Orbital (the USB session's `usb-mouse` merged in) | a few hours | 1 hour, one build and two QEMU runs; the driver was the USB session's | 0 |
 
 So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
 it went fast: every part had a template in Redox (`vesad` for the
