@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # USB hotplug on the real Pi without a person (#17): dwc2d switches the
-# power of a hub port off and on (experiment usb-hotplug, /tmp/dwc2d-cycle),
+# power of a hub port off and on (base 0033, /tmp/dwc2d-cycle),
 # and this script checks in the serial log that the device went away and
 # came back, and that devshd answers again over the network afterwards.
 #
