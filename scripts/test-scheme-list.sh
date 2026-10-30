@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Check an image with the experiment ns-list-snapshot in QEMU: netstack
 # found the network scheme at boot, /scheme lists every scheme once and in
-# sorted order (the listing now goes through a sorted snapshot), and the
+# sorted order with ls -U (the listing now goes through a sorted snapshot;
+# before, it came in hash map order), and the
 # same listing twice in a row is equal.
 #
 # The host port for devshd is 12323, or DEVSH_PORT=<port>.
@@ -46,7 +47,7 @@ check "netstack found a network adapter" bash -c "! grep -aq 'no network adapter
 
 # One name per line, between two markers.
 names() {
-    devsh "echo BEGIN" "ls -1 /scheme" "echo END" | sed -n '/^BEGIN$/,/^END$/p' | grep -vxE 'BEGIN|END|.*ls -1 /scheme.*|echo END' | grep -a '^[a-z]'
+    devsh "echo BEGIN" "ls -U -1 /scheme" "echo END" | sed -n '/^BEGIN$/,/^END$/p' | grep -vxE 'BEGIN|END|.*ls -U -1 /scheme.*|echo END' | grep -a '^[a-z]'
 }
 first=$(names)
 second=$(names)
