@@ -3197,3 +3197,37 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, base `0049`. test 114 ([#88](
   images in between kept theirs. If something on the LAN opens many
   connections to the Pi, this leak would explain it. Not checked.
 - `/srv/tftp/redox` has the stable image again; stable booted.
+
+## 2026-10-30: `v0.3.0-dev-481-gcfa7d09+x9d2b`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `timerd-test`, `timezone`. test 95 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46) local time Europe/Berlin, and rerun of #49's freeze), Pi test agent
+
+**Pass: all time zone outputs as expected, and no freeze in 20 minutes
+(slowest timer run 5.3 s, #49: 438 s). One note: the Pi did not answer ping
+from homenodellm, though devsh answered every minute.** Image
+`~/tz-images/keep/tz-netboot-v0.3.0-dev-481-gcfa7d09+x9d2b.img`, manifest
+matches.
+
+- Standard checks pass, 0 of 300 starts failed.
+- Boot log: `timesync: clock set to 2026-10-30 20:11:23 UTC from pool.ntp.org`,
+  `timerd: clock set by timesync, 2026-10-30 21:11:23 CET`.
+- Over devsh:
+  - `date` `Fri Oct 30 21:15:02 CET 2026`, `date -u` `Fri Oct 30 20:15:02 UTC 2026`
+  - `ls -l /etc/localtime` `-> /usr/share/zoneinfo/Europe/Berlin`
+  - `date -d '@1792889999'` `Sun Oct 25 02:59:59 CEST 2026`;
+    `'@1792890000'` `Sun Oct 25 02:00:00 CET 2026`;
+    `'@1774746000'` `Sun Mar 29 03:00:00 CEST 2026`
+  - `timerd -t …` six lines: `02:30:00 CEST (+02:00)`, `02:59:59 CEST`,
+    `02:00:00 CET (+01:00)`, `02:30:00 CET` on 25 October;
+    `01:59:59 CET (+01:00)`, `03:00:00 CEST (+02:00)` on 29 March
+  - `env TZ=UTC timerd -t 1792890000` `2026-10-25 01:00:00 UTC (+00:00)`
+- **Freeze check**, 21:11:23–21:32 CET (20 minutes): 33 timer runs, all
+  `exited with code 0`, the slowest 5.3 s (`test-catchup` at 21:28, when it
+  started in the same second as `test-minute`), most under 1 s. A `date` line
+  came every minute, 21:12:00 to 21:32:00, no gap. `echo pong` over devsh
+  answered all 16 times. No panic.
+- **Ping:** my ping from homenodellm (ICMP, works against the router) got no
+  answer in any of the 16 minutes. `ping -c 2 192.168.178.120` from the Pi
+  works, 0 % loss. So the Pi is reachable and the network works, but it does
+  not answer incoming ping. I did not look into it further.
+- `/srv/tftp/redox` has the stable image again; stable booted.
