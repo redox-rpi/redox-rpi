@@ -1,4 +1,4 @@
-From e96161d0406c6017f7c89e8bb576ac910db21126 Mon Sep 17 00:00:00 2001
+From 330996f64f2267d82055f4cf1102692207d63a5a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:50:01 +0100
 Subject: [PATCH 30/33] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
@@ -8,12 +8,12 @@ The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,
 firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
 1, writing 0 or 1 sets it. Pi 3B+ only.
 ---
- drivers/rpi-firmwared/src/main.rs | 43 +++++++++++++++++++++++++++++--
- drivers/rpi-firmwared/src/mbox.rs |  2 ++
- 2 files changed, 43 insertions(+), 2 deletions(-)
+ drivers/rpi-firmwared/src/main.rs | 47 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs | 23 +++++++++++++++
+ 2 files changed, 68 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..e9a735b 100644
+index 4a7a018..83c7053 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -15,6 +15,10 @@
@@ -56,7 +56,7 @@ index 4a7a018..e9a735b 100644
              _ => return Err(Error::new(ENOENT)),
          }
          Ok(text)
-@@ -112,11 +126,36 @@ impl FirmwareScheme {
+@@ -112,11 +126,40 @@ impl FirmwareScheme {
                  println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
                  Ok(())
              }
@@ -67,12 +67,16 @@ index 4a7a018..e9a735b 100644
 +                    "0" => 0,
 +                    _ => return Err(Error::new(EINVAL)),
 +                };
-+                // Only the first word (0 = done) matters; the firmware may
-+                // answer with a shorter value than it was sent (#60: the pin
-+                // changed, but `[0, _]` alone made the write fail).
-+                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
++                // Only the first word (0 = done) matters, if there is an
++                // answer at all (#60, #77: the pin changed, the write failed).
++                // println: the serial log does not show this daemon's stderr.
++                let fail = |e: String| {
++                    println!("rpi-firmwared: Wi-Fi power: {e}");
++                    Error::new(syscall::EIO)
++                };
++                match mbox.set_property(TAG_SET_GPIO_STATE, &[gpio, state]).map_err(fail)?[..] {
 +                    [] | [0, ..] => Ok(()),
-+                    _ => Err(log(format!("Wi-Fi power: firmware refused GPIO {gpio}"))),
++                    ref answer => Err(fail(format!("firmware refused GPIO {gpio}: {answer:x?}"))),
 +                }
 +            }
              _ => Err(Error::new(EROFS)),
@@ -94,7 +98,7 @@ index 4a7a018..e9a735b 100644
  fn arm_clock_max(mbox: &mut Mailbox) {
      let before = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM);
 diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
-index 737398e..506220e 100644
+index 737398e..39ad30e 100644
 --- a/drivers/rpi-firmwared/src/mbox.rs
 +++ b/drivers/rpi-firmwared/src/mbox.rs
 @@ -44,6 +44,8 @@ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
@@ -106,6 +110,41 @@ index 737398e..506220e 100644
  
  /// Clock id of the ARM cores.
  pub const CLOCK_ARM: u32 = 3;
+@@ -92,6 +94,24 @@ impl Mailbox {
+     /// value buffer, which has room for `response_words` words of answer.
+     /// Returns the answer, as long as the firmware says it is.
+     pub fn property(&mut self, tag: u32, request: &[u32], response_words: usize) -> Result<Vec<u32>, String> {
++        self.call(tag, request, response_words, true)
++    }
++
++    /// A property call that sets something. The firmware does
++    /// SET_GPIO_STATE on the 3B+ without marking the tag as answered (Pi
++    /// test #77: the pin changed, the call still failed), so only the
++    /// message status counts; the answer is empty then.
++    pub fn set_property(&mut self, tag: u32, request: &[u32]) -> Result<Vec<u32>, String> {
++        self.call(tag, request, request.len(), false)
++    }
++
++    fn call(
++        &mut self,
++        tag: u32,
++        request: &[u32],
++        response_words: usize,
++        need_answer: bool,
++    ) -> Result<Vec<u32>, String> {
+         let value_words = request.len().max(response_words);
+         let total = 6 + value_words;
+         if total > BUF_WORDS {
+@@ -138,6 +158,9 @@ impl Mailbox {
+             return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
+         }
+         if buf[4] & TAG_RESPONSE == 0 {
++            if !need_answer {
++                return Ok(Vec::new());
++            }
+             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+         }
+         let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
 -- 
 2.54.0 (Apple Git-157)
 

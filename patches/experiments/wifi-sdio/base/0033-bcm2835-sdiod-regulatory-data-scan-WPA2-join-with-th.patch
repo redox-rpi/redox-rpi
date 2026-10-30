@@ -1,4 +1,4 @@
-From 56456114081197ec463a5a1911e285af495584c1 Mon Sep 17 00:00:00 2001
+From 741a3251cbc76a21ba6f554b6a71e8d2e6b15270 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 15:43:40 +0100
 Subject: [PATCH 33/33] bcm2835-sdiod: regulatory data, scan, WPA2 join with

@@ -30,6 +30,8 @@ fetch "$NONFREE/brcm/brcmfmac43455-sdio.txt" "brcmfmac43455-sdio.raspberrypi,3-m
 fetch "$LINUXFW/LICENCE.cypress" LICENCE.cypress \
     ae0db6cc4db33941148df0f67de53e76a77b1b5a46b3165edb7040aa2750015f
 mkdir -p "${COOKBOOK_STAGE}/usr/lib/firmware/brcm"
-cp cyfmac43455-sdio-* "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt" LICENCE.cypress \
+# Named one by one: a pattern like cyfmac43455-sdio-* missed the .clm_blob (#77).
+cp cyfmac43455-sdio-minimal.bin cyfmac43455-sdio-standard.bin cyfmac43455-sdio.clm_blob \
+    "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt" LICENCE.cypress \
     "${COOKBOOK_STAGE}/usr/lib/firmware/brcm/"
 """
