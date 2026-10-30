@@ -1,0 +1,380 @@
+From 5db31996da5cc7e9307efc928383f646a820d77c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 07:29:52 +0100
+Subject: [PATCH] netstack: SLAAC with every prefix of a router advertisement
+
+smoltcp keeps only the last prefix option of a router advertisement, so
+with a global and a unique local prefix (Fritz!Box) only the unique local
+address was formed (Pi tests #47, #55). The options are now read from the
+raw message: one address per autonomous /64 prefix, global ones first,
+removed when the valid lifetime drops to 0. A router lifetime of 0 ends
+only the router that sent it, so an advertisement from another router
+no longer drops the default route.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/link/ethernet.rs     | 184 ++++++++++++++++++++++++++----
+ netstack/src/link/mod.rs          |   6 +-
+ netstack/src/scheme/mod.rs        |  27 +++--
+ netstack/src/scheme/netcfg/mod.rs |   4 +-
+ 4 files changed, 184 insertions(+), 37 deletions(-)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 539847f..dd2ae06 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -10,7 +10,7 @@ use smoltcp::time::{Duration, Instant};
+ use smoltcp::wire::{
+     ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
+     EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
+-    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags, NdiscPrefixInfoFlags,
++    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags,
+     NdiscRepr, RawHardwareAddress,
+ };
+ 
+@@ -42,7 +42,8 @@ const EMPTY_MAC: EthernetAddress = EthernetAddress([0; 6]);
+ /// advertisements.
+ struct Ipv6State {
+     link_local: Option<Ipv6Address>,
+-    global: Option<Ipv6Cidr>,
++    /// SLAAC addresses, one per prefix, global ones first.
++    addrs: Vec<Ipv6Cidr>,
+     router: Option<Ipv6Address>,
+     dns: Option<Ipv6Address>,
+     solicitations: u32,
+@@ -53,7 +54,7 @@ impl Default for Ipv6State {
+     fn default() -> Self {
+         Self {
+             link_local: None,
+-            global: None,
++            addrs: Vec::new(),
+             router: None,
+             dns: None,
+             solicitations: 0,
+@@ -107,6 +108,77 @@ fn rdnss_server(icmp: &[u8]) -> Option<Option<Ipv6Address>> {
+     None
+ }
+ 
++/// A prefix information option (RFC 4861 4.6.2) of a router advertisement.
++#[derive(Debug, PartialEq)]
++struct PrefixInfo {
++    prefix: Ipv6Address,
++    prefix_len: u8,
++    autonomous: bool,
++    valid_lifetime: u32,
++}
++
++/// Every prefix information option of a router advertisement. smoltcp keeps
++/// only the last one, and routers often send a global and a unique local
++/// prefix together.
++fn prefix_infos(icmp: &[u8]) -> Vec<PrefixInfo> {
++    let mut infos = Vec::new();
++    let Some(mut options) = icmp.get(16..) else {
++        return infos;
++    };
++    while options.len() >= 8 {
++        let len = usize::from(options[1]) * 8;
++        if len == 0 || len > options.len() {
++            break;
++        }
++        if options[0] == 3 && len >= 32 {
++            infos.push(PrefixInfo {
++                prefix_len: options[2],
++                autonomous: options[3] & 0x40 != 0,
++                valid_lifetime: u32::from_be_bytes(options[4..8].try_into().unwrap()),
++                prefix: Ipv6Address::from(<[u8; 16]>::try_from(&options[16..32]).unwrap()),
++            });
++        }
++        options = &options[len..];
++    }
++    infos
++}
++
++/// fc00::/7, unique local addresses: reachable only inside the site.
++fn is_unique_local(addr: Ipv6Address) -> bool {
++    addr.octets()[0] & 0xfe == 0xfc
++}
++
++/// Applies the prefixes of a router advertisement to the SLAAC addresses:
++/// a new address per autonomous /64 prefix, none for a prefix whose valid
++/// lifetime is 0. Global addresses come before unique local ones.
++fn apply_prefixes(addrs: &mut Vec<Ipv6Cidr>, infos: &[PrefixInfo], mac: EthernetAddress) {
++    for info in infos {
++        if !info.autonomous || info.prefix_len != 64 || info.prefix.segments()[0] & 0xffc0 == 0xfe80 {
++            continue;
++        }
++        let cidr = Ipv6Cidr::new(eui64_address(info.prefix, mac), 64);
++        let known = addrs.iter().position(|a| *a == cidr);
++        match (known, info.valid_lifetime) {
++            (Some(i), 0) => {
++                addrs.remove(i);
++            }
++            (None, lifetime) if lifetime != 0 => addrs.push(cidr),
++            _ => {}
++        }
++    }
++    addrs.sort_by_key(|a| is_unique_local(a.address()));
++}
++
++/// The router after an advertisement from `src`: a router lifetime of 0
++/// ends only that router, not one learned from another advertisement.
++fn next_router(current: Option<Ipv6Address>, src: Ipv6Address, lifetime_zero: bool) -> Option<Ipv6Address> {
++    match (current, lifetime_zero) {
++        (_, false) => Some(src),
++        (Some(r), true) if r == src => None,
++        (current, true) => current,
++    }
++}
++
+ fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
+     let a = addr.octets();
+     Ipv6Address::from([
+@@ -223,7 +295,7 @@ impl EthernetLink {
+     }
+ 
+     fn is_own_ipv6(&self, addr: Ipv6Address) -> bool {
+-        self.ipv6.link_local == Some(addr) || self.ipv6.global.map(|c| c.address()) == Some(addr)
++        self.ipv6.link_local == Some(addr) || self.ipv6.addrs.iter().any(|c| c.address() == addr)
+     }
+ 
+     fn process_arp(&mut self, packet: &[u8], now: Instant) {
+@@ -379,7 +451,6 @@ impl EthernetLink {
+             NdiscRepr::RouterAdvert {
+                 router_lifetime,
+                 lladdr,
+-                prefix_info,
+                 ..
+             } => {
+                 if src.segments()[0] & 0xffc0 != 0xfe80 {
+@@ -388,23 +459,15 @@ impl EthernetLink {
+                 if let Some(mac) = mac_of(lladdr) {
+                     self.learn_neighbor(IpAddress::Ipv6(src), mac, now);
+                 }
+-                self.ipv6.router = (router_lifetime != Duration::ZERO).then_some(src);
+-                if let Some(prefix) = prefix_info {
+-                    if prefix.flags.contains(NdiscPrefixInfoFlags::ADDRCONF)
+-                        && prefix.prefix_len == 64
+-                        && prefix.prefix.segments()[0] & 0xffc0 != 0xfe80
+-                    {
+-                        self.ipv6.global = (prefix.valid_lifetime != Duration::ZERO).then(|| {
+-                            Ipv6Cidr::new(eui64_address(prefix.prefix, hardware_address), 64)
+-                        });
+-                    }
+-                }
++                self.ipv6.router =
++                    next_router(self.ipv6.router, src, router_lifetime == Duration::ZERO);
++                apply_prefixes(&mut self.ipv6.addrs, &prefix_infos(ip.payload()), hardware_address);
+                 if let Some(dns) = rdnss_server(ip.payload()) {
+                     self.ipv6.dns = dns;
+                 }
+                 info!(
+-                    "{}: router advertisement from {}: router {:?}, address {:?}, dns {:?}",
+-                    self.name, src, self.ipv6.router, self.ipv6.global, self.ipv6.dns
++                    "{}: router advertisement from {}: router {:?}, addresses {:?}, dns {:?}",
++                    self.name, src, self.ipv6.router, self.ipv6.addrs, self.ipv6.dns
+                 );
+             }
+             _ => {}
+@@ -577,8 +640,9 @@ impl EthernetLink {
+                     IpAddress::Ipv6(target) => {
+                         let on_link_global = self
+                             .ipv6
+-                            .global
+-                            .filter(|cidr| cidr.contains_addr(&target))
++                            .addrs
++                            .iter()
++                            .find(|cidr| cidr.contains_addr(&target))
+                             .map(|cidr| cidr.address());
+                         let Some(src) = on_link_global.or(self.ipv6.link_local) else {
+                             return;
+@@ -752,9 +816,87 @@ impl LinkDevice for EthernetLink {
+     fn ipv6_config(&self) -> Option<Ipv6Config> {
+         Some(Ipv6Config {
+             link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
+-            global: self.ipv6.global,
++            addrs: self.ipv6.addrs.clone(),
+             router: self.ipv6.router,
+             dns: self.ipv6.dns,
+         })
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const MAC: EthernetAddress = EthernetAddress([0xb8, 0x27, 0xeb, 0x08, 0xe0, 0xaa]);
++
++    /// A router advertisement (ICMPv6 header and RA fields) with prefix
++    /// options for the given prefixes and valid lifetimes.
++    fn ra(prefixes: &[([u16; 4], u32)]) -> Vec<u8> {
++        let mut icmp = vec![134, 0, 0, 0, 64, 0, 0x07, 0x08, 0, 0, 0, 0, 0, 0, 0, 0];
++        // source link-layer address option first, as routers send it
++        icmp.extend_from_slice(&[1, 1, 0xb4, 0xfc, 0x7d, 0x53, 0xb2, 0x89]);
++        for (p, valid) in prefixes {
++            icmp.extend_from_slice(&[3, 4, 64, 0xc0]);
++            icmp.extend_from_slice(&valid.to_be_bytes());
++            icmp.extend_from_slice(&valid.to_be_bytes());
++            icmp.extend_from_slice(&[0; 4]);
++            for s in p {
++                icmp.extend_from_slice(&s.to_be_bytes());
++            }
++            icmp.extend_from_slice(&[0; 8]);
++        }
++        icmp
++    }
++
++    #[test]
++    fn global_and_unique_local_prefix() {
++        // The Fritz!Box in tests #47/#55: unique local prefix last.
++        let msg = ra(&[([0x2a02, 0x590, 0x1507, 0xc201], 7200), ([0xfdeb, 0xd4ef, 0xa7ac, 0], 7200)]);
++        let infos = prefix_infos(&msg);
++        assert_eq!(infos.len(), 2);
++        let mut addrs = Vec::new();
++        apply_prefixes(&mut addrs, &infos, MAC);
++        let expect: Vec<Ipv6Cidr> = [
++            "2a02:590:1507:c201:ba27:ebff:fe08:e0aa/64",
++            "fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64",
++        ]
++        .iter()
++        .map(|s| s.parse().unwrap())
++        .collect();
++        assert_eq!(addrs, expect);
++        // The same advertisement again changes nothing.
++        apply_prefixes(&mut addrs, &infos, MAC);
++        assert_eq!(addrs, expect);
++    }
++
++    #[test]
++    fn unique_local_first_still_sorted() {
++        let mut addrs = Vec::new();
++        apply_prefixes(&mut addrs, &prefix_infos(&ra(&[([0xfdeb, 0xd4ef, 0xa7ac, 0], 7200)])), MAC);
++        apply_prefixes(&mut addrs, &prefix_infos(&ra(&[([0x2a02, 0x590, 0x1507, 0xc201], 7200)])), MAC);
++        assert_eq!(addrs[0].address().segments()[0], 0x2a02);
++        // A valid lifetime of 0 removes only that prefix's address.
++        apply_prefixes(&mut addrs, &prefix_infos(&ra(&[([0x2a02, 0x590, 0x1507, 0xc201], 0)])), MAC);
++        assert_eq!(addrs.len(), 1);
++        assert_eq!(addrs[0].address().segments()[0], 0xfdeb);
++    }
++
++    #[test]
++    fn router_lifetime_zero_from_another_router() {
++        let fritz = Ipv6Address::new(0xfe80, 0, 0, 0, 0xb6fc, 0x7dff, 0xfe53, 0xb289);
++        let other = Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
++        let r = next_router(None, fritz, false);
++        assert_eq!(r, Some(fritz));
++        // An advertisement that only announces a prefix keeps the router.
++        assert_eq!(next_router(r, other, true), Some(fritz));
++        assert_eq!(next_router(r, fritz, true), None);
++    }
++
++    #[test]
++    fn truncated_options() {
++        let mut msg = ra(&[([0x2a02, 0x590, 0x1507, 0xc201], 7200)]);
++        msg.truncate(msg.len() - 4);
++        assert!(prefix_infos(&msg).is_empty());
++        assert!(prefix_infos(&msg[..10]).is_empty());
++    }
++}
+diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
+index 7a8fda8..857cba2 100644
+--- a/netstack/src/link/mod.rs
++++ b/netstack/src/link/mod.rs
+@@ -8,10 +8,12 @@ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv6Address, Ipv6Cidr};
+ 
+ /// IPv6 addresses of a link: its link-local address and what stateless
+ /// autoconfiguration learned from router advertisements
+-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct Ipv6Config {
+     pub link_local: Ipv6Cidr,
+-    pub global: Option<Ipv6Cidr>,
++    /// One address per advertised prefix, global ones before unique local
++    /// ones (fc00::/7); the first is the source for destinations off-link.
++    pub addrs: Vec<Ipv6Cidr>,
+     pub router: Option<Ipv6Address>,
+     /// Name server from the router advertisement (RDNSS)
+     pub dns: Option<Ipv6Address>,
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index b6295c8..6c98500 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -255,7 +255,7 @@ impl Smolnetd {
+         if current == self.ipv6_applied {
+             return;
+         }
+-        let old = std::mem::replace(&mut self.ipv6_applied, current);
++        let old = std::mem::replace(&mut self.ipv6_applied, current.clone());
+         let mut iface = self.iface.borrow_mut();
+         let mut route_table = self.route_table.borrow_mut();
+ 
+@@ -268,9 +268,9 @@ impl Smolnetd {
+             IpCidr::Ipv6(Ipv6Cidr::new(Ipv6Address::from(octets), cidr.prefix_len()))
+         };
+ 
+-        if let Some(old) = old {
++        if let Some(old) = &old {
+             let mut cidrs = vec![IpCidr::Ipv6(old.link_local)];
+-            cidrs.extend(old.global.map(IpCidr::Ipv6));
++            cidrs.extend(old.addrs.iter().copied().map(IpCidr::Ipv6));
+             iface.update_ip_addrs(|addrs| addrs.retain(|addr| !cidrs.contains(addr)));
+             iface
+                 .routes_mut()
+@@ -278,27 +278,30 @@ impl Smolnetd {
+             route_table.remove_rule(link_local_net);
+             route_table.remove_rule(multicast_net);
+             route_table.remove_rule(default_net);
+-            if let Some(global) = old.global {
+-                route_table.remove_rule(network(global));
++            for &addr in &old.addrs {
++                route_table.remove_rule(network(addr));
+             }
+         }
+ 
+-        if let Some(new) = current {
++        if let Some(new) = &current {
+             let dev: Rc<str> = "eth0".into();
+             let link_local = IpAddress::Ipv6(new.link_local.address());
++            // Off-link destinations get the first (preferably global) address.
+             let src = new
+-                .global
+-                .map_or(link_local, |global| IpAddress::Ipv6(global.address()));
++                .addrs
++                .first()
++                .map_or(link_local, |addr| IpAddress::Ipv6(addr.address()));
+             iface.update_ip_addrs(|addrs| {
+                 let _ = addrs.push(IpCidr::Ipv6(new.link_local));
+-                if let Some(global) = new.global {
+-                    let _ = addrs.push(IpCidr::Ipv6(global));
++                for &addr in &new.addrs {
++                    let _ = addrs.push(IpCidr::Ipv6(addr));
+                 }
+             });
+             route_table.insert_rule(Rule::new(link_local_net, None, dev.clone(), link_local));
+             route_table.insert_rule(Rule::new(multicast_net, None, dev.clone(), link_local));
+-            if let Some(global) = new.global {
+-                route_table.insert_rule(Rule::new(network(global), None, dev.clone(), src));
++            for &addr in &new.addrs {
++                let own = IpAddress::Ipv6(addr.address());
++                route_table.insert_rule(Rule::new(network(addr), None, dev.clone(), own));
+             }
+             if let Some(router) = new.router {
+                 route_table.insert_rule(Rule::new(
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index 6a733e7..60cb8c9 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -217,8 +217,8 @@ fn mk_root_node(
+                                     };
+                                     if let Some(v6) = dev.ipv6_config() {
+                                         res += &format!("{}\n", v6.link_local);
+-                                        if let Some(global) = v6.global {
+-                                            res += &format!("{global}\n");
++                                        for addr in &v6.addrs {
++                                            res += &format!("{addr}\n");
+                                         }
+                                     }
+                                     res
+-- 
+2.54.0 (Apple Git-157)
+
