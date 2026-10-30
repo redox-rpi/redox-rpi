@@ -1,3 +1,14 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 29 Oct 2026 20:00:00 +0100
+Subject: [PATCH] Deliver signals that arrived while ld.so loaded the program
+
+After SyncSigPctl, set the signal mask again: procmgr kept the pending
+bits of the old control struct, and this makes the kernel deliver them.
+(redox-rpi #55)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
 --- a/src/platform/mod.rs
 +++ b/src/platform/mod.rs
 @@ -365,6 +365,12 @@
