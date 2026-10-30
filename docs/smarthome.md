@@ -9,8 +9,11 @@ of Redox first, [time.md](time.md) the timers used here.
 
 All of it is on branch `mqtt` (built on branch `timerd`), issue
 [#49](https://github.com/redox-rpi/redox-rpi/issues/49), planned for v0.8.0.
-It passed in QEMU against a Mosquitto broker; the tests on a real Pi are
-queued (#58 and #65 in the [test plan](test-plan.md)).
+It passed in QEMU against a Mosquitto broker. On a real Pi, publishing and
+subscribing work (test #58); `ha-bridge` failed its first test (#65)
+because a connection to a broker that does not answer hung. That is fixed
+on the branch and waits for the next Pi test. Encrypted connections (TLS)
+are on branch `mqtt-tls`, see [below](#encrypted-connections-tls).
 
 | Experiment | What it adds |
 |---|---|
@@ -23,9 +26,9 @@ scripts/build-image.sh --experiment timesync --experiment timerd \
     --experiment mqtt --experiment ha-bridge
 ```
 
-**Not supported:** TLS (encrypted connections), MQTT 5 and QoS 2. User
-name and password go over the network in plain text: use it only in your
-home network.
+**Not supported:** MQTT 5, QoS 2 and TLS client certificates. Without TLS
+(branch `mqtt` alone), user name and password go over the network in plain
+text: use that only in your home network.
 
 ## A broker
 
@@ -97,6 +100,7 @@ topic that never comes.
 | `-C n` | sub | exit after n messages |
 | `-u user`, `-P password` | both | login |
 | `-i id`, `-k seconds` | both | client id (default `<tool>-<pid>`), keep-alive (default 60 s) |
+| `--tls`, `--cafile file`, `--no-tls` | both | encrypted connection, see [below](#encrypted-connections-tls) (branch `mqtt-tls`) |
 
 Exit code 0 on success, 1 on a network or broker error (the message says
 which: `192.168.178.120:1883: Transport endpoint is not connected` when no
@@ -131,6 +135,41 @@ args = ["-c", "mqtt-pub -t redox-rpi/uptime -m \"$(uptime)\""]
 The temperature comes in thousandths of a degree: `47236` is 47.2 °C.
 Other values from the firmware are in `/scheme/rpi-firmware`
 ([rpi-firmware.md](rpi-firmware.md)).
+
+## Encrypted connections (TLS)
+
+On branch `mqtt-tls` ([#56](https://github.com/redox-rpi/redox-rpi/issues/56),
+QEMU tested, Pi test #76 queued) all three tools can talk to the broker
+over TLS, port 8883, so the login and the values are encrypted.
+
+Most home brokers use a certificate from their own CA. Copy that CA's
+certificate (`ca.crt`, a PEM file) to the Pi as `/etc/mqtt-ca.crt`; from
+then on all tools use TLS and port 8883 without any option:
+
+```sh
+cat > /etc/mqtt-ca.crt        # as root: paste ca.crt, then Ctrl-D
+mqtt-pub -t home/pi/hello -m "now encrypted"
+```
+
+For one call instead: `--cafile ca.crt`, or `--tls` for a broker with a
+certificate from a public CA such as Let's Encrypt. `--no-tls` goes back
+to plain port 1883. The address in `/etc/mqtt-host` or `-h` must be one
+the certificate names (its host name or IP address).
+
+**The clock must be right first.** A certificate is valid only from a
+certain date. The Pi has no clock that runs while it is off and starts at
+the image's build time or the time saved at the last run, until `timesync`
+has the time from the network ([time.md](time.md)). A broker certificate
+made after that time is "not valid yet" until then:
+
+```
+mqtt-pub: 192.168.178.50:8883: invalid peer certificate: certificate not valid yet: … (is the clock right? check with date -u)
+```
+
+`ha-bridge` tries again every 30 seconds and connects as soon as the clock
+is right; timers wait for `timesync` anyway. By hand, check `date -u`
+first. Without a network time server, set the clock by hand
+(`timesync -s`) or use a DS3231 clock module.
 
 ## Home Assistant
 
@@ -212,14 +251,19 @@ on another computer:
 | `redox-rpi/redox/availability` | `online` or `offline`, retained |
 
 **Not tested yet:** with a real Home Assistant (the messages follow its
-documentation and were checked with `mosquitto_sub`), and on a real Pi
-(test #65).
+documentation and were checked with `mosquitto_sub`). On a real Pi the
+values arrived (test #65), but the first run hung before the broker
+address was set; fixed on the branch, waiting for the next Pi test.
 
 ## Problems
 
 | What you see | Why, and what to do |
 |---|---|
 | `Transport endpoint is not connected` | No broker at that address and port. Check `/etc/mqtt-host` and that the broker listens on the network, not only on `localhost`. |
+| `no answer from the broker within 10 s` | Nothing answers at that address: wrong address in `/etc/mqtt-host`, or the broker machine is off. |
+| `invalid peer certificate: UnknownIssuer` | TLS without the broker's CA: put it into `/etc/mqtt-ca.crt` or use `--cafile`. |
+| `certificate not valid yet` | The Pi's clock is behind; wait for `timesync` or check `date -u`. |
+| `unexpected end of file` with TLS | TLS to a plain port (1883); the TLS port is usually 8883. |
 | `broker refused the connection: bad user name or password` / `not authorized` | The broker wants a login: `-u` and `-P`. |
 | `mqtt-sub -t home/#` waits forever | Ion dropped the `#`: quote it, `'home/#'`. |
 | `ha-bridge: …; trying again in 30 s` in the log | The broker is not reachable yet; it keeps trying. |
