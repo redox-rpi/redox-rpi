@@ -80,7 +80,7 @@ DS3231 module.
 
 ## Setting the clock by hand
 
-On branch `clock-settime` (with relibc patch `0008`), as root:
+On branch `clock-settime` (with relibc patch `0011`), as root:
 
 ```sh
 timesync -s '2026-10-29 14:05'        # UTC; seconds are optional
@@ -95,7 +95,7 @@ time, so the next boot starts from there. A wrong format gives exit code 2.
 In Ion an argument that starts with `@` must be quoted, as above.
 
 `date -s` does not work on Redox: it says `setting the date is not
-supported by Redox`. With patch `0008`, C and Rust programs can set the
+supported by Redox`. With patch `0011`, C and Rust programs can set the
 clock with `clock_settime(CLOCK_REALTIME, …)` or `settimeofday()`; only
 root may.
 
