@@ -25,8 +25,16 @@ port=${FAT_PORT:-12323}
 part=1048576
 failed=0
 
+# devsh output is a terminal's: drop escape sequences and the prompt lines.
 devsh() {
-    python3 "$ROOT/scripts/devsh.py" 127.0.0.1 "$port" "$@" 2>/dev/null | tr -d '\r'
+    python3 "$ROOT/scripts/devsh.py" 127.0.0.1 "$port" "$@" 2>/dev/null | python3 -c '
+import re, sys
+s = sys.stdin.buffer.read().decode(errors="replace")
+s = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07", "", s).replace("\x00", "")
+for line in s.replace("\r", "\n").split("\n"):
+    if line.strip() and "# " not in line and "login:" not in line and "password:" not in line:
+        print(line)
+'
 }
 
 monitor() {
@@ -103,28 +111,29 @@ tr -d '\r' < "$log" | grep -aE "dwc2d: mass storage|usbmountd|fatfsd" | sed 's/^
 
 check "read a file from the host" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat /scheme/usb0/hello.txt' 2>/dev/null | grep -aq 'hello from the host'"
 
-out=$(devsh "cd /scheme/usb0
-dd if=/scheme/rand of=rand.bin bs=4096 count=256
-sha256sum rand.bin
-mkdir dir
-echo one > a.txt
-echo two > b.txt
-mv a.txt b.txt
-mv /scheme/usb0/rand.bin /scheme/usb0/dir/moved.bin
-echo gone > del.txt
-rm del.txt
-ls /scheme/usb0 /scheme/usb0/dir
-cat b.txt
-cd /
-usbmountd eject usb0
-ls /scheme/usb0")
+# One command per argument: devsh waits for the prompt after each.
+out=$(devsh "cd /scheme/usb0" \
+    "dd if=/scheme/rand of=rand.bin bs=4096 count=256" \
+    "sha256sum rand.bin" \
+    "mkdir dir" \
+    "echo one > a.txt" \
+    "echo two > b.txt" \
+    "mv a.txt b.txt" \
+    "mv /scheme/usb0/rand.bin /scheme/usb0/dir/moved.bin" \
+    "echo gone > del.txt" \
+    "rm del.txt" \
+    "ls /scheme/usb0 /scheme/usb0/dir" \
+    "cat b.txt" \
+    "cd /" \
+    "usbmountd eject usb0" \
+    "ls /scheme/usb0")
 echo "$out" > "$work/out.txt"
 echo "$out" | grep -aE 'rand.bin|moved|b.txt|usbmountd|No such|^two' | sed 's/^/      /'
 rand_sha=$(echo "$out" | grep -aoE '^[0-9a-f]{64}  rand.bin' | cut -c1-64)
 check "rename replaces the target" grep -aqx 'two' "$work/out.txt"
 check "eject" grep -aq 'usb0 unmounted' "$work/out.txt"
 check "fatfsd unmounted" wait_log "fatfsd: unmounted" 5
-check "scheme gone after eject" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme' 2>/dev/null | grep -aqw usb0"
+check "scheme gone after eject" bash -c "! grep -aqx usb0 <<< \"\$1\"" _ "$(devsh 'ls -1 /scheme')"
 
 monitor "device_del stick0" > /dev/null
 check "stick removed" wait_log "dwc2d: mass storage removed" 10
@@ -149,6 +158,6 @@ devsh "echo three >> /scheme/usb0/b.txt" > /dev/null
 # Unplugged without eject: fatfsd ends, the name is free again.
 monitor "device_del stick1" > /dev/null
 check "fatfsd ends when the stick goes away" wait_log "usbmountd: /scheme/usb0 ended" 15 2
-check "scheme gone after unplugging" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls /scheme' 2>/dev/null | grep -aqw usb0"
+check "scheme gone after unplugging" bash -c "! grep -aqx usb0 <<< \"\$1\"" _ "$(devsh 'ls -1 /scheme')"
 tr -d '\r' < "$log" | grep -aE "usbmountd|fatfsd" | tail -n 6 | sed 's/^/      /'
 exit $failed
