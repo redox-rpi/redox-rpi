@@ -203,6 +203,20 @@ fn io_err(err: io::Error) -> Error {
     })
 }
 
+/// An inode number for `path`: FAT has none, but programs compare them to
+/// see whether two names are the same file (`mv a b`). FNV-1a of the
+/// lowercase path (FAT names ignore case); the root is 1.
+fn inode(path: &str) -> u64 {
+    if path.is_empty() {
+        return 1;
+    }
+    let hash = path
+        .bytes()
+        .map(|b| b.to_ascii_lowercase())
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
+    hash.max(2)
+}
+
 /// Joins `path` to the directory `base` and removes ".", ".." and empty parts.
 fn join(base: &str, path: &str) -> String {
     let mut parts: Vec<&str> = if path.starts_with('/') {
@@ -514,6 +528,7 @@ impl SchemeSync for FatScheme {
         let path = self.path(id)?.to_string();
         let (is_dir, size) = self.lookup(&path)?;
         *stat = Stat {
+            st_ino: inode(&path),
             st_mode: if is_dir { MODE_DIR | 0o755 } else { MODE_FILE | 0o644 },
             st_nlink: 1,
             st_size: size,
@@ -555,7 +570,7 @@ impl SchemeSync for FatScheme {
             .filter(|(name, _)| name != "." && name != "..");
         for (idx, (name, is_dir)) in entries.enumerate().skip(opaque_offset as usize) {
             let result = buf.entry(DirEntry {
-                inode: idx as u64 + 1,
+                inode: inode(&join(&path, &name)),
                 next_opaque_id: idx as u64 + 1,
                 name: &name,
                 kind: if is_dir { DirentKind::Directory } else { DirentKind::Regular },

@@ -128,9 +128,9 @@ out=$(devsh "cd /scheme/usb0" \
     "usbmountd eject usb0" \
     "ls /scheme/usb0")
 echo "$out" > "$work/out.txt"
-echo "$out" | grep -aE 'rand.bin|moved|b.txt|usbmountd|No such|^two' | sed 's/^/      /'
+echo "$out" | grep -aE 'rand.bin|moved|b.txt|usbmountd|mv:|^one|^two' | sed 's/^/      /'
 rand_sha=$(echo "$out" | grep -aoE '^[0-9a-f]{64}  rand.bin' | cut -c1-64)
-check "rename replaces the target" grep -aqx 'two' "$work/out.txt"
+check "rename replaces the target" grep -aqx 'one' "$work/out.txt"
 check "eject" grep -aq 'usb0 unmounted' "$work/out.txt"
 check "fatfsd unmounted" wait_log "fatfsd: unmounted" 5
 check "scheme gone after eject" bash -c "! grep -aqx usb0 <<< \"\$1\"" _ "$(devsh 'ls -1 /scheme')"
