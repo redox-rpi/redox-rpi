@@ -9,11 +9,11 @@ of the write time the card spent programming (busy):
 bcm2835-sdhostd: 5 s: read 3 requests 24 blocks 4 ms; write 120 requests 960 blocks 2900 ms, 2400 ms of it busy
 ```
 
-Needs [`sdhost-driver`](../sdhost-driver/README.md) and
-[`sdhost-boot`](../sdhost-boot/README.md) before it:
+The sdhost driver is in the default patches since `sdhost-default`
+([#6](https://github.com/redox-rpi/redox-rpi/issues/6)):
 
 ```bash
-scripts/build-image.sh --experiment ldso-diagnostics --experiment sdhost-driver --experiment sdhost-boot --experiment sdhost-stats
+scripts/build-image.sh --experiment sdhost-stats
 ```
 
 ## Results
