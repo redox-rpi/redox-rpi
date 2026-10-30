@@ -70,3 +70,4 @@ checks that `lsusb` follows.
   devices; a keyboard plugged in through the monitor shows up as address
   4 and goes away again when unplugged.
 - QEMU after merging the updated `usb-hotplug` (port cycling, base 0032 there), images `v0.3.0-dev-179-g8370f55+x02a9` and, on usb-hotplug 3b460dc, `v0.3.0-dev-183-g6cb24c3+x02a9`: all checks of `qemu-check.sh` pass again, including the keyboard plugged in and out. The dwc2d patch (now 0034, after usb-storage's 0033) also updates the list after a port cycle.
+- **QEMU as default** (base `0053` on `usb-hotplug` 186ced7, default build without experiments, image `v0.3.0-dev-486-gdd28c2f`, 2026-10-31): `qemu-check.sh` 4 of 4. `lsusb` lists hub, keyboard and CDC network card; `hwinfo` shows 4 CPUs and 3 USB devices; the keyboard plugged in through the monitor shows up as address 4 and goes away again.
