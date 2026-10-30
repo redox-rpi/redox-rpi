@@ -36,6 +36,16 @@
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
 
+- [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
+  (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
+  firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
+  with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
+  netstack takes it as `wlan0` and dhcpd leases it. The network name and
+  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
+  chip: unit tests and a QEMU check of the settings path pass; Pi test
+  #110.
+
 ## Later
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi on the Pi 3B+ and Zero 2 W (milestone v0.6.0); it would be the
