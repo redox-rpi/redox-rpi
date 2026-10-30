@@ -104,8 +104,10 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     `background` then: forks are very slow in this QEMU run, where
     `getty` and `bcm2835-sdhci` each used 11 to 12 minutes of CPU. Not a
     mouse problem; to be checked on the Pi.
-  - Motion left over from a burst was only reported with the next QEMU
-    mouse event (reported to the USB session; QEMU or `dwc2d`'s polling).
+  - Some moves arrived late or merged with later ones. That was the test
+    setup: QEMU's monitor `mouse_move` went to QEMU's current pointer
+    without `mouse_set` to the USB mouse. With `mouse_set` the USB session
+    saw every move arrive within 3 s.
 
 ## What is missing
 
