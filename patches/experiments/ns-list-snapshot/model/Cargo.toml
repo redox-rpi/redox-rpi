@@ -1,0 +1,6 @@
+[package]
+name = "nslist"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+hashbrown = { version = "=0.15.5", default-features = false, features = ["inline-more", "default-hasher"] }

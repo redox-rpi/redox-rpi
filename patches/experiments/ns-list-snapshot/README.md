@@ -16,15 +16,26 @@ said "no network adapter found" although `dwc2d` had registered
   goes through the names as they were when it started, sorted, and the
   copy is dropped when the directory is closed.
 
+## Why it is rare
+
+`model/` is a small host program (`cargo run` in that folder) that does
+what `initnsmgr` did: the names in a hashbrown 0.15.5 map (the version
+`bootstrap` uses), listed in 512-byte pages, with `sudo` registered after
+the first, second or third page. With 15 to 61 schemes, the listing loses
+names only when the map holds exactly 28 or 56 schemes: then the insert
+grows the table and reorders it, and 2 to 12 names go missing, sometimes
+`network.usb`. Which names depends on the hash seed. At boot this needs
+the scheme count to hit such a threshold just when `sudo` registers in the
+middle of netstack's listing, which matches the 1 in 36 QEMU boots seen.
+
+Starting `ramfs` instances to make the race frequent did not work in
+QEMU: started from a shell or a unit, `ramfs` panicked ("Interrupted
+system call").
+
 ## Tests
 
-- `scripts/test-scheme-list.sh [image]` needs the test experiment
-  `scheme-list-stress` (never in a release): a unit started by init, in
-  init's namespace where netstack lives, starts 40 `ramfs` instances one
-  by one and lists `/scheme` five times after each. The script checks over
-  devsh that all 200 listings contain the network scheme exactly once.
-
-Build for the check:
-`scripts/build-image.sh --experiment scheme-list-stress` (without the fix)
-and `--experiment ns-list-snapshot --experiment scheme-list-stress` (with
-it).
+- `scripts/test-scheme-list.sh [image]` (QEMU, image with this
+  experiment): netstack found the network scheme, `/scheme` lists every
+  scheme once, sorted, and twice the same.
+- Pi: a normal boot with this experiment (standard checks); the race is
+  too rare to show there directly.

@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Check in QEMU that every listing of /scheme is complete while schemes are
-# registered meanwhile. Needs an image built with --experiment
-# scheme-list-stress: a test unit in init's namespace starts 40 ramfs
-# instances and lists /scheme 200 times in between. Without the experiment
-# ns-list-snapshot some listings miss the network scheme (netstack at boot
-# then sometimes finds no network adapter); with it none should.
+# Check an image with the experiment ns-list-snapshot in QEMU: netstack
+# found the network scheme at boot, /scheme lists every scheme once and in
+# sorted order (the listing now goes through a sorted snapshot), and the
+# same listing twice in a row is equal.
 #
 # The host port for devshd is 12323, or DEVSH_PORT=<port>.
 #
@@ -33,7 +31,7 @@ check() {
 }
 
 rm -f "$log"
-DEVSH_PORT=$port timeout 900 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --image "$image" \
+DEVSH_PORT=$port timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --image "$image" \
     < /dev/null > "$log" 2>&1 &
 qemu=$!
 # QEMU runs below the wrapper script: stop it by its devshd port.
@@ -44,17 +42,17 @@ for _ in $(seq 80); do
     sleep 3
 done
 check "devshd answers" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'echo ready' 2>/dev/null | grep -q ready"
+check "netstack found a network adapter" bash -c "! grep -aq 'no network adapter found' '$log'"
 
-for _ in $(seq 60); do
-    devsh "cat /tmp/list-test.done" | grep -qE '^[0-9]+$' && break
-    sleep 5
-done
-registered=$(devsh "cat /tmp/list-test.done" | grep -E '^[0-9]+$' | tail -1)
-counts=$(devsh "cat /tmp/list-test.out" | grep -E '^[0-9]+$')
-listings=$(grep -c . <<< "$counts")
-missed=$(grep -cvx 1 <<< "$counts")
-echo "      ${registered:-0} schemes registered during $listings listings, $missed listings without exactly one network scheme"
-check "the test unit ran (40 schemes registered)" test "${registered:-0}" -eq 40
-check "200 listings" test "$listings" -eq 200
-check "every listing has the network scheme once" test "$missed" -eq 0
+# One name per line, between two markers.
+names() {
+    devsh "echo BEGIN" "ls -1 /scheme" "echo END" | sed -n '/^BEGIN$/,/^END$/p' | grep -vxE 'BEGIN|END|.*ls -1 /scheme.*|echo END' | grep -a '^[a-z]'
+}
+first=$(names)
+second=$(names)
+echo "      $(grep -c . <<< "$first") schemes listed"
+check "the network scheme is listed once" test "$(grep -c '^network\.' <<< "$first")" -eq 1
+check "no scheme listed twice" test -z "$(sort <<< "$first" | uniq -d)"
+check "the listing is sorted" test "$first" = "$(LC_ALL=C sort <<< "$first")"
+check "two listings are equal" test "$first" = "$second"
 exit $failed
