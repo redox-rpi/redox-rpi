@@ -24,9 +24,10 @@ This experiment adds `/etc/pkg.d/40_redox-rpi` with
 
 - `pkg install <name>` takes our build if we publish one, else the
   upstream one.
-- `pkg update` compares against the first repository's index only
-  (pkgutils has no multi-repository update yet), so it updates our
-  packages from our repository and leaves upstream packages alone.
+- `pkg update` compares each installed package against the first
+  repository that has it (pkg-hold patch 0004; upstream pkgutils reads
+  only the first repository's index): our packages against ours,
+  everything else against `static.redox-os.org`.
 
 It also replaces the hold list of `pkg-hold` with entries like
 `kernel 192.168.178.120`: our patched packages are updated from our
@@ -40,4 +41,23 @@ scripts/publish-pkg-repo.sh
 ```
 
 Publish again after each build that should reach the Pis; the index keeps
-packages published earlier.
+packages published earlier. `pkg update` compares checksums, not versions
+or dates: a Pi with a newer build than the repository gets the
+repository's older packages. So publish every build that goes onto Pis.
+
+## QEMU test (2026-10-30)
+
+Image E `v0.3.0-dev-195-gb17a05f+xb43c` (`timesync`, `pkg-hold` with
+0004, `pkg-repo`); the repository still had build D (2026-10-29).
+
+- `pkg search reboot` lists packages of both repositories.
+- `pkg update --yes` updates 17 packages: the 15 upstream ones that differ
+  from our pin (coreutils, ion, redoxfs, uutils, …) from
+  `static.redox-os.org`, and `base` and `pkgutils` from our repository,
+  which allows them (`base 192.168.178.120` in the hold list). Nothing is
+  ignored, no "already exists".
+- Kernel and `libc.so` unchanged, `reboot` stays 0.1.2 (same in both).
+  `/usr/bin/pkg` changed to build D's, which lacks 0004: the older
+  repository won, see above.
+- `ls --version` (uutils 0.11.0 from upstream) works; a second
+  `pkg update --yes` has nothing to do.

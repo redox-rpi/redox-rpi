@@ -40,3 +40,13 @@ files that exist ("already exists"). `/etc/pkg/packages.toml` still
 recorded the new version. With 0003 an update skips files whose content
 is the same, replaces files the old version installed when they are
 unchanged on disk, and leaves files changed locally alone.
+
+## Updates from several repositories
+
+Patch 0004: upstream `pkg update` compares installed packages against the
+index (`repo.toml`) of the first repository in `/etc/pkg.d` only, so with
+our repository first it never saw newer upstream packages. With 0004 it
+reads the index of every repository and takes, per package, the first
+repository that lists it, the same one `pkg install` downloads from. A
+repository that cannot be reached is skipped with a message. `pkg search`
+then also lists the packages of every repository.
