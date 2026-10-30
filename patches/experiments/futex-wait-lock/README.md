@@ -46,3 +46,10 @@ and 3 s parker per run):
 | `v0.3.0-dev-361-g0b9f4c5+x9f6b` | this backport | 0 of 41 (suite run and 40 single runs) |
 
 The suite with the backport: 320 tests, 22 failures, all known, none new.
+
+The assistant's candle benchmark (`cbench`, Rust `thread::park` in a
+barrier pool, [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), QEMU `-smp 4` on image
+`v0.3.0-dev-166-g371127e+x18f5` with the kernel replaced: hangs in 2 of 2
+runs with the pinned kernel; no hang with the first own patch (200 × 1,
+100 × 4, 50 × 23 rows) nor with this backport (300 × 1, 200 × 4,
+100 × 23 rows).
