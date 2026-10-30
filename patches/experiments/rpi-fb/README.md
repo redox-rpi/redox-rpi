@@ -25,6 +25,9 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   a while (damage union that only grew), shadow buffers for clients when
   dumb buffers are uncached, `drawbench`; see
   [experiment `orbital`](../orbital/README.md).
+- [`0036`](base/0036-rpi-fbd-wait-for-the-vertical-blank-after-a-page-fli.patch)
+  (branch `graphics-vsync`, step 1b): waits for the vertical blank after a
+  page flip; see [below](#branch-graphics-vsync-patch-0036).
 
 ## What `rpi-fbd` does
 
@@ -122,9 +125,30 @@ the controller's speed. Cached dumb buffers need cache maintenance before
 each blit, which user space cannot do today (DMA plan step 2, a kernel
 change).
 
+### Branch `graphics-vsync` (patch `0036`)
+
+The firmware moves the visible window (tag `0x00048009`) at its next
+vertical blank, not at once. A frame that comes within that time used to
+be drawn into the buffer still on screen and could tear.
+
+- After a flip, `set_plane` remembers the time. The next frame, if it
+  comes less than 20 ms later (one 60 Hz frame plus a margin), first
+  waits for the vertical blank with tag `0x0004800e` (value 0). The tag is
+  not in the firmware's published tag list; Raspberry Pi's Linux fbdev
+  driver uses it for `FBIO_WAITFORVSYNC`. Frames that come later do not
+  wait.
+- If the firmware does not answer the tag (QEMU answers it with no
+  value), the log says `rpi-fbd: no vsync from the firmware, frames may
+  tear` and it is not asked again. `RPI_FB_VSYNC=off` turns it off.
+- With `RPI_FB_BENCH=1`, the 5 s report adds `… vsync waits, … ms on
+  average`: on the Pi up to about 16.7 ms each at 60 Hz.
+- Only double-buffered modes flip, so at 1920x1200 or 1920x1080 with
+  `gpu_mem=16` nothing changes.
+
 ### Not done
 
-- Waiting for the vertical blank before the next frame after a flip.
+- Waiting for the vertical blank on the real firmware: tested only in
+  QEMU, which does not have the tag (patch `0036` falls back there).
 - DMA blits that run while the client draws on (interrupt or a later
   check instead of polling), and cached dumb buffers.
 - A new HDMI mode for a monitor turned on later (needs the display
