@@ -3374,3 +3374,33 @@ setting, so a missing clock is not the reason.** Image
   `no answer with any flow setting`.
 - Step 4 still waits for the user's OK.
 - `/srv/tftp/redox` has the stable image again.
+
+## 2026-10-30: `v0.3.0-dev-407-g741b667+x4ec1`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 120 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server leftovers), Pi test agent
+
+**Pass: 3 host key types, key login from the data partition, still working
+after a reset with the same host keys.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-407-g741b667+x4ec1.img` (no
+manifest next to it).
+
+- (1) `ssh-keyscan -t rsa,ecdsa,ed25519 192.168.178.148`: **3 keys**,
+  `ssh-rsa`, `ecdsa-sha2-nistp256`, `ssh-ed25519` (#81: RSA only).
+  `ssh-keyscan 192.168.178.148` without `-t` (about 30 s later): the same 3
+  types. No dropped connection.
+- (2) `/home/root/.ssh/authorized_keys` does not exist on the image. A new
+  test key (`ed25519`, no comment) went into
+  `/scheme/data/home/root/.ssh/authorized_keys` (after `mkdir -p`).
+  `ssh -i <key> root@192.168.178.148 echo ok`: `ok` in 1.2 s.
+- (3) After `echo reset > /scheme/sys/kstop`: the same key login works
+  (`ok`, `uid=0(root) gid=0(root)`) without adding the key again. Host key
+  fingerprints before and after the reset are the same: RSA
+  `SHA256:nggT0H31…`, ECDSA `SHA256:MXb/OY+z…`, ED25519 `SHA256:6b9SpKQH…`. No
+  `generating new host keys` on serial.
+- (4) `ssh-session.exp` with that key: prompt, command, backspace, `exit` all
+  ok, exit at once. `sshd` SCHTIME 0.85 s before, 2.15 s after 11 sessions
+  (#101: 1.81 s after 12): about the same.
+- Standard checks pass, 0 of 300 starts failed. No panic or unhandled
+  exception apart from the known pcid one.
+- The test key file removed from `/scheme/data/home/root/.ssh/`. Stable image
+  staged again.
