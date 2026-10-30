@@ -2653,3 +2653,30 @@ done:** my permission check blocked the change to the shared
   known start crashes, see test 92).
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-155-g16b10cb+x7d9f`
+
+Real Pi 3B+ over netboot. Experiments: `gpio`, `bluetooth`. test 90 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54) Bluetooth, rerun of test 79 with the power switch fixed), Pi test agent
+
+**Fail: the power switch works now, but the controller still never answers.**
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-155-g16b10cb+x7d9f/harddrive.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- Boot: `bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`.
+  No `tag 0x00038041: not supported` any more, no `received bytes lost`, no
+  `a 1 ms sleep did not come back`.
+- `cat /scheme/rpi-firmware/bt_power`: `0`. `bt up` (2.4 s): **`power:
+  cycled`** (no I/O error: the fix works), `uart: core clock 250000000 Hz,
+  115313 baud`, then `bt: no answer to HCI command 0c03`. `bt_power` then reads `1`.
+- `bt info`, `bt scan 10`, `bt inquiry 10`: `no answer to HCI command` 1001,
+  0c01 and 0401.
+- `echo 0 > …/bt_power; echo 1 > …/bt_power; bt cmd 0c03`: no answer.
+- `throttled`: `0x00080000` (the soft temperature limit was reached at some
+  point since boot; the temperature is 56.9 °C, nothing throttled now).
+- Possible cause: `/srv/tftp/config.txt` has `enable_uart=1` and
+  `dtoverlay=disable-bt` (the PL011 goes to the serial console on GPIO 14/15).
+  The BT chip's UART lines (GPIO 30–33) may then not be routed to the mini
+  UART, or still be set for another function. A GPIO function readout of
+  GPIO 30–33 after `bt up` would show it.
+
+Stable image restored afterwards.
