@@ -313,7 +313,7 @@ manifest_head="$(mktemp)"
     awk '!/^#/ && NF == 2 { printf "%s = \"%s\"\n", $1, $2 }' "$LOCK"
     echo
     echo "[patches]"
-    for name in fdt kernel bootloader base relibc; do
+    for name in fdt kernel bootloader base relibc redoxfs; do
         patch_files "$name" | while read -r patch; do
             echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
         done
