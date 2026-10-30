@@ -6,10 +6,12 @@
 //!
 //! dwc2d serves a stick as the disk scheme `disk.usb-dwc2+<ports>-scsi`
 //! (#25), with `0` for the whole stick and `0p0`, `0p1`, ... for its
-//! partitions. Once a second usbmountd looks at `/scheme`: for a new USB disk
-//! it starts `fatfsd <partition> usbN` for each FAT partition (or for the
-//! whole stick if it has a FAT filesystem and no partition table), with the
-//! lowest free N. When the disk goes away it stops that fatfsd (SIGTERM).
+//! partitions. A card reader has one such disk per slot with a card, `1`,
+//! `1p0`, ... in the same scheme (#52). Once a second usbmountd looks at
+//! `/scheme`: for each new disk (a LUN) it starts `fatfsd <partition> usbN`
+//! for each FAT partition (or for the whole disk if it has a FAT filesystem
+//! and no partition table), with the lowest free N. When the disk goes away
+//! (stick unplugged, card taken out) it stops that fatfsd (SIGTERM).
 //!
 //! `eject` sends fatfsd SIGTERM: it writes what is open, marks the volume
 //! clean and ends; `eject` waits until `/scheme/usbN` is gone. The stick is
@@ -17,7 +19,7 @@
 //!
 //! The process IDs of the fatfsd instances are in `/tmp/usbmount/usbN.pid`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
@@ -31,6 +33,7 @@ const EJECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct Mount {
     name: String,
+    /// `<scheme>/<lun>`.
     disk: String,
     child: Child,
     stopping: bool,
@@ -50,22 +53,33 @@ fn schemes() -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// The partitions of a disk scheme in order, or the whole disk (`0`) if it
-/// has none.
-fn partitions(disk: &str) -> Vec<String> {
-    let names: Vec<String> = match fs::read_dir(format!("/scheme/{disk}")) {
+/// The disks (LUNs) of a USB disk scheme, as `<scheme>/<lun>`, with their
+/// partitions in order, or the whole disk if it has none. An empty card
+/// reader slot has no entry.
+fn luns(scheme: &str) -> BTreeMap<String, Vec<String>> {
+    let names: Vec<String> = match fs::read_dir(format!("/scheme/{scheme}")) {
         Ok(dir) => dir.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect(),
-        Err(_) => return Vec::new(),
+        Err(_) => return BTreeMap::new(),
     };
-    let mut parts: Vec<(u32, String)> = names
-        .iter()
-        .filter_map(|n| n.strip_prefix("0p").and_then(|p| p.parse().ok()).map(|p| (p, n.clone())))
-        .collect();
-    parts.sort();
-    if parts.is_empty() && names.iter().any(|n| n == "0") {
-        return vec!["0".to_string()];
+    let mut luns: BTreeMap<u32, Vec<(u32, String)>> = BTreeMap::new();
+    for name in &names {
+        let (lun, part) = match name.split_once('p') {
+            Some((lun, part)) => (lun.parse().ok(), part.parse().ok()),
+            None => (name.parse().ok(), None),
+        };
+        let Some(lun) = lun else { continue };
+        let parts = luns.entry(lun).or_default();
+        if let Some(part) = part {
+            parts.push((part, name.clone()));
+        }
     }
-    parts.into_iter().map(|(_, n)| n).collect()
+    luns.into_iter()
+        .map(|(lun, mut parts)| {
+            parts.sort();
+            let parts = if parts.is_empty() { vec![lun.to_string()] } else { parts.into_iter().map(|(_, n)| n).collect() };
+            (format!("{scheme}/{lun}"), parts)
+        })
+        .collect()
 }
 
 /// What the first block of `path` holds. The disk is read in whole blocks.
@@ -108,9 +122,10 @@ fn free_name(mounts: &[Mount], present: &BTreeSet<String>) -> String {
         .unwrap()
 }
 
-fn mount_new(disk: &str, mounts: &mut Vec<Mount>, present: &BTreeSet<String>) {
-    for part in partitions(disk) {
-        let path = format!("/scheme/{disk}/{part}");
+fn mount_new(disk: &str, parts: &[String], mounts: &mut Vec<Mount>, present: &BTreeSet<String>) {
+    let scheme = disk.rsplit_once('/').map_or(disk, |(s, _)| s);
+    for part in parts {
+        let path = format!("/scheme/{scheme}/{part}");
         match kind(&path) {
             Kind::Fat => {}
             Kind::ExFat => {
@@ -137,12 +152,22 @@ fn daemon() -> ! {
     // USB disks seen: mounted, ejected or without FAT. A disk leaves the set
     // when it goes away, so plugging it in again mounts it again.
     let mut seen: BTreeSet<String> = BTreeSet::new();
+    // Disks seen once: mounted in the next round if still there with the
+    // same partitions, so a partition table being read is not missed.
+    let mut new: BTreeMap<String, Vec<String>> = BTreeMap::new();
     println!("usbmountd: watching for USB disks");
     loop {
         let present = schemes();
-        let disks: BTreeSet<String> = present.iter().filter(|n| n.starts_with("disk.usb")).cloned().collect();
+        // Listing /scheme can miss a name while another scheme registers
+        // (#79); such a disk shows up one round later.
+        let disks: BTreeMap<String, Vec<String>> =
+            present.iter().filter(|n| n.starts_with("disk.usb")).flat_map(|s| luns(s)).collect();
 
-        for m in mounts.iter_mut().filter(|m| !m.stopping && !disks.contains(&m.disk)) {
+        // A disk missing from the listing is gone only if it cannot be
+        // looked at directly either.
+        let gone = |disk: &str| !disks.contains_key(disk) && fs::metadata(format!("/scheme/{disk}")).is_err();
+
+        for m in mounts.iter_mut().filter(|m| !m.stopping && gone(&m.disk)) {
             println!("usbmountd: {} went away, stopping /scheme/{}", m.disk, m.name);
             unsafe { libc::kill(m.child.id() as libc::pid_t, libc::SIGTERM) };
             m.stopping = true;
@@ -156,13 +181,17 @@ fn daemon() -> ! {
             _ => true,
         });
 
-        seen.retain(|d| disks.contains(d));
-        for disk in &disks {
-            if seen.insert(disk.clone()) {
-                // driver-block reads the partition table when the scheme is
-                // made; give a just registered disk a moment.
-                sleep(Duration::from_millis(200));
-                mount_new(disk, &mut mounts, &present);
+        seen.retain(|d| !gone(d));
+        let last = std::mem::take(&mut new);
+        for (disk, parts) in &disks {
+            if seen.contains(disk) {
+                continue;
+            }
+            if last.get(disk) == Some(parts) {
+                seen.insert(disk.clone());
+                mount_new(disk, parts, &mut mounts, &present);
+            } else {
+                new.insert(disk.clone(), parts.clone());
             }
         }
         sleep(POLL);
