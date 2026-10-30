@@ -52,3 +52,26 @@ of the LAN7800's port, network back after 7–10 s. The keyboard was
 unplugged and plugged into 4 ports, found each time. With the cable pulled
 during boot, dhcpd configured the network after 4 attempts
 ([report](../../../docs/test-reports.md)).
+
+## Merge to main
+
+Merge-ready (2026-10-30): main is merged in, and the three patches apply
+unchanged after main's base patches (rebuilt on `0024` and `0030`, same
+patch IDs as before).
+
+- **Numbers at the merge:** `git mv` to `patches/base/` in this order:
+  `0030` hotplug → `0031`, `0031` dhcpd → `0032`, `0032` cycle command →
+  `0033`. No kernel or relibc patches. Then drop `--experiment
+  usb-hotplug` from the branches that use it (`dwc2d-boottime`,
+  `usb-serial`, `usb-storage`, `usb-mouse`, `usb-storage-more`).
+- **Proven on the Pi:** test #35 (`v0.3.0-dev-148-g54f7433+x657a`:
+  standard checks, 3 power cycles of the LAN7800's port, keyboard in 4
+  ports, cable pulled during boot) and test #67
+  (`v0.3.0-dev-176-g752ac70+x8057`, with `dwc2d-boottime` on top, which
+  carries the later halt and SETUP fixes in these same patches):
+  `scripts/pi-hotplug-test.sh` 15/15 twice, keyboard cycle.
+- **QEMU after the merge with main:** `scripts/test-hotplug.sh` 15/15 with
+  `dwc2d-boottime` (`v0.3.0-dev-325-g9c7ecdb+x8057`) and with `usb-serial`
+  (`v0.3.0-dev-332-gbf1ec19+x41ea`) on top.
+- **Still needs a person:** nothing for the merge. The Anker hub steps
+  stay with test #4 (rtl8152 session).
