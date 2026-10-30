@@ -17,21 +17,21 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - `92_sshd.service` starts `/usr/bin/sshd -D -e` (sshd needs its absolute
   path to re-execute itself for each connection).
 - User `sshd` and `/var/empty` for privilege separation.
-- relibc `0001`: `setitimer(ITIMER_REAL)` and `getitimer` on top of the
+- relibc `0040`: `setitimer(ITIMER_REAL)` and `getitimer` on top of the
   POSIX timer that `alarm()` uses. Without it sshd closes every connection
   ("login grace time setitimer failed").
-- relibc `0002`: `setgroups` succeeds for root (the kernel has no
+- relibc `0041`: `setgroups` succeeds for root (the kernel has no
   supplementary groups); it returned ENOSYS and the privilege separation
   child exits on that.
-- relibc `0003`: `poll`/`ppoll` merge entries that repeat an fd into one
+- relibc `0042`: `poll`/`ppoll` merge entries that repeat an fd into one
   epoll registration (Redox keeps one per fd; the second `EPOLL_CTL_ADD`
   replaced the first). sshd polls its socket twice, for input and output;
   with nothing to write the socket was not watched at all, and the reply
   that opens a session never left.
-- relibc `0004`: `ld.so` finds a program whose argv[0] starts with "-"
+- relibc `0043`: `ld.so` finds a program whose argv[0] starts with "-"
   (a login shell, "-ion"); it looks the program up by argv[0] and stopped
   with "failed to locate '-ion'".
-- base `0024` (after the default base patches): `procmgr` sends SIGCHLD
+- base `0040` (after the default base patches): `procmgr` sends SIGCHLD
   for an exited process without the permission check of `kill()`. The
   pre-authentication child runs as user `sshd`; its SIGCHLD to the root
   parent failed ("failed to send SIGCHLD to parent PID …: Operation not
@@ -44,6 +44,24 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - `recipes/net/openssh/0002`: a login with a terminal goes on when
   `chown`/`chmod` of the PTY fail with EOPNOTSUPP (ptyd's PTYs have no
   owner or mode); before, `sshd-session` exited at once.
+- base `0041`: `netstack` reports a listening TCP socket readable only
+  when a connection waits. smoltcp's `may_recv()` is false in Listen, so
+  the socket was always readable and the listening `sshd` used a whole CPU
+  in its poll loop.
+- base `0042`: when the PTY master closes (the SSH session ends), `ptyd`
+  sends SIGHUP and SIGCONT to every process group that was in front on
+  that terminal, and `tcgetattr` on it fails with EIO, as on Linux. It
+  logs one line per hangup.
+- `recipes/core/ion/0001`: Ion exits (status 129) when its terminal is
+  gone, and no longer panics on it: it read the dead terminal forever, or
+  its flush error message and `tcsetpgrp(…).unwrap()` panicked (the
+  `UNHANDLED EXCEPTION … /usr/bin/ion` after every SSH session).
+- `tools/polltest`: listens on a port and shows whether `poll` reports it
+  readable without a connection (base `0041`).
+
+Patch numbers start at 0040 so they do not collide with the default
+patches: relibc `0040`–`0043` were `0001`–`0004` and base `0040` was
+`0024` before 2026-10-30. The results below use the old numbers.
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment serial-rx --experiment sshd
