@@ -24,8 +24,9 @@ have the same code; `usb-hotplug` has it at line 216.
 
 ## Tests
 
-- QEMU: boots, enumerates and the network comes up as before (QEMU's
-  devices never send a short reply, so the retry itself is not exercised
-  there).
-- Pi: test row in docs/test-plan.md, several boots, looking for the new
+- QEMU (`v0.3.0-dev-419-g65391ae+x1a87`), two boots: hub, keyboard and
+  network card enumerated, network up, no panic, no retry line. QEMU's
+  devices never send a short reply, so the retry itself does not run
+  there.
+- Pi: test #105 (Pi test agent), 5 boots, looking for the new
   log line.
