@@ -53,9 +53,12 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
   that terminal, and `tcgetattr` on it fails with EIO, as on Linux. It
   logs one line per hangup.
 - `recipes/core/ion/0001`: Ion exits (status 129) when its terminal is
-  gone, and no longer panics on it: it read the dead terminal forever, or
-  its flush error message and `tcsetpgrp(…).unwrap()` panicked (the
-  `UNHANDLED EXCEPTION … /usr/bin/ion` after every SSH session).
+  gone. At the prompt it read the dead terminal forever (liner returns an
+  empty line at end of file), and any message to the dead terminal
+  panicked, e.g. the report that the job ended by SIGHUP: the
+  `UNHANDLED EXCEPTION … /usr/bin/ion` after every SSH session. Ion now
+  checks the terminal after each read, and a panic hook turns a panic
+  while the terminal is gone into exit 129.
 - `tools/polltest`: listens on a port and shows whether `poll` reports it
   readable without a connection (base `0041`).
 
@@ -127,3 +130,28 @@ QEMU, with a 16 MB RedoxFS image mounted as `data` (reproduces the rename
 failure): the keys go to the data partition; after deleting `/etc/ssh/ssh_host_*`
 the script brings the same keys back (same fingerprints), makes only a missing
 key type, exits 0, and SSH login works.
+
+## Pi test #81, CPU and session end (2026-10-30)
+
+Pi test #81 (`v0.3.0-dev-305-g2d679a2+x4ec1`) passed: keys made and kept on
+`/scheme/data`, login in 1.3 s, `ssh-session.exp` passes, same fingerprints
+after a reset. Notes: `ssh-keyscan` with several types in one call returned
+only RSA; `authorized_keys` is lost on a reset (RAM root of the network
+image).
+
+After that, in QEMU:
+
+- The listening `sshd` used a whole CPU: `poll` said its socket was readable
+  without a connection (base `0041`). With the fix `polltest` waits its 2 s
+  timeouts and `sshd` has about 2 s of CPU after 20 logins.
+- Every session end aborted the session's Ion (`UNHANDLED EXCEPTION`).
+  With base `0042` and the Ion patch, `v0.3.0-dev-402-g787acab+x4ec1`:
+  15 sessions (5 dropped at the prompt, 5 dropped 12 s into `sleep 40`,
+  5 normal `exit`): 0 exceptions, a `ptyd: pty … hangup` line for each, the
+  `sleep` ends with the session, no shell left over.
+- Known: a session dropped in the first seconds of a program start leaves
+  that program running, because Ion gives it the terminal only after the
+  exec, so ptyd does not know its group yet. Experiment `pty-sigint` (#55)
+  closes that window.
+- Seen now and then, also on devsh: the first start of a large program can
+  take about 5 s in QEMU, before `ld.so` runs.
