@@ -3,10 +3,11 @@
 [#25](https://github.com/redox-rpi/redox-rpi/issues/25), the filesystem
 side. `dwc2d` serves a stick as the disk scheme `disk.usb-dwc2+<ports>-scsi`
 (experiment `usb-storage`, the USB topic's side); this experiment mounts
-its FAT partitions. Applies after `usb-hotplug` and `usb-storage`:
+its FAT partitions. Applies after `usb-storage` (USB hotplug is in the base
+patches `0031`–`0033`):
 
 ```bash
-scripts/build-image.sh --experiment usb-hotplug --experiment usb-storage --experiment usb-fat
+scripts/build-image.sh --experiment usb-storage --experiment usb-fat
 ```
 
 ## What it adds

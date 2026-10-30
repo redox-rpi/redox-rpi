@@ -5,8 +5,8 @@
 # files, eject, unplug and check on the host that the files are there and the
 # volume is marked clean. Plug it in again, read back, unplug without eject.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-storage --experiment usb-fat, and mtools on the host. The host port
+# Needs an image built with --experiment usb-storage --experiment usb-fat
+# (hotplug is a base patch now), and mtools on the host. The host port
 # for devshd is 12323, or FAT_PORT=<port>.
 #
 # Usage:
@@ -94,7 +94,7 @@ head -c 1048576 /dev/urandom > "$work/big.bin"
 big_sha=$(sha256sum < "$work/big.bin" | cut -c1-64)
 
 rm -f "$socket" "$log"
-QEMU_DEVSH_PORT=$port timeout 900 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" \
+DEVSH_PORT=$port timeout 900 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" \
     --image "$image" < /dev/null > "$log" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null; sleep 1; pkill -P $qemu 2>/dev/null' EXIT
