@@ -245,6 +245,10 @@ export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
 COOKBOOK_CARGO_PATH=. cookbook_cargo
 """'
     fi
+    # The cookbook copies a path source into source/ without removing files
+    # that are gone from tools/, so a file from another branch's build can
+    # break this one. Start from a fresh copy; target/ stays for speed.
+    rm -rf "$REDOX/recipes/other/$tool/source"
     mkdir -p "$REDOX/recipes/other/$tool"
     cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
 [source]
