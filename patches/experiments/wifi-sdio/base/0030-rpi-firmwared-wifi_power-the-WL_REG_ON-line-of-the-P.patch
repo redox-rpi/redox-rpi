@@ -1,4 +1,4 @@
-From 330996f64f2267d82055f4cf1102692207d63a5a Mon Sep 17 00:00:00 2001
+From da1d626b0e508e1ade74586f834ccdde1aec310d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:50:01 +0100
 Subject: [PATCH 30/33] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
@@ -8,12 +8,12 @@ The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,
 firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
 1, writing 0 or 1 sets it. Pi 3B+ only.
 ---
- drivers/rpi-firmwared/src/main.rs | 47 +++++++++++++++++++++++++++++--
- drivers/rpi-firmwared/src/mbox.rs | 23 +++++++++++++++
- 2 files changed, 68 insertions(+), 2 deletions(-)
+ drivers/rpi-firmwared/src/main.rs | 56 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs | 23 +++++++++++++
+ 2 files changed, 77 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..83c7053 100644
+index 4a7a018..91d2e29 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -15,6 +15,10 @@
@@ -56,7 +56,7 @@ index 4a7a018..83c7053 100644
              _ => return Err(Error::new(ENOENT)),
          }
          Ok(text)
-@@ -112,11 +126,40 @@ impl FirmwareScheme {
+@@ -112,11 +126,49 @@ impl FirmwareScheme {
                  println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
                  Ok(())
              }
@@ -75,7 +75,16 @@ index 4a7a018..83c7053 100644
 +                    Error::new(syscall::EIO)
 +                };
 +                match mbox.set_property(TAG_SET_GPIO_STATE, &[gpio, state]).map_err(fail)?[..] {
-+                    [] | [0, ..] => Ok(()),
++                    // Which of the two the firmware does may depend on the
++                    // start*.elf it runs (gpu_mem, Pi test #79); say so.
++                    [] => {
++                        println!("rpi-firmwared: Wi-Fi power {state}, tag not marked answered");
++                        Ok(())
++                    }
++                    [0, ..] => {
++                        println!("rpi-firmwared: Wi-Fi power {state}, tag answered");
++                        Ok(())
++                    }
 +                    ref answer => Err(fail(format!("firmware refused GPIO {gpio}: {answer:x?}"))),
 +                }
 +            }

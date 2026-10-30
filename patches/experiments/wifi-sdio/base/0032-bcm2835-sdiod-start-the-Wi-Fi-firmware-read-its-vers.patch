@@ -1,4 +1,4 @@
-From 7dc26ac86630d2cbfe226ec469e1792e4d6c8d1e Mon Sep 17 00:00:00 2001
+From 6f12184a9ade5d6de321d5a4a24b77672851c56a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 15:23:04 +0100
 Subject: [PATCH 32/33] bcm2835-sdiod: start the Wi-Fi firmware, read its

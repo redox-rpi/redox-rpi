@@ -1,4 +1,4 @@
-From 3a92f0a251ad7cb77a8e56d18a88cb9a746d8ba9 Mon Sep 17 00:00:00 2001
+From 084697364440e4382889f6c194d1ee6c9220caf9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:53:56 +0100
 Subject: [PATCH 31/33] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
