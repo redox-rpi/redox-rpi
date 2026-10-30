@@ -1,5 +1,6 @@
 [packages]
 openssh = "source"
+polltest = "source"
 
 # Privilege separation: sshd runs the pre-auth part as this user, chrooted
 # to /var/empty.
