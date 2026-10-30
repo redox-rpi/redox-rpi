@@ -4,8 +4,8 @@
 # disk scheme, copy it to block 2048, check the copy in the image on the
 # host, unplug the stick, and plug it in again.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-storage. The host port for devshd is 12323, or STORAGE_PORT=<port>.
+# Needs an image built with --experiment usb-storage (hotplug is base
+# 0031-0033 on usb-hotplug). devshd port 12323, or STORAGE_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-storage.sh [image]
