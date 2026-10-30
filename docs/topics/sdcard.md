@@ -39,7 +39,7 @@
   first boot, with a welcome app (milestone v0.4.0). Welcome app:
   experiment `welcome` (branch `welcome-app`) asks for keyboard layout, time
   zone, hostname, root password and Wi-Fi on the first boot, before login;
-  passes in QEMU, Pi test queued.
+  passes in QEMU and on the Pi (test 78), pull request open.
 - sdhost with DMA instead of PIO, after the DMA plan in [#21](https://github.com/redox-rpi/redox-rpi/issues/21)
   (milestone v0.4.0): prototype `sdhost-dma` (branch `sdhost-dma`) passes
   in QEMU; Pi test #42.

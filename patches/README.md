@@ -38,7 +38,7 @@ each one expects to come before it:
 | `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
-| `0025` | `experiments/welcome/base/` | getty starts the first-boot welcome app instead of login until it is done (#24) |
+| `0040` | `experiments/welcome/base/` | getty starts the first-boot welcome app instead of login until it is done (#24) |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`),

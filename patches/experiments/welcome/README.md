@@ -15,7 +15,7 @@ Then it writes `/etc/welcome.done` and does not run again. Delete that file
 to get it at the next boot, or run `welcome --force` from a shell.
 
 How it starts: base patch
-[`0025`](base/0025-getty-run-the-first-boot-welcome-app-instead-of-logi.patch)
+[`0040`](base/0040-getty-run-the-first-boot-welcome-app-instead-of-logi.patch)
 makes getty start `welcome --login` instead of `login` while
 `/usr/bin/welcome` exists and `/etc/welcome.done` does not. When it is
 done, the welcome app becomes `login` (exec, the same process). A first
@@ -53,5 +53,12 @@ again and checks that the welcome does not come back.
   prompt follows at once, and the second boot goes straight to the login
   prompt with hostname `pi-test`. Not covered: the time zone question
   (this image has no zone files) and the screen console.
+- Real Pi 3B+, test 78, `v0.3.0-dev-261-ge881cdb+xda44` (network boot):
+  the welcome waits on the serial console with no login prompt, all
+  questions answered there (`gb`, `pi-test`, `TestNet`), the passphrase is
+  not in the serial log, the login prompt follows at once, the files are
+  written as in QEMU (`/etc/net/wifi` `-rw-------`), standard checks pass,
+  0 of 300 starts failed. Not checked: the screen console (HDMI) and the
+  time zone question.
 
 See also [test-reports.md](../../../docs/test-reports.md).
