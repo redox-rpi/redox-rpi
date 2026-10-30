@@ -17,6 +17,16 @@
 - [#42](https://github.com/redox-rpi/redox-rpi/issues/42) SPI driver `bcm2835-spid` for SPI0 and the `spi` tool
   (v0.8.0): experiment [`spi`](../../patches/experiments/spi/README.md),
   branch `spi`, on top of `i2c` (gpio, i2c and spi go in together).
+- Branch `spi` is on current main (2026-10-30, image
+  `v0.3.0-dev-393-ga24b8b8+xcd36`): all three QEMU checks pass. Pi test
+  #99 checks what needs no person or wiring
+  ([`nowire-check.py`](../../patches/experiments/gpio/nowire-check.py):
+  output read-back, pulls, `power_led`, I2C errors, SPI with the MISO
+  pull). Pi tests #38–#40 (LEDs seen by a person, DS3231, jumper wires)
+  wait for a visit.
+- Before the PR: gpio patch `0041` (`power_led`) must be regenerated on top
+  of the ondemand governor (base `0040`, PR #76), which touches the same
+  lines of `rpi-firmwared`; the patch numbers then follow the free ones.
 
 ## Later
 
