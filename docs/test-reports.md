@@ -2443,3 +2443,38 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152` (today's main, the 
   had 6 of 1000 in test 92 today.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-217-g2d2f24c+xf552`
+
+Real Pi 3B+ over netboot. Experiments: `multicast`, `ipv6`, `lan78xx-multicast`, `mdns`, `rtl8152`, `timesync`. test 85 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27) IPv6 global address and default route), Pi test agent
+
+**Pass.** Image `~/redox-rpi-zrtl/keep/slaac-v0.3.0-dev-217-g2d2f24c+xf552.img`.
+The Fritz!Box's global prefix today is `2a02:590:1504:9901::/64` (homenodellm:
+`2a02:590:1504:9901:4a45:e6ff:fea0:b063`).
+
+- About a minute after boot, `eth0` addresses: `fe80::ba27:ebff:fe08:e0aa/64`,
+  **`2a02:590:1504:9901:ba27:ebff:fe08:e0aa/64`**,
+  `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64`, `192.168.178.148/24`: **pass**.
+- Routes: **`default via fe80::b6fc:7dff:fe53:b289 dev eth0 src
+  2a02:590:1504:9901:ba27:ebff:fe08:e0aa`**, plus `2a02:590:1504:9901::/64`,
+  `fdeb:d4ef:a7ac::/64` and `fe80::/64` on eth0: **pass**.
+- The serial log has no `router advertisement from …` lines (this image
+  doesn't print them). The only router seen is the Fritz!Box,
+  `fe80::b6fc:7dff:fe53:b289`.
+- `ping -6` to the Pi's global address from homenodellm: 3/3 (0.9–4.3 ms):
+  **pass**.
+- `net6 udp [2a02:…:b063]:7777 hello`: reply `hello`, and `udp-echo.py` saw
+  the Pi's `2a02:590:1504:9901:ba27:ebff:fe08:e0aa` (it timed out in test 55):
+  **pass**. To the ULA `fdeb:…:b063`: reply, echo saw the Pi's ULA: **pass**.
+- `net6 resolve example.com`: `2606:4700:10::6814:179a`,
+  `2606:4700:10::ac42:93f3` (and two IPv4 addresses). `net6 tcp
+  [2606:4700:10::6814:179a]:80 hello`: from `[2a02:…:e0aa]:49152`, reply
+  `HTTP/1.1 400 Bad Request`, `Server: cloudflare`: **pass** (internet over IPv6).
+- `/scheme/netcfg/resolv/nameserver6`: `fdeb:d4ef:a7ac:0:b6fc:7dff:fe53:b289`.
+- `mdns-query.py redox-rpi.local AAAA -6 wlp13s0`: the Pi answers with three
+  AAAA records (fe80, 2a02 and fdeb) and the A record. The Fritz!Box also
+  answers from its cache: **pass**.
+- After 10 minutes (09:25 UTC): the same addresses and routes.
+- Standard checks pass, 0 of 300 starts failed.
+
+Stable image restored afterwards.
