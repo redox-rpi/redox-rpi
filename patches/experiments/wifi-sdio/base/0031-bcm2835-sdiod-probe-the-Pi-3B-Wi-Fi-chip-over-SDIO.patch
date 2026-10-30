@@ -1,7 +1,7 @@
-From 084697364440e4382889f6c194d1ee6c9220caf9 Mon Sep 17 00:00:00 2001
+From d94b64b8f8e1335246cce01d8b799a2fea7d9634 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:53:56 +0100
-Subject: [PATCH 31/33] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
+Subject: [PATCH 31/34] bcm2835-sdiod: probe the Pi 3B+ Wi-Fi chip over SDIO
 
 GPIO 34-39 to the Arasan controller (the SD card stays on sdhost),
 power-cycle through rpi-firmwared's wifi_power, SDIO card init (CMD5,
@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.d/50_bcm2835-sdiod.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 4bded67..6b1e8ed 100644
+index a1b4b1b..6316667 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -47,6 +47,7 @@ members = [
@@ -36,10 +36,10 @@ index 4bded67..6b1e8ed 100644
      "drivers/net/e1000d",
      "drivers/net/ixgbed",
 diff --git a/Makefile b/Makefile
-index 263a5c4..f7ed03e 100644
+index 8ea0789..441937e 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -32,6 +32,7 @@ endif
+@@ -34,6 +34,7 @@ endif
  
  ifeq ($(TARGET),aarch64-unknown-redox)
  	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d

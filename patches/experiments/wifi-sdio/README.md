@@ -36,7 +36,26 @@ which frees the Arasan controller for the Wi-Fi chip.
 
   it joins that network, WPA2-PSK through the firmware's own supplicant
   (minimal firmware only), and waits for `link up` and `WPA2 keys in place`.
-  No network interface yet: the probe exits after that.
+- base `0034` (branch `wifi-join`, on top of netstack-multi #81): after
+  the join the driver stays and registers `network.wlan0`. netstack takes
+  it as `wlan0`, and dhcpd gets a lease on it (the default route stays on
+  `eth0` while the cable has a lease). Ethernet frames go out and come in
+  on SDPCM channel 2. The driver polls the chip every 2 ms while idle (the
+  interrupt is not wired up yet) and logs `N frames in, M out, …` once a
+  minute when the counters changed.
+  - The firmware supplicant gets the PMK as 64 hex digits, as from Linux'
+    brcmfmac. The driver computes it from the passphrase with
+    PBKDF2-HMAC-SHA1 (`psk.rs`, tested with the IEEE 802.11 annex J
+    vectors), so the chip's ARM need not.
+  - `/etc/net/wifi` also takes `ssid_hex=` and `psk_hex=`.
+  - [`wifi-config.py`](wifi-config.py) `<host> 2323 <file>` writes a
+    settings file to a running Pi through devshd in that hex form and
+    prints only byte counts. The file stays on the build host, outside the
+    repository: for the Pi tests `~/.config/redox-rpi/wifi` on homenodellm,
+    which the user creates. **Network names and passphrases are never
+    committed.**
+  - Not yet: rejoining after the link drops, the chip's interrupt,
+    scanning from netstack or a settings tool.
 - recipe `wifi-firmware` (in `recipes/`, added by `config.toml`):
   downloads firmware, CLM blob, NVRAM file and `LICENCE.cypress` from
   pinned commits of RPi-Distro/firmware-nonfree and linux-firmware, checks
@@ -46,8 +65,8 @@ which frees the Arasan controller for the Wi-Fi chip.
 
 It prints lines starting with `bcm2835-sdiod:` and ends with
 `bcm2835-sdiod: OK` or `bcm2835-sdiod: FAILED` and the reason. Without the
-firmware files it stops after the chip ID (still `OK`). No network
-interface yet.
+firmware files it stops after the chip ID (still `OK`). With
+`/etc/net/wifi` it prints `OK` after the join and keeps running.
 
 In QEMU the Arasan has no card behind it, so the probe ends with a CMD5
 timeout.

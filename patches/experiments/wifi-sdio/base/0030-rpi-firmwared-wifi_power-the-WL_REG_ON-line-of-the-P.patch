@@ -1,7 +1,7 @@
-From da1d626b0e508e1ade74586f834ccdde1aec310d Mon Sep 17 00:00:00 2001
+From 6cc59a779012936fa9288ad2b55e85eecb2d8230 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:50:01 +0100
-Subject: [PATCH 30/33] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
+Subject: [PATCH 30/34] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
  3B+ Wi-Fi chip
 
 The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,

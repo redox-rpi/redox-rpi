@@ -1,0 +1,611 @@
+From 8a3bcbbbb3383d2eee67193ce3d5da390711422c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 13:23:28 +0100
+Subject: [PATCH 34/34] bcm2835-sdiod: network interface wlan0 after the join,
+ PMK from the passphrase
+
+After a join the driver stays and registers network.wlan0, which netstack
+takes as wlan0: Ethernet frames go out and come in on SDPCM channel 2
+with a BCDC data header. It polls the SDIO core every 2 ms while idle
+(no interrupt yet) and logs frame counters once a minute.
+
+The firmware supplicant now gets the WPA2 PMK as 64 hex digits, as from
+Linux' brcmfmac, computed here with PBKDF2-HMAC-SHA1 (tested with the
+IEEE 802.11 annex J vectors). /etc/net/wifi also takes ssid_hex= and
+psk_hex=, for names and passphrases a shell would mangle.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/net/bcm2835-sdiod/Cargo.toml     |   5 +-
+ drivers/net/bcm2835-sdiod/src/main.rs    |  16 ++-
+ drivers/net/bcm2835-sdiod/src/netif.rs   | 137 +++++++++++++++++++
+ drivers/net/bcm2835-sdiod/src/psk.rs     | 164 +++++++++++++++++++++++
+ drivers/net/bcm2835-sdiod/src/station.rs |  59 +++++++-
+ drivers/net/bcm2835-sdiod/src/wifi.rs    |  28 +++-
+ 6 files changed, 389 insertions(+), 20 deletions(-)
+ create mode 100644 drivers/net/bcm2835-sdiod/src/netif.rs
+ create mode 100644 drivers/net/bcm2835-sdiod/src/psk.rs
+
+diff --git a/drivers/net/bcm2835-sdiod/Cargo.toml b/drivers/net/bcm2835-sdiod/Cargo.toml
+index edd284a..b6b16cf 100644
+--- a/drivers/net/bcm2835-sdiod/Cargo.toml
++++ b/drivers/net/bcm2835-sdiod/Cargo.toml
+@@ -1,12 +1,15 @@
+ [package]
+ name = "bcm2835-sdiod"
+-description = "Raspberry Pi 3B+ Wi-Fi chip over SDIO (probe)"
++description = "Raspberry Pi 3B+ Wi-Fi chip over SDIO"
+ version = "0.1.0"
+ edition = "2021"
+ 
+ [dependencies]
+ fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++redox_syscall.workspace = true
+ common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++driver-network = { path = "../driver-network" }
+ 
+ [lints]
+ workspace = true
+diff --git a/drivers/net/bcm2835-sdiod/src/main.rs b/drivers/net/bcm2835-sdiod/src/main.rs
+index 0a0a8c8..0f3bf64 100644
+--- a/drivers/net/bcm2835-sdiod/src/main.rs
++++ b/drivers/net/bcm2835-sdiod/src/main.rs
+@@ -11,8 +11,9 @@
+ //! `/usr/lib/firmware/brcm` (package `wifi-firmware`) it then lists the
+ //! cores, downloads firmware and NVRAM, starts the firmware, asks it for
+ //! its version and MAC address, loads the regulatory data, scans and, with
+-//! `/etc/net/wifi` (`ssid=…`, `psk=…`), joins that network. It prints what
+-//! it finds and exits; there is no network interface yet.
++//! `/etc/net/wifi` (`ssid=…`, `psk=…`), joins that network and stays as the
++//! network interface `network.wlan0` (see `netif`); without the file it
++//! prints what it finds and exits.
+ //!
+ //! `bcm2835-sdiod standard` loads the standard firmware instead of the
+ //! minimal one.
+@@ -29,7 +30,9 @@ mod chip;
+ mod erom;
+ mod host;
+ mod event;
++mod netif;
+ mod nvram;
++mod psk;
+ mod scan;
+ mod sdpcm;
+ mod station;
+@@ -210,8 +213,8 @@ fn probe() -> Result<(), String> {
+     if mac.len() < 6 {
+         return Err(format!("cur_etheraddr: {} bytes", mac.len()));
+     }
+-    let mac: Vec<String> = mac[..6].iter().map(|b| format!("{b:02x}")).collect();
+-    println!("bcm2835-sdiod: MAC address {}", mac.join(":"));
++    let mac: [u8; 6] = mac[..6].try_into().unwrap();
++    println!("bcm2835-sdiod: MAC address {}", station::mac(&mac));
+ 
+     let clm_path = format!("{FIRMWARE_DIR}/cyfmac43455-sdio.clm_blob");
+     let clm = fs::read(&clm_path).map_err(|e| format!("{clm_path}: {e}"))?;
+@@ -220,9 +223,12 @@ fn probe() -> Result<(), String> {
+     let networks = station::scan(&mut control, &mut bus)?;
+     station::print_networks(&networks);
+     match station::read_config() {
+-        Some((ssid, psk)) => {
++        Some(config) => {
++            let (ssid, psk) = config.map_err(|e| format!("{}: {e}", station::CONFIG_PATH))?;
+             station::join(&mut control, &mut bus, &ssid, psk.as_deref())?;
+             println!("bcm2835-sdiod: joined {}", String::from_utf8_lossy(&ssid));
++            println!("bcm2835-sdiod: OK");
++            netif::serve(bus, control, mac);
+         }
+         None => println!("bcm2835-sdiod: no {}, not joining a network", station::CONFIG_PATH),
+     }
+diff --git a/drivers/net/bcm2835-sdiod/src/netif.rs b/drivers/net/bcm2835-sdiod/src/netif.rs
+new file mode 100644
+index 0000000..1078b54
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/netif.rs
+@@ -0,0 +1,137 @@
++//! After the join: the network interface. The driver registers
++//! `network.wlan0`, which netstack takes as `wlan0`; Ethernet frames go out
++//! on SDPCM channel 2 and come back on it, each with a BCDC data header.
++//!
++//! The chip's interrupt line is not wired up yet, so the driver polls the
++//! SDIO core's interrupt status: every 2 ms while idle, at once while
++//! frames come in.
++
++use std::io;
++use std::os::fd::IntoRawFd;
++use std::thread;
++use std::time::{Duration, Instant};
++
++use driver_network::{NetworkAdapter, NetworkScheme};
++use syscall::{Error, Result, EINVAL, EIO};
++
++use crate::bus::Bus;
++use crate::event;
++use crate::station::mac;
++use crate::wifi::{self, Control};
++
++pub const SCHEME: &str = "network.wlan0";
++const IDLE: Duration = Duration::from_millis(2);
++/// How often the frame counters are logged, when they changed.
++const STATS_EVERY: Duration = Duration::from_secs(60);
++
++struct Wlan {
++    bus: Bus,
++    control: Control,
++    mac: [u8; 6],
++    rx_frames: u64,
++    tx_frames: u64,
++    tx_errors: u64,
++}
++
++impl Wlan {
++    /// Takes what the firmware has for us; true if anything came.
++    fn poll(&mut self) -> bool {
++        let before = self.control.rx.len();
++        let got = match self.control.pump(&mut self.bus) {
++            Ok(got) => got,
++            Err(e) => {
++                println!("bcm2835-sdiod: {e}");
++                false
++            }
++        };
++        self.rx_frames += self.control.rx.len().saturating_sub(before) as u64;
++        for e in self.control.take_events() {
++            match e.kind {
++                event::E_LINK => println!(
++                    "bcm2835-sdiod: link {} ({}), reason {}",
++                    if e.flags & event::LINK_UP != 0 { "up" } else { "down" },
++                    mac(&e.addr),
++                    e.reason
++                ),
++                _ => wifi::log_event(&e),
++            }
++        }
++        got
++    }
++}
++
++impl NetworkAdapter for Wlan {
++    fn mac_address(&mut self) -> [u8; 6] {
++        self.mac
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        self.control.rx.len()
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
++        let Some(frame) = self.control.rx.pop_front() else {
++            return Ok(None);
++        };
++        if frame.len() > buf.len() {
++            return Err(Error::new(EINVAL));
++        }
++        buf[..frame.len()].copy_from_slice(&frame);
++        Ok(Some(frame.len()))
++    }
++
++    fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
++        match self.control.send_data(&mut self.bus, buf) {
++            Ok(()) => {
++                self.tx_frames += 1;
++                Ok(buf.len())
++            }
++            Err(e) => {
++                self.tx_errors += 1;
++                if self.tx_errors <= 3 {
++                    println!("bcm2835-sdiod: sending a frame: {e}");
++                }
++                Err(Error::new(EIO))
++            }
++        }
++    }
++}
++
++/// Serves `network.wlan0` for good.
++pub fn serve(bus: Bus, control: Control, mac: [u8; 6]) -> ! {
++    // daemon::Daemon reports "ready" through the pipe in INIT_NOTIFY. When
++    // started by hand there is none, or a stale one inherited from the
++    // shell, so the driver always gives it a pipe of its own; init does not
++    // wait for this oneshot_async service anyway.
++    let (reader, writer) = io::pipe().expect("bcm2835-sdiod: no pipe");
++    let _ = reader.into_raw_fd(); // kept open, so the write cannot fail
++    std::env::set_var("INIT_NOTIFY", writer.into_raw_fd().to_string());
++
++    daemon::Daemon::new(move |daemon| {
++        let adapter = Wlan { bus, control, mac, rx_frames: 0, tx_frames: 0, tx_errors: 0 };
++        let mut scheme = NetworkScheme::new(move || adapter, daemon, SCHEME.to_string());
++        println!("bcm2835-sdiod: {SCHEME} registered, MAC {}", crate::station::mac(&mac));
++        let mut logged = (0, 0);
++        let mut next_stats = Instant::now() + STATS_EVERY;
++        loop {
++            if let Err(e) = scheme.tick() {
++                println!("bcm2835-sdiod: scheme: {e}");
++            }
++            if scheme.adapter_mut().poll() {
++                continue;
++            }
++            if Instant::now() >= next_stats {
++                next_stats = Instant::now() + STATS_EVERY;
++                let a = scheme.adapter();
++                if (a.rx_frames, a.tx_frames) != logged {
++                    logged = (a.rx_frames, a.tx_frames);
++                    println!(
++                        "bcm2835-sdiod: {} frames in, {} out, {} dropped, {} send errors",
++                        a.rx_frames, a.tx_frames, a.control.rx_dropped, a.tx_errors
++                    );
++                }
++            }
++            thread::sleep(IDLE);
++        }
++    })
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/psk.rs b/drivers/net/bcm2835-sdiod/src/psk.rs
+new file mode 100644
+index 0000000..c49526d
+--- /dev/null
++++ b/drivers/net/bcm2835-sdiod/src/psk.rs
+@@ -0,0 +1,164 @@
++//! The WPA2 pairwise master key from a passphrase: PBKDF2 with HMAC-SHA1,
++//! 4096 rounds, the network name as salt, 32 bytes (IEEE 802.11 annex
++//! J.4). The firmware supplicant could do this itself, but on the chip's
++//! ARM it takes seconds; Linux' brcmfmac hands it the key as 64 hex digits
++//! too.
++
++/// SHA-1 (FIPS 180-4).
++pub fn sha1(data: &[u8]) -> [u8; 20] {
++    let mut h: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
++    let mut msg = data.to_vec();
++    msg.push(0x80);
++    while msg.len() % 64 != 56 {
++        msg.push(0);
++    }
++    msg.extend_from_slice(&((data.len() as u64) * 8).to_be_bytes());
++    for block in msg.chunks(64) {
++        let mut w = [0u32; 80];
++        for (i, word) in block.chunks(4).enumerate() {
++            w[i] = u32::from_be_bytes(word.try_into().unwrap());
++        }
++        for i in 16..80 {
++            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
++        }
++        let [mut a, mut b, mut c, mut d, mut e] = h;
++        for (i, &wi) in w.iter().enumerate() {
++            let (f, k) = match i {
++                0..=19 => ((b & c) | (!b & d), 0x5a827999),
++                20..=39 => (b ^ c ^ d, 0x6ed9eba1),
++                40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1bbcdc),
++                _ => (b ^ c ^ d, 0xca62c1d6),
++            };
++            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(wi);
++            e = d;
++            d = c;
++            c = b.rotate_left(30);
++            b = a;
++            a = t;
++        }
++        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
++            *x = x.wrapping_add(y);
++        }
++    }
++    let mut out = [0u8; 20];
++    for (i, x) in h.iter().enumerate() {
++        out[i * 4..i * 4 + 4].copy_from_slice(&x.to_be_bytes());
++    }
++    out
++}
++
++/// HMAC-SHA1 (RFC 2104).
++pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
++    let mut k = [0u8; 64];
++    if key.len() > 64 {
++        k[..20].copy_from_slice(&sha1(key));
++    } else {
++        k[..key.len()].copy_from_slice(key);
++    }
++    let mut inner: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
++    inner.extend_from_slice(data);
++    let mut outer: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
++    outer.extend_from_slice(&sha1(&inner));
++    sha1(&outer)
++}
++
++/// PBKDF2-HMAC-SHA1 (RFC 8018) for `out.len()` bytes.
++fn pbkdf2_sha1(password: &[u8], salt: &[u8], rounds: u32, out: &mut [u8]) {
++    for (i, chunk) in out.chunks_mut(20).enumerate() {
++        let mut s = salt.to_vec();
++        s.extend_from_slice(&(i as u32 + 1).to_be_bytes());
++        let mut u = hmac_sha1(password, &s);
++        let mut t = u;
++        for _ in 1..rounds {
++            u = hmac_sha1(password, &u);
++            for (x, y) in t.iter_mut().zip(u) {
++                *x ^= y;
++            }
++        }
++        chunk.copy_from_slice(&t[..chunk.len()]);
++    }
++}
++
++/// The 32-byte PMK for `passphrase` on network `ssid`.
++pub fn pmk(passphrase: &[u8], ssid: &[u8]) -> [u8; 32] {
++    let mut out = [0u8; 32];
++    pbkdf2_sha1(passphrase, ssid, 4096, &mut out);
++    out
++}
++
++/// Lower-case hex digits.
++pub fn hex(bytes: &[u8]) -> String {
++    bytes.iter().map(|b| format!("{b:02x}")).collect()
++}
++
++/// Bytes from hex digits, `None` for an odd count or a non-hex character.
++pub fn unhex(text: &str) -> Option<Vec<u8>> {
++    let text = text.trim();
++    if text.len() % 2 != 0 {
++        return None;
++    }
++    (0..text.len())
++        .step_by(2)
++        .map(|i| u8::from_str_radix(text.get(i..i + 2)?, 16).ok())
++        .collect()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn sha1_vectors() {
++        assert_eq!(hex(&sha1(b"abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
++        assert_eq!(hex(&sha1(b"")), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
++        assert_eq!(
++            hex(&sha1(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
++            "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
++        );
++    }
++
++    #[test]
++    fn hmac_vectors() {
++        // RFC 2202, test cases 1, 2 and 6 (key longer than a block).
++        assert_eq!(hex(&hmac_sha1(&[0x0b; 20], b"Hi There")), "b617318655057264e28bc0b6fb378c8ef146be00");
++        assert_eq!(
++            hex(&hmac_sha1(b"Jefe", b"what do ya want for nothing?")),
++            "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"
++        );
++        assert_eq!(
++            hex(&hmac_sha1(&[0xaa; 80], b"Test Using Larger Than Block-Size Key - Hash Key First")),
++            "aa4ae5e15272d00e95705637ce8a3b55ed402112"
++        );
++    }
++
++    #[test]
++    fn pbkdf2_vectors() {
++        // RFC 6070, test cases 1 and 2.
++        let mut out = [0u8; 20];
++        pbkdf2_sha1(b"password", b"salt", 1, &mut out);
++        assert_eq!(hex(&out), "0c60c80f961f0e71f3a9b524af6012062fe037a6");
++        pbkdf2_sha1(b"password", b"salt", 2, &mut out);
++        assert_eq!(hex(&out), "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957");
++    }
++
++    #[test]
++    fn wpa2_psk_vectors() {
++        // IEEE 802.11-2016 annex J.4.2.
++        assert_eq!(
++            hex(&pmk(b"password", b"IEEE")),
++            "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e"
++        );
++        assert_eq!(
++            hex(&pmk(b"ThisIsAPassword", b"ThisIsASSID")),
++            "0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af"
++        );
++    }
++
++    #[test]
++    fn hex_round_trip() {
++        assert_eq!(unhex("00ff10"), Some(vec![0, 255, 16]));
++        assert_eq!(unhex(&hex(b"Fritz!Box 7590")), Some(b"Fritz!Box 7590".to_vec()));
++        assert_eq!(unhex("abc"), None);
++        assert_eq!(unhex("zz"), None);
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/station.rs b/drivers/net/bcm2835-sdiod/src/station.rs
+index fd51ede..7294718 100644
+--- a/drivers/net/bcm2835-sdiod/src/station.rs
++++ b/drivers/net/bcm2835-sdiod/src/station.rs
+@@ -6,6 +6,7 @@ use std::time::Duration;
+ 
+ use crate::bus::Bus;
+ use crate::event::{self, Event};
++use crate::psk;
+ use crate::scan::{self, Bss};
+ use crate::sdpcm;
+ use crate::wifi::{CmdError, Control};
+@@ -22,7 +23,9 @@ const DL_TYPE_CLM: u16 = 2;
+ const AES_ENABLED: u32 = 0x4;
+ const WPA2_AUTH_PSK: u32 = 0x80;
+ 
+-/// The settings file: `ssid=…` and, for WPA2, `psk=…` (8 to 63 characters).
++/// The settings file: `ssid=…` and, for WPA2, `psk=…` (8 to 63
++/// characters). `ssid_hex=…` and `psk_hex=…` give the same as hex digits,
++/// for names and passphrases with characters a shell would mangle.
+ pub const CONFIG_PATH: &str = "/etc/net/wifi";
+ 
+ /// Loads the regulatory data (country and channel rules) into the
+@@ -133,19 +136,38 @@ pub fn print_networks(list: &[Bss]) {
+ }
+ 
+ /// Network name and passphrase from the settings file, if there is one.
+-pub fn read_config() -> Option<(Vec<u8>, Option<Vec<u8>>)> {
++pub fn read_config() -> Option<Result<(Vec<u8>, Option<Vec<u8>>), String>> {
+     let text = fs::read_to_string(CONFIG_PATH).ok()?;
++    Some(parse_config(&text))
++}
++
++/// Network name and passphrase from the text of the settings file.
++pub fn parse_config(text: &str) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
+     let mut ssid = None;
+     let mut psk = None;
+     for line in text.lines() {
+         let line = line.trim_end_matches('\r');
++        let hex = |v: &str, what: &str| psk::unhex(v).ok_or(format!("{what}: not hex digits"));
+         if let Some(v) = line.strip_prefix("ssid=") {
+             ssid = Some(v.as_bytes().to_vec());
++        } else if let Some(v) = line.strip_prefix("ssid_hex=") {
++            ssid = Some(hex(v, "ssid_hex")?);
+         } else if let Some(v) = line.strip_prefix("psk=") {
+             psk = Some(v.as_bytes().to_vec());
++        } else if let Some(v) = line.strip_prefix("psk_hex=") {
++            psk = Some(hex(v, "psk_hex")?);
+         }
+     }
+-    Some((ssid?, psk))
++    Ok((ssid.ok_or("no ssid= line")?, psk))
++}
++
++/// The key the firmware supplicant gets: the PMK as 64 hex digits, which
++/// it takes in place of a passphrase (as from Linux' brcmfmac).
++pub fn pmk_key(passphrase: &[u8], ssid: &[u8]) -> Result<Vec<u8>, String> {
++    if !(8..=63).contains(&passphrase.len()) {
++        return Err(format!("passphrase of {} characters, needs 8 to 63", passphrase.len()));
++    }
++    Ok(psk::hex(&psk::pmk(passphrase, ssid)).into_bytes())
+ }
+ 
+ /// Joins `ssid`, with WPA2-PSK through the firmware supplicant when a
+@@ -158,9 +180,7 @@ pub fn join(control: &mut Control, bus: &mut Bus, ssid: &[u8], psk: Option<&[u8]
+     control.set_u32(bus, sdpcm::WLC_SET_AUTH, 0)?;
+     match psk {
+         Some(psk) => {
+-            if !(8..=63).contains(&psk.len()) {
+-                return Err(format!("passphrase of {} characters, needs 8 to 63", psk.len()));
+-            }
++            let key = pmk_key(psk, ssid)?;
+             control.set_u32(bus, sdpcm::WLC_SET_WSEC, AES_ENABLED)?;
+             control.set_u32(bus, sdpcm::WLC_SET_WPA_AUTH, WPA2_AUTH_PSK)?;
+             match control.set_var_u32(bus, "sup_wpa", 1) {
+@@ -172,7 +192,7 @@ pub fn join(control: &mut Control, bus: &mut Bus, ssid: &[u8], psk: Option<&[u8]
+                 }
+                 Err(e) => return Err(e.into()),
+             }
+-            control.command(bus, sdpcm::WLC_SET_WSEC_PMK, true, &scan::wsec_pmk(psk))?;
++            control.command(bus, sdpcm::WLC_SET_WSEC_PMK, true, &scan::wsec_pmk(&key))?;
+         }
+         None => {
+             control.set_u32(bus, sdpcm::WLC_SET_WSEC, 0)?;
+@@ -228,3 +248,28 @@ pub fn join(control: &mut Control, bus: &mut Bus, ssid: &[u8], psk: Option<&[u8]
+ pub fn mac(a: &[u8; 6]) -> String {
+     a.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn config_plain_and_hex() {
++        let (ssid, psk) = parse_config("ssid=Home\npsk=secret123\n").unwrap();
++        assert_eq!((ssid, psk), (b"Home".to_vec(), Some(b"secret123".to_vec())));
++        let (ssid, psk) = parse_config("ssid_hex=486f6d65\r\npsk_hex=2722203b24\r\n").unwrap();
++        assert_eq!((ssid, psk), (b"Home".to_vec(), Some(b"'\" ;$".to_vec())));
++        let (ssid, psk) = parse_config("ssid=Open net\n").unwrap();
++        assert_eq!((ssid, psk), (b"Open net".to_vec(), None));
++        assert!(parse_config("psk=secret123\n").is_err());
++        assert!(parse_config("ssid_hex=4x\n").is_err());
++    }
++
++    #[test]
++    fn pmk_key_is_hex() {
++        let key = pmk_key(b"password", b"IEEE").unwrap();
++        assert_eq!(key, b"f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e");
++        assert!(pmk_key(b"short", b"IEEE").is_err());
++        assert!(pmk_key(&[b'a'; 64], b"IEEE").is_err());
++    }
++}
+diff --git a/drivers/net/bcm2835-sdiod/src/wifi.rs b/drivers/net/bcm2835-sdiod/src/wifi.rs
+index 6097477..349793c 100644
+--- a/drivers/net/bcm2835-sdiod/src/wifi.rs
++++ b/drivers/net/bcm2835-sdiod/src/wifi.rs
+@@ -55,6 +55,9 @@ const F2_ADDR: u32 = 0x8000;
+ pub const F2_BLOCK: u32 = 512;
+ /// The first read of a frame; the rest follows once the length is known.
+ const FIRST_READ: usize = 64;
++/// Received Ethernet frames kept until the network stack reads them; more
++/// are dropped.
++const RX_QUEUE: usize = 64;
+ 
+ /// Writes firmware and NVRAM and starts the ARM.
+ pub fn download(bus: &mut Bus, chip: &Chip, firmware: &[u8], nvram: &[u8]) -> Result<(), String> {
+@@ -138,8 +141,10 @@ pub struct Control {
+     id: u16,
+     replies: Vec<(u16, Result<Vec<u8>, i32>)>,
+     events: VecDeque<Event>,
+-    /// Ethernet frames received on channel 2 (none expected before a join).
+-    pub data_frames: usize,
++    /// Ethernet frames received on channel 2, for the network stack.
++    pub rx: VecDeque<Vec<u8>>,
++    /// Frames dropped because `rx` was full.
++    pub rx_dropped: usize,
+ }
+ 
+ /// A firmware command failed or got no reply.
+@@ -179,7 +184,8 @@ impl Control {
+             id: 0,
+             replies: Vec::new(),
+             events: VecDeque::new(),
+-            data_frames: 0,
++            rx: VecDeque::new(),
++            rx_dropped: 0,
+         }
+     }
+ 
+@@ -260,7 +266,6 @@ impl Control {
+     }
+ 
+     /// Sends an Ethernet frame on the data channel.
+-    #[allow(dead_code)]
+     pub fn send_data(&mut self, bus: &mut Bus, ether: &[u8]) -> Result<(), String> {
+         let payload = event::data_payload(ether);
+         self.send(bus, sdpcm::CHANNEL_DATA, |seq| sdpcm::frame(seq, sdpcm::CHANNEL_DATA, &payload))
+@@ -293,8 +298,13 @@ impl Control {
+         }
+     }
+ 
++    /// Events that came in since the last call (after a join: link changes).
++    pub fn take_events(&mut self) -> Vec<Event> {
++        self.events.drain(..).collect()
++    }
++
+     /// Takes the frames the firmware has for us; false if there were none.
+-    fn pump(&mut self, bus: &mut Bus) -> Result<bool, String> {
++    pub fn pump(&mut self, bus: &mut Bus) -> Result<bool, String> {
+         let status = bus.read32(self.sdio_base + SD_INTSTATUS)?;
+         let pending = status & (I_HMB_FRAME_IND | I_HMB_HOST_INT);
+         if pending == 0 {
+@@ -334,7 +344,11 @@ impl Control {
+                     // A broken event frame is no reason to stop.
+                     Err(e) => println!("bcm2835-sdiod: event channel: {e}"),
+                 },
+-                sdpcm::CHANNEL_DATA => self.data_frames += 1,
++                sdpcm::CHANNEL_DATA => match event::ether_frame(parsed.payload) {
++                    Ok(ether) if self.rx.len() < RX_QUEUE => self.rx.push_back(ether.to_vec()),
++                    Ok(_) => self.rx_dropped += 1,
++                    Err(e) => println!("bcm2835-sdiod: data channel: {e}"),
++                },
+                 other => println!("bcm2835-sdiod: frame on channel {other}, {} bytes", parsed.payload.len()),
+             }
+         }
+@@ -386,7 +400,7 @@ impl Control {
+     }
+ }
+ 
+-fn log_event(e: &Event) {
++pub fn log_event(e: &Event) {
+     println!(
+         "bcm2835-sdiod: event {} ({}), status {}, reason {}, flags 0x{:x}",
+         event::name(e.kind),
+-- 
+2.54.0 (Apple Git-157)
+
