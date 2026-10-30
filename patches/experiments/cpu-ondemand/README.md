@@ -8,7 +8,7 @@ file, throttle watch).
 scripts/build-image.sh --experiment cpu-ondemand
 ```
 
-Base patch `0023` adds a governor thread to `rpi-firmwared`, like Linux's
+Base patch `0050` adds a governor thread to `rpi-firmwared`, like Linux's
 `ondemand` governor with `raspberrypi-cpufreq`:
 
 - Every 100 ms it reads the per-CPU times from `/scheme/sys/stat` (busy and
@@ -38,7 +38,7 @@ Base patch `0023` adds a governor thread to `rpi-firmwared`, like Linux's
 - The mode is not kept across a reboot: `rpi-firmwared` starts from the
   initfs, before `/etc` is there. A line in an init script can set it.
 
-Kernel patch `0008` fixes the CPU times in `sys:stat`: each context switch
+Kernel patch `0050` fixes the CPU times in `sys:stat`: each context switch
 added its time in whole milliseconds and dropped the rest, so a CPU that
 switches every few microseconds (many system calls, such as the start loop)
 looked almost idle. The kernel now keeps nanoseconds and still shows
@@ -62,7 +62,7 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
 
 ## Results
 
-- **QEMU** (build `v0.3.0-dev-92-g663bbe4+xc99c`, without kernel `0008`,
+- **QEMU** (build `v0.3.0-dev-92-g663bbe4+xc99c`, without kernel `0050`,
   2026-10-28): the `governor` file reads as above; writing `performance`,
   `powersave` and `ondemand` works and counts switches, `bogus` fails with
   "Invalid argument", writing `arm_clock` sets mode `fixed`. QEMU has a
@@ -71,8 +71,8 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
   (40 s and 47 s of CPU time after a minute), so ondemand rightly stays at
   `max` there. Only the real Pi can show the switch to `min`. The same run
   showed the millisecond rounding (one CPU with 220000 switches in 5 s
-  counted 0.6 s), hence kernel `0008`.
-- **QEMU with kernel `0008`** (build `v0.3.0-dev-93-g2d1a2e4+xc99c`,
+  counted 0.6 s), hence kernel `0050`.
+- **QEMU with kernel `0050`** (build `v0.3.0-dev-93-g2d1a2e4+xc99c`,
   2026-10-28): the CPU that runs the polling `bcm2835-sdhcid` now shows
   4124 ms busy in a 4.1 s sample (100 %), the others 0–25 %. The governor
   stays at `max` in ondemand, as expected while a driver polls;
