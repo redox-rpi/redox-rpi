@@ -1,7 +1,7 @@
-From 19eb715d6cd369892c93571a5f024350a81476f0 Mon Sep 17 00:00:00 2001
+From 2822f9fa4d6c53c62494513f7ca83db19cef6e5e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:33:40 +0100
-Subject: [PATCH] bcm2835-gpiod: spin instead of sleeping while the pull
+Subject: [PATCH 42/42] bcm2835-gpiod: spin instead of sleeping while the pull
  setting settles
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From d23122238dc39ad8cf063d6033d66a1005f6e213 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:10:38 +0100
-Subject: [PATCH 40/41] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a
+Subject: [PATCH 40/42] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a
  scheme
 
 /scheme/gpio/pins lists every pin with mode and level;
