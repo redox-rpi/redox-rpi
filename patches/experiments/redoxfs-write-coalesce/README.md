@@ -1,6 +1,12 @@
-# redoxfs-write-coalesce
+# RedoxFS collects small writes (#16, was experiment `redoxfs-write-coalesce`)
 
-Prototype for [#16](https://github.com/redox-rpi/redox-rpi/issues/16):
+**Default since the merge of this branch:** redoxfs `0037`–`0039` (moved
+to `patches/redoxfs/`, numbered `0001`–`0003` in the text below) are in
+every image. `--experiment redoxfs-write-coalesce` is still accepted and
+does nothing, so older commands keep working. This page stays as the
+patches' documentation.
+
+Fix for [#16](https://github.com/redox-rpi/redox-rpi/issues/16):
 RedoxFS writes about 28 times the data for a file written in 4 KiB calls.
 
 ## Cause
@@ -86,3 +92,11 @@ card has all three lines (14 bytes), although the file was never closed and
 nothing else came to the filesystem. Two mistakes on the way: an empty
 socket answers `EAGAIN` (11), not `EWOULDBLOCK` (41, a separate number on
 Redox), and `/scheme/event` gives a queue only for an open with `O_CREAT`.
+
+Pi test 70 (2026-10-30, `v0.3.0-dev-172-g80279b9+x8cc4`, all three
+patches, [report](../../../docs/test-reports.md#2026-10-30-v030-dev-172-g80279b9x8cc4)):
+**pass**. 1 MiB on `/scheme/data` with `conv=fsync`, copied file to file at
+`bs=4k` 0.49 s (stable 12.7 s), `bs=1000` 0.82 s, `bs=512` 1.22 s (stable
+94 s). All copies and 300 appends intact, also after `echo reset >
+/scheme/sys/kstop`; the three lines of a file left open reached the card
+within the 2 s. No `no timer for collected writes`; 0 of 300 starts failed.

@@ -16,6 +16,16 @@
   ([#57](https://github.com/redox-rpi/redox-rpi/issues/57)): redoxfs `0036`,
   default with branch `redoxfs-rename`; before, `mv` on
   `/scheme/data` failed with os error 2. Pi test 83 passed on 2026-10-30.
+- RedoxFS collects small consecutive writes into whole records
+  ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)): redoxfs
+  `0037`–`0039`, default with branch `t16-write-amp`. Before, every `write`
+  rewrote its 128 KiB record plus about 7 metadata blocks, 28 times the data
+  for 4 KiB writes; now 1.3 times. On the Pi (test 70, 2026-10-30) 1 MiB
+  copied at `bs=4k` takes 0.49 s instead of 12.7 s; data waits at most 2 s.
+  Still an upstream problem (RedoxFS
+  [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51),
+  [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57)); the
+  user reports it to Redox.
 
 ## Next
 
@@ -29,16 +39,6 @@
 
 ## Later
 
-- [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 28 times the data for 4 KiB writes
-  (milestone v0.4.0). The same on x86_64 as on aarch64 (QEMU,
-  `scripts/redoxfs-write-amp.py`, RedoxFS 0.9.1 `c988cb8`, the newest
-  upstream), so an upstream problem; the user reports it to Redox. Related upstream work: RedoxFS
-  [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51) and
-  [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57).
-  Cause: every `write` call is a transaction that rewrites its whole
-  128 KiB record plus about 7 metadata blocks. Prototype
-  `redoxfs-write-coalesce` (branch `t16-write-amp`) collects consecutive
-  small writes into whole records: 28.4 → 1.3 in QEMU; Pi test #46.
 - [#24](https://github.com/redox-rpi/redox-rpi/issues/24) a small release image that grows to the whole card on the
   first boot, with a welcome app (milestone v0.4.0).
 - sdhost with DMA instead of PIO, after the DMA plan in [#21](https://github.com/redox-rpi/redox-rpi/issues/21)
