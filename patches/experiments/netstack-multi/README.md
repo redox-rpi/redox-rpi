@@ -10,7 +10,7 @@ scripts/build-image.sh --experiment netstack-multi
 
 | Patch | What |
 |---|---|
-| `0050` | netstack opens every `network.*` scheme at start and looks again every 2 s. `network.wlan*` become `wlan0`, `wlan1`, …, the others `eth0`, `eth1`, …, wired ones first. `/scheme/netcfg/ifaces` lists them. |
+| `0050` | netstack opens every `network.*` scheme at start and looks again every 2 s. `network.wlan*` become `wlan0`, `wlan1`, …, the others `eth0`, `eth1`, …, wired ones first. `/scheme/netcfg/ifaces` lists them. netstack tells init it is ready only once netcfg and the interfaces exist (with parallel init, dhcpd started too early in Pi test 69). |
 | `0051` | A DHCP client broadcast goes out only on the adapter whose MAC is in it, with that interface's address or 0.0.0.0 as source; other broadcasts only on the interface of their source address. After the router changes a packet's source it fills the UDP/TCP checksums again. |
 | `0052` | dhcpd keeps running: it reads `ifaces` every 2 s and gets a lease on each new interface (5 s per reply, 3 tries, again after 30 s). It takes only replies with its transaction ID and MAC. One default route: the first wired interface with a lease, else Wi-Fi; the name server comes from the same lease. `dhcpd -i eth0` is the old one-shot mode. |
 | `0053` | `testnetd`, a fake adapter for tests (in `/usr/lib/drivers`). |

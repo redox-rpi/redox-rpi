@@ -1,4 +1,4 @@
-From 59c0074444768f2b05f99f33736e0f5437224e58 Mon Sep 17 00:00:00 2001
+From 894509b9c11cb3856ad692ebd88934ba6a8470e6 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
 Subject: [PATCH 50/53] netstack: several network adapters, also ones that
@@ -14,10 +14,10 @@ is the first source address for smoltcp.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  netstack/src/adapters.rs          | 146 ++++++++++++++++++++++++++++++
- netstack/src/main.rs              |  87 ++++++++----------
+ netstack/src/main.rs              |  93 ++++++++-----------
  netstack/src/scheme/mod.rs        |  32 +++++--
  netstack/src/scheme/netcfg/mod.rs | 120 +++++++++++++++++++++---
- 4 files changed, 314 insertions(+), 71 deletions(-)
+ 4 files changed, 318 insertions(+), 73 deletions(-)
  create mode 100644 netstack/src/adapters.rs
 
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
@@ -173,7 +173,7 @@ index 0000000..8499e04
 +    scheme.starts_with("network.wlan")
 +}
 diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 084c3d3..87395f9 100644
+index 084c3d3..6b36c62 100644
 --- a/netstack/src/main.rs
 +++ b/netstack/src/main.rs
 @@ -2,15 +2,15 @@
@@ -252,10 +252,12 @@ index 084c3d3..87395f9 100644
  
      trace!("opening ip scheme socket");
      let ip_fd = Socket::nonblock()
-@@ -102,9 +69,11 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -100,11 +67,11 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     let event_queue = EventQueue::<EventSource>::new()
+         .map_err(|e| anyhow!("failed to create event queue: {:?}", e))?;
  
-     daemon.ready();
- 
+-    daemon.ready();
+-
 -    event_queue
 -        .subscribe(network_fd.raw(), EventSource::Network, EventFlags::READ)
 -        .map_err(|e| anyhow!("failed to listen to network events: {:?}", e))?;
@@ -267,7 +269,7 @@ index 084c3d3..87395f9 100644
  
      event_queue
          .subscribe(time_fd.raw(), EventSource::Time, EventFlags::READ)
-@@ -147,8 +116,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -147,8 +114,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
          .context("failed to listen to netcfg scheme events")?;
  
      let mut smolnetd = Smolnetd::new(
@@ -277,15 +279,21 @@ index 084c3d3..87395f9 100644
          ip_fd,
          udp_fd,
          tcp_fd,
-@@ -160,6 +128,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -158,8 +124,13 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     )
+     .context("smolnetd: failed to initialize smolnetd")?;
  
++    // Ready only now: netcfg and the interfaces exist after Smolnetd::new,
++    // and with parallel init dhcpd may start right after this (test 69).
++    daemon.ready();
++
      libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
  
 +    let mut last_scan = std::time::Instant::now();
      let all = {
          use EventSource::*;
          [Network, Time, IpScheme, UdpScheme, IcmpScheme, NetcfgScheme].map(Ok)
-@@ -167,11 +136,27 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -167,11 +138,27 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
  
      for event_res in all
          .into_iter()
