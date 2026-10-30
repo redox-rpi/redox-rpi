@@ -2478,3 +2478,30 @@ The Fritz!Box's global prefix today is `2a02:590:1504:9901::/64` (homenodellm:
 - Standard checks pass, 0 of 300 starts failed.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-218-ge3e4424+x19b9`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `boot-time`. test 84 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, third round, base `0028`), Pi test agent
+
+**Pass: network in 5 of 5 boots, login about 21.4 s after `kreset`.** Staged
+with `~/t18-work/bt6-stage/scripts/netboot.sh` (bootloader md5 `549fc80b…`).
+Afterwards the saved stable files went back into `/srv/tftp/redox`. Timelines
+are on homenodellm in `~/t18-work/tl-pi-bt6-{1..5}.txt`; each boot was a devsh
+reset (boot 1 from the stable image).
+
+| Seconds | boot 1 | boot 2 | boot 3 | boot 4 | boot 5 |
+|---|---|---|---|---|---|
+| `kreset` | 2.02 | 1.55 | 1.50 | 1.55 | 1.58 |
+| kernel starts | 18.35 | 17.31 | 17.34 | 17.28 | 17.39 |
+| `switchroot to /usr` | 22.21 | 21.15 | 21.21 | 21.13 | 21.24 |
+| `redox login:` | 23.92 | 22.91 | 22.91 | 22.88 | 22.95 |
+| **`redox login:` after `kreset`** | **21.90** | **21.36** | **21.41** | **21.33** | **21.37** |
+| `40_dwc2d.service ready after` | 8409 ms | 6741 ms | 6246 ms | 6429 ms | 6304 ms |
+| network | yes | yes | yes | yes | yes |
+
+- No `Can't open /scheme/netcfg/ifaces/eth0/mac` in any boot, and devsh
+  answered after every boot: **pass** (test 69 boot 1 had no network).
+- Login is about as fast as test 69 (21.3–22.1 s after `kreset`).
+- Standard checks pass, 0 of 300 starts failed.
+
+Stable image restored afterwards.
