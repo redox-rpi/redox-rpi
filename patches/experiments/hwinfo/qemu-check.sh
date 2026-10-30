@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# QEMU check for the hwinfo experiment (#35): lsusb and hwinfo over devsh,
+# QEMU check for lsusb and hwinfo (#35): both over devsh,
 # then a second keyboard plugged in and out through QEMU's monitor; lsusb
-# must follow. Needs an image built with --experiment usb-hotplug
-# --experiment hwinfo.
+# must follow. Needs an image with base 0053 and the hwinfo package.
 #
 # Usage: patches/experiments/hwinfo/qemu-check.sh [image] [devsh port]
 

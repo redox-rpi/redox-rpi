@@ -27,6 +27,8 @@ bootloader = "source"
 relibc = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
+# `lsusb` and `hwinfo` (tools/hwinfo).
+hwinfo = "source"
 # Programs beyond the minimal system, prebuilt by Redox. Most of them
 # (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
 # start with today's prebuilt aarch64 packages, in QEMU too; see

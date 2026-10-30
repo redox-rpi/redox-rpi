@@ -1,14 +1,13 @@
-# Experiment: lsusb and hwinfo
+# lsusb and hwinfo (was experiment `hwinfo`)
 
 Issue [#35](https://github.com/redox-rpi/redox-rpi/issues/35), planned for
-v0.7.0 (ROADMAP wish list: `lsusb` and hardware info).
+v0.7.0 (ROADMAP wish list: `lsusb` and hardware info). **Default since the
+merge of this branch:** the patch is base `0053` in `patches/base/` (after
+the `usb-hotplug` patches `0031`–`0033`), and every image installs the
+package `hwinfo` (`config/raspi3bp-sdcard.toml`). `--experiment hwinfo` is
+still accepted and adds nothing.
 
-```bash
-scripts/build-image.sh --experiment usb-hotplug --experiment hwinfo
-```
-
-- **Base patch** (numbered at merge; after the experiment `usb-hotplug`,
-  agreed with the USB session): `dwc2d` keeps what it learns during
+- **Base patch `0053`:** `dwc2d` keeps what it learns during
   enumeration and serves it read-only as `/scheme/usb.dwc2/devices`, one
   line per device:
 
@@ -35,8 +34,7 @@ scripts/build-image.sh --experiment usb-hotplug --experiment hwinfo
     the throttling flags in words, and the number of USB devices. Sources
     that are missing are left out.
 
-The package is built for every image (`scripts/build-image.sh`), but only
-this experiment installs it.
+The package is built and installed for every image.
 
 QEMU: [`qemu-check.sh`](qemu-check.sh) runs `lsusb` and `hwinfo` over
 devsh, then plugs a second keyboard in and out through QEMU's monitor and
