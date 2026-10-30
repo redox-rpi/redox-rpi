@@ -1,4 +1,9 @@
-# Complete /scheme listings (experiment `ns-list-snapshot`)
+# Complete /scheme listings (was experiment `ns-list-snapshot`)
+
+**Default since PR #80:** base `0036` (moved to `patches/base/`) is in
+every image. `--experiment ns-list-snapshot` is still accepted and does
+nothing, so older commands keep working. This page stays as the patch's
+documentation.
 
 Issue: [#79](https://github.com/redox-rpi/redox-rpi/issues/79). Found while checking the USB hotplug pull
 request #68: in 1 of 36 QEMU boots, netstack
@@ -34,8 +39,7 @@ system call").
 
 ## Tests
 
-- `scripts/test-scheme-list.sh [image]` (QEMU, image with this
-  experiment): netstack found the network scheme, `/scheme` lists every
+- `scripts/test-scheme-list.sh [image]` (QEMU): netstack found the network scheme, `/scheme` lists every
   scheme once, sorted, and twice the same.
 - Pi: a normal boot with this experiment (standard checks); the race is
   too rare to show there directly.
@@ -45,4 +49,6 @@ system call").
 - QEMU (`v0.3.0-dev-372-g6d1e186+x99f7`): `scripts/test-scheme-list.sh`
   passes. The image before the fix fails only the order check, because
   its listing comes in hash map order.
-- Pi: test #100 (Pi test agent), queued.
+- Pi: test 100 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-30-v030-dev-372-g6d1e186x99f7), Pi test agent): **3 of 3 boots pass**:
+  37 schemes, each listed once and sorted, one `network.usb_lan78xx`, no
+  "no network adapter found", standard checks 300/300.

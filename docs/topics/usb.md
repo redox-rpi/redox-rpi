@@ -8,6 +8,11 @@
   `0022`, kernel `0004`–`0006`), about 5 % of a core instead
   of a full one on a real Pi (test #5,
   [#29](https://github.com/redox-rpi/redox-rpi/issues/29)).
+- netstack finds `dwc2d`'s network adapter every boot: `initnsmgr`
+  lists `/scheme` from a sorted snapshot, so a scheme registered meanwhile
+  (`sudo` at boot) no longer hides `network.*` (base `0036`, PR #80,
+  [#79](https://github.com/redox-rpi/redox-rpi/issues/79); 1 in 36 QEMU
+  boots before, Pi test 100 3 of 3).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
   plugged in before boot.
 
