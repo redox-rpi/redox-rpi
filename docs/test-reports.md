@@ -2874,3 +2874,29 @@ log logging memory netcfg network.usb_lan78xx null pipe proc pty rand
 rpi-firmware serio shm sudo sys tcp time udp uds_dgram uds_stream zero`.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-402-g787acab+x4ec1`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 101 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server rerun with the CPU fix and the session-end fix, PR #78), Pi test agent
+
+**Pass.** Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-402-g787acab+x4ec1.img`.
+
+- Boot: no `Unable to move`, no `no hostkeys available`. No `generating new host
+  keys`, because the keys from test 81 are still on `/scheme/data/etc/ssh`, all 8
+  files, private ones `-rw-------`. Standard checks pass, 0 of 300 starts failed.
+- `polltest`: 5 × `poll N: ret 0 revents 0x0 after 2004–2010 ms; accept: Try
+  again (os error 11)`: **pass** (before the fix: `ret 1` at once).
+- `ssh root@192.168.178.148 'echo OK; id'`: `OK`, `uid=0(root) gid=0(root)`,
+  **1.23 s** including the login. `ssh-session.exp` (Pi, port 22, key file):
+  prompt, command, backspace, `exit` all ok, exit at once: **pass**.
+- `sshd` CPU (`ps`, SCHTIME): 0.43 s about 1 minute after boot, 1.81 s after
+  12 logins, 2.94 s after 22 sessions: **pass** (it doesn't grow by a second per
+  second any more).
+- 5 sessions `ssh -tt`, `echo hi` (answered `hi`), then `kill -9` of the local
+  client; and 5 sessions `sleep 40`, client killed after about 12 s. The serial
+  log has 10 lines `ptyd: pty … hangup, SIGHUP to groups [...]` (one group for
+  the prompt cases, two with `sleep`) and **no `UNHANDLED EXCEPTION`**, no
+  `panicked`. Afterwards `ps` shows no leftover `ion` or `sleep` from those
+  sessions (only devsh's own `login`/`ion`): **pass**.
+
+Stable image restored afterwards.
