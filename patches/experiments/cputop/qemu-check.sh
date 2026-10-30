@@ -29,7 +29,7 @@ count() {
 }
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 check "header" "^cputop: 10\.[0-9] s, [0-9]+ threads$"
-check "per core" "^cpu0 +busy +[0-9]+ %  \([0-9]+ ms busy, [0-9]+ ms idle\)$"
+check "per core" "^cpu0 +busy +[0-9]+ %  \([0-9]+ ms busy, [0-9]+ ms idle, [0-9]+ switches/s\)$"
 check "thread table" "^ +PID +CPU% +TOTAL STAT +CPU +NAME$"
 check "thread rows" "^ +[0-9]+ +[0-9]+\.[0-9] +[0-9]+:[0-9]{2}:[0-9]{2}\.[0-9] "
 count "rounds: 1 + 2 + 1" "^cputop: [0-9.]+ s, " 4

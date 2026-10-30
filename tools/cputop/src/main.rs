@@ -82,8 +82,9 @@ fn threads() -> Result<HashMap<(String, String, usize), Thread>, String> {
     Ok(threads)
 }
 
-/// Per core: busy (user + nice + kernel + irq) and idle milliseconds.
-fn cores() -> Result<Vec<(String, u64, u64)>, String> {
+/// Per core: busy (user + nice + kernel + irq) and idle milliseconds, and
+/// context switches (`cpuN user nice kernel idle irq switches`).
+fn cores() -> Result<Vec<(String, u64, u64, u64)>, String> {
     let text = fs::read_to_string(STAT).map_err(|err| format!("{STAT}: {err}"))?;
     Ok(text
         .lines()
@@ -92,8 +93,8 @@ fn cores() -> Result<Vec<(String, u64, u64)>, String> {
             let mut fields = line.split_whitespace();
             let name = fields.next()?.to_owned();
             let v: Vec<u64> = fields.filter_map(|f| f.parse().ok()).collect();
-            let [user, nice, kernel, idle, irq] = v[..] else { return None };
-            Some((name, user + nice + kernel + irq, idle))
+            let [user, nice, kernel, idle, irq, ref rest @ ..] = v[..] else { return None };
+            Some((name, user + nice + kernel + irq, idle, rest.first().copied().unwrap_or(0)))
         })
         .collect())
 }
@@ -106,11 +107,12 @@ fn round(seconds: f64, lines: usize) -> Result<(), String> {
     let elapsed = started.elapsed().as_secs_f64();
 
     println!("cputop: {elapsed:.1} s, {} threads", threads_after.len());
-    for (name, busy, idle) in &cores_after {
-        let Some((_, busy0, idle0)) = cores_before.iter().find(|(n, ..)| n == name) else { continue };
+    for (name, busy, idle, switches) in &cores_after {
+        let Some((_, busy0, idle0, switches0)) = cores_before.iter().find(|(n, ..)| n == name) else { continue };
         let (busy, idle) = (busy.saturating_sub(*busy0), idle.saturating_sub(*idle0));
         let share = if busy + idle > 0 { busy * 100 / (busy + idle) } else { 0 };
-        println!("{name:<5} busy {share:>3} %  ({busy} ms busy, {idle} ms idle)");
+        let switches = (switches.saturating_sub(*switches0) as f64 / elapsed) as u64;
+        println!("{name:<5} busy {share:>3} %  ({busy} ms busy, {idle} ms idle, {switches} switches/s)");
     }
 
     let mut used: Vec<(u64, &Thread)> = threads_after
