@@ -71,14 +71,21 @@
   in PR #75 as well).
   Publish every build that goes onto Pis: `pkg update` compares
   checksums, so an older repository wins over a newer image.
+- Packages that survive a reset (#44, branch `pkg-persist`, experiment
+  `pkg-persist`): `pkg-persist install <name>` installs with `pkg --root`
+  onto the SD data partition and copies the files into the RAM root, and
+  a boot service copies them again after every reset. It needed a redoxfs
+  fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
+  also says when the clock makes a certificate look invalid. QEMU passes;
+  Pi test #124 queued.
 
 ## Next
 
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
-- Packages (#44, plan in the issue): installs that survive a reboot on network and
-  direct boot (`pkg --root` into the SD data partition, a boot service
-  links the files into `/`); a clear message when the clock is not set
-  yet; the nightly run publishes our repository after a passing build.
-  Whether Redox's prebuilt programs run is #40 (relibc topic).
+- Packages (#44): Pi test #124 of `pkg-persist`, then a PR. The nightly
+  run should publish our repository after a passing build; that needs
+  `scripts/publish-pkg-repo.sh` on main (PR #75) and a step in the nightly
+  script by its owner. Whether Redox's prebuilt programs run is #40
+  (relibc topic).
