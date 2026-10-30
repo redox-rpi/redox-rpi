@@ -34,15 +34,14 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0024`, `0030`–`0033`, `0041`–`0044` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment; numbered after the sdhost patches planned as `0025`–`0029`), `0031` `dwc2d` finds USB devices plugged in or removed after boot, `0032` `dhcpd` tries again until the server answers, `0033` the hub port cycle command for hotplug tests (`0031`–`0033` were experiment `usb-hotplug`; #17), `0041` netstack uses every network adapter, also ones that appear later, `0042` a broadcast goes out only on its own interface, `0043` `dhcpd` gets a lease on every interface and keeps one default route (its retries replace the loop of `0032`), `0044` `testnetd`, a fake adapter for tests (`0041`–`0044` were experiment `netstack-multi`; #53) |
-| `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
-| `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
-| `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
+| `0001`–`0016`, `0018`, `0020`–`0028`, `0030`, `0041`–`0044` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment) |
+| `0001`–`0008` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31) |
+| `0029` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
 
 Experiments apply after all default patches. Combinations that build:
-`sdhost-driver` (with `sdhost-boot` or `sdhost-stats`),
-`timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
-default patches now, and so are `serial-rx` and `pi-clean-boot`; the names are still accepted
+`sdhost-stats`, `timesync`, `ldso-diagnostics`.
+`rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
+`sdhost-boot` and `ctx-leak-fix` are default patches now; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):

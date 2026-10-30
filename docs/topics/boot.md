@@ -65,7 +65,8 @@
   experiments `pkg-hold` and `pkg-repo`). The hold list keeps our patched
   packages (kernel, relibc, base, …) on our builds (Pi test #52 passed);
   pkgutils patch 0003 makes `pkg update` replace files at all (Pi test #73
-  queued), patch 0004 compares each package against the first repository
+  passed; [PR #66](https://github.com/redox-rpi/redox-rpi/pull/66) for the hold list, [PR #75](https://github.com/redox-rpi/redox-rpi/pull/75) for
+  the repository and 0003, branch `pkg-repo-tested`), patch 0004 compares each package against the first repository
   that has it, so upstream packages are updated too (QEMU 2026-10-30).
   Publish every build that goes onto Pis: `pkg update` compares
   checksums, so an older repository wins over a newer image.
