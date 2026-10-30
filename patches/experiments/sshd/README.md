@@ -155,3 +155,9 @@ After that, in QEMU:
   closes that window.
 - Seen now and then, also on devsh: the first start of a large program can
   take about 5 s in QEMU, before `ld.so` runs.
+
+Pi test #101 (`v0.3.0-dev-402-g787acab+x4ec1`, 2026-10-30) passed:
+`polltest` waits its 2 s timeouts (5 of 5), `sshd` has 2.9 s of CPU after
+22 sessions, 10 killed clients (5 at the prompt, 5 during `sleep 40`) each
+give a hangup line with no Ion exception and nothing left over, login in
+1.2 s, the keys are kept. Report: `docs/test-reports.md` on main.

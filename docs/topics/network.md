@@ -22,7 +22,9 @@
   `sshd` no longer uses a whole CPU (netstack reported a listening socket
   always readable), and the shell exits cleanly when the session ends
   (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
-  instead of panicking). Pi rerun with these queued; pull request to main.
+  instead of panicking). Pi rerun #101 passed (2026-10-30): 2.9 s of
+  `sshd` CPU after 22 sessions, 10 dropped sessions without an Ion
+  exception or leftovers. Pull request #78.
   Ctrl-C while a program starts:
   [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
