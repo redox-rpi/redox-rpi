@@ -121,7 +121,7 @@ index bc0d233..1cb6c7b 100644
  
                  let mut sc0 = 0.0f32;
 diff --git a/candle-nn/src/kv_cache.rs b/candle-nn/src/kv_cache.rs
-index 8ca8410..da96f24 100644
+index 8ca8410..279aad4 100644
 --- a/candle-nn/src/kv_cache.rs
 +++ b/candle-nn/src/kv_cache.rs
 @@ -1037,26 +1037,32 @@ impl InterleavedKvCache {
@@ -196,8 +196,42 @@ index 8ca8410..da96f24 100644
          &self.buf[..self.len * self.pos_stride]
      }
  
+@@ -1115,6 +1125,33 @@ impl RawInterleavedKvCache {
+         self.len = 0;
+     }
+ 
++    /// The cached positions as bytes, to save them.
++    pub fn as_bytes(&self) -> &[u8] {
++        let d = self.data();
++        // SAFETY: plain numbers, no padding.
++        unsafe { std::slice::from_raw_parts(d.as_ptr() as *const u8, std::mem::size_of_val(d)) }
++    }
++
++    /// Replace the cache with `len` positions read from `r`, as written by
++    /// `as_bytes`.
++    pub fn read_from(&mut self, len: usize, r: &mut impl std::io::Read) -> std::io::Result<()> {
++        let n = len * self.pos_stride;
++        if self.buf.len() < n {
++            let step = self.grow.max(self.pos_stride);
++            let want = n.div_ceil(step) * step;
++            self.buf.reserve_exact(want - self.buf.len());
++            self.buf.resize(want, T::ZERO);
++        }
++        self.len = 0;
++        // SAFETY: plain numbers, every bit pattern is a valid value.
++        let bytes = unsafe {
++            std::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as *mut u8, n * std::mem::size_of::<T>())
++        };
++        r.read_exact(bytes)?;
++        self.len = len;
++        Ok(())
++    }
++
+     pub fn h_kv(&self) -> usize {
+         self.h_kv
+     }
 diff --git a/candle-transformers/src/models/quantized_qwen3.rs b/candle-transformers/src/models/quantized_qwen3.rs
-index 3fa0044..d97c97a 100644
+index 3fa0044..318c90a 100644
 --- a/candle-transformers/src/models/quantized_qwen3.rs
 +++ b/candle-transformers/src/models/quantized_qwen3.rs
 @@ -12,11 +12,68 @@ use candle::quantized::{gguf_file, QTensor};
@@ -363,3 +397,40 @@ index 3fa0044..d97c97a 100644
          let span = tracing::span!(tracing::Level::TRACE, "model");
          let span_output = tracing::span!(tracing::Level::TRACE, "output");
          Ok(Self {
+@@ -565,4 +631,36 @@ impl ModelWeights {
+             layer.clear_kv_cache();
+         }
+     }
++
++    /// Write the CPU key/value cache of every layer to `w`, to load it again
++    /// with `load_kv_cache` (for example the state after a fixed system
++    /// prompt). Returns the number of positions.
++    pub fn save_kv_cache(&self, w: &mut impl std::io::Write) -> Result<usize> {
++        let mut len = 0;
++        for layer in &self.layers {
++            let Some(c) = &layer.self_attn.raw_cache else {
++                candle::bail!("no CPU key/value cache to save")
++            };
++            len = c.len();
++            w.write_all(&(len as u64).to_le_bytes())?;
++            w.write_all(c.as_bytes())?;
++        }
++        Ok(len)
++    }
++
++    /// Replace the key/value cache with one written by `save_kv_cache`.
++    /// Returns the number of positions.
++    pub fn load_kv_cache(&mut self, r: &mut impl std::io::Read) -> Result<usize> {
++        let mut len = 0;
++        for layer in &mut self.layers {
++            let Some(c) = &mut layer.self_attn.raw_cache else {
++                candle::bail!("no CPU key/value cache to load into")
++            };
++            let mut n = [0u8; 8];
++            r.read_exact(&mut n)?;
++            len = u64::from_le_bytes(n) as usize;
++            c.read_from(len, r)?;
++        }
++        Ok(len)
++    }
+ }

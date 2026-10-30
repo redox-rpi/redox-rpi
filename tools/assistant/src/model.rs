@@ -47,8 +47,31 @@ impl Model {
         let stdout = child.stdout.take().unwrap();
         let mut m = Model { child, stdin, stdout };
         m.answer(|_| {})?;
-        m.feed(&format!("<|im_start|>system\n{}<|im_end|>\n", system_prompt()))?;
+        // Reading the system prompt takes minutes on a Pi 3; the model's
+        // state after it is saved once and loaded on later starts.
+        let system = format!("<|im_start|>system\n{}<|im_end|>\n", system_prompt());
+        match saved_prompt_file() {
+            Some(file) => {
+                let key = prompt_key(path, &system);
+                if m.request(&format!("load {file} {key}"))? != "ok" {
+                    m.feed(&system)?;
+                    if let Some(dir) = std::path::Path::new(&file).parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    // A failed save only costs the same wait next time.
+                    m.request(&format!("save {file} {key}"))?;
+                }
+            }
+            None => m.feed(&system)?,
+        }
         Ok(m)
+    }
+
+    /// Send a one-line request and return the answer.
+    fn request(&mut self, line: &str) -> std::io::Result<String> {
+        writeln!(self.stdin, "{line}")?;
+        self.stdin.flush()?;
+        self.answer(|_| {})
     }
 
     /// Read until EOT, passing the text on as it arrives.
@@ -215,6 +238,28 @@ impl Hider {
 
 /// The system message: who the assistant is for, and the tools in the form
 /// Qwen3 was trained on.
+/// Where the state after the system prompt is saved: ASSISTANT_CACHE (empty
+/// turns saving off), else ~/.cache/assistant/prompt.kv. None if the path
+/// has spaces (rinfer's requests are split at spaces).
+fn saved_prompt_file() -> Option<String> {
+    let file = match std::env::var("ASSISTANT_CACHE") {
+        Ok(f) => f,
+        Err(_) => format!("{}/.cache/assistant/prompt.kv", std::env::var("HOME").ok()?),
+    };
+    (!file.is_empty() && !file.contains(char::is_whitespace)).then_some(file)
+}
+
+/// Marks a saved state as made by this model file and system prompt (FNV-1a
+/// over the model's path and size and the prompt).
+fn prompt_key(model: &str, system: &str) -> String {
+    let size = std::fs::metadata(model).map(|m| m.len()).unwrap_or(0);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in model.bytes().chain(size.to_le_bytes()).chain(system.bytes()) {
+        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
 pub fn system_prompt() -> String {
     let mut s = String::from(
         "You are the assistant on a Raspberry Pi running Redox OS. The user knows macOS, Windows \
@@ -299,6 +344,15 @@ mod tests {
         let mut h = Hider::default();
         let s = h.visible("a < b") + &h.rest();
         assert_eq!(s, "a < b\n");
+    }
+
+    #[test]
+    fn prompt_key_changes_with_the_prompt() {
+        let a = prompt_key("/nonexistent/model.gguf", "one");
+        assert_eq!(a.len(), 16);
+        assert_eq!(a, prompt_key("/nonexistent/model.gguf", "one"));
+        assert_ne!(a, prompt_key("/nonexistent/model.gguf", "two"));
+        assert_ne!(a, prompt_key("/nonexistent/other.gguf", "one"));
     }
 
     #[test]

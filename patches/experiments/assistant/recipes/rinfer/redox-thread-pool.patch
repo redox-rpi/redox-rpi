@@ -1,17 +1,60 @@
 diff --git a/candle-core/src/utils.rs b/candle-core/src/utils.rs
-index 324e623..9cb3c0f 100644
+index 324e623..7c097d5 100644
 --- a/candle-core/src/utils.rs
 +++ b/candle-core/src/utils.rs
-@@ -164,7 +164,12 @@ impl BarrierPool {
+@@ -104,6 +104,17 @@ fn get_cluster_size() -> usize {
+     usize::MAX
+ }
+ 
++/// How long idle Redox workers yield before they sleep:
++/// `CANDLE_POOL_IDLE_MS`, default 100 ms.
++#[cfg(target_os = "redox")]
++fn redox_pool_idle() -> std::time::Duration {
++    let ms = std::env::var("CANDLE_POOL_IDLE_MS")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .unwrap_or(100);
++    std::time::Duration::from_millis(ms)
++}
++
+ fn barrier_pool_spin_limit() -> u32 {
+     std::env::var("CANDLE_BARRIER_POOL_SPIN_LIMIT")
+         .ok()
+@@ -146,10 +157,14 @@ impl BarrierPool {
+                         let inner = unsafe { &*(inner_ptr as *const BarrierPoolInner) };
+                         let slot = &inner.slots[tid];
+                         let mut gen = 0usize;
++                        #[cfg(target_os = "redox")]
++                        let redox_idle = redox_pool_idle();
+ 
+                         loop {
+                             // Spin briefly then park, waiting for next work item.
+                             let mut spins = 0u32;
++                            #[cfg(target_os = "redox")]
++                            let mut idle_since: Option<std::time::Instant> = None;
+                             loop {
+                                 let g = slot.go.load(Ordering::Acquire);
+                                 if g != gen {
+@@ -164,7 +179,22 @@ impl BarrierPool {
                                      spin_loop();
                                  } else {
                                      // Park deposits a token; unpark() before park() returns immediately — no race.
 +                                    #[cfg(not(target_os = "redox"))]
                                      std::thread::park();
 +                                    // On Redox a wakeup from unpark() is sometimes lost and
-+                                    // the pool hangs; poll the go flag instead.
++                                    // the pool hangs; poll the go flag instead. A sleep lasts
++                                    // until the next timer tick (10 ms), far longer than the
++                                    // gaps between the matmuls of a token, so yield while work
++                                    // came recently and sleep only once the pool is idle.
 +                                    #[cfg(target_os = "redox")]
-+                                    std::thread::sleep(std::time::Duration::from_micros(200));
++                                    {
++                                        let since = idle_since.get_or_insert_with(std::time::Instant::now);
++                                        if since.elapsed() < redox_idle {
++                                            std::thread::yield_now();
++                                        } else {
++                                            std::thread::sleep(std::time::Duration::from_micros(200));
++                                        }
++                                    }
                                      spins = 0;
                                  }
                              }

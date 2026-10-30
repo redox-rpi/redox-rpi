@@ -7,11 +7,19 @@
 //!               text is added to the conversation
 //!   gen <max>   write the reply, at most max tokens, until `<|im_end|>`
 //!   reset       start a new conversation
+//!   save <path> <key>
+//!               write the conversation so far (the key/value cache) to a
+//!               file, marked with key (no spaces)
+//!   load <path> <key>
+//!               continue from such a file, if it has the same key
 //!
 //! Every answer ends with the byte 0x04 (EOT): `feed` and `reset` answer with
-//! nothing else, `gen` with the reply text as it is written. The first EOT,
-//! before any request, says the model is loaded. Timings go to stderr.
-use std::io::{BufRead, Read, Write};
+//! nothing else, `gen` with the reply text as it is written, `save` and
+//! `load` with `ok` or `no` (`load` then starts a new conversation). The
+//! first EOT, before any request, says the model is loaded. Timings go to
+//! stderr.
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::time::Instant;
 
 use candle::{Device, Tensor};
@@ -20,6 +28,8 @@ use candle_transformers::models::quantized_qwen3::ModelWeights;
 use tokenizers::Tokenizer;
 
 const EOT: u8 = 0x04;
+/// First line of a saved conversation; the key follows on the second.
+const SAVE_MAGIC: &str = "rinfer-kv 1";
 
 struct Session<'a> {
     model: &'a mut ModelWeights,
@@ -115,6 +125,67 @@ impl Session<'_> {
         );
         Ok(())
     }
+
+    fn save(&mut self, path: &str, key: &str) -> anyhow::Result<()> {
+        if let Some(p) = self.pending.take() {
+            self.run(&[p])?;
+        }
+        let t = Instant::now();
+        let tmp = format!("{path}.part");
+        let mut w = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
+        write!(w, "{SAVE_MAGIC}\n{key}\n")?;
+        let n = self.model.save_kv_cache(&mut w)?;
+        w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        eprintln!("rinfer: saved {n} tokens in {:.1} s", t.elapsed().as_secs_f32());
+        Ok(())
+    }
+
+    fn load(&mut self, path: &str, key: &str) -> anyhow::Result<()> {
+        let t = Instant::now();
+        self.reset();
+        let mut r = BufReader::with_capacity(1 << 20, File::open(path)?);
+        let mut head = String::new();
+        for _ in 0..2 {
+            r.read_line(&mut head)?;
+        }
+        if head != format!("{SAVE_MAGIC}\n{key}\n") {
+            anyhow::bail!("{path} is for another model or prompt");
+        }
+        match self.model.load_kv_cache(&mut r) {
+            Ok(n) => self.pos = n,
+            Err(e) => {
+                self.reset();
+                return Err(e.into());
+            }
+        }
+        eprintln!(
+            "rinfer: loaded {} tokens in {:.1} s, heap {} MiB (peak {} MiB)",
+            self.pos,
+            t.elapsed().as_secs_f32(),
+            super::heap_mib(),
+            super::peak_mib()
+        );
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.model.clear_kv_cache();
+        self.pos = 0;
+        self.pending = None;
+        self.logits = None;
+    }
+}
+
+/// `ok` or `no` for `save` and `load`; the reason goes to stderr.
+fn status(result: anyhow::Result<()>, out: &mut impl Write) -> anyhow::Result<()> {
+    if let Err(e) = result {
+        eprintln!("rinfer: {e}");
+        out.write_all(b"no")?;
+    } else {
+        out.write_all(b"ok")?;
+    }
+    Ok(())
 }
 
 pub fn serve(model: &mut ModelWeights, tokenizer: &Tokenizer) -> anyhow::Result<()> {
@@ -131,23 +202,28 @@ pub fn serve(model: &mut ModelWeights, tokenizer: &Tokenizer) -> anyhow::Result<
         if input.read_line(&mut line)? == 0 {
             return Ok(());
         }
-        let mut words = line.split_whitespace();
-        let result = match (words.next(), words.next().and_then(|n| n.parse::<usize>().ok())) {
-            (Some("feed"), Some(n)) => {
-                let mut buf = vec![0; n];
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let result = match words[..] {
+            [] => continue,
+            ["feed", n] if n.parse::<usize>().is_ok() => {
+                let mut buf = vec![0; n.parse().unwrap()];
                 input.read_exact(&mut buf)?;
                 let text = String::from_utf8(buf)?;
                 s.feed(&text)
             }
-            (Some("gen"), Some(max)) => s.gen(max, &mut out),
-            (Some("reset"), None) => {
-                s.model.clear_kv_cache();
-                s.pos = 0;
-                s.pending = None;
-                s.logits = None;
+            ["gen", max] if max.parse::<usize>().is_ok() => s.gen(max.parse().unwrap(), &mut out),
+            ["reset"] => {
+                s.reset();
                 Ok(())
             }
-            (None, _) => continue,
+            ["save", path, key] => {
+                let r = s.save(path, key);
+                status(r, &mut out)
+            }
+            ["load", path, key] => {
+                let r = s.load(path, key);
+                status(r, &mut out)
+            }
             _ => Err(anyhow::anyhow!("unknown request: {}", line.trim())),
         };
         if let Err(e) = result {

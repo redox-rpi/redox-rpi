@@ -10,9 +10,12 @@
 # preallocates 4096 positions (900 MiB), rinfer starts with 256 and the
 # cache grows by 64 instead of doubling; the cache is bf16 (half the
 # memory); a whole prompt at once no longer keeps a second copy of it; the
-# rotary tables cover 4096 positions instead of 40,960 (30 MiB less). redox-thread-pool.patch: candle's
-# worker pool hung on Redox because a wakeup from thread::unpark was
-# sometimes lost; idle workers there poll with a short sleep instead.
+# rotary tables cover 4096 positions instead of 40,960 (30 MiB less); the
+# cache can be saved to a file and loaded again. redox-thread-pool.patch:
+# candle's worker pool hung on Redox because a wakeup from thread::unpark
+# was sometimes lost; idle workers there poll instead, yielding while work
+# came in the last 100 ms (CANDLE_POOL_IDLE_MS), since a sleep lasts a
+# whole 10 ms timer tick.
 [source]
 git = "https://github.com/huggingface/candle.git"
 rev = "12bb5d1f6350f4ea9827d9086f213feec1f0af6a"
