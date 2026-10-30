@@ -8,6 +8,10 @@
   `0022`, kernel `0004`–`0006`), about 5 % of a core instead
   of a full one on a real Pi (test #5,
   [#29](https://github.com/redox-rpi/redox-rpi/issues/29)).
+- `dwc2d` asks again for a reply shorter than the fields it reads
+  (device descriptor, hub port status, hub descriptor) instead of
+  panicking (base `0037`, PR #84; the panic of test 98, Pi test 105
+  5 of 5 boots).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
   plugged in before boot.
 
@@ -30,7 +34,7 @@
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
-  (on `usb-hotplug`), experiment `usb-storage` (base `0033` there).
+  (on `usb-hotplug`), experiment `usb-storage` (base `0038` there).
   `dwc2d` serves a stick (bulk-only transport, SCSI) as the driver-block
   disk scheme `disk.usb-dwc2+<ports>-scsi`; the boot session's `fatfsd`
   mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
@@ -45,7 +49,7 @@
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
-  (on `usb-hotplug`), experiment `usb-serial` (base `0036` there). Each is
+  (on `usb-hotplug`), experiment `usb-serial` (base `0035` there, PR #70). Each is
   `/scheme/usb-serial/<ports>` with a `baud` file and termios calls,
   hotplug. **QEMU passes** (`scripts/test-usb-serial.sh`, 15/15 with
   QEMU's FTDI); Pi test #62 with a person, same visit as #50 and #56.
@@ -57,7 +61,7 @@
   test #47.
 
 - `dwc2d` boot time (#47): branch [`dwc2d-boottime`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-boottime)
-  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0037` there).
+  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0034` there, PR #69).
   Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
   waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
   what is connected, and the link wait overlaps with rescans. QEMU: ready
@@ -69,7 +73,7 @@
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
   [`usb-storage-more`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage-more)
-  (base `0038`). **QEMU passes** (`scripts/test-usb-storage.sh` 18/18);
+  (base `0039` there, on `usb-storage`). **QEMU passes** (`scripts/test-usb-storage.sh` 18/18, again after the rebase onto the hotplug base patches on 2026-10-30);
   Pi test #71 with a person, same visit as #50.
 
 ## Next
