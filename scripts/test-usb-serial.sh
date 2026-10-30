@@ -6,8 +6,8 @@
 # it and plug it in again. dwc2d prints what goes through while
 # /tmp/dwc2d-serial-log exists.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-serial. The host port for devshd is 12323, or SERIAL_PORT=<port>.
+# Needs an image with base 0035 (USB serial adapters, the default once
+# usb-serial is merged). The host port for devshd is 12323, or SERIAL_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-serial.sh [image]

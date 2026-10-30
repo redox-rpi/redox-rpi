@@ -1,7 +1,10 @@
-# USB serial adapters (experiment `usb-serial`)
+# USB serial adapters (was experiment `usb-serial`)
 
-Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
---experiment usb-serial`). Issue: v0.8.0, topic:usb.
+Issue: [#50](https://github.com/redox-rpi/redox-rpi/issues/50), v0.8.0,
+topic:usb. **Default once this branch is merged:** the patch is base
+`0035` in `patches/base/`, after the hotplug patches `0031`–`0033`.
+`--experiment usb-serial` is still accepted and adds nothing. Below,
+`0036` is the number it had as an experiment.
 
 - **base `0036`:** `dwc2d` runs USB serial adapters, the chips in Zigbee
   and Thread coordinator sticks (SONOFF ZBDongle-P/-E, SkyConnect) and
@@ -44,18 +47,16 @@ Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
 
 ## Merge to main
 
-**Not merge-ready yet: Pi test #62 needs a person.** The branch is
-otherwise up to date (2026-10-30): it contains `usb-hotplug` merged with
-main, and `0036` applies unchanged (same patch ID).
+Draft pull request on top of `usb-hotplug`, with main merged in
+(2026-10-30). The patch applies unchanged (same patch ID). **It waits
+for Pi test #62, which needs a person.**
 
-- **QEMU after the merge with main** (`v0.3.0-dev-332-gbf1ec19+x41ea`):
+- **QEMU after merging main** (`v0.3.0-dev-332-gbf1ec19+x41ea`):
   `scripts/test-usb-serial.sh` 15/15 and `scripts/test-hotplug.sh` 15/15.
-- **Proven on the Pi:** nothing specific yet. The hotplug and channel code
-  it builds on passed #35 and #67.
+- **Proven on the Pi:** nothing of its own yet. The hotplug and channel
+  code it builds on passed #35 and #67.
 - **Still needs a person (#62):** plug a CP210x or CH340 stick (and FTDI or
   CDC-ACM if at hand) into the 3B+. Then read and write through a
   loopback jumper or the stick's own answers, set the speed, unplug and
   plug in again. QEMU has only an FTDI model, so CDC-ACM, CP210x and CH340
   are proven only on the Pi.
-- **Number at the merge:** `git mv` to `patches/base/` after
-  `usb-hotplug`'s patches and drop `--experiment usb-serial`.
