@@ -294,8 +294,9 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
     in Orbital or `rpi-fbd`. A click on the terminal icon opened no
     window within 90 s, because forks were very slow in that run (`getty`
     and `bcm2835-sdhci` each used 11 to 12 minutes of CPU). Some moves
-    arrived late in these runs, but that was the test setup (no
-    `mouse_set` in QEMU's monitor); the USB session saw every move arrive.
+    arrived late in these runs; that was the test helper, which did not
+    read QEMU's serial output while sending them, so `dwc2d` blocked on
+    its event log. Fixed in the helper, the moves arrive as sent.
   - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
     the display size (probably 1920x1080, then single buffered with
     `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
