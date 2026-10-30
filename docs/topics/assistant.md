@@ -333,6 +333,19 @@ git).
   `v0.3.0-dev-175-g29052d7+x4590` (network boot, 128 MiB). The SD-card
   recipe `qwen3-model` still fetches the original file; it moves to the
   smaller one after the Pi test.
+- **Pi test 112, 2026-10-30, network boot: pass, no `oom`.** 738 MB free
+  at the start (128 MiB image). `rinfer` loaded in 78 s and answered
+  "Paris": reading the prompt at 2.2 tokens per second, writing at 1.0
+  (goal 2), heap peak 378 MiB. The assistant ran `show_time` and
+  `list_files` and answered from them; reading the system prompt took
+  about 170 s on each start, heap peak 430 MiB, lowest free 90 MB. The
+  Pi needs more than QEMU did: after the run 130 MB stayed used (file
+  cache of the download and the model). The last answer to the time
+  question was slow (0.15 tokens per second, the other answers 0.6 to
+  1.0); not explained yet. The Pi was at its soft temperature limit
+  (66 °C) but kept 1.4 GHz. One `devshd` thread died with `RELIBC PANIC`
+  in `src/sync/mod.rs:103` (`futex_wake`, `EFAULT`) while memory was
+  lowest; devshd went on. [Report](../test-reports.md).
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -352,12 +365,15 @@ git).
 
 ## Next
 
-- Pi test #112 (network boot, rerun of #106 with the memory cuts): speed
-  of `rinfer`, memory, and the assistant with tools. If candle reaches
-  about 2 tokens per second, it stays; if not, our own loop (step 2b). Pi
-  test #51 (SD card, llama.cpp numbers) still waits for a card swap.
+- Writing runs at 1 token per second on the Pi (goal 2). Profile it
+  before deciding on our own loop (step 2b): the worker pool's 200 µs
+  sleep (the kernel futex fix would allow parking again), the q4_0 kernels
+  without `sdot`, and the slow answer after a tool call. Pi test #51 (SD
+  card, llama.cpp numbers) would show how far llama.cpp gets; it still
+  waits for a card swap.
 - Save the state after the system prompt to a file, so the assistant
-  does not read 380 tokens on every start.
+  does not read 380 tokens (170 s on the Pi) on every start.
+- Move the SD-card recipe `qwen3-model` to the smaller model file.
 - A grammar mask while a tool call is written, and a test set of
   questions; a cap on the conversation length (memory).
 
