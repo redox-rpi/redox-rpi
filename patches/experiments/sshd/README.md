@@ -161,3 +161,25 @@ Pi test #101 (`v0.3.0-dev-402-g787acab+x4ec1`, 2026-10-30) passed:
 22 sessions, 10 killed clients (5 at the prompt, 5 during `sleep 40`) each
 give a hangup line with no Ion exception and nothing left over, login in
 1.2 s, the keys are kept. Report: `docs/test-reports.md` on main.
+
+## Several connections at once, keys that survive a reset (2026-10-30)
+
+Branch `sshd-keys`, after Pi test #101.
+
+- `ssh-keyscan` with several key types returned only RSA. The host keys
+  were all there: each type alone worked. ssh-keyscan opens one connection
+  per type at once, and netstack listened with a single smoltcp socket and
+  made the next one only at `accept()`, so the other connections were reset.
+  Base `0046` gives each listening file 7 spare sockets listening on the same
+  endpoint; `accept()` and `poll()` look at them too, and a spare that got a
+  connection is replaced. QEMU: `ssh-keyscan -t rsa,ecdsa,ed25519` and the
+  default both return all three keys. Bursts fired right after each other
+  can miss one: sshd's `PerSourcePenalties` (OpenSSH default) penalises
+  connections that never try to log in, as on Linux.
+- `authorized_keys` was lost on a reset of the network-boot image (its root
+  lives in memory). sshd now also reads
+  `/scheme/data<home>/.ssh/authorized_keys` (`AuthorizedKeysFile` in
+  `92_sshd.service`), on the SD card's data partition: for root
+  `/scheme/data/home/root/.ssh/authorized_keys`. QEMU, with a 16 MB RedoxFS
+  mounted as `data`: key login with only that file works, `StrictModes`
+  accepts it. The host keys were already kept there (Pi test #101).
