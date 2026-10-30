@@ -2054,3 +2054,23 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 81 ([
     That is expected.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-311-g9dcb81b+xd71d`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `redoxfs-rename`. test 83 ([#57](https://github.com/redox-rpi/redox-rpi/issues/57) `rename` on `/scheme/data`), Pi test agent
+
+**Pass.** Image `~/redox-rpi-sd/keep/netboot-v0.3.0-dev-311-g9dcb81b+xd71d.img`,
+manifest matches.
+
+- `echo x > /scheme/data/t83a; mv /scheme/data/t83a /scheme/data/t83b`:
+  exit 0. `ls /scheme/data` shows `t83b`, no `t83a`.
+- Relative names in `/scheme/data` (`mv t83c t83d`): exit 0, `t83d` there.
+- `mv /scheme/data/t83d /scheme/data/t83dir/` into a new directory: exit 0.
+  `cat /scheme/data/t83dir/t83d` gives `y`.
+- `mv /tmp/x /tmp/y`: exit 0, content kept.
+- `rm -r /scheme/data/t83b /scheme/data/t83dir`: exit 0, both gone.
+- Standard checks pass, 0 of 300 starts failed.
+- `/scheme/data` also has `etc` (test 81's SSH host keys) and older test
+  files, left as they are.
+
+Stable image restored afterwards.
