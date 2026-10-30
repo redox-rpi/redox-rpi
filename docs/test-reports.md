@@ -1879,3 +1879,45 @@ both time columns are given:
   11 s after the login prompt (cycle writes 7.1 and 8.8 MB/s): **pass**.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-110-g9f47c94+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ha-bridge`, `ldso-diagnostics`, `mqtt`, `mqtt-tls-test`, `timerd`, `timesync`. test 76 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) MQTT over TLS), Pi test agent
+
+**TLS works; fails on the ha-bridge start and a memory loss.** Broker
+`~/mqtt-broker/pi-test-broker-tls.sh` (TLS 192.168.178.120:8883, plain :1883);
+capture saved as `~/pitest-tools/broker76.out` on homenodellm.
+
+- Standard checks pass, manifest matches, 0 of 300 starts failed.
+- `date -u`: `Fri Oct 30 07:10:12 UTC 2026` (after the CA date).
+  `head -1 /etc/mqtt-ca.crt`: `-----BEGIN CERTIFICATE-----`. Then
+  `echo 192.168.178.120 > /etc/mqtt-host` at 07:10:24.
+- **Fail:** no `ha-bridge: 6 sensors announced …` within 30 s, and no
+  availability or discovery. The image starts ha-bridge only from timerd, every
+  minute, without `-d` (`/usr/lib/timer.d/ha-bridge.toml`, `cmd = "ha-bridge"`).
+  Its first run started at 07:08, before `/etc/mqtt-host` existed (so it tried
+  `localhost`), and hung like in tests 58 and 65 (`still running, skipped this
+  run`, two `ha-bridge` processes). After `kill`, the next runs worked over TLS:
+  `redox-rpi/redox/state` once a minute from 07:12, each run 0.3 s.
+- `ha-bridge -d &` started by hand at 07:20:38: `redox-rpi/redox/availability
+  online` and all six `homeassistant/…/config` topics at once: **pass**.
+- `mqtt-pub -t tls/pi -m hello -q 1`: exit 0, `tls/pi hello` arrived.
+  `mqtt-pub -t tls/pi -m again -r`, then `mqtt-sub -t tls/pi -C 1 -v`:
+  `tls/pi again`. `mqtt-pub --no-tls -t plain/pi -m x`: exit 0, arrived.
+  `mqtt-pub --tls --cafile /etc/hostname …`: `/etc/hostname: no certificates`,
+  exit 1. All **pass**.
+- `time mqtt-pub -t tls/pi -m t`: **0.09 s** (QEMU 0.5–2 s).
+- Reset through `echo reset > /scheme/sys/kstop` (with `ha-bridge -d`
+  running): `redox-rpi/redox/availability offline` at 07:21:39, about 35 s
+  after the reset: **pass**. Retained `tls/pi` cleared, broker stopped.
+- **Memory loss:** between 07:12 and 07:21 free memory went from 534 MB
+  (ha-bridge's `memory_free`) to 56 MB (`free`), about 15 MB a minute. It
+  still went on after the hung ha-bridge was killed. No process grew (all
+  `PRIVATE` under 40 MB). Over the same time the Pi stopped answering ping
+  (devsh still worked). On the serial console, `cat
+  /scheme/netcfg/ifaces/eth0/addr/list` took about 3 minutes, and `netstack`
+  had used 3 min 20 s of CPU by 07:17 (it stayed there afterwards). `dwc2d`
+  showed ACTTIME 9 min 41 s, SCHTIME 0.34 s. This build has no `ctx-leak-fix`,
+  so it may be that leak. The reset cleared it before it ran out.
+
+Stable image restored afterwards.
