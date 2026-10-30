@@ -70,6 +70,33 @@ Pi 3B+, test #80 (2026-10-30, `v0.3.0-dev-236-gd47707f+x810f`):
 With only the Ion patch, SSH still failed: ptyd sent SIGINT to the right group
 while the program loaded, and the signal was lost (reason 2).
 
+## Ctrl-C right after Enter (#86)
+
+Pi test #80 found a Ctrl-C on the serial console that took effect only
+when `sleep 30` ended. It is not the serial path but the timing: between
+the end of the line and the job taking the terminal, the SIGINT reaches
+Ion's own group. Ion only noted it, the job ran to its end, and Ion then
+reported its own SIGINT as `process (<Ion's pid>) ended by signal SIGINT`.
+In QEMU this needs a Ctrl-C at most about 0.02 s after Enter, over devsh
+too; on the Pi the window is wider.
+
+- `recipes/core/ion/0002`: Ion forgets signals noted before the line was
+  read, and passes a SIGINT noted since then on to the job with `killpg`
+  when it starts watching it.
+- QEMU (`v0.3.0-dev-359-ga6966cc+x810f`): over devsh, Ctrl-C 0.01–1 s after
+  Enter, no round was late any more: `sleep` stopped within 0.4 s (before:
+  late at 0.02 s). On the serial console (`serial-ctrlc-test.py --qemu`),
+  0.05–3 s after Enter, every round stopped within 0.6 s.
+  `ctrlc-test.py`: 6 of 6.
+- Still open, not this patch: a Ctrl-C within about 0.03 s of Enter can
+  come while Ion's line editor still has the terminal in raw mode. It is
+  then a plain byte in the input, the next prompt reads it, and `sleep`
+  runs to its end (2 to 4 of 14–18 rounds at 0.01–0.03 s). Linux has the
+  same race with a shorter window. A fix would be in ptyd: treat a queued
+  VINTR byte as Ctrl-C when ISIG is switched on again.
+- Pi test #118 is queued.
+
 ## Check
 
     patches/experiments/pty-sigint/ctrlc-test.py <host> [--port 2323] [--rounds 10]
+    patches/experiments/pty-sigint/serial-ctrlc-test.py --device /dev/ttyUSB0 [--delays 0.05,0.1,0.3,1]
