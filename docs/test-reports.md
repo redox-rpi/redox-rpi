@@ -2420,3 +2420,26 @@ Boot log `rpi-firmwared: ARM clock 600 -> 1400 MHz`. Shelly read only, every
   temperature 49.9 °C.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-339-g801d1fe+x9f76`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152` (today's main, the stable image config). test 94 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1) remaining start crashes), Pi test agent
+
+**Pass: 0 of 3000 starts failed.** Staged with
+`~/t18-work/t1-stage/scripts/netboot.sh --server 192.168.178.120 --tftp-dir
+/srv/tftp --image ~/t18-work/image-t1/harddrive.img`, bootloader md5
+`7a5e2023…`. Afterwards the saved stable files went back into
+`/srv/tftp/redox` (`netboot.cmd`/`netboot.scr` included).
+
+- ARM clock: `/scheme/rpi-firmware/clock` does not exist; `clocks` shows `arm
+  1400000000 1400000000` (1400 MHz).
+- `pi-test.py --manifest …/netboot-v0.3.0-dev-339-g801d1fe+x9f76.toml --starts
+  3000 --serial-log … --crash-log ~/t18-work/t1-pi.jsonl --report
+  ~/t18-work/t1-pi.md` (from a checkout of `t10-start-loop` 61ea421; I couldn't run
+  `~/t18-work/t10/` as written because it has no `scripts/` folder): all checks
+  pass, manifest matches, **0 of 3000 starts failed**. So no crash log file was written.
+- Serial log from login to the end of the run: no crash dump. Only the usual
+  `pcid` exception at boot. For comparison, the stable image (v0.3.0-dev-15)
+  had 6 of 1000 in test 92 today.
+
+Stable image restored afterwards.
