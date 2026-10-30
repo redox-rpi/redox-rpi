@@ -1,28 +1,29 @@
-From 7fea608f8634659ec342a9a2c3295f7179979cc2 Mon Sep 17 00:00:00 2001
+From 97248c248b89d20ae9d4d3b17ffc9fe5aa6802d3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 30 Oct 2026 20:44:53 +0000
 Subject: [PATCH] rpi-fbd: RPI_FB settings also from the firmware command line
 
 ---
- drivers/graphics/rpi-fbd/src/firmware.rs | 19 ++++++++++++++
+ drivers/graphics/rpi-fbd/src/firmware.rs | 20 +++++++++++++++
  drivers/graphics/rpi-fbd/src/main.rs     | 32 +++++++++++++++++++++---
- 2 files changed, 47 insertions(+), 4 deletions(-)
+ 2 files changed, 48 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/graphics/rpi-fbd/src/firmware.rs b/drivers/graphics/rpi-fbd/src/firmware.rs
-index 1b9b1a22..2ce51a3f 100644
+index 1b9b1a22..8b852459 100644
 --- a/drivers/graphics/rpi-fbd/src/firmware.rs
 +++ b/drivers/graphics/rpi-fbd/src/firmware.rs
-@@ -19,6 +19,9 @@ const TAG_GET_PHYSICAL_SIZE: u32 = 0x0004_0003;
+@@ -19,6 +19,10 @@ const TAG_GET_PHYSICAL_SIZE: u32 = 0x0004_0003;
  const TAG_GET_PITCH: u32 = 0x0004_0008;
  const TAG_GET_EDID_BLOCK: u32 = 0x0003_0020;
  const TAG_GET_VC_MEMORY: u32 = 0x0001_0006;
 +const TAG_GET_COMMAND_LINE: u32 = 0x0005_0001;
-+/// Room for the command line, in words.
-+const COMMAND_LINE_WORDS: usize = 256;
++/// Room for the command line, in words: what fits next to the headers in
++/// `rpi-firmwared`'s 256-word message buffer.
++const COMMAND_LINE_WORDS: usize = 240;
  const TAG_SET_PHYSICAL_SIZE: u32 = 0x0004_8003;
  const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
  const TAG_SET_DEPTH: u32 = 0x0004_8005;
-@@ -184,6 +187,22 @@ impl Firmware {
+@@ -184,6 +188,22 @@ impl Firmware {
          self.call(&mut msg) && Self::answered(&msg, i) && msg.words[i - 1] & !TAG_RESPONSE != 0
      }
  
