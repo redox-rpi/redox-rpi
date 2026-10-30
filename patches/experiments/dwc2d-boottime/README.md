@@ -33,5 +33,22 @@ which is 60 % of the time from kernel start to `redox login:`:
 - **QEMU** (`v0.3.0-dev-176-g752ac70+x8057`): `devices ready after`
   461, 477 and 521 ms (before: 1.6 s until ready); `scripts/test-hotplug.sh`
   15 of 15, three times.
-- **Pi**: test #67 in docs/test-plan.md (Pi test agent): two timed boots
-  as in test 53, standard checks, `scripts/pi-hotplug-test.sh`.
+- **Pi** (test #67, `v0.3.0-dev-176-g752ac70+x8057`): **pass**.
+  `devices ready after 3294 ms` in both boots instead of 6.2 s; about
+  2.1 s of it is the LAN7800's autonegotiation. Kernel to login 7.4 s
+  instead of 10.3 s. Standard checks, `scripts/pi-hotplug-test.sh` 15/15
+  twice, keyboard cycle.
+
+## Merge to main
+
+Merge-ready (2026-10-30), after `usb-hotplug`: this branch contains it,
+merged with main. `0037` applies unchanged (same patch ID).
+
+- **Number at the merge:** `git mv` to `patches/base/` right after
+  `usb-hotplug`'s three patches (`0034` if those become `0031`–`0033`),
+  and drop `--experiment dwc2d-boottime`.
+- **Proven on the Pi:** test #67 above.
+- **QEMU after the merge with main** (`v0.3.0-dev-325-g9c7ecdb+x8057`):
+  `scripts/test-hotplug.sh` 15/15; ready after 455 ms with a network card,
+  1504 ms without one (the 1 s wait for late devices).
+- **Still needs a person:** nothing.
