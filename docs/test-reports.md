@@ -2680,3 +2680,37 @@ Image `~/redox-rpi-cpu/keep/v0.3.0-dev-155-g16b10cb+x7d9f/harddrive.img`.
   GPIO 30–33 after `bt up` would show it.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-341-gc3ad5d3+x59c0`
+
+Real Pi 3B+ over netboot. Experiments: `multicast`, `ipv6`, `lan78xx-multicast`, `mdns`, `sshd`, `rtl8152`, `timesync`. test 96 ([#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS announces SSH), Pi test agent
+
+**Pass.** Image `~/redox-rpi-zrtl/keep/mdns-ssh-v0.3.0-dev-341-gc3ad5d3+x59c0.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `mdnsd:` lines: `redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2
+  services configured`, `redox-rpi._devsh._tcp.local port 2323 announced`,
+  `redox-rpi._ssh._tcp.local port 22 announced`, `redox-rpi.local is
+  192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1504:9901:ba27:ebff:fe08:e0aa,
+  fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa`.
+- `mdns-query.py redox-rpi.local`: A `192.168.178.148` (ttl 120) and the three
+  AAAA: **pass**.
+- `mdns-query.py _ssh._tcp.local PTR`: PTR `redox-rpi._ssh._tcp.local` (ttl
+  4500), plus A/AAAA. `redox-rpi._ssh._tcp.local SRV`: **SRV port 22 target
+  `redox-rpi.local`** (ttl 120), and `ANY` adds `TXT 00`: **pass**.
+  - Note: the PTR answer carries A/AAAA as extra records but not the SRV and
+    TXT. The Mac on the same network sends them with its PTR. Browsers that
+    ask SRV separately (avahi, dns-sd) still work. Adding them to the PTR
+    answer would save one query.
+- `_devsh._tcp.local PTR`: `redox-rpi._devsh._tcp.local`, SRV (asked
+  directly) port 2323: **pass**.
+- `_services._dns-sd._udp.local PTR`: the Pi lists `_devsh._tcp.local` and
+  `_ssh._tcp.local`: **pass**.
+- `ssh -v root@192.168.178.148` (the address from mDNS, test key put into
+  `/home/root/.ssh/authorized_keys` over devsh): `Server host key: ssh-ed25519
+  SHA256:6b9SpKQH…` (the same as test 81, kept on `/scheme/data`),
+  `Authenticated … using "publickey"`, `OK`, `Redox redox-rpi 0.5.12 …`: **pass**.
+- Idle CPU over 30 s (`ps`, there is no `top`): `mdnsd` SCHTIME +0.02 s, `sshd`
+  +0.00 s.
+
+Stable image restored afterwards.
