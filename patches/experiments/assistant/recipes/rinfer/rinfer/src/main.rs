@@ -83,24 +83,76 @@ fn peak_mib() -> usize {
     mib(PEAK.load(Ordering::Relaxed))
 }
 
-/// Reads at most 1 MiB per call. candle reads each tensor with one
-/// `read_exact`, up to 127 MB for the token table; RedoxFS then allocates a
-/// buffer of the same size, and the extra copies ran the 1 GiB Pi (QEMU) out
-/// of memory.
-struct ChunkedReader<R>(R);
+/// Reads the model file for candle's GGUF loader.
+///
+/// - The GGUF header holds the tokenizer, about 300,000 strings, read with
+///   760,000 small reads and a `stream_position` per string. Unbuffered,
+///   each was a request to the file system: on the Pi loading ran at
+///   0.2 MB/s. This reader buffers 1 MiB and knows its position, so neither
+///   reaches the file.
+/// - Reads are at most 1 MiB: candle reads each tensor with one
+///   `read_exact`, up to 127 MB for the token table, and RedoxFS then
+///   allocated a buffer of the same size, which ran the 1 GiB Pi (QEMU) out
+///   of memory.
+struct ModelReader {
+    inner: std::io::BufReader<CountingFile>,
+    pos: u64,
+}
 
-impl<R: Read> Read for ChunkedReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = buf.len().min(1 << 20);
-        self.0.read(&mut buf[..n])
+impl ModelReader {
+    fn open(path: &str) -> std::io::Result<Self> {
+        let f = CountingFile(std::fs::File::open(path)?);
+        Ok(ModelReader { inner: std::io::BufReader::with_capacity(1 << 20, f), pos: 0 })
     }
 }
 
-impl<R: Seek> Seek for ChunkedReader<R> {
+impl Read for ModelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(1 << 20);
+        let n = self.inner.read(&mut buf[..n])?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for ModelReader {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        let target = match to {
+            SeekFrom::Start(p) => p as i64,
+            SeekFrom::Current(d) => self.pos as i64 + d,
+            SeekFrom::End(_) => {
+                self.pos = self.inner.seek(to)?;
+                return Ok(self.pos);
+            }
+        };
+        // Keeps the buffer when the target is inside it.
+        self.inner.seek_relative(target - self.pos as i64)?;
+        self.pos = target as u64;
+        Ok(self.pos)
+    }
+
+    fn stream_position(&mut self) -> std::io::Result<u64> {
+        Ok(self.pos)
+    }
+}
+
+/// Counts the reads that reach the file.
+struct CountingFile(std::fs::File);
+
+impl Read for CountingFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        FILE_READS.fetch_add(1, Ordering::Relaxed);
+        self.0.read(buf)
+    }
+}
+
+impl Seek for CountingFile {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.0.seek(pos)
     }
 }
+
+static FILE_READS: AtomicUsize = AtomicUsize::new(0);
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -129,14 +181,15 @@ fn main() -> anyhow::Result<()> {
     eprintln!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
 
     let t0 = Instant::now();
-    let mut file = ChunkedReader(std::fs::File::open(path)?);
+    let mut file = ModelReader::open(path)?;
     let content = gguf_file::Content::read(&mut file)?;
     let tokenizer = Tokenizer::from_gguf(&content)?;
     let device = Device::Cpu;
     let mut model = ModelWeights::from_gguf(content, &mut file, &device)?;
     eprintln!(
-        "loaded in {:.1} s, heap {} MiB (peak {} MiB)",
+        "loaded in {:.1} s ({} reads of the file), heap {} MiB (peak {} MiB)",
         t0.elapsed().as_secs_f32(),
+        FILE_READS.load(Ordering::Relaxed),
         mib(IN_USE.load(Ordering::Relaxed)),
         mib(PEAK.load(Ordering::Relaxed))
     );

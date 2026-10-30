@@ -1,19 +1,19 @@
-# Experiment: assistant, llama.cpp and a small model on Redox (#43)
+# Experiment: assistant, a local language model on Redox (#43)
 
-Puts the assistant (`tools/assistant`), the Rust model runtime `rinfer`
-(candle) and llama.cpp's command-line programs into the image, to test a
-local language model on the Pi. See
+Puts the assistant (`tools/assistant`) and the Rust model runtime `rinfer`
+(candle) into the image, to test a local language model on the Pi. See
 [docs/topics/assistant.md](../../../docs/topics/assistant.md).
 
 ```bash
 scripts/build-image.sh --sdcard --experiment assistant --experiment assistant-model
-scripts/build-image.sh --experiment assistant      # network boot, without the model
+scripts/build-image.sh --experiment assistant --experiment assistant-netboot   # network boot, without the model
 ```
 
-The model file (382 MB) comes with the experiment
+The model file (382 MB) and llama.cpp come with the experiment
 [`assistant-model`](../assistant-model), only for the SD-card image: the
-network-boot image is loaded into RAM and holds at most 256 MiB. There
-`rinfer --download` fetches it onto `/scheme/data`.
+network-boot image is loaded into RAM, and
+[`assistant-netboot`](../assistant-netboot) makes it 128 MiB to leave room
+for the model. There `rinfer --download` fetches it onto `/scheme/data`.
 
 - [`recipes/rinfer`](recipes/rinfer): candle with three patches (an `sdot`
   fallback for the Cortex-A53, less memory for Qwen3, a worker pool that
