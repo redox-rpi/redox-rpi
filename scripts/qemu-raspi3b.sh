@@ -18,6 +18,7 @@
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest
+#                     (DEVSH_PORT=<port> picks another one, for parallel runs)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
@@ -166,8 +167,8 @@ else
     qemu+=(-device usb-kbd)
 fi
 if [ "$usb_net" = yes ]; then
-    # Host port 12323 reaches devshd (port 2323) in the guest.
-    qemu+=(-netdev user,id=usbnet,hostfwd=tcp::12323-:2323 -device usb-net,netdev=usbnet)
+    # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest.
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
