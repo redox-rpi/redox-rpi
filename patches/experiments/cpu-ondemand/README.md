@@ -28,7 +28,16 @@ Base patch `0050` adds a governor thread to `rpi-firmwared`, like Linux's
   switches 12
   min 600000000
   max 1400000000
+  time_min_ms 51230
+  time_max_ms 8410
   ```
+
+  `time_min_ms` and `time_max_ms` count how long the governor has set
+  each rate since start, the current interval included. Use them, not
+  `target`, to see whether the clock goes down: reading the file starts
+  a program (`cat`), and that start is load by itself, so `target` and
+  `load` show the moment of the read (Pi test #25 never saw `target min`
+  for this reason). Read the file twice with a pause and compare.
 
   Writing `ondemand`, `performance` (always maximum, the behavior of
   `0021`) or `powersave` (always minimum) sets the mode:
@@ -42,7 +51,9 @@ Kernel patch `0050` fixes the CPU times in `sys:stat`: each context switch
 added its time in whole milliseconds and dropped the rest, so a CPU that
 switches every few microseconds (many system calls, such as the start loop)
 looked almost idle. The kernel now keeps nanoseconds and still shows
-milliseconds.
+milliseconds. (An earlier version of this patch changed only comments;
+the one since build `v0.3.0-dev-354` changes `switch.rs` and
+`cpu_stats.rs`.)
 
 `rpi-firmwared` leaves its namespace after start (`setrens(0, 0)`), so it
 opens `/scheme/sys` before that and opens `stat` inside it for each sample
@@ -52,11 +63,14 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
 
 1. Boot. The boot log shows `rpi-firmwared: ARM clock 600 -> 1400 MHz`.
 2. `scripts/pi-test.py` standard checks.
-3. `ondemand-check.py <repo> <pi>` (in this directory): after a few idle seconds the governor
-   shows `target min` and `arm_clock` 600 MHz; 50 starts timed in the modes
+3. Idle: `cat /scheme/rpi-firmware/governor; sleep 60; cat
+   /scheme/rpi-firmware/governor` as one command; most of the 60 s should
+   go to `time_min_ms`. The Shelly power reading (read only) should be close
+   to `powersave` and below `performance`.
+4. `ondemand-check.py <repo> <pi>` (in this directory): 50 starts timed in the modes
    `ondemand`, `performance` and `powersave`. Ondemand should be close to
    performance, and the number of switches grows.
-4. Soak: `ondemand-check.py <repo> <pi> 1 30` adds 30 minutes of rounds of
+5. Soak: `ondemand-check.py <repo> <pi> 1 30` adds 30 minutes of rounds of
    50 starts with 3 s pauses, so the clock goes up and down each round.
    No failures, no hang, `switches` grows by about two per round.
 
@@ -77,3 +91,17 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
   4124 ms busy in a 4.1 s sample (100 %), the others 0–25 %. The governor
   stays at `max` in ondemand, as expected while a driver polls;
   `powersave` gives `target min`. Ready for the Pi test.
+- **Pi test #25** (build `v0.3.0-dev-93`, 2026-10-29): the soak passed
+  (no failures, `switches` grew), but the idle check never saw `target
+  min`. Not a firmware refusal (the switches count rose and `arm_clock`
+  followed in the soak) and not wrong thresholds: the governor file was
+  read by a freshly started program, which is the load it reports. That
+  image also still had the polling `dwc2d`; main has interrupt-driven USB
+  since then.
+- **QEMU with time counters** (build `v0.3.0-dev-354-gc656808+x6039`, on
+  current main with `cputop`, 2026-10-30): quiet for 20 s, 17948 ms at
+  min and 2748 ms at max (87 % at min; QEMU's clock is fixed, so this is
+  the governor's decision only); a loop of 100 starts, 0 ms at min and
+  35985 ms at max. `cputop 10` while quiet: all four cores 0–1 % busy,
+  busiest threads `dwc2d` 0.8 % and `rpi-firmwared` 0.7 %. Pi test #93
+  checks the real clock and the watts.
