@@ -143,6 +143,9 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
   Of that, about 15.8 s pass before the kernel starts (firmware, U-Boot,
   the image over HTTP, the bootloader); `dwc2d` reports ready after
   6.2–8.4 s, now beside the rest of the start.
+- Pi test #107, rerun after merging main (`v0.3.0-dev-426-g5dc3790+x19b9`,
+  sdhost as default SD driver): network and SD card in 3 of 3 boots,
+  `redox login:` 21.0–21.2 s after `kreset`, standard checks pass.
 - With clean boot (#18, merged last for v0.3.0) `pcid-spawner` twice and
   `audiod` go away: about 1.2 s in QEMU.
 - Pi (#53): 33.7 s → 29.3 s to `redox login:`, almost all from the

@@ -24,8 +24,10 @@
   (base `0045`): QEMU init to login 6.0 s instead of 14.9 s. Pi (#69):
   login 6 s earlier, but `dhcpd` could start before `eth0` existed
   (`netstack` reported ready too early, fixed in base `0046`). Pi (#84):
-  network in 5 of 5 boots, login 21.4 s after `kreset`. Pull request
-  open.
+  network in 5 of 5 boots, login 21.4 s after `kreset`. Pi (#107),
+  rerun on the build with today's main: network and SD card in 3 of 3
+  boots, login 21.0–21.2 s, standard checks pass. Pull request
+  [#85](https://github.com/redox-rpi/redox-rpi/pull/85) open.
 
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: passed on a
   Pi 3B+ as experiment `pi-clean-boot` (tests #14 and #5, 2026-10-28,
