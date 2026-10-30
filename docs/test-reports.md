@@ -1801,3 +1801,36 @@ timelines in `~/t18-work/tl-pi-bt5-{1,2,3}.txt` on homenodellm:
   100 ms or more: `40_rpi-firmwared` 852 ms, `40_hwd` about 445 ms,
   `40_bcm2835-sdhcid` about 445 ms, `00_ptyd` about 158 ms, `60_data`
   413–433 ms.
+
+## Test 74: netstack with several adapters (2026-10-30, Pi test agent)
+
+**Pass.** Build `v0.3.0-dev-261-gaca5de2+x368f` (branch `netstack-multi`),
+image `~/redox-rpi-zrtl/keep/nsm-v0.3.0-dev-261-gaca5de2+x368f.img`, staged
+with stable's bootloader and reset over the serial console.
+
+- Boot: `DHCP: eth0 got 192.168.178.148/24` and
+  `DHCP: default route via 192.168.178.1 (eth0)`: **pass**.
+- Before testnetd: eth0 `192.168.178.148/24`; routes `default via
+  192.168.178.1 dev eth0`, `127.0.0.0/8 dev loopback`, `192.168.178.0/24 dev eth0`.
+- `/usr/lib/drivers/testnetd &` over devsh: within a few seconds the serial log
+  has `DHCP: eth1 got 10.0.9.2/24` (the `network.test0 registered` line went to
+  devsh, not to the serial log). eth1 addr `10.0.9.2/24`; routes still have
+  `default via 192.168.178.1 dev eth0` plus `10.0.9.0/24 dev eth1`: **pass**.
+- `ping -c 3 10.0.9.1`: 3/3, about 3 ms. `ping -c 3 192.168.178.1`: 3/3,
+  0.8–1.7 ms: **pass**.
+- `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`: no eth0
+  traffic leaked onto eth1.
+- devsh answered throughout. Standard checks pass before and after testnetd
+  (0 of 300 starts failed each time).
+- Every `DHCP:` and `smolnetd` line of the serial log (there were no
+  `smolnetd` lines; the two `DHCP client bound` lines are U-Boot's netboot):
+
+```
+DHCP client bound to address 192.168.178.148 (6 ms)
+DHCP client bound to address 192.168.178.148 (2 ms)
+DHCP: eth0 got 192.168.178.148/24
+DHCP: default route via 192.168.178.1 (eth0)
+DHCP: eth1 got 10.0.9.2/24
+```
+
+Stable image restored afterwards.
