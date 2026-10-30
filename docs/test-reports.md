@@ -2941,3 +2941,33 @@ PASS: 4096-byte transfer finishes (wrong bytes expected without jumper): loopbac
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-172-gc7bee13+xb847`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `assistant`. test 106 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43) Qwen3 0.6B with `rinfer` and the assistant), Pi test agent
+
+**Fail: the first `rinfer` run never answered, and the kernel then panicked with
+`oom` and halted the Pi.** Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-172-gc7bee13+xb847.img`.
+
+- Standard checks pass, 0 of 300 starts failed. `free`: 606,764 KB free of
+  745,252. `/scheme/data`: 898 MB free.
+- `rinfer --download …partNNN /scheme/data/Qwen3-0.6B-Q4_0.gguf`: the file
+  reached the right size, **382,156,480 bytes**, at 12:08 UTC after about 26
+  minutes (from 11:42, about 0.24 MB/s). The part list was cut off by my
+  devsh tool's 1500 s timeout.
+- `rinfer /scheme/data/Qwen3-0.6B-Q4_0.gguf 'What is the capital of
+  France?' 32` (started 12:09): it printed only `neon: true, threads: 4`, and
+  no `loaded in … s` within 20 minutes. From a second devsh, `free` showed
+  550 → 535 MB free over the first 2 minutes, and `rinfer`'s PRIVATE grew
+  only 7 → 22 MB while it used 2 min 11 s of CPU (SCHTIME). So it was loading
+  the model very slowly. Later devsh calls timed out.
+- The serial log then has `KERNEL PANIC: panicked at src/memory/mod.rs:1459:34:
+  not yet implemented: oom` in a page fault of `/usr/bin/rinfer`, then the same
+  panic in `logd` and `netstack`, and `HALT`. The last serial line came at
+  about 12:50 UTC. Soft temperature warnings at 60.1 °C came often the whole
+  time. The Shelly plug is on (4.3 W). The Pi needs a power cycle (the user's
+  OK).
+- So no answer, no tokens per second, no assistant or `llama-bench` run. The
+  model file stays on `/scheme/data` for the rerun.
+- `/srv/tftp/redox` has the stable image again for the next boot.
