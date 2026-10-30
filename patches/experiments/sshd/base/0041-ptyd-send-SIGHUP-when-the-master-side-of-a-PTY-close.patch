@@ -4,7 +4,8 @@ Subject: [PATCH] ptyd: send SIGHUP when the master side of a PTY closes
 When an SSH session ends, sshd closes the PTY master. The shell on the
 slave side was never told; it read EOF, wrote to a dead terminal and
 panicked. Like Unix, send SIGHUP (and SIGCONT) to every process group
-that was in front on this terminal.
+that was in front on this terminal, and let tcgetattr on the hung-up
+terminal fail with EIO.
 ---
 diff --git a/ptyd/src/controlterm.rs b/ptyd/src/controlterm.rs
 index c0e79088..099de5d5 100644
@@ -37,7 +38,7 @@ index d0a9a06c..c722b2b5 100644
              Ok(4)
          } else {
 diff --git a/ptyd/src/pty.rs b/ptyd/src/pty.rs
-index 638419dd..49d8f3e2 100644
+index 638419dd..3b03f7a6 100644
 --- a/ptyd/src/pty.rs
 +++ b/ptyd/src/pty.rs
 @@ -19,6 +19,9 @@ pub struct Pty {
@@ -58,7 +59,7 @@ index 638419dd..49d8f3e2 100644
          }
      }
  
-@@ -342,6 +346,25 @@ impl Pty {
+@@ -342,6 +346,26 @@ impl Pty {
          }
      }
  
@@ -75,6 +76,7 @@ index 638419dd..49d8f3e2 100644
 +    }
 +
 +    pub fn note_pgrp(&mut self, pgrp: usize) {
++        eprintln!("ptyd: pty {} pgrp {}", self.id, pgrp);
 +        self.pgrp = pgrp;
 +        if pgrp != 0 && !self.seen_pgrps.contains(&pgrp) {
 +            self.seen_pgrps.push(pgrp);
@@ -84,3 +86,27 @@ index 638419dd..49d8f3e2 100644
      fn kill(fd: &libredox::Fd, target: ProcKillTarget, sig: usize) -> Result<()> {
          Ok(fd
              .call_wo(
+diff --git a/ptyd/src/termios.rs b/ptyd/src/termios.rs
+index 5630d22e..25cfddf2 100644
+--- a/ptyd/src/termios.rs
++++ b/ptyd/src/termios.rs
+@@ -1,7 +1,7 @@
+ use std::cell::RefCell;
+ use std::rc::Weak;
+ 
+-use syscall::error::{Error, Result, EBADF, EINVAL, EPIPE};
++use syscall::error::{Error, Result, EBADF, EINVAL, EIO, EPIPE};
+ use syscall::flag::{EventFlags, F_GETFL, F_SETFL, O_ACCMODE};
+ 
+ use crate::pty::Pty;
+@@ -48,7 +48,9 @@ impl Resource for PtyTermios {
+             }
+             Ok(i)
+         } else {
+-            Ok(0)
++            // Hung up: tcgetattr fails like on Linux, so programs see that
++            // the terminal is gone.
++            Err(Error::new(EIO))
+         }
+     }
+ 
