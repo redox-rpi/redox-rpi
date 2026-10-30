@@ -91,7 +91,7 @@ timesync -s '2026-10-29 14:05'       # UTC; seconds optional
 timesync -s '@1793282730'            # seconds since 1970 (quote the @ in Ion)
 ```
 
-It sets the clock with `clock_settime`, which relibc patch `0008` adds
+It sets the clock with `clock_settime`, which relibc patch `0011` adds
 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)), and saves the
 time like an NTP answer. With a relibc without the patch (ENOSYS) it writes
 `/scheme/sys/update_time_offset` itself, as before.

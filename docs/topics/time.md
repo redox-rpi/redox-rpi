@@ -14,7 +14,7 @@
   restart; waits for `timesync`. Branch `timerd`, experiments `timerd` and
   `timerd-test` ([README](../../patches/experiments/timerd/README.md)).
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
-  and `settimeofday` in relibc (patch `0008`): programs can set the clock;
+  and `settimeofday` in relibc (patch `0011`): programs can set the clock;
   `timesync` uses it and gets `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` to set
   the clock by hand. Branch `clock-settime` (on `timerd`); passed in QEMU,
   Pi test #66 queued.

@@ -1,7 +1,7 @@
-From 8d7c481ee57efa56ae6c0dcb2b1e76a70cc4d7e6 Mon Sep 17 00:00:00 2001
+From 8e02160e679b5736e291510748fe5824ed507c54 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 14:46:27 +0000
-Subject: [PATCH] redox: clock_settime(CLOCK_REALTIME) and settimeofday
+Subject: [PATCH 11/12] redox: clock_settime(CLOCK_REALTIME) and settimeofday
 
 clock_settime returned ENOSYS on Redox, and settimeofday did not exist.
 The kernel keeps the real time as boot time plus monotonic time and takes
