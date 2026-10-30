@@ -1,39 +1,41 @@
-From b54d6a30f1a71470df1bd489e7a456ff74ee94c6 Mon Sep 17 00:00:00 2001
+From 23a57cfaa8e3f70578f8242ddd604c063c98cfd4 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 30 Oct 2026 07:46:43 +0000
 Subject: [PATCH] Exit when the terminal is gone instead of panicking or
  reading it forever
 
-When an SSH session ends, the PTY goes away under the shell. Reading it
-failed again and again, and flushing stderr fell back to println!, which
-panicked on the dead terminal and aborted ion.
+When an SSH session ends, the PTY goes away under the shell. At the
+prompt, liner returned an empty line at end of file, so ion read the
+dead terminal forever; any message to the terminal (a flush error, the
+report that the foreground job ended by SIGHUP) panicked and aborted
+ion. Check the terminal after each read, and turn a panic while the
+terminal is gone into exit status 129, like a SIGHUP.
 ---
- src/binary/mod.rs                      | 10 ++++------
- src/binary/readln.rs                   | 12 +++++++++++-
- src/lib/shell/pipe_exec/job_control.rs |  3 ++-
- 3 files changed, 17 insertions(+), 8 deletions(-)
+ src/binary/mod.rs    | 10 ++++++++++
+ src/binary/readln.rs | 12 +++++++++++-
+ 2 files changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/src/binary/mod.rs b/src/binary/mod.rs
-index 7fa4b8d..ffdf0cf 100644
+index 7fa4b8d..027877e 100644
 --- a/src/binary/mod.rs
 +++ b/src/binary/mod.rs
-@@ -253,12 +253,10 @@ impl<'a> InteractiveShell<'a> {
- 
-     fn exec<T: Fn(&mut Shell<'_>)>(mut self, prep_for_exit: &T) -> ! {
-         loop {
--            if let Err(err) = io::stdout().flush() {
--                eprintln!("ion: failed to flush stdio: {}", err);
--            }
--            if let Err(err) = io::stderr().flush() {
--                println!("ion: failed to flush stderr: {}", err);
--            }
-+            // No message: with the terminal gone, eprintln! and println!
-+            // panic.
-+            let _ = io::stdout().flush();
-+            let _ = io::stderr().flush();
-             match self.readln(prep_for_exit) {
-                 Some(lines) => {
-                     for command in lines
+@@ -114,6 +114,16 @@ impl<'a> InteractiveShell<'a> {
+     /// Creates an interactive session that reads from a prompt provided by
+     /// Liner.
+     pub fn execute_interactive(self) -> ! {
++        // When the terminal is gone (an SSH session ended), every message
++        // to it panics, for example the report that the foreground job
++        // ended by SIGHUP. Exit like on SIGHUP instead of aborting.
++        let default_hook = std::panic::take_hook();
++        std::panic::set_hook(Box::new(move |info| {
++            if !nix::unistd::isatty(0).unwrap_or(false) {
++                std::process::exit(129);
++            }
++            default_hook(info)
++        }));
+         let context_bis = self.context.clone();
+         let huponexit = self.huponexit.clone();
+         let prep_for_exit = &move |shell: &mut Shell<'_>| {
 diff --git a/src/binary/readln.rs b/src/binary/readln.rs
 index 4e24ce0..52f8fd9 100644
 --- a/src/binary/readln.rs
@@ -64,20 +66,6 @@ index 4e24ce0..52f8fd9 100644
          match line {
              Ok(line) => {
                  if line.bytes().next() != Some(b'#')
-diff --git a/src/lib/shell/pipe_exec/job_control.rs b/src/lib/shell/pipe_exec/job_control.rs
-index 96a8ef7..fe884cc 100644
---- a/src/lib/shell/pipe_exec/job_control.rs
-+++ b/src/lib/shell/pipe_exec/job_control.rs
-@@ -351,7 +351,8 @@ impl<'a> Shell<'a> {
-     /// foreground process group.
-     fn set_foreground_as(pid: Pid) {
-         signals::block();
--        unistd::tcsetpgrp(0, pid).unwrap();
-+        // Fails when the terminal is gone; the prompt then exits.
-+        let _ = unistd::tcsetpgrp(0, pid);
-         signals::unblock();
-     }
- 
 -- 
 2.53.0
 
