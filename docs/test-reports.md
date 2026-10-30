@@ -2745,3 +2745,59 @@ in `~/redox-rpi-t12/build/cond98-pi.txt` and `relibc98-pi.txt`.
   `ungetc_ftell`, `tls_align` ×2, `tls_shared` and `redox_ring_ramfs`.
 
 Stable image restored afterwards.
+
+## 2026-10-29: `v0.3.0-dev-141-g3fd1bba+x9ea9` (German keyboard layout, #36), QEMU
+
+Branch `keyboard-layouts`, experiment `keyboard-de` with `timesync` and
+`rtl8152`. QEMU `raspi3b`, USB keyboard through the QEMU monitor
+(`patches/experiments/keyboard-de/test-keymap.sh`).
+
+- `inputd -K de` on the serial console, then login on the console with
+  the USB keyboard: `root`, `password` unchanged.
+- Typed as German key positions: `cat > /home/root/de.txt` and
+  `zyß@{[]}\~|#öäü€"§'<>`. The file holds exactly that line: z and y
+  swapped, umlauts, ß, AltGr for @ { [ ] } \ ~ | €, the < > key. **Pass.**
+- An earlier attempt with `echo '…'` failed in ion ("`[` is out of place"
+  even in single quotes), not in the layout: the screen showed the line
+  typed correctly.
+
+## 2026-10-29: `v0.3.0-dev-143-ge940bf6+x9ea9` (German layout from boot, #36), QEMU
+
+Same branch, now with `config.toml` (`/etc/init.d/05_keymap.service`
+runs `inputd -K de`). `test-keymap.sh` no longer switches the layout on
+the serial console: the login and the typed line come out German from
+boot, the file holds `zyß@{[]}\~|#öäü€"§'<>`. **Pass.**
+
+## 2026-10-29: `v0.3.0-dev-239-g43c6882+x9ea9` (dead keys, layout from /etc/keymap, #36), QEMU
+
+Branch `keyboard-layouts`: base `0026` adds dead keys and `inputd
+--keymap-file`; the boot unit reads `/etc/keymap` (`de`). `test-keymap.sh`
+types the earlier line plus ´ e, Shift+´ a, ^ o, ´ space, ^ x: the file
+holds `zyß@{[]}\~|#öäü€"§'<>éàô´^x`. **Pass.** The German layout comes from
+`/etc/keymap` at boot, without `inputd -K` by hand.
+
+## 2026-10-30: `v0.3.0-dev-424-g2b56378+x9ea9` (German keyboard layout, #36), QEMU
+
+Branch `keyboard-layouts` with main merged, patches renumbered `0041`,
+`0042`. `test-keymap.sh` types `zyß@{[]}\~|#öäü€"§'<>éàô´^x` on QEMU's USB
+keyboard, and it comes out exactly as typed: **pass**. This image replaces
+`v0.3.0-dev-239-g43c6882+x9ea9` for Pi test 64.
+
+## 2026-10-29: `v0.3.0-dev-216-gfcd1b8d+x19b9-dirty` (parallel init, #47), QEMU
+
+Branch `boot-time` with base `0027`: init starts `notify` services in
+parallel; the root file system no longer waits for `dwc2d`. QEMU `raspi3b`
+with `--usb-net`: `switchroot to /usr` right after `50_rootfs` (1.5 s after
+init's first unit), `40_dwc2d.service` ready at 2.2 s alongside the `/usr`
+units, `netstack` after it, `redox login:` 6.0 s after init's first unit
+(14.9 s with `v0.3.0-dev-214-g67fdc06+x19b9`, on a slower run). DHCP and
+`ping -c 2 10.0.2.2` pass, `/tmp` is `drwxrwxrwt`. Without a network card
+the boot ends at the login as well. **Pass.** Pi test queued.
+
+## 2026-10-30: `v0.3.0-dev-217-g1d028a4+x19b9-dirty` (netstack ready after eth0, #47), QEMU
+
+Branch `boot-time` with base `0028`: `netstack` reports ready after
+`Smolnetd::new` has set up `eth0` and its schemes (Pi test #69 boot 1 had
+`dhcpd` fail with `Can't open /scheme/netcfg/ifaces/eth0/mac`). QEMU
+`raspi3b` with `--usb-net`, three boots: DHCP and `ping -c 1 10.0.2.2` pass
+each time, no `eth0/mac` error. **Pass.** Pi test queued.
