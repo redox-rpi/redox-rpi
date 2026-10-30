@@ -62,7 +62,7 @@ Step 3, base `0026`–`0027` and relibc `0002`, so programs can use IPv6:
   `net6 tcp <[addr]:port> <text>`, all through std and relibc.
 
 Not done yet: duplicate address detection, address and router lifetimes
-(only lifetime 0 removes), more than one prefix, DHCPv6, redirects, static
+(only lifetime 0 removes), DHCPv6, redirects, static
 IPv6 addresses through netcfg, scope IDs (`%eth0`; there is only one
 interface), `gethostbyname2(AF_INET6)`, `getnameinfo` for IPv6,
 `IPV6_PKTINFO` (which address a packet came to), `IPV6_V6ONLY` (sockets
@@ -80,6 +80,13 @@ the guest's link-local and SLAAC address.
 
 With `--udp` the script also names itself as DNS server (RDNSS), answers
 `matter.test` AAAA `2001:db8:1::99` and echoes UDP to port 7.
+
+With `--ula` it acts like the Fritz!Box of Pi tests #47 and #55: the
+advertisement carries `fd00:db8:2::/64` after the global prefix, and a
+second router (`fe80::5054:ff:fe12:3498`) announces only that prefix
+with router lifetime 0. Checks: an echo reply from the guest's ULA
+address, and an echo reply to `2001:db8:99::1` (off-link, so it needs
+the default route) sent to the first router's MAC.
 
 ```bash
 patches/experiments/ipv6/ipv6-qemu-test.py --udp --seconds 700 &
