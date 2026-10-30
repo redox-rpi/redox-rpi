@@ -24,4 +24,11 @@ the image has `termios-check`.
 
 ## Tests
 
-- QEMU: see below.
+- QEMU (`v0.3.0-dev-487-g9c876dc+x805a`, QEMU's FTDI adapter):
+  `scripts/test-usb-serial.sh` passes 18/18. `termios-check <port> 19200`:
+  `cfsetspeed` and `tcsetattr` succeed, dwc2d prints `19200 baud, 8N1`,
+  the `baud` file reads 19200, `cfgetospeed`/`cfgetispeed` give 19200
+  after `tcgetattr`, and `cfsetspeed(12345)` fails with `EINVAL`. Before
+  the patch, `cfsetspeed` failed with `EINVAL` for every speed.
+- Pi: not needed for the relibc side (no hardware involved). It can ride
+  along with the USB serial person test #62.
