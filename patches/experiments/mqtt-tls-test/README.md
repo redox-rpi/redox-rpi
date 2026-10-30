@@ -61,3 +61,35 @@ mqtt-tls-test`), TLS broker on the build host (2026-10-29):
 The clock was right from the start: the test CA was made before the image
 was built, so the build time already lies in its validity. On a real Pi
 the Pi test (test plan) checks the same against `192.168.178.120:8883`.
+
+## Memory (Pi test 89, [#56](https://github.com/redox-rpi/redox-rpi/issues/56))
+
+Pi test 89 (`v0.3.0-dev-115-g78c6372+x125f`) lost about 5.5 MB of free
+memory a minute while `ha-bridge` ran over TLS. QEMU `raspi3b`, same
+experiments, TLS broker on the build host (2026-10-30). Each line runs the
+program 101 times in one `ion` loop (`for i in 1..101; … > /dev/null; end`),
+so the measuring shell costs nothing in between:
+
+| 101 runs of | dev-115 (as test 89) | dev-463 (main merged: kernel `0008`) |
+|---|---|---|
+| `ls /` | +1.7 MB | +1.6 MB |
+| `mqtt-pub --help` | +1.2 MB | +1.4 MB |
+| `mqtt-pub --no-tls -t plain/x -m x` | **+8.5 MB** | +1.2 MB |
+| `mqtt-pub -t tls/x -m x` (TLS) | **+8.6 MB** | +1.2 MB |
+| idle, service and timer (TLS), per minute | 0.23 MB | 0.12 MB |
+
+- Each MQTT run lost about 70 KB more than `ls` on dev-115, with or
+  without TLS: the connect watchdog is a thread that ends itself, and
+  the kernel kept such threads ([#31](https://github.com/redox-rpi/redox-rpi/issues/31),
+  kernel patch `0008`, on main since PR #67). With `0008` an MQTT run costs
+  what any program start costs (about 12 KB).
+- TLS adds nothing of its own: the `ha-bridge` service stays at 8.57 MB
+  for the whole run (`/scheme/sys/context`), so rustls and the library do
+  not grow. Per TCP connection `netstack` grows about 4 KB, and per TLS run
+  `randd`'s shared memory about 8 KB (random numbers for the handshake).
+- One timer run a minute explains neither 5.5 MB a minute nor its absence
+  in test 88 (plain). The Pi rerun records every process's memory every
+  3 minutes to show which one grows there.
+- Measuring with one `devsh` command a minute cost about 0.4 MB a command
+  in this QEMU setup (the serial login of `devsh.py`), so the readings
+  above come from long loops and a 10-minute quiet phase.
