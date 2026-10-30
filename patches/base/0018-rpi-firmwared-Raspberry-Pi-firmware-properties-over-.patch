@@ -1,15 +1,9 @@
-From 5e39e9fb14ed259a7161b8089cca4efb6760c65c Mon Sep 17 00:00:00 2001
-From: stephan-xyz <stephan@zehrer.xyz>
-Date: Tue, 27 Oct 2026 08:48:05 +0100
-Subject: [PATCH] rpi-firmwared: Raspberry Pi firmware properties over the
- VideoCore mailbox
+From f03cadd840f3de969f3ed9a4507585264b04ee85 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 06:59:52 +0000
+Subject: [PATCH 17/23] rpi-firmwared: Raspberry Pi firmware properties over
+ the
 
-Asks the Raspberry Pi firmware through the property mailbox for the SoC
-temperature, clock rates, throttling flags and board data, and serves
-them as text files in the rpi-firmware scheme: temperature, throttled,
-clocks and board.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  Cargo.toml                             |   1 +
  Makefile                               |   4 +
@@ -25,10 +19,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/40_rpi-firmwared.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index e8f1350..471b877 100644
+index d5268e75..c5a89261 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -54,6 +54,7 @@ members = [
+@@ -55,6 +55,7 @@ members = [
      "drivers/net/rtl8168d",
      "drivers/net/virtio-netd",
  
@@ -37,12 +31,12 @@ index e8f1350..471b877 100644
  
      "drivers/storage/ahcid",
 diff --git a/Makefile b/Makefile
-index 6b454de..0de2883 100644
+index 7af9f011..b6338981 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -20,6 +20,10 @@ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd net
- DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+@@ -22,6 +22,10 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Cargo.toml))
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
  
 +ifeq ($(TARGET),aarch64-unknown-redox)
 +	INITFS_BINS += rpi-firmwared
@@ -53,7 +47,7 @@ index 6b454de..0de2883 100644
      INITFS_DRIVERS_BINS += ahcid ided
 diff --git a/drivers/rpi-firmwared/Cargo.toml b/drivers/rpi-firmwared/Cargo.toml
 new file mode 100644
-index 0000000..3b13382
+index 00000000..3b13382b
 --- /dev/null
 +++ b/drivers/rpi-firmwared/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -77,7 +71,7 @@ index 0000000..3b13382
 +workspace = true
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
 new file mode 100644
-index 0000000..287c0ce
+index 00000000..287c0cee
 --- /dev/null
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -0,0 +1,306 @@
@@ -389,7 +383,7 @@ index 0000000..287c0ce
 +}
 diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
 new file mode 100644
-index 0000000..327a773
+index 00000000..327a7731
 --- /dev/null
 +++ b/drivers/rpi-firmwared/src/mbox.rs
 @@ -0,0 +1,146 @@
@@ -540,7 +534,7 @@ index 0000000..327a773
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index d9e2dab..8741d3d 100644
+index d9e2dab8..8741d3dd 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -8,4 +8,5 @@ requires_weak = [
@@ -551,7 +545,7 @@ index d9e2dab..8741d3d 100644
  ]
 diff --git a/init.initfs.d/40_rpi-firmwared.service b/init.initfs.d/40_rpi-firmwared.service
 new file mode 100644
-index 0000000..019a7b7
+index 00000000..019a7b7b
 --- /dev/null
 +++ b/init.initfs.d/40_rpi-firmwared.service
 @@ -0,0 +1,8 @@
@@ -564,5 +558,5 @@ index 0000000..019a7b7
 +cmd = "rpi-firmwared"
 +type = { scheme = "rpi-firmware" }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

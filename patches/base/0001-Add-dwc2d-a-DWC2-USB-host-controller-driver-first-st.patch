@@ -1,15 +1,8 @@
-From 73e9d7949e59569436afe06cc073c24ba8f3b5fb Mon Sep 17 00:00:00 2001
-From: stephan-xyz <stephan@zehrer.xyz>
-Date: Sun, 25 Oct 2026 19:30:00 +0100
-Subject: [PATCH 01/16] Add dwc2d, a DWC2 USB host controller driver (first
- stage)
+From bf5ad40049c9a81739ce0df9bd1880cd88ff4cb7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 06:59:35 +0000
+Subject: [PATCH 01/23] Add dwc2d, a DWC2 USB host controller driver (first
 
-Brings up the Synopsys DesignWare USB 2.0 controller of the Raspberry Pi
-in host mode with buffer DMA, resets the root port and enumerates the
-device behind it with control transfers. Polling only, and it does not
-offer the USB scheme to class drivers yet.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  Cargo.lock                      |  11 ++
  Cargo.toml                      |   1 +
@@ -28,10 +21,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/40_dwc2d.service
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 9aaac3a..c10be2e 100644
+index 7b117370..0b2d4ddc 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -721,6 +721,17 @@ dependencies = [
+@@ -745,6 +745,17 @@ dependencies = [
   "linux-raw-sys 0.9.4",
  ]
  
@@ -50,22 +43,22 @@ index 9aaac3a..c10be2e 100644
  name = "e1000d"
  version = "0.1.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 67666be..e8f1350 100644
+index 736882c3..d5268e75 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -66,6 +66,7 @@ members = [
-     "drivers/storage/usbscsid",
+@@ -68,6 +68,7 @@ members = [
      "drivers/storage/virtio-blkd",
+     "drivers/storage/virtio-fsd",
  
 +    "drivers/usb/dwc2d",
      "drivers/usb/xhcid",
      "drivers/usb/usbctl",
      "drivers/usb/usbhubd",
 diff --git a/Makefile b/Makefile
-index 6bdec71..6b454de 100644
+index 6c2970fe..7af9f011 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -27,7 +27,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+@@ -37,7 +37,7 @@ ifeq (,$(filter i586-unknown-redox i686-unknown-redox,$(TARGET)))
  endif
  
  ifeq ($(TARGET),aarch64-unknown-redox)
@@ -76,7 +69,7 @@ index 6bdec71..6b454de 100644
  # For testing/benchmarking only
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
 new file mode 100644
-index 0000000..bdc5f86
+index 00000000..bdc5f866
 --- /dev/null
 +++ b/drivers/usb/dwc2d/Cargo.toml
 @@ -0,0 +1,16 @@
@@ -98,7 +91,7 @@ index 0000000..bdc5f86
 +workspace = true
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
 new file mode 100644
-index 0000000..dc009ea
+index 00000000..dc009ead
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -0,0 +1,245 @@
@@ -349,7 +342,7 @@ index 0000000..dc009ea
 +}
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
 new file mode 100644
-index 0000000..6fe954b
+index 00000000..6fe954b0
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -0,0 +1,132 @@
@@ -487,7 +480,7 @@ index 0000000..6fe954b
 +}
 diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
 new file mode 100644
-index 0000000..cfe08ae
+index 00000000..cfe08ae9
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/regs.rs
 @@ -0,0 +1,100 @@
@@ -592,7 +585,7 @@ index 0000000..cfe08ae
 +pub const PID_DATA1: u32 = 2;
 +pub const PID_SETUP: u32 = 3;
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8ddb479..d9e2dab 100644
+index 8ddb4795..d9e2dab8 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -5,6 +5,7 @@ requires_weak = [
@@ -605,7 +598,7 @@ index 8ddb479..d9e2dab 100644
  ]
 diff --git a/init.initfs.d/40_dwc2d.service b/init.initfs.d/40_dwc2d.service
 new file mode 100644
-index 0000000..e9e0ecf
+index 00000000..e9e0ecf0
 --- /dev/null
 +++ b/init.initfs.d/40_dwc2d.service
 @@ -0,0 +1,9 @@
@@ -619,5 +612,5 @@ index 0000000..e9e0ecf
 +cmd = "dwc2d"
 +type = "notify"
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
