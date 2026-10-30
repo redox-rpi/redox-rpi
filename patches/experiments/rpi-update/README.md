@@ -4,7 +4,8 @@ For the direct firmware boot ([#15](https://github.com/redox-rpi/redox-rpi/issue
 `make-sdcard.sh --direct`). `rpi-update` ([`tools/rpi-update`](../../../tools/rpi-update))
 fetches a newer build from the build host into a second slot on the FAT
 partition and starts it once with the firmware's tryboot. If the new system
-comes up, it stays; if not, the next reset starts the old one.
+comes up, it stays; if not, the watchdog (or the next reset) starts the
+old one.
 
 ```bash
 scripts/build-image.sh --experiment redox-fatfs2 --experiment rpi-fb --experiment rpi-update
@@ -47,9 +48,31 @@ is kernel and system together. `config.txt` names the slot that starts.
    reaches `90_rpi-update-commit.service`, `rpi-update commit` sees it in
    `/scheme/sys/env`, writes the new slot into `config.txt` and deletes
    `tryboot.txt`.
-4. If the new kernel hangs or the system does not get that far, a power
-   cycle (or the watchdog, once there is one) starts `config.txt` again:
-   the old slot.
+4. If the new kernel hangs or the system does not get that far, the
+   watchdog resets the board (see below) and the firmware starts
+   `config.txt` again: the old slot. A power cycle does the same.
+
+## Watchdog
+
+The BCM2837's watchdog (power management block at `0x3f100000`, the one
+the kernel resets through) counts down from at most about 16 s and then
+resets the board.
+
+- rpi-boot-stub arms it with that maximum in a tryboot start (command line
+  `REDOX_RPI_TRYBOOT=1`), just before it starts the kernel, and adds
+  `RPI_WATCHDOG_ARMED=1` to the environment.
+- `05_rpi-update-watchdog.service` (`rpi-update watchdog`, about 3 s after
+  the kernel starts) restarts the countdown every 4 s through
+  `/scheme/memory/physical@dev`.
+- `rpi-update commit` stops the watchdog and writes
+  `/tmp/rpi-update-committed`; the loop sees it and ends.
+- Without a commit within 2 minutes the loop stops restarting it, and
+  about 16 s later the old slot starts.
+
+So a kernel that hangs before userspace, a system that never gets to
+service 90, or a commit that fails all end in the old slot without a
+person. `REDOX_RPI_WATCHDOG=off` on the command line leaves the watchdog
+out; `=dry` also lets `rpi-update` only log the register writes.
 
 ## QEMU test (2026-10-29)
 
@@ -76,8 +99,29 @@ rpi-update writes whole MiB, fatfsd keeps files open per handle.
 The firmware side (does the Pi start `tryboot.txt` once after the flag,
 and `config.txt` again after a reset) can only be tested on a Pi.
 
+## QEMU test of the watchdog (2026-10-30)
+
+Image v0.3.0-dev-211-g80cc863+xe113 (`redox-fatfs2`, `rpi-fb`,
+`rpi-update`) on a `make-sdcard.sh --direct` card.
+
+- `--append REDOX_RPI_TRYBOOT=1`: QEMU resets as soon as the stub arms the
+  watchdog (its model has no countdown), 15477 starts in 400 s. That shows
+  the write reaches the PM block, but QEMU cannot test the timing, so
+  the next runs use `REDOX_RPI_WATCHDOG=dry`.
+- Tryboot start with a `tryboot.txt` on the card: `watchdog: restarting it
+  until commit`, one restart (`0x24 <- 0x5a0fffff`, `0x1c <- 0x5a000020`),
+  `slot a committed`, `0x1c <- 0x5a000102` (stop), `watchdog: committed
+  after 4 s, stopped`.
+- The same with a system whose commit service only prints the status: 30
+  restarts, then `watchdog: no commit after 120 s, the old slot starts in
+  about 16 s`, and no more writes.
+- Normal start: `watchdog not armed by rpi-boot-stub, nothing to do`, `not
+  a tryboot start, nothing to commit`.
+
 ## Services
 
+- `05_rpi-update-watchdog.service`: `rpi-update watchdog`, does nothing
+  outside a tryboot start.
 - `66_boot-fat.service`: `fatfsd /scheme/disk.mmc/0p0 boot`.
 - `90_rpi-update-commit.service`: `rpi-update commit`, does nothing
   outside a tryboot start.
@@ -91,4 +135,7 @@ and `config.txt` again after a reset) can only be tested on a Pi.
   broken downloads.
 - "Came up" means init got to service 90. A system that boots but has no
   network is still committed.
-- No watchdog yet: a hanging new kernel needs a power cycle to fall back.
+- The watchdog's real countdown, and whether the Pi firmware starts
+  `config.txt` after a watchdog reset, are only tested on a Pi (test #72).
+- The 2 minutes are fixed; a system that is slow to reach service 90
+  falls back although it works.
