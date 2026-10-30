@@ -6,13 +6,8 @@
 # 2026-10-29.
 
 # Signals
-./bins_dynamic/sigaction fail                 # second handler not called after raise, #4 (passes with sigentry-thread-signals)
-./bins_dynamic/sys_select/pselect fail        # SIGILL, #4 (passes with sigentry-thread-signals)
 ./bins_dynamic/sigaltstack fail               # passes with sigsegv + sigentry-thread-signals
-./bins_dynamic/signals/sigpause-revert fail   # hangs, #4 (passes with sigentry-thread-signals)
-./bins_dynamic/signals/sigprocmask-3 fail      # #4 (passes with sigentry-thread-signals)
 ./bins_dynamic/signals/sigsegv fail           # no exception handler on aarch64; passes with sigsegv
-./bins_dynamic/signals/sigset-5 fail          # #4 (passes with sigentry-thread-signals)
 ./bins_dynamic/signals/stackoverflow fail     # passes with sigsegv
 ./bins_dynamic/signals/kill-child flaky
 ./bins_dynamic/signals/kill-permission flaky  # hangs sometimes
