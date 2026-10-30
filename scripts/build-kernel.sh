@@ -2,11 +2,15 @@
 # Build the Redox aarch64 kernel with this repository's patches.
 #
 # Works on macOS and Linux. Needs git, rustup and make. Sources are cloned
-# into upstream/ on first use; existing clones are used as they are, so local
-# changes there end up in the build.
+# into upstream/ on first use, at the commits in config/upstream.lock;
+# existing clones are used as they are, so local changes there end up in the
+# build.
 #
 # Usage:
-#   scripts/build-kernel.sh
+#   scripts/build-kernel.sh [--latest]
+#
+#   --latest   clone the newest upstream kernel instead of the pinned commit
+#              (CI checks with it whether our patches still work upstream)
 #
 # Result: upstream/kernel/build/aarch64/kernel
 
@@ -16,15 +20,27 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="$ROOT/upstream"
 KERNEL="$UPSTREAM/kernel"
 FDT="$UPSTREAM/fdt-crate"
+LOCK="$ROOT/config/upstream.lock"
+pinned() { awk -v n="$1" '$1 == n { print $2 }' "$LOCK"; }
 # The fdt revision the kernel pins in its Cargo.toml; our patches apply to it.
-FDT_REV="8fa4388e056e48826e8898557a1c8600f9ee5d6a"
+FDT_REV="$(pinned fdt)"
+
+kernel_rev="$(pinned kernel)"
+case "${1:-}" in
+    --latest) kernel_rev=HEAD ;;
+    "") ;;
+    *) echo "unknown argument: $1" >&2; exit 1 ;;
+esac
 
 mkdir -p "$UPSTREAM"
 
 if [ ! -d "$KERNEL" ]; then
-    git clone --depth 1 https://gitlab.redox-os.org/redox-os/kernel.git "$KERNEL"
+    git init -q "$KERNEL"
+    git -C "$KERNEL" fetch -q --depth 1 https://gitlab.redox-os.org/redox-os/kernel.git "$kernel_rev"
+    git -C "$KERNEL" checkout -q FETCH_HEAD
     git -C "$KERNEL" apply "$ROOT"/patches/kernel/*.patch
 fi
+echo "kernel source: $(git -C "$KERNEL" rev-parse HEAD)"
 
 if [ ! -d "$FDT" ]; then
     git init -q "$FDT"
