@@ -9,6 +9,8 @@
 //! bt scan [seconds]     LE scan (default 5 s)
 //! bt inquiry [seconds]  classic inquiry (default 5 s)
 //! bt cmd 1001 [bytes]   send an HCI command (hex), print what comes back
+//! bt diag               pins, UART lines, and HCI Reset with each flow
+//!                       control setting of the driver
 //! ```
 //!
 //! The chip starts in ROM without the firmware (build 0); `bt up` loads
@@ -25,6 +27,11 @@ const DATA: &str = "/scheme/btuart/data";
 const CLOCK: &str = "/scheme/btuart/clock";
 const POWER: &str = "/scheme/rpi-firmware/bt_power";
 const CLOCKS: &str = "/scheme/rpi-firmware/clocks";
+const FLOW: &str = "/scheme/btuart/flow";
+const STATUS: &str = "/scheme/btuart/status";
+/// CTS, RTS, TX and RX of the mini UART, and GPIO 43 (GPCLK2 in Linux's
+/// devicetree for the 3B+, the chip's 32 kHz sleep clock).
+const DIAG_PINS: &[u32] = &[30, 31, 32, 33, 43];
 const FIRMWARE: &str = "/usr/lib/firmware/brcm/BCM4345C0.hcd";
 
 const PACKET_COMMAND: u8 = 0x01;
@@ -397,8 +404,74 @@ fn seconds(arg: Option<&String>) -> u64 {
     arg.and_then(|s| s.parse().ok()).filter(|&s| s > 0).unwrap_or(5)
 }
 
+/// One line from the driver's status file, without its name.
+fn status_line(status: &str, name: &str) -> String {
+    status.lines().find_map(|l| l.strip_prefix(name)).unwrap_or(" ?").trim().to_string()
+}
+
+fn print_status(when: &str) {
+    let status = fs::read_to_string(STATUS).unwrap_or_default();
+    println!(
+        "  {when}: cts_line {}, rts {}, tx_fifo {}, rx_fifo {}, cntl {}, msr {}",
+        status_line(&status, "cts_line"),
+        status_line(&status, "rts_status"),
+        status_line(&status, "tx_fifo"),
+        status_line(&status, "rx_fifo"),
+        status_line(&status, "cntl"),
+        status_line(&status, "msr"),
+    );
+}
+
+/// For a chip that does not answer: the pin setup and line states, then an
+/// HCI Reset with each flow control setting, printing every byte that comes
+/// back (bytes that are no HCI event point at a wrong baud rate).
+fn diag() -> io::Result<()> {
+    for pin in DIAG_PINS {
+        let mode = fs::read_to_string(format!("/scheme/gpio/{pin}/mode")).unwrap_or_else(|e| format!("({e})"));
+        let value = fs::read_to_string(format!("/scheme/gpio/{pin}/value")).unwrap_or_else(|e| format!("({e})"));
+        let pull = fs::read_to_string(format!("/scheme/gpio/{pin}/pull")).unwrap_or_else(|e| format!("({e})"));
+        println!("gpio {pin}: mode {}, level {}, pull {}", mode.trim(), value.trim(), pull.trim());
+    }
+    println!("bt_power: {}", fs::read_to_string(POWER).unwrap_or_default().trim());
+    power_cycle();
+    update_clock();
+    let mut answered = Vec::new();
+    for flow in ["auto", "auto-low", "none"] {
+        fs::write(FLOW, flow).map_err(|err| error(format!("{FLOW}: {err}")))?;
+        println!("flow {flow}:");
+        let mut hci = Hci::open()?;
+        print_status("before");
+        if let Err(err) = hci.send(RESET, &[]) {
+            println!("  send: {err}");
+        }
+        let deadline = Instant::now() + Duration::from_millis(1000);
+        let mut got = Vec::new();
+        let mut buf = [0; 256];
+        while Instant::now() < deadline {
+            if let Ok(n) = hci.port.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+        }
+        print_status("after");
+        if got.is_empty() {
+            println!("  received: nothing");
+        } else {
+            println!("  received {} bytes: {}", got.len(), hex(&got[..got.len().min(32)]));
+            if got.starts_with(&[PACKET_EVENT, EVENT_COMMAND_COMPLETE]) {
+                answered.push(flow);
+            }
+        }
+    }
+    fs::write(FLOW, "auto").ok();
+    match answered.first() {
+        Some(_) => println!("answered with flow: {}", answered.join(", ")),
+        None => println!("no answer with any flow setting"),
+    }
+    Ok(())
+}
+
 fn usage() -> ! {
-    eprintln!("usage: bt up | info | scan [seconds] | inquiry [seconds] | cmd <opcode> [bytes...]   (hex)");
+    eprintln!("usage: bt up | info | scan [seconds] | inquiry [seconds] | cmd <opcode> [bytes...] (hex) | diag");
     process::exit(2);
 }
 
@@ -410,6 +483,7 @@ fn main() {
         Some("scan") => le_scan(seconds(args.get(1))),
         Some("inquiry") => inquiry(seconds(args.get(1))),
         Some("cmd") if args.len() >= 2 => raw(&args[1..]),
+        Some("diag") => diag(),
         _ => usage(),
     };
     if let Err(err) = result {
