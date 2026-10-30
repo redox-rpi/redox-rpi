@@ -56,4 +56,4 @@ boot through QEMU's monitor:
   it reads back with the right SHA-256;
 - unplugged without eject: fatfsd ends, `/scheme/usb0` is gone.
 
-On the Pi: test 100 (needs a person with a stick).
+On the Pi: test 104 (needs a person with a stick).
