@@ -2900,3 +2900,44 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 101 (
   sessions (only devsh's own `login`/`ion`): **pass**.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-393-ga24b8b8+xcd36`
+
+Real Pi 3B+ over netboot. Branch `spi`. test 99 ([#38](https://github.com/redox-rpi/redox-rpi/issues/38), [#39](https://github.com/redox-rpi/redox-rpi/issues/39), [#42](https://github.com/redox-rpi/redox-rpi/issues/42) GPIO, I2C and SPI drivers, the part without a person or wiring), Pi test agent
+
+**Pass: 21 of 21.** Image `~/redox-rpi-cpu/keep/v0.3.0-dev-393-ga24b8b8+xcd36/harddrive.img`.
+
+- Boot: `bcm2835-gpiod: 54 pins at 0x3f200000`, `bcm2835-i2cd: bus 1 at
+  0x3f804000, 100 kHz (core 250 MHz)`, `bcm2835-spid: bus 0 at 0x3f204000,
+  1000 kHz (core 250 MHz)`.
+- Standard checks pass, 0 of 300 starts failed.
+- `patches/experiments/gpio/nowire-check.py` (branch `spi`), no jumper, so
+  the SPI part checks the MISO pull instead of the loopback:
+
+```
+PASS: GPIO 5 output 1 reads back: 1
+PASS: GPIO 5 output 0 reads back: 0
+PASS: GPIO 6 input with pull up reads 1: 1
+PASS: GPIO 6 input with pull down reads 0: 0
+PASS: GPIO 6 input with pull up reads 1: 1
+PASS: activity LED (GPIO 29) takes writes
+PASS: power_led takes off and on
+PASS: pins table has 54 rows: 54 lines
+PASS: I2C pins 2 and 3 in alt0: alt0 alt0
+PASS: i2c detect finishes: answering: none
+PASS: missing address 50 gives an error: i2c: read: No such device or address (os error 6)
+PASS: SPI pins 7-11 in alt0: alt0 alt0 alt0 alt0 alt0
+SPI: jumper pin 19 to 21 not found (['00 00 00'])
+PASS: MISO pull up, 1000000 Hz, cs0: reads ff: ff ff ff ff
+PASS: MISO pull up, 1000000 Hz, cs1: reads ff: ff ff ff ff
+PASS: MISO pull up, 10000000 Hz, cs0: reads ff: ff ff ff ff
+PASS: MISO pull up, 10000000 Hz, cs1: reads ff: ff ff ff ff
+PASS: MISO pull down, 1000000 Hz, cs0: reads 00: 00 00 00 00
+PASS: MISO pull down, 1000000 Hz, cs1: reads 00: 00 00 00 00
+PASS: MISO pull down, 10000000 Hz, cs0: reads 00: 00 00 00 00
+PASS: MISO pull down, 10000000 Hz, cs1: reads 00: 00 00 00 00
+PASS: 4096-byte transfer finishes (wrong bytes expected without jumper): loopback: 4096 bytes at 1000000 Hz, 4082 wrong spi: loopback failed (MOSI pin 19 to MISO pin 21?)
+21 of 21 checks passed
+```
+
+Stable image restored afterwards.
