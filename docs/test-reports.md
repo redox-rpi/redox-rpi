@@ -2801,3 +2801,30 @@ Branch `boot-time` with base `0028`: `netstack` reports ready after
 `dhcpd` fail with `Can't open /scheme/netcfg/ifaces/eth0/mac`). QEMU
 `raspi3b` with `--usb-net`, three boots: DHCP and `ping -c 1 10.0.2.2` pass
 each time, no `eth0/mac` error. **Pass.** Pi test queued.
+
+## 2026-10-30: `v0.3.0-rc2` (`v0.3.0-dev-402-g78a673d+x12cb`)
+
+Real Pi 3B+ over netboot. `--release v0.3.0-rc2 --experiment timesync`, main 78a673d. test 102 (v0.3.0 rc2 automated, checklist tests 1–5 and 11), Pi test agent
+
+**Pass: all six checks, and no `dwc2d` panic in 6 of 6 boots.** Image
+`~/redox-rpi-rel/keep/v0.3.0-rc2-netboot.img`, staged with the build agent's
+`scripts/netboot.sh` (its bootloader and manifest). Afterwards the saved stable
+files went back into `/srv/tftp/redox`.
+
+| # | check | result |
+|---|---|---|
+| 1 | `pi-test.py --starts 1000` (`t10-start-loop` copy) | **pass**: `PASS version: v0.3.0-rc2 (v0.3.0-dev-402-g78a673d+x12cb)`, all checks pass, **0 of 1000 starts failed** |
+| 2 | clock | **pass**: `rpi-firmwared: ARM clock 600 -> 1400 MHz`, `clocks` shows `arm 1400000000 1400000000`, no throttle or under-voltage line |
+| 3 | SD and unused drivers | **pass**: `bcm2835-sdhostd: SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no `bcm2835-sdhcid`, `pcid`, `pcid-spawner`, `audiod` or `rtcd` line in any of the six boots |
+| 4 | time | **pass**: `timesync: clock set to 2026-10-30 10:47:50 UTC from pool.ntp.org`; `date -u` on the Pi and the build host both `10:51:36` |
+| 5 | `reboot` over devsh × 5 | **pass**: each back to `redox login:` after 22 s, devsh answers, one `kreset` each |
+| 11 | `serial-input-test.sh 20` (logged in on the console) | **pass**: `20 of 20 lines complete`, no getty panic |
+
+- `dwc2d` panic check (build agent): the first boot and all 5 reboots show
+  `dwc2d: LAN78xx link up after 1710 ms` (once 1840 ms) and **no
+  `panicked`**. The network came up every time: 0 of 6 boots with test 98's
+  `enumerate.rs:173:40` panic.
+- Copies of the start-loop report and the reboot list are on homenodellm in
+  `~/redox-rpi-rel/keep/` (`t102-report.md`, `t102-reboots.txt`).
+
+Stable image restored afterwards.
