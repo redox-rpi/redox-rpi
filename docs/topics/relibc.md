@@ -54,6 +54,13 @@
 - `stdio/fscanf_offby1` and `stdio/ungetc_ftell` were test bugs: they rely
   on x86_64's argument evaluation order. Fixed in relibc-tests patch
   `0004` (branch `t-test-order`).
+- [#43](https://github.com/redox-rpi/redox-rpi/issues/43) lost wakeups in `thread::park` and `pthread_cond_*`: a kernel
+  race, not relibc. `FUTEX_WAIT` compared the word before it queued itself
+  under the lock `FUTEX_WAKE` takes, so a wake on another CPU in between
+  was lost. Upstream fixed it on 2026-10-27 (`57ccc8f`, `5805059`), after
+  our pin; experiment `futex-wait-lock` (branch `t-futex-wait-lock`)
+  backports it. New test `pthread/cond_stress`: QEMU 3 of 21 runs lose a
+  wakeup without, 0 of 41 with it. Pi test #98 queued.
 - The static tests and statically linked C programs link the toolchain's
   `libc.a` (prefix sysroot, built 2026-10-24), not the relibc of the
   build: our relibc patches do not reach them. Fix for the tests (branch
