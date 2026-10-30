@@ -55,12 +55,59 @@ a small word table exists. Not now.
 | Weights | 382 MB |
 | Context (KV cache), 1024 tokens at 16 bits | 112 MiB (28 layers x 2 x 1024 values x 2 bytes per token); 56 MiB with an 8-bit cache |
 | Working buffers | about 50 to 100 MiB, less with small batches |
-| Redox with the console and network | to be measured (QEMU `free` in In progress) |
+| Redox with the console and network | about 96 MiB at the shell (QEMU `free`) |
 | **Total** | about 600 to 650 MiB, leaves room for the user's programs |
 
 Without swap and with no page cache that can drop pages, the model must
 stay fully in RAM. candle reads it into the heap (no `mmap`), which is
 fine at this size; a hand-written runtime can do the same.
+
+Measured with `rinfer` (candle) in QEMU: 468 MiB heap after loading,
+497 MiB at the peak, 674 MiB of 912 MiB used in total while it ran. Redox
+backs memory with RAM as soon as it is allocated, even if it is never
+touched (Linux does not), and runs out with a kernel panic (no swap, no
+OOM handling). So every large buffer counts, not only the ones in use.
+
+### RAM the assistant needs
+
+Measured 2026-10-30 after the memory cuts (commit `29052d7`, smaller model
+file `Qwen3-0.6B-Q4_0e.gguf`; `rinfer` heap counter on the build host and
+in QEMU, Redox `free` in QEMU, which shows 912 MiB). Before the cuts in
+brackets.
+
+| Part | MiB |
+|---|---|
+| Redox at the shell (console, network) | 96 to 100 |
+| Model file in memory (token table 4-bit) | 326 (364, token table Q6_K) |
+| Model loaded, cache for 256 tokens | 375, peak 377 while loading (468, peak 497) |
+| Each further 64 tokens of conversation (key/value cache, bf16) | +7 (f32: +56 per 256 tokens) |
+| System prompt with the tools (380 tokens), first question | 399, peak 430 (527, peak 565) |
+| rinfer process beyond its heap (stacks, allocator, program) | about 40 to 100 |
+| File cache left after reading the model | about 40 |
+| `assistant` itself | about 1 |
+
+In QEMU with 180 MiB held back by a test program (stricter than a
+network-booted Pi with the 128 MiB image), Redox used at most 799 of
+912 MiB for both assistant questions; before the cuts the same check ran
+out of memory. So the assistant needs about **520 MiB** of the Pi's RAM
+beyond Redox itself (it was about 700). **Network boot has less RAM:**
+the Pi showed 745 MB in all and 607 MB free with the 256 MiB image (Pi
+test 106), and the model did not fit then (kernel `oom`). The experiment
+`assistant-netboot` makes that image 128 MiB, which should leave about
+720 MB free. Raising `gpu_mem` from 16 to 64 MiB (48 MiB less for Redox)
+still fits on the SD card; check again before going higher.
+
+Where the memory went, and what each cut saves (heap on the build host):
+the rotary tables covered all 40,960 positions Qwen3 allows (30 MiB, now
+4,096: 3 MiB); the tokenizer's 300,000 strings stayed in memory while the
+weights loaded (27 MiB, now freed first); the key/value cache was f32 and
+grew by 256 positions (now bf16, half the size, growing by 64); the token
+table was stored as Q6_K (122 MiB, requantised to Q4_0: 83 MiB, with
+llama.cpp's `llama-quantize --token-embedding-type q4_0`; the other
+tensors stay as they were). The smaller table changes answers a little:
+in a check of ten questions both files called the right tools for "What
+time is it?", the date and the files, but without the question mark the
+smaller one guessed the time instead of calling `show_time`.
 
 ### Speed (estimates, not measured)
 
@@ -163,9 +210,9 @@ the prompt. This matters more for good answers than the choice of model.
 | Step | What | Size |
 |---|---|---|
 | 1 | Reference: llama.cpp built for Redox, the model answers in QEMU; recipe and SD image | done; Pi test #51 for reference numbers |
-| 2 | Rust runtime: candle built for Redox with an `sdot` fallback, a small test program, recipe in the experiment; answers in QEMU, speed against llama.cpp on the Pi | 2 to 4 days plus a Pi slot |
+| 2 | Rust runtime: candle built for Redox with an `sdot` fallback, a small test program, recipe in the experiment; answers in QEMU, speed against llama.cpp on the Pi | answers in QEMU, worker-pool hang fixed (4 days); Pi speed test open |
 | 2b | Only if candle is too big or slow: our own Qwen3 runtime in Rust (GGUF, Q4_0/Q8_0 NEON kernels for ARMv8.0, tokenizer) | 2 to 3 weeks |
-| 3 | The `assistant` program in Rust: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | 1 to 2 weeks |
+| 3 | The `assistant` program in Rust: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | chat loop and tools with the model run in QEMU (1 day); saved prompt state and grammar mask open, about 1 week |
 | 4 | Tools that change things, with confirmation; the namespace sandbox; the Redox help text and a test set of 50 to 100 questions from macOS, Windows and Linux users | 1 to 2 weeks |
 | 5 | Optional: fine-tune the model (LoRA) on the tools and the help text, off the Pi | 2 to 4 weeks |
 | 6 | Later: other models (FunctionGemma for the Zero 2 W); a Rust 1.58-bit kernel once a small BitNet model exists | open (kernel 1 to 2 weeks) |
@@ -205,15 +252,100 @@ git).
   per second reading, 0.04 writing; says nothing about the Pi.
 - Pi test #51 in the [queue](../test-plan.md): the SD card image, with a
   person to swap the card. Gives the llama.cpp reference numbers.
-- **Rust runtime, started 2026-10-29:** a test program `rinfer` on candle
-  `12bb5d1` (Qwen3 GGUF, tokenizer from the GGUF file, greedy decoding,
-  timings) in `~/assistant-work/rinfer`. Reading candle showed the `sdot`
-  problem above: its NEON dot products for Q4_0, Q8_0 and the K formats
-  need `dotprod`, which the A53 lacks (only its repacking path checks at
-  runtime). Not built for Redox yet: building candle means cargo runs
-  build scripts of about 100 crates.io packages on the build host, which
-  waits for the maintainer's OK. Without it, the next step is our own
-  dependency-free loop (step 2b).
+- **Rust runtime, 2026-10-29: `rinfer` (candle `12bb5d1`) answers in
+  QEMU.** A test program in the experiment
+  ([recipe](https://github.com/redox-rpi/redox-rpi/tree/assistant/patches/experiments/assistant/recipes/rinfer)):
+  Qwen3 from the GGUF file, the tokenizer from the same file, greedy
+  decoding, timings and a heap counter. Built static against our relibc
+  with cargo; 4.9 MB binary. Three changes to candle were needed:
+  - `sdot`: candle's NEON dot products for Q4_0, Q8_0 and the K formats
+    use the `dotprod` instruction, which the A53 lacks.
+    [sdot-fallback.patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/rinfer/sdot-fallback.patch)
+    gives the same result with plain NEON (multiply-long and pairwise
+    add); the binary has no `sdot` left.
+  - The token table (151,936 x 1,024) was turned into f32, 622 MB, and
+    read twice. [qwen3-memory.patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/rinfer/qwen3-memory.patch)
+    keeps it quantized and unpacks only the rows of the input tokens; the
+    output layer shares it.
+  - The key/value cache was preallocated for 4,096 positions per layer:
+    32 MiB x 28 layers, 900 MiB. On Redox that is real memory, so the
+    first runs ended in an out-of-memory kernel panic. The same patch adds
+    `CANDLE_KV_CACHE_LEN`; `rinfer` starts with 256 positions and the
+    cache doubles when full. Heap peak on the build host: 1,337 MiB
+    before, 497 MiB after.
+  - candle sizes its thread pool from the CPU count, which Redox does not
+    report (one thread); `rinfer` sets four.
+
+  QEMU `raspi3b`, prompt "Hi" (17 tokens with the template): "Hello! How
+  can", 7 seconds per token for the prompt and for writing (0.14 to
+  0.15 tokens per second; llama.cpp in QEMU: 0.19 reading, 0.04
+  writing). QEMU speed says nothing about the Pi.
+- **The whole prompt at once hung, 2026-10-30:** candle's worker pool
+  parks idle threads with `thread::park`, and on Redox a wakeup was
+  sometimes lost, so a matmul waited forever (a benchmark without the
+  model, `cbench`, hung within 200 calls; with threads that never park,
+  no hang). The relibc session traced it to a race in the kernel's
+  `FUTEX_WAIT`, fixed upstream after our pin (kernel `57ccc8f`,
+  `5805059`); with that backport `cbench` runs 600 calls without a hang.
+  Until it is in our kernel, rinfer's
+  [redox-thread-pool.patch](https://github.com/redox-rpi/redox-rpi/blob/assistant/patches/experiments/assistant/recipes/rinfer/redox-thread-pool.patch)
+  lets idle workers poll with a 200 µs sleep. In QEMU the whole prompt at
+  once is now about 9 times faster than one token at a time: 380 tokens in
+  280 s.
+- **The assistant answers with the model, 2026-10-30:** `rinfer --serve`
+  keeps the model loaded; `assistant` starts it, puts the tools in the
+  system message in Qwen3's format, runs `<tool_call>` replies through the
+  same allow-list and confirmation as typed calls, and hands the result
+  back. The 0.6B model sometimes writes a call without the tags
+  (`list_files` or `list_files(folder="Documents")`); those are accepted
+  too. On the build host it answered the time, the files in the home
+  folder and in `Documents`, "Paris", "use the `cp` command", and asked
+  before `make_folder` (`n` changed nothing, `y` created it). Misses: for
+  "Show me my files" it asked for a folder named `home`. QEMU `raspi3b`:
+  "What time is it?" ran `show_time` and answered from it, heap peak
+  565 MiB, no out-of-memory; reading the system prompt took 280 s and
+  writing ran at 0.4 to 0.5 tokens per second (QEMU, not the Pi).
+- **A Pi test without a person, 2026-10-30:** the experiment `assistant`
+  (llama.cpp, `rinfer`, `assistant`) now fits the network-boot image; the
+  model file moved to the experiment `assistant-model` (SD card only).
+  On a network-booted Pi, `rinfer --download` fetches the model over plain
+  HTTP from the build host onto the data partition `/scheme/data`, in
+  16 MiB parts (`/srv/tftp/models/qwen3-parts/`), each on its own
+  connection (curl from the prebuilt packages crashes on aarch64). In QEMU
+  the parts arrived until the 256 MiB disk was full; a full disk then hung
+  the next write instead of failing it.
+- **Pi test 106, 2026-10-30, network boot: failed, two findings.** The
+  download of the model onto `/scheme/data` worked (382,156,480 bytes,
+  26 minutes). `rinfer` then loaded at about 0.2 MB/s with the CPU busy,
+  and after 40 minutes the kernel ran out of memory. (1) candle reads the
+  tokenizer strings in the GGUF header with 761,160 small reads and a
+  position query per string, each a request to the file system; rinfer's
+  `ModelReader` buffers 1 MiB and keeps the position itself: 577 reads
+  (build host 0.8 → 0.3 s; this was also why loading took 11 to 23
+  minutes in QEMU). (2) Network boot leaves 607 MB free (above).
+  [Report](../test-reports.md).
+- **Memory cuts, 2026-10-30:** rinfer needs about 120 MiB less (see RAM
+  the assistant needs): bf16 cache, rotary tables for 4,096 positions, the
+  tokenizer strings freed early, and the smaller model file. In QEMU with
+  180 MiB held back, `rinfer` loaded in 150 to 170 s (539 reads of the
+  file) and both assistant questions ran (`show_time`, `list_files`);
+  at least 110 MiB stayed free. Rerun on the Pi: test #112, image
+  `v0.3.0-dev-175-g29052d7+x4590` (network boot, 128 MiB). The SD-card
+  recipe `qwen3-model` still fetches the original file; it moves to the
+  smaller one after the Pi test.
+- **Pi test 112, 2026-10-30, network boot: pass, no `oom`.** 738 MB free
+  at the start (128 MiB image). `rinfer` loaded in 78 s and answered
+  "Paris": reading the prompt at 2.2 tokens per second, writing at 1.0
+  (goal 2), heap peak 378 MiB. The assistant ran `show_time` and
+  `list_files` and answered from them; reading the system prompt took
+  about 170 s on each start, heap peak 430 MiB, lowest free 90 MB. The
+  Pi needs more than QEMU did: after the run 130 MB stayed used (file
+  cache of the download and the model). The last answer to the time
+  question was slow (0.15 tokens per second, the other answers 0.6 to
+  1.0); not explained yet. The Pi was at its soft temperature limit
+  (66 °C) but kept 1.4 GHz. One `devshd` thread died with `RELIBC PANIC`
+  in `src/sync/mod.rs:103` (`futex_wake`, `EFAULT`) while memory was
+  lowest; devshd went on. [Report](../test-reports.md).
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -233,17 +365,17 @@ git).
 
 ## Next
 
-- Rust model runtime: with the maintainer's OK build `rinfer` (candle)
-  for Redox with the `sdot` fallback, else start our own loop; run it in
-  QEMU `raspi3b` and measure memory, speed and size, then put it into the
-  experiment next to llama.cpp.
-- Connect the model to the tool layer: tool descriptions in the system
-  prompt, the grammar mask while a tool call is written.
-- Pi test #51: `llama-bench` for real speed, `free` while the model runs.
-- A Pi test without a person: the network-boot image with llama.cpp, and
-  the model on the netboot card's data partition (`/scheme/data`). llama.cpp
-  can download it itself over plain HTTP from the build host (`-mu`,
-  cpp-httplib is built in); untested.
+- Writing runs at 1 token per second on the Pi (goal 2). Profile it
+  before deciding on our own loop (step 2b): the worker pool's 200 µs
+  sleep (the kernel futex fix would allow parking again), the q4_0 kernels
+  without `sdot`, and the slow answer after a tool call. Pi test #51 (SD
+  card, llama.cpp numbers) would show how far llama.cpp gets; it still
+  waits for a card swap.
+- Save the state after the system prompt to a file, so the assistant
+  does not read 380 tokens (170 s on the Pi) on every start.
+- Move the SD-card recipe `qwen3-model` to the smaller model file.
+- A grammar mask while a tool call is written, and a test set of
+  questions; a cap on the conversation length (memory).
 
 ## Later
 
