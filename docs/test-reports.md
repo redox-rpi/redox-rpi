@@ -3325,3 +3325,31 @@ matches.
   the write time (16.5 of 48.6 s), much more than #75's 12 %, while reading
   stays at 7 %.
 - `/srv/tftp/redox` has the stable image again.
+
+## 2026-10-30: `v0.3.0-dev-359-ga6966cc+x810f`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `pty-sigint` (Ion patch `0002`). test 118 ([#86](https://github.com/redox-rpi/redox-rpi/issues/86) Ctrl-C on the serial console right after Enter), Pi test agent
+
+**Pass: on the serial console all 12 Ctrl-Cs stopped `sleep 40` within about
+0.1 s (#80: about 32 s), over devsh 10 of 10.** Staged with
+`~/t18-work/c86-stage/scripts/netboot.sh` (bootloader md5 `4fccdb94…`), image
+`~/t18-work/image-c86/harddrive.img` (md5 `caaff094…`).
+
+- Serial console, logged in as root, delays
+  0.05, 0.1, 0.2, 0.3, 0.5, 1 s after Enter, twice: **every round
+  `stopped by SIGINT 0.1 s after Ctrl-C`**, `PASS: 0 late of 12`. The serial
+  log has 12 times `ion: pipeline execution error: process (…) ended by signal
+  SIGINT`. No round fell in the raw-mode window (no `line cancelled`).
+- How: not the branch's `serial-ctrlc-test.py` itself, which reads
+  `/dev/ttyUSB0` directly and types at full speed. Instead the same rounds
+  with the same timing and checks (`~/pitest-tools/ctrlc118.py`): the logging
+  service stayed on, the script read its file, and it typed `sleep 40` one
+  character every 0.15 s. The delay counts from the Enter, as in the
+  original, and the Ctrl-C is one byte.
+- devsh: `patches/experiments/pty-sigint/ctrlc-test.py 192.168.178.148
+  --rounds 10` (a6966cc): 10 of 10 `stopped by SIGINT 0.0 s after Ctrl-C`
+  (5 after 1 s, 5 after 3 s), Ctrl-C at the prompt leaves the shell answering:
+  **PASS**.
+- Standard checks with `--manifest`: all pass, 0 of 300 starts failed.
+- No panic or unhandled exception on serial.
+- `/srv/tftp/redox` has the stable image again; stable booted at 21:02 UTC.
