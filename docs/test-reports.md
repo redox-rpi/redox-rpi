@@ -2264,21 +2264,29 @@ Stable image restored afterwards.
 
 Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timerd`, `timerd-test`, `timesync`, `timezone`. test 49 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zone Europe/Berlin), Pi test agent
 
-**Stopped: the Pi hung about 2 minutes after the login prompt.** Image
-`~/tz-images/netboot-harddrive.img` (the row's build; the folder now also has
-a newer `tz-netboot-harddrive.img` from 08:23).
+**Pass, but the Pi froze for 7 minutes.** Image `~/tz-images/netboot-harddrive.img`
+(the row's build; the folder now also has a newer `tz-netboot-harddrive.img`
+from 08:23).
 
-- Boot normal: `timerd: clock set by timesync, 2026-10-30 09:27:45
-  Europe/Berlin`, and the timer lines show local times (`next run 2026-10-30
-  09:28:00 Europe/Berlin`). `test-catchup` caught up a run missed since
-  2026-10-29 12:50 and ran `uname` (exit 0).
-- The last serial line, at 09:28:00 local, is `timerd: test-minute: starting
-  date (scheduled)`. After that nothing more came: no further timer runs, no
-  echo on the serial console, no answer to ARP from homenodellm (`No route to
-  host`). devsh never answered. The Shelly plug is on and reads 4.3 W.
-- So no `date`, `/etc/localtime` or standard checks. For comparison, the build
-  host shows `Fri Oct 30 09:29:31 CET 2026` and `date -d @1782907200` →
-  `Wed Jul  1 14:00:00 CEST 2026`.
-- The Pi needs a power cycle (the plug, the user's OK). The image in
-  `/srv/tftp/redox` is still this one; it goes back to stable before the next
-  boot.
+- `date`: `Fri Oct 30 09:36:09 CET 2026`, `date -u`: `08:36:10 UTC`, the same
+  as `TZ=Europe/Berlin date` on homenodellm: **pass**.
+- `ls -l /etc/localtime`: `-> /usr/share/zoneinfo/Europe/Berlin`. `date -d
+  '@1782907200'`: `Wed Jul  1 14:00:00 CEST 2026`: **pass**.
+- timerd logs local times (`clock set by timesync, 2026-10-30 09:27:45
+  Europe/Berlin`, `next run … Europe/Berlin`). `test-catchup` caught up a run
+  missed since 2026-10-29 12:50, and `test-minute` and `test-catchup` run
+  every minute: **pass**.
+- Standard checks pass, 0 of 300 starts failed.
+- **Freeze:** from 08:28:00 to 08:35:19 UTC (about 2 minutes after the login
+  prompt) the whole Pi stopped: no serial echo, no ARP answer, devsh down, no
+  timer runs. The plug read 4.3 W. Then it carried on by itself: `timerd:
+  test-catchup: exited with code 0 after 438.0 s` and the same for
+  `test-minute`. Afterwards `free` showed 583 MB free (of 745 MB).
+  `/scheme/sys/stat` had CPU 0 busy 440 s and CPU 3 busy 439 s, the other two
+  under 3 s. In `/scheme/sys/context` the initfs `redoxfs` had ACTTIME 7 min 20 s
+  and SCHTIME 1 min 18 s, and `dwc2d` sat at `UR+` on `#2` (as in test 82). So
+  the initfs `redoxfs` was busy for the whole freeze. This build is old
+  (v0.3.0-dev-98, before `ctx-leak-fix`). No panic or new exception in the
+  serial log (only the usual `pcid` one).
+
+Stable image restored afterwards.
