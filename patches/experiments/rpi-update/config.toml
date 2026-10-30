@@ -17,6 +17,22 @@ args = ["/scheme/disk.mmc/0p0", "boot"]
 type = "oneshot_async"
 """
 
+# After a tryboot start: rpi-boot-stub armed the watchdog (about 16 s);
+# keep restarting it until commit, at most 2 minutes. Otherwise this does
+# nothing.
+[[files]]
+path = "/usr/lib/init.d/05_rpi-update-watchdog.service"
+data = """
+[unit]
+description = "Watchdog of a tryboot start until rpi-update commit"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "rpi-update"
+args = ["watchdog"]
+type = "oneshot_async"
+"""
+
 # After a tryboot start of a new slot: the system came up this far, so it
 # stays. Without a tryboot start this does nothing.
 [[files]]

@@ -41,6 +41,16 @@ const PF_DEV: u64 = (0b01 << 8) | (2 << 2); // outer shareable, MAIR index 2
 /// PL011 UART of the BCM2837 (Pi 3, 3B+, Zero 2 W); the firmware set it up.
 const UART: usize = 0x3F20_1000;
 
+/// Power management watchdog of the BCM2837, as in the kernel's bcm2835_wdt.
+const PM: usize = 0x3F10_0000;
+const PM_RSTC: usize = 0x1c;
+const PM_WDOG: usize = 0x24;
+const PM_PASSWORD: u32 = 0x5a00_0000;
+const PM_RSTC_WRCFG_CLR: u32 = 0xffff_ffcf;
+const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x0000_0020;
+/// Longest timeout: 20 bits of 16 µs ticks, about 16.8 s.
+const PM_WDOG_MAX: u32 = 0x000f_ffff;
+
 const KERNEL_LEN: usize = include_bytes!(env!("REDOX_KERNEL")).len();
 
 #[repr(C, align(4096))]
@@ -472,8 +482,12 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     // is in /chosen bootargs. Words of the form NAME=value with an upper-case
     // NAME are Redox environment variables, as with the bootloader's
     // environment editor; the firmware's lower-case Linux options are left out.
+    let mut tryboot = false;
+    let mut watchdog_off = false;
     if let Some(bootargs) = bootargs {
         for word in bootargs.split_ascii_whitespace() {
+            tryboot |= word == "REDOX_RPI_TRYBOOT=1";
+            watchdog_off |= word == "REDOX_RPI_WATCHDOG=off";
             if let Some((name, _)) = word.split_once('=') {
                 if !name.is_empty()
                     && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
@@ -483,6 +497,13 @@ unsafe fn boot(dtb_addr: u64) -> ! {
                 }
             }
         }
+    }
+    // A tryboot start of a new slot (rpi-update): if the new kernel hangs,
+    // the watchdog resets the board and the firmware starts config.txt, the
+    // old slot. `rpi-update watchdog` takes over in userspace until commit.
+    let watchdog = tryboot && !watchdog_off;
+    if watchdog {
+        let _ = writeln!(env, "RPI_WATCHDOG_ARMED=1");
     }
 
     unsafe {
@@ -517,6 +538,12 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     }
 
     let ttbr = unsafe { build_page_tables(ram, kernel_base, kernel_size) };
+    if watchdog {
+        println!("rpi-boot-stub: tryboot start, watchdog armed for 16 s");
+        unsafe { arm_watchdog() };
+    } else if tryboot {
+        println!("rpi-boot-stub: tryboot start, watchdog off (REDOX_RPI_WATCHDOG=off)");
+    }
     println!("rpi-boot-stub: starting the kernel at {:#x}", entry);
 
     unsafe {
@@ -534,6 +561,19 @@ unsafe fn boot(dtb_addr: u64) -> ! {
             entry,
             addr_of!(ARGS) as u64,
         )
+    }
+}
+
+/// Starts the watchdog with its longest timeout and a full reset when it
+/// runs out, the same register writes as Linux' bcm2835_wdt_start.
+unsafe fn arm_watchdog() {
+    unsafe {
+        core::ptr::write_volatile((PM + PM_WDOG) as *mut u32, PM_PASSWORD | PM_WDOG_MAX);
+        let rstc = core::ptr::read_volatile((PM + PM_RSTC) as *const u32);
+        core::ptr::write_volatile(
+            (PM + PM_RSTC) as *mut u32,
+            PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET,
+        );
     }
 }
 

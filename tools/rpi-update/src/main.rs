@@ -15,12 +15,20 @@
 //!     rpi-update try             set the firmware's tryboot flag, reboot
 //!     rpi-update commit          after a tryboot start: config.txt points at
 //!                                the new slot from now on
+//!     rpi-update watchdog        after a tryboot start: keeps the watchdog
+//!                                from resetting until commit, at most 2 min
 //!
 //! The firmware reads tryboot.txt instead of config.txt once, after a reboot
 //! with the tryboot flag. tryboot.txt adds REDOX_RPI_TRYBOOT=1 to the command
 //! line, which rpi-boot-stub passes into the environment (/scheme/sys/env).
 //! If the new system does not come up, the next reset boots the old slot
 //! again: the flag is gone and config.txt still names it.
+//!
+//! So that this also happens without a power cycle, rpi-boot-stub arms the
+//! watchdog in a tryboot start (about 16 s, the longest it can wait).
+//! `rpi-update watchdog`, started early by init, restarts it every few
+//! seconds until `commit` has run; if that does not happen within
+//! WATCHDOG_DEADLINE, it stops and the watchdog resets the board.
 //!
 //! The server directory (scripts/publish-rpi-update.sh) has kernel8.img,
 //! initramfs, SHA256SUMS and BUILD_ID. Plain HTTP on the home network.
@@ -29,9 +37,12 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::net::TcpStream;
 use std::os::unix::fs::FileExt;
+use std::os::unix::io::AsRawFd;
+use std::path::Path;
 use std::process;
+use std::ptr;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
@@ -40,6 +51,22 @@ const CONF: &str = "/etc/rpi-update.conf";
 const TRY_MARK: &str = "REDOX_RPI_TRYBOOT=1";
 /// SET_REBOOT_FLAGS: bit 0 makes the firmware read tryboot.txt once.
 const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
+/// Set by rpi-boot-stub when it armed the watchdog.
+const WATCHDOG_MARK: &str = "RPI_WATCHDOG_ARMED=1";
+/// Written by commit; the watchdog loop stops when it sees it.
+const COMMITTED: &str = "/tmp/rpi-update-committed";
+const WATCHDOG_DEADLINE: Duration = Duration::from_secs(120);
+const WATCHDOG_PET: Duration = Duration::from_secs(4);
+
+// Power management watchdog of the BCM2837 (Pi 3, 3B+, Zero 2 W).
+const PM_BASE: usize = 0x3F10_0000;
+const PM_RSTC: usize = 0x1c;
+const PM_WDOG: usize = 0x24;
+const PM_PASSWORD: u32 = 0x5a00_0000;
+const PM_RSTC_WRCFG_CLR: u32 = 0xffff_ffcf;
+const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x0000_0020;
+const PM_RSTC_RESET: u32 = 0x0000_0102;
+const PM_WDOG_MAX: u32 = 0x000f_ffff;
 
 struct Slot {
     kernel: &'static str,
@@ -83,8 +110,55 @@ fn config_for(config: &str, slot: usize, cmdline: Option<&str>) -> String {
     out
 }
 
+fn env_has(word: &str) -> bool {
+    fs::read_to_string("/scheme/sys/env").is_ok_and(|env| env.lines().any(|l| l.trim() == word))
+}
+
 fn in_tryboot() -> bool {
-    fs::read_to_string("/scheme/sys/env").is_ok_and(|env| env.lines().any(|l| l.trim() == TRY_MARK))
+    env_has(TRY_MARK)
+}
+
+/// The power management registers, mapped from /scheme/memory.
+struct Pm(*mut u32);
+
+impl Pm {
+    fn map() -> io::Result<Pm> {
+        let mem = fs::OpenOptions::new().read(true).write(true).open("/scheme/memory/physical@dev")?;
+        let p = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                4096,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                mem.as_raw_fd(),
+                PM_BASE as libc::off_t,
+            )
+        };
+        if p == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Pm(p as *mut u32))
+    }
+
+    fn read(&self, reg: usize) -> u32 {
+        unsafe { ptr::read_volatile(self.0.add(reg / 4)) }
+    }
+
+    fn write(&self, reg: usize, value: u32) {
+        unsafe { ptr::write_volatile(self.0.add(reg / 4), PM_PASSWORD | value) }
+    }
+
+    /// Restarts the countdown (Linux' bcm2835_wdt_start).
+    fn pet(&self) {
+        self.write(PM_WDOG, PM_WDOG_MAX);
+        let rstc = self.read(PM_RSTC) & !0xff00_0000;
+        self.write(PM_RSTC, (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET);
+    }
+
+    /// Stops the watchdog (Linux' bcm2835_wdt_stop).
+    fn stop(&self) {
+        self.write(PM_RSTC, PM_RSTC_RESET);
+    }
 }
 
 fn server_url(arg: Option<&String>) -> io::Result<String> {
@@ -269,6 +343,7 @@ fn commit() -> io::Result<()> {
     }
     let Ok(t) = fs::read_to_string(boot("tryboot.txt")) else {
         println!("no tryboot.txt, already committed");
+        stop_watchdog();
         return Ok(());
     };
     let slot = slot_of(&t).ok_or_else(|| io::Error::other("tryboot.txt starts no known slot"))?;
@@ -277,7 +352,48 @@ fn commit() -> io::Result<()> {
     fs::remove_file(boot("tryboot.txt"))?;
     let _ = fs::remove_file(boot("cmdline-try.txt"));
     println!("slot {} committed", ["a", "b"][slot]);
+    stop_watchdog();
     Ok(())
+}
+
+/// Tells the watchdog loop that commit is done and stops the watchdog.
+fn stop_watchdog() {
+    if !env_has(WATCHDOG_MARK) {
+        return;
+    }
+    let _ = fs::write(COMMITTED, "");
+    match Pm::map() {
+        Ok(pm) => {
+            pm.stop();
+            println!("watchdog stopped");
+        }
+        Err(e) => eprintln!("rpi-update: watchdog: {e}"),
+    }
+}
+
+fn watchdog() -> io::Result<()> {
+    if !env_has(WATCHDOG_MARK) {
+        println!("watchdog not armed by rpi-boot-stub, nothing to do");
+        return Ok(());
+    }
+    let pm = Pm::map()?;
+    let start = Instant::now();
+    println!("watchdog: restarting it until commit, at most {} s", WATCHDOG_DEADLINE.as_secs());
+    loop {
+        if Path::new(COMMITTED).exists() {
+            pm.stop();
+            println!("watchdog: committed after {} s, stopped", start.elapsed().as_secs());
+            return Ok(());
+        }
+        if start.elapsed() >= WATCHDOG_DEADLINE {
+            println!("watchdog: no commit after {} s, the old slot starts in about 16 s", WATCHDOG_DEADLINE.as_secs());
+            loop {
+                thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        pm.pet();
+        thread::sleep(WATCHDOG_PET);
+    }
 }
 
 fn main() {
@@ -287,8 +403,9 @@ fn main() {
         Some("fetch") => fetch(args.get(2)),
         Some("try") => try_boot(),
         Some("commit") => commit(),
+        Some("watchdog") => watchdog(),
         _ => {
-            eprintln!("usage: rpi-update status|fetch [<url>]|try|commit");
+            eprintln!("usage: rpi-update status|fetch [<url>]|try|commit|watchdog");
             process::exit(2);
         }
     };
