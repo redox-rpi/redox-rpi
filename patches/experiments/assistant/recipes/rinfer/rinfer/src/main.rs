@@ -171,7 +171,7 @@ fn main() -> anyhow::Result<()> {
     }
     // candle preallocates a 4096-position key/value cache per layer (900 MiB
     // for Qwen3 0.6B). Redox backs it with real memory and has no swap, so
-    // start small; the cache doubles when a reply needs more.
+    // start small; the cache grows when a reply needs more.
     if std::env::var_os("CANDLE_KV_CACHE_LEN").is_none() {
         std::env::set_var("CANDLE_KV_CACHE_LEN", "256");
     }
@@ -182,8 +182,11 @@ fn main() -> anyhow::Result<()> {
 
     let t0 = Instant::now();
     let mut file = ModelReader::open(path)?;
-    let content = gguf_file::Content::read(&mut file)?;
+    let mut content = gguf_file::Content::read(&mut file)?;
     let tokenizer = Tokenizer::from_gguf(&content)?;
+    // The tokenizer's 300,000 strings (27 MiB) are no longer needed; free
+    // them before the weights take the memory.
+    content.metadata.retain(|k, _| !k.starts_with("tokenizer."));
     let device = Device::Cpu;
     let mut model = ModelWeights::from_gguf(content, &mut file, &device)?;
     eprintln!(
