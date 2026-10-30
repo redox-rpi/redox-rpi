@@ -13,9 +13,7 @@
 # rotary tables cover 4096 positions instead of 40,960 (30 MiB less); the
 # cache can be saved to a file and loaded again. redox-thread-pool.patch:
 # candle's worker pool hung on Redox because a wakeup from thread::unpark
-# was sometimes lost; idle workers there poll instead, yielding while work
-# came in the last 100 ms (CANDLE_POOL_IDLE_MS), since a sleep lasts a
-# whole 10 ms timer tick.
+# was sometimes lost; idle workers there poll with a short sleep instead.
 [source]
 git = "https://github.com/huggingface/candle.git"
 rev = "12bb5d1f6350f4ea9827d9086f213feec1f0af6a"
