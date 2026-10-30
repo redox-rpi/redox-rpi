@@ -105,9 +105,10 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     `getty` and `bcm2835-sdhci` each used 11 to 12 minutes of CPU. Not a
     mouse problem; to be checked on the Pi.
   - Some moves arrived late or merged with later ones. That was the test
-    setup: QEMU's monitor `mouse_move` went to QEMU's current pointer
-    without `mouse_set` to the USB mouse. With `mouse_set` the USB session
-    saw every move arrive within 3 s.
+    helper: while sending moves it read neither QEMU's serial output nor
+    the monitor's replies, so `dwc2d` blocked writing its event log to the
+    serial console. With both read, the moves arrive as sent; the USB
+    session's own runs never showed it.
 
 ## What is missing
 
