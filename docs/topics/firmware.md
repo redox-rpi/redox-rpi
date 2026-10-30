@@ -15,6 +15,10 @@
 
 - Bluetooth, [#54](https://github.com/redox-rpi/redox-rpi/issues/54)
   (outlook for v0.9.0), see below.
+- `cputop` ([#58](https://github.com/redox-rpi/redox-rpi/issues/58), branch
+  `cputop`): CPU time per core and per thread over an interval, to find
+  what keeps a core busy. It is for the ondemand governor (#23), which saw
+  no idle Pi in test #25; Pi test #82 uses it.
 
 ## Bluetooth
 
