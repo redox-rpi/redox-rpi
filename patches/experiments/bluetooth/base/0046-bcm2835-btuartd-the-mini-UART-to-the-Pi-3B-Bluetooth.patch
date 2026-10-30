@@ -1,7 +1,7 @@
-From 7249690a594a7c38c2f55651d0a246a9f9b4a5be Mon Sep 17 00:00:00 2001
+From 351661fe6c1022e3f317c3133c31e32761de59e3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:13:56 +0100
-Subject: [PATCH 46/49] bcm2835-btuartd: the mini UART to the Pi 3B+ Bluetooth
+Subject: [PATCH 46/50] bcm2835-btuartd: the mini UART to the Pi 3B+ Bluetooth
  chip as a scheme
 
 The serial console keeps the PL011, so the Bluetooth chip on GPIO 30 to
@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-btuartd.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 283616f..dd27141 100644
+index 5d733268..342486be 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -54,6 +54,7 @@ members = [
@@ -38,7 +38,7 @@ index 283616f..dd27141 100644
      "drivers/rpi-firmwared",
      "drivers/redoxerd",
 diff --git a/Makefile b/Makefile
-index b3d89d3..2a3f4d9 100644
+index 7ad0f20d..83c02eea 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
@@ -52,7 +52,7 @@ index b3d89d3..2a3f4d9 100644
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-btuartd/Cargo.toml b/drivers/bcm2835-btuartd/Cargo.toml
 new file mode 100644
-index 0000000..aa8342c
+index 00000000..aa8342c0
 --- /dev/null
 +++ b/drivers/bcm2835-btuartd/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -76,7 +76,7 @@ index 0000000..aa8342c
 +workspace = true
 diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
 new file mode 100644
-index 0000000..0a66e16
+index 00000000..0a66e16a
 --- /dev/null
 +++ b/drivers/bcm2835-btuartd/src/main.rs
 @@ -0,0 +1,370 @@
@@ -452,7 +452,7 @@ index 0000000..0a66e16
 +}
 diff --git a/drivers/bcm2835-btuartd/src/uart.rs b/drivers/bcm2835-btuartd/src/uart.rs
 new file mode 100644
-index 0000000..fa3e00c
+index 00000000..fa3e00c5
 --- /dev/null
 +++ b/drivers/bcm2835-btuartd/src/uart.rs
 @@ -0,0 +1,99 @@
@@ -556,7 +556,7 @@ index 0000000..fa3e00c
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8bf7bac..9f44670 100644
+index 286d5fa0..9d9f8917 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -5,6 +5,7 @@ requires_weak = [
@@ -564,12 +564,12 @@ index 8bf7bac..9f44670 100644
      "40_ps2d.service",
      "40_bcm2835-gpiod.service",
 +    "41_bcm2835-btuartd.service",
-     "40_bcm2835-sdhcid.service",
+     "40_bcm2835-sdhostd.service",
      "40_dwc2d.service",
      "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-btuartd.service b/init.initfs.d/41_bcm2835-btuartd.service
 new file mode 100644
-index 0000000..fcc4a60
+index 00000000..fcc4a60f
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-btuartd.service
 @@ -0,0 +1,9 @@
@@ -583,5 +583,5 @@ index 0000000..fcc4a60
 +cmd = "bcm2835-btuartd"
 +type = { scheme = "btuart" }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

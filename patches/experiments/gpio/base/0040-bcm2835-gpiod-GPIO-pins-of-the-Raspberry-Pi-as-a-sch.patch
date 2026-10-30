@@ -1,4 +1,4 @@
-From d23122238dc39ad8cf063d6033d66a1005f6e213 Mon Sep 17 00:00:00 2001
+From 5d87fc320af95dc06f4864b470f2cd482d0e3684 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:10:38 +0100
 Subject: [PATCH 40/42] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a
@@ -26,7 +26,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/40_bcm2835-gpiod.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 471b877..283616f 100644
+index 4bded670..5d733268 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -54,6 +54,7 @@ members = [
@@ -38,7 +38,7 @@ index 471b877..283616f 100644
      "drivers/redoxerd",
  
 diff --git a/Makefile b/Makefile
-index 0de2883..b3d89d3 100644
+index 263a5c43..7ad0f20d 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
@@ -52,7 +52,7 @@ index 0de2883..b3d89d3 100644
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-gpiod/Cargo.toml b/drivers/bcm2835-gpiod/Cargo.toml
 new file mode 100644
-index 0000000..ce60ee0
+index 00000000..ce60ee01
 --- /dev/null
 +++ b/drivers/bcm2835-gpiod/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -76,7 +76,7 @@ index 0000000..ce60ee0
 +workspace = true
 diff --git a/drivers/bcm2835-gpiod/src/gpio.rs b/drivers/bcm2835-gpiod/src/gpio.rs
 new file mode 100644
-index 0000000..4cfa52a
+index 00000000..4cfa52a5
 --- /dev/null
 +++ b/drivers/bcm2835-gpiod/src/gpio.rs
 @@ -0,0 +1,170 @@
@@ -252,7 +252,7 @@ index 0000000..4cfa52a
 +}
 diff --git a/drivers/bcm2835-gpiod/src/main.rs b/drivers/bcm2835-gpiod/src/main.rs
 new file mode 100644
-index 0000000..c2d10b1
+index 00000000..c2d10b1f
 --- /dev/null
 +++ b/drivers/bcm2835-gpiod/src/main.rs
 @@ -0,0 +1,324 @@
@@ -582,7 +582,7 @@ index 0000000..c2d10b1
 +}
 diff --git a/init.initfs.d/40_bcm2835-gpiod.service b/init.initfs.d/40_bcm2835-gpiod.service
 new file mode 100644
-index 0000000..3668b51
+index 00000000..3668b51c
 --- /dev/null
 +++ b/init.initfs.d/40_bcm2835-gpiod.service
 @@ -0,0 +1,8 @@
@@ -595,7 +595,7 @@ index 0000000..3668b51
 +cmd = "bcm2835-gpiod"
 +type = { scheme = "gpio" }
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8741d3d..8bf7bac 100644
+index 89351d05..286d5fa0 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -4,6 +4,7 @@ requires_weak = [
@@ -603,9 +603,9 @@ index 8741d3d..8bf7bac 100644
      "20_graphics.target",
      "40_ps2d.service",
 +    "40_bcm2835-gpiod.service",
-     "40_bcm2835-sdhcid.service",
+     "40_bcm2835-sdhostd.service",
      "40_dwc2d.service",
      "40_hwd.service",
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

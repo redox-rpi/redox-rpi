@@ -1,8 +1,8 @@
-From 7f7f98c83d744fe7813a46ed0cbd7fbb9373f115 Mon Sep 17 00:00:00 2001
+From a8e4a017514083ae51852a64afb0144cf3b5f237 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 12:43:14 +0100
-Subject: [PATCH] bcm2835-btuartd: flow and status files to find out what the
- chip needs
+Subject: [PATCH 50/50] bcm2835-btuartd: flow and status files to find out what
+ the chip needs
 
 flow selects hardware RTS/CTS with the reset assert levels (auto, the
 start setting), with both lines asserted low (auto-low), or no flow
@@ -14,7 +14,7 @@ the FIFO levels and the raw registers.
  2 files changed, 92 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
-index 588991b..ef0283a 100644
+index 588991b0..ef0283ad 100644
 --- a/drivers/bcm2835-btuartd/src/main.rs
 +++ b/drivers/bcm2835-btuartd/src/main.rs
 @@ -10,6 +10,11 @@
@@ -112,7 +112,7 @@ index 588991b..ef0283a 100644
      };
      let socket = Socket::create().expect("bcm2835-btuartd: failed to create the btuart scheme");
 diff --git a/drivers/bcm2835-btuartd/src/uart.rs b/drivers/bcm2835-btuartd/src/uart.rs
-index fa3e00c..f5b9aaf 100644
+index fa3e00c5..f5b9aaf1 100644
 --- a/drivers/bcm2835-btuartd/src/uart.rs
 +++ b/drivers/bcm2835-btuartd/src/uart.rs
 @@ -12,7 +12,9 @@ const MU_IIR: usize = 0x48;
@@ -209,5 +209,5 @@ index fa3e00c..f5b9aaf 100644
          unsafe { self.regs.add(offset / 4).read_volatile() }
      }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

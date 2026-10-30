@@ -1,7 +1,7 @@
-From a04b1b4f729f4d7f8c06294f88182b111848e041 Mon Sep 17 00:00:00 2001
+From 6aadf951d6b0d997969c5dc9296aa2f3f145985c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:04:12 +0100
-Subject: [PATCH 47/49] bcm2835-btuartd: poll instead of a timed Condvar wait,
+Subject: [PATCH 47/50] bcm2835-btuartd: poll instead of a timed Condvar wait,
  check that sleeping works
 
 In QEMU the first read on data never came back. Reads now poll the
@@ -14,7 +14,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 65 insertions(+), 19 deletions(-)
 
 diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
-index 0a66e16..d5b016a 100644
+index 0a66e16a..d5b016a5 100644
 --- a/drivers/bcm2835-btuartd/src/main.rs
 +++ b/drivers/bcm2835-btuartd/src/main.rs
 @@ -20,9 +20,10 @@
@@ -170,5 +170,5 @@ index 0a66e16..d5b016a 100644
          .process_requests_blocking(scheme)
          .expect("bcm2835-btuartd: failed to process requests");
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

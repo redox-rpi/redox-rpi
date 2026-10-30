@@ -1,7 +1,7 @@
-From e541b464265f712363417c6b4dd9cab753b4e73b Mon Sep 17 00:00:00 2001
+From aab3d42e6cecfa692a2b41bb5c9b414894b52f9c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:11:39 +0100
-Subject: [PATCH 45/49] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
+Subject: [PATCH 45/50] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
  Bluetooth chip
 
 BT_ON hangs on the firmware's GPIO expander (pin 0, firmware GPIO 128),
@@ -14,7 +14,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 36 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 75ed4c5..7be4e2c 100644
+index 75ed4c5c..7be4e2c0 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -19,6 +19,9 @@
@@ -92,5 +92,5 @@ index 75ed4c5..7be4e2c 100644
  /// bits 4-11 are the type, bits 20-22 the memory size.
  fn decode_revision(revision: u32) -> Option<(&'static str, &'static str)> {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

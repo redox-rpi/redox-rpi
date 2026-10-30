@@ -1,7 +1,7 @@
-From 4628675a00f9ba09c1f7cbaa7c4c9e05ea8f9fee Mon Sep 17 00:00:00 2001
+From cbe30536e092a816a710134270a6c7bc5bc751cf Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:23:23 +0100
-Subject: [PATCH 48/49] bcm2835-btuartd: a read with nothing received returns 0
+Subject: [PATCH 48/50] bcm2835-btuartd: a read with nothing received returns 0
  bytes, not EAGAIN
 
 The blocking scheme handler parks a request that answers EAGAIN and
@@ -13,7 +13,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
-index d5b016a..d4f8afe 100644
+index d5b016a5..d4f8afea 100644
 --- a/drivers/bcm2835-btuartd/src/main.rs
 +++ b/drivers/bcm2835-btuartd/src/main.rs
 @@ -3,7 +3,8 @@
@@ -45,5 +45,5 @@ index d5b016a..d4f8afe 100644
              pause();
          };
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

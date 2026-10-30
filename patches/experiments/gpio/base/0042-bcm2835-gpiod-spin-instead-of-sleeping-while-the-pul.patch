@@ -1,4 +1,4 @@
-From 2822f9fa4d6c53c62494513f7ca83db19cef6e5e Mon Sep 17 00:00:00 2001
+From 38996d84e3ed12e67ff8899adbf898ad1199e284 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:33:40 +0100
 Subject: [PATCH 42/42] bcm2835-gpiod: spin instead of sleeping while the pull
@@ -17,7 +17,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 13 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/bcm2835-gpiod/src/gpio.rs b/drivers/bcm2835-gpiod/src/gpio.rs
-index 4cfa52a..8128ca7 100644
+index 4cfa52a5..8128ca7a 100644
 --- a/drivers/bcm2835-gpiod/src/gpio.rs
 +++ b/drivers/bcm2835-gpiod/src/gpio.rs
 @@ -1,8 +1,7 @@
@@ -58,5 +58,5 @@ index 4cfa52a..8128ca7 100644
  mod tests {
      use super::*;
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
