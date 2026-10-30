@@ -27,7 +27,7 @@
   time and `timerd -t`. Branch `timezone` (on top of `timerd`), experiment
   `timezone` ([README](../../patches/experiments/timezone/README.md)).
   **Pi test 95 passed** (CET/CEST at both 2026 switches, no freeze in 20
-  minutes); draft pull request after #59 (v0.5.0).
+  minutes); draft pull request #102, after #59 (v0.5.0).
 
 ## Next
 
