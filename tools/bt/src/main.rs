@@ -29,6 +29,7 @@ const POWER: &str = "/scheme/rpi-firmware/bt_power";
 const CLOCKS: &str = "/scheme/rpi-firmware/clocks";
 const FLOW: &str = "/scheme/btuart/flow";
 const STATUS: &str = "/scheme/btuart/status";
+const LPO: &str = "/scheme/btuart/lpo";
 /// CTS, RTS, TX and RX of the mini UART, and GPIO 43 (GPCLK2 in Linux's
 /// devicetree for the 3B+, the chip's 32 kHz sleep clock).
 const DIAG_PINS: &[u32] = &[30, 31, 32, 33, 43];
@@ -432,6 +433,18 @@ fn diag() -> io::Result<()> {
         let pull = fs::read_to_string(format!("/scheme/gpio/{pin}/pull")).unwrap_or_else(|e| format!("({e})"));
         println!("gpio {pin}: mode {}, level {}, pull {}", mode.trim(), value.trim(), pull.trim());
     }
+    // A running 32 kHz clock reads as a mix of 0 and 1.
+    let (mut ones, mut zeros) = (0, 0);
+    for _ in 0..200 {
+        match fs::read_to_string("/scheme/gpio/43/value").map(|v| v.trim().to_string()).as_deref() {
+            Ok("1") => ones += 1,
+            Ok("0") => zeros += 1,
+            _ => {}
+        }
+    }
+    println!("gpio 43 sampled 200 times: {ones} high, {zeros} low");
+    let lpo = fs::read_to_string(LPO).unwrap_or_default();
+    println!("lpo: {}", lpo.lines().collect::<Vec<_>>().join(", "));
     println!("bt_power: {}", fs::read_to_string(POWER).unwrap_or_default().trim());
     power_cycle();
     update_clock();
