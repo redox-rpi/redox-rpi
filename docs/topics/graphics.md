@@ -267,6 +267,15 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   - **Memory with a terminal:** 194 MiB used (login window plus
     `orbterm`); the biggest part is the decoded background picture (84
     MB in `background`).
+  - **Mouse** (branch `graphics-gui-mouse`, this work merged with the
+    USB session's `usb-mouse`, #48; image
+    `v0.3.0-dev-222-g67cef7a+xd99d`): in QEMU the pointer moves, hovering
+    shows the launcher's tooltips and the buttons arrive, with no change
+    in Orbital or `rpi-fbd`. A click on the terminal icon opened no
+    window within 90 s, because forks were very slow in that run (`getty`
+    and `bcm2835-sdhci` each used 11 to 12 minutes of CPU). Motion left
+    over after a burst arrived only with the next event (QEMU or
+    `dwc2d`'s polling; with the USB session).
   - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
     the display size (probably 1920x1080, then single buffered with
     `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
@@ -285,10 +294,10 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 - Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
   login to desktop time, frame rate with `drawbench`, terminal speed,
   memory. With the NanoKVM most screen checks need no person.
-- For a usable desktop: a USB mouse in `dwc2d` (boot protocol, like the
-  keyboard: about 300 lines, estimate a few hours plus a Pi test with a
-  mouse), then keyboard and mouse at the same time (more host channels,
-  hotplug from the `usb-hotplug` work).
+- For a usable desktop: the USB mouse works in QEMU (`usb-mouse` on
+  `usb-hotplug`, #48, keyboard and mouse at the same time); next is the
+  Pi test with a mouse (the NanoKVM's USB can be one) and then `usb-mouse`
+  and the graphics branches on main once their Pi tests pass.
 
 ## Effort: estimate and what it took
 
@@ -306,6 +315,7 @@ on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 | Orbital on `rpi-fbd` (`graphics-gui`): login window on screen | not estimated | 20 minutes (a config file, binary packages) | 25 (config) |
 | … then input, memory, frame rate, two `rpi-fbd` fixes, `drawbench` | not estimated | 1 hour more, most of it QEMU runs (each 5 to 15 minutes, the emulated desktop is slow) | 20 (driver), 3 (Makefile) |
 | … keyboard in Orbital, terminal window, its speed and memory | not estimated | 1.5 hours, almost all QEMU runs (keys get lost while the emulated desktop is busy) | 5 (config: `cosmic-term` link) |
+| … mouse in Orbital (the USB session's `usb-mouse` merged in) | a few hours | 1 hour, one build and two QEMU runs; the driver was the USB session's | 0 |
 
 So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
 it went fast: every part had a template in Redox (`vesad` for the
