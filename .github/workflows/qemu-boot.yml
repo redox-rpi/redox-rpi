@@ -1,15 +1,16 @@
 name: QEMU boot test
 
-# Builds the latest upstream Redox kernel with this repository's patches and
-# boots it with the latest daily server image in QEMU's Raspberry Pi 3 machine.
-# Runs daily as well, to notice upstream changes that break the Pi.
+# Checks that all patches apply to the upstream commits pinned in
+# config/upstream.lock, builds the pinned kernel with our patches and boots it
+# with the latest daily server image in QEMU's Raspberry Pi 3 machine.
+# upstream-weekly.yml does the same with the latest upstream sources.
+# The full image from the pinned sources is built and tested on the real Pi
+# every night on the build host (scripts/update-stable.sh).
 
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "0 5 * * *"
   workflow_dispatch:
 
 jobs:
@@ -24,7 +25,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-arm zstd
 
-      - name: Build kernel
+      - name: Check patches on the pinned commits
+        run: scripts/check-patches.sh
+
+      - name: Build kernel (pinned commit)
         run: scripts/build-kernel.sh
 
       - name: Build redoxfs-file
