@@ -17,8 +17,13 @@ Base `0025`, `netstack`:
   - resolves IPv6 next hops with a solicitation to the solicited-node group;
   - IPv6 multicast to `33:33` + the low 32 bits;
   - up to 3 router solicitations, 4 s apart;
-  - from a router advertisement: the router (lifetime above 0) and, for a
-    /64 prefix with the autonomous flag, the SLAAC address (RFC 4862).
+  - from a router advertisement: the router (lifetime above 0) and, for
+    each /64 prefix with the autonomous flag, a SLAAC address (RFC 4862).
+    Since base `0029` every prefix counts (smoltcp keeps only the last
+    one, so with the Fritz!Box's global and unique local prefix only the
+    unique local address came up, Pi tests #47 and #55); global addresses
+    come first and are the source off-link, and a router lifetime of 0
+    ends only the router that sent it.
 - Smolnetd copies the link's addresses and router into smoltcp and the
   route table: `fe80::/64`, `ff00::/8`, the prefix, `::/0` via the router,
   and `::1` on the loopback device. `cat /scheme/netcfg/ifaces/eth0/addr/list`
