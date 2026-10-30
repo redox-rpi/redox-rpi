@@ -30,7 +30,7 @@
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
-  (on `usb-hotplug`), experiment `usb-storage` (base `0033` there).
+  (on `usb-hotplug`), experiment `usb-storage` (base `0038` there).
   `dwc2d` serves a stick (bulk-only transport, SCSI) as the driver-block
   disk scheme `disk.usb-dwc2+<ports>-scsi`; the boot session's `fatfsd`
   mounts it. **QEMU test passes** (`scripts/test-usb-storage.sh`: read,
@@ -69,7 +69,7 @@
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
   [`usb-storage-more`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage-more)
-  (base `0038`). **QEMU passes** (`scripts/test-usb-storage.sh` 18/18);
+  (base `0039` there, on `usb-storage`). **QEMU passes** (`scripts/test-usb-storage.sh` 18/18, again after the rebase onto the hotplug base patches on 2026-10-30);
   Pi test #71 with a person, same visit as #50.
 
 ## Next
