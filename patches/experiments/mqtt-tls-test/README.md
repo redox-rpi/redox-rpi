@@ -93,3 +93,9 @@ so the measuring shell costs nothing in between:
 - Measuring with one `devsh` command a minute cost about 0.4 MB a command
   in this QEMU setup (the serial login of `devsh.py`), so the readings
   above come from long loops and a 10-minute quiet phase.
+
+**Pi test 111** (`v0.3.0-dev-463-gac3dad4+x125f`, real Pi 3B+, 2026-10-30):
+free memory fell **0.21 MB a minute** over 30 minutes with the service and
+the timer over TLS (test 89: 5.5). `ha-bridge` and `redoxfs` stay the same;
+`netstack` grows about 58 KB a minute and `randd`'s shared memory 12 KB a
+minute ([report](../../../docs/test-reports.md)).
