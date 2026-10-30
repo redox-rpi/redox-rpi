@@ -2537,3 +2537,14 @@ Real Pi 3B+ over netboot. Experiments: `relibc-tests`, `timesync`, `rtl8152`, `s
   is based on QEMU's 10 failures, and the Pi fails fewer.
 
 Stable image restored afterwards.
+
+
+## 2026-10-29: `v0.3.0-dev-260-g480ba01+xda44-dirty.371f590ffeb2` (welcome app, #24), QEMU
+
+Branch `welcome-app`, experiment `welcome`. `test-welcome.sh` answers the
+first-boot questions on the serial console: layout `gb`, hostname
+`pi-test`, no new password, Wi-Fi `TestNet` / `secret123`. The files are
+written (`/etc/net/wifi` mode 600), the passphrase is not echoed, the
+login prompt follows at once. The second boot of the same card shows no
+welcome and keeps hostname `pi-test`. **Pass.** The time zone question was
+skipped (no zone files in this image). Pi test 78 passed later; the rebased branch (`v0.3.0-dev-381-g5d6d934+xda44`, patch `0040`) passes this test as well.
