@@ -5,7 +5,7 @@ are dated January 1st. [`tools/timesync`](../../../tools/timesync) asks an
 NTP server (SNTP) for the time once the network is up and sets the clock.
 It writes the boot time, in nanoseconds since 1970, to
 `/scheme/sys/update_time_offset`, the same interface `rtcd` uses on PCs;
-relibc has no `clock_settime` yet.
+With relibc patch `0011` it uses `clock_settime`, which writes the same file.
 
 ```bash
 scripts/build-image.sh --experiment timesync
@@ -102,3 +102,8 @@ sets the clock back from NTP through the same call and saves it; a bad
 argument gives exit code 2. The built `libc.so` exports `clock_settime`
 and `settimeofday`. `date -s` still says "setting the date is not supported
 by Redox" (uutils turns it off for Redox).
+
+Pi test 66 (real Pi 3B+, same build) passed the same checks; `date -u` was
+in the same second as the build host. Again in QEMU with current main and
+`timerd` merged (`v0.3.0-dev-495-g2d6bf55+x7f63`, 2026-10-30): the same
+results, and `date -u` after `timesync` matched the host to the second.
