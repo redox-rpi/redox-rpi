@@ -19,14 +19,14 @@ A network boot has its root elsewhere, so the uuid does not match and the card
 is left alone.
 
 ```bash
-scripts/build-image.sh --sdcard --experiment timesync --experiment rtl8152 --experiment grow-root
+scripts/build-image.sh --sdcard --experiment timesync --experiment grow-root
 scripts/make-sdcard.sh --local upstream/redox/build/aarch64/sdcard/harddrive.img --small --out build/grow.img
 ```
 
 `--small` shrinks the root RedoxFS to its contents (`redoxfs-resize min`) and
 makes the root partition just as large: a 149 MiB image (23 MiB as `.xz`).
 
-Needs the sdhost base patches (branch `sdhost-default`).
+Needs the sdhost driver, which main has as base patches `0025`–`0028`.
 
 ## Results
 
