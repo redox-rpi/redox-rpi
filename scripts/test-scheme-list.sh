@@ -17,7 +17,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 log="$ROOT/images/qemu-scheme-list.log"
 boots=${BOOTS:-10}
+port=${DEVSH_PORT:-12323}
 failed=0
+noboot=0
 
 for i in $(seq "$boots"); do
     rm -f "$log"
@@ -29,10 +31,15 @@ for i in $(seq "$boots"); do
         sleep 1
     done
     sleep 3
-    pkill -P $qemu 2>/dev/null
+    # QEMU runs below the wrapper script: find it by its devshd port.
+    pkill -f "[q]emu-system-aarch64.*hostfwd=tcp::$port-" 2>/dev/null
     kill $qemu 2>/dev/null
     wait $qemu 2>/dev/null
-    if grep -aq "no network adapter found" "$log"; then
+    if ! grep -aq "redox login:" "$log"; then
+        noboot=$((noboot + 1))
+        cp "$log" "$ROOT/images/qemu-scheme-list-noboot-$i.log"
+        echo "      boot $i: no login prompt"
+    elif grep -aq "no network adapter found" "$log"; then
         failed=$((failed + 1))
         cp "$log" "$ROOT/images/qemu-scheme-list-fail-$i.log"
         echo "      boot $i: netstack found no network adapter"
@@ -41,7 +48,11 @@ for i in $(seq "$boots"); do
     fi
 done
 
-echo "$failed of $boots boots without a network adapter"
+echo "$failed of $boots boots without a network adapter, $noboot without a login prompt"
+if [ "$noboot" -gt 0 ]; then
+    echo "FAIL: every boot reached the login prompt"
+    exit 1
+fi
 if [ "$failed" -eq 0 ]; then
     echo "PASS: netstack found the network scheme in every boot"
 else
