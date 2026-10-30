@@ -95,3 +95,16 @@ announcements carry A, AAAA, the devsh records and `_ssh._tcp.local` PTR →
 multicast A yes, unicast A yes, SRV 2323 yes, SRV 22 yes, multicast AAAA
 over IPv6 yes, unicast AAAA over IPv6 yes`. Without the file (unit test)
 the service is not announced. Pi test #96 is queued.
+
+**Pi test 96** (2026-10-30, `v0.3.0-dev-341-gc3ad5d3+x59c0`, with sshd):
+**pass**. `redox-rpi.local` with A and three AAAA (link-local, global,
+ULA), `_ssh._tcp` with SRV port 22, `_devsh._tcp` with SRV port 2323,
+both in `_services._dns-sd._udp`, and an SSH login at the address mDNS
+gave. mdnsd used 0.02 s of CPU in 30 s idle.
+
+**QEMU after merging main and `ipv6`** (2026-10-30,
+`v0.3.0-dev-508-g78d2545+x3072`, without sshd): **pass**, `result:
+multicast A yes, unicast A yes, SRV 2323 yes, multicast AAAA over IPv6
+yes, unicast AAAA over IPv6 yes`. The `_devsh._tcp.local` PTR answer now
+carries SRV, TXT, A and AAAA, and `_ssh._tcp` is not announced (no
+`/usr/bin/sshd` in this image).
