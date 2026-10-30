@@ -1,0 +1,117 @@
+From f8c60d2dff9c6232c59dd1bde97943ad0b784e09 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 11:48:23 +0100
+Subject: [PATCH] dwc2d: ask again for a reply shorter than the fields read
+ from it
+
+A real Pi 3B+ got an empty reply to the first device descriptor request
+after a reset, and dwc2d panicked on head[7] (index out of bounds, len
+0). The device descriptor, hub port status and hub descriptor are now
+fetched with request_min: a short reply is asked for again up to three
+times, then the request fails with Error::Short instead of the code
+indexing past the end.
+---
+ drivers/usb/dwc2d/src/dwc2.rs      |  2 ++
+ drivers/usb/dwc2d/src/enumerate.rs | 45 +++++++++++++++++++++++++++---
+ 2 files changed, 43 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 279d8eb..dfc5d19 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -25,6 +25,8 @@ pub enum Error {
+     Stall,
+     /// Channel halted without completing, with the HCINT bits.
+     Transfer(u32),
++    /// A reply shorter than the caller needs, with its length.
++    Short(usize),
+ }
+ 
+ #[derive(Clone)]
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 1b97738..624907b 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -158,6 +158,43 @@ impl Bus {
+         }
+     }
+ 
++    /// [`Self::request`] for a reply the caller reads fixed fields from: one
++    /// shorter than `min` bytes is asked for again, and after three short
++    /// replies the request fails instead of the caller indexing past the
++    /// end. A real Pi 3B+ once got an empty reply to the first device
++    /// descriptor request after a reset.
++    pub(crate) fn request_min(
++        &mut self,
++        address: u8,
++        max_packet: u16,
++        speed: Speed,
++        request_type: u8,
++        request: u8,
++        value: u16,
++        index: u16,
++        length: u16,
++        min: usize,
++    ) -> Result<Vec<u8>, Error> {
++        const ATTEMPTS: usize = 3;
++        let mut attempt = 1;
++        loop {
++            let data = self.request(address, max_packet, speed, request_type, request, value, index, length)?;
++            if data.len() >= min {
++                return Ok(data);
++            }
++            println!(
++                "dwc2d: request {:02x?} to address {address}: {} of {min} bytes (attempt {attempt})",
++                *self.setup,
++                data.len()
++            );
++            if attempt == ATTEMPTS {
++                return Err(Error::Short(data.len()));
++            }
++            attempt += 1;
++            sleep(Duration::from_millis(10));
++        }
++    }
++
+     /// A control request with a data stage towards the device.
+     pub(crate) fn request_out(
+         &mut self,
+@@ -212,7 +249,7 @@ impl Bus {
+         // The first 8 bytes of the device descriptor hold the max packet
+         // size of endpoint 0. High-speed devices always use 64.
+         let initial_max_packet = if speed == Speed::High { 64 } else { 8 };
+-        let head = self.request(0, initial_max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8)?;
++        let head = self.request_min(0, initial_max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8, 8)?;
+         let max_packet = u16::from(head[7]);
+ 
+         let address = self.free_address()?;
+@@ -222,7 +259,7 @@ impl Bus {
+         }
+         sleep(Duration::from_millis(10));
+ 
+-        let d = self.request(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18)?;
++        let d = self.request_min(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18, 18)?;
+         let device = Device {
+             address,
+             speed,
+@@ -254,7 +291,7 @@ impl Bus {
+     }
+ 
+     fn port_status(&mut self, hub: u8, max_packet: u16, speed: Speed, port: u16) -> Result<(u16, u16), Error> {
+-        let s = self.request(hub, max_packet, speed, 0xA3, REQ_GET_STATUS, 0, port, 4)?;
++        let s = self.request_min(hub, max_packet, speed, 0xA3, REQ_GET_STATUS, 0, port, 4, 4)?;
+         Ok((u16::from_le_bytes([s[0], s[1]]), u16::from_le_bytes([s[2], s[3]])))
+     }
+ 
+@@ -267,7 +304,7 @@ impl Bus {
+         hub_tt: Option<(u8, u8)>,
+     ) -> Result<(), Error> {
+         let indent = "  ".repeat(depth);
+-        let desc = self.request(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71)?;
++        let desc = self.request_min(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71, 6)?;
+         let ports = u16::from(desc[2]);
+         let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
+         // wHubCharacteristics, bits 1:0: 00 all ports powered together,
+-- 
+2.54.0 (Apple Git-157)
+

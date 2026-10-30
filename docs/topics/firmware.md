@@ -10,12 +10,47 @@
   [#20](https://github.com/redox-rpi/redox-rpi/issues/20), Pi tests #13 and
   #19: 0 of 7000 starts failed at 1400 MHz with the x18 fix).
 - `reboot` through the watchdog (kernel patch `0002`).
+- `hwinfo` ([#35](https://github.com/redox-rpi/redox-rpi/issues/35),
+  package `hwinfo`, with `lsusb`): build and experiments, model, revision,
+  serial, memory, firmware, CPUs, clocks and governor, temperature,
+  throttling in words, number of USB devices. Pi test #32 (as experiment)
+  and #125.
 
 ## In progress
 
-- [#35](https://github.com/redox-rpi/redox-rpi/issues/35) `lsusb` and `hwinfo` (v0.7.0): experiment
-  [`hwinfo`](../../patches/experiments/hwinfo/README.md), branch `hwinfo`;
-  `dwc2d` lists its devices in `/scheme/usb.dwc2/devices` (base `0024`).
+- Bluetooth, [#54](https://github.com/redox-rpi/redox-rpi/issues/54)
+  (outlook for v0.9.0), see below.
+- `cputop` ([#58](https://github.com/redox-rpi/redox-rpi/issues/58), branch
+  `cputop`): CPU time per core and per thread over an interval, to find
+  what keeps a core busy. It is for the ondemand governor (#23), which saw
+  no idle Pi in test #25; Pi test #82 uses it.
+
+## Bluetooth
+
+The Bluetooth half of the Pi 3B+ Wi-Fi/Bluetooth chip (CYW43455,
+Bluetooth part BCM4345C0) sits on a UART at GPIO 30–33. The serial console
+keeps the PL011 (`dtoverlay=disable-bt`), so Bluetooth gets the mini UART
+(ALT5, RTS/CTS), as with Linux's `miniuart-bt` overlay. BT_ON is pin 0 of
+the firmware's GPIO expander.
+
+Branch `bluetooth`, experiment `bluetooth` (needs `gpio`):
+
+- `rpi-firmwared` `bt_power` (BT_ON).
+- Driver `bcm2835-btuartd`: `/scheme/btuart` (`data`, `baud`, `clock`).
+- Tool `bt`:
+  - `up`: power cycle, firmware `BCM4345C0.hcd` upload, reset.
+  - `info`
+  - `scan` (LE)
+  - `inquiry` (classic)
+  - `cmd`
+- Firmware downloaded at build time (package `bt-firmware`).
+
+QEMU is tested against a fake HCI controller on the mini UART. Next is a
+Pi test on the serial console only.
+
+Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
+higher baud rates. The mini UART's baud rate follows the core clock, so
+throttling garbles it.
 
 ## Later
 

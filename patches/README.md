@@ -34,18 +34,15 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0023` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link |
-| `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
-| `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
-| `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
-| `0021` | `experiments/pi-clean-boot/base/` | no PCI and audio services on the Pi |
-| `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment (the number is taken by `base/0023` since `dwc2-default`; renumbered at its merge) |
-| (at merge) | `experiments/hwinfo/base/` | `dwc2d` lists its devices in `/scheme/usb.dwc2/devices`, for `lsusb` (after `usb-hotplug`) |
+| `0001`–`0016`, `0018`, `0020`–`0028`, `0030`–`0033`, `0037`, `0053` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment), `0031` `dwc2d` finds USB devices plugged in or removed after boot, `0032` `dhcpd` tries again until the server answers, `0033` the hub port cycle command for hotplug tests (`0031`–`0033` were experiment `usb-hotplug`; #17), `0037` `dwc2d` asks again for a USB reply shorter than the fields it reads, instead of panicking (was experiment `dwc2d-short-reply`; test 98, test 105), `0053` `dwc2d` lists its devices in `/scheme/usb.dwc2/devices`, for `lsusb` (was experiment `hwinfo`, #35) |
+| `0001`–`0008` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31) |
+| `0029` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
 
 Experiments apply after all default patches. Combinations that build:
-`sdhost-driver` (with `sdhost-boot` or `sdhost-stats`), `pi-clean-boot`,
-`timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
-default patches now; the names are still accepted and do nothing.
+`sdhost-stats`, `timesync`, `ldso-diagnostics`.
+`rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
+`sdhost-boot`, `ctx-leak-fix`, `usb-hotplug`, `dwc2d-short-reply` and `hwinfo` are default patches now; the names are still accepted
+and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
 
