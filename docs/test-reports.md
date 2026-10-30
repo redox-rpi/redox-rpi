@@ -2852,3 +2852,25 @@ serial-console reset, boots 2–5 through `echo reset > /scheme/sys/kstop`.
   link up after … ms` instead.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-372-g6d1e186+x99f7`
+
+Real Pi 3B+ over netboot. Experiment: `ns-list-snapshot`. test 100 ([#79](https://github.com/redox-rpi/redox-rpi/issues/79) complete `/scheme` listings), Pi test agent
+
+**Pass: 3 of 3 boots.** Image
+`~/redox-rpi-dwc2boot/keep/nslist-v0.3.0-dev-372-g6d1e186+x99f7.img`. Boot 1
+through a serial-console reset, boots 2 and 3 through `echo reset >
+/scheme/sys/kstop`.
+
+| boot | `no network adapter found` | `ls -U -1 /scheme` | `network.` lines | standard checks |
+|---|---|---|---|---|
+| 1 | none | 37 entries, each once, sorted | 1 | pass, 0 of 300 failed |
+| 2 | none | 37, each once, sorted | 1 | pass, 0 of 300 |
+| 3 | none | 37, each once, sorted | 1 | pass, 0 of 300 |
+
+The list (the same in all three boots): `chan data debug disk.live disk.mmc
+display.vesa event fbcon.2 file icmp initfs input ip irq kernel.acpi kernel.dtb
+log logging memory netcfg network.usb_lan78xx null pipe proc pty rand
+rpi-firmware serio shm sudo sys tcp time udp uds_dgram uds_stream zero`.
+
+Stable image restored afterwards.
