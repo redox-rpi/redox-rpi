@@ -2259,3 +2259,26 @@ read back. Columns of `bcm2835-sdhostd` (`ps` shows `bcm2835-sdhos`):
 - Standard checks pass, 0 of 300 starts failed. Test file deleted.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-98-g9b91443+x9d2b`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timerd`, `timerd-test`, `timesync`, `timezone`. test 49 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zone Europe/Berlin), Pi test agent
+
+**Stopped: the Pi hung about 2 minutes after the login prompt.** Image
+`~/tz-images/netboot-harddrive.img` (the row's build; the folder now also has
+a newer `tz-netboot-harddrive.img` from 08:23).
+
+- Boot normal: `timerd: clock set by timesync, 2026-10-30 09:27:45
+  Europe/Berlin`, and the timer lines show local times (`next run 2026-10-30
+  09:28:00 Europe/Berlin`). `test-catchup` caught up a run missed since
+  2026-10-29 12:50 and ran `uname` (exit 0).
+- The last serial line, at 09:28:00 local, is `timerd: test-minute: starting
+  date (scheduled)`. After that nothing more came: no further timer runs, no
+  echo on the serial console, no answer to ARP from homenodellm (`No route to
+  host`). devsh never answered. The Shelly plug is on and reads 4.3 W.
+- So no `date`, `/etc/localtime` or standard checks. For comparison, the build
+  host shows `Fri Oct 30 09:29:31 CET 2026` and `date -d @1782907200` →
+  `Wed Jul  1 14:00:00 CEST 2026`.
+- The Pi needs a power cycle (the plug, the user's OK). The image in
+  `/srv/tftp/redox` is still this one; it goes back to stable before the next
+  boot.
