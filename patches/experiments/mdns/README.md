@@ -19,6 +19,10 @@ Needs the [`multicast`](../multicast) experiment first (joining
   exists; mdnsd looks every 30 seconds and announces again when the set
   changes.
   Announces all records twice at start and whenever the address changes.
+  A service's PTR answer carries its SRV and TXT records and the address
+  records as additional records (RFC 6763 section 12.1; Pi test 96 noted
+  that the Mac does this), so a browser has port and address after one
+  query.
   Queries from port 5353 get a multicast answer, one-shot queries from
   other ports a unicast answer with their ID and question.
 - **IPv6** (branch `mdns6`, needs the [`ipv6`](../ipv6) experiment):
