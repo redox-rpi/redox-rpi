@@ -1,0 +1,18 @@
+[packages]
+pkg-persist = "source"
+
+# After 60_data has mounted the SD card's data partition: copy the packages
+# installed there with pkg-persist into the root filesystem, which is in
+# RAM on network and direct boot. Does nothing without them.
+[[files]]
+path = "/usr/lib/init.d/61_pkg-persist.service"
+data = """
+[unit]
+description = "Packages from the data partition"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "pkg-persist"
+args = ["restore"]
+type = "oneshot_async"
+"""

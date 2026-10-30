@@ -236,7 +236,7 @@ for name in bootloader base relibc pkgutils; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot sigregs timesync; do
+for tool in devshd pkg-persist reboot sigregs timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
