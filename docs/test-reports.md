@@ -2167,3 +2167,38 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `pkg-hold`, `pkg-repo`. test 
 - The repository at `http://192.168.178.120:8080/pkg` can be used again.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-261-ge881cdb+xda44`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `welcome`. test 78 ([#24](https://github.com/redox-rpi/redox-rpi/issues/24) first-boot welcome app), Pi test agent
+
+**Pass.** Staged with `~/t18-work/wel-stage/scripts/netboot.sh --server
+192.168.178.120 --tftp-dir /srv/tftp --image ~/t18-work/image-wel/harddrive.img`
+(the image's own bootloader and `netboot.scr`). Afterwards the saved stable
+files went back into `/srv/tftp/redox`, including `netboot.cmd`/`netboot.scr`.
+
+- After boot the serial console showed `Welcome to Redox OS on the Raspberry
+  Pi.` and `This is the first start. Press Enter to set …` and waited, with no
+  `redox login:`.
+- Prompts and answers on the serial console:
+  - Enter.
+  - `Keyboard layouts: dvorak, us, gb, azerty, bepo, it`, `Keyboard layout
+    [us]:` → `gb`.
+  - `Time zone: no zone files in /usr/share/zoneinfo; the clock shows UTC.`
+    (no prompt).
+  - `Name of this computer (hostname) [redox]:` → `pi-test`.
+  - `Set a new root password? The image's is "password" (y/n) [n]:` → Enter.
+  - `Wi-Fi network name []:` → `TestNet`.
+  - `Passphrase (8 to 63 characters, empty for an open network):` →
+    `secret123`, **not echoed** (it isn't anywhere in the serial log).
+- `Saved; the Wi-Fi driver joins it at the next boot.`, `Done. Log in as root.
+  To change these settings later, run welcome --force.`, then the banner and
+  `redox login:` at once: **pass**.
+- Logged in on serial as root: `/etc/keymap` ends in `gb`, `/etc/hostname`
+  is `pi-test` (no newline at the end), `/etc/net/wifi` has
+  `ssid=TestNet`/`psk=secret123`, and `/etc/welcome.done` says `First-boot setup
+  done. …`. `ls -l /etc/net/wifi`: `-rw------- 1 root root 78`: **pass**.
+- Standard checks pass, 0 of 300 starts failed (devsh not affected).
+- NanoKVM/HDMI not checked.
+
+Stable image restored afterwards.
