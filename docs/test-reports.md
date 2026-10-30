@@ -3231,3 +3231,34 @@ matches.
   works, 0 % loss. So the Pi is reachable and the network works, but it does
   not answer incoming ping. I did not look into it further.
 - `/srv/tftp/redox` has the stable image again; stable booted.
+
+## 2026-10-30: `v0.3.0-dev-456-gfe96015+x204a`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `pkg-hold`, `pkg-repo`, `sigreturn-svc`. test 115 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44) `pkg update` from both repositories), Pi test agent
+
+**Pass: 15 upstream packages updated, none of ours, our files unchanged,
+300 starts afterwards without a failure, nano and bash install and run,
+`bash-ok`.** Image `~/redox-rpi-boot/keep/repoG-harddrive.img`, repository
+`http://192.168.178.120:8080/pkg` from the same build.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `pkg update --yes` at **20:37:18 UTC**, 11.5 s: `Packages to update:`
+  ca-certificates, coreutils, diffutils, extrautils, ion, kibi, libgcc,
+  libonig, libstdcxx, netdb, netutils, redoxfs, userutils, uutils,
+  uutils-procps (15; 12.9 MB download, 43.2 MB install). None of base,
+  kernel, relibc, pkgutils, reboot. No `Some transactions are ignored`. Ends
+  with `Commit complete.` (Several `TODO: setsockopt(…, 6, 1, …) - unknown
+  option` info lines from relibc, harmless.)
+- `sha256sum` before and after, unchanged: kernel `d1e4f5d9…`, `libc.so`
+  `7ec8c067…`, `pkg` `9d058799…`, `reboot` `ff39315b…`.
+- `pkg info coreutils`: `remote: static.redox-os.org`. `pkg info pkgutils`:
+  `remote: 192.168.178.120` (0.3.3, build time 2026-10-30T20:01:51Z).
+- Second `pkg update --yes`: only `Fetch complete.`, nothing to do (0.9 s).
+- Standard checks again with the updated upstream programs: all pass, **0 of
+  300 starts failed**.
+- `pkg install --yes nano`, `nano --version`: `GNU nano, version 9.2`.
+- `pkg install --yes bash` (27 files), then
+  `bash -c "for i in {1..200}; do ls / > /dev/null; done; echo bash-ok"`:
+  **`bash-ok`** after 31.6 s.
+- No panic and no unhandled exception on the serial console.
+- `/srv/tftp/redox` has the stable image again.
