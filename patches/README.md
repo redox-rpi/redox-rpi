@@ -34,8 +34,8 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0028`, `0030` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment) |
-| `0001`–`0008` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31) |
+| `0001`–`0016`, `0018`, `0020`–`0028`, `0030`, `0040` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment), `0040` the `rpi-firmwared` governor, the ARM clock follows the load (was experiment `cpu-ondemand`, with kernel `0040`; #23, Pi test #93) |
+| `0001`–`0008`, `0040` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31), `0040` CPU times in `sys:stat` without rounding (with base `0040`, #23) |
 | `0029` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
 | `0040`–`0042` | `experiments/gpio/base/` | `bcm2835-gpiod` GPIO driver; `rpi-firmwared` `power_led` (#38) |
 | `0043` | `experiments/i2c/base/` | `bcm2835-i2cd` I2C bus 1 driver (#39) |
@@ -44,7 +44,7 @@ each one expects to come before it:
 Experiments apply after all default patches. Combinations that build:
 `sdhost-stats`, `timesync`, `ldso-diagnostics`.
 `rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
-`sdhost-boot` and `ctx-leak-fix` are default patches now; the names are still accepted
+`sdhost-boot`, `ctx-leak-fix` and `cpu-ondemand` are default patches now; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
