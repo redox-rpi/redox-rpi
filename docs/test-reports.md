@@ -2828,3 +2828,27 @@ files went back into `/srv/tftp/redox`.
   `~/redox-rpi-rel/keep/` (`t102-report.md`, `t102-reboots.txt`).
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-419-g65391ae+x1a87`
+
+Real Pi 3B+ over netboot. Experiment: `dwc2d-short-reply`. test 105 (dwc2d no longer panics on a short USB reply, after test 98), Pi test agent
+
+**Pass: 5 of 5 boots without a panic, the network up every time.** Image
+`~/redox-rpi-usb/keep/short-v0.3.0-dev-419-g65391ae+x1a87.img`. Boot 1 through a
+serial-console reset, boots 2–5 through `echo reset > /scheme/sys/kstop`.
+
+| boot | `panicked` | LAN | devsh | standard checks |
+|---|---|---|---|---|
+| 1 | 0 | `dwc2d: LAN78xx link up after 1710 ms` | ok | pass, 0 of 300 failed |
+| 2 | 0 | the same | ok | pass, 0 of 300 |
+| 3 | 0 | the same | ok | pass, 0 of 300 |
+| 4 | 0 | the same | ok | pass, 0 of 300 |
+| 5 | 0 | the same | ok | pass, 0 of 300 |
+
+- No `dwc2d: request … bytes (attempt n)` line in any boot: no short reply came,
+  so the retry didn't run. So this shows nothing breaks, not that the fix
+  catches the case (test 98 hit it in 1 of 2 boots, rc2 in 0 of 6).
+- The row expects `dwc2d: network on the adapter …`. This build prints `LAN78xx
+  link up after … ms` instead.
+
+Stable image restored afterwards.
