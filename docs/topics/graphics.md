@@ -319,6 +319,14 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
+- **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
+  judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
+  `drawbench` and the vsync line, without a screen. If it passes, a draft
+  PR from `graphics-vsync` brings experiment `rpi-fb` (patches `0024`–
+  `0029`, `0036`) and experiment `orbital` (a config file) to main, still
+  as experiments, not default; the report goes into the PR. Making
+  `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
+  #54 with #108), which checks what the screen shows.
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
 - Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
   boot (is `monitor connected` logged?), and double buffering at 1280x720.
