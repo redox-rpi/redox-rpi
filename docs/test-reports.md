@@ -1999,3 +1999,27 @@ Image `~/redox-rpi-cpu/keep/v0.3.0-dev-151-g13c2757+x7d9f/harddrive.img`.
   change on the shared TFTP server, so not done here).
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-236-gd47707f+x810f`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `pty-sigint`. test 80 ([#55](https://github.com/redox-rpi/redox-rpi/issues/55) Ctrl-C while a program starts), Pi test agent
+
+**Pass over devsh; the serial console check is late.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-236-gd47707f+x810f.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `patches/experiments/pty-sigint/ctrlc-test.py 192.168.178.148 --rounds 20`
+  (from `origin/pty-sigint`): rounds 1–10 Ctrl-C after 1 s, rounds 11–20
+  after 3 s, all `stopped by SIGINT`. `Ctrl-C at the prompt: shell still
+  answers`. `PASS: 20 of 20 stopped`.
+- `ttyinfo` over devsh: `pgrp = 482`, `tcgetpgrp(0) = 482`, `ISIG=true`,
+  `VINTR = 0x3`, `SIGINT = default, blocked=false`: **pass**.
+- Serial console, logged in as root: `sleep 30`, Enter, Ctrl-C right after
+  it. Ion printed `ion: pipeline execution error: process (484) ended by signal
+  SIGINT` only **after about 32 s**, so `sleep` ran its full 30 s and the
+  signal stopped it only at the end. Over devsh the same case passes.
+- Serial log: the only exceptions are pcid's
+  (`Pci::CfgAccess::read on this architecture`), the same on every image and
+  on stable. Nothing else.
+
+Stable image restored afterwards.
