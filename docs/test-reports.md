@@ -3036,3 +3036,50 @@ matches. TLS broker `~/mqtt-broker/pi-test-broker-tls.sh` on homenodellm.
   the 60 s keep-alive). Broker stopped; it ran without persistence, so no
   retained topics stay.
 - `/srv/tftp/redox` has the stable image again; stable booted to `redox login:`.
+
+## 2026-10-30: `v0.3.0-dev-175-g29052d7+x4590`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `assistant`, `assistant-netboot`. test 112 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43) assistant, rerun of #106), Pi test agent
+
+**Pass, with one finding: no `oom`, `rinfer` answers Paris and both
+assistant questions run the right tool. Writing is slow, about 1 token a
+second (goal 2). One `devshd` thread hit a `RELIBC PANIC` while memory was low.**
+Image `~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-175-g29052d7+x4590.img`,
+manifest matches. The Pi had a power cycle (by the user) after #106.
+
+- Standard checks pass, 0 of 300 starts failed. `free`: **738,408 KB free**
+  of 876,068 (#106: 607 MB of 745). The old `Qwen3-0.6B-Q4_0.gguf` from #106
+  was still there; removed.
+- `rinfer --download …partNNN`: `part 000` to `part 020`,
+  `341455552 bytes in 1497 s` (about 25 minutes, 0.23 MB/s).
+- `rinfer … 'What is the capital of France?' 32`: `loaded in 77.8 s (539
+  reads of the file)`, heap 375 MiB (peak 377), answer
+  `The capital of France is **Paris**.`, prompt 23 tokens at **2.19 t/s**,
+  generated 9 tokens at **1.03 t/s**, heap peak 378 MiB. `free` from a
+  second devsh: 689 → 365 → 298 → 192 MB free while it loaded and wrote.
+- `assistant --ask 'What time is it?'` (`ASSISTANT_DEBUG=1`), 451 s in all:
+  loaded in 77.0 s; `rinfer: read 380 tokens in 168.3 s` (system prompt),
+  read 22 tokens in 14.4 s, ran **`show_time`** (wrote 2 tokens at 0.94 t/s),
+  tool result `It is Friday, 30 October 2026, 19:24 UTC.`, read 40 tokens in
+  25.5 s, answer `The current time is Friday, 30 October 2026, 19:24 UTC.`
+  (24 tokens in 163.3 s, **0.15 t/s**). Heap peak 430 MiB. `date` right after:
+  19:27:43.
+- `assistant --ask 'Which files are in my home folder?'`, 338 s: loaded in
+  89.2 s, read 380 tokens in 171.7 s, ran **`list_files`** (`~ has 3 entries:
+  .assistant.log .config/ .local/`), answer lists `.config`, `.local`, `.log`
+  (19 tokens in 30.8 s, 0.62 t/s; it shortened `.assistant.log`). Heap peak
+  430 MiB.
+- `free` every 30 s from a second devsh during both questions (26 readings):
+  lowest **90,192 KB free** (19:31:53), mostly 105–120 MB; never under 50 MB.
+  After the run: 609,704 KB free.
+- `temperature` 66604 (66.6 °C), `throttled` 0x00080008 (soft temperature
+  limit now and before). Soft-limit warnings at 59–61 °C came often on
+  serial; the clock stayed at 1400 MHz.
+- No kernel panic, no `oom`. **Finding:** during the assistant run the serial
+  log has `RELIBC PANIC: panicked at src/sync/mod.rs:103:54: called
+  Result::unwrap() on an Err value: Errno(14)` and then `UNHANDLED EXCEPTION
+  … PID 37, NAME /usr/bin/devshd` (a guard-page fault). PID 37 is a devshd
+  thread; devshd went on answering, and the test went on. Errno 14 is EFAULT.
+  It happened while free memory was near its lowest.
+- `Qwen3-0.6B-Q4_0e.gguf` removed at the end. `/srv/tftp/redox` has the
+  stable image again.
