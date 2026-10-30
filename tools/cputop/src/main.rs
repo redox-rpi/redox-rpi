@@ -149,7 +149,7 @@ fn main() {
     let (mut rounds, mut lines, mut seconds) = (1u32, 10usize, 5.0f64);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        let mut value = |args: &mut dyn Iterator<Item = String>| args.next().and_then(|v| v.parse().ok());
+        let value = |args: &mut dyn Iterator<Item = String>| args.next().and_then(|v| v.parse().ok());
         match arg.as_str() {
             "-n" => rounds = value(&mut args).unwrap_or_else(|| usage()),
             "-l" => lines = value(&mut args).map(|v: u32| v as usize).unwrap_or_else(|| usage()),
