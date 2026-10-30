@@ -137,7 +137,12 @@ fn copy_dir(
             continue;
         }
         if exists {
-            if meta.is_file() && fs::read(&src)? == fs::read(&dest)? {
+            let same = if meta.file_type().is_symlink() {
+                fs::read_link(&src).ok() == fs::read_link(&dest).ok()
+            } else {
+                meta.is_file() && fs::read(&src)? == fs::read(&dest)?
+            };
+            if same {
                 continue;
             }
             fs::remove_file(&dest)?;
