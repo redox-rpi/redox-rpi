@@ -2,11 +2,18 @@
 
 ## State
 
-- `bcm2835-sdhcid` (Arasan controller) is the default driver, patched for
-  error recovery and a safe data clock.
-- `bcm2835-sdhostd` (sdhost controller, the one Linux uses) is an
-  experiment (`sdhost-driver`, `sdhost-boot`): 2.5 times faster writing and
-  2.9 times faster reading than `bcm2835-sdhcid`.
+- `bcm2835-sdhostd` (sdhost controller, the one Linux uses) is the default
+  SD driver (base patches `0025`–`0028`, #6): 2.5 times faster writing and
+  2.9 times faster reading than `bcm2835-sdhcid`, which no longer starts.
+  `0028` divides the SD clock for the firmware's highest core clock (from
+  `rpi-firmwared`). Transfer statistics at boot stay an experiment
+  (`sdhost-stats`, `0029`).
+- Kernel `0008` frees a thread that ends itself when its syscall returns
+  (was experiment `ctx-leak-fix`, #31); without it the kernel ran out of
+  memory under SD load.
+- Pi test #61 (2026-10-29, `v0.3.0-dev-212-gc9fcc6d+x12cb`): standard
+  checks and `scripts/sd-stress.py` with 2 restarts pass, no file lost or
+  changed.
 - v0.3.0-rc1, an SD card image with sdhost as the only driver and the root
   filesystem on the card, passed on a real Pi 3B+ on 2026-10-28.
 - SD card stress test (`scripts/sd-stress.py`, 2026-10-28): both drivers
@@ -29,13 +36,8 @@
 
 ## Next
 
-- [#6](https://github.com/redox-rpi/redox-rpi/issues/6) sdhost as the default driver, branch `sdhost-default`:
-  `sdhost-driver` and `sdhost-boot` are base patches `0022`–`0024`, and
-  `0025` divides the SD clock for the firmware's highest core clock (from
-  `rpi-firmwared`) instead of a fixed 400 MHz. Passes in QEMU
-  (`v0.3.0-dev-76-g13092c5+x9f76`). Pi tests queued: #23 network boot,
-  #24 SD card image on the Pi 3B+ and Zero 2 W (needs the user). Merge to
-  main after those.
+- [#6](https://github.com/redox-rpi/redox-rpi/issues/6) and [#31](https://github.com/redox-rpi/redox-rpi/issues/31): branch `sdhost-ctxleak` goes to main
+  through a pull request. #24 (Zero 2 W) waits for a later release.
 
 ## Later
 
