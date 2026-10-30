@@ -15,7 +15,7 @@ image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
     --run "sleep 20" \
     --run "echo IDLE; cat /scheme/rpi-firmware/governor" \
     --run "cputop 10" \
-    --run "for i in 1..150; ls / > /dev/null; end & sleep 3; echo LOAD; cat /scheme/rpi-firmware/governor; wait" \
+    --run "for i in 1..200; ls / > /dev/null; if test \$i -eq 100; echo LOAD; cat /scheme/rpi-firmware/governor; end; end" \
     --run "sleep 5; echo AFTER; cat /scheme/rpi-firmware/governor" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
@@ -30,6 +30,6 @@ check "idle: target min" "$(after IDLE)" "^target min$"
 check "load: target max" "$(after LOAD)" "^target max$"
 check "after the load: target min again" "$(after AFTER)" "^target min$"
 echo "--- governor and cputop:"
-grep -E "^(IDLE|LOAD|AFTER|target|load) " <<< "$log"; grep -E "^(IDLE|LOAD|AFTER)$|^target |^load " <<< "$log"
+grep -E "^(IDLE|LOAD|AFTER)$|^target |^load " <<< "$log"
 sed -n '/^cputop: /,/^$/p' <<< "$log" | head -16
 exit $failed
