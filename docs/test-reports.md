@@ -2202,3 +2202,32 @@ files went back into `/srv/tftp/redox`, including `netboot.cmd`/`netboot.scr`.
 - NanoKVM/HDMI not checked.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-172-g80279b9+x8cc4`
+
+Real Pi 3B+ over netboot. Experiment: `redoxfs-write-coalesce` (patches 0002 and 0003). test 70 ([#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS write coalescing, second round), Pi test agent
+
+**Pass.** Image `~/redox-rpi-sd/keep/netboot-v0.3.0-dev-172-g80279b9+x8cc4.img`,
+manifest matches.
+
+| on `/scheme/data`, 1 MiB, `conv=fsync` | this image | test 46 | stable (test 46) |
+|---|---|---|---|
+| random source written, `bs=1048576` | 0.27 s | 0.27–0.37 s | 0.30 s |
+| copy file to file, `bs=4k` | **0.49 s** | 11.9 s | 12.7 s |
+| copy, `bs=1000` | **0.82 s** | 45 s | |
+| copy, `bs=512` | **1.22 s** | 86 s | 94 s |
+| `if=/scheme/rand bs=4096 count=256` | 0.39, 0.41 s | 0.38–0.44 s | 10.1 s |
+
+- Copies with small blocks now take about as long as writing 1 MiB at once
+  (QEMU: 0.94 s and 1.6 s).
+- The SHA-256 of all three copies equals the source (`b8363f26…6ec90`), also
+  after `echo reset > /scheme/sys/kstop`: **pass**.
+- 300 `echo line $i >> log` (4.1 s) give 300 lines, also after the reset: **pass**.
+- `ion -c "echo one; echo two; echo three; read x" > t.txt` left waiting in
+  one devsh session. About 6 s later `echo reset > /scheme/sys/kstop` from a
+  second session. After the boot, `cat t.txt` shows `one`, `two`, `three`:
+  **pass** (the 2 s flush works).
+- No `no timer for collected writes` in the serial log.
+- Standard checks pass, 0 of 300 starts failed. Test files deleted.
+
+Stable image restored afterwards.
