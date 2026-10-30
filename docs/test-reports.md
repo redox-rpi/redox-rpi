@@ -3083,3 +3083,28 @@ manifest matches. The Pi had a power cycle (by the user) after #106.
   It happened while free memory was near its lowest.
 - `Qwen3-0.6B-Q4_0e.gguf` removed at the end. `/srv/tftp/redox` has the
   stable image again.
+
+## 2026-10-30: `v0.3.0-rc3` (`v0.3.0-dev-453-g036c039+x12cb`)
+
+Real Pi 3B+ over netboot. `--release v0.3.0-rc3 --experiment timesync`, main 036c039. test 113 (v0.3.0 rc3 automated, checklist tests 1–5 and 11), Pi test agent
+
+**Pass on 5 of 6 checks, and no `dwc2d` panic in 6 of 6 boots. Check 11 lost
+characters in 2 of 20 lines on the first run, then passed 20 of 20 on a
+rerun.** Image `~/redox-rpi-rel/keep/v0.3.0-rc3-netboot.img`, staged with the
+build agent's `scripts/netboot.sh` (its bootloader and manifest). Afterwards
+the saved stable files went back into `/srv/tftp/redox`, and stable booted.
+
+| # | check | result |
+|---|---|---|
+| 1 | `pi-test.py --starts 1000` (`t10-start-loop` copy, 61ea421) | **pass**: `PASS version: v0.3.0-rc3 (v0.3.0-dev-453-g036c039+x12cb)`, manifest, ps (42), ps-tty, sdcard all pass, **0 of 1000 starts failed** |
+| 2 | clock | **pass**: `rpi-firmwared: ARM clock 600 -> 1400 MHz`, no throttle, under-voltage or temperature warning in any boot; `/scheme/rpi-firmware/clocks`: `arm 1400000000` |
+| 3 | SD driver, no PC services | **pass**: `bcm2835-sdhostd: SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no `bcm2835-sdhcid`, `pcid`, `pcid-spawner`, `audiod` or `rtcd` line |
+| 4 | time | **pass**: `timesync: clock set to … from pool.ntp.org`; `date +%s` on the Pi equal to the host's (0 s apart) |
+| 5 | `reboot` over devsh × 5 | **pass**: each back to `redox login:` after 22–24 s, devsh answers (one boot needed one retry, 3 s) |
+| 11 | `serial-input-test.sh 20` (logged in on the console) | **first run 18 of 20** (`S18 LOST characters` and one more line), no getty panic; **rerun 20 of 20** |
+
+- **Every boot** (the first and the 5 reboots, 6 in all): no `dwc2d` panic
+  (no `enumerate.rs`, no `panicked`), `dwc2d: 5 device(s) enumerated`, the
+  network came up (devsh answered each time).
+- Check 11: rc2 (#102) had 20 of 20. Lost characters at full speed came
+  before too (#28); this time 2 lines in the first run, none in the second.
