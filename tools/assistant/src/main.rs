@@ -1,21 +1,25 @@
 //! assistant: the tool layer of a local assistant for Redox on the Pi (#43).
 //!
-//! A small language model will answer questions and ask for tools; this
-//! program decides what runs. It has no model yet: tool calls are typed by
-//! hand, in the form the model (Qwen3) writes them:
+//! A small language model (Qwen3 0.6B, run by `rinfer`, see `model.rs`)
+//! answers questions and asks for tools; this program decides what runs.
+//! Tool calls can also be typed by hand, in the form the model writes them:
 //!
 //! ```text
 //! <tool_call>{"name": "list_files", "arguments": {"folder": "Documents"}}</tool_call>
 //! ```
 //!
 //! Usage:
-//!   assistant                 interactive: `/tools`, `/call <tool call>`, `/quit`
+//!   assistant                 interactive: questions, `/tools`, `/call <tool call>`, `/quit`
+//!   assistant --no-model      the same without the language model
+//!   assistant --ask <text>    answer one question with the model
 //!   assistant --tools         list the tools
 //!   assistant --call <call>   run one tool call; a change asks on stdin first
 //!
+//! ASSISTANT_MODEL sets the model file, ASSISTANT_DEBUG shows rinfer's timings.
 //! See `tools.rs` for the rules (allow-list, confirmation, home folder only).
 
 mod json;
+mod model;
 mod tools;
 
 use std::io::{self, BufRead, Write};
@@ -35,7 +39,20 @@ fn main() -> ExitCode {
     let mut ctx = Context { home, log, confirm: &mut confirm };
 
     match args.first().map(String::as_str) {
-        None => interactive(&mut ctx),
+        None => interactive(&mut ctx, start_model()),
+        Some("--no-model") if args.len() == 1 => interactive(&mut ctx, None),
+        Some("--ask") if args.len() == 2 => {
+            let Some(mut m) = start_model() else {
+                return ExitCode::FAILURE;
+            };
+            match ask_model(&mut m, &args[1], &mut ctx) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("assistant: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some("--tools") => {
             print_tools();
             ExitCode::SUCCESS
@@ -48,14 +65,48 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("usage: assistant [--tools | --call '<tool call>']");
+            eprintln!("usage: assistant [--no-model | --ask '<question>' | --tools | --call '<tool call>']");
             ExitCode::from(2)
         }
     }
 }
 
-fn interactive(ctx: &mut Context) -> ExitCode {
-    println!("Assistant (tools only, no language model yet). /tools lists the tools, /quit ends.");
+fn start_model() -> Option<model::Model> {
+    let path = std::env::var("ASSISTANT_MODEL").unwrap_or_else(|_| model::DEFAULT_MODEL.into());
+    println!("Loading the language model, this takes a moment...");
+    match model::Model::start(&path) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            println!("The language model did not start ({e}); tools only.");
+            None
+        }
+    }
+}
+
+fn ask_model(m: &mut model::Model, question: &str, ctx: &mut Context) -> std::io::Result<()> {
+    let mut print = |t: &str| {
+        print!("{t}");
+        let _ = io::stdout().flush();
+    };
+    let mut call = |text: &str| match run_call(text, ctx) {
+        Ok(out) => {
+            println!("{out}");
+            out
+        }
+        Err(e) => {
+            println!("Not done: {e}.");
+            format!("Not done: {e}.")
+        }
+    };
+    m.ask(question, &mut print, &mut call)
+}
+
+fn interactive(ctx: &mut Context, mut model: Option<model::Model>) -> ExitCode {
+    if model.is_some() {
+        println!("Assistant. Ask a question; /tools lists the tools, /quit ends.");
+    } else {
+        println!("Assistant (tools only). /tools lists the tools, /quit ends.");
+    }
     let stdin = io::stdin();
     loop {
         print!("> ");
@@ -74,21 +125,20 @@ fn interactive(ctx: &mut Context) -> ExitCode {
             print_tools();
         } else if let Some(rest) = line.strip_prefix("/call ") {
             call(rest, ctx);
+        } else if let Some(m) = model.as_mut() {
+            if let Err(e) = ask_model(m, line, ctx) {
+                println!("The language model stopped ({e}); tools only.");
+                model = None;
+            }
         } else {
-            println!("There is no language model in this build yet. Try /tools or /call.");
+            println!("There is no language model running. Try /tools or /call.");
         }
     }
 }
 
 /// Run a tool call given as JSON, with or without the `<tool_call>` tags.
 fn call(text: &str, ctx: &mut Context) -> bool {
-    let text = text.trim();
-    let text = text
-        .strip_prefix("<tool_call>")
-        .and_then(|t| t.strip_suffix("</tool_call>"))
-        .unwrap_or(text);
-    let result = json::parse(text.trim()).map_err(|e| format!("not a valid tool call ({e})"));
-    match result.and_then(|v| tools::run(&v, ctx)) {
+    match run_call(text, ctx) {
         Ok(out) => {
             println!("{out}");
             true
@@ -98,6 +148,16 @@ fn call(text: &str, ctx: &mut Context) -> bool {
             false
         }
     }
+}
+
+fn run_call(text: &str, ctx: &mut Context) -> Result<String, String> {
+    let text = text.trim();
+    let text = text
+        .strip_prefix("<tool_call>")
+        .and_then(|t| t.strip_suffix("</tool_call>"))
+        .unwrap_or(text);
+    let v = json::parse(text.trim()).map_err(|e| format!("not a valid tool call ({e})"))?;
+    tools::run(&v, ctx)
 }
 
 /// Ask a yes/no question on the terminal; only `y` or `yes` means yes.

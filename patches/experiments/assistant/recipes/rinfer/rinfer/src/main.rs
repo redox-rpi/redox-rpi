@@ -1,5 +1,8 @@
 //! Minimal Qwen3 GGUF inference with candle, for testing on Redox.
 //! Usage: rinfer <model.gguf> <prompt> [tokens]
+//!        rinfer <model.gguf> --serve     (for the assistant, see serve.rs)
+mod serve;
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -110,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     if std::env::var_os("RINFER_TRACE").is_some() {
         TRACE.store(1, Ordering::Relaxed);
     }
-    println!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
+    eprintln!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
 
     let t0 = Instant::now();
     let mut file = ChunkedReader(std::fs::File::open(path)?);
@@ -118,12 +121,15 @@ fn main() -> anyhow::Result<()> {
     let tokenizer = Tokenizer::from_gguf(&content)?;
     let device = Device::Cpu;
     let mut model = ModelWeights::from_gguf(content, &mut file, &device)?;
-    println!(
+    eprintln!(
         "loaded in {:.1} s, heap {} MiB (peak {} MiB)",
         t0.elapsed().as_secs_f32(),
         mib(IN_USE.load(Ordering::Relaxed)),
         mib(PEAK.load(Ordering::Relaxed))
     );
+    if prompt == "--serve" {
+        return serve::serve(&mut model, &tokenizer);
+    }
 
     let text = format!("<|im_start|>user\n{prompt} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n");
     let tokens = tokenizer.encode(text, true).map_err(anyhow::Error::msg)?;
@@ -134,7 +140,7 @@ fn main() -> anyhow::Result<()> {
     let t1 = Instant::now();
     // RINFER_STEP: feed the prompt one token at a time and print each
     // step's time, to see progress where a step is slow (QEMU).
-    let logits = if std::env::var_os("RINFER_STEP").is_some() {
+    let logits = if step_mode() {
         let mut last = None;
         for (pos, &t) in tokens.iter().enumerate() {
             let ts = Instant::now();
@@ -173,4 +179,9 @@ fn main() -> anyhow::Result<()> {
     println!("generated: {} tokens in {:.1} s ({:.2} t/s)", out.len() - 1, gen_s, (out.len() - 1) as f32 / gen_s);
     println!("heap {} MiB (peak {} MiB)", mib(IN_USE.load(Ordering::Relaxed)), mib(PEAK.load(Ordering::Relaxed)));
     Ok(())
+}
+
+/// RINFER_STEP: run the prompt one token at a time.
+fn step_mode() -> bool {
+    std::env::var_os("RINFER_STEP").is_some()
 }
