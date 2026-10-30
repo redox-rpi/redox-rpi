@@ -1,12 +1,19 @@
 # sdhost-dma
 
-Prototype for [#21](https://github.com/redox-rpi/redox-rpi/issues/21):
+For [#30](https://github.com/redox-rpi/redox-rpi/issues/30) (plan in
+[#21](https://github.com/redox-rpi/redox-rpi/issues/21)):
 `bcm2835-sdhostd` moves transfers of more than one block with the BCM2835
 DMA controller, step 1 of the [DMA plan](../../../docs/topics/dma.md)
 (branch `dma-plan`).
 
-Needs the sdhost base patches (`sdhost-default`); this branch is based on
-`sdhost-ctxleak`.
+Applies on main, where sdhost is the default driver (base `0025`–`0028`).
+
+Agreed with the Firmware topic, which owns the DMA plan (#30): channel 4
+is sdhost's (5 is kept for framebuffer blits, 2 and 0 for SPI or audio);
+the bus offset comes from `/soc` `dma-ranges` (fallback `0xc000_0000`);
+only bit 4 of the global enable register is changed; the DMA code stays in
+its own module (`dma.rs`), so it can move to `common` when a second driver
+needs DMA. No channel allocator and no cache maintenance yet.
 
 - Channel 4, if `brcm,dma-channel-mask` in the devicetree leaves it free;
   otherwise the driver prints `no DMA (...)` and moves everything with the
