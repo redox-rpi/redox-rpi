@@ -30,7 +30,8 @@ register of the restore.
   INHIBIT_DELIVERY, and runs `signal_handler`, so a signal that became
   deliverable during the handler is delivered right away (what
   `arch_ret_to_sig` did before).
-- **sigregs**: on Redox it now checks x18 too.
+- **sigregs**: `--x18` checks x18 too (without this experiment it fails
+  on Redox, so the stable checks run sigregs without it).
 
 Kernel and relibc must come together: the new relibc on an old kernel
 would run `svc #0x5352` as a syscall.
@@ -48,7 +49,7 @@ scripts/build-image.sh --experiment sigreturn-svc --experiment sigregs-test
 
 QEMU, 2026-10-29, with `sigregs-test` and `sigentry-thread-signals`:
 
-| Build | `sigregs process -n 3000` | `sigregs thread -n 3000` | 700 starts (`ls`, `pwd`, `sha256sum`) |
+| Build | `sigregs process -n 3000` (x18 checked) | `sigregs thread -n 3000` (x18 checked) | 700 starts (`ls`, `pwd`, `sha256sum`) |
 |---|---|---|---|
 | `v0.3.0-dev-137-g6988886+xae3b` (without) | FAIL, x18 changed after 3 signals | FAIL, x18 changed after 2 signals | 0 failed |
 | `v0.3.0-dev-138-ge543996+xbb89` (with) | PASS | PASS | 0 failed |
