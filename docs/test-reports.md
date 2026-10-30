@@ -2582,3 +2582,42 @@ capture saved as `~/pitest-tools/broker88.out` on homenodellm. Manifest matches.
   No loss over 6 minutes; the row's TLS rerun (#89) is the comparison.
 
 Broker stopped, stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-115-g78c6372+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timesync`, `timerd`, `mqtt`, `ha-bridge`, `mqtt-tls-test`. test 89 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) rerun of test 76, MQTT over TLS with the connect fix), Pi test agent
+
+**Pass, but free memory falls about 5.5 MB a minute while ha-bridge runs over
+TLS.** Broker `~/mqtt-broker/pi-test-broker-tls.sh`; capture saved as
+`~/pitest-tools/broker89.out` on homenodellm. Manifest matches.
+
+- Standard checks pass, 0 of 300 starts failed. A first try right after the
+  boot printed nothing (probably before devsh was up); the second passed.
+- Before the broker was set (about 9 minutes): `ha-bridge: 10.0.2.2:8883: no
+  answer from the broker within 10 s; trying again in 30 s` (the service) and
+  the timer runs, each `exited with code 1 after 10.1 s`. **No** `still
+  running, skipped this run`: **pass**. `/usr/lib/init.d/75_ha-bridge.service`
+  runs `ha-bridge -d`; `ps` shows `ha-bridge` (pid 38, two threads).
+- `echo 192.168.178.120 > /etc/mqtt-host` at 10:04:04, nothing killed. `ha-bridge:
+  6 sensors announced on 192.168.178.120:8883 (TLS) as redox-rpi/redox` after
+  about 26 s. The broker got `redox-rpi/redox/availability online`, the six
+  configs, and `redox-rpi/redox/state` once a minute: **pass**.
+- `mqtt-pub -t tls/pi -m hello -q 1`: exit 0, `tls/pi hello` arrived: **pass**.
+- `echo reset > /scheme/sys/kstop` at 10:15:19, `availability offline` at
+  10:15:45, **about 27 s** later: **pass**.
+- `free` (free KB of 745,252):
+
+| time | free | |
+|---|---|---|
+| 09:58:40 | 581,704 | after boot, broker not set |
+| 10:01:49 | 506,400 | right after the standard checks |
+| 10:04:51 | 501,876 | broker just set (TLS from 10:04:30) |
+| 10:11:32 | 460,308 | |
+| 10:14:33 | 448,308 | |
+
+  From 10:04:51 to 10:14:33, 53.6 MB less in 9.7 minutes, **about 5.5 MB a
+  minute**. Test 88 (same features without TLS) stayed level, and test 76 (older
+  image) lost about 15 MB a minute. So the loss comes with the TLS connections
+  (one `ha-bridge` connection a minute plus the service's).
+
+Broker stopped, retained `tls/pi` cleared, stable image restored afterwards.
