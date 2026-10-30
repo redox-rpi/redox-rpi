@@ -21,10 +21,13 @@
   / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
   passed.
-
 - [#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zones:
-  `/etc/localtime` and zone files (package `zoneinfo`), `timerd` in local
-  time. Branch `timezone` (on top of `timerd`), experiment `timezone`.
+  `/etc/localtime` and zone files (package `zoneinfo`, Europe/Berlin and
+  UTC), relibc patch `0012` (`tm_zone` is CET/CEST), `timerd` in local
+  time and `timerd -t`. Branch `timezone` (on top of `timerd`), experiment
+  `timezone` ([README](../../patches/experiments/timezone/README.md)).
+  **Pi test 95 passed** (CET/CEST at both 2026 switches, no freeze in 20
+  minutes); draft pull request after #59 (v0.5.0).
 
 ## Next
 

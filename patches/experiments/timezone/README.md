@@ -72,4 +72,8 @@ boot log says `timerd: clock set by timesync, 2026-10-30 09:24:42 CET`.
 In Ion, `@…` must be quoted (`'@1792890000'`), else Ion reads it as an
 array.
 
-Not yet tested on a real Pi.
+**Pi test 95** (real Pi 3B+, `v0.3.0-dev-481-gcfa7d09+x9d2b`, 2026-10-30):
+the same outputs for `date`, `date -d` and `timerd -t` at both switches,
+`date` in CET next to `date -u`, and `TZ=UTC` gives UTC. 20 minutes of the
+`timerd-test` timers without a stall (slowest run 5.3 s; the old image of
+test 49 once stalled for 438 s).
