@@ -1,4 +1,4 @@
-From bfd658f1a2ce812ce5018ac75f2bb51a4ba139d8 Mon Sep 17 00:00:00 2001
+From 0ff149c47a28882049b28334c97d70cdad2ca041 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Wed, 28 Oct 2026 20:59:15 +0100
 Subject: [PATCH] rpi-firmwared: governor, the ARM clock follows the load
@@ -13,17 +13,17 @@ Refs redox-rpi/redox-rpi#23
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/rpi-firmwared/src/governor.rs | 228 ++++++++++++++++++++++++++
- drivers/rpi-firmwared/src/main.rs     |  45 ++++-
- 2 files changed, 266 insertions(+), 7 deletions(-)
+ drivers/rpi-firmwared/src/governor.rs | 263 ++++++++++++++++++++++++++
+ drivers/rpi-firmwared/src/main.rs     |  46 ++++-
+ 2 files changed, 302 insertions(+), 7 deletions(-)
  create mode 100644 drivers/rpi-firmwared/src/governor.rs
 
 diff --git a/drivers/rpi-firmwared/src/governor.rs b/drivers/rpi-firmwared/src/governor.rs
 new file mode 100644
-index 0000000..672c67b
+index 00000000..a51ab2e4
 --- /dev/null
 +++ b/drivers/rpi-firmwared/src/governor.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,263 @@
 +//! CPU clock governor: the ARM clock follows the load, like Linux's
 +//! `ondemand`.
 +//!
@@ -32,10 +32,16 @@ index 0000000..672c67b
 +//! sets the maximum clock; after `DOWN_SAMPLES` samples in a row below
 +//! `DOWN_LOAD` percent it goes back to the minimum. The firmware still lowers
 +//! the clock on its own when the SoC gets hot or the voltage drops.
++//!
++//! Reading the governor file starts a program, which is load itself, so
++//! `target` and `load` there mostly show that moment. `time_min_ms` and
++//! `time_max_ms` count how long the clock was at each rate since the
++//! driver started: two reads some seconds apart give the share at the
++//! minimum.
 +
 +use std::sync::{Arc, Mutex};
 +use std::thread;
-+use std::time::Duration;
++use std::time::{Duration, Instant};
 +
 +use crate::mbox::*;
 +
@@ -91,6 +97,11 @@ index 0000000..672c67b
 +    switches: u64,
 +    min: u32,
 +    max: u32,
++    /// Since when the clock has been at `target`.
++    since: Instant,
++    /// Time at the minimum and at the maximum before `since`.
++    time_min: Duration,
++    time_max: Duration,
 +}
 +
 +impl Governor {
@@ -105,6 +116,9 @@ index 0000000..672c67b
 +            switches: 0,
 +            min,
 +            max,
++            since: Instant::now(),
++            time_min: Duration::ZERO,
++            time_max: Duration::ZERO,
 +        }
 +    }
 +
@@ -115,13 +129,21 @@ index 0000000..672c67b
 +            (_, Some(Target::Min)) => "min",
 +            (_, Some(Target::Max)) => "max",
 +        };
++        let (mut time_min, mut time_max) = (self.time_min, self.time_max);
++        match self.target {
++            Some(Target::Min) => time_min += self.since.elapsed(),
++            Some(Target::Max) => time_max += self.since.elapsed(),
++            None => {}
++        }
 +        format!(
-+            "mode {}\ntarget {target}\nload {}\nswitches {}\nmin {}\nmax {}\n",
++            "mode {}\ntarget {target}\nload {}\nswitches {}\nmin {}\nmax {}\ntime_min_ms {}\ntime_max_ms {}\n",
 +            self.mode.name(),
 +            self.load,
 +            self.switches,
 +            self.min,
-+            self.max
++            self.max,
++            time_min.as_millis(),
++            time_max.as_millis()
 +        )
 +    }
 +
@@ -132,11 +154,23 @@ index 0000000..672c67b
 +            Mode::Performance => self.go(Target::Max, mbox),
 +            Mode::Powersave => self.go(Target::Min, mbox),
 +            Mode::Fixed => {
++                self.account();
 +                self.target = None;
 +                Ok(())
 +            }
 +            Mode::Ondemand => Ok(()),
 +        }
++    }
++
++    /// Adds the time since the last change to the current target.
++    fn account(&mut self) {
++        let now = Instant::now();
++        match self.target {
++            Some(Target::Min) => self.time_min += now - self.since,
++            Some(Target::Max) => self.time_max += now - self.since,
++            None => {}
++        }
++        self.since = now;
 +    }
 +
 +    fn go(&mut self, target: Target, mbox: &mut Mailbox) -> Result<(), String> {
@@ -148,6 +182,7 @@ index 0000000..672c67b
 +            Target::Max => self.max,
 +        };
 +        mbox.set_clock(CLOCK_ARM, rate)?;
++        self.account();
 +        self.target = Some(target);
 +        self.switches += 1;
 +        Ok(())
@@ -253,17 +288,18 @@ index 0000000..672c67b
 +    }
 +}
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..b351fad 100644
+index 4a7a018a..2961555b 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
-@@ -14,11 +14,15 @@
+@@ -14,11 +14,16 @@
  //!   maximum rate in Hz
  //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
  //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
 -//!   in Hz, `max` or `min` sets it
 +//!   in Hz, `max` or `min` sets it and stops the governor (mode `fixed`)
-+//! - `/scheme/rpi-firmware/governor`: mode, target, load and number of clock
-+//!   changes of the governor; writing `ondemand`, `performance` or
++//! - `/scheme/rpi-firmware/governor`: mode, target, load, number of clock
++//!   changes and time at the minimum and maximum clock (ms) of the
++//!   governor; writing `ondemand`, `performance` or
 +//!   `powersave` sets the mode
  //!
 -//! At start it sets the ARM clock to its maximum; the firmware lowers it by
@@ -276,7 +312,7 @@ index 4a7a018..b351fad 100644
  
  use std::fmt::Write as _;
  use std::process;
-@@ -35,8 +39,11 @@ use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTD
+@@ -35,8 +40,11 @@ use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTD
  use syscall::schemev2::NewFdFlags;
  use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
  
@@ -288,7 +324,7 @@ index 4a7a018..b351fad 100644
  use mbox::*;
  
  /// Bus address of the mailbox on all BCM283x, used if the devicetree has no
-@@ -44,9 +51,9 @@ use mbox::*;
+@@ -44,9 +52,9 @@ use mbox::*;
  const MBOX_BUS_ADDR: usize = 0x7e00_b880;
  const PAGE_SIZE: usize = 4096;
  
@@ -300,7 +336,7 @@ index 4a7a018..b351fad 100644
  
  const THROTTLE_POLL: Duration = Duration::from_secs(5);
  
-@@ -60,11 +67,16 @@ enum Handle {
+@@ -60,11 +68,16 @@ enum Handle {
  
  struct FirmwareScheme {
      mbox: Arc<Mutex<Mailbox>>,
@@ -317,7 +353,7 @@ index 4a7a018..b351fad 100644
          let mut text = String::new();
          let mbox = &mut *self.mbox.lock().unwrap();
          match name {
-@@ -100,8 +112,15 @@ impl FirmwareScheme {
+@@ -100,8 +113,15 @@ impl FirmwareScheme {
      }
  
      fn set(&mut self, name: &str, value: &str) -> Result<()> {
@@ -333,7 +369,7 @@ index 4a7a018..b351fad 100644
              "arm_clock" => {
                  let rate = match value {
                      "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
-@@ -109,7 +128,8 @@ impl FirmwareScheme {
+@@ -109,7 +129,8 @@ impl FirmwareScheme {
                      hz => hz.parse().map_err(|_| Error::new(EINVAL))?,
                  };
                  let rate = mbox.set_clock(CLOCK_ARM, rate).map_err(log)?;
@@ -343,7 +379,7 @@ index 4a7a018..b351fad 100644
                  Ok(())
              }
              _ => Err(Error::new(EROFS)),
-@@ -408,8 +428,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+@@ -408,8 +429,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
      } as *mut u32;
      let mbox = Mailbox::new(regs).expect("rpi-firmwared: failed to allocate the message buffer");
      let mbox = Arc::new(Mutex::new(mbox));
@@ -354,7 +390,7 @@ index 4a7a018..b351fad 100644
          handles: HandleMap::new(),
      };
      match scheme.contents("board") {
-@@ -420,6 +442,15 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+@@ -420,6 +443,15 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
          Err(_) => println!("rpi-firmwared: mailbox at 0x{phys:08x} does not answer"),
      }
      arm_clock_max(&mut mbox.lock().unwrap());
@@ -371,5 +407,5 @@ index 4a7a018..b351fad 100644
  
      let socket = Socket::create().expect("rpi-firmwared: failed to create the rpi-firmware scheme");
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
