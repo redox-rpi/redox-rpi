@@ -1,4 +1,4 @@
-From 7cc9079721b9798ba32f7daaeddde85fcc01109b Mon Sep 17 00:00:00 2001
+From 29cc7d7f7a1a18318929076500d7fb03ea9286cb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 09:41:47 +0000
 Subject: [PATCH] aarch64: mark signals sent to a thread like x86_64, keep the
@@ -16,7 +16,7 @@ earlier signal.
  1 file changed, 7 insertions(+), 3 deletions(-)
 
 diff --git a/redox-rt/src/arch/aarch64.rs b/redox-rt/src/arch/aarch64.rs
-index cd2e08b1..de941857 100644
+index cd2e08b..de94185 100644
 --- a/redox-rt/src/arch/aarch64.rs
 +++ b/redox-rt/src/arch/aarch64.rs
 @@ -225,6 +225,7 @@ asmfunction!(__relibc_internal_sigentry: ["

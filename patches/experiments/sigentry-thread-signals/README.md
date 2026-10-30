@@ -31,12 +31,13 @@ highest pending signal and x86_64 the lowest (POSIX leaves the order open).
 x86_64 reads `sender_infos` with the realtime index too (past its 32
 entries); aarch64 stores 0 there instead.
 
-Review result: both patches belong in the default relibc patches; they
-stay here until the merge gives them a number
-([patches/README](../../README.md#patch-numbers)).
+Both patches are default relibc patches now:
+[`relibc/0008`](../../relibc/) (`0001` here) and `relibc/0009` (`0002`),
+applied without this experiment. This README keeps the history; the
+name is still accepted and adds nothing.
 
 ```bash
-scripts/build-image.sh --experiment sigregs-test --experiment sigentry-thread-signals
+scripts/build-image.sh --experiment sigregs-test
 ```
 
 Test: `sigregs thread` and `sigregs sender` (experiment
@@ -56,3 +57,7 @@ QEMU, 2026-10-29, review patch `0002`:
 |---|---|---|---|
 | `v0.3.0-dev-139-g307beae+xffb7-dirty` (only `0001`) | FAIL twice: the child's signal shows the thread's sender (si_pid 38, expected 39) | PASS | PASS |
 | `v0.3.0-dev-139-g307beae+xae3b` (`0001` and `0002`) | PASS twice | PASS | PASS |
+
+Real Pi 3B+, 2026-10-29: test 37 (`0001` and `0002`) and test 68 (with
+experiment `sigsegv`) pass, `sigregs sender`, `thread -n 3000` and
+`process -n 3000` included ([test reports](../../../docs/test-reports.md)).
