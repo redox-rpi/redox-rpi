@@ -8,7 +8,9 @@ comes while Ion still reads the line cancels the line instead: that counts
 too when the prompt comes back and no `sleep` is left running. Finally a
 Ctrl-C at the prompt must leave the shell working.
 
-  ctrlc-test.py <host> [--port 2323] [--rounds 10]
+  ctrlc-test.py <host> [--port 2323] [--rounds 10] [--delays 0,0.1,0.3]
+
+--delays sends Ctrl-C after these delays in turn instead (issue #86).
 """
 import argparse, importlib.util, os, socket, sys, time
 
@@ -51,11 +53,12 @@ def round_(host, port, delay, baseline):
         sh.sock.sendall(b"sleep 40\r")
         time.sleep(delay)
         sh.sock.sendall(b"\x03")
+        t0 = time.time()
         text = read_for(sh.sock, 30, "ended by signal SIGINT")
     finally:
         sh.sock.close()
     if "ended by signal SIGINT" in text:
-        return "signal"
+        return f"signal {time.time() - t0:.1f}"
     after = text.split("sleep 40", 1)[-1]
     if pt.SHELL_PROMPT.search(after.encode()) and sleeps(host, port) == baseline:
         return "cancelled"
@@ -68,16 +71,23 @@ def main():
     ap.add_argument("host")
     ap.add_argument("--port", type=int, default=2323)
     ap.add_argument("--rounds", type=int, default=10)
+    ap.add_argument("--delays", help="comma-separated delays in seconds")
     args = ap.parse_args()
 
     baseline = sleeps(args.host, args.port)
+    delays = [float(d) for d in args.delays.split(",")] if args.delays else None
     failed = 0
     for i in range(args.rounds):
-        delay = 1 if i < args.rounds // 2 else 3
+        if delays:
+            delay = delays[i % len(delays)]
+        else:
+            delay = 1 if i < args.rounds // 2 else 3
         res = round_(args.host, args.port, delay, baseline)
         failed += res is None
-        what = {"signal": "stopped by SIGINT", "cancelled": "line cancelled before start",
-                None: "NOT stopped"}[res]
+        if res and res.startswith("signal"):
+            what = f"stopped by SIGINT {res.split()[1]} s after Ctrl-C"
+        else:
+            what = {"cancelled": "line cancelled before start", None: "NOT stopped"}[res]
         print(f"round {i + 1}: Ctrl-C after {delay} s: {what}", flush=True)
 
     sh = pt.Shell(args.host, args.port)
