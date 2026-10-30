@@ -10,7 +10,7 @@ User docs, with examples: [docs/smarthome.md](../smarthome.md) (branch
 ## In progress
 
 All three on branch `mqtt-tls` (it contains `mqtt`, which is based on
-`timerd`), in one draft PR after the `timerd` PR #59:
+`timerd`), in draft PR #89 (merge after the `timerd` PR #59):
 
 - [#49](https://github.com/redox-rpi/redox-rpi/issues/49) MQTT client:
   library and the tools `mqtt-pub` and `mqtt-sub` in
