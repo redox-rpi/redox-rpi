@@ -81,3 +81,13 @@ additional record; IPv4 answers carry the AAAA record the same way.
 
 **Real Pi:** not tested yet. Test #47 (step 2 of IPv6, IPv4 mDNS) and a
 second test for this branch are in the [queue](../../../docs/test-plan.md).
+
+**QEMU with `_ssh._tcp`** (2026-10-30, build `v0.3.0-dev-341-gc3ad5d3+x59c0`:
+branch `mdns` merged with `sshd` for the test only, experiments multicast,
+ipv6, lan78xx-multicast, mdns, sshd, rtl8152, timesync): **pass**. The
+announcements carry A, AAAA, the devsh records and `_ssh._tcp.local` PTR →
+`redox-rpi._ssh._tcp.local`, SRV port 22 target `redox-rpi.local`, on
+224.0.0.251 and ff02::fb. `mdns-qemu-test.py --ssh --ipv6`: `result:
+multicast A yes, unicast A yes, SRV 2323 yes, SRV 22 yes, multicast AAAA
+over IPv6 yes, unicast AAAA over IPv6 yes`. Without the file (unit test)
+the service is not announced. Pi test #95 is queued.
