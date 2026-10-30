@@ -1,4 +1,4 @@
-From 4283fbfaa8a8786d038450dd87b09d383a5ad0a6 Mon Sep 17 00:00:00 2001
+From e541b464265f712363417c6b4dd9cab753b4e73b Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:11:39 +0100
 Subject: [PATCH 45/49] rpi-firmwared: bt_power, the BT_ON line of the Pi 3B+
@@ -14,7 +14,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 36 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index a12c59e..e92dd53 100644
+index 75ed4c5..7be4e2c 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -19,6 +19,9 @@
@@ -54,7 +54,7 @@ index a12c59e..e92dd53 100644
              "temperature" => {
                  let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
                  writeln!(text, "{value}").unwrap();
-@@ -130,6 +141,18 @@ impl FirmwareScheme {
+@@ -132,6 +143,18 @@ impl FirmwareScheme {
                      _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
                  }
              }
@@ -65,7 +65,7 @@ index a12c59e..e92dd53 100644
 +                    "0" => 0,
 +                    _ => return Err(Error::new(EINVAL)),
 +                };
-+                match mbox.property(TAG_SET_GPIO_STATE, &[gpio, state], 2).map_err(log)?[..] {
++                match mbox.set_property(TAG_SET_GPIO_STATE, &[gpio, state]).map_err(log)?[..] {
 +                    [] | [0, ..] => Ok(()),
 +                    _ => Err(log(format!("Bluetooth power: firmware refused GPIO {gpio}"))),
 +                }
@@ -73,7 +73,7 @@ index a12c59e..e92dd53 100644
              "arm_clock" => {
                  let rate = match value {
                      "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
-@@ -245,6 +268,17 @@ fn power_led_gpio(mbox: &mut Mailbox) -> Option<u32> {
+@@ -247,6 +270,17 @@ fn power_led_gpio(mbox: &mut Mailbox) -> Option<u32> {
      (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(130)
  }
  

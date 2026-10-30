@@ -1,4 +1,4 @@
-From a170d62e119b57b84c38b555525e89fff3ddf384 Mon Sep 17 00:00:00 2001
+From 0428557f2efb16029cc0f80dc4e242c3b70027ae Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:49:29 +0100
 Subject: [PATCH 49/49] bcm2835-btuartd: yield instead of sleeping while a read

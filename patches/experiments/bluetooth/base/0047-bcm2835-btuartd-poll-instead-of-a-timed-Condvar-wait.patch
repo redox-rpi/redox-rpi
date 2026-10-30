@@ -1,4 +1,4 @@
-From 6da156b89aed7335a4dae492ec60af5ae1c26547 Mon Sep 17 00:00:00 2001
+From a04b1b4f729f4d7f8c06294f88182b111848e041 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:04:12 +0100
 Subject: [PATCH 47/49] bcm2835-btuartd: poll instead of a timed Condvar wait,

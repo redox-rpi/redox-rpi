@@ -1,4 +1,4 @@
-From dca9f5b2206d2026a16d7960474e10c42b2afc8d Mon Sep 17 00:00:00 2001
+From 4628675a00f9ba09c1f7cbaa7c4c9e05ea8f9fee Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 18:23:23 +0100
 Subject: [PATCH 48/49] bcm2835-btuartd: a read with nothing received returns 0
