@@ -189,6 +189,11 @@ be drawn into the buffer still on screen and could tear.
   MB/s, DMA blit 53 MB/s. QEMU runs the controller byte by byte and
   treats uncached memory as normal, so none of this says anything about
   the Pi.
+- QEMU, branch `graphics-vsync`, `v0.3.0-dev-200-gd73095c+xced2`
+  (2026-10-30), `RPI_FB=1280x720 RPI_FB_BENCH=1`: after the mode change
+  `rpi-fbd: no vsync from the firmware, frames may tear` once (QEMU has no
+  such tag), then frames by DMA as before, login. The wait itself only
+  runs on the Pi.
 - The image above was built at commit `ae30bad`, when the patches were
   still numbered `0023` and `0024` (same content).
 - Real Pi: queued in [docs/test-plan.md](../../../docs/test-plan.md).
