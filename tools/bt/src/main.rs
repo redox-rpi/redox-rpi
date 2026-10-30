@@ -30,6 +30,7 @@ const CLOCKS: &str = "/scheme/rpi-firmware/clocks";
 const FLOW: &str = "/scheme/btuart/flow";
 const STATUS: &str = "/scheme/btuart/status";
 const LPO: &str = "/scheme/btuart/lpo";
+const POWER_CONFIG: &str = "/scheme/rpi-firmware/bt_power_config";
 /// CTS, RTS, TX and RX of the mini UART, and GPIO 43 (GPCLK2 in Linux's
 /// devicetree for the 3B+, the chip's 32 kHz sleep clock).
 const DIAG_PINS: &[u32] = &[30, 31, 32, 33, 43];
@@ -405,6 +406,11 @@ fn seconds(arg: Option<&String>) -> u64 {
     arg.and_then(|s| s.parse().ok()).filter(|&s| s > 0).unwrap_or(5)
 }
 
+fn print_power_config(when: &str) {
+    let config = fs::read_to_string(POWER_CONFIG).unwrap_or_else(|e| format!("({e})"));
+    println!("bt_power_config {when}: {}", config.lines().collect::<Vec<_>>().join(", "));
+}
+
 /// One line from the driver's status file, without its name.
 fn status_line(status: &str, name: &str) -> String {
     status.lines().find_map(|l| l.strip_prefix(name)).unwrap_or(" ?").trim().to_string()
@@ -446,7 +452,9 @@ fn diag() -> io::Result<()> {
     let lpo = fs::read_to_string(LPO).unwrap_or_default();
     println!("lpo: {}", lpo.lines().collect::<Vec<_>>().join(", "));
     println!("bt_power: {}", fs::read_to_string(POWER).unwrap_or_default().trim());
+    print_power_config("before");
     power_cycle();
+    print_power_config("after");
     update_clock();
     let mut answered = Vec::new();
     for flow in ["auto", "auto-low", "none"] {

@@ -1,0 +1,102 @@
+From 7c18be9da5386bd5aa31b5a4bb5b448055b9409f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 22:07:20 +0100
+Subject: [PATCH] rpi-firmwared: bt_power switches BT_ON as an output
+ (SET_GPIO_CONFIG), bt_power_config
+
+Linux's raspberrypi-exp-gpio sets an expander pin with SET_GPIO_CONFIG
+(direction out, the firmware's polarity, the state). SET_GPIO_STATE alone
+left BT_ON reading 1 while the chip stayed silent on the Pi, as if the
+firmware kept the pin an input. bt_power_config shows direction,
+polarity, termination and state as the firmware reports them.
+---
+ drivers/rpi-firmwared/src/main.rs | 31 +++++++++++++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs |  2 ++
+ 2 files changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 7be4e2c..34d310f 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -19,6 +19,8 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
++//! - `/scheme/rpi-firmware/bt_power_config`: direction, polarity and
++//!   state of that line as the firmware reports them
+ //! - `/scheme/rpi-firmware/bt_power`: the BT_ON line of the Pi 3B+
+ //!   Bluetooth chip, `1` (on) or `0` (off); writing sets it. Also on the
+ //!   GPIO expander; other boards do not have this file.
+@@ -51,7 +53,7 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "bt_power", "clocks", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "bt_power", "bt_power_config", "clocks", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+ const WRITABLE: &[&str] = &["arm_clock", "bt_power", "power_led"];
+ 
+@@ -98,6 +100,16 @@ impl FirmwareScheme {
+                 };
+                 writeln!(text, "{state}").unwrap();
+             }
++            "bt_power_config" => {
++                let gpio = bt_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let [direction, polarity, term_en, pull_up] = gpio_config(mbox, gpio)?;
++                let state = match mbox.property(TAG_GET_GPIO_STATE, &[gpio, 0], 2).map_err(log)?[..] {
++                    [0, state] => state.to_string(),
++                    _ => "?".to_string(),
++                };
++                let direction = if direction == 1 { "out" } else { "in" };
++                writeln!(text, "direction {direction}\npolarity {polarity}\nterm_en {term_en}\npull_up {pull_up}\nstate {state}").unwrap();
++            }
+             "temperature" => {
+                 let value = mbox.value_of(TAG_GET_TEMPERATURE, 0).map_err(log)?;
+                 writeln!(text, "{value}").unwrap();
+@@ -150,7 +162,13 @@ impl FirmwareScheme {
+                     "0" => 0,
+                     _ => return Err(Error::new(EINVAL)),
+                 };
+-                match mbox.set_property(TAG_SET_GPIO_STATE, &[gpio, state]).map_err(log)?[..] {
++                // As Linux's raspberrypi-exp-gpio: make the pin an output with
++                // the state in one SET_GPIO_CONFIG, keeping the polarity the
++                // firmware reports. SET_GPIO_STATE alone left BT_ON reading 1
++                // with the chip silent (Pi tests #90, #109), as for a pin the
++                // firmware keeps as an input.
++                let polarity = gpio_config(mbox, gpio).map(|c| c[1]).unwrap_or(0);
++                match mbox.set_property(TAG_SET_GPIO_CONFIG, &[gpio, 1, polarity, 0, 0, state]).map_err(log)?[..] {
+                     [] | [0, ..] => Ok(()),
+                     _ => Err(log(format!("Bluetooth power: firmware refused GPIO {gpio}"))),
+                 }
+@@ -270,6 +288,15 @@ fn power_led_gpio(mbox: &mut Mailbox) -> Option<u32> {
+     (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(130)
+ }
+ 
++/// GET_GPIO_CONFIG of a firmware GPIO: direction (1 = out), polarity,
++/// termination on, pull-up.
++fn gpio_config(mbox: &mut Mailbox, gpio: u32) -> Result<[u32; 4]> {
++    match mbox.property(TAG_GET_GPIO_CONFIG, &[gpio, 0, 0, 0, 0], 5).map_err(log)?[..] {
++        [0, direction, polarity, term_en, pull_up] => Ok([direction, polarity, term_en, pull_up]),
++        _ => Err(log(format!("GPIO {gpio}: firmware gave no configuration"))),
++    }
++}
++
+ /// The firmware GPIO of BT_ON: pin 0 of the GPIO expander (128 + 0) on the
+ /// Pi 3B+ (`shutdown-gpios` of the bluetooth node in Linux's devicetree).
+ /// High powers the Bluetooth half of the chip.
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e..479c054 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -46,6 +46,8 @@ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
++pub const TAG_GET_GPIO_CONFIG: u32 = 0x0003_0043;
++pub const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
+-- 
+2.54.0 (Apple Git-157)
+
