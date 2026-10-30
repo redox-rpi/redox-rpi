@@ -200,21 +200,50 @@ fn step_mode() -> bool {
 }
 
 /// HTTP/1.0 GET of `url` into `file`, in 1 MiB pieces, with the length the
-/// server gives checked at the end. No TLS: meant for the build host on the
-/// home network.
+/// server gives checked. No TLS: meant for the build host on the home
+/// network. `NNN` in the URL stands for a part number (000, 001, ...): the
+/// parts are fetched one by one, each on its own connection, until the server
+/// answers 404, and joined, so no single connection runs long. (In QEMU one
+/// long download stopped after 64 MiB without an error; the disk was close to
+/// full, and a full disk can hang writes on Redox.)
 fn download(url: &str, file: &str) -> anyhow::Result<()> {
+    let mut out = std::fs::File::create(file)?;
+    let t = Instant::now();
+    let mut got = 0u64;
+    if url.contains("NNN") {
+        for part in 0.. {
+            let u = url.replace("NNN", &format!("{part:03}"));
+            match fetch(&u, &mut out, &mut got)? {
+                true => eprintln!("part {part:03}, {} MiB", got >> 20),
+                false if part > 0 => break,
+                false => anyhow::bail!("{u}: not found"),
+            }
+        }
+    } else if !fetch(url, &mut out, &mut got)? {
+        anyhow::bail!("{url}: not found");
+    }
+    out.sync_all()?;
+    println!("{file}: {got} bytes in {:.0} s", t.elapsed().as_secs_f32());
+    Ok(())
+}
+
+/// One GET, appended to `out`; false if the server answers 404.
+fn fetch(url: &str, out: &mut std::fs::File, got: &mut u64) -> anyhow::Result<bool> {
     use std::io::BufRead;
     let rest = url.strip_prefix("http://").ok_or_else(|| anyhow::anyhow!("only http:// URLs"))?;
     let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
     let addr = if host.contains(':') { host.to_string() } else { format!("{host}:80") };
     let stream = std::net::TcpStream::connect(&addr)?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(60)))?;
     let mut w = stream.try_clone()?;
     write!(w, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")?;
     let mut r = std::io::BufReader::with_capacity(1 << 20, stream);
     let mut line = String::new();
     r.read_line(&mut line)?;
-    if !line.split_whitespace().nth(1).is_some_and(|c| c == "200") {
-        anyhow::bail!("server answered: {}", line.trim());
+    match line.split_whitespace().nth(1) {
+        Some("200") => {}
+        Some("404") => return Ok(false),
+        _ => anyhow::bail!("server answered: {}", line.trim()),
     }
     let mut len = None;
     loop {
@@ -230,24 +259,18 @@ fn download(url: &str, file: &str) -> anyhow::Result<()> {
             }
         }
     }
-    let mut out = std::fs::File::create(file)?;
     let mut buf = vec![0u8; 1 << 20];
-    let (mut got, t) = (0u64, Instant::now());
+    let start = *got;
     loop {
-        let n = r.read(&mut buf)?;
+        let n = r.read(&mut buf).map_err(|e| anyhow::anyhow!("after {got} bytes: {e}"))?;
         if n == 0 {
             break;
         }
         out.write_all(&buf[..n])?;
-        got += n as u64;
-        if got % (32 << 20) < n as u64 {
-            eprintln!("{} MiB", got >> 20);
-        }
+        *got += n as u64;
     }
-    out.sync_all()?;
-    if len.is_some_and(|l| l != got) {
-        anyhow::bail!("got {got} bytes, the server said {}", len.unwrap());
+    if let Some(l) = len.filter(|&l| l != *got - start) {
+        anyhow::bail!("{url}: got {} bytes, the server said {l}", *got - start);
     }
-    println!("{file}: {got} bytes in {:.0} s", t.elapsed().as_secs_f32());
-    Ok(())
+    Ok(true)
 }
