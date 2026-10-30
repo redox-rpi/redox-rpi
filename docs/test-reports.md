@@ -1141,3 +1141,741 @@ lines; no other failed service. `dwc2d: LAN78xx link up`, DHCP bound to
 
 Stable image `v0.3.0-dev-15-g24fbb96+x9f76` staged again afterwards and
 booted to the login prompt.
+
+## 2026-10-29: `v0.3.0-dev-122-g74a1e24+x607a`
+
+Built 2026-10-29T10:18:15Z, `libc.so` `08e0353fe25191f9…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `sdhost-dma`, `timesync`. test 42 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21) sdhost with DMA), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-122-g74a1e24+x607a |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 42 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), branch
+`sdhost-dma`. Boot log: `bcm2835-sdhostd: DMA channel 4 at 0x3f007000`,
+`SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`,
+`serving /scheme/disk.mmc`; no `DMA error`, `DMA timeout` or `no DMA`, no
+`bcm2835-sdhcid`.
+
+| 256 MiB on `/scheme/data`, `bs=1048576` | time | MB/s | CPU time of `bcm2835-sdhostd` |
+|---|---|---|---|
+| write `conv=fsync` (run 1) | 37.8 s | 7.1 | 45.3 s for write and read together |
+| write `conv=fsync` (run 2) | 30.3 s | 8.8 | +23.7 s (45.30 → 69.02 s) |
+| read (run 2) | 15.1 s | 18 | +13.7 s (69.02 → 82.72 s) |
+| `sd-stress.py` write | | 6.9 | |
+
+With DMA the driver still uses the CPU for about 80 % of the write time
+and 90 % of the read time (it looks like it waits for DMA by polling). For
+comparison, #30 with PIO wrote at 7.9 MB/s (`sd-stress.py`); no CPU time was
+noted there.
+
+`scripts/sd-stress.py --cycles 2 --serial-log ~/redox-rpi/logs/serial.log`
+(main with 56e2df4):
+
+- write: 256 MiB at 6.9 MB/s; 1000 small files, 250 deleted, 250 new,
+  358 s.
+- verify: 1001 files, 0 missing, 0 changed: **pass**.
+- cycle 1: reset, login prompt after 28 s, then **`/scheme/data not mounted
+  within 300 s`**, and the script stopped (fail). When I looked right after,
+  at 5 min 50 s uptime, `/scheme/data` was mounted with all 1001 files
+  (270 MB), and the script's own check (`ls /scheme` shows `data`) passed.
+  So either the mount took more than about 5 minutes, or the devsh session
+  stopped answering during the wait; the log does not say which. Test 30
+  saw a similar late mount after a reset ("two minutes later all 1002 files
+  were there"). The boot log of that boot looks like a normal one.
+- Afterwards: standard checks pass, 0 of 300 starts failed; `free` used
+  145 MB (138 MB after boot, 203 MB right after the 256 MiB runs). Test
+  files deleted.
+
+## 2026-10-29: `v0.3.0-dev-212-gc9fcc6d+x12cb`
+
+Built 2026-10-29T13:30:57Z, `libc.so` `08e0353fe25191f9…`, real Pi 3B+ over netboot. Experiments: `timesync`. test 61 (v0.3.0 merge candidate for [#6](https://github.com/redox-rpi/redox-rpi/issues/6) and [#31](https://github.com/redox-rpi/redox-rpi/issues/31)), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-212-gc9fcc6d+x12cb |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-212-gc9fcc6d+x12cb.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+
+## 2026-10-29: `v0.3.0-dev-212-gc9fcc6d+x12cb`, SD card stress test (sdhost)
+
+`scripts/sd-stress.py`: 256 MiB file (8.0 MB/s), 1000 files of 4 KiB with 250 replaced, then 2 restarts, each followed by a check of every file and 32 MiB more; 1003 files at the end, 9 minutes. test 61, sd-stress rerun with 3f6079c, Pi test agent
+
+| Check | Missing | Changed |
+|---|---|---|
+| after writing | 0 | 0 |
+| restart 1 | 0 | 0 |
+| restart 2 | 0 | 0 |
+
+Result: **pass**.
+
+Test 61 (v0.3.0 merge candidate for [#6](https://github.com/redox-rpi/redox-rpi/issues/6) and [#31](https://github.com/redox-rpi/redox-rpi/issues/31)), branch `sdhost-ctxleak` c9fcc6d:
+
+- Boot log: `bcm2835-sdhostd: SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`, `serving /scheme/disk.mmc`; no `bcm2835-sdhcid`. Known `pcid` panic only.
+- `free` used: 137 MB after boot, 145 MB after the first stress run, and the same check after the second run (see the commit's result line).
+- First `sd-stress.py` run (main before 3f6079c): write and verify passed (1001 files, 6.6 MB/s), then after restart 1 `/scheme/data not mounted within 300 s`; at 5 min 52 s uptime it was mounted with all files. Same as test 42.
+- Rerun with 3f6079c (above): **pass**, `/scheme/data` there 11 s and 12 s after the login prompt; 0 missing, 0 changed over 2 restarts.
+
+## 2026-10-29: `v0.3.0-dev-176-g752ac70+x8057`
+
+Built 2026-10-29T14:51:21Z, `libc.so` `94f45c69b01420be…`, real Pi 3B+ over netboot. Experiments: `dwc2d-boottime`, `usb-hotplug`. test 67 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) shorter dwc2d boot), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-176-g752ac70+x8057 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 41 processes (piped) |
+| ps-tty | pass | 41 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 67 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), branch
+`dwc2d-boottime`. Two boots timed with `boot-timeline.py` from the reset
+over devsh; timelines in `~/dwc2boot-work/tl-pi-{1,2}.txt` on homenodellm.
+
+| Seconds from reset | boot 1 | boot 2 |
+|---|---|---|
+| kernel starts (`Redox OS starting...`) | 23.06 | 23.16 |
+| `dwc2d: controller at` | 25.43 | 25.47 |
+| `link up on the LAN7800 at address 5` | 28.69 | 28.78 |
+| `dwc2d: devices ready after 3294 ms` | 28.69 | 28.78 |
+| `redox login:` | 30.50 | 30.58 |
+| kernel to `redox login:` | **7.44 s** | **7.42 s** |
+
+- `devices ready after 3294 ms` in both boots (test 53: 6176 ms): well
+  below, though above the expected 2000–2500 ms. About 2.1 s of it is the
+  LAN7800's link wait (`LAN7800 at address 5` at 26.63 s, link up at
+  28.69 s).
+- Kernel to login 7.4 s instead of about 10.3 s in test 53. (This image
+  still has the 5 s bootloader wait, so reset to login is 30.5 s.)
+- Devices: `hub at address 1` (4 ports, per port), `2` (3 ports, per port),
+  `3` (4 ports, ganged), `keyboard at address 4`, `LAN7800 at address 5`,
+  `network address b8:27:eb:08:e0:aa` (as before). The plan row expected
+  the Anker hub at address 4; here the third hub is at address 3. No
+  `no link yet`, `reset timed out` or `request … failed`: **pass**.
+- `scripts/pi-test.py` standard checks: pass, 0 of 300 starts failed.
+- `scripts/pi-hotplug-test.sh <pi> 3` (from `~/redox-rpi-dwc2boot`): 15 of
+  15 checks pass, run twice; port off, disconnected after 104 ms, LAN7800
+  found again, link up, devshd answers again each cycle.
+  `KEYBOARD=1 … 1`: keyboard removed and found again: **pass**.
+
+## 2026-10-29: `v0.3.0-dev-216-gfb78c4a+xd4e7`
+
+Built 2026-10-29T13:55:43Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 57 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi SDIO probe), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-216-gfb78c4a+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 57 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi`, experiment `wifi-sdio`. Every `bcm2835-sdiod:` line from the serial log:
+
+```
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: OK
+```
+
+- **Pass**: `bcm2835-sdiod: OK`; `CMD5 R4 0x30ffff00, 3 functions`; `CIS
+  vendor 0x02d0`; `function 1 ready`; `ALP clock on`; the three `chipid`
+  lines (CMD52, CMD53, CMD53 at 25 MHz 4 bits) all `chip 0x4345 rev 6`.
+- Odd: writing `wifi_power` (0 and 1) gave `I/O error (os error 5)`, and it
+  "was 0" before; afterwards `cat /scheme/rpi-firmware/wifi_power` gives
+  `1`, and the chip answered.
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed; no
+  `bcm2835-sdhostd` errors. Only the known `pcid` panic in the log.
+
+## 2026-10-29: `v0.3.0-dev-218-g7d69076+xd4e7`
+
+Built 2026-10-29T14:24:37Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 60 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 2, firmware), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-218-g7d69076+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 60 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi`, experiment `wifi-sdio`. Every `bcm2835-sdiod:` line of the boot (minimal firmware):
+
+```
+bcm2835-sdiod: EMMC at 0x3f300000
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: core 0x800 rev 51 at 0x18000000, wrapper 0x18100000
+bcm2835-sdiod: core 0x812 rev 54 at 0x18001000, wrapper 0x18101000
+bcm2835-sdiod: core 0x83e rev 9 at 0x18002000, wrapper 0x18102000
+bcm2835-sdiod: core 0x83c rev 14 at 0x18003000, wrapper 0x18103000
+bcm2835-sdiod: core 0x829 rev 21 at 0x18004000, wrapper 0x18104000
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 298 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: event frame (channel 1), 0 bytes
+bcm2835-sdiod: firmware version: wl0: Nov  1 2021 00:37:12 version 7.45.241 (1a2f2fa CY) FWID 01-5209c09
+bcm2835-sdiod: mailbox from the firmware 0x00040002
+bcm2835-sdiod: MAC address b8:27:eb:5d:b5:ff
+bcm2835-sdiod: OK
+```
+
+Then over devsh as root, `/usr/lib/drivers/bcm2835-sdiod standard` (exit 0), lines that differ from the boot:
+
+```
+bcm2835-sdiod: wifi_power was 1
+bcm2835-sdiod: standard firmware, 609309 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (609312 bytes in 303 ms) and read back
+bcm2835-sdiod: firmware version: wl0: Aug 29 2023 01:47:08 version 7.45.265 (28bca26 CY) FWID 01-b677b91b
+```
+
+- **Pass**: chip ID OK; cores 0x83e, 0x812, 0x829 (and 0x800, 0x83c);
+  RAM 0x00198000, 800 KiB; minimal firmware 548728 bytes written in 298 ms
+  and read back; NVRAM written; ARM started; HT clock on; function 2 ready,
+  firmware running; `firmware version: wl0: Nov  1 2021 … version 7.45.241`;
+  MAC address `b8:27:eb:5d:b5:ff`; last line `OK`.
+- Between `ARM started` and `OK`: mailbox `0x00040008`, one event frame
+  (channel 1, 0 bytes), the version, mailbox `0x00040002`, the MAC.
+- Standard firmware: 609312 bytes in 303 ms, version 7.45.265 (Aug 29
+  2023), same MAC, `OK`: **pass**.
+- Writing `wifi_power` still gives `I/O error (os error 5)` (as in test 57).
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-220-gbec0fd5+xd4e7`
+
+Built 2026-10-29T14:43:58Z, `libc.so` `e73ca44da45e3559…`, real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 63 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4, scan), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-220-gbec0fd5+xd4e7 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 63 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), branch `wifi` (bec0fd5). Every `bcm2835-sdiod:` line of the boot (the driver ran twice at boot):
+
+```
+bcm2835-sdiod: EMMC at 0x3f300000
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: GPFSEL3 0x3ffff000 GPFSEL4 0x24200924 GPFSEL5 0x00000924
+bcm2835-sdiod: base clock 200000000 Hz, SLOTISR_VER 0x99020000
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: card selected, RCA 0x0001
+bcm2835-sdiod: CCCR revision 0x32, capability 0x02
+bcm2835-sdiod: CIS vendor 0x02d0 device 0xa9a6
+bcm2835-sdiod: function 1 ready
+bcm2835-sdiod: ALP clock on (CHIPCLKCSR 0x68)
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: at 25000000 Hz, 4 bits:
+bcm2835-sdiod: CMD53 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: core 0x800 rev 51 at 0x18000000, wrapper 0x18100000
+bcm2835-sdiod: core 0x812 rev 54 at 0x18001000, wrapper 0x18101000
+bcm2835-sdiod: core 0x83e rev 9 at 0x18002000, wrapper 0x18102000
+bcm2835-sdiod: core 0x83c rev 14 at 0x18003000, wrapper 0x18103000
+bcm2835-sdiod: core 0x829 rev 21 at 0x18004000, wrapper 0x18104000
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 272 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: data frame of 0 bytes
+bcm2835-sdiod: FAILED
+```
+
+- **Fail**: up to `function 2 ready, firmware running` and `mailbox from
+  the firmware 0x00040008` as in test 60, then `data frame of 0 bytes` and
+  `FAILED`; no `MAC address`, no CLM, no radio up, no scan. In test 60
+  (image 218-g7d69076) the same place logged `event frame (channel 1),
+  0 bytes` and went on to the version and MAC, so the 0-byte frame that
+  the firmware sends first is now taken as a data frame and ends the run.
+- Second run over devsh (`/usr/lib/drivers/bcm2835-sdiod`, exit 1) and a
+  run with `standard` (609312 bytes in 301 ms): the same `data frame of 0
+  bytes`, `FAILED`.
+- `scripts/pi-test.py` standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-187-g0f28c70+x0042`
+
+Built 2026-10-29T14:16:08Z, `libc.so` `bd047155ea800b72…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `serial-rx`, `sshd`, `timesync`. test 59 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-187-g0f28c70+x0042 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 59 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45)), branch
+`sshd`. **Fail**: sshd does not start, so no SSH login could be tried.
+
+- Boot log: no `ssh-keygen: generating new host keys`. `sshd-keys` runs
+  `ssh-keygen -A -f /scheme/data`, which takes about a minute (RSA) and then
+  logs `Unable to move /scheme/data/etc/ssh/ssh_host_{rsa,ecdsa,ed25519,mldsa44_ed25519}_key.pub
+  into position: No such file or directory`; init: `sshd-keys failed with
+  exit status: 1`; then `sshd: no hostkeys available -- exiting.`
+- `/scheme/data/etc/ssh` holds all eight key files under their temporary
+  names (`ssh_host_ed25519_key.XXXXz37Ax9`, …), never renamed.
+- Cause: `rename` does not work on `/scheme/data`. `echo x > /scheme/data/t59c;
+  mv /scheme/data/t59c /scheme/data/t59d` gives `mv: No such file or
+  directory (os error 2)` (also with relative names, also in
+  `/scheme/data/etc/ssh`); the same in `/tmp` works. **The stable image
+  `v0.3.0-dev-15-g24fbb96+x9f76` has the same `mv` failure on
+  `/scheme/data`**, so it is not new in this branch.
+- `/scheme/data` was mounted; standard checks pass, 0 of 300 starts failed
+  (devshd). The temporary key files were deleted afterwards.
+
+## 2026-10-29: `v0.3.0-dev-100-g0a85e1e+xd656`
+
+Built 2026-10-29T14:09:20Z, `libc.so` `d19d472ff4ba92c2…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `mqtt`, `mqtt-demo`, `timerd`, `timesync`. test 58 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) MQTT), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-100-g0a85e1e+xd656 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 59 processes (piped) |
+| ps-tty | pass | 59 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 58 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
+`mqtt`; mosquitto on homenodellm (`~/mqtt-broker/pi-test-broker.sh`).
+
+- `echo 192.168.178.120 > /etc/mqtt-host`; `mqtt-pub -t redox/pi/hello -q 1
+  -m hello` exit 0, the broker has `redox/pi/hello hello`: **pass**.
+- `mosquitto_pub … -t redox/cmd/x -m to-pi` while `mqtt-sub -t 'redox/cmd/#'
+  -q 1 -v -C 1` runs on the Pi: prints `redox/cmd/x to-pi`, exit 0: **pass**.
+- `cat /scheme/rpi-firmware/temperature`: 58533.
+- **Found**: the two demo timers published nothing for 8 minutes. Their
+  first `mqtt-pub` runs (PIDs 41 and 44, started at boot, before
+  `/etc/mqtt-host` was set, so to the default host 10.0.2.2) hung and never
+  ended, and timerd logged `mqtt-uptime: still running, skipped this run`
+  (and the same for `mqtt-temperature`) every minute. `timerd -l` over devsh
+  also hung then. After `kill 41 44` both timers published once a minute:
+  `redox-rpi/temperature 56920`, `redox-rpi/uptime 11m 56s`, and so on;
+  `timerd -l` shows both with a last run. So `mqtt-pub` needs a connect
+  timeout (or the demo should wait for `/etc/mqtt-host`).
+- No `RELIBC PANIC` or `exited with code 1` in the serial log. Standard
+  checks pass, 0 of 300 starts failed. devsh did not answer some sessions
+  in between (one `uptime` timed out).
+
+## 2026-10-29: `v0.3.0-dev-104-g439640d+x3029`
+
+Built 2026-10-29T14:41:39Z, `libc.so` `d19d472ff4ba92c2…`, real Pi 3B+ over netboot. Experiments: `ha-bridge`, `ldso-diagnostics`, `mqtt`, `timerd`, `timesync`. test 65 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49) ha-bridge), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-104-g439640d+x3029 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 65 ([#49](https://github.com/redox-rpi/redox-rpi/issues/49)), branch
+`mqtt`, experiment `ha-bridge`; the same broker as test 58.
+
+- The boot took longer than the others: the `redox-rpi v…` banner came 80 s
+  after `network boot` (others about 22 s).
+- `echo 192.168.178.120 > /etc/mqtt-host`, then nothing reached the broker
+  for 2 minutes. As in test 58, the first `ha-bridge` run (PIDs 38, 42,
+  started by timerd at 17:48, before the host was set) hung, and timerd
+  logged `ha-bridge: still running, skipped this run` every minute. After
+  `kill 38 42`:
+- `redox-rpi/redox/state` once a minute, for example
+  `{"cpu_temperature":58.5,"cpu_clock":1400,"throttled":"OFF","uptime":347,"memory_free":546.2,"memory_used":25.0}`:
+  temperature and clock plausible, `throttled` OFF (firmware `0x00080008`:
+  soft temperature limit seen before, not now). `memory_free` 546 MB
+  matches `free` (548 MB free), but `memory_used` 25.0 does not match
+  `free`'s 170–198 MB used.
+- **Missing**: no `redox-rpi/redox/availability online` and none of the six
+  `homeassistant/…/config` topics, neither live nor retained (a fresh
+  `mosquitto_sub -t 'homeassistant/#'` got nothing). After `mosquitto_pub -t
+  homeassistant/status -m online` the configs did not come either.
+- **Missing**: after `echo reset > /scheme/sys/kstop` no `availability
+  offline` (last will) within 2 minutes.
+- Standard checks pass, 0 of 300 starts failed.
+- Probably the same cause as test 58: discovery and the last will are sent
+  only by the first run, which hung before `/etc/mqtt-host` was set.
+  Afterwards the broker was stopped and the stable image restored.
+
+## 2026-10-29: `v0.3.0-dev-98-g723b343+x7f63`
+
+Built 2026-10-29T14:48:42Z, `libc.so` `100761987443777d…`, real Pi 3B+ over netboot. Experiments: `ldso-diagnostics`, `timerd`, `timesync`. test 66 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51) clock_settime and timesync -s), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-98-g723b343+x7f63 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 47 processes (piped) |
+| ps-tty | pass | 47 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 66 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)), branch
+`clock-settime` (relibc `0008`, `timesync -s`). All **pass**:
+
+- Serial log: `timesync: clock set to 2026-10-29 18:00:18 UTC from
+  pool.ntp.org` (after the saved time).
+- `timesync -s "2030-01-02 03:04:05"`: `clock set to 2030-01-02 03:04:05 UTC
+  by hand`, exit 0; `date -u` `Wed Jan  2 03:04:05 UTC 2030`; `touch /tmp/x`
+  gives `Jan  2 03:04`.
+- `timesync -s '@1793282730'`: `2026-10-29 14:05:30 UTC by hand`, exit 0.
+- `timesync`: first `from the build time` (the clock was before the build
+  time), then `2026-10-29 18:02:05 UTC from pool.ntp.org`, exit 0; `date -u`
+  18:02:06, the same second as homenodellm.
+- `timesync -s 2030`: `-s wants 'YYYY-MM-DD HH:MM[:SS]' (UTC) or
+  @<seconds>, not "2030"`, exit 2.
+- `/scheme/data/timesync.last` afterwards holds the NTP time (18:02), only
+  its file date is 2 Jan 2030 from the test; the stable image booted with
+  the right time from it.
+- Standard checks pass, 0 of 300 starts failed (every program with the
+  changed C library).
+
+## 2026-10-29: `v0.3.0-dev-104-g3f88563+x508a`
+
+Built 2026-10-28T20:36:54Z, `libc.so` `f97ca1fa2be411ab…`, real Pi 3B+ over netboot. Experiments: `icache-sync`, `rtl8152`, `timesync`. test 28 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3) icache sync), ARM at 1400 MHz, Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-104-g3f88563+x508a |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 1000 failed |
+
+Test 28 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), branch
+`t3-icache`, experiment `icache-sync`.
+
+- `scripts/pi-test.py --starts 1000`: **0 of 1000 failed**, no exception in
+  the serial log (only the known `pcid` panic).
+- Not at 600 MHz as the row asks: this image raises the ARM clock at boot
+  (`rpi-firmwared: ARM clock 600 -> 1400 MHz`, `clocks`: `arm 1400000000`),
+  and without `cpu-ondemand` there is no `arm_clock` file to set 600 MHz.
+- Start loop on the Pi, `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`,
+  two runs each:
+
+  | Image | ARM | 500 starts |
+  |---|---|---|
+  | this image (`icache-sync`) | 1400 MHz | 88.5 s, 90.6 s |
+  | stable `v0.3.0-dev-15-g24fbb96+x9f76` | 600 MHz | 162.5 s, 162.2 s |
+  | test 37 image `v0.3.0-dev-140-g55bd363+x68b9` (no `icache-sync`) | 1400 MHz | 127.0 s, 136.1 s |
+
+  None of these is the same build without the patch, so the cost of the
+  cache maintenance itself cannot be read from this: the test 37 image at
+  the same clock is even slower than this one. A like-for-like number needs
+  the `t3-icache` base built once without `icache-sync`.
+
+## 2026-10-29: `v0.3.0-dev-93-g2d1a2e4+xc99c`
+
+Built 2026-10-28T20:09:08Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over netboot. Experiments: `cpu-ondemand`, `rtl8152`, `timesync`. test 25 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23) CPU clock follows the load), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-93-g2d1a2e4+xc99c |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 53 processes (piped) |
+| ps-tty | pass | 53 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 25 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), branch `cpu-ondemand`. Boot log: `rpi-firmwared: ARM clock 600 -> 1400 MHz`. `ondemand-check.py <repo> <pi> 2 30` (from `cpu-ondemand`), first lines:
+
+```
+idle: mode ondemand target max load 100 switches 16 min 600000000 max 1400000000 1400000000
+ondemand: 50 starts in 8.1 s, 0 failed; now mode ondemand target max load 100 switches 18 min 600000000 max 1400000000 1400000000
+performance: 50 starts in 8.3 s, 0 failed; now mode performance target max load 61 switches 18 min 600000000 max 1400000000 1400000000
+powersave: 50 starts in 16.0 s, 0 failed; now mode powersave target min load 100 switches 19 min 600000000 max 1400000000 600000000
+ondemand: 50 starts in 8.1 s, 0 failed; now mode ondemand target max load 83 switches 22 min 600000000 max 1400000000 1400000000
+performance: 50 starts in 11.7 s, 0 failed; now mode performance target max load 97 switches 22 min 600000000 max 1400000000 1400000000
+powersave: 50 starts in 16.0 s, 0 failed; now mode powersave target min load 92 switches 23 min 600000000 max 1400000000 600000000
+after timing: mode ondemand target max load 81 switches 26 min 600000000 max 1400000000 1400000000
+soak: 0 of 50 starts failed; mode ondemand target max load 99 switches 30 min 600000000 max 1400000000 1400000000
+…
+soak: 0 of 6500 starts failed; mode ondemand target max load 100 switches 354 min 600000000 max 1400000000 1400000000
+end: mode ondemand target max load 100 switches 354 min 600000000 max 1400000000 1400000000 ['59610', '0x00080008']
+```
+
+- Timed 50 starts: ondemand 8.1 and 8.1 s, performance 8.3 and 11.7 s,
+  powersave 16.0 and 16.0 s (600 MHz): **pass**.
+- Soak, 30 minutes of rounds of 50 starts with 3 s pauses: **0 of 6500
+  starts failed**, switches grew from 30 to 354: **pass**. The serial log
+  has `rpi-firmwared: no longer throttled` 94 times (soft temperature
+  limit, about 60 °C, `throttled 0x00080008` at the end) and no exception
+  except the known `pcid` panic.
+- **Fail: idle does not go to the minimum.** The first `idle` line has
+  `target max load 100`, 1400 MHz. Checked by hand after the soak: after
+  `sleep 10` and `sleep 30` with nothing else running, still `target max`,
+  load 72–100, 1400 MHz, and 30 more switches during the 30 s. `ps`: the
+  initfs `redoxfs` (PID 20) had 14 min 11 s CPU time (`netstack` 1 min,
+  `rpi-firmwared` 9 s), so something keeps a CPU busy and the governor
+  sees load. 
+- Standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-189-gd5ac445+x02a9`
+
+Built 2026-10-29T14:17:39Z, `libc.so` `e42257f7a7bb4c47…`, real Pi 3B+ over netboot. Experiments: `hwinfo`, `timesync`, `usb-hotplug`. test 32 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35) lsusb and hwinfo), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-189-gd5ac445+x02a9 |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 43 processes (piped) |
+| ps-tty | pass | 43 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 32 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35)), branch `hwinfo`. Output over devsh:
+
+```
+### lsusb  (0.3 s)
+Bus 001 Device 001: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 002: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 003: ID 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+) (USB 2.10, high speed)
+Bus 001 Device 004: ID 05e3:0610 hub (USB 2.00, high speed)
+Bus 001 Device 005: ID 04d9:0006 keyboard, HID (USB 2.00, low speed)
+### lsusb -t  (0.3 s)
+root port: address 1, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 2, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 3, 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+), high speed
+port 2: address 4, 05e3:0610 hub, high speed
+port 1: address 5, 04d9:0006 keyboard, HID, low speed
+### hwinfo  (5.1 s)
+build        v0.3.0-dev-189-gd5ac445+x02a9
+experiments  hwinfo timesync usb-hotplug
+model        Raspberry Pi 3 Model B+
+revision     0x00a020d3
+serial       00000000ed08e0aa
+memory       1 GiB
+ARM memory   998 MiB
+GPU memory   16 MiB
+firmware     0x6aa809d0
+CPUs         4
+ARM clock    1400 MHz (max 1400 MHz)
+clocks       emmc 200 MHz, uart 48 MHz, core 250 MHz, v3d 250 MHz, h264 250 MHz, isp 250 MHz, sdram 400 MHz
+temperature  56.9 °C
+throttling   0x00000000 (none now)
+USB          5 devices (lsusb for the list)
+```
+
+- `lsusb`, `lsusb -t`, `lsusb -v`: both 3B+ hubs `0424:2514`, the LAN7800
+  `0424:7800`, plus a `05e3:0610` hub and a `04d9:0006` keyboard; the tree
+  matches dwc2d's boot log; `-v` lists the interfaces: **pass**.
+- `hwinfo`: Raspberry Pi 3 Model B+, 1 GiB (998 MiB ARM, 16 MiB GPU), 4
+  CPUs, ARM 1400 MHz, the other clocks the same as `/scheme/rpi-firmware/clocks`,
+  56.9 °C (`temperature` a moment later 55843), throttling none: **pass**.
+- Standard checks pass, 0 of 300 starts failed. The optional plug test
+  with a person was not done.
+
+## 2026-10-29: `v0.3.0-dev-228-g5d21b70+x29ce`
+
+Built 2026-10-29T15:06:10Z, `libc.so` `447cc92099c9a1d9…`, real Pi 3B+ over netboot. Experiments: `relibc-tests`, `rtl8152`, `sigentry-thread-signals`, `sigregs-test`, `sigsegv`, `timesync`. test 68 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13) sigsegv and relibc tests), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-228-g5d21b70+x29ce |
+| manifest | pass | build ID and libc.so hash match manifest.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 68 ([#13](https://github.com/redox-rpi/redox-rpi/issues/13)), branch
+`t-sigsegv-pi` (`sigsegv` + `sigentry-thread-signals`).
+
+- `sigregs sender` (si_pid 371 from the thread, 372 from the child),
+  `sigregs thread -n 3000`, `sigregs process -n 3000`: all **pass**.
+- `ion /usr/share/relibc-tests/run.ion` over devsh: finished
+  (`RELIBC-TESTS rc=1`), output saved on homenodellm in
+  `~/pitest-tools/t68-relibc-tests.txt`. `scripts/relibc-tests-compare.py`
+  from `t-sigsegv-pi` with `config/relibc-tests-expected.txt`:
+  `SUMMARY v0.3.0-dev-228-g5d21b70+x29ce: 319 tests, 11 failed (11 known,
+  0 flaky, 0 new), 14 fixed`, exit 0: **pass**.
+  - FIXED: `netdb/getaddrinfo`, `pthread/rwlock_randtest`, `sigaction`,
+    **`sigaltstack`**, `signals/sigpause-revert`, `signals/sigprocmask-3`,
+    **`signals/sigsegv`**, `signals/sigset-5`, **`signals/stackoverflow`**,
+    `sys_select/pselect`, `sys_socket/getpeername`, `sys_socket/getsockopt`,
+    `sys_socket/recv`, `sys_socket/recvfrom` (QEMU: 8 fixed; on the Pi the
+    socket and netdb tests pass too).
+  - Known failures: `stdio/fscanf_offby1`, `stdio/mutex`, `stdio/popen`,
+    `stdio/ungetc_ftell`, `stdlib/system`, `time/timer`, `tls_align`
+    (dynamic and static), `tls_shared`, `unistd/exec`.
+- Serial log: no `UNHANDLED EXCEPTION` except the known `pcid` panic at
+  boot (the exceptions the tests cause on purpose now arrive as signals).
+- Standard checks pass, 0 of 300 starts failed.
+
+## 2026-10-29: `v0.3.0-dev-217-g1d028a4+x19b9`
+
+Built 2026-10-29T15:07:19Z, `libc.so` `8eb8f49492564a29…`, real Pi 3B+ over netboot. Experiments: `boot-time`, `rtl8152`, `timesync`. test 69 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, second round), Pi test agent
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-217-g1d028a4+x19b9 |
+| manifest | pass | present in the image |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+Test 69 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), branch
+`boot-time` 1d028a4, image `~/t18-work/image-bt5/`, staged with
+`~/t18-work/bt5-stage/scripts/netboot.sh` (boot-time `netboot.cmd`, the
+image's own bootloader with the 1 s wait, md5 `ce0d8b09…`). Three boots,
+timelines in `~/t18-work/tl-pi-bt5-{1,2,3}.txt` on homenodellm:
+
+| Seconds | boot 1 (devsh reset) | boot 2 (serial reset) | boot 3 (devsh reset) |
+|---|---|---|---|
+| `kreset` | about 1.6 | 5.19 | 1.56 |
+| kernel starts | 19.52 | 22.74 | 19.07 |
+| `switchroot to /usr` | 22.38 | 26.47 | 21.98 |
+| `redox login:` | **23.34** | **27.32** | **22.89** |
+| `redox login:` after `kreset` | about 21.7 | 22.1 | 21.3 |
+| `40_dwc2d.service ready after` | 6283 ms | 6252 ms | 6199 ms |
+| network | **none**: `dhcpd: Can't open /scheme/netcfg/ifaces/eth0/mac` | yes | yes |
+
+- `init: switchroot to /usr` now comes before `40_dwc2d.service ready`
+  (dwc2d is ready about 4 s after the login prompt, at init 6.5–7.3 s):
+  **pass**. Login about 6.5 s earlier than test 53's boot-time image
+  (29.05–29.51 s from the reset, about 27.3 s after `kreset`).
+- **Fail**: in boot 1 `dhcpd` started before dwc2d had made `eth0` and gave
+  up (`Can't open /scheme/netcfg/ifaces/eth0/mac`), so the Pi had no network
+  and devsh never answered (reset over the serial console). Boots 2 and 3
+  got their address. So `dhcpd` (and what needs the network) must still
+  wait for the adapter, or retry.
+- First devsh answer: not measured exactly; in boots 2 and 3 devsh answered
+  within a minute of the reset.
+- Standard checks pass (boot 3), 0 of 300 starts failed. Other units of
+  100 ms or more: `40_rpi-firmwared` 852 ms, `40_hwd` about 445 ms,
+  `40_bcm2835-sdhcid` about 445 ms, `00_ptyd` about 158 ms, `60_data`
+  413–433 ms.
+
+## 2026-10-30: `v0.3.0-dev-261-gaca5de2+x368f`
+
+Real Pi 3B+ over netboot. Experiment: `netstack-multi`. test 74 ([#53](https://github.com/redox-rpi/redox-rpi/issues/53) netstack with several adapters), Pi test agent
+
+**Pass.** Branch `netstack-multi`,
+image `~/redox-rpi-zrtl/keep/nsm-v0.3.0-dev-261-gaca5de2+x368f.img`, staged
+with stable's bootloader and reset over the serial console.
+
+- Boot: `DHCP: eth0 got 192.168.178.148/24` and
+  `DHCP: default route via 192.168.178.1 (eth0)`: **pass**.
+- Before testnetd: eth0 `192.168.178.148/24`; routes `default via
+  192.168.178.1 dev eth0`, `127.0.0.0/8 dev loopback`, `192.168.178.0/24 dev eth0`.
+- `/usr/lib/drivers/testnetd &` over devsh: within a few seconds the serial log
+  has `DHCP: eth1 got 10.0.9.2/24` (the `network.test0 registered` line went to
+  devsh, not to the serial log). eth1 addr `10.0.9.2/24`; routes still have
+  `default via 192.168.178.1 dev eth0` plus `10.0.9.0/24 dev eth1`: **pass**.
+- `ping -c 3 10.0.9.1`: 3/3, about 3 ms. `ping -c 3 192.168.178.1`: 3/3,
+  0.8–1.7 ms: **pass**.
+- `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`: no eth0
+  traffic leaked onto eth1.
+- devsh answered throughout. Standard checks pass before and after testnetd
+  (0 of 300 starts failed each time).
+- Every `DHCP:` and `smolnetd` line of the serial log (there were no
+  `smolnetd` lines; the two `DHCP client bound` lines are U-Boot's netboot):
+
+```
+DHCP client bound to address 192.168.178.148 (6 ms)
+DHCP client bound to address 192.168.178.148 (2 ms)
+DHCP: eth0 got 192.168.178.148/24
+DHCP: default route via 192.168.178.1 (eth0)
+DHCP: eth1 got 10.0.9.2/24
+```
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-218-g8deec9e+xbe97`
+
+Real Pi 3B+ over netboot. Experiments: `sdhost-dma`, `timesync`. test 75 ([#21](https://github.com/redox-rpi/redox-rpi/issues/21) sdhost with DMA, second try: wait for the DMA interrupt), Pi test agent
+
+**Data safe, but the CPU time did not go down.** Image
+`~/redox-rpi-sd/keep/netboot-v0.3.0-dev-218-g8deec9e+xbe97.img`, manifest
+matches.
+
+- Boot log (all 4 boots): `bcm2835-sdhostd: DMA interrupt
+  /scheme/irq/phandle-1/1,20`, `DMA channel 4 at 0x3f007000`, `SDHC/SDXC card,
+  15193 MiB, 4-bit bus, high speed, up to 50 MHz`; no `cannot use DMA
+  interrupt`, `DMA error`, `DMA timeout` or `no DMA`: **pass**.
+- Standard checks pass, manifest matches, 0 of 300 starts failed.
+
+256 MiB on `/scheme/data`, `bs=1048576`, from `/dev/urandom` (it makes 256 MiB
+in 4.0 s, 68 MB/s). `ps` shows the driver as `/scheme/initfs/bin/bcm2835-sdhos`;
+both time columns are given:
+
+| | time | MB/s | ACTTIME of `bcm2835-sdhostd` | SCHTIME |
+|---|---|---|---|---|
+| write `conv=fsync` | 35.0 s | 7.7 | +28.9 s (53.53 → 82.39) | +4.3 s (13.60 → 17.94) |
+| read | 15.3 s | 18 | +14.0 s (82.39 → 96.43) | +1.1 s (17.94 → 19.06) |
+| read with `sha256sum` after the reset | 21.5 s | | +10.2 s (0.08 → 10.31) | +2.7 s |
+| test 42 write (polling) | 30.3 s | 8.8 | +23.7 s | |
+| test 42 read (polling) | 15.1 s | 18 | +13.7 s | |
+
+- The ACTTIME column (the one test 42 used) is still about 82 % of the write
+  time and 92 % of the read time, the same as with polling. If SCHTIME is the
+  real CPU time, it is 12 % and 7 %. I can't tell from here which column counts
+  waiting for the interrupt; the driver session knows.
+- Speed is the same as test 42.
+- An earlier run from `/dev/zero` wrote 256 MiB in 2.9 s (92 MB/s) and read it
+  in 0.3 s. RedoxFS probably does not store blocks of zeros, so that run is not
+  a disk measurement.
+- SHA-256 of a 256 MiB random file before and after `echo reset >
+  /scheme/sys/kstop`: `42bf6207…1c07b97` both times: **pass**.
+- `scripts/sd-stress.py --cycles 2 --serial-log ~/redox-rpi/logs/serial.log`:
+  write 7.8 MB/s, 1001 files checked after writing and 1001 and 1002 after
+  restarts 1 and 2, 0 missing, 0 changed. `/scheme/data` was there 0 s and
+  11 s after the login prompt (cycle writes 7.1 and 8.8 MB/s): **pass**.
+
+Stable image restored afterwards.
