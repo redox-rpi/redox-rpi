@@ -1879,3 +1879,178 @@ both time columns are given:
   11 s after the login prompt (cycle writes 7.1 and 8.8 MB/s): **pass**.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-110-g9f47c94+x125f`
+
+Real Pi 3B+ over netboot. Experiments: `ha-bridge`, `ldso-diagnostics`, `mqtt`, `mqtt-tls-test`, `timerd`, `timesync`. test 76 ([#56](https://github.com/redox-rpi/redox-rpi/issues/56) MQTT over TLS), Pi test agent
+
+**TLS works; fails on the ha-bridge start and a memory loss.** Broker
+`~/mqtt-broker/pi-test-broker-tls.sh` (TLS 192.168.178.120:8883, plain :1883);
+capture saved as `~/pitest-tools/broker76.out` on homenodellm.
+
+- Standard checks pass, manifest matches, 0 of 300 starts failed.
+- `date -u`: `Fri Oct 30 07:10:12 UTC 2026` (after the CA date).
+  `head -1 /etc/mqtt-ca.crt`: `-----BEGIN CERTIFICATE-----`. Then
+  `echo 192.168.178.120 > /etc/mqtt-host` at 07:10:24.
+- **Fail:** no `ha-bridge: 6 sensors announced …` within 30 s, and no
+  availability or discovery. The image starts ha-bridge only from timerd, every
+  minute, without `-d` (`/usr/lib/timer.d/ha-bridge.toml`, `cmd = "ha-bridge"`).
+  Its first run started at 07:08, before `/etc/mqtt-host` existed (so it tried
+  `localhost`), and hung like in tests 58 and 65 (`still running, skipped this
+  run`, two `ha-bridge` processes). After `kill`, the next runs worked over TLS:
+  `redox-rpi/redox/state` once a minute from 07:12, each run 0.3 s.
+- `ha-bridge -d &` started by hand at 07:20:38: `redox-rpi/redox/availability
+  online` and all six `homeassistant/…/config` topics at once: **pass**.
+- `mqtt-pub -t tls/pi -m hello -q 1`: exit 0, `tls/pi hello` arrived.
+  `mqtt-pub -t tls/pi -m again -r`, then `mqtt-sub -t tls/pi -C 1 -v`:
+  `tls/pi again`. `mqtt-pub --no-tls -t plain/pi -m x`: exit 0, arrived.
+  `mqtt-pub --tls --cafile /etc/hostname …`: `/etc/hostname: no certificates`,
+  exit 1. All **pass**.
+- `time mqtt-pub -t tls/pi -m t`: **0.09 s** (QEMU 0.5–2 s).
+- Reset through `echo reset > /scheme/sys/kstop` (with `ha-bridge -d`
+  running): `redox-rpi/redox/availability offline` at 07:21:39, about 35 s
+  after the reset: **pass**. Retained `tls/pi` cleared, broker stopped.
+- **Memory loss:** between 07:12 and 07:21 free memory went from 534 MB
+  (ha-bridge's `memory_free`) to 56 MB (`free`), about 15 MB a minute. It
+  still went on after the hung ha-bridge was killed. No process grew (all
+  `PRIVATE` under 40 MB). Over the same time the Pi stopped answering ping
+  (devsh still worked). On the serial console, `cat
+  /scheme/netcfg/ifaces/eth0/addr/list` took about 3 minutes, and `netstack`
+  had used 3 min 20 s of CPU by 07:17 (it stayed there afterwards). `dwc2d`
+  showed ACTTIME 9 min 41 s, SCHTIME 0.34 s. This build has no `ctx-leak-fix`,
+  so it may be that leak. The reset cleared it before it ran out.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-223-g7a3641a+xd4e7`
+
+Real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 77 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4 again, rerun of test 63), Pi test agent
+
+**Fail: the CLM file is missing from the image.** Image
+`~/redox-rpi-zrtl/keep/wifiscan2-v0.3.0-dev-223-g7a3641a+xd4e7.img`.
+
+- The 0-byte frame fix works: where test 63 stopped at `data frame of 0
+  bytes`, the driver now reads `firmware version: wl0: Nov  1 2021 00:37:12
+  version 7.45.241 (1a2f2fa CY) FWID 01-5209c09` and `MAC address
+  b8:27:eb:5d:b5:ff`. Everything test 60 checks passes.
+- Then: `bcm2835-sdiod: /usr/lib/firmware/brcm/cyfmac43455-sdio.clm_blob: No
+  such file or directory (os error 2)` and `bcm2835-sdiod: FAILED`. So there is
+  no `CLM loaded`, `radio up` or scan. `/usr/lib/firmware/brcm/` has only
+  `LICENCE.cypress`, `brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt`,
+  `cyfmac43455-sdio-minimal.bin` and `cyfmac43455-sdio-standard.bin`.
+- Second run over devsh: same lines, same `FAILED` (firmware written in
+  272 ms, 293 ms at boot).
+- `wifi_power`: **still fails**. `echo 0 > /scheme/rpi-firmware/wifi_power;
+  echo $?` gives `I/O error (os error 5)` and 1, the same for `echo 1`. `cat`
+  shows the value written (0, then 1). The driver logs the same I/O errors.
+- Standard checks pass, 0 of 300 starts failed.
+
+Boot `bcm2835-sdiod:` lines (core and CMD lines as in test 63):
+
+```
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 293 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: firmware version: wl0: Nov  1 2021 00:37:12 version 7.45.241 (1a2f2fa CY) FWID 01-5209c09
+bcm2835-sdiod: mailbox from the firmware 0x00040002
+bcm2835-sdiod: MAC address b8:27:eb:5d:b5:ff
+bcm2835-sdiod: /usr/lib/firmware/brcm/cyfmac43455-sdio.clm_blob: No such file or directory (os error 2)
+bcm2835-sdiod: FAILED
+```
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-151-g13c2757+x7d9f`
+
+Real Pi 3B+ over netboot. Experiments: `gpio`, `bluetooth`. test 79 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54) Bluetooth over the mini UART), Pi test agent
+
+**Fail: Bluetooth power cannot be switched, so the controller never answers.**
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-151-g13c2757+x7d9f/harddrive.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- Boot: `bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`,
+  no `a 1 ms sleep did not come back`, no `received bytes lost`.
+- `cat /scheme/rpi-firmware/bt_power`: `0`.
+- `bt up`: `power: cannot switch it (I/O error (os error 5)), going on`,
+  `uart: core clock 250000000 Hz, 115313 baud`, `bt: no answer to HCI command
+  0c03` (2.1 s). `bt_power` stays `0`.
+- `bt info`, `bt scan 10`, `bt inquiry 10`: `no answer to HCI command` 1001,
+  0c01 and 0401. `bt cmd 0c03` once more: no answer. `throttled`:
+  `0x00000000`.
+- `echo 1 > /scheme/rpi-firmware/bt_power`: `I/O error (os error 5)`, exit 1
+  (`cat` then shows 1). The serial log has one `rpi-firmwared: tag 0x00038041:
+  not supported by the firmware` per try. 0x00038041 is SET_GPIO_STATE (the
+  expander GPIO for BT and Wi-Fi power). Test 77's `wifi_power` I/O error is
+  the same problem.
+- Possible cause: `/srv/tftp/config.txt` has `gpu_mem=16`, so the Pi boots the
+  cut-down `start_cd.elf`/`fixup_cd.dat`. `start.elf` is from Sep 14 2026.
+  Whether `start_cd.elf` lacks this tag needs a check with `gpu_mem` raised (a
+  change on the shared TFTP server, so not done here).
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-236-gd47707f+x810f`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `pty-sigint`. test 80 ([#55](https://github.com/redox-rpi/redox-rpi/issues/55) Ctrl-C while a program starts), Pi test agent
+
+**Pass over devsh; the serial console check is late.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-236-gd47707f+x810f.img`.
+
+- Standard checks pass, 0 of 300 starts failed.
+- `patches/experiments/pty-sigint/ctrlc-test.py 192.168.178.148 --rounds 20`
+  (from `origin/pty-sigint`): rounds 1–10 Ctrl-C after 1 s, rounds 11–20
+  after 3 s, all `stopped by SIGINT`. `Ctrl-C at the prompt: shell still
+  answers`. `PASS: 20 of 20 stopped`.
+- `ttyinfo` over devsh: `pgrp = 482`, `tcgetpgrp(0) = 482`, `ISIG=true`,
+  `VINTR = 0x3`, `SIGINT = default, blocked=false`: **pass**.
+- Serial console, logged in as root: `sleep 30`, Enter, Ctrl-C right after
+  it. Ion printed `ion: pipeline execution error: process (484) ended by signal
+  SIGINT` only **after about 32 s**, so `sleep` ran its full 30 s and the
+  signal stopped it only at the end. Over devsh the same case passes.
+- Serial log: the only exceptions are pcid's
+  (`Pci::CfgAccess::read on this architecture`), the same on every image and
+  on stable. Nothing else.
+
+Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-305-g2d679a2+x4ec1`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 81 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server, rerun of test 59 with the host key fix), Pi test agent
+
+**Pass.** Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-305-g2d679a2+x4ec1.img`.
+
+- Boot log: `ssh-keygen: generating new host keys: RSA ECDSA ED25519
+  MLDSA44-ED25519`, then sshd starts. No `Unable to move`, no `no hostkeys
+  available`. Only the expected `TODO: madvise(…)` lines.
+- `ls -l /scheme/data/etc/ssh`: the 8 files `ssh_host_{rsa,ecdsa,ed25519,
+  mldsa44_ed25519}_key` (`-rw-------`) and `.pub` (`-rw-r--r--`), no leftover
+  temporary files: **pass**.
+- Standard checks pass, 0 of 300 starts failed.
+- Test key put into `/home/root/.ssh/authorized_keys` over devsh. `ssh
+  root@192.168.178.148 'echo OK; id; uname -a'`: `OK`, `uid=0(root)
+  gid=0(root)`, `Redox redox 0.5.12 … aarch64 Redox`, **1.3 s** including the
+  login: **pass**.
+- `ssh-session.exp` (host and port set to the Pi, `-p 22`, key file): prompt,
+  command, prompt, backspace, prompt and `exit` all ok, exit at once: **pass**.
+- Host keys: RSA `SHA256:nggT0H31…`, ECDSA `SHA256:MXb/OY+z…`, ED25519
+  `SHA256:6b9SpKQH…`. After `echo reset > /scheme/sys/kstop` they are the
+  same, and that boot log has no `generating new host keys`: **pass**.
+- Notes:
+  - `ssh-keyscan` asked for several key types in one call returned only RSA.
+    One type per call gives all three.
+  - After the reset, key login is refused, because `authorized_keys` lives in
+    `/home/root` on the root file system, which is in RAM on a network boot.
+    That is expected.
+
+Stable image restored afterwards.
