@@ -90,14 +90,27 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     8/4/6/2 move, 5 left click, 1 right click), a stopgap until `dwc2d`
     has a mouse.
 
+- **Mouse** (branch `graphics-gui-mouse`: this branch merged with
+  `usb-mouse`, #48; `--experiment timesync --experiment rpi-fb
+  --experiment orbital --experiment usb-hotplug --experiment usb-mouse`,
+  image `v0.3.0-dev-222-g67cef7a+xd99d`, QEMU with `-device usb-mouse`
+  next to the keyboard, moves and clicks through QEMU's monitor):
+  - `dwc2d` sends the mouse to `inputd` and Orbital takes it with no
+    change in Orbital or `rpi-fbd`: the pointer moves, hovering over the
+    launcher's terminal icon shows its `Terminal` tooltip, left and right
+    buttons arrive (`dwc2d: mouse: buttons …` in the log).
+  - A click on the terminal icon opened no window within 90 s. The
+    icon runs `/usr/bin/orbterm`, but the launcher was still spawning
+    `background` then: forks are very slow in this QEMU run, where
+    `getty` and `bcm2835-sdhci` each used 11 to 12 minutes of CPU. Not a
+    mouse problem; to be checked on the Pi.
+  - Motion left over from a burst was only reported with the next QEMU
+    mouse event (reported to the USB session; QEMU or `dwc2d`'s polling).
+
 ## What is missing
 
-- **Mouse:** `dwc2d` drives one USB keyboard in the boot protocol and no
-  mouse, so Orbital can only be used by keyboard (login, the shortcuts
-  shown while Super is held). A boot-protocol mouse is the same kind of
-  code as the keyboard (`dwc2d/src/hid.rs`, 300 lines) plus relative
-  motion events to `inputd`; one device of each kind until hotplug and
-  more channels (`usb-hotplug` branch).
+- **Mouse on the Pi:** in QEMU it works (see above); the Pi test with a
+  mouse is in the USB topic's queue, and the NanoKVM's USB can act as one.
 - **Pi numbers:** frame rate, the CPU against DMA trade with shadow
   buffers, the time from login to desktop, memory at 1920x1200. The Pi
   test in [docs/test-plan.md](../../../docs/test-plan.md) collects them.
