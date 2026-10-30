@@ -29,9 +29,9 @@ windows were easy to hit.
   SIGINT and SIGTERM to the default action: until the exec is done it runs
   Ion's handlers, which would only note the signal. `ion = "source"` in
   `config.toml` builds Ion with it.
-- `base/0001`: procmgr copies pending signals into the new control struct
+- `base/0043`: procmgr copies pending signals into the new control struct
   (POSIX keeps pending signals across exec).
-- `relibc/0001`: right after that, libc sets its signal mask again, which
+- `relibc/0044`: right after that, libc sets its signal mask again, which
   delivers such a signal at once.
 - `tools/ttyinfo` (in `config.toml`): shows a terminal's foreground group,
   ISIG, the SIGINT disposition, and waits for SIGINT.
