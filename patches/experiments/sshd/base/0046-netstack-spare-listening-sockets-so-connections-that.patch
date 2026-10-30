@@ -1,0 +1,233 @@
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -73,6 +73,14 @@ impl<DataT> SocketFile<DataT> {
+         }
+     }
+ 
++    /// Like clone_with_data, for another socket of the set.
++    pub fn clone_with_socket(&self, socket_handle: SocketHandle, data: DataT) -> SocketFile<DataT> {
++        SocketFile {
++            socket_handle,
++            ..self.clone_with_data(data)
++        }
++    }
++
+     pub fn new_with_data(socket_handle: SocketHandle, data: DataT) -> SocketFile<DataT> {
+         SocketFile {
+             flags: 0,
+@@ -137,10 +145,10 @@ where
+             ..
+         }) = self
+         {
++            let read_ready = SocketT::read_ready_in(socket_set, socket_handle, data);
+             let socket = socket_set.get_mut::<SocketT>(socket_handle);
+ 
+-            if events & syscall::EVENT_READ.bits() == syscall::EVENT_READ.bits()
+-                && socket.read_ready(data)
++            if events & syscall::EVENT_READ.bits() == syscall::EVENT_READ.bits() && read_ready
+             {
+                 if !*read_notified {
+                     *read_notified = true;
+@@ -191,6 +199,18 @@ where
+         self.can_recv(data) || !self.may_recv()
+     }
+ 
++    /// read_ready for a file whose state can span more sockets of the set.
++    fn read_ready_in(socket_set: &mut SocketSet, handle: SocketHandle, data: &Self::DataT) -> bool
++    where
++        Self: AnySocket<'static>,
++    {
++        socket_set.get_mut::<Self>(handle).read_ready(data)
++    }
++
++    /// Called when the last file of a socket closes, before the socket is
++    /// removed: other sockets that belong to it go too.
++    fn remove_extra(_socket_set: &mut SocketSet, _data: &Self::DataT) {}
++
+     fn hop_limit(&self) -> u8;
+     fn set_hop_limit(&mut self, hop_limit: u8);
+ 
+@@ -689,6 +709,9 @@ where
+                 };
+ 
+                 if remove {
++                    if let SchemeFile::Socket(ref file) = scheme_file {
++                        SocketT::remove_extra(&mut socket_set, &file.data);
++                    }
+                     socket_set.remove(socket_handle);
+                 }
+             }
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -1,3 +1,5 @@
++use std::cell::RefCell;
++use std::rc::Rc;
+ use std::str;
+ 
+ use libredox::flag;
+@@ -11,6 +13,30 @@ use super::socket::{Context, DupResult, SchemeFile, SchemeSocket, SocketFile};
+ use super::{parse_endpoint, SchemeWrapper, SocketSet};
+ use crate::port_set::PortSet;
+ 
++// A listening socket of smoltcp takes one connection, and netstack makes
++// the next one only at accept(). Connections that come in before that were
++// reset: ssh-keyscan with several key types got only the first. A listening
++// file therefore has spare sockets listening on the same endpoint too.
++const LISTEN_SPARES: usize = 7;
++
++/// The data of a listening file: its endpoint and the spare sockets.
++#[derive(Clone)]
++pub struct Listener {
++    endpoint: IpListenEndpoint,
++    spares: Rc<RefCell<Vec<SocketHandle>>>,
++}
++
++fn new_listening_socket(socket_set: &mut SocketSet, endpoint: IpListenEndpoint) -> SocketHandle {
++    let rx_buffer = TcpSocketBuffer::new(vec![0; 0xffff]);
++    let tx_buffer = TcpSocketBuffer::new(vec![0; 0xffff]);
++    let handle = socket_set.add(TcpSocket::new(rx_buffer, tx_buffer));
++    socket_set
++        .get_mut::<TcpSocket>(handle)
++        .listen(endpoint)
++        .expect("Can't listen on local endpoint");
++    handle
++}
++
+ const SO_SNDBUF: usize = 7;
+ const SO_RCVBUF: usize = 8;
+ 
+@@ -18,7 +44,7 @@ pub type TcpScheme = SchemeWrapper<TcpSocket<'static>>;
+ 
+ impl<'a> SchemeSocket for TcpSocket<'a> {
+     type SchemeDataT = PortSet;
+-    type DataT = Option<IpListenEndpoint>;
++    type DataT = Option<Listener>;
+     type SettingT = ();
+ 
+     const BASE_PATH: &'static str = "/scheme/tcp/";
+@@ -50,6 +76,26 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         }
+     }
+ 
++    fn read_ready_in(socket_set: &mut SocketSet, handle: SocketHandle, data: &Self::DataT) -> bool {
++        let ready = socket_set.get_mut::<TcpSocket>(handle).read_ready(data);
++        match data {
++            Some(listener) if !ready => listener
++                .spares
++                .borrow()
++                .iter()
++                .any(|&spare| socket_set.get::<TcpSocket>(spare).is_active()),
++            _ => ready,
++        }
++    }
++
++    fn remove_extra(socket_set: &mut SocketSet, data: &Self::DataT) {
++        if let Some(listener) = data {
++            for spare in listener.spares.borrow_mut().drain(..) {
++                socket_set.remove(spare);
++            }
++        }
++    }
++
+     fn hop_limit(&self) -> u8 {
+         self.hop_limit().unwrap_or(64)
+     }
+@@ -142,7 +188,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+             tcp_socket
+                 .listen(local_endpoint)
+                 .expect("Can't listen on local endpoint");
+-            Some(local_endpoint)
++            let spares = (0..LISTEN_SPARES)
++                .map(|_| new_listening_socket(socket_set, local_endpoint))
++                .collect();
++            Some(Listener {
++                endpoint: local_endpoint,
++                spares: Rc::new(RefCell::new(spares)),
++            })
+         };
+ 
+         Ok((socket_handle, listen_enpoint))
+@@ -157,9 +209,9 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+             if let Some(endpoint) = self.local_endpoint() {
+                 // Socket was connected on some port
+                 port_set.release_port(endpoint.port);
+-            } else if let Some(endpoint) = data {
++            } else if let Some(ref listener) = data {
+                 // Socket was listening on some port
+-                port_set.release_port(endpoint.port);
++                port_set.release_port(listener.endpoint.port);
+             }
+         }
+         Ok(())
+@@ -220,12 +272,32 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         let file = match path {
+             "listen" => {
+                 if let SchemeFile::Socket(ref tcp_handle) = *file {
+-                    let Some(listen_enpoint) = tcp_handle.data else {
++                    let Some(ref listener) = tcp_handle.data else {
+                         // This socket is not listening so we can't accept a connection
+                         return Err(SyscallError::new(syscall::EINVAL));
+                     };
++                    let listen_enpoint = listener.endpoint;
+ 
+                     if !is_active {
++                        // A connection may have come in on a spare: hand
++                        // that over and put a new spare in its place.
++                        let active = listener
++                            .spares
++                            .borrow()
++                            .iter()
++                            .position(|&spare| socket_set.get::<TcpSocket>(spare).is_active());
++                        if let Some(index) = active {
++                            let new_spare = new_listening_socket(socket_set, listen_enpoint);
++                            let spare =
++                                std::mem::replace(&mut listener.spares.borrow_mut()[index], new_spare);
++                            if let Some(endpoint) = socket_set.get::<TcpSocket>(spare).local_endpoint() {
++                                port_set.acquire_port(endpoint.port);
++                            }
++                            return Ok(Some((
++                                SchemeFile::Socket(tcp_handle.clone_with_socket(spare, None)),
++                                None,
++                            )));
++                        }
+                         // Socket listening but no connection received
+                         if tcp_handle.flags & syscall::O_NONBLOCK == syscall::O_NONBLOCK {
+                             return Err(SyscallError::new(syscall::EAGAIN));
+@@ -239,18 +311,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+                     let new_handle = SchemeFile::Socket(tcp_handle.clone_with_data(None));
+ 
+                     // Creating a socket to continue listening
+-                    let rx_packets = vec![0; 0xffff];
+-                    let tx_packets = vec![0; 0xffff];
+-                    let rx_buffer = TcpSocketBuffer::new(rx_packets);
+-                    let tx_buffer = TcpSocketBuffer::new(tx_packets);
+-                    let socket = TcpSocket::new(rx_buffer, tx_buffer);
+-                    let new_socket_handle = socket_set.add(socket);
+-                    {
+-                        let tcp_socket = socket_set.get_mut::<TcpSocket>(new_socket_handle);
+-                        tcp_socket
+-                            .listen(listen_enpoint)
+-                            .expect("Can't listen on local endpoint");
+-                    }
++                    let new_socket_handle = new_listening_socket(socket_set, listen_enpoint);
+                     // We got a new connection to the socket so acquire the port
+                     port_set.acquire_port(
+                         local_endpoint
+@@ -259,7 +320,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+                     );
+                     return Ok(Some((
+                         new_handle,
+-                        Some((new_socket_handle, Some(listen_enpoint))),
++                        Some((new_socket_handle, Some(listener.clone()))),
+                     )));
+                 } else {
+                     return Err(SyscallError::new(syscall::EBADF));
+@@ -268,7 +329,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+             _ => {
+                 trace!("TCP dup unknown {}", path);
+                 if let SchemeFile::Socket(ref tcp_handle) = *file {
+-                    SchemeFile::Socket(tcp_handle.clone_with_data(tcp_handle.data))
++                    SchemeFile::Socket(tcp_handle.clone_with_data(tcp_handle.data.clone()))
+                 } else {
+                     SchemeFile::Socket(SocketFile::new_with_data(socket_handle, None))
+                 }
