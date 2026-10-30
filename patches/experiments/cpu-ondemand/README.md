@@ -4,11 +4,12 @@ Issue [#23](https://github.com/redox-rpi/redox-rpi/issues/23), planned for
 v0.4.0. Builds on base patch `0021` (ARM clock to its maximum, `arm_clock`
 file, throttle watch).
 
-```bash
-scripts/build-image.sh --experiment cpu-ondemand
-```
+**Default since Pi test #93:** base patch `0040` and kernel patch `0040`
+(they were `0050` here while this was an experiment). The name
+`cpu-ondemand` is still accepted by `build-image.sh` and does nothing;
+`qemu-check.sh` and `ondemand-check.py` stay here.
 
-Base patch `0050` adds a governor thread to `rpi-firmwared`, like Linux's
+Base patch `0040` adds a governor thread to `rpi-firmwared`, like Linux's
 `ondemand` governor with `raspberrypi-cpufreq`:
 
 - Every 100 ms it reads the per-CPU times from `/scheme/sys/stat` (busy and
@@ -47,7 +48,7 @@ Base patch `0050` adds a governor thread to `rpi-firmwared`, like Linux's
 - The mode is not kept across a reboot: `rpi-firmwared` starts from the
   initfs, before `/etc` is there. A line in an init script can set it.
 
-Kernel patch `0050` fixes the CPU times in `sys:stat`: each context switch
+Kernel patch `0040` fixes the CPU times in `sys:stat`: each context switch
 added its time in whole milliseconds and dropped the rest, so a CPU that
 switches every few microseconds (many system calls, such as the start loop)
 looked almost idle. The kernel now keeps nanoseconds and still shows
@@ -105,3 +106,11 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
   35985 ms at max. `cputop 10` while quiet: all four cores 0–1 % busy,
   busiest threads `dwc2d` 0.8 % and `rpi-firmwared` 0.7 %. Pi test #93
   checks the real clock and the watts.
+- **Pi test #93** (build `v0.3.0-dev-354-gc656808+x6039`, 2026-10-30):
+  **pass.** Idle 60 s after login: 96 % of the time at 600 MHz, 3.05 W
+  (powersave 3.00 W, performance 3.20 W); again 96 % after the start
+  loops. 50 starts: ondemand 8.0 s, performance 7.9 s, powersave 15.9 s,
+  0 failed; `cputop` at idle: cores 0–2 %, `dwc2d` 2.3 %. As expected,
+  `target` still reads `max` (the read is load); the time counters show
+  the real picture. See
+  [the report](../../../docs/test-reports.md#2026-10-30-v030-dev-354-gc656808x6039).

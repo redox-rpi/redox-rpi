@@ -4,7 +4,7 @@
 # at `target` but at the counters: over 20 quiet seconds the clock must be
 # at the minimum most of the time, and during a start loop at the maximum.
 # QEMU's clock is fixed (min = max), so only the governor's decisions are
-# checked, not the rate. Build with --experiment cputop too.
+# checked, not the rate. Build with --experiment cputop (the governor is a default patch).
 #
 # Usage: patches/experiments/cpu-ondemand/qemu-check.sh [image]
 

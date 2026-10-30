@@ -34,16 +34,15 @@ each one expects to come before it:
 
 | Number | Where | What |
 |---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0024`, `0030` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment; numbered after the sdhost patches planned as `0025`–`0029`) |
+| `0001`–`0016`, `0018`, `0020`–`0024`, `0030`, `0040` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment; numbered after the sdhost patches planned as `0025`–`0029`), `0040` the `rpi-firmwared` governor, the ARM clock follows the load (was experiment `cpu-ondemand`, with kernel `0040`, CPU times in `sys:stat` without rounding; #23, Pi test #93) |
 | `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
-| `0050`, kernel `0050` | `experiments/cpu-ondemand/` | `rpi-firmwared` governor: the ARM clock follows the load; kernel: CPU times in `sys:stat` without rounding |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`),
 `timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
-default patches now, and so are `serial-rx` and `pi-clean-boot`; the names are still accepted
+default patches now, and so are `serial-rx`, `pi-clean-boot` and `cpu-ondemand`; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
