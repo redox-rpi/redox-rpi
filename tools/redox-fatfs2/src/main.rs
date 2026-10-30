@@ -9,19 +9,27 @@
 //! a file handle also keeps the crate's file open with its position, so
 //! sequential reads and writes do not walk the cluster chain again. fatfsd
 //! stays in the foreground, start it with `&`.
+//!
+//! SIGTERM unmounts: open files are written, the FAT32 free-space info and
+//! the volume's dirty flag are updated, and the scheme goes away. A disk
+//! that goes away (ENODEV, ENXIO) ends fatfsd too. Either way it removes its
+//! scheme name, so a stick plugged in again can use it.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use fatfs::{Dir, FileSystem, FsOptions};
 use redox_scheme::scheme::{register_sync_scheme, SchemeState, SchemeSync};
 use redox_scheme::{CallerCtx, OpenResult, RequestKind, Response, SignalBehavior, Socket};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 use syscall::error::{
-    Error, Result, EBADF, EEXIST, EINVAL, EIO, EISDIR, ENODEV, ENOENT, ENOTDIR, ENOTEMPTY, ENXIO,
+    Error, Result, EBADF, EBUSY, EEXIST, EINTR, EINVAL, EIO, EISDIR, ENODEV, ENOENT, ENOTDIR,
+    ENOTEMPTY, ENXIO, EXDEV,
 };
 use syscall::flag::{
     AT_REMOVEDIR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY, O_EXCL, O_RDONLY, O_STAT,
@@ -40,6 +48,31 @@ struct Disk {
     /// The block number `block` holds. fatfsd is the only writer, so it
     /// stays valid; the FAT is read entry by entry.
     cached: Option<u64>,
+}
+
+/// The scheme name, to remove it from the namespace at exit.
+static SCHEME_NAME: OnceLock<String> = OnceLock::new();
+
+/// Set by SIGTERM.
+static UNMOUNT: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_sigterm(_: libc::c_int) {
+    UNMOUNT.store(true, Ordering::SeqCst);
+}
+
+/// Removes the scheme name from the namespace and exits. A scheme's name
+/// stays there after its socket is closed until it is unlinked (unlinking
+/// the path would ask the scheme itself).
+fn leave(code: i32) -> ! {
+    if let Some(name) = SCHEME_NAME.get() {
+        let unlinked = libredox::call::getns()
+            .map_err(|e| e.to_string())
+            .and_then(|ns| syscall::unlinkat(ns, format!("/scheme/{name}"), 0).map_err(|e| e.to_string()));
+        if let Err(err) = unlinked {
+            eprintln!("fatfsd: /scheme/{name} stays: {err}");
+        }
+    }
+    process::exit(code);
 }
 
 /// errno of a disk that went away, e.g. an unplugged USB stick.
@@ -73,7 +106,7 @@ impl Disk {
         if let Err(err) = &res {
             if is_gone(err) {
                 eprintln!("fatfsd: the disk is gone ({err}), exiting");
-                process::exit(0);
+                leave(0);
             }
         }
         res
@@ -264,6 +297,36 @@ impl FatScheme {
         }
     }
 
+    /// The path a rename target names: `/scheme/<name>/...` (what relibc
+    /// sends), or a path in this filesystem.
+    fn target_path(&self, path: &str) -> Result<String> {
+        match path.strip_prefix("/scheme/") {
+            Some(rest) => {
+                let (scheme, rest) = rest.split_once('/').unwrap_or((rest, ""));
+                if scheme != self.name {
+                    return Err(Error::new(EXDEV));
+                }
+                Ok(join("", rest))
+            }
+            None => Ok(join("", path)),
+        }
+    }
+
+    /// Gives the handles of `from` and everything below it the new path.
+    fn rename_handles(&mut self, from: &str, to: &str) {
+        for handle in self.handles.values_mut() {
+            if let Handle::Dir(path) | Handle::File { path, .. } = handle {
+                let lower = path.to_ascii_lowercase();
+                let from_lower = from.to_ascii_lowercase();
+                if lower == from_lower {
+                    *path = to.to_string();
+                } else if lower.starts_with(&format!("{from_lower}/")) {
+                    *path = format!("{to}{}", &path[from.len()..]);
+                }
+            }
+        }
+    }
+
     fn insert(&mut self, handle: Handle) -> usize {
         let id = self.next_id;
         self.next_id += 1;
@@ -409,6 +472,44 @@ impl SchemeSync for FatScheme {
         file.flush().map_err(io_err)
     }
 
+    /// Renames the handle's file or directory. Like POSIX, an existing
+    /// target is replaced if it is a file, or an empty directory for a
+    /// directory.
+    fn frename(&mut self, id: usize, path: &str, _ctx: &CallerCtx) -> Result<usize> {
+        let from = self.path(id)?.to_string();
+        if from.is_empty() {
+            return Err(Error::new(EBUSY));
+        }
+        let to = self.target_path(path)?;
+        if to.is_empty() || to.to_ascii_lowercase().starts_with(&format!("{}/", from.to_ascii_lowercase())) {
+            return Err(Error::new(EINVAL));
+        }
+        if to == from {
+            return Ok(0);
+        }
+        let (from_dir, _) = self.lookup(&from)?;
+        // A different name for the same entry (only the case changes) is a
+        // rename, not a replace.
+        if !to.eq_ignore_ascii_case(&from) {
+            match self.lookup(&to) {
+                Ok((to_dir, _)) => {
+                    if to_dir != from_dir {
+                        return Err(Error::new(if to_dir { EISDIR } else { ENOTDIR }));
+                    }
+                    self.close_files(&to);
+                    self.fs.root_dir().remove(&to).map_err(io_err)?;
+                }
+                Err(err) if err.errno == ENOENT => {}
+                Err(err) => return Err(err),
+            }
+        }
+        self.close_files(&from);
+        let root = self.fs.root_dir();
+        root.rename(&from, &root, &to).map_err(io_err)?;
+        self.rename_handles(&from, &to);
+        Ok(0)
+    }
+
     fn fstat(&mut self, id: usize, stat: &mut Stat, _ctx: &CallerCtx) -> Result<()> {
         let path = self.path(id)?.to_string();
         let (is_dir, size) = self.lookup(&path)?;
@@ -485,10 +586,25 @@ fn run(disk: &str, name: &str) -> io::Result<()> {
     let mut scheme = FatScheme { fs, name: name.to_string(), handles: BTreeMap::new(), next_id: 1 };
     let mut state = SchemeState::new();
     register_sync_scheme(&socket, name, &mut scheme).map_err(io::Error::from)?;
+    let _ = SCHEME_NAME.set(name.to_string());
     eprintln!("fatfsd: serving /scheme/{name}");
 
+    // Without SA_RESTART, so that waiting for a request returns EINTR.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_sigterm as usize;
+        libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+    }
+
     loop {
-        let req = match socket.next_request(SignalBehavior::Restart)? {
+        if UNMOUNT.load(Ordering::SeqCst) {
+            return unmount(scheme);
+        }
+        let next = match socket.next_request(SignalBehavior::Interrupt) {
+            Err(err) if err.errno == EINTR => continue,
+            next => next?,
+        };
+        let req = match next {
             None => return Ok(()),
             Some(req) => match req.kind() {
                 RequestKind::Call(req) => req,
@@ -507,6 +623,22 @@ fn run(disk: &str, name: &str) -> io::Result<()> {
     }
 }
 
+/// Writes the open files, then the FAT32 free-space info and the clean
+/// flag (fatfs' unmount).
+fn unmount(mut scheme: FatScheme) -> io::Result<()> {
+    eprintln!("fatfsd: unmounting /scheme/{}", scheme.name);
+    // The open files borrow the filesystem; dropping them writes them.
+    scheme.handles.clear();
+    let fs = scheme.fs as *const FileSystem<Disk> as *mut FileSystem<Disk>;
+    drop(scheme);
+    // SAFETY: `fs` came from Box::leak in run(), and nothing borrows it any
+    // more: the handles are gone and the scheme is dropped.
+    let fs = unsafe { Box::from_raw(fs) };
+    fs.unmount()?;
+    eprintln!("fatfsd: unmounted, the disk can be removed");
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 3 {
@@ -515,6 +647,7 @@ fn main() {
     }
     if let Err(err) = run(&args[1], &args[2]) {
         eprintln!("fatfsd: {}: {err}", args[1]);
-        process::exit(1);
+        leave(1);
     }
+    leave(0);
 }

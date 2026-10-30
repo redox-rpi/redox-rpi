@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # MIT. Without its default "chrono" feature: new files get no timestamps.
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
+libc = "0.2"
 libredox = "0.1.25"
 redox-scheme = "0.12.0"
 redox_syscall = { version = "0.9.5", features = ["std"] }

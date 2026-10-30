@@ -1,0 +1,9 @@
+[package]
+name = "usbmountd"
+description = "Mount the FAT partitions of USB sticks with fatfsd as /scheme/usb0, usb1, ..., and unmount them for removal"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

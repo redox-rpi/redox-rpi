@@ -1,0 +1,17 @@
+[packages]
+redox-fatfs2 = "source"
+usbmountd = "source"
+
+# Watches for USB disks from dwc2d (experiment usb-storage) and mounts their
+# FAT partitions with fatfsd as /scheme/usb0, usb1, ...
+[[files]]
+path = "/usr/lib/init.d/70_usbmountd.service"
+data = """
+[unit]
+description = "Mount USB sticks"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "usbmountd"
+type = "oneshot_async"
+"""
