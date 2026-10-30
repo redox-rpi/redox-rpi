@@ -39,7 +39,7 @@ keyboards() {
 }
 
 rm -f "$socket" "$log"
-QEMU_DEVSH_PORT=$port timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" --image "$image" \
+DEVSH_PORT=$port timeout 600 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" --image "$image" \
     < /dev/null > "$log" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null; sleep 2; pkill -P $qemu 2>/dev/null' EXIT
