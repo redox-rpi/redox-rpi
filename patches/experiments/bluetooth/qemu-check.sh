@@ -32,7 +32,8 @@ done
     --run "bt scan 2" \
     --run "bt inquiry 2" \
     --run "bt cmd 1009" \
-    --run "bt cmd fc99" > /dev/null 2>&1
+    --run "bt cmd fc99" \
+    --run "bt diag" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
 failed=0
@@ -42,7 +43,7 @@ check() {
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 check "driver started" "bcm2835-btuartd: mini UART at 0x3f215000, 11[0-9]{4} baud"
 check "pins 30 and 33 alt5, 33 pulled up" "^P alt5 alt5 up"
-check "scheme files" "^baud[[:space:]]+clock[[:space:]]+data"
+check "scheme files" "^baud[[:space:]]+clock[[:space:]]+data[[:space:]]+flow[[:space:]]+status"
 check "no bt_power on QEMU's 3B" "^power: no /scheme/rpi-firmware/bt_power"
 check "ROM version, build 0" "^version: Bluetooth 4.1 \(HCI 7, LMP 7\), manufacturer 15 \(Broadcom\), subversion 6119, firmware build 0$"
 check "firmware loaded" "^firmware: /usr/lib/firmware/brcm/BCM4345C0.hcd, 323 records"
@@ -56,6 +57,9 @@ check "inquiry finds the PC" "^bredr FE:CA:EF:BE:ED:FE class 0a010c$"
 check "inquiry count" "^inquiry: 1 devices$"
 check "raw command" "^00 ac 1f 00 c0 45 43$"
 check "unknown command status" "^01$"
+check "diag: pins" "^gpio 32: mode alt5"
+check "diag: line status" "^  after: cts_line [01], rts [01], tx_fifo 0"
+check "diag: reset answered with each flow setting" "^answered with flow: auto, auto-low, none$"
 if grep -q "^launch after 323 records$" "$hci_log"; then echo "PASS: fake saw the whole firmware"; else echo "FAIL: fake saw the whole firmware"; failed=1; fi
 if grep -q "^stray byte" "$hci_log"; then echo "FAIL: stray bytes on the UART"; failed=1; else echo "PASS: no stray bytes"; fi
 exit $failed
