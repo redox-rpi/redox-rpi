@@ -1,4 +1,4 @@
-From c072da8654f3d5680cb20d418b234f8bd1f73503 Mon Sep 17 00:00:00 2001
+From b54d6a30f1a71470df1bd489e7a456ff74ee94c6 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 30 Oct 2026 07:46:43 +0000
 Subject: [PATCH] Exit when the terminal is gone instead of panicking or
@@ -8,9 +8,10 @@ When an SSH session ends, the PTY goes away under the shell. Reading it
 failed again and again, and flushing stderr fell back to println!, which
 panicked on the dead terminal and aborted ion.
 ---
- src/binary/mod.rs    | 10 ++++------
- src/binary/readln.rs | 12 +++++++++++-
- 2 files changed, 15 insertions(+), 7 deletions(-)
+ src/binary/mod.rs                      | 10 ++++------
+ src/binary/readln.rs                   | 12 +++++++++++-
+ src/lib/shell/pipe_exec/job_control.rs |  3 ++-
+ 3 files changed, 17 insertions(+), 8 deletions(-)
 
 diff --git a/src/binary/mod.rs b/src/binary/mod.rs
 index 7fa4b8d..ffdf0cf 100644
@@ -63,6 +64,20 @@ index 4e24ce0..52f8fd9 100644
          match line {
              Ok(line) => {
                  if line.bytes().next() != Some(b'#')
+diff --git a/src/lib/shell/pipe_exec/job_control.rs b/src/lib/shell/pipe_exec/job_control.rs
+index 96a8ef7..fe884cc 100644
+--- a/src/lib/shell/pipe_exec/job_control.rs
++++ b/src/lib/shell/pipe_exec/job_control.rs
+@@ -351,7 +351,8 @@ impl<'a> Shell<'a> {
+     /// foreground process group.
+     fn set_foreground_as(pid: Pid) {
+         signals::block();
+-        unistd::tcsetpgrp(0, pid).unwrap();
++        // Fails when the terminal is gone; the prompt then exits.
++        let _ = unistd::tcsetpgrp(0, pid);
+         signals::unblock();
+     }
+ 
 -- 
 2.53.0
 

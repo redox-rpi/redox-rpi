@@ -59,7 +59,7 @@ index 638419dd..3b03f7a6 100644
          }
      }
  
-@@ -342,6 +346,26 @@ impl Pty {
+@@ -342,6 +346,25 @@ impl Pty {
          }
      }
  
@@ -76,7 +76,6 @@ index 638419dd..3b03f7a6 100644
 +    }
 +
 +    pub fn note_pgrp(&mut self, pgrp: usize) {
-+        eprintln!("ptyd: pty {} pgrp {}", self.id, pgrp);
 +        self.pgrp = pgrp;
 +        if pgrp != 0 && !self.seen_pgrps.contains(&pgrp) {
 +            self.seen_pgrps.push(pgrp);
