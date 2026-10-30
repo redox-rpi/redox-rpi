@@ -1,4 +1,9 @@
-# redoxfs-rename
+# rename on non-root RedoxFS (#57, was experiment `redoxfs-rename`)
+
+**Default since the merge of this branch:** redoxfs `0036` (moved to
+`patches/redoxfs/`) is in every image. `--experiment redoxfs-rename` is
+still accepted and does nothing, so older commands keep working. This page
+stays as the patch's documentation.
 
 Fix for [#57](https://github.com/redox-rpi/redox-rpi/issues/57): `rename`
 fails with `ENOENT` on every RedoxFS except the root one, e.g.
@@ -12,11 +17,7 @@ its scheme (`/scheme/data/b`). RedoxFS' `frename_internal` checked that the
 scheme is its own, but then walked the whole path from the filesystem root,
 looking for a directory `scheme`. The root filesystem works because its
 paths carry no scheme. `flink` (`validate_new_link`) already removes the
-scheme; `0001` does the same for both paths of a rename.
-
-```bash
-scripts/build-image.sh --experiment redoxfs-rename
-```
+scheme; `0036` does the same for both paths of a rename.
 
 ## Results
 
@@ -31,4 +32,7 @@ branch `qemu-data-part`), 2026-10-30:
   `/scheme/data` to `/home/root` (EXDEV, `mv` copies) and renames on the
   root filesystem all work; the moved file keeps its content.
 
-On the Pi: test 83.
+On the Pi, 2026-10-30, test 83 with `v0.3.0-dev-311-g9dcb81b+xd71d`
+([report](../../../docs/test-reports.md#2026-10-30-v030-dev-311-g9dcb81bxd71d)):
+**pass**. Absolute and relative renames on `/scheme/data`, a move into a
+new directory, `mv` on `/tmp` and `rm -r` all work; 0 of 300 starts failed.

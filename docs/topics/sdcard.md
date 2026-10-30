@@ -12,6 +12,10 @@
 - SD card stress test (`scripts/sd-stress.py`, 2026-10-28): both drivers
   pass on the same commit (256 MiB, 1000 small files, 5 restarts, no file
   lost or changed); 256 MiB at 3.2 MB/s with sdhcid, 5.7 MB/s with sdhost.
+- `rename` works on every RedoxFS, not only the root one
+  ([#57](https://github.com/redox-rpi/redox-rpi/issues/57)): redoxfs `0036`,
+  default with branch `redoxfs-rename`; before, `mv` on
+  `/scheme/data` failed with os error 2. Pi test 83 passed on 2026-10-30.
 
 ## Next
 

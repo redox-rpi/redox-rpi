@@ -38,11 +38,12 @@ each one expects to come before it:
 | `0017`, `0018` | `experiments/sdhost-driver/base/` | sdhost driver, high speed mode and statistics (`0018` here applies after `base/0018`) |
 | `0018` | `experiments/sdhost-boot/base/` | start sdhost at boot instead of sdhcid (after `sdhost-driver`) |
 | `0019` | `experiments/sdhost-stats/base/` | transfer statistics at boot (after `sdhost-driver`) |
+| `0036` | `redoxfs/` | `rename` within a non-root RedoxFS such as `/scheme/data` named by an absolute path (was experiment `redoxfs-rename`, #57); RedoxFS is pinned in `config/upstream.lock` like the other recipes |
 
 Experiments apply after all default patches. Combinations that build:
 `sdhost-driver` (with `sdhost-boot` or `sdhost-stats`),
 `timesync`, `ldso-diagnostics`. `rtl8152` and `dwc2-interrupts` are
-default patches now, and so are `serial-rx` and `pi-clean-boot`; the names are still accepted
+default patches now, and so are `serial-rx`, `pi-clean-boot` and `redoxfs-rename`; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
