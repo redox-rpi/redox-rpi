@@ -3353,3 +3353,24 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `pty-sigint` (Ion 
 - Standard checks with `--manifest`: all pass, 0 of 300 starts failed.
 - No panic or unhandled exception on serial.
 - `/srv/tftp/redox` has the stable image again; stable booted at 21:02 UTC.
+
+## 2026-10-30: `v0.3.0-dev-454-g06437b9+x7d9f`
+
+Real Pi 3B+ over netboot. Experiments: `gpio`, `bluetooth`. test 109 step 5 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54) Bluetooth, the 32 kHz sleep clock on GPIO 43), Pi test agent
+
+**The sleep clock runs: GPIO 43 sampled 102 high and 98 low, and the clock
+reports `enabled 1, busy 1, rate_hz 32768`. The chip still answers with no flow
+setting, so a missing clock is not the reason.** Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-454-g06437b9+x7d9f/harddrive.img`.
+
+- Boot log: `bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`.
+- The two new lines:
+  - `gpio 43 sampled 200 times: 102 high, 98 low`
+  - `lpo: enabled 1, busy 1, source 1, divi 585, divf 3840, rate_hz 32768, ctl 0x00000291, div 0x00249f00`
+- The rest is the same as steps 1–3: GPIO 30–33 alt5 (pulls up/none/none/up),
+  GPIO 43 alt0; `bt_power: 0`, `power: cycled`, 115313 baud; `auto` and
+  `none` leave `tx_fifo 0`, `auto-low` keeps `tx_fifo 4`; `cts_line 1` before
+  and after every Reset; `received: nothing` each time;
+  `no answer with any flow setting`.
+- Step 4 still waits for the user's OK.
+- `/srv/tftp/redox` has the stable image again.
