@@ -1921,3 +1921,52 @@ capture saved as `~/pitest-tools/broker76.out` on homenodellm.
   so it may be that leak. The reset cleared it before it ran out.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-223-g7a3641a+xd4e7`
+
+Real Pi 3B+ over netboot. Experiments: `ctx-leak-fix`, `rtl8152`, `timesync`, `wifi-sdio`. test 77 ([#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi steps 3–4 again, rerun of test 63), Pi test agent
+
+**Fail: the CLM file is missing from the image.** Image
+`~/redox-rpi-zrtl/keep/wifiscan2-v0.3.0-dev-223-g7a3641a+xd4e7.img`.
+
+- The 0-byte frame fix works: where test 63 stopped at `data frame of 0
+  bytes`, the driver now reads `firmware version: wl0: Nov  1 2021 00:37:12
+  version 7.45.241 (1a2f2fa CY) FWID 01-5209c09` and `MAC address
+  b8:27:eb:5d:b5:ff`. Everything test 60 checks passes.
+- Then: `bcm2835-sdiod: /usr/lib/firmware/brcm/cyfmac43455-sdio.clm_blob: No
+  such file or directory (os error 2)` and `bcm2835-sdiod: FAILED`. So there is
+  no `CLM loaded`, `radio up` or scan. `/usr/lib/firmware/brcm/` has only
+  `LICENCE.cypress`, `brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt`,
+  `cyfmac43455-sdio-minimal.bin` and `cyfmac43455-sdio-standard.bin`.
+- Second run over devsh: same lines, same `FAILED` (firmware written in
+  272 ms, 293 ms at boot).
+- `wifi_power`: **still fails**. `echo 0 > /scheme/rpi-firmware/wifi_power;
+  echo $?` gives `I/O error (os error 5)` and 1, the same for `echo 1`. `cat`
+  shows the value written (0, then 1). The driver logs the same I/O errors.
+- Standard checks pass, 0 of 300 starts failed.
+
+Boot `bcm2835-sdiod:` lines (core and CMD lines as in test 63):
+
+```
+bcm2835-sdiod: wifi_power was 0
+bcm2835-sdiod: wifi_power 0: I/O error (os error 5)
+bcm2835-sdiod: wifi_power 1: I/O error (os error 5)
+bcm2835-sdiod: CMD5 R4 0x30ffff00, 3 functions
+bcm2835-sdiod: CMD52 chipid 0x15264345: chip 0x4345 rev 6 cores 5
+bcm2835-sdiod: chip ID OK
+bcm2835-sdiod: RAM 0x00198000, 800 KiB
+bcm2835-sdiod: minimal firmware, 548728 bytes; NVRAM 1748 bytes
+bcm2835-sdiod: firmware written (548728 bytes in 293 ms) and read back
+bcm2835-sdiod: NVRAM written at 0x0025f92c (1748 bytes)
+bcm2835-sdiod: ARM started, reset vector 0xb83ef198
+bcm2835-sdiod: HT clock on (CHIPCLKCSR 0xd0)
+bcm2835-sdiod: function 2 ready, firmware running
+bcm2835-sdiod: mailbox from the firmware 0x00040008
+bcm2835-sdiod: firmware version: wl0: Nov  1 2021 00:37:12 version 7.45.241 (1a2f2fa CY) FWID 01-5209c09
+bcm2835-sdiod: mailbox from the firmware 0x00040002
+bcm2835-sdiod: MAC address b8:27:eb:5d:b5:ff
+bcm2835-sdiod: /usr/lib/firmware/brcm/cyfmac43455-sdio.clm_blob: No such file or directory (os error 2)
+bcm2835-sdiod: FAILED
+```
+
+Stable image restored afterwards.
