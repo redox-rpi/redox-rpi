@@ -2023,3 +2023,34 @@ Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `pty-sigint`. test
   on stable. Nothing else.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-305-g2d679a2+x4ec1`
+
+Real Pi 3B+ over netboot. Experiments: `timesync`, `rtl8152`, `sshd`. test 81 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server, rerun of test 59 with the host key fix), Pi test agent
+
+**Pass.** Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-305-g2d679a2+x4ec1.img`.
+
+- Boot log: `ssh-keygen: generating new host keys: RSA ECDSA ED25519
+  MLDSA44-ED25519`, then sshd starts. No `Unable to move`, no `no hostkeys
+  available`. Only the expected `TODO: madvise(…)` lines.
+- `ls -l /scheme/data/etc/ssh`: the 8 files `ssh_host_{rsa,ecdsa,ed25519,
+  mldsa44_ed25519}_key` (`-rw-------`) and `.pub` (`-rw-r--r--`), no leftover
+  temporary files: **pass**.
+- Standard checks pass, 0 of 300 starts failed.
+- Test key put into `/home/root/.ssh/authorized_keys` over devsh. `ssh
+  root@192.168.178.148 'echo OK; id; uname -a'`: `OK`, `uid=0(root)
+  gid=0(root)`, `Redox redox 0.5.12 … aarch64 Redox`, **1.3 s** including the
+  login: **pass**.
+- `ssh-session.exp` (host and port set to the Pi, `-p 22`, key file): prompt,
+  command, prompt, backspace, prompt and `exit` all ok, exit at once: **pass**.
+- Host keys: RSA `SHA256:nggT0H31…`, ECDSA `SHA256:MXb/OY+z…`, ED25519
+  `SHA256:6b9SpKQH…`. After `echo reset > /scheme/sys/kstop` they are the
+  same, and that boot log has no `generating new host keys`: **pass**.
+- Notes:
+  - `ssh-keyscan` asked for several key types in one call returned only RSA.
+    One type per call gives all three.
+  - After the reset, key login is refused, because `authorized_keys` lives in
+    `/home/root` on the root file system, which is in RAM on a network boot.
+    That is expected.
+
+Stable image restored afterwards.
