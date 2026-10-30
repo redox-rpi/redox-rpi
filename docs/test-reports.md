@@ -2074,3 +2074,62 @@ manifest matches.
   files, left as they are.
 
 Stable image restored afterwards.
+
+## 2026-10-30: `v0.3.0-dev-93-g2d1a2e4+xc99c` and `v0.3.0-dev-317-g40be428+xe828`
+
+Real Pi 3B+ over netboot. test 82 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23) why the Pi never looks idle, follow-up to test 25), Pi test agent. Raw output on homenodellm in `~/pitest-tools/t82/` (`s82-a.txt`, `s82-b.txt`, `c82.txt`).
+
+**Found: on the `cpu-ondemand` image `dwc2d` holds CPU 2 the whole time. On
+current main (the `cputop` image) all four CPUs are idle.**
+
+### First image, `cpu-ondemand` (same as test 25)
+
+No soak or start loop before. Samples 60 s after `redox login:`, 30 s apart:
+
+| | cpu0 busy | cpu1 | cpu2 | cpu3 | governor |
+|---|---|---|---|---|---|
+| idle, after boot | 93 ms | 546 ms | **10 ms busy, 0 ms idle** | 0 ms | target `max`, load 100 |
+| idle, 60 s after the start loop | 91 ms | 3 ms | **0 ms busy, 0 ms idle** | 597 ms | target `max`, load 100 |
+
+The other CPUs gained about 31,000 ms of idle time each over 30 s. CPU 2
+gained neither busy nor idle time.
+
+`/scheme/sys/context`: `dwc2d` (pid 14) is `UR+` (running) on `#2` in all
+four samples. Its ACTTIME stays at **5 min 22.39 s** (SCHTIME 0.26 s), never
+changing. It was taken about 5 min 20 s after the reset, so `dwc2d` has had
+CPU 2 since boot and is never switched out. That is why the counters don't
+move, and why the governor sees load 100 and keeps `max`.
+
+Top threads by ACTTIME growth over the 30 s (both samples alike, `dwc2d`
+can't be measured):
+
+| thread | after boot | after the start loop |
+|---|---|---|
+| initfs `redoxfs` | +0.44 s | +0.44 s |
+| `netstack` | +0.16 s | +0.22 s |
+| `rpi-firmwared` (thread 2) | +0.10 s | +0.11 s |
+| `ptyd` | +0.03 s | +0.04 s |
+| `devshd` / `procmgr` | +0.01 s | +0.01 s |
+
+Standard checks pass between the samples, 0 of 300 starts failed.
+
+### Second image, `cputop` (main + `cputop`, no governor)
+
+| `cputop` | cpu0 | cpu1 | cpu2 | cpu3 | busiest thread |
+|---|---|---|---|---|---|
+| 30 s, 60 s after boot | 0 % | 0 % | 0 % | 0 % (2 ms) | `dwc2d` 2.2 %, then everything 0.0 % |
+| 30 s, 60 s after the start loop | 0 % (0 ms) | 0 % (2 ms) | 0 % | 0 % | `dwc2d` 2.2 %, `netstack` 0.1 % |
+| `-n 3 -l 5 10` (3 × 10 s) | 0 % | 0 % | 0 % | 0 % | `dwc2d` 2.6 / 1.8 / 2.2 % |
+
+- Every CPU idles (each gained about 28–30 s of idle in 30 s, 100–290 switches/s).
+  `dwc2d` is blocked (`UB`) and moves between CPUs.
+- The initfs `redoxfs` TOTAL went from 0.8 s to **33.6 s** during the start
+  loop, then stayed at 0.0 %. So its 14 minutes in test 25 come from the
+  6500-start soak, not from idling.
+- Standard checks pass, 0 of 300 starts failed.
+
+So the always-busy CPU comes from the `dwc2d` of the old `cpu-ondemand` base
+(v0.3.0-dev-93). The current `dwc2d` (tests 53 and 67) sleeps. Rebasing
+`cpu-ondemand` on main should let the governor go down to `min`.
+
+Stable image restored afterwards.
