@@ -62,7 +62,13 @@ impl Session<'_> {
         let enc = self.tokenizer.encode(text, false).map_err(anyhow::Error::msg)?;
         tokens.extend_from_slice(enc.get_ids());
         self.run(&tokens)?;
-        eprintln!("rinfer: read {} tokens in {:.1} s", tokens.len(), t.elapsed().as_secs_f32());
+        eprintln!(
+            "rinfer: read {} tokens in {:.1} s, heap {} MiB (peak {} MiB)",
+            tokens.len(),
+            t.elapsed().as_secs_f32(),
+            super::heap_mib(),
+            super::peak_mib()
+        );
         Ok(())
     }
 
@@ -99,7 +105,14 @@ impl Session<'_> {
             self.pos += 1;
         }
         let secs = t.elapsed().as_secs_f32();
-        eprintln!("rinfer: wrote {} tokens in {secs:.1} s ({:.2} t/s)", reply.len(), reply.len() as f32 / secs);
+        eprintln!(
+            "rinfer: wrote {} tokens in {secs:.1} s ({:.2} t/s), {} tokens in the cache, heap {} MiB (peak {} MiB)",
+            reply.len(),
+            reply.len() as f32 / secs,
+            self.pos,
+            super::heap_mib(),
+            super::peak_mib()
+        );
         Ok(())
     }
 }

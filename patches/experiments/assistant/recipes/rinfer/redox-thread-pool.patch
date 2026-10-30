@@ -1,0 +1,17 @@
+diff --git a/candle-core/src/utils.rs b/candle-core/src/utils.rs
+index 324e623..9cb3c0f 100644
+--- a/candle-core/src/utils.rs
++++ b/candle-core/src/utils.rs
+@@ -164,7 +164,12 @@ impl BarrierPool {
+                                     spin_loop();
+                                 } else {
+                                     // Park deposits a token; unpark() before park() returns immediately — no race.
++                                    #[cfg(not(target_os = "redox"))]
+                                     std::thread::park();
++                                    // On Redox a wakeup from unpark() is sometimes lost and
++                                    // the pool hangs; poll the go flag instead.
++                                    #[cfg(target_os = "redox")]
++                                    std::thread::sleep(std::time::Duration::from_micros(200));
+                                     spins = 0;
+                                 }
+                             }

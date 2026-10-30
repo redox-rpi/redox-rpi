@@ -7,11 +7,15 @@
 # runs a 1 GiB Pi out of memory: qwen3-memory.patch keeps it quantized and
 # dequantizes only the rows of the input tokens. It also lets
 # CANDLE_KV_CACHE_LEN set the key/value cache's starting size; candle
-# preallocates 4096 positions (900 MiB), rinfer starts with 256.
+# preallocates 4096 positions (900 MiB), rinfer starts with 256 and the
+# cache grows by 256 instead of doubling; a whole prompt at once no longer
+# keeps a second copy of the cache. redox-thread-pool.patch: candle's
+# worker pool hung on Redox because a wakeup from thread::unpark was
+# sometimes lost; idle workers there poll with a short sleep instead.
 [source]
 git = "https://github.com/huggingface/candle.git"
 rev = "12bb5d1f6350f4ea9827d9086f213feec1f0af6a"
-patches = ["sdot-fallback.patch", "qwen3-memory.patch"]
+patches = ["sdot-fallback.patch", "qwen3-memory.patch", "redox-thread-pool.patch"]
 
 [build]
 template = "custom"

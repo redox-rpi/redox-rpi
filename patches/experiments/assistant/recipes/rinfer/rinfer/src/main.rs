@@ -73,6 +73,14 @@ fn mib(n: usize) -> usize {
     n >> 20
 }
 
+fn heap_mib() -> usize {
+    mib(IN_USE.load(Ordering::Relaxed))
+}
+
+fn peak_mib() -> usize {
+    mib(PEAK.load(Ordering::Relaxed))
+}
+
 /// Reads at most 1 MiB per call. candle reads each tensor with one
 /// `read_exact`, up to 127 MB for the token table; RedoxFS then allocates a
 /// buffer of the same size, and the extra copies ran the 1 GiB Pi (QEMU) out
