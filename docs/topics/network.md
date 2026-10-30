@@ -46,6 +46,18 @@
   chip: unit tests and a QEMU check of the settings path pass; Pi test
   #110.
 
+- [#88](https://github.com/redox-rpi/redox-rpi/issues/88) netstack kept
+  every accepted TCP connection (2 x 64 KiB) after it was closed: a wrong
+  reference count in `dup("listen")`. Fixed in base `0049`, draft PR
+  [#90](https://github.com/redox-rpi/redox-rpi/pull/90). **Pi test 114
+  passed**: 120 devsh connections cost 1.1 MB, where stable lost 5.3 MB
+  for 40.
+- [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
+  answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
+  (each only while its program is on the image); **Pi test 96 passed**,
+  SSH works at the address mDNS gives. Draft PR
+  [#93](https://github.com/redox-rpi/redox-rpi/pull/93) on top of #82.
+
 ## Later
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi on the Pi 3B+ and Zero 2 W (milestone v0.6.0); it would be the

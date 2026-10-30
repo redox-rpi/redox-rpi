@@ -78,7 +78,31 @@
 
 ## Next
 
-- A Pi test of USB sticks (high-speed stick on the 3B+ hub).
+- Pi tests of USB sticks and card readers: rows #50 and #71, one image,
+  with a person in the USB visit.
+
+## USB gadget mode (effort analysis)
+
+[#95](https://github.com/redox-rpi/redox-rpi/issues/95): the Zero 2 W as a
+network adapter on the computer its USB cable is plugged into, without a
+HAT. No code yet.
+
+- **What `dwc2d` needs:** device mode next to today's host mode, chosen
+  by the device tree (`dr_mode=peripheral` in a `[pi02]` section); the
+  device core (FIFOs, device interrupts, endpoint registers); the endpoint
+  0 state machine with the standard requests; a CDC-ECM function (Linux,
+  macOS) registered as `network.usb-gadget`, CDC-NCM later for Windows.
+  The port is host or device, not both. The Pi 3B+ can't do device mode
+  (its DWC2 sits behind the LAN7515 hub).
+- **Testing:** QEMU's DWC2 model is host only, so: a host model in Rust
+  that plays a host's enumeration against the code, then a Zero 2 W cabled
+  to homenodellm (powered by it, `cdc_ether` on the Linux side, tests over
+  SSH), booted from SD or, if it works, by rpiboot over the same cable. A
+  second USB serial adapter for the Zero's console; one person visit to
+  set it up and try a Mac or PC.
+- **Size:** about 1700 lines for ECM (half of today's `dwc2d`), about 4–5
+  sessions; NCM about 400 lines more. Medium; the risk is the test bench,
+  not the code.
 
 ## Later
 
