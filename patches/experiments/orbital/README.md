@@ -99,13 +99,18 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     change in Orbital or `rpi-fbd`: the pointer moves, hovering over the
     launcher's terminal icon shows its `Terminal` tooltip, left and right
     buttons arrive (`dwc2d: mouse: buttons …` in the log).
-  - A click on the terminal icon opened no window within 90 s. The
-    icon runs `/usr/bin/orbterm`, but the launcher was still spawning
-    `background` then: forks are very slow in this QEMU run, where
-    `getty` and `bcm2835-sdhci` each used 11 to 12 minutes of CPU. Not a
-    mouse problem; to be checked on the Pi.
-  - Some moves arrived late or merged with later ones. That was the test
-    helper: while sending moves it read neither QEMU's serial output nor
+  - With the test helper fixed (next point), the whole desktop works by
+    keyboard and mouse (run `km1`, 2026-10-30): Enter at the login window,
+    the desktop within 90 s, a click on the launcher's terminal icon opens
+    `orbterm` as `user` within 90 s, and `echo hi` typed there prints
+    `hi`. Memory (`free`, of 932 MiB): 194 MiB at the login window, 270
+    MiB with the desktop and the terminal (`background` 82 MB with the
+    decoded picture, `orbital` 25 MB, `launcher` 9 MB, `orbterm` 6 MB).
+  - An earlier run's click opened nothing, and `getty` and `bcm2835-sdhci`
+    used 11 to 12 minutes of CPU there; that was the same helper fault,
+    not slow forks.
+  - Some moves arrived late or merged with later ones, and logins took 2
+    to 10 minutes in earlier runs. That was the test helper: while sending moves it read neither QEMU's serial output nor
     the monitor's replies, so `dwc2d` blocked writing its event log to the
     serial console. With both read, the moves arrive as sent; the USB
     session's own runs never showed it.
