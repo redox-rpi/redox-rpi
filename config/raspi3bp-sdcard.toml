@@ -27,6 +27,10 @@ bootloader = "source"
 relibc = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
+# `i2c` and `spi` commands for the I2C and SPI drivers (tools/i2c,
+# tools/spi; base patches 0047 and 0048).
+i2c = "source"
+spi = "source"
 # Programs beyond the minimal system, prebuilt by Redox. Most of them
 # (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
 # start with today's prebuilt aarch64 packages, in QEMU too; see

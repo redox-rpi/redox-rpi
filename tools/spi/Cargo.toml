@@ -1,0 +1,8 @@
+[package]
+name = "spi"
+description = "Send bytes over SPI through /scheme/spi and print the answer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

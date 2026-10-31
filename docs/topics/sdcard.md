@@ -34,7 +34,7 @@
 - [#16](https://github.com/redox-rpi/redox-rpi/issues/16) RedoxFS writes 28 times the data for 4 KiB writes
   (milestone v0.4.0). The same on x86_64 as on aarch64 (QEMU,
   `scripts/redoxfs-write-amp.py`, RedoxFS 0.9.1 `c988cb8`, the newest
-  upstream), so an upstream problem; the user reports it to Redox. Related upstream work: RedoxFS
+  upstream), so an upstream problem; the user reports it to Redox (pointers for that, also for the rename bug #57: [docs/upstream/redoxfs.md](../upstream/redoxfs.md)). Related upstream work: RedoxFS
   [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51) and
   [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57).
   Cause: every `write` call is a transaction that rewrites its whole
