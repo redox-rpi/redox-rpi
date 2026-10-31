@@ -1,0 +1,36 @@
+From 25b00a25704a44ee1376cca58a66f334a10397e7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 07:01:42 +0100
+Subject: [PATCH] Unmap the path page of an open at the root of a scheme
+
+copy_and_capture_tail maps one page for the path of openat and similar
+calls, but took the span to unmap from the path's length. An empty path,
+as for /scheme/tcp or /scheme/rand, gave an empty span, so the page
+stayed mapped in the scheme daemon: 4 KiB per open, e.g. per TCP
+connection in netstack and per random read in randd.
+---
+ src/scheme/user.rs | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/scheme/user.rs b/src/scheme/user.rs
+index d91ae0a..e01009d 100644
+--- a/src/scheme/user.rs
++++ b/src/scheme/user.rs
+@@ -457,10 +457,10 @@ impl UserInner {
+                 src: None,
+                 dst: None,
+             },
+-            span: {
+-                let (first_page, page_count, _offset) = page_range_containing(base, len);
+-                PageSpan::new(first_page, page_count)
+-            },
++            // Always the one page mapped above. Taken from `len`, an empty path (the root of a
++            // scheme, as for /scheme/tcp or /scheme/rand) gave an empty span, so the page stayed
++            // mapped in the scheme for good.
++            span: PageSpan::new(dst_page, 1),
+             addrsp: Some(dst_addr_space),
+         })
+     }
+-- 
+2.54.0 (Apple Git-157)
+
