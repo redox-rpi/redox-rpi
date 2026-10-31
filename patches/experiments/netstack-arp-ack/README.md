@@ -23,10 +23,12 @@ for the test downloader.
 ## Tests
 
 `rstserver.py PORT BODY` (here, for the host) answers each connection with an
-HTTP header and offers BODY bytes, then resets the connection after 2 s. With
-a body larger than the receive window (64 KiB) and a slow reader
-(`netget URL --slow 5000`), the reader still has data buffered when the reset
-comes.
+HTTP header, offers BODY bytes a second later, and resets the connection 2 s
+after that. A reader with `netget URL --slow 5000` gets only the header in
+its first read and then sleeps, so its receive buffer (64 KiB) is full when
+the reset comes. With the fix it then reads those bytes and ends with
+`read after N bytes … os error 107`, N about 64000; the old code ends right
+away with N about 0.
 
 - QEMU `raspi3b` (`v0.3.0-dev-795-g187edb8+xff6c`, with `netget`), 382 MB
   download with a capture of the USB network card: ARP request and reply
