@@ -38,7 +38,18 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   was not always zero (test 130: `test blit of 2 rows moved 4`, while
   #116 got 3 with the same code), probably because the kernel clears it
   through a cached mapping; the log now says `DMA test buffer had N of 64
-  words not zero` when that happens.
+  words not zero` when that happens. Test 138: no such line, and the test
+  blit passed (`YLENGTH+1 rows`).
+- [`0069`](base/0069-rpi-fbd-DMA-test-of-a-whole-screen-into-the-framebuf.patch):
+  before clients come, a full-screen DMA buffer and a blit of 1, 64 and
+  then all rows into the framebuffer, each step logged (`rpi-fbd: DMA
+  test: …`) and checked. In test 138 the boot stopped right after DMA
+  started, with nothing in the log, on the first client frames; QEMU
+  with the Pi's memory layout does not stop. The test runs in a thread
+  with a 3 s deadline: an error, a wrong row or a hang leaves CPU blits
+  (`blits with the CPU: DMA test …`). If the whole machine stops, the
+  last `DMA test:` line shows which step it was. QEMU: whole screen
+  1824x984 in 50 ms.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
