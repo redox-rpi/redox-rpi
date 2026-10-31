@@ -1,0 +1,23 @@
+# pkg asks the redox-rpi repository on the build host first
+# (scripts/publish-pkg-repo.sh), then static.redox-os.org (50_redox).
+# By address: the build host's name does not resolve in QEMU.
+[[files]]
+path = "/etc/pkg.d/40_redox-rpi"
+data = """
+http://192.168.178.120:8080/pkg
+"""
+
+# Replaces the hold list of pkg-hold (list pkg-repo after pkg-hold): our
+# patched packages still come only from our repository, never from
+# static.redox-os.org, but new builds from our repository are taken.
+[[files]]
+path = "/etc/pkg/hold"
+data = """
+# Packages pkg takes only from the redox-rpi repository (patches/experiments/pkg-repo).
+base 192.168.178.120
+base-initfs 192.168.178.120
+bootloader 192.168.178.120
+kernel 192.168.178.120
+relibc 192.168.178.120
+pkgutils 192.168.178.120
+"""

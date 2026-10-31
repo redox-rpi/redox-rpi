@@ -13,6 +13,10 @@ extern "C" {
 }
 
 fn main() {
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("reboot {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     unsafe { sync() };
     let result = OpenOptions::new()
         .write(true)
