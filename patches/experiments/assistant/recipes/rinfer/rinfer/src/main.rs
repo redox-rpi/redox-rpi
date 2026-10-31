@@ -183,7 +183,12 @@ fn main() -> anyhow::Result<()> {
     if std::env::var_os("RINFER_TRACE").is_some() {
         TRACE.store(1, Ordering::Relaxed);
     }
-    eprintln!("neon: {}, threads: {}", candle::utils::with_neon(), candle::utils::get_num_threads());
+    eprintln!(
+        "neon: {}, threads: {}, pool spin limit: {}",
+        candle::utils::with_neon(),
+        candle::utils::get_num_threads(),
+        std::env::var("CANDLE_BARRIER_POOL_SPIN_LIMIT").unwrap_or_else(|_| "25000 (default)".into())
+    );
 
     let t0 = Instant::now();
     let mut file = ModelReader::open(path)?;
@@ -232,6 +237,11 @@ fn main() -> anyhow::Result<()> {
 
     let mut out = vec![next];
     let mut shown = 0;
+    // Where a written token's time goes: the model, the sampling over the
+    // whole vocabulary, and how often a pool worker fell asleep (a sleep
+    // lasts until the next 10 ms timer tick on Redox).
+    let (mut fwd_s, mut sample_s) = (0f32, 0f32);
+    let sleeps0 = candle::utils::POOL_SLEEPS.load(Ordering::Relaxed);
     let t2 = Instant::now();
     for i in 0..n.saturating_sub(1) {
         if Some(next) == eos {
@@ -242,15 +252,26 @@ fn main() -> anyhow::Result<()> {
         shown = s.len();
         std::io::stdout().flush()?;
         let input = Tensor::new(&[next], &device)?.unsqueeze(0)?;
+        let t = Instant::now();
         let logits = model.forward(&input, tokens.len() + i)?.squeeze(0)?;
+        let t_s = Instant::now();
         next = lp.sample(&logits)?;
+        fwd_s += (t_s - t).as_secs_f32();
+        sample_s += t_s.elapsed().as_secs_f32();
         out.push(next);
     }
     let s = tokenizer.decode(&out, true).map_err(anyhow::Error::msg)?;
     println!("{}", &s[shown.min(s.len())..]);
     let gen_s = t2.elapsed().as_secs_f32();
     println!("prompt: {} tokens in {:.1} s ({:.2} t/s)", tokens.len(), prompt_s, tokens.len() as f32 / prompt_s);
+    let written = (out.len() - 1).max(1) as f32;
     println!("generated: {} tokens in {:.1} s ({:.2} t/s)", out.len() - 1, gen_s, (out.len() - 1) as f32 / gen_s);
+    println!(
+        "per token: model {:.0} ms, sampling {:.0} ms, pool sleeps {:.0}",
+        fwd_s * 1e3 / written,
+        sample_s * 1e3 / written,
+        (candle::utils::POOL_SLEEPS.load(Ordering::Relaxed) - sleeps0) as f32 / written
+    );
     println!("heap {} MiB (peak {} MiB)", mib(IN_USE.load(Ordering::Relaxed)), mib(PEAK.load(Ordering::Relaxed)));
     Ok(())
 }

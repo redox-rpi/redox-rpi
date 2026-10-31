@@ -94,6 +94,7 @@ impl Session<'_> {
         let eos = self.tokenizer.token_to_id("<|im_end|>");
         let mut lp = LogitsProcessor::from_sampling(1, Sampling::ArgMax);
         let t = Instant::now();
+        let sleeps0 = candle::utils::POOL_SLEEPS.load(std::sync::atomic::Ordering::Relaxed);
         let mut reply = Vec::new();
         let mut shown = 0;
         loop {
@@ -118,9 +119,11 @@ impl Session<'_> {
         }
         let secs = t.elapsed().as_secs_f32();
         eprintln!(
-            "rinfer: wrote {} tokens in {secs:.1} s ({:.2} t/s), {} tokens in the cache, heap {} MiB (peak {} MiB)",
+            "rinfer: wrote {} tokens in {secs:.1} s ({:.2} t/s, {:.0} pool sleeps per token), {} tokens in the cache, heap {} MiB (peak {} MiB)",
             reply.len(),
             reply.len() as f32 / secs,
+            (candle::utils::POOL_SLEEPS.load(std::sync::atomic::Ordering::Relaxed) - sleeps0) as f32
+                / reply.len().max(1) as f32,
             self.pos,
             super::heap_mib(),
             super::peak_mib()
