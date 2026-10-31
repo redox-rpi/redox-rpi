@@ -1,0 +1,89 @@
+From 43a331781e04e691c02358f38c3ac3df17ab72c3 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 16:43:01 +0000
+Subject: [PATCH] aarch64: clean and invalidate caches for executable file maps
+ and page faults
+
+Two more ways code reaches an executable page without mprotect or exec:
+- an fmap with PROT_EXEC: the scheme filled the pages as data;
+- a page fault in an executable grant: the kernel zeroes or copies the
+  frame through its linear mapping, or a scheme supplies it.
+Clean the frame to the point of unification and invalidate the
+instruction cache before it is mapped (redox-rpi #3).
+---
+ src/context/memory.rs | 42 ++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 36 insertions(+), 6 deletions(-)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 6ffa19b..9d1ecbf 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -847,15 +847,33 @@ pub fn clean_dcache_to_pou(mapper: &PageMapper, span: PageSpan) {
+         let Some((phys, _)) = mapper.translate(page) else {
+             continue;
+         };
+-        let start = RmmA::phys_to_virt(phys).data();
+-        let mut address = start;
+-        while address < start + PAGE_SIZE {
+-            unsafe { core::arch::asm!("dc cvau, {}", in(reg) address, options(nostack)) };
+-            address += line;
+-        }
++        clean_frame_to_pou(Frame::containing(phys), line);
++    }
++}
++
++/// Clean one frame to the point of unification through the kernel's linear
++/// mapping; `line` is the smallest data cache line size from `CTR_EL0`.
++#[cfg(target_arch = "aarch64")]
++fn clean_frame_to_pou(frame: Frame, line: usize) {
++    let start = RmmA::phys_to_virt(frame.base()).data();
++    let mut address = start;
++    while address < start + PAGE_SIZE {
++        unsafe { core::arch::asm!("dc cvau, {}", in(reg) address, options(nostack)) };
++        address += line;
+     }
+ }
+ 
++/// Clean and invalidate the caches for one frame that is about to be mapped
++/// executable: a frame the kernel just zeroed or copied on a page fault, or
++/// one a scheme filled.
++#[cfg(target_arch = "aarch64")]
++pub fn sync_icache_frame(frame: Frame) {
++    let ctr: usize;
++    unsafe { core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
++    clean_frame_to_pou(frame, 4 << ((ctr >> 16) & 0xf));
++    invalidate_icache();
++}
++
+ /// Invalidate all instruction caches of the inner shareable domain. The
+ /// Cortex-A53's instruction cache is VIPT and may alias, so invalidating by
+ /// address through the linear mapping is not enough.
+@@ -1680,6 +1698,12 @@ impl Grant {
+                     flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+                 }
+             }
++            // The scheme wrote these pages as data (redox-rpi #3).
++            #[cfg(target_arch = "aarch64")]
++            if new_flags.has_execute() {
++                clean_dcache_to_pou(mapper, span);
++                invalidate_icache();
++            }
+         }
+ 
+         Ok(Self {
+@@ -2912,6 +2936,12 @@ fn correct_inner<'l>(
+     };
+ 
+     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
++    // The frame may have just been zeroed or copied through the linear
++    // mapping, or filled by a scheme (redox-rpi #3).
++    #[cfg(target_arch = "aarch64")]
++    if new_flags.has_execute() {
++        sync_icache_frame(frame);
++    }
+     let Some(flush) = (unsafe {
+         addr_space
+             .table
+-- 
+2.53.0
+
