@@ -52,3 +52,16 @@ output to `/dev/null`:
 
 QEMU cannot show whether the maintenance is needed; it only shows that
 nothing breaks and roughly what it costs. Not yet tested on a real Pi.
+
+QEMU, 2026-10-30, same loop, the same base built twice (`t3-icache` with
+main merged), three runs each, alternating:
+
+| Build | Exceptions | Loop time |
+|---|---|---|
+| `v0.3.0-dev-469-g7021aa9+x12cb` (without) | 0 | 240 s, 268 s, 193 s |
+| `v0.3.0-dev-469-g7021aa9+x12c9` (`icache-sync`) | 0 | 242 s, 254 s, 229 s |
+
+The difference (about 3 %) is within the noise of the shared build host.
+
+Real Pi 3B+, 2026-10-28, test 28: 0 of 1000 starts failed. The cost on
+the Pi, both builds of one base, is Pi test 127.
