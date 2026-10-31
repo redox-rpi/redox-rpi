@@ -16,4 +16,8 @@ TCP send kept dwc2d busy about half the time, the same with and without
 
 ## Tests
 
-- QEMU: see below.
+- QEMU 2026-10-31, both images from b2dd152 with `tcp-send`, 2 MiB over
+  TCP twice: wait-irq `+x98e9` 0.16/0.14 MB/s, dwc2d CPU +11.61/+12.66 s;
+  tx-irq `+x3388` 0.16/0.17 MB/s, +10.78/+10.23 s (about 13% less, same
+  speed). tx-irq: storage 18/18, hotplug 15/15, keyboard pass.
+- Pi: test #152.
