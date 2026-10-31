@@ -223,15 +223,20 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: pin them and add our patches to their [source] section.
-for name in bootloader base relibc; do
+# pkgutils and redoxfs only when an experiment patches them (pkg-hold,
+# pkg-persist); otherwise the image takes the upstream binary.
+for name in bootloader base relibc pkgutils redoxfs; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
+    if { [ "$name" = pkgutils ] || [ "$name" = redoxfs ]; } && [ -z "$(patch_files "$name")" ]; then
+        continue
+    fi
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
         "$REDOX/recipes/core/$name/recipe.toml"
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot sigregs timesync; do
+for tool in devshd pkg-persist reboot sigregs timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
