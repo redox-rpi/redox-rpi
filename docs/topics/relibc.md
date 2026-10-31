@@ -58,6 +58,9 @@
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
     single runs pass; they only fail sometimes under the suite's load.
+    With three busy loops on the 4 CPUs (QEMU, 2026-10-31,
+    `v0.3.0-dev-574-g55e47fb+xb3d9`) also 45 of 45, so plain CPU load
+    is not the trigger; more likely an earlier test in the suite.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
