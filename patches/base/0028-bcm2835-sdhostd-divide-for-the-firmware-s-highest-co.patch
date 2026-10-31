@@ -1,0 +1,161 @@
+From 7fc30daf9b488fcf7670140d51a3fd4189408d71 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 20:03:52 +0100
+Subject: [PATCH 25/25] bcm2835-sdhostd: divide for the firmware's highest core
+ clock
+
+The clock divider assumed a 400 MHz core clock. Read the core clock's
+current and highest rate from rpi-firmwared (/scheme/rpi-firmware/clocks)
+and divide for the highest: the firmware moves the core clock while the
+system runs, and the SD clock stays at or below its target either way.
+Without rpi-firmwared, 400 MHz as before. sdhostd starts after
+rpi-firmwared.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 19 +++++----
+ drivers/storage/bcm2835-sdhostd/src/main.rs | 46 ++++++++++++++++++++-
+ init.initfs.d/40_bcm2835-sdhostd.service    |  3 +-
+ 3 files changed, 58 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
+index 98b26e0..1b5b27d 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/host.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
+@@ -85,9 +85,10 @@ const FIFO_BURST: usize = 8;
+ const MAX_CDIV: u32 = 0x7ff;
+ 
+ /// The divider runs off the VPU core clock. The firmware moves it between
+-/// 250 MHz and 400 MHz on the Pi 3B+ while the system runs; dividing for
+-/// 400 MHz keeps the SD clock at or below the target either way.
+-const CORE_CLOCK: u32 = 400_000_000;
++/// its minimum and maximum (250 and 400 MHz on the Pi 3B+) while the system
++/// runs; dividing for the maximum keeps the SD clock at or below the target
++/// either way. 400 MHz when the firmware does not say.
++pub const DEFAULT_CORE_CLOCK: u32 = 400_000_000;
+ const IDENT_CLOCK: u32 = 400_000;
+ /// Default speed mode: at most 25 MHz.
+ const DATA_CLOCK: u32 = 25_000_000;
+@@ -150,7 +151,9 @@ pub struct SdHost {
+     /// Block addressing (SDHC/SDXC); byte addressing otherwise.
+     high_capacity: bool,
+     size: u64,
+-    /// The SD clock aimed at, at a 400 MHz core clock.
++    /// The highest core clock the firmware may switch to.
++    core_clock: u32,
++    /// The SD clock aimed at, at that core clock.
+     clock: u32,
+     stats: Option<Stats>,
+ }
+@@ -216,9 +219,11 @@ impl Stats {
+ unsafe impl Send for SdHost {}
+ 
+ impl SdHost {
+-    pub fn new(regs: *mut u32) -> Self {
++    /// `core_clock` is the highest rate of the VPU core clock in Hz.
++    pub fn new(regs: *mut u32, core_clock: u32) -> Self {
+         SdHost {
+             regs,
++            core_clock,
+             hcfg: 0,
+             rca: 0,
+             high_capacity: false,
+@@ -270,9 +275,9 @@ impl SdHost {
+     /// Set the SD clock to at most `hz`, and the data timeout to about
+     /// half a second.
+     fn set_clock(&mut self, hz: u32) {
+-        let div = CORE_CLOCK.div_ceil(hz).max(2) - 2;
++        let div = self.core_clock.div_ceil(hz).max(2) - 2;
+         let div = div.min(MAX_CDIV);
+-        let clock = CORE_CLOCK / (div + 2);
++        let clock = self.core_clock / (div + 2);
+         self.set_reg(SDCDIV, div);
+         self.set_reg(SDTOUT, clock / 2);
+         self.clock = clock;
+diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
+index e112026..7725b89 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/main.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
+@@ -10,7 +10,7 @@
+ //! by hand next to bcm2835-sdhcid, use another name, e.g. `disk.sdhost`;
+ //! the card then no longer answers bcm2835-sdhcid until the next boot.
+ 
+-use std::{env, process};
++use std::{env, fs, process};
+ 
+ use driver_block::{DiskScheme, ExecutorTrait, TrivialExecutor};
+ use event::{EventFlags, RawEventQueue};
+@@ -68,6 +68,48 @@ fn sdhost_phys(fdt: &Fdt) -> usize {
+         .unwrap_or(bus_addr)
+ }
+ 
++/// The highest VPU core clock, which the SD clock divider runs off, from
++/// rpi-firmwared (`/scheme/rpi-firmware/clocks`: name, current and maximum
++/// rate in Hz per line).
++fn core_clock() -> u32 {
++    let clocks = match fs::read_to_string("/scheme/rpi-firmware/clocks") {
++        Ok(clocks) => clocks,
++        Err(err) => {
++            println!(
++                "bcm2835-sdhostd: no clocks from rpi-firmwared ({err}), assuming a {} MHz core clock",
++                host::DEFAULT_CORE_CLOCK / 1_000_000
++            );
++            return host::DEFAULT_CORE_CLOCK;
++        }
++    };
++    let core = clocks.lines().find_map(|line| {
++        let mut words = line.split_whitespace();
++        if words.next() != Some("core") {
++            return None;
++        }
++        let now = words.next()?.parse::<u32>().ok()?;
++        let max = words.next()?.parse::<u32>().ok()?;
++        Some((now, max))
++    });
++    match core {
++        Some((now, max)) if max >= now && max > 0 => {
++            println!(
++                "bcm2835-sdhostd: core clock {} MHz, up to {} MHz",
++                now / 1_000_000,
++                max / 1_000_000
++            );
++            max
++        }
++        _ => {
++            println!(
++                "bcm2835-sdhostd: no core clock from rpi-firmwared, assuming {} MHz",
++                host::DEFAULT_CORE_CLOCK / 1_000_000
++            );
++            host::DEFAULT_CORE_CLOCK
++        }
++    }
++}
++
+ /// Name of the disk scheme to serve, from the first argument.
+ #[cfg(target_os = "redox")]
+ fn scheme_name() -> String {
+@@ -102,7 +144,7 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+     };
+     unsafe { route_sd_pins(phys - GPIO_OFFSET) };
+ 
+-    let mut sdhost = host::SdHost::new(regs);
++    let mut sdhost = host::SdHost::new(regs, core_clock());
+     if env::var_os("SDHOSTD_STATS").is_some() {
+         sdhost.enable_stats();
+     }
+diff --git a/init.initfs.d/40_bcm2835-sdhostd.service b/init.initfs.d/40_bcm2835-sdhostd.service
+index c494796..7353f9c 100644
+--- a/init.initfs.d/40_bcm2835-sdhostd.service
++++ b/init.initfs.d/40_bcm2835-sdhostd.service
+@@ -1,6 +1,7 @@
+ [unit]
+ description = "BCM2835 SD card driver (sdhost)"
+-requires_weak = ["10_inputd.service", "10_lived.service", "20_graphics.target"]
++# rpi-firmwared first: the clock divider needs the core clock.
++requires_weak = ["10_inputd.service", "10_lived.service", "20_graphics.target", "40_rpi-firmwared.service"]
+ condition_architecture = ["aarch64"]
+ condition_board = ["raspi3bp"]
+ 
+-- 
+2.54.0 (Apple Git-157)
+
