@@ -119,6 +119,9 @@ Result with `v0.3.0-dev-459-g799ed17+x7d9f` (measured core clock, a clock
 set by hand stays): 28 of 28 pass. QEMU does not answer the measured-clock
 tag, so `core_clock` is missing there and `bt` falls back to `clocks`.
 
+Result with `v0.3.0-dev-462-gf830bfd+x7d9f` (flow `auto-low`, no baud
+drift, receive thread without sleeps while in use): 29 of 29 pass.
+
 ## Test on the Pi
 
 Queued as test-plan row 79 for the Pi test agent.
