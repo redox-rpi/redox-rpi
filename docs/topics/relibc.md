@@ -85,12 +85,12 @@
     the kernel read the list address as one fd. Upstream relibc
     `112eb43c` fixes it; backport as experiment `rt-call-flags` (branch
     `t14-ring-call`), QEMU: `redox_ring_ramfs` passes, nothing else
-    changes. Same bug in the DRM `PRIME_FD_TO_HANDLE` ioctl and in
+    changes. Pi row 166. Same bug in the DRM `PRIME_FD_TO_HANDLE` ioctl and in
     libredox calls with two fds.
   - `sys_socket/unixrecv`, `unixrecvfrom`, `unixnonblock` fail in every
     build since 2026-10-31 midday (`connect` gives `EINVAL`): redoxfs was
     not pinned and upstream `5ba45a6` changed Unix socket connect.
-    [#145](https://github.com/redox-rpi/redox-rpi/issues/145), branch `t-pin-redoxfs` pins it; QEMU: no new failures. Pi row 160.
+    [#145](https://github.com/redox-rpi/redox-rpi/issues/145), redoxfs is pinned since PR #146 (Pi test 160 passed).
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
     (`tls-variant1`), since stdio locking across threads is broken without
     it; (2) the signal tests under load (job control in
