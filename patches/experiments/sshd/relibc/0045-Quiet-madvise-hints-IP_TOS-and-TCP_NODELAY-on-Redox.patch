@@ -1,0 +1,118 @@
+From 8b044735a7d78072c07fbcfb42f2fbdeaf62e76f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 31 Oct 2026 05:19:40 +0000
+Subject: [PATCH] Quiet madvise hints, IP_TOS and TCP_NODELAY on Redox
+
+sshd makes these calls on every connection, and each logged a TODO
+line at INFO level:
+- madvise: the pure hints (NORMAL, RANDOM, SEQUENTIAL, WILLNEED,
+  DONTDUMP) succeed without a log line. Redox writes no core dumps.
+  MADV_DONTNEED keeps its line: relibc does not drop the pages.
+- getsockopt(IPPROTO_IP, IP_TOS) and (IPPROTO_TCP, TCP_NODELAY) report
+  0, the state netstack has (TOS 0, Nagle on), instead of ENOSYS.
+- setsockopt(IP_TOS) succeeds quietly; setsockopt(TCP_NODELAY)
+  succeeds with a debug line, since netstack cannot switch Nagle off
+  yet (its socket options carry no level).
+(redox-rpi #109)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/platform/redox/mod.rs    | 25 +++++++++++++++++--------
+ src/platform/redox/socket.rs | 24 +++++++++++++++++++++++-
+ 2 files changed, 40 insertions(+), 9 deletions(-)
+
+diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
+index f4cb7fa..049024f 100644
+--- a/src/platform/redox/mod.rs
++++ b/src/platform/redox/mod.rs
+@@ -40,7 +40,10 @@ use crate::{
+         signal::{NSIG, SIGEV_NONE, SIGEV_SIGNAL, SIGEV_THREAD, SIGRTMIN, sigevent},
+         stdio::RENAME_NOREPLACE,
+         sys_file,
+-        sys_mman::{MAP_ANONYMOUS, PROT_READ, PROT_WRITE},
++        sys_mman::{
++            MADV_DONTDUMP, MADV_NORMAL, MADV_RANDOM, MADV_SEQUENTIAL, MADV_WILLNEED,
++            MAP_ANONYMOUS, PROT_READ, PROT_WRITE,
++        },
+         sys_random,
+         sys_resource::{PRIO_PROCESS, RLIMIT_NLIMITS, rlimit, rusage, setpriority},
+         sys_select::timeval,
+@@ -952,13 +955,19 @@ impl Pal for Sys {
+     }
+ 
+     unsafe fn madvise(addr: *mut c_void, len: usize, flags: c_int) -> Result<()> {
+-        todo_skip!(
+-            0,
+-            "madvise({:p}, 0x{:x}, 0x{:x}): not implemented",
+-            addr,
+-            len,
+-            flags
+-        );
++        match flags {
++            // Hints only: Redox writes no core dumps, and the others change
++            // nothing here. OpenSSL asks for MADV_DONTDUMP on every sshd
++            // connection, so these stay quiet.
++            MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTDUMP => {}
++            _ => todo_skip!(
++                0,
++                "madvise({:p}, 0x{:x}, 0x{:x}): not implemented",
++                addr,
++                len,
++                flags
++            ),
++        }
+         Ok(())
+     }
+ 
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index 78ead85..2890d2a 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -23,7 +23,8 @@ use crate::{
+             EPIPE, EPROTONOSUPPORT,
+         },
+         fcntl,
+-        netinet_in::{in_addr, in_port_t, sockaddr_in},
++        netinet_in::{IP_TOS, IPPROTO_IP, IPPROTO_TCP, in_addr, in_port_t, sockaddr_in},
++        netinet_tcp::TCP_NODELAY,
+         signal::SIGPIPE,
+         sys_select::timeval,
+         sys_socket::{
+@@ -726,6 +727,16 @@ impl PalSocket for Sys {
+             }
+         }
+ 
++        // netstack sends TOS 0 and keeps smoltcp's default with Nagle on, and
++        // its socket options carry no level, so these report that state.
++        // sshd asks for TCP_NODELAY on every connection.
++        if (level == c_int::from(IPPROTO_IP) && option_name == IP_TOS)
++            || (level == c_int::from(IPPROTO_TCP) && option_name == TCP_NODELAY)
++        {
++            *option_c_int(option_value)? = 0;
++            return Ok(size_of::<c_int>() as socklen_t);
++        }
++
+         todo_skip!(
+             0,
+             "getsockopt({}, {}, {}, {:#x?})",
+@@ -1010,6 +1021,17 @@ impl PalSocket for Sys {
+             }
+         }
+ 
++        // IP_TOS is a hint smoltcp has no setting for. TCP_NODELAY needs
++        // netstack support (its socket options carry no level); until then
++        // Nagle stays on. sshd sets both on every connection.
++        if level == c_int::from(IPPROTO_IP) && option_name == IP_TOS {
++            return Ok(());
++        }
++        if level == c_int::from(IPPROTO_TCP) && option_name == TCP_NODELAY {
++            log::debug!("setsockopt({}, IPPROTO_TCP, TCP_NODELAY): Nagle stays on", socket);
++            return Ok(());
++        }
++
+         todo_skip!(
+             0,
+             "setsockopt({}, {}, {}, {:?}) - unknown option",
+-- 
+2.53.0
+
