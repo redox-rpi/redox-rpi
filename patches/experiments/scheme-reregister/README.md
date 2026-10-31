@@ -50,5 +50,13 @@ for each listing.
 
 `scripts/test-scheme-reregister.sh` (QEMU, needs fatfsd from experiment
 `usb-fat`): fatfsd on the image's FAT partition as `t117`, SIGKILL, fatfsd
-again as `t117`, list its root; a third fatfsd as `t117` while the second
-runs must get `File exists`.
+again as `t117`, list its root. That a live scheme keeps its name is not
+covered: a second fatfsd on the same partition stops with `ENOLCK` before it
+registers.
+
+QEMU raspi3b, 2026-10-31, `v0.3.0-dev-671-g157dad0+x9d6b` (branch
+`t117-test`: this branch with `usb-fat` merged in, for fatfsd): the
+restarted fatfsd serves `t117` again, `nsmgr: scheme t117 ended,
+registering it again`. Without the fix (`usb-fat` image
+`v0.3.0-dev-450-gc4b9500+x87f5`): `fatfsd: /scheme/disk.mmc/0p1: File
+exists (os error 17)`.

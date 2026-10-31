@@ -87,12 +87,6 @@ out=$(devsh "fatfsd $disk t117 &" "sleep 2")
 echo "$out" | grep -a "fatfsd" | sed 's/^/      /'
 check "second fatfsd serves t117 again" reads
 check "no File exists" bash -c "! grep -aq 'File exists' <<< \"\$1\"" _ "$out"
-
-# A live scheme keeps its name: a third fatfsd as t117 gets File exists.
-out=$(devsh "fatfsd $disk t117" "sleep 1")
-echo "$out" | grep -a "fatfsd" | sed 's/^/      /'
-check "a live t117 keeps its name" grep -aq 'File exists' <<< "$out"
-check "the second fatfsd still serves t117" reads
 tr -d '\r' < "$log" | grep -aE "fatfsd|nsmgr|File exists" | tail -n 6 | sed 's/^/      /'
 
 devsh "pkill fatfsd" > /dev/null
