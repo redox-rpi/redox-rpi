@@ -3516,3 +3516,56 @@ no answer with any flow setting
 
 Step 4 (`miniuart-bt` in the shared config.txt) still waits for the user's OK.
 Stable image restored afterwards.
+
+## 2026-10-31: test 121, sdhost DMA × RedoxFS write coalescing (2×2)
+
+Real Pi 3B+ over netboot. Test 121 ([#30](https://github.com/redox-rpi/redox-rpi/issues/30), [#16](https://github.com/redox-rpi/redox-rpi/issues/16)), Pi test agent.
+
+**All four images pass and none had a short read (`256+0 records in` every time).
+With the same image, the write speed and the driver's SCHTIME change a lot from
+run to run, so #117's 5.5 MB/s and +16.5 s look like noise, not a slower build.**
+DMA uses less ACTTIME (about 18–21 s per write against about 26 s) but more SCHTIME
+(+3.4 to +11.5 s against +3.1 to +3.5 s); PIO was steadier and a little faster
+here (8.1–9.0 MB/s). Coalescing made no clear difference with DMA or PIO.
+
+Images from homenodellm `~/redox-rpi-sd/keep/`, each manifest matches, staged in
+order A–D with stable's bootloader:
+
+- `scripts/pi-test.py` standard checks pass on all 4 (version, manifest, ps, ps-tty,
+  sdcard, 0 of 300 starts failed).
+- Boot log: A and B show `bcm2835-sdhostd: DMA interrupt /scheme/irq/phandle-1/1,20`
+  and `DMA channel 4 at 0x3f007000`. C and D have no DMA line. No panic in any boot.
+
+On `/scheme/data`, 256 MiB with `bs=1048576` from `/dev/urandom`. Steps:
+1 = `conv=fsync`; 2 = with `iflag=fullblock`; 3 = read to `/dev/null`;
+4 = step 2 again. ACTTIME and SCHTIME are the `ps` change of `bcm2835-sdhos`
+across the step.
+
+| image | step | UTC | records in | time | MB/s | ACTTIME | SCHTIME |
+|---|---|---|---|---|---|---|---|
+| A DMA | 1 write | 01:37:29 | 256+0 | 40.5 s | 6.6 | +21.0 s | **+11.5 s** |
+| A DMA | 2 write fullblock | 01:38:12 | 256+0 | 34.0 s | 7.9 | +27.1 s | +6.6 s |
+| A DMA | 3 read | 01:38:51 | 256+0 | 15.3 s | 18 | +13.8 s | +1.0 s |
+| A DMA | 4 write fullblock | 01:39:08 | 256+0 | 40.5 s | 6.6 | +34.0 s | +4.3 s |
+| B DMA + coalescing (#117 image) | 1 write | 01:41:36 | 256+0 | 32.9 s | 8.2 | +18.3 s | +7.9 s |
+| B | 2 write fullblock | 01:42:15 | 256+0 | 37.5 s | 7.2 | +30.9 s | +3.6 s |
+| B | 3 read | 01:42:59 | 256+0 | 15.6 s | 17 | +14.2 s | +0.7 s |
+| B | 4 write fullblock | 01:43:16 | 256+0 | 35.0 s | 7.7 | +28.5 s | +3.4 s |
+| C PIO | 1 write | 01:45:45 | 256+0 | 32.8 s | 8.2 | +26.4 s | +3.3 s |
+| C PIO | 2 write fullblock | 01:46:20 | 256+0 | 32.6 s | 8.2 | +26.2 s | +3.5 s |
+| C PIO | 3 read | 01:46:58 | 256+0 | 14.0 s | 19 | +12.6 s | +0.9 s |
+| C PIO | 4 write fullblock | 01:47:14 | 256+0 | 33.0 s | 8.1 | +26.6 s | +3.4 s |
+| D PIO + coalescing | 1 write | 01:49:31 | 256+0 | 32.0 s | 8.4 | +25.8 s | +3.2 s |
+| D | 2 write fullblock | 01:50:09 | 256+0 | 29.9 s | 9.0 | +23.8 s | +3.1 s |
+| D | 3 read | 01:50:40 | 256+0 | 13.8 s | 19 | +12.7 s | +0.9 s |
+| D | 4 write fullblock | 01:51:00 | 256+0 | 32.9 s | 8.2 | +26.7 s | +3.5 s |
+
+- The #117 image (B) wrote at 8.2 MB/s with SCHTIME +7.9 s this time, against
+  5.5 MB/s and +16.5 s in #117. Plain DMA (A) had the slowest first write
+  (6.6 MB/s, +11.5 s). So the slow #117 run came from DMA's variance, not from
+  coalescing.
+- Every image ran steps 1–4 right after the standard checks, on a fresh boot.
+  The files were removed after each step.
+
+Raw output: homenodellm `~/pitest-tools/t121/` (`X-boot.txt`, `X-pitest.txt`, `X-dd.txt`).
+Stable image restored afterwards.
