@@ -10,7 +10,7 @@ Subject: [PATCH] rpi-firmwared: bt_power switches BT_ON as an output
  2 files changed, 52 insertions(+), 14 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 7be4e2c..272e3c5 100644
+index 7be4e2c..527a3f0 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -19,9 +19,14 @@
@@ -22,7 +22,7 @@ index 7be4e2c..272e3c5 100644
  //! - `/scheme/rpi-firmware/bt_power`: the BT_ON line of the Pi 3B+
  //!   Bluetooth chip, `1` (on) or `0` (off); writing sets it. Also on the
  //!   GPIO expander; other boards do not have this file.
-+//! - `/scheme/rpi-firmware/wl_power`, `wifi_power_config`: the same for WL_ON,
++//! - `/scheme/rpi-firmware/wifi_power`, `wifi_power_config`: the same for WL_ON,
 +//!   the line that powers the Wi-Fi half of the chip (expander pin 1). Linux
 +//!   switches it on at boot before Bluetooth starts.
  //!
