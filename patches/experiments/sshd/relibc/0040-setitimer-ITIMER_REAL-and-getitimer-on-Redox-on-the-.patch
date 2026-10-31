@@ -1,0 +1,222 @@
+From 0b3080750574ce775139063007181ee6b6d3fe56 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 13:27:36 +0100
+Subject: [PATCH] setitimer(ITIMER_REAL) and getitimer on Redox, on the alarm()
+ timer
+
+setitimer returned ENOSYS, so programs that use it for timeouts fail;
+OpenSSH's sshd closes every connection with "login grace time setitimer
+failed". ITIMER_REAL now arms the process-global POSIX timer that
+alarm() already uses (SIGALRM, CLOCK_REALTIME), with interval, and
+returns the previous setting. alarm() and setitimer share the timer, as
+on Linux. ITIMER_VIRTUAL and ITIMER_PROF stay ENOSYS.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/unistd/alarm.rs   | 58 +++++++++++++++----------------
+ src/header/unistd/mod.rs     |  2 +-
+ src/platform/redox/signal.rs | 67 ++++++++++++++++++++++++------------
+ 3 files changed, 75 insertions(+), 52 deletions(-)
+
+diff --git a/src/header/unistd/alarm.rs b/src/header/unistd/alarm.rs
+index 8dffd514..454cdad5 100644
+--- a/src/header/unistd/alarm.rs
++++ b/src/header/unistd/alarm.rs
+@@ -31,34 +31,40 @@ static ALARM_TIMER: Mutex<Option<AlarmTimer>> = Mutex::new(None);
+ /// pending alarm be preserved across exec (the timer continues counting down
+ /// in the new process image as i understand).
+ pub fn alarm_timespec(duration: timespec) -> c_uint {
++    // Arm the timer as a one-shot (no interval)
++    let old = real_timer(Some(&itimerspec {
++        it_value: duration,
++        it_interval: timespec::default(),
++    }));
++    let secs = old.it_value.tv_sec as c_uint;
++    if old.it_value.tv_nsec > 0 {
++        secs + 1 // POSIX: round up
++    } else {
++        secs
++    }
++}
++
++/// Returns the setting of the process-global alarm timer and, if `new` is
++/// given, arms it with `new` (a zero `it_value` disarms it). `alarm()` and
++/// `setitimer(ITIMER_REAL)` share this timer, as on Linux.
++pub fn real_timer(new: Option<&itimerspec>) -> itimerspec {
+     let mut guard = ALARM_TIMER.lock();
+ 
+-    // Determine remaining time on any existing alarm
+-    let remaining = if let Some(ref alarm) = *guard {
+-        match Sys::timer_gettime(alarm.0) {
+-            Ok(cur) => {
+-                let secs = cur.it_value.tv_sec as c_uint;
+-                if cur.it_value.tv_nsec > 0 {
+-                    secs + 1 // POSIX: round up
+-                } else {
+-                    secs
+-                }
+-            }
+-            Err(_) => 0,
+-        }
+-    } else {
+-        0
+-    };
++    let old = guard
++        .as_ref()
++        .and_then(|alarm| Sys::timer_gettime(alarm.0).ok())
++        .unwrap_or_default();
+ 
+-    let disarm = duration.tv_sec == 0 && duration.tv_nsec == 0;
++    let Some(new) = new else {
++        return old;
++    };
+ 
+-    if disarm {
+-        // alarm(0): cancel any pending alarm
++    if new.it_value.tv_sec == 0 && new.it_value.tv_nsec == 0 {
+         if let Some(ref alarm) = *guard {
+             let zero = itimerspec::default();
+             let _ = Sys::timer_settime(alarm.0, 0, &zero, None);
+         }
+-        return remaining;
++        return old;
+     }
+ 
+     // Lazily create the singleton timer if it doesn't exist yet
+@@ -69,20 +75,14 @@ pub fn alarm_timespec(duration: timespec) -> c_uint {
+         evp.sigev_notify = SIGEV_SIGNAL;
+         evp.sigev_signo = c_int::try_from(SIGALRM).expect("constant within c_int::MAX");
+         let Ok(timer_id) = Sys::timer_create(crate::header::time::CLOCK_REALTIME, &evp) else {
+-            return remaining;
++            return old;
+         };
+ 
+         *guard = Some(AlarmTimer(timer_id));
+         timer_id
+     };
+-    drop(guard);
+ 
+-    // Arm the timer as a one-shot (no interval)
+-    let spec = itimerspec {
+-        it_value: duration,
+-        it_interval: timespec::default(),
+-    };
+-    let _ = Sys::timer_settime(timer_id, 0, &spec, None);
++    let _ = Sys::timer_settime(timer_id, 0, new, None);
+ 
+-    remaining
++    old
+ }
+diff --git a/src/header/unistd/mod.rs b/src/header/unistd/mod.rs
+index f4712297..6c21ade0 100644
+--- a/src/header/unistd/mod.rs
++++ b/src/header/unistd/mod.rs
+@@ -53,7 +53,7 @@ use super::{
+     stdio::snprintf,
+ };
+ 
+-mod alarm;
++pub(crate) mod alarm;
+ mod brk;
+ mod getopt;
+ mod getpass;
+diff --git a/src/platform/redox/signal.rs b/src/platform/redox/signal.rs
+index 7892ac13..214d73cb 100644
+--- a/src/platform/redox/signal.rs
++++ b/src/platform/redox/signal.rs
+@@ -13,7 +13,9 @@ use crate::{
+             SIG_BLOCK, SIG_DFL, SIG_IGN, SIG_SETMASK, SIG_UNBLOCK, SS_DISABLE, SS_ONSTACK,
+             sigaction, siginfo_t, sigval, stack_t, ucontext_t,
+         },
+-        time::timespec,
++        sys_select::timeval,
++        time::{itimerspec, timespec},
++        unistd::alarm::real_timer,
+     },
+ };
+ use core::mem::offset_of;
+@@ -46,22 +48,11 @@ const _: () = {
+ 
+ impl PalSignal for Sys {
+     #[allow(deprecated)]
+-    #[expect(unused_variables, reason = "setitimer not implemented")]
+     fn getitimer(which: c_int, out: &mut itimerval) -> Result<()> {
+-        let path = match which {
+-            ITIMER_REAL => "/scheme/itimer/1",
+-            _ => return Err(Errno(EINVAL)),
+-        };
+-        // TODO: implement setitimer
+-        // let fd = FdGuard::new(redox_rt::sys::open(path, syscall::O_RDONLY | syscall::O_CLOEXEC)?);
+-        // let count = syscall::read(*fd, &mut spec)?;
+-
+-        let spec = syscall::ITimerSpec::default();
+-        out.it_interval.tv_sec = spec.it_interval.tv_sec as time_t;
+-        out.it_interval.tv_usec = spec.it_interval.tv_nsec / 1000;
+-        out.it_value.tv_sec = spec.it_value.tv_sec as time_t;
+-        out.it_value.tv_usec = spec.it_value.tv_nsec / 1000;
+-
++        if which != ITIMER_REAL {
++            return Err(Errno(EINVAL));
++        }
++        *out = itimerval_from(&real_timer(None));
+         Ok(())
+     }
+ 
+@@ -90,12 +81,22 @@ impl PalSignal for Sys {
+     }
+ 
+     #[allow(deprecated)]
+-    fn setitimer(_which: c_int, _new: &itimerval, _old: Option<&mut itimerval>) -> Result<()> {
+-        // TODO: setitimer is no longer part of POSIX and should not be implemented in Redox
+-        // Change the platform-independent implementation to use POSIX timers.
+-        // For Redox, the timer should probably use "/scheme/time"
+-        todo_skip!(0, "setitimer not implemented");
+-        Err(Errno(ENOSYS))
++    fn setitimer(which: c_int, new: &itimerval, old: Option<&mut itimerval>) -> Result<()> {
++        if which != ITIMER_REAL {
++            // ITIMER_VIRTUAL and ITIMER_PROF count CPU time, which Redox does
++            // not offer as a timer.
++            todo_skip!(0, "setitimer({which}) not implemented");
++            return Err(Errno(ENOSYS));
++        }
++        let spec = itimerspec {
++            it_interval: timespec_from(&new.it_interval)?,
++            it_value: timespec_from(&new.it_value)?,
++        };
++        let prev = real_timer(Some(&spec));
++        if let Some(old) = old {
++            *old = itimerval_from(&prev);
++        }
++        Ok(())
+     }
+ 
+     fn sigaction(
+@@ -271,3 +272,25 @@ impl PalSignal for Sys {
+         Ok(info.si_signo)
+     }
+ }
++
++fn timespec_from(tv: &timeval) -> Result<timespec> {
++    if !(0..1_000_000).contains(&tv.tv_usec) {
++        return Err(Errno(EINVAL));
++    }
++    Ok(timespec {
++        tv_sec: tv.tv_sec,
++        tv_nsec: (tv.tv_usec * 1000) as _,
++    })
++}
++
++#[allow(deprecated)]
++fn itimerval_from(spec: &itimerspec) -> itimerval {
++    let tv = |ts: &timespec| timeval {
++        tv_sec: ts.tv_sec,
++        tv_usec: (ts.tv_nsec / 1000) as _,
++    };
++    itimerval {
++        it_interval: tv(&spec.it_interval),
++        it_value: tv(&spec.it_value),
++    }
++}
+-- 
+2.54.0 (Apple Git-157)
+

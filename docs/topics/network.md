@@ -10,6 +10,23 @@
 
 ## Next
 
+- [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):
+  OpenSSH from source; key and password login and an interactive shell
+  work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
+  with a repeated fd, `ld.so` and login shells), `procmgr` (SIGCHLD of a
+  child that dropped its privileges) and OpenSSH (no `chroot`, PTY
+  without owner). Pi test #59 failed: no host keys, because rename does
+  not work on `/scheme/data`; the keys are now made in `/etc/ssh` and
+  copied there. Rerun #81 passed on the Pi (2026-10-30): login in
+  1.3 s, the keys stay the same after a reset. Since then: the listening
+  `sshd` no longer uses a whole CPU (netstack reported a listening socket
+  always readable), and the shell exits cleanly when the session ends
+  (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
+  instead of panicking). Pi rerun #101 passed (2026-10-30): 2.9 s of
+  `sshd` CPU after 22 sessions, 10 dropped sessions without an Ion
+  exception or leftovers. Pull request #78.
+  Ctrl-C while a program starts:
+  [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top

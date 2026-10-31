@@ -1,0 +1,76 @@
+[packages]
+openssh = "source"
+polltest = "source"
+# Patched: exits when the SSH session ends (recipes/core/ion).
+ion = "source"
+
+# Privilege separation: sshd runs the pre-auth part as this user, chrooted
+# to /var/empty.
+[users.sshd]
+password = ""
+shell = "/usr/bin/false"
+
+[[files]]
+path = "/var/empty"
+data = ""
+directory = true
+mode = 0o755
+
+# Host keys are made at the first boot (ssh-keygen -A only creates missing
+# keys). The network-boot image's root lives in memory, so the keys are kept
+# on the SD card's data partition when it is mounted (60_data.service), or
+# clients would see a new host key after every boot.
+[[files]]
+path = "/usr/lib/redox-rpi/sshd-keys"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# Host keys live on the data partition, so they stay the same across new
+# images. ssh-keygen writes each key under a temporary name and renames it,
+# and /scheme/data has no rename: make the keys in /etc/ssh, copy them over.
+if test -d /scheme/data
+    mkdir -p /scheme/data/etc/ssh
+    for type in [rsa ecdsa ed25519 mldsa44_ed25519]
+        if test -f /scheme/data/etc/ssh/ssh_host_${type}_key
+            cp /scheme/data/etc/ssh/ssh_host_${type}_key /scheme/data/etc/ssh/ssh_host_${type}_key.pub /etc/ssh/
+            chmod 600 /etc/ssh/ssh_host_${type}_key
+        end
+    end
+    ssh-keygen -A
+    for type in [rsa ecdsa ed25519 mldsa44_ed25519]
+        if not test -f /scheme/data/etc/ssh/ssh_host_${type}_key
+            cp /etc/ssh/ssh_host_${type}_key /etc/ssh/ssh_host_${type}_key.pub /scheme/data/etc/ssh/
+            chmod 600 /scheme/data/etc/ssh/ssh_host_${type}_key
+        end
+    end
+else
+    ssh-keygen -A
+end
+# (cp -p would fail: Redox cannot set file times.) Success means keys exist.
+test -f /etc/ssh/ssh_host_ed25519_key
+"""
+
+[[files]]
+path = "/usr/lib/init.d/91_sshd-keys.service"
+data = """
+[unit]
+description = "Create missing SSH host keys"
+requires_weak = ["60_data.service"]
+
+[service]
+cmd = "/usr/lib/redox-rpi/sshd-keys"
+type = "oneshot"
+"""
+
+[[files]]
+path = "/usr/lib/init.d/92_sshd.service"
+data = """
+[unit]
+description = "OpenSSH server on TCP port 22"
+requires_weak = ["10_net.target", "91_sshd-keys.service"]
+
+[service]
+cmd = "/usr/bin/sshd"
+args = ["-D", "-e"]
+type = "oneshot_async"
+"""
