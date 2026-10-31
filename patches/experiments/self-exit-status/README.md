@@ -33,3 +33,13 @@ timesync --experiment self-exit-status`, build
 | `free` around 200 `dd` runs (#31 leak, about 76 KB per run before `0008`) | – | used 124576 KB before, 103524 KB after: no growth |
 
 So the leak fix of `0008` stays and the exit status is 0 again.
+
+Real Pi 3B+, 2026-10-31, same image, test 133
+([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md),
+commit b9910c7): `pthread/exit` 10 of 10 `rc=0`; `free` around 200 `dd`
+runs +824 KB (about 4 KB per run, before `0008` about 76 KB); relibc suite
+16 failures, all known, none new; standard checks pass.
+
+Reviewed by the author of `0008` (SD Card & Storage session): the deferred
+exit after the syscall still reads only `being_sigkilled`; only the status
+read looks at `exiting_itself`.
