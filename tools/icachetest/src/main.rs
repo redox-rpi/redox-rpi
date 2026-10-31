@@ -8,8 +8,9 @@
 //!
 //! Usage: icachetest [rounds]   (default 10000 per test)
 //!
-//! ICACHETEST_FSYNC=1 calls fsync before the file is mapped, ICACHETEST_KEEP=1
-//! keeps the files of the file-map test (for looking at the RedoxFS bug).
+//! ICACHETEST_REUSE=1 deletes each file of the file-map test right after its
+//! round, so the next file gets its disk block: RedoxFS then maps the deleted
+//! file's data (a file system bug, not a cache one).
 
 use std::ffi::CString;
 use std::process::exit;
@@ -104,10 +105,11 @@ fn same_page(rounds: usize) -> usize {
     wrong
 }
 
-/// A new file every round, mapped read-execute (no mprotect). A new name,
-/// because RedoxFS hands out the old pages for a file that was truncated
-/// and written again.
+/// A new file every round, mapped read-execute (no mprotect). The files stay
+/// until the end: RedoxFS maps the old data of a disk block that a deleted or
+/// truncated file freed.
 fn file_map(rounds: usize, base: &str) -> Option<usize> {
+    let reuse = std::env::var_os("ICACHETEST_REUSE").is_some();
     let mut wrong = 0;
     let mut old_data = 0;
     let buf = anon(libc::PROT_READ | libc::PROT_WRITE);
@@ -128,9 +130,6 @@ fn file_map(rounds: usize, base: &str) -> Option<usize> {
             eprintln!("file: write: {}", std::io::Error::last_os_error());
             unsafe { libc::close(fd) };
             return None;
-        }
-        if std::env::var_os("ICACHETEST_FSYNC").is_some() {
-            unsafe { libc::fsync(fd) };
         }
         let p = mmap(PAGE, libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE, fd);
         if p.is_null() {
@@ -157,9 +156,12 @@ fn file_map(rounds: usize, base: &str) -> Option<usize> {
             libc::munmap(p as *mut _, PAGE);
             libc::close(fd);
         }
-        if std::env::var_os("ICACHETEST_KEEP").is_none() {
+        if reuse {
             let _ = std::fs::remove_file(&path);
         }
+    }
+    for round in 0..rounds {
+        let _ = std::fs::remove_file(format!("{base}.{round}"));
     }
     unsafe { libc::munmap(buf as *mut _, PAGE) };
     if old_data > 0 {
