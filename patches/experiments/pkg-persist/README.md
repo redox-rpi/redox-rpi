@@ -45,6 +45,11 @@ Also in this experiment:
   "not valid yet" (or expired), pkg says what year the clock is at and to
   set the clock first, instead of only the TLS error.
 
+The boot copy is a `oneshot` service: init waits for it, so the login
+prompt and the services after it see the packages. Its line ends with the
+time it took. Init reads its service files before the copy, so a service
+file that a package brings does not start at boot.
+
 Without a data partition (network boot without a card) `pkg-persist`
 fails at the pkg step and `restore` does nothing.
 
@@ -65,3 +70,12 @@ partition is the EFI one, so `60_data` fails there).
   (QEMU's root is on the card, the Pi's is in RAM), data partition kept.
   `/usr/bin/nano` is gone, `pkg-persist restore` copies the 214 files
   again without network, and nano runs.
+
+## Pi test (2026-10-31)
+
+Test 124 with `v0.3.0-dev-462-g3783750+xc526` passes: `mv` on
+`/scheme/data` works, `pkg-persist install nano` copies 214 files and nano
+runs, and after `reboot` the boot service copies the same 214 files and
+nano runs again. A second `restore` copies nothing. The boot copy line came
+after `redox login:` because the service was still `oneshot_async`; it is
+a `oneshot` since.
