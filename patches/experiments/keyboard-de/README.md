@@ -58,6 +58,9 @@ rejects `[` even in quotes. It needs no network port.
   `inputd -K` by hand): `test-keymap.sh` passes the same way.
 - QEMU `raspi3b`, `v0.3.0-dev-239-g43c6882+x9ea9` (dead keys, layout from
   `/etc/keymap`): `test-keymap.sh` passes with `éàô´^x` at the end of the
-  line. Pi test with a person: #64 in the test plan.
+  line.
+- QEMU `raspi3b`, `v0.3.0-dev-765-gc992087+x9ea9` (branch `t36-keymap`,
+  today's main): `test-keymap.sh` passes the same way. Pi test with a
+  person: #150 in the test plan (replaces #64).
 
 Details in [test-reports.md](../../../docs/test-reports.md).
