@@ -265,6 +265,7 @@ fn step_mode() -> bool {
 /// an earlier try is kept up to its last whole part and the rest is fetched:
 /// the Pi downloads at 0.06 to 0.25 MB/s, so a stopped try is not lost. A
 /// part whose connection breaks is fetched again, up to 10 times in a row.
+/// Each part (16 MiB) is held in memory before it is written.
 fn download(url: &str, file: &str) -> anyhow::Result<()> {
     let t = Instant::now();
     let mut got = 0u64;
@@ -293,24 +294,33 @@ fn download(url: &str, file: &str) -> anyhow::Result<()> {
         let mut tries = 0;
         loop {
             let u = url.replace("NNN", &format!("{part:03}"));
-            let (start, t_part) = (got, Instant::now());
-            match fetch(&u, &mut out, &mut got) {
-                Ok(true) => {
-                    let mb = (got - start) as f32 / 1e6;
-                    eprintln!("part {part:03}, {} MiB, {:.2} MB/s", got >> 20, mb / t_part.elapsed().as_secs_f32());
+            // The part arrives in memory first, then goes to the file, so the
+            // network and the card each get their own speed.
+            let t_net = Instant::now();
+            match get(&u) {
+                Ok(Some(body)) => {
+                    let net = t_net.elapsed().as_secs_f32();
+                    let t_card = Instant::now();
+                    out.write_all(&body)?;
+                    out.sync_data()?;
+                    got += body.len() as u64;
+                    let mb = body.len() as f32 / 1e6;
+                    eprintln!(
+                        "part {part:03}, {} MiB, network {:.2} MB/s, card {:.2} MB/s",
+                        got >> 20,
+                        mb / net,
+                        mb / t_card.elapsed().as_secs_f32()
+                    );
                     part += 1;
                     tries = 0;
                 }
-                Ok(false) if part > 0 => break,
-                Ok(false) => anyhow::bail!("{u}: not found"),
+                Ok(None) if part > 0 => break,
+                Ok(None) => anyhow::bail!("{u}: not found"),
                 // A dropped connection (the Pi saw ENOTCONN after 204 MB):
-                // cut the broken part off and fetch it again.
+                // fetch the part again; nothing of it was written yet.
                 Err(e) if tries < 10 => {
                     tries += 1;
                     eprintln!("part {part:03}: {e}; again in 5 s (try {tries} of 10)");
-                    got = start;
-                    out.set_len(got)?;
-                    out.seek(SeekFrom::End(0))?;
                     std::thread::sleep(std::time::Duration::from_secs(5));
                 }
                 Err(e) => return Err(e),
@@ -369,6 +379,20 @@ fn head(url: &str) -> anyhow::Result<Option<u64>> {
         return Ok(None);
     }
     len.map(Some).ok_or_else(|| anyhow::anyhow!("{url}: no length"))
+}
+
+/// One GET into memory; None if the server answers 404.
+fn get(url: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let (mut r, status, len) = request("GET", url)?;
+    if status == "404" {
+        return Ok(None);
+    }
+    let mut body = Vec::with_capacity(len.unwrap_or(0) as usize);
+    r.read_to_end(&mut body).map_err(|e| anyhow::anyhow!("after {} bytes: {e}", body.len()))?;
+    if let Some(l) = len.filter(|&l| l != body.len() as u64) {
+        anyhow::bail!("{url}: got {} bytes, the server said {l}", body.len());
+    }
+    Ok(Some(body))
 }
 
 /// One GET, appended to `out`; false if the server answers 404.
