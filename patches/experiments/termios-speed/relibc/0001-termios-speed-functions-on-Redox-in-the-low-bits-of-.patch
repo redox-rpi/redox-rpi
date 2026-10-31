@@ -1,0 +1,107 @@
+From f84168b1444d10a3d5c6478d74d93a4fb0461416 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 21:18:44 +0100
+Subject: [PATCH] termios: speed functions on Redox, in the low bits of c_cflag
+
+cfsetispeed, cfsetospeed and cfsetspeed failed with EINVAL on Redox
+and cfgetispeed/cfgetospeed returned 0: only Linux was implemented.
+Redox keeps one speed for both directions in c_cflag & 0o37, which is
+where ptyd and device drivers read it. cfsetispeed(B0) keeps the
+output speed, as POSIX says.
+---
+ src/header/termios/mod.rs | 39 +++++++++++++++++++++++++--------------
+ 1 file changed, 25 insertions(+), 14 deletions(-)
+
+diff --git a/src/header/termios/mod.rs b/src/header/termios/mod.rs
+index 5b2b324f..9d8f1372 100644
+--- a/src/header/termios/mod.rs
++++ b/src/header/termios/mod.rs
+@@ -154,6 +154,12 @@ pub unsafe extern "C" fn tcgetsid(fildes: c_int) -> pid_t {
+     sid
+ }
+ 
++/// The speed bits of `c_cflag` on Redox: `B0`–`B38400` are `0o0`–`0o17` and
++/// `B57600`–`B4000000` are `0o20`–`0o36`, below `CSIZE`. Drivers (ptyd, the
++/// USB serial adapters in dwc2d) read the speed from there.
++#[cfg(target_os = "redox")]
++const REDOX_CBAUD: tcflag_t = 0o37;
++
+ /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/cfgetispeed.html>.
+ ///
+ /// Extracts the input baud rate from the termios structure reference to by
+@@ -171,10 +177,7 @@ pub unsafe extern "C" fn cfgetispeed(termios_p: *const termios) -> speed_t {
+     }
+     #[cfg(target_os = "redox")]
+     {
+-        //TODO
+-        // used to suppress unused_variables lint, remove when redox implemented
+-        let _not_used_yet_redox = termios_p;
+-        0
++        unsafe { (*termios_p).c_cflag & REDOX_CBAUD }
+     }
+ }
+ 
+@@ -195,10 +198,7 @@ pub unsafe extern "C" fn cfgetospeed(termios_p: *const termios) -> speed_t {
+     }
+     #[cfg(target_os = "redox")]
+     {
+-        //TODO
+-        // used to suppress unused_variables lint, remove when redox implemented
+-        let _not_used_yet_redox = termios_p;
+-        0
++        unsafe { (*termios_p).c_cflag & REDOX_CBAUD }
+     }
+ }
+ 
+@@ -212,15 +212,23 @@ pub unsafe extern "C" fn cfgetospeed(termios_p: *const termios) -> speed_t {
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut termios, speed: speed_t) -> c_int {
+     match speed as usize {
+-        // TODO redox impl
+         #[cfg(target_os = "linux")]
+         B0..=B38400 | B57600..=B4000000 => {
+             unsafe { (*termios_p).__c_ispeed = speed };
+             0
+         }
++        // Redox keeps one speed for both directions in c_cflag. An input
++        // speed of B0 means "the same as the output speed" (POSIX), so it
++        // leaves c_cflag as it is.
++        #[cfg(target_os = "redox")]
++        B0 => 0,
++        #[cfg(target_os = "redox")]
++        B0..=B38400 | B57600..=B4000000 => {
++            let termios = unsafe { &mut *termios_p };
++            termios.c_cflag = (termios.c_cflag & !REDOX_CBAUD) | speed;
++            0
++        }
+         _ => {
+-            // used to suppress unused_variables lint, remove when redox implemented
+-            let _not_used_yet_redox = termios_p;
+             platform::ERRNO.set(errno::EINVAL);
+             -1
+         }
+@@ -237,15 +245,18 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut termios, speed: speed_t) ->
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut termios, speed: speed_t) -> c_int {
+     match speed as usize {
+-        // TODO redox impl
+         #[cfg(target_os = "linux")]
+         B0..=B38400 | B57600..=B4000000 => {
+             unsafe { (*termios_p).__c_ospeed = speed };
+             0
+         }
++        #[cfg(target_os = "redox")]
++        B0..=B38400 | B57600..=B4000000 => {
++            let termios = unsafe { &mut *termios_p };
++            termios.c_cflag = (termios.c_cflag & !REDOX_CBAUD) | speed;
++            0
++        }
+         _ => {
+-            // used to suppress unused_variables lint, remove when redox implemented
+-            let _not_used_yet_redox = termios_p;
+             platform::ERRNO.set(errno::EINVAL);
+             -1
+         }
+-- 
+2.54.0 (Apple Git-157)
+

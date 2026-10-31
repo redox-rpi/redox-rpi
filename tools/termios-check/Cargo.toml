@@ -1,0 +1,8 @@
+[package]
+name = "termios-check"
+description = "Check relibc's termios speed functions (cfsetspeed, cfgetospeed) on a serial port"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

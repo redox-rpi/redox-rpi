@@ -7,7 +7,8 @@
 # /tmp/dwc2d-serial-log exists.
 #
 # Needs an image with base 0035 (USB serial adapters, the default once
-# usb-serial is merged). The host port for devshd is 12323, or SERIAL_PORT=<port>.
+# usb-serial is merged). With --experiment termios-speed it also sets the
+# speed through relibc's cfsetspeed (tools/termios-check). The host port for devshd is 12323, or SERIAL_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-serial.sh [image]
@@ -162,6 +163,18 @@ check "speed set to 9600" wait_more "dwc2d: serial $name: 9600 baud, 8N1" 5 "$n"
 check "speed reads 9600" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat $dev/baud' 2>/dev/null | grep -aq 9600"
 devsh "echo fast > $dev/baud" > /dev/null
 check "bad speed refused" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat $dev/baud' 2>/dev/null | grep -aq 9600"
+
+# With the experiment termios-speed: the speed through relibc's cfsetspeed
+# and tcsetattr, the way normal programs set it.
+if devsh "ls /usr/bin/termios-check" | grep -aq termios-check; then
+    echo "== speed through termios (cfsetspeed)"
+    n=$(count "dwc2d: serial $name: 19200 baud, 8N1")
+    out=$(devsh "termios-check $dev 19200" | tr -d '\0\r')
+    sed 's/^/      /' <<< "$out" | grep -a "ok  \|FAIL\|speed before"
+    check "termios-check passes" bash -c "grep -aq 'ok   cfsetspeed refuses' <<< \"\$1\" && ! grep -aq FAIL <<< \"\$1\"" _ "$out"
+    check "speed set to 19200 through termios" wait_more "dwc2d: serial $name: 19200 baud, 8N1" 5 "$n"
+    check "baud file reads 19200" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'cat $dev/baud' 2>/dev/null | grep -aq 19200"
+fi
 
 echo "== port switched off and on"
 # The test command for the real Pi; QEMU's hub powers its ports together,
