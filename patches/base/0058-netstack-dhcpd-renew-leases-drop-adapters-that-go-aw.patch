@@ -1,4 +1,4 @@
-From 8d8357729b715605ac2eb9b5a64b33ed4b1ab58b Mon Sep 17 00:00:00 2001
+From ad2188a88205066e75d8326a301d249513efed8a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 31 Oct 2026 07:21:33 +0100
 Subject: [PATCH] netstack, dhcpd: renew leases, drop adapters that go away,
@@ -6,15 +6,15 @@ Subject: [PATCH] netstack, dhcpd: renew leases, drop adapters that go away,
 
 ---
  dhcpd/src/main.rs                     | 229 +++++++++++++++++++++++---
- drivers/net/testnetd/src/main.rs      |  32 +++-
- drivers/net/testnetd/src/responder.rs |  20 ++-
+ drivers/net/testnetd/src/main.rs      |  49 ++++--
+ drivers/net/testnetd/src/responder.rs |  47 ++++--
  netstack/src/adapters.rs              |  73 +++++---
  netstack/src/link/mod.rs              |   7 +
  netstack/src/main.rs                  |   9 +-
  netstack/src/router/route_table.rs    |   5 +
  netstack/src/scheme/mod.rs            |  18 ++
  netstack/src/scheme/netcfg/mod.rs     |  12 ++
- 9 files changed, 346 insertions(+), 59 deletions(-)
+ 9 files changed, 377 insertions(+), 72 deletions(-)
 
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
 index 1eb4f1d..6f374a8 100644
@@ -343,13 +343,17 @@ index 1eb4f1d..6f374a8 100644
      fn preferred_test() {
          let lease = |r: Option<[u8; 4]>| Lease { router: r, ..Lease::default() };
 diff --git a/drivers/net/testnetd/src/main.rs b/drivers/net/testnetd/src/main.rs
-index 32432d3..e14b4f7 100644
+index 32432d3..b39c2e1 100644
 --- a/drivers/net/testnetd/src/main.rs
 +++ b/drivers/net/testnetd/src/main.rs
-@@ -7,6 +7,11 @@
+@@ -7,6 +7,15 @@
  //! another interface should arrive here. The counters are written to
  //! `/tmp/testnetd.log` after each change.
  //!
++//! A scheme with `wlan` in its name (`network.wlan_test0`) gets the
++//! network 10.0.8.0/24 and MAC 02:00:00:00:08:02 instead, so two testnetds
++//! can run side by side. Each writes its process ID to `/tmp/<scheme>.pid`.
++//!
 +//! A second argument sets the lease time in seconds (default one hour),
 +//! for renewal tests. While `/tmp/testnetd-nodhcp` exists, DHCP gets no
 +//! answer, as if the server went away. Killing testnetd removes the
@@ -358,15 +362,20 @@ index 32432d3..e14b4f7 100644
  //! Run from a shell: it starts itself again as a daemon and returns once
  //! the scheme is registered.
  
-@@ -23,6 +28,7 @@ use responder::{Counters, Responder};
+@@ -21,10 +30,11 @@ mod responder;
  
- const NIC_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x02];
+ use responder::{Counters, Responder};
+ 
+-const NIC_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x02];
  const LOG: &str = "/tmp/testnetd.log";
 +const NO_DHCP: &str = "/tmp/testnetd-nodhcp";
  
  struct TestAdapter {
++    mac: [u8; 6],
      responder: Responder,
-@@ -37,8 +43,8 @@ impl TestAdapter {
+     rx: VecDeque<Vec<u8>>,
+     logged: Counters,
+@@ -37,8 +47,8 @@ impl TestAdapter {
              return;
          }
          let line = format!(
@@ -377,7 +386,16 @@ index 32432d3..e14b4f7 100644
          );
          let _ = std::fs::write(LOG, &line);
          self.logged = c.clone();
-@@ -66,6 +72,7 @@ impl NetworkAdapter for TestAdapter {
+@@ -47,7 +57,7 @@ impl TestAdapter {
+ 
+ impl NetworkAdapter for TestAdapter {
+     fn mac_address(&mut self) -> [u8; 6] {
+-        NIC_MAC
++        self.mac
+     }
+ 
+     fn available_for_read(&mut self) -> usize {
+@@ -66,6 +76,7 @@ impl NetworkAdapter for TestAdapter {
      }
  
      fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
@@ -385,7 +403,7 @@ index 32432d3..e14b4f7 100644
          let replies = self.responder.handle(buf);
          self.rx.extend(replies);
          self.log();
-@@ -77,6 +84,10 @@ fn main() {
+@@ -77,6 +88,10 @@ fn main() {
      let scheme = std::env::args()
          .nth(1)
          .unwrap_or_else(|| "network.test0".to_string());
@@ -396,7 +414,7 @@ index 32432d3..e14b4f7 100644
  
      // A login shell may have an INIT_NOTIFY of its own, so the daemon run
      // is marked with a variable of ours.
-@@ -84,21 +95,24 @@ fn main() {
+@@ -84,21 +99,33 @@ fn main() {
          // Started from a shell: run again with a readiness pipe, as init would.
          let exe = std::env::current_exe().expect("testnetd: no executable path");
          let mut cmd = Command::new(exe);
@@ -417,19 +435,28 @@ index 32432d3..e14b4f7 100644
 -    let _ = std::fs::write(LOG, "dhcp 0 dhcp_foreign 0 foreign_src 0 ping 0\n");
 +fn run(daemon: daemon::Daemon, scheme_name: String, lease: u32) -> ! {
 +    let _ = std::fs::write(LOG, "dhcp 0 dhcp_foreign 0 foreign_src 0 ping 0 renew 0\n");
++    let _ = std::fs::write(
++        format!("/tmp/{scheme_name}.pid"),
++        format!("{}\n", std::process::id()),
++    );
++    let net = if scheme_name.contains("wlan") { 8 } else { 9 };
++    let mac = [0x02, 0, 0, 0, net, 0x02];
      let mut scheme = NetworkScheme::new(
 -        || TestAdapter {
 -            responder: Responder::new(NIC_MAC),
 +        move || TestAdapter {
++            mac,
 +            responder: Responder {
 +                lease,
-+                ..Responder::new(NIC_MAC)
++                host_ip: [10, 0, net, 1],
++                client_ip: [10, 0, net, 2],
++                ..Responder::new(mac)
 +            },
              rx: VecDeque::new(),
              logged: Counters::default(),
          },
 diff --git a/drivers/net/testnetd/src/responder.rs b/drivers/net/testnetd/src/responder.rs
-index 4fcd55a..54dbf8f 100644
+index 4fcd55a..83ac6ed 100644
 --- a/drivers/net/testnetd/src/responder.rs
 +++ b/drivers/net/testnetd/src/responder.rs
 @@ -4,6 +4,9 @@
@@ -442,7 +469,7 @@ index 4fcd55a..54dbf8f 100644
  
  pub const HOST_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x01];
  pub const HOST_IP: [u8; 4] = [10, 0, 9, 1];
-@@ -16,11 +19,17 @@ pub struct Counters {
+@@ -16,11 +19,20 @@ pub struct Counters {
      pub dhcp_foreign: usize,
      pub foreign_src: usize,
      pub ping: usize,
@@ -457,19 +484,64 @@ index 4fcd55a..54dbf8f 100644
 +    pub lease: u32,
 +    /// No DHCP answers while set.
 +    pub dhcp_off: bool,
++    /// The host's and the client's address.
++    pub host_ip: [u8; 4],
++    pub client_ip: [u8; 4],
  }
  
  fn checksum(data: &[u8]) -> u16 {
-@@ -73,6 +82,8 @@ impl Responder {
+@@ -73,6 +85,10 @@ impl Responder {
          Responder {
              mac,
              counters: Counters::default(),
 +            lease: 3600,
 +            dhcp_off: false,
++            host_ip: HOST_IP,
++            client_ip: CLIENT_IP,
          }
      }
  
-@@ -165,7 +176,13 @@ impl Responder {
+@@ -92,13 +108,13 @@ impl Responder {
+ 
+     fn arp(&mut self, arp: &[u8]) -> Option<Vec<u8>> {
+         // Ethernet/IPv4 request for the host's address.
+-        if arp.len() < 28 || arp[0..8] != [0, 1, 8, 0, 6, 4, 0, 1] || arp[24..28] != HOST_IP {
++        if arp.len() < 28 || arp[0..8] != [0, 1, 8, 0, 6, 4, 0, 1] || arp[24..28] != self.host_ip {
+             return None;
+         }
+         let mut reply = Vec::with_capacity(28);
+         reply.extend_from_slice(&[0, 1, 8, 0, 6, 4, 0, 2]);
+         reply.extend_from_slice(&HOST_MAC);
+-        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&self.host_ip);
+         reply.extend_from_slice(&arp[8..18]);
+         Some(ethernet(self.mac_of(&arp[8..14]), HOST_MAC, 0x0806, &reply))
+     }
+@@ -120,12 +136,12 @@ impl Responder {
+         }
+         let src: [u8; 4] = packet[12..16].try_into().unwrap();
+         let dst: [u8; 4] = packet[16..20].try_into().unwrap();
+-        if src != [0; 4] && src[..3] != HOST_IP[..3] {
++        if src != [0; 4] && src[..3] != self.host_ip[..3] {
+             self.counters.foreign_src += 1;
+         }
+         let body = &packet[header_len..total];
+         match packet[9] {
+-            1 if dst == HOST_IP => self.icmp(src, body),
++            1 if dst == self.host_ip => self.icmp(src, body),
+             17 => self.udp(body),
+             _ => None,
+         }
+@@ -141,7 +157,7 @@ impl Responder {
+         reply[2..4].copy_from_slice(&[0, 0]);
+         let sum = checksum(&reply);
+         reply[2..4].copy_from_slice(&sum.to_be_bytes());
+-        let packet = ipv4(HOST_IP, src, 1, &reply);
++        let packet = ipv4(self.host_ip, src, 1, &reply);
+         Some(ethernet(self.mac, HOST_MAC, 0x0800, &packet))
+     }
+ 
+@@ -165,7 +181,13 @@ impl Responder {
              return None;
          }
          self.counters.dhcp += 1;
@@ -483,16 +555,36 @@ index 4fcd55a..54dbf8f 100644
          let reply_type = match msg_type {
              1 => 2, // Discover → Offer
              3 => 5, // Request → Ack
-@@ -184,7 +201,8 @@ impl Responder {
+@@ -177,21 +199,22 @@ impl Responder {
+         reply[2] = 6;
+         reply[4..8].copy_from_slice(&msg[4..8]); // xid
+         reply[10..12].copy_from_slice(&msg[10..12]); // flags
+-        reply[16..20].copy_from_slice(&CLIENT_IP); // yiaddr
+-        reply[20..24].copy_from_slice(&HOST_IP); // siaddr
++        reply[16..20].copy_from_slice(&self.client_ip); // yiaddr
++        reply[20..24].copy_from_slice(&self.host_ip); // siaddr
+         reply[28..44].copy_from_slice(&msg[28..44]); // chaddr
+         reply[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]);
          reply.extend_from_slice(&[53, 1, reply_type]);
          reply.extend_from_slice(&[54, 4]);
-         reply.extend_from_slice(&HOST_IP);
+-        reply.extend_from_slice(&HOST_IP);
 -        reply.extend_from_slice(&[51, 4, 0, 0, 0x0e, 0x10]); // one hour
++        reply.extend_from_slice(&self.host_ip);
 +        reply.extend_from_slice(&[51, 4]);
 +        reply.extend_from_slice(&self.lease.to_be_bytes());
          reply.extend_from_slice(&[1, 4, 255, 255, 255, 0]);
          reply.extend_from_slice(&[3, 4]);
-         reply.extend_from_slice(&HOST_IP);
+-        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&self.host_ip);
+         reply.extend_from_slice(&[6, 4]);
+-        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&self.host_ip);
+         reply.push(255);
+-        let packet = ipv4(HOST_IP, [255; 4], 17, &udp(67, 68, &reply));
++        let packet = ipv4(self.host_ip, [255; 4], 17, &udp(67, 68, &reply));
+         Some(ethernet(BROADCAST_MAC, HOST_MAC, 0x0800, &packet))
+     }
+ }
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
 index 8499e04..d1e63c7 100644
 --- a/netstack/src/adapters.rs
