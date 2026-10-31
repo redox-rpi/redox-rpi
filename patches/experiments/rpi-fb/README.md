@@ -32,6 +32,13 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (branch `graphics-vsync`): the `RPI_FB*` settings also from the
   firmware's command line (`cmdline.txt`), so a test can set them without
   typing at the bootloader menu.
+- [`0068`](base/0068-rpi-fbd-DMA-test-blit-into-a-buffer-it-clears-itself.patch):
+  the DMA test blit at start clears its target buffer itself and counts
+  only rows that hold the test pattern. On the Pi, "zeroed" DMA memory
+  was not always zero (test 130: `test blit of 2 rows moved 4`, while
+  #116 got 3 with the same code), probably because the kernel clears it
+  through a cached mapping; the log now says `DMA test buffer had N of 64
+  words not zero` when that happens.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
