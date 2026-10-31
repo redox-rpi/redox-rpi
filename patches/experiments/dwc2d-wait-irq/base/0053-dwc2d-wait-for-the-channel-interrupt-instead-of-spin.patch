@@ -1,4 +1,4 @@
-From 56dcfc5a9666cce335ed5fde260185627a2c283c Mon Sep 17 00:00:00 2001
+From e2cbb7fb23508908d05286145d7499d27fa8166d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 31 Oct 2026 06:10:37 +0100
 Subject: [PATCH] dwc2d: wait for the channel interrupt instead of spinning
@@ -10,12 +10,12 @@ network frame or a control request, and then waits for the channel's
 halt interrupt on a second irq handle, with a 2 ms timer as the
 fallback (#104). A first try with short sleeps hung dwc2d in QEMU.
 ---
- drivers/usb/dwc2d/src/dwc2.rs | 102 +++++++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/dwc2.rs | 115 +++++++++++++++++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs |  11 ++--
- 2 files changed, 107 insertions(+), 6 deletions(-)
+ 2 files changed, 120 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 279d8eb..1465809 100644
+index 279d8eb..de92402 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -1,12 +1,45 @@
@@ -104,7 +104,7 @@ index 279d8eb..1465809 100644
      pub fn transfer_on(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
          self.start(ch, phase);
          let start = Instant::now();
-@@ -455,14 +514,53 @@ impl Dwc2 {
+@@ -455,14 +514,66 @@ impl Dwc2 {
              if let Some(result) = self.poll(ch, phase.len) {
                  return result;
              }
@@ -132,16 +132,24 @@ index 279d8eb..1465809 100644
 +    /// [`WAIT_FALLBACK`], and then poll it like [`Dwc2::poll`].
 +    ///
 +    /// Only this channel raises the interrupt meanwhile: a received frame
-+    /// waiting for the main loop would raise it again and again. The
-+    /// interrupt is acknowledged once the channel is cleared, before the
++    /// waiting for the main loop would raise it again and again. The other
++    /// channels are masked in their HCINTMSK, not in HAINTMSK: QEMU's model
++    /// raises the interrupt again only when a channel's HCINTMSK changes.
++    /// The interrupt is acknowledged once the channel is cleared, before the
 +    /// other channels come back; a frame received meanwhile then raises it
 +    /// again for the main loop.
 +    fn wait_halt(&self, waiter: &Mutex<Waiter>, ch: usize, len: usize, left: Duration) -> Option<Result<(usize, u32), Error>> {
 +        let mut waiter = waiter.lock().unwrap_or_else(|e| e.into_inner());
 +        let haintmsk = self.read(HAINTMSK);
-+        let intmsk = self.read(hcintmsk(ch));
++        let mut masks = [0; 16];
++        for (c, mask) in masks.iter_mut().enumerate().take(self.channels) {
++            *mask = self.read(hcintmsk(c));
++            if c != ch && *mask != 0 {
++                self.write(hcintmsk(c), 0);
++            }
++        }
++        self.write(HAINTMSK, haintmsk | 1 << ch);
 +        self.write(hcintmsk(ch), HCINT_CH_HLTD);
-+        self.write(HAINTMSK, 1 << ch);
 +
 +        if self.read(hcint(ch)) & HCINT_CH_HLTD == 0 {
 +            waiter.timer.arm(left.min(WAIT_FALLBACK));
@@ -153,9 +161,14 @@ index 279d8eb..1465809 100644
 +        let mut count = [0; 8];
 +        if waiter.irq.read(&mut count).unwrap_or(0) == count.len() {
 +            let _ = waiter.irq.write(&count);
-         }
-+        self.write(hcintmsk(ch), intmsk);
++        }
++        self.write(hcintmsk(ch), masks[ch]);
 +        self.write(HAINTMSK, haintmsk);
++        for (c, &mask) in masks.iter().enumerate().take(self.channels) {
++            if c != ch && mask != 0 {
++                self.write(hcintmsk(c), mask);
++            }
+         }
 +        result
      }
  
