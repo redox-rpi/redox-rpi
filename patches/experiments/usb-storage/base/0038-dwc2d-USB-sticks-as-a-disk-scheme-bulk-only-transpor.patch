@@ -1,0 +1,683 @@
+From 7f989e4b95c9c9e336eb023c93ad7d40de56221d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 12:15:04 +0100
+Subject: [PATCH 1/2] dwc2d: USB sticks as a disk scheme (bulk-only transport,
+ SCSI)
+
+A bulk-only SCSI interface (class 8, subclass 6, protocol 0x50) found at
+boot or plugged in later is set up with INQUIRY, TEST UNIT READY (up to
+5 s while the stick gets ready) and READ CAPACITY (10, or 16 above
+2 TiB), and served through driver-block's DiskScheme as
+disk.usb-dwc2+<ports>-scsi, like upstream's usbscsid: 0 is the whole
+stick, 0p0, 0p1, ... its partitions. Reads and writes go out as READ and
+WRITE (10, or 16 for large disks) in chunks of up to 64 KiB on host
+channels 4 and 5, with the BOT recovery steps for stalls and phase
+errors. A stick that stops answering returns ENODEV; when it is unplugged
+the scheme goes away.
+
+One stick at a time; a full-speed stick behind a high-speed hub is not
+supported (no split bulk transfers).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                         |   1 +
+ drivers/usb/dwc2d/Cargo.toml       |   1 +
+ drivers/usb/dwc2d/src/enumerate.rs |  16 ++
+ drivers/usb/dwc2d/src/main.rs      |  75 +++++-
+ drivers/usb/dwc2d/src/storage.rs   | 419 +++++++++++++++++++++++++++++
+ 5 files changed, 509 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/storage.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index a5f72da9..4a8b1b6c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -766,6 +766,7 @@ version = "0.1.0"
+ dependencies = [
+  "common",
+  "daemon",
++ "driver-block",
+  "driver-network",
+  "fdt 0.2.0-alpha1",
+  "inputd",
+diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
+index de3a4ea5..0e10948c 100644
+--- a/drivers/usb/dwc2d/Cargo.toml
++++ b/drivers/usb/dwc2d/Cargo.toml
+@@ -8,6 +8,7 @@ edition = "2021"
+ fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
++driver-block = { path = "../../storage/driver-block" }
+ driver-network = { path = "../../net/driver-network" }
+ inputd = { path = "../../inputd" }
+ 
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 624907b5..fa103c8b 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -475,6 +475,22 @@ impl Bus {
+         Ok(())
+     }
+ 
++    /// The ports from the root to a device, e.g. `1.3` for port 3 of the hub
++    /// on port 1 of the root hub; `0` for the device on the root port.
++    pub fn port_path(&self, address: u8) -> String {
++        let mut ports = Vec::new();
++        let mut current = address;
++        while let Some((hub, port)) = self.port_of(current) {
++            ports.push(port.to_string());
++            current = hub;
++        }
++        if ports.is_empty() {
++            return "0".to_string();
++        }
++        ports.reverse();
++        ports.join(".")
++    }
++
+     /// The hub and port a device is plugged into.
+     pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
+         self.devices.iter().find(|d| d.address == address)?.parent
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 28cc7aa2..930aca98 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -2,8 +2,8 @@
+ //! mode, as found on the Raspberry Pi 1-3 and Zero.
+ //!
+ //! Brings up the controller, enumerates the devices behind the root port and
+-//! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153) and a boot
+-//! protocol keyboard directly in this process. It does not offer the USB
++//! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153), a boot
++//! protocol keyboard and USB sticks (as a disk scheme) directly in this process. It does not offer the USB
+ //! scheme to class drivers yet.
+ 
+ use std::fs::{File, OpenOptions};
+@@ -22,7 +22,9 @@ mod hid;
+ mod lan78xx;
+ mod regs;
+ mod rtl8152;
++mod storage;
+ 
++use driver_block::{DiskScheme, ExecutorTrait, FuturesExecutor};
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+ use ecm::Ecm;
+@@ -31,6 +33,7 @@ use event::{user_data, EventQueue};
+ use hid::Keyboard;
+ use lan78xx::Lan78xx;
+ use rtl8152::Rtl8152;
++use storage::{StorageFunction, Stick};
+ 
+ /// A network adapter on the bus, initialized. It receives only while the
+ /// network stack uses it.
+@@ -206,6 +209,8 @@ enum Found {
+     Net(Adapter, [u8; 6], bool),
+     /// A keyboard, configured.
+     Keyboard(hid::KeyboardFunction),
++    /// A USB stick, not set up yet.
++    Storage(StorageFunction),
+ }
+ 
+ /// Recognize a device and bring it up. `link_wait` is how long a network
+@@ -249,6 +254,10 @@ fn probe(
+             }
+         };
+     }
++    if let Some(f) = storage::find(bus, device) {
++        println!("dwc2d: mass storage at address {address}");
++        return Some(Found::Storage(f));
++    }
+     if let Some(f) = hid::find(bus, device) {
+         return match hid::init(bus, &f) {
+             Ok(()) => {
+@@ -401,9 +410,38 @@ user_data! {
+         Scheme,
+         Time,
+         Hotplug,
++        Disk,
+     }
+ }
+ 
++/// A USB stick and the disk scheme that serves it.
++struct UsbDisk {
++    address: u8,
++    name: String,
++    scheme: DiskScheme<Stick>,
++}
++
++/// Set up a stick and register its disk scheme, named after its port like
++/// upstream's usbscsid: `disk.usb-dwc2+<ports>-scsi`.
++fn start_disk(bus: &mut Bus, hc: &Dwc2, f: StorageFunction, events: &EventQueue<Source>) -> Option<UsbDisk> {
++    let address = f.address;
++    let stick = Stick::new(bus, hc.clone(), f)
++        .inspect_err(|err| println!("dwc2d: mass storage at address {address}: {err:?}"))
++        .ok()?;
++    let name = format!("disk.usb-dwc2+{}-scsi", bus.port_path(address));
++    println!(
++        "dwc2d: mass storage /scheme/{name}: {}, {} MiB, {}-byte blocks",
++        stick.name,
++        stick.size() / (1024 * 1024),
++        driver_block::Disk::block_size(&stick)
++    );
++    let scheme = DiskScheme::new(None, name.clone(), [(0, stick)].into(), &FuturesExecutor);
++    events
++        .subscribe(scheme.event_handle().raw(), Source::Disk, event::EventFlags::READ)
++        .expect("dwc2d: failed to subscribe to the disk scheme");
++    Some(UsbDisk { address, name, scheme })
++}
++
+ fn main() {
+     daemon::Daemon::new(daemon);
+ }
+@@ -439,6 +477,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
+     let mut keyboard = None;
++    // Sticks found at boot; their schemes start with the event queue.
++    let mut sticks = Vec::new();
+     for device in bus.devices.clone() {
+         match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
+             Some(Found::Net(adapter, mac, link)) => {
+@@ -451,6 +491,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 net.adapters.push((adapter, link));
+             }
+             Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
++            Some(Found::Storage(f)) => sticks.push(f),
+             _ => {}
+         }
+     }
+@@ -470,6 +511,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     // stdout goes to logd from here on; rescans print only when something
+     // changes.
+     let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
++    // One stick at a time for now.
++    let mut disk = sticks.into_iter().next().and_then(|f| start_disk(&mut bus, &hc, f, &events));
+ 
+     // The receive channel's halt raises the controller's interrupt; without
+     // it, fall back to a timer that polls.
+@@ -510,7 +553,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .expect("dwc2d: failed to subscribe to the scheme");
+ 
+     scheme.tick().expect("dwc2d: network scheme failed");
+-    for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++    for event in events.iter().map(|e| e.expect("dwc2d: failed to get event")) {
+         match event.user_data {
+             Source::Irq => {
+                 let file = irq_file.as_mut().unwrap();
+@@ -523,6 +566,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+             }
+             Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
++            Source::Disk => {
++                if let Some(d) = disk.as_mut() {
++                    if let Err(err) = FuturesExecutor.block_on(d.scheme.tick()) {
++                        println!("dwc2d: disk scheme: {err}");
++                    }
++                }
++            }
+             Source::Time => {
+                 timer.fired();
+                 let mut next = None;
+@@ -579,6 +629,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         println!("dwc2d: keyboard removed");
+                         keyboard = None;
+                     }
++                    // Dropping the scheme makes open handles fail; its name
++                    // stays in the namespace until unlinked there, and a
++                    // stick plugged into the same port again needs it.
++                    // (Unlinking the path would ask the scheme itself.)
++                    if disk.as_ref().is_some_and(|d| d.address == address) {
++                        let UsbDisk { name, scheme, .. } = disk.take().unwrap();
++                        let _ = events.unsubscribe(scheme.event_handle().raw());
++                        drop(scheme);
++                        let unlinked = libredox::call::getns().map_err(|e| e.to_string()).and_then(|ns| {
++                            syscall::unlinkat(ns, format!("/scheme/{name}"), 0).map_err(|e| e.to_string())
++                        });
++                        if let Err(err) = unlinked {
++                            println!("dwc2d: mass storage: /scheme/{name} stays: {err}");
++                        }
++                        println!("dwc2d: mass storage removed");
++                    }
+                 }
+                 for &address in &changes.added {
+                     let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+@@ -590,6 +656,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                             keyboard = Keyboard::new(hc.clone(), f);
+                             timer.arm(Duration::ZERO);
+                         }
++                        Some(Found::Storage(f)) if disk.is_none() => {
++                            disk = start_disk(&mut bus, &hc, f, &events);
++                        }
+                         _ => {}
+                     }
+                 }
+diff --git a/drivers/usb/dwc2d/src/storage.rs b/drivers/usb/dwc2d/src/storage.rs
+new file mode 100644
+index 00000000..260a380d
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/storage.rs
+@@ -0,0 +1,419 @@
++//! USB mass storage (USB sticks, card readers): bulk-only transport with
++//! SCSI commands, served as a disk scheme through driver-block.
++//!
++//! One command is a command block wrapper (CBW) on the bulk OUT endpoint,
++//! the data on bulk IN or OUT, and a command status wrapper (CSW) on bulk
++//! IN (USB Mass Storage Class Bulk-Only Transport 1.0). Only LUN 0 is used.
++
++use std::time::Duration;
++
++use common::dma::Dma;
++use driver_block::Disk;
++use syscall::error::{Error as SysError, Result as SysResult, EIO, ENODEV};
++
++use crate::dwc2::{Dwc2, Error, Phase, Speed};
++use crate::enumerate::{Bus, Device};
++use crate::regs::{EPTYPE_BULK, PID_DATA0};
++
++const CLASS_MASS_STORAGE: u8 = 0x08;
++const SUBCLASS_SCSI: u8 = 0x06;
++const PROTOCOL_BULK_ONLY: u8 = 0x50;
++
++const REQ_GET_DESCRIPTOR: u8 = 0x06;
++const REQ_SET_CONFIGURATION: u8 = 0x09;
++const REQ_CLEAR_FEATURE: u8 = 0x01;
++const DESC_CONFIGURATION: u8 = 0x02;
++const FEATURE_ENDPOINT_HALT: u16 = 0;
++/// Bulk-Only Mass Storage Reset (BOT 3.1).
++const REQ_BULK_ONLY_RESET: u8 = 0xFF;
++
++const CBW_SIGNATURE: u32 = 0x4342_5355;
++const CSW_SIGNATURE: u32 = 0x5342_5355;
++const CBW_LEN: usize = 31;
++const CSW_LEN: usize = 13;
++
++// SCSI operation codes
++const TEST_UNIT_READY: u8 = 0x00;
++const REQUEST_SENSE: u8 = 0x03;
++const INQUIRY: u8 = 0x12;
++const READ_CAPACITY_10: u8 = 0x25;
++const READ_10: u8 = 0x28;
++const WRITE_10: u8 = 0x2A;
++const READ_16: u8 = 0x88;
++const WRITE_16: u8 = 0x8A;
++const SERVICE_ACTION_IN_16: u8 = 0x9E;
++const READ_CAPACITY_16: u8 = 0x10;
++
++/// The host channels for the stick: 0 does control transfers, the network
++/// adapters use 1 and 2, the keyboard 3.
++const CHANNEL_IN: usize = 4;
++const CHANNEL_OUT: usize = 5;
++/// The largest data stage of one command.
++const MAX_TRANSFER: usize = 64 * 1024;
++/// Sticks may take a while for a write or after a reset.
++const DATA_TIMEOUT: Duration = Duration::from_secs(10);
++const WRAPPER_TIMEOUT: Duration = Duration::from_secs(5);
++
++/// A bulk-only SCSI interface and its endpoints.
++#[derive(Clone)]
++pub struct StorageFunction {
++    pub address: u8,
++    speed: Speed,
++    max_packet0: u16,
++    configuration: u8,
++    interface: u8,
++    ep_in: u8,
++    ep_out: u8,
++    max_packet_in: u16,
++    max_packet_out: u16,
++}
++
++/// Search the first configuration of a device for a bulk-only SCSI
++/// interface.
++pub fn find(bus: &mut Bus, device: &Device) -> Option<StorageFunction> {
++    let config = bus
++        .request(device.address, device.max_packet, device.speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_CONFIGURATION) << 8, 0, 512)
++        .ok()?;
++    let mut function = None::<StorageFunction>;
++    let mut in_storage = false;
++    let mut pos = 0;
++    while pos + 2 <= config.len() && config[pos] >= 2 {
++        let desc = &config[pos..(pos + config[pos] as usize).min(config.len())];
++        match desc[1] {
++            4 if desc.len() >= 9 => {
++                in_storage = function.is_none()
++                    && desc[5] == CLASS_MASS_STORAGE
++                    && desc[6] == SUBCLASS_SCSI
++                    && desc[7] == PROTOCOL_BULK_ONLY;
++                if in_storage {
++                    function = Some(StorageFunction {
++                        address: device.address,
++                        speed: device.speed,
++                        max_packet0: device.max_packet,
++                        configuration: config[5],
++                        interface: desc[2],
++                        ep_in: 0,
++                        ep_out: 0,
++                        max_packet_in: 0,
++                        max_packet_out: 0,
++                    });
++                }
++            }
++            5 if desc.len() >= 7 && in_storage && desc[3] & 3 == 2 => {
++                let f = function.as_mut().unwrap();
++                let max_packet = u16::from_le_bytes([desc[4], desc[5]]) & 0x7FF;
++                if desc[2] & 0x80 != 0 {
++                    f.ep_in = desc[2] & 0xF;
++                    f.max_packet_in = max_packet;
++                } else {
++                    f.ep_out = desc[2] & 0xF;
++                    f.max_packet_out = max_packet;
++                }
++            }
++            _ => {}
++        }
++        pos += desc.len();
++    }
++    let function = function.filter(|f| f.ep_in != 0 && f.ep_out != 0)?;
++    // dwc2d has no split bulk transfers: a full-speed stick behind the Pi's
++    // high-speed hubs cannot be reached.
++    if device.tt.is_some() {
++        println!("dwc2d: mass storage at address {}: full speed behind a high-speed hub, not supported", device.address);
++        return None;
++    }
++    Some(function)
++}
++
++/// A USB stick, ready for reads and writes of whole blocks.
++pub struct Stick {
++    hc: Dwc2,
++    f: StorageFunction,
++    tag: u32,
++    in_pid: u32,
++    out_pid: u32,
++    cbw: Dma<[u8; CBW_LEN]>,
++    csw: Dma<[u8; CSW_LEN]>,
++    data: Dma<[u8; MAX_TRANSFER]>,
++    setup: Dma<[u8; 8]>,
++    control: Dma<[u8; 512]>,
++    block_size: u32,
++    blocks: u64,
++    /// Vendor and product from INQUIRY, for the log.
++    pub name: String,
++}
++
++/// How a command ended.
++enum Status {
++    Passed(usize),
++    Failed,
++}
++
++impl Stick {
++    /// Configure the stick and read its size. Waits up to a few seconds
++    /// for a stick that is not ready yet after it was plugged in.
++    pub fn new(bus: &mut Bus, hc: Dwc2, f: StorageFunction) -> Result<Self, Error> {
++        bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(f.configuration), 0, 0)?;
++        let mut stick = Self {
++            hc,
++            f,
++            tag: 1,
++            in_pid: PID_DATA0,
++            out_pid: PID_DATA0,
++            cbw: Dma::new([0; CBW_LEN]).expect("dwc2d: DMA allocation failed"),
++            csw: Dma::new([0; CSW_LEN]).expect("dwc2d: DMA allocation failed"),
++            data: Dma::new([0; MAX_TRANSFER]).expect("dwc2d: DMA allocation failed"),
++            setup: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
++            control: Dma::new([0; 512]).expect("dwc2d: DMA allocation failed"),
++            block_size: 0,
++            blocks: 0,
++            name: String::new(),
++        };
++
++        if let Status::Passed(len) = stick.command(&[INQUIRY, 0, 0, 0, 36, 0], true, 36)? {
++            if len >= 32 {
++                let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
++                stick.name = format!("{} {}", text(&stick.data[8..16]), text(&stick.data[16..32]));
++            }
++        }
++
++        // A stick reports "not ready" for a while after power-on.
++        let mut ready = false;
++        for _ in 0..50 {
++            if let Status::Passed(_) = stick.command(&[TEST_UNIT_READY, 0, 0, 0, 0, 0], false, 0)? {
++                ready = true;
++                break;
++            }
++            stick.request_sense()?;
++            std::thread::sleep(Duration::from_millis(100));
++        }
++        if !ready {
++            return Err(Error::Timeout("stick not ready"));
++        }
++
++        let Status::Passed(8) = stick.command(&[READ_CAPACITY_10, 0, 0, 0, 0, 0, 0, 0, 0, 0], true, 8)? else {
++            return Err(Error::Timeout("READ CAPACITY failed"));
++        };
++        let last = u32::from_be_bytes(stick.data[0..4].try_into().unwrap());
++        stick.block_size = u32::from_be_bytes(stick.data[4..8].try_into().unwrap());
++        stick.blocks = u64::from(last) + 1;
++        if last == u32::MAX {
++            // Larger than 2 TiB with 512-byte blocks.
++            let mut cdb = [0u8; 16];
++            cdb[0] = SERVICE_ACTION_IN_16;
++            cdb[1] = READ_CAPACITY_16;
++            cdb[13] = 32;
++            let Status::Passed(len) = stick.command(&cdb, true, 32)? else {
++                return Err(Error::Timeout("READ CAPACITY (16) failed"));
++            };
++            if len < 12 {
++                return Err(Error::Timeout("READ CAPACITY (16) too short"));
++            }
++            stick.blocks = u64::from_be_bytes(stick.data[0..8].try_into().unwrap()) + 1;
++            stick.block_size = u32::from_be_bytes(stick.data[8..12].try_into().unwrap());
++        }
++        if stick.block_size == 0 || stick.block_size as usize > MAX_TRANSFER {
++            return Err(Error::Timeout("unusable block size"));
++        }
++        Ok(stick)
++    }
++
++    pub fn size(&self) -> u64 {
++        self.blocks * u64::from(self.block_size)
++    }
++
++    fn phase(&self, dir_in: bool, buf_phys: usize, len: usize) -> Phase {
++        Phase {
++            dev_addr: self.f.address,
++            endpoint: if dir_in { self.f.ep_in } else { self.f.ep_out },
++            dir_in,
++            ep_type: EPTYPE_BULK,
++            max_packet: if dir_in { self.f.max_packet_in } else { self.f.max_packet_out },
++            low_speed: false,
++            pid: if dir_in { self.in_pid } else { self.out_pid },
++            buf_phys,
++            len,
++        }
++    }
++
++    /// One bulk transfer; returns the bytes moved.
++    fn bulk(&mut self, dir_in: bool, buf_phys: usize, len: usize, timeout: Duration) -> Result<usize, Error> {
++        let phase = self.phase(dir_in, buf_phys, len);
++        let channel = if dir_in { CHANNEL_IN } else { CHANNEL_OUT };
++        let (moved, next_pid) = self.hc.transfer_on(channel, &phase, timeout)?;
++        if dir_in {
++            self.in_pid = next_pid;
++        } else {
++            self.out_pid = next_pid;
++        }
++        Ok(moved)
++    }
++
++    fn control_request(&mut self, request_type: u8, request: u8, value: u16, index: u16) -> Result<(), Error> {
++        let [v0, v1] = value.to_le_bytes();
++        let [i0, i1] = index.to_le_bytes();
++        *self.setup = [request_type, request, v0, v1, i0, i1, 0, 0];
++        self.hc
++            .control(self.f.address, self.f.max_packet0, false, None, &mut self.setup, &mut self.control)
++            .map(|_| ())
++    }
++
++    /// Clear a stalled endpoint; its data toggle starts over.
++    fn clear_halt(&mut self, dir_in: bool) -> Result<(), Error> {
++        let endpoint = if dir_in { 0x80 | self.f.ep_in } else { self.f.ep_out };
++        self.control_request(0x02, REQ_CLEAR_FEATURE, FEATURE_ENDPOINT_HALT, u16::from(endpoint))?;
++        if dir_in {
++            self.in_pid = PID_DATA0;
++        } else {
++            self.out_pid = PID_DATA0;
++        }
++        Ok(())
++    }
++
++    /// Reset recovery after a phase error or a stalled command (BOT 5.3.4).
++    fn reset_recovery(&mut self) -> Result<(), Error> {
++        self.control_request(0x21, REQ_BULK_ONLY_RESET, 0, u16::from(self.f.interface))?;
++        self.clear_halt(true)?;
++        self.clear_halt(false)
++    }
++
++    /// Run one SCSI command. The data stage uses `self.data`: filled by the
++    /// caller for `dir_in == false`, by the stick otherwise.
++    fn command(&mut self, cdb: &[u8], dir_in: bool, len: usize) -> Result<Status, Error> {
++        let tag = self.tag;
++        self.tag = self.tag.wrapping_add(1);
++        let mut cbw = [0u8; CBW_LEN];
++        cbw[0..4].copy_from_slice(&CBW_SIGNATURE.to_le_bytes());
++        cbw[4..8].copy_from_slice(&tag.to_le_bytes());
++        cbw[8..12].copy_from_slice(&(len as u32).to_le_bytes());
++        cbw[12] = if dir_in { 0x80 } else { 0 };
++        cbw[14] = cdb.len() as u8;
++        cbw[15..15 + cdb.len()].copy_from_slice(cdb);
++        *self.cbw = cbw;
++
++        let cbw_phys = self.cbw.physical();
++        if let Err(err) = self.bulk(false, cbw_phys, CBW_LEN, WRAPPER_TIMEOUT) {
++            if let Error::Stall = err {
++                self.reset_recovery()?;
++            }
++            return Err(err);
++        }
++
++        let mut moved = 0;
++        if len > 0 {
++            let data_phys = self.data.physical();
++            match self.bulk(dir_in, data_phys, len, DATA_TIMEOUT) {
++                Ok(n) => moved = n,
++                // The stick ends the data stage early with a stall; the
++                // status still follows.
++                Err(Error::Stall) => self.clear_halt(dir_in)?,
++                Err(err) => return Err(err),
++            }
++        }
++
++        let csw_phys = self.csw.physical();
++        let got = match self.bulk(true, csw_phys, CSW_LEN, WRAPPER_TIMEOUT) {
++            Err(Error::Stall) => {
++                self.clear_halt(true)?;
++                self.bulk(true, csw_phys, CSW_LEN, WRAPPER_TIMEOUT)?
++            }
++            other => other?,
++        };
++        let csw = *self.csw;
++        if got != CSW_LEN
++            || u32::from_le_bytes(csw[0..4].try_into().unwrap()) != CSW_SIGNATURE
++            || u32::from_le_bytes(csw[4..8].try_into().unwrap()) != tag
++        {
++            self.reset_recovery()?;
++            return Err(Error::Timeout("bad command status"));
++        }
++        match csw[12] {
++            0 => Ok(Status::Passed(moved)),
++            1 => Ok(Status::Failed),
++            _ => {
++                self.reset_recovery()?;
++                Err(Error::Timeout("phase error"))
++            }
++        }
++    }
++
++    /// Fetch the sense data after a failed command, which also clears it.
++    /// Returns sense key, additional sense code and qualifier.
++    fn request_sense(&mut self) -> Result<(u8, u8, u8), Error> {
++        match self.command(&[REQUEST_SENSE, 0, 0, 0, 18, 0], true, 18)? {
++            Status::Passed(len) if len >= 14 => Ok((self.data[2] & 0xF, self.data[12], self.data[13])),
++            _ => Ok((0, 0, 0)),
++        }
++    }
++
++    /// A READ or WRITE command for `count` blocks at `lba`.
++    fn rw_cdb(write: bool, lba: u64, count: u32) -> ([u8; 16], usize) {
++        let mut cdb = [0u8; 16];
++        if lba + u64::from(count) <= u64::from(u32::MAX) && count <= u32::from(u16::MAX) {
++            cdb[0] = if write { WRITE_10 } else { READ_10 };
++            cdb[2..6].copy_from_slice(&(lba as u32).to_be_bytes());
++            cdb[7..9].copy_from_slice(&(count as u16).to_be_bytes());
++            (cdb, 10)
++        } else {
++            cdb[0] = if write { WRITE_16 } else { READ_16 };
++            cdb[2..10].copy_from_slice(&lba.to_be_bytes());
++            cdb[10..14].copy_from_slice(&count.to_be_bytes());
++            (cdb, 16)
++        }
++    }
++
++    /// Read or write whole blocks starting at `lba`, in chunks of at most
++    /// [`MAX_TRANSFER`] bytes.
++    fn transfer(&mut self, write: bool, lba: u64, mut buf: Option<&mut [u8]>, out: Option<&[u8]>) -> SysResult<usize> {
++        let total = buf.as_ref().map(|b| b.len()).or(out.map(<[u8]>::len)).unwrap_or(0);
++        let block = self.block_size as usize;
++        let per_chunk = MAX_TRANSFER / block * block;
++        let mut done = 0;
++        while done < total {
++            let len = (total - done).min(per_chunk);
++            if len % block != 0 {
++                return Err(SysError::new(EIO));
++            }
++            let at = lba + (done / block) as u64;
++            let (cdb, cdb_len) = Self::rw_cdb(write, at, (len / block) as u32);
++            if let Some(out) = out {
++                self.data[..len].copy_from_slice(&out[done..done + len]);
++            }
++            match self.command(&cdb[..cdb_len], !write, len) {
++                Ok(Status::Passed(moved)) if moved == len => {}
++                Ok(Status::Passed(_)) | Ok(Status::Failed) => {
++                    let sense = self.request_sense().unwrap_or_default();
++                    eprintln!("dwc2d: mass storage: {} at block {at} failed, sense {sense:02x?}", if write { "write" } else { "read" });
++                    return Err(SysError::new(EIO));
++                }
++                // The stick does not answer at all: most likely unplugged.
++                Err(err) => {
++                    eprintln!("dwc2d: mass storage: {err:?}");
++                    return Err(SysError::new(ENODEV));
++                }
++            }
++            if let Some(buf) = buf.as_mut() {
++                buf[done..done + len].copy_from_slice(&self.data[..len]);
++            }
++            done += len;
++        }
++        Ok(done)
++    }
++}
++
++impl Disk for Stick {
++    fn block_size(&self) -> u32 {
++        self.block_size
++    }
++
++    fn size(&self) -> u64 {
++        Stick::size(self)
++    }
++
++    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> SysResult<usize> {
++        self.transfer(false, block, Some(buffer), None)
++    }
++
++    async fn write(&mut self, block: u64, buffer: &[u8]) -> SysResult<usize> {
++        self.transfer(true, block, None, Some(buffer))
++    }
++}
+-- 
+2.53.0
+
