@@ -4275,3 +4275,29 @@ SUMMARY v0.3.0-dev-417-gd2482d8+x9903: 319 tests, 13 failed (12 known, 0 flaky, 
   `sigpause-…`, `sigsegv`, `sigset-5`, `stackoverflow`). None came from the 1000 starts.
 
 Raw output: homenodellm `~/pitest-tools/t129/`. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-515-gf41008d+x810f` (ctrlc-raw, Ctrl-C 0.01–0.03 s after Enter)
+
+Real Pi 3B+ over netboot. Test 131 (left over from [#86](https://github.com/redox-rpi/redox-rpi/issues/86)), Pi test agent.
+
+**Pass: on the serial console all 19 Ctrl-Cs stopped `sleep 40` 0.1 s after the
+Ctrl-C, including the 15 at 0.01–0.03 s after Enter. Over devsh, 10 of 10.**
+Staged with `~/t18-work/c86-stage/scripts/netboot.sh` (bootloader md5
+`4fccdb94…`), image `~/t18-work/image-craw/harddrive.img` (md5 `2d55fab0…`),
+manifest next to it.
+
+- Serial console, logged in as root after the boot had settled (devshd answering).
+  Delays `3,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.05,0.1,1`:
+  **every round `stopped by SIGINT 0.1 s after Ctrl-C`**, `PASS: 0 late of 19`.
+  The serial log has 19 times `ended by signal SIGINT`.
+- How, as in #118: not `serial-ctrlc-test.py` itself, which reads
+  `/dev/ttyUSB0` directly. I ran the same rounds and checks with
+  `~/pitest-tools/ctrlc118.py`: the logging service stayed on and the script
+  read its file. `sleep 40` was typed one character every 0.15 s, and the delay
+  counts from the Enter. The Ctrl-C is one byte.
+- devsh: `patches/experiments/pty-sigint/ctrlc-test.py 192.168.178.148 --rounds 10
+  --delays 0,0.01,0.02,0.03,0.1` (from `ctrlc-raw`): 10 of 10 `stopped by SIGINT
+  0.1 s after Ctrl-C`, and after a Ctrl-C at the prompt the shell still answers: **PASS**.
+- Standard checks with `--manifest`: all pass (manifest matches, 0 of 300 starts failed).
+
+Stable image restored afterwards.
