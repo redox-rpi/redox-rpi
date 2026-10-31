@@ -2,6 +2,7 @@
 # Check the USB keyboard driver in QEMU: type on QEMU's USB keyboard at the
 # login prompt, then look for the file the typed commands created, through
 # devshd. Needs an image built with scripts/build-image.sh (network boot).
+# The host port for devshd is 12323, or KEYBOARD_PORT=<port>.
 #
 # Usage:
 #   scripts/test-keyboard.sh [image]
@@ -12,15 +13,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 socket="$ROOT/images/qemu-monitor.sock"
 log="$ROOT/images/qemu-keyboard.log"
+port=${KEYBOARD_PORT:-12323}
 rm -f "$socket" "$log"
 
-timeout 300 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" --image "$image" \
+DEVSH_PORT=$port timeout 300 "$ROOT/scripts/qemu-raspi3b.sh" --usb-net --monitor "$socket" --image "$image" \
     < /dev/null > "$log" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null || true' EXIT
 
 devsh() {
-    python3 "$ROOT/scripts/devsh.py" 127.0.0.1 12323 "$@" 2>/dev/null
+    python3 "$ROOT/scripts/devsh.py" 127.0.0.1 "$port" "$@" 2>/dev/null
 }
 
 # devshd starts late, after the console's login prompt.

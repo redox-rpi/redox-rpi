@@ -1,0 +1,8 @@
+[package]
+name = "tcp-send"
+description = "Send a number of zero bytes to a TCP port and print how long it took, for network speed tests"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
