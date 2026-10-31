@@ -32,7 +32,11 @@
   `libgcc_s`. In QEMU 31 programs pass, including git, vim, python312 and
   rustpython ([allowlist](https://github.com/redox-rpi/redox-rpi/blob/t40-prebuilt/patches/experiments/prebuilt-programs/allowlist.txt));
   `xz` ships no `xz` program and `rsync -a` hangs. The 256 MiB image is
-  the limit: big ones must be installed alone. Pi test #163 queued.
+  the limit: big ones must be installed alone. Pi test #163 passed
+  (2026-10-31): the 26 small programs, git, python312 and sqlite3 install
+  and run on the Pi; the 26 took 3 minutes. 11.7 to 16.1 MB stay free on
+  `/`, so free space on the root filesystem is the limit for any package
+  library idea: bigger sets need a larger image or the SD data partition.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
