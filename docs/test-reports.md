@@ -5678,3 +5678,39 @@ staged, reset over devsh; standard checks pass (0 of 300 starts failed).
   no panic.
 
 Stable image stays staged.
+
+## 2026-10-31: `v0.3.0-dev-848-gdc1da3e+xdd51` (t14-ring-call + t13-relibc-tests, rt-call-flags)
+
+Real Pi 3B+ over netboot. Test 166 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**Partly: 0 of 1000 starts failed and `redox_ring_ramfs` passes (rc=0, no `Bad
+file number`). But the relibc suite hung the whole Pi at
+`pthread/rwlock_randtest`**, after 98 tests: no answer on devsh, TCP or serial.
+The Pi needed a power cycle. Image
+`~/redox-rpi-t12/keep/rcf-v0.3.0-dev-848-gdc1da3e+xdd51.img` (manifest in the
+image), stable bootloader.
+
+- `scripts/pi-test.py --starts 1000 --serial-log …`: version, manifest
+  (present), ps, ps-tty, sdcard pass; **0 of 1000 starts failed**.
+- `./bins_dynamic/redox_ring_ramfs`: `Write Benchmark: 32000 ops in 0.622 seconds
+  (200.82 MB/s)`, `Read Benchmark: 32000 ops in 1.897 seconds (65.90 MB/s)`,
+  `Tests finished successfully!`, **rc=0**.
+- `ion /usr/share/relibc-tests/run.ion` (`COMMAND_TIMEOUT=60`): the last test
+  started was `./bins_dynamic/pthread/rwlock_randtest` (`# waiting 1011ms`). Then
+  no more output; devsh gave up after 305 s of silence. The serial log stopped
+  at 21:08:47. Afterwards devsh `No route to host`, TCP probe 0 of 2. In #160
+  (same suite, without `rt-call-flags`) `rwlock_randtest` passed.
+- `relibc-tests-compare.py`: `the suite did not finish (98 tests started, no
+  'RELIBC-TESTS rc=' line)`, so no FIXED/NEW verdict.
+- Serial during the suite: kernel dumps for the signal tests that are on the
+  known list (`sigprocmask-3`, `sigpause-revert`, `sigsegv`, `sigset-5`,
+  `stackoverflow`; `UNHANDLED EXCEPTION`), and `get_connected_peer … Bad file
+  number` twice from the socket tests. No kernel panic line before the hang; the
+  hang left no message.
+- Stable staged, Pi power-cycled with the Shelly plug at 21:14 UTC; stable booted
+  to login and devsh answers.
+
+Next: run the suite again on this image, or `rwlock_randtest` alone a few
+times, to tell a hang from `rt-call-flags` from a rare one.
+
+Stable image restored afterwards.
