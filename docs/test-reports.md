@@ -4766,3 +4766,30 @@ rpi-fbd: DMA test: 64 rows into the framebuffer
 - Stable staged, then the Pi was power-cycled with the Shelly plug at 14:53
   UTC; stable booted to login and devsh answered.
 - As the coordinator asked, no second graphics image today.
+
+## 2026-10-31: `v0.3.0-dev-671-g157dad0+x9d6b` (t117-test, a scheme name registered again)
+
+Real Pi 3B+ over netboot. Test 146 ([#117](https://github.com/redox-rpi/redox-rpi/issues/117)), Pi test agent.
+
+**Pass: after `pkill -9 fatfsd`, a new fatfsd registers `t117` again and serves
+the boot files; no `File exists`.** Image
+`~/redox-rpi-sd/keep/t117-v0.3.0-dev-671-g157dad0+x9d6b.img`, manifest matches,
+stable bootloader. Standard checks with `--manifest` pass (0 of 300 starts
+failed). Read only, on the FAT boot partition `/scheme/disk.mmc/0p0`.
+
+| step | result |
+|---|---|
+| `fatfsd /scheme/disk.mmc/0p0 t117 &`, `ls /scheme/t117` | `ion: bg [0] 364`; lists `LICENCE.broadcom`, `bcm2710-rpi-3-b-plus.dtb`, `boot.scr`, `bootcode.bin`, `config.txt`, `fixup.dat`, `overlays`, `start.elf`, `u-boot.bin` … |
+| `pkill -9 fatfsd`, `ps` | no fatfsd in `ps` |
+| `ls -1 /scheme` | still lists `t117` |
+| `ls /scheme/t117` | `No such device` (os error 19) |
+| `fatfsd /scheme/disk.mmc/0p0 t117 &`, `ls /scheme/t117` | `ion: bg [0] 381`; **lists the boot files again**; no `File exists (os error 17)` |
+| serial | `[src/initnsmgr.rs:92 WARN] nsmgr: scheme t117 ended, registering it again` |
+| `pkill fatfsd` | `fatfsd: unmounting /scheme/t117`, `fatfsd: unmounted, the disk can be removed`; no fatfsd left |
+
+- The `fatfsd: serving /scheme/t117` line did not show: a background job's
+  output does not reach devsh, and fatfsd does not write to the serial console.
+  The second fatfsd served the files, which shows it registered.
+- No panic.
+
+Stable image restored afterwards.
