@@ -1,4 +1,4 @@
-From 8a6265691f8ece0a118c5c9e154cdadf287e89a4 Mon Sep 17 00:00:00 2001
+From 1383b5fdc5e42e786035804b4d2d889adaa87cfb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:59:57 +0100
 Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
@@ -10,7 +10,7 @@ Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
  create mode 100644 drivers/usb/dwc2d/src/mouse.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..7dcf47a 100644
+index 28cc7aa2..7dcf47a5 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -205,7 +205,7 @@ index 28cc7aa..7dcf47a 100644
                  scheme.tick().expect("dwc2d: network scheme failed");
 diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
 new file mode 100644
-index 0000000..1dc70c7
+index 00000000..1dc70c7f
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/mouse.rs
 @@ -0,0 +1,471 @@
@@ -681,5 +681,5 @@ index 0000000..1dc70c7
 +    }
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

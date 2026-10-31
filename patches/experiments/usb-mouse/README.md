@@ -1,9 +1,12 @@
 # USB mice and tablets (experiment `usb-mouse`)
 
-Applies after the experiment `usb-hotplug` (`--experiment usb-hotplug
---experiment usb-mouse`).
+Issue [#48](https://github.com/redox-rpi/redox-rpi/issues/48). Applies on
+main, where hotplug is part of the default patches (`0031`–`0033`):
+`--experiment usb-mouse`. Moved over from branch `usb-mouse`, where it was
+`0035` on top of the old `usb-hotplug` experiment; renumbered to `0059`
+because `0035` is USB serial (PR #70).
 
-- **base `0035`:** `dwc2d` runs a USB mouse or tablet (HID) and sends its
+- **base `0059`:** `dwc2d` runs a USB mouse or tablet (HID) and sends its
   movements, buttons and wheel to inputd, as it does for the keyboard and
   as `usbhidd` does on xHCI: `MouseRelativeEvent` for a mouse, `MouseEvent`
   with 0..=65535 on both axes for a tablet, `ButtonEvent` (left, right,

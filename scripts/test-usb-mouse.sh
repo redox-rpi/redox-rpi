@@ -5,8 +5,7 @@
 # same for a usb-tablet (absolute positions). dwc2d prints the events it
 # sends to inputd while /tmp/dwc2d-input-log exists.
 #
-# Needs an image built with --experiment usb-hotplug --experiment
-# usb-mouse. The host port for devshd is 12323, or MOUSE_PORT=<port>.
+# Needs an image built with --experiment usb-mouse. The host port for devshd is 12323, or MOUSE_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-mouse.sh [image]
