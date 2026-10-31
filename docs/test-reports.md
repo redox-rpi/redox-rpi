@@ -5052,3 +5052,38 @@ PASS starts: 0 of 3000 failed
   `exception`, `panicked`, `Data abort` or `Instruction abort`.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-773-g2ffa68b+x7f63` (timesync-harden, checked answers and several servers)
+
+Real Pi 3B+ over netboot. Test 152 (follow-up to [#51](https://github.com/redox-rpi/redox-rpi/issues/51)), Pi test agent.
+
+**Pass: every check as expected, and the standard checks pass.** Image
+`~/ntp-test/keep/ntp-v0.3.0-dev-773-g2ffa68b+x7f63.img`, manifest matches, stable
+bootloader. `fake-ntp.py 192.168.178.120 1800` from `origin/timesync-harden`
+(UDP 12301–12309). H = 192.168.178.120.
+
+**Boot** (serial):
+
+```
+timesync: clock set to 2026-10-31 16:17:43 UTC from the saved time
+timesync: clock set to 2026-10-31 16:27:07 UTC, offset +564.272 s (pool.ntp.org (139.177.202.26) +564.281 s, pool.ntp.org (162.254.225.152) +564.272 s, pool.ntp.org (67.223.208.241) +564.266 s)
+timerd: clock set by timesync, 2026-10-31 16:27:08 UTC
+```
+
+| step | result |
+|---|---|
+| (1) `timesync -n` | `offset +0.004 s (clock not set; pool.ntp.org (139.177.202.26) +0.009 s, pool.ntp.org (162.254.225.152) +0.004 s, pool.ntp.org (67.223.208.241) -0.007 s)` |
+| (2) `timesync -n H:12301 H:12305 H:12307` | `offset -0.007 s (… 12301 -0.007 s, 12305 +7199.993 s, 12307 -0.007 s)`: the +7200 s answer is outvoted |
+| (3a) 12302 | `server not synchronized (leap indicator 3)`, then `no time server answered within a minute (last: …)` |
+| (3b) 12303 | `kiss-of-death RATE`, then `no time server answered within a minute (last: …)` |
+| (3c) 12304 | `answer does not match the request`, then `no time server answered within a minute (last: …)` |
+| (3d) 12301 + 12305 | `two answers 7200 s apart, waiting for a third`, then `no time server answered within a minute (last: …)` |
+| (4) `timesync H:12305; date -u` | `clock set to 2026-10-31 18:29:41 UTC, offset +7199.994 s`; `date -u` `18:29:41` |
+| (4) `timesync; date -u` | `clock set to 2026-10-31 16:29:42 UTC, offset -7199.999 s` (three pool answers −7200.000, −7199.999, −7199.998 s); `date -u` `16:29:42`, host `16:29:47` (5 s later, after the command) |
+| `grep -c rate fake-ntp.log` | **1** |
+
+- The saved time was 9 min 24 s behind at boot (the Pi was off since the last
+  save); pool answers fixed it.
+- No panic. `fake-ntp.py` stopped afterwards.
+
+Stable image restored afterwards.
