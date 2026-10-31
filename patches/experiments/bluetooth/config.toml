@@ -1,0 +1,3 @@
+[packages]
+bt = "source"
+bt-firmware = "source"

@@ -1,0 +1,584 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:13:56 +0100
+Subject: [PATCH 72/81] bcm2835-btuartd: the mini UART to the Pi 3B+ Bluetooth
+ chip as a scheme
+
+The serial console keeps the PL011, so the Bluetooth chip on GPIO 30 to
+33 gets the mini UART (ALT5), as with Linux's miniuart-bt overlay:
+/scheme/btuart/data is the byte stream, baud and clock set the baud rate
+from the core clock. A thread moves received bytes into a buffer; RTS and
+CTS flow control are on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                               |   1 +
+ Makefile                                 |   2 +-
+ drivers/bcm2835-btuartd/Cargo.toml       |  18 ++
+ drivers/bcm2835-btuartd/src/main.rs      | 370 +++++++++++++++++++++++
+ drivers/bcm2835-btuartd/src/uart.rs      |  99 ++++++
+ init.initfs.d/40_drivers.target          |   1 +
+ init.initfs.d/41_bcm2835-btuartd.service |   9 +
+ 7 files changed, 499 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/bcm2835-btuartd/Cargo.toml
+ create mode 100644 drivers/bcm2835-btuartd/src/main.rs
+ create mode 100644 drivers/bcm2835-btuartd/src/uart.rs
+ create mode 100644 init.initfs.d/41_bcm2835-btuartd.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index fe17604..f059ef2 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -54,6 +54,7 @@ members = [
+     "drivers/net/rtl8168d",
+     "drivers/net/virtio-netd",
+ 
++    "drivers/bcm2835-btuartd",
+     "drivers/bcm2835-gpiod",
+     "drivers/bcm2835-i2cd",
+     "drivers/bcm2835-spid",
+diff --git a/Makefile b/Makefile
+index 00c38a1..348263c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-btuartd
+ endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+diff --git a/drivers/bcm2835-btuartd/Cargo.toml b/drivers/bcm2835-btuartd/Cargo.toml
+new file mode 100644
+index 0000000..aa8342c
+--- /dev/null
++++ b/drivers/bcm2835-btuartd/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "bcm2835-btuartd"
++description = "Mini UART (AUX) of the Raspberry Pi, wired to the Bluetooth chip"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../common" }
++daemon = { path = "../../daemon" }
++scheme-utils = { path = "../../scheme-utils" }
++
++libredox.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
+new file mode 100644
+index 0000000..0a66e16
+--- /dev/null
++++ b/drivers/bcm2835-btuartd/src/main.rs
+@@ -0,0 +1,370 @@
++//! The mini UART of the Raspberry Pi 3B+ on GPIO 30 to 33, where the
++//! Bluetooth half of the Wi-Fi/Bluetooth chip sits, as a scheme:
++//!
++//! - `/scheme/btuart/data`: the byte stream. A write sends the bytes; a read
++//!   returns what has arrived, waiting up to 100 ms for the first byte, and
++//!   fails with EAGAIN if nothing came. Offsets are ignored.
++//! - `/scheme/btuart/baud`: the baud rate; writing sets the nearest one the
++//!   divider allows (115200 at start, the chip's default).
++//! - `/scheme/btuart/clock`: the core clock in Hz that the baud rate is
++//!   derived from; writing a new rate (after the firmware changed it)
++//!   programs the baud rate again.
++//!
++//! The serial console keeps the PL011 (`dtoverlay=disable-bt`), so this is
++//! the split of Linux's `miniuart-bt` overlay. At start the driver sets
++//! GPIO 30 (CTS), 31 (RTS), 32 (TX) and 33 (RX) to ALT5 through
++//! `bcm2835-gpiod`, and reads the core clock from `rpi-firmwared`. A thread
++//! moves received bytes from the 8-byte FIFO into a buffer; RTS flow
++//! control holds the chip off while it sleeps. Switching the chip on
++//! (`/scheme/rpi-firmware/bt_power`) and HCI are up to the program using it.
++
++use std::collections::VecDeque;
++use std::process;
++use std::sync::{Arc, Condvar, Mutex};
++use std::thread;
++use std::time::Duration;
++
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EAGAIN, EBADF, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS, ETIMEDOUT};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
++
++mod uart;
++
++use uart::MiniUart;
++
++/// Bus address of the AUX block, used if the devicetree has no mini UART.
++const AUX_BUS_ADDR: usize = 0x7e21_5000;
++const PAGE_SIZE: usize = 4096;
++/// CTS, RTS, TX, RX and their pulls: the inputs pulled up, as in Linux.
++const PINS: &[(u32, &str)] = &[(30, "up"), (31, "none"), (32, "none"), (33, "up")];
++const DEFAULT_BAUD: u32 = 115_200;
++/// Core clock of the Pi 3, if `rpi-firmwared` does not say.
++const DEFAULT_CORE_HZ: u32 = 250_000_000;
++/// Received bytes kept for the reader; older ones are dropped beyond this.
++const BUFFER: usize = 64 * 1024;
++const READ_WAIT: Duration = Duration::from_millis(100);
++/// How long the transmitter may wait for CTS per byte.
++const SEND_TIMEOUT: Duration = Duration::from_millis(500);
++const POLL: Duration = Duration::from_millis(1);
++
++const FILES: &[&str] = &["baud", "clock", "data"];
++
++#[derive(Clone, Copy)]
++enum Setting {
++    Baud,
++    Clock,
++}
++
++enum Handle {
++    Root,
++    Dir,
++    File(Vec<u8>),
++    Write(Setting),
++    Data,
++}
++
++#[derive(Default)]
++struct Received {
++    bytes: VecDeque<u8>,
++    /// Bytes the FIFO or the buffer lost.
++    lost: u64,
++}
++
++struct BtUartScheme {
++    uart: Arc<MiniUart>,
++    received: Arc<(Mutex<Received>, Condvar)>,
++    core_hz: u32,
++    baud: u32,
++    handles: HandleMap<Handle>,
++}
++
++impl BtUartScheme {
++    fn contents(&self, setting: Setting) -> String {
++        match setting {
++            Setting::Baud => format!("{}\n", self.baud),
++            Setting::Clock => format!("{}\n", self.core_hz),
++        }
++    }
++
++    fn set(&mut self, setting: Setting, value: &str) -> Result<()> {
++        let value = value.parse::<u32>().ok().filter(|&v| v > 0).ok_or(Error::new(EINVAL))?;
++        let baud = match setting {
++            Setting::Baud => value,
++            Setting::Clock => {
++                self.core_hz = value;
++                self.baud
++            }
++        };
++        self.baud = self.uart.set_baud(self.core_hz, baud);
++        Ok(())
++    }
++
++    fn receive(&self, buf: &mut [u8]) -> Result<usize> {
++        let (lock, arrived) = &*self.received;
++        let mut received = lock.lock().unwrap();
++        if received.bytes.is_empty() {
++            received = arrived.wait_timeout(received, READ_WAIT).unwrap().0;
++        }
++        if received.bytes.is_empty() {
++            return Err(Error::new(EAGAIN));
++        }
++        let len = buf.len().min(received.bytes.len());
++        for (slot, byte) in buf.iter_mut().zip(received.bytes.drain(..len)) {
++            *slot = byte;
++        }
++        Ok(len)
++    }
++}
++
++impl SchemeSync for BtUartScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        // O_RDWR includes the O_WRONLY bit.
++        let write = flags & O_WRONLY != 0;
++        let handle = match path.trim_matches('/') {
++            "" => Handle::Dir,
++            "data" => Handle::Data,
++            name @ ("baud" | "clock") => {
++                let setting = if name == "baud" { Setting::Baud } else { Setting::Clock };
++                if write {
++                    Handle::Write(setting)
++                } else {
++                    Handle::File(self.contents(setting).into_bytes())
++                }
++            }
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++                let len = buf.len().min(data.len() - start);
++                buf[..len].copy_from_slice(&data[start..start + len]);
++                Ok(len)
++            }
++            Handle::Data if buf.is_empty() => Ok(0),
++            Handle::Data => self.receive(buf),
++            Handle::Write(_) => Err(Error::new(EBADF)),
++            _ => Err(Error::new(EISDIR)),
++        }
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match *self.handles.get(id)? {
++            Handle::Write(setting) => {
++                let value = std::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.trim();
++                self.set(setting, value)?;
++            }
++            Handle::Data => self.uart.send(buf, SEND_TIMEOUT).map_err(|()| Error::new(ETIMEDOUT))?,
++            _ => return Err(Error::new(EBADF)),
++        }
++        Ok(buf.len())
++    }
++
++    // Shells truncate a file before writing to it.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Write(_) | Handle::Data => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        if !matches!(self.handles.get(id)?, Handle::Dir) {
++            return Err(Error::new(ENOTDIR));
++        }
++        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
++        for (i, name) in FILES.iter().enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: i as u64,
++                name,
++                kind: DirentKind::Regular,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Write(_) | Handle::Data => stat.st_mode = 0o644 | MODE_FILE,
++            Handle::Root | Handle::Dir => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "btuart", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// Moves received bytes into the buffer and wakes a waiting reader.
++fn receive_loop(uart: Arc<MiniUart>, received: Arc<(Mutex<Received>, Condvar)>) -> ! {
++    let mut reported = 0;
++    loop {
++        let mut got = false;
++        while let Some((byte, overrun)) = uart.try_read() {
++            let (lock, arrived) = &*received;
++            let mut buffer = lock.lock().unwrap();
++            if overrun {
++                buffer.lost += 1;
++            }
++            if buffer.bytes.len() == BUFFER {
++                buffer.bytes.pop_front();
++                buffer.lost += 1;
++            }
++            buffer.bytes.push_back(byte);
++            arrived.notify_one();
++            got = true;
++        }
++        if !got {
++            let lost = received.0.lock().unwrap().lost;
++            if lost != reported {
++                eprintln!("bcm2835-btuartd: {lost} received bytes lost so far");
++                reported = lost;
++            }
++            thread::sleep(POLL);
++        }
++    }
++}
++
++/// The CPU physical address of the AUX block, from the devicetree's mini
++/// UART node (`reg` is its registers at AUX + 0x40).
++fn aux_phys(fdt: &Fdt) -> usize {
++    let bus_addr = fdt
++        .all_nodes()
++        .filter(|node| node.compatible().is_some_and(|c| c.all().any(|c| c == "brcm,bcm2835-aux-uart")))
++        .filter_map(|node| node.reg()?.next())
++        .map(|reg| reg.starting_address as usize & !(PAGE_SIZE - 1))
++        .next()
++        .unwrap_or(AUX_BUS_ADDR);
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// The core clock from `/scheme/rpi-firmware/clocks` (`core <rate> <max>`).
++fn core_clock() -> Option<u32> {
++    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").ok()?;
++    clocks.lines().find_map(|line| line.strip_prefix("core ")?.split_whitespace().next()?.parse().ok())
++}
++
++/// GPIO 30 to 33 to ALT5 (mini UART CTS, RTS, TX, RX).
++fn route_pins() {
++    for &(pin, pull) in PINS {
++        let result = std::fs::write(format!("/scheme/gpio/{pin}/mode"), "alt5")
++            .and_then(|()| std::fs::write(format!("/scheme/gpio/{pin}/pull"), pull));
++        if let Err(err) = result {
++            eprintln!("bcm2835-btuartd: cannot set up GPIO {pin} ({err}); leaving it to the firmware");
++        }
++    }
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-btuartd: no devicetree");
++        process::exit(0);
++    };
++    let phys = aux_phys(&fdt);
++    let regs = unsafe {
++        common::physmap(phys, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-btuartd: failed to map registers")
++    } as *mut u32;
++    route_pins();
++    let core_hz = core_clock().unwrap_or(DEFAULT_CORE_HZ);
++    let uart = Arc::new(MiniUart::new(regs));
++    let baud = uart.set_baud(core_hz, DEFAULT_BAUD);
++    println!("bcm2835-btuartd: mini UART at 0x{phys:08x}, {baud} baud (core {} MHz)", core_hz / 1_000_000);
++
++    let received = Arc::new((Mutex::new(Received::default()), Condvar::new()));
++    {
++        let (uart, received) = (uart.clone(), received.clone());
++        thread::spawn(move || receive_loop(uart, received));
++    }
++
++    let mut scheme = BtUartScheme {
++        uart,
++        received,
++        core_hz,
++        baud,
++        handles: HandleMap::new(),
++    };
++    let socket = Socket::create().expect("bcm2835-btuartd: failed to create the btuart scheme");
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++
++    libredox::call::setrens(0, 0).expect("bcm2835-btuartd: failed to enter the null namespace");
++
++    handler
++        .process_requests_blocking(scheme)
++        .expect("bcm2835-btuartd: failed to process requests");
++}
+diff --git a/drivers/bcm2835-btuartd/src/uart.rs b/drivers/bcm2835-btuartd/src/uart.rs
+new file mode 100644
+index 0000000..fa3e00c
+--- /dev/null
++++ b/drivers/bcm2835-btuartd/src/uart.rs
+@@ -0,0 +1,99 @@
++//! The mini UART of the BCM2835 and BCM2837 (BCM2835 ARM Peripherals,
++//! chapter 2): a 16550-like UART in the AUX block with 8-byte FIFOs. Its
++//! baud rate is derived from the core clock. Polled, no interrupts.
++
++use std::time::{Duration, Instant};
++
++/// Offsets from the start of the AUX block.
++const AUX_ENABLES: usize = 0x04;
++const MU_IO: usize = 0x40;
++const MU_IER: usize = 0x44;
++const MU_IIR: usize = 0x48;
++const MU_LCR: usize = 0x4c;
++const MU_MCR: usize = 0x50;
++const MU_LSR: usize = 0x54;
++const MU_CNTL: usize = 0x60;
++const MU_BAUD: usize = 0x68;
++
++const ENABLE_MINI_UART: u32 = 1 << 0;
++/// Both FIFOs cleared (bits 1 and 2), FIFOs on (bits 6 and 7).
++const IIR_CLEAR_FIFOS: u32 = 0xc6;
++/// 8 data bits. The datasheet says bit 0 alone, but both bits are needed.
++const LCR_8BIT: u32 = 0b11;
++const LSR_DATA_READY: u32 = 1 << 0;
++const LSR_RX_OVERRUN: u32 = 1 << 1;
++/// Despite its name: the transmit FIFO can take a byte.
++const LSR_TX_EMPTY: u32 = 1 << 5;
++const CNTL_RX: u32 = 1 << 0;
++const CNTL_TX: u32 = 1 << 1;
++/// RTS follows the receive FIFO, so the other side stops before it overflows.
++const CNTL_AUTO_RTS: u32 = 1 << 2;
++/// The transmitter waits while CTS is not asserted.
++const CNTL_AUTO_CTS: u32 = 1 << 3;
++/// Deassert RTS when only 4 places are left in the receive FIFO.
++const CNTL_RTS_AT_4: u32 = 0b11 << 4;
++
++pub struct MiniUart {
++    regs: *mut u32,
++}
++
++// The registers are only touched with single volatile accesses; the RX
++// thread reads, the scheme thread writes.
++unsafe impl Send for MiniUart {}
++unsafe impl Sync for MiniUart {}
++
++impl MiniUart {
++    /// `regs` points at the start of the AUX block. Turns the mini UART on:
++    /// 8N1, hardware flow control, FIFOs cleared.
++    pub fn new(regs: *mut u32) -> Self {
++        let uart = Self { regs };
++        uart.write(AUX_ENABLES, uart.read(AUX_ENABLES) | ENABLE_MINI_UART);
++        uart.write(MU_CNTL, 0);
++        uart.write(MU_IER, 0);
++        uart.write(MU_LCR, LCR_8BIT);
++        uart.write(MU_MCR, 0);
++        uart.write(MU_IIR, IIR_CLEAR_FIFOS);
++        uart.write(MU_CNTL, CNTL_RX | CNTL_TX | CNTL_AUTO_RTS | CNTL_AUTO_CTS | CNTL_RTS_AT_4);
++        uart
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    /// Sets the baud rate as close to `baud` as the divider allows, for a
++    /// core clock of `core_hz`; returns the rate it got.
++    pub fn set_baud(&self, core_hz: u32, baud: u32) -> u32 {
++        // baud = core / (8 * (divider + 1)), rounded to the nearest.
++        let divider = ((core_hz + 4 * baud) / (8 * baud.max(1))).clamp(1, 0x1_0000) - 1;
++        self.write(MU_BAUD, divider);
++        core_hz / (8 * (divider + 1))
++    }
++
++    /// The next received byte, if there is one; also whether bytes were lost
++    /// before it.
++    pub fn try_read(&self) -> Option<(u8, bool)> {
++        let lsr = self.read(MU_LSR);
++        (lsr & LSR_DATA_READY != 0).then(|| (self.read(MU_IO) as u8, lsr & LSR_RX_OVERRUN != 0))
++    }
++
++    /// Sends `data`; gives up when the transmitter does not take a byte
++    /// within `timeout` (CTS held off).
++    pub fn send(&self, data: &[u8], timeout: Duration) -> Result<(), ()> {
++        for &byte in data {
++            let deadline = Instant::now() + timeout;
++            while self.read(MU_LSR) & LSR_TX_EMPTY == 0 {
++                if Instant::now() > deadline {
++                    return Err(());
++                }
++                std::hint::spin_loop();
++            }
++            self.write(MU_IO, u32::from(byte));
++        }
++        Ok(())
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 2c05be8..7c3b5dd 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -7,6 +7,7 @@ requires_weak = [
+     "40_bcm2835-gpiod.service",
+     "41_bcm2835-i2cd.service",
+     "41_bcm2835-spid.service",
++    "41_bcm2835-btuartd.service",
+     "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+diff --git a/init.initfs.d/41_bcm2835-btuartd.service b/init.initfs.d/41_bcm2835-btuartd.service
+new file mode 100644
+index 0000000..fcc4a60
+--- /dev/null
++++ b/init.initfs.d/41_bcm2835-btuartd.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "Raspberry Pi mini UART for Bluetooth"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["40_bcm2835-gpiod.service", "40_rpi-firmwared.service"]
++
++[service]
++cmd = "bcm2835-btuartd"
++type = { scheme = "btuart" }

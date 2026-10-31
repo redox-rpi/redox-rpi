@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 18:23:23 +0100
+Subject: [PATCH 74/81] bcm2835-btuartd: a read with nothing received returns 0
+ bytes, not EAGAIN
+
+The blocking scheme handler parks a request that answers EAGAIN and
+nothing woke it again, so the first read hung.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/bcm2835-btuartd/src/main.rs | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
+index d5b016a..d4f8afe 100644
+--- a/drivers/bcm2835-btuartd/src/main.rs
++++ b/drivers/bcm2835-btuartd/src/main.rs
+@@ -3,7 +3,8 @@
+ //!
+ //! - `/scheme/btuart/data`: the byte stream. A write sends the bytes; a read
+ //!   returns what has arrived, waiting up to 100 ms for the first byte, and
+-//!   fails with EAGAIN if nothing came. Offsets are ignored.
++//!   returns 0 bytes if nothing came (EAGAIN would make the scheme handler
++//!   park the request for good). Offsets are ignored.
+ //! - `/scheme/btuart/baud`: the baud rate; writing sets the nearest one the
+ //!   divider allows (115200 at start, the chip's default).
+ //! - `/scheme/btuart/clock`: the core clock in Hz that the baud rate is
+@@ -30,7 +31,7 @@ use redox_scheme::scheme::SchemeSync;
+ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::{Blocking, FpathWriter, HandleMap};
+ use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+-use syscall::error::{Error, Result, EACCES, EAGAIN, EBADF, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS, ETIMEDOUT};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS, ETIMEDOUT};
+ use syscall::schemev2::NewFdFlags;
+ use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
+ 
+@@ -150,7 +151,7 @@ impl BtUartScheme {
+             }
+             drop(received);
+             if Instant::now() > deadline {
+-                return Err(Error::new(EAGAIN));
++                return Ok(0);
+             }
+             pause();
+         };
