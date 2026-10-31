@@ -481,6 +481,62 @@ fn print_status(when: &str) {
 /// For a chip that does not answer: the pin setup and line states, then an
 /// HCI Reset with each flow control setting, printing every byte that comes
 /// back (bytes that are no HCI event point at a wrong baud rate).
+/// The core clock the firmware reports now, in Hz.
+fn firmware_core() -> String {
+    fs::read_to_string(CLOCKS)
+        .ok()
+        .and_then(|text| text.lines().find_map(|l| l.strip_prefix("core ")?.split_whitespace().next().map(str::to_owned)))
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// The 3B+ core clock moves between 250 and 400 MHz unless `config.txt`
+/// fixes it (`miniuart-bt` does), and the mini UART's baud rate follows it.
+/// Test 109 step 7 got 7 bytes for HCI Reset, as long as the real answer,
+/// but garbled. Waits until the chip is ready (CTS low), then sends HCI
+/// Reset with the divider computed for each assumed core clock, flow `none`.
+fn baud_sweep() -> io::Result<Vec<u32>> {
+    fs::write(FLOW, "none").map_err(|err| error(format!("{FLOW}: {err}")))?;
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) && status_line(&fs::read_to_string(STATUS).unwrap_or_default(), "cts_line") != "0" {
+        sleep(Duration::from_millis(10));
+    }
+    let cts = status_line(&fs::read_to_string(STATUS).unwrap_or_default(), "cts_line");
+    println!("baud sweep: cts_line {cts} after {} ms", start.elapsed().as_millis());
+    let mut answered = Vec::new();
+    for mhz in [250, 275, 300, 325, 350, 375, 400, 450, 500] {
+        fs::write(CLOCK, (mhz * 1_000_000u32).to_string()).map_err(|err| error(format!("{CLOCK}: {err}")))?;
+        let mut hci = Hci::open()?;
+        // Drop what a power cycle or an earlier try left behind.
+        let mut buf = [0; 256];
+        let quiet = Instant::now();
+        while quiet.elapsed() < Duration::from_millis(50) {
+            hci.port.read(&mut buf).ok();
+        }
+        let core_before = firmware_core();
+        hci.send(RESET, &[]).ok();
+        let deadline = Instant::now() + Duration::from_millis(300);
+        let mut got = Vec::new();
+        while Instant::now() < deadline {
+            if let Ok(n) = hci.port.read(&mut buf) {
+                got.extend_from_slice(&buf[..n]);
+            }
+        }
+        let ok = got.starts_with(&[PACKET_EVENT, EVENT_COMMAND_COMPLETE]);
+        println!(
+            "  assumed core {mhz} MHz (firmware says {core_before} before, {} after): {}{}",
+            firmware_core(),
+            if got.is_empty() { "nothing".to_string() } else { hex(&got[..got.len().min(32)]) },
+            if ok { "  <- Command Complete" } else { "" }
+        );
+        if ok {
+            answered.push(mhz);
+        }
+    }
+    update_clock();
+    fs::write(FLOW, "auto").ok();
+    Ok(answered)
+}
+
 fn diag() -> io::Result<()> {
     for pin in DIAG_PINS {
         let mode = fs::read_to_string(format!("/scheme/gpio/{pin}/mode")).unwrap_or_else(|e| format!("({e})"));
@@ -548,6 +604,11 @@ fn diag() -> io::Result<()> {
     match answered.first() {
         Some(_) => println!("answered with flow: {}", answered.join(", ")),
         None => println!("no answer with any flow setting"),
+    }
+    let cores = baud_sweep()?;
+    match cores.first() {
+        Some(_) => println!("baud sweep answered for core MHz: {}", cores.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")),
+        None => println!("baud sweep: no answer for any core clock"),
     }
     Ok(())
 }

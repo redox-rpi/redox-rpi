@@ -61,6 +61,7 @@ check "diag: pins" "^gpio 32: mode alt5"
 check "diag: lpo clock read" "^lpo: enabled [01], busy [01], source [0-9]+"
 check "diag: line status" "^  after: cts_line [01], rts [01], tx_fifo 0"
 check "diag: reset answered with each flow setting" "^answered with flow: auto, auto-low, none$"
+check "diag: baud sweep answered (QEMU ignores the divider)" "^baud sweep answered for core MHz: 250, 275, 300, 325, 350, 375, 400, 450, 500$"
 if grep -q "^launch after 323 records$" "$hci_log"; then echo "PASS: fake saw the whole firmware"; else echo "FAIL: fake saw the whole firmware"; failed=1; fi
 if grep -q "^stray byte" "$hci_log"; then echo "FAIL: stray bytes on the UART"; failed=1; else echo "PASS: no stray bytes"; fi
 exit $failed
