@@ -54,9 +54,11 @@
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
-  executable and at exec. QEMU: 0 of 700 starts fail, loop 6-8 % slower.
-  No known failure needs it: Pi test 28 had 0 of 1000 at 1400 MHz, the
-  same as main without it (test 94: 0 of 3000).
+  executable and at exec. QEMU: 0 of 700 starts fail; on one base built
+  with and without it (main merged, 2026-10-30) the loop is about 3 %
+  slower, within the host's noise. No known failure needs it: Pi test 28
+  had 0 of 1000 at 1400 MHz, the same as main without it (test 94: 0 of
+  3000). Pi test 127 measures the cost on the Pi with both builds.
 
 ## Next
 
