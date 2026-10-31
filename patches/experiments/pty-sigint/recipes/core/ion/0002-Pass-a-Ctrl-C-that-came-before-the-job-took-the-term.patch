@@ -1,0 +1,79 @@
+From 22d18b643bdafefefd41a0c81c18affe7b3820c1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 12:25:43 +0000
+Subject: [PATCH] Pass a Ctrl-C that came before the job took the terminal on
+ to the job
+
+On Redox the time between the end of the line and the job taking the
+terminal is long enough to type Ctrl-C into. The SIGINT then reaches the
+shell, which only notes it; the job runs to its end, and the shell
+reports "process (<shell pid>) ended by signal SIGINT" afterwards.
+
+The shell now forgets signals noted before the line was read, and passes
+a SIGINT noted since then on to the foreground job when it starts
+watching it. (redox-rpi #86)
+---
+ src/binary/readln.rs                   |  1 +
+ src/lib/shell/mod.rs                   |  4 +++
+ src/lib/shell/pipe_exec/job_control.rs | 11 +++++-
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/binary/readln.rs b/src/binary/readln.rs
+index 4e24ce0..a475226 100644
+--- a/src/binary/readln.rs
++++ b/src/binary/readln.rs
+@@ -24,6 +24,7 @@ impl<'a> InteractiveShell<'a> {
+ 
+         match line {
+             Ok(line) => {
++                self.shell.borrow().clear_pending_signals();
+                 if line.bytes().next() != Some(b'#')
+                     && line.bytes().any(|c| !c.is_ascii_whitespace())
+                 {
+diff --git a/src/lib/shell/mod.rs b/src/lib/shell/mod.rs
+index 9ae4f6d..bd9d8ec 100644
+--- a/src/lib/shell/mod.rs
++++ b/src/lib/shell/mod.rs
+@@ -165,6 +165,10 @@ impl<'a> Default for Shell<'a> {
+ }
+ 
+ impl<'a> Shell<'a> {
++    /// Forgets signals the shell noted before the current line was read,
++    /// so that only those after it count for the commands of that line.
++    pub fn clear_pending_signals(&self) { signals::PENDING.store(0, Ordering::SeqCst); }
++
+     /// Install signal handlers necessary for the shell to work
+     fn install_signal_handler() {
+         extern "C" fn handler(signal: i32) {
+diff --git a/src/lib/shell/pipe_exec/job_control.rs b/src/lib/shell/pipe_exec/job_control.rs
+index 96a8ef7..5e3d7ba 100644
+--- a/src/lib/shell/pipe_exec/job_control.rs
++++ b/src/lib/shell/pipe_exec/job_control.rs
+@@ -15,7 +15,7 @@ use nix::{
+ };
+ use std::{
+     fmt,
+-    sync::Mutex,
++    sync::{atomic::Ordering, Mutex},
+     thread::{sleep, spawn},
+     time::Duration,
+ };
+@@ -280,6 +280,15 @@ impl<'a> Shell<'a> {
+             PipeErrorPropagation::LastCommand(Status::SUCCESS)
+         };
+ 
++        // A Ctrl-C between the end of the line and the job taking the
++        // terminal reaches the shell instead of the job. It was meant for
++        // the job: pass it on, or the job runs to its end and the shell
++        // reports the signal as its own afterwards.
++        if signals::PENDING.load(Ordering::SeqCst) as u8 == signals::SIGINT {
++            signals::PENDING.store(0, Ordering::SeqCst);
++            let _ = signal::killpg(group, Signal::SIGINT);
++        }
++
+         loop {
+             match wait::waitpid(Pid::from_raw(-group.as_raw()), Some(WaitPidFlag::WUNTRACED)) {
+                 Err(err) => match err {
+-- 
+2.53.0
+
