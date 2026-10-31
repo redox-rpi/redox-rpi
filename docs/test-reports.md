@@ -4613,3 +4613,28 @@ init: switchroot to /usr /etc
 The hang comes after rpi-fbd started DMA blits, around the handoff to fbcond.
 That fits the DMA path or the large DMA buffers (`0049`) stalling the boot, but
 the log doesn't prove it. The row stays queued for the second boot and the checks.
+
+## 2026-10-31: `v0.3.0-dev-491-g67c7d1d+x125f` (mqtt-cert, MQTT client certificates)
+
+Real Pi 3B+ over netboot. Test 139 ([#115](https://github.com/redox-rpi/redox-rpi/issues/115)), Pi test agent.
+
+**Pass: all three steps and the standard checks.** Image
+`~/mqtt-test/keep/cc-netboot-v0.3.0-dev-491-g67c7d1d+x125f.img`, manifest
+matches, with the stable bootloader. Broker `client-cert-broker.sh
+192.168.178.120 3600` from branch `mqtt-cert` (port 8884, `require_certificate`);
+certificate installed with `install-client-cert.py` (`/etc/mqtt-client.crt`
+595 bytes, `/etc/mqtt-client.key` 241 bytes, mode 600).
+
+| check | result |
+|---|---|
+| standard checks | **pass**: version, manifest, ps, ps-tty, sdcard; 0 of 300 starts failed |
+| (1) `mqtt-pub -p 8884 -t cc/pi -m with-cert -q 1` | **pass**: exit 0; broker subscriber `2026-10-31T12:49:18+0000 cc/pi with-cert`; mosquitto `New client connected from 192.168.178.148:49157 as mqtt-pub-396 (p2, c1, k60, u'redox-rpi')` |
+| (2) without the certificate | **pass**: exit 1, `mqtt-pub: 192.168.178.120:8884: TLS: received fatal alert: CertificateRequired (the broker wants a client certificate: give it with --cert and --key)`; nothing new at the subscriber; mosquitto `peer did not return a certificate`, `Client <unknown> disconnected: Protocol error.` |
+| (3) `ha-bridge -p 8884` | **pass**: exit 0; `redox-rpi/redox/state {"cpu_temperature":54.8,"cpu_clock":1400,"throttled":"OFF","uptime":135,"memory_free":576.3,"memory_used":20.6}`; mosquitto `as ha-bridge-402 (… u'redox-rpi')` |
+
+- `free` afterwards: 743612 total, 152048 used, 591564 free; `throttled`
+  `0x00000000`; no `panicked` or `RELIBC PANIC` on the serial console.
+- Broker stopped afterwards (port 8884 closed); the other test brokers on
+  homenodellm were left running.
+
+Stable image restored afterwards.
