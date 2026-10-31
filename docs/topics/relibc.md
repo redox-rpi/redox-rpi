@@ -60,7 +60,9 @@
     single runs pass; they only fail sometimes under the suite's load.
     With three busy loops on the 4 CPUs (QEMU, 2026-10-31,
     `v0.3.0-dev-574-g55e47fb+xb3d9`) also 45 of 45, so plain CPU load
-    is not the trigger; more likely an earlier test in the suite.
+    is not the trigger. Three full suite runs in one QEMU boot
+    (same build) and the Pi suite runs of tests 129 and 133: none of the
+    three failed. Not reproduced; they stay on the flaky list.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
