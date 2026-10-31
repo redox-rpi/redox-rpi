@@ -14,7 +14,7 @@
   package `hwinfo`, with `lsusb`): build and experiments, model, revision,
   serial, memory, firmware, CPUs, clocks and governor, temperature,
   throttling in words, number of USB devices. Pi test #32 (as experiment)
-  and #125.
+  and #125 passed. The governor line needs PR #76.
 
 ## In progress
 

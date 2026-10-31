@@ -28,7 +28,7 @@
   `/scheme/usb.dwc2/devices` and updates the list after each hotplug scan
   that found a change. `lsusb` names the Pi's own chips and describes
   other devices by their class; `-t` shows the hub tree, `-v` the
-  interfaces. Pi test #32 (as experiment) and #125.
+  interfaces. Pi tests #32 (as experiment) and #125 passed.
 
 ## In progress
 
