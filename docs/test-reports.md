@@ -5026,3 +5026,29 @@ Times are seconds after `kreset`, from `boot-timeline.py`
   checks with `--manifest` pass (0 of 300 starts failed). No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-764-gcf2025e+x9f76` (main cf2025e, start-crash recount)
+
+Real Pi 3B+ over netboot. Test 149 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), Pi test agent.
+
+**Pass: 0 of 3000 starts failed** (test 94 on `v0.3.0-dev-339`: 0 of 3000).
+Image `~/redox-rpi-t12/keep/t1-v0.3.0-dev-764-gcf2025e+x9f76.img`, manifest
+matches, stable bootloader. `scripts/pi-test.py 192.168.178.148 --starts 3000
+--manifest … --serial-log ~/redox-rpi/logs/serial.log --crash-log
+t149-crashes.jsonl`:
+
+```
+PASS version: v0.3.0-dev-764-gcf2025e+x9f76
+PASS manifest: build ID and libc.so hash match netboot-v0.3.0-dev-764-gcf2025e+x9f76.toml
+PASS ps: 51 processes (piped)
+PASS ps-tty: 51 lines straight to the terminal, rc=0
+PASS sdcard: write, read back, delete on /scheme/data
+PASS starts: 0 of 3000 failed
+```
+
+- The crash log stayed empty (no file written: no failed start, so no
+  FAR/ELR/ESR to report).
+- Serial log during the starts (16:17 to 16:25 UTC): **0** lines with `FATAL`,
+  `exception`, `panicked`, `Data abort` or `Instruction abort`.
+
+Stable image restored afterwards.
