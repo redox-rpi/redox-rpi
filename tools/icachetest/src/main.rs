@@ -105,6 +105,7 @@ fn same_page(rounds: usize) -> usize {
 fn file_map(rounds: usize, path: &str) -> Option<usize> {
     let cpath = CString::new(path).unwrap();
     let mut wrong = 0;
+    let mut old_data = 0;
     let buf = anon(libc::PROT_READ | libc::PROT_WRITE);
     for round in 0..rounds {
         let n = value(round);
@@ -128,7 +129,19 @@ fn file_map(rounds: usize, path: &str) -> Option<usize> {
             unsafe { libc::close(fd) };
             return None;
         }
-        if unsafe { call(p, round) } != n {
+        // Read the mapping as data first: if that is already old, the file
+        // system handed out old pages, which is not a cache problem.
+        let offset = (round * 8) % PAGE;
+        let word = unsafe { ptr::read_volatile(p.add(offset) as *const u32) };
+        if word != movz_w0(n) {
+            if old_data == 0 {
+                eprintln!(
+                    "file-map: round {round}: the mapping holds movz #{}, the file #{n}",
+                    (word >> 5) & 0xffff
+                );
+            }
+            old_data += 1;
+        } else if unsafe { call(p, round) } != n {
             wrong += 1;
         }
         unsafe {
@@ -138,6 +151,9 @@ fn file_map(rounds: usize, path: &str) -> Option<usize> {
     }
     unsafe { libc::munmap(buf as *mut _, PAGE) };
     let _ = std::fs::remove_file(path);
+    if old_data > 0 {
+        println!("file-map: {old_data} of {rounds} mappings held old file data (not a cache problem)");
+    }
     Some(wrong)
 }
 
