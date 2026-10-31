@@ -1,0 +1,595 @@
+From ae934bf6c37f50e2925656d320dccd633c7067eb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 13:26:02 +0100
+Subject: [PATCH] socket, netdb: AF_INET6 sockets, AAAA lookups, IPv6 name
+ servers
+
+AF_INET6 sockets use the same tcp and udp schemes, with the address in
+brackets. getaddrinfo asks for AAAA records too (A first for AF_UNSPEC)
+and returns sockaddr_in6. The resolver tries every name server, IPv4 or
+IPv6 from /etc/net/dns, then those from /scheme/netcfg/resolv/nameserver6,
+with a 5 s timeout each, and closes its socket.
+---
+ src/header/netdb/lookup.rs   | 271 +++++++++++++++++++++--------------
+ src/header/netdb/mod.rs      |  59 ++++++--
+ src/header/netdb/redox.rs    |  21 ++-
+ src/platform/redox/socket.rs |  70 ++++++++-
+ 4 files changed, 288 insertions(+), 133 deletions(-)
+
+diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
+index 361aa8aa..4ae98ba2 100644
+--- a/src/header/netdb/lookup.rs
++++ b/src/header/netdb/lookup.rs
+@@ -1,4 +1,5 @@
+ use alloc::{string::ToString, vec::Vec};
++use core::net::IpAddr;
+ 
+ use crate::{
+     error::Errno,
+@@ -9,8 +10,9 @@ use crate::{
+ use crate::header::{
+     bits_arpainet::htons,
+     errno::EINVAL,
+-    netinet_in::{IPPROTO_UDP, in_addr, sockaddr_in},
+-    sys_socket::constants::{AF_INET, SOCK_DGRAM},
++    netinet_in::{IPPROTO_UDP, in_addr, in6_addr, sockaddr_in, sockaddr_in6},
++    sys_select::timeval,
++    sys_socket::constants::{AF_INET, AF_INET6, SO_RCVTIMEO, SOCK_DGRAM, SOL_SOCKET},
+     time::{self, timespec},
+ };
+ 
+@@ -21,18 +23,91 @@ use super::{
+ 
+ pub type LookupHost = Vec<in_addr>;
+ 
++/// An address found by [`lookup_host_family`].
++pub enum HostAddr {
++    V4(in_addr),
++    V6(in6_addr),
++}
++
++const TYPE_A: u16 = 0x0001;
++const TYPE_PTR: u16 = 0x000C;
++const TYPE_AAAA: u16 = 0x001C;
++const CLASS_IN: u16 = 0x0001;
++
+ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
++    Ok(lookup_host_family(host, AF_INET)?
++        .into_iter()
++        .filter_map(|addr| match addr {
++            HostAddr::V4(addr) => Some(addr),
++            HostAddr::V6(_) => None,
++        })
++        .collect())
++}
++
++/// Looks up `host` with A records for `AF_INET`, AAAA records for
++/// `AF_INET6`, and both (IPv4 first) for anything else.
++pub fn lookup_host_family(host: &str, family: i32) -> Result<Vec<HostAddr>, Errno> {
+     if let Some(host_direct_addr) = parse_ipv4_string(host) {
+         // already an ip address
+-        return Ok(vec![in_addr {
++        return Ok(vec![HostAddr::V4(in_addr {
+             s_addr: host_direct_addr,
+-        }]);
++        })]);
++    }
++    if let Ok(addr) = host.parse::<core::net::Ipv6Addr>() {
++        return Ok(vec![HostAddr::V6(in6_addr {
++            s6_addr: addr.octets(),
++        })]);
+     }
+ 
+-    let dns_string = get_dns_server()?;
++    let mut addrs = Vec::new();
++    let mut last_err = None;
++    if family != AF_INET6 {
++        match query(host, TYPE_A) {
++            Ok(response) => addrs.extend(response.answers.into_iter().filter_map(|answer| {
++                let data = <[u8; 4]>::try_from(answer.data.as_slice()).ok()?;
++                (answer.a_type == TYPE_A && answer.a_class == CLASS_IN).then(|| {
++                    HostAddr::V4(in_addr {
++                        s_addr: u32::from_ne_bytes(data),
++                    })
++                })
++            })),
++            Err(err) => last_err = Some(err),
++        }
++    }
++    if family != AF_INET {
++        match query(host, TYPE_AAAA) {
++            Ok(response) => addrs.extend(response.answers.into_iter().filter_map(|answer| {
++                let s6_addr = <[u8; 16]>::try_from(answer.data.as_slice()).ok()?;
++                (answer.a_type == TYPE_AAAA && answer.a_class == CLASS_IN)
++                    .then(|| HostAddr::V6(in6_addr { s6_addr }))
++            })),
++            Err(err) => last_err = Some(err),
++        }
++    }
++
++    match last_err {
++        Some(err) if addrs.is_empty() => Err(err),
++        _ => Ok(addrs),
++    }
++}
+ 
+-    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
++/// The name servers: those in the platform's config (IPv4 or IPv6), then on
++/// Redox the IPv6 servers that netstack learned from router advertisements.
++fn dns_servers() -> Vec<IpAddr> {
++    let mut servers: Vec<IpAddr> = get_dns_server()
++        .map(|list| {
++            list.split_whitespace()
++                .filter_map(|word| word.parse().ok())
++                .collect()
++        })
++        .unwrap_or_default();
++    #[cfg(target_os = "redox")]
++    servers.extend(super::sys::get_dns_servers_ipv6().into_iter().map(IpAddr::V6));
++    servers
++}
+ 
++/// Asks the name servers in turn until one answers.
++fn query(name: &str, q_type: u16) -> Result<Dns, Errno> {
+     let mut timespec = timespec::default();
+     Sys::clock_gettime(
+         time::constants::CLOCK_REALTIME,
+@@ -44,128 +119,104 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+         transaction_id: tid,
+         flags: 0x0100,
+         queries: vec![DnsQuery {
+-            name: host.to_string(),
+-            q_type: 0x0001,
+-            q_class: 0x0001,
++            name: name.to_string(),
++            q_type,
++            q_class: CLASS_IN,
+         }],
+         answers: vec![],
+     };
+-
+     let packet_data = packet.compile();
+ 
+-    let mut dest = [0_u8; size_of::<sockaddr_in>()];
+-    *plain::from_mut_bytes(&mut dest).unwrap() = sockaddr_in {
+-        sin_family: u16::try_from(AF_INET).expect("AF_INET is positive and below u16::MAX"),
+-        sin_port: htons(53),
+-        sin_addr: in_addr { s_addr: dns_addr },
+-        ..Default::default()
++    let mut last_err = Errno(EINVAL);
++    for server in dns_servers() {
++        match query_server(server, &packet_data) {
++            Ok(response) if response.transaction_id == tid => return Ok(response),
++            Ok(_) => last_err = Errno(EINVAL),
++            Err(err) => last_err = err,
++        }
++    }
++    Err(last_err)
++}
++
++fn query_server(server: IpAddr, packet_data: &[u8]) -> Result<Dns, Errno> {
++    let (domain, dest) = match server {
++        IpAddr::V4(addr) => {
++            let mut dest = vec![0_u8; size_of::<sockaddr_in>()];
++            *plain::from_mut_bytes(&mut dest).unwrap() = sockaddr_in {
++                sin_family: u16::try_from(AF_INET).expect("AF_INET is positive and below u16::MAX"),
++                sin_port: htons(53),
++                sin_addr: in_addr {
++                    s_addr: u32::from_ne_bytes(addr.octets()),
++                },
++                ..Default::default()
++            };
++            (AF_INET, dest)
++        }
++        IpAddr::V6(addr) => {
++            let mut dest = vec![0_u8; size_of::<sockaddr_in6>()];
++            *plain::from_mut_bytes(&mut dest).unwrap() = sockaddr_in6 {
++                sin6_family: u16::try_from(AF_INET6).expect("AF_INET6 is positive"),
++                sin6_port: htons(53),
++                sin6_flowinfo: 0,
++                sin6_addr: in6_addr {
++                    s6_addr: addr.octets(),
++                },
++                sin6_scope_id: 0,
++            };
++            (AF_INET6, dest)
++        }
+     };
+ 
+-    let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
+-    let _ = Sys::connect(sock, &dest)?;
+-    Sys::sendto(sock, &packet_data, 0, None)?;
++    let sock = Sys::socket(domain, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
++    let result = (|| {
++        let _ = Sys::connect(sock, &dest)?;
++
++        // Don't wait forever for a server that does not answer
++        let timeout = timeval {
++            tv_sec: 5,
++            tv_usec: 0,
++        };
++        let timeout_bytes = unsafe {
++            core::slice::from_raw_parts((&raw const timeout).cast::<u8>(), size_of::<timeval>())
++        };
++        let _ = Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout_bytes);
+ 
+-    let mut buf = vec![0u8; 65536];
++        Sys::sendto(sock, packet_data, 0, None)?;
+ 
+-    let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
++        let mut buf = vec![0u8; 65536];
++        let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
++        Dns::parse(&buf[..count]).map_err(|_| Errno(EINVAL))
++    })();
++    let _ = Sys::close(sock);
++    result
++}
+ 
+-    let response = Dns::parse(&buf[..count]).map_err(|_| Errno(EINVAL))?;
+-    let addrs: Vec<_> = response
++pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
++    let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
++    // Address intentionally backwards for reverse lookup
++    let name = format!(
++        "{}.{}.{}.{}.in-addr.arpa",
++        addr[3], addr[2], addr[1], addr[0]
++    );
++
++    let response = query(&name, TYPE_PTR)?;
++    let names = response
+         .answers
+         .into_iter()
+         .filter_map(|answer| {
+-            if answer.a_type == 0x0001 && answer.a_class == 0x0001 && answer.data.len() == 4 {
+-                let addr = in_addr {
+-                    s_addr: u32::from_ne_bytes([
+-                        answer.data[0],
+-                        answer.data[1],
+-                        answer.data[2],
+-                        answer.data[3],
+-                    ]),
+-                };
+-                Some(addr)
++            if answer.a_type == TYPE_PTR && answer.a_class == CLASS_IN {
++                // answer.data is encoded kinda weird.
++                // Basically length-prefixed strings for each
++                // subsection of the domain.
++                // We need to parse this to insert periods where
++                // they belong (ie at the end of each string)
++                Some(parse_revdns_answer(&answer.data))
+             } else {
+                 None
+             }
+         })
+         .collect();
+-
+-    Ok(addrs)
+-}
+-
+-pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
+-    let dns_string = get_dns_server()?;
+-
+-    if let Some(dns_addr) = parse_ipv4_string(&dns_string) {
+-        let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
+-        // Address intentionally backwards for reverse lookup
+-        let name = format!(
+-            "{}.{}.{}.{}.in-addr.arpa",
+-            addr[3], addr[2], addr[1], addr[0]
+-        );
+-
+-        let mut timespec = timespec::default();
+-        if let Ok(()) = Sys::clock_gettime(
+-            time::constants::CLOCK_REALTIME,
+-            Out::from_mut(&mut timespec),
+-        ) {}; // TODO handle error
+-        let tid = (timespec.tv_nsec >> 16) as u16;
+-
+-        let packet = Dns {
+-            transaction_id: tid,
+-            flags: 0x0100,
+-            queries: vec![DnsQuery {
+-                name,
+-                q_type: 0x000C,
+-                q_class: 0x0001,
+-            }],
+-            answers: vec![],
+-        };
+-
+-        let packet_data = packet.compile();
+-
+-        let mut dest_addr = [0_u8; size_of::<sockaddr_in>()];
+-        *plain::from_mut_bytes(&mut dest_addr).unwrap() = sockaddr_in {
+-            sin_family: u16::try_from(AF_INET).expect("AF_INET is positive and below u16::MAX"),
+-            sin_port: htons(53),
+-            sin_addr: in_addr { s_addr: dns_addr },
+-            ..Default::default()
+-        };
+-
+-        let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
+-        let _ = Sys::connect(sock, &dest_addr)?;
+-
+-        let _bytes_sent = Sys::sendto(sock, &packet_data, 0, None)?;
+-
+-        let mut buf = [0u8; 65536];
+-
+-        let (count, _dstaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
+-
+-        match Dns::parse(&buf[..count]) {
+-            Ok(response) => {
+-                let names = response
+-                    .answers
+-                    .into_iter()
+-                    .filter_map(|answer| {
+-                        if answer.a_type == 0x000C && answer.a_class == 0x0001 {
+-                            // answer.data is encoded kinda weird.
+-                            // Basically length-prefixed strings for each
+-                            // subsection of the domain.
+-                            // We need to parse this to insert periods where
+-                            // they belong (ie at the end of each string)
+-                            Some(parse_revdns_answer(&answer.data))
+-                        } else {
+-                            None
+-                        }
+-                    })
+-                    .collect();
+-                Ok(names)
+-            }
+-            Err(_err) => Err(Errno(EINVAL)),
+-        }
+-    } else {
+-        Err(Errno(EINVAL))
+-    }
++    Ok(names)
+ }
+ 
+ fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
+diff --git a/src/header/netdb/mod.rs b/src/header/netdb/mod.rs
+index b731551f..572051a6 100644
+--- a/src/header/netdb/mod.rs
++++ b/src/header/netdb/mod.rs
+@@ -17,10 +17,13 @@ use crate::{
+         bits_safamily_t::sa_family_t,
+         errno::ENOENT,
+         fcntl::O_RDONLY,
+-        netinet_in::{in_addr, sockaddr_in},
++        netinet_in::{in_addr, in6_addr, sockaddr_in, sockaddr_in6},
+         stdlib::atoi,
+         strings::strcasecmp,
+-        sys_socket::{constants::AF_INET, sockaddr, socklen_t},
++        sys_socket::{
++            constants::{AF_INET, AF_INET6, AF_UNSPEC},
++            sockaddr, socklen_t,
++        },
+         unistd::SEEK_SET,
+     },
+     platform::{
+@@ -953,28 +956,54 @@ fn getaddrinfo_inner(
+     });
+     let node = str::from_utf8(node_cstr.to_bytes()).map_err(|_| AddrInfoErr::EAI_NONAME)?;
+ 
++    let family_hint = hints_opt.map_or(AF_UNSPEC, |hints| hints.ai_family);
+     let lookuphost = if ai_flags & AI_NUMERICHOST > 0 {
+-        let s_addr = parse_ipv4_string(node).ok_or(AddrInfoErr::EAI_NONAME)?;
+-
+-        vec![in_addr { s_addr }]
++        if let Some(s_addr) = parse_ipv4_string(node) {
++            vec![HostAddr::V4(in_addr { s_addr })]
++        } else {
++            let addr = node
++                .parse::<core::net::Ipv6Addr>()
++                .map_err(|_| AddrInfoErr::EAI_NONAME)?;
++            vec![HostAddr::V6(in6_addr {
++                s6_addr: addr.octets(),
++            })]
++        }
+     } else {
+-        lookup_host(node)?
++        lookup_host_family(node, family_hint)?
+     };
+ 
+     let mut first_info: Option<Box<addrinfo>> = None;
+     let mut last_info: Option<&mut addrinfo> = None;
+ 
+-    for in_addr in lookuphost {
+-        ai_family = AF_INET;
++    for host_addr in lookuphost {
+         ai_protocol = 0;
+ 
+-        let mut sockaddr = vec![0_u8; size_of::<sockaddr_in>()].into_boxed_slice();
+-
+-        *plain::from_mut_bytes(&mut sockaddr).unwrap() = sockaddr_in {
+-            sin_family: sa_family_t::try_from(ai_family).expect("AF_INET is positive"),
+-            sin_port: htons(port),
+-            sin_addr: in_addr,
+-            sin_zero: [0; 8],
++        let sockaddr = match host_addr {
++            HostAddr::V4(_) if family_hint == AF_INET6 => continue,
++            HostAddr::V6(_) if family_hint == AF_INET => continue,
++            HostAddr::V4(in_addr) => {
++                ai_family = AF_INET;
++                let mut sockaddr = vec![0_u8; size_of::<sockaddr_in>()].into_boxed_slice();
++                *plain::from_mut_bytes(&mut sockaddr).unwrap() = sockaddr_in {
++                    sin_family: sa_family_t::try_from(ai_family).expect("AF_INET is positive"),
++                    sin_port: htons(port),
++                    sin_addr: in_addr,
++                    sin_zero: [0; 8],
++                };
++                sockaddr
++            }
++            HostAddr::V6(in6_addr) => {
++                ai_family = AF_INET6;
++                let mut sockaddr = vec![0_u8; size_of::<sockaddr_in6>()].into_boxed_slice();
++                *plain::from_mut_bytes(&mut sockaddr).unwrap() = sockaddr_in6 {
++                    sin6_family: sa_family_t::try_from(ai_family).expect("AF_INET6 is positive"),
++                    sin6_port: htons(port),
++                    sin6_flowinfo: 0,
++                    sin6_addr: in6_addr,
++                    sin6_scope_id: 0,
++                };
++                sockaddr
++            }
+         };
+ 
+         let ai_canonname = if ai_flags & AI_CANONNAME > 0 {
+diff --git a/src/header/netdb/redox.rs b/src/header/netdb/redox.rs
+index 314dffcd..3fc9f735 100644
+--- a/src/header/netdb/redox.rs
++++ b/src/header/netdb/redox.rs
+@@ -4,7 +4,7 @@ use crate::{
+     header::{errno, fcntl},
+     io::Read,
+ };
+-use alloc::string::String;
++use alloc::{string::String, vec::Vec};
+ 
+ pub fn get_dns_server() -> Result<String, Errno> {
+     let mut string = String::new();
+@@ -14,3 +14,22 @@ pub fn get_dns_server() -> Result<String, Errno> {
+ 
+     Ok(string)
+ }
++
++/// IPv6 name servers that netstack learned from router advertisements
++/// (RDNSS, RFC 8106), one per line.
++pub fn get_dns_servers_ipv6() -> Vec<core::net::Ipv6Addr> {
++    let mut string = String::new();
++    let Ok(mut file) = File::open(
++        c"/scheme/netcfg/resolv/nameserver6".into(),
++        fcntl::O_RDONLY,
++    ) else {
++        return Vec::new();
++    };
++    if file.read_to_string(&mut string).is_err() {
++        return Vec::new();
++    }
++    string
++        .split_whitespace()
++        .filter_map(|word| word.parse().ok())
++        .collect()
++}
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index b3d0834b..4b867ae6 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -23,7 +23,7 @@ use crate::{
+             EPIPE, EPROTONOSUPPORT,
+         },
+         fcntl,
+-        netinet_in::{IPPROTO_IP, in_addr, in_port_t, sockaddr_in},
++        netinet_in::{IPPROTO_IP, in_addr, in_port_t, in6_addr, sockaddr_in, sockaddr_in6},
+         signal::SIGPIPE,
+         sys_select::timeval,
+         sys_socket::{
+@@ -69,6 +69,26 @@ fn bind_or_connect(op: SocketCall, socket: c_int, address_raw: &[u8]) -> Result<
+                 _ => unreachable!(),
+             }
+         }
++        AF_INET6 => {
++            let data: &sockaddr_in6 = address_raw
++                .get(..mem::size_of::<sockaddr_in6>())
++                .and_then(|raw| plain::from_bytes(raw).ok())
++                .ok_or(Errno(EINVAL))?;
++            let addr = core::net::Ipv6Addr::from(data.sin6_addr.s6_addr);
++            let port = in_port_t::from_be(data.sin6_port);
++
++            // netstack wants IPv6 addresses in brackets, and IPv4-mapped
++            // addresses (::ffff:a.b.c.d) as plain IPv4
++            let host = match addr.to_ipv4_mapped() {
++                Some(v4) => v4.to_string(),
++                None => format!("[{addr}]"),
++            };
++            match op {
++                SocketCall::Bind => format!("/{host}:{port}"),
++                SocketCall::Connect => format!("{host}:{port}"),
++                _ => unreachable!(),
++            }
++        }
+         AF_UNIX => {
+             log::warn!("bind/connect with AF_UNIX were replaced with SYS_CALL.");
+             return Err(Errno(EAFNOSUPPORT));
+@@ -129,7 +149,39 @@ fn inner_af_inet(local: bool, buf: &[u8], address_dst: &mut [u8]) -> socklen_t {
+         // Skip the remote part
+         parts.next();
+     }
+-    let mut unparsed_addr = Vec::from(parts.next().expect("missing address"));
++    let part = parts.next().expect("missing address");
++
++    // IPv6: [addr]:port
++    if let Some(rest) = part.strip_prefix(b"[") {
++        let end = memchr::memchr(b']', rest).expect("missing ]");
++        let addr: core::net::Ipv6Addr = str::from_utf8(&rest[..end])
++            .ok()
++            .and_then(|addr| addr.parse().ok())
++            .expect("invalid IPv6 address from netstack");
++        let port = str::from_utf8(&rest[end + 1..])
++            .ok()
++            .and_then(|port| port.strip_prefix(':'))
++            .and_then(|port| port.parse().ok())
++            .expect("invalid port");
++        let ret = sockaddr_in6 {
++            sin6_family: AF_INET6 as sa_family_t,
++            sin6_port: in_port_t::to_be(port),
++            sin6_flowinfo: 0,
++            sin6_addr: in6_addr {
++                s6_addr: addr.octets(),
++            },
++            sin6_scope_id: 0,
++        };
++        // TODO: safe transmute
++        let address_src = unsafe {
++            core::slice::from_raw_parts((&raw const ret).cast::<u8>(), size_of::<sockaddr_in6>())
++        };
++        let to_copy = address_src.len().min(address_dst.len());
++        address_dst[..to_copy].copy_from_slice(&address_src[..to_copy]);
++        return size_of::<sockaddr_in6>().try_into().unwrap();
++    }
++
++    let mut unparsed_addr = Vec::from(part);
+ 
+     let sep = memchr::memchr(b':', &unparsed_addr).expect("missing port");
+     let (raw_addr, rest) = unparsed_addr.split_at_mut(sep);
+@@ -557,7 +609,7 @@ impl PalSocket for Sys {
+ 
+     fn bind(socket: c_int, address_raw: &[u8]) -> Result<()> {
+         match extract_sa_family(address_raw)? {
+-            AF_INET => {
++            AF_INET | AF_INET6 => {
+                 (bind_or_connect_into(SocketCall::Bind, socket, address_raw))?;
+             }
+             AF_UNIX => {
+@@ -627,7 +679,7 @@ impl PalSocket for Sys {
+ 
+     fn connect(socket: c_int, address_raw: &[u8]) -> Result<c_int> {
+         match extract_sa_family(address_raw)? {
+-            AF_INET => bind_or_connect_into(SocketCall::Connect, socket, address_raw),
++            AF_INET | AF_INET6 => bind_or_connect_into(SocketCall::Connect, socket, address_raw),
+             AF_UNIX => {
+                 let path_bytes = address_raw
+                     .get(mem::offset_of!(sockaddr_un, sun_path)..)
+@@ -1045,7 +1097,7 @@ impl PalSocket for Sys {
+ 
+     // FIXME use protocol variable
+     fn socket(domain: c_int, kind: c_int, _protocol: c_int) -> Result<c_int> {
+-        if domain != AF_INET && domain != AF_UNIX {
++        if domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX {
+             return Err(Errno(EAFNOSUPPORT));
+         }
+         // if protocol != 0 {
+@@ -1058,8 +1110,12 @@ impl PalSocket for Sys {
+         // The tcp: and udp: schemes allow using no path,
+         // and later specifying one using `dup`.
+         Ok(match (domain, kind) {
+-            (AF_INET, SOCK_STREAM) => redox_rt::sys::open("/scheme/tcp", flags)? as c_int,
+-            (AF_INET, SOCK_DGRAM) => redox_rt::sys::open("/scheme/udp", flags)? as c_int,
++            // One tcp and udp scheme for both: the address in the path
++            // tells IPv4 and IPv6 apart
++            (AF_INET | AF_INET6, SOCK_STREAM) => {
++                redox_rt::sys::open("/scheme/tcp", flags)? as c_int
++            }
++            (AF_INET | AF_INET6, SOCK_DGRAM) => redox_rt::sys::open("/scheme/udp", flags)? as c_int,
+             (AF_UNIX, SOCK_STREAM) => {
+                 redox_rt::sys::open("/scheme/uds_stream", flags | O_CREAT)? as c_int
+             }
+-- 
+2.54.0 (Apple Git-157)
+

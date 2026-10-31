@@ -38,8 +38,12 @@ jobs:
       - id: list
         name: List relibc experiments
         run: |
-          list=$(for d in patches/experiments/*/relibc; do basename "$(dirname "$d")"; done \
-            | jq -R . | jq -sc '[""] + .')
+          # An experiment that applies on top of others lists them in its
+          # file "needs"; they come first, e.g. "multicast ipv6".
+          list=$(for d in patches/experiments/*/relibc; do
+                   e=$(dirname "$d")
+                   echo "$(cat "$e/needs" 2>/dev/null | tr '\n' ' ')$(basename "$e")"
+                 done | jq -R . | jq -sc '[""] + .')
           echo "experiments=$list" >> "$GITHUB_OUTPUT"
           echo "$list"
 
@@ -61,8 +65,9 @@ jobs:
 
       - name: Check out relibc with the patches
         run: |
-          scripts/relibc-checkout.sh relibc \
-            ${{ matrix.experiment && format('--experiment {0}', matrix.experiment) || '' }}
+          args=()
+          for e in ${{ matrix.experiment }}; do args+=(--experiment "$e"); done
+          scripts/relibc-checkout.sh relibc "${args[@]}"
 
       - name: Build
         working-directory: relibc

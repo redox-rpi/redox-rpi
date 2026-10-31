@@ -1,0 +1,305 @@
+From 769f2a67747c10e7d428912aef851de796749990 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 13:26:01 +0100
+Subject: [PATCH] netstack: IPv6 endpoints in socket paths, DNS server from
+ router advertisements
+
+Socket paths take and show IPv6 endpoints in brackets ([fe80::1]:5353),
+so programs can open IPv6 UDP and TCP sockets. The RDNSS option of a
+router advertisement (RFC 8106) gives an IPv6 name server, shown in
+/scheme/netcfg/resolv/nameserver6.
+---
+ netstack/src/link/ethernet.rs     | 31 ++++++++++++++++--
+ netstack/src/link/mod.rs          |  2 ++
+ netstack/src/scheme/mod.rs        | 54 +++++++++++++++++++++++--------
+ netstack/src/scheme/netcfg/mod.rs | 10 ++++++
+ netstack/src/scheme/tcp.rs        | 16 +++------
+ netstack/src/scheme/udp.rs        | 22 +++----------
+ 6 files changed, 91 insertions(+), 44 deletions(-)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index fe60b84..539847f 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -44,6 +44,7 @@ struct Ipv6State {
+     link_local: Option<Ipv6Address>,
+     global: Option<Ipv6Cidr>,
+     router: Option<Ipv6Address>,
++    dns: Option<Ipv6Address>,
+     solicitations: u32,
+     next_solicitation: Instant,
+ }
+@@ -54,6 +55,7 @@ impl Default for Ipv6State {
+             link_local: None,
+             global: None,
+             router: None,
++            dns: None,
+             solicitations: 0,
+             next_solicitation: Instant::ZERO,
+         }
+@@ -84,6 +86,27 @@ fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
+ }
+ 
+ /// ff02::1:ffXX:XXXX, where NDP asks for the owner of `addr`.
++/// The first name server of the RDNSS option (RFC 8106) in a router
++/// advertisement, `Some(None)` when the option says to stop using it.
++/// smoltcp does not parse this option, so read the raw ICMPv6 message.
++fn rdnss_server(icmp: &[u8]) -> Option<Option<Ipv6Address>> {
++    // type, code, checksum, hop limit, flags, lifetime, reachable, retrans
++    let mut options = icmp.get(16..)?;
++    while options.len() >= 8 {
++        let len = usize::from(options[1]) * 8;
++        if len == 0 || len > options.len() {
++            return None;
++        }
++        if options[0] == 25 && len >= 24 {
++            let lifetime = u32::from_be_bytes(options[4..8].try_into().unwrap());
++            let addr = Ipv6Address::from(<[u8; 16]>::try_from(&options[8..24]).unwrap());
++            return Some((lifetime != 0).then_some(addr));
++        }
++        options = &options[len..];
++    }
++    None
++}
++
+ fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
+     let a = addr.octets();
+     Ipv6Address::from([
+@@ -376,9 +399,12 @@ impl EthernetLink {
+                         });
+                     }
+                 }
++                if let Some(dns) = rdnss_server(ip.payload()) {
++                    self.ipv6.dns = dns;
++                }
+                 info!(
+-                    "{}: router advertisement from {}: router {:?}, address {:?}",
+-                    self.name, src, self.ipv6.router, self.ipv6.global
++                    "{}: router advertisement from {}: router {:?}, address {:?}, dns {:?}",
++                    self.name, src, self.ipv6.router, self.ipv6.global, self.ipv6.dns
+                 );
+             }
+             _ => {}
+@@ -728,6 +754,7 @@ impl LinkDevice for EthernetLink {
+             link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
+             global: self.ipv6.global,
+             router: self.ipv6.router,
++            dns: self.ipv6.dns,
+         })
+     }
+ }
+diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
+index 620da3e..7a8fda8 100644
+--- a/netstack/src/link/mod.rs
++++ b/netstack/src/link/mod.rs
+@@ -13,6 +13,8 @@ pub struct Ipv6Config {
+     pub link_local: Ipv6Cidr,
+     pub global: Option<Ipv6Cidr>,
+     pub router: Option<Ipv6Address>,
++    /// Name server from the router advertisement (RDNSS)
++    pub dns: Option<Ipv6Address>,
+ }
+ 
+ /// Represent a link layer device (eth0, loopback...)
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index b64e8f3..b6295c8 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -14,8 +14,8 @@ use smoltcp::phy::Tracer;
+ use smoltcp::socket::AnySocket;
+ use smoltcp::time::{Duration, Instant};
+ use smoltcp::wire::{
+-    EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address,
+-    Ipv6Address, Ipv6Cidr,
++    EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint,
++    Ipv4Address, Ipv6Address, Ipv6Cidr,
+ };
+ use syscall::data::TimeSpec;
+ use syscall::{self, Error as SyscallError};
+@@ -370,20 +370,48 @@ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Resu
+ }
+ 
+ fn parse_endpoint(socket: &str) -> IpListenEndpoint {
+-    let mut socket_parts = socket.split(':');
+-    let host = Ipv4Address::from_str(socket_parts.next().unwrap_or(""))
+-        .ok()
+-        .filter(|addr| !addr.is_unspecified())
+-        .map(IpAddress::Ipv4);
+-
+-    let port = socket_parts
+-        .next()
+-        .unwrap_or("")
+-        .parse::<u16>()
+-        .unwrap_or(0);
++    // IPv6 addresses come in brackets: [fe80::1]:5353
++    let (host, port) = if let Some(rest) = socket.strip_prefix('[') {
++        let (host, rest) = rest.split_once(']').unwrap_or((rest, ""));
++        (
++            Ipv6Address::from_str(host).ok().map(IpAddress::Ipv6),
++            rest.strip_prefix(':').unwrap_or(""),
++        )
++    } else {
++        let (host, port) = socket.split_once(':').unwrap_or((socket, ""));
++        (Ipv4Address::from_str(host).ok().map(IpAddress::Ipv4), port)
++    };
++    let host = host.filter(|addr| !addr.is_unspecified());
++    let port = port.parse::<u16>().unwrap_or(0);
+     IpListenEndpoint { addr: host, port }
+ }
+ 
++/// An endpoint as it appears in socket paths: `addr:port`, IPv6 addresses
++/// in brackets, `0.0.0.0` for no address.
++pub struct PathEndpoint(pub Option<IpAddress>, pub u16);
++
++impl From<IpEndpoint> for PathEndpoint {
++    fn from(endpoint: IpEndpoint) -> Self {
++        PathEndpoint(Some(endpoint.addr), endpoint.port)
++    }
++}
++
++impl From<IpListenEndpoint> for PathEndpoint {
++    fn from(endpoint: IpListenEndpoint) -> Self {
++        PathEndpoint(endpoint.addr, endpoint.port)
++    }
++}
++
++impl std::fmt::Display for PathEndpoint {
++    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
++        match self.0 {
++            Some(IpAddress::Ipv6(addr)) => write!(f, "[{}]:{}", addr, self.1),
++            Some(addr) => write!(f, "{}:{}", addr, self.1),
++            None => write!(f, "0.0.0.0:{}", self.1),
++        }
++    }
++}
++
+ struct WaitHandle {
+     until: Option<TimeSpec>,
+     cancelling: bool,
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index 554dafd..6a733e7 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -77,6 +77,16 @@ fn mk_root_node(
+ ) -> CfgNodeRef {
+     cfg_node! {
+         "resolv" => {
++            "nameserver6" => {
++                ro [devices] || {
++                    devices
++                        .borrow()
++                        .get("eth0")
++                        .and_then(|dev| dev.ipv6_config())
++                        .and_then(|config| config.dns)
++                        .map_or(String::new(), |dns| format!("{}\n", dns))
++                }
++            },
+             "nameserver" => {
+                 rw [dns_config, notifier] (Option<Ipv4Address>, None)
+                 || {
+diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
+index 949f3db..6df2ae1 100644
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -8,7 +8,7 @@ use smoltcp::wire::{IpEndpoint, IpListenEndpoint};
+ use syscall::{self, Error as SyscallError, Result as SyscallResult};
+ 
+ use super::socket::{Context, DupResult, SchemeFile, SchemeSocket, SocketFile};
+-use super::{parse_endpoint, SchemeWrapper, SocketSet};
++use super::{parse_endpoint, PathEndpoint, SchemeWrapper, SocketSet};
+ use crate::port_set::PortSet;
+ 
+ const SO_SNDBUF: usize = 7;
+@@ -277,25 +277,19 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         FpathWriter::with(buf, "tcp", |w| {
+             let unspecified = "0.0.0.0:0";
+             match self.remote_endpoint() {
+-                Some(endpoint) => write!(w, "{}", endpoint).unwrap(),
++                Some(endpoint) => write!(w, "{}", PathEndpoint::from(endpoint)).unwrap(),
+                 None => w.push_str(unspecified),
+             }
+             w.push_str("/");
+             match (self.local_endpoint(), file) {
+-                (Some(endpoint), _) => write!(w, "{}", endpoint).unwrap(),
++                (Some(endpoint), _) => write!(w, "{}", PathEndpoint::from(endpoint)).unwrap(),
+                 (
+                     None,
+                     SchemeFile::Socket(SocketFile {
+                         data: Some(endpoint),
+                         ..
+                     }),
+-                ) => {
+-                    if endpoint.is_specified() {
+-                        write!(w, "{}", endpoint).unwrap()
+-                    } else {
+-                        write!(w, "0.0.0.0:{}", endpoint.port).unwrap()
+-                    }
+-                }
++                ) => write!(w, "{}", PathEndpoint::from(*endpoint)).unwrap(),
+                 _ => w.push_str(unspecified),
+             }
+ 
+@@ -342,7 +336,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+                 return Err(SyscallError::new(syscall::EINVAL));
+             }
+             let address = match self.remote_endpoint() {
+-                Some(endpoint) => format!("{}{}:{}", Self::BASE_PATH, endpoint.addr, endpoint.port),
++                Some(endpoint) => format!("{}{}", Self::BASE_PATH, PathEndpoint::from(endpoint)),
+                 None => format!("{}0.0.0.0:0", Self::BASE_PATH),
+             };
+ 
+diff --git a/netstack/src/scheme/udp.rs b/netstack/src/scheme/udp.rs
+index 3a35d5c..5912e83 100644
+--- a/netstack/src/scheme/udp.rs
++++ b/netstack/src/scheme/udp.rs
+@@ -10,7 +10,7 @@ use smoltcp::wire::{IpEndpoint, IpListenEndpoint};
+ use syscall::{self, Error as SyscallError, Result as SyscallResult};
+ 
+ use super::socket::{Context, DupResult, SchemeFile, SchemeSocket, SocketFile};
+-use super::{parse_endpoint, SchemeWrapper, Smolnetd, SocketSet};
++use super::{parse_endpoint, PathEndpoint, SchemeWrapper, Smolnetd, SocketSet};
+ use crate::port_set::PortSet;
+ use crate::router::Router;
+ 
+@@ -277,22 +277,13 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
+             // remote
+             match file {
+                 SchemeFile::Socket(SocketFile { data: endpoint, .. }) => {
+-                    if endpoint.is_specified() {
+-                        write!(w, "{}", endpoint).unwrap()
+-                    } else {
+-                        write!(w, "0.0.0.0:{}", endpoint.port).unwrap()
+-                    }
++                    write!(w, "{}", PathEndpoint::from(*endpoint)).unwrap()
+                 }
+                 _ => w.push_str(unspecified),
+             }
+             w.push_str("/");
+             // local
+-            let endpoint = self.endpoint();
+-            if endpoint.is_specified() {
+-                write!(w, "{}", endpoint).unwrap()
+-            } else {
+-                write!(w, "0.0.0.0:{}", endpoint.port).unwrap()
+-            }
++            write!(w, "{}", PathEndpoint::from(self.endpoint())).unwrap();
+ 
+             Ok(())
+         })
+@@ -348,12 +339,7 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
+ 
+             //Address Handling
+             let address_formatted = if prepared_name_len > 0 {
+-                format!(
+-                    "{}{}:{}",
+-                    Self::BASE_PATH,
+-                    address.endpoint.addr,
+-                    address.endpoint.port
+-                )
++                format!("{}{}", Self::BASE_PATH, PathEndpoint::from(address.endpoint))
+             } else {
+                 String::from("")
+             };
+-- 
+2.54.0 (Apple Git-157)
+

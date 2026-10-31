@@ -1,0 +1,959 @@
+From 3ad870abbade91d97f022e9d92e87329c107649e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:15:05 +0100
+Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
+
+smoltcp answers echo requests again (auto-icmp-echo-reply, IPv4 and IPv6),
+so the addresses can be checked with ping. It skips NDP and SLAAC on an IP medium, so the Ethernet link does them
+itself, like ARP: it answers neighbor solicitations for its addresses,
+resolves IPv6 next hops with solicitations to the solicited-node group,
+maps IPv6 multicast to 33:33 MACs, sends router solicitations and takes a
+/64 prefix with the autonomous flag from router advertisements (modified
+EUI-64 address, RFC 4862). Smolnetd copies the link-local address, the
+SLAAC address and the router into the interface and the route table
+(fe80::/64, ff00::/8, the prefix, ::/0 via the router), plus ::1 on the
+loopback device. The router sends IPv6 packets with the source address
+smoltcp chose. No duplicate address detection, no lifetimes beyond zero,
+no IPv6 sockets in relibc yet.
+---
+ netstack/Cargo.toml               |   3 +-
+ netstack/src/link/ethernet.rs     | 435 +++++++++++++++++++++++++-----
+ netstack/src/link/mod.rs          |  16 +-
+ netstack/src/router/mod.rs        |  45 +++-
+ netstack/src/scheme/mod.rs        |  87 +++++-
+ netstack/src/scheme/netcfg/mod.rs |  24 +-
+ 6 files changed, 532 insertions(+), 78 deletions(-)
+
+diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
+index f965d19..06ee2dc 100644
+--- a/netstack/Cargo.toml
++++ b/netstack/Cargo.toml
+@@ -27,9 +27,10 @@ default-features = false
+ features = [
+     "std",
+     "medium-ethernet", "medium-ip",
+-    "proto-ipv4", "multicast",
++    "proto-ipv4", "proto-ipv6", "multicast",
+     "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
+     "iface-max-addr-count-8",
++    "auto-icmp-echo-reply",
+     "log"
+ ]
+ #For debugging: "log", "verbose"
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index b778a21..fe60b84 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -4,26 +4,30 @@ use std::fs::File;
+ use std::io::{ErrorKind, Read, Write};
+ use std::rc::Rc;
+ 
++use smoltcp::phy::ChecksumCapabilities;
+ use smoltcp::storage::PacketMetadata;
+ use smoltcp::time::{Duration, Instant};
+ use smoltcp::wire::{
+     ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
+-    EthernetRepr, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr,
++    EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
++    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags, NdiscPrefixInfoFlags,
++    NdiscRepr, RawHardwareAddress,
+ };
+ 
+-use super::LinkDevice;
++use super::{Ipv6Config, LinkDevice};
+ 
+ struct Neighbor {
+     hardware_address: EthernetAddress,
+     expires_at: Instant,
+ }
+ 
++/// Neighbor discovery: ARP for IPv4, NDP neighbor solicitations for IPv6.
+ #[derive(Debug, Default)]
+ enum ArpState {
+     #[default]
+     Discovered,
+     Discovering {
+-        target: Ipv4Address,
++        target: IpAddress,
+         tries: u32,
+         silent_until: Instant,
+     },
+@@ -33,6 +37,29 @@ type PacketBuffer = smoltcp::storage::PacketBuffer<'static, IpAddress>;
+ 
+ const EMPTY_MAC: EthernetAddress = EthernetAddress([0; 6]);
+ 
++/// IPv6 state of the link: the link-local address from the MAC address, and
++/// what stateless address autoconfiguration (RFC 4862) learned from router
++/// advertisements.
++struct Ipv6State {
++    link_local: Option<Ipv6Address>,
++    global: Option<Ipv6Cidr>,
++    router: Option<Ipv6Address>,
++    solicitations: u32,
++    next_solicitation: Instant,
++}
++
++impl Default for Ipv6State {
++    fn default() -> Self {
++        Self {
++            link_local: None,
++            global: None,
++            router: None,
++            solicitations: 0,
++            next_solicitation: Instant::ZERO,
++        }
++    }
++}
++
+ pub struct EthernetLink {
+     name: Rc<str>,
+     neighbor_cache: BTreeMap<IpAddress, Neighbor>,
+@@ -43,6 +70,38 @@ pub struct EthernetLink {
+     network_file: File,
+     hardware_address: Option<EthernetAddress>,
+     ip_address: Option<Ipv4Cidr>,
++    ipv6: Ipv6State,
++}
++
++/// The interface identifier from a MAC address (modified EUI-64, RFC 4291).
++fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
++    let p = prefix.octets();
++    let m = mac.0;
++    Ipv6Address::from([
++        p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
++        m[0] ^ 0x02, m[1], m[2], 0xff, 0xfe, m[3], m[4], m[5],
++    ])
++}
++
++/// ff02::1:ffXX:XXXX, where NDP asks for the owner of `addr`.
++fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
++    let a = addr.octets();
++    Ipv6Address::from([
++        0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xff, a[13], a[14], a[15],
++    ])
++}
++
++/// 33:33 and the low 32 bits of an IPv6 multicast address (RFC 2464).
++fn ipv6_multicast_mac(addr: Ipv6Address) -> EthernetAddress {
++    let a = addr.octets();
++    EthernetAddress([0x33, 0x33, a[12], a[13], a[14], a[15]])
++}
++
++fn ip_protocol_of(packet: &[u8]) -> EthernetProtocol {
++    match packet.first().map(|b| b >> 4) {
++        Some(6) => EthernetProtocol::Ipv6,
++        _ => EthernetProtocol::Ipv4,
++    }
+ }
+ 
+ impl EthernetLink {
+@@ -54,6 +113,10 @@ impl EthernetLink {
+     const NEIGHBOR_LIVE_TIME: Duration = Duration::from_secs(60);
+     const ARP_SILENCE_TIME: Duration = Duration::from_secs(1);
+ 
++    /// RFC 4861: up to 3 router solicitations, 4 s apart.
++    const MAX_ROUTER_SOLICITATIONS: u32 = 3;
++    const ROUTER_SOLICITATION_INTERVAL: Duration = Duration::from_secs(4);
++
+     pub fn new(name: &str, network_file: File) -> Self {
+         let waiting_packets = PacketBuffer::new(
+             vec![PacketMetadata::EMPTY; Self::MAX_WAITING_PACKET_COUNT],
+@@ -70,6 +133,7 @@ impl EthernetLink {
+             output_buffer: Vec::with_capacity(Self::MTU),
+             arp_state: Default::default(),
+             neighbor_cache: Default::default(),
++            ipv6: Default::default(),
+         }
+     }
+ 
+@@ -102,6 +166,43 @@ impl EthernetLink {
+         }
+     }
+ 
++    /// Sends an NDP message (hop limit 255) from `src` to `dst`.
++    fn send_ndisc(
++        &mut self,
++        dst_mac: EthernetAddress,
++        src: Ipv6Address,
++        dst: Ipv6Address,
++        repr: NdiscRepr,
++    ) {
++        let icmp = Icmpv6Repr::Ndisc(repr);
++        let ip = Ipv6Repr {
++            src_addr: src,
++            dst_addr: dst,
++            next_header: IpProtocol::Icmpv6,
++            payload_len: icmp.buffer_len(),
++            hop_limit: 0xff,
++        };
++        self.send_to(
++            dst_mac,
++            ip.buffer_len() + icmp.buffer_len(),
++            |buf| {
++                let mut packet = Ipv6Packet::new_unchecked(buf);
++                ip.emit(&mut packet);
++                icmp.emit(
++                    &src,
++                    &dst,
++                    &mut Icmpv6Packet::new_unchecked(packet.payload_mut()),
++                    &ChecksumCapabilities::default(),
++                );
++            },
++            EthernetProtocol::Ipv6,
++        );
++    }
++
++    fn is_own_ipv6(&self, addr: Ipv6Address) -> bool {
++        self.ipv6.link_local == Some(addr) || self.ipv6.global.map(|c| c.address()) == Some(addr)
++    }
++
+     fn process_arp(&mut self, packet: &[u8], now: Instant) {
+         let Some(hardware_address) = self.hardware_address else {
+             return;
+@@ -173,19 +274,163 @@ impl EthernetLink {
+                         EthernetProtocol::Arp,
+                     );
+                 }
+-                self.check_waiting_packets(source_protocol_addr, source_hardware_addr, now);
++                self.check_waiting_packets(
++                    IpAddress::Ipv4(source_protocol_addr),
++                    source_hardware_addr,
++                    now,
++                );
+             }
+             _ => {}
+         }
+     }
+ 
+-    fn check_waiting_packets(&mut self, ip: Ipv4Address, mac: EthernetAddress, now: Instant) {
++    /// Handles NDP messages (RFC 4861) here, like ARP: smoltcp ignores them
++    /// on an IP medium. Returns false for packets the IP layer should get.
++    fn process_ndisc(&mut self, packet: &[u8], now: Instant) -> bool {
++        let Some(hardware_address) = self.hardware_address else {
++            return false;
++        };
++        let Ok(ip) = Ipv6Packet::new_checked(packet) else {
++            return false;
++        };
++        if ip.next_header() != IpProtocol::Icmpv6 || ip.hop_limit() != 0xff {
++            return false;
++        }
++        let (src, dst) = (ip.src_addr(), ip.dst_addr());
++        let Ok(icmp) = Icmpv6Packet::new_checked(ip.payload()) else {
++            return false;
++        };
++        let Ok(Icmpv6Repr::Ndisc(repr)) =
++            Icmpv6Repr::parse(&src, &dst, &icmp, &ChecksumCapabilities::default())
++        else {
++            return false;
++        };
++        let mac_of = |lladdr: Option<RawHardwareAddress>| {
++            lladdr
++                .filter(|l| l.as_bytes().len() == 6)
++                .map(|l| EthernetAddress::from_bytes(l.as_bytes()))
++                .filter(|m| m.is_unicast())
++        };
++
++        match repr {
++            NdiscRepr::NeighborSolicit { target_addr, lladdr } => {
++                if !self.is_own_ipv6(target_addr) {
++                    return true;
++                }
++                let sender = mac_of(lladdr);
++                if let (Some(mac), false) = (sender, src.is_unspecified()) {
++                    self.learn_neighbor(IpAddress::Ipv6(src), mac, now);
++                }
++                // A solicitation from :: is duplicate address detection; the
++                // answer then goes to all nodes.
++                let (dst_mac, dst_ip, flags) = match sender {
++                    Some(mac) if !src.is_unspecified() => (
++                        mac,
++                        src,
++                        NdiscNeighborFlags::SOLICITED | NdiscNeighborFlags::OVERRIDE,
++                    ),
++                    _ => (
++                        ipv6_multicast_mac(Ipv6Address::new(0xff02, 0, 0, 0, 0, 0, 0, 1)),
++                        Ipv6Address::new(0xff02, 0, 0, 0, 0, 0, 0, 1),
++                        NdiscNeighborFlags::OVERRIDE,
++                    ),
++                };
++                self.send_ndisc(
++                    dst_mac,
++                    target_addr,
++                    dst_ip,
++                    NdiscRepr::NeighborAdvert {
++                        flags,
++                        target_addr,
++                        lladdr: Some(hardware_address.into()),
++                    },
++                );
++            }
++            NdiscRepr::NeighborAdvert {
++                target_addr, lladdr, ..
++            } => {
++                if let Some(mac) = mac_of(lladdr) {
++                    self.learn_neighbor(IpAddress::Ipv6(target_addr), mac, now);
++                }
++            }
++            NdiscRepr::RouterAdvert {
++                router_lifetime,
++                lladdr,
++                prefix_info,
++                ..
++            } => {
++                if src.segments()[0] & 0xffc0 != 0xfe80 {
++                    return true;
++                }
++                if let Some(mac) = mac_of(lladdr) {
++                    self.learn_neighbor(IpAddress::Ipv6(src), mac, now);
++                }
++                self.ipv6.router = (router_lifetime != Duration::ZERO).then_some(src);
++                if let Some(prefix) = prefix_info {
++                    if prefix.flags.contains(NdiscPrefixInfoFlags::ADDRCONF)
++                        && prefix.prefix_len == 64
++                        && prefix.prefix.segments()[0] & 0xffc0 != 0xfe80
++                    {
++                        self.ipv6.global = (prefix.valid_lifetime != Duration::ZERO).then(|| {
++                            Ipv6Cidr::new(eui64_address(prefix.prefix, hardware_address), 64)
++                        });
++                    }
++                }
++                info!(
++                    "{}: router advertisement from {}: router {:?}, address {:?}",
++                    self.name, src, self.ipv6.router, self.ipv6.global
++                );
++            }
++            _ => {}
++        }
++        true
++    }
++
++    fn learn_neighbor(&mut self, ip: IpAddress, mac: EthernetAddress, now: Instant) {
++        self.neighbor_cache.insert(
++            ip,
++            Neighbor {
++                hardware_address: mac,
++                expires_at: now + Self::NEIGHBOR_LIVE_TIME,
++            },
++        );
++        if let ArpState::Discovering { target, .. } = self.arp_state {
++            if target == ip {
++                self.check_waiting_packets(ip, mac, now);
++            }
++        }
++    }
++
++    fn send_router_solicitation(&mut self, now: Instant) {
++        let (Some(mac), Some(link_local)) = (self.hardware_address, self.ipv6.link_local) else {
++            return;
++        };
++        if self.ipv6.router.is_some()
++            || self.ipv6.solicitations >= Self::MAX_ROUTER_SOLICITATIONS
++            || now < self.ipv6.next_solicitation
++        {
++            return;
++        }
++        self.ipv6.solicitations += 1;
++        self.ipv6.next_solicitation = now + Self::ROUTER_SOLICITATION_INTERVAL;
++        let all_routers = Ipv6Address::new(0xff02, 0, 0, 0, 0, 0, 0, 2);
++        self.send_ndisc(
++            ipv6_multicast_mac(all_routers),
++            link_local,
++            all_routers,
++            NdiscRepr::RouterSolicit {
++                lladdr: Some(mac.into()),
++            },
++        );
++    }
++
++    fn check_waiting_packets(&mut self, ip: IpAddress, mac: EthernetAddress, now: Instant) {
+         let mut waiting_packets =
+             std::mem::replace(&mut self.waiting_packets, PacketBuffer::new(vec![], vec![]));
+         loop {
+             match waiting_packets.peek() {
+-                Ok((IpAddress::Ipv4(dst), _)) if dst == &ip => {}
+-                Ok((IpAddress::Ipv4(dst), _)) => {
++                Ok((dst, _)) if dst == &ip => {}
++                Ok((dst, _)) => {
+                     self.arp_state = ArpState::Discovering {
+                         target: *dst,
+                         tries: 0,
+@@ -205,18 +450,18 @@ impl EthernetLink {
+                 mac,
+                 packet.len(),
+                 |buf| buf.copy_from_slice(packet),
+-                EthernetProtocol::Ipv4,
++                ip_protocol_of(packet),
+             );
+         }
+ 
+         self.waiting_packets = waiting_packets;
+     }
+ 
+-    fn drop_waiting_packets(&mut self, ip: Ipv4Address, now: Instant) {
++    fn drop_waiting_packets(&mut self, ip: IpAddress, now: Instant) {
+         loop {
+             match self.waiting_packets.peek() {
+-                Ok((IpAddress::Ipv4(dst), _)) if dst == &ip => {}
+-                Ok((IpAddress::Ipv4(dst), _)) => {
++                Ok((dst, _)) if dst == &ip => {}
++                Ok((dst, _)) => {
+                     self.arp_state = ArpState::Discovering {
+                         target: *dst,
+                         tries: 0,
+@@ -251,7 +496,6 @@ impl EthernetLink {
+         };
+         buf.copy_from_slice(packet);
+ 
+-        let IpAddress::Ipv4(next_hop) = next_hop;
+         if let ArpState::Discovered = self.arp_state {
+             self.arp_state = ArpState::Discovering {
+                 target: next_hop,
+@@ -263,15 +507,13 @@ impl EthernetLink {
+         }
+     }
+ 
++    /// Asks for the MAC address of the current target: ARP for IPv4, a
++    /// neighbor solicitation for IPv6.
+     fn send_arp(&mut self, now: Instant) {
+         let Some(hardware_address) = self.hardware_address else {
+             return;
+         };
+ 
+-        let Some(ip_address) = self.ip_address else {
+-            return;
+-        };
+-
+         match self.arp_state {
+             ArpState::Discovered => {}
+             ArpState::Discovering { silent_until, .. } if silent_until > now => {}
+@@ -283,23 +525,50 @@ impl EthernetLink {
+                 ref mut tries,
+                 ref mut silent_until,
+             } => {
+-                let arp_repr = ArpRepr::EthernetIpv4 {
+-                    operation: ArpOperation::Request,
+-                    source_hardware_addr: hardware_address,
+-                    source_protocol_addr: ip_address.address(),
+-                    target_hardware_addr: EthernetAddress::BROADCAST,
+-                    target_protocol_addr: target,
+-                };
+-
+                 *tries += 1;
+                 *silent_until = now + Self::ARP_SILENCE_TIME;
+ 
+-                self.send_to(
+-                    EthernetAddress::BROADCAST,
+-                    arp_repr.buffer_len(),
+-                    |buf| arp_repr.emit(&mut ArpPacket::new_unchecked(buf)),
+-                    EthernetProtocol::Arp,
+-                );
++                match target {
++                    IpAddress::Ipv4(target) => {
++                        let Some(ip_address) = self.ip_address else {
++                            return;
++                        };
++                        let arp_repr = ArpRepr::EthernetIpv4 {
++                            operation: ArpOperation::Request,
++                            source_hardware_addr: hardware_address,
++                            source_protocol_addr: ip_address.address(),
++                            target_hardware_addr: EthernetAddress::BROADCAST,
++                            target_protocol_addr: target,
++                        };
++
++                        self.send_to(
++                            EthernetAddress::BROADCAST,
++                            arp_repr.buffer_len(),
++                            |buf| arp_repr.emit(&mut ArpPacket::new_unchecked(buf)),
++                            EthernetProtocol::Arp,
++                        );
++                    }
++                    IpAddress::Ipv6(target) => {
++                        let on_link_global = self
++                            .ipv6
++                            .global
++                            .filter(|cidr| cidr.contains_addr(&target))
++                            .map(|cidr| cidr.address());
++                        let Some(src) = on_link_global.or(self.ipv6.link_local) else {
++                            return;
++                        };
++                        let group = solicited_node(target);
++                        self.send_ndisc(
++                            ipv6_multicast_mac(group),
++                            src,
++                            group,
++                            NdiscRepr::NeighborSolicit {
++                                target_addr: target,
++                                lladdr: Some(hardware_address.into()),
++                            },
++                        );
++                    }
++                }
+             }
+         }
+     }
+@@ -307,31 +576,43 @@ impl EthernetLink {
+ 
+ impl LinkDevice for EthernetLink {
+     fn send(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
++        let proto = ip_protocol_of(packet);
++        match next_hop {
++            // IPv4 multicast goes to the group's MAC address, 01:00:5e plus the
++            // low 23 bits of the group (RFC 1112), without ARP.
++            IpAddress::Ipv4(group) if group.is_multicast() && !group.is_broadcast() => {
++                let [_, b1, b2, b3] = group.octets();
++                self.send_to(
++                    EthernetAddress([0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3]),
++                    packet.len(),
++                    |buf| buf.copy_from_slice(packet),
++                    proto,
++                );
++                return;
++            }
++            IpAddress::Ipv6(group) if group.is_multicast() => {
++                self.send_to(
++                    ipv6_multicast_mac(group),
++                    packet.len(),
++                    |buf| buf.copy_from_slice(packet),
++                    proto,
++                );
++                return;
++            }
++            _ => {}
++        }
++
+         let local_broadcast = match self.ip_address.and_then(|cidr| cidr.broadcast()) {
+             Some(addr) => IpAddress::Ipv4(addr) == next_hop,
+             None => false,
+         };
+ 
+-        // IPv4 multicast goes to the group's MAC address, 01:00:5e plus the
+-        // low 23 bits of the group (RFC 1112), without ARP.
+-        let IpAddress::Ipv4(next_hop_v4) = next_hop;
+-        if next_hop_v4.is_multicast() && !next_hop_v4.is_broadcast() {
+-            let [_, b1, b2, b3] = next_hop_v4.octets();
+-            self.send_to(
+-                EthernetAddress([0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3]),
+-                packet.len(),
+-                |buf| buf.copy_from_slice(packet),
+-                EthernetProtocol::Ipv4,
+-            );
+-            return;
+-        }
+-
+         if local_broadcast || next_hop.is_broadcast() {
+             self.send_to(
+                 EthernetAddress::BROADCAST,
+                 packet.len(),
+                 |buf| buf.copy_from_slice(packet),
+-                EthernetProtocol::Ipv4,
++                proto,
+             );
+             return;
+         }
+@@ -344,12 +625,7 @@ impl LinkDevice for EthernetLink {
+                     self.handle_missing_neighbor(next_hop, packet, now)
+                 } else {
+                     let mac = e.get().hardware_address;
+-                    self.send_to(
+-                        mac,
+-                        packet.len(),
+-                        |buf| buf.copy_from_slice(packet),
+-                        EthernetProtocol::Ipv4,
+-                    )
++                    self.send_to(mac, packet.len(), |buf| buf.copy_from_slice(packet), proto)
+                 }
+             }
+         }
+@@ -362,17 +638,22 @@ impl LinkDevice for EthernetLink {
+ 
+         let mut input_buffer = std::mem::replace(&mut self.input_buffer, Vec::new());
+         loop {
+-            if let Err(e) = self.network_file.read(&mut input_buffer) {
+-                if e.kind() != ErrorKind::WouldBlock {
+-                    error!("Failed to read ethernet device on link {}", self.name);
+-                } else {
+-                    // No packet to read but we check if we have arp to send
+-                    self.send_arp(now);
++            let len = match self.network_file.read(&mut input_buffer) {
++                Ok(len) => len,
++                Err(e) => {
++                    if e.kind() != ErrorKind::WouldBlock {
++                        error!("Failed to read ethernet device on link {}", self.name);
++                    } else {
++                        // No packet to read but we check if we have arp or a
++                        // router solicitation to send
++                        self.send_arp(now);
++                        self.send_router_solicitation(now);
++                    }
++                    self.input_buffer = input_buffer;
++                    return None;
+                 }
+-                self.input_buffer = input_buffer;
+-                return None;
+-            }
+-            let packet = EthernetFrame::new_unchecked(&input_buffer[..]);
++            };
++            let packet = EthernetFrame::new_unchecked(&input_buffer[..len]);
+             let Ok(repr) = EthernetRepr::parse(&packet) else {
+                 debug!("Dropped incomming frame on {} (Malformed)", self.name);
+                 continue;
+@@ -392,7 +673,18 @@ impl LinkDevice for EthernetLink {
+             match repr.ethertype {
+                 EthernetProtocol::Ipv4 => {
+                     self.input_buffer = input_buffer;
+-                    return Some(EthernetFrame::new_unchecked(&self.input_buffer[..]).payload());
++                    return Some(
++                        EthernetFrame::new_unchecked(&self.input_buffer[..len]).payload(),
++                    );
++                }
++                EthernetProtocol::Ipv6 => {
++                    if self.process_ndisc(packet.payload(), now) {
++                        continue;
++                    }
++                    self.input_buffer = input_buffer;
++                    return Some(
++                        EthernetFrame::new_unchecked(&self.input_buffer[..len]).payload(),
++                    );
+                 }
+                 EthernetProtocol::Arp => self.process_arp(packet.payload(), now),
+                 _ => continue,
+@@ -414,7 +706,11 @@ impl LinkDevice for EthernetLink {
+     }
+ 
+     fn set_mac_address(&mut self, addr: EthernetAddress) {
+-        self.hardware_address = Some(addr)
++        self.hardware_address = Some(addr);
++        self.ipv6.link_local = Some(eui64_address(
++            Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 0),
++            addr,
++        ));
+     }
+ 
+     fn ip_address(&self) -> Option<IpCidr> {
+@@ -422,7 +718,16 @@ impl LinkDevice for EthernetLink {
+     }
+ 
+     fn set_ip_address(&mut self, addr: IpCidr) {
+-        let IpCidr::Ipv4(addr) = addr;
+-        self.ip_address = Some(addr);
++        if let IpCidr::Ipv4(addr) = addr {
++            self.ip_address = Some(addr);
++        }
++    }
++
++    fn ipv6_config(&self) -> Option<Ipv6Config> {
++        Some(Ipv6Config {
++            link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
++            global: self.ipv6.global,
++            router: self.ipv6.router,
++        })
+     }
+ }
+diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
+index e36e331..620da3e 100644
+--- a/netstack/src/link/mod.rs
++++ b/netstack/src/link/mod.rs
+@@ -4,7 +4,16 @@ pub mod loopback;
+ use std::rc::Rc;
+ 
+ use smoltcp::time::Instant;
+-use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
++use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv6Address, Ipv6Cidr};
++
++/// IPv6 addresses of a link: its link-local address and what stateless
++/// autoconfiguration learned from router advertisements
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Ipv6Config {
++    pub link_local: Ipv6Cidr,
++    pub global: Option<Ipv6Cidr>,
++    pub router: Option<Ipv6Address>,
++}
+ 
+ /// Represent a link layer device (eth0, loopback...)
+ pub trait LinkDevice {
+@@ -29,6 +38,11 @@ pub trait LinkDevice {
+ 
+     fn ip_address(&self) -> Option<IpCidr>;
+     fn set_ip_address(&mut self, addr: IpCidr);
++
++    /// IPv6 addresses of this link, if it has any
++    fn ipv6_config(&self) -> Option<Ipv6Config> {
++        None
++    }
+ }
+ 
+ #[derive(Default)]
+diff --git a/netstack/src/router/mod.rs b/netstack/src/router/mod.rs
+index e3d19e9..9d51fe1 100644
+--- a/netstack/src/router/mod.rs
++++ b/netstack/src/router/mod.rs
+@@ -74,6 +74,10 @@ impl Router {
+ 
+     pub fn dispatch(&mut self, now: Instant) {
+         while let Ok(((), packet)) = self.tx_buffer.dequeue() {
++            if packet.first().map_or(false, |b| b >> 4 == 6) {
++                Self::dispatch_ipv6(&self.devices, &self.route_table, packet, now);
++                continue;
++            }
+             if let Ok(mut packet) = smoltcp::wire::Ipv4Packet::new_checked(packet) {
+                 let dst_addr = IpAddress::Ipv4(packet.dst_addr());
+                 if packet.dst_addr().is_broadcast() {
+@@ -101,10 +105,11 @@ impl Router {
+                         continue;
+                     };
+ 
+-                    let IpAddress::Ipv4(src) = rule.src;
+-                    if src != packet.src_addr() {
+-                        packet.set_src_addr(src);
+-                        packet.fill_checksum()
++                    if let IpAddress::Ipv4(src) = rule.src {
++                        if src != packet.src_addr() {
++                            packet.set_src_addr(src);
++                            packet.fill_checksum()
++                        }
+                     }
+ 
+                     dev.send(next_hop, packet.into_inner(), now);
+@@ -114,6 +119,38 @@ impl Router {
+     }
+ }
+ 
++impl Router {
++    /// IPv6 keeps the source address smoltcp chose: it is part of the
++    /// checksum of every upper layer.
++    fn dispatch_ipv6(
++        devices: &RefCell<DeviceList>,
++        route_table: &RefCell<RouteTable>,
++        packet: &[u8],
++        now: Instant,
++    ) {
++        let Ok(ipv6) = smoltcp::wire::Ipv6Packet::new_checked(packet) else {
++            return;
++        };
++        let dst = ipv6.dst_addr();
++        let dst_addr = IpAddress::Ipv6(dst);
++        let route_table = route_table.borrow();
++        let Some(rule) = route_table.lookup_rule(&dst_addr) else {
++            warn!("No route found for destination: {}", dst_addr);
++            return;
++        };
++        let next_hop = match rule.via {
++            Some(via) if !dst.is_multicast() => via,
++            _ => dst_addr,
++        };
++        let mut devices = devices.borrow_mut();
++        let Some(dev) = devices.get_mut(&rule.dev) else {
++            warn!("Device {} not found", rule.dev);
++            return;
++        };
++        dev.send(next_hop, packet, now);
++    }
++}
++
+ impl Device for Router {
+     type RxToken<'a> = RxToken<'a>;
+ 
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index c7d7916..b64e8f3 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -15,6 +15,7 @@ use smoltcp::socket::AnySocket;
+ use smoltcp::time::{Duration, Instant};
+ use smoltcp::wire::{
+     EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address,
++    Ipv6Address, Ipv6Cidr,
+ };
+ use syscall::data::TimeSpec;
+ use syscall::{self, Error as SyscallError};
+@@ -27,7 +28,7 @@ use self::udp::UdpScheme;
+ use crate::error::{Error, Result};
+ use crate::link::ethernet::EthernetLink;
+ use crate::link::loopback::LoopbackDevice;
+-use crate::link::{DeviceList, LinkDevice};
++use crate::link::{DeviceList, Ipv6Config, LinkDevice};
+ use crate::router::route_table::{RouteTable, Rule};
+ use crate::router::Router;
+ use crate::scheme::smoltcp::iface::SocketSet as SmoltcpSocketSet;
+@@ -56,6 +57,10 @@ fn getcfg(key: &str) -> Result<String> {
+ pub struct Smolnetd {
+     router_device: Tracer<Router>,
+     iface: Interface,
++    devices: Rc<RefCell<DeviceList>>,
++    route_table: Rc<RefCell<RouteTable>>,
++    /// The IPv6 configuration of eth0 that the interface and routes have
++    ipv6_applied: Option<Ipv6Config>,
+     time_file: File,
+ 
+     socket_set: Rc<RefCell<SocketSet>>,
+@@ -88,6 +93,7 @@ impl Smolnetd {
+             //This is a placeholder IP for DHCP
+             IpCidr::new(IpAddress::v4(0, 0, 0, 0), 8),
+             IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8),
++            IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 1), 128),
+         ];
+ 
+         let default_gw = Ipv4Address::from_str(getcfg("ip_router").unwrap().trim())
+@@ -118,6 +124,12 @@ impl Smolnetd {
+             Rc::clone(loopback.name()),
+             "127.0.0.1".parse().unwrap(),
+         ));
++        route_table.borrow_mut().insert_rule(Rule::new(
++            "::1/128".parse().unwrap(),
++            None,
++            Rc::clone(loopback.name()),
++            "::1".parse().unwrap(),
++        ));
+ 
+         let mut eth0 = EthernetLink::new("eth0", unsafe {
+             File::from_raw_fd(network_file.into_raw() as RawFd)
+@@ -129,6 +141,9 @@ impl Smolnetd {
+ 
+         Ok(Smolnetd {
+             iface: Rc::clone(&iface),
++            devices: Rc::clone(&devices),
++            route_table: Rc::clone(&route_table),
++            ipv6_applied: None,
+             router_device: network_device,
+             socket_set: Rc::clone(&socket_set),
+             timer: ::std::time::Instant::now(),
+@@ -229,7 +244,77 @@ impl Smolnetd {
+         Ok(())
+     }
+ 
++    /// Brings the interface's addresses and the routes in line with the IPv6
++    /// configuration of eth0 (link-local address, SLAAC address, router).
++    fn sync_ipv6(&mut self) {
++        let current = self
++            .devices
++            .borrow()
++            .get("eth0")
++            .and_then(|dev| dev.ipv6_config());
++        if current == self.ipv6_applied {
++            return;
++        }
++        let old = std::mem::replace(&mut self.ipv6_applied, current);
++        let mut iface = self.iface.borrow_mut();
++        let mut route_table = self.route_table.borrow_mut();
++
++        let link_local_net: IpCidr = "fe80::/64".parse().unwrap();
++        let multicast_net: IpCidr = "ff00::/8".parse().unwrap();
++        let default_net: IpCidr = "::/0".parse().unwrap();
++        let network = |cidr: Ipv6Cidr| {
++            let mut octets = cidr.address().octets();
++            octets[8..].fill(0);
++            IpCidr::Ipv6(Ipv6Cidr::new(Ipv6Address::from(octets), cidr.prefix_len()))
++        };
++
++        if let Some(old) = old {
++            let mut cidrs = vec![IpCidr::Ipv6(old.link_local)];
++            cidrs.extend(old.global.map(IpCidr::Ipv6));
++            iface.update_ip_addrs(|addrs| addrs.retain(|addr| !cidrs.contains(addr)));
++            iface
++                .routes_mut()
++                .update(|routes| routes.retain(|route| !route.is_ipv6_gateway()));
++            route_table.remove_rule(link_local_net);
++            route_table.remove_rule(multicast_net);
++            route_table.remove_rule(default_net);
++            if let Some(global) = old.global {
++                route_table.remove_rule(network(global));
++            }
++        }
++
++        if let Some(new) = current {
++            let dev: Rc<str> = "eth0".into();
++            let link_local = IpAddress::Ipv6(new.link_local.address());
++            let src = new
++                .global
++                .map_or(link_local, |global| IpAddress::Ipv6(global.address()));
++            iface.update_ip_addrs(|addrs| {
++                let _ = addrs.push(IpCidr::Ipv6(new.link_local));
++                if let Some(global) = new.global {
++                    let _ = addrs.push(IpCidr::Ipv6(global));
++                }
++            });
++            route_table.insert_rule(Rule::new(link_local_net, None, dev.clone(), link_local));
++            route_table.insert_rule(Rule::new(multicast_net, None, dev.clone(), link_local));
++            if let Some(global) = new.global {
++                route_table.insert_rule(Rule::new(network(global), None, dev.clone(), src));
++            }
++            if let Some(router) = new.router {
++                route_table.insert_rule(Rule::new(
++                    default_net,
++                    Some(IpAddress::Ipv6(router)),
++                    dev,
++                    src,
++                ));
++                let _ = iface.routes_mut().add_default_ipv6_route(router);
++            }
++        }
++        info!("eth0 IPv6: {:?}", current);
++    }
++
+     fn poll(&mut self) -> Result<Duration> {
++        self.sync_ipv6();
+         let timeout = {
+             let mut iter_limit = 10usize;
+             let mut iface = self.iface.borrow_mut();
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index 9921e53..554dafd 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -201,10 +201,17 @@ fn mk_root_node(
+                         || {
+                             let res = match devices.borrow().get("eth0") {
+                                 Some(dev) => {
+-                                    match dev.ip_address() {
++                                    let mut res = match dev.ip_address() {
+                                         Some(addr) => format!("{addr}\n"),
+                                         None => "Not configured\n".into(),
++                                    };
++                                    if let Some(v6) = dev.ipv6_config() {
++                                        res += &format!("{}\n", v6.link_local);
++                                        if let Some(global) = v6.global {
++                                            res += &format!("{global}\n");
++                                        }
+                                     }
++                                    res
+                                 }
+                                 None => "Device not found\n".into(),
+                             };
+@@ -217,7 +224,8 @@ fn mk_root_node(
+                             if cur_value.is_none() {
+                                 let cidr = IpCidr::from_str(line)
+                                     .map_err(|_| SyscallError::new(syscall::EINVAL))?;
+-                                if !cidr.address().is_unicast() {
++                                // IPv6 addresses come from autoconfiguration only, for now
++                                if !cidr.address().is_unicast() || !matches!(cidr, IpCidr::Ipv4(_)) {
+                                     return Err(SyscallError::new(syscall::EINVAL));
+                                 }
+                                 *cur_value = Some(cidr);
+@@ -233,8 +241,10 @@ fn mk_root_node(
+ 
+                                     let mut route_table = route_table.borrow_mut();
+                                     if let Some(old_addr) = dev.ip_address() {
+-                                        let IpCidr::Ipv4(old_v4_cidr) = old_addr;
+-                                        let old_network = IpCidr::Ipv4(old_v4_cidr.network());
++                                        let old_network = match old_addr {
++                                            IpCidr::Ipv4(old_v4_cidr) => IpCidr::Ipv4(old_v4_cidr.network()),
++                                            other => other,
++                                        };
+ 
+                                         route_table.remove_rule(old_network);
+                                         route_table.remove_rule(ipv4_multicast());
+@@ -251,8 +261,10 @@ fn mk_root_node(
+                                     // job to find give this source.
+                                     iface.borrow_mut().update_ip_addrs(|addrs| addrs.insert(0, cidr).unwrap());
+ 
+-                                    let IpCidr::Ipv4(v4_cidr) = cidr;
+-                                    let network_cidr = IpCidr::Ipv4(v4_cidr.network());
++                                    let network_cidr = match cidr {
++                                        IpCidr::Ipv4(v4_cidr) => IpCidr::Ipv4(v4_cidr.network()),
++                                        other => other,
++                                    };
+                                     route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()));
+                                     // Multicast groups (mDNS, SSDP) are reached on this link even
+                                     // without a default route.
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,226 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:48:05 +0100
+Subject: [PATCH] netstack: IPv4 multicast
+
+Join and leave IPv4 multicast groups with IP_ADD_MEMBERSHIP and
+IP_DROP_MEMBERSHIP (setsockopt level IPPROTO_IP, which relibc passes as a
+third metadata word). smoltcp's multicast feature then reports the groups
+with IGMP and accepts their packets. The Ethernet link accepts multicast
+frames and sends IPv4 multicast to 01:00:5e plus the group's low 23 bits
+without ARP; the router sends multicast on the route's device, not through
+its gateway. Memberships are counted per scheme and not left when a socket
+closes.
+---
+ netstack/Cargo.toml               |  2 +-
+ netstack/src/link/ethernet.rs     | 20 +++++++++--
+ netstack/src/router/mod.rs        |  5 +--
+ netstack/src/scheme/netcfg/mod.rs | 10 +++++-
+ netstack/src/scheme/socket.rs     | 57 ++++++++++++++++++++++++++++++-
+ 5 files changed, 87 insertions(+), 7 deletions(-)
+
+diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
+index 520f7d9..f965d19 100644
+--- a/netstack/Cargo.toml
++++ b/netstack/Cargo.toml
+@@ -27,7 +27,7 @@ default-features = false
+ features = [
+     "std",
+     "medium-ethernet", "medium-ip",
+-    "proto-ipv4",
++    "proto-ipv4", "multicast",
+     "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
+     "iface-max-addr-count-8",
+     "log"
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 5f32a47..b778a21 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -312,6 +312,20 @@ impl LinkDevice for EthernetLink {
+             None => false,
+         };
+ 
++        // IPv4 multicast goes to the group's MAC address, 01:00:5e plus the
++        // low 23 bits of the group (RFC 1112), without ARP.
++        let IpAddress::Ipv4(next_hop_v4) = next_hop;
++        if next_hop_v4.is_multicast() && !next_hop_v4.is_broadcast() {
++            let [_, b1, b2, b3] = next_hop_v4.octets();
++            self.send_to(
++                EthernetAddress([0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3]),
++                packet.len(),
++                |buf| buf.copy_from_slice(packet),
++                EthernetProtocol::Ipv4,
++            );
++            return;
++        }
++
+         if local_broadcast || next_hop.is_broadcast() {
+             self.send_to(
+                 EthernetAddress::BROADCAST,
+@@ -364,8 +378,10 @@ impl LinkDevice for EthernetLink {
+                 continue;
+             };
+ 
+-            // We let EMPTY_MAC pass because somehow this is the mac used when net=redir is used
+-            if !repr.dst_addr.is_broadcast()
++            // We let EMPTY_MAC pass because somehow this is the mac used when net=redir is used.
++            // Broadcast and multicast frames pass; the interface drops packets for
++            // multicast groups it has not joined.
++            if !repr.dst_addr.is_multicast()
+                 && repr.dst_addr != EMPTY_MAC
+                 && repr.dst_addr != hardware_address
+             {
+diff --git a/netstack/src/router/mod.rs b/netstack/src/router/mod.rs
+index 3cfd0a2..e3d19e9 100644
+--- a/netstack/src/router/mod.rs
++++ b/netstack/src/router/mod.rs
+@@ -88,9 +88,10 @@ impl Router {
+                         continue;
+                     };
+ 
++                    // Multicast leaves on the route's device, never through its gateway.
+                     let next_hop = match rule.via {
+-                        Some(via) => via,
+-                        None => dst_addr,
++                        Some(via) if !packet.dst_addr().is_multicast() => via,
++                        _ => dst_addr,
+                     };
+ 
+                     let mut devices = self.devices.borrow_mut();
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index f344e28..9921e53 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -34,6 +34,10 @@ fn gateway_cidr() -> IpCidr {
+     IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0)
+ }
+ 
++fn ipv4_multicast() -> IpCidr {
++    "224.0.0.0/4".parse().unwrap()
++}
++
+ fn parse_route(value: &str, route_table: &RouteTable) -> SyscallResult<Rule> {
+     let mut parts = value.split_whitespace();
+     let cidr_str = parts.next().ok_or(SyscallError::new(syscall::EINVAL))?;
+@@ -233,6 +237,7 @@ fn mk_root_node(
+                                         let old_network = IpCidr::Ipv4(old_v4_cidr.network());
+ 
+                                         route_table.remove_rule(old_network);
++                                        route_table.remove_rule(ipv4_multicast());
+                                         route_table.change_src(old_addr.address(), cidr.address());
+                                         iface.borrow_mut().update_ip_addrs(|addrs| addrs.retain(|addr| *addr != old_addr))
+                                     }
+@@ -248,7 +253,10 @@ fn mk_root_node(
+ 
+                                     let IpCidr::Ipv4(v4_cidr) = cidr;
+                                     let network_cidr = IpCidr::Ipv4(v4_cidr.network());
+-                                    route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()))
++                                    route_table.insert_rule(Rule::new(network_cidr, None, dev.name().clone(), cidr.address()));
++                                    // Multicast groups (mDNS, SSDP) are reached on this link even
++                                    // without a default route.
++                                    route_table.insert_rule(Rule::new(ipv4_multicast(), None, dev.name().clone(), cidr.address()))
+                                 }
+                                 notifier.borrow_mut().schedule_notify("ifaces/eth0/addr/list");
+                                 notifier.borrow_mut().schedule_notify("route/list");
+diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
+index 2251f6f..254bce8 100644
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -13,6 +13,7 @@ use redox_scheme::scheme::{register_scheme_inner, Op, SchemeSync};
+ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::HandleMap;
+ use smoltcp::socket::AnySocket;
++use smoltcp::wire::Ipv4Address;
+ use syscall::data::TimeSpec;
+ use syscall::flag::{EVENT_READ, EVENT_WRITE};
+ use syscall::schemev2::NewFdFlags;
+@@ -30,9 +31,15 @@ use crate::Smolnetd;
+ const SO_RCVBUF: usize = 8;
+ const SO_SNDBUF: usize = 7;
+ 
++const IPPROTO_IP: u64 = 0;
++const IP_ADD_MEMBERSHIP: usize = 35;
++const IP_DROP_MEMBERSHIP: usize = 36;
++
+ pub struct Context {
+     pub iface: Interface,
+     pub route_table: Rc<RefCell<RouteTable>>,
++    /// Joined IPv4 multicast groups and how many joins each has
++    pub multicast_groups: BTreeMap<Ipv4Address, usize>,
+ }
+ 
+ pub struct NullFile {
+@@ -298,7 +305,11 @@ where
+             scheme_data: SocketT::new_scheme_data(),
+             scheme_file,
+             _phantom_socket: PhantomData,
+-            context: Context { iface, route_table },
++            context: Context {
++                iface,
++                route_table,
++                multicast_groups: BTreeMap::new(),
++            },
+         };
+         let cap_id = scheme.scheme_root()?;
+         register_scheme_inner(&scheme.scheme_file, name, cap_id)?;
+@@ -436,6 +447,47 @@ where
+         }
+     }
+ 
++    /// Socket options of level IPPROTO_IP. Group memberships belong to the
++    /// interface, counted over all sockets of this scheme; closing a socket
++    /// does not leave its groups.
++    fn set_ip_option(&mut self, name: usize, payload: &[u8]) -> SyscallResult<usize> {
++        let join = match name {
++            IP_ADD_MEMBERSHIP => true,
++            IP_DROP_MEMBERSHIP => false,
++            _ => return Ok(0),
++        };
++        // struct ip_mreq or ip_mreqn: the group comes first, in network byte order
++        let Some(&[a, b, c, d]) = payload.get(..4) else {
++            return Err(SyscallError::new(EINVAL));
++        };
++        let group = Ipv4Address::new(a, b, c, d);
++        if !group.is_multicast() || group.is_broadcast() {
++            return Err(SyscallError::new(EINVAL));
++        }
++
++        let mut iface = self.context.iface.borrow_mut();
++        let groups = &mut self.context.multicast_groups;
++        if join {
++            let count = groups.entry(group).or_insert(0);
++            if *count == 0 {
++                iface
++                    .join_multicast_group(group)
++                    .map_err(|_| SyscallError::new(syscall::ENOBUFS))?;
++            }
++            *count += 1;
++        } else {
++            let Some(count) = groups.get_mut(&group) else {
++                return Err(SyscallError::new(syscall::EADDRNOTAVAIL));
++            };
++            *count -= 1;
++            if *count == 0 {
++                groups.remove(&group);
++                let _ = iface.leave_multicast_group(group);
++            }
++        }
++        Ok(0)
++    }
++
+     fn call_inner(
+         &mut self,
+         fd: usize,
+@@ -452,6 +504,9 @@ where
+             // TODO
+             // SocketCall::Bind => self.handle_bind(id, &payload),
+             // SocketCall::Connect => self.handle_connect(id, &payload),
++            SocketCall::SetSockOpt if metadata.get(2) == Some(&IPPROTO_IP) => {
++                self.set_ip_option(metadata[1] as usize, payload)
++            }
+             SocketCall::SetSockOpt => {
+                 // currently not used
+                 // self.handle_setsockopt(id, metadata[1] as i32, &payload)
+-- 
+2.54.0 (Apple Git-157)
+
