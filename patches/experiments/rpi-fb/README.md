@@ -32,6 +32,13 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (branch `graphics-vsync`): the `RPI_FB*` settings also from the
   firmware's command line (`cmdline.txt`), so a test can set them without
   typing at the bootloader menu.
+- [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
+  (branch `graphics-dma-order`): the kernel hands out physically
+  contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
+  buddy allocator instead of 11). Without it, dumb buffers above 4 MiB
+  (1824x984 is 7 MiB, 1920x1200 9 MiB) never get DMA memory, however much
+  is free, and fall back to CPU blits (`dumb buffer … in normal memory:
+  Out of memory`).
 
 ## What `rpi-fbd` does
 

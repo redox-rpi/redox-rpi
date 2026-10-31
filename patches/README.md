@@ -43,6 +43,7 @@ each one expects to come before it:
 | `0022` | `experiments/dwc2-interrupts/base/` | `dwc2d` waits for its interrupt (after `rtl8152`); kernel `0004`–`0006` in the same experiment |
 | `0023` | `experiments/serial-rx/base/` | getty keeps input the PTY does not take yet (#28); kernel `0007` in the same experiment |
 | `0024`–`0029`, `0036`–`0037` | `experiments/rpi-fb/base/` | `rpi-firmwared` property file and the display driver `rpi-fbd` ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)); `0027` DMA blits (branch `graphics-fb3`), `0028`–`0029` for Orbital (branch `graphics-gui`), `0036` vsync after a flip, `0037` settings from `cmdline.txt` (branch `graphics-vsync`) |
+| `0049` | `experiments/rpi-fb/kernel/` | kernel: physically contiguous blocks up to 16 MiB, for `rpi-fbd`'s DMA dumb buffers above 4 MiB (branch `graphics-dma-order`, [#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
 
 Combinations that build: `sdhost-driver` + `rtl8152` (release candidate
 v0.2.0-alpha, in this order), each with `ldso-diagnostics` and `timesync`.
