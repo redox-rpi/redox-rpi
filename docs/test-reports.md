@@ -3569,3 +3569,66 @@ across the step.
 
 Raw output: homenodellm `~/pitest-tools/t121/` (`X-boot.txt`, `X-pitest.txt`, `X-dd.txt`).
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-457-gfd3a726+x7d9f` (test 109 step 7, drive test and WL_ON)
+
+Real Pi 3B+ over netboot. Test 109 step 7 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**With WL_ON on, the Bluetooth chip starts: it drives its TX line high and sends
+bytes back. Without WL_ON it stays silent.** WL_ON was `0` at boot. With
+WL_ON 1, GPIO 33 (the chip's TX) went high 1 ms after BT_ON and stayed high,
+and CTS went from 1 to 0. With flow `none`, 7 bytes came back after HCI Reset:
+`10 10 10 13 80 00 f0`. That is not an `04 0e …` event, which per the reading
+guide points at a wrong baud rate. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-457-gfd3a726+x7d9f/harddrive.img` (no manifest),
+with stable's bootloader. Boot log:
+`bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`.
+
+- Before `bt diag`: `cat /scheme/rpi-firmware/wifi_power` → `0`;
+  `bt_power_config` → `direction out, polarity 0, term_en 0, pull_up 0, state 0`.
+- (a) `bt diag`:
+
+```
+gpio 30: mode alt5, level 1, pull up
+gpio 31: mode alt5, level 1, pull none
+gpio 32: mode alt5, level 1, pull none
+gpio 33: mode alt5, level 1, pull up
+gpio 43: mode alt0, level 0, pull unknown
+gpio 43 sampled 200 times: 97 high, 103 low
+lpo: enabled 1, busy 1, source 1, divi 585, divf 3840, rate_hz 32768, ctl 0x00000291, div 0x00249f00
+bt_power: 0
+bt_power_config before: direction out, polarity 0, term_en 0, pull_up 0, state 0
+wifi_power_config before: direction out, polarity 0, term_en 0, pull_up 0, state 0
+drive test, WL_ON as found: BT_ON 0: gpio 30 1, gpio 33 0
+drive test, WL_ON as found: BT_ON 1, 5551 samples in 2 s: gpio 30 low 0 (never), gpio 33 high 0 (never)
+wifi_power: 1
+drive test, WL_ON 1: BT_ON 0: gpio 30 1, gpio 33 1
+drive test, WL_ON 1: BT_ON 1, 7409 samples in 2 s: gpio 30 low 0 (never), gpio 33 high 7409 (first after 1 ms)
+power: cycled
+bt_power_config after: direction out, polarity 0, term_en 0, pull_up 0, state 1
+wifi_power_config after: direction out, polarity 0, term_en 0, pull_up 0, state 1
+uart: core clock 250000000 Hz, 115313 baud
+flow auto:
+before: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+after: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+received: nothing
+flow auto-low:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+received: nothing
+flow none:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+received 7 bytes: 10 10 10 13 80 00 f0
+no answer with any flow setting
+```
+
+- `cat /scheme/btuart/status` afterwards: `cts_line 0, rts_status 1, tx_fifo 0,
+  rx_fifo 0, tx_done 1, lsr 0x60, msr 0x10, cntl 0x3f, stat 0x0000034e`.
+- (b) not run: `bt diag` counts no flow setting as answered.
+- One note: with WL_ON 1 and BT_ON 0, GPIO 33 already read 1. GPIO 30 never
+  went low in either case.
+
+Reading: the chip needs WL_ON. Next is the UART side: the baud rate, and why
+`auto`/`auto-low` see nothing while `none` gets bytes. Step 4 still waits for the
+user's OK. Stable image restored afterwards.
