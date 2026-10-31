@@ -1,4 +1,4 @@
-From 6888448ff6b404a2fbaebacfccf691b7c2c641ac Mon Sep 17 00:00:00 2001
+From f8c60d2dff9c6232c59dd1bde97943ad0b784e09 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 11:48:23 +0100
 Subject: [PATCH] dwc2d: ask again for a reply shorter than the fields read
@@ -16,7 +16,7 @@ indexing past the end.
  2 files changed, 43 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 316df76..3f38d24 100644
+index 279d8eb..dfc5d19 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -25,6 +25,8 @@ pub enum Error {
@@ -29,10 +29,10 @@ index 316df76..3f38d24 100644
  
  #[derive(Clone)]
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 2710053..5291911 100644
+index 1b97738..624907b 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
-@@ -122,6 +122,43 @@ impl<'a> Bus<'a> {
+@@ -158,6 +158,43 @@ impl Bus {
          }
      }
  
@@ -76,7 +76,7 @@ index 2710053..5291911 100644
      /// A control request with a data stage towards the device.
      pub(crate) fn request_out(
          &mut self,
-@@ -169,7 +206,7 @@ impl<'a> Bus<'a> {
+@@ -212,7 +249,7 @@ impl Bus {
          // The first 8 bytes of the device descriptor hold the max packet
          // size of endpoint 0. High-speed devices always use 64.
          let initial_max_packet = if speed == Speed::High { 64 } else { 8 };
@@ -84,8 +84,8 @@ index 2710053..5291911 100644
 +        let head = self.request_min(0, initial_max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8, 8)?;
          let max_packet = u16::from(head[7]);
  
-         let address = self.next_address;
-@@ -180,7 +217,7 @@ impl<'a> Bus<'a> {
+         let address = self.free_address()?;
+@@ -222,7 +259,7 @@ impl Bus {
          }
          sleep(Duration::from_millis(10));
  
@@ -94,7 +94,7 @@ index 2710053..5291911 100644
          let device = Device {
              address,
              speed,
-@@ -211,7 +248,7 @@ impl<'a> Bus<'a> {
+@@ -254,7 +291,7 @@ impl Bus {
      }
  
      fn port_status(&mut self, hub: u8, max_packet: u16, speed: Speed, port: u16) -> Result<(u16, u16), Error> {
@@ -103,7 +103,7 @@ index 2710053..5291911 100644
          Ok((u16::from_le_bytes([s[0], s[1]]), u16::from_le_bytes([s[2], s[3]])))
      }
  
-@@ -224,7 +261,7 @@ impl<'a> Bus<'a> {
+@@ -267,7 +304,7 @@ impl Bus {
          hub_tt: Option<(u8, u8)>,
      ) -> Result<(), Error> {
          let indent = "  ".repeat(depth);
@@ -111,7 +111,7 @@ index 2710053..5291911 100644
 +        let desc = self.request_min(hub, max_packet, speed, 0xA0, REQ_GET_DESCRIPTOR, u16::from(DESC_HUB) << 8, 0, 71, 6)?;
          let ports = u16::from(desc[2]);
          let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
-         println!("dwc2d: {indent}hub at address {hub}: {ports} ports");
+         // wHubCharacteristics, bits 1:0: 00 all ports powered together,
 -- 
 2.54.0 (Apple Git-157)
 
