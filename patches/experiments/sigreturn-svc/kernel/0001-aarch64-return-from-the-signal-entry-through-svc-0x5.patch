@@ -1,0 +1,93 @@
+From f2ea81cb82e3a4674d1b679173cf69b4c9360ac6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 09:38:22 +0000
+Subject: [PATCH] aarch64: return from the signal entry through svc #0x5352
+
+relibc's aarch64 signal entry returned with br x18, which clobbers x18, an
+ordinary register on Redox. Now it restores every register and ends with
+svc #0x5352: the kernel sets pc and x0 from the sigcontrol struct, enables
+signal delivery again if relibc asked for it (control flag 4), and delivers
+pending unblocked signals right away.
+---
+ src/arch/aarch64/interrupt/exception.rs |  8 ++++++
+ src/context/signal.rs                   | 38 +++++++++++++++++++++++++
+ 2 files changed, 46 insertions(+)
+
+diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
+index 29ac806c..75c10726 100644
+--- a/src/arch/aarch64/interrupt/exception.rs
++++ b/src/arch/aarch64/interrupt/exception.rs
+@@ -16,6 +16,10 @@ exception_stack!(synchronous_exception_at_el1_with_sp0, |stack| {
+     loop {}
+ });
+ 
++/// `svc` immediate of relibc's aarch64 signal return (redox-rpi #1); every
++/// other `svc` is a normal syscall.
++const SIGRETURN_IMM: u32 = 0x5352;
++
+ fn exception_code(esr: usize) -> u8 {
+     ((esr >> 26) & 0x3f) as u8
+ }
+@@ -188,6 +192,10 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
+     unsafe {
+         let code = exception_code(stack.iret.esr_el1);
+         match code {
++            0b010101 if iss(stack.iret.esr_el1) & 0xffff == SIGRETURN_IMM => {
++                let mut token = CleanLockToken::new();
++                crate::context::signal::sigreturn(stack, &mut token);
++            }
+             0b010101 => {
+                 let scratch = &stack.scratch;
+                 let elr = stack.iret.elr_el1;
+diff --git a/src/context/signal.rs b/src/context/signal.rs
+index cd6215c6..8cbb579f 100644
+--- a/src/context/signal.rs
++++ b/src/context/signal.rs
+@@ -22,6 +22,44 @@ pub fn set_saved_syscall_ret(ret: usize, token: &mut CleanLockToken) {
+     }
+ }
+ 
++/// Return from relibc's aarch64 signal entry (redox-rpi #1). The signal entry
++/// cannot jump back to the interrupted code without clobbering a register, so
++/// it restores all of them and ends with `svc #0x5352`. Here pc and x0 come
++/// from the sigcontrol struct; with SIGRETURN_UNINHIBIT set, signal delivery is
++/// enabled again and pending unblocked signals are delivered right away.
++#[cfg(target_arch = "aarch64")]
++pub fn sigreturn(stack: &mut crate::arch::interrupt::InterruptStack, token: &mut CleanLockToken) {
++    /// Control flag set by relibc; not in the syscall crate.
++    const SIGRETURN_UNINHIBIT: usize = 4;
++    {
++        let context_lock = context::current();
++        let context = context_lock.read(token.token());
++        let Some((thread_ctl, _, _)) = context.sigcontrol() else {
++            return;
++        };
++        // `signal_handler` below reads and writes these through
++        // `Context::regs_mut`, so store them volatile.
++        unsafe {
++            core::ptr::write_volatile(
++                core::ptr::addr_of_mut!(stack.iret.elr_el1),
++                thread_ctl.saved_ip.get(),
++            );
++            core::ptr::write_volatile(
++                core::ptr::addr_of_mut!(stack.scratch.x0),
++                thread_ctl.saved_archdep_reg.get(),
++            );
++        }
++        let flags = thread_ctl.control_flags.load(Ordering::Acquire);
++        if flags & SIGRETURN_UNINHIBIT != 0 {
++            thread_ctl.control_flags.store(
++                flags & !(SIGRETURN_UNINHIBIT | SigcontrolFlags::INHIBIT_DELIVERY.bits()),
++                Ordering::Release,
++            );
++        }
++    }
++    signal_handler(token);
++}
++
+ pub fn signal_handler(token: &mut CleanLockToken) {
+     let context_lock = context::current();
+     let context = context_lock.upgradeable_read(token.token());
+-- 
+2.53.0
+

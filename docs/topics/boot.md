@@ -10,6 +10,20 @@
 
 ## In progress
 
+- [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time. After the bootloader: [PR #85](https://github.com/redox-rpi/redox-rpi/pull/85)
+  (`boot-time`: bootloader wait 1 s, parallel init; login 21 s after reset
+  instead of 33.7 s) and the USB session's PR #69 (`dwc2d-boottime`).
+  Before Redox, branch `boot-time-2`: no U-Boot countdown (2 s) and no
+  firmware `boot_delay` (1 s by default). QEMU: login 2–5 s sooner. The
+  test Pi loads firmware and U-Boot from its SD card (the TFTP serial
+  directory changed nothing, test #134), and U-Boot cannot save settings
+  there (`Bad device specification mmc 0`), so Pi test #134 now copies two
+  files onto the network-boot card at the card-swap visit of #18 and #72. Also on the branch: the network-boot image is
+  192 MiB instead of 256 (71 MB free in QEMU; less to unpack and copy, more
+  RAM), Pi test #142. Left as they are: U-Boot's USB start (2.8 s), the
+  LAN7800 link (1.7 s) and the 43 MB image download (3.8 s; gzip is at its
+  best, U-Boot has no zstd command).
+
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: passed on a
   Pi 3B+ as experiment `pi-clean-boot` (tests #14 and #5, 2026-10-28,
   keyboard checked in #5). Branch `clean-boot-default` makes it the
@@ -76,15 +90,16 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. QEMU passes;
-  Pi test #124 queued.
+  also says when the clock makes a certificate look invalid. Pi tests
+  #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
+  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
 
 ## Next
 
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
-- Packages (#44): Pi test #124 of `pkg-persist`, then a PR. The nightly
+- Packages (#44): the nightly
   run should publish our repository after a passing build; that needs
   `scripts/publish-pkg-repo.sh` on main (PR #75) and a step in the nightly
   script by its owner. Whether Redox's prebuilt programs run is #40
