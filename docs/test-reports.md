@@ -3958,3 +3958,79 @@ timesync: clock set to 2026-10-31 03:52:02 UTC from pool.ntp.org
 - Clean up: `rm -r /scheme/data/pkg`; `/scheme/data` is as before.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-459-g799ed17+x7d9f` (test 109 step 9, measured core clock)
+
+Real Pi 3B+ over netboot. Test 109 step 9 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**The measured core clock is 400 MHz (`core_clock` 400000000), and with it HCI
+Reset is answered correctly in `bt diag` (flow `auto-low` and `none`).
+`bt up` still fails**: with the default flow `auto` it gets no answer to Reset.
+With flow `none` it gets past Reset but stops at the next command (`1001`). The
+console logged up to 262 lost received bytes, which by the row's reading points
+at the polling receive thread. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-459-g799ed17+x7d9f/harddrive.img`, with the new
+stable's bootloader. Boot log:
+`bcm2835-btuartd: mini UART at 0x3f215000, 115207 baud (core 400 MHz)`.
+
+- (a) `core_clock` → `400000000`. `clocks` has `core 250000000 400000000`
+  (reported, max). `cat /scheme/btuart/clock` → `400000000` / `firmware`.
+- (b) `bt diag`, the lines after the drive test (pins, 32 kHz clock and the
+  WL_ON drive test are as in steps 7 and 8):
+
+```
+core clock idle: firmware reports 250000000, measures 399999000
+core clock under load: firmware reports 250000000, measures 400000000
+core clock after: firmware reports 250000000, measures 399999000
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud
+flow auto:
+before: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+after: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+received: nothing
+flow auto-low:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+flow none:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+answered with flow: auto-low, none
+baud sweep: cts_line 0 after 0 ms
+assumed core 250 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 275 MHz (firmware reports 250000000, measures 400000000): 18 0c 86 03 0c 80
+assumed core 300 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 325 MHz (firmware reports 250000000, measures 400000000): 08 03 28 60 00
+assumed core 350 MHz (firmware reports 250000000, measures 400000000): 0c c1 16 08 e0
+assumed core 375 MHz (firmware reports 250000000, measures 400000000): 04 10 01 00
+assumed core 400 MHz (firmware reports 250000000, measures 400000000): 04 0e 04 01 03 0c 00  <- Command Complete
+assumed core 450 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 500 MHz (firmware reports 250000000, measures 400000000): nothing
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115473 baud
+baud sweep answered for core MHz: 400
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115473 baud
+reset at the driver's clock, flow auto: nothing
+reset at the driver's clock, flow none: 04 0e 04 01 03 1c 01  <- Command Complete
+```
+
+  The core clock stays at 400 MHz idle, under load and after. The last reset
+  answer is `03 1c 01` instead of `03 0c 00`, a few bits off, after the baud
+  rate changed from 115207 to 115473.
+- (c) `bt up` → `uart: core clock 400000000 Hz set by firmware …, 115473 baud`,
+  `bt: no answer to HCI command 0c03`. `bt info` → no answer to `1001`.
+  `bt scan 10` → no answer to `0c01`. `bt inquiry 10` → no answer to `0401`.
+- (d) `echo 400000000 > /scheme/btuart/clock; bt up` → `… set by hand …`,
+  still no answer to `0c03`. `bt info` and `bt scan 10` have no answer.
+  `cat /scheme/btuart/clock` → `400000000` / `hand` (the hand setting stays).
+  The flow was `auto`.
+- Extra, not in the row: `echo none > /scheme/btuart/flow; bt up` → **no answer to
+  `1001`**, so Reset (`0c03`) was answered and it failed one command later.
+  `bt info` → no answer to `1001`. `bt scan 10` → `scan: LE for 10 s`, no answer to `200c`.
+- (e) `cat /scheme/btuart/clock` → `400000000 hand`; `status` → `cts_line 0,
+  rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1, lsr 0x60, msr 0x10, cntl 0x03,
+  stat 0x0000030e`. **262 `received bytes lost` lines** on the serial console
+  (up to `262 received bytes lost so far`).
+
+No `firmware: …, 323 records` line: `bt up` never got that far. Step 4 still
+waits for the user's OK. Stable image restored afterwards.
