@@ -23,3 +23,8 @@ scripts/build-image.sh --experiment pi-heartbeat
 ```
 
 ## Results
+
+QEMU raspi3b (`-smp 4`), 2026-10-31, test build `v0.3.0-dev-892-gfaec08e+xccf1`
+(`relibc-tests`, `timesync`, `self-exit-status`, `futex-wait-lock`,
+`pi-heartbeat`): all 4 CPUs write their heartbeat (`[hb 0 12]` … `[hb 3 12]`),
+the relibc suite has 18 failures, all known, none new.
