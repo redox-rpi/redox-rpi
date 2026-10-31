@@ -388,6 +388,19 @@ git).
   430 MiB, then 407 MiB; devsh kept working after each run; the soft
   temperature limit was reached (`throttled` 0x00080008 at the end).
   [Report](../test-reports.md).
+- **Writing speed, 2026-10-31 (branch `assistant-speed`):** the answers at
+  0.15 tokens per second (#112, #153) all ran with 4 threads; with 3 they
+  stayed at 1.06 to 1.44. Heat alone (1.4 to 1.2 GHz) would cost about
+  15 %. The likely cost is candle's worker pool: a worker that runs out of
+  spins sleeps, and on Redox a sleep lasts until the next timer tick, up
+  to 10 ms, while a token needs about 200 matrix products. rinfer now
+  prints per written token the model time, the sampling time and the pool
+  sleeps. QEMU with 3 threads: spin limit 25,000 (the default) gave 438
+  sleeps per token and 0.44 tokens per second, 2,500,000 gave 1 sleep and
+  1.05. Pi test #159 compares spin limits from 25,000 to 25,000,000 and 4
+  threads. Not worth it now: a smaller quantization (the weights are
+  already Q4_0) and a shorter answer cap (answers are 24 to 33 tokens, the
+  cap is 200); the q4_0 kernel only if the model time stays high.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
