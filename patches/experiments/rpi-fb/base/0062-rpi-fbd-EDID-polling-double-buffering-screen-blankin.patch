@@ -1,0 +1,505 @@
+From 6c8aa12fd714f31d46fac1a78326f6375b0e5c2d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 10:50:40 +0000
+Subject: [PATCH] rpi-fbd: EDID polling, double buffering, screen blanking
+
+Every 5 seconds rpi-fbd reads the EDID again; when it changes (a monitor
+came, went or was replaced) it updates the connector and sends a hotplug
+event. With room in the GPU memory it asks for two screens one below the
+other, draws into the hidden one and moves the firmware visible window
+to it. A client that sets no mode blanks the screen through the firmware.
+---
+ drivers/graphics/rpi-fbd/src/firmware.rs |  38 +++++-
+ drivers/graphics/rpi-fbd/src/main.rs     |  84 +++++++++++---
+ drivers/graphics/rpi-fbd/src/scheme.rs   | 142 +++++++++++++++++++----
+ 3 files changed, 220 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/graphics/rpi-fbd/src/firmware.rs b/drivers/graphics/rpi-fbd/src/firmware.rs
+index 2ed37bf4..48dc81cd 100644
+--- a/drivers/graphics/rpi-fbd/src/firmware.rs
++++ b/drivers/graphics/rpi-fbd/src/firmware.rs
+@@ -14,9 +14,11 @@ const TAG_RESPONSE: u32 = 1 << 31;
+ const BUS_ALIAS: u32 = 0xC000_0000;
+ 
+ const TAG_ALLOCATE: u32 = 0x0004_0001;
++const TAG_BLANK_SCREEN: u32 = 0x0004_0002;
+ const TAG_GET_PHYSICAL_SIZE: u32 = 0x0004_0003;
+ const TAG_GET_PITCH: u32 = 0x0004_0008;
+ const TAG_GET_EDID_BLOCK: u32 = 0x0003_0020;
++const TAG_GET_VC_MEMORY: u32 = 0x0001_0006;
+ const TAG_SET_PHYSICAL_SIZE: u32 = 0x0004_8003;
+ const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
+ const TAG_SET_DEPTH: u32 = 0x0004_8005;
+@@ -40,6 +42,8 @@ pub struct Mode {
+     pub height: u32,
+     /// In pixels
+     pub stride: u32,
++    /// 2 with a second buffer below the first (double buffering), else 1
++    pub buffers: u32,
+ }
+ 
+ #[derive(Debug)]
+@@ -117,12 +121,20 @@ impl Firmware {
+         (w != 0 && h != 0).then_some((w, h))
+     }
+ 
+-    /// A new 32-bit framebuffer of this size. The firmware scales it to the
+-    /// monitor's mode, which stays the one it chose at power-on.
+-    pub fn set_mode(&self, width: u32, height: u32) -> Result<Mode, String> {
++    /// Size of the GPU's memory (`gpu_mem` in config.txt), in bytes.
++    pub fn gpu_memory(&self) -> Option<usize> {
++        let mut msg = Message::new();
++        let i = msg.tag(TAG_GET_VC_MEMORY, &[], 2);
++        self.call(&mut msg).then(|| msg.words[i + 1] as usize)
++    }
++
++    /// A new 32-bit framebuffer of this size, with `buffers` screens one
++    /// below the other (2 for double buffering). The firmware scales it to
++    /// the monitor's mode, which stays the one it chose at power-on.
++    pub fn set_mode(&self, width: u32, height: u32, buffers: u32) -> Result<Mode, String> {
+         let mut msg = Message::new();
+         let phys = msg.tag(TAG_SET_PHYSICAL_SIZE, &[width, height], 2);
+-        msg.tag(TAG_SET_VIRTUAL_SIZE, &[width, height], 2);
++        let virt = msg.tag(TAG_SET_VIRTUAL_SIZE, &[width, height * buffers], 2);
+         msg.tag(TAG_SET_VIRTUAL_OFFSET, &[0, 0], 2);
+         let depth = msg.tag(TAG_SET_DEPTH, &[32], 1);
+         msg.tag(TAG_SET_PIXEL_ORDER, &[PIXEL_ORDER_RGB], 1);
+@@ -138,20 +150,36 @@ impl Firmware {
+             width: msg.words[phys],
+             height: msg.words[phys + 1],
+             stride: msg.words[pitch] / 4,
++            buffers,
+         };
+         if msg.words[depth] != 32
++            || msg.words[virt + 1] != mode.height * buffers
+             || mode.base == 0
+             || mode.base % 4096 != 0
+             || mode.width == 0
+             || mode.height == 0
+             || mode.stride < mode.width
+-            || mode.size < mode.stride as usize * mode.height as usize * 4
++            || mode.size < mode.stride as usize * mode.height as usize * 4 * buffers as usize
+         {
+             return Err(format!("{width}x{height}: firmware gave {mode:x?}"));
+         }
+         Ok(mode)
+     }
+ 
++    /// Shows the screen that starts at line `y` of the virtual framebuffer.
++    pub fn set_offset(&self, y: u32) -> bool {
++        let mut msg = Message::new();
++        msg.tag(TAG_SET_VIRTUAL_OFFSET, &[0, y], 2);
++        self.call(&mut msg)
++    }
++
++    /// Screen off (true) or on.
++    pub fn blank(&self, off: bool) -> bool {
++        let mut msg = Message::new();
++        msg.tag(TAG_BLANK_SCREEN, &[off as u32], 1);
++        self.call(&mut msg)
++    }
++
+     /// The monitor's EDID, base block and extensions. None without a monitor
+     /// or when the firmware does not have the tag.
+     pub fn edid(&self) -> Option<Vec<u8>> {
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index a65b5303..60fd8c9d 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -8,25 +8,38 @@
+ //! display, so `fbcond` hands the console over from `vesad`, which only has
+ //! the boot framebuffer.
+ //!
+-//! At start it keeps the boot framebuffer (`FRAMEBUFFER_*` from U-Boot's
+-//! bootloader or `rpi-boot-stub`) when the firmware still shows it, so the
+-//! handover does not flicker. `RPI_FB=WIDTHxHEIGHT` in the environment
++//! At start it asks for a double-buffered framebuffer when two screens fit
++//! well into the GPU memory; otherwise it keeps the boot framebuffer
++//! (`FRAMEBUFFER_*` from U-Boot's bootloader or `rpi-boot-stub`) when the
++//! firmware still shows it, so the handover does not flicker. Every few
++//! seconds it reads the EDID again and tells clients when a monitor came or
++//! went. `RPI_FB=WIDTHxHEIGHT` in the environment
+ //! makes that size the preferred mode, `RPI_FB=off` leaves the display to
+ //! `vesad`.
+ 
+ use std::env;
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Write};
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::io::AsRawFd;
++use std::time::Duration;
+ 
+-use driver_graphics::GraphicsScheme;
++use driver_graphics::{GraphicsAdapter, GraphicsScheme};
+ use event::{user_data, EventQueue};
+ 
+ use crate::firmware::{Firmware, Mode};
+-use crate::scheme::{RpiAdapter, Screen};
++use crate::scheme::{new_mode, RpiAdapter, Screen};
+ 
+ mod firmware;
+ mod scheme;
+ 
+ /// When the firmware reports no display size.
+ const DEFAULT_SIZE: (u32, u32) = (1024, 768);
++/// How often the EDID is read again, for a monitor turned on later.
++const EDID_POLL: Duration = Duration::from_secs(5);
++/// Double buffering at start only when both screens take at most this part
++/// of the GPU memory; the firmware needs the rest.
++const DOUBLE_SHARE: usize = 2;
+ 
+ fn main() {
+     common::init();
+@@ -57,9 +70,20 @@ fn boot_framebuffer() -> Option<Mode> {
+         width,
+         height,
+         stride,
++        buffers: 1,
+     })
+ }
+ 
++/// Arms the timer `EDID_POLL` from now.
++fn arm(time: &mut File) {
++    let mut now = syscall::TimeSpec::default();
++    if time.read(&mut now).is_err() {
++        return;
++    }
++    now.tv_sec += EDID_POLL.as_secs() as i64;
++    let _ = time.write(&now);
++}
++
+ fn daemon(daemon: daemon::Daemon) -> ! {
+     let rpi_fb = env::var("RPI_FB").unwrap_or_default();
+     if rpi_fb == "off" {
+@@ -90,10 +114,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         None => println!("rpi-fbd: no EDID (no monitor, or the firmware does not read it)"),
+     }
+ 
+-    // Keep the boot framebuffer while the firmware still shows it at that
+-    // size; otherwise (direct boot without one) ask for a new one.
++    // Two screens if they fit well; else keep the boot framebuffer while the
++    // firmware still shows it at that size; else (direct boot without one)
++    // ask for a new one.
++    let size = display_size.unwrap_or(DEFAULT_SIZE);
++    let double_fits = firmware.gpu_memory().is_some_and(|gpu| {
++        size.0 as usize * size.1 as usize * 4 * 2 <= gpu / DOUBLE_SHARE
++    });
+     let (screen, display_size) = match boot {
+-        Some(mode) if display_size == Some((mode.width, mode.height)) => {
++        Some(mode) if !double_fits && display_size == Some((mode.width, mode.height)) => {
+             println!(
+                 "rpi-fbd: boot framebuffer {}x{} stride {} at {:#x}",
+                 mode.width, mode.height, mode.stride, mode.base
+@@ -101,15 +130,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             (Screen::map(mode), (mode.width, mode.height))
+         }
+         _ => {
+-            let size = display_size.unwrap_or(DEFAULT_SIZE);
+-            match firmware.set_mode(size.0, size.1) {
+-                Ok(mode) => {
+-                    println!(
+-                        "rpi-fbd: {}x{} stride {} at {:#x}",
+-                        mode.width, mode.height, mode.stride, mode.base
+-                    );
+-                    (Screen::map(mode), size)
+-                }
++            match new_mode(&firmware, size.0, size.1) {
++                Ok(mode) => (Screen::map(mode), size),
+                 Err(err) => {
+                     eprintln!("rpi-fbd: no framebuffer: {err}");
+                     daemon.ready();
+@@ -126,12 +148,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         display_size,
+         requested,
+         edid,
++        blanked: false,
+     };
+     let mut scheme = GraphicsScheme::new(adapter, "display.rpi".to_owned(), false);
+ 
+     user_data! {
+         enum Source {
+             Scheme,
++            Time,
+         }
+     }
+ 
+@@ -145,6 +169,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         )
+         .unwrap();
+ 
++    let mut time = OpenOptions::new()
++        .read(true)
++        .write(true)
++        .custom_flags(syscall::O_NONBLOCK as i32)
++        .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))
++        .expect("rpi-fbd: failed to open /scheme/time");
++    event_queue
++        .subscribe(time.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++        .unwrap();
++    arm(&mut time);
++
+     daemon.ready();
+ 
+     let all = [Source::Scheme];
+@@ -158,6 +193,19 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     .tick()
+                     .expect("rpi-fbd: failed to handle scheme events");
+             }
++            Source::Time => {
++                if scheme.adapter_mut().poll_edid() {
++                    let (adapter, objects) = scheme.adapter_and_kms_objects_mut();
++                    let ids = objects.connector_ids().to_vec();
++                    for &id in &ids {
++                        adapter.probe_connector(objects, id).unwrap();
++                    }
++                    for id in ids {
++                        scheme.notify_connector_hotplug(id);
++                    }
++                }
++                arm(&mut time);
++            }
+         }
+     }
+ 
+@@ -165,7 +213,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ }
+ 
+ /// The monitor name descriptor (tag 0xfc) of the EDID base block.
+-fn monitor_name(edid: &[u8]) -> Option<String> {
++pub fn monitor_name(edid: &[u8]) -> Option<String> {
+     edid[54..126].chunks_exact(18).find_map(|d| {
+         (d[..3] == [0, 0, 0] && d[3] == 0xfc).then(|| {
+             String::from_utf8_lossy(&d[5..18])
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 8f55839b..56fe8a1f 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -34,12 +34,20 @@ pub struct RpiAdapter {
+     /// `RPI_FB=WIDTHxHEIGHT`: offered first, so `fbcond` takes it.
+     pub requested: Option<(u32, u32)>,
+     pub edid: Option<Vec<u8>>,
++    /// Screen off through the firmware (a client set no mode).
++    pub blanked: bool,
+ }
+ 
+-/// The framebuffer the firmware scans out, mapped into this process.
++/// The framebuffer the firmware scans out, mapped into this process. With
++/// two buffers, `set_plane` draws into the one not shown and then moves the
++/// firmware's visible window to it, so a frame never shows half drawn.
+ pub struct Screen {
+     pub mode: Mode,
+     mem: common::PhysBorrowed,
++    /// The buffer shown now (0 or 1)
++    front: u32,
++    /// What changed in the last frame: the other buffer still lacks it.
++    last_damage: Option<Damage>,
+ }
+ 
+ impl fmt::Debug for Screen {
+@@ -50,42 +58,92 @@ impl fmt::Debug for Screen {
+ 
+ impl Screen {
+     pub fn map(mode: Mode) -> syscall::Result<Self> {
+-        let len = mode.stride as usize * mode.height as usize * 4;
++        let len = mode.stride as usize * mode.height as usize * 4 * mode.buffers as usize;
+         let mem = common::PhysBorrowed::map(
+             mode.base,
+             len.next_multiple_of(PAGE_SIZE),
+             common::Prot::RW,
+             common::MemoryType::WriteCombining,
+         )?;
+-        Ok(Screen { mode, mem })
++        Ok(Screen {
++            mode,
++            mem,
++            front: 0,
++            last_damage: None,
++        })
++    }
++
++    /// The first pixel of buffer `i`.
++    fn pixels(&self, i: u32) -> *mut u32 {
++        let offset = i as usize * self.mode.stride as usize * self.mode.height as usize;
++        unsafe { self.mem.as_ptr().cast::<u32>().add(offset) }
+     }
+ 
+-    fn pixels(&self) -> *mut u32 {
+-        self.mem.as_ptr().cast()
++    /// The buffer to draw into: the hidden one with two buffers.
++    fn back(&self) -> u32 {
++        if self.mode.buffers == 2 { 1 - self.front } else { 0 }
+     }
+ 
+     fn clear(&mut self) {
+-        let len = self.mode.stride as usize * self.mode.height as usize;
+-        unsafe { ptr::write_bytes(self.pixels(), 0, len) };
++        let len = self.mode.stride as usize * self.mode.height as usize * self.mode.buffers as usize;
++        unsafe { ptr::write_bytes(self.pixels(0), 0, len) };
++        self.last_damage = None;
+     }
+ }
+ 
+ impl RpiAdapter {
+-    /// A new framebuffer of this size from the firmware, in place of the old.
+-    fn switch(&mut self, width: u32, height: u32) -> syscall::Result<()> {
+-        let mode = self.firmware.set_mode(width, height).map_err(|err| {
++    /// A new framebuffer of this size from the firmware, in place of the old:
++    /// double buffered if the GPU memory has room for two, else single.
++    pub fn switch(&mut self, width: u32, height: u32) -> syscall::Result<()> {
++        let mode = new_mode(&self.firmware, width, height).map_err(|err| {
+             eprintln!("rpi-fbd: {err}");
+             syscall::Error::new(syscall::EINVAL)
+         })?;
+         let mut screen = Screen::map(mode)?;
+         screen.clear();
+-        println!(
+-            "rpi-fbd: {}x{} stride {} at {:#x}",
+-            mode.width, mode.height, mode.stride, mode.base
+-        );
+         self.screen = screen;
+         Ok(())
+     }
++
++    /// Asks the firmware for the EDID again. True when it changed: a monitor
++    /// came, went or was replaced.
++    pub fn poll_edid(&mut self) -> bool {
++        let edid = self.firmware.edid();
++        if edid == self.edid {
++            return false;
++        }
++        match &edid {
++            Some(edid) => println!(
++                "rpi-fbd: monitor connected: {} (EDID {} bytes)",
++                crate::monitor_name(edid).unwrap_or_else(|| "without a name".to_owned()),
++                edid.len()
++            ),
++            None => println!("rpi-fbd: monitor gone (no EDID)"),
++        }
++        self.edid = edid;
++        true
++    }
++}
++
++/// Two buffers, or one when the GPU memory (16 MiB with `gpu_mem=16`) has
++/// no room for two. A failed request leaves no framebuffer, so the single
++/// one is asked for again either way.
++pub fn new_mode(firmware: &Firmware, width: u32, height: u32) -> Result<Mode, String> {
++    let mode = firmware
++        .set_mode(width, height, 2)
++        .or_else(|err| {
++            println!("rpi-fbd: no double buffering ({err})");
++            firmware.set_mode(width, height, 1)
++        })?;
++    println!(
++        "rpi-fbd: {}x{} stride {} at {:#x}, {}",
++        mode.width,
++        mode.height,
++        mode.stride,
++        mode.base,
++        if mode.buffers == 2 { "double buffered" } else { "single buffer" }
++    );
++    Ok(mode)
+ }
+ 
+ #[derive(Debug)]
+@@ -146,6 +204,9 @@ impl GraphicsAdapter for RpiAdapter {
+             objects.set_connector_edid(id, edid.clone());
+         }
+         let mut connector = objects.get_connector(id)?.lock().unwrap();
++        if self.edid.is_none() {
++            connector.edid = None;
++        }
+         connector.connection = KmsConnectorStatus::Connected;
+         connector.connector_type = drm_sys::DRM_MODE_CONNECTOR_HDMIA;
+ 
+@@ -190,10 +251,21 @@ impl GraphicsAdapter for RpiAdapter {
+         state: KmsCrtcState<Self>,
+         _connector_ids: &[KmsObjectId],
+     ) -> syscall::Result<()> {
+-        if let Some(mode) = &state.mode {
+-            let size = (u32::from(mode.hdisplay), u32::from(mode.vdisplay));
+-            if size != (self.screen.mode.width, self.screen.mode.height) {
+-                self.switch(size.0, size.1)?;
++        match &state.mode {
++            Some(mode) => {
++                let size = (u32::from(mode.hdisplay), u32::from(mode.vdisplay));
++                if size != (self.screen.mode.width, self.screen.mode.height) {
++                    self.switch(size.0, size.1)?;
++                }
++                if self.blanked && self.firmware.blank(false) {
++                    self.blanked = false;
++                }
++            }
++            // No mode: the client turns the display off.
++            None => {
++                if !self.blanked && self.firmware.blank(true) {
++                    self.blanked = true;
++                }
+             }
+         }
+         *crtc.state.lock().unwrap() = state;
+@@ -211,7 +283,27 @@ impl GraphicsAdapter for RpiAdapter {
+             return Ok(());
+         }
+         match &new_plane_state.fb {
+-            Some(buffer) => buffer.buffer.sync(&mut self.screen, damage),
++            Some(buffer) => {
++                let back = self.screen.back();
++                // The back buffer missed the last frame's changes too.
++                let damage = match (damage, self.screen.last_damage) {
++                    (Some(now), Some(last)) if self.screen.mode.buffers == 2 => Some(union(now, last)),
++                    (Some(_), None) if self.screen.mode.buffers == 2 => None,
++                    (damage, _) => damage,
++                };
++                buffer.buffer.sync(&mut self.screen, back, damage);
++                if self.screen.mode.buffers == 2 {
++                    if self.firmware.set_offset(back * self.screen.mode.height) {
++                        self.screen.front = back;
++                    }
++                    self.screen.last_damage = damage.or(Some(Damage {
++                        x: 0,
++                        y: 0,
++                        width: self.screen.mode.width,
++                        height: self.screen.mode.height,
++                    }));
++                }
++            }
+             None => self.screen.clear(),
+         }
+         *plane.state.lock().unwrap() = new_plane_state;
+@@ -219,6 +311,14 @@ impl GraphicsAdapter for RpiAdapter {
+     }
+ }
+ 
++/// The smallest rectangle around both.
++fn union(a: Damage, b: Damage) -> Damage {
++    let (x, y) = (a.x.min(b.x), a.y.min(b.y));
++    let x2 = (a.x + a.width).max(b.x + b.width);
++    let y2 = (a.y + a.height).max(b.y + b.height);
++    Damage { x, y, width: x2 - x, height: y2 - y }
++}
++
+ /// A dumb buffer in normal memory; `set_plane` copies it to the screen.
+ #[derive(Debug)]
+ pub struct GraphicScreen {
+@@ -247,7 +347,7 @@ impl GraphicScreen {
+ 
+     /// Copies the damaged rectangle, clipped to both sizes: a client may
+     /// still draw at the old size right after a mode change.
+-    fn sync(&self, screen: &mut Screen, damage: Option<Damage>) {
++    fn sync(&self, screen: &mut Screen, buffer: u32, damage: Option<Damage>) {
+         let width = self.width.min(screen.mode.width as usize);
+         let height = self.height.min(screen.mode.height as usize);
+         let damage = damage
+@@ -262,7 +362,7 @@ impl GraphicScreen {
+         let (w, h) = (damage.width as usize, damage.height as usize);
+ 
+         let src = self.ptr.as_ptr() as *const u32;
+-        let dst = screen.pixels();
++        let dst = screen.pixels(buffer);
+         let stride = screen.mode.stride as usize;
+         for row in y..y + h {
+             unsafe {
+-- 
+2.53.0
+

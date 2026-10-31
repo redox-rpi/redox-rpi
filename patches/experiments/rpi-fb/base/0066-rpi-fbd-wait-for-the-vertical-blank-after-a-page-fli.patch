@@ -1,0 +1,179 @@
+From f4fb635b0fcef5aae5b269f434508964a83c04a4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 08:29:48 +0000
+Subject: [PATCH] rpi-fbd: wait for the vertical blank after a page flip
+
+---
+ drivers/graphics/rpi-fbd/src/firmware.rs | 11 +++++++
+ drivers/graphics/rpi-fbd/src/main.rs     |  4 +++
+ drivers/graphics/rpi-fbd/src/scheme.rs   | 42 ++++++++++++++++++++++++
+ init.initfs.d/40_rpi-fbd.service         |  1 +
+ 4 files changed, 58 insertions(+)
+
+diff --git a/drivers/graphics/rpi-fbd/src/firmware.rs b/drivers/graphics/rpi-fbd/src/firmware.rs
+index 48dc81cd..1b9b1a22 100644
+--- a/drivers/graphics/rpi-fbd/src/firmware.rs
++++ b/drivers/graphics/rpi-fbd/src/firmware.rs
+@@ -25,6 +25,9 @@ const TAG_SET_DEPTH: u32 = 0x0004_8005;
+ const TAG_SET_PIXEL_ORDER: u32 = 0x0004_8006;
+ const TAG_SET_ALPHA_MODE: u32 = 0x0004_8007;
+ const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
++/// Not in the firmware's tag list; Raspberry Pi's Linux fbdev driver uses
++/// it for `FBIO_WAITFORVSYNC`.
++const TAG_SET_VSYNC: u32 = 0x0004_800E;
+ 
+ /// "RGB" in the firmware's words: bytes B, G, R, x in memory, a
+ /// little-endian 0x00RRGGBB as Redox draws (the same as U-Boot asks for).
+@@ -173,6 +176,14 @@ impl Firmware {
+         self.call(&mut msg)
+     }
+ 
++    /// Waits for the display's next vertical blank. False when the
++    /// firmware does not know the tag (QEMU answers it with no value).
++    pub fn wait_vsync(&self) -> bool {
++        let mut msg = Message::new();
++        let i = msg.tag(TAG_SET_VSYNC, &[0], 1);
++        self.call(&mut msg) && Self::answered(&msg, i) && msg.words[i - 1] & !TAG_RESPONSE != 0
++    }
++
+     /// Screen off (true) or on.
+     pub fn blank(&self, off: bool) -> bool {
+         let mut msg = Message::new();
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index 0b67e6ae..f3a6703d 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -21,6 +21,9 @@
+ //! controller when it has a free channel; `RPI_FB_DMA=off` copies with the
+ //! CPU, `RPI_FB_BENCH=1` measures both at start and logs the blits every
+ //! few seconds.
++//!
++//! With two buffers it waits for the vertical blank after a flip before
++//! drawing into the buffer that was shown, unless `RPI_FB_VSYNC=off`.
+ 
+ use std::env;
+ use std::fs::{File, OpenOptions};
+@@ -178,6 +181,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         edid,
+         blanked: false,
+         dma: blit_dma(),
++        vsync: !env::var("RPI_FB_VSYNC").is_ok_and(|v| v == "off"),
+         stats: Default::default(),
+     };
+     let bench = env::var_os("RPI_FB_BENCH").is_some();
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 1dcb07c0..38ed17cf 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -42,6 +42,10 @@ pub struct RpiAdapter {
+     pub blanked: bool,
+     /// Blits with the DMA controller; None copies with the CPU.
+     pub dma: Option<BlitDma>,
++    /// Wait for the vertical blank after a flip before drawing into the
++    /// buffer that was shown; off with `RPI_FB_VSYNC=off` or when the
++    /// firmware does not have the tag.
++    pub vsync: bool,
+     pub stats: Stats,
+ }
+ 
+@@ -53,6 +57,8 @@ pub struct Stats {
+     dma_time: Duration,
+     cpu_bytes: usize,
+     cpu_time: Duration,
++    vsync_waits: u32,
++    vsync_time: Duration,
+ }
+ 
+ impl Stats {
+@@ -87,6 +93,9 @@ pub struct Screen {
+     front: u32,
+     /// What changed in the last frame: the other buffer still lacks it.
+     last_damage: Option<Damage>,
++    /// When the visible window last moved. The firmware moves it at its
++    /// next vertical blank, so until then the back buffer is still shown.
++    flipped: Option<Instant>,
+ }
+ 
+ impl fmt::Debug for Screen {
+@@ -109,6 +118,7 @@ impl Screen {
+             mem,
+             front: 0,
+             last_damage: None,
++            flipped: None,
+         })
+     }
+ 
+@@ -176,6 +186,13 @@ impl RpiAdapter {
+         if stats.cpu_bytes > 0 {
+             line += &format!(", CPU {}", rate(stats.cpu_bytes, stats.cpu_time));
+         }
++        if stats.vsync_waits > 0 {
++            line += &format!(
++                ", {} vsync waits, {:.1} ms on average",
++                stats.vsync_waits,
++                stats.vsync_time.as_secs_f64() * 1000.0 / stats.vsync_waits as f64
++            );
++        }
+         println!("{line}");
+     }
+ 
+@@ -399,6 +416,7 @@ impl GraphicsAdapter for RpiAdapter {
+         }
+         match &new_plane_state.fb {
+             Some(buffer) => {
++                self.wait_for_flip();
+                 let back = self.screen.back();
+                 // This frame's own changes, which the other buffer misses
+                 // next time.
+@@ -421,6 +439,7 @@ impl GraphicsAdapter for RpiAdapter {
+                 if self.screen.mode.buffers == 2 {
+                     if self.firmware.set_offset(back * self.screen.mode.height) {
+                         self.screen.front = back;
++                        self.screen.flipped = Some(Instant::now());
+                     }
+                     self.screen.last_damage = own.or(Some(Damage {
+                         x: 0,
+@@ -437,6 +456,29 @@ impl GraphicsAdapter for RpiAdapter {
+     }
+ }
+ 
++impl RpiAdapter {
++    /// With two buffers, the one to draw into was shown until the last
++    /// flip took effect. If that flip was less than a frame ago, wait for
++    /// the vertical blank, so the new frame does not tear into the picture.
++    fn wait_for_flip(&mut self) {
++        let Some(flipped) = self.screen.flipped.take() else {
++            return;
++        };
++        // 60 Hz plus a margin; older flips have taken effect.
++        if !self.vsync || flipped.elapsed() > Duration::from_millis(20) {
++            return;
++        }
++        let start = Instant::now();
++        if self.firmware.wait_vsync() {
++            self.stats.vsync_waits += 1;
++            self.stats.vsync_time += start.elapsed();
++        } else {
++            println!("rpi-fbd: no vsync from the firmware, frames may tear");
++            self.vsync = false;
++        }
++    }
++}
++
+ /// The smallest rectangle around both.
+ fn union(a: Damage, b: Damage) -> Damage {
+     let (x, y) = (a.x.min(b.x), a.y.min(b.y));
+diff --git a/init.initfs.d/40_rpi-fbd.service b/init.initfs.d/40_rpi-fbd.service
+index 46b117af..470c819a 100644
+--- a/init.initfs.d/40_rpi-fbd.service
++++ b/init.initfs.d/40_rpi-fbd.service
+@@ -17,5 +17,6 @@ inherit_envs = [
+     "RPI_FB",
+     "RPI_FB_DMA",
+     "RPI_FB_BENCH",
++    "RPI_FB_VSYNC",
+ ]
+ type = "notify"
+-- 
+2.53.0
+
