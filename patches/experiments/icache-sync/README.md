@@ -16,10 +16,16 @@ did that for user code:
   mapping in the calling process, and then switches the context to the
   new address space.
 
-User space cannot fix this alone: `SCTLR_EL1.UCI` is not set, and the
-Cortex-A53's instruction cache is VIPT and may alias, so even
-`ic ivau` by address would not be enough; it needs `ic ialluis`, which only
-EL1 may use. Linux does the same for VIPT instruction caches.
+User space cannot fix this alone for exec and `mprotect`: the code was
+written through another mapping (exec) or the kernel's linear mapping,
+and the Cortex-A53's instruction cache is VIPT and may alias, so it needs
+`ic ialluis`, which only EL1 may use. Linux does the same for VIPT
+instruction caches.
+
+`SCTLR_EL1.UCI` and `UCT` are set (by the bootloader), so a program that
+writes code into its own read-write-execute memory (a JIT) can do its own
+maintenance with `dc cvau` and `ic ivau`, as on Linux; `icachetest`'s
+`user-flush` test does that without a trap.
 
 QEMU does not model caches, and no crash so far was traced to stale
 instructions (the start crashes were the x18 bug, #1). This is a
@@ -36,9 +42,29 @@ Kernel patch `0001`:
   executable grant of the new address space, before the context runs in
   it.
 
+Kernel patch `0002`, the other ways code reaches an executable page:
+
+- `mmap` of a file with `PROT_EXEC` (`borrow_fmap`): the scheme filled the
+  pages as data;
+- a page fault in an executable grant that copies a frame (copy on write)
+  or takes a frame from a scheme.
+
+Fresh zeroed frames are left alone: exec fills a new program through such
+faults and syncs the whole address space at the switch, and a sync per
+fault made the QEMU loop 18 % slower for nothing.
+
 ```bash
 scripts/build-image.sh --experiment icache-sync
 ```
+
+## Stress test
+
+[`icachetest`](../icachetest/README.md) writes `movz w0, #n; ret` into a
+page as data, makes it executable (`mprotect` on a new page, `mprotect` on
+the same page, `mmap` of a file, user-space maintenance on a
+read-write-execute page) and counts rounds that return an old n. Build
+it into an image with `--experiment icachetest`, with and without this
+experiment.
 
 ## Result
 
@@ -63,5 +89,26 @@ main merged), three runs each, alternating:
 
 The difference (about 3 %) is within the noise of the shared build host.
 
-Real Pi 3B+, 2026-10-28, test 28: 0 of 1000 starts failed. The cost on
-the Pi, both builds of one base, is Pi test 127.
+Real Pi 3B+, 2026-10-28, test 28: 0 of 1000 starts failed.
+
+Real Pi 3B+, 2026-10-31, test 127 (`0001` only, both builds of one base):
+0 of 1000 starts failed with and without it; the `ls` loop is 1.3 %
+slower with it (about 2 ms per program start).
+
+QEMU, 2026-10-31, `v0.3.0-dev-801-gea8b5c2` with `icachetest`, without
+(`+x8a5e`) and with `icache-sync` (`+x9080`, `0001` and `0002`):
+
+- `icachetest 3000`: all four tests 0 stale rounds in both builds (QEMU
+  has no caches to get wrong; this shows the test and the patch work).
+- Loop (`ls` and `pwd` 300 times, `sha256sum` 100 times), four rounds
+  alternating, no exception: without 266, 288, 258, 302 s; with 306,
+  315, 298, 347 s (about 13 %).
+- Where the time goes (a diagnostic build counting syncs, boot plus 600
+  starts): 1151 `mprotect`, 833 exec, 0 fmap, 16 page faults. The exec
+  sync cleans about 900 pages (3.6 MB) per start, because exec copies
+  the whole program and `ld.so` on every start; that is `0001`'s cost,
+  which test 127 measured on the Pi. In QEMU, `ic ialluis` also throws
+  away QEMU's translated code, which a Cortex-A53 does not pay.
+
+Pi test 162 runs `icachetest` on both builds: without `icache-sync` it
+should show whether stale instructions really happen on the Pi.
