@@ -41,7 +41,7 @@ each one expects to come before it:
 Experiments apply after all default patches. Combinations that build:
 `sdhost-stats`, `timesync`, `ldso-diagnostics`.
 `rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
-`sdhost-boot`, `ctx-leak-fix`, `usb-hotplug`, `dwc2d-short-reply`, `cpu-ondemand`, `gpio`, `i2c` and `spi` are default patches now; the names are still accepted
+`sdhost-boot`, `ctx-leak-fix`, `usb-hotplug`, `dwc2d-short-reply`, `cpu-ondemand`, `gpio`, `i2c`, `spi` and `sigentry-thread-signals` (relibc `0008`, `0009`) are default patches now; the names are still accepted
 and do nothing.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
