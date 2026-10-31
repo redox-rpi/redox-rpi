@@ -1,0 +1,18 @@
+[package]
+name = "redox-fatfs2"
+description = "fatfsd: serve a FAT partition (the Pi boot partition) as a Redox scheme, on the fatfs crate; successor of redox-fatfs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "fatfsd"
+path = "src/main.rs"
+
+[dependencies]
+# MIT. Without its default "chrono" feature: new files get no timestamps.
+fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
+libc = "0.2"
+libredox = "0.1.25"
+redox-scheme = "0.12.0"
+redox_syscall = { version = "0.9.5", features = ["std"] }
