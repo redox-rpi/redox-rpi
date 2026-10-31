@@ -30,4 +30,19 @@ stick write kept a core busy.
 
 ## Tests
 
-- QEMU: see below.
+- QEMU, 2026-10-31, `v0.3.0-dev-449-g461061e+x885b` against the baseline
+  `v0.3.0-dev-441-g81d8d88+xf757` (#71's image), `scripts/measure-usb-cpu.sh`:
+
+  | step | baseline | wait-irq |
+  |---|---|---|
+  | idle 30 s, dwc2d CPU | 0.40 s | 0.33 s |
+  | stick read 64 MiB | 182 MB/s, 0.42 s | 128 MB/s, 0.49 s |
+  | stick write 32 MiB | 160 MB/s, 0.30 s | 117 MB/s, 0.34 s |
+  | TCP send 16 MiB | 0.20 MB/s, 57 s | 0.15 MB/s, 53 s |
+
+  QEMU finishes a stick chunk almost at once, so waiting costs more than
+  spinning there; on the Pi a 64 KiB chunk takes milliseconds of bus time.
+  TCP send in QEMU is slow either way (about 7 ms per frame). Boot and
+  devshd 3 of 3, `test-usb-storage.sh` 18/18, `test-hotplug.sh` 15/15,
+  `test-keyboard.sh` 1/1.
+- Pi: test #135, like for like against #71's image.
