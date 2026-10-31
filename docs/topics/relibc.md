@@ -19,6 +19,12 @@
   `t4-thread-signals`, patch `0002` fixes two more differences; Pi tests
   #37 and #68 pass. Draft PR #64 makes both patches default relibc
   `0008` and `0009` (stacked on #62).
+- [#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs (bash, vim, …) from the Redox package
+  repository: experiment `prebuilt-programs`, with experiment
+  `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
+  which these programs use. Pi test #45 passed (2026-10-29): nine
+  programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
+  PR #61.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
@@ -46,18 +52,29 @@
     succeeds (15 of 15 runs): the owner check reads a thread-local
     thread-ID cache that a new thread does not get zeroed. `tls-variant1`
     on the current base (branch `t-tls-mutex`,
-    `v0.3.0-dev-417-gd2482d8+x44a9`) fixes all four, but then
-    `pthread/exit` hangs (the main thread calls `pthread_exit` while a
-    detached thread runs; it passes 20 of 20 runs without the patch).
+    `v0.3.0-dev-417-gd2482d8+x44a9`) fixes all four. `pthread/exit`
+    fails on that image, but not because of the patch: kernel `0008`
+    (ctx-leak fix, #31) makes a process whose last thread ends with
+    `pthread_exit` report SIGKILL instead of 0. Every image with main
+    merged has it; without `0008` the test passes 20 of 20.
+    Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
+    [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
+    10 of 10 runs exit 0 and the #31 leak stays fixed. Pi test 133
+    passed (10 of 10 exit 0, no new suite failures).
   - `pthread/rwlock_randtest` does not hang: 1,000,000 lock operations
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
     single runs pass; they only fail sometimes under the suite's load.
+    With three busy loops on the 4 CPUs (QEMU, 2026-10-31,
+    `v0.3.0-dev-574-g55e47fb+xb3d9`) also 45 of 45, so plain CPU load
+    is not the trigger. Three full suite runs in one QEMU boot
+    (same build) and the Pi suite runs of tests 129 and 133: none of the
+    three failed. Not reproduced; they stay on the flaky list.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
-    with the `pthread/exit` hang, since stdio locking across threads is
-    broken without it; (2) the signal tests under load (job control in
+    (`tls-variant1`), since stdio locking across threads is broken without
+    it; (2) the signal tests under load (job control in
     bash, child handling in sshd); (3) `rwlock_randtest`'s runtime, a note
     in the list only.
 - No signal for exceptions on aarch64: relibc registered no exception
@@ -133,7 +150,8 @@ commits in `config/upstream.lock`.
   - Reproduce: relibc-tests patch `0005` (`pthread/cond_stress`), 3 of 21
     runs in QEMU `-smp 4`.
 - **Static TLS laid out like x86_64, aarch64** (experiment `tls-variant1`,
-  branch `t14-tls-layout`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); QEMU only so far).
+  branch `t-tls-mutex`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); Pi test 129 passed,
+  draft PR [#123](https://github.com/redox-rpi/redox-rpi/pull/123), stacked on #62).
   - Where: `ld.so` (`src/ld_so/`).
   - Broken: `ld.so` places the static TLS blocks of the program and the
     libraries loaded at start as on x86_64. aarch64 (TLS variant I)
@@ -159,6 +177,14 @@ commits in `config/upstream.lock`.
     `printf`. gcc evaluates arguments right to left on x86_64 and left to
     right on aarch64.
   - Fix: the patch moves the calls into separate statements.
+- Notes for the user's upstream reports on the x18 signal return
+  ([#127](https://github.com/redox-rpi/redox-rpi/issues/127), bug),
+  `clock_settime` ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)),
+  termios speeds ([#94](https://github.com/redox-rpi/redox-rpi/issues/94))
+  and `madvise`/socket options
+  ([#109](https://github.com/redox-rpi/redox-rpi/issues/109)), checked
+  against current relibc master:
+  [docs/upstream/relibc.md](../upstream/relibc.md).
 - Already reported: patch `0004` (x1/x2 swap in the signal entry) as
   [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309).
 
