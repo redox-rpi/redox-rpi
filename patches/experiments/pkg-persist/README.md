@@ -45,10 +45,14 @@ Also in this experiment:
   "not valid yet" (or expired), pkg says what year the clock is at and to
   set the clock first, instead of only the TLS error.
 
-The boot copy is a `oneshot` service: init waits for it, so the login
-prompt and the services after it see the packages. Its line ends with the
-time it took. Init reads its service files before the copy, so a service
-file that a package brings does not start at boot.
+The boot copy is a `oneshot` service, so a service that names
+`61_pkg-persist.service` in `requires_weak` starts only once the packages
+are in `/`. The login prompt does not wait: `30_getty_debug` depends only
+on `00_base.target`, so `redox login:` usually comes before the copy line
+(the line ends with the time the copy took). A program from the data
+partition typed in the first moments after login may not be there yet.
+Init has read its service files by then, so a service file that a package
+brings does not start at boot.
 
 Without a data partition (network boot without a card) `pkg-persist`
 fails at the pkg step and `restore` does nothing.
@@ -77,5 +81,6 @@ Test 124 with `v0.3.0-dev-462-g3783750+xc526` passes: `mv` on
 `/scheme/data` works, `pkg-persist install nano` copies 214 files and nano
 runs, and after `reboot` the boot service copies the same 214 files and
 nano runs again. A second `restore` copies nothing. The boot copy line came
-after `redox login:` because the service was still `oneshot_async`; it is
-a `oneshot` since.
+after `redox login:`: the login prompt does not depend on the data
+partition (see above). The service is a `oneshot` since, for services
+that depend on it.
