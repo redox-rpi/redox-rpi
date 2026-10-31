@@ -5641,3 +5641,40 @@ T40 DONE
   Bigger sets need a larger image or a disk.
 
 Stable image restored afterwards.
+
+## 2026-10-31: stable `v0.3.0-dev-533-g6c729cd+x9f76` (does the network stay up when idle)
+
+Real Pi 3B+ over netboot. Test 164 ([#92](https://github.com/redox-rpi/redox-rpi/issues/92)), Pi test agent.
+
+**Pass: the network stayed up for 62 minutes idle.** devsh answered all five
+readings (0, 15, 30, 47 and 62 min), the address stayed, and 180 of 180 TCP
+probes in the second half were answered. The serial console had no `netstack`,
+`dwc2d` or `Dropped` line. Two notes: the Pi does not answer ICMP echo from
+the build host, and netstack's memory grew by 1.1 MB in the hour. Stable as
+staged, reset over devsh; standard checks pass (0 of 300 starts failed).
+
+- **ICMP ping does not work here:** the build host has no `ping`, and
+  `ping.py` (ICMP datagram socket) got **0 of 180** answers from the Pi
+  (20:02:55 to 20:32:45). It also got 0 of 3 later while devsh answered; the
+  router 192.168.178.1 answers 2 of 2. So the Pi (or netstack) does not answer
+  echo requests from this host. I took that half as not measurable.
+- **Instead, minutes 32 to 62:** a TCP connect to closed port 9 every 10 s;
+  each reset counts as answered. Result: **180 of 180 answered**, 2.1 to 87.0 ms.
+- Readings over devsh (`uptime`; netstack and dwc2d ACTTIME and memory;
+  `eth0` address; `free` used):
+
+| uptime | netstack ACTTIME / mem | dwc2d ACTTIME / mem | eth0 | used |
+|---|---|---|---|---|
+| 1m 26s | 0.19 s / 3.59 MB | 1.52 s / 1.70 MB | 192.168.178.148/24 | 137600 |
+| 16m 29s | 0.70 s / 3.72 MB | 21.57 s / 1.70 MB | same | 137980 |
+| 31m 26s | 1.22 s / 3.84 MB | 41.50 s / 1.70 MB | same | 138368 |
+| 47m 36s | 1.78 s / 3.97 MB | 62.95 s / 1.70 MB | same | 138748 |
+| 1h 2m 26s | 2.29 s / **4.72 MB** | 82.62 s / 1.70 MB | same | 139984 |
+
+- netstack memory grows about 0.13 MB per 15 minutes, then +0.75 MB in the last
+  15 (the 180 probe connections). dwc2d stays flat at 1.70 MB but uses 1.33 s of
+  CPU per idle minute (about 2 %). `free` used grows 2.4 MB in the hour.
+- Serial: no `netstack`, `dwc2d` or `smolnetd` error or warning, no `Dropped`,
+  no panic.
+
+Stable image stays staged.
