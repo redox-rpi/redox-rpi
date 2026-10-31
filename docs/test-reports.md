@@ -5026,3 +5026,128 @@ Times are seconds after `kreset`, from `boot-timeline.py`
   checks with `--manifest` pass (0 of 300 starts failed). No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-764-gcf2025e+x9f76` (main cf2025e, start-crash recount)
+
+Real Pi 3B+ over netboot. Test 149 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), Pi test agent.
+
+**Pass: 0 of 3000 starts failed** (test 94 on `v0.3.0-dev-339`: 0 of 3000).
+Image `~/redox-rpi-t12/keep/t1-v0.3.0-dev-764-gcf2025e+x9f76.img`, manifest
+matches, stable bootloader. `scripts/pi-test.py 192.168.178.148 --starts 3000
+--manifest … --serial-log ~/redox-rpi/logs/serial.log --crash-log
+t149-crashes.jsonl`:
+
+```
+PASS version: v0.3.0-dev-764-gcf2025e+x9f76
+PASS manifest: build ID and libc.so hash match netboot-v0.3.0-dev-764-gcf2025e+x9f76.toml
+PASS ps: 51 processes (piped)
+PASS ps-tty: 51 lines straight to the terminal, rc=0
+PASS sdcard: write, read back, delete on /scheme/data
+PASS starts: 0 of 3000 failed
+```
+
+- The crash log stayed empty (no file written: no failed start, so no
+  FAR/ELR/ESR to report).
+- Serial log during the starts (16:17 to 16:25 UTC): **0** lines with `FATAL`,
+  `exception`, `panicked`, `Data abort` or `Instruction abort`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-773-g2ffa68b+x7f63` (timesync-harden, checked answers and several servers)
+
+Real Pi 3B+ over netboot. Test 152 (follow-up to [#51](https://github.com/redox-rpi/redox-rpi/issues/51)), Pi test agent.
+
+**Pass: every check as expected, and the standard checks pass.** Image
+`~/ntp-test/keep/ntp-v0.3.0-dev-773-g2ffa68b+x7f63.img`, manifest matches, stable
+bootloader. `fake-ntp.py 192.168.178.120 1800` from `origin/timesync-harden`
+(UDP 12301–12309). H = 192.168.178.120.
+
+**Boot** (serial):
+
+```
+timesync: clock set to 2026-10-31 16:17:43 UTC from the saved time
+timesync: clock set to 2026-10-31 16:27:07 UTC, offset +564.272 s (pool.ntp.org (139.177.202.26) +564.281 s, pool.ntp.org (162.254.225.152) +564.272 s, pool.ntp.org (67.223.208.241) +564.266 s)
+timerd: clock set by timesync, 2026-10-31 16:27:08 UTC
+```
+
+| step | result |
+|---|---|
+| (1) `timesync -n` | `offset +0.004 s (clock not set; pool.ntp.org (139.177.202.26) +0.009 s, pool.ntp.org (162.254.225.152) +0.004 s, pool.ntp.org (67.223.208.241) -0.007 s)` |
+| (2) `timesync -n H:12301 H:12305 H:12307` | `offset -0.007 s (… 12301 -0.007 s, 12305 +7199.993 s, 12307 -0.007 s)`: the +7200 s answer is outvoted |
+| (3a) 12302 | `server not synchronized (leap indicator 3)`, then `no time server answered within a minute (last: …)` |
+| (3b) 12303 | `kiss-of-death RATE`, then `no time server answered within a minute (last: …)` |
+| (3c) 12304 | `answer does not match the request`, then `no time server answered within a minute (last: …)` |
+| (3d) 12301 + 12305 | `two answers 7200 s apart, waiting for a third`, then `no time server answered within a minute (last: …)` |
+| (4) `timesync H:12305; date -u` | `clock set to 2026-10-31 18:29:41 UTC, offset +7199.994 s`; `date -u` `18:29:41` |
+| (4) `timesync; date -u` | `clock set to 2026-10-31 16:29:42 UTC, offset -7199.999 s` (three pool answers −7200.000, −7199.999, −7199.998 s); `date -u` `16:29:42`, host `16:29:47` (5 s later, after the command) |
+| `grep -c rate fake-ntp.log` | **1** |
+
+- The saved time was 9 min 24 s behind at boot (the Pi was off since the last
+  save); pool answers fixed it.
+- No panic. `fake-ntp.py` stopped afterwards.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-768-g7d71e64+x1258` (sigreturn-default, aarch64 signal return as default patches)
+
+Real Pi 3B+ over netboot. Test 154 ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)), Pi test agent.
+
+**Pass: normal boot to login with no `FATAL` or panic, four of four `sigregs`
+runs PASS, and the standard checks pass.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-768-g7d71e64+x1258.img`, manifest
+matches, stable bootloader.
+
+```
+### sigregs process --x18 -n 500  (13.0 s)
+process: sending from child 47 to 46
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 50 to 49
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs process -n 500  (20.1 s)
+process: sending from child 56 to 55
+PASS process: 500 signals, all registers kept
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+- `sigregs thread` not run (fails on main too until PR #64).
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-816-g7376c46+x4590` (assistant + devshd-accept, devshd under a memory-heavy run)
+
+Real Pi 3B+ over netboot. Test 153 ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)), Pi test agent.
+
+**Pass: devsh accepted a new connection after each of the three assistant runs.**
+The serial console's only `devshd:` line was the start-up `devshd: listening on
+port 2323`: no accept errors, no rebind, no session thread error. #126's
+`Connection refused` did not come back. Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-816-g7376c46+x4590.img`, manifest
+matches, stable bootloader. Standard checks pass (0 of 300 starts failed).
+Model on the card (341455552 bytes). 4 threads (`RAYON_NUM_THREADS=4`);
+`prompt.kv` removed before each run, so each run read the system prompt.
+
+| run | total (`date -u`) | prompt read | saved | answers | writing | new devsh `echo alive` |
+|---|---|---|---|---|---|---|
+| 1 | 16:48:58 → 16:53:14 (256 s) | 380 tokens in 167.2 s | 6.1 s | `It is Saturday, 31 October 2026, 16:52 UTC.`, `The current time is 16:52 UTC.` | 1.21, 0.72 t/s | **alive** at 16:53:14 |
+| 2 | 16:53:18 → 16:58:40 (322 s) | 166.1 s | 11.3 s | same, 16:56 UTC | 1.33, **0.15** t/s | **alive** at 16:58:40 |
+| 3 | 16:58:50 → 17:03:32 (283 s) | 174.4 s | 8.6 s | same, 17:02 UTC (second: `… 31 October 2026 at 17:02 UTC.`) | **0.16**, 0.87 t/s | **alive** at 17:03:33 |
+
+- `free` from a second devsh during run 2 (16:54:51): 725120 used, 145524 free
+  of 870644. That connection needed one retry (`no output for: echo start`),
+  then answered. After the runs: 254104 used, 616540 free.
+- Writing slowed to 0.15–0.16 t/s in two answers (#126 with 4 threads:
+  0.78 t/s). Both came after the chip reached its soft temperature limit
+  (below); the second devsh during run 2 may also have cost time.
+- End: temperature 61.2 °C, `throttled` `0x00080008` (soft temperature limit
+  reached and active).
+- No `oom`, no kernel panic, no `RELIBC PANIC`. `prompt.kv` removed; the model
+  kept.
+
+Stable image restored afterwards.
