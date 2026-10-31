@@ -70,25 +70,44 @@ OOM handling). So every large buffer counts, not only the ones in use.
 
 ### RAM the assistant needs
 
-Measured 2026-10-30 (`rinfer --serve` heap counter on the build host and
-in QEMU, Redox `free` in QEMU, which shows 912 MiB):
+Measured 2026-10-30 after the memory cuts (commit `29052d7`, smaller model
+file `Qwen3-0.6B-Q4_0e.gguf`; `rinfer` heap counter on the build host and
+in QEMU, Redox `free` in QEMU, which shows 912 MiB). Before the cuts in
+brackets.
 
 | Part | MiB |
 |---|---|
 | Redox at the shell (console, network) | 96 to 100 |
-| Model loaded, cache for 256 tokens | 468 (497 at the peak while loading) |
-| Each further 256 tokens of conversation (key/value cache, f32) | +56 |
-| System prompt with the tools (380 tokens), first question | 527, peak 565 |
-| Conversation of about 700 tokens | 583, peak 594 |
+| Model file in memory (token table 4-bit) | 326 (364, token table Q6_K) |
+| Model loaded, cache for 256 tokens | 375, peak 377 while loading (468, peak 497) |
+| Each further 64 tokens of conversation (key/value cache, bf16) | +7 (f32: +56 per 256 tokens) |
+| System prompt with the tools (380 tokens), first question | 399, peak 430 (527, peak 565) |
+| rinfer process beyond its heap (stacks, allocator, program) | about 40 to 100 |
+| File cache left after reading the model | about 40 |
 | `assistant` itself | about 1 |
 
-So the assistant needs about **700 MiB** of the Pi's RAM for a
-conversation of 700 tokens, about 760 MiB for 1,000 tokens, and leaves
-about 150 to 200 MiB. Raising `gpu_mem` from 16 to 64 MiB (48 MiB less
-for Redox) still fits; 128 MiB leaves only about 50 to 100 MiB and needs a
-shorter conversation (the assistant would start over after about 500
-tokens); more does not fit. An 8-bit or 16-bit cache would halve or
-quarter the +56 MiB steps (not in candle's CPU path yet).
+In QEMU with 180 MiB held back by a test program (stricter than a
+network-booted Pi with the 128 MiB image), Redox used at most 799 of
+912 MiB for both assistant questions; before the cuts the same check ran
+out of memory. So the assistant needs about **520 MiB** of the Pi's RAM
+beyond Redox itself (it was about 700). **Network boot has less RAM:**
+the Pi showed 745 MB in all and 607 MB free with the 256 MiB image (Pi
+test 106), and the model did not fit then (kernel `oom`). The experiment
+`assistant-netboot` makes that image 128 MiB, which should leave about
+720 MB free. Raising `gpu_mem` from 16 to 64 MiB (48 MiB less for Redox)
+still fits on the SD card; check again before going higher.
+
+Where the memory went, and what each cut saves (heap on the build host):
+the rotary tables covered all 40,960 positions Qwen3 allows (30 MiB, now
+4,096: 3 MiB); the tokenizer's 300,000 strings stayed in memory while the
+weights loaded (27 MiB, now freed first); the key/value cache was f32 and
+grew by 256 positions (now bf16, half the size, growing by 64); the token
+table was stored as Q6_K (122 MiB, requantised to Q4_0: 83 MiB, with
+llama.cpp's `llama-quantize --token-embedding-type q4_0`; the other
+tensors stay as they were). The smaller table changes answers a little:
+in a check of ten questions both files called the right tools for "What
+time is it?", the date and the files, but without the question mark the
+smaller one guessed the time instead of calling `show_time`.
 
 ### Speed (estimates, not measured)
 
@@ -295,6 +314,51 @@ git).
   connection (curl from the prebuilt packages crashes on aarch64). In QEMU
   the parts arrived until the 256 MiB disk was full; a full disk then hung
   the next write instead of failing it.
+- **Pi test 106, 2026-10-30, network boot: failed, two findings.** The
+  download of the model onto `/scheme/data` worked (382,156,480 bytes,
+  26 minutes). `rinfer` then loaded at about 0.2 MB/s with the CPU busy,
+  and after 40 minutes the kernel ran out of memory. (1) candle reads the
+  tokenizer strings in the GGUF header with 761,160 small reads and a
+  position query per string, each a request to the file system; rinfer's
+  `ModelReader` buffers 1 MiB and keeps the position itself: 577 reads
+  (build host 0.8 → 0.3 s; this was also why loading took 11 to 23
+  minutes in QEMU). (2) Network boot leaves 607 MB free (above).
+  [Report](../test-reports.md).
+- **Memory cuts, 2026-10-30:** rinfer needs about 120 MiB less (see RAM
+  the assistant needs): bf16 cache, rotary tables for 4,096 positions, the
+  tokenizer strings freed early, and the smaller model file. In QEMU with
+  180 MiB held back, `rinfer` loaded in 150 to 170 s (539 reads of the
+  file) and both assistant questions ran (`show_time`, `list_files`);
+  at least 110 MiB stayed free. Rerun on the Pi: test #112, image
+  `v0.3.0-dev-175-g29052d7+x4590` (network boot, 128 MiB). The SD-card
+  recipe `qwen3-model` still fetches the original file; it moves to the
+  smaller one after the Pi test.
+- **Pi test 112, 2026-10-30, network boot: pass, no `oom`.** 738 MB free
+  at the start (128 MiB image). `rinfer` loaded in 78 s and answered
+  "Paris": reading the prompt at 2.2 tokens per second, writing at 1.0
+  (goal 2), heap peak 378 MiB. The assistant ran `show_time` and
+  `list_files` and answered from them; reading the system prompt took
+  about 170 s on each start, heap peak 430 MiB, lowest free 90 MB. The
+  Pi needs more than QEMU did: after the run 130 MB stayed used (file
+  cache of the download and the model). The last answer to the time
+  question was slow (0.15 tokens per second, the other answers 0.6 to
+  1.0); not explained yet. The Pi was at its soft temperature limit
+  (66 °C) but kept 1.4 GHz. One `devshd` thread died with `RELIBC PANIC`
+  in `src/sync/mod.rs:103` (`futex_wake`, `EFAULT`) while memory was
+  lowest; devshd went on. [Report](../test-reports.md).
+- **Saved prompt state, 2026-10-31:** `rinfer --serve` can save the key
+  and value cache to a file and load it again (`save`/`load`). The
+  assistant saves it after the system prompt (default
+  `~/.cache/assistant/prompt.kv`, 44 MB, `ASSISTANT_CACHE` sets another
+  file, empty turns it off) and loads it on the next start if model and
+  system prompt are the same. QEMU `raspi3b`: reading the system prompt
+  took 232 s, loading it 11 s, same answer, heap peak 415 MiB instead of
+  430. Pi test #126 measures it on the Pi.
+- **Writing speed, 2026-10-31, QEMU only:** the worker pool calling
+  `sched_yield` instead of its 200 µs sleep halved the speed, and spinning
+  longer before the sleep (`CANDLE_BARRIER_POOL_SPIN_LIMIT=2000000`) made
+  it far slower still; both dropped. QEMU timings are rough, so #126 also
+  compares 4 and 3 threads on the Pi.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -314,14 +378,14 @@ git).
 
 ## Next
 
-- A Pi test without a person (network boot, the model fetched onto
-  `/scheme/data` with `rinfer --download`): speed of `rinfer` with the
-  whole prompt and one token at a time, memory, and the assistant with
-  tools. If candle reaches about 2 tokens per second, it stays; if not,
-  our own loop (step 2b). Pi test #51 (SD card, llama.cpp numbers) still
+- Writing runs at 1 token per second on the Pi (goal 2). Profile it
+  before deciding on our own loop (step 2b): the worker pool's 200 µs
+  sleep (the kernel futex fix would allow parking again; yield and longer
+  spinning were worse in QEMU), the q4_0 kernels
+  without `sdot`, and the slow answer after a tool call. Pi test #51 (SD
+  card, llama.cpp numbers) would show how far llama.cpp gets; it still
   waits for a card swap.
-- Save the state after the system prompt to a file, so the assistant
-  does not read 380 tokens on every start.
+- Move the SD-card recipe `qwen3-model` to the smaller model file.
 - A grammar mask while a tool call is written, and a test set of
   questions; a cap on the conversation length (memory).
 

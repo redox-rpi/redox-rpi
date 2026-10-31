@@ -13,7 +13,8 @@
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
-  of #68, base `0041`–`0044` once merged; Pi test #74 passed):
+  of #68, base `0041`–`0044` once merged; Pi tests #74 and #122 passed,
+  #122 on the branch as it will be merged):
   netstack used to take one adapter at start and dhcpd configured only
   `eth0`, once. Now netstack opens every `network.*` scheme and looks
   again every 2 s (`wlan*` for Wi-Fi, `eth*` for the rest), dhcpd gets a
@@ -23,8 +24,15 @@
   network plus testnetd started after boot) and on the Pi (test 74, LAN7800
   plus testnetd). Since then netstack also reports ready only after netcfg
   and the interfaces exist (test 69 race; same as boot-time base `0028`).
-  Still missing: lease renewal,
-  adapters that go away, falling back to Wi-Fi when the cable is pulled.
+  The rest is draft PR
+  [#118](https://github.com/redox-rpi/redox-rpi/pull/118) on top of #81
+  (base `0058`): dhcpd renews leases and drops them at their end or on a
+  NAK; netstack drops an adapter that goes away (scheme gone or file
+  failing) with its address and routes; the default route moves to the
+  next interface or is removed. QEMU passes with two testnetds; Pi test
+  #140. Not done: link state (a pulled cable shows only when the lease
+  ends); a restarted driver cannot take its old scheme name again
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
@@ -35,6 +43,39 @@
   [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
+
+- [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
+  (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
+  firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
+  with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
+  netstack takes it as `wlan0` and dhcpd leases it. The network name and
+  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
+  chip: unit tests and a QEMU check of the settings path pass; Pi test
+  #110.
+
+- [#88](https://github.com/redox-rpi/redox-rpi/issues/88) netstack kept
+  every accepted TCP connection (2 x 64 KiB) after it was closed: a wrong
+  reference count in `dup("listen")`. Fixed in base `0049`, draft PR
+  [#90](https://github.com/redox-rpi/redox-rpi/pull/90). **Pi test 114
+  passed**: 120 devsh connections cost 1.1 MB, where stable lost 5.3 MB
+  for 40.
+  The rest of #88's growth (Pi test 111, `SHARED` of netstack and randd)
+  was a kernel bug: every open of a scheme's root (`/scheme/tcp` per TCP
+  connection, `/scheme/rand` per random read) left one 4 KiB page mapped in
+  the daemon. Kernel `0057`, draft PR
+  [#114](https://github.com/redox-rpi/redox-rpi/pull/114), merge after #90;
+  QEMU: no growth over 800 MQTT runs. Pi test #136.
+- [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
+  answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
+  (each only while its program is on the image); **Pi test 96 passed**,
+  SSH works at the address mDNS gives; **Pi test 123 passed** with SRV,
+  TXT and address records in a service's PTR answer. Draft PR
+  [#93](https://github.com/redox-rpi/redox-rpi/pull/93) on top of #82.
+- [#105](https://github.com/redox-rpi/redox-rpi/issues/105) `ls` of a
+  netcfg directory failed with `Not a directory`: upstream's netcfg scheme
+  has no `getdents`. Base `0056` (branch `netcfg-ls`) lists the names a
+  directory node already reads as; QEMU passes, Pi test #128.
 
 ## Later
 
