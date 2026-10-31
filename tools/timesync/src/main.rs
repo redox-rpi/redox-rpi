@@ -16,8 +16,18 @@
 //! `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` (UTC) or `-s @<seconds since 1970>`
 //! sets the clock by hand, for a Pi without a network (Redox' `date` cannot
 //! set it) and saves it.
-//! Waits until DHCP has set a default route, then tries the servers in turn
-//! until one answers, for up to a minute. With `-d` it tries again every 30
+//! A server is a name, an IPv4 address or `address:port`.
+//!
+//! Each answer is checked: it must come from the address asked, carry the
+//! request's transmit time as its origin time, and come from a synchronized
+//! server (leap indicator not 3, stratum 1 to 15). A kiss-of-death (stratum
+//! 0) is reported with its code; after DENY or RSTR that address is not asked
+//! again. It asks up to three addresses (a name such as `pool.ntp.org` has
+//! several) and uses the median offset, so one wrong server cannot move the
+//! clock. After the first sync it keeps the clock when the offset is below
+//! 50 ms, and refuses a jump of more than an hour unless two answers agree.
+//! Waits until DHCP has set a default route, then asks the servers until one
+//! answers, for up to a minute. With `-d` it tries again every 30
 //! seconds until the first answer: Redox' DNS lookup has no timeout, so a
 //! lookup before the network is up would wait forever.
 
@@ -25,8 +35,8 @@ use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
@@ -52,6 +62,18 @@ const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Lookups that never returned; no new ones beyond this.
 const MAX_STUCK_LOOKUPS: usize = 4;
 static PENDING_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+/// Answers used for one sync.
+const SAMPLES: usize = 3;
+/// Answers this close to the median agree with it.
+const AGREE_NS: i128 = 1_000_000_000;
+/// After the first sync, offsets below this leave the clock alone.
+const KEEP_BELOW_NS: i128 = 50_000_000;
+/// After the first sync, a jump beyond this needs two answers that agree.
+const MAX_LONE_JUMP_NS: i128 = 3600 * 1_000_000_000;
+/// Whether a sync has set the clock since start.
+static SYNCED_ONCE: AtomicBool = AtomicBool::new(false);
+/// Addresses that sent a kiss-of-death DENY or RSTR.
+static BANNED: Mutex<Vec<SocketAddr>> = Mutex::new(Vec::new());
 /// Routes set by DHCP (`default via …`), from smolnetd.
 const ROUTES: &str = "/scheme/netcfg/route/list";
 
@@ -126,11 +148,14 @@ fn set_by_hand(text: &str) -> ! {
     }
 }
 
-/// The server's IPv4 address. The lookup runs in its own thread, so a lookup
-/// that never returns does not hang timesync.
-fn resolve(server: &str) -> io::Result<SocketAddr> {
+/// The server's IPv4 addresses. The lookup runs in its own thread, so a
+/// lookup that never returns does not hang timesync.
+fn resolve(server: &str) -> io::Result<Vec<SocketAddr>> {
     if let Ok(ip) = server.parse::<Ipv4Addr>() {
-        return Ok((ip, 123).into());
+        return Ok(vec![(ip, 123).into()]);
+    }
+    if let Ok(addr) = server.parse::<SocketAddr>() {
+        return Ok(vec![addr]);
     }
     if PENDING_LOOKUPS.load(Ordering::SeqCst) >= MAX_STUCK_LOOKUPS {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "earlier DNS lookups still hang"));
@@ -139,13 +164,13 @@ fn resolve(server: &str) -> io::Result<SocketAddr> {
     let (tx, rx) = mpsc::channel();
     let name = server.to_string();
     thread::spawn(move || {
-        let addr = (name.as_str(), 123).to_socket_addrs().map(|mut a| a.find(SocketAddr::is_ipv4));
+        let addr = (name.as_str(), 123).to_socket_addrs().map(|a| a.filter(SocketAddr::is_ipv4).collect::<Vec<_>>());
         PENDING_LOOKUPS.fetch_sub(1, Ordering::SeqCst);
         let _ = tx.send(addr);
     });
     match rx.recv_timeout(LOOKUP_TIMEOUT) {
-        Ok(Ok(Some(addr))) => Ok(addr),
-        Ok(Ok(None)) => Err(io::Error::new(io::ErrorKind::NotFound, "no IPv4 address")),
+        Ok(Ok(addrs)) if !addrs.is_empty() => Ok(addrs),
+        Ok(Ok(_)) => Err(io::Error::new(io::ErrorKind::NotFound, "no IPv4 address")),
         Ok(Err(err)) => Err(err),
         Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "DNS lookup timed out")),
     }
@@ -157,34 +182,112 @@ fn network_up() -> bool {
     fs::read_to_string(ROUTES).map_or(true, |routes| routes.contains("default"))
 }
 
-/// Ask one server. Returns the Unix time in nanoseconds and the monotonic
-/// clock at the moment the answer arrived.
-fn query(server: &str) -> io::Result<(u128, u128)> {
-    let addr = resolve(server)?;
+/// Why an answer is not used.
+#[derive(Debug, PartialEq)]
+enum Refused {
+    /// Kiss-of-death (stratum 0) with its four-letter code.
+    Kiss(String),
+    Bad(&'static str),
+}
+
+/// Check a server's answer to a request whose transmit time was `request`.
+/// Returns the server's transmit time, seconds and fraction since 1900.
+fn check_answer(packet: &[u8], request: &[u8; 8]) -> Result<(u64, u64), Refused> {
+    if packet.len() < 48 || packet[0] & 7 != 4 {
+        return Err(Refused::Bad("not a server answer"));
+    }
+    if packet[24..32] != request[..] {
+        return Err(Refused::Bad("answer does not match the request"));
+    }
+    if packet[1] == 0 {
+        let code = packet[12..16].iter().map(|&b| if b.is_ascii_graphic() { b as char } else { '?' });
+        return Err(Refused::Kiss(code.collect()));
+    }
+    if packet[0] >> 6 == 3 {
+        return Err(Refused::Bad("server not synchronized (leap indicator 3)"));
+    }
+    if packet[1] > 15 {
+        return Err(Refused::Bad("server not synchronized (stratum 16 or more)"));
+    }
+    let seconds = u32::from_be_bytes(packet[40..44].try_into().unwrap()) as u64;
+    let fraction = u32::from_be_bytes(packet[44..48].try_into().unwrap()) as u64;
+    if seconds == 0 && fraction == 0 {
+        return Err(Refused::Bad("no transmit time"));
+    }
+    Ok((seconds, fraction))
+}
+
+/// Ask one address. Returns the server's time minus the local clock, in
+/// nanoseconds.
+fn query(addr: SocketAddr) -> io::Result<i128> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_read_timeout(Some(QUERY_TIMEOUT))?;
-    // Leap indicator 0, version 4, mode 3 (client).
+    // Leap indicator 0, version 4, mode 3 (client). The transmit time is
+    // the local clock with the monotonic nanoseconds as the low bits, so an
+    // answer to another request does not match.
+    let mut request = [0u8; 8];
+    let ntp_secs = (realtime_secs() + NTP_TO_UNIX) as u32;
+    request[..4].copy_from_slice(&ntp_secs.to_be_bytes());
+    request[4..].copy_from_slice(&(monotonic_ns() as u32).to_be_bytes());
     let mut packet = [0u8; 48];
     packet[0] = 0x23;
+    packet[40..48].copy_from_slice(&request);
     let sent = Instant::now();
     socket.send_to(&packet, addr)?;
-    let (len, _) = socket.recv_from(&mut packet)?;
-    let received = monotonic_ns();
+    let mut answer = [0u8; 68];
+    let len = loop {
+        let (len, from) = socket.recv_from(&mut answer)?;
+        if from == addr {
+            break len;
+        }
+        if sent.elapsed() > QUERY_TIMEOUT {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "no answer from the address asked"));
+        }
+    };
+    let local = clock_ns(libc::CLOCK_REALTIME) as i128;
     let round_trip = sent.elapsed();
-
-    if len < 48 || packet[0] & 7 != 4 || packet[1] == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "not a valid server answer"));
-    }
-    // Transmit timestamp: seconds and fraction since 1900.
-    let seconds = u32::from_be_bytes(packet[40..44].try_into().unwrap()) as u64;
-    let fraction = u32::from_be_bytes(packet[44..48].try_into().unwrap()) as u128;
+    let (seconds, fraction) = match check_answer(&answer[..len], &request) {
+        Ok(time) => time,
+        Err(Refused::Kiss(code)) => {
+            if code == "DENY" || code == "RSTR" {
+                BANNED.lock().unwrap().push(addr);
+            }
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("kiss-of-death {code}")));
+        }
+        Err(Refused::Bad(why)) => return Err(io::Error::new(io::ErrorKind::InvalidData, why)),
+    };
     let unix = seconds.wrapping_sub(NTP_TO_UNIX);
     if unix < EARLIEST {
         return Err(io::Error::new(io::ErrorKind::InvalidData, format!("implausible time {unix}")));
     }
     // The server stamped its answer about half a round trip ago.
-    let ns = unix as u128 * 1_000_000_000 + (fraction * 1_000_000_000 >> 32) + round_trip.as_nanos() / 2;
-    Ok((ns, received))
+    let ns = unix as i128 * 1_000_000_000 + ((fraction as i128 * 1_000_000_000) >> 32) + round_trip.as_nanos() as i128 / 2;
+    Ok(ns - local)
+}
+
+/// The offset to use from the answers' offsets. `first`: no sync has set the
+/// clock yet, so a single answer is enough for any jump.
+fn choose(offsets: &[i128], first: bool) -> Result<i128, String> {
+    let mut sorted = offsets.to_vec();
+    sorted.sort_unstable();
+    let offset = match sorted[..] {
+        [] => return Err("no answer".into()),
+        [a, b] if b - a > AGREE_NS => {
+            return Err(format!("two answers {} apart, waiting for a third", seconds(b - a)));
+        }
+        [a, b] => a + (b - a) / 2,
+        _ => sorted[sorted.len() / 2],
+    };
+    let agree = sorted.iter().filter(|o| (*o - offset).abs() <= AGREE_NS).count();
+    if !first && offset.abs() > MAX_LONE_JUMP_NS && agree < 2 {
+        return Err(format!("one answer wants a jump of {}; it needs two that agree", seconds(offset)));
+    }
+    Ok(offset)
+}
+
+/// An offset in seconds with a sign, such as "+0.012 s".
+fn seconds(ns: i128) -> String {
+    format!("{:+.3} s", ns as f64 / 1e9)
 }
 
 /// "YYYY-MM-DD HH:MM:SS" in UTC (days to civil date after Howard Hinnant).
@@ -275,7 +378,37 @@ fn restore() {
     }
 }
 
-/// Ask the servers in turn, for up to a minute. Returns the time it set.
+/// Answers from up to three addresses of the servers, as (offset, label).
+fn samples(servers: &[&str], last_error: &mut String) -> Vec<(i128, String)> {
+    let mut found = Vec::new();
+    for server in servers {
+        let addrs = match resolve(server) {
+            Ok(addrs) => addrs,
+            Err(err) => {
+                *last_error = format!("{server}: {err}");
+                continue;
+            }
+        };
+        for addr in addrs {
+            if found.len() == SAMPLES {
+                return found;
+            }
+            if BANNED.lock().unwrap().contains(&addr) {
+                continue;
+            }
+            match query(addr) {
+                Ok(offset) => found.push((offset, format!("{server} ({})", addr.ip()))),
+                Err(err) => {
+                    eprintln!("timesync: {server} ({addr}): {err}");
+                    *last_error = format!("{server}: {err}");
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Ask the servers, for up to a minute. Returns the time it set.
 fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
     let start = Instant::now();
     let mut last_error = String::from("no default route (DHCP not done)");
@@ -284,22 +417,33 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
             sleep(Duration::from_secs(1));
             continue;
         }
-        for server in servers {
-            match query(server) {
-                Ok((unix_ns, at_monotonic)) => {
+        let found = samples(servers, &mut last_error);
+        if !found.is_empty() {
+            let offsets: Vec<i128> = found.iter().map(|(o, _)| *o).collect();
+            let first = !SYNCED_ONCE.load(Ordering::SeqCst);
+            match choose(&offsets, first) {
+                Ok(offset) => {
+                    let detail: Vec<String> = found.iter().map(|(o, from)| format!("{from} {}", seconds(*o))).collect();
+                    let unix_ns = (clock_ns(libc::CLOCK_REALTIME) as i128 + offset) as u128;
                     let unix = (unix_ns / 1_000_000_000) as u64;
+                    let detail = detail.join(", ");
                     if dry_run {
-                        println!("timesync: {} UTC from {server} (clock not set)", format_utc(unix));
+                        println!("timesync: {} UTC, offset {} (clock not set; {detail})", format_utc(unix), seconds(offset));
                         return Ok(unix);
                     }
-                    if let Err(err) = set_clock(unix_ns, at_monotonic) {
+                    if !first && offset.abs() < KEEP_BELOW_NS {
+                        println!("timesync: offset {}, clock kept ({detail})", seconds(offset));
+                        return Ok(unix);
+                    }
+                    if let Err(err) = set_clock(unix_ns, monotonic_ns()) {
                         return Err(format!("cannot set the clock through {TIME_OFFSET}: {err}"));
                     }
-                    println!("timesync: clock set to {} UTC from {server}", format_utc(unix));
+                    println!("timesync: clock set to {} UTC, offset {} ({detail})", format_utc(unix), seconds(offset));
+                    SYNCED_ONCE.store(true, Ordering::SeqCst);
                     let _ = fs::write(SYNCED, format!("{unix}\n"));
                     return Ok(unix);
                 }
-                Err(err) => last_error = format!("{server}: {err}"),
+                Err(err) => last_error = err,
             }
         }
         sleep(Duration::from_secs(2));
@@ -380,6 +524,52 @@ mod tests {
         assert_eq!(parse_time_arg("2026-10-29"), None);
         assert_eq!(parse_time_arg("2026-10-29 9:00"), None);
         assert_eq!(format_utc(parse_time_arg("2026-12-31 23:59:59").unwrap()), "2026-12-31 23:59:59");
+    }
+
+    fn answer(li_vn_mode: u8, stratum: u8, request: &[u8; 8]) -> [u8; 48] {
+        let mut p = [0u8; 48];
+        p[0] = li_vn_mode;
+        p[1] = stratum;
+        p[24..32].copy_from_slice(request);
+        p[40..44].copy_from_slice(&((EARLIEST + NTP_TO_UNIX) as u32).to_be_bytes());
+        p
+    }
+
+    #[test]
+    fn answer_checks() {
+        let req = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(check_answer(&answer(0x24, 2, &req), &req), Ok(((EARLIEST + NTP_TO_UNIX), 0)));
+        assert_eq!(check_answer(&answer(0x24, 2, &req)[..47], &req), Err(Refused::Bad("not a server answer")));
+        assert_eq!(check_answer(&answer(0x23, 2, &req), &req), Err(Refused::Bad("not a server answer")));
+        assert_eq!(
+            check_answer(&answer(0x24, 2, &[0; 8]), &req),
+            Err(Refused::Bad("answer does not match the request"))
+        );
+        assert!(matches!(check_answer(&answer(0xe4, 2, &req), &req), Err(Refused::Bad(w)) if w.contains("leap")));
+        assert!(matches!(check_answer(&answer(0x24, 16, &req), &req), Err(Refused::Bad(w)) if w.contains("stratum")));
+        let mut kiss = answer(0xe4, 0, &req);
+        kiss[12..16].copy_from_slice(b"RATE");
+        assert_eq!(check_answer(&kiss, &req), Err(Refused::Kiss("RATE".into())));
+        let mut zero = answer(0x24, 2, &req);
+        zero[40..48].fill(0);
+        assert_eq!(check_answer(&zero, &req), Err(Refused::Bad("no transmit time")));
+    }
+
+    #[test]
+    fn choosing() {
+        const S: i128 = 1_000_000_000;
+        assert!(choose(&[], true).is_err());
+        assert_eq!(choose(&[5 * S], false), Ok(5 * S));
+        // One answer may move the clock far only at the first sync.
+        assert_eq!(choose(&[7200 * S], true), Ok(7200 * S));
+        assert!(choose(&[7200 * S], false).is_err());
+        assert_eq!(choose(&[S / 10, S / 5], false), Ok(S * 3 / 20));
+        assert!(choose(&[0, 7200 * S], true).is_err());
+        // One wrong server among three does not move the clock.
+        assert_eq!(choose(&[S / 100, 7200 * S, S / 50], false), Ok(S / 50));
+        assert_eq!(choose(&[7200 * S, 7200 * S + S / 2, 0], false), Ok(7200 * S));
+        assert!(choose(&[-7200 * S, 0, 7200 * S], false).is_ok());
+        assert!(choose(&[-7200 * S, 3 * 3600 * S, 7200 * S], false).is_err());
     }
 
     #[test]
