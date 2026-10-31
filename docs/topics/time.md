@@ -22,6 +22,10 @@ User docs, with examples: [docs/time.md](../time.md).
   / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
   passed; draft pull request #98, after #59 (v0.9.0).
+- `timesync` checks NTP answers (origin time, leap indicator, stratum,
+  kiss-of-death) and uses the median of up to three servers; after the
+  first sync no lone jump of more than an hour. Branch `timesync-harden`
+  on `clock-settime`; QEMU passed, Pi test #152 queued (v0.9.0).
 
 ## Next
 
