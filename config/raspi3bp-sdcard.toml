@@ -48,6 +48,9 @@ path = "/usr/lib/rpi-firmware/governor.ion"
 data = """
 if test -f /etc/rpi-firmware/governor
     cat /etc/rpi-firmware/governor > /scheme/rpi-firmware/governor || cat /etc/rpi-firmware/governor > /scheme/rpi-firmware/arm_clock
+else
+    # No file: keep the ondemand governor; init counts status 1 as failed.
+    true
 end
 """
 
