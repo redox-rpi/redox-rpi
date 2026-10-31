@@ -12,6 +12,11 @@
   (device descriptor, hub port status, hub descriptor) instead of
   panicking (base `0037`, PR #84; the panic of test 98, Pi test 105
   5 of 5 boots).
+- netstack finds `dwc2d`'s network adapter every boot: `initnsmgr`
+  lists `/scheme` from a sorted snapshot, so a scheme registered meanwhile
+  (`sudo` at boot) no longer hides `network.*` (base `0036`, PR #80,
+  [#79](https://github.com/redox-rpi/redox-rpi/issues/79); 1 in 36 QEMU
+  boots before, Pi test 100 3 of 3).
 - USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W.
 - Hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17), base
   `0031`–`0033`): dwc2d rescans the root port and all hub ports every
