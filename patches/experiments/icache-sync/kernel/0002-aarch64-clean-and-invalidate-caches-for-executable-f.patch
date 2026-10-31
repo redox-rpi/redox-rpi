@@ -1,4 +1,4 @@
-From 43a331781e04e691c02358f38c3ac3df17ab72c3 Mon Sep 17 00:00:00 2001
+From 4c8462954a359b304561f74a6a1a9494c3d59bc9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 31 Oct 2026 16:43:01 +0000
 Subject: [PATCH] aarch64: clean and invalidate caches for executable file maps
@@ -6,16 +6,19 @@ Subject: [PATCH] aarch64: clean and invalidate caches for executable file maps
 
 Two more ways code reaches an executable page without mprotect or exec:
 - an fmap with PROT_EXEC: the scheme filled the pages as data;
-- a page fault in an executable grant: the kernel zeroes or copies the
-  frame through its linear mapping, or a scheme supplies it.
+- a page fault in an executable grant that copies a frame (copy on
+  write) or takes a frame from a scheme.
 Clean the frame to the point of unification and invalidate the
-instruction cache before it is mapped (redox-rpi #3).
+instruction cache before it is mapped (redox-rpi #3). Fresh zeroed
+frames are left alone: exec fills a new program through such faults and
+syncs the whole address space at the switch, so a sync per fault only
+cost time (QEMU loop 18 % slower instead of 3 %).
 ---
- src/context/memory.rs | 42 ++++++++++++++++++++++++++++++++++++------
- 1 file changed, 36 insertions(+), 6 deletions(-)
+ src/context/memory.rs | 59 ++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 53 insertions(+), 6 deletions(-)
 
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index 6ffa19b..9d1ecbf 100644
+index 6ffa19b..48c63c7 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
 @@ -847,15 +847,33 @@ pub fn clean_dcache_to_pou(mapper: &PageMapper, span: PageSpan) {
@@ -45,8 +48,8 @@ index 6ffa19b..9d1ecbf 100644
  }
  
 +/// Clean and invalidate the caches for one frame that is about to be mapped
-+/// executable: a frame the kernel just zeroed or copied on a page fault, or
-+/// one a scheme filled.
++/// executable: a frame the kernel just copied on a page fault, or one a
++/// scheme filled.
 +#[cfg(target_arch = "aarch64")]
 +pub fn sync_icache_frame(frame: Frame) {
 +    let ctr: usize;
@@ -71,14 +74,58 @@ index 6ffa19b..9d1ecbf 100644
          }
  
          Ok(Self {
-@@ -2912,6 +2936,12 @@ fn correct_inner<'l>(
+@@ -2687,6 +2711,10 @@ fn correct_inner<'l>(
+     // TODO: Readahead backwards, i.e. MAP_GROWSDOWN.
+ 
+     let mut allow_writable = true;
++    // The frame got its contents as data on this fault: copied by the kernel
++    // or supplied by a scheme (redox-rpi #3).
++    #[cfg(target_arch = "aarch64")]
++    let mut filled_as_data = false;
+ 
+     let frame = match grant_info.provider {
+         Provider::Allocated { .. } | Provider::AllocatedShared { .. }
+@@ -2701,6 +2729,10 @@ fn correct_inner<'l>(
+                         let result = cow(frame, info, RefKind::Cow)?;
+                         if let Some(old_frame) = result.old_frame {
+                             flusher.queue(old_frame, None, TlbShootdownActions::FREE);
++                            #[cfg(target_arch = "aarch64")]
++                            {
++                                filled_as_data = true;
++                            }
+                         }
+                         result.new_frame
+                     }
+@@ -2820,6 +2852,10 @@ fn correct_inner<'l>(
+                             if let Some(old_frame) = old_frame {
+                                 flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                                 flusher.flush();
++                                #[cfg(target_arch = "aarch64")]
++                                {
++                                    filled_as_data = true;
++                                }
+                             }
+ 
+                             let mut guard = RwLockUpgradableGuard::upgrade(guard);
+@@ -2906,12 +2942,23 @@ fn correct_inner<'l>(
+             flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
+ 
+             info!("Got frame {:?} from external fmap", frame);
++            #[cfg(target_arch = "aarch64")]
++            {
++                filled_as_data = true;
++            }
+ 
+             frame
+         }
      };
  
      let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
-+    // The frame may have just been zeroed or copied through the linear
-+    // mapping, or filled by a scheme (redox-rpi #3).
++    // Fresh zeroed frames need nothing: code written into them later is
++    // either loaded by exec (synced at the switch), made executable by
++    // mprotect, or maintained by the program that writes it.
 +    #[cfg(target_arch = "aarch64")]
-+    if new_flags.has_execute() {
++    if filled_as_data && new_flags.has_execute() {
 +        sync_icache_frame(frame);
 +    }
      let Some(flush) = (unsafe {
