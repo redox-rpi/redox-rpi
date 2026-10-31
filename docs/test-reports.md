@@ -3632,3 +3632,44 @@ no answer with any flow setting
 Reading: the chip needs WL_ON. Next is the UART side: the baud rate, and why
 `auto`/`auto-low` see nothing while `none` gets bytes. Step 4 still waits for the
 user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-478-g1764270` (PR #81 netstack-multi, as it will be merged)
+
+Real Pi 3B+ over netboot. Test 122 ([#53](https://github.com/redox-rpi/redox-rpi/issues/53)), Pi test agent.
+
+**Pass, as in test 74, with one difference: `ls /scheme/netcfg/ifaces` fails.** It
+answers `ls: general io error: Not a directory (os error 20)`, while
+`cat /scheme/netcfg/ifaces` says `Is a directory`. Both `eth0/addr/list` and
+`eth1/addr/list` can be read, so both adapters are there; only listing the
+directory doesn't work. Image `~/redox-rpi-zrtl/keep/nsm-v0.3.0-dev-478-g1764270.img`
+(no manifest next to it; the one in the image passes), with stable's bootloader.
+
+- `scripts/pi-test.py` standard checks, before and after testnetd: **pass**
+  (version, manifest present, ps 47 then 50 processes, ps-tty, sdcard,
+  0 of 300 starts failed both times).
+- `/usr/lib/drivers/testnetd &`, then after 30 s:
+  - `cat /scheme/netcfg/ifaces/eth1/addr/list` → **`10.0.9.2/24`**;
+    `eth0/addr/list` → `192.168.178.148/24`.
+  - `cat /scheme/netcfg/route/list` has **one default route**, plus
+    `10.0.9.0/24 dev eth1`:
+
+```
+default via 192.168.178.1 dev eth0 src 192.168.178.148
+127.0.0.0/8  dev loopback src 127.0.0.1
+10.0.9.0/24  dev eth1 src 10.0.9.2
+192.168.178.0/24  dev eth0 src 192.168.178.148
+```
+
+  - `ping -c 3 10.0.9.1`: 3/3 (2.4–2.9 ms); `ping -c 3 192.168.178.1`: 3/3 (1.0–1.8 ms).
+  - `cat /tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`.
+- Every `DHCP:`/`smolnetd` line of the serial log (no `smolnetd` line and no panic):
+
+```
+DHCP client bound to address 192.168.178.148 (5 ms)
+DHCP client bound to address 192.168.178.148 (8 ms)
+DHCP: eth0 got 192.168.178.148/24
+DHCP: default route via 192.168.178.1 (eth0)
+DHCP: eth1 got 10.0.9.2/24
+```
+
+Stable image restored afterwards.
