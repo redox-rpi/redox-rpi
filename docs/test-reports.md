@@ -3880,3 +3880,50 @@ Built 2026-10-31T03:30:26Z, `libc.so` `d8e9a5ac4a3e35a3…`, real Pi 3B+ over ne
 | ps-tty | pass | 42 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## 2026-10-31: `v0.3.0-dev-458-g990871c+x7d9f` (test 109 step 8, baud sweep)
+
+Real Pi 3B+ over netboot. Test 109 step 8 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**The chip answers HCI Reset correctly when the divider assumes a 400 MHz core
+clock: `04 0e 04 01 03 0c 00 <- Command Complete`.** The firmware reports
+250 MHz before and after every try. So the UART runs at a baud rate for 400 MHz
+while the firmware says 250 MHz. Per the row's reading guide, the core clock is
+not what the firmware reports, and the fix is to measure or fix it.
+**(b) did not work yet**: `bt up` set the UART back to the firmware's 250 MHz.
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-458-g990871c+x7d9f/harddrive.img` (no
+manifest), with the new stable's bootloader.
+
+- (a) `bt diag` begins with the same lines as step 7: pins, the 32 kHz clock
+  (99 high / 101 low), the WL_ON drive test (GPIO 33 high after 1 ms with
+  WL_ON 1), and flow `none` getting `10 10 10 13 80 00 f0`. The sweep:
+
+```
+baud sweep: cts_line 0 after 0 ms
+assumed core 250 MHz (firmware says 250000000 before, 250000000 after): nothing
+assumed core 275 MHz (firmware says 250000000 before, 250000000 after): 18 0c 86 03 0c 80
+assumed core 300 MHz (firmware says 250000000 before, 250000000 after): nothing
+assumed core 325 MHz (firmware says 250000000 before, 250000000 after): 08 03 28 60 00
+assumed core 350 MHz (firmware says 250000000 before, 250000000 after): 0c 81 16 08 e0
+assumed core 375 MHz (firmware says 250000000 before, 250000000 after): 04 10 01 00
+assumed core 400 MHz (firmware says 250000000 before, 250000000 after): 04 0e 04 01 03 0c 00  <- Command Complete
+assumed core 450 MHz (firmware says 250000000 before, 250000000 after): nothing
+assumed core 500 MHz (firmware says 250000000 before, 250000000 after): nothing
+uart: core clock 250000000 Hz, 115313 baud
+baud sweep answered for core MHz: 400
+```
+
+- (b) `echo 400000000 > /scheme/btuart/clock; echo none > /scheme/btuart/flow`, then:
+  - `bt info` → `bt: no answer to HCI command 1001`.
+  - `bt up` → `power: cycled`, **`uart: core clock 250000000 Hz, 115313 baud`**,
+    `bt: no answer to HCI command 0c03`. The power cycle in `bt up` went back to
+    the firmware's 250 MHz instead of the 400 MHz written to `clock`.
+  - `bt info` → no answer to `1001`; `bt scan 10` → no answer to `0c01`.
+  - `cat /scheme/btuart/status` afterwards: `cts_line 0, rts_status 0, tx_fifo 0,
+    rx_fifo 0, tx_done 1, lsr 0x60, msr 0x10, cntl 0x03, stat 0x0000030e`.
+- The serial console showed `bcm2835-btuartd: N received bytes lost so far`
+  221 times after login, up to 221 bytes lost.
+
+Next: `bt up` (and `bt info` before it) should keep the clock written to
+`/scheme/btuart/clock`, or the core clock should be fixed. Step 4 still waits
+for the user's OK. Stable image restored afterwards.
