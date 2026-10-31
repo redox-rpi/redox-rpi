@@ -58,6 +58,11 @@
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
     single runs pass; they only fail sometimes under the suite's load.
+    With three busy loops on the 4 CPUs (QEMU, 2026-10-31,
+    `v0.3.0-dev-574-g55e47fb+xb3d9`) also 45 of 45, so plain CPU load
+    is not the trigger. Three full suite runs in one QEMU boot
+    (same build) and the Pi suite runs of tests 129 and 133: none of the
+    three failed. Not reproduced; they stay on the flaky list.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
@@ -138,7 +143,8 @@ commits in `config/upstream.lock`.
   - Reproduce: relibc-tests patch `0005` (`pthread/cond_stress`), 3 of 21
     runs in QEMU `-smp 4`.
 - **Static TLS laid out like x86_64, aarch64** (experiment `tls-variant1`,
-  branch `t14-tls-layout`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); QEMU only so far).
+  branch `t-tls-mutex`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); Pi test 129 passed,
+  draft PR [#123](https://github.com/redox-rpi/redox-rpi/pull/123), stacked on #62).
   - Where: `ld.so` (`src/ld_so/`).
   - Broken: `ld.so` places the static TLS blocks of the program and the
     libraries loaded at start as on x86_64. aarch64 (TLS variant I)
@@ -164,6 +170,14 @@ commits in `config/upstream.lock`.
     `printf`. gcc evaluates arguments right to left on x86_64 and left to
     right on aarch64.
   - Fix: the patch moves the calls into separate statements.
+- Notes for the user's upstream reports on the x18 signal return
+  ([#127](https://github.com/redox-rpi/redox-rpi/issues/127), bug),
+  `clock_settime` ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)),
+  termios speeds ([#94](https://github.com/redox-rpi/redox-rpi/issues/94))
+  and `madvise`/socket options
+  ([#109](https://github.com/redox-rpi/redox-rpi/issues/109)), checked
+  against current relibc master:
+  [docs/upstream/relibc.md](../upstream/relibc.md).
 - Already reported: patch `0004` (x1/x2 swap in the signal entry) as
   [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309).
 
