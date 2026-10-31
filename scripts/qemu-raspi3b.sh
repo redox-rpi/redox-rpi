@@ -40,6 +40,11 @@
 #                     serial console and run this shell command (repeatable,
 #                     implies --test); the output lands in the log, and the
 #                     script waits until all commands are done
+#   --data            add a RedoxFS data partition as the second GPT entry,
+#                     like on the network-boot SD card (scripts/make-sdcard.sh),
+#                     so Redox mounts it at /scheme/data. Doubles the SD card;
+#                     the image's BIOS entry (unused on aarch64) goes away.
+#                     Needs sfdisk (Linux)
 #   --sd-size <MiB>   size of QEMU's SD card (a power of two, at least the
 #                     image's size); above 2048 the card is SDHC
 #   --timeout <s>     give up after this many seconds (default 900)
@@ -63,6 +68,7 @@ timeout=900
 uboot=""
 run=()
 sd_size=""
+data=no
 usb_net=no
 usb_host=""
 monitor=(-monitor none)
@@ -76,6 +82,7 @@ while [ $# -gt 0 ]; do
         --timeout) timeout="$2"; shift 2 ;;
         --run) run+=("$2"); test=yes; shift 2 ;;
         --sd-size) sd_size="$2"; shift 2 ;;
+        --data) data=yes; shift ;;
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
@@ -140,10 +147,32 @@ while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
 if [ -n "$sd_size" ]; then sd=$((sd_size * 1024 * 1024)); fi
 [ "$sd" -eq "$size" ] || truncate -s "$sd" run.img
 
-if [ -n "$kernel" ]; then
-    tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+if [ -n "$kernel" ] || [ "$data" = yes ]; then
     [ -x "$tool" ] || cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
+fi
+if [ -n "$kernel" ]; then
     "$tool" run.img put usr/lib/boot/kernel "$kernel"
+fi
+
+if [ "$data" = yes ]; then
+    # Redox mounts the second GPT entry (/scheme/disk.mmc/0p1) at /scheme/data;
+    # in the image that is the EFI partition. New table: EFI, a data partition
+    # in the second half of the card, then the root filesystem. The bootloader
+    # skips RedoxFS partitions without a kernel.
+    half=$(($(wc -c < run.img) / 512))
+    part() { sfdisk -d run.img | grep "name=\"$1\"" | sed 's/^[^:]*: //'; }
+    efi="$(part EFI)" root="$(part REDOX)"
+    truncate -s $((half * 1024)) run.img
+    rm -f run.data
+    truncate -s $(((half - 2048) * 512)) run.data
+    echo "Data partition of the QEMU SD card (scripts/qemu-raspi3b.sh --data)." > run.readme
+    "$tool" run.data mkfs 7265646f-7872-7069-2d64-617461000001 run.readme > /dev/null
+    dd if=run.data of=run.img bs=512 seek="$half" conv=notrunc status=none
+    rm -f run.data run.readme
+    printf '%s\n' "label: gpt" "$efi" \
+        "start=$half, size=$((half - 2048)), type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=7265646F-7872-7069-2D64-617461000001, name=\"DATA\"" \
+        "$root" | sfdisk -q --no-reread --no-tell-kernel run.img
 fi
 
 qemu=(qemu-system-aarch64

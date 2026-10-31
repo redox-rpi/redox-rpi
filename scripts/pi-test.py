@@ -3,6 +3,8 @@
 
 Usage:
     scripts/pi-test.py <host> [--port 2323] [--manifest <file>] [--starts 300]
+                       [--serial-log <file>] [--serial-lines 15]
+                       [--crash-log <file.jsonl>]
                        [--report docs/test-reports.md] [--note <text>]
 
 Checks, in this order:
@@ -13,16 +15,25 @@ Checks, in this order:
   ps-tty    ps writes its list straight to the terminal
   sdcard    a file written to /scheme/data (SD card) reads back the same
   starts    dynamically linked programs (ls, pwd) start --starts times;
-            every start that fails is counted
+            for every start that fails, the report lists the program, its
+            exit status, what it printed, and the crash dump lines the
+            serial console logged meanwhile (with --serial-log, e.g.
+            ~/redox-rpi/logs/serial.log, or images/qrun.log under QEMU)
 
 Prints a summary and, with --report, appends it to that Markdown file.
+With --crash-log, appends one JSON object per line for each failed start,
+and for each crash dump in the serial log that matches no failed start
+(see CRASH_LOG below), for counting start crashes across runs (#1).
 Exits with 1 if a check failed.
 """
 
 import argparse
 import datetime
 import hashlib
+import json
+import os
 import re
+import signal
 import socket
 import sys
 import time
@@ -102,6 +113,165 @@ class Shell:
         self.sock.close()
 
 
+def serial_size(path):
+    """Current size of the serial log, to read only what comes after it."""
+    try:
+        return os.path.getsize(path) if path else None
+    except OSError:
+        return None
+
+
+# Lines of a kernel crash dump worth quoting; the registers and the stack
+# walk in between stay in the serial log.
+CRASH_LINE = re.compile(
+    r"grant was not|FATAL|(FAR|ELR|ESR)_EL1|UNHANDLED EXCEPTION|panicked|SIG[A-Z]{3,}"
+)
+
+
+def serial_lines(path, start):
+    """The lines the serial log got after offset `start`, without terminal
+    escape sequences."""
+    if start is None:
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            # A smaller file was rotated or truncated: read it from the start.
+            f.seek(start if f.tell() >= start else 0)
+            data = f.read()
+    except OSError:
+        return []
+    text = ANSI.sub(b"", data).replace(b"\x00", b"").decode(errors="replace")
+    return [l.rstrip() for l in text.replace("\r", "\n").split("\n") if l.strip()]
+
+
+# One crash dump of the kernel, as on aarch64:
+#   ...exception:ERROR -- FATAL: Not an SVC induced synchronous exception (ty=100010)
+#   FAR_EL1: 0xc5778b
+#   ELR_EL1: 0000000000C5778B
+#   ESR_EL1: 000000008A000000
+#   SP_EL0: 00007FFFFFFFF560, X0: ... X30: 0000000000401E20 (some builds)
+#     FP 00007ffffffff560: PC 0000000000401c48   (frame walk)
+#   ...signal:INFO -- UNHANDLED EXCEPTION, CPU #0, PID 258, NAME /usr/bin/pwd, CONTEXT ...
+REGISTER = re.compile(r"\b(FAR_EL1|ELR_EL1|ESR_EL1|LR|SP|SP_EL0|X30|x30)\s*[:=]\s*(?:0x)?([0-9A-Fa-f]+)\b")
+REGISTER_KEY = {"FAR_EL1": "far", "ELR_EL1": "elr", "ESR_EL1": "esr",
+                "LR": "lr", "X30": "lr", "x30": "lr", "SP": "sp", "SP_EL0": "sp"}
+FRAME = re.compile(r"\bFP ([0-9A-Fa-f]+): PC ([0-9A-Fa-f]+)")
+# Frames with the frame pointer above this are the kernel's own, after the
+# program's.
+USER_END = 0x8000_0000_0000
+TRACE_FRAMES = 8
+UNHANDLED = re.compile(r"UNHANDLED EXCEPTION, CPU #(\d+), PID (\d+), NAME (\S+?),?(?:\s|$)")
+
+
+def split_dumps(lines):
+    """The crash dumps in serial log lines, in order: dicts with kind, far,
+    elr, esr, ec (exception class from ESR), lr, sp, pid, cpu, name (None
+    where the dump does not say), trace (the first PCs of the program's
+    frame walk)
+    and their key lines."""
+    dumps, cur = [], None
+
+    def new():
+        return {"kind": None, "far": None, "elr": None, "esr": None, "ec": None,
+                "lr": None, "sp": None, "pid": None, "cpu": None, "name": None, "trace": [],
+                "lines": []}
+
+    for line in lines:
+        fatal = "FATAL" in line or "panicked" in line
+        if fatal or (cur is None and (REGISTER.search(line) or UNHANDLED.search(line))):
+            if cur is not None and (fatal or cur["name"] is not None):
+                dumps.append(cur)
+                cur = None
+            if cur is None:
+                cur = new()
+            if fatal:
+                m = re.search(r"\(ty=(\w+)\)", line)
+                cur["kind"] = f"ty={m.group(1)}" if m else line.split("--")[-1].strip()[:100]
+        if cur is None:
+            continue
+        if CRASH_LINE.search(line):
+            cur["lines"].append(line)
+        for name, value in REGISTER.findall(line):
+            key = REGISTER_KEY[name]
+            if cur[key] is None:
+                cur[key] = hex(int(value, 16))
+        m = FRAME.search(line)
+        if m and int(m.group(1), 16) < USER_END and len(cur["trace"]) < TRACE_FRAMES:
+            cur["trace"].append(hex(int(m.group(2), 16)))
+        m = UNHANDLED.search(line)
+        if m:
+            cur["cpu"], cur["pid"], cur["name"] = int(m.group(1)), int(m.group(2)), m.group(3)
+            dumps.append(cur)
+            cur = None
+    if cur is not None:
+        dumps.append(cur)
+    for d in dumps:
+        if d["esr"] is not None:
+            d["ec"] = hex((int(d["esr"], 16) >> 26) & 0x3F)
+    return dumps
+
+
+def match_dumps(batch, dumps, lines, count):
+    """Gives each failed start of one command line the first unused dump
+    whose NAME is its program; returns the dumps no start took."""
+    left = list(dumps)
+    for c in batch:
+        d = next((d for d in left if d["name"] and d["name"].rsplit("/", 1)[-1] == c["program"]), None)
+        if d is not None:
+            left.remove(d)
+        c["crash"] = d
+        c["serial"] = d["lines"][-count:] if d else []
+    # No dump at all: show the end of the serial log instead.
+    if not dumps and batch:
+        batch[0]["serial"] = lines[-count:]
+    return left
+
+
+# --crash-log: one JSON object per line. Fields: host, build_id, libc
+# (sha256 of /usr/lib/libc.so), time (UTC), starts (the range of the command
+# line), program (null for a dump no failed start took), status, messages
+# (what the program printed), crash (null if no dump was found; else kind,
+# far, elr, esr, ec, lr, sp as hex strings, pid, cpu, name, each null where
+# the dump does not say, and trace, the first PCs of the frame walk), serial
+# (key lines of that dump).
+def crash_record(info, host, c):
+    crash = None
+    if c.get("crash"):
+        crash = {k: v for k, v in c["crash"].items() if k != "lines"}
+    return {"host": host, "build_id": info.get("build_id"), "libc": info.get("libc"),
+            "time": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "starts": c["starts"].replace("–", "-"), "program": c["program"], "status": c["status"],
+            "messages": c["messages"], "crash": crash, "serial": c["serial"]}
+
+
+def crash_summary(d):
+    """FAR, ELR, ESR and PID of a dump in one line for the report."""
+    parts = [f"{k.upper()} {d[k]}" for k in ("far", "elr", "esr", "lr", "sp") if d.get(k)]
+    if d.get("pid") is not None:
+        parts.append(f"PID {d['pid']}")
+    return ", ".join(parts)
+
+
+# Ion's message when it cannot start a program of the start loop.
+NOT_STARTED = re.compile(r"ion: .*?(?:command not found|No such file|Permission denied|Exec format).*?\b(ls|pwd)\b")
+
+
+def describe_status(status):
+    """Ion's $? as text; above 128 it is a signal number plus 128. A program
+    the kernel ends for an exception shows exit 1 in QEMU, so the serial
+    lines tell crashes apart."""
+    if not status.isdigit():
+        return "exit status unknown"
+    code = int(status)
+    if code > 128:
+        try:
+            return f"exit {code}, signal {code - 128} ({signal.Signals(code - 128).name})"
+        except ValueError:
+            return f"exit {code}, signal {code - 128}"
+    return f"exit {code}"
+
+
 def parse_manifest(path):
     values = {}
     for line in open(path):
@@ -117,12 +287,17 @@ def main():
     ap.add_argument("--port", type=int, default=2323)
     ap.add_argument("--manifest")
     ap.add_argument("--starts", type=int, default=300)
+    ap.add_argument("--serial-log", help="serial console log to quote when a start fails")
+    ap.add_argument("--serial-lines", type=int, default=15)
+    ap.add_argument("--crash-log", help="append failed starts and crash dumps as JSON lines")
     ap.add_argument("--report")
     ap.add_argument("--note", default="")
     args = ap.parse_args()
 
     results = []  # (check, ok, detail)
     info = {}
+    crashes = []  # failed starts: starts (range), program, status, messages, crash, serial
+    stray = []  # crash dumps that match no failed start, same fields
 
     def check(name, ok, detail):
         results.append((name, ok, detail))
@@ -167,29 +342,82 @@ def main():
         )
         check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {'; '.join(out[:2]) or 'nothing'}")
 
-        failures, errors, done = 0, set(), 0
+        done, others = 0, set()
         per_run = 25  # iterations per command line, 2 starts each
         while done < args.starts:
             n = min(per_run, (args.starts - done + 1) // 2)
+            mark = serial_size(args.serial_log)
             out = sh.run(
-                f"for i in 1..={n}; ls / > /dev/null || echo FAILED ls; pwd > /dev/null || echo FAILED pwd; end",
+                f"for i in 1..={n}; ls / > /dev/null || echo FAILED ls $?; pwd > /dev/null || echo FAILED pwd $?; end",
                 timeout=300,
             )
+            # A failing program prints its messages before the FAILED line.
+            messages, batch = [], []
+            not_started = None
             for l in out:
                 if l.startswith("FAILED"):
-                    failures += 1
+                    _, program, *status = l.split()
+                    if not_started and not_started["program"] == program:
+                        # Ion said why, then the || branch ran after all.
+                        not_started["status"] += f", {describe_status(status[0] if status else '')}"
+                    else:
+                        batch.append({"starts": f"{done + 1}–{done + 2 * n}", "program": program,
+                                      "status": describe_status(status[0] if status else ""),
+                                      "messages": messages})
+                    messages, not_started = [], None
+                elif m := NOT_STARTED.match(l):
+                    # Ion could not start it (no such file, not executable).
+                    # It then ends the whole command line: no || branch, and
+                    # the rest of this line's starts do not run.
+                    not_started = {"starts": f"{done + 1}–{done + 2 * n}", "program": m.group(1),
+                                   "status": "did not start, Ion skipped the rest of these starts",
+                                   "messages": messages + [l[:200]]}
+                    batch.append(not_started)
+                    messages = []
                 elif l and not l.startswith("/"):
-                    errors.add(l[:100])
+                    messages.append(l[:200])
+            others.update(messages)
+            if batch:
+                time.sleep(2)  # the crash dump reaches the serial log a bit later
+            lines = serial_lines(args.serial_log, mark)
+            dumps = split_dumps(lines)
+            # One command line covers 50 starts: the dumps go to the failed
+            # starts by program name.
+            for d in match_dumps(batch, dumps, lines, args.serial_lines):
+                stray.append({"starts": f"{done + 1}–{done + 2 * n}", "program": None, "status": None,
+                              "messages": [], "crash": d, "serial": d["lines"][-args.serial_lines:]})
+            crashes.extend(batch)
             done += 2 * n
-        detail = f"{failures} of {done} failed"
-        if errors:
-            detail += "; messages: " + "; ".join(f'"{e}"' for e in sorted(errors)[:5])
-        check("starts", failures == 0, detail)
-        info["starts"] = (failures, done)
+        detail = f"{len(crashes)} of {done} failed"
+        if crashes:
+            counts = {}
+            for c in crashes:
+                key = f"{c['program']} {c['status']}"
+                counts[key] = counts.get(key, 0) + 1
+            detail += ": " + "; ".join(f"{k} ({v}×)" for k, v in sorted(counts.items()))
+        if others:
+            detail += "; other messages: " + "; ".join(f'"{e[:100]}"' for e in sorted(others)[:5])
+        if stray:
+            detail += f"; {len(stray)} other crash dump(s) in the serial log"
+        check("starts", not crashes, detail)
+        for i, c in enumerate(crashes + stray):
+            print(f"  starts {c['starts']}: {c['program'] or 'no failed start'}, {c['status'] or ''}"
+                  f"{'; ' + crash_summary(c['crash']) if c['crash'] else ''}", flush=True)
+            for l in c["messages"]:
+                print(f"    says: {l}", flush=True)
+            # The serial lines of the first few; all of them are in the report.
+            for l in c["serial"] if i < 3 else []:
+                print(f"    serial: {l}", flush=True)
+        info["starts"] = (len(crashes), done)
     finally:
         sh.close()
 
     passed = all(ok for _, ok, _ in results)
+    if args.crash_log and (crashes or stray):
+        with open(args.crash_log, "a") as f:
+            for c in crashes + stray:
+                f.write(json.dumps(crash_record(info, args.host, c)) + "\n")
+        print(f"{len(crashes) + len(stray)} record(s) appended to {args.crash_log}", flush=True)
     if args.report:
         date = datetime.date.today().isoformat()
         with open(args.report, "a") as f:
@@ -205,6 +433,28 @@ def main():
             for name, ok, detail in results:
                 detail = detail.replace("|", "\\|")
                 f.write(f"| {name} | {'pass' if ok else '**fail**'} | {detail} |\n")
+            for title, items in (("Failed starts", crashes), ("Crash dumps without a failed start", stray)):
+                if not items:
+                    continue
+                f.write(f"\n{title} (build `{info.get('build_id', '?')}`):\n\n")
+                for c in items[:20]:
+                    f.write(f"- starts {c['starts']}")
+                    if c["program"]:
+                        f.write(f": `{c['program']}`, {c['status']}")
+                    elif c["crash"] and c["crash"]["name"]:
+                        f.write(f": `{c['crash']['name']}`")
+                    if c["crash"]:
+                        f.write(f"; {crash_summary(c['crash'])}")
+                    if c["messages"]:
+                        f.write("; printed: " + "; ".join(f'"{m}"' for m in c["messages"][:3]))
+                    if not c["serial"]:
+                        f.write("; no serial log lines\n")
+                        continue
+                    f.write(", serial lines:\n\n  ```\n")
+                    f.write("".join(f"  {l}\n" for l in c["serial"]))
+                    f.write("  ```\n")
+                if len(items) > 20:
+                    f.write(f"- … and {len(items) - 20} more\n")
     sys.exit(0 if passed else 1)
 
 
