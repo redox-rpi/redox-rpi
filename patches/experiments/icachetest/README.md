@@ -1,13 +1,16 @@
 # Experiment: icachetest, the instruction cache stress test (#3)
 
 Adds `icachetest` ([tools/icachetest](../../../tools/icachetest)) to the
-image and nothing else, so an image with and one without
-[`icache-sync`](../icache-sync/README.md) can run the same test.
+image and nothing else. The cache maintenance it checks
+([`icache-sync`](../icache-sync/README.md)) is default now (kernel `0010`,
+`0011`), so every image should pass it:
 
 ```bash
-scripts/build-image.sh --experiment icachetest                         # without
-scripts/build-image.sh --experiment icachetest --experiment icache-sync # with
+scripts/build-image.sh --experiment icachetest
 ```
+
+Pi test 162 compared builds of `t3-icache` (PR #148) from before that,
+with and without the experiment.
 
 On Redox: `icachetest [rounds]` (default 10000 per test). Each round writes
 `movz w0, #n; ret` into a page as data, makes it executable and calls it:

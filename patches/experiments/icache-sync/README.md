@@ -2,6 +2,11 @@
 
 For [#3](https://github.com/redox-rpi/redox-rpi/issues/3).
 
+**Default now:** the two patches are kernel `0010` and `0011` in
+[`patches/kernel/`](../../kernel/), in every image (after Pi test 162
+showed stale code without them). `--experiment icache-sync` adds nothing
+any more; this page keeps the history.
+
 ## The gap
 
 On AArch64, instruction fetch does not see data that is still in the data
@@ -33,7 +38,7 @@ correctness fix for real hardware.
 
 ## The change
 
-Kernel patch `0001`:
+Kernel patch `0001` (default `0010`):
 
 - `AddrSpace::mprotect`: when pages become executable, clean each mapped
   page to the point of unification through the kernel's linear mapping,
@@ -42,7 +47,7 @@ Kernel patch `0001`:
   executable grant of the new address space, before the context runs in
   it.
 
-Kernel patch `0002`, the other ways code reaches an executable page:
+Kernel patch `0002` (default `0011`), the other ways code reaches an executable page:
 
 - `mmap` of a file with `PROT_EXEC` (`borrow_fmap`): the scheme filled the
   pages as data;
