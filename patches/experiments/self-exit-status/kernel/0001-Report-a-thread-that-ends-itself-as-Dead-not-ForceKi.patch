@@ -1,0 +1,84 @@
+From 6042dfc580082c81643096519401c7fbafe4516b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 05:18:34 +0000
+Subject: [PATCH] Report a thread that ends itself as Dead, not ForceKilled
+
+Since "Exit a thread that kills itself when its syscall returns", a
+thread that ends itself (relibc writes ForceKill to its own status
+handle) is marked being_sigkilled, and the status read reports that as
+ForceKilled. procmgr turns ForceKilled into SIGKILL when it is the
+process's last thread, so a process whose last thread calls
+pthread_exit ended with SIGKILL instead of 0. Mark such a thread with
+exiting_itself as well and report it as Dead, as before that patch.
+---
+ src/context/context.rs |  5 +++++
+ src/scheme/proc.rs     | 15 ++++++++++++---
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/src/context/context.rs b/src/context/context.rs
+index f63da92..2855506 100644
+--- a/src/context/context.rs
++++ b/src/context/context.rs
+@@ -164,6 +164,10 @@ pub struct Context {
+     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
+     pub userspace: bool,
+     pub being_sigkilled: bool,
++    /// Set with `being_sigkilled` when the thread ends itself (relibc's thread exit
++    /// writes ForceKill to its own status handle): it is a normal exit, so its status
++    /// reads Dead, not ForceKilled.
++    pub exiting_itself: bool,
+     pub fmap_ret: Option<Frame>,
+     /// Priority
+     pub prio: usize,
+@@ -251,6 +255,7 @@ impl Context {
+             is_active: false,
+             queue_key: None,
+             being_sigkilled: false,
++            exiting_itself: false,
+             owner_proc_id,
+ 
+             euid: 0,
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index a804931..bc1343b 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -1322,7 +1322,11 @@ impl ContextHandle {
+                             // does not return, so the references the syscall path still
+                             // holds (the file description of this handle, and through it
+                             // the handle and this context) would never be dropped.
+-                            context.write(token.token()).being_sigkilled = true;
++                            {
++                                let mut ctxt = context.write(token.token());
++                                ctxt.being_sigkilled = true;
++                                ctxt.exiting_itself = true;
++                            }
+                             crate::percpu::PercpuBlock::current()
+                                 .switch_internals
+                                 .being_sigkilled
+@@ -1413,7 +1417,11 @@ impl ContextHandle {
+                             // does not return, so the references the syscall path still
+                             // holds (the file description of this handle, and through it
+                             // the handle and this context) would never be dropped.
+-                            context.write(token.token()).being_sigkilled = true;
++                            {
++                                let mut ctxt = context.write(token.token());
++                                ctxt.being_sigkilled = true;
++                                ctxt.exiting_itself = true;
++                            }
+                             crate::percpu::PercpuBlock::current()
+                                 .switch_internals
+                                 .being_sigkilled
+@@ -1546,8 +1554,9 @@ impl ContextHandle {
+                 let status = {
+                     let context = context.read(token.token());
+                     match context.status {
++                        // A thread that ended itself exited normally (Dead below).
+                         Status::Runnable | Status::Dead { excp: None }
+-                            if context.being_sigkilled =>
++                            if context.being_sigkilled && !context.exiting_itself =>
+                         {
+                             ContextStatus::ForceKilled
+                         }
+-- 
+2.53.0
+
