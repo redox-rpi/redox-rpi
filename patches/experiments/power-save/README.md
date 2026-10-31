@@ -39,4 +39,6 @@ scripts/build-image.sh --experiment power-save [--experiment cputop]
 
 `qemu-check.sh`: reads both files, switches `i2c2` off and on, the display
 off, on, blank and unblank, and checks that `usb` and `uart0` are refused.
-QEMU has no real domains or HDMI, so it checks the driver, not the saving.
+QEMU has no real domains or HDMI, so it checks the driver, not the saving;
+its firmware lists no power domains at all. `v0.3.0-dev-703-g7ce5389+x9024`
+(`--experiment power-save --experiment cputop`): 10 of 10, cputop 6 of 6.
