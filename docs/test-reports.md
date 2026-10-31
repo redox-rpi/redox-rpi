@@ -5485,3 +5485,47 @@ probe lines).
 - Standard checks pass (0 of 300 starts failed). No panic in A or B.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-801-gea8b5c2` without (`+x8a5e`) and with `icache-sync` (`+x9080`) (instruction cache stress test)
+
+Real Pi 3B+ over netboot. Test 162 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Pass, with a clear result. Without `icache-sync` the Cortex-A53 runs stale
+code: 31–33 % of `new-page` rounds and 53 % of `same-page` rounds. With
+`icache-sync` it is 0 of 10000 in every test, on both boots.** 0 of 1000 starts
+failed on both images, and the serial log shows no exception. Images
+`~/t18-work/image-t3/without.img` (md5 `32ee2042…`) and `with.img` (md5
+`1437c1b6…`), staged with `~/t18-work/t3-stage/scripts/netboot.sh` (bootloader md5
+`4fccdb94` each time), order A, B, A, B, each a fresh boot over a devsh reset.
+
+`icachetest 10000`:
+
+| test | A1 (without) | B1 (with) | A2 (without) | B2 (with) |
+|---|---|---|---|---|
+| `new-page` | **3146** of 10000 stale | 0 | **3244** | 0 |
+| `same-page` | **5310** | 0 | **5349** | 0 |
+| `file-map` | 0 | 0 | 0 | 0 |
+| `user-flush` | 0 | 0 | 0 | 0 |
+| result | `FAIL` (68.2 s) | **`PASS`** (67.8 s) | `FAIL` (62.7 s) | **`PASS`** (63.3 s) |
+
+- `pi-test.py --starts 1000` on the first boot of each: **0 of 1000 failed** for
+  A1 and B1. All standard checks pass.
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`, three times:
+
+| boot | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| A1 | 118.87 s | 118.99 s | 119.06 s |
+| B1 | 116.77 s | 116.75 s | 116.86 s |
+| A2 | 116.19 s | 116.79 s | 116.83 s |
+| B2 | 114.34 s | 114.44 s | 114.29 s |
+
+  `icache-sync` costs nothing measurable; B was even 1–2 s faster. These loops
+  take longer than test 127's 77.7 vs 78.7 s, because this image is a newer main
+  with more in `/usr`; A and B are like for like.
+- Serial log of each boot: 0 lines with `FATAL`, `exception` or `panicked`. The
+  stale rounds in A did not crash anything, because `icachetest` checks the
+  result itself.
+- So the gap is real on the Pi (`file-map` and `user-flush` are already safe),
+  and `icache-sync` closes it.
+
+Stable image restored afterwards.
