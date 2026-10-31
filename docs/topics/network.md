@@ -13,7 +13,8 @@
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
-  of #68, base `0041`–`0044` once merged; Pi test #74 passed):
+  of #68, base `0041`–`0044` once merged; Pi tests #74 and #122 passed,
+  #122 on the branch as it will be merged):
   netstack used to take one adapter at start and dhcpd configured only
   `eth0`, once. Now netstack opens every `network.*` scheme and looks
   again every 2 s (`wlan*` for Wi-Fi, `eth*` for the rest), dhcpd gets a
@@ -45,6 +46,23 @@
   the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
   chip: unit tests and a QEMU check of the settings path pass; Pi test
   #110.
+
+- [#88](https://github.com/redox-rpi/redox-rpi/issues/88) netstack kept
+  every accepted TCP connection (2 x 64 KiB) after it was closed: a wrong
+  reference count in `dup("listen")`. Fixed in base `0049`, draft PR
+  [#90](https://github.com/redox-rpi/redox-rpi/pull/90). **Pi test 114
+  passed**: 120 devsh connections cost 1.1 MB, where stable lost 5.3 MB
+  for 40.
+- [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
+  answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
+  (each only while its program is on the image); **Pi test 96 passed**,
+  SSH works at the address mDNS gives; **Pi test 123 passed** with SRV,
+  TXT and address records in a service's PTR answer. Draft PR
+  [#93](https://github.com/redox-rpi/redox-rpi/pull/93) on top of #82.
+- [#105](https://github.com/redox-rpi/redox-rpi/issues/105) `ls` of a
+  netcfg directory failed with `Not a directory`: upstream's netcfg scheme
+  has no `getdents`. Base `0056` (branch `netcfg-ls`) lists the names a
+  directory node already reads as; QEMU passes, Pi test #128.
 
 ## Later
 
