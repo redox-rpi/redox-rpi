@@ -346,6 +346,19 @@ git).
   (66 °C) but kept 1.4 GHz. One `devshd` thread died with `RELIBC PANIC`
   in `src/sync/mod.rs:103` (`futex_wake`, `EFAULT`) while memory was
   lowest; devshd went on. [Report](../test-reports.md).
+- **Saved prompt state, 2026-10-31:** `rinfer --serve` can save the key
+  and value cache to a file and load it again (`save`/`load`). The
+  assistant saves it after the system prompt (default
+  `~/.cache/assistant/prompt.kv`, 44 MB, `ASSISTANT_CACHE` sets another
+  file, empty turns it off) and loads it on the next start if model and
+  system prompt are the same. QEMU `raspi3b`: reading the system prompt
+  took 232 s, loading it 11 s, same answer, heap peak 415 MiB instead of
+  430. Pi test #126 measures it on the Pi.
+- **Writing speed, 2026-10-31, QEMU only:** the worker pool calling
+  `sched_yield` instead of its 200 µs sleep halved the speed, and spinning
+  longer before the sleep (`CANDLE_BARRIER_POOL_SPIN_LIMIT=2000000`) made
+  it far slower still; both dropped. QEMU timings are rough, so #126 also
+  compares 4 and 3 threads on the Pi.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -367,12 +380,11 @@ git).
 
 - Writing runs at 1 token per second on the Pi (goal 2). Profile it
   before deciding on our own loop (step 2b): the worker pool's 200 µs
-  sleep (the kernel futex fix would allow parking again), the q4_0 kernels
+  sleep (the kernel futex fix would allow parking again; yield and longer
+  spinning were worse in QEMU), the q4_0 kernels
   without `sdot`, and the slow answer after a tool call. Pi test #51 (SD
   card, llama.cpp numbers) would show how far llama.cpp gets; it still
   waits for a card swap.
-- Save the state after the system prompt to a file, so the assistant
-  does not read 380 tokens (170 s on the Pi) on every start.
 - Move the SD-card recipe `qwen3-model` to the smaller model file.
 - A grammar mask while a tool call is written, and a test set of
   questions; a cap on the conversation length (memory).

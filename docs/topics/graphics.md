@@ -319,6 +319,12 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
+- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
+  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
+  main, the base patches renumbered to `0060`–`0067` (main now uses
+  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
+  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
+  2–3 and #130 pass.
 - **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
   judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
   `drawbench` and the vsync line, without a screen. If it passes, a draft
@@ -327,6 +333,22 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   as experiments, not default; the report goes into the PR. Making
   `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
   #54 with #108), which checks what the screen shows.
+  Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
+  `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
+  free. The cause is the kernel: its page allocator hands out at most 4
+  MiB of physically contiguous memory (11 orders), however much is free,
+  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
+  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
+  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. On the Pi (#130)
+  the DMA test blit at start failed (`test blit of 2 rows moved 4`, while
+  #116 got 3 with the same code), so the DMA path was not reached; the
+  allocator change itself ran without trouble. Likely cause: "zeroed" DMA
+  memory that is not zero, because the kernel clears it through a cached
+  mapping and the driver reads it uncached. Patch `0068` clears the test
+  buffer itself and logs what was there; Pi test #138
+  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
+  `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
+  file in `/srv/tftp/`.
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
 - Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
   boot (is `monitor connected` logged?), and double buffering at 1280x720.
