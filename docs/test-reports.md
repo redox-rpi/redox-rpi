@@ -4706,3 +4706,30 @@ no `prompt.kv.part` or `prompt.kv` before.
   download to the card.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-451-g7203785` baseline `+x644c` and wait-irq `+x98e9` (TCP send)
+
+Real Pi 3B+ over netboot. Test 144 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Pass: the host counted 16777216 bytes in all four runs, and devshd answered
+afterwards.** Both images send at 8.3 to 8.9 MB/s. dwc2d's ACTTIME rises the same
+on both, by about 1.0 s per 16 MiB send, so wait-irq is not higher, but also no
+lower. Images from `~/redox-rpi-usb/keep/` with their manifests (match), stable
+bootloader. Standard checks with `--manifest` pass on both (0 of 300 starts
+failed). Host side: OpenBSD `nc -l <port> | wc -c`.
+
+| image | run | `tcp-send` | host bytes | dwc2d ACTTIME before → after | SCHTIME before → after |
+|---|---|---|---|---|---|
+| baseline | 1 | `16777216 bytes in 1.89 s, 8.88 MB/s` | 16777216 | 1.80 → 2.80 s (**+1.00**) | 1.93 → 2.05 s (+0.12) |
+| baseline | 2 | `16777216 bytes in 2.00 s, 8.39 MB/s` | 16777216 | 2.95 → 3.96 s (**+1.01**) | 2.19 → 2.22 s (+0.03) |
+| wait-irq | 1 | `16777216 bytes in 2.01 s, 8.33 MB/s` | 16777216 | 1.67 → 2.66 s (**+0.99**) | 1.82 → 1.84 s (+0.02) |
+| wait-irq | 2 | `16777216 bytes in 2.01 s, 8.36 MB/s` | 16777216 | 2.72 → 3.72 s (**+1.00**) | 1.89 → 1.91 s (+0.02) |
+
+- ACTTIME is the first time column of `/scheme/sys/context` (as in #135); each
+  before/after pair also covers about 0.4 s of devsh between the commands.
+- So dwc2d is busy about half the 2 s a send takes, the same with and without
+  wait-irq: the sent frames still spin, as the row expected.
+- `free` afterwards: baseline 134300 used of 743188, wait-irq 145984 of 743180.
+  No panic.
+
+Stable image restored afterwards.
