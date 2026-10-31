@@ -49,7 +49,17 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   with a 3 s deadline: an error, a wrong row or a hang leaves CPU blits
   (`blits with the CPU: DMA test …`). If the whole machine stops, the
   last `DMA test:` line shows which step it was. QEMU: whole screen
-  1824x984 in 50 ms.
+  1824x984 in 50 ms. Test 145: the 1-row blit worked, the 64-row blit
+  (2D mode, YLENGTH 63) into the framebuffer stopped the whole Pi, which
+  the deadline cannot catch. The same boot had `DMA test buffer had 34
+  of 64 words not zero`, so `0068` was needed.
+- [`0070`](base/0070-rpi-fbd-DMA-blits-only-with-RPI_FB_DMA-on.patch):
+  because of test 145, DMA blits are off unless `RPI_FB_DMA=on`; the
+  default copies with the CPU, as #116 and #130 did on the Pi.
+- [`0071`](base/0071-rpi-fbd-an-interrupted-event-wait-is-not-fatal.patch):
+  with `RPI_FB_DMA=on`, one QEMU run had `rpi-fbd` panic with
+  `Interrupted system call` from its event queue after the DMA test
+  thread ended; that error is now skipped.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
@@ -144,7 +154,8 @@ follows the DMA plan of #21 (`docs/topics/dma.md` on branch `dma-plan`):
 - The register code is a copy of `bcm2835-sdhostd`'s `dma.rs` (branch
   `sdhost-dma`); the SD session agreed. Both move into a common crate once
   both drivers work on the Pi.
-- `RPI_FB_DMA=off` copies with the CPU. `RPI_FB_BENCH=1` measures at
+- DMA blits only with `RPI_FB_DMA=on` (`0070`); the default copies with
+  the CPU. `RPI_FB_BENCH=1` measures at
   start (full screen, 10 rounds): drawing (fill, a console scroll) in
   normal and in uncached memory, the blit with the CPU from both, and the
   blit with DMA; then it logs the blits every 5 seconds.
