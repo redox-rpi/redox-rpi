@@ -5299,3 +5299,33 @@ netget: 382156480 bytes in 49.6 s, 7.71 MB/s
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-798-gb225933+x1258` (t4-with-137, signals sent to a thread)
+
+Real Pi 3B+ over netboot. Test 157 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)), Pi test agent.
+
+**Pass: boot to login with no `FATAL` or panic, all five `sigregs` runs PASS
+(signals to a thread now arrive, 500 of 500), and the standard checks pass.**
+Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-798-gb225933+x1258.img`,
+manifest matches, stable bootloader.
+
+```
+### sigregs thread --x18 -n 500  (15.3 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (15.2 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (20.1 s)
+PASS thread: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs sender  (0.2 s)
+PASS sender: si_pid 55 from the thread, 56 from the child
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+
+Stable image restored afterwards.
