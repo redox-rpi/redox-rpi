@@ -21,8 +21,8 @@
 //! Each answer is checked: it must come from the address asked, carry the
 //! request's transmit time as its origin time, and come from a synchronized
 //! server (leap indicator not 3, stratum 1 to 15). A kiss-of-death (stratum
-//! 0) is reported with its code; after DENY or RSTR that address is not asked
-//! again. It asks up to three addresses (a name such as `pool.ntp.org` has
+//! 0) is reported with its code; after RATE that address is not asked again
+//! in this sync, after DENY or RSTR never again. It asks up to three addresses (a name such as `pool.ntp.org` has
 //! several) and uses the median offset, so one wrong server cannot move the
 //! clock. After the first sync it keeps the clock when the offset is below
 //! 50 ms, and refuses a jump of more than an hour unless two answers agree.
@@ -378,8 +378,22 @@ fn restore() {
     }
 }
 
+/// Print a message once per sync.
+fn report(reported: &mut Vec<String>, message: String) {
+    if !reported.contains(&message) {
+        eprintln!("timesync: {message}");
+        reported.push(message);
+    }
+}
+
 /// Answers from up to three addresses of the servers, as (offset, label).
-fn samples(servers: &[&str], last_error: &mut String) -> Vec<(i128, String)> {
+/// Addresses in `skip` (kiss-of-death RATE in this sync) are not asked.
+fn samples(
+    servers: &[&str],
+    skip: &mut Vec<SocketAddr>,
+    reported: &mut Vec<String>,
+    last_error: &mut String,
+) -> Vec<(i128, String)> {
     let mut found = Vec::new();
     for server in servers {
         let addrs = match resolve(server) {
@@ -393,13 +407,16 @@ fn samples(servers: &[&str], last_error: &mut String) -> Vec<(i128, String)> {
             if found.len() == SAMPLES {
                 return found;
             }
-            if BANNED.lock().unwrap().contains(&addr) {
+            if skip.contains(&addr) || BANNED.lock().unwrap().contains(&addr) {
                 continue;
             }
             match query(addr) {
                 Ok(offset) => found.push((offset, format!("{server} ({})", addr.ip()))),
                 Err(err) => {
-                    eprintln!("timesync: {server} ({addr}): {err}");
+                    if err.to_string() == "kiss-of-death RATE" {
+                        skip.push(addr);
+                    }
+                    report(reported, format!("{server} ({addr}): {err}"));
                     *last_error = format!("{server}: {err}");
                 }
             }
@@ -412,12 +429,13 @@ fn samples(servers: &[&str], last_error: &mut String) -> Vec<(i128, String)> {
 fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
     let start = Instant::now();
     let mut last_error = String::from("no default route (DHCP not done)");
+    let (mut skip, mut reported) = (Vec::new(), Vec::new());
     while start.elapsed() < GIVE_UP_AFTER {
         if !network_up() {
             sleep(Duration::from_secs(1));
             continue;
         }
-        let found = samples(servers, &mut last_error);
+        let found = samples(servers, &mut skip, &mut reported, &mut last_error);
         if !found.is_empty() {
             let offsets: Vec<i128> = found.iter().map(|(o, _)| *o).collect();
             let first = !SYNCED_ONCE.load(Ordering::SeqCst);
@@ -443,7 +461,10 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
                     let _ = fs::write(SYNCED, format!("{unix}\n"));
                     return Ok(unix);
                 }
-                Err(err) => last_error = err,
+                Err(err) => {
+                    report(&mut reported, err.clone());
+                    last_error = err;
+                }
             }
         }
         sleep(Duration::from_secs(2));
