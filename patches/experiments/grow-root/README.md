@@ -41,4 +41,9 @@ QEMU `raspi3b`, `v0.3.0-dev-81-g5ceb150+x9922` (2026-10-28):
 - First try: `redoxfs-resize` got `ENOLCK` because `growfs` still held the
   whole disk open; it closes it now.
 
+Again after the merge of main, `v0.3.0-dev-564-g69799a6+x99f2`
+(2026-10-31), `--small` image (149 MiB) on a 4 GiB card: partition
+85 → 4032 MiB and restart, RedoxFS 84 → 4032 MiB, a third boot without
+`growfs` lines.
+
 On the Pi: test 29 in `docs/test-plan.md` (needs a person to swap the card).
