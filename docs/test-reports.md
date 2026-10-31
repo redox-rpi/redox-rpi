@@ -6042,3 +6042,26 @@ netget: 382156480 bytes in 429.6 s, 0.89 MB/s
 - Afterwards `netget.bin` 382156480 bytes, removed; `/scheme/data` 394.2M used.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-855-g81b7717+x8ea9` (image A of 170 plus `futex-wait-lock`)
+
+Real Pi 3B+ over netboot. Test 173 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Fail: `futex-wait-lock` does not stop the freeze. 11 runs passed, then run 12
+froze the whole Pi.** Same as in 170: no devsh, no serial output, power cycle.
+Image `~/redox-rpi-t12/keep/rwfutex-v0.3.0-dev-855-g81b7717+x8ea9.img`, stable
+bootloader; banner `redox-rpi v0.3.0-dev-855-g81b7717+x8ea9`.
+
+- `./bins_dynamic/pthread/rwlock_randtest`, each its own devsh command with a
+  60 s client timeout: runs 1–11 **pass**, `real` 1.27 to 1.43 s.
+- Run 12 (started about 22:33): no result after 65 s, `echo ok` no answer,
+  **0 serial bytes** since the run started. Power-cycled at 22:34:13 with stable
+  staged.
+- `cond_stress` not run (the freeze ended the row).
+- Together: A (170) froze in 2 of 10 runs, B with `rt-call-flags` (170) 0 of
+  20, C with `futex-wait-lock` 1 of 12, and the suite in 166 once. It is neither
+  `rt-call-flags` nor the futex deadlock of `57ccc8f`. The whole machine stops
+  without a word (no panic), which points at the kernel (a lock or IRQ path on
+  aarch64), not at relibc's rwlock.
+
+Stable image restored afterwards.
