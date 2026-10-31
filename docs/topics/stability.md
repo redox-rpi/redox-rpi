@@ -74,9 +74,14 @@
   Ion's own group before the job had the terminal, and Ion only noted it.
   Ion patch `0002` passes it on to the job. Pi test #118 passed
   (2026-10-30): serial 12 of 12 stopped within 0.1 s, devsh 10 of 10.
-  Left: a Ctrl-C within about 0.03 s of Enter can still be read as a plain
-  byte while the line editor is in raw mode (as on Linux, shorter there).
-  Pull request open.
+  Pull request #100.
+- Left over from #86 (branch `ctrlc-raw`, on top of `serial-ctrlc`): a
+  Ctrl-C within about 0.03 s of Enter came while Ion's line editor had the
+  terminal in raw mode (ISIG off) and stayed a plain byte. ptyd patch
+  `0057` turns such an unread Ctrl-C into SIGINT when ISIG comes back, and
+  Ion patch `0003` keeps that SIGINT for the job. Pi test #131 passed
+  (2026-10-31): serial 19 of 19 stopped within 0.1 s, 15 of them at
+  0.01–0.03 s after Enter; devsh 10 of 10. Pull request open.
 
 ## Next
 

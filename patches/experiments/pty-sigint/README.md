@@ -120,6 +120,11 @@ program got no SIGINT, and the next prompt read the byte.
   one round of 18 ran to the end; that may be the Enter and the Ctrl-C
   read in one piece by liner, which ptyd cannot see. devsh
   (`ctrlc-test.py --delays 0,0.01,0.02,0.03`): 4 of 4.
+- Pi test #131 (2026-10-31, `v0.3.0-dev-515-gf41008d+x810f`): on the serial
+  console after the boot had settled, 19 of 19 Ctrl-Cs stopped `sleep 40`
+  0.1 s after the Ctrl-C, 15 of them at 0.01–0.03 s after Enter; devsh
+  `ctrlc-test.py --delays 0,0.01,0.02,0.03,0.1` 10 of 10; standard checks
+  pass, 0 of 300 starts failed.
 
 ## Check
 
