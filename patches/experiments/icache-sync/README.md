@@ -129,3 +129,8 @@ builds, A, B, A, B on fresh boots:
 1000 starts failed with both builds, no exception, and no measurable cost:
 the `ls` loop took 116.8 s with and 118.9 s without on the first boots.
 Upstream note: [docs/upstream/kernel.md](../../../docs/upstream/kernel.md).
+
+Real Pi 3B+, 2026-10-31, test 169 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-845-g7590e1cx8a5e-icache-default-icache-sync-as-default-kernel-patches)), the default image
+with kernel `0010`, `0011` (`v0.3.0-dev-845-g7590e1c+x8a5e`, plus
+`icachetest`): 0 stale rounds in all four tests, 0 of 1000 starts failed,
+standard checks pass, `ls` loop 116.9 s.
