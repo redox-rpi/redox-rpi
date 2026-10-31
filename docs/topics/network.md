@@ -87,6 +87,13 @@
   (7.4 MB/s, steady, 0 USB errors) with the network alone; the same
   download written to `/scheme/data` hung the whole Pi. The card writes
   during a download cause it; the hang is with the SD card & storage area.
+- [#140](https://github.com/redox-rpi/redox-rpi/issues/140) an ARP entry
+  expired during a busy connection and ACKs were dropped from the full
+  queue; [#141](https://github.com/redox-rpi/redox-rpi/issues/141) a read
+  after a TCP reset gave `ENOTCONN` although data was still buffered. Both
+  seen in #119, both upstream code. Experiment `netstack-arp-ack` (base
+  `0082`): a stale entry stays in use while ARP asks again; buffered data
+  comes first. QEMU passes what it can show; Pi test #156.
 
 ## Later
 
