@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 14:31:49 +0100
+Subject: [PATCH] rpi-firmwared: display and power_domains, to switch off HDMI
+ and unused power domains
+
+display: writing off/on switches the HDMI display's power (SET_DISPLAY_POWER,
+as Linux's vc4 driver does), blank/unblank only blanks the picture.
+power_domains: lists the firmware's power domains (GET_POWER_STATE) and
+switches one with '<name> on|off' (SET_POWER_STATE); usb and uart0 are
+refused, since they carry the network and the serial console on a 3B+.
+---
+ drivers/rpi-firmwared/src/main.rs | 66 ++++++++++++++++++++++++++++++-
+ drivers/rpi-firmwared/src/mbox.rs |  4 ++
+ 2 files changed, 68 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 5875830..aaa5993 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -23,6 +23,14 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
++//! - `/scheme/rpi-firmware/display`: what was last written to it (`on`
++//!   until then); writing `off` or `on` switches the HDMI display's power
++//!   (the firmware's SET_DISPLAY_POWER, as Linux's vc4 driver does),
++//!   `blank` or `unblank` only blanks the picture
++//! - `/scheme/rpi-firmware/power_domains`: one line per firmware power
++//!   domain: name, `on` or `off`; writing `<name> on` or `<name> off`
++//!   switches it. Domains in use on the board (USB, which carries the
++//!   network on a 3B+, and the PL011 serial console) are refused.
+ //!
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -56,9 +64,17 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &[
++    "arm_clock", "board", "clocks", "display", "governor", "power_domains", "power_led", "temperature", "throttled",
++];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "display", "governor", "power_domains", "power_led"];
++
++/// The firmware's power domains (SET_POWER_STATE device ids 0-8).
++const POWER_DOMAINS: &[&str] = &["sd", "uart0", "uart1", "usb", "i2c0", "i2c1", "i2c2", "spi", "ccp2tx"];
++/// Domains that are never switched off: the network hangs on USB (3B+) and
++/// the serial console on the PL011.
++const POWER_DOMAINS_IN_USE: &[&str] = &["usb", "uart0"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -75,6 +91,8 @@ struct FirmwareScheme {
+     // Lock order: the governor before the mailbox.
+     governor: Arc<Mutex<Governor>>,
+     handles: HandleMap<Handle>,
++    /// What was last written to `display`.
++    display: &'static str,
+ }
+ 
+ impl FirmwareScheme {
+@@ -122,6 +140,18 @@ impl FirmwareScheme {
+                 }
+             }
+             "board" => board(mbox, &mut text),
++            "display" => writeln!(text, "{}", self.display).unwrap(),
++            "power_domains" => {
++                for (id, name) in POWER_DOMAINS.iter().enumerate() {
++                    // Bit 0: on; bit 1: the domain does not exist.
++                    let Ok([_, state]) = mbox.property(TAG_GET_POWER_STATE, &[id as u32, 0], 2).as_deref() else {
++                        continue;
++                    };
++                    if state & 2 == 0 {
++                        writeln!(text, "{name} {}", if state & 1 != 0 { "on" } else { "off" }).unwrap();
++                    }
++                }
++            }
+             _ => return Err(Error::new(ENOENT)),
+         }
+         Ok(text)
+@@ -146,6 +176,37 @@ impl FirmwareScheme {
+                     _ => Err(log(format!("power LED: firmware refused GPIO {gpio}"))),
+                 }
+             }
++            "display" => {
++                let (name, tag, request): (&'static str, u32, [u32; 2]) = match value {
++                    "on" => ("on", TAG_SET_DISPLAY_POWER, [0, 1]),
++                    "off" => ("off", TAG_SET_DISPLAY_POWER, [0, 0]),
++                    "blank" => ("blank", TAG_FRAMEBUFFER_BLANK, [1, 0]),
++                    "unblank" => ("unblank", TAG_FRAMEBUFFER_BLANK, [0, 0]),
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                let request = if tag == TAG_FRAMEBUFFER_BLANK { &request[..1] } else { &request[..] };
++                let answer = mbox.set_property(tag, request).map_err(log)?;
++                println!("rpi-firmwared: display {name} (firmware answered {answer:?})");
++                self.display = name;
++                Ok(())
++            }
++            "power_domains" => {
++                let (domain, state) = value.split_once(' ').ok_or(Error::new(EINVAL))?;
++                let id = POWER_DOMAINS.iter().position(|name| *name == domain).ok_or(Error::new(EINVAL))?;
++                let on = match state.trim() {
++                    "on" => 1,
++                    "off" => 0,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                if on == 0 && POWER_DOMAINS_IN_USE.contains(&domain) {
++                    eprintln!("rpi-firmwared: power domain {domain} is in use, not switched off");
++                    return Err(Error::new(EACCES));
++                }
++                // Bit 1: wait until the domain is switched.
++                let answer = mbox.property(TAG_SET_POWER_STATE, &[id as u32, on | 2], 2).map_err(log)?;
++                println!("rpi-firmwared: power domain {domain} {} (firmware answered {answer:?})", state.trim());
++                Ok(())
++            }
+             "governor" => {
+                 let mode = Mode::parse(value).ok_or(Error::new(EINVAL))?;
+                 governor.set_mode(mode, mbox).map_err(log)?;
+@@ -474,6 +535,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         mbox: mbox.clone(),
+         governor: governor.clone(),
+         handles: HandleMap::new(),
++        display: "on",
+     };
+     match scheme.contents("board") {
+         Ok(board) => {
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e..308255a 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -46,6 +46,10 @@ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
++pub const TAG_GET_POWER_STATE: u32 = 0x0002_0001;
++pub const TAG_SET_POWER_STATE: u32 = 0x0002_8001;
++pub const TAG_FRAMEBUFFER_BLANK: u32 = 0x0004_0002;
++pub const TAG_SET_DISPLAY_POWER: u32 = 0x0004_8019;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
