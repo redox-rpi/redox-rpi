@@ -5119,3 +5119,35 @@ PASS process: 500 signals, all registers kept
 - `sigregs thread` not run (fails on main too until PR #64).
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-816-g7376c46+x4590` (assistant + devshd-accept, devshd under a memory-heavy run)
+
+Real Pi 3B+ over netboot. Test 153 ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)), Pi test agent.
+
+**Pass: devsh accepted a new connection after each of the three assistant runs.**
+The serial console's only `devshd:` line was the start-up `devshd: listening on
+port 2323`: no accept errors, no rebind, no session thread error. #126's
+`Connection refused` did not come back. Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-816-g7376c46+x4590.img`, manifest
+matches, stable bootloader. Standard checks pass (0 of 300 starts failed).
+Model on the card (341455552 bytes). 4 threads (`RAYON_NUM_THREADS=4`);
+`prompt.kv` removed before each run, so each run read the system prompt.
+
+| run | total (`date -u`) | prompt read | saved | answers | writing | new devsh `echo alive` |
+|---|---|---|---|---|---|---|
+| 1 | 16:48:58 → 16:53:14 (256 s) | 380 tokens in 167.2 s | 6.1 s | `It is Saturday, 31 October 2026, 16:52 UTC.`, `The current time is 16:52 UTC.` | 1.21, 0.72 t/s | **alive** at 16:53:14 |
+| 2 | 16:53:18 → 16:58:40 (322 s) | 166.1 s | 11.3 s | same, 16:56 UTC | 1.33, **0.15** t/s | **alive** at 16:58:40 |
+| 3 | 16:58:50 → 17:03:32 (283 s) | 174.4 s | 8.6 s | same, 17:02 UTC (second: `… 31 October 2026 at 17:02 UTC.`) | **0.16**, 0.87 t/s | **alive** at 17:03:33 |
+
+- `free` from a second devsh during run 2 (16:54:51): 725120 used, 145524 free
+  of 870644. That connection needed one retry (`no output for: echo start`),
+  then answered. After the runs: 254104 used, 616540 free.
+- Writing slowed to 0.15–0.16 t/s in two answers (#126 with 4 threads:
+  0.78 t/s). Both came after the chip reached its soft temperature limit
+  (below); the second devsh during run 2 may also have cost time.
+- End: temperature 61.2 °C, `throttled` `0x00080008` (soft temperature limit
+  reached and active).
+- No `oom`, no kernel panic, no `RELIBC PANIC`. `prompt.kv` removed; the model
+  kept.
+
+Stable image restored afterwards.
