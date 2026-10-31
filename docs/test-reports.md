@@ -4239,3 +4239,39 @@ boot with the new stable's bootloader. Both run at `arm 1400000000`.
 
 Within a boot, the runs vary by less than 0.15 s, so the difference is real but
 small. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-417-gd2482d8+x9903` (tls-variant1, static TLS layout in `ld.so`)
+
+Real Pi 3B+ over netboot. Test 129 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**Pass.** `stdio/mutex`, `tls_align` (dynamic and static) and `tls_shared` are
+`FIXED`. The only `NEW` line is `pthread/exit` (SIGKILL), which the row allows.
+Image `~/redox-rpi-t12/build/tls-pi.img`, with the new stable's bootloader.
+
+- `scripts/pi-test.py --starts 1000`: **pass**, 0 of 1000 starts failed. No
+  exception in the serial log during the starts.
+- `cd /usr/share/relibc-tests`, 10 × `./bins_dynamic/stdio/mutex`: **10 × `rc=0`**.
+- `ion /usr/share/relibc-tests/run.ion` (60 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t-tls-mutex`:
+
+```
+NEW ./bins_dynamic/pthread/exit: # ./bins_dynamic/pthread/exit: process exited unsuccessfully: signal: 9 (SIGKILL)
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/stdio/mutex: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+FIXED ./bins_dynamic/tls_align: on the list, but passed
+FIXED ./bins_dynamic/tls_shared: on the list, but passed
+FIXED ./bins_static/tls_align: on the list, but passed
+SUMMARY v0.3.0-dev-417-gd2482d8+x9903: 319 tests, 13 failed (12 known, 0 flaky, 1 new), 10 fixed
+```
+
+- The 6 `FATAL: Not an SVC induced synchronous exception` lines in the serial log
+  all come from the known signal tests in `run.ion` (`signals/sigprocmask…`,
+  `sigpause-…`, `sigsegv`, `sigset-5`, `stackoverflow`). None came from the 1000 starts.
+
+Raw output: homenodellm `~/pitest-tools/t129/`. Stable image restored afterwards.
