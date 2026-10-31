@@ -20,4 +20,7 @@ TCP send kept dwc2d busy about half the time, the same with and without
   TCP twice: wait-irq `+x98e9` 0.16/0.14 MB/s, dwc2d CPU +11.61/+12.66 s;
   tx-irq `+x3388` 0.16/0.17 MB/s, +10.78/+10.23 s (about 13% less, same
   speed). tx-irq: storage 18/18, hotplug 15/15, keyboard pass.
-- Pi: test #152.
+- Pi 2026-10-31 (test 152, the tx-irq row), 16 MiB twice: wait-irq 7.28/8.30
+  MB/s, dwc2d ACTTIME +1.03/+1.14 s; tx-irq 7.12/7.94 MB/s, +1.22/+1.10 s.
+  **No gain on the Pi**; the QEMU saving does not carry over. Not added to
+  `dwc2d-wait-irq` (#139).
