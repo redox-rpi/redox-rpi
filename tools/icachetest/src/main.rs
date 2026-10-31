@@ -7,6 +7,9 @@
 //! every round passes.
 //!
 //! Usage: icachetest [rounds]   (default 10000 per test)
+//!
+//! ICACHETEST_FSYNC=1 calls fsync before the file is mapped, ICACHETEST_KEEP=1
+//! keeps the files of the file-map test (for looking at the RedoxFS bug).
 
 use std::ffi::CString;
 use std::process::exit;
@@ -126,6 +129,9 @@ fn file_map(rounds: usize, base: &str) -> Option<usize> {
             unsafe { libc::close(fd) };
             return None;
         }
+        if std::env::var_os("ICACHETEST_FSYNC").is_some() {
+            unsafe { libc::fsync(fd) };
+        }
         let p = mmap(PAGE, libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE, fd);
         if p.is_null() {
             eprintln!("file: mmap: {}", std::io::Error::last_os_error());
@@ -151,7 +157,9 @@ fn file_map(rounds: usize, base: &str) -> Option<usize> {
             libc::munmap(p as *mut _, PAGE);
             libc::close(fd);
         }
-        let _ = std::fs::remove_file(&path);
+        if std::env::var_os("ICACHETEST_KEEP").is_none() {
+            let _ = std::fs::remove_file(&path);
+        }
     }
     unsafe { libc::munmap(buf as *mut _, PAGE) };
     if old_data > 0 {
