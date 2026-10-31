@@ -4526,3 +4526,36 @@ new stable's bootloader. Standard checks pass (6 of 6).
   (`/scheme/data/Qwen3-0.6B-Q4_0e.gguf`, 341,455,552 bytes).
 
 Stable image restored afterwards.
+
+## 2026-10-31: test 134, boot time without U-Boot countdown and `boot_delay` (stable `v0.3.0-dev-533-g6c729cd+x9f76`)
+
+Real Pi 3B+ over netboot. Test 134 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), Pi test agent. Run with the user's OK.
+
+**Stopped as the row says: with `/srv/tftp/ed08e0aa` in place, the Pi still
+counted `2 1 0` and ran the same U-Boot build, so it didn't use the folder.**
+B boots 1 and 2 are the same as A to within 0.1 s. Most likely the Pi loads its
+firmware and U-Boot from its SD card (U-Boot then fetches only
+`/redox/harddrive.img.gz` and `bootloader-live.efi` over HTTP, as the server log
+shows), so bootcode.bin never asks for `/srv/tftp/<serial>/`. tftpd-hpa runs
+without request logging, so I can't confirm this from the TFTP side.
+
+Seconds after the start of the timeline (reset over devsh), with `boot-timeline.py`:
+
+| boot | `kreset` | U-Boot banner | autoboot `2` / `1` / `0` | DHCP bound | `redox login:` |
+|---|---|---|---|---|---|
+| A1 | 1.55 | 3.76 | 8.27 / 9.27 / 9.27 | 11.22 | 33.51 |
+| A2 | 1.55 | 3.76 | 8.28 / 9.29 / 9.29 | 11.19 | 33.04 |
+| A3 | 1.56 | 3.77 | 8.24 / 9.25 / 9.25 | 11.21 | 33.11 |
+| B1 (folder in place) | 1.55 | 3.75 | 8.26 / 9.26 / 9.26 | 11.16 | 33.11 |
+| B2 (folder in place) | 1.55 | 3.76 | 8.26 / 9.26 / 9.26 | 11.17 | 33.12 |
+
+- The U-Boot banner is `U-Boot 2026.10 (Oct 25 2026 - 08:30:37 +0000)` in every
+  boot, A and B, so the branch's `u-boot.bin` was not used either.
+- Reset to banner is 2.2 s; banner to `redox login:` is about 29.3 s.
+- After B2: the runner was stopped, `rm -r /srv/tftp/ed08e0aa` was done (checked:
+  gone), and one more boot of stable counted `2 1 0` and reached `redox login:` at
+  32.96 s. No standard checks for B, since B never ran the new files.
+
+To test this, the new `config.txt` and `u-boot.bin` must go where this Pi really
+loads them from, likely the SD card's FAT partition, which needs a card swap or
+another approach. The row stays queued. Stable image in place.
