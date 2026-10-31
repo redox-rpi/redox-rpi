@@ -329,10 +329,12 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   #54 with #108), which checks what the screen shows.
   Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
   `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
-  free. The 7 MB DMA buffer needs physically contiguous memory, and none
-  that large was left; `rpi-fbd` then copies that buffer with the CPU, as
-  designed. Allocating the large buffers early or DMA through page lists
-  would lift it; later. Boots 2–3 of #116 set `RPI_FB*` through
+  free. The cause is the kernel: its page allocator hands out at most 4
+  MiB of physically contiguous memory (11 orders), however much is free,
+  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
+  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
+  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. Pi test #130
+  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
   `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
   file in `/srv/tftp/`.
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
