@@ -45,7 +45,10 @@ QEMU is tested against a fake HCI controller on the mini UART. On the Pi
 when the baud divider assumes a 400 MHz core clock, while the firmware
 reports 250 MHz. So `rpi-firmwared` gets `core_clock` (the measured rate),
 and a clock written to `/scheme/btuart/clock` by hand stays through
-`bt up`. Step 9 tests that; the firmware upload comes after.
+`bt up`. Step 9 confirmed the measured 400 MHz and also showed the chip
+wants the flow control lines asserted low (`auto-low`, now the start
+setting) and that the receive thread lost bytes between sleeps. Step 10
+tests those fixes and the firmware upload.
 
 Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
 higher baud rates. The mini UART's baud rate follows the core clock, so
