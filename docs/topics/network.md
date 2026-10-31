@@ -24,8 +24,15 @@
   network plus testnetd started after boot) and on the Pi (test 74, LAN7800
   plus testnetd). Since then netstack also reports ready only after netcfg
   and the interfaces exist (test 69 race; same as boot-time base `0028`).
-  Still missing: lease renewal,
-  adapters that go away, falling back to Wi-Fi when the cable is pulled.
+  The rest is draft PR
+  [#118](https://github.com/redox-rpi/redox-rpi/pull/118) on top of #81
+  (base `0058`): dhcpd renews leases and drops them at their end or on a
+  NAK; netstack drops an adapter that goes away (scheme gone or file
+  failing) with its address and routes; the default route moves to the
+  next interface or is removed. QEMU passes with two testnetds; Pi test
+  #140. Not done: link state (a pulled cable shows only when the lease
+  ends); a restarted driver cannot take its old scheme name again
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
