@@ -88,7 +88,7 @@ too; on the Pi the window is wider.
   late at 0.02 s). On the serial console (`serial-ctrlc-test.py --qemu`),
   0.05–3 s after Enter, every round stopped within 0.6 s.
   `ctrlc-test.py`: 6 of 6.
-- Still open, not this patch: a Ctrl-C within about 0.03 s of Enter can
+- Still open, not this patch (see the next section): a Ctrl-C within about 0.03 s of Enter can
   come while Ion's line editor still has the terminal in raw mode. It is
   then a plain byte in the input, the next prompt reads it, and `sleep`
   runs to its end (2 to 4 of 14–18 rounds at 0.01–0.03 s). Linux has the
@@ -98,6 +98,28 @@ too; on the Pi the window is wider.
   console, Ctrl-C 0.05–1 s after Enter, 12 of 12 stopped `sleep 40` about
   0.1 s after the Ctrl-C (#80: about 32 s); devsh 10 of 10; standard checks
   pass, 0 of 300 starts failed.
+
+## Ctrl-C typed in raw mode, right after Enter
+
+Left over from #86. While you type, Ion's line editor (liner) has the
+terminal in raw mode, with ISIG off. A Ctrl-C that reaches ptyd before liner
+switches the terminal back after Enter stayed a plain byte in the input: the
+program got no SIGINT, and the next prompt read the byte.
+
+- `base/0057` (ptyd): when ISIG is switched on again, an interrupt character
+  that is still unread becomes SIGINT for the foreground group, and the
+  input up to it is dropped, as if ISIG had been on when it came. Linux
+  keeps such a byte as data.
+- `recipes/core/ion/0003`: Ion forgets old signals before liner starts, not
+  after it returned. ptyd sends that SIGINT while liner hands the terminal
+  back, so Ion has to keep it; `0002` then passes it on to the job.
+- QEMU (`v0.3.0-dev-515-gf41008d+x810f`), serial console, Ctrl-C 0.01–0.03 s
+  after Enter: after the boot had settled, 24 of 24 stopped `sleep 40`
+  within 0.6 s (before: 2 to 4 of 14–18 ran to the end). In a run that
+  started while services were still coming up (redoxfs, timesync, devshd),
+  one round of 18 ran to the end; that may be the Enter and the Ctrl-C
+  read in one piece by liner, which ptyd cannot see. devsh
+  (`ctrlc-test.py --delays 0,0.01,0.02,0.03`): 4 of 4.
 
 ## Check
 
