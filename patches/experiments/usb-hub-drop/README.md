@@ -39,6 +39,7 @@ Applies after [`dwc2d-netstats`](../dwc2d-netstats/README.md):
 
 ## Tests
 
+- Pi: test #172 (after #171).
 - QEMU 2026-10-31, `v0.3.0-dev-857-g7ed9070+xa901` (`netget`,
   `dwc2d-netstats`, `timesync`, `usb-hub-drop`): boots, `test-hotplug.sh`
   15/15, keyboard test pass, network port cycle comes back with devsh. An
