@@ -41,3 +41,8 @@ timesync`, with and without this experiment:
 Both runs show the same 4 `NEW` lines, which come from the base, not from
 this patch: `pthread/exit` (experiment `self-exit-status` not enabled)
 and `sys_socket/unixrecv`, `unixrecvfrom`, `unixnonblock`.
+
+After main with the redoxfs pin (#145) was merged in: `v0.3.0-dev-848-gdc1da3e+xdd51`
+(`--experiment relibc-tests --experiment timesync --experiment
+self-exit-status --experiment rt-call-flags`): 16 failures, all known, none
+new; `redox_ring_ramfs` passes.
