@@ -170,6 +170,14 @@ commits in `config/upstream.lock`.
     `printf`. gcc evaluates arguments right to left on x86_64 and left to
     right on aarch64.
   - Fix: the patch moves the calls into separate statements.
+- Notes for the user's upstream reports on the x18 signal return
+  ([#127](https://github.com/redox-rpi/redox-rpi/issues/127), bug),
+  `clock_settime` ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)),
+  termios speeds ([#94](https://github.com/redox-rpi/redox-rpi/issues/94))
+  and `madvise`/socket options
+  ([#109](https://github.com/redox-rpi/redox-rpi/issues/109)), checked
+  against current relibc master:
+  [docs/upstream/relibc.md](../upstream/relibc.md).
 - Already reported: patch `0004` (x1/x2 swap in the signal entry) as
   [relibc#309](https://gitlab.redox-os.org/redox-os/relibc/-/work_items/309).
 
