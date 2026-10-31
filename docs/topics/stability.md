@@ -38,7 +38,9 @@
   experiment, not built here): main cf2025e, `v0.3.0-dev-764-gcf2025e+x9f76` (stable-image experiments),
   QEMU raspi3b: **0 of 5000** starts failed (5 boots of 1000 starts,
   `pi-test.py --crash-log`), crash log empty, no exception in any
-  serial log. Before: 0 of 1300 on `v0.3.0-dev-339`. Pi recount: test 149.
+  serial log. Before: 0 of 1300 on `v0.3.0-dev-339`. Real Pi, same
+  image, test 149: **0 of 3000**, no FATAL or exception on the serial
+  console. No start crash is left; #1 can be closed.
 - Base `0024` and kernel `0007` (2026-10-29, [#28](https://github.com/redox-rpi/redox-rpi/issues/28), [#32](https://github.com/redox-rpi/redox-rpi/issues/32)): fast input on
   the serial console no longer loses characters (the kernel keeps PL011
   input while it writes to the port), and getty no longer panics when the
@@ -68,10 +70,8 @@
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1): Pi recount, test 149. If it has no failed start either, #1
-  can be closed. The x18-safe signal return for programs other than
-  relibc is on main as experiment `sigreturn-svc` (PR #61), opt-in; no
-  start crash needs it today.
+- x18-safe signal return for programs other than relibc: experiment
+  `sigreturn-svc` on main (PR #61), opt-in; no start crash needs it.
 
 ## Later
 
