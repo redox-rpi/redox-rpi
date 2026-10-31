@@ -61,7 +61,8 @@ registering it again`. Without the fix (`usb-fat` image
 `v0.3.0-dev-450-gc4b9500+x87f5`): `fatfsd: /scheme/disk.mmc/0p1: File
 exists (os error 17)`.
 
-On the Pi 3B+: test 146, pass (same image). After `pkill -9 fatfsd` the
+On the Pi 3B+: test 146, pass (same image;
+[report](../../../docs/test-reports.md#2026-10-31-v030-dev-671-g157dad0x9d6b-t117-test-a-scheme-name-registered-again)). After `pkill -9 fatfsd` the
 name stayed (`No such device`); the second fatfsd served the boot files
 again without `File exists`, and the serial console showed `nsmgr: scheme
 t117 ended, registering it again`.
