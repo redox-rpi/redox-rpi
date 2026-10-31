@@ -1,0 +1,128 @@
+From abcf7a062b19432ba5cab502a7f46efe34c249b8 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:20:08 +0100
+Subject: [PATCH 42/44] netstack: send a broadcast only on its own interface,
+ fix checksums
+
+A DHCP client message goes out only on the adapter whose MAC is its
+chaddr, a broadcast from an interface address only on that interface.
+After the router changes the source address it fills the UDP and TCP
+checksums again; they cover that address.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/router/mod.rs | 75 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 72 insertions(+), 3 deletions(-)
+
+diff --git a/netstack/src/router/mod.rs b/netstack/src/router/mod.rs
+index 3cfd0a2..141094b 100644
+--- a/netstack/src/router/mod.rs
++++ b/netstack/src/router/mod.rs
+@@ -4,7 +4,9 @@ use std::rc::Rc;
+ use smoltcp::phy::{Device, DeviceCapabilities, Medium};
+ use smoltcp::storage::PacketMetadata;
+ use smoltcp::time::Instant;
+-use smoltcp::wire::IpAddress;
++use smoltcp::wire::{
++    EthernetAddress, IpAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Packet, TcpPacket, UdpPacket,
++};
+ 
+ use self::route_table::RouteTable;
+ use crate::link::DeviceList;
+@@ -77,9 +79,20 @@ impl Router {
+             if let Ok(mut packet) = smoltcp::wire::Ipv4Packet::new_checked(packet) {
+                 let dst_addr = IpAddress::Ipv4(packet.dst_addr());
+                 if packet.dst_addr().is_broadcast() {
++                    let target = broadcast_target(&Ipv4Packet::new_unchecked(packet.as_ref()), &self.devices.borrow());
++                    if let Some((_, Some(src))) = target {
++                        if src != packet.src_addr() {
++                            packet.set_src_addr(src);
++                            packet.fill_checksum();
++                            fill_l4_checksum(&mut packet);
++                        }
++                    }
++                    let target = target.map(|(name, _)| name);
+                     let buf = packet.into_inner();
+                     for dev in self.devices.borrow_mut().iter_mut() {
+-                        dev.send(dst_addr, buf, now)
++                        if target.as_ref().map_or(true, |t| t == dev.name()) {
++                            dev.send(dst_addr, buf, now)
++                        }
+                     }
+                 } else {
+                     let route_table = self.route_table.borrow();
+@@ -103,7 +116,8 @@ impl Router {
+                     let IpAddress::Ipv4(src) = rule.src;
+                     if src != packet.src_addr() {
+                         packet.set_src_addr(src);
+-                        packet.fill_checksum()
++                        packet.fill_checksum();
++                        fill_l4_checksum(&mut packet);
+                     }
+ 
+                     dev.send(next_hop, packet.into_inner(), now);
+@@ -113,6 +127,61 @@ impl Router {
+     }
+ }
+ 
++/// The one device a broadcast belongs to, or None to send it on all.
++///
++/// A DHCP client message goes out only on the adapter whose MAC is its
++/// `chaddr`, so each interface gets its own lease; its source becomes that
++/// interface's address, or 0.0.0.0 before it has one (the second value).
++/// A broadcast from an interface address goes out on that interface.
++fn broadcast_target(
++    packet: &Ipv4Packet<&[u8]>,
++    devices: &DeviceList,
++) -> Option<(Rc<str>, Option<Ipv4Address>)> {
++    let payload = packet.payload();
++    if packet.next_header() == IpProtocol::Udp && payload.len() >= 8 + 34 {
++        let src_port = u16::from_be_bytes([payload[0], payload[1]]);
++        let dst_port = u16::from_be_bytes([payload[2], payload[3]]);
++        if src_port == 68 && dst_port == 67 {
++            let chaddr = EthernetAddress::from_bytes(&payload[8 + 28..8 + 34]);
++            if let Some(dev) = devices.iter().find(|d| d.mac_address() == Some(chaddr)) {
++                let src = match dev.ip_address() {
++                    Some(IpCidr::Ipv4(cidr)) => cidr.address(),
++                    _ => Ipv4Address::UNSPECIFIED,
++                };
++                return Some((Rc::clone(dev.name()), Some(src)));
++            }
++        }
++    }
++    let src = packet.src_addr();
++    if src.is_unspecified() {
++        return None;
++    }
++    devices
++        .iter()
++        .find(|d| d.ip_address().map(|c| c.address()) == Some(IpAddress::Ipv4(src)))
++        .map(|d| (Rc::clone(d.name()), None))
++}
++
++/// The UDP and TCP checksums cover the source address, so they must be
++/// filled again after the router changes it.
++fn fill_l4_checksum(packet: &mut Ipv4Packet<&mut [u8]>) {
++    let src = IpAddress::Ipv4(packet.src_addr());
++    let dst = IpAddress::Ipv4(packet.dst_addr());
++    match packet.next_header() {
++        IpProtocol::Udp => {
++            if let Ok(mut udp) = UdpPacket::new_checked(packet.payload_mut()) {
++                udp.fill_checksum(&src, &dst);
++            }
++        }
++        IpProtocol::Tcp => {
++            if let Ok(mut tcp) = TcpPacket::new_checked(packet.payload_mut()) {
++                tcp.fill_checksum(&src, &dst);
++            }
++        }
++        _ => {}
++    }
++}
++
+ impl Device for Router {
+     type RxToken<'a> = RxToken<'a>;
+ 
+-- 
+2.54.0 (Apple Git-157)
+

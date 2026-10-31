@@ -1,0 +1,797 @@
+From fb054d2eeddd4c6e6104cc294cc81dc6d6f3d1d6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:20:08 +0100
+Subject: [PATCH 43/44] dhcpd: lease on every interface, one default route
+
+dhcpd watches netcfg ifaces/ and gets a lease on each interface,
+including ones that appear later, with a 5 s wait per reply and retries.
+Replies are taken only with our transaction ID and MAC. The default
+route and name server come from the first wired interface with a lease,
+else from Wi-Fi. dhcpd -i <iface> keeps the old one-shot behaviour.
+This replaces the retry loop of "dhcpd: try again until the server
+answers": an interface without a lease is asked three times, then again
+every 30 s, so a cable plugged in later still gets an address.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dhcpd/src/main.rs | 694 +++++++++++++++++++++++++---------------------
+ 1 file changed, 371 insertions(+), 323 deletions(-)
+
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index 4c20be3..1eb4f1d 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -1,8 +1,9 @@
++use std::collections::BTreeMap;
+ use std::fs::{File, OpenOptions};
+-use std::io::{Read, Write};
++use std::io::{ErrorKind, Read, Write};
+ use std::net::{SocketAddr, UdpSocket};
+-use std::time::Duration;
+-use std::{env, thread, time};
++use std::time::{Duration, Instant};
++use std::{env, process, thread, time};
+ 
+ use dhcp::Dhcp;
+ 
+@@ -98,34 +99,167 @@ impl MacAddr {
+     }
+ }
+ 
+-/// How long to wait for each answer of the server.
+-const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
+-/// The pause before trying again, e.g. while the cable is out or until a
+-/// network adapter is plugged in.
+-const RETRY_PAUSE: Duration = Duration::from_secs(2);
++/// What a DHCP server gave one interface.
++#[derive(Clone, Debug, Default, PartialEq)]
++struct Lease {
++    addr: [u8; 4],
++    mask_len: u32,
++    router: Option<[u8; 4]>,
++    dns: Option<[u8; 4]>,
++}
++
++/// Options of a DHCP reply that dhcpd uses.
++#[derive(Default)]
++struct Reply {
++    msg_type: u8,
++    yiaddr: [u8; 4],
++    subnet: Option<[u8; 4]>,
++    router: Option<[u8; 4]>,
++    dns: Option<[u8; 4]>,
++    server_id: Option<[u8; 4]>,
++}
++
++fn ipv4(data: &[u8]) -> Option<[u8; 4]> {
++    (data.len() >= 4).then(|| [data[0], data[1], data[2], data[3]])
++}
++
++fn fmt_ip(ip: [u8; 4]) -> String {
++    format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
++}
++
++/// Parses a reply to our request: right transaction and our MAC, else None.
++/// A reply for another interface, or another client, is not ours.
++fn parse_reply(data: &[u8], tid: u32, mac: &MacAddr, verbose: bool) -> Option<Reply> {
++    if data.len() < size_of::<Dhcp>() - 308 + 4 {
++        return None;
++    }
++    let mut buf = [0u8; size_of::<Dhcp>()];
++    let n = data.len().min(buf.len());
++    buf[..n].copy_from_slice(&data[..n]);
++    let dhcp = unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const Dhcp) };
++    let (op, reply_tid, chaddr, yiaddr) = (dhcp.op, dhcp.tid, dhcp.chaddr, dhcp.yiaddr);
++    if op != 2 || reply_tid != tid || chaddr[..6] != mac.bytes {
++        return None;
++    }
++
++    let mut reply = Reply {
++        yiaddr,
++        ..Reply::default()
++    };
++    let options = dhcp.options;
++    let mut i = 0;
++    while i < options.len() {
++        let option = options[i];
++        match option {
++            0 => i += 1,
++            255 => break,
++            _ => {
++                let Some(&len) = options.get(i + 1) else { break };
++                let Some(data) = options.get(i + 2..i + 2 + len as usize) else {
++                    break;
++                };
++                i += 2 + len as usize;
++                if verbose {
++                    println!("DHCP: option {option}: {data:?}");
++                }
++                match option {
++                    1 if reply.subnet.is_none() => reply.subnet = ipv4(data),
++                    3 if reply.router.is_none() => reply.router = ipv4(data),
++                    6 if reply.dns.is_none() => reply.dns = ipv4(data),
++                    53 if !data.is_empty() => reply.msg_type = data[0],
++                    54 => reply.server_id = ipv4(data),
++                    _ => (),
++                }
++            }
++        }
++    }
++    Some(reply)
++}
+ 
+-fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+-    let current_mac = MacAddr::from_str(get_iface_cfg_value(iface, "mac")?.trim());
++fn message(mac: &MacAddr, tid: u32, options: &[u8]) -> Dhcp {
++    let mut chaddr = [0; 16];
++    chaddr[..6].copy_from_slice(&mac.bytes);
++    let mut dhcp = Dhcp {
++        op: 1,
++        htype: 1,
++        hlen: 6,
++        hops: 0,
++        tid,
++        secs: 0,
++        // Ask for broadcast replies: the interface may have no address yet.
++        flags: 0x8000u16.to_be(),
++        ciaddr: [0; 4],
++        yiaddr: [0; 4],
++        siaddr: [0; 4],
++        giaddr: [0; 4],
++        chaddr,
++        sname: [0; 64],
++        file: [0; 128],
++        magic: 0x63825363u32.to_be(),
++        options: [0; 308],
++    };
++    dhcp.options[..options.len()].copy_from_slice(options);
++    dhcp
++}
+ 
+-    let current_ip = get_iface_cfg_value(iface, "addr/list")?
+-        .lines()
+-        .next()
+-        .map(|l| l.to_owned())
+-        .unwrap_or("0.0.0.0".to_string());
++fn send(socket: &UdpSocket, dhcp: &Dhcp) -> Result<(), String> {
++    let data = unsafe {
++        std::slice::from_raw_parts((dhcp as *const Dhcp) as *const u8, size_of::<Dhcp>())
++    };
++    socket.send(data).map(|_| ()).map_err(|e| e.to_string())
++}
+ 
++/// Waits up to `timeout` for a reply of type `want` (or a NAK).
++fn receive(
++    socket: &UdpSocket,
++    tid: u32,
++    mac: &MacAddr,
++    want: u8,
++    timeout: Duration,
++    verbose: bool,
++) -> Result<Reply, String> {
++    let deadline = Instant::now() + timeout;
++    let mut buf = [0; 65536];
++    loop {
++        let left = deadline.saturating_duration_since(Instant::now());
++        if left.is_zero() {
++            return Err("timed out".into());
++        }
++        try_fmt!(socket.set_read_timeout(Some(left)), "failed to set read timeout");
++        let n = match socket.recv(&mut buf) {
++            Ok(n) => n,
++            Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
++                return Err("timed out".into());
++            }
++            Err(err) => return Err(format!("failed to receive: {err}")),
++        };
++        match parse_reply(&buf[..n], tid, mac, verbose) {
++            Some(reply) if reply.msg_type == want => return Ok(reply),
++            Some(reply) if reply.msg_type == 6 => return Err("server sent NAK".into()),
++            Some(_) => (),
++            None => {
++                if verbose {
++                    println!("DHCP: ignored a reply for another request");
++                }
++            }
++        }
++    }
++}
++
++/// Gets a lease for `iface` and sets its address. Routes and the name
++/// server are left to the caller, which knows about the other interfaces.
++fn dhcp(iface: &str, timeout: Duration, verbose: bool) -> Result<Lease, String> {
++    let mac = MacAddr::from_str(get_iface_cfg_value(iface, "mac")?.trim());
+     if verbose {
+-        println!(
+-            "DHCP: MAC: {} Current IP: {}",
+-            current_mac.to_string(),
+-            current_ip.trim()
+-        );
++        println!("DHCP: {iface} MAC {}", mac.to_string());
+     }
+ 
+     let tid = try_fmt!(
+         time::SystemTime::now().duration_since(time::UNIX_EPOCH),
+         "failed to get time"
+     )
+-    .subsec_nanos();
++    .subsec_nanos()
++        ^ u32::from_be_bytes([mac.bytes[2], mac.bytes[3], mac.bytes[4], mac.bytes[5]]);
+ 
+     let socket = try_fmt!(UdpSocket::bind(("0.0.0.0", 68)), "failed to bind udp");
+     try_fmt!(
+@@ -133,355 +267,269 @@ fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+         "failed to connect udp"
+     );
+     try_fmt!(
+-        socket.set_read_timeout(Some(ANSWER_TIMEOUT)),
+-        "failed to set read timeout"
++        socket.set_write_timeout(Some(timeout)),
++        "failed to set write timeout"
+     );
++
++    // DHCP Message Type (Discover), End
+     try_fmt!(
+-        socket.set_write_timeout(Some(ANSWER_TIMEOUT)),
+-        "failed to set write timeout"
++        send(&socket, &message(&mac, tid, &[53, 1, 1, 255])),
++        "failed to send discover"
+     );
++    if verbose {
++        println!("DHCP: {iface} sent Discover");
++    }
+ 
+-    {
+-        let mut discover = Dhcp {
+-            op: 1,
+-            htype: 1,
+-            hlen: 6,
+-            hops: 0,
+-            tid,
+-            secs: 0,
+-            flags: 0x8000u16.to_be(),
+-            ciaddr: [0, 0, 0, 0],
+-            yiaddr: [0, 0, 0, 0],
+-            siaddr: [0, 0, 0, 0],
+-            giaddr: [0, 0, 0, 0],
+-            chaddr: [
+-                current_mac.bytes[0],
+-                current_mac.bytes[1],
+-                current_mac.bytes[2],
+-                current_mac.bytes[3],
+-                current_mac.bytes[4],
+-                current_mac.bytes[5],
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-            ],
+-            sname: [0; 64],
+-            file: [0; 128],
+-            magic: 0x63825363u32.to_be(),
+-            options: [0; 308],
+-        };
++    let offer = receive(&socket, tid, &mac, 2, timeout, verbose)
++        .map_err(|e| format!("no offer: {e}"))?;
++    if verbose {
++        println!("DHCP: {iface} offer {}", fmt_ip(offer.yiaddr));
++    }
+ 
+-        for (s, d) in [
+-            // DHCP Message Type (Discover)
+-            53, 1, 1, // End
+-            255,
+-        ]
+-        .iter()
+-        .zip(discover.options.iter_mut())
+-        {
+-            *d = *s;
++    let mask_len = match offer.subnet {
++        Some(subnet) => (!u32::from_be_bytes(subnet)).leading_zeros(),
++        None => {
++            println!("DHCP: {iface}: no subnet mask");
++            0
+         }
++    };
+ 
+-        let discover_data = unsafe {
+-            std::slice::from_raw_parts((&discover as *const Dhcp) as *const u8, size_of::<Dhcp>())
+-        };
+-
+-        let _sent = try_fmt!(socket.send(discover_data), "failed to send discover");
+-
+-        if verbose {
+-            println!("DHCP: Sent Discover");
+-        }
+-    }
++    // The address is set before the Request, so that a server which
++    // answers to the new address (unicast) still reaches us.
++    try_fmt!(
++        set_iface_cfg_value(
++            iface,
++            "addr/set",
++            &format!("{}/{mask_len}\n", fmt_ip(offer.yiaddr))
++        ),
++        "failed to set ip"
++    );
+ 
+-    let mut offer_data = [0; 65536];
+-    try_fmt!(socket.recv(&mut offer_data), "failed to receive offer");
+-    let offer = unsafe { &*(offer_data.as_ptr() as *const Dhcp) };
++    let y = offer.yiaddr;
++    let s = offer.server_id.unwrap_or([0; 4]);
++    let request = [
++        53, 1, 3, // DHCP Message Type (Request)
++        50, 4, y[0], y[1], y[2], y[3], // Requested IP Address
++        54, 4, s[0], s[1], s[2], s[3], // Server Identifier
++        255,
++    ];
++    try_fmt!(
++        send(&socket, &message(&mac, tid, &request)),
++        "failed to send request"
++    );
+     if verbose {
+-        println!(
+-            "DHCP: Offer IP: {:?}, Server IP: {:?}",
+-            offer.yiaddr, offer.siaddr
+-        );
++        println!("DHCP: {iface} sent Request");
+     }
+ 
+-    let mut subnet_option = None;
+-    let mut router_option = None;
+-    let mut dns_option = None;
+-    let mut server_id_option = None;
+-    {
+-        let mut options = offer.options.iter();
+-        while let Some(option) = options.next() {
+-            match *option {
+-                0 => (),
+-                255 => break,
+-                _ => {
+-                    if let Some(len) = options.next() {
+-                        if *len as usize <= options.as_slice().len() {
+-                            let data = &options.as_slice()[..*len as usize];
+-                            for _data_i in 0..*len {
+-                                options.next();
+-                            }
+-                            match *option {
+-                                1 => {
+-                                    if verbose {
+-                                        println!("DHCP: Subnet Mask: {data:?}");
+-                                    }
+-                                    if data.len() == 4 && subnet_option.is_none() {
+-                                        subnet_option = Some(Vec::from(data));
+-                                    }
+-                                }
+-                                3 => {
+-                                    if verbose {
+-                                        println!("DHCP: Router: {data:?}");
+-                                    }
+-                                    if data.len() == 4 && router_option.is_none() {
+-                                        router_option = Some(Vec::from(data));
+-                                    }
+-                                }
+-                                6 => {
+-                                    if verbose {
+-                                        println!("DHCP: Domain Name Server: {data:?}");
+-                                    }
+-                                    if data.len() == 4 && dns_option.is_none() {
+-                                        dns_option = Some(Vec::from(data));
+-                                    }
+-                                }
+-                                51 => {
+-                                    if verbose {
+-                                        println!("DHCP: Lease Time: {data:?}");
+-                                    }
+-                                }
+-                                53 => {
+-                                    if verbose {
+-                                        println!("DHCP: Message Type: {data:?}");
+-                                    }
+-                                }
+-                                54 => {
+-                                    if verbose {
+-                                        println!("DHCP: Server ID: {data:?}");
+-                                    }
+-                                    if data.len() == 4 {
+-                                        // Store the server ID
+-                                        server_id_option =
+-                                            Some([data[0], data[1], data[2], data[3]]);
+-                                    }
+-                                }
+-                                _ => {
+-                                    if verbose {
+-                                        println!("DHCP: {option}: {data:?}");
+-                                    }
+-                                }
+-                            }
+-                        }
+-                    }
+-                }
++    let ack = receive(&socket, tid, &mac, 5, timeout, verbose)
++        .map_err(|e| format!("no ack: {e}"))?;
++    let router = ack.router.or(offer.router);
++    let mut dns = ack.dns.or(offer.dns);
++    if let Some(d) = dns {
++        if d[0] == 127 {
++            if verbose {
++                println!("DHCP: {iface}: DNS {} is loopback, using 9.9.9.9", fmt_ip(d));
+             }
++            dns = Some([9, 9, 9, 9]);
+         }
++    }
+ 
+-        let mask_len = if let Some(subnet) = subnet_option {
+-            let mut subnet: u32 = (subnet[0] as u32) << 24
+-                | (subnet[1] as u32) << 16
+-                | (subnet[2] as u32) << 8
+-                | subnet[3] as u32;
+-            subnet = !subnet;
+-            subnet.leading_zeros()
+-        } else {
+-            println!("DHCP: No subnet mask");
+-            0
+-        };
++    Ok(Lease {
++        addr: offer.yiaddr,
++        mask_len,
++        router,
++        dns,
++    })
++}
+ 
+-        let new_ips = format!(
+-            "{}.{}.{}.{}/{}\n",
+-            offer.yiaddr[0], offer.yiaddr[1], offer.yiaddr[2], offer.yiaddr[3], mask_len
++/// Wired interfaces before Wi-Fi, then by name: eth0 before eth1 before wlan0.
++fn iface_order(name: &str) -> (bool, String) {
++    (name.starts_with("wlan"), name.to_string())
++}
++
++/// The interface whose router becomes the default route.
++fn preferred(leases: &BTreeMap<String, Lease>) -> Option<(&String, &Lease)> {
++    leases
++        .iter()
++        .filter(|(_, lease)| lease.router.is_some())
++        .min_by_key(|(name, _)| iface_order(name))
++}
++
++/// Points the default route and the name server at `lease`.
++fn apply_default(iface: &str, lease: &Lease, verbose: bool) -> Result<(), String> {
++    if let Some(router) = lease.router {
++        // Only one default route: replace the one another interface set.
++        let _ = set_cfg_value("route/rm", "0.0.0.0/0");
++        try_fmt!(
++            set_cfg_value("route/add", &format!("default via {}", fmt_ip(router))),
++            "failed to set default route"
+         );
++        println!("DHCP: default route via {} ({iface})", fmt_ip(router));
++    } else {
++        println!("DHCP: {iface}: no router");
++    }
++    if let Some(dns) = lease.dns {
+         try_fmt!(
+-            set_iface_cfg_value(iface, "addr/set", &new_ips),
+-            "failed to set ip"
++            set_cfg_value("resolv/nameserver", &fmt_ip(dns)),
++            "failed to set name server"
+         );
+-
+         if verbose {
+-            let new_ip = try_fmt!(get_iface_cfg_value(iface, "addr/list"), "failed to get ip");
+-            println!("DHCP: New IP: {}", new_ip.trim());
++            println!("DHCP: name server {}", fmt_ip(dns));
+         }
++    } else {
++        println!("DHCP: {iface}: no DNS resolver");
++    }
++    Ok(())
++}
+ 
+-        if let Some(router) = router_option {
+-            let default_route = format!(
+-                "default via {}.{}.{}.{}",
+-                router[0], router[1], router[2], router[3]
+-            );
+-
+-            try_fmt!(
+-                set_cfg_value("route/add", &default_route),
+-                "failed to set default route"
+-            );
++fn list_ifaces() -> Vec<String> {
++    get_cfg_value("ifaces")
++        .map(|list| {
++            list.lines()
++                .map(str::trim)
++                .filter(|l| !l.is_empty())
++                .map(String::from)
++                .collect()
++        })
++        .unwrap_or_default()
++}
+ 
+-            if verbose {
+-                let new_router = try_fmt!(get_cfg_value("route/list"), "failed to get ip router");
+-                println!("DHCP: New Router: {}", new_router.trim());
++/// How long one DHCP exchange waits for each reply.
++const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
++/// How often the interface list is read.
++const SCAN: Duration = Duration::from_secs(2);
++/// How long to wait before asking again on an interface that got no lease.
++const RETRY: Duration = Duration::from_secs(30);
++/// Attempts per interface before waiting `RETRY`.
++const ATTEMPTS: usize = 3;
++
++fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
++    for attempt in 1..=ATTEMPTS {
++        match dhcp(iface, REPLY_TIMEOUT, verbose) {
++            Ok(lease) => {
++                println!(
++                    "DHCP: {iface} got {}/{}",
++                    fmt_ip(lease.addr),
++                    lease.mask_len
++                );
++                return Some(lease);
+             }
+-        } else {
+-            println!("DHCP: No router");
++            Err(err) => eprintln!("dhcpd: {iface}: attempt {attempt}: {err}"),
+         }
++    }
++    None
++}
+ 
+-        if let Some(mut dns) = dns_option {
+-            if dns[0] == 127 {
+-                let quad9 = [9, 9, 9, 9].to_vec();
+-                if verbose {
+-                    println!(
+-                        "DHCP: Received sarcastic DNS suggestion {}.{}.{}.{}, using {}.{}.{}.{} instead",
+-                        dns[0], dns[1], dns[2], dns[3], quad9[0], quad9[1], quad9[2], quad9[3]
+-                    );
++/// Gets a lease on every interface, also those that appear later, and keeps
++/// one default route: the first wired interface with a lease, else Wi-Fi.
++fn watch(verbose: bool) -> ! {
++    let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
++    let mut failed: BTreeMap<String, Instant> = BTreeMap::new();
++    let mut default: Option<(String, Lease)> = None;
++    loop {
++        let mut ifaces = list_ifaces();
++        ifaces.sort_by_key(|name| iface_order(name));
++        for iface in ifaces {
++            if leases.contains_key(&iface) {
++                continue;
++            }
++            if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
++                continue;
++            }
++            match try_lease(&iface, verbose) {
++                Some(lease) => {
++                    failed.remove(&iface);
++                    leases.insert(iface, lease);
++                }
++                None => {
++                    failed.insert(iface, Instant::now());
+                 }
+-                dns = quad9;
+             }
+-
+-            let nameserver = format!("{}.{}.{}.{}", dns[0], dns[1], dns[2], dns[3]);
+-
+-            try_fmt!(
+-                set_cfg_value("resolv/nameserver", &nameserver),
+-                "failed to set name server"
+-            );
+-
+-            if verbose {
+-                let new_dns = try_fmt!(get_cfg_value("resolv/nameserver"), "failed to get dns");
+-                println!("DHCP: New DNS: {}", new_dns.trim());
++            let want = preferred(&leases).map(|(n, l)| (n.clone(), l.clone()));
++            if want.is_some() && want != default {
++                let (name, lease) = want.as_ref().unwrap();
++                if let Err(err) = apply_default(name, lease, verbose) {
++                    eprintln!("dhcpd: {err}");
++                    continue;
++                }
++                default = want;
+             }
+-        } else {
+-            println!("DHCP: No DNS resolver");
+         }
++        thread::sleep(SCAN);
+     }
+-
+-    {
+-        let mut request = Dhcp {
+-            op: 1,
+-            htype: 1,
+-            hlen: 6,
+-            hops: 0,
+-            tid,
+-            secs: 0,
+-            flags: 0,
+-            ciaddr: [0; 4],
+-            yiaddr: [0; 4],
+-            siaddr: [0; 4],
+-            giaddr: [0; 4],
+-            chaddr: [
+-                current_mac.bytes[0],
+-                current_mac.bytes[1],
+-                current_mac.bytes[2],
+-                current_mac.bytes[3],
+-                current_mac.bytes[4],
+-                current_mac.bytes[5],
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-                0x00,
+-            ],
+-            sname: [0; 64],
+-            file: [0; 128],
+-            magic: 0x63825363u32.to_be(),
+-            options: [0; 308],
+-        };
+-
+-        // If the server_id_option was None, use "0.0.0.0"
+-        let server_id = server_id_option.unwrap_or([0, 0, 0, 0]);
+-
+-        for (s, d) in [
+-            // DHCP Message Type (Request)
+-            53,
+-            1,
+-            3,
+-            // Requested IP Address
+-            50,
+-            4,
+-            offer.yiaddr[0],
+-            offer.yiaddr[1],
+-            offer.yiaddr[2],
+-            offer.yiaddr[3],
+-            // Server Identifier - use Option 54 from the Offer
+-            54,
+-            4,
+-            server_id[0],
+-            server_id[1],
+-            server_id[2],
+-            server_id[3],
+-            // End
+-            255,
+-        ]
+-        .iter()
+-        .zip(request.options.iter_mut())
+-        {
+-            *d = *s;
+-        }
+-
+-        let request_data = unsafe {
+-            std::slice::from_raw_parts((&request as *const Dhcp) as *const u8, size_of::<Dhcp>())
+-        };
+-
+-        let _sent = try_fmt!(socket.send(request_data), "failed to send request");
+-
+-        if verbose {
+-            println!("DHCP: Sent Request");
+-        }
+-    }
+-
+-    {
+-        let mut ack_data = [0; 65536];
+-        try_fmt!(socket.recv(&mut ack_data), "failed to receive ack");
+-        let ack = unsafe { &*(ack_data.as_ptr() as *const Dhcp) };
+-        if verbose {
+-            println!(
+-                "DHCP: Ack IP: {:?}, Server IP: {:?}",
+-                ack.yiaddr, ack.siaddr
+-            );
+-        }
+-    }
+-
+-    Ok(())
+ }
+ 
+ fn main() {
+     let mut verbose = false;
+-    let iface = "eth0";
++    let mut iface = None;
+ 
+-    //TODO: parse iface from the args
+-    for arg in env::args().skip(1) {
++    let mut args = env::args().skip(1);
++    while let Some(arg) = args.next() {
+         match arg.as_ref() {
+             "-v" => verbose = true,
++            "-i" => iface = args.next(),
+             _ => (),
+         }
+     }
+ 
+-    // Without a link or an adapter the server does not answer; keep trying,
+-    // so the network comes up when the cable or adapter is plugged in.
+-    // Only the first failure is reported.
+-    let mut attempts = 1;
+-    while let Err(err) = dhcp(iface, verbose) {
+-        if attempts == 1 {
+-            eprintln!("dhcpd: {err}, trying again every {}s", (ANSWER_TIMEOUT + RETRY_PAUSE).as_secs());
++    // `-i eth0`: one interface, one attempt, as dhcpd used to work.
++    if let Some(iface) = iface {
++        let result = dhcp(&iface, Duration::from_secs(30), verbose)
++            .and_then(|lease| apply_default(&iface, &lease, verbose));
++        if let Err(err) = result {
++            eprintln!("dhcpd: {err}");
++            process::exit(1);
+         }
+-        attempts += 1;
+-        thread::sleep(RETRY_PAUSE);
+-    }
+-    if attempts > 1 {
+-        eprintln!("dhcpd: configured after {attempts} attempts");
++        return;
+     }
++
++    watch(verbose)
+ }
+ 
+ #[cfg(test)]
+ mod test {
+-    use super::MacAddr;
++    use super::*;
++
++    fn reply(op: u8, tid: u32, mac: [u8; 6], options: &[u8]) -> Vec<u8> {
++        let mut dhcp = message(&MacAddr { bytes: mac }, tid, options);
++        dhcp.op = op;
++        dhcp.yiaddr = [10, 0, 9, 2];
++        let data = unsafe {
++            std::slice::from_raw_parts((&dhcp as *const Dhcp) as *const u8, size_of::<Dhcp>())
++        };
++        data.to_vec()
++    }
++
++    #[test]
++    fn reply_filter_test() {
++        let mac = MacAddr { bytes: [2, 0, 0, 0, 0, 1] };
++        let opts = [53, 1, 2, 1, 4, 255, 255, 255, 0, 3, 4, 10, 0, 9, 1, 255];
++        let r = parse_reply(&reply(2, 7, mac.bytes, &opts), 7, &mac, false).unwrap();
++        assert_eq!(r.msg_type, 2);
++        assert_eq!(r.yiaddr, [10, 0, 9, 2]);
++        assert_eq!(r.subnet, Some([255, 255, 255, 0]));
++        assert_eq!(r.router, Some([10, 0, 9, 1]));
++        // Other transaction, other MAC, or a request: not ours.
++        assert!(parse_reply(&reply(2, 8, mac.bytes, &opts), 7, &mac, false).is_none());
++        assert!(parse_reply(&reply(2, 7, [2, 0, 0, 0, 0, 2], &opts), 7, &mac, false).is_none());
++        assert!(parse_reply(&reply(1, 7, mac.bytes, &opts), 7, &mac, false).is_none());
++        // Truncated options do not panic.
++        assert!(parse_reply(&reply(2, 7, mac.bytes, &[3, 200]), 7, &mac, false).is_some());
++    }
++
++    #[test]
++    fn preferred_test() {
++        let lease = |r: Option<[u8; 4]>| Lease { router: r, ..Lease::default() };
++        let mut leases = BTreeMap::new();
++        leases.insert("wlan0".to_string(), lease(Some([10, 0, 9, 1])));
++        assert_eq!(preferred(&leases).unwrap().0, "wlan0");
++        leases.insert("eth1".to_string(), lease(None));
++        assert_eq!(preferred(&leases).unwrap().0, "wlan0");
++        leases.insert("eth1".to_string(), lease(Some([10, 0, 2, 2])));
++        assert_eq!(preferred(&leases).unwrap().0, "eth1");
++        leases.insert("eth0".to_string(), lease(Some([10, 0, 3, 2])));
++        assert_eq!(preferred(&leases).unwrap().0, "eth0");
++    }
+ 
+     #[test]
+     fn from_str_test() {
+-- 
+2.54.0 (Apple Git-157)
+
