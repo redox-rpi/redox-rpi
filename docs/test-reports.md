@@ -4476,3 +4476,53 @@ DHCP: eth2 renewed 10.0.9.2 for 30 s
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-562-g55a1014+x4590` (test 126, saved prompt state and writing speed)
+
+Real Pi 3B+ over netboot. Test 126 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**The download now finishes, the assistant answers with the time, and writing
+speed is measured. The saved prompt state doesn't work on the Pi:** the cache is
+written as `prompt.kv.part` with exactly 43,581,693 bytes but never renamed to
+`prompt.kv`. So there is no `saved` line, and the second run reads the 380
+tokens again instead of loading them. This looks like the rename problem on
+`/scheme/data` that test 124's image fixed in RedoxFS; this image doesn't have
+that fix. **After the first run, devshd stopped accepting connections**
+(`Connection refused`); the serial console still worked and the devshd process
+was still there. Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-562-g55a1014+x4590.img`, with the
+new stable's bootloader. Standard checks pass (6 of 6).
+
+- Download (resumed): `kept parts 000 to 011 from an earlier try, 192 MiB`, then
+  parts 012–020 at 0.48–1.95 MB/s, `341455552 bytes in 126 s`. Two
+  `smolnetd: Dropped packet on eth0 because waiting queue was full` lines at 07:57.
+- First `assistant --ask 'What time is it?'` (07:58):
+  `loaded in 21.6 s`, **`rinfer: read 380 tokens in 166.1 s`** (#112: about 170 s),
+  then the answer `It is Saturday, 31 October 2026, 08:01 UTC.` Then devsh went
+  silent; the next commands got `Connection refused`. `ls -l /scheme/data` over
+  the serial console: `prompt.kv.part` 43,581,693 bytes, no `prompt.kv`. I
+  reset over the serial console, with the same image and the model kept.
+- Second `assistant --ask` after the reset (09:01–09:05, 255 s total):
+  `loaded in 20.7 s`, again **`read 380 tokens in 170.5 s`** (no `loaded 380 tokens`),
+  answer `It is Saturday, 31 October 2026, 09:05 UTC.` Again only `prompt.kv.part`.
+  devsh kept working this time.
+- Writing speed, `rinfer … 'Name three colours.' 32` (answer `Three colours are
+  blue, green, and red.`):
+
+| threads | load | prompt | **generated** |
+|---|---|---|---|
+| 4 (default) | 20.7 s | 20 tokens, 2.03 t/s | **10 tokens in 12.8 s, 0.78 t/s** |
+| 3 (`RAYON_NUM_THREADS=3`) | 20.5 s | 20 tokens, 2.25 t/s | **10 tokens in 8.1 s, 1.24 t/s** |
+
+  In the assistant runs, the writing speed was 0.86–1.22 t/s (#112: 1.0).
+- Temperature: 52.1 °C and `throttled 0x00000000` before. After the runs, 60.1 °C
+  and `0x00080000`: the soft temperature limit was hit, and the console logged
+  `soft temperature limit … 60.1 °C, ARM 1400 MHz` and `no longer throttled`
+  many times. So the 4-thread numbers may be held back by the heat.
+- `free` from a second devsh: the lowest was 120,256 KB during the first run and
+  130,444 KB during the second (start 736,520 KB), so it never got near 50 MB.
+  Heap peak 430 MiB. No kernel panic, `oom` or `RELIBC PANIC` on the console.
+- At the end, `prompt.kv.part` was removed. The model stays on the card
+  (`/scheme/data/Qwen3-0.6B-Q4_0e.gguf`, 341,455,552 bytes).
+
+Stable image restored afterwards.
