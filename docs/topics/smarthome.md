@@ -38,9 +38,11 @@ All three on branch `mqtt-tls` (it contains `mqtt`, which is based on
 
 ## Next
 
-- `netstack` still grows about 58 KB a minute with a connection a minute,
-  and `randd`'s shared memory 12 KB a minute (one random read per TLS run;
-  Pi test 111). Network topic for `netstack`.
+- The rest of the memory loss in Pi test 111 ([#88](https://github.com/redox-rpi/redox-rpi/issues/88))
+  is not in the MQTT tools: `netstack` kept each accepted connection
+  (devsh readings; PR #90), and the kernel kept a 4 KiB page in `netstack`
+  and `randd` per open of `/scheme/tcp` and `/scheme/rand` (PR #114). Pi
+  test 137 reruns test 111 with both.
 - Check `ha-bridge` against a real Home Assistant.
 - Let other recipes use the library (now only by copying `src/lib.rs`).
 - TLS client certificates (Mosquitto `require_certificate`).
