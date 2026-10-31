@@ -6,12 +6,17 @@ for v0.9.0. This is the first step: talk to the Bluetooth half of the Pi
 firmware, and run basic HCI commands. There is no Bluetooth stack yet (no
 pairing, L2CAP or profiles).
 
-It builds on the [gpio](../gpio/README.md) experiment (#38), which does
-the pin mux, so both go in:
+It needs the GPIO driver for the pin mux, which is a default patch since
+PR #87 (#38):
 
 ```bash
-scripts/build-image.sh --experiment gpio --experiment bluetooth
+scripts/build-image.sh --experiment bluetooth
 ```
+
+**Works on the Pi since test 109 step 12:** `bt up` loads the firmware
+(323 records in 5.9 s, build 382, Bluetooth 5.0), the chip reports its
+address, and an LE scan found 22 devices, with no bytes lost
+([report](../../../docs/test-reports.md#2026-10-31-v030-dev-466-g54ea9bfx7d9f-bluetooth-step-12-wl_on-before-bt-up)).
 
 ## Hardware
 
@@ -22,20 +27,20 @@ pins, with RTS/CTS flow control. This is the split of Linux's
 `miniuart-bt` overlay. BT_ON, the chip's Bluetooth power line, is pin 0 of
 the firmware's GPIO expander (firmware GPIO 128). WL_ON, the Wi-Fi half's
 power line, is pin 1 (firmware GPIO 129); Linux switches it on at boot,
-before Bluetooth starts. Base `0052` serves it as `wifi_power` (and
+before Bluetooth starts. Base `0078` serves it as `wifi_power` (and
 `wifi_power_config`), the same file name as the Wi-Fi experiment, so a
 merge keeps one entry.
 
 The mini UART's baud rate is derived from the core clock. Pi test #109
 step 8 found that the chip answers only at the divider for a 400 MHz core
-clock, while the firmware's `clocks` file says 250 MHz. So base `0053`
+clock, while the firmware's `clocks` file says 250 MHz. So base `0079`
 adds `/scheme/rpi-firmware/core_clock`, the rate the firmware measures
 (mailbox tag 0x00030047). The driver starts with it, and `bt up` tells it
-the current rate again (`firmware <rate>`). Base `0054` keeps a rate
+the current rate again (`firmware <rate>`). Base `0080` keeps a rate
 written to `/scheme/btuart/clock` by hand: `bt up` leaves it, and writing
 `firmware` gives the control back.
 
-Step 9 then found three more things, fixed in base `0055`: the chip
+Step 9 then found three more things, fixed in base `0081`: the chip
 answers only with the flow control lines asserted low (`auto-low`, now
 the start setting; `auto` has the reset levels), the baud rate drifted
 with each clock change (the driver now keeps the rate asked for), and the
@@ -47,17 +52,27 @@ Step 10: no bytes lost, and `bt info` got the chip's version and name
 (BCM4345C0, build 0). Only `bt up` failed: its Reset 200 ms after the
 power cycle came back with bits flipped (`03 1c 01`), so `bt` took it for
 another command's answer. `bt up` now waits 1 s after BT_ON, tries Reset
-up to three times, and prints events it ignores. If the firmware throttles the core clock
+up to three times, and prints events it ignores.
+
+Step 11: still no answer, and `bt info` after `bt up` none either. The
+difference to step 10 was WL_ON: `bt diag` switched it on, `bt up` did
+not, and step 10's `bt info` ran after `bt diag`. `bt up`'s power cycle
+now switches WL_ON on first. Step 12: Reset answers on the first try, the
+firmware loads, `bt info` gives `43:45:C0:00:1F:AC` and
+`BCM43455 37.4MHz Raspberry Pi 3+-0190`, `bt scan 10` lists 22 devices,
+`bt inquiry 10` none (nothing discoverable over BR/EDR nearby).
+
+If the firmware throttles the core clock
 (undervoltage, heat), the baud rate drifts and HCI gets garbled. Then
 `/scheme/rpi-firmware/throttled` is not 0.
 
 ## What is in it
 
-- **Base patch `0045`, `rpi-firmwared`:** `/scheme/rpi-firmware/bt_power`
+- **Base patch `0071`, `rpi-firmwared`:** `/scheme/rpi-firmware/bt_power`
   (`1`/`0`), the BT_ON line. Pi 3B+ only, like `power_led` and the Wi-Fi
   experiment's `wifi_power`. The three patches touch the same lines; at a
   merge keep all entries.
-- **Base patch `0046`, `bcm2835-btuartd`** (new driver in the initfs,
+- **Base patches `0072`–`0077`, `0080`, `0081`, `bcm2835-btuartd`** (new driver in the initfs,
   after `bcm2835-gpiod` and `rpi-firmwared`): the mini UART as the scheme
   `btuart`.
 
@@ -92,12 +107,13 @@ up to three times, and prints events it ignores. If the firmware throttles the c
   `/usr/lib/firmware/brcm/`. It is under the Cypress licence, so it is
   downloaded at build time and never kept in this repository, like the
   Wi-Fi firmware.
+- **Base patches `0078`, `0079`, `rpi-firmwared`:** BT_ON switched as an
+  output (`SET_GPIO_CONFIG`), `bt_power_config`, `wifi_power`
+  (`wifi_power_config`) and `core_clock`.
 - **`scripts/build-image.sh`:** an experiment's `recipes/` directory
   becomes recipes, the same hunk as on branch `wifi`.
 - **`scripts/qemu-raspi3b.sh --mini-uart <chardev>`:** connects QEMU's
   mini UART, which is otherwise unused.
-
-Patch numbers here are placeholders; the merge gives the real ones.
 
 ## QEMU
 
@@ -131,9 +147,14 @@ drift, receive thread without sleeps while in use): 29 of 29 pass.
 Result with `v0.3.0-dev-464-gff58612+x7d9f` (1 s after power-on, Reset
 tried three times): 29 of 29 pass.
 
+Result with `v0.3.0-dev-466-g54ea9bf+x7d9f` (WL_ON before the power
+cycle): 29 of 29 pass. QEMU has no `wifi_power`, so the change only shows
+on the Pi.
+
 ## Test on the Pi
 
-Queued as test-plan row 79 for the Pi test agent.
+Test-plan rows 79 and 109 (steps 1–12), Pi test agent; step 12 passed
+(see above). Step 4 (`miniuart-bt` in `config.txt`) was not needed.
 
 Serial console only, no wiring. Phones or other Bluetooth devices nearby
 make the scans more telling. Steps:
@@ -150,7 +171,7 @@ cat /scheme/rpi-firmware/throttled
 
 Expected:
 
-- `bt_power` is 0 at boot and 1 after `bt up`.
+- `bt_power` is 0 at boot and 1 after `bt up`; `wifi_power` the same.
 - `bt up` shows `firmware build 0`, then the record count, then a
   non-zero build and `up`.
 - `bt info` gives an address and a name.
