@@ -22,6 +22,12 @@
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
+- [#109](https://github.com/redox-rpi/redox-rpi/issues/109) calls sshd makes on every connection logged
+  `TODO` lines: `madvise` hints now succeed quietly, `getsockopt` of `IP_TOS`
+  and `TCP_NODELAY` reports 0 (netstack's state) instead of ENOSYS, and
+  `setsockopt` of both succeeds without a log line. relibc `0045` in
+  experiment `sshd`, branch `relibc-quiet`. QEMU: key logins work, no TODO
+  lines; Pi test #132 queued. Switching Nagle off needs netstack support.
 - [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on Redox: experiment `relibc-tests` (branch
   `t13-relibc-tests`) runs upstream's suite in QEMU. `scripts/relibc-tests.sh`
   builds, runs it and compares with `config/relibc-tests-expected.txt`
