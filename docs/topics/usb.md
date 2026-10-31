@@ -71,7 +71,7 @@
 
 - [#104](https://github.com/redox-rpi/redox-rpi/issues/104) no busy-waiting
   in dwc2d: branch [`dwc2d-wait-irq`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-wait-irq)
-  (on `usb-storage-more`), experiment `dwc2d-wait-irq` (base `0053` there).
+  (on `usb-storage-more`), experiment `dwc2d-wait-irq` (base `0071` there).
   Sent frames, stick chunks and control requests spun until the channel
   halted; now they spin 50 µs and then wait for the channel's interrupt on
   a second irq handle, with a 2 ms timer as the fallback. A first try with
