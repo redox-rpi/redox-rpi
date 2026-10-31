@@ -10,6 +10,16 @@
 
 ## In progress
 
+- [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time. After the bootloader: [PR #85](https://github.com/redox-rpi/redox-rpi/pull/85)
+  (`boot-time`: bootloader wait 1 s, parallel init; login 21 s after reset
+  instead of 33.7 s) and the USB session's PR #69 (`dwc2d-boottime`).
+  Before Redox, branch `boot-time-2`: no U-Boot countdown (2 s) and no
+  firmware `boot_delay` (1 s by default). QEMU: login 2–5 s sooner. Pi test
+  #134 queued, staged in the Pi's serial directory on the TFTP server so
+  only that Pi sees it. Left as they are: U-Boot's USB start (2.8 s), the
+  LAN7800 link (1.7 s) and the 43 MB image download (3.8 s; gzip is at its
+  best, U-Boot has no zstd command).
+
 - [#18](https://github.com/redox-rpi/redox-rpi/issues/18) leave `pcid` and `audiod` out of the Pi images: passed on a
   Pi 3B+ as experiment `pi-clean-boot` (tests #14 and #5, 2026-10-28,
   keyboard checked in #5). Branch `clean-boot-default` makes it the

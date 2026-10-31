@@ -51,10 +51,16 @@
     (ctx-leak fix, #31) makes a process whose last thread ends with
     `pthread_exit` report SIGKILL instead of 0. Every image with main
     merged has it; without `0008` the test passes 20 of 20.
+    Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
+    [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
+    10 of 10 runs exit 0 and the #31 leak stays fixed. Pi row 133.
   - `pthread/rwlock_randtest` does not hang: 1,000,000 lock operations
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
     single runs pass; they only fail sometimes under the suite's load.
+    With three busy loops on the 4 CPUs (QEMU, 2026-10-31,
+    `v0.3.0-dev-574-g55e47fb+xb3d9`) also 45 of 45, so plain CPU load
+    is not the trigger; more likely an earlier test in the suite.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout

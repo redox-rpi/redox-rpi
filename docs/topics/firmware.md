@@ -47,8 +47,10 @@ reports 250 MHz. So `rpi-firmwared` gets `core_clock` (the measured rate),
 and a clock written to `/scheme/btuart/clock` by hand stays through
 `bt up`. Step 9 confirmed the measured 400 MHz and also showed the chip
 wants the flow control lines asserted low (`auto-low`, now the start
-setting) and that the receive thread lost bytes between sleeps. Step 10
-tests those fixes and the firmware upload.
+setting) and that the receive thread lost bytes between sleeps. Step 10:
+`bt info` answers (BCM4345C0, build 0) with no bytes lost; `bt up` sent
+its Reset too soon after power-on. Step 11 waits longer, retries, and
+tests the firmware upload.
 
 Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
 higher baud rates. The mini UART's baud rate follows the core clock, so
