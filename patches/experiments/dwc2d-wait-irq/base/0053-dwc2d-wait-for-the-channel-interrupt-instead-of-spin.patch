@@ -1,4 +1,4 @@
-From 1f117cbdce52dfda1552dc7fba5ad3a4b233f633 Mon Sep 17 00:00:00 2001
+From 56dcfc5a9666cce335ed5fde260185627a2c283c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 31 Oct 2026 06:10:37 +0100
 Subject: [PATCH] dwc2d: wait for the channel interrupt instead of spinning
@@ -10,20 +10,21 @@ network frame or a control request, and then waits for the channel's
 halt interrupt on a second irq handle, with a 2 ms timer as the
 fallback (#104). A first try with short sleeps hung dwc2d in QEMU.
 ---
- drivers/usb/dwc2d/src/dwc2.rs | 95 ++++++++++++++++++++++++++++++++++-
- drivers/usb/dwc2d/src/main.rs | 11 ++--
- 2 files changed, 100 insertions(+), 6 deletions(-)
+ drivers/usb/dwc2d/src/dwc2.rs | 102 +++++++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs |  11 ++--
+ 2 files changed, 107 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 279d8eb..8751d47 100644
+index 279d8eb..1465809 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -1,12 +1,44 @@
+@@ -1,12 +1,45 @@
  //! DWC2 host controller in buffer DMA mode, driven by polling.
  
-+use std::fs::File;
++use std::fs::{File, OpenOptions};
 +use std::io::{Read, Write};
 +use std::os::fd::AsRawFd;
++use std::os::unix::fs::OpenOptionsExt;
  use std::ptr::{read_volatile, write_volatile};
 +use std::sync::{Mutex, OnceLock};
  use std::thread::sleep;
@@ -63,7 +64,7 @@ index 279d8eb..8751d47 100644
  
  /// The Pi's DMA masters see RAM through the VideoCore bus, where it is
  /// aliased (uncached) at 0xC000_0000. QEMU's raspi machines alias it there too.
-@@ -142,6 +174,19 @@ impl Dwc2 {
+@@ -142,6 +175,25 @@ impl Dwc2 {
          self.write(GAHBCFG, self.read(GAHBCFG) | GAHBCFG_GLBL_INTR_EN);
      }
  
@@ -71,7 +72,13 @@ index 279d8eb..8751d47 100644
 +    /// at `irq_path` instead of spinning. Call after
 +    /// [`Dwc2::enable_rx_interrupt`], which switches the interrupt on.
 +    pub fn enable_wait_interrupt(&self, irq_path: &str) -> std::io::Result<()> {
-+        let irq = File::create(irq_path)?;
++        // O_STAT: a second handle on the same interrupt, without reserving
++        // it again (the main loop's handle holds the reservation).
++        let irq = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .custom_flags(syscall::O_STAT as i32)
++            .open(irq_path)?;
 +        let timer = Timer::new()?;
 +        let events = EventQueue::new()?;
 +        events.subscribe(irq.as_raw_fd() as usize, Wake::Irq, event::EventFlags::READ)?;
@@ -83,7 +90,7 @@ index 279d8eb..8751d47 100644
      /// Stop a channel started with [`Dwc2::start`], e.g. a receive transfer
      /// to a device that went away, and wait until it halts.
      pub fn halt(&self, ch: usize) {
-@@ -448,6 +493,13 @@ impl Dwc2 {
+@@ -448,6 +500,13 @@ impl Dwc2 {
  
      /// Run one transfer on a channel and wait for it. Returns the bytes
      /// moved and the data PID for the next transfer on this endpoint.
@@ -97,7 +104,7 @@ index 279d8eb..8751d47 100644
      pub fn transfer_on(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
          self.start(ch, phase);
          let start = Instant::now();
-@@ -455,14 +507,53 @@ impl Dwc2 {
+@@ -455,14 +514,53 @@ impl Dwc2 {
              if let Some(result) = self.poll(ch, phase.len) {
                  return result;
              }
