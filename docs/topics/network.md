@@ -93,7 +93,10 @@
   after a TCP reset gave `ENOTCONN` although data was still buffered. Both
   seen in #119, both upstream code. Experiment `netstack-arp-ack` (base
   `0082`): a stale entry stays in use while ARP asks again; buffered data
-  comes first. QEMU passes what it can show; Pi test #156.
+  comes first. **Pi test 156 passed** (65535 buffered bytes read after a
+  reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
+  [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
+  patch `0082`.
 
 ## Later
 
