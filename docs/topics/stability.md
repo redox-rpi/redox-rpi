@@ -33,6 +33,12 @@
   bad table address. The sixth jumped to address 1 from `load_object`'s
   init function loop (`blr x8`), likely a value relocated with the same
   bad DSO pointer. No other crash type is left on the Pi 3B+.
+- Recount on main, 2026-10-31 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), after PR #122
+  (self-exit-status) and PR #61 (which adds `sigreturn-svc` as an
+  experiment, not built here): main cf2025e, `v0.3.0-dev-764-gcf2025e+x9f76` (stable-image experiments),
+  QEMU raspi3b: **0 of 5000** starts failed (5 boots of 1000 starts,
+  `pi-test.py --crash-log`), crash log empty, no exception in any
+  serial log. Before: 0 of 1300 on `v0.3.0-dev-339`. Pi recount: test 149.
 - Base `0024` and kernel `0007` (2026-10-29, [#28](https://github.com/redox-rpi/redox-rpi/issues/28), [#32](https://github.com/redox-rpi/redox-rpi/issues/32)): fast input on
   the serial console no longer loses characters (the kernel keeps PL011
   input while it writes to the port), and getty no longer panics when the
@@ -62,15 +68,10 @@
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
-  x18, so the signal entry can still corrupt it there. Either reserve x18
-  in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
-  rebuilt) or return from the signal entry without clobbering a register.
-  The second is on branch `t1-sigreturn` (experiment `sigreturn-svc`,
-  kernel and relibc): QEMU passes `sigregs` with x18 and 0 of 700 starts;
-  Pi test 36: `sigregs process` keeps x18, 0 of 1000 starts. No start
-  crash needs it today (the dynamic linker is relibc); it matters for
-  programs that use x18 themselves and get signals.
+- [#1](https://github.com/redox-rpi/redox-rpi/issues/1): Pi recount, test 149. If it has no failed start either, #1
+  can be closed. The x18-safe signal return for programs other than
+  relibc is on main as experiment `sigreturn-svc` (PR #61), opt-in; no
+  start crash needs it today.
 
 ## Later
 
