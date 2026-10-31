@@ -5329,3 +5329,39 @@ PASS sender: si_pid 55 from the thread, 56 from the child
 - Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-799-g68620a9+x1258` (sigsegv-main, signals for CPU exceptions)
+
+Real Pi 3B+ over netboot. Test 158 (PR #143), Pi test agent.
+
+**Pass: 2 × 500 faults each handled and continued; thread, process and sender
+pass; standard checks pass; no panic.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-799-g68620a9+x1258.img`, manifest
+matches, stable bootloader. The boot reached login.
+
+```
+### sigregs segv -n 500  (76.8 s)
+PASS segv: 500 faults, each handled and continued
+### sigregs segv -n 500  (76.8 s)
+PASS segv: 500 faults, each handled and continued
+### sigregs thread --x18 -n 500  (15.3 s)
+PASS thread: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (20.1 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs sender  (0.3 s)
+PASS sender: si_pid 55 from the thread, 56 from the child
+```
+
+- Kernel register dumps on the serial console: exactly **1000** (one per fault),
+  each `FATAL: Not an SVC induced synchronous exception (ty=100100)`,
+  `FAR_EL1: 0x10`, `ESR_EL1: 0000000092000007` (data abort at EL0), from
+  `synchronous_exception_at_el0`. Expected by the row. No other `FATAL` line, 0
+  `panicked`.
+- Each `segv -n 500` run takes 77 s, longer than devshd's 60 s guide, because
+  the 500 dumps go out over the 115200-baud console. pirun waited (300 s
+  timeout), and both runs completed.
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: all pass, **0 of
+  300 starts failed**.
+
+Stable image restored afterwards.
