@@ -25,7 +25,9 @@ User docs, with examples: [docs/time.md](../time.md).
 - `timesync` checks NTP answers (origin time, leap indicator, stratum,
   kiss-of-death) and uses the median of up to three servers; after the
   first sync no lone jump of more than an hour. Branch `timesync-harden`
-  on `clock-settime`; QEMU passed, Pi test #152 queued (v0.9.0).
+  on `clock-settime`; QEMU and Pi test #152 passed
+  ([report](../test-reports.md#2026-10-31-v030-dev-773-g2ffa68bx7f63-timesync-harden-checked-answers-and-several-servers)); draft pull request #135, after #98
+  (v0.9.0).
 
 ## Next
 

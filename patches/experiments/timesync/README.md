@@ -154,5 +154,9 @@ fake servers at `10.0.2.2`, 2026-10-31):
 | 12301, 12305 | `two answers 7200 s apart, waiting for a third`, clock not set |
 | `timesync 10.0.2.2:12305`, then `timesync` | clock 2 h ahead (a single answer at the first sync), then back by -7199.995 s from three pool answers |
 
+**Result on the Pi** (test 152, 2026-10-31): all of the above pass on a
+Pi 3B+; the clock set 2 h ahead went back by -7199.999 s
+([report](../../../docs/test-reports.md#2026-10-31-v030-dev-773-g2ffa68bx7f63-timesync-harden-checked-answers-and-several-servers)).
+
 The hourly rules of `-d` (keep below 50 ms, no lone jump over an hour) are
 covered by the unit tests (`cargo test` in `tools/timesync`).
