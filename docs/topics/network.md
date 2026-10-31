@@ -83,9 +83,10 @@
   [docs/upstream/netstack.md](../upstream/netstack.md).
 - [#119](https://github.com/redox-rpi/redox-rpi/issues/119) long downloads
   on the Pi run at 0.24 MB/s or less and once ended with `os error 107`
-  (test 126). QEMU doesn't show it: 3.9 MB/s steady, also with the receive
-  window closed for 300 s. Diagnosis on the Pi, network alone and with
-  card writes: test 141 (branch `tcp-slow`, test downloader `netget`).
+  (test 126). **Not netstack:** Pi test 141 got 382 MB in 51.5 s
+  (7.4 MB/s, steady, 0 USB errors) with the network alone; the same
+  download written to `/scheme/data` hung the whole Pi. The card writes
+  during a download cause it; the hang is with the SD card & storage area.
 
 ## Later
 
