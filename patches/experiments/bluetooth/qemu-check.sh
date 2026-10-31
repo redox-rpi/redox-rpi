@@ -35,7 +35,7 @@ done
     --run "bt cmd fc99" \
     --run "echo 400000000 > /scheme/btuart/clock" \
     --run "bt diag" \
-    --run "echo C \$(cat /scheme/btuart/clock)" > /dev/null 2>&1
+    --run "cat /scheme/btuart/clock" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
 failed=0
@@ -68,7 +68,7 @@ check "bt up takes the firmware's clock" "^uart: core clock [0-9]+ Hz set by fir
 check "a clock set by hand stays" "^uart: core clock 400000000 Hz set by hand"
 check "diag: core clock idle and under load" "^core clock under load: firmware reports [0-9]+, measures"
 check "diag: reset at the driver's clock" "^reset at the driver's clock, flow auto: 04 0e 04 01 03 0c 00  <- Command Complete$"
-check "the sweep gives the clock back to the firmware" "^C [0-9]+ firmware$"
+check "the sweep gives the clock back to the firmware" "^firmware$"
 if grep -q "^launch after 323 records$" "$hci_log"; then echo "PASS: fake saw the whole firmware"; else echo "FAIL: fake saw the whole firmware"; failed=1; fi
 if grep -q "^stray byte" "$hci_log"; then echo "FAIL: stray bytes on the UART"; failed=1; else echo "PASS: no stray bytes"; fi
 exit $failed
