@@ -5865,3 +5865,34 @@ PASS
 - Serial log from the boot to the end: 0 `FATAL`, `exception` or `panicked`.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-848-gdc1da3e` without (`+xb3d9`) and with `rt-call-flags` (`+xdd51`) (`rwlock_randtest` hang from 166)
+
+Real Pi 3B+ over netboot. Test 170 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**`rt-call-flags` does not cause the hang. The image without it (A) froze the
+whole Pi twice in 9 runs. The image with it (B) passed 20 of 20.** Each run was
+its own devsh command with a 60 s client timeout. Images
+`~/redox-rpi-t12/keep/rcfbase-dc1da3e.img` (A) and
+`rcf-v0.3.0-dev-848-gdc1da3e+xdd51.img` (B, the image of 166), stable
+bootloader. The banners confirmed each boot (`+xb3d9` with `experiments:
+relibc-tests self-exit-status timesync`; `+xdd51` with `rt-call-flags`).
+
+| image | runs | passed | timed out | after the timeout |
+|---|---|---|---|---|
+| A1 (without) | 1 | 0 | **1** (run 1) | devsh dead, 0 serial bytes since the run started, power cycle 21:56 |
+| B1 (with) | 20 | **20** | 0 | |
+| A2 (without) | 9 | 8 | **1** (run 9) | devsh dead, 0 serial bytes, power cycle 22:09 |
+
+- A passing run takes **1.3–1.5 s** (`real 1.31` to `1.48 s`), not the 11–17 s
+  the row expected; the same for A and B.
+- In both hangs the Pi stopped completely: no devsh answer within 10 s, no new
+  serial output. The serial log around them holds nothing (1 byte). It looks
+  like test 166: a machine-wide stop, not a slow run.
+- With 2 hangs in 10 A runs and 0 in 20 B runs, `rt-call-flags` is not the cause
+  (if anything B looks better, but 20 runs can't show that). Neither image has the
+  futex fix `futex-wait-lock` (#98), the likely next suspect.
+- Stable staged and the Pi power-cycled at the end; stable runs
+  (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
