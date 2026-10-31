@@ -64,11 +64,17 @@ check "diag: lpo clock read" "^lpo: enabled [01], busy [01], source [0-9]+"
 check "diag: line status" "^  after: cts_line [01], rts [01], tx_fifo 0"
 check "diag: reset answered with each flow setting" "^answered with flow: auto, auto-low, none$"
 check "diag: baud sweep answered (QEMU ignores the divider)" "^baud sweep answered for core MHz: 250, 275, 300, 325, 350, 375, 400, 450, 500$"
-check "bt up takes the firmware's clock" "^uart: core clock [0-9]+ Hz set by firmware \(firmware (measures|reports) [0-9]+\)"
+check "bt up takes the firmware's clock, flow auto-low" "^uart: core clock [0-9]+ Hz set by firmware \(firmware (measures|reports) [0-9]+\), 115[0-9]{3} baud, flow auto-low$"
 check "a clock set by hand stays" "^uart: core clock 400000000 Hz set by hand"
 check "diag: core clock idle and under load" "^core clock under load: firmware reports [0-9]+, measures"
-check "diag: reset at the driver's clock" "^reset at the driver's clock, flow auto: 04 0e 04 01 03 0c 00  <- Command Complete$"
+check "diag: reset at the driver's clock" "^reset at the driver's clock, flow auto-low: 04 0e 04 01 03 0c 00  <- Command Complete$"
 check "the sweep gives the clock back to the firmware" "^firmware$"
+# QEMU's core clock is 350 MHz: 115131 baud every time, also after the sweep.
+if grep -E "^uart: core clock 350000000 Hz set by firmware" <<< "$log" | grep -qv " 115131 baud,"; then
+    echo "FAIL: the baud rate does not drift over the sweep"; failed=1
+else
+    echo "PASS: the baud rate does not drift over the sweep"
+fi
 if grep -q "^launch after 323 records$" "$hci_log"; then echo "PASS: fake saw the whole firmware"; else echo "FAIL: fake saw the whole firmware"; failed=1; fi
 if grep -q "^stray byte" "$hci_log"; then echo "FAIL: stray bytes on the UART"; failed=1; else echo "PASS: no stray bytes"; fi
 exit $failed

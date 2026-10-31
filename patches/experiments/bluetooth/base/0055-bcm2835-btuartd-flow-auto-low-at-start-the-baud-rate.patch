@@ -1,0 +1,238 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 06:02:37 +0100
+Subject: [PATCH] bcm2835-btuartd: flow auto-low at start, the baud rate asked
+ for survives clock changes, no sleep while the port is in use
+
+Pi test #109 step 9: the chip answers with auto-low and none but never
+with auto; the baud rate drifted from 115207 to 115473 over the sweep;
+262 received bytes lost, the 15-byte Read Local Version answer among them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/bcm2835-btuartd/src/main.rs | 102 ++++++++++++++++++++--------
+ drivers/bcm2835-btuartd/src/uart.rs |   8 ++-
+ 2 files changed, 78 insertions(+), 32 deletions(-)
+
+diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
+index 3832670..410a950 100644
+--- a/drivers/bcm2835-btuartd/src/main.rs
++++ b/drivers/bcm2835-btuartd/src/main.rs
+@@ -13,9 +13,9 @@
+ //!   `firmware <rate>` (what `bt` writes) does the same unless a rate was
+ //!   set by hand, and `firmware` alone gives the control back. Pi test #109
+ //!   step 8 needed 400 MHz by hand while the firmware said 250 MHz.
+-//! - `/scheme/btuart/flow`: `auto` (hardware RTS/CTS, the start setting),
+-//!   `auto-low` (the same with both lines asserted low) or `none` (no flow
+-//!   control, RTS held asserted). For finding out what the chip needs.
++//! - `/scheme/btuart/flow`: `auto-low` (hardware RTS/CTS, asserted low, the
++//!   start setting), `auto` (the same with the reset assert levels, which
++//!   the chip never answers) or `none` (no flow control, RTS held asserted).
+ //! - `/scheme/btuart/status`: CTS line, RTS, FIFO levels and the raw
+ //!   registers.
+ //! - `/scheme/btuart/lpo`: the general-purpose clock 2 on GPIO 43, the
+@@ -26,14 +26,17 @@
+ //! the split of Linux's `miniuart-bt` overlay. At start the driver sets
+ //! GPIO 30 (CTS), 31 (RTS), 32 (TX) and 33 (RX) to ALT5 through
+ //! `bcm2835-gpiod`, and reads the core clock from `rpi-firmwared`. A thread
+-//! moves received bytes from the 8-byte FIFO into a buffer; RTS flow
+-//! control holds the chip off while it sleeps. Switching the chip on
++//! moves received bytes from the 8-byte FIFO into a buffer. It only yields
++//! while the port is in use (half a second after a read or write) and
++//! sleeps otherwise: at 115200 baud the FIFO fills in 0.7 ms, less than a
++//! sleep takes, and with flow `none` nothing holds the chip off (Pi test
++//! #109 step 9 lost the 15-byte answer to Read Local Version). Switching the chip on
+ //! (`/scheme/rpi-firmware/bt_power`) and HCI are up to the program using it.
+ 
+ use std::collections::VecDeque;
+ use std::process;
+-use std::sync::atomic::{AtomicBool, Ordering};
+-use std::sync::{Arc, Mutex};
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::{Arc, Mutex, OnceLock};
+ use std::thread;
+ use std::time::{Duration, Instant};
+ 
+@@ -69,9 +72,23 @@ const READ_WAIT: Duration = Duration::from_millis(100);
+ /// How long the transmitter may wait for CTS per byte.
+ const SEND_TIMEOUT: Duration = Duration::from_millis(500);
+ const POLL: Duration = Duration::from_millis(1);
++/// How long after a read or write the receive thread polls without sleeping.
++const BUSY: Duration = Duration::from_millis(500);
+ 
+ /// Whether a short sleep comes back; if not, the polling loops yield.
+ static SLEEP_WORKS: AtomicBool = AtomicBool::new(false);
++/// Until when (ms since START) the port counts as in use.
++static BUSY_UNTIL: AtomicU64 = AtomicU64::new(0);
++static START: OnceLock<Instant> = OnceLock::new();
++
++fn now_ms() -> u64 {
++    START.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++/// Marks the port in use for BUSY from now.
++fn mark_busy() {
++    BUSY_UNTIL.store(now_ms() + BUSY.as_millis() as u64, Ordering::Relaxed);
++}
+ 
+ /// Waits a little between polls: sleeps for POLL, or only yields where
+ /// sleeping does not work.
+@@ -137,6 +154,10 @@ struct BtUartScheme {
+     /// Whether `core_hz` was written by hand; `firmware` rates leave it then.
+     clock_by_hand: bool,
+     baud: u32,
++    /// The baud rate asked for; `baud` is the nearest the divider gives.
++    /// A new clock divides for this one, so the rate does not drift (Pi test
++    /// #109 step 9 went from 115207 to 115473 over the baud sweep).
++    baud_wanted: u32,
+     flow: Flow,
+     handles: HandleMap<Handle>,
+ }
+@@ -166,12 +187,15 @@ impl BtUartScheme {
+         };
+         let value = value.parse::<u32>().ok().filter(|&v| v > 0).ok_or(Error::new(EINVAL))?;
+         let baud = match setting {
+-            Setting::Baud => value,
++            Setting::Baud => {
++                self.baud_wanted = value;
++                value
++            }
+             Setting::Clock if from_firmware && self.clock_by_hand => return Ok(()),
+             Setting::Clock => {
+                 self.core_hz = value;
+                 self.clock_by_hand = !from_firmware;
+-                self.baud
++                self.baud_wanted
+             }
+             Setting::Flow => unreachable!(),
+         };
+@@ -208,9 +232,11 @@ impl BtUartScheme {
+         // Polls with yields: neither a timed Condvar wait nor a sleep came
+         // back in this (the scheme's) thread on Redox; the RX thread can
+         // sleep.
++        mark_busy();
+         let deadline = Instant::now() + READ_WAIT;
+         let mut received = loop {
+-            let received = self.received.lock().unwrap();
++            let mut received = self.received.lock().unwrap();
++            drain(&self.uart, &mut received);
+             if !received.bytes.is_empty() {
+                 break received;
+             }
+@@ -308,7 +334,10 @@ impl SchemeSync for BtUartScheme {
+                 let value = std::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.trim();
+                 self.set(setting, value)?;
+             }
+-            Handle::Data => self.uart.send(buf, SEND_TIMEOUT).map_err(|()| Error::new(ETIMEDOUT))?,
++            Handle::Data => {
++                mark_busy();
++                self.uart.send(buf, SEND_TIMEOUT).map_err(|()| Error::new(ETIMEDOUT))?
++            }
+             _ => return Err(Error::new(EBADF)),
+         }
+         Ok(buf.len())
+@@ -372,29 +401,43 @@ impl SchemeSync for BtUartScheme {
+     }
+ }
+ 
++/// Moves what the FIFO holds into the buffer; whether there was anything.
++/// Called with the buffer locked, so the two threads that drain never
++/// reorder bytes.
++fn drain(uart: &MiniUart, buffer: &mut Received) -> bool {
++    let mut got = false;
++    while let Some((byte, overrun)) = uart.try_read() {
++        if overrun {
++            buffer.lost += 1;
++        }
++        if buffer.bytes.len() == BUFFER {
++            buffer.bytes.pop_front();
++            buffer.lost += 1;
++        }
++        buffer.bytes.push_back(byte);
++        got = true;
++    }
++    got
++}
++
+ /// Moves received bytes into the buffer.
+ fn receive_loop(uart: Arc<MiniUart>, received: Arc<Mutex<Received>>) -> ! {
+     let mut reported = 0;
+     loop {
+-        let mut got = false;
+-        while let Some((byte, overrun)) = uart.try_read() {
++        let (got, lost) = {
+             let mut buffer = received.lock().unwrap();
+-            if overrun {
+-                buffer.lost += 1;
+-            }
+-            if buffer.bytes.len() == BUFFER {
+-                buffer.bytes.pop_front();
+-                buffer.lost += 1;
+-            }
+-            buffer.bytes.push_back(byte);
+-            got = true;
++            (drain(&uart, &mut buffer), buffer.lost)
++        };
++        if got {
++            continue;
+         }
+-        if !got {
+-            let lost = received.lock().unwrap().lost;
+-            if lost != reported {
+-                eprintln!("bcm2835-btuartd: {lost} received bytes lost so far");
+-                reported = lost;
+-            }
++        if lost != reported {
++            eprintln!("bcm2835-btuartd: {lost} received bytes lost so far");
++            reported = lost;
++        }
++        if now_ms() < BUSY_UNTIL.load(Ordering::Relaxed) {
++            thread::yield_now();
++        } else {
+             pause();
+         }
+     }
+@@ -488,7 +531,8 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         core_hz,
+         clock_by_hand: false,
+         baud,
+-        flow: Flow::Auto,
++        baud_wanted: DEFAULT_BAUD,
++        flow: Flow::AutoLow,
+         handles: HandleMap::new(),
+     };
+     let socket = Socket::create().expect("bcm2835-btuartd: failed to create the btuart scheme");
+diff --git a/drivers/bcm2835-btuartd/src/uart.rs b/drivers/bcm2835-btuartd/src/uart.rs
+index f5b9aaf..2259caa 100644
+--- a/drivers/bcm2835-btuartd/src/uart.rs
++++ b/drivers/bcm2835-btuartd/src/uart.rs
+@@ -45,8 +45,10 @@ const MCR_RTS: u32 = 1 << 1;
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ pub enum Flow {
+     /// The hardware handles RTS and CTS, assert levels as reset (clear).
++    /// The Pi 3B+ chip never answers with these (Pi test #109 step 9).
+     Auto,
+-    /// The hardware handles RTS and CTS, both asserted when low.
++    /// The hardware handles RTS and CTS, both asserted when low, as UART
++    /// flow control normally is. The start setting.
+     AutoLow,
+     /// No flow control; RTS held low (the other side may send).
+     None,
+@@ -82,7 +84,7 @@ unsafe impl Sync for MiniUart {}
+ 
+ impl MiniUart {
+     /// `regs` points at the start of the AUX block. Turns the mini UART on:
+-    /// 8N1, hardware flow control, FIFOs cleared.
++    /// 8N1, hardware flow control (asserted low), FIFOs cleared.
+     pub fn new(regs: *mut u32) -> Self {
+         let uart = Self { regs };
+         uart.write(AUX_ENABLES, uart.read(AUX_ENABLES) | ENABLE_MINI_UART);
+@@ -91,7 +93,7 @@ impl MiniUart {
+         uart.write(MU_LCR, LCR_8BIT);
+         uart.write(MU_MCR, 0);
+         uart.write(MU_IIR, IIR_CLEAR_FIFOS);
+-        uart.set_flow(Flow::Auto);
++        uart.set_flow(Flow::AutoLow);
+         uart
+     }
+ 

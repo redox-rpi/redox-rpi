@@ -254,10 +254,12 @@ fn update_clock() {
     let mut lines = clock.lines();
     let (hz, by) = (lines.next().unwrap_or("?"), lines.next().unwrap_or("?"));
     let baud = fs::read_to_string("/scheme/btuart/baud").unwrap_or_default();
+    let flow = fs::read_to_string(FLOW).unwrap_or_default();
     println!(
-        "uart: core clock {hz} Hz set by {by} (firmware {from} {}), {} baud",
+        "uart: core clock {hz} Hz set by {by} (firmware {from} {}), {} baud, flow {}",
         core.as_deref().unwrap_or("?"),
-        baud.trim()
+        baud.trim(),
+        flow.trim()
     );
 }
 
@@ -581,7 +583,7 @@ fn baud_sweep() -> io::Result<Vec<u32>> {
     // Back to the firmware's rate.
     fs::write(CLOCK, "firmware").ok();
     update_clock();
-    fs::write(FLOW, "auto").ok();
+    fs::write(FLOW, "auto-low").ok();
     Ok(answered)
 }
 
@@ -653,7 +655,7 @@ fn diag() -> io::Result<()> {
             }
         }
     }
-    fs::write(FLOW, "auto").ok();
+    fs::write(FLOW, "auto-low").ok();
     match answered.first() {
         Some(_) => println!("answered with flow: {}", answered.join(", ")),
         None => println!("no answer with any flow setting"),
@@ -667,12 +669,12 @@ fn diag() -> io::Result<()> {
     // packet: start it again, then Reset at the clock `bt up` uses.
     power_cycle();
     update_clock();
-    for flow in ["auto", "none"] {
+    for flow in ["auto-low", "none"] {
         fs::write(FLOW, flow).ok();
         let mut hci = Hci::open()?;
         println!("reset at the driver's clock, flow {flow}: {}", show(&reset_bytes(&mut hci, Duration::from_millis(500))));
     }
-    fs::write(FLOW, "auto").ok();
+    fs::write(FLOW, "auto-low").ok();
     Ok(())
 }
 

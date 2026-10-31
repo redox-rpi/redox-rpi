@@ -33,7 +33,15 @@ adds `/scheme/rpi-firmware/core_clock`, the rate the firmware measures
 (mailbox tag 0x00030047). The driver starts with it, and `bt up` tells it
 the current rate again (`firmware <rate>`). Base `0054` keeps a rate
 written to `/scheme/btuart/clock` by hand: `bt up` leaves it, and writing
-`firmware` gives the control back. If the firmware throttles the core clock
+`firmware` gives the control back.
+
+Step 9 then found three more things, fixed in base `0055`: the chip
+answers only with the flow control lines asserted low (`auto-low`, now
+the start setting; `auto` has the reset levels), the baud rate drifted
+with each clock change (the driver now keeps the rate asked for), and the
+8-byte receive FIFO overflowed between the receive thread's sleeps (it
+fills in 0.7 ms at 115200 baud). The thread now only yields while the
+port is in use, half a second after a read or write. If the firmware throttles the core clock
 (undervoltage, heat), the baud rate drifts and HCI gets garbled. Then
 `/scheme/rpi-firmware/throttled` is not 0.
 
@@ -54,8 +62,8 @@ written to `/scheme/btuart/clock` by hand: `bt up` leaves it, and writing
   | `/scheme/btuart/clock` | core clock in Hz, then `firmware` or `hand` | a rate sets it by hand; `firmware <rate>` only without one; `firmware` alone gives control back |
 
   A thread moves received bytes from the 8-byte FIFO into a 64 KiB
-  buffer, polling every millisecond. RTS holds the chip off when the FIFO
-  is nearly full.
+  buffer, without sleeping while the port is in use. With flow `auto-low`
+  RTS holds the chip off when the FIFO is nearly full.
 - **Tool `bt`** (`tools/bt`, package from this repository). It talks HCI
   in the UART framing (H4):
 
