@@ -1,8 +1,8 @@
-From 4286968bf40cbcf13b0d9b1e434a0e37c7cec0f2 Mon Sep 17 00:00:00 2001
+From 7f989e4b95c9c9e336eb023c93ad7d40de56221d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
-Subject: [PATCH 38/39] dwc2d: USB sticks as a disk scheme (bulk-only
- transport, SCSI)
+Subject: [PATCH 1/2] dwc2d: USB sticks as a disk scheme (bulk-only transport,
+ SCSI)
 
 A bulk-only SCSI interface (class 8, subclass 6, protocol 0x50) found at
 boot or plugged in later is set up with INQUIRY, TEST UNIT READY (up to
@@ -29,19 +29,19 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 drivers/usb/dwc2d/src/storage.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 3823eb2..b930c9c 100644
+index a5f72da9..4a8b1b6c 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -727,6 +727,7 @@ version = "0.1.0"
+@@ -766,6 +766,7 @@ version = "0.1.0"
  dependencies = [
   "common",
   "daemon",
 + "driver-block",
   "driver-network",
   "fdt 0.2.0-alpha1",
-  "libredox",
+  "inputd",
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
-index de3a4ea..0e10948 100644
+index de3a4ea5..0e10948c 100644
 --- a/drivers/usb/dwc2d/Cargo.toml
 +++ b/drivers/usb/dwc2d/Cargo.toml
 @@ -8,6 +8,7 @@ edition = "2021"
@@ -53,10 +53,10 @@ index de3a4ea..0e10948 100644
  inputd = { path = "../../inputd" }
  
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 1b97738..ff4dc66 100644
+index 624907b5..fa103c8b 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
-@@ -438,6 +438,22 @@ impl Bus {
+@@ -475,6 +475,22 @@ impl Bus {
          Ok(())
      }
  
@@ -80,7 +80,7 @@ index 1b97738..ff4dc66 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..930aca9 100644
+index 28cc7aa2..930aca98 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -255,7 +255,7 @@ index 28cc7aa..930aca9 100644
                  }
 diff --git a/drivers/usb/dwc2d/src/storage.rs b/drivers/usb/dwc2d/src/storage.rs
 new file mode 100644
-index 0000000..260a380
+index 00000000..260a380d
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/storage.rs
 @@ -0,0 +1,419 @@
@@ -679,5 +679,5 @@ index 0000000..260a380
 +    }
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
