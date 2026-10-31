@@ -94,7 +94,13 @@ What else to keep in mind:
   `pkg-hold` (PR #66) is what stops that.
 - `sqlite3 :memory:` prints two lines `Unknown special reference: memory:`
   from init's namespace manager; the query still works.
-- Pi test #163 repeats this on the Pi over the network.
+- **Pi test #163 passed** (2026-10-31, real Pi 3B+, network boot): the 26
+  small programs, git, python312 and sqlite3 install with `pkg` and print
+  `T40 PASS`; standard checks pass, no exception. The Pi is much faster
+  than QEMU: the 26-package install took 3 minutes, git 43 s, python312
+  with bash and curl 8 min 48 s. Free space on `/` at the end: 16.1 MB
+  after the 26 plus git, 11.7 MB after python312 (on a fresh boot).
+  Free space on `/` is what limits how much can be installed.
 
 To repeat the static check on homenodellm: download the packages (`.pkgar`
 and `.toml` from the repository URL above) into `pkgs/`, extract each with

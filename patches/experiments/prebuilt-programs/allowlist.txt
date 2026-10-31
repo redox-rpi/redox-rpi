@@ -8,6 +8,8 @@
 # timesync and sigreturn-svc), relibc c303135; the repository's relibc is
 # ad0c479. `pkg install --yes <name>` in QEMU over the network, then
 # pkg-check.sh. Static check of all 82 non-GUI packages: abi-check.py.
+# Pi test #163 (real Pi 3B+) passed for the 26 small ones, git, python312
+# and sqlite3; vim, rustpython not run on the Pi.
 #
 # Install these one at a time or in small groups: the network-boot image
 # has about 130 MB free, and pkg also needs room for the downloads in /tmp.
