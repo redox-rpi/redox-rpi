@@ -15,10 +15,6 @@ for contributors in the wish list in [ROADMAP.md](../ROADMAP.md).
   900 on the Pi) remains: [#1](https://github.com/redox-rpi/redox-rpi/issues/1). The frequent random failures of v0.1.0-alpha (about
   every third command) are fixed since v0.2.0, see
   [debugging-random-crashes.md](debugging-random-crashes.md).
-- **Many prebuilt programs did not start:** bash, nano, vim, tmux, ripgrep,
-  curl, wget, gawk stopped with a `brk` exception; `find` failed to link.
-  Left out of the images. Probably the same cause as the random failures
-  fixed in v0.2.0; not tested again yet.
 
 ## Annoying
 

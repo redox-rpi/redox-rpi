@@ -31,8 +31,17 @@ reboot = "source"
 # tools/spi; base patches 0047 and 0048).
 i2c = "source"
 spi = "source"
-# Programs beyond the minimal system, prebuilt by Redox. Most of them
-# (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
-# start with today's prebuilt aarch64 packages, in QEMU too; see
-# docs/status.md.
+# Programs beyond the minimal system, prebuilt by Redox. bash, nano, vim,
+# curl, wget, tmux, ripgrep, gawk and findutils use x18, which the signal
+# return kept only since relibc 0013 and kernel 0009 (#127); they start
+# reliably since then (#40, Pi test 45).
 diffutils = {}
+bash = {}
+nano = {}
+vim = {}
+findutils = {}
+gawk = {}
+tmux = {}
+ripgrep = {}
+curl = {}
+wget = {}

@@ -24,7 +24,10 @@ daily image `redox_server_aarch64_2026-10-24_565`.
 - **Prebuilt programs:** bash, nano, vim, tmux, ripgrep, curl, wget and gawk
   from Redox' aarch64 package repository stop at start with a `brk`
   exception (ESR `0xF2000001`), `find` fails to link; in QEMU as on the Pi.
-  coreutils, ion, kibi and diffutils run. Not in our images for now.
+  coreutils, ion, kibi and diffutils run. Later (2026-10-29) all nine
+  started; the `brk` was most likely the random start crash fixed in v0.2.0,
+  and the x18 bug (#127) is fixed by relibc `0013`. Back in the images
+  ([#40](https://github.com/redox-rpi/redox-rpi/issues/40)).
 - **Programs failed at random** (fixed in v0.2.0): about every third program
   started from the shell died at start, mostly with relibc's `no filetable fd
   present`. Cause: relibc's aarch64 signal entry swapped the registers x1 and
