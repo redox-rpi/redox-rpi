@@ -1,0 +1,40 @@
+From ff607d75c679bfd2344ce62725c083b061c02133 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 08:19:12 +0000
+Subject: [PATCH 12/12] time: tm_zone is the zone abbreviation (CET, CEST), not
+ the zone name
+
+localtime_r() put the tz database name ("Europe/Berlin") into tm_zone,
+so strftime("%Z") printed that instead of CET or CEST as other systems
+do. Use the abbreviation of the offset in effect, as tzname already does;
+the name only where the database has none.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/time/mod.rs | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/header/time/mod.rs b/src/header/time/mod.rs
+index 70948e3e..2bafbfc9 100755
+--- a/src/header/time/mod.rs
++++ b/src/header/time/mod.rs
+@@ -830,8 +830,14 @@ fn get_localtime(
+ }
+ 
+ fn datetime_to_tm(local_time: &DateTime<Tz>) -> tm {
+-    let tz = local_time.timezone().name();
+-    let tz = tz.strip_prefix("Etc/").unwrap_or(tz);
++    // tm_zone is the abbreviation in effect at that time ("CET" or "CEST"
++    // for Europe/Berlin), as on other systems; the zone name only if the
++    // database has no abbreviation.
++    let name = local_time.timezone().name();
++    let tz = local_time
++        .offset()
++        .abbreviation()
++        .unwrap_or_else(|| name.strip_prefix("Etc/").unwrap_or(name));
+ 
+     let mut t = blank_tm();
+     // Populate the `tm` structure
+-- 
+2.53.0
+
