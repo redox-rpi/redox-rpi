@@ -21,7 +21,9 @@ redoxfs 192.168.178.120
 
 # After 60_data has mounted the SD card's data partition: copy the packages
 # installed there with pkg-persist into the root filesystem, which is in
-# RAM on network and direct boot. Does nothing without them.
+# RAM on network and direct boot. Does nothing without them. A oneshot, so
+# the services after it and the login prompt only start once the copies
+# are complete (oneshot_async let `redox login:` come first).
 [[files]]
 path = "/usr/lib/init.d/61_pkg-persist.service"
 data = """
@@ -32,5 +34,5 @@ requires_weak = ["00_base.target", "60_data.service"]
 [service]
 cmd = "pkg-persist"
 args = ["restore"]
-type = "oneshot_async"
+type = "oneshot"
 """

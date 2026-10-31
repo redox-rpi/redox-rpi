@@ -27,6 +27,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
+use std::time::Instant;
 
 const DEFAULT_ROOT: &str = "/scheme/data/pkg";
 /// The files pkg-persist copied into / during this boot, relative to the
@@ -87,6 +88,7 @@ fn restore(root: &Path) -> io::Result<()> {
         println!("pkg-persist: {} does not exist, nothing to copy", root.display());
         return Ok(());
     }
+    let start = Instant::now();
     let target = dest_root();
     let list_path = target.join(COPIED);
     let copied_before: BTreeSet<String> = fs::read_to_string(&list_path)
@@ -102,7 +104,11 @@ fn restore(root: &Path) -> io::Result<()> {
     for path in &copied {
         writeln!(list, "{path}")?;
     }
-    println!("pkg-persist: {new} files copied into {}, {kept} kept from the image", target.display());
+    println!(
+        "pkg-persist: {new} files copied into {}, {kept} kept from the image ({} ms)",
+        target.display(),
+        start.elapsed().as_millis()
+    );
     Ok(())
 }
 
