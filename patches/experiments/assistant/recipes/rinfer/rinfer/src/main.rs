@@ -164,8 +164,10 @@ fn main() -> anyhow::Result<()> {
     let n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(16);
     // candle sizes its thread pool from RAYON_NUM_THREADS or the CPU count,
     // which Redox does not report (candle then uses one thread). The Pi 3
-    // has four cores, but three write faster (Pi test 126: 1.24 tokens per
-    // second against 0.78) and leave one for the network and the shell.
+    // has four cores. Four write fastest alone (Pi test 159: 2.56 tokens per
+    // second against 2.0), but with all cores busy any other process (the
+    // assistant, the shell, the network) stalls a worker: answers fell to
+    // 0.15 tokens per second in #112 and #153. Three leave a core for them.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
         let n = if cfg!(target_os = "redox") {
             3
@@ -173,6 +175,13 @@ fn main() -> anyhow::Result<()> {
             std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(4)
         };
         std::env::set_var("RAYON_NUM_THREADS", n.to_string());
+    }
+    // A pool worker that runs out of spins sleeps, and on Redox a sleep
+    // lasts until the next 10 ms timer tick. With candle's 25,000 spins the
+    // workers slept 236 times per token on the Pi (1.38 tokens per second);
+    // from 250,000 on not at all (2.0 with 3 threads; Pi test 159).
+    if cfg!(target_os = "redox") && std::env::var_os("CANDLE_BARRIER_POOL_SPIN_LIMIT").is_none() {
+        std::env::set_var("CANDLE_BARRIER_POOL_SPIN_LIMIT", "250000");
     }
     // candle preallocates a 4096-position key/value cache per layer (900 MiB
     // for Qwen3 0.6B). Redox backs it with real memory and has no swap, so
@@ -187,7 +196,7 @@ fn main() -> anyhow::Result<()> {
         "neon: {}, threads: {}, pool spin limit: {}",
         candle::utils::with_neon(),
         candle::utils::get_num_threads(),
-        std::env::var("CANDLE_BARRIER_POOL_SPIN_LIMIT").unwrap_or_else(|_| "25000 (default)".into())
+        std::env::var("CANDLE_BARRIER_POOL_SPIN_LIMIT").unwrap_or_else(|_| "25000 (candle's default)".into())
     );
 
     let t0 = Instant::now();
