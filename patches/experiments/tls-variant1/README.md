@@ -59,3 +59,11 @@ recursive-lock owner check is thread-local, and a new thread read a
 wrong value there. `pthread/exit` fails on this base for another reason
 (kernel `0008`, a process whose last thread calls `pthread_exit` ends
 with SIGKILL).
+
+Real Pi 3B+, 2026-10-31, same image, test 129
+([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md),
+commit eacbca0): **pass**. 1000 program starts through the changed loader,
+0 failed, no exception; `stdio/mutex` 10 of 10 `rc=0`; in the suite
+`stdio/mutex`, `tls_align` (dynamic and static) and `tls_shared` are
+`FIXED`. The only `NEW` line is `pthread/exit` (kernel `0008`, fixed by
+experiment `self-exit-status`, PR #122).
