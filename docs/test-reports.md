@@ -5151,3 +5151,181 @@ Model on the card (341455552 bytes). 4 threads (`RAYON_NUM_THREADS=4`);
   kept.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-806-gb2dd152` wait-irq `+x98e9` and tx-irq `+x3388` (sent frames without the spin)
+
+Real Pi 3B+ over netboot. Test 155 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104), sent frames without the spin), Pi test agent. (Queued as a second 152 by mistake; renumbered to 155.)
+
+**Pass: the host counted 16777216 bytes in all four runs, and devshd answered
+afterwards.** dwc2d's ACTTIME is **not lower with tx-irq**: +1.22 and +1.10 s
+per 16 MiB against +1.03 and +1.14 s for wait-irq. Sending is about as fast
+(7.1 to 8.3 MB/s). Images from `~/redox-rpi-usb/keep/` with their manifests
+(match), stable bootloader, wait-irq first. Standard checks with `--manifest`
+pass on both (0 of 300 starts failed). Host side: `nc -l <port> | wc -c`.
+
+| image | run | `tcp-send` | host bytes | dwc2d ACTTIME before → after | SCHTIME before → after |
+|---|---|---|---|---|---|
+| wait-irq | 1 | `16777216 bytes in 2.31 s, 7.28 MB/s` | 16777216 | 1.74 → 2.77 s (**+1.03**) | 1.88 → 1.91 s (+0.03) |
+| wait-irq | 2 | `16777216 bytes in 2.02 s, 8.30 MB/s` | 16777216 | 2.97 → 4.11 s (**+1.14**) | 2.10 → 2.22 s (+0.12) |
+| tx-irq | 1 | `16777216 bytes in 2.36 s, 7.12 MB/s` | 16777216 | 1.61 → 2.83 s (**+1.22**) | 1.74 → 1.76 s (+0.02) |
+| tx-irq | 2 | `16777216 bytes in 2.11 s, 7.94 MB/s` | 16777216 | 2.90 → 4.00 s (**+1.10**) | 1.82 → 1.85 s (+0.03) |
+
+- ACTTIME as in #144 (first time column of `/scheme/sys/context`); each pair
+  also covers about 0.4 s of devsh between the commands.
+- #144 (wait-irq `451`): +0.99 and +1.00 s at 8.3 MB/s. So the time dwc2d spends
+  per 16 MiB sent is unchanged on all three builds.
+- No dwc2d line on the serial console about the transmit interrupt or spin (only
+  the enumeration). `free` afterwards: 138928 used (wait-irq), 140308 (tx-irq) of
+  739432. No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-795-g187edb8+xff6c` (netstack-arp-ack, stale ARP and reads after a TCP reset)
+
+Real Pi 3B+ over netboot. Test 156 ([#140](https://github.com/redox-rpi/redox-rpi/issues/140), [#141](https://github.com/redox-rpi/redox-rpi/issues/141)), Pi test agent.
+
+**Pass: after a reset, netget still reads the 65535 buffered bytes. Three
+downloads of 382 MB complete at 7.67–7.78 MB/s, with no `waiting queue was
+full` line.** Image `~/redox-rpi-zrtl/keep/arpack-v0.3.0-dev-795-g187edb8+xff6c.img`
+(manifest in the image), stable bootloader. Standard checks pass before and
+after (0 of 300 starts failed each time).
+
+(1) Reset test, `rstserver.py 18998 1000000`:
+
+```
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+```
+
+Server: `17:39:00 192.168.178.148: header, 437576 body bytes into the socket,
+then reset`, and the same at 17:39:11. N = 65535 both times (pass: above 30000).
+
+(2) ARP, `netget http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf --log /scheme/debug` three times:
+
+| run | result | 16 MiB steps |
+|---|---|---|
+| 1 | `382156480 bytes in 49.8 s, 7.67 MB/s` | 7.38–7.97 MB/s |
+| 2 | `382156480 bytes in 49.1 s, 7.78 MB/s` | 7.6–7.9 MB/s |
+| 3 | `382156480 bytes in 49.6 s, 7.71 MB/s` | 7.4–7.9 MB/s |
+
+- Serial during the three runs: **0 `waiting queue was full`** lines, no
+  `Dropped` and no `smolnetd` line. The whole boot had none either. No panic.
+- The three runs took about 2.5 minutes together, so they spanned two or three
+  60 s ARP refreshes.
+- Every `netget:` line from the serial log (`--log /scheme/debug`):
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.75 MB/s
+netget:    32 MiB     4.3 s  7.87 MB/s
+netget:    48 MiB     6.6 s  7.45 MB/s
+netget:    64 MiB     8.8 s  7.64 MB/s
+netget:    80 MiB    11.0 s  7.65 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.78 MB/s
+netget:   128 MiB    17.5 s  7.69 MB/s
+netget:   144 MiB    19.6 s  7.92 MB/s
+netget:   160 MiB    21.7 s  7.95 MB/s
+netget:   176 MiB    23.9 s  7.75 MB/s
+netget:   192 MiB    26.0 s  7.92 MB/s
+netget:   208 MiB    28.3 s  7.38 MB/s
+netget:   224 MiB    30.6 s  7.46 MB/s
+netget:   240 MiB    32.8 s  7.60 MB/s
+netget:   256 MiB    35.0 s  7.55 MB/s
+netget:   272 MiB    37.2 s  7.70 MB/s
+netget:   288 MiB    39.4 s  7.71 MB/s
+netget:   304 MiB    41.5 s  7.82 MB/s
+netget:   320 MiB    43.7 s  7.97 MB/s
+netget:   336 MiB    45.9 s  7.58 MB/s
+netget:   352 MiB    48.1 s  7.38 MB/s
+netget: 382156480 bytes in 49.8 s, 7.67 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.63 MB/s
+netget:    32 MiB     4.4 s  7.64 MB/s
+netget:    48 MiB     6.6 s  7.73 MB/s
+netget:    64 MiB     8.7 s  7.77 MB/s
+netget:    80 MiB    10.9 s  7.85 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.66 MB/s
+netget:   128 MiB    17.5 s  7.67 MB/s
+netget:   144 MiB    19.6 s  7.89 MB/s
+netget:   160 MiB    21.8 s  7.77 MB/s
+netget:   176 MiB    23.9 s  7.80 MB/s
+netget:   192 MiB    26.1 s  7.75 MB/s
+netget:   208 MiB    28.2 s  7.90 MB/s
+netget:   224 MiB    30.4 s  7.84 MB/s
+netget:   240 MiB    32.5 s  7.89 MB/s
+netget:   256 MiB    34.6 s  7.86 MB/s
+netget:   272 MiB    36.8 s  7.80 MB/s
+netget:   288 MiB    38.9 s  7.93 MB/s
+netget:   304 MiB    41.1 s  7.76 MB/s
+netget:   320 MiB    43.2 s  7.86 MB/s
+netget:   336 MiB    45.4 s  7.79 MB/s
+netget:   352 MiB    47.5 s  7.89 MB/s
+netget: 382156480 bytes in 49.1 s, 7.78 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.74 MB/s
+netget:    32 MiB     4.3 s  7.80 MB/s
+netget:    48 MiB     6.4 s  8.01 MB/s
+netget:    64 MiB     8.6 s  7.75 MB/s
+netget:    80 MiB    10.7 s  7.87 MB/s
+netget:    96 MiB    12.9 s  7.83 MB/s
+netget:   112 MiB    15.2 s  7.35 MB/s
+netget:   128 MiB    17.4 s  7.60 MB/s
+netget:   144 MiB    19.6 s  7.52 MB/s
+netget:   160 MiB    21.8 s  7.81 MB/s
+netget:   176 MiB    23.9 s  7.82 MB/s
+netget:   192 MiB    26.1 s  7.69 MB/s
+netget:   208 MiB    28.3 s  7.76 MB/s
+netget:   224 MiB    30.5 s  7.79 MB/s
+netget:   240 MiB    32.7 s  7.64 MB/s
+netget:   256 MiB    34.8 s  7.89 MB/s
+netget:   272 MiB    37.0 s  7.78 MB/s
+netget:   288 MiB    39.1 s  7.70 MB/s
+netget:   304 MiB    41.4 s  7.63 MB/s
+netget:   320 MiB    43.5 s  7.64 MB/s
+netget:   336 MiB    45.7 s  7.66 MB/s
+netget:   352 MiB    47.9 s  7.67 MB/s
+netget: 382156480 bytes in 49.6 s, 7.71 MB/s
+```
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-798-gb225933+x1258` (t4-with-137, signals sent to a thread)
+
+Real Pi 3B+ over netboot. Test 157 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)), Pi test agent.
+
+**Pass: boot to login with no `FATAL` or panic, all five `sigregs` runs PASS
+(signals to a thread now arrive, 500 of 500), and the standard checks pass.**
+Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-798-gb225933+x1258.img`,
+manifest matches, stable bootloader.
+
+```
+### sigregs thread --x18 -n 500  (15.3 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (15.2 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (20.1 s)
+PASS thread: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs sender  (0.2 s)
+PASS sender: si_pid 55 from the thread, 56 from the child
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+
+Stable image restored afterwards.
