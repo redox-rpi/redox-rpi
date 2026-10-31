@@ -3673,3 +3673,75 @@ DHCP: eth1 got 10.0.9.2/24
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-520-g38cb884+xf552` (PR #93 mDNS, PTR answer with SRV, TXT, address records)
+
+Real Pi 3B+ over netboot. Test 123 ([#37](https://github.com/redox-rpi/redox-rpi/issues/37)), Pi test agent.
+
+**Pass: the PTR answer carries SRV, TXT, A and AAAA in one reply, and (2)–(4)
+are as described.** Image `~/redox-rpi-zrtl/keep/mdns-v0.3.0-dev-520-g38cb884+xf552.img`
+(no manifest next to it; the one in the image passes), with stable's bootloader.
+Query tool from `origin/mdns:patches/experiments/mdns/mdns-query.py`.
+
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest present,
+  ps 48, ps-tty, sdcard, 0 of 300 starts failed).
+- `mdnsd:` serial lines:
+
+```
+mdnsd: redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2 services configured
+mdnsd: redox-rpi._devsh._tcp.local port 2323 announced
+mdnsd: redox-rpi.local is 192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1504:9901:ba27:ebff:fe08:e0aa, fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa
+```
+
+- (1) `python3 /tmp/mdns-query.py _devsh._tcp.local PTR`: one answer with PTR,
+  **SRV, TXT, A**, and three AAAA:
+
+```
+192.168.178.148: _devsh._tcp.local PTR redox-rpi._devsh._tcp.local (ttl 4500)
+192.168.178.148: redox-rpi._devsh._tcp.local SRV port 2323 target redox-rpi.local (ttl 120)
+192.168.178.148: redox-rpi._devsh._tcp.local TXT 00 (ttl 4500)
+192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA 2a02:590:1504:9901:ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+```
+
+- (2) `python3 /tmp/mdns-query.py redox-rpi.local`: A `192.168.178.148`, plus the
+  three AAAA. The router also answered from its cache with the same A (ttl 10).
+
+```
+192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA 2a02:590:1504:9901:ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.1: redox-rpi.local A 192.168.178.148 (ttl 10)
+```
+
+- (3) `python3 /tmp/mdns-query.py redox-rpi.local AAAA -6 wlp13s0`: answered from
+  the Pi's link-local address with link-local, `2a02:…` and `fdeb:…`, plus the A:
+
+```
+fe80::ba27:ebff:fe08:e0aa: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+fe80::ba27:ebff:fe08:e0aa: redox-rpi.local AAAA 2a02:590:1504:9901:ba27:ebff:fe08:e0aa (ttl 120)
+fe80::ba27:ebff:fe08:e0aa: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+fe80::ba27:ebff:fe08:e0aa: redox-rpi.local A 192.168.178.148 (ttl 120)
+```
+
+- (4) `python3 /tmp/mdns-query.py _services._dns-sd._udp.local PTR`: the Pi's lines
+  are below. Other devices on the LAN answered too; their lines are left out here.
+  The Pi lists only **`_devsh._tcp.local`, no `_ssh._tcp`**:
+
+```
+192.168.178.148: _services._dns-sd._udp.local PTR _devsh._tcp.local (ttl 4500)
+192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA 2a02:590:1504:9901:ba27:ebff:fe08:e0aa (ttl 120)
+192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+```
+
+- mdnsd CPU when idle: `top -n 1` printed no mdnsd line, so I used `ps`. ACTTIME
+  went from 0.06 s to 0.07 s over 30 s idle (about 3 min after boot), 4.92 MB.
+- The TXT record is a single empty string (`00`). The serial log says
+  "2 services configured" but announces only devsh; this image has no sshd.
+
+Stable image restored afterwards.
