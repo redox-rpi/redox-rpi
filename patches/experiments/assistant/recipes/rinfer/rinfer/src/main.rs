@@ -263,7 +263,8 @@ fn step_mode() -> bool {
 /// long download stopped after 64 MiB without an error; the disk was close to
 /// full, and a full disk can hang writes on Redox.) With parts, a file left by
 /// an earlier try is kept up to its last whole part and the rest is fetched:
-/// the Pi downloads at 0.1 to 0.25 MB/s, so a stopped try is not lost.
+/// the Pi downloads at 0.06 to 0.25 MB/s, so a stopped try is not lost. A
+/// part whose connection breaks is fetched again, up to 10 times in a row.
 fn download(url: &str, file: &str) -> anyhow::Result<()> {
     let t = Instant::now();
     let mut got = 0u64;
@@ -284,16 +285,35 @@ fn download(url: &str, file: &str) -> anyhow::Result<()> {
         }
         out = std::fs::OpenOptions::new().create(true).write(true).open(file)?;
         out.set_len(got)?;
-        out.seek(std::io::SeekFrom::End(0))?;
+        out.seek(SeekFrom::End(0))?;
         if first > 0 {
             eprintln!("kept parts 000 to {:03} from an earlier try, {} MiB", first - 1, got >> 20);
         }
-        for part in first.. {
+        let mut part = first;
+        let mut tries = 0;
+        loop {
             let u = url.replace("NNN", &format!("{part:03}"));
-            match fetch(&u, &mut out, &mut got)? {
-                true => eprintln!("part {part:03}, {} MiB", got >> 20),
-                false if part > 0 => break,
-                false => anyhow::bail!("{u}: not found"),
+            let (start, t_part) = (got, Instant::now());
+            match fetch(&u, &mut out, &mut got) {
+                Ok(true) => {
+                    let mb = (got - start) as f32 / 1e6;
+                    eprintln!("part {part:03}, {} MiB, {:.2} MB/s", got >> 20, mb / t_part.elapsed().as_secs_f32());
+                    part += 1;
+                    tries = 0;
+                }
+                Ok(false) if part > 0 => break,
+                Ok(false) => anyhow::bail!("{u}: not found"),
+                // A dropped connection (the Pi saw ENOTCONN after 204 MB):
+                // cut the broken part off and fetch it again.
+                Err(e) if tries < 10 => {
+                    tries += 1;
+                    eprintln!("part {part:03}: {e}; again in 5 s (try {tries} of 10)");
+                    got = start;
+                    out.set_len(got)?;
+                    out.seek(SeekFrom::End(0))?;
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                }
+                Err(e) => return Err(e),
             }
         }
     } else {
