@@ -4359,3 +4359,47 @@ SUMMARY v0.3.0-dev-574-g55e47fb+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 
   No `NEW` line, and `pthread/exit` passes in the suite too (in #129 it was `NEW` with SIGKILL).
 
 Raw output: homenodellm `~/pitest-tools/t133/`. Stable image restored afterwards.
+
+## 2026-10-31: test 135, dwc2d waits for the channel interrupt (baseline vs `dwc2d-wait-irq`)
+
+Real Pi 3B+ over netboot. Test 135 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Partly done. Both images pass the standard checks and hotplug (network 3 of 3,
+keyboard 1 of 1) with no hang, and the wait-irq image has no `transfers spin`
+line. The TCP step was not measured: the Pi's `nc` doesn't send what it reads
+from a pipe. No USB stick was in, so the stick step falls to the USB visit.** So
+the main comparison, dwc2d ACTTIME during long transfers, is still open.
+Images `~/redox-rpi-usb/keep/storage3-v0.3.0-dev-441-g81d8d88+xf757.img`
+(baseline, as #71) and `wait-irq-v0.3.0-dev-449-g461061e+x885b.img`, both
+manifests match, with the new stable's bootloader.
+
+- Boot log, both images: `dwc2d: interrupt /scheme/irq/phandle-1/1,9`,
+  `dwc2d: keyboard at address 5` (the NanoKVM's USB), no `mass storage` line, no
+  panic. The wait-irq image has **no `dwc2d: transfers spin` line**.
+- Standard checks with `--manifest`: **pass** for both (0 of 300 starts failed).
+- dwc2d ACTTIME (from `grep dwc2d /scheme/sys/context`) before → after:
+
+| step | baseline | wait-irq |
+|---|---|---|
+| (1) 30 s idle | 1.77 → 2.49 s (**+0.72 s**) | 2.14 → 2.96 s (**+0.82 s**) |
+| (3) `pi-hotplug-test.sh 3` with `KEYBOARD=1` | 9.88 → 11.02 s (+1.14 s) | 10.35 → 11.30 s (+0.95 s) |
+| (2) TCP send | not measured | not measured |
+| (4) stick | no stick | no stick |
+
+- (3) Hotplug: **pass on both**. Network: port off, device removed, found again,
+  network on the adapter again, devshd answers again, 3 of 3 each. Keyboard:
+  1 of 1. `cycle: hub 2 port 1 disconnected after` 102–114 ms (baseline) and
+  101–113 ms (wait-irq).
+- (2) Why no TCP number: the Pi's `nc` (`nc [-l] host:port`) connects
+  (`Remote host: 192.168.178.120:5135`), but with
+  `dd if=/dev/zero bs=65536 count=256 | nc 192.168.178.120:5135` the host
+  receives 0 bytes and `dd` stops with `Broken pipe` after `0+0 records`. The
+  same happens with `echo hello`. A try the other way round, with the Pi
+  listening (`nc -l 0.0.0.0:5136 > /dev/null`), accepted the connection but gave
+  no clear byte count. There's no `sh`, `curl` or `wget` on these images.
+  During these tries dwc2d's ACTTIME on the wait-irq image rose from 18.7 s to
+  34.4 s, so the failed connections cost CPU in dwc2d. That needs a look, but it's
+  no measurement.
+
+The row stays queued for the TCP step, which needs a sender that works on the Pi.
+Stable image restored afterwards.
