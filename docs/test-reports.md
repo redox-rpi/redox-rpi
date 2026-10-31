@@ -3800,3 +3800,46 @@ USB          5 devices (lsusb for the list)
 - Optional port cycle (`pi-hotplug-test.sh`) not run.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-462-g3783750+xc526` (pkg-persist, packages that survive a reset)
+
+Real Pi 3B+ over netboot with the usual card. Test 124 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44)), Pi test agent.
+
+**Pass for (1) to (5), with one point for the owner.** After the reboot, the copy
+line appears in the serial log after `timesync: … from pool.ntp.org` and after
+`redox login:`. The row asks for it before any network use. The service starts
+after `60_data`, and the line is printed when the copy ends, so the log can't
+show whether the copy started before timesync used the network.
+Image `~/redox-rpi-boot/keep/persistC-harddrive.img` (no manifest next to it;
+the one in the image passes), with stable's bootloader.
+
+- First boot: `pkg-persist: /scheme/data/pkg does not exist, nothing to copy`,
+  no `60_data` failure, then
+  `timesync: clock set to 2026-10-31 02:08:51 UTC from pool.ntp.org`.
+- `scripts/pi-test.py` standard checks: **pass**, both after the first boot and
+  at the end (version, manifest present, ps 47, ps-tty, sdcard, 0 of 300 starts failed).
+- (1) `mv`: `echo hi > /scheme/data/t124; mv /scheme/data/t124 /scheme/data/t124b`
+  gave no error, `ls /scheme/data` showed `t124b`, then it was removed.
+- (2) `pkg-persist install nano` (39 s) ends with `Commit complete.` and
+  `pkg-persist: 214 files copied into /, 2 kept from the image`.
+  `nano --version` prints `GNU nano, version 9.2`. `pkg-persist list` shows
+  `nano`, `ncursesw` and `terminfo`.
+- (3) `reboot` (same image, one `kreset`), back to `redox login:` after 25 s.
+  Serial log order: `timesync: … from the saved time`, `timesync: clock set to
+  2026-10-31 02:11:24 UTC from pool.ntp.org`, `redox login:`, then
+  **`pkg-persist: 214 files copied into /, 2 kept from the image`** (same count).
+  `nano --version` works again. `ls /scheme/data/pkg/var/lib/packages` lists
+  `nano.pkgar_head ncursesw.pkgar_head terminfo.pkgar_head`.
+- (4) `pkg-persist restore` again: `pkg-persist: 0 files copied into /, 2 kept from the image`.
+- (5) `rm -r /scheme/data/pkg`; `/scheme/data` is as before the test.
+
+`pkg-persist:` lines in order:
+
+```
+pkg-persist: /scheme/data/pkg does not exist, nothing to copy
+pkg-persist: 214 files copied into /, 2 kept from the image      (install)
+pkg-persist: 214 files copied into /, 2 kept from the image      (boot after reboot)
+pkg-persist: 0 files copied into /, 2 kept from the image        (restore again)
+```
+
+Stable image restored afterwards.
