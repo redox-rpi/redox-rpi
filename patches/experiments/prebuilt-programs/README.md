@@ -4,6 +4,10 @@ Adds bash, nano, vim, findutils, gawk, tmux, ripgrep, curl and wget from
 Redox' aarch64 package repository (binary packages) to the image, to find
 out why they fail at start.
 
+**In the images by default now** (`config/raspi3bp-sdcard.toml`, #40),
+after relibc `0013` and kernel `0009` (#127). The name is still accepted
+and adds nothing new.
+
 ```bash
 scripts/build-image.sh --experiment prebuilt-programs
 ```

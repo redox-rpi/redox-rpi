@@ -13,3 +13,16 @@ include = ["raspi3bp.toml"]
 # only needs to exist. The Pi 3B+ image uses about 81 MiB of its RedoxFS.
 filesystem_size = 128
 efi_partition_size = 8
+
+# The prebuilt programs of raspi3bp-sdcard.toml (#40) need about 80 MB with
+# openssl3 and do not fit; install them with pkg if needed.
+[packages]
+bash = "ignore"
+nano = "ignore"
+vim = "ignore"
+findutils = "ignore"
+gawk = "ignore"
+tmux = "ignore"
+ripgrep = "ignore"
+curl = "ignore"
+wget = "ignore"
