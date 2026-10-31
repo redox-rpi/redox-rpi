@@ -4,7 +4,11 @@ Issues: [#140](https://github.com/redox-rpi/redox-rpi/issues/140),
 [#141](https://github.com/redox-rpi/redox-rpi/issues/141); both seen in
 #119.
 
-**Base `0082`**, two small fixes in netstack:
+**Default since PR [#PRNUM](https://github.com/redox-rpi/redox-rpi/pull/PRNUM):** base patch `0082`
+(`patches/base/`). The name `netstack-arp-ack` is still accepted and does
+nothing.
+
+Base `0082`, two small fixes in netstack:
 
 - **ARP:** an entry expired 60 s after it was learned. Every packet to that
   host then waited in a queue of 10 until the ARP reply came, so a busy
@@ -17,8 +21,7 @@ Issues: [#140](https://github.com/redox-rpi/redox-rpi/issues/140),
   was still in the receive buffer. `read_buf` now hands out that data first,
   and returns `ENOTCONN` only when the buffer is empty.
 
-Build: `--experiment netstack-arp-ack` on main; add `--experiment netget`
-for the test downloader.
+Test downloader: `--experiment netget`.
 
 ## Tests
 
@@ -41,4 +44,8 @@ away with N about 0.
   itself and turns the host's reset into a normal close. The old and the new
   image both read to the end of the stream. On the Pi the connection goes
   straight to homenodellm, so the reset arrives as one.
-- Pi 3B+: test plan row.
+- Pi 3B+, **test 156: pass**
+  ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-795-g187edb8xff6c-netstack-arp-ack-stale-arp-and-reads-after-a-tcp-reset)).
+  After a reset netget still read the 65535 buffered bytes, both times.
+  Three 382 MB downloads ran at 7.67 to 7.78 MB/s, with no `waiting queue
+  was full` and no `Dropped` line.
