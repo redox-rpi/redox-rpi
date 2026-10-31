@@ -53,6 +53,12 @@
   [#90](https://github.com/redox-rpi/redox-rpi/pull/90). **Pi test 114
   passed**: 120 devsh connections cost 1.1 MB, where stable lost 5.3 MB
   for 40.
+  The rest of #88's growth (Pi test 111, `SHARED` of netstack and randd)
+  was a kernel bug: every open of a scheme's root (`/scheme/tcp` per TCP
+  connection, `/scheme/rand` per random read) left one 4 KiB page mapped in
+  the daemon. Kernel `0057`, draft PR
+  [#114](https://github.com/redox-rpi/redox-rpi/pull/114), merge after #90;
+  QEMU: no growth over 800 MQTT runs. Pi test #136.
 - [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
   answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
   (each only while its program is on the image); **Pi test 96 passed**,
