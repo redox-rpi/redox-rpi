@@ -5835,3 +5835,33 @@ dwc2d: keyboard removed
   at dwc2d losing the hub, rather than at redoxfs.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-845-g7590e1c+x8a5e` (icache-default, icache-sync as default kernel patches)
+
+Real Pi 3B+ over netboot. Test 169 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Pass: `icachetest 10000` PASS with 0 stale rounds in all four tests, standard
+checks pass, 0 of 1000 starts failed, and no exception or panic.** Image
+`~/t18-work/image-icd/harddrive.img` (md5 `511ef4ab`), staged with
+`~/t18-work/t3-stage/scripts/netboot.sh` (bootloader md5 `4fccdb94`, as in
+tests 131 and 162).
+
+```
+### icachetest 10000  (68.0 s)
+new-page: 0 of 10000 rounds ran stale code
+same-page: 0 of 10000 rounds ran stale code
+file-map: 0 of 10000 rounds ran stale code
+user-flush: 0 of 10000 rounds ran stale code
+PASS
+```
+
+(test 162 without `icache-sync`: up to 3244 `new-page` and 5349 `same-page`.)
+
+- `scripts/pi-test.py --starts 1000`: version, manifest (present), ps, ps-tty,
+  sdcard pass; **0 of 1000 starts failed**.
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`: **116.99 s,
+  116.87 s, 116.93 s** (test 162 with `icache-sync`: 116.8 s; without: 116.2 to
+  119.1 s).
+- Serial log from the boot to the end: 0 `FATAL`, `exception` or `panicked`.
+
+Stable image restored afterwards.
