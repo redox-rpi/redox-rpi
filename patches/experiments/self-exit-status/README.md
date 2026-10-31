@@ -20,3 +20,16 @@ scripts/build-image.sh --experiment self-exit-status
 ```
 
 ## Results
+
+QEMU raspi3b (`-smp 4`), 2026-10-31, branch `t-self-exit` with
+`t13-relibc-tests` merged, `--experiment relibc-tests --experiment
+timesync --experiment self-exit-status`, build
+`v0.3.0-dev-574-g55e47fb+xb3d9`:
+
+| Check | Without the patch (main with `0008`) | With the patch |
+|---|---|---|
+| relibc suite | `pthread/exit` NEW: SIGKILL (`v0.3.0-dev-417-gd2482d8+x9903`) | 319 tests, 22 failures, all known, none new |
+| `pthread/exit`, 10 runs | SIGKILL | 10 of 10 `rc=0` |
+| `free` around 200 `dd` runs (#31 leak, about 76 KB per run before `0008`) | – | used 124576 KB before, 103524 KB after: no growth |
+
+So the leak fix of `0008` stays and the exit status is 0 again.
