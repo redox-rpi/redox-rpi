@@ -39,15 +39,27 @@ diffutils = {}
 
 # CPU clock at boot (#23): rpi-firmwared starts in the initfs, before /etc
 # is there, with the ondemand governor. If /etc/rpi-firmware/governor
-# exists, its word goes to the governor: `ondemand`, `performance` or
-# `powersave`; anything the governor refuses goes to arm_clock instead, so
-# a rate in Hz (or `max`, `min`) keeps a fixed clock, like force_turbo=1 on
-# Linux. rpi-firmwared logs what it set.
+# exists, its word goes to the governor if it is `ondemand`, `performance`
+# or `powersave`, else to arm_clock, so a rate in Hz (or `max`, `min`)
+# keeps a fixed clock, like force_turbo=1 on Linux. rpi-firmwared logs what it set.
 [[files]]
 path = "/usr/lib/rpi-firmware/governor.ion"
 data = """
+# A mode goes to the governor, anything else (a rate, max, min) to arm_clock.
+# Choosing first keeps the governor's refusal out of the log (Pi test 161:
+# cat: /etc/rpi-firmware/governor: Invalid argument).
 if test -f /etc/rpi-firmware/governor
-    cat /etc/rpi-firmware/governor > /scheme/rpi-firmware/governor || cat /etc/rpi-firmware/governor > /scheme/rpi-firmware/arm_clock
+    let mode = $(cat /etc/rpi-firmware/governor)
+    match $mode
+        case ondemand
+            echo $mode > /scheme/rpi-firmware/governor
+        case performance
+            echo $mode > /scheme/rpi-firmware/governor
+        case powersave
+            echo $mode > /scheme/rpi-firmware/governor
+        case _
+            echo $mode > /scheme/rpi-firmware/arm_clock
+    end
 else
     # No file: keep the ondemand governor; init counts status 1 as failed.
     true

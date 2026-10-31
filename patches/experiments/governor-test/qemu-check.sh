@@ -38,6 +38,11 @@ expect "mode performance after boot" AT-BOOT "^mode performance"
 check "a rate goes to arm_clock" "rpi-firmwared: ARM clock [0-9]+ MHz, governor off"
 expect "mode fixed after a rate" AFTER-RATE "^mode fixed"
 expect "a bad word changes nothing" AFTER-BOGUS "^mode fixed"
+if grep -q "cat: /etc/rpi-firmware/governor: Invalid argument" <<< "$log"; then
+    echo "FAIL: a rate gives no error from cat"; failed=1
+else
+    echo "PASS: a rate gives no error from cat"
+fi
 expect "back to ondemand" AFTER-ONDEMAND "^mode ondemand"
 echo "--- governor lines:"
 grep -E "rpi-firmwared: (governor|ARM clock)" <<< "$log" | head
