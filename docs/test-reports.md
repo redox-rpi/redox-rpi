@@ -4669,3 +4669,38 @@ ps-tty, sdcard, 0 of 300 starts failed).
 - The Pi's clock read 1970 (no timesync in this image).
 
 Stable image staged afterwards; the Pi needs a power cycle to boot it.
+
+## 2026-10-31: `v0.3.0-dev-564-gfaa76a7+x4590` (assistant, saved prompt state)
+
+Real Pi 3B+ over netboot. Test 143 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Pass: the prompt state is saved as `prompt.kv` and loaded on the next run.**
+The prompt step goes from 179.4 s to 2.3 s, and the whole question from 266 s to
+75 s. Image `~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-564-gfaa76a7+x4590.img`,
+manifest matches, stable bootloader. Standard checks pass (0 of 300 starts
+failed). The model was on the card (`Qwen3-0.6B-Q4_0e.gguf` 341455552 bytes);
+no `prompt.kv.part` or `prompt.kv` before.
+
+| | first run | second run |
+|---|---|---|
+| model | `loaded in 21.2 s`, threads 3 | `loaded in 20.7 s` |
+| prompt | `read 380 tokens in 179.4 s`, **`saved 380 tokens in 5.8 s`** | **`loaded 380 tokens in 2.3 s`** |
+| answer | `It is Saturday, 31 October 2026, 14:35 UTC.`, then `The current time is 14:35 UTC.` | same, 14:37 UTC |
+| writing | 1.24 t/s and 1.06 t/s | 1.44 t/s and 1.23 t/s |
+| total (`date -u` before/after) | 14:31:40 to 14:36:06, 266 s | 14:36:20 to 14:37:35, 75 s |
+| peak heap | 430 MiB | 407 MiB |
+
+- `prompt.kv` after the first run: 43581693 bytes, as expected.
+- The first run prints `rinfer: No such file or directory (os error 2)` once
+  before reading the prompt (no cache yet); harmless.
+- devsh accepted connections after each run (#126: `Connection refused`).
+- `free` from a second devsh during the second run (14:37:10): 733584 used,
+  140844 free of 874428; after it 237548 used.
+- Temperature 52.6 °C before, 62.3 °C after; `throttled` `0x00000000` before,
+  **`0x00080008` after** (soft temperature limit reached and active).
+- No panic, no `oom`, no `RELIBC PANIC`. `prompt.kv` removed; the model kept.
+- Also removed `/scheme/data/netget.bin` left by #141's hang. It held
+  359464809 of 382156480 bytes (94 %), so the #141 hang came late in the
+  download to the card.
+
+Stable image restored afterwards.
