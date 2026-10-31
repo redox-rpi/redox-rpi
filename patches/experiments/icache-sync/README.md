@@ -110,5 +110,17 @@ QEMU, 2026-10-31, `v0.3.0-dev-801-gea8b5c2` with `icachetest`, without
   which test 127 measured on the Pi. In QEMU, `ic ialluis` also throws
   away QEMU's translated code, which a Cortex-A53 does not pay.
 
-Pi test 162 runs `icachetest` on both builds: without `icache-sync` it
-should show whether stale instructions really happen on the Pi.
+Real Pi 3B+, 2026-10-31, test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)), the same two
+builds, A, B, A, B on fresh boots:
+
+| `icachetest 10000` | without, boot 1 | with, boot 1 | without, boot 2 | with, boot 2 |
+|---|---|---|---|---|
+| `new-page` | **3146** stale | 0 | **3244** | 0 |
+| `same-page` | **5310** | 0 | **5349** | 0 |
+| `file-map` | 0 | 0 | 0 | 0 |
+| `user-flush` | 0 | 0 | 0 | 0 |
+
+**The gap is real on the Cortex-A53, and `icache-sync` closes it.** 0 of
+1000 starts failed with both builds, no exception, and no measurable cost:
+the `ls` loop took 116.8 s with and 118.9 s without on the first boots.
+Upstream note: [docs/upstream/kernel.md](../../../docs/upstream/kernel.md).

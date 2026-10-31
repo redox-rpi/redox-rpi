@@ -63,12 +63,11 @@
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
   executable and at exec (`0001`), and for executable file maps and page
-  faults that copy a frame (`0002`). No known failure needs it: Pi test
-  127 had 0 of 1000 failed starts with and without it, and it costs
-  about 2 ms per start (1.3 %). The new stress test `icachetest`
-  (experiment `icachetest`) passes in QEMU with and without it; Pi test
-  162 runs it on both builds to see whether a real Pi ever runs stale
-  code. Found on the way: RedoxFS maps the old data of a freed disk block
+  faults that copy a frame (`0002`). **Pi test 162: the gap is real.**
+  Without it, the new stress test `icachetest` ran stale code in about a
+  third of the rounds on a fresh page and half on a reused one; with it,
+  0 on both boots, 0 of 1000 failed starts and no measurable cost. Pull
+  request #148; upstream note in `docs/upstream/kernel.md`. Found on the way: RedoxFS maps the old data of a freed disk block
   (a file deleted or truncated, then a new one written), in QEMU too.
 
 ## Next
