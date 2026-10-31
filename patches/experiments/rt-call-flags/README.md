@@ -28,3 +28,16 @@ scripts/build-image.sh --experiment rt-call-flags
 ```
 
 ## Results
+
+QEMU raspi3b, 2026-10-31, branch `t14-ring-call` with `t13-relibc-tests`
+merged (test build only), `--experiment relibc-tests --experiment
+timesync`, with and without this experiment:
+
+| | Without (`v0.3.0-dev-803-g6e2853f+x36c5`) | With (`…+xfb68`) |
+|---|---|---|
+| `redox_ring_ramfs` | `redox_ring_register_files: Bad file number` | passes (`FIXED`) |
+| Other differences | – | none |
+
+Both runs show the same 4 `NEW` lines, which come from the base, not from
+this patch: `pthread/exit` (experiment `self-exit-status` not enabled)
+and `sys_socket/unixrecv`, `unixrecvfrom`, `unixnonblock`.
