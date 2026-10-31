@@ -5714,3 +5714,59 @@ Next: run the suite again on this image, or `rwlock_randtest` alone a few
 times, to tell a hang from `rt-call-flags` from a rare one.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, long write to the card without network load)
+
+Real Pi 3B+ over netboot. Test 167 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**Pass: all 25 steps of 16 MiB finished, 400 MiB in 64 KiB writes in 182 s of
+dd time (1.1 to 3.6 MB/s). devsh answered after each step, and the serial
+console showed no error.** So the card alone takes a long write; test 141's
+hang needs the network as well. Image
+`~/redox-rpi-sd/keep/t151-v0.3.0-dev-838-g64fa695+x8116.img` (md5 `15e52989`),
+staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- (1) `df -h /scheme/data`: 960.0M size, 393.7M used, 566.3M free. No
+  `netget.bin` (removed after #141, see #143); `rm` said `No such file`.
+- (2) `dd if=/scheme/rand of=/tmp/r16 bs=65536 count=256`: 16 MiB in 0.76 s.
+  `free` used 162280.
+- (3) the 25 steps (`dd … seek=<i×256> conv=notrunc`, then `free`):
+
+| step | start (UTC) | dd time | rate | `free` used |
+|---|---|---|---|---|
+| 0 | 21:16:38 | 14.9571 s | 1.1 MB/s | 183964 |
+| 1 | 21:16:55 | 7.82 s | 2.1 MB/s | 191280 |
+| 2 | 21:17:10 | 5.33287 s | 3.1 MB/s | 193724 |
+| 3 | 21:17:22 | 6.40854 s | 2.6 MB/s | 194708 |
+| 4 | 21:17:40 | 6.21403 s | 2.7 MB/s | 195280 |
+| 5 | 21:17:58 | 10.9027 s | 1.5 MB/s | 195696 |
+| 6 | 21:18:11 | 5.65799 s | 3.0 MB/s | 196084 |
+| 7 | 21:18:24 | 5.45208 s | 3.1 MB/s | 196468 |
+| 8 | 21:18:41 | 10.9754 s | 1.5 MB/s | 196848 |
+| 9 | 21:18:54 | 5.22359 s | 3.2 MB/s | 197236 |
+| 10 | 21:19:01 | 6.25465 s | 2.7 MB/s | 197608 |
+| 11 | 21:19:09 | 12.9977 s | 1.3 MB/s | 197976 |
+| 12 | 21:19:24 | 6.26754 s | 2.7 MB/s | 198380 |
+| 13 | 21:19:32 | 5.2923 s | 3.2 MB/s | 198748 |
+| 14 | 21:19:49 | 5.97413 s | 2.8 MB/s | 199132 |
+| 15 | 21:20:07 | 6.8708 s | 2.4 MB/s | 199500 |
+| 16 | 21:20:21 | 6.47109 s | 2.6 MB/s | 199896 |
+| 17 | 21:20:34 | 5.08902 s | 3.3 MB/s | 200268 |
+| 18 | 21:20:46 | 4.71222 s | 3.6 MB/s | 200664 |
+| 19 | 21:20:53 | 12.5595 s | 1.3 MB/s | 201028 |
+| 20 | 21:21:07 | 4.8601 s | 3.5 MB/s | 201412 |
+| 21 | 21:21:24 | 6.60228 s | 2.5 MB/s | 201784 |
+| 22 | 21:21:32 | 4.8109 s | 3.5 MB/s | 202164 |
+| 23 | 21:21:49 | 8.61827 s | 1.9 MB/s | 202540 |
+| 24 | 21:22:04 | 5.31831 s | 3.2 MB/s | 202920 |
+
+- Every step `rc=0`, devsh answered at once. Writes alternate between about
+  3 MB/s and slower steps (1.1 to 1.9 MB/s, steps 0, 5, 8, 11, 19, 23): the
+  card's own pauses, no trend. Memory: +21.7 MB in step 0 (first write to the
+  file), then about +0.38 MB per step (`used` 183964 → 202920).
+- (4) `ls -l /scheme/data/w151.bin`: **419430400** bytes. `df -h`: 793.8M used,
+  166.2M free. `rm` worked, so the partition is back to the model only.
+- Serial: only the usual boot lines (`bcm2835-sdhostd: SDHC/SDXC card, 15193 MiB,
+  4-bit bus, high speed, up to 50 MHz`); no `sdhost` or `redoxfs` error, no panic.
+
+Stable image restored afterwards.
