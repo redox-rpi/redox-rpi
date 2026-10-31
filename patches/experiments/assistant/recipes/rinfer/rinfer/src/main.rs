@@ -261,13 +261,34 @@ fn step_mode() -> bool {
 /// parts are fetched one by one, each on its own connection, until the server
 /// answers 404, and joined, so no single connection runs long. (In QEMU one
 /// long download stopped after 64 MiB without an error; the disk was close to
-/// full, and a full disk can hang writes on Redox.)
+/// full, and a full disk can hang writes on Redox.) With parts, a file left by
+/// an earlier try is kept up to its last whole part and the rest is fetched:
+/// the Pi downloads at 0.1 to 0.25 MB/s, so a stopped try is not lost.
 fn download(url: &str, file: &str) -> anyhow::Result<()> {
-    let mut out = std::fs::File::create(file)?;
     let t = Instant::now();
     let mut got = 0u64;
+    let mut out;
     if url.contains("NNN") {
-        for part in 0.. {
+        // Whole parts already in the file, by the lengths the server gives.
+        let have = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+        let mut first = 0;
+        while have > 0 {
+            let u = url.replace("NNN", &format!("{first:03}"));
+            match head(&u)? {
+                Some(l) if got + l <= have => {
+                    got += l;
+                    first += 1;
+                }
+                _ => break,
+            }
+        }
+        out = std::fs::OpenOptions::new().create(true).write(true).open(file)?;
+        out.set_len(got)?;
+        out.seek(std::io::SeekFrom::End(0))?;
+        if first > 0 {
+            eprintln!("kept parts 000 to {:03} from an earlier try, {} MiB", first - 1, got >> 20);
+        }
+        for part in first.. {
             let u = url.replace("NNN", &format!("{part:03}"));
             match fetch(&u, &mut out, &mut got)? {
                 true => eprintln!("part {part:03}, {} MiB", got >> 20),
@@ -275,16 +296,20 @@ fn download(url: &str, file: &str) -> anyhow::Result<()> {
                 false => anyhow::bail!("{u}: not found"),
             }
         }
-    } else if !fetch(url, &mut out, &mut got)? {
-        anyhow::bail!("{url}: not found");
+    } else {
+        out = std::fs::File::create(file)?;
+        if !fetch(url, &mut out, &mut got)? {
+            anyhow::bail!("{url}: not found");
+        }
     }
     out.sync_all()?;
     println!("{file}: {got} bytes in {:.0} s", t.elapsed().as_secs_f32());
     Ok(())
 }
 
-/// One GET, appended to `out`; false if the server answers 404.
-fn fetch(url: &str, out: &mut std::fs::File, got: &mut u64) -> anyhow::Result<bool> {
+/// Opens a connection for `method` on `url` and reads the status line and
+/// headers: the reader at the body, the status code and the Content-Length.
+fn request(method: &str, url: &str) -> anyhow::Result<(std::io::BufReader<std::net::TcpStream>, String, Option<u64>)> {
     use std::io::BufRead;
     let rest = url.strip_prefix("http://").ok_or_else(|| anyhow::anyhow!("only http:// URLs"))?;
     let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, "/".into()));
@@ -292,14 +317,13 @@ fn fetch(url: &str, out: &mut std::fs::File, got: &mut u64) -> anyhow::Result<bo
     let stream = std::net::TcpStream::connect(&addr)?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(60)))?;
     let mut w = stream.try_clone()?;
-    write!(w, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")?;
+    write!(w, "{method} {path} HTTP/1.0\r\nHost: {host}\r\n\r\n")?;
     let mut r = std::io::BufReader::with_capacity(1 << 20, stream);
     let mut line = String::new();
     r.read_line(&mut line)?;
-    match line.split_whitespace().nth(1) {
-        Some("200") => {}
-        Some("404") => return Ok(false),
-        _ => anyhow::bail!("server answered: {}", line.trim()),
+    let status = line.split_whitespace().nth(1).unwrap_or("").to_string();
+    if status != "200" && status != "404" {
+        anyhow::bail!("server answered: {}", line.trim());
     }
     let mut len = None;
     loop {
@@ -314,6 +338,24 @@ fn fetch(url: &str, out: &mut std::fs::File, got: &mut u64) -> anyhow::Result<bo
                 len = v.trim().parse::<u64>().ok();
             }
         }
+    }
+    Ok((r, status, len))
+}
+
+/// The length of `url` from a HEAD request; None if the server answers 404.
+fn head(url: &str) -> anyhow::Result<Option<u64>> {
+    let (_, status, len) = request("HEAD", url)?;
+    if status == "404" {
+        return Ok(None);
+    }
+    len.map(Some).ok_or_else(|| anyhow::anyhow!("{url}: no length"))
+}
+
+/// One GET, appended to `out`; false if the server answers 404.
+fn fetch(url: &str, out: &mut std::fs::File, got: &mut u64) -> anyhow::Result<bool> {
+    let (mut r, status, len) = request("GET", url)?;
+    if status == "404" {
+        return Ok(false);
     }
     let mut buf = vec![0u8; 1 << 20];
     let start = *got;
