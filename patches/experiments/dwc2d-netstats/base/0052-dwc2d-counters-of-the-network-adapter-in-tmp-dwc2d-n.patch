@@ -1,7 +1,7 @@
-From ae014575aa1ee7eaea37bd5d25e7e3cf57502b1e Mon Sep 17 00:00:00 2001
+From e05ea46bf232a2fee6804b98af42ea5806050b7e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 21:30:10 +0100
-Subject: [PATCH] dwc2d: counters of the network adapter in
+Subject: [PATCH 1/2] dwc2d: counters of the network adapter in
  /tmp/dwc2d-netstats, for diagnosis
 
 RX/TX frames and errors with the last error code, the time of the last
@@ -17,10 +17,10 @@ tell whether frames still come from the adapter when the network stops
  create mode 100644 drivers/usb/dwc2d/src/stats.rs
 
 diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
-index d748e55..7e7a700 100644
+index 77cfeeed..b43413bd 100644
 --- a/drivers/usb/dwc2d/src/ecm.rs
 +++ b/drivers/usb/dwc2d/src/ecm.rs
-@@ -211,12 +211,16 @@ impl Ecm {
+@@ -210,12 +210,16 @@ impl Ecm {
                  self.in_pid = next_pid;
                  self.rx_armed = false;
                  if len > 0 {
@@ -38,7 +38,7 @@ index d748e55..7e7a700 100644
          }
      }
  
-@@ -261,7 +265,10 @@ impl NetworkAdapter for Ecm {
+@@ -272,7 +276,10 @@ impl NetworkAdapter for Ecm {
          let (_, next_pid) = self
              .hc
              .transfer_on(TX_CHANNEL, &phase, timeout)
@@ -50,7 +50,7 @@ index d748e55..7e7a700 100644
          self.out_pid = next_pid;
          // A frame that fills its last packet ends with a zero-length packet.
          if len % usize::from(self.function.max_packet_out) == 0 {
-@@ -269,9 +276,13 @@ impl NetworkAdapter for Ecm {
+@@ -280,9 +287,13 @@ impl NetworkAdapter for Ecm {
              let (_, next_pid) = self
                  .hc
                  .transfer_on(TX_CHANNEL, &phase, timeout)
@@ -66,10 +66,10 @@ index d748e55..7e7a700 100644
      }
  }
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index 7de1c28..1e90160 100644
+index ccdc7b44..70d39395 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
-@@ -380,10 +380,15 @@ impl Lan78xx {
+@@ -407,10 +407,15 @@ impl Lan78xx {
              None => {}
              Some(Ok((len, next_pid))) => {
                  self.in_pid = next_pid;
@@ -86,7 +86,7 @@ index 7de1c28..1e90160 100644
          }
      }
  }
-@@ -420,16 +425,23 @@ impl NetworkAdapter for Lan78xx {
+@@ -447,16 +452,23 @@ impl NetworkAdapter for Lan78xx {
          let (_, next_pid) = self
              .hc
              .transfer_on(TX_CHANNEL, &phase, timeout)
@@ -113,7 +113,7 @@ index 7de1c28..1e90160 100644
      }
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 5a0bc4a..1b53322 100644
+index 28cc7aa2..1c19c7ef 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -22,6 +22,7 @@ mod hid;
@@ -124,7 +124,7 @@ index 5a0bc4a..1b53322 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -84,6 +85,8 @@ impl NetworkAdapter for UsbNet {
+@@ -268,6 +269,8 @@ fn probe(
  const RX_CHANNEL: usize = 1;
  /// How often to look for received frames without an interrupt.
  const POLL_FALLBACK: Duration = Duration::from_millis(10);
@@ -133,15 +133,15 @@ index 5a0bc4a..1b53322 100644
  
  fn get_dtb() -> Vec<u8> {
      std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
-@@ -203,6 +206,7 @@ user_data! {
+@@ -399,6 +402,7 @@ user_data! {
      enum Source {
          Irq,
          Scheme,
 +        Stats,
          Time,
+         Hotplug,
      }
- }
-@@ -317,6 +321,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -508,6 +512,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      events
          .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the scheme");
@@ -157,7 +157,7 @@ index 5a0bc4a..1b53322 100644
  
      scheme.tick().expect("dwc2d: network scheme failed");
      for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
-@@ -324,6 +337,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -515,6 +528,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              Source::Irq => {
                  let file = irq_file.as_mut().unwrap();
                  let mut irq = [0; 8];
@@ -165,7 +165,7 @@ index 5a0bc4a..1b53322 100644
                  if file.read(&mut irq).unwrap_or(0) == irq.len() {
                      // tick() takes the received frame and clears the
                      // channel's interrupt; only then unmask the line.
-@@ -331,7 +345,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -522,7 +536,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let _ = file.write(&irq);
                  }
              }
@@ -181,11 +181,11 @@ index 5a0bc4a..1b53322 100644
 +                t.arm(STATS_EVERY);
 +            }
              Source::Time => {
-                 let t = timer.as_mut().unwrap();
-                 t.fired();
+                 timer.fired();
+                 let mut next = None;
 diff --git a/drivers/usb/dwc2d/src/stats.rs b/drivers/usb/dwc2d/src/stats.rs
 new file mode 100644
-index 0000000..9508ff8
+index 00000000..9508ff80
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/stats.rs
 @@ -0,0 +1,100 @@
@@ -290,5 +290,5 @@ index 0000000..9508ff8
 +    let _ = std::fs::write("/tmp/dwc2d-netstats", s);
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
