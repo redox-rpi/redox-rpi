@@ -60,6 +60,17 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   with `RPI_FB_DMA=on`, one QEMU run had `rpi-fbd` panic with
   `Interrupted system call` from its event queue after the DMA test
   thread ended; that error is now skipped.
+- [`0072`](base/0072-rpi-fbd-DMA-control-block-as-the-Pi-Linux-framebuffer.patch):
+  the control block as the Pi's Linux framebuffer driver (`bcm2708_fb`)
+  has it for the same full-height 2D blits into the framebuffer: AXI
+  priority 0, no `WAIT_RESP`, bursts of 2 (it uses 8 only on channel 0).
+  `rpi-fbd` had priority 8 with panic priority 15, `WAIT_RESP` and bursts
+  of 4, taken from the SD card driver, whose transfers the card paces. An
+  unpaced copy at the highest priority fits test 145: 7 KB (1 row) went
+  through, 467 KB (64 rows) stopped the Pi. Stride (0), the bus addresses
+  (`0xc0000000` alias) and the row count (`height - 1` in YLENGTH) were
+  already the same as in Linux. QEMU does not model bus priority, so only
+  the Pi can show it; QEMU still passes the DMA test and the bench.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
