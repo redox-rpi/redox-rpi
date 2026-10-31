@@ -222,16 +222,19 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 """
 EOF
 
-# Other core recipes with patches: a directory patches/<recipe>/, or
-# patches/experiments/<name>/<recipe>/ of a selected experiment. A new one
-# needs no change here, only its line in config/upstream.lock. The first
-# three keep their old order (it decides the order in the manifest).
+# Other core recipes we pin: each one with a line in config/upstream.lock
+# (also without patches: an unpinned recipe builds the newest upstream
+# commit, #145), and each one with patches in patches/<recipe>/ or in
+# patches/experiments/<name>/<recipe>/ of a selected experiment, which must
+# then have a lock line. A new one needs no change here. The first three
+# keep their old order (it decides the order in the manifest).
 recipes=(bootloader base relibc)
 while read -r name; do
-    case " ${recipes[*]} kernel fdt experiments recipes " in *" $name "*) continue ;; esac
-    [ -d "$REDOX/recipes/core/$name" ] || { echo "patches/$name: no recipe recipes/core/$name" >&2; exit 1; }
+    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
 done < <(
+    awk '!/^#/ && NF == 2 { print $1 }' "$LOCK"
     for dir in "$ROOT"/patches/*/; do basename "$dir"; done
     for exp in "${experiments[@]}"; do
         for dir in "$ROOT/patches/experiments/$exp"/*/; do [ -d "$dir" ] && basename "$dir"; done

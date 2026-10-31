@@ -49,9 +49,11 @@ accepts the name and does nothing.
 **Lists that nobody edits:** to keep pull requests from conflicting with
 each other, no shared list names patches or programs:
 
-- `scripts/build-image.sh` patches every core recipe that has a directory
-  here (`patches/<recipe>/`) or in a selected experiment, and pins it with
-  its line in `config/upstream.lock`.
+- `scripts/build-image.sh` pins every core recipe that has a line in
+  `config/upstream.lock`, and patches those with a directory here
+  (`patches/<recipe>/`) or in a selected experiment. A patched recipe needs
+  a lock line. A core recipe without one builds the newest upstream commit
+  each time (#145), so every recipe built from source belongs in the lock.
 - It builds every program in `tools/<name>/` that has a `recipe.toml` (the
   `[build]` part of its recipe; it adds the `[source]` part). Whether the
   image contains the program is decided by the image config or the
