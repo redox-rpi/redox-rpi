@@ -14,5 +14,10 @@ dtoverlay=disable-bt
 # Wi-Fi uses that controller otherwise and is unavailable.
 dtoverlay=mmc
 
+# Start U-Boot without the firmware's default 1 s wait and rainbow screen
+# (#47).
+boot_delay=0
+disable_splash=1
+
 # Leave as much RAM as possible to Redox; there is no graphics driver yet.
 gpu_mem=16
