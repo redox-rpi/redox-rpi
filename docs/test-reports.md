@@ -4428,3 +4428,51 @@ the one in the image passes), with the new stable's bootloader. No panic.
   grows about 800 KB. PRIVATE didn't change either.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-482-g7623557` (netstack-multi2, lease renewal and an adapter that goes away)
+
+Real Pi 3B+ over netboot. Test 140 ([#53](https://github.com/redox-rpi/redox-rpi/issues/53)), Pi test agent.
+
+**Pass: renewals, dropping a lost adapter, a new adapter, and a lease running
+out all work. eth0 kept the default route and devsh answered throughout.**
+Image `~/redox-rpi-zrtl/keep/nsm2-v0.3.0-dev-482-g7623557.img` (no manifest next
+to it; the one in the image passes), with the new stable's bootloader. No panic.
+
+- Standard checks before and after: **pass** both times (ps 47 then 50, 0 of 300 starts failed).
+- (1) `/usr/lib/drivers/testnetd network.test0 30 &`, then 50 s:
+  `DHCP: eth1 got 10.0.9.2/24` and three `DHCP: eth1 renewed 10.0.9.2 for 30 s`
+  (a fourth came later). `/tmp/testnetd.log`:
+  `dhcp 5 dhcp_foreign 0 foreign_src 0 ping 0 renew 3`. `route/list` keeps
+  `default via 192.168.178.1 dev eth0`, plus `10.0.9.0/24 dev eth1`.
+- (2) `kill $(cat /tmp/network.test0.pid)` (pid 368), then 10 s: `… link eth1:
+  No such device (os error 19); dropping it` and `DHCP: eth1 is gone`.
+  `route/list` has **no eth1 line** and still the eth0 default route.
+  `cat /scheme/netcfg/ifaces/eth1/addr/list` fails with `Invalid argument`.
+- (3) `/usr/lib/drivers/testnetd network.test1 30 &`, then 30 s:
+  `DHCP: eth2 got 10.0.9.2/24`, `ping -c 3 10.0.9.1` **3/3** (2.8–3.7 ms),
+  `route/list` has `10.0.9.0/24 dev eth2` and the same eth0 default route.
+- (4) `echo x > /tmp/testnetd-nodhcp`, then 50 s: `DHCP: eth2 lease of 10.0.9.2
+  ended`; eth0 default route unchanged. After `rm /tmp/testnetd-nodhcp`, eth2 got
+  the lease again and renewed it.
+- Every `DHCP:` line and the `dropping it` line from the serial log:
+
+```
+DHCP: eth0 got 192.168.178.148/24
+DHCP: default route via 192.168.178.1 (eth0)
+DHCP: eth1 got 10.0.9.2/24
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+smolnetd@netstack::link::ethernet:359 ERROR] Failed to read ethernet device on link eth1: No such device (os error 19); dropping it
+DHCP: eth1 is gone
+DHCP: eth2 got 10.0.9.2/24
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 lease of 10.0.9.2 ended
+DHCP: eth2 got 10.0.9.2/24
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+```
+
+Stable image restored afterwards.
