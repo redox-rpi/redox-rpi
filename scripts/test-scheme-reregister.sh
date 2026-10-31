@@ -70,14 +70,23 @@ echo "      FAT partition: ${disk:-none}"
 check "first fatfsd serves t117" test -n "$disk"
 
 # SIGKILL: fatfsd cannot remove its name.
-devsh "pkill -9 fatfsd" "sleep 1" > /dev/null
-check "fatfsd gone" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port ps 2>/dev/null | grep -aq fatfsd"
+devsh "pkill -9 fatfsd" > /dev/null
+gone() {
+    local _
+    for _ in $(seq 5); do
+        devsh "ps" | grep -aq "/usr/bin/fatfsd" || return 0
+        sleep 1
+    done
+    return 1
+}
+check "fatfsd gone" gone
 listed && echo "      t117 is still listed after the kill (the name stays until it is registered again)"
 
-# Round 2: the same name again.
-devsh "fatfsd $disk t117 &" "sleep 2" > /dev/null
+# Round 2: the same name again. fatfsd prints its errors on the terminal.
+out=$(devsh "fatfsd $disk t117 &" "sleep 2")
+echo "$out" | grep -a "fatfsd" | sed 's/^/      /'
 check "second fatfsd serves t117 again" reads
-check "no File exists" bash -c "! tr -d '\r' < '$log' | grep -aq 'File exists'"
+check "no File exists" bash -c "! grep -aq 'File exists' <<< \"\$1\"" _ "$out"
 tr -d '\r' < "$log" | grep -aE "fatfsd|nsmgr|File exists" | tail -n 6 | sed 's/^/      /'
 
 devsh "pkill fatfsd" > /dev/null
