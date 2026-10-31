@@ -1,0 +1,115 @@
+From f9757804960e1fb08348669a8ca028ae35d9fd26 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 18:09:43 +0100
+Subject: [PATCH] dwc2d: send network frames without spinning first
+
+A sent frame finished within the 50 us spin of transfer_on, so the
+interrupt wait never came into play while sending, and dwc2d was busy
+about half the time of a TCP send on the Pi (test #144). Frames now
+wait for the channel's interrupt at once (#104).
+---
+ drivers/usb/dwc2d/src/dwc2.rs    | 14 +++++++++++++-
+ drivers/usb/dwc2d/src/ecm.rs     |  4 ++--
+ drivers/usb/dwc2d/src/lan78xx.rs |  4 ++--
+ drivers/usb/dwc2d/src/rtl8152.rs |  4 ++--
+ 4 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index de92402..3d46b26 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -508,6 +508,18 @@ impl Dwc2 {
+     /// so the CPU is free meanwhile. Not with `sleep`: with naps of 50 us,
+     /// dwc2d sometimes never woke up again in QEMU (#104).
+     pub fn transfer_on(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
++        self.transfer_spin(ch, phase, timeout, SPIN)
++    }
++
++    /// Send one network frame: like [`Dwc2::transfer_on`], but wait for the
++    /// interrupt at once instead of spinning first. A frame takes tens of
++    /// microseconds on the bus, and the spin kept dwc2d busy about half the
++    /// time while sending (Pi test #144).
++    pub fn send_frame(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
++        self.transfer_spin(ch, phase, timeout, Duration::ZERO)
++    }
++
++    fn transfer_spin(&self, ch: usize, phase: &Phase, timeout: Duration, spin: Duration) -> Result<(usize, u32), Error> {
+         self.start(ch, phase);
+         let start = Instant::now();
+         loop {
+@@ -522,7 +534,7 @@ impl Dwc2 {
+                 return Err(Error::Timeout("channel halt"));
+             }
+             match WAITER.get() {
+-                Some(waiter) if waited >= SPIN => {
++                Some(waiter) if waited >= spin => {
+                     if let Some(result) = self.wait_halt(waiter, ch, phase.len, timeout - waited) {
+                         return result;
+                     }
+diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
+index 77cfeee..c7d40b9 100644
+--- a/drivers/usb/dwc2d/src/ecm.rs
++++ b/drivers/usb/dwc2d/src/ecm.rs
+@@ -271,7 +271,7 @@ impl NetworkAdapter for Ecm {
+         let phase = self.phase(false, len);
+         let (_, next_pid) = self
+             .hc
+-            .transfer_on(TX_CHANNEL, &phase, timeout)
++            .send_frame(TX_CHANNEL, &phase, timeout)
+             .map_err(|_| SysError::new(EIO))?;
+         self.out_pid = next_pid;
+         // A frame that fills its last packet ends with a zero-length packet.
+@@ -279,7 +279,7 @@ impl NetworkAdapter for Ecm {
+             let phase = self.phase(false, 0);
+             let (_, next_pid) = self
+                 .hc
+-                .transfer_on(TX_CHANNEL, &phase, timeout)
++                .send_frame(TX_CHANNEL, &phase, timeout)
+                 .map_err(|_| SysError::new(EIO))?;
+             self.out_pid = next_pid;
+         }
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index ccdc7b4..79110ca 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -446,14 +446,14 @@ impl NetworkAdapter for Lan78xx {
+         let phase = self.phase(false, total);
+         let (_, next_pid) = self
+             .hc
+-            .transfer_on(TX_CHANNEL, &phase, timeout)
++            .send_frame(TX_CHANNEL, &phase, timeout)
+             .map_err(|_| SysError::new(EIO))?;
+         self.out_pid = next_pid;
+         if total % usize::from(self.f.max_packet_out) == 0 {
+             let phase = self.phase(false, 0);
+             let (_, next_pid) = self
+                 .hc
+-                .transfer_on(TX_CHANNEL, &phase, timeout)
++                .send_frame(TX_CHANNEL, &phase, timeout)
+                 .map_err(|_| SysError::new(EIO))?;
+             self.out_pid = next_pid;
+         }
+diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
+index 54d6f80..03a5b23 100644
+--- a/drivers/usb/dwc2d/src/rtl8152.rs
++++ b/drivers/usb/dwc2d/src/rtl8152.rs
+@@ -1046,14 +1046,14 @@ impl NetworkAdapter for Rtl8152 {
+         let phase = self.phase(false, total);
+         let (_, next_pid) = self
+             .hc
+-            .transfer_on(TX_CHANNEL, &phase, timeout)
++            .send_frame(TX_CHANNEL, &phase, timeout)
+             .map_err(|_| SysError::new(EIO))?;
+         self.out_pid = next_pid;
+         if total % usize::from(self.f.max_packet_out) == 0 {
+             let phase = self.phase(false, 0);
+             let (_, next_pid) = self
+                 .hc
+-                .transfer_on(TX_CHANNEL, &phase, timeout)
++                .send_frame(TX_CHANNEL, &phase, timeout)
+                 .map_err(|_| SysError::new(EIO))?;
+             self.out_pid = next_pid;
+         }
+-- 
+2.54.0 (Apple Git-157)
+

@@ -44,6 +44,7 @@ needs() {
         dwc2-interrupts) echo rtl8152 ;;
         usb-storage-more) echo usb-storage ;;
         dwc2d-wait-irq) echo usb-storage usb-storage-more ;;
+        dwc2d-tx-irq) echo usb-storage usb-storage-more dwc2d-wait-irq ;;
     esac
 }
 
