@@ -5770,3 +5770,68 @@ staged with `~/redox-rpi-boot/scripts/netboot.sh`.
   4-bit bus, high speed, up to 50 MHz`); no `sdhost` or `redoxfs` error, no panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, the test 141 download into the card again)
+
+Real Pi 3B+ over netboot. Test 168 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**The hang came back, and it is not a frozen machine: the Pi's USB hub with the
+network chip dropped off.** The last serial lines are `dwc2d: hub 1 port 1:
+device at address 2 removed` and `dwc2d: keyboard removed`, at 160 MiB. The
+system kept running: login over the serial console worked, `free` normal. But
+the network was gone, and reading netstack's address list hung. The plug read
+**2.0 W** (idle with network about 3.0 W). Image
+`~/redox-rpi-sd/keep/t151-v0.3.0-dev-838-g64fa695+x8116.img` (md5 `15e52989`),
+staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- (1) `df -h /scheme/data`: 960.0M, 393.7M used, 566.3M free; no `netget.bin`
+  or `w151.bin`.
+- (2) `netget http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf /scheme/data/netget.bin --log /scheme/debug`,
+  serial lines:
+
+```
+netget: HTTP/1.0 200 OK
+netget:    16 MiB    15.0 s  1.12 MB/s
+netget:    32 MiB    22.1 s  2.35 MB/s
+netget:    48 MiB    30.6 s  2.00 MB/s
+netget:    64 MiB    40.9 s  1.63 MB/s
+netget:    80 MiB    55.7 s  1.13 MB/s
+netget:    96 MiB    69.4 s  1.24 MB/s
+netget:   112 MiB   100.2 s  0.54 MB/s
+netget:   128 MiB   106.9 s  2.53 MB/s
+netget:   144 MiB   122.0 s  1.11 MB/s
+netget:   160 MiB   142.6 s  0.82 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+dwc2d: keyboard removed
+```
+
+  (The serial log stopped at 21:26:36.)
+- (3) second devsh every 30 s:
+
+| time | `free` used | `netget.bin` | dwc2d `rx_frames` | rx/tx errors |
+|---|---|---|---|---|
+| 21:24:29 | 186572 | 49887006 | 29338 | 0 / 0 |
+| 21:25:01 | 188236 | 88552524 | 64001 | 0 / 0 |
+| 21:25:39 | 188780 | 141738264 | 99397 | 0 / 0 |
+| 21:26:21 | 189220 | 174441981 | 122256 | 0 / 0 |
+| 21:26:58 to 21:32:02 | no answer (10 tries) | | | |
+
+- **Over the serial console afterwards** (logged in as root at about 21:33):
+  - `uptime` 9m 58s and `free` 184824 used, 555000 free: the system ran on.
+  - `ls -l /scheme/data/netget.bin`: 182400465 bytes.
+  - `/tmp/dwc2d-netstats` frozen at `uptime_ms 167953`: `rx_frames 128439`,
+    `rx_errors 0`, `tx_frames 59314`, `tx_errors 0`, `irqs 110830`.
+  - `ps`: netget (PID 59) still there, blocked. **`bcm2835-sdhostd` ACTTIME
+    2:16.26 in 10 minutes** (the card driver busy most of the time). `redoxfs`
+    (31) SCHTIME 1:27.10. dwc2d 11.0 s, state `US`. netstack 10.7 s.
+  - `cat /scheme/netcfg/ifaces/eth0/addr/list` never returned: netstack is
+    stuck. `throttled` was not read (it was typed behind the stuck command).
+- Power-cycled with the Shelly plug at 21:35 UTC (same image). After the reboot
+  `ls -l /scheme/data/netget.bin`: **182400465** bytes (174 MiB) kept, then
+  removed.
+- No panic line. #167 (the same writes without network) passed. So the card
+  writes alone are fine, but together with the network the USB hub drops. The
+  2.0 W reading and the hub removal point at power to the USB hub/LAN chip, or
+  at dwc2d losing the hub, rather than at redoxfs.
+
+Stable image restored afterwards.
