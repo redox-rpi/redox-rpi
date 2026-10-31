@@ -41,4 +41,4 @@ QEMU `raspi3b`, `v0.3.0-dev-81-g5ceb150+x9922` (2026-10-28):
 - First try: `redoxfs-resize` got `ENOLCK` because `growfs` still held the
   whole disk open; it closes it now.
 
-On the Pi: queue row #25 in `docs/test-plan.md`.
+On the Pi: test 29 in `docs/test-plan.md` (needs a person to swap the card).
