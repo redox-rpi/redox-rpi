@@ -4897,3 +4897,95 @@ inquiry: 0 devices
 - No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-703-g7ce5389+x9024` (power-save, idle power per switch)
+
+Real Pi 3B+ over netboot. Test 147 ([#126](https://github.com/redox-rpi/redox-rpi/issues/126)), Pi test agent.
+
+**Idle power: 3.23 W on stable, 2.99 W on the power-save image. No single switch
+saves 0.1 W or more.** Driver: every write was taken and devsh and the serial
+console kept working. But the unused power domains were **already off at
+boot**, and writing `on` leaves them off. Shelly plug read only (`shelly-sample.sh`
+from `origin/power-save`, 18 readings 10 s apart), nothing over devsh during a
+sample. Image `~/redox-rpi-cpu/keep/v0.3.0-dev-703-g7ce5389+x9024/harddrive.img`
+(manifest in the image), stable bootloader. Each sample started 3 minutes after
+`redox login:` or right after the step's command.
+
+| sample | mean | min | max | vs previous |
+|---|---|---|---|---|
+| A-stable (`v0.3.0-dev-533-g6c729cd+x9f76`) | 3.23 W | 3.1 | 3.3 | |
+| B1-idle | 2.99 W | 2.9 | 3.1 | −0.24 W vs stable |
+| B2-blank | 2.91 W | 2.8 | 3.0 | −0.08 (none) |
+| B3-hdmi-off | 2.99 W | 2.9 | 3.1 | +0.08 (none) |
+| B4-power-led-off | 2.99 W | 2.9 | 3.1 | 0 |
+| B5-act-led-off | 3.02 W | 2.9 | 3.1 | +0.03 (none) |
+| B6-domains-off | 2.99 W | 2.9 | 3.0 | −0.03 (none) |
+| B7-all-powersave | 3.00 W | 2.9 | 3.1 | +0.01 (none) |
+
+(2) before any switch:
+
+```
+sd on / uart0 off / uart1 off / usb on / i2c0 off / i2c1 off / i2c2 off / spi off / ccp2tx off
+display: on
+power_led: on
+gpio 29 mode: out, value: 0
+governor: mode ondemand, target max, load 100, switches 4, min 600000000, max 1400000000, time_min_ms 356209, time_max_ms 14644
+```
+
+(6) each `echo "<name> off"` was taken (no error), and devsh answered after each
+(`alive`). `cat power_domains` afterwards shows the same list as in (2): **all six
+were already off.** `usb` and `uart0` were not touched.
+
+(8) `cputop 30` (governor back at ondemand):
+
+```
+cputop: 30.0 s, 44 threads
+cpu0  busy   0 %  (0 ms busy, 30011 ms idle, 107 switches/s)
+cpu1  busy   2 %  (741 ms busy, 29269 ms idle, 291 switches/s)
+cpu2  busy   0 %  (34 ms busy, 29974 ms idle, 174 switches/s)
+cpu3  busy   0 %  (114 ms busy, 29894 ms idle, 186 switches/s)
+16  2.4  0:00:35.8  UB #1  dwc2d
+ 8  0.4  0:00:04.9  US #3  rpi-firmwared
+25  0.1  0:00:02.2  UB #1  netstack
+```
+
+(9) everything back: each write taken. But **`power_domains` still lists all six
+`off`** after `echo "<name> on"` (the firmware answers `[id, 0]`, state 0, to `on`
+as well). `display` and `power_led` read `on`, governor `ondemand`. Standard
+checks pass (0 of 300 starts failed). The picture on the NanoKVM was not checked
+(no person, no screenshot).
+
+`rpi-firmwared:` lines on the serial console:
+
+```
+rpi-firmwared: mailbox at 0x3f00b880, revision 0x00a020d3, model Raspberry Pi 3 Model B+
+rpi-firmwared: ARM clock 600 -> 1400 MHz
+rpi-firmwared: display blank (firmware answered [1])
+rpi-firmwared: display unblank (firmware answered [0])
+rpi-firmwared: display off (firmware answered [0])
+rpi-firmwared: power domain i2c0 off (firmware answered [4, 0])
+rpi-firmwared: power domain i2c2 off (firmware answered [6, 0])
+rpi-firmwared: power domain uart1 off (firmware answered [2, 0])
+rpi-firmwared: power domain ccp2tx off (firmware answered [8, 0])
+rpi-firmwared: power domain i2c1 off (firmware answered [5, 0])
+rpi-firmwared: power domain spi off (firmware answered [7, 0])
+rpi-firmwared: governor powersave
+rpi-firmwared: governor ondemand
+rpi-firmwared: power domain i2c0 on (firmware answered [4, 0])
+rpi-firmwared: power domain i2c2 on (firmware answered [6, 0])
+rpi-firmwared: power domain uart1 on (firmware answered [2, 0])
+rpi-firmwared: power domain ccp2tx on (firmware answered [8, 0])
+rpi-firmwared: power domain i2c1 on (firmware answered [5, 0])
+rpi-firmwared: power domain spi on (firmware answered [7, 0])
+rpi-firmwared: display on (firmware answered [0])
+```
+
+- `power_led` and the GPIO 29 writes log nothing on the serial console.
+- GPIO 29 (activity LED) was already `out`/`0` at boot, so B5 changed nothing.
+- `display off` answered `[0]` and saved nothing measurable. On the 3B+ HDMI
+  off may need more than the blank call (power domain or clock).
+- The 0.24 W between stable and B1 is the clearest difference, but stable and
+  the power-save image differ in more than the switches (base `spi`/PR #87).
+- No panic.
+
+Stable image restored afterwards.
