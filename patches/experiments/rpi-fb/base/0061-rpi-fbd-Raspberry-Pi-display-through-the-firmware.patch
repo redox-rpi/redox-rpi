@@ -1,0 +1,778 @@
+From 3bb810927b60202583342ae5fef9deaee42e1e32 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 09:37:49 +0000
+Subject: [PATCH 25/25] rpi-fbd: Raspberry Pi display through the firmware
+
+A display driver for the framebuffer that the Pi firmware scans out. It
+asks the firmware, through rpi-firmwared, for a framebuffer of the size a
+client sets (the firmware scales it to the monitor mode) and for the
+EDID, and registers as a regular display, so fbcond hands the console
+over from vesad. It keeps the boot framebuffer while the firmware still
+shows it. RPI_FB=WIDTHxHEIGHT makes that size the preferred mode,
+RPI_FB=off leaves the display to vesad.
+---
+ Cargo.toml                               |   1 +
+ Makefile                                 |   2 +-
+ drivers/graphics/rpi-fbd/Cargo.toml      |  18 ++
+ drivers/graphics/rpi-fbd/src/firmware.rs | 183 +++++++++++++++
+ drivers/graphics/rpi-fbd/src/main.rs     | 176 ++++++++++++++
+ drivers/graphics/rpi-fbd/src/scheme.rs   | 286 +++++++++++++++++++++++
+ init.initfs.d/40_drivers.target          |   1 +
+ init.initfs.d/40_rpi-fbd.service         |  19 ++
+ 8 files changed, 685 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/graphics/rpi-fbd/Cargo.toml
+ create mode 100644 drivers/graphics/rpi-fbd/src/firmware.rs
+ create mode 100644 drivers/graphics/rpi-fbd/src/main.rs
+ create mode 100644 drivers/graphics/rpi-fbd/src/scheme.rs
+ create mode 100644 init.initfs.d/40_rpi-fbd.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 471b8778..66fc317e 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -41,6 +41,7 @@ members = [
+     "drivers/graphics/fbcond",
+     "drivers/graphics/graphics-ipc",
+     "drivers/graphics/ihdgd",
++    "drivers/graphics/rpi-fbd",
+     "drivers/graphics/vesad",
+     "drivers/graphics/virtio-gpud",
+ 
+diff --git a/Makefile b/Makefile
+index 0de28837..6d60bbe5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared
++	INITFS_BINS += rpi-firmwared rpi-fbd
+ endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+diff --git a/drivers/graphics/rpi-fbd/Cargo.toml b/drivers/graphics/rpi-fbd/Cargo.toml
+new file mode 100644
+index 00000000..a0bb8392
+--- /dev/null
++++ b/drivers/graphics/rpi-fbd/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "rpi-fbd"
++description = "Raspberry Pi display through the firmware: framebuffer size, EDID"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++redox_syscall.workspace = true
++redox_event.workspace = true
++
++common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++driver-graphics = { path = "../driver-graphics" }
++drm-sys.workspace = true
++libredox.workspace = true
++
++[lints]
++workspace = true
+diff --git a/drivers/graphics/rpi-fbd/src/firmware.rs b/drivers/graphics/rpi-fbd/src/firmware.rs
+new file mode 100644
+index 00000000..2ed37bf4
+--- /dev/null
++++ b/drivers/graphics/rpi-fbd/src/firmware.rs
+@@ -0,0 +1,183 @@
++//! Framebuffer and EDID tags of the firmware's property interface, sent
++//! through `/scheme/rpi-firmware/property` (rpi-firmwared owns the mailbox).
++//!
++//! Tags: https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
++
++use std::fs::{File, OpenOptions};
++use std::os::unix::fs::FileExt;
++
++const REQUEST: u32 = 0;
++const RESPONSE_OK: u32 = 0x8000_0000;
++const TAG_RESPONSE: u32 = 1 << 31;
++/// The VideoCore's uncached alias of ARM memory; the framebuffer address
++/// comes back with it.
++const BUS_ALIAS: u32 = 0xC000_0000;
++
++const TAG_ALLOCATE: u32 = 0x0004_0001;
++const TAG_GET_PHYSICAL_SIZE: u32 = 0x0004_0003;
++const TAG_GET_PITCH: u32 = 0x0004_0008;
++const TAG_GET_EDID_BLOCK: u32 = 0x0003_0020;
++const TAG_SET_PHYSICAL_SIZE: u32 = 0x0004_8003;
++const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
++const TAG_SET_DEPTH: u32 = 0x0004_8005;
++const TAG_SET_PIXEL_ORDER: u32 = 0x0004_8006;
++const TAG_SET_ALPHA_MODE: u32 = 0x0004_8007;
++const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
++
++/// "RGB" in the firmware's words: bytes B, G, R, x in memory, a
++/// little-endian 0x00RRGGBB as Redox draws (the same as U-Boot asks for).
++const PIXEL_ORDER_RGB: u32 = 1;
++const ALPHA_IGNORED: u32 = 2;
++/// EDID base block plus at most this many extension blocks.
++const EDID_MAX_EXTENSIONS: usize = 3;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct Mode {
++    /// ARM physical address
++    pub base: usize,
++    pub size: usize,
++    pub width: u32,
++    pub height: u32,
++    /// In pixels
++    pub stride: u32,
++}
++
++#[derive(Debug)]
++pub struct Firmware {
++    file: File,
++}
++
++/// A property message, built tag by tag.
++struct Message {
++    words: Vec<u32>,
++}
++
++impl Message {
++    fn new() -> Self {
++        Message { words: vec![0, REQUEST] }
++    }
++
++    /// Adds a tag with `values` and room for `answer` words; returns the
++    /// index of its first value word.
++    fn tag(&mut self, id: u32, values: &[u32], answer: usize) -> usize {
++        let len = values.len().max(answer);
++        self.words.extend([id, (len * 4) as u32, REQUEST]);
++        let first = self.words.len();
++        self.words.extend(values);
++        self.words.resize(first + len, 0);
++        first
++    }
++}
++
++impl Firmware {
++    pub fn open() -> std::io::Result<Self> {
++        let file = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open("/scheme/rpi-firmware/property")?;
++        Ok(Firmware { file })
++    }
++
++    /// Sends the message; the answer replaces it. False when the firmware
++    /// did not answer with success.
++    fn call(&self, msg: &mut Message) -> bool {
++        msg.words.push(0); // end tag
++        msg.words[0] = (msg.words.len() * 4) as u32;
++        let bytes: Vec<u8> = msg.words.iter().flat_map(|w| w.to_le_bytes()).collect();
++        if let Err(err) = self.file.write_at(&bytes, 0) {
++            eprintln!("rpi-fbd: property call failed: {err}");
++            return false;
++        }
++        let mut answer = vec![0; bytes.len()];
++        match self.file.read_at(&mut answer, 0) {
++            Ok(n) if n == answer.len() => {}
++            _ => return false,
++        }
++        for (word, bytes) in msg.words.iter_mut().zip(answer.chunks_exact(4)) {
++            *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
++        }
++        msg.words[1] == RESPONSE_OK
++    }
++
++    /// Whether the firmware answered the tag whose first value word is at
++    /// `first` (the tag's response bit).
++    fn answered(msg: &Message, first: usize) -> bool {
++        msg.words[first - 1] & TAG_RESPONSE != 0
++    }
++
++    /// The display size: the monitor's mode the firmware set up at power-on,
++    /// or the framebuffer's size once one is allocated.
++    pub fn display_size(&self) -> Option<(u32, u32)> {
++        let mut msg = Message::new();
++        let i = msg.tag(TAG_GET_PHYSICAL_SIZE, &[], 2);
++        if !self.call(&mut msg) {
++            return None;
++        }
++        let (w, h) = (msg.words[i], msg.words[i + 1]);
++        (w != 0 && h != 0).then_some((w, h))
++    }
++
++    /// A new 32-bit framebuffer of this size. The firmware scales it to the
++    /// monitor's mode, which stays the one it chose at power-on.
++    pub fn set_mode(&self, width: u32, height: u32) -> Result<Mode, String> {
++        let mut msg = Message::new();
++        let phys = msg.tag(TAG_SET_PHYSICAL_SIZE, &[width, height], 2);
++        msg.tag(TAG_SET_VIRTUAL_SIZE, &[width, height], 2);
++        msg.tag(TAG_SET_VIRTUAL_OFFSET, &[0, 0], 2);
++        let depth = msg.tag(TAG_SET_DEPTH, &[32], 1);
++        msg.tag(TAG_SET_PIXEL_ORDER, &[PIXEL_ORDER_RGB], 1);
++        msg.tag(TAG_SET_ALPHA_MODE, &[ALPHA_IGNORED], 1);
++        let alloc = msg.tag(TAG_ALLOCATE, &[4096], 2);
++        let pitch = msg.tag(TAG_GET_PITCH, &[], 1);
++        if !self.call(&mut msg) {
++            return Err(format!("{width}x{height}: no answer from the firmware"));
++        }
++        let mode = Mode {
++            base: (msg.words[alloc] & !BUS_ALIAS) as usize,
++            size: msg.words[alloc + 1] as usize,
++            width: msg.words[phys],
++            height: msg.words[phys + 1],
++            stride: msg.words[pitch] / 4,
++        };
++        if msg.words[depth] != 32
++            || mode.base == 0
++            || mode.base % 4096 != 0
++            || mode.width == 0
++            || mode.height == 0
++            || mode.stride < mode.width
++            || mode.size < mode.stride as usize * mode.height as usize * 4
++        {
++            return Err(format!("{width}x{height}: firmware gave {mode:x?}"));
++        }
++        Ok(mode)
++    }
++
++    /// The monitor's EDID, base block and extensions. None without a monitor
++    /// or when the firmware does not have the tag.
++    pub fn edid(&self) -> Option<Vec<u8>> {
++        let mut edid = Vec::new();
++        let mut block = 0;
++        loop {
++            let mut msg = Message::new();
++            let i = msg.tag(TAG_GET_EDID_BLOCK, &[block], 2 + 32);
++            if !self.call(&mut msg) || !Self::answered(&msg, i) || msg.words[i + 1] != 0 {
++                break;
++            }
++            edid.extend(msg.words[i + 2..i + 34].iter().flat_map(|w| w.to_le_bytes()));
++            let extensions = (edid[126] as usize).min(EDID_MAX_EXTENSIONS);
++            block += 1;
++            if block as usize > extensions {
++                break;
++            }
++        }
++        valid_edid(&edid).then_some(edid)
++    }
++}
++
++/// The EDID header and the base block's checksum; the parser in
++/// driver-graphics panics on anything else.
++fn valid_edid(edid: &[u8]) -> bool {
++    edid.len() >= 128
++        && edid[..8] == [0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00]
++        && edid[..128].iter().fold(0u8, |sum, b| sum.wrapping_add(*b)) == 0
++}
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+new file mode 100644
+index 00000000..a65b5303
+--- /dev/null
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -0,0 +1,176 @@
++//! Raspberry Pi display driver through the firmware (issue #33 of redox-rpi).
++//!
++//! The firmware on the VideoCore drives HDMI: it reads the monitor's EDID at
++//! power-on, sets up a mode and scans out a framebuffer it allocates on
++//! request. This driver asks it through `rpi-firmwared`'s `property` file
++//! for that framebuffer, in the size a client sets (the firmware scales it
++//! to the monitor's mode), and for the EDID. It registers as a regular
++//! display, so `fbcond` hands the console over from `vesad`, which only has
++//! the boot framebuffer.
++//!
++//! At start it keeps the boot framebuffer (`FRAMEBUFFER_*` from U-Boot's
++//! bootloader or `rpi-boot-stub`) when the firmware still shows it, so the
++//! handover does not flicker. `RPI_FB=WIDTHxHEIGHT` in the environment
++//! makes that size the preferred mode, `RPI_FB=off` leaves the display to
++//! `vesad`.
++
++use std::env;
++
++use driver_graphics::GraphicsScheme;
++use event::{user_data, EventQueue};
++
++use crate::firmware::{Firmware, Mode};
++use crate::scheme::{RpiAdapter, Screen};
++
++mod firmware;
++mod scheme;
++
++/// When the firmware reports no display size.
++const DEFAULT_SIZE: (u32, u32) = (1024, 768);
++
++fn main() {
++    common::init();
++    daemon::Daemon::new(daemon);
++}
++
++fn env_hex(name: &str) -> Option<usize> {
++    usize::from_str_radix(&env::var(name).ok()?, 16).ok()
++}
++
++fn parse_size(value: &str) -> Option<(u32, u32)> {
++    let (w, h) = value.split_once('x')?;
++    let (w, h) = (w.parse().ok()?, h.parse().ok()?);
++    ((1..=4096).contains(&w) && (1..=4096).contains(&h)).then_some((w, h))
++}
++
++/// The boot framebuffer, as the bootloader or the boot stub passed it.
++fn boot_framebuffer() -> Option<Mode> {
++    let (base, width, height, stride) = (
++        env_hex("FRAMEBUFFER_ADDR")?,
++        env_hex("FRAMEBUFFER_WIDTH")? as u32,
++        env_hex("FRAMEBUFFER_HEIGHT")? as u32,
++        env_hex("FRAMEBUFFER_STRIDE")? as u32,
++    );
++    (base != 0 && base % 4096 == 0).then_some(Mode {
++        base,
++        size: stride as usize * height as usize * 4,
++        width,
++        height,
++        stride,
++    })
++}
++
++fn daemon(daemon: daemon::Daemon) -> ! {
++    let rpi_fb = env::var("RPI_FB").unwrap_or_default();
++    if rpi_fb == "off" {
++        println!("rpi-fbd: off (RPI_FB=off)");
++        daemon.ready();
++        std::process::exit(0);
++    }
++    let requested = parse_size(&rpi_fb);
++
++    let firmware = match Firmware::open() {
++        Ok(firmware) => firmware,
++        Err(err) => {
++            eprintln!("rpi-fbd: no firmware property interface: {err}");
++            daemon.ready();
++            std::process::exit(0);
++        }
++    };
++
++    let boot = boot_framebuffer();
++    let display_size = firmware.display_size();
++    let edid = firmware.edid();
++    match &edid {
++        Some(edid) => println!(
++            "rpi-fbd: EDID {} bytes, monitor {}",
++            edid.len(),
++            monitor_name(edid).unwrap_or_else(|| "without a name".to_owned())
++        ),
++        None => println!("rpi-fbd: no EDID (no monitor, or the firmware does not read it)"),
++    }
++
++    // Keep the boot framebuffer while the firmware still shows it at that
++    // size; otherwise (direct boot without one) ask for a new one.
++    let (screen, display_size) = match boot {
++        Some(mode) if display_size == Some((mode.width, mode.height)) => {
++            println!(
++                "rpi-fbd: boot framebuffer {}x{} stride {} at {:#x}",
++                mode.width, mode.height, mode.stride, mode.base
++            );
++            (Screen::map(mode), (mode.width, mode.height))
++        }
++        _ => {
++            let size = display_size.unwrap_or(DEFAULT_SIZE);
++            match firmware.set_mode(size.0, size.1) {
++                Ok(mode) => {
++                    println!(
++                        "rpi-fbd: {}x{} stride {} at {:#x}",
++                        mode.width, mode.height, mode.stride, mode.base
++                    );
++                    (Screen::map(mode), size)
++                }
++                Err(err) => {
++                    eprintln!("rpi-fbd: no framebuffer: {err}");
++                    daemon.ready();
++                    std::process::exit(0);
++                }
++            }
++        }
++    };
++    let screen = screen.expect("rpi-fbd: failed to map the framebuffer");
++
++    let adapter = RpiAdapter {
++        firmware,
++        screen,
++        display_size,
++        requested,
++        edid,
++    };
++    let mut scheme = GraphicsScheme::new(adapter, "display.rpi".to_owned(), false);
++
++    user_data! {
++        enum Source {
++            Scheme,
++        }
++    }
++
++    let event_queue: EventQueue<Source> =
++        EventQueue::new().expect("rpi-fbd: failed to create event queue");
++    event_queue
++        .subscribe(
++            scheme.event_handle().raw(),
++            Source::Scheme,
++            event::EventFlags::READ,
++        )
++        .unwrap();
++
++    daemon.ready();
++
++    let all = [Source::Scheme];
++    for event in all
++        .into_iter()
++        .chain(event_queue.map(|e| e.expect("rpi-fbd: failed to get next event").user_data))
++    {
++        match event {
++            Source::Scheme => {
++                scheme
++                    .tick()
++                    .expect("rpi-fbd: failed to handle scheme events");
++            }
++        }
++    }
++
++    panic!();
++}
++
++/// The monitor name descriptor (tag 0xfc) of the EDID base block.
++fn monitor_name(edid: &[u8]) -> Option<String> {
++    edid[54..126].chunks_exact(18).find_map(|d| {
++        (d[..3] == [0, 0, 0] && d[3] == 0xfc).then(|| {
++            String::from_utf8_lossy(&d[5..18])
++                .trim_end_matches(['\n', ' '])
++                .to_owned()
++        })
++    })
++}
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+new file mode 100644
+index 00000000..8f55839b
+--- /dev/null
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -0,0 +1,286 @@
++use std::alloc::{self, Layout};
++use std::fmt;
++use std::ptr::{self, NonNull};
++
++use driver_graphics::kms::connector::{modeinfo_for_size, KmsConnectorDriver, KmsConnectorStatus};
++use driver_graphics::kms::crtc::{KmsCrtc, KmsCrtcState};
++use driver_graphics::kms::objects::{KmsObjectId, KmsObjects};
++use driver_graphics::kms::plane::{KmsPlane, KmsPlaneState};
++use driver_graphics::{Buffer, Damage, DumbBufferConfig, GraphicsAdapter};
++use syscall::PAGE_SIZE;
++
++use crate::firmware::{Firmware, Mode};
++
++/// Sizes offered besides the monitor's own: the firmware scales any size to
++/// the monitor's mode. Up to 1920x1200, which fits the 16 MiB of GPU memory
++/// that `gpu_mem=16` leaves.
++const EXTRA_SIZES: &[(u32, u32)] = &[
++    (1920, 1200),
++    (1920, 1080),
++    (1680, 1050),
++    (1280, 1024),
++    (1280, 720),
++    (1024, 768),
++    (800, 600),
++    (640, 480),
++];
++
++#[derive(Debug)]
++pub struct RpiAdapter {
++    pub firmware: Firmware,
++    pub screen: Screen,
++    /// The monitor's mode as the firmware set it up at power-on.
++    pub display_size: (u32, u32),
++    /// `RPI_FB=WIDTHxHEIGHT`: offered first, so `fbcond` takes it.
++    pub requested: Option<(u32, u32)>,
++    pub edid: Option<Vec<u8>>,
++}
++
++/// The framebuffer the firmware scans out, mapped into this process.
++pub struct Screen {
++    pub mode: Mode,
++    mem: common::PhysBorrowed,
++}
++
++impl fmt::Debug for Screen {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("Screen").field("mode", &self.mode).finish()
++    }
++}
++
++impl Screen {
++    pub fn map(mode: Mode) -> syscall::Result<Self> {
++        let len = mode.stride as usize * mode.height as usize * 4;
++        let mem = common::PhysBorrowed::map(
++            mode.base,
++            len.next_multiple_of(PAGE_SIZE),
++            common::Prot::RW,
++            common::MemoryType::WriteCombining,
++        )?;
++        Ok(Screen { mode, mem })
++    }
++
++    fn pixels(&self) -> *mut u32 {
++        self.mem.as_ptr().cast()
++    }
++
++    fn clear(&mut self) {
++        let len = self.mode.stride as usize * self.mode.height as usize;
++        unsafe { ptr::write_bytes(self.pixels(), 0, len) };
++    }
++}
++
++impl RpiAdapter {
++    /// A new framebuffer of this size from the firmware, in place of the old.
++    fn switch(&mut self, width: u32, height: u32) -> syscall::Result<()> {
++        let mode = self.firmware.set_mode(width, height).map_err(|err| {
++            eprintln!("rpi-fbd: {err}");
++            syscall::Error::new(syscall::EINVAL)
++        })?;
++        let mut screen = Screen::map(mode)?;
++        screen.clear();
++        println!(
++            "rpi-fbd: {}x{} stride {} at {:#x}",
++            mode.width, mode.height, mode.stride, mode.base
++        );
++        self.screen = screen;
++        Ok(())
++    }
++}
++
++#[derive(Debug)]
++pub struct Connector;
++
++impl KmsConnectorDriver for Connector {
++    type State = ();
++}
++
++impl GraphicsAdapter for RpiAdapter {
++    type Connector = Connector;
++    type Crtc = ();
++    type Plane = ();
++
++    type Buffer = GraphicScreen;
++    type Framebuffer = ();
++
++    fn name(&self) -> &'static [u8] {
++        b"rpi-fbd"
++    }
++
++    fn desc(&self) -> &'static [u8] {
++        b"Raspberry Pi firmware framebuffer"
++    }
++
++    fn init(&mut self, objects: &mut KmsObjects<Self>) {
++        let (crtc, _primary_plane_id) = objects.add_crtc((), (), (), (), None);
++        objects.add_connector(Connector, (), &[crtc]);
++    }
++
++    fn get_unique(&self) -> String {
++        "rpi-fbd".to_owned()
++    }
++
++    fn min_max_fb_size(&self) -> (u32, u32, u32, u32) {
++        (0, 4096, 0, 4096)
++    }
++
++    fn dumb_buffer_config(&self) -> Option<DumbBufferConfig> {
++        Some(DumbBufferConfig {
++            preferred_depth: 24,
++            prefer_shadow: false,
++        })
++    }
++
++    fn cursor_size(&self) -> Option<(u64, u64)> {
++        None
++    }
++
++    /// Always connected: without a monitor the firmware still has a mode
++    /// (its fallback), and a monitor plugged in later shows it.
++    fn probe_connector(
++        &mut self,
++        objects: &mut KmsObjects<Self>,
++        id: KmsObjectId,
++    ) -> syscall::Result<()> {
++        if let Some(edid) = &self.edid {
++            objects.set_connector_edid(id, edid.clone());
++        }
++        let mut connector = objects.get_connector(id)?.lock().unwrap();
++        connector.connection = KmsConnectorStatus::Connected;
++        connector.connector_type = drm_sys::DRM_MODE_CONNECTOR_HDMIA;
++
++        // First the preferred mode, then the monitor's, then the extra sizes.
++        let first = self.requested.unwrap_or(self.display_size);
++        let edid_modes = std::mem::take(&mut connector.modes);
++        let mut modes = vec![modeinfo_for_size(first.0, first.1)];
++        let others = edid_modes
++            .into_iter()
++            .chain(EXTRA_SIZES.iter().map(|&(w, h)| modeinfo_for_size(w, h)));
++        for mut mode in others {
++            if modes
++                .iter()
++                .any(|m| (m.hdisplay, m.vdisplay) == (mode.hdisplay, mode.vdisplay))
++            {
++                continue;
++            }
++            mode.type_ &= !drm_sys::DRM_MODE_TYPE_PREFERRED;
++            modes.push(mode);
++        }
++        connector.modes = modes;
++        Ok(())
++    }
++
++    fn create_dumb_buffer(&mut self, width: u32, height: u32) -> (Self::Buffer, u32) {
++        (
++            GraphicScreen::new(width as usize, height as usize),
++            width * 4,
++        )
++    }
++
++    fn map_dumb_buffer(&mut self, framebuffer: &Self::Buffer) -> *mut u8 {
++        framebuffer.ptr.as_ptr().cast::<u8>()
++    }
++
++    fn create_framebuffer(&mut self, _buffer: &Self::Buffer) -> Self::Framebuffer {}
++
++    fn set_crtc(
++        &mut self,
++        _objects: &KmsObjects<Self>,
++        crtc: &KmsCrtc<Self>,
++        state: KmsCrtcState<Self>,
++        _connector_ids: &[KmsObjectId],
++    ) -> syscall::Result<()> {
++        if let Some(mode) = &state.mode {
++            let size = (u32::from(mode.hdisplay), u32::from(mode.vdisplay));
++            if size != (self.screen.mode.width, self.screen.mode.height) {
++                self.switch(size.0, size.1)?;
++            }
++        }
++        *crtc.state.lock().unwrap() = state;
++        Ok(())
++    }
++
++    fn set_plane(
++        &mut self,
++        _objects: &KmsObjects<Self>,
++        plane: &KmsPlane<Self>,
++        new_plane_state: KmsPlaneState<Self>,
++        damage: Option<Damage>,
++    ) -> syscall::Result<()> {
++        if new_plane_state.crtc_id.is_none() {
++            return Ok(());
++        }
++        match &new_plane_state.fb {
++            Some(buffer) => buffer.buffer.sync(&mut self.screen, damage),
++            None => self.screen.clear(),
++        }
++        *plane.state.lock().unwrap() = new_plane_state;
++        Ok(())
++    }
++}
++
++/// A dumb buffer in normal memory; `set_plane` copies it to the screen.
++#[derive(Debug)]
++pub struct GraphicScreen {
++    width: usize,
++    height: usize,
++    ptr: NonNull<[u32]>,
++}
++
++impl GraphicScreen {
++    fn new(width: usize, height: usize) -> GraphicScreen {
++        let len = width * height;
++        let layout = Self::layout(len);
++        let ptr = unsafe { alloc::alloc_zeroed(layout) };
++        let ptr = ptr::slice_from_raw_parts_mut(ptr.cast(), len);
++        let ptr = NonNull::new(ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
++
++        GraphicScreen { width, height, ptr }
++    }
++
++    fn layout(len: usize) -> Layout {
++        Layout::array::<u32>(len)
++            .unwrap()
++            .align_to(PAGE_SIZE)
++            .unwrap()
++    }
++
++    /// Copies the damaged rectangle, clipped to both sizes: a client may
++    /// still draw at the old size right after a mode change.
++    fn sync(&self, screen: &mut Screen, damage: Option<Damage>) {
++        let width = self.width.min(screen.mode.width as usize);
++        let height = self.height.min(screen.mode.height as usize);
++        let damage = damage
++            .unwrap_or(Damage {
++                x: 0,
++                y: 0,
++                width: width as u32,
++                height: height as u32,
++            })
++            .clip(width as u32, height as u32);
++        let (x, y) = (damage.x as usize, damage.y as usize);
++        let (w, h) = (damage.width as usize, damage.height as usize);
++
++        let src = self.ptr.as_ptr() as *const u32;
++        let dst = screen.pixels();
++        let stride = screen.mode.stride as usize;
++        for row in y..y + h {
++            unsafe {
++                ptr::copy_nonoverlapping(src.add(row * self.width + x), dst.add(row * stride + x), w);
++            }
++        }
++    }
++}
++
++impl Drop for GraphicScreen {
++    fn drop(&mut self) {
++        let layout = Self::layout(self.ptr.len());
++        unsafe { alloc::dealloc(self.ptr.as_ptr().cast(), layout) };
++    }
++}
++
++impl Buffer for GraphicScreen {
++    fn size(&self) -> usize {
++        self.width * self.height * 4
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 8741d3dd..177058c3 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -9,4 +9,5 @@ requires_weak = [
+     "40_hwd.service",
+     "40_pcid-spawner-initfs.service",
+     "40_rpi-firmwared.service",
++    "40_rpi-fbd.service",
+ ]
+diff --git a/init.initfs.d/40_rpi-fbd.service b/init.initfs.d/40_rpi-fbd.service
+new file mode 100644
+index 00000000..17a50ed5
+--- /dev/null
++++ b/init.initfs.d/40_rpi-fbd.service
+@@ -0,0 +1,19 @@
++[unit]
++description = "Raspberry Pi display through the firmware"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = [
++    "20_graphics.target",
++    "40_rpi-firmwared.service",
++]
++
++[service]
++cmd = "rpi-fbd"
++inherit_envs = [
++    "FRAMEBUFFER_ADDR",
++    "FRAMEBUFFER_WIDTH",
++    "FRAMEBUFFER_HEIGHT",
++    "FRAMEBUFFER_STRIDE",
++    "RPI_FB",
++]
++type = "notify"
+-- 
+2.53.0
+

@@ -1,0 +1,157 @@
+From 93d2c3599fd73e43dd0552b06a9a991f17ed4f3e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 31 Oct 2026 09:52:04 +0000
+Subject: [PATCH] rpi-fbd: DMA test of a whole screen into the framebuffer
+ before clients, with a deadline
+
+---
+ drivers/graphics/rpi-fbd/src/main.rs   |   1 +
+ drivers/graphics/rpi-fbd/src/scheme.rs | 102 +++++++++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index bf042d4e..c43eb854 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -208,6 +208,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         vsync: !setting("RPI_FB_VSYNC").is_some_and(|v| v == "off"),
+         stats: Default::default(),
+     };
++    adapter.test_dma();
+     let bench = setting("RPI_FB_BENCH").is_some();
+     if bench {
+         adapter.bench();
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 38ed17cf..87993ee7 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -1,6 +1,8 @@
+ use std::alloc::{self, Layout};
+ use std::fmt;
+ use std::ptr::{self, NonNull};
++use std::sync::mpsc;
++use std::thread;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+@@ -15,6 +17,10 @@ use syscall::PAGE_SIZE;
+ use crate::dma::{Blit, BlitDma};
+ use crate::firmware::{Firmware, Mode};
+ 
++/// How long the DMA test at start may take before `rpi-fbd` gives up on
++/// DMA. QEMU, the slowest so far, needs well under a second at 1920x1200.
++const DMA_TEST_DEADLINE: Duration = Duration::from_secs(3);
++
+ /// Sizes offered besides the monitor's own: the firmware scales any size to
+ /// the monitor's mode. Up to 1920x1200, which fits the 16 MiB of GPU memory
+ /// that `gpu_mem=16` leaves.
+@@ -141,6 +147,40 @@ impl Screen {
+ }
+ 
+ impl RpiAdapter {
++    /// Before clients get DMA blits: a full-screen buffer and a blit of the
++    /// whole screen through the controller into the framebuffer, as the
++    /// first client frame will do. On the Pi (#138) the boot stopped right
++    /// after DMA started, with nothing in the log. Each step is logged, and
++    /// the test runs in a thread with a deadline: an error, a wrong picture
++    /// or a hang (unless the whole machine stops) leaves CPU blits.
++    pub fn test_dma(&mut self) {
++        let Some(mut dma) = self.dma.take() else {
++            return;
++        };
++        let mode = self.screen.mode;
++        let back = self.screen.back();
++        let target = ScreenTarget {
++            phys: mode.base + back as usize * mode.stride as usize * mode.height as usize * 4,
++            pixels: self.screen.pixels(back) as usize,
++            width: mode.width as usize,
++            height: mode.height as usize,
++            stride: mode.stride as usize,
++        };
++        let (tx, rx) = mpsc::channel();
++        thread::spawn(move || {
++            let result = target.test(&mut dma);
++            let _ = tx.send((dma, result));
++        });
++        match rx.recv_timeout(DMA_TEST_DEADLINE) {
++            Ok((dma, Ok(()))) => self.dma = Some(dma),
++            Ok((_, Err(err))) => println!("rpi-fbd: blits with the CPU: DMA test: {err}"),
++            Err(_) => println!(
++                "rpi-fbd: blits with the CPU: DMA test not done after {} s",
++                DMA_TEST_DEADLINE.as_secs()
++            ),
++        }
++    }
++
+     /// A new framebuffer of this size from the firmware, in place of the old:
+     /// double buffered if the GPU memory has room for two, else single.
+     pub fn switch(&mut self, width: u32, height: u32) -> syscall::Result<()> {
+@@ -618,3 +658,65 @@ impl Buffer for GraphicScreen {
+         self.width * self.height * 4
+     }
+ }
++
++/// The framebuffer as the DMA test sees it, in plain numbers so the test
++/// thread can have it.
++struct ScreenTarget {
++    phys: usize,
++    /// The mapping of the first pixel; it outlives the test.
++    pixels: usize,
++    width: usize,
++    height: usize,
++    /// In pixels
++    stride: usize,
++}
++
++impl ScreenTarget {
++    fn test(&self, dma: &mut BlitDma) -> Result<(), String> {
++        let (w, h) = (self.width, self.height);
++        println!("rpi-fbd: DMA test: buffer of {w}x{h}");
++        let mut buffer = match Dma::<[u32]>::zeroed_slice(w * h) {
++            Ok(buffer) => unsafe { buffer.assume_init() },
++            Err(err) => {
++                // Clients that large get normal memory and CPU blits anyway.
++                println!("rpi-fbd: DMA test: no buffer of that size ({err}), skipped");
++                return Ok(());
++            }
++        };
++        let screen = self.pixels as *mut u32;
++        let row = |y: usize| unsafe { std::slice::from_raw_parts_mut(screen.add(y * self.stride), w) };
++        // The picture on the screen, so the blits do not change it.
++        let src = buffer.as_mut_ptr();
++        for y in 0..h {
++            unsafe { ptr::copy_nonoverlapping(row(y).as_ptr(), src.add(y * w), w) };
++        }
++        for rows in [1, 64.min(h), h] {
++            println!("rpi-fbd: DMA test: {rows} rows into the framebuffer");
++            let checked: &[usize] = if rows == 1 { &[0] } else { &[0, rows - 1] };
++            // Spoil the first and last row; the blit has to restore them.
++            for &y in checked {
++                row(y).iter_mut().for_each(|pixel| *pixel ^= 0x00ff_ffff);
++            }
++            let start = Instant::now();
++            dma.blit(Blit {
++                src: buffer.physical(),
++                dst: self.phys,
++                src_pitch: w * 4,
++                dst_pitch: self.stride * 4,
++                width: w * 4,
++                rows,
++            })
++            .map_err(|err| err.to_string())?;
++            let time = start.elapsed();
++            for &y in checked {
++                if row(y) != &buffer[y * w..(y + 1) * w] {
++                    return Err(format!("row {y} wrong after a blit of {rows} rows"));
++                }
++            }
++            if rows == h {
++                println!("rpi-fbd: DMA test: whole screen in {:.1} ms", time.as_secs_f64() * 1000.0);
++            }
++        }
++        Ok(())
++    }
++}
+-- 
+2.53.0
+
