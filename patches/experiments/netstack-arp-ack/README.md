@@ -21,3 +21,22 @@ Build: `--experiment netstack-arp-ack` on main; add `--experiment netget`
 for the test downloader.
 
 ## Tests
+
+`rstserver.py PORT BODY` (here, for the host) answers each connection with an
+HTTP header and offers BODY bytes, then resets the connection after 2 s. With
+a body larger than the receive window (64 KiB) and a slow reader
+(`netget URL --slow 5000`), the reader still has data buffered when the reset
+comes.
+
+- QEMU `raspi3b` (`v0.3.0-dev-795-g187edb8+xff6c`, with `netget`), 382 MB
+  download with a capture of the USB network card: ARP request and reply
+  every 60 s (56, 116, 176, 236, 296 s) while the download continues; no
+  `Dropped packet` line; 382156480 bytes complete. QEMU's user network
+  answers ARP at once, so the old code shows the same capture; the
+  difference only shows where the reply takes a while (the Pi: test 141 had
+  two `waiting queue was full` drops).
+- QEMU can't test the reset: its user network ends the guest's connection
+  itself and turns the host's reset into a normal close. The old and the new
+  image both read to the end of the stream. On the Pi the connection goes
+  straight to homenodellm, so the reset arrives as one.
+- Pi 3B+: test plan row.
