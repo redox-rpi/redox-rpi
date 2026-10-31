@@ -13,3 +13,14 @@ diff --git a/src/memory/mod.rs b/src/memory/mod.rs
  const MAX_ORDER: u32 = ORDER_COUNT - 1;
  
  #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+@@ -970,8 +973,8 @@
+     let append_page = |page: Frame,
+                        info: &'static PageInfo,
+                        order,
+-                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
+-                       last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
++                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize],
++                       last_pages: &mut [Option<(Frame, &PageInfo)>; ORDER_COUNT as usize],
+                        allocator: &mut BumpAllocator<RmmA>| {
+         let this_page = (page, info);
+ 
