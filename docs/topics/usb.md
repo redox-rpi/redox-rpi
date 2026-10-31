@@ -23,6 +23,11 @@
   person (`scripts/test-hotplug.sh` in QEMU, `scripts/pi-hotplug-test.sh`
   on the Pi). Pi tests #35 and #67 ([reports](../test-reports.md)). The
   Anker hub steps stay with test #4.
+- Shorter boot (#47, base `0034`): hubs take the ports that are connected
+  after power-good instead of waiting for empty ones, and the wait for the
+  network link overlaps with rescans for late devices. On the Pi 3B+ dwc2d
+  is ready after 3.3 s instead of 6.2 s (2.1 s of it is the LAN7800's
+  link), kernel to login 7.4 s instead of 10.3 s (test #67).
 
 ## In progress
 
@@ -53,15 +58,6 @@
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
   QEMU (no LAN7800 there); the Pi check rides on the network session's
   test #47.
-
-- `dwc2d` boot time (#47): branch [`dwc2d-boottime`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-boottime)
-  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0034` there, PR #69).
-  Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
-  waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
-  what is connected, and the link wait overlaps with rescans. QEMU: ready
-  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15. **Pi test
-  #67 passes**: ready after 3.3 s instead of 6.2 s (2.1 s of it is the
-  LAN7800's link), kernel to login 7.4 s instead of 10.3 s, hotplug 15/15.
 
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch

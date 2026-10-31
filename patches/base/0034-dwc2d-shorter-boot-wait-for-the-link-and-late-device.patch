@@ -1,0 +1,239 @@
+From 9cf5f324c0a3cdf6ba71daa70e19c3baf9b1e004 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 15:50:12 +0100
+Subject: [PATCH] dwc2d: shorter boot: wait for the link and late devices
+ together, not per hub
+
+On the Pi 3B+ dwc2d took 6.2 s until it reported ready (test 53): every
+hub waited up to a second for its empty ports to connect (three hubs,
+3.6 s), then the LAN7800 waited 1.7 s for its link.
+
+A hub now takes the ports that are connected after power-good and moves
+on; the hotplug rescan finds devices that connect later. At boot the
+network adapters start without waiting for their link; dwc2d then waits
+for the first link (up to 10 s, as before) and rescans meanwhile, so
+late devices and autonegotiation overlap. Without a network adapter it
+looks for late devices for 1 s. The adapter for the network stack's MAC
+address is picked after that wait, by link as before. The LAN7800's
+link is now also followed after boot, like the RTL815x's.
+
+dwc2d prints "devices ready after N ms" when it reports ready.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 26 +++-------
+ drivers/usb/dwc2d/src/lan78xx.rs   | 22 +++++++--
+ drivers/usb/dwc2d/src/main.rs      | 76 ++++++++++++++++++++++--------
+ 3 files changed, 81 insertions(+), 43 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 1b97738..9320af9 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -284,26 +284,14 @@ impl Bus {
+         // Power-on-to-power-good time.
+         sleep(power_on_delay.max(Duration::from_millis(20)));
+ 
+-        // Devices take a while to signal their connection after power-on
+-        // (the Pi 3B+'s LAN7800 was missed after 100 ms). Collect the ports
+-        // that connect within a second.
+-        let mut connected = vec![false; usize::from(ports) + 1];
+-        let start = Instant::now();
+-        loop {
+-            for port in 1..=ports {
+-                if !connected[usize::from(port)] {
+-                    let (status, _) = self.port_status(hub, max_packet, speed, port)?;
+-                    connected[usize::from(port)] = status & PORT_STAT_CONNECTION != 0;
+-                }
+-            }
+-            if connected[1..].iter().all(|&c| c) || start.elapsed() > Duration::from_secs(1) {
+-                break;
+-            }
+-            sleep(Duration::from_millis(50));
+-        }
+-
++        // Take the ports connected now. Devices take a while to signal
++        // their connection after power-on (the Pi 3B+'s LAN7800 was missed
++        // after 100 ms, when the firmware had not powered it before); the
++        // rescans find those, at boot while dwc2d waits for a link (see
++        // main.rs), so empty ports cost no time.
+         for port in 1..=ports {
+-            if connected[usize::from(port)] {
++            let (status, _) = self.port_status(hub, max_packet, speed, port)?;
++            if status & PORT_STAT_CONNECTION != 0 {
+                 self.attach(this, port)?;
+             }
+         }
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index ccdc7b4..e1a48e1 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -155,6 +155,12 @@ struct Regs<'a> {
+ }
+ 
+ impl Regs<'_> {
++    fn link(&mut self) -> Result<bool, Error> {
++        // The link bit latches low; read twice for the current state.
++        self.mii_read(MII_BMSR)?;
++        Ok(self.mii_read(MII_BMSR)? & BMSR_LINK != 0)
++    }
++
+     fn read(&mut self, reg: u16) -> Result<u32, Error> {
+         let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
+         Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
+@@ -294,17 +300,18 @@ pub fn init(
+     r.set(MAC_RX, MAC_RX_EN)?;
+     r.set(FCT_RX_CTL, FCT_CTL_EN)?;
+ 
+-    // Wait for the link, so DHCP does not start into a dead cable.
++    // Wait for the link, so DHCP does not start into a dead cable. At boot
++    // the main loop waits instead, while it looks for more devices.
+     let start = Instant::now();
+     let link = loop {
+-        // The link bit latches low; read twice for the current state.
+-        r.mii_read(MII_BMSR)?;
+-        if r.mii_read(MII_BMSR)? & BMSR_LINK != 0 {
++        if r.link()? {
+             println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
+             break true;
+         }
+         if start.elapsed() >= link_wait {
+-            println!("dwc2d: LAN78xx no link yet");
++            if !link_wait.is_zero() {
++                println!("dwc2d: LAN78xx no link yet");
++            }
+             break false;
+         }
+         sleep(Duration::from_millis(100));
+@@ -312,6 +319,11 @@ pub fn init(
+     Ok((mac, link))
+ }
+ 
++/// Whether the PHY has a link.
++pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
++    Regs { bus, f }.link()
++}
++
+ /// Receive frames for `mac`: the address the network stack uses, when the
+ /// adapter takes over from another one.
+ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 28cc7aa..12be94a 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -11,7 +11,7 @@ use std::io::{Read, Write};
+ use std::os::fd::AsRawFd;
+ use std::os::unix::fs::OpenOptionsExt;
+ use std::process;
+-use std::time::Duration;
++use std::time::{Duration, Instant};
+ 
+ use fdt::Fdt;
+ 
+@@ -126,13 +126,16 @@ impl UsbNet {
+     /// Read the link of every RTL815x.
+     fn refresh_links(&mut self, bus: &mut Bus) {
+         for (adapter, link) in self.adapters.iter_mut() {
+-            if let Adapter::Rtl8152(a) = adapter {
+-                if let Ok(now) = rtl8152::link(bus, a.function()) {
+-                    if now != *link {
+-                        let state = if now { "up" } else { "down" };
+-                        println!("dwc2d: link {state} on the RTL815x at address {}", a.function().address);
+-                        *link = now;
+-                    }
++            let (now, name, address) = match adapter {
++                Adapter::Rtl8152(a) => (rtl8152::link(bus, a.function()), "RTL815x", a.function().address),
++                Adapter::Lan78xx(a) => (lan78xx::link(bus, a.function()), "LAN7800", a.function().address),
++                Adapter::Ecm(_) => continue,
++            };
++            if let Ok(now) = now {
++                if now != *link {
++                    let state = if now { "up" } else { "down" };
++                    println!("dwc2d: link {state} on the {name} at address {address}");
++                    *link = now;
+                 }
+             }
+         }
+@@ -394,6 +397,8 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ /// can take longer than 5 s. Adapters plugged in later do not wait: their
+ /// link is looked at with every rescan.
+ const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
++/// How long to look for devices at boot when there is no network adapter.
++const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
+ 
+ user_data! {
+     enum Source {
+@@ -424,6 +429,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             .expect("dwc2d: failed to map registers") as usize
+     };
+ 
++    let boot_start = Instant::now();
+     let mut hc = Dwc2::new(base);
+     println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());
+ 
+@@ -439,19 +445,51 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
+     let mut keyboard = None;
+-    for device in bus.devices.clone() {
+-        match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
+-            Some(Found::Net(adapter, mac, link)) => {
+-                // The network stack keeps the address of the adapter it
+-                // starts with.
+-                let rank = adapter.rank(link);
+-                if net.adapters.iter().all(|(a, l)| a.rank(*l) > rank) {
+-                    net.mac = mac;
++    let mut macs = Vec::new();
++    let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, keyboard: &mut Option<Keyboard>, addresses: Vec<u8>| {
++        for address in addresses {
++            let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
++                continue;
++            };
++            match probe(bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
++                Some(Found::Net(adapter, mac, link)) => {
++                    macs.push((adapter.address(), mac));
++                    net.adapters.push((adapter, link));
+                 }
+-                net.adapters.push((adapter, link));
++                Some(Found::Keyboard(f)) if keyboard.is_none() => *keyboard = Keyboard::new(hc.clone(), f),
++                _ => {}
+             }
+-            Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
+-            _ => {}
++        }
++    };
++    let addresses = bus.devices.iter().map(|d| d.address).collect();
++    boot_probe(&mut bus, &mut net, &mut keyboard, addresses);
++    // Wait for a network adapter's link, so DHCP does not start into a dead
++    // cable, or, without an adapter, a moment for devices that connect late
++    // after power-on. Rescans meanwhile take devices that connect now, so
++    // waiting for the link and for the hub ports overlaps (on the Pi 3B+,
++    // the LAN7800's autonegotiation takes 1.7 s).
++    let start = Instant::now();
++    loop {
++        net.refresh_links(&mut bus);
++        if net.adapters.iter().any(|(_, link)| *link) {
++            break;
++        }
++        let wait = if net.adapters.is_empty() { BOOT_CONNECT_WAIT } else { BOOT_LINK_WAIT };
++        if start.elapsed() >= wait {
++            if !net.adapters.is_empty() {
++                println!("dwc2d: no link yet");
++            }
++            break;
++        }
++        std::thread::sleep(Duration::from_millis(50));
++        let changes = bus.scan();
++        boot_probe(&mut bus, &mut net, &mut keyboard, changes.added);
++    }
++    println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
++    // The network stack keeps the address of the adapter it starts with.
++    if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
++        if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
++            net.mac = mac;
+         }
+     }
+     net.select(&mut bus);
+-- 
+2.54.0 (Apple Git-157)
+
