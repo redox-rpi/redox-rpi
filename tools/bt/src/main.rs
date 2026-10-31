@@ -245,6 +245,21 @@ fn power_cycle() {
         println!("power: no {POWER} (not a Pi 3B+?), leaving it as it is");
         return;
     }
+    // The chip starts only with the Wi-Fi half powered too (WL_ON), as Linux
+    // does at boot: Pi test #109 step 7. Steps 10 and 11: `bt up` without
+    // it got no answer, the same commands after `bt diag` (which switches
+    // WL_ON on) did.
+    match fs::read_to_string(WL_POWER).as_deref().map(str::trim) {
+        Ok("1") => {}
+        Ok(was) => match fs::write(WL_POWER, "1") {
+            Ok(()) => {
+                sleep(Duration::from_millis(200));
+                println!("power: wifi_power was {was}, switched on");
+            }
+            Err(err) => println!("power: wifi_power was {was}, cannot switch it on ({err}), going on"),
+        },
+        Err(err) => println!("power: no {WL_POWER} ({err}), going on"),
+    }
     let result = fs::write(POWER, "0").and_then(|()| {
         sleep(Duration::from_millis(50));
         fs::write(POWER, "1")
