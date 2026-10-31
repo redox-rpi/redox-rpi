@@ -4559,3 +4559,20 @@ Seconds after the start of the timeline (reset over devsh), with `boot-timeline.
 To test this, the new `config.txt` and `u-boot.bin` must go where this Pi really
 loads them from, likely the SD card's FAT partition, which needs a card swap or
 another approach. The row stays queued. Stable image in place.
+
+## 2026-10-31: test 135 step 2 again, TCP send from a file (`v0.3.0-dev-449-g461061e+x885b`)
+
+Real Pi 3B+ over netboot. Test 135 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Not measurable: the file form doesn't send anything either.** On the
+wait-irq image, `dd if=/dev/zero of=/tmp/tx bs=65536 count=256` made
+`/tmp/tx` (16,777,216 bytes). Then twice `time nc 192.168.178.120:5135 < /tmp/tx`:
+each printed `Remote host: 192.168.178.120:5135` and ended after 0.04 s
+(`real 0.043949064s`, `0.042097759s`). `nc -l 5135 | wc -c` on homenodellm counted
+**0 bytes** both times. dwc2d ACTTIME across each `nc`: 0.64 → 0.65 s and
+7.74 → 7.76 s. Between the two tries it rose at its idle rate (about 1.6 s per
+minute, as in step 1), so the failed sends themselves cost nothing.
+`/tmp/tx` was removed afterwards.
+
+With this, step 2 is recorded as not measurable, as the usb session asked; the
+rest is in the first 135 report. Stable image restored afterwards.
