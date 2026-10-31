@@ -359,6 +359,24 @@ git).
   longer before the sleep (`CANDLE_BARRIER_POOL_SPIN_LIMIT=2000000`) made
   it far slower still; both dropped. QEMU timings are rough, so #126 also
   compares 4 and 3 threads on the Pi.
+- **Pi test 126, 2026-10-31, network boot: partly passes.** The model
+  download needed four tries: the Pi fetched at 0.06 to 0.25 MB/s, and one
+  try stopped with `os error 107` (#119). `rinfer --download` now keeps the
+  whole 16 MiB parts of an earlier try, fetches a broken part again and
+  prints network and card speed per part; the fourth try finished the last
+  150 MB at 0.5 to 2 MB/s. The model now stays on the card
+  (`/scheme/data`). The assistant answered with the time, reading the
+  system prompt in 166 to 171 s; lowest free 120 MB, heap peak 430 MiB, no
+  panic. **Writing: 1.24 tokens per second with 3 threads, 0.78 with 4**,
+  so rinfer now uses 3 on Redox (one sample each, at the 60 °C soft
+  temperature limit). **The saved state stayed `prompt.kv.part`:** rename
+  fails on `/scheme/data` (#57). rinfer now writes `prompt.kv` in place
+  with a placeholder first line that becomes valid only at the end (QEMU:
+  saved, then loaded in 18 s instead of 325 s). **devshd refused
+  connections after the first assistant run** (`Connection refused`, the
+  process still there; the serial console worked); after a reset it did
+  not happen again. Rerun of the saved state: test #143.
+  [Report](../test-reports.md).
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
