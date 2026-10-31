@@ -1,4 +1,4 @@
-From dee45078bffffa88c35436e1c36b98deb30ce926 Mon Sep 17 00:00:00 2001
+From edc991799636f5846774c4fd5834b02dc6a81b49 Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Sat, 31 Oct 2026 07:58:02 +0000
 Subject: [PATCH] initnsmgr: register a scheme name again after its scheme
@@ -10,51 +10,42 @@ scheme, which the kernel answers with ENODEV. Registering the name again
 failed with EEXIST, so a restarted driver, or a USB device that came
 back, could not get its old name.
 
-On a name that is taken, check the old capability with fcntl(F_GETFD).
-The kernel looks up the scheme for it without sending the scheme a
-request, and answers ENODEV if the scheme is gone; then the new scheme
-takes the name.
+On a name that is taken, check the old capability with the fcntl
+syscall, F_GETFD. The kernel looks up the scheme for it without sending
+the scheme a request, and answers ENODEV if the scheme is gone; then the
+new scheme takes the name. Both cases are logged.
 ---
- bootstrap/src/initnsmgr.rs | 20 ++++++++++++++++++--
- 1 file changed, 18 insertions(+), 2 deletions(-)
+ bootstrap/src/initnsmgr.rs | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
 
 diff --git a/bootstrap/src/initnsmgr.rs b/bootstrap/src/initnsmgr.rs
-index 707b896d..9b2e1fbb 100644
+index 707b896d..24abf60c 100644
 --- a/bootstrap/src/initnsmgr.rs
 +++ b/bootstrap/src/initnsmgr.rs
-@@ -81,14 +81,30 @@ struct SchemeRegister {
+@@ -81,8 +81,21 @@ struct SchemeRegister {
  impl SchemeRegister {
      fn register(&self, fd: FdGuard) -> Result<()> {
          let mut ns = self.target_namespace.borrow_mut();
 -        if ns.schemes.contains_key(&self.scheme_name) {
 -            return Err(Error::new(EEXIST));
 +        if let Some(old) = ns.schemes.get(&self.scheme_name) {
-+            if !scheme_ended(old) {
-+                return Err(Error::new(EEXIST));
++            // A scheme whose process ended keeps its name: nothing tells the
++            // namespace manager. The kernel then answers calls through the old
++            // capability with ENODEV. For F_GETFD it looks the scheme up without
++            // sending it a request, so a live scheme is not asked anything. (The
++            // raw syscall: redox-rt answers F_GETFD from its own table.)
++            match syscall::fcntl(old.as_raw_fd(), syscall::F_GETFD, 0) {
++                Err(err) if err.errno == ENODEV => {
++                    log::warn!("nsmgr: scheme {} ended, registering it again", self.scheme_name);
++                }
++                res => {
++                    log::warn!("nsmgr: scheme {} is taken ({:?})", self.scheme_name, res);
++                    return Err(Error::new(EEXIST));
++                }
 +            }
-+            // A driver that was restarted, or a device that came back.
-+            log::info!("nsmgr: scheme {} ended, registering it again", self.scheme_name);
          }
          ns.schemes.insert(self.scheme_name.clone(), Arc::new(fd));
          Ok(())
-     }
- }
- 
-+/// Whether the process that served a scheme has ended. The name stays in the
-+/// namespace after that, because nothing tells the namespace manager, and
-+/// the kernel answers calls through the old capability with ENODEV. F_GETFD
-+/// looks up the scheme in the kernel without sending it a request, so a live
-+/// scheme is not asked anything.
-+fn scheme_ended(cap_fd: &FdGuard) -> bool {
-+    matches!(
-+        redox_rt::sys::fcntl(cap_fd.as_raw_fd(), syscall::F_GETFD, 0),
-+        Err(err) if err.errno == ENODEV
-+    )
-+}
-+
- #[derive(Debug, Clone)]
- enum Handle {
-     Access(NamespaceAccess),
 -- 
 2.53.0
 

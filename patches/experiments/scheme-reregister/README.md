@@ -26,13 +26,20 @@ but not after a crash or SIGKILL.
 ## Fix
 
 `base/0001`: when the name is taken, `register` checks the old capability
-with `fcntl(F_GETFD)`. For that the kernel looks up the scheme without
-sending it a request, and answers `ENODEV` when the scheme is gone; then
-the new scheme takes the name (`nsmgr: scheme <name> ended, registering
-it again`). A live scheme is not asked anything, keeps its name, and
-`register` still gives `EEXIST`. (A `dup` with an empty buffer, the first
-try, never reaches the scheme: the kernel only copies the file
-description, so it never failed.)
+with the `fcntl` syscall, `F_GETFD`. For that the kernel looks up the
+scheme without sending it a request, and answers `ENODEV` when the scheme
+is gone; then the new scheme takes the name (`nsmgr: scheme <name> ended,
+registering it again`). A live scheme is not asked anything and keeps its
+name: `register` still gives `EEXIST` (`nsmgr: scheme <name> is taken`).
+
+Two checks that do not work, found on the way:
+- `dup` with an empty buffer never reaches the scheme: the kernel only
+  copies the file description.
+- `redox_rt::sys::fcntl(F_GETFD)` is answered by redox-rt from its own fd
+  table, so it needs the raw syscall.
+
+A debug kernel confirmed the kernel side is fine: after SIGKILL the
+daemon's files are closed and its scheme is removed and dropped.
 
 Not changed: a dead name is still listed in `/scheme` until it is
 registered again, and namespaces forked before the restart keep the old
@@ -43,4 +50,5 @@ for each listing.
 
 `scripts/test-scheme-reregister.sh` (QEMU, needs fatfsd from experiment
 `usb-fat`): fatfsd on the image's FAT partition as `t117`, SIGKILL, fatfsd
-again as `t117`, list its root.
+again as `t117`, list its root; a third fatfsd as `t117` while the second
+runs must get `File exists`.
