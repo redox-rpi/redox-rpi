@@ -5403,3 +5403,39 @@ answered `Three colours are blue, green, and red.` (10 tokens).
   then `0x00080008`). No `oom`, no kernel panic, no `RELIBC PANIC`. Model kept.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-823-ga961ba0+xb3d9` (t-pin-redoxfs + t13-relibc-tests, redoxfs pinned)
+
+Real Pi 3B+ over netboot. Test 160 ([#145](https://github.com/redox-rpi/redox-rpi/issues/145)), Pi test agent.
+
+**Pass: the pinned redoxfs boots and runs (0 of 1000 starts failed), the four
+Unix socket tests pass, and the relibc suite has no new failure.** Image
+`~/redox-rpi-t12/keep/pinfs-v0.3.0-dev-823-ga961ba0+xb3d9.img` (manifest in the
+image, none next to it), stable bootloader.
+
+- `scripts/pi-test.py --starts 1000 --serial-log …`: version, manifest (present),
+  ps, ps-tty, sdcard pass; **0 of 1000 starts failed**.
+- In `/usr/share/relibc-tests/bins_dynamic/sys_socket`:
+  - `./unixrecvfrom`: `send lorem`, `recvfrom lorem`, **rc=0**
+  - `./unixrecv`: `send ipsum`, `recv ipsum`, **rc=0**
+  - `./unixnonblock`: `send ipsum`, `recv ipsum`, **rc=0**
+  - `./unixsocketpair`: SOCK_STREAM and SOCK_DGRAM `child: ping`, `parent: pong`, **rc=0**
+  - no `connect failed: Invalid argument`; 0 `handle_bind` lines on the serial
+    console.
+- `ion /usr/share/relibc-tests/run.ion` (64.6 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t13-relibc-tests` (the suite prints to devsh, so I compared the devsh output):
+
+```
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+SUMMARY v0.3.0-dev-823-ga961ba0+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 0 new), 6 fixed
+```
+
+  **No `NEW` line**, the same as #133.
+
+Stable image restored afterwards.
