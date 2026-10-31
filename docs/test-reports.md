@@ -5154,7 +5154,7 @@ Stable image restored afterwards.
 
 ## 2026-10-31: `v0.3.0-dev-806-gb2dd152` wait-irq `+x98e9` and tx-irq `+x3388` (sent frames without the spin)
 
-Real Pi 3B+ over netboot. Test 152, tx-irq row ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent. (The queue had two rows numbered 152; this is the `dwc2d-tx-irq` one, the other is the timesync report above.)
+Real Pi 3B+ over netboot. Test 155 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104), sent frames without the spin), Pi test agent. (Queued as a second 152 by mistake; renumbered to 155.)
 
 **Pass: the host counted 16777216 bytes in all four runs, and devshd answered
 afterwards.** dwc2d's ACTTIME is **not lower with tx-irq**: +1.22 and +1.10 s

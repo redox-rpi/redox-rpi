@@ -200,7 +200,7 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
-| 2026-10-31 | 152 sent frames without the spin (`dwc2d-tx-irq` vs wait-irq) | wait-irq `v0.3.0-dev-806-gb2dd152+x98e9`, tx-irq `+x3388` | **pass**: host counts 16777216 bytes in 4 of 4 runs, devshd answers; wait-irq 7.28/8.30 MB/s, ACTTIME +1.03/+1.14 s; tx-irq 7.12/7.94 MB/s, ACTTIME +1.22/+1.10 s: no gain |
+| 2026-10-31 | 155 sent frames without the spin (`dwc2d-tx-irq` vs wait-irq) | wait-irq `v0.3.0-dev-806-gb2dd152+x98e9`, tx-irq `+x3388` | **pass**: host counts 16777216 bytes in 4 of 4 runs, devshd answers; wait-irq 7.28/8.30 MB/s, ACTTIME +1.03/+1.14 s; tx-irq 7.12/7.94 MB/s, ACTTIME +1.22/+1.10 s: no gain |
 | 2026-10-31 | 153 devshd under a memory-heavy assistant run | `v0.3.0-dev-816-g7376c46+x4590` | **pass**: a new devsh answers after each of 3 runs (4 threads, prompt read each time); only `devshd: listening on port 2323` on serial, no accept errors; free 145 MB during run 2; soft temperature limit hit, writing down to 0.15 t/s in two answers; no panic |
 | 2026-10-31 | 154 aarch64 signal return as default patches | `v0.3.0-dev-768-g7d71e64+x1258` | **pass**: boot to login, no FATAL or panic; `sigregs process --x18 -n 500` ×3 and `-n 500` ×1 all keep every register; standard checks pass, 0 of 300 starts failed |
 | 2026-10-31 | 152 timesync checks answers, median of up to three servers | `v0.3.0-dev-773-g2ffa68b+x7f63` | **pass**: boot uses three pool servers, timerd follows; +7200 s server outvoted; leap 3, RATE (asked once), wrong origin, and 2-of-2 disagreement each refused; clock 2 h ahead set back by −7199.999 s; standard checks pass |
