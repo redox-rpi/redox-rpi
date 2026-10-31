@@ -4301,3 +4301,29 @@ manifest next to it.
 - Standard checks with `--manifest`: all pass (manifest matches, 0 of 300 starts failed).
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-410-g313d292+x4ec1` (relibc-quiet, sshd without TODO lines)
+
+Real Pi 3B+ over netboot. Test 132 ([#109](https://github.com/redox-rpi/redox-rpi/issues/109)), Pi test agent.
+
+**Pass: 5 key logins and `ssh-session.exp` work, and the serial log has no
+`TODO: madvise`, `getsockopt` or `setsockopt` line.** The only `TODO` line in
+the whole boot is one `TODO: ioctl TIOCSCTTY` from the `ssh-session.exp` session
+(a terminal session, not one of the three this row is about). Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-410-g313d292+x4ec1.img` (no manifest
+next to it), with the new stable's bootloader. Same setup as #120.
+
+- `TODO` lines in the serial log after boot, before any login: **0**.
+- The test key (`ed25519`) went into `/scheme/data/home/root/.ssh/authorized_keys`, as in #120.
+- 5 × `ssh -i <key> root@192.168.178.148 echo ok`: **5 × `ok`**, 0.98–1.06 s each.
+- `ssh-session.exp`: command, prompt again, backspace, `exit` all ok; it exits at once.
+- `TODO` lines after all of this: 1, `[INFO sshd-session@src/header/sys_ioctl/redox/mod.rs:141]
+  TODO: ioctl TIOCSCTTY`. No `madvise`, `getsockopt` or `setsockopt` (#101 had
+  several per connection).
+- `ssh-keyscan -t rsa,ecdsa,ed25519 192.168.178.148`: **3 keys** (`ssh-rsa`,
+  `ecdsa-sha2-nistp256`, `ssh-ed25519`).
+- Standard checks: all pass (manifest present in the image, 0 of 300 starts
+  failed). No panic or unhandled exception.
+- The key file was removed from `/scheme/data/home/root/.ssh/`.
+
+Stable image restored afterwards.
