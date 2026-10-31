@@ -12,25 +12,19 @@
   (device descriptor, hub port status, hub descriptor) instead of
   panicking (base `0037`, PR #84; the panic of test 98, Pi test 105
   5 of 5 boots).
-- USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W, when
-  plugged in before boot.
+- USB keyboard on the HDMI console of a real Pi 3B+ and Zero 2 W.
+- Hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17), base
+  `0031`–`0033`): dwc2d rescans the root port and all hub ports every
+  second. A keyboard or network adapter plugged in later is used, and the
+  network moves to the best adapter (RTL815x with a link, else LAN7800,
+  else RTL815x without a link, else CDC Ethernet), keeping its MAC address
+  and lease. `dhcpd` tries again until the server answers. A test command
+  (`/tmp/dwc2d-cycle`) switches a hub port off and on for tests without a
+  person (`scripts/test-hotplug.sh` in QEMU, `scripts/pi-hotplug-test.sh`
+  on the Pi). Pi tests #35 and #67 ([reports](../test-reports.md)). The
+  Anker hub steps stay with test #4.
 
 ## In progress
-
-- [#17](https://github.com/redox-rpi/redox-rpi/issues/17) hotplug, branch
-  [`usb-hotplug`](https://github.com/redox-rpi/redox-rpi/tree/usb-hotplug),
-  experiment `usb-hotplug` on top of `dwc2-default`. dwc2d rescans the
-  root port and all hub ports every second. A keyboard or network adapter
-  plugged in later is used, and the network moves to the best adapter
-  (RTL815x with a link, else LAN7800, else RTL815x without a link, else CDC
-  Ethernet), keeping its MAC address and lease. `dhcpd` tries again until
-  the server answers. A test command (`/tmp/dwc2d-cycle`) switches a hub
-  port off and on for tests without a person. QEMU: 15 of 15 checks of
-  `scripts/test-hotplug.sh` pass. Pi test #35 is queued: part A automated
-  with `scripts/pi-hotplug-test.sh`, part B with a person, bundled with
-  the Anker hub test #4.
-- `dwc2-default`: RTL8152 and dwc2 interrupts as default patches, merged
-  with main; first in the rc2 merge order, waits for the Pi test.
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
@@ -42,7 +36,7 @@
 
 - [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
   tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
-  (on `usb-hotplug`), experiment `usb-mouse` (base `0035` there). Events go
+  experiment `usb-mouse` (base `0035` there). Events go
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
   visit as #50.
@@ -68,7 +62,6 @@
   after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15. **Pi test
   #67 passes**: ready after 3.3 s instead of 6.2 s (2.1 s of it is the
   LAN7800's link), kernel to login 7.4 s instead of 10.3 s, hotplug 15/15.
-  Merges with `usb-hotplug` once #35 passes.
 
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
