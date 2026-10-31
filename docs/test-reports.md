@@ -4793,3 +4793,58 @@ failed). Read only, on the FAT boot partition `/scheme/disk.mmc/0p0`.
 - No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-464-gff58612+x7d9f` (bluetooth, step 11: power-on wait and Reset retries)
+
+Real Pi 3B+ over netboot. Test 109 step 11 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**The chip did not answer Reset on any try, with `auto-low` or `none`, so no
+upload ran.** No `ignored` events, no lost bytes. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-464-gff58612+x7d9f/harddrive.img`, manifest
+matches, stable bootloader. Standard checks with `--manifest` pass (0 of 300
+starts failed). Flow at start: `auto-low`.
+
+(a) flow `auto-low`:
+
+```
+### bt up  (12.0 s)
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+reset: try 1: no answer to HCI command 0c03, again
+reset: try 2: no answer to HCI command 0c03, again
+bt: Connection timed out (os error 110)
+### bt info  (0.9 s)
+bt: Connection timed out (os error 110)
+### bt scan 10  (0.9 s)
+bt: Connection timed out (os error 110)
+### bt inquiry 10  (5.8 s)
+bt: Connection timed out (os error 110)
+```
+
+(b) flow `none`:
+
+```
+### bt up  (8.6 s)
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow none
+reset: try 1: no answer to HCI command 0c03, again
+reset: try 2: no answer to HCI command 0c03, again
+bt: no answer to HCI command 0c03
+### bt info  (2.4 s)
+bt: no answer to HCI command 1001
+### cat /scheme/btuart/status
+cts_line 1, rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1, lsr 0x60, msr 0x00, cntl 0x03, stat 0x0000038e
+```
+
+- (c) `received bytes lost` lines on the serial console: **0**. No
+  `(event … ignored: …)` line and no `reset: answered` in either run. Serial:
+  `bcm2835-btuartd: mini UART at 0x3f215000, 115207 baud (core 400 MHz)`. No
+  panic.
+- With `auto-low` the third try ends in `Connection timed out (os error 110)`;
+  after that every `bt` command times out at once (0.9 s). With `none` the third
+  try ends in `no answer`.
+- Unlike step 10, `bt info` with `none` did not answer here either. In step 10 it
+  ran before any `bt up`; here it came after two `bt up` power cycles. CTS
+  stays `1` (high) after both.
+
+Stable image restored afterwards.

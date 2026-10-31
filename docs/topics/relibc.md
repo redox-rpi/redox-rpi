@@ -19,6 +19,12 @@
   `t4-thread-signals`, patch `0002` fixes two more differences; Pi tests
   #37 and #68 pass. Draft PR #64 makes both patches default relibc
   `0008` and `0009` (stacked on #62).
+- [#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs (bash, vim, …) from the Redox package
+  repository: experiment `prebuilt-programs`, with experiment
+  `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
+  which these programs use. Pi test #45 passed (2026-10-29): nine
+  programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
+  PR #61.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
@@ -53,7 +59,8 @@
     merged has it; without `0008` the test passes 20 of 20.
     Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
     [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
-    10 of 10 runs exit 0 and the #31 leak stays fixed. Pi row 133.
+    10 of 10 runs exit 0 and the #31 leak stays fixed. Pi test 133
+    passed (10 of 10 exit 0, no new suite failures).
   - `pthread/rwlock_randtest` does not hang: 1,000,000 lock operations
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
