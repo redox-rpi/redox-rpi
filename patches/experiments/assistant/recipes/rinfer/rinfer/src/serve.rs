@@ -19,7 +19,7 @@
 //! first EOT, before any request, says the model is loaded. Timings go to
 //! stderr.
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
 
 use candle::{Device, Tensor};
@@ -30,6 +30,8 @@ use tokenizers::Tokenizer;
 const EOT: u8 = 0x04;
 /// First line of a saved conversation; the key follows on the second.
 const SAVE_MAGIC: &str = "rinfer-kv 1";
+/// The first line while a save is being written; as long as SAVE_MAGIC.
+const UNFINISHED: &str = "rinfer-kv -";
 
 struct Session<'a> {
     model: &'a mut ModelWeights,
@@ -131,12 +133,18 @@ impl Session<'_> {
             self.run(&[p])?;
         }
         let t = Instant::now();
-        let tmp = format!("{path}.part");
-        let mut w = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
-        write!(w, "{SAVE_MAGIC}\n{key}\n")?;
+        // Written in place with a placeholder first line, which becomes
+        // SAVE_MAGIC only once the rest is on disk: a file cut short is then
+        // refused by `load`. (A temporary file and a rename would be the
+        // usual way, but rename fails on /scheme/data, #57.)
+        let mut w = BufWriter::with_capacity(1 << 20, File::create(path)?);
+        write!(w, "{UNFINISHED}\n{key}\n")?;
         let n = self.model.save_kv_cache(&mut w)?;
-        w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
-        std::fs::rename(&tmp, path)?;
+        let mut f = w.into_inner().map_err(|e| e.into_error())?;
+        f.sync_all()?;
+        f.seek(SeekFrom::Start(0))?;
+        f.write_all(SAVE_MAGIC.as_bytes())?;
+        f.sync_all()?;
         eprintln!("rinfer: saved {n} tokens in {:.1} s", t.elapsed().as_secs_f32());
         Ok(())
     }

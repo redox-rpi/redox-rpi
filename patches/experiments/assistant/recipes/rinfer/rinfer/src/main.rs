@@ -164,9 +164,14 @@ fn main() -> anyhow::Result<()> {
     let n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(16);
     // candle sizes its thread pool from RAYON_NUM_THREADS or the CPU count,
     // which Redox does not report (candle then uses one thread). The Pi 3
-    // has four cores.
+    // has four cores, but three write faster (Pi test 126: 1.24 tokens per
+    // second against 0.78) and leave one for the network and the shell.
     if std::env::var_os("RAYON_NUM_THREADS").is_none() {
-        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(4);
+        let n = if cfg!(target_os = "redox") {
+            3
+        } else {
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(4)
+        };
         std::env::set_var("RAYON_NUM_THREADS", n.to_string());
     }
     // candle preallocates a 4096-position key/value cache per layer (900 MiB
