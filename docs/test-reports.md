@@ -4213,3 +4213,29 @@ fbcond: Performing handoff
 So the allocator change ran under 300 starts without trouble, but the DMA path
 it is meant for wasn't reached. Next: why the DMA test blit moves 4 instead of
 2 rows. Stable image restored afterwards.
+
+## 2026-10-31: test 127, icache-sync cost, like for like (`v0.3.0-dev-469-g7021aa9`)
+
+Real Pi 3B+ over netboot. Test 127 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Both images pass 1000 starts without a failure or exception. With the patch,
+the `ls` loop is 1.0 s slower per 500 runs (about 1.3 %, 2 ms per program
+start), the same in both rounds.** Images A
+`~/redox-rpi-icache/build/icache-base.img` (`+x12cb`, without) and B
+`icache-icache.img` (`+x12c9`, with `icache-sync`), run A, B, A, B, each on a fresh
+boot with the new stable's bootloader. Both run at `arm 1400000000`.
+
+- `scripts/pi-test.py --starts 1000` (first boot of each image): **pass** for A
+  and B, 0 of 1000 starts failed.
+- No exception and no panic in the serial log of any of the four boots (not
+  even the `pcid` one).
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`, three times per boot:
+
+| round | A without | B with `icache-sync` |
+|---|---|---|
+| 1 | 77.77 s, 77.81 s, 77.76 s | 78.75 s, 78.77 s, 78.84 s |
+| 2 | 77.59 s, 77.46 s, 77.61 s | 78.62 s, 78.55 s, 78.55 s |
+| mean | **77.67 s** | **78.68 s** (+1.01 s, +1.3 %) |
+
+Within a boot, the runs vary by less than 0.15 s, so the difference is real but
+small. Stable image restored afterwards.
