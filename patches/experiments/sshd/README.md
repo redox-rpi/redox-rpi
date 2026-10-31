@@ -31,6 +31,10 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0043`: `ld.so` finds a program whose argv[0] starts with "-"
   (a login shell, "-ion"); it looks the program up by argv[0] and stopped
   with "failed to locate '-ion'".
+- relibc `0045`: quiet `madvise` hints (`MADV_DONTDUMP` from OpenSSL on every
+  connection), `getsockopt` of `IP_TOS` and `TCP_NODELAY` reports 0 (netstack's
+  state: TOS 0, Nagle on) instead of ENOSYS, `setsockopt` of both succeeds
+  without an INFO line (#109). Real `TCP_NODELAY` needs netstack support.
 - base `0040` (after the default base patches): `procmgr` sends SIGCHLD
   for an exited process without the permission check of `kill()`. The
   pre-authentication child runs as user `sshd`; its SIGCHLD to the root
