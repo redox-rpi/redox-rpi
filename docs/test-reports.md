@@ -4638,3 +4638,34 @@ certificate installed with `install-client-cert.py` (`/etc/mqtt-client.crt`
   homenodellm were left running.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-601-g5db6321+x675f` (tcp-slow, long download)
+
+Real Pi 3B+ over netboot. Test 141 ([#119](https://github.com/redox-rpi/redox-rpi/issues/119)), Pi test agent.
+
+**Network alone is fast and steady: 382156480 bytes in 51.5 s, 7.42 MB/s, no
+errors. Network and card: the Pi hung.** No serial line and no `netget` output
+before it stopped. Image
+`~/redox-rpi-zrtl/keep/tcpdiag-v0.3.0-dev-601-g5db6321+x675f.img` (manifest in
+the image), stable bootloader. Standard checks pass (version, manifest, ps,
+ps-tty, sdcard, 0 of 300 starts failed).
+
+| step | result |
+|---|---|
+| (1) at uptime 61 s | `rx_frames 624`, `rx_errors 0`, `tx_frames 257`, `tx_errors 0`, `irqs 598`, `ticks 3149`; netstack 0.19 s / 0.23 s, dwc2d 1.81 s / 2.88 s; ping 1.7–94.6 ms, avg 35.6 ms, 0 % loss |
+| (2) network only | `HTTP/1.0 200 OK`, then each 16 MiB in 2.2–2.4 s (7.25 to 7.60 MB/s, no slowdown), **`382156480 bytes in 51.5 s, 7.42 MB/s`** |
+| (2) second devsh (5 min, after the download) | ping 1.34–1.55 ms; `rx_frames 270989`, `rx_errors 0`, `tx_frames 131961`, `tx_errors 0`, `irqs 259198`, `ticks 703506` |
+| (3) at uptime 397 s | `rx_frames 271082`, `rx_errors 0`, `tx_errors 0`; netstack 21.24 s / 34.06 s, dwc2d 22.47 s / 9.80 s; ping 1.8–22.9 ms, 0 % loss |
+| (4) network and card | `netget … /scheme/data/netget.bin` started 12:59:03 UTC (server log: GET at 12:59:05). **No output in 60 minutes; the Pi hung.** The serial console wrote nothing after the boot. The HTTP server kept sending until `OSError: [Errno 113] No route to host` at 13:19:57, so the Pi stopped answering some time before that. No ping, ARP incomplete |
+| (5) | not run (Pi unreachable) |
+
+- Serial lines with `Dropped`, `netstack` or `dwc2d`: the boot's `dwc2d`
+  enumeration (LAN7800, `link up after 1710 ms`) and two `smolnetd … Dropped
+  packet on eth0 because waiting queue was full` at uptime 151 s (during step 2).
+  Nothing later; no panic line.
+- `df` does not list `/scheme/data`; the card has room for #126's 341 MB model.
+- `netget`'s lines only reach devsh when it ends, so the step 4 progress is lost.
+  A rerun could write them to the serial console or a file to show how far it got.
+- The Pi's clock read 1970 (no timesync in this image).
+
+Stable image staged afterwards; the Pi needs a power cycle to boot it.
