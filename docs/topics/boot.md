@@ -14,9 +14,11 @@
   (`boot-time`: bootloader wait 1 s, parallel init; login 21 s after reset
   instead of 33.7 s) and the USB session's PR #69 (`dwc2d-boottime`).
   Before Redox, branch `boot-time-2`: no U-Boot countdown (2 s) and no
-  firmware `boot_delay` (1 s by default). QEMU: login 2–5 s sooner. Pi test
-  #134 queued, staged in the Pi's serial directory on the TFTP server so
-  only that Pi sees it. Also on the branch: the network-boot image is
+  firmware `boot_delay` (1 s by default). QEMU: login 2–5 s sooner. The
+  test Pi loads firmware and U-Boot from its SD card (the TFTP serial
+  directory changed nothing, test #134), and U-Boot cannot save settings
+  there (`Bad device specification mmc 0`), so Pi test #134 now copies two
+  files onto the network-boot card at the card-swap visit of #18 and #72. Also on the branch: the network-boot image is
   192 MiB instead of 256 (71 MB free in QEMU; less to unpack and copy, more
   RAM), Pi test #142. Left as they are: U-Boot's USB start (2.8 s), the
   LAN7800 link (1.7 s) and the 43 MB image download (3.8 s; gzip is at its
