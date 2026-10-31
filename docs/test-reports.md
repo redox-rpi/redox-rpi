@@ -3843,3 +3843,27 @@ pkg-persist: 0 files copied into /, 2 kept from the image        (restore again)
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-179-g950dd30+x4590` (test 126, first try, not finished)
+
+Real Pi 3B+ over netboot. Test 126 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**No result. My test runner cut the model download short, so the test must run
+again.** The runner gave the `rinfer --download` command 900 s. In that time
+223,081,729 of 341,455,552 bytes arrived (about 0.25 MB/s), and then the devsh
+connection closed. Every model load that followed stopped with `Error: tensor
+needs 4096 bytes at offset 224546496, only 0 remaining in file`, and the
+assistant fell back to "tools only". These are not real readings.
+
+- Standard checks pass (version, manifest present, ps 47, ps-tty, sdcard,
+  0 of 300 starts failed). The boot log has
+  `thread 'main' (1) panicked at drivers/pcid/src/cfg_access/fallback.rs:88:9`
+  (this image is based on dev-179, before pcid was left out on the Pi).
+- `free` before: 737,936 KB free. The lowest free reading during the failed
+  loads was 443,780 KB.
+- At the end, `temperature` 60148 (60.1 °C) and `throttled` `0x00080000`
+  (soft temperature limit reached since boot, not active now).
+- `prompt.kv` and the partial model file were removed; `/scheme/data` is as before.
+
+Next try: the download needs about 25 minutes at this speed, and the runner now
+allows 50. Stable image restored afterwards.
