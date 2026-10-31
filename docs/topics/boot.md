@@ -76,15 +76,16 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. QEMU passes;
-  Pi test #124 queued.
+  also says when the clock makes a certificate look invalid. Pi tests
+  #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
+  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
 
 ## Next
 
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
-- Packages (#44): Pi test #124 of `pkg-persist`, then a PR. The nightly
+- Packages (#44): the nightly
   run should publish our repository after a passing build; that needs
   `scripts/publish-pkg-repo.sh` on main (PR #75) and a step in the nightly
   script by its owner. Whether Redox's prebuilt programs run is #40
