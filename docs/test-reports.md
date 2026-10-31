@@ -3927,3 +3927,34 @@ baud sweep answered for core MHz: 400
 Next: `bt up` (and `bt info` before it) should keep the clock written to
 `/scheme/btuart/clock`, or the core clock should be fixed. Step 4 still waits
 for the user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-464-g3835c4d+xc526` (pkg-persist recheck, blocking oneshot)
+
+Real Pi 3B+ over netboot with the usual card. Test 127 ([#44](https://github.com/redox-rpi/redox-rpi/issues/44)), Pi test agent.
+
+**Pass. The boot copy now takes 3940 ms and comes before timesync's lines.**
+Image `~/redox-rpi-boot/keep/persistD-harddrive.img` (no manifest next to it;
+the one in the image passes), with the new stable's bootloader.
+
+- First boot: `pkg-persist: /scheme/data/pkg does not exist, nothing to copy`.
+- `pkg-persist install nano`: nano, ncursesw and terminfo (1.19 MB download),
+  `Commit complete.`, `pkg-persist: 214 files copied into /, 2 kept from the image (3736 ms)`.
+- `reboot` (one `kreset`), back after 26 s. Serial log order:
+
+```
+redox-rpi v0.3.0-dev-464-g3835c4d+xc526 (netboot, 2026-10-31T02:18:59Z)
+experiments: pkg-hold pkg-persist pkg-repo sigreturn-svc timesync
+redox login: pkg-persist: 214 files copied into /, 2 kept from the image (3940 ms)
+timesync: clock set to 2026-10-31 03:50:23 UTC from the saved time
+timesync: clock set to 2026-10-31 03:52:02 UTC from pool.ntp.org
+```
+
+  **N = 3940 ms.** The line comes right after `redox login:` (the row expects
+  that) and now **before** both timesync lines. In #124 it came after
+  timesync's NTP line.
+- `nano --version` → `GNU nano, version 9.2`.
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest present,
+  ps 47, ps-tty, sdcard, 0 of 300 starts failed).
+- Clean up: `rm -r /scheme/data/pkg`; `/scheme/data` is as before.
+
+Stable image restored afterwards.
