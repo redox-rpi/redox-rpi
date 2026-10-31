@@ -4733,3 +4733,36 @@ failed). Host side: OpenBSD `nc -l <port> | wc -c`.
   No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-562-g9a33382+x4af4` (rpi-fb-pr, DMA test with CPU fallback)
+
+Real Pi 3B+ over netboot. Test 145 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**Boot hung during the DMA test, at the 64-row blit.** The 3 s fallback did not
+catch it; the machine stopped. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-562-g9a33382+x4af4.img` (manifest
+next to it), stable bootloader, staged and reset over devsh at about 14:42 UTC.
+
+Every `rpi-fbd` line, in order (serial console):
+
+```
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: DMA test buffer had 34 of 64 words not zero
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+rpi-fbd: DMA test: buffer of 1824x984
+rpi-fbd: DMA test: 1 rows into the framebuffer
+rpi-fbd: DMA test: 64 rows into the framebuffer
+```
+
+- **Last line: `DMA test: 64 rows into the framebuffer`**, then nothing; the
+  serial log stopped at 14:43:38. By the row's key: the 64-row DMA blit stopped
+  the machine (the full-screen buffer and the 1-row blit worked). No
+  `984 rows`, no `whole screen in`, no `blits with the CPU` line, no
+  `fbcond: Performing handoff`, no login, no panic line.
+- The last init line before it was `init: switchroot to /scheme/initfs
+  /scheme/initfs/etc` (#138 got as far as `switchroot to /usr /etc`).
+- The Pi did not answer ping (ARP incomplete) 10 minutes later.
+- Stable staged, then the Pi was power-cycled with the Shelly plug at 14:53
+  UTC; stable booted to login and devsh answered.
+- As the coordinator asked, no second graphics image today.
