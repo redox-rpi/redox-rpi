@@ -13,7 +13,46 @@
 
 ## In progress
 
-- Nothing.
+- Bluetooth, [#54](https://github.com/redox-rpi/redox-rpi/issues/54)
+  (outlook for v0.9.0), see below.
+- `cputop` ([#58](https://github.com/redox-rpi/redox-rpi/issues/58), branch
+  `cputop`): CPU time per core and per thread over an interval, to find
+  what keeps a core busy. It is for the ondemand governor (#23), which saw
+  no idle Pi in test #25; Pi test #82 uses it.
+
+## Bluetooth
+
+The Bluetooth half of the Pi 3B+ Wi-Fi/Bluetooth chip (CYW43455,
+Bluetooth part BCM4345C0) sits on a UART at GPIO 30–33. The serial console
+keeps the PL011 (`dtoverlay=disable-bt`), so Bluetooth gets the mini UART
+(ALT5, RTS/CTS), as with Linux's `miniuart-bt` overlay. BT_ON is pin 0 of
+the firmware's GPIO expander.
+
+Branch `bluetooth`, experiment `bluetooth` (needs `gpio`):
+
+- `rpi-firmwared` `bt_power` (BT_ON), `wifi_power` (WL_ON), `core_clock`.
+- Driver `bcm2835-btuartd`: `/scheme/btuart` (`data`, `baud`, `clock`).
+- Tool `bt`:
+  - `up`: power cycle, firmware `BCM4345C0.hcd` upload, reset.
+  - `info`
+  - `scan` (LE)
+  - `inquiry` (classic)
+  - `cmd`
+- Firmware downloaded at build time (package `bt-firmware`).
+
+QEMU is tested against a fake HCI controller on the mini UART. On the Pi
+(row 109), the chip needs WL_ON on, and since step 8 it answers HCI Reset
+when the baud divider assumes a 400 MHz core clock, while the firmware
+reports 250 MHz. So `rpi-firmwared` gets `core_clock` (the measured rate),
+and a clock written to `/scheme/btuart/clock` by hand stays through
+`bt up`. Step 9 confirmed the measured 400 MHz and also showed the chip
+wants the flow control lines asserted low (`auto-low`, now the start
+setting) and that the receive thread lost bytes between sleeps. Step 10
+tests those fixes and the firmware upload.
+
+Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
+higher baud rates. The mini UART's baud rate follows the core clock, so
+throttling garbles it.
 
 ## Later
 
