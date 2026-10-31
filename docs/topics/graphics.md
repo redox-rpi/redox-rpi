@@ -319,6 +319,12 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
+- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
+  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
+  main, the base patches renumbered to `0060`–`0067` (main now uses
+  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
+  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
+  2–3 and #130 pass.
 - **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
   judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
   `drawbench` and the vsync line, without a screen. If it passes, a draft
