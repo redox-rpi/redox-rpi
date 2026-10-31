@@ -3463,3 +3463,56 @@ Afterwards the saved stable files went back into `/srv/tftp/redox`.
 
 Raw readings: homenodellm `~/pitest-tools/t119/` (`r-HHMM.txt`, `ping.txt`).
 Issue 92 didn't show up in this run. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-455-g9486f60+x7d9f` (test 109 step 6, BT_ON the Linux way)
+
+Real Pi 3B+ over netboot. Test 109 step 6 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**Still no answer from the Bluetooth chip.** `bt_power` now switches BT_ON as an
+output, and the switch works: `state 0` before the power cycle, `state 1` after,
+`direction out` both times. Even so, HCI Reset gets no reply with any flow
+setting, and CTS stays at 1 as in steps 1–3 and 5. So a BT_ON kept as an input
+wasn't the cause. Image `~/redox-rpi-cpu/keep/v0.3.0-dev-455-g9486f60+x7d9f/harddrive.img`
+(no manifest). Stable's bootloader was used. Boot log:
+`bcm2835-btuartd: mini UART at 0x3f215000, 115313 baud (core 250 MHz)`.
+
+- (a) `cat /scheme/rpi-firmware/bt_power_config`, read first after boot:
+  `direction out, polarity 0, term_en 0, pull_up 0, state 0`. The firmware
+  already had BT_ON as an output, not `direction in`.
+- (b) `bt diag`:
+
+```
+gpio 30: mode alt5, level 1, pull up
+gpio 31: mode alt5, level 1, pull none
+gpio 32: mode alt5, level 1, pull none
+gpio 33: mode alt5, level 1, pull up
+gpio 43: mode alt0, level 1, pull unknown
+gpio 43 sampled 200 times: 97 high, 103 low
+lpo: enabled 1, busy 1, source 1, divi 585, divf 3840, rate_hz 32768, ctl 0x00000291, div 0x00249f00
+bt_power: 0
+bt_power_config before: direction out, polarity 0, term_en 0, pull_up 0, state 0
+power: cycled
+bt_power_config after: direction out, polarity 0, term_en 0, pull_up 0, state 1
+uart: core clock 250000000 Hz, 115313 baud
+flow auto:
+before: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+after: cts_line 1, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x00
+received: nothing
+flow auto-low:
+before: cts_line 1, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x00
+after: cts_line 1, rts 0, tx_fifo 4, rx_fifo 0, cntl 0xff, msr 0x00
+received: nothing
+flow none:
+before: cts_line 1, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x00
+after: cts_line 1, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x00
+received: nothing
+no answer with any flow setting
+```
+
+- (c) Not run: no flow setting answered.
+- `cat /scheme/btuart/status` afterwards: `cts_line 1, rts_status 1, tx_fifo 0,
+  rx_fifo 0, tx_done 1, lsr 0x60, msr 0x00, cntl 0x3f, stat 0x000003ce`.
+- The 32 kHz clock runs as in step 5 (97 high / 103 low, `rate_hz 32768`).
+
+Step 4 (`miniuart-bt` in the shared config.txt) still waits for the user's OK.
+Stable image restored afterwards.
