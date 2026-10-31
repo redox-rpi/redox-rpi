@@ -24,7 +24,19 @@
   `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
   which these programs use. Pi test #45 passed (2026-10-29): nine
   programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
-  PR #61.
+  PR #61. Installing them with `pkg` instead (branch `t40-prebuilt`,
+  2026-10-31): upstream's packages use our `libc.so` through
+  `/lib/ld.so.1`, so the relibc version gap (ad0c479 against our c303135)
+  does not matter for them. 71 of 82 packages resolve every library and
+  symbol against our image; only `libmpfr` lacks `__bid_*` from
+  `libgcc_s`. In QEMU 31 programs pass, including git, vim, python312 and
+  rustpython ([allowlist](https://github.com/redox-rpi/redox-rpi/blob/t40-prebuilt/patches/experiments/prebuilt-programs/allowlist.txt));
+  `xz` ships no `xz` program and `rsync -a` hangs. The 256 MiB image is
+  the limit: big ones must be installed alone. Pi test #163 passed
+  (2026-10-31): the 26 small programs, git, python312 and sqlite3 install
+  and run on the Pi; the 26 took 3 minutes. 11.7 to 16.1 MB stay free on
+  `/`, so free space on the root filesystem is the limit for any package
+  library idea: bigger sets need a larger image or the SD data partition.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
@@ -71,7 +83,18 @@
     (same build) and the Pi suite runs of tests 129 and 133: none of the
     three failed. Not reproduced; they stay on the flaky list.
   - The five socket tests pass on the Pi (#68); QEMU has no network.
-  - `redox_ring_ramfs`: not looked at yet.
+  - `redox_ring_ramfs`: `redox_ring_register_files: Bad file number`.
+    redox-rt's `sys_call*` did not add `Call::extra_flags()`, so a call
+    with two descriptors reached the kernel without `MULTIPLE_FDS2` and
+    the kernel read the list address as one fd. Upstream relibc
+    `112eb43c` fixes it; backport as experiment `rt-call-flags` (branch
+    `t14-ring-call`), QEMU: `redox_ring_ramfs` passes, nothing else
+    changes. Pi row 166. Same bug in the DRM `PRIME_FD_TO_HANDLE` ioctl and in
+    libredox calls with two fds.
+  - `sys_socket/unixrecv`, `unixrecvfrom`, `unixnonblock` fail in every
+    build since 2026-10-31 midday (`connect` gives `EINVAL`): redoxfs was
+    not pinned and upstream `5ba45a6` changed Unix socket connect.
+    [#145](https://github.com/redox-rpi/redox-rpi/issues/145), redoxfs is pinned since PR #146 (Pi test 160 passed).
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
     (`tls-variant1`), since stdio locking across threads is broken without
     it; (2) the signal tests under load (job control in
