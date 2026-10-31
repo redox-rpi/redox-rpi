@@ -19,6 +19,12 @@
   `t4-thread-signals`, patch `0002` fixes two more differences; Pi tests
   #37 and #68 pass. Draft PR #64 makes both patches default relibc
   `0008` and `0009` (stacked on #62).
+- [#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs (bash, vim, …) from the Redox package
+  repository: experiment `prebuilt-programs`, with experiment
+  `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
+  which these programs use. Pi test #45 passed (2026-10-29): nine
+  programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
+  PR #61.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
