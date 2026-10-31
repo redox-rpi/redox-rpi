@@ -4576,3 +4576,40 @@ minute, as in step 1), so the failed sends themselves cost nothing.
 
 With this, step 2 is recorded as not measurable, as the usb session asked; the
 rest is in the first 135 report. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-561-g772e33b+x4af4` (PR #113 image with `0068`, DMA test blit)
+
+Real Pi 3B+ over netboot, NanoKVM on HDMI, serial only. Test 138 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**DMA now works (`2D mode moves YLENGTH+1 rows`, no `not zero` line), but the
+first boot hung right after `init: switchroot to /usr /etc`: no login, no
+network, no devsh, from 09:25 UTC on.** Only a power cycle can get the Pi back,
+and that waits for the user's OK. So there is no second boot, `free` or
+standard check yet. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-561-g772e33b+x4af4.img`, manifest
+matches, with the new stable's bootloader.
+
+- Boot 1, serial log:
+
+```
+redox-rpi: network boot from 192.168.178.120
+redox-rpi: image loaded over HTTP
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+Finished graphical debug
+fbbootlogd: handoff requested
+init: switchroot to /usr /etc
+```
+
+  Nothing came after that, not even the `fbcond: Performing handoff` that
+  follows in a normal boot. There's no `DMA test buffer had N of 64 words not
+  zero` line, no `blits with the CPU` line, no `dumb buffer … in normal memory`
+  line, and no panic or `out of memory` line.
+- The Pi is unreachable (`No route to host`). The Shelly plug reads `output: true`,
+  4.1 W. The stable image is staged again, so the power cycle boots stable.
+
+The hang comes after rpi-fbd started DMA blits, around the handoff to fbcond.
+That fits the DMA path or the large DMA buffers (`0049`) stalling the boot, but
+the log doesn't prove it. The row stays queued for the second boot and the checks.
