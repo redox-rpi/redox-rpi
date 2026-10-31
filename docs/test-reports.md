@@ -4403,3 +4403,28 @@ manifests match, with the new stable's bootloader.
 
 The row stays queued for the TCP step, which needs a sender that works on the Pi.
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-568-g81ac5d9` (kernel `0057`, scheme-root open leaves no page)
+
+Real Pi 3B+ over netboot. Test 136 ([#88](https://github.com/redox-rpi/redox-rpi/issues/88)), Pi test agent.
+
+**Pass: `SHARED` of netstack and randd is the same before and after 200 opens
+of each scheme root, and the standard checks pass.** Image
+`~/redox-rpi-zrtl/keep/tail-v0.3.0-dev-568-g81ac5d9.img` (no manifest next to it;
+the one in the image passes), with the new stable's bootloader. No panic.
+
+- `scripts/pi-test.py` standard checks: **pass** (manifest present, ps 41, ps-tty,
+  sdcard, 0 of 300 starts failed).
+- One devsh command (65 s), the four `grep` lines:
+
+```
+22    0     0     UB    #2    F          00:00:00.20 00:00:00.24 3.22 MB 16.0 KB /usr/bin/netstack
+3     0     0     UB    #3    F          00:00:00.00 00:00:00.01 1.55 MB 0 B     /scheme/initfs/bin/randd
+22    0     0     UB    #0    F          00:00:00.30 00:00:00.36 3.22 MB 16.0 KB /usr/bin/netstack
+3     0     0     UB    #2    F          00:00:00.01 00:00:00.01 1.55 MB 0 B     /scheme/initfs/bin/randd
+```
+
+  netstack `SHARED` 16.0 KB → 16.0 KB, randd 0 B → 0 B. Without the fix, each
+  grows about 800 KB. PRIVATE didn't change either.
+
+Stable image restored afterwards.
