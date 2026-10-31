@@ -4989,3 +4989,40 @@ rpi-firmwared: display on (firmware answered [0])
 - No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-553-gf4b1432+x12cb` (boot-time-2, 192 MiB network-boot image)
+
+Real Pi 3B+ over netboot. Test 142 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), Pi test agent.
+
+**Pass: three of three B boots reach `redox login:` with network, standard checks
+pass, nano installs.** Image loaded to kernel start is only **0.25 s shorter**
+(8.18 s → 7.93 s). The total memory is **64 MiB larger** (743612 → 809060 KiB).
+A: stable as staged. B: `cp ~/redox-rpi-boot/keep/bt2A-redox/* /srv/tftp/redox/`.
+Times are seconds after `kreset`, from `boot-timeline.py`
+(`origin/boot-time`).
+
+| boot | image loaded over HTTP | mode menu | kernel start (first `kernel::` line) | `redox login:` | loaded → kernel |
+|---|---|---|---|---|---|
+| A stable (256 MiB) | 13.48 | 15.94 | 21.66 | 31.58 | 8.18 |
+| B1 (192 MiB) | 13.49 | 15.80 | 21.41 | 31.35 | 7.92 |
+| B2 | 13.44 | 15.74 | 21.35 | 31.33 | 7.91 |
+| B3 | 13.48 | 15.83 | 21.40 | 31.34 | 7.92 |
+
+- The download hardly changes: gzip 43112933 bytes (A) and 43037135 bytes (B),
+  both 11.3 MiB/s, about 3.64 s. The unused space compresses to almost nothing.
+  The saving left is U-Boot unpacking less and the bootloader copying
+  `live: 158/158 MiB` instead of `222/222 MiB`. Both copies took 0.2 to 0.3 s on
+  the console. Login comes about 0.25 s sooner.
+- Most of the time between image loaded and the kernel is the bootloader's
+  5 s mode menu (`Continuing with the selected mode in 5 seconds`).
+- `df -h /`: A `222.0M` size, 86.5M used, 135.5M free; B `158.0M`, 86.6M used,
+  71.4M free (as expected), after nano 91.7M used, 66.3M free.
+- `free -m` (prints KiB here): A total 743612, free 596720; B total 809060, free
+  671616 (+65448 KiB total, +74896 KiB free).
+- `pkg install --yes nano` took 27.4 s and committed 214 files; `nano --version`
+  prints `GNU nano, version 9.2`. One `TODO: setsockopt(7, 6, 1, …) - unknown
+  option` info line from pkg.
+- Network on every B boot: `dwc2d: LAN78xx link up after 1710 ms`. Standard
+  checks with `--manifest` pass (0 of 300 starts failed). No panic.
+
+Stable image restored afterwards.
