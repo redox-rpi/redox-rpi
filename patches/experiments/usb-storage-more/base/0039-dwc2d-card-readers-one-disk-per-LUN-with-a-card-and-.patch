@@ -1,7 +1,7 @@
-From 816302ec8422172833d03d81b292570e3b752b1c Mon Sep 17 00:00:00 2001
+From 3c101bc28e6ce6d1f198a65e8841df2af9f71a14 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:09:09 +0100
-Subject: [PATCH 39/39] dwc2d: card readers (one disk per LUN with a card) and
+Subject: [PATCH 2/2] dwc2d: card readers (one disk per LUN with a card) and
  several sticks at once
 
 A card reader has one logical unit per slot. GET MAX LUN gives their
@@ -22,7 +22,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 144 insertions(+), 69 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 930aca9..689851a 100644
+index 930aca98..689851a9 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -33,7 +33,7 @@ use event::{user_data, EventQueue};
@@ -139,7 +139,7 @@ index 930aca9..689851a 100644
                      }
                  }
 diff --git a/drivers/usb/dwc2d/src/storage.rs b/drivers/usb/dwc2d/src/storage.rs
-index 260a380..70f59cd 100644
+index 260a380d..70f59cdb 100644
 --- a/drivers/usb/dwc2d/src/storage.rs
 +++ b/drivers/usb/dwc2d/src/storage.rs
 @@ -3,8 +3,11 @@
@@ -440,5 +440,5 @@ index 260a380..70f59cd 100644
  
      async fn read(&mut self, block: u64, buffer: &mut [u8]) -> SysResult<usize> {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

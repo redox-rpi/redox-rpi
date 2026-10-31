@@ -270,8 +270,9 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
     desktop, of 932 MiB (QEMU, `free`). Fits the Pi's 1 GB easily.
   - **Frame rate:** QEMU's DMA model is slow (30 to 57 frames per second
     for 512x512 in `drawbench`), so the real number comes from the Pi
-    test #54. The login to desktop takes 1 to 3 minutes in QEMU (its
-    emulated CPU), to be timed on the Pi.
+    test #54. The login to desktop takes under 90 s in QEMU (earlier runs
+    measured minutes, but the test helper caused that; see Mouse), to be
+    timed on the Pi.
   - **Keyboard and terminal** (`v0.3.0-dev-195-g671b427+xdf3e`):
     `dwc2d`'s existing keyboard events reach Orbital and the terminal
     window without changes (`echo Hi` typed in `orbterm` ran; Super-F12
@@ -291,12 +292,24 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
     USB session's `usb-mouse`, #48; image
     `v0.3.0-dev-222-g67cef7a+xd99d`): in QEMU the pointer moves, hovering
     shows the launcher's tooltips and the buttons arrive, with no change
-    in Orbital or `rpi-fbd`. A click on the terminal icon opened no
-    window within 90 s, because forks were very slow in that run (`getty`
-    and `bcm2835-sdhci` each used 11 to 12 minutes of CPU). Some moves
-    arrived late in these runs; that was the test helper, which did not
-    read QEMU's serial output while sending them, so `dwc2d` blocked on
-    its event log. Fixed in the helper, the moves arrive as sent.
+    in Orbital or `rpi-fbd`. **The whole desktop works by keyboard and
+    mouse** (2026-10-30): Enter at the login window, the desktop within 90
+    s, a click on the launcher's terminal icon opens `orbterm` within 90
+    s, and `echo hi` typed there prints `hi`. Earlier runs showed late
+    moves, logins of minutes, a click that opened nothing and `getty` and
+    `bcm2835-sdhci` at 12 minutes of CPU; all of that came from the test
+    helper, which did not read QEMU's serial output while sending input,
+    so programs writing to the console blocked.
+  - **Memory for the desktop with `gpu_mem=16`:** in QEMU (`free`, 932 MiB
+    for Redox) 194 MiB used at the login window and 270 MiB with the
+    desktop and a terminal: `background` 82 MB (the decoded picture),
+    `orbital` 25 MB, `launcher` 9 MB, `orbterm` 6 MB. On the Pi,
+    `gpu_mem=16` leaves Redox about 1008 MiB, more than QEMU's 932, so
+    the desktop uses about a quarter of it. The framebuffer itself is in
+    the GPU's 16 MiB (1280x720 double buffered 7 MiB, 1920x1080 single 8
+    MiB); the clients' buffers and shadow copies are in Redox's memory
+    and are part of the 270 MiB. The biggest single saving would be a
+    smaller background picture.
   - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
     the display size (probably 1920x1080, then single buffered with
     `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
@@ -306,6 +319,36 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
+- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
+  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
+  main, the base patches renumbered to `0060`–`0067` (main now uses
+  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
+  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
+  2–3 and #130 pass.
+- **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
+  judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
+  `drawbench` and the vsync line, without a screen. If it passes, a draft
+  PR from `graphics-vsync` brings experiment `rpi-fb` (patches `0024`–
+  `0029`, `0036`) and experiment `orbital` (a config file) to main, still
+  as experiments, not default; the report goes into the PR. Making
+  `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
+  #54 with #108), which checks what the screen shows.
+  Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
+  `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
+  free. The cause is the kernel: its page allocator hands out at most 4
+  MiB of physically contiguous memory (11 orders), however much is free,
+  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
+  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
+  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. On the Pi (#130)
+  the DMA test blit at start failed (`test blit of 2 rows moved 4`, while
+  #116 got 3 with the same code), so the DMA path was not reached; the
+  allocator change itself ran without trouble. Likely cause: "zeroed" DMA
+  memory that is not zero, because the kernel clears it through a cached
+  mapping and the driver reads it uncached. Patch `0068` clears the test
+  buffer itself and logs what was there; Pi test #138
+  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
+  `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
+  file in `/srv/tftp/`.
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
 - Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
   boot (is `monitor connected` logged?), and double buffering at 1280x720.

@@ -1,0 +1,61 @@
+From 70695d234e02984d15d3288e706567ad0a11c09f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 06:09:17 +0100
+Subject: [PATCH] netstack: list netcfg directories (getdents)
+
+---
+ netstack/src/scheme/netcfg/mod.rs | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index f344e28..362b110 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -14,6 +14,7 @@ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::{Blocking, HandleMap};
+ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
+ use syscall::data::Stat;
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+ use syscall::flag::{MODE_DIR, MODE_FILE};
+ use syscall::schemev2::NewFdFlags;
+ use syscall::{
+@@ -532,6 +533,36 @@ impl SchemeSync for NetCfgSchemeInner {
+         Ok(i)
+     }
+ 
++    /// A directory's entries are the names its node reads as, one per line
++    /// (taken when it was opened), so `ls` works on any directory here.
++    fn getdents<'buf>(
++        &mut self,
++        fd: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> SyscallResult<DirentBuf<&'buf mut [u8]>> {
++        let file = match self.handles.get(fd)? {
++            Handle::File(file) => file,
++            Handle::SchemeRoot => return Err(SyscallError::new(syscall::EBADF)),
++        };
++        if !file.is_dir {
++            return Err(SyscallError::new(syscall::ENOTDIR));
++        }
++        let Ok(skip) = usize::try_from(opaque_offset) else {
++            return Ok(buf);
++        };
++        let names = str::from_utf8(&file.read_buf).unwrap_or("");
++        for (i, name) in names.lines().filter(|n| !n.is_empty()).enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: i as u64,
++                name,
++                kind: DirentKind::Unspecified,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
+     fn fstat(&mut self, fd: usize, stat: &mut Stat, _ctx: &CallerCtx) -> SyscallResult<()> {
+         let handle = self.handles.get_mut(fd)?;
+ 
+-- 
+2.54.0 (Apple Git-157)
+
