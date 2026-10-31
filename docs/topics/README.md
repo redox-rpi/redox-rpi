@@ -18,6 +18,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Pi Zero 2 W | [zero2w.md](zero2w.md) | [topic:zero2w](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Azero2w) |
 | CI and tests | [ci.md](ci.md) | [topic:ci](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aci) |
 | Smart home, MQTT | [smarthome.md](smarthome.md) | [topic:smarthome](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Asmarthome) |
+| GPIO, I2C and other Pi peripherals | [gpio.md](gpio.md) | [topic:gpio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agpio) |
 | Graphics (effort analysis) | [graphics.md](graphics.md) | [topic:graphics](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agraphics) |
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
 
