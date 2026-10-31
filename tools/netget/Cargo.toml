@@ -1,0 +1,6 @@
+[package]
+name = "netget"
+description = "Download a file over plain HTTP and print the speed as it goes (network tests)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
