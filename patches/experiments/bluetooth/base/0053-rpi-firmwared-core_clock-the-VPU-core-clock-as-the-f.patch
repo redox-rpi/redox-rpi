@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 04:52:14 +0100
+Subject: [PATCH 53/54] rpi-firmwared: core_clock, the VPU core clock as the
+ firmware measures it
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/rpi-firmwared/src/main.rs | 15 +++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs |  3 +++
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 527a3f0..07da74c 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -12,6 +12,10 @@
+ //!   (undervoltage, frequency capping, temperature limit), as a hex number
+ //! - `/scheme/rpi-firmware/clocks`: one line per clock: name, current and
+ //!   maximum rate in Hz
++//! - `/scheme/rpi-firmware/core_clock`: the VPU core clock in Hz as the
++//!   firmware measures it. It can differ from the `core` line in `clocks`:
++//!   on the 3B+ the mini UART ran at 400 MHz while `clocks` said 250 MHz
++//!   (Pi test #109 step 8).
+ //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+ //!   in Hz, `max` or `min` sets it
+@@ -57,8 +61,8 @@ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+ const FILES: &[&str] = &[
+-    "arm_clock", "board", "bt_power", "bt_power_config", "clocks", "power_led", "temperature", "throttled", "wifi_power",
+-    "wifi_power_config",
++    "arm_clock", "board", "bt_power", "bt_power_config", "clocks", "core_clock", "power_led", "temperature", "throttled",
++    "wifi_power", "wifi_power_config",
+ ];
+ /// Files that can be written: settings.
+ const WRITABLE: &[&str] = &["arm_clock", "bt_power", "power_led", "wifi_power"];
+@@ -87,6 +91,13 @@ impl FirmwareScheme {
+                 let value = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM).map_err(log)?;
+                 writeln!(text, "{value}").unwrap();
+             }
++            "core_clock" => {
++                let value = mbox.value_of(TAG_GET_CLOCK_RATE_MEASURED, CLOCK_CORE).map_err(log)?;
++                if value == 0 {
++                    return Err(Error::new(ENOENT));
++                }
++                writeln!(text, "{value}").unwrap();
++            }
+             "power_led" => {
+                 let gpio = power_led_gpio(mbox).ok_or(Error::new(ENOENT))?;
+                 // The firmware answers 0 in the first word on success, then
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 479c054..69ea30f 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -42,6 +42,7 @@ pub const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
+ pub const TAG_GET_TEMPERATURE: u32 = 0x0003_0006;
+ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
+ pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
++pub const TAG_GET_CLOCK_RATE_MEASURED: u32 = 0x0003_0047;
+ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+@@ -51,6 +52,8 @@ pub const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
++/// Clock id of the VPU core clock, which the mini UART and SD host run off.
++pub const CLOCK_CORE: u32 = 4;
+ 
+ /// Clocks the firmware knows, by id.
+ pub const CLOCKS: &[(u32, &str)] = &[

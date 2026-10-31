@@ -9,8 +9,8 @@
 //! bt scan [seconds]     LE scan (default 5 s)
 //! bt inquiry [seconds]  classic inquiry (default 5 s)
 //! bt cmd 1001 [bytes]   send an HCI command (hex), print what comes back
-//! bt diag               pins, UART lines, and HCI Reset with each flow
-//!                       control setting of the driver
+//! bt diag               pins, UART lines, core clock, and HCI Reset with
+//!                       each flow control setting of the driver
 //! ```
 //!
 //! The chip starts in ROM without the firmware (build 0); `bt up` loads
@@ -27,6 +27,7 @@ const DATA: &str = "/scheme/btuart/data";
 const CLOCK: &str = "/scheme/btuart/clock";
 const POWER: &str = "/scheme/rpi-firmware/bt_power";
 const CLOCKS: &str = "/scheme/rpi-firmware/clocks";
+const CORE_CLOCK: &str = "/scheme/rpi-firmware/core_clock";
 const FLOW: &str = "/scheme/btuart/flow";
 const STATUS: &str = "/scheme/btuart/status";
 const LPO: &str = "/scheme/btuart/lpo";
@@ -236,17 +237,28 @@ fn power_cycle() {
     }
 }
 
-/// Tells the driver the current core clock, which the baud rate depends on.
+/// Tells the driver the core clock, which the baud rate depends on: the one
+/// the firmware measures, else the one it reports. Pi test #109 step 8: the
+/// chip answered at the divider for 400 MHz while the firmware reported
+/// 250 MHz. A rate written to `/scheme/btuart/clock` by hand stays; the
+/// driver ignores `firmware` rates then.
 fn update_clock() {
-    let core = fs::read_to_string(CLOCKS)
-        .ok()
-        .and_then(|text| text.lines().find_map(|l| l.strip_prefix("core ")?.split_whitespace().next().map(str::to_owned)));
-    if let Some(core) = core {
-        if fs::write(CLOCK, &core).is_ok() {
-            let baud = fs::read_to_string("/scheme/btuart/baud").unwrap_or_default();
-            println!("uart: core clock {core} Hz, {} baud", baud.trim());
-        }
+    let (core, from) = match measured_core() {
+        Some(hz) => (Some(hz), "measures"),
+        None => (reported_core(), "reports"),
+    };
+    if let Some(core) = &core {
+        fs::write(CLOCK, format!("firmware {core}")).ok();
     }
+    let clock = fs::read_to_string(CLOCK).unwrap_or_default();
+    let mut lines = clock.lines();
+    let (hz, by) = (lines.next().unwrap_or("?"), lines.next().unwrap_or("?"));
+    let baud = fs::read_to_string("/scheme/btuart/baud").unwrap_or_default();
+    println!(
+        "uart: core clock {hz} Hz set by {by} (firmware {from} {}), {} baud",
+        core.as_deref().unwrap_or("?"),
+        baud.trim()
+    );
 }
 
 /// Loads the firmware: Download Minidriver, then the file's records (each
@@ -478,15 +490,69 @@ fn print_status(when: &str) {
     );
 }
 
-/// For a chip that does not answer: the pin setup and line states, then an
-/// HCI Reset with each flow control setting, printing every byte that comes
-/// back (bytes that are no HCI event point at a wrong baud rate).
-/// The core clock the firmware reports now, in Hz.
-fn firmware_core() -> String {
+/// The core clock the firmware reports now, in Hz (`clocks`).
+fn reported_core() -> Option<String> {
     fs::read_to_string(CLOCKS)
         .ok()
         .and_then(|text| text.lines().find_map(|l| l.strip_prefix("core ")?.split_whitespace().next().map(str::to_owned)))
-        .unwrap_or_else(|| "?".to_string())
+}
+
+/// The core clock the firmware measures now, in Hz (`core_clock`).
+fn measured_core() -> Option<String> {
+    fs::read_to_string(CORE_CLOCK).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+}
+
+fn firmware_core() -> String {
+    format!(
+        "reports {}, measures {}",
+        reported_core().as_deref().unwrap_or("?"),
+        measured_core().as_deref().unwrap_or("?")
+    )
+}
+
+/// The core clock idle, while this program spins for half a second, and
+/// after: whether it moves with the load.
+fn clock_probe() {
+    println!("core clock idle: firmware {}", firmware_core());
+    let spin = std::thread::spawn(|| {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(500) {
+            std::hint::spin_loop();
+        }
+    });
+    sleep(Duration::from_millis(250));
+    println!("core clock under load: firmware {}", firmware_core());
+    spin.join().ok();
+    sleep(Duration::from_millis(250));
+    println!("core clock after: firmware {}", firmware_core());
+}
+
+/// Drops what is waiting, sends HCI Reset and returns what comes back
+/// within `window`.
+fn reset_bytes(hci: &mut Hci, window: Duration) -> Vec<u8> {
+    let mut buf = [0; 256];
+    let quiet = Instant::now();
+    while quiet.elapsed() < Duration::from_millis(50) {
+        hci.port.read(&mut buf).ok();
+    }
+    hci.send(RESET, &[]).ok();
+    let deadline = Instant::now() + window;
+    let mut got = Vec::new();
+    while Instant::now() < deadline {
+        if let Ok(n) = hci.port.read(&mut buf) {
+            got.extend_from_slice(&buf[..n]);
+        }
+    }
+    got
+}
+
+fn show(got: &[u8]) -> String {
+    let ok = got.starts_with(&[PACKET_EVENT, EVENT_COMMAND_COMPLETE]);
+    format!(
+        "{}{}",
+        if got.is_empty() { "nothing".to_string() } else { hex(&got[..got.len().min(32)]) },
+        if ok { "  <- Command Complete" } else { "" }
+    )
 }
 
 /// The 3B+ core clock moves between 250 and 400 MHz unless `config.txt`
@@ -506,37 +572,23 @@ fn baud_sweep() -> io::Result<Vec<u32>> {
     for mhz in [250, 275, 300, 325, 350, 375, 400, 450, 500] {
         fs::write(CLOCK, (mhz * 1_000_000u32).to_string()).map_err(|err| error(format!("{CLOCK}: {err}")))?;
         let mut hci = Hci::open()?;
-        // Drop what a power cycle or an earlier try left behind.
-        let mut buf = [0; 256];
-        let quiet = Instant::now();
-        while quiet.elapsed() < Duration::from_millis(50) {
-            hci.port.read(&mut buf).ok();
-        }
-        let core_before = firmware_core();
-        hci.send(RESET, &[]).ok();
-        let deadline = Instant::now() + Duration::from_millis(300);
-        let mut got = Vec::new();
-        while Instant::now() < deadline {
-            if let Ok(n) = hci.port.read(&mut buf) {
-                got.extend_from_slice(&buf[..n]);
-            }
-        }
-        let ok = got.starts_with(&[PACKET_EVENT, EVENT_COMMAND_COMPLETE]);
-        println!(
-            "  assumed core {mhz} MHz (firmware says {core_before} before, {} after): {}{}",
-            firmware_core(),
-            if got.is_empty() { "nothing".to_string() } else { hex(&got[..got.len().min(32)]) },
-            if ok { "  <- Command Complete" } else { "" }
-        );
-        if ok {
+        let got = reset_bytes(&mut hci, Duration::from_millis(300));
+        println!("  assumed core {mhz} MHz (firmware {}): {}", firmware_core(), show(&got));
+        if got.starts_with(&[PACKET_EVENT, EVENT_COMMAND_COMPLETE]) {
             answered.push(mhz);
         }
     }
+    // Back to the firmware's rate.
+    fs::write(CLOCK, "firmware").ok();
     update_clock();
     fs::write(FLOW, "auto").ok();
     Ok(answered)
 }
 
+/// For a chip that does not answer: the pin setup and line states, the core
+/// clock, then an HCI Reset with each flow control setting and assumed core
+/// clock, printing every byte that comes back (bytes that are no HCI event
+/// point at a wrong baud rate).
 fn diag() -> io::Result<()> {
     for pin in DIAG_PINS {
         let mode = fs::read_to_string(format!("/scheme/gpio/{pin}/mode")).unwrap_or_else(|e| format!("({e})"));
@@ -572,6 +624,7 @@ fn diag() -> io::Result<()> {
     }
     power_cycle();
     print_power_config("after");
+    clock_probe();
     update_clock();
     let mut answered = Vec::new();
     for flow in ["auto", "auto-low", "none"] {
@@ -610,6 +663,16 @@ fn diag() -> io::Result<()> {
         Some(_) => println!("baud sweep answered for core MHz: {}", cores.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")),
         None => println!("baud sweep: no answer for any core clock"),
     }
+    // The tries after the right one may leave the chip inside a garbled
+    // packet: start it again, then Reset at the clock `bt up` uses.
+    power_cycle();
+    update_clock();
+    for flow in ["auto", "none"] {
+        fs::write(FLOW, flow).ok();
+        let mut hci = Hci::open()?;
+        println!("reset at the driver's clock, flow {flow}: {}", show(&reset_bytes(&mut hci, Duration::from_millis(500))));
+    }
+    fs::write(FLOW, "auto").ok();
     Ok(())
 }
 

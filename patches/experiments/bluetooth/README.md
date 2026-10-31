@@ -26,9 +26,14 @@ before Bluetooth starts. Base `0052` serves it as `wifi_power` (and
 `wifi_power_config`), the same file name as the Wi-Fi experiment, so a
 merge keeps one entry.
 
-The mini UART's baud rate is derived from the core clock. The driver
-programs it from the rate `rpi-firmwared` reports, and `bt up` tells it
-the current rate again. If the firmware throttles the core clock
+The mini UART's baud rate is derived from the core clock. Pi test #109
+step 8 found that the chip answers only at the divider for a 400 MHz core
+clock, while the firmware's `clocks` file says 250 MHz. So base `0053`
+adds `/scheme/rpi-firmware/core_clock`, the rate the firmware measures
+(mailbox tag 0x00030047). The driver starts with it, and `bt up` tells it
+the current rate again (`firmware <rate>`). Base `0054` keeps a rate
+written to `/scheme/btuart/clock` by hand: `bt up` leaves it, and writing
+`firmware` gives the control back. If the firmware throttles the core clock
 (undervoltage, heat), the baud rate drifts and HCI gets garbled. Then
 `/scheme/rpi-firmware/throttled` is not 0.
 
@@ -46,7 +51,7 @@ the current rate again. If the firmware throttles the core clock
   |---|---|---|
   | `/scheme/btuart/data` | received bytes (waits up to 100 ms, then 0 bytes) | sends the bytes |
   | `/scheme/btuart/baud` | baud rate (115200 at start) | sets it |
-  | `/scheme/btuart/clock` | core clock in Hz | sets it, reprograms the baud rate |
+  | `/scheme/btuart/clock` | core clock in Hz, then `firmware` or `hand` | a rate sets it by hand; `firmware <rate>` only without one; `firmware` alone gives control back |
 
   A thread moves received bytes from the 8-byte FIFO into a 64 KiB
   buffer, polling every millisecond. RTS holds the chip off when the FIFO
