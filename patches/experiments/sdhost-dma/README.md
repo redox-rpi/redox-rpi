@@ -68,3 +68,17 @@ from the last context.
 
 Open: SCHTIME with polling (test 87), to put a number on the saving. (DREQ pacing, drain words, MB/s and CPU time against PIO with
 `scripts/sd-stress.py`).
+
+Pi tests 117 and 121 (2026-10-30/31), all images on the same main, 256 MiB on
+`/scheme/data` with `bs=1048576`, driver CPU as SCHTIME:
+
+| | write MB/s | write SCHTIME | read MB/s | read SCHTIME |
+|---|---|---|---|---|
+| PIO (6 runs, with and without RedoxFS coalescing) | 8.1–9.0 | +3.1 to +3.5 s | 19 | +0.9 s |
+| DMA (7 runs, with and without coalescing, #117 included) | 5.5–8.2 | +3.4 to +16.5 s | 17–18 | +0.7 to +1.0 s |
+
+On the Pi 3B+ DMA does not pay off: the card limits writes to about 8 MB/s,
+and PIO already spends only about 10 % of the write time in the driver. DMA
+was slower and its CPU time varied from run to run. Reading is the same
+either way. This experiment stays an experiment and does not become a
+default patch.
