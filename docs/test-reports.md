@@ -4070,3 +4070,89 @@ Error: after 204051684 bytes: Transport endpoint is not connected (os error 107)
 
 Requeued with the assistant session's new image `v0.3.0-dev-561-g3118d0a+x4590`
 (download resumes). Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-462-gf830bfd+x7d9f` (test 109 step 10, flow auto-low, no baud drift)
+
+Real Pi 3B+ over netboot. Test 109 step 10 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**First full answer from the chip: with flow `none`, `bt info` reads `version:
+Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119,
+firmware build 0`, `name: BCM4345C0`. But `bt up` still gets no answer to Reset
+(`0c03`) with either flow, so there's no firmware upload yet.** No bytes were
+lost in (a) and (b); 224 were lost during (c), which includes `bt diag`.
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-462-gf830bfd+x7d9f/harddrive.img`, with
+the new stable's bootloader. Boot log:
+`bcm2835-btuartd: mini UART at 0x3f215000, 115207 baud (core 400 MHz)`.
+Booted with a serial-console reset: the devsh reset from the #126 image didn't
+take.
+
+- (a) `cat /scheme/btuart/flow /scheme/btuart/baud /scheme/btuart/clock` →
+  `auto-low`, `115207`, `400000000` / `firmware`, as expected.
+- (b)
+  - `bt up` → `power: cycled`, `uart: core clock 400000000 Hz set by firmware
+    (firmware measures 400000000), 115207 baud, flow auto-low`,
+    **`bt: no answer to HCI command 0c03`**.
+  - `bt info` → no answer to `1001`.
+  - `bt scan 10` and `bt inquiry 10` → `bt: Connection timed out (os error 110)`.
+  - **0 `received bytes lost` lines** up to here.
+- (c) `bt diag` (from the clock lines on):
+
+```
+core clock idle: firmware reports 250000000, measures 400000000
+core clock under load: firmware reports 250000000, measures 400000000
+core clock after: firmware reports 250000000, measures 400000000
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+flow auto:
+before: cts_line 0, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x10
+after: cts_line 0, rts 1, tx_fifo 4, rx_fifo 0, cntl 0x3f, msr 0x10
+received: nothing
+flow auto-low:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+flow none:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+answered with flow: auto-low, none
+baud sweep: cts_line 0 after 0 ms
+assumed core 250 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 275 MHz (firmware reports 250000000, measures 400000000): 18 0c 84 03 0c 80
+assumed core 300 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 325 MHz (firmware reports 250000000, measures 400000000): 08 03 28 20 00
+assumed core 350 MHz (firmware reports 250000000, measures 399999000): 04 c1 12 08 e0
+assumed core 375 MHz (firmware reports 250000000, measures 400000000): 04 10 01 00
+assumed core 400 MHz (firmware reports 250000000, measures 400000000): 04 0e 04 01 03 0c 00  <- Command Complete
+assumed core 450 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 500 MHz (firmware reports 250000000, measures 400000000): nothing
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow none
+baud sweep answered for core MHz: 400
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+reset at the driver's clock, flow auto-low: 04 0e 04 01 03 1c 01  <- Command Complete
+reset at the driver's clock, flow none: nothing
+```
+
+  Then `echo none > /scheme/btuart/flow`:
+  - `bt up` → `… 115207 baud, flow none`, **`bt: no answer to HCI command 0c03`**.
+  - `bt info` → **answered**:
+
+```
+version: Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119, firmware build 0
+address: AA:AA:AA:AA:AA:AA
+name: BCM4345C0
+```
+
+  - `status` → `cts_line 0, rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1,
+    lsr 0x60, msr 0x10, cntl 0x03, stat 0x0000030e`.
+- (d) **0 lost bytes after (a)/(b), 224 after (c)** (`224 received bytes lost so far`).
+  So the bytes were lost during `bt diag` or the `bt up`/`bt info` with flow `none`.
+- In `bt diag`, the baud rate stays 115207 throughout (no drift, as intended).
+  The reset at the driver's clock with `auto-low` still answers `03 1c 01`
+  instead of `03 0c 00`.
+- Reading: the chip talks (version, BCM4345C0, the default address before the
+  firmware is loaded). `bt up`'s Reset right after the power cycle gets no
+  answer, while a later `bt info` does. That looks like `bt up` sends too soon
+  after power-on.
+
+Step 4 still waits for the user's OK. Stable image restored afterwards.
