@@ -223,7 +223,7 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: pin them and add our patches to their [source] section.
-for name in bootloader base relibc; do
+for name in bootloader base relibc redoxfs; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
@@ -316,7 +316,7 @@ manifest_head="$(mktemp)"
     awk '!/^#/ && NF == 2 { printf "%s = \"%s\"\n", $1, $2 }' "$LOCK"
     echo
     echo "[patches]"
-    for name in fdt kernel bootloader base relibc; do
+    for name in fdt kernel bootloader base relibc redoxfs; do
         patch_files "$name" | while read -r patch; do
             echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
         done
