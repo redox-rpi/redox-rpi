@@ -46,9 +46,11 @@
     succeeds (15 of 15 runs): the owner check reads a thread-local
     thread-ID cache that a new thread does not get zeroed. `tls-variant1`
     on the current base (branch `t-tls-mutex`,
-    `v0.3.0-dev-417-gd2482d8+x44a9`) fixes all four, but then
-    `pthread/exit` hangs (the main thread calls `pthread_exit` while a
-    detached thread runs; it passes 20 of 20 runs without the patch).
+    `v0.3.0-dev-417-gd2482d8+x44a9`) fixes all four. `pthread/exit`
+    fails on that image, but not because of the patch: kernel `0008`
+    (ctx-leak fix, #31) makes a process whose last thread ends with
+    `pthread_exit` report SIGKILL instead of 0. Every image with main
+    merged has it; without `0008` the test passes 20 of 20.
   - `pthread/rwlock_randtest` does not hang: 1,000,000 lock operations
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
@@ -56,8 +58,8 @@
   - The five socket tests pass on the Pi (#68); QEMU has no network.
   - `redox_ring_ramfs`: not looked at yet.
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
-    with the `pthread/exit` hang, since stdio locking across threads is
-    broken without it; (2) the signal tests under load (job control in
+    (`tls-variant1`), since stdio locking across threads is broken without
+    it; (2) the signal tests under load (job control in
     bash, child handling in sshd); (3) `rwlock_randtest`'s runtime, a note
     in the list only.
 - No signal for exceptions on aarch64: relibc registered no exception
