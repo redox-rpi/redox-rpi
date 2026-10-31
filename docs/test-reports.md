@@ -5529,3 +5529,42 @@ failed on both images, and the serial log shows no exception. Images
   and `icache-sync` closes it.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-770-g0b9da6d+x9f76` (prebuilt-default, nine prebuilt programs in the image)
+
+Real Pi 3B+ over netboot. Test 165 ([#40](https://github.com/redox-rpi/redox-rpi/issues/40)), Pi test agent.
+
+**Pass: 450 of 450 starts succeed, the bash loop prints `LOOPa50` 5 of 5 times,
+and the standard checks pass.** But `/etc/ssh` is not in this image, so the
+`find` loop counted 50 runs of `find` on a missing path (details below). Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-770-g0b9da6d+x9f76.img`, manifest
+matches, stable bootloader. The boot reached login with no `FATAL` or panic
+line.
+
+| program, 50 runs in an Ion loop | succeeded |
+|---|---|
+| `bash -c true` | 50 |
+| `nano --version` | 50 |
+| `vim --version` | 50 |
+| `find /etc/ssh` | 50 (see below) |
+| `gawk --version` | 50 |
+| `tmux -V` | 50 |
+| `rg --version` | 50 |
+| `curl --version` | 50 |
+| `wget --version` | 50 |
+
+- `bash -c 'for j in $(seq 1 50); do true; /usr/bin/true; x=$(echo a); done; echo LOOP$x$j'`
+  five times: `LOOPa50` each time.
+- `df -h`: `/` 222.0M size, **162.3M used, 59.7M free** (73 %); QEMU had 162 MiB
+  used.
+- `find`: `/etc/ssh` does not exist here (`ls: cannot access '/etc/ssh'`; this
+  image has no SSH experiment). Each run printed `Error: /etc/ssh: description()
+  is deprecated; use Display` and still exited 0. `find /nonexistent` does the
+  same, rc=0. GNU find exits 1 and says `No such file or directory`. On a real
+  directory `find /etc -maxdepth 1` lists the entries (`/etc`,
+  `/etc/login_schemes.toml`, `/etc/hostname`, `/etc/net`, `/etc/os-release` …),
+  rc=0. `find --version` is `Unrecognized flag`.
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: all pass, **0 of
+  300 starts failed**. Serial: 0 `FATAL` or `panicked` lines.
+
+Stable image restored afterwards.
