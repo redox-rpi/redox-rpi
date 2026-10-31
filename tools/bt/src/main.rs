@@ -38,6 +38,8 @@ const WL_POWER_CONFIG: &str = "/scheme/rpi-firmware/wifi_power_config";
 /// devicetree for the 3B+, the chip's 32 kHz sleep clock).
 const DIAG_PINS: &[u32] = &[30, 31, 32, 33, 43];
 const FIRMWARE: &str = "/usr/lib/firmware/brcm/BCM4345C0.hcd";
+/// How long the chip gets after BT_ON before the first command.
+const POWER_ON_WAIT: Duration = Duration::from_millis(1000);
 
 const PACKET_COMMAND: u8 = 0x01;
 const PACKET_ACL: u8 = 0x02;
@@ -152,7 +154,8 @@ impl Hci {
                 None => return Err(error(format!("no answer to HCI command {opcode:04x}"))),
                 Some((EVENT_COMMAND_COMPLETE, p)) if p.len() >= 3 && p[1..3] == op => return Ok(p[3..].to_vec()),
                 Some((EVENT_COMMAND_STATUS, p)) if p.len() >= 4 && p[2..4] == op => return Ok(vec![p[0]]),
-                Some(_) => {}
+                // Shown, so a garbled answer is not mistaken for none.
+                Some((code, p)) => println!("  (event {code:02x} ignored: {})", hex(&p)),
             }
         }
     }
@@ -213,8 +216,27 @@ fn version(hci: &mut Hci) -> io::Result<u16> {
     Ok(revision & 0x0fff)
 }
 
+/// HCI Reset, tried up to three times: right after power-on the chip
+/// answered with bits flipped (`03 1c 01` for `03 0c 00`, Pi test #109
+/// step 10), and a later try worked.
 fn reset(hci: &mut Hci) -> io::Result<()> {
-    hci.command(RESET, &[]).map(|_| ())
+    for attempt in 1..=3 {
+        match hci.command(RESET, &[]) {
+            Ok(_) => {
+                if attempt > 1 {
+                    println!("reset: answered on try {attempt}");
+                }
+                return Ok(());
+            }
+            Err(err) if attempt < 3 => {
+                println!("reset: try {attempt}: {err}, again");
+                sleep(Duration::from_millis(500));
+                hci.drain();
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    unreachable!()
 }
 
 /// Switches the chip off and on, if this board lets us.
@@ -229,8 +251,10 @@ fn power_cycle() {
     });
     match result {
         Ok(()) => {
-            // The chip needs a moment before it answers on the UART.
-            sleep(Duration::from_millis(200));
+            // The chip needs a moment before it answers on the UART: a
+            // Reset 200 ms after power-on came back garbled, one about a
+            // second later was right (Pi test #109 step 10).
+            sleep(POWER_ON_WAIT);
             println!("power: cycled");
         }
         Err(err) => println!("power: cannot switch it ({err}), going on"),

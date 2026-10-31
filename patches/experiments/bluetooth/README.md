@@ -41,7 +41,13 @@ the start setting; `auto` has the reset levels), the baud rate drifted
 with each clock change (the driver now keeps the rate asked for), and the
 8-byte receive FIFO overflowed between the receive thread's sleeps (it
 fills in 0.7 ms at 115200 baud). The thread now only yields while the
-port is in use, half a second after a read or write. If the firmware throttles the core clock
+port is in use, half a second after a read or write.
+
+Step 10: no bytes lost, and `bt info` got the chip's version and name
+(BCM4345C0, build 0). Only `bt up` failed: its Reset 200 ms after the
+power cycle came back with bits flipped (`03 1c 01`), so `bt` took it for
+another command's answer. `bt up` now waits 1 s after BT_ON, tries Reset
+up to three times, and prints events it ignores. If the firmware throttles the core clock
 (undervoltage, heat), the baud rate drifts and HCI gets garbled. Then
 `/scheme/rpi-firmware/throttled` is not 0.
 
