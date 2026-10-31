@@ -4034,3 +4034,39 @@ reset at the driver's clock, flow none: 04 0e 04 01 03 1c 01  <- Command Complet
 
 No `firmware: …, 323 records` line: `bt up` never got that far. Step 4 still
 waits for the user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-560-gc85276b+x4590` (test 126, tries 2 and 3, no result)
+
+Real Pi 3B+ over netboot. Test 126 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**No result: the model download didn't finish, so nothing about the saved
+prompt state or the writing speed could be measured.** The standard checks pass
+(6 of 6) in both boots. No kernel panic and no `RELIBC PANIC`.
+
+- **Try 2** (03:55–04:54 UTC): my runner allowed 3000 s. In that time 322,202,182 of
+  341,455,552 bytes arrived (about 0.1 MB/s). The devsh connection closed
+  before the end, and every model load then stopped with `Error: tensor needs
+  1769472 bytes at offset 321972928, only 229254 remaining in file`.
+- **Try 3** (05:02–06:01 UTC), a fresh download with 5400 s allowed. **`rinfer
+  --download` stopped by itself**:
+
+```
+part 000, 16 MiB
+…
+part 011, 192 MiB
+Error: after 204051684 bytes: Transport endpoint is not connected (os error 107)
+```
+
+  That is 204 MB in 59 minutes, about 0.058 MB/s, slower than try 2 and much
+  slower than try 1's 0.25 MB/s. The first `assistant --ask` afterwards
+  printed `The language model did not start (Interrupted system call (os error 4))`.
+  The later ones stopped on the short file
+  (`tensor needs 4096 bytes at offset 206833344, only 0 remaining`).
+- `temperature` was 52–53 °C before and after, and `throttled` was
+  `0x00000000` throughout. `free` was 736,592 KB at the start and 629,620 KB at
+  the end. The lowest reading during the failed loads was 673,380 KB.
+- The short model file (204 MB) is still on `/scheme/data`. The next image
+  resumes the download.
+
+Requeued with the assistant session's new image `v0.3.0-dev-561-g3118d0a+x4590`
+(download resumes). Stable image restored afterwards.
