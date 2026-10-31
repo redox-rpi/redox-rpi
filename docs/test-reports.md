@@ -5439,3 +5439,49 @@ SUMMARY v0.3.0-dev-823-ga961ba0+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 
   **No `NEW` line**, the same as #133.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-793-g9ba1d403` (A) and `+x3d23` (B) (governor-config, CPU clock setting at boot)
+
+Real Pi 3B+ over netboot. Test 161 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), Pi test agent.
+
+**Pass: the default image stays on ondemand with no error. The test image boots
+in `performance` from `/etc/rpi-firmware/governor`, and writing the file plus
+`governor.ion` switches to fixed 600 MHz and back to ondemand. Standard checks
+pass on both.** One point is not as the row expected: `switches` did not grow
+during A's standard checks, because the clock was already at max when they
+started (details below). Images from `~/redox-rpi-cpu/keep/` (manifest in the
+image), stable bootloader.
+
+**(A) default image** (no file in `/etc`). Serial: no `governor.ion … failed`
+line (the only `failed` lines are the usual U-Boot `mmc 2`, randd and redoxfs
+probe lines).
+
+| read | mode | target | load | switches | time_min_ms | time_max_ms |
+|---|---|---|---|---|---|---|
+| 3 min after login | ondemand | max | 81 | 6 | 187810 | 16021 |
+| 60 s later | ondemand | max | 100 | 12 | 249966 (**+62156**) | 23560 |
+| after the standard checks | ondemand | max | 64 | 12 (**+0**) | 249966 | 76138 (+52578) |
+
+- The 60 s wait put 62.2 s at the minimum clock (pass: at least 50000).
+- During the standard checks the clock stayed at 1400 MHz the whole time
+  (`time_max_ms` +52.6 s, `time_min_ms` +0). The second read had already sent
+  it to max (`load 100`), so it went up before the checks rather than during
+  them. Standard checks pass (0 of 300 starts failed).
+
+**(B) test image** (`/etc/rpi-firmware/governor` = `performance`):
+
+- Serial, after `init: switchroot to /usr /etc`: `rpi-firmwared: governor
+  performance`.
+- `arm_clock` 3 min after login and 60 s later: `1400000000` both.
+  `governor`: `mode performance`, `switches 0`, `time_min_ms 0`.
+- Shelly (read only): `B-performance: mean 3.26 W, min 3.2, max 3.4, n 18`
+  (test 93: 3.20 W performance, 3.05 W ondemand).
+- `echo 600000000 > /etc/rpi-firmware/governor; ion /usr/lib/rpi-firmware/governor.ion; cat …`:
+  `600000000`, `mode fixed`, `target -`. Serial `rpi-firmwared: ARM clock 600
+  MHz, governor off`. **The command also printed `cat: /etc/rpi-firmware/governor:
+  Invalid argument` once**, before the values; the clock was set anyway.
+- `echo ondemand > …; ion …governor.ion; cat …`: `mode ondemand`, `switches 1`.
+  Serial `rpi-firmwared: governor ondemand`.
+- Standard checks pass (0 of 300 starts failed). No panic in A or B.
+
+Stable image restored afterwards.
