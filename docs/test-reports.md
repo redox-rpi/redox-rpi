@@ -3404,3 +3404,62 @@ manifest next to it).
   exception apart from the known pcid one.
 - The test key file removed from `/scheme/data/home/root/.ssh/`. Stable image
   staged again.
+
+## 2026-10-31: `v0.3.0-dev-482-g1ff88ec+x056b` (dwc2d-netstats), long idle run
+
+Real Pi 3B+ over netboot. Test 119 ([#92](https://github.com/redox-rpi/redox-rpi/issues/92)), Pi test agent.
+
+**Pass: the network stayed up for the whole run, 4 h 13 min (21:12 to 01:25 UTC).**
+Image `~/redox-rpi-dwc2boot/keep/netstats-v0.3.0-dev-482-g1ff88ec+x056b.img`,
+its manifest, staged with the build agent's `scripts/netboot.sh`. The run was
+shortened from 03:00 to 01:30 UTC so tests 109 step 6 and 121 fit before 03:15.
+Afterwards the saved stable files went back into `/srv/tftp/redox`.
+
+- 25 readings, one every 10 to 11 minutes, each a single devsh connection: **all
+  25 answered**, eth0 kept `192.168.178.148/24` and the default route every time,
+  each `cat` of `addr/list` took 0.4 s, and **`ping -c 3 192.168.178.1` from the
+  Pi had 0 % loss every time**.
+- No devsh failure, so no serial readings or reset were needed.
+- The host's ping to the Pi got no answer in all 260 tries (one a minute). This is
+  the same as earlier tests: the Pi pings out fine but answers no ICMP from
+  homenodellm. So this ping says nothing about #92.
+- Counters: `uptime_ms`, `rx_frames` and `irqs` grew steadily all night
+  (about 7,200 frames per 10 minutes). **`rx_errors` went to 1 once**
+  (`rx_last_error 0x92`, at `uptime_ms` 7,449,997, about 23:15 UTC) and stayed at 1;
+  traffic went on normally. `tx_errors` stayed 0.
+- Memory: dwc2d stayed at 1.70 MB. netstack grew from 3.34 MB to 6.72 MB, about
+  0.14 MB per devsh connection. That matches the leak #114 measured on stable
+  (5.25 MB per 40 connections); this image doesn't have the #114 fix. `free`
+  went down by 10 MB (609,916 to 599,576 KB).
+- dwc2d CPU time: ACTTIME 3 min 42 s after 2 h 47 min uptime (about 2 % of one core).
+
+| UTC | uptime_ms | rx_frames | rx_err | tx_frames | tx_err | irqs | netstack | dwc2d | free KB | router ping loss |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 21:17 | 310673 | 2438 | 0 | 270 | 0 | 2393 | 3.34 MB | 1.70 MB | 609916 | 0 % |
+| 21:18 | 360775 | 2866 | 0 | 359 | 0 | 2816 | 3.72 MB | 1.70 MB | 608956 | 0 % |
+| 21:29 | 1007086 | 7489 | 0 | 459 | 0 | 7387 | 3.91 MB | 1.70 MB | 608072 | 0 % |
+| 21:39 | 1653398 | 12113 | 0 | 552 | 0 | 11998 | 4.09 MB | 1.70 MB | 607672 | 0 % |
+| 21:50 | 2294699 | 16701 | 0 | 662 | 0 | 16565 | 4.09 MB | 1.70 MB | 607292 | 0 % |
+| 22:01 | 2930992 | 21173 | 0 | 749 | 0 | 20982 | 4.28 MB | 1.70 MB | 606868 | 0 % |
+| 22:12 | 3587313 | 25823 | 0 | 878 | 0 | 25558 | 4.47 MB | 1.70 MB | 606416 | 0 % |
+| 22:22 | 4223604 | 30311 | 0 | 962 | 0 | 29982 | 4.47 MB | 1.70 MB | 605988 | 0 % |
+| 22:33 | 4869915 | 34892 | 0 | 1075 | 0 | 34503 | 4.66 MB | 1.70 MB | 605612 | 0 % |
+| 22:44 | 5516224 | 39603 | 0 | 1179 | 0 | 39158 | 4.84 MB | 1.70 MB | 605236 | 0 % |
+| 22:55 | 6162527 | 44292 | 0 | 1278 | 0 | 43798 | 4.84 MB | 1.70 MB | 604868 | 0 % |
+| 23:05 | 6803824 | 48864 | 0 | 1360 | 0 | 48298 | 5.03 MB | 1.70 MB | 604488 | 0 % |
+| 23:16 | 7450127 | 53530 | 1 | 1478 | 0 | 52902 | 5.22 MB | 1.70 MB | 604120 | 0 % |
+| 23:27 | 8091426 | 58126 | 1 | 1578 | 0 | 57454 | 5.22 MB | 1.70 MB | 603752 | 0 % |
+| 23:38 | 8732724 | 62752 | 1 | 1662 | 0 | 62023 | 5.41 MB | 1.70 MB | 603368 | 0 % |
+| 23:48 | 9374025 | 67380 | 1 | 1763 | 0 | 66597 | 5.59 MB | 1.70 MB | 602988 | 0 % |
+| 23:59 | 10010311 | 71985 | 1 | 1864 | 0 | 71132 | 5.59 MB | 1.70 MB | 602612 | 0 % |
+| 00:10 | 10656619 | 76602 | 1 | 1972 | 0 | 75724 | 5.78 MB | 1.70 MB | 602232 | 0 % |
+| 00:20 | 11297915 | 81197 | 1 | 2062 | 0 | 80303 | 5.97 MB | 1.70 MB | 601800 | 0 % |
+| 00:31 | 11934208 | 85802 | 1 | 2166 | 0 | 84904 | 5.97 MB | 1.70 MB | 601492 | 0 % |
+| 00:42 | 12580535 | 90471 | 1 | 2272 | 0 | 89551 | 6.16 MB | 1.70 MB | 601068 | 0 % |
+| 00:52 | 13221838 | 95094 | 1 | 2365 | 0 | 94171 | 6.34 MB | 1.70 MB | 600696 | 0 % |
+| 01:03 | 13863143 | 99736 | 1 | 2466 | 0 | 98805 | 6.53 MB | 1.70 MB | 600324 | 0 % |
+| 01:14 | 14514456 | 104440 | 1 | 2582 | 0 | 103498 | 6.53 MB | 1.70 MB | 599956 | 0 % |
+| 01:24 | 15150748 | 109045 | 1 | 2666 | 0 | 108094 | 6.72 MB | 1.70 MB | 599576 | 0 % |
+
+Raw readings: homenodellm `~/pitest-tools/t119/` (`r-HHMM.txt`, `ping.txt`).
+Issue 92 didn't show up in this run. Stable image restored afterwards.
