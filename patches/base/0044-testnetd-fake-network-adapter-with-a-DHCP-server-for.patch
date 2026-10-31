@@ -13,40 +13,40 @@ it re-runs itself as a daemon.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  Cargo.toml                            |   1 +
- Makefile                              |   2 +
+ Makefile                              |   2 +-
  drivers/net/testnetd/Cargo.toml       |  16 ++
  drivers/net/testnetd/src/main.rs      | 131 ++++++++++++
  drivers/net/testnetd/src/responder.rs | 283 ++++++++++++++++++++++++++
- 5 files changed, 433 insertions(+)
+ 5 files changed, 432 insertions(+), 1 deletion(-)
  create mode 100644 drivers/net/testnetd/Cargo.toml
  create mode 100644 drivers/net/testnetd/src/main.rs
  create mode 100644 drivers/net/testnetd/src/responder.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 471b877..0959f57 100644
+index 4bded67..6051ff9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -52,6 +52,7 @@ members = [
+@@ -51,6 +51,7 @@ members = [
+     "drivers/net/e1000d",
      "drivers/net/ixgbed",
      "drivers/net/rtl8139d",
-     "drivers/net/rtl8168d",
 +    "drivers/net/testnetd",
+     "drivers/net/rtl8168d",
      "drivers/net/virtio-netd",
  
-     "drivers/rpi-firmwared",
 diff --git a/Makefile b/Makefile
-index 0de2883..f4abcf8 100644
+index 263a5c4..0af422a 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -19,6 +19,8 @@ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+@@ -17,7 +17,7 @@ INITFS_BINS = ipcd init logd ramfs randd zerod \
+ 	pcid pcid-spawner rtcd vesad
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
  BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
- DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+-DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
++DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
  	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
-+# netstack tests only (netstack-multi experiment)
-+DRIVERS_BINS += testnetd
  
  ifeq ($(TARGET),aarch64-unknown-redox)
- 	INITFS_BINS += rpi-firmwared
 diff --git a/drivers/net/testnetd/Cargo.toml b/drivers/net/testnetd/Cargo.toml
 new file mode 100644
 index 0000000..49459b3
@@ -495,6 +495,3 @@ index 0000000..4fcd55a
 +        assert_eq!(r.counters.foreign_src, 0);
 +    }
 +}
--- 
-2.54.0 (Apple Git-157)
-
