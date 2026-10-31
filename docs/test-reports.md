@@ -4327,3 +4327,35 @@ next to it), with the new stable's bootloader. Same setup as #120.
 - The key file was removed from `/scheme/data/home/root/.ssh/`.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-574-g55e47fb+xb3d9` (self-exit-status, `pthread_exit` of the last thread)
+
+Real Pi 3B+ over netboot. Test 133 ([#108](https://github.com/redox-rpi/redox-rpi/issues/108)), Pi test agent.
+
+**Pass: `pthread/exit` exits with status 0 (10 of 10), no memory growth over
+200 `dd` runs, and the relibc suite has no `NEW` line.** Image
+`~/redox-rpi-t12/keep/selfexit-v0.3.0-dev-574-g55e47fb+xb3d9.img` (no manifest
+next to it; the one in the image passes), with the new stable's bootloader.
+
+- Standard checks: all pass (manifest present in the image, 0 of 300 starts failed).
+- `cd /usr/share/relibc-tests`, 10 × `./bins_dynamic/pthread/exit`: **10 × `rc=0`** (6.5 s).
+- `free` → 137,348 KB used. Then 200 × `dd if=/dev/zero of=/dev/null bs=1k count=1`
+  (33 s). `free` → 138,172 KB used: **+824 KB**, about 4 KB per run (before
+  `0008`: about 76 KB per run). Under the 1 MB limit.
+- `ion /usr/share/relibc-tests/run.ion` (65 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t13-relibc-tests`:
+
+```
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+SUMMARY v0.3.0-dev-574-g55e47fb+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 0 new), 6 fixed
+```
+
+  No `NEW` line, and `pthread/exit` passes in the suite too (in #129 it was `NEW` with SIGKILL).
+
+Raw output: homenodellm `~/pitest-tools/t133/`. Stable image restored afterwards.
