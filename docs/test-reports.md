@@ -4156,3 +4156,26 @@ name: BCM4345C0
   after power-on.
 
 Step 4 still waits for the user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-548-ge36b623` (`ls` on the netcfg directories)
+
+Real Pi 3B+ over netboot. Test 128 ([#105](https://github.com/redox-rpi/redox-rpi/issues/105)), Pi test agent.
+
+**Pass: every `ls` lists what the row expects, with no `Not a directory`.**
+Image `~/redox-rpi-zrtl/keep/ncls-v0.3.0-dev-548-ge36b623.img` (no manifest next
+to it; the one in the image passes), with the new stable's bootloader. No panic.
+
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest present,
+  ps 46, ps-tty, sdcard, 0 of 300 starts failed).
+- Over devsh:
+
+```
+ls /scheme/netcfg                         → ifaces  resolv  route
+ls /scheme/netcfg/ifaces                  → eth0
+ls /scheme/netcfg/ifaces/eth0             → addr  mac
+ls /scheme/netcfg/ifaces/eth0/addr        → list  set
+ls /scheme/netcfg/route                   → add  list  rm
+cat /scheme/netcfg/ifaces/eth0/addr/list  → 192.168.178.148/24
+```
+
+Stable image restored afterwards.
