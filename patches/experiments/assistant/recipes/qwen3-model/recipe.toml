@@ -1,0 +1,16 @@
+# Qwen3 0.6B (Apache 2.0), 4-bit Q4_0 GGUF, 382 MB. Downloaded at build
+# time and checked; the file is not kept in git.
+[build]
+template = "custom"
+script = """
+url="https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf"
+sum="33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb"
+file="${COOKBOOK_RECIPE}/Qwen3-0.6B-Q4_0.gguf"
+if ! echo "$sum  $file" | sha256sum -c --status 2>/dev/null; then
+    curl -fL -o "$file.part" "$url"
+    echo "$sum  $file.part" | sha256sum -c
+    mv "$file.part" "$file"
+fi
+mkdir -p "${COOKBOOK_STAGE}/usr/share/assistant/models"
+cp "$file" "${COOKBOOK_STAGE}/usr/share/assistant/models/"
+"""

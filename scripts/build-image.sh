@@ -231,7 +231,7 @@ for name in bootloader base relibc; do
 done
 
 # Our own packages, built from this repository.
-for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
+for tool in assistant cputop devshd i2c reboot sigregs spi timerd timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
@@ -256,6 +256,19 @@ path = "$ROOT/tools/$tool"
 [build]
 $build
 EOF
+done
+
+# Experiments may bring whole recipes (patches/experiments/<name>/recipes/),
+# copied fresh into recipes/other on every run.
+for exp in "${experiments[@]}"; do
+    for recipe in "$ROOT/patches/experiments/$exp/recipes/"*/; do
+        [ -d "$recipe" ] || continue
+        name="$(basename "$recipe")"
+        dest="$REDOX/recipes/other/$name"
+        mkdir -p "$dest"
+        find "$dest" -mindepth 1 -maxdepth 1 ! -name source ! -name target -exec rm -rf {} +
+        cp -r "$recipe"* "$dest/"
+    done
 done
 
 # Uncommitted changes to anything that goes into the image.
