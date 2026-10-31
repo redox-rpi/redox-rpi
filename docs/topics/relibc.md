@@ -148,7 +148,8 @@ commits in `config/upstream.lock`.
   - Reproduce: relibc-tests patch `0005` (`pthread/cond_stress`), 3 of 21
     runs in QEMU `-smp 4`.
 - **Static TLS laid out like x86_64, aarch64** (experiment `tls-variant1`,
-  branch `t14-tls-layout`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); QEMU only so far).
+  branch `t-tls-mutex`, [#14](https://github.com/redox-rpi/redox-rpi/issues/14); Pi test 129 passed,
+  draft PR [#123](https://github.com/redox-rpi/redox-rpi/pull/123), stacked on #62).
   - Where: `ld.so` (`src/ld_so/`).
   - Broken: `ld.so` places the static TLS blocks of the program and the
     libraries loaded at start as on x86_64. aarch64 (TLS variant I)
