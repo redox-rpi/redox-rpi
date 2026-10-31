@@ -5,7 +5,7 @@
 //! and checks them in a loop while signals arrive. The handler overwrites
 //! all of them. A register that differs after a signal shows a bug in the
 //! signal entry or return. x18 only with `--x18`: macOS reserves it, and
-//! Redox keeps it only with experiment `sigreturn-svc` (redox-rpi #1).
+//! Redox keeps it since relibc 0013 and kernel 0009 (redox-rpi #1, #127).
 //! Not checked: x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
 //! sp.
 //!

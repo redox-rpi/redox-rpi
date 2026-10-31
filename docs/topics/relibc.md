@@ -23,8 +23,9 @@
   repository: experiment `prebuilt-programs`, with experiment
   `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
   which these programs use. Pi test #45 passed (2026-10-29): nine
-  programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
-  PR #61.
+  programs, 450 of 450 starts. Merged with PR #61. Branch
+  `sigreturn-default` makes `sigreturn-svc` default patches, relibc `0013`
+  and kernel `0009` ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)).
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
