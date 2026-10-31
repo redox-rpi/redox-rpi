@@ -4848,3 +4848,52 @@ cts_line 1, rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1, lsr 0x60, msr 0x00, c
   stays `1` (high) after both.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-466-g54ea9bf+x7d9f` (bluetooth, step 12: WL_ON before `bt up`)
+
+Real Pi 3B+ over netboot. Test 109 step 12 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**Pass: Bluetooth comes up.** With WL_ON switched on first, Reset answers, the
+323-record firmware loads in 5.9 s, the chip reports build 382 with a real
+address, and an LE scan finds 22 devices. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-466-g54ea9bf+x7d9f/harddrive.img` (no manifest
+next to it), stable bootloader. Nothing else ran over devsh before; flow at
+`auto-low`.
+
+```
+### cat /scheme/rpi-firmware/wifi_power
+0
+### bt up  (7.9 s)
+power: wifi_power was 0, switched on
+power: cycled
+uart: core clock 399999000 Hz set by firmware (firmware measures 399999000), 115207 baud, flow auto-low
+version: Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119, firmware build 0
+firmware: /usr/lib/firmware/brcm/BCM4345C0.hcd, 323 records in 5866 ms
+version: Bluetooth 5.0 (HCI 9, LMP 9), manufacturer 305, subversion 6119, firmware build 382
+up
+### bt info  (0.4 s)
+version: Bluetooth 5.0 (HCI 9, LMP 9), manufacturer 305, subversion 6119, firmware build 382
+address: 43:45:C0:00:1F:AC
+name: BCM43455 37.4MHz Raspberry Pi 3+-0190
+### bt scan 10  (10.4 s)
+scan: LE for 10 s
+… 22 lines, among them ShellyPlugSG3-543204689994 rssi -44, ShellyPlus1-441793A8302C rssi -70,
+  Qingping Alarm Clock rssi -69, Govee_H70B3_2B93 rssi -85, SBBT-002C rssi -68
+scan: 22 devices
+### bt inquiry 10  (10.6 s)
+inquiry: 10 s
+inquiry: 0 devices
+### cat /scheme/rpi-firmware/wifi_power
+1
+```
+
+- (c) not needed: (b) worked with `auto-low`.
+- (e) `received bytes lost` lines on the serial console: **0**. No `reset:`
+  line (Reset answered on the first try, which `bt up` does not print) and no
+  `ignored` event.
+- Classic inquiry found 0 devices without an error: nothing near was
+  discoverable over BR/EDR (passes by the row's reading).
+- So WL_ON was the difference between `bt diag` and `bt up` (steps 10 and 11).
+- No panic.
+
+Stable image restored afterwards.
