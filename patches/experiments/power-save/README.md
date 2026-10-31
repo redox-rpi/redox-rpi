@@ -29,11 +29,21 @@ scripts/build-image.sh --experiment power-save [--experiment cputop]
 | Idea | How it is switched | State |
 |---|---|---|
 | Idle cores sleep | kernel idle loop: `wfi` when every context is idle (`enable_and_halt` in `startup/mod.rs`) | already so; `cputop` shows who keeps a core awake |
-| HDMI off | `display` (this patch) | to measure |
+| HDMI off | `display` (this patch) | Pi test 147: blank −0.08 W, off +0.08 W: no change (plug resolution 0.1 W) |
 | Bluetooth and Wi-Fi off | `bt_power`, `wifi_power` (experiments `bluetooth`, `wifi`) | off at boot unless a driver switches them on (Pi reports: `wifi_power was 0`) |
-| LEDs off | `power_led` (base `0046`), activity LED GPIO 29 through `/scheme/gpio/29/value` | to measure |
-| Unused power domains off | `power_domains` (this patch) | to measure |
-| ARM clock follows the load | governor, base `0040` (#23) | default; Pi test 93: 3.05 W idle, 3.00 W `powersave`, 3.20 W `performance` |
+| LEDs off | `power_led` (base `0046`), activity LED GPIO 29 through `/scheme/gpio/29/value` | Pi test 147: 0 and +0.03 W: no change |
+| Unused power domains off | `power_domains` (this patch) | Pi test 147: already off at boot (`uart0 uart1 i2c0 i2c1 i2c2 spi ccp2tx`); the firmware answers state 0 to `on` too, so they cannot be switched on this way either |
+| ARM clock follows the load | governor, base `0040` (#23) | default; Pi test 93: 3.05 W idle, 3.00 W `powersave`, 3.20 W `performance`; Pi test 147: `powersave` +0.01 W |
+
+## Result on the Pi (test 147)
+
+Shelly plug, 18 readings over 3 minutes per sample, nothing else running:
+idle **3.23 W** on the stable image (`v0.3.0-dev-533`), **2.99 W** on this
+image (current main with the ondemand governor). No switch changed the
+power by 0.1 W or more. `cputop 30`: cores 0–2 % busy, 107–291
+switches/s; `dwc2d` takes 2.4 % of a core, the largest part. So nothing
+here becomes an option; the experiment stays on its branch as a tool for
+later measurements.
 
 ## QEMU
 
