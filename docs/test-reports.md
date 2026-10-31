@@ -3745,3 +3745,58 @@ fe80::ba27:ebff:fe08:e0aa: redox-rpi.local A 192.168.178.148 (ttl 120)
   "2 services configured" but announces only devsh; this image has no sshd.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-486-gdd28c2f` (PR #103, `lsusb` and `hwinfo` as defaults)
+
+Real Pi 3B+ over netboot. Test 125 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35)), Pi test agent.
+
+**Pass, with one gap: `hwinfo` has no governor line.** Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-486-gdd28c2f/harddrive.img` (no manifest next
+to it; the one in the image passes), with stable's bootloader. No panic in the boot log.
+
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest present, ps 47,
+  ps-tty, sdcard, 0 of 300 starts failed).
+- `lsusb` lists both hubs `0424:2514`, the LAN7800 `0424:7800`, and the USB hub and
+  keyboard that are plugged in. `lsusb -t` shows the tree; my devsh helper strips
+  leading spaces, so the indentation is lost below. `lsusb -v` gives each
+  interface's class.
+
+```
+Bus 001 Device 001: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 002: ID 0424:2514 Microchip USB2514 hub (USB 2.00, high speed)
+Bus 001 Device 003: ID 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+) (USB 2.10, high speed)
+Bus 001 Device 004: ID 05e3:0610 hub (USB 2.00, high speed)
+Bus 001 Device 005: ID 04d9:0006 keyboard, HID (USB 2.00, low speed)
+
+root port: address 1, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 2, 0424:2514 Microchip USB2514 hub, high speed
+port 1: address 3, 0424:7800 Microchip LAN7800 Gigabit Ethernet (Pi 3B+), high speed
+port 2: address 4, 05e3:0610 hub, high speed
+port 1: address 5, 04d9:0006 keyboard, HID, low speed
+```
+
+- `ls /scheme/usb.dwc2` → `devices`.
+- `hwinfo`:
+
+```
+build        v0.3.0-dev-486-gdd28c2f
+model        Raspberry Pi 3 Model B+
+revision     0x00a020d3
+memory       1 GiB
+ARM memory   998 MiB
+GPU memory   16 MiB
+firmware     0x6aa809d0
+CPUs         4
+ARM clock    1400 MHz (max 1400 MHz)
+clocks       emmc 200 MHz, uart 48 MHz, core 250 MHz, v3d 250 MHz, h264 250 MHz, isp 250 MHz, sdram 400 MHz
+temperature  53.6 °C
+throttling   0x00000000 (none now)
+USB          5 devices (lsusb for the list)
+```
+
+  Model, 1 GiB, 4 CPUs, clocks, temperature and throttling are there. The USB
+  count (5) matches `lsusb`. **No governor line.** (The serial number line is left
+  out here.)
+- Optional port cycle (`pi-hotplug-test.sh`) not run.
+
+Stable image restored afterwards.
