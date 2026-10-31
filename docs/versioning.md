@@ -7,7 +7,7 @@ redox-rpi commit, the upstream commits, the patches and the experiments.
 
 | Input | Where |
 |---|---|
-| Upstream commits (redox build system, kernel, relibc, base, bootloader, fdt) | [`config/upstream.lock`](../config/upstream.lock) |
+| Upstream commits (redox build system, kernel, relibc, base, bootloader, fdt, redoxfs) | [`config/upstream.lock`](../config/upstream.lock) |
 | Our patches | [`patches/<component>/`](../patches/) |
 | Experiments, successful or not | [`patches/experiments/<name>/`](../patches/experiments/), each with a README and its result |
 | Image contents | [`config/raspi3bp.toml`](../config/raspi3bp.toml) (network boot), [`config/raspi3bp-sdcard.toml`](../config/raspi3bp-sdcard.toml) (SD card) |
@@ -21,6 +21,11 @@ files again. The patch files in this repository are what the build uses.
 Packages other than the core components above come as binaries from the
 Redox package server and are not pinned; the manifest records their
 versions and hashes.
+
+redoxfs is built from source (it holds the root file system and the
+socket files of Unix sockets), so it is pinned too: in October 2026 an
+upstream redoxfs change to Unix socket connect did not fit the pinned
+relibc and base, and every new image lost Unix socket connect ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)).
 
 ## Rules in `scripts/build-image.sh`
 
