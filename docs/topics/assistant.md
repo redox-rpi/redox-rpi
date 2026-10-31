@@ -18,7 +18,7 @@ Nothing on `main` yet; the branch `assistant` is ready for review (PR for #43). 
 network-booted Pi 3B+ the assistant answers with the Qwen3 0.6B model and
 its tools: 21 s to load, a saved system prompt loaded in 2 s, writing at
 about 2 tokens per second with 3 threads (#159). Pi tests #112, #126,
-#143.
+#143, #159.
 
 ## The limits of a Pi 3B+
 
