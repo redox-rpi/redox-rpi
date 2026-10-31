@@ -50,3 +50,12 @@ QEMU, 2026-10-29, `v0.3.0-dev-150-ge231651+x44a9` (with `relibc-tests`):
 
 The rest of the suite is unchanged (no new failures); the image boots and
 `errno` (libc's own TLS) still works.
+
+QEMU, 2026-10-30/31, on the current base (branch `t-tls-mutex`, main
+merged), `v0.3.0-dev-417-gd2482d8+x9903` (with `timesync`): `stdio/mutex`
+(15 of 15 single runs), `tls_align` (dynamic and static) and `tls_shared`
+pass. `stdio/mutex` failed because the thread-ID cache behind the
+recursive-lock owner check is thread-local, and a new thread read a
+wrong value there. `pthread/exit` fails on this base for another reason
+(kernel `0008`, a process whose last thread calls `pthread_exit` ends
+with SIGKILL).
