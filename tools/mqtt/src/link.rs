@@ -225,6 +225,8 @@ fn add_time_hint(e: io::Error) -> io::Error {
         io::Error::new(e.kind(), format!("{text} (the broker wants a client certificate: give it with --cert and --key)"))
     } else if text.contains("UnknownCA") || text.contains("BadCertificate") || text.contains("CertificateUnknown") {
         io::Error::new(e.kind(), format!("{text} (the broker does not accept this client certificate)"))
+    } else if text.contains("KeyMismatch") {
+        io::Error::new(e.kind(), format!("{text} (the --key file does not belong to the --cert file)"))
     } else {
         e
     }
