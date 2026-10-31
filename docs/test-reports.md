@@ -5087,3 +5087,35 @@ timerd: clock set by timesync, 2026-10-31 16:27:08 UTC
 - No panic. `fake-ntp.py` stopped afterwards.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-768-g7d71e64+x1258` (sigreturn-default, aarch64 signal return as default patches)
+
+Real Pi 3B+ over netboot. Test 154 ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)), Pi test agent.
+
+**Pass: normal boot to login with no `FATAL` or panic, four of four `sigregs`
+runs PASS, and the standard checks pass.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-768-g7d71e64+x1258.img`, manifest
+matches, stable bootloader.
+
+```
+### sigregs process --x18 -n 500  (13.0 s)
+process: sending from child 47 to 46
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 50 to 49
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs process -n 500  (20.1 s)
+process: sending from child 56 to 55
+PASS process: 500 signals, all registers kept
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+- `sigregs thread` not run (fails on main too until PR #64).
+
+Stable image restored afterwards.
