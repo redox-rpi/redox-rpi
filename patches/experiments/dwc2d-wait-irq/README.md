@@ -8,10 +8,15 @@ frame, every 64 KiB USB stick chunk and every control request spun, so a
 stick write kept a core busy.
 
 - **base `0053`:** `transfer_on` spins for 50 µs, about a full-size
-  network frame or a control request, and then sleeps with a nap that
-  doubles from 50 µs to 1 ms until the channel halts. Waiting for the
-  channel's interrupt instead would need the interrupt line shared with
-  the event loop; that is a later step if the naps cost speed.
+  network frame or a control request, and then waits for the channel's halt
+  interrupt. dwc2d opens a second handle on its irq for this, with its own
+  event queue and a 2 ms timer as the fallback. While a transfer waits, only
+  its channel raises the interrupt; the receive channel comes back once the
+  channel is cleared and the interrupt acknowledged. Without an interrupt,
+  transfers spin as before.
+- A first try slept with naps from 50 µs to 1 ms. In QEMU dwc2d then
+  sometimes never woke up from such a nap (state `US`, 4 of 4 boots), so
+  DHCP and devshd never came up. Hence the interrupt, and no short sleeps.
 - Applies on `usb-storage-more` (hotplug base `0031`–`0033`, experiments
   `usb-storage`, `usb-storage-more`): `--experiment usb-storage
   --experiment usb-storage-more --experiment dwc2d-wait-irq`.

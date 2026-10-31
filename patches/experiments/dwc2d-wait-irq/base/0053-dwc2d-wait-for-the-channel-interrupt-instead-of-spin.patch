@@ -1,0 +1,203 @@
+From 1f117cbdce52dfda1552dc7fba5ad3a4b233f633 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 06:10:37 +0100
+Subject: [PATCH] dwc2d: wait for the channel interrupt instead of spinning
+ while a long transfer runs
+
+transfer_on spun until the channel halted, so a USB stick chunk or a
+slow device kept a core busy. It now spins for 50 us, which covers a
+network frame or a control request, and then waits for the channel's
+halt interrupt on a second irq handle, with a 2 ms timer as the
+fallback (#104). A first try with short sleeps hung dwc2d in QEMU.
+---
+ drivers/usb/dwc2d/src/dwc2.rs | 95 ++++++++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs | 11 ++--
+ 2 files changed, 100 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 279d8eb..8751d47 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -1,12 +1,44 @@
+ //! DWC2 host controller in buffer DMA mode, driven by polling.
+ 
++use std::fs::File;
++use std::io::{Read, Write};
++use std::os::fd::AsRawFd;
+ use std::ptr::{read_volatile, write_volatile};
++use std::sync::{Mutex, OnceLock};
+ use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
++use event::{user_data, EventQueue};
+ 
+ use crate::regs::*;
++use crate::Timer;
++
++/// How long [`Dwc2::transfer_on`] spins before it waits for the interrupt:
++/// about a full-size network frame with some NAKs, or a control request.
++const SPIN: Duration = Duration::from_micros(50);
++/// While waiting for the interrupt, look at the channel at least this
++/// often, in case the interrupt got lost.
++const WAIT_FALLBACK: Duration = Duration::from_millis(2);
++
++user_data! {
++    enum Wake {
++        Irq,
++        Time,
++    }
++}
++
++/// Lets a transfer wait for its channel to halt without spinning: the
++/// channel's halt raises the controller's interrupt, with a timer as the
++/// fallback. Its own handle on the irq scheme, next to the main loop's:
++/// every handle sees every interrupt and acknowledges it on its own.
++struct Waiter {
++    irq: File,
++    timer: Timer,
++    events: EventQueue<Wake>,
++}
++
++static WAITER: OnceLock<Mutex<Waiter>> = OnceLock::new();
+ 
+ /// The Pi's DMA masters see RAM through the VideoCore bus, where it is
+ /// aliased (uncached) at 0xC000_0000. QEMU's raspi machines alias it there too.
+@@ -142,6 +174,19 @@ impl Dwc2 {
+         self.write(GAHBCFG, self.read(GAHBCFG) | GAHBCFG_GLBL_INTR_EN);
+     }
+ 
++    /// From now on, transfers longer than [`SPIN`] wait for the interrupt
++    /// at `irq_path` instead of spinning. Call after
++    /// [`Dwc2::enable_rx_interrupt`], which switches the interrupt on.
++    pub fn enable_wait_interrupt(&self, irq_path: &str) -> std::io::Result<()> {
++        let irq = File::create(irq_path)?;
++        let timer = Timer::new()?;
++        let events = EventQueue::new()?;
++        events.subscribe(irq.as_raw_fd() as usize, Wake::Irq, event::EventFlags::READ)?;
++        events.subscribe(timer.0.as_raw_fd() as usize, Wake::Time, event::EventFlags::READ)?;
++        let _ = WAITER.set(Mutex::new(Waiter { irq, timer, events }));
++        Ok(())
++    }
++
+     /// Stop a channel started with [`Dwc2::start`], e.g. a receive transfer
+     /// to a device that went away, and wait until it halts.
+     pub fn halt(&self, ch: usize) {
+@@ -448,6 +493,13 @@ impl Dwc2 {
+ 
+     /// Run one transfer on a channel and wait for it. Returns the bytes
+     /// moved and the data PID for the next transfer on this endpoint.
++    ///
++    /// The controller moves the data by DMA. A short transfer (a network
++    /// frame, a control request) is done within [`SPIN`], so it is waited
++    /// for by spinning; a longer one (a USB stick chunk) waits for the
++    /// channel's interrupt once [`Dwc2::enable_wait_interrupt`] set it up,
++    /// so the CPU is free meanwhile. Not with `sleep`: with naps of 50 us,
++    /// dwc2d sometimes never woke up again in QEMU (#104).
+     pub fn transfer_on(&self, ch: usize, phase: &Phase, timeout: Duration) -> Result<(usize, u32), Error> {
+         self.start(ch, phase);
+         let start = Instant::now();
+@@ -455,14 +507,53 @@ impl Dwc2 {
+             if let Some(result) = self.poll(ch, phase.len) {
+                 return result;
+             }
+-            if start.elapsed() > timeout {
++            let waited = start.elapsed();
++            if waited > timeout {
+                 // Halt the channel so it can be reused.
+                 let value = self.read(hcchar(ch));
+                 self.write(hcchar(ch), value | HCCHAR_CHDIS);
+                 return Err(Error::Timeout("channel halt"));
+             }
+-            std::hint::spin_loop();
++            match WAITER.get() {
++                Some(waiter) if waited >= SPIN => {
++                    if let Some(result) = self.wait_halt(waiter, ch, phase.len, timeout - waited) {
++                        return result;
++                    }
++                }
++                _ => std::hint::spin_loop(),
++            }
++        }
++    }
++
++    /// Wait until channel `ch` halts, or for at most `left` or
++    /// [`WAIT_FALLBACK`], and then poll it like [`Dwc2::poll`].
++    ///
++    /// Only this channel raises the interrupt meanwhile: a received frame
++    /// waiting for the main loop would raise it again and again. The
++    /// interrupt is acknowledged once the channel is cleared, before the
++    /// other channels come back; a frame received meanwhile then raises it
++    /// again for the main loop.
++    fn wait_halt(&self, waiter: &Mutex<Waiter>, ch: usize, len: usize, left: Duration) -> Option<Result<(usize, u32), Error>> {
++        let mut waiter = waiter.lock().unwrap_or_else(|e| e.into_inner());
++        let haintmsk = self.read(HAINTMSK);
++        let intmsk = self.read(hcintmsk(ch));
++        self.write(hcintmsk(ch), HCINT_CH_HLTD);
++        self.write(HAINTMSK, 1 << ch);
++
++        if self.read(hcint(ch)) & HCINT_CH_HLTD == 0 {
++            waiter.timer.arm(left.min(WAIT_FALLBACK));
++            let _ = waiter.events.next_event();
++            waiter.timer.fired();
++        }
++        let result = self.poll(ch, len);
++
++        let mut count = [0; 8];
++        if waiter.irq.read(&mut count).unwrap_or(0) == count.len() {
++            let _ = waiter.irq.write(&count);
+         }
++        self.write(hcintmsk(ch), intmsk);
++        self.write(HAINTMSK, haintmsk);
++        result
+     }
+ 
+     /// Run one transaction phase on channel 0, split through the hub's
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 689851a..0fba567 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -362,10 +362,10 @@ fn find_irq(fdt: &Fdt) -> Option<String> {
+ }
+ 
+ /// A one-shot timer on the monotonic clock, delivered as an event.
+-struct Timer(File);
++pub(crate) struct Timer(pub(crate) File);
+ 
+ impl Timer {
+-    fn new() -> std::io::Result<Self> {
++    pub(crate) fn new() -> std::io::Result<Self> {
+         OpenOptions::new()
+             .read(true)
+             .write(true)
+@@ -374,7 +374,7 @@ impl Timer {
+             .map(Self)
+     }
+ 
+-    fn arm(&mut self, after: Duration) {
++    pub(crate) fn arm(&mut self, after: Duration) {
+         let mut time = syscall::TimeSpec::default();
+         if self.0.read(&mut time).is_err() {
+             return;
+@@ -386,7 +386,7 @@ impl Timer {
+     }
+ 
+     /// Consume the event.
+-    fn fired(&mut self) {
++    pub(crate) fn fired(&mut self) {
+         let mut time = syscall::TimeSpec::default();
+         let _ = self.0.read(&mut time);
+     }
+@@ -537,6 +537,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 .subscribe(file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ)
+                 .expect("dwc2d: failed to subscribe to the IRQ");
+             hc.enable_rx_interrupt(RX_CHANNEL);
++            if let Err(err) = hc.enable_wait_interrupt(path) {
++                eprintln!("dwc2d: transfers spin, no second handle on {path}: {err}");
++            }
+             println!("dwc2d: interrupt {path}");
+         }
+         _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
+-- 
+2.54.0 (Apple Git-157)
+
