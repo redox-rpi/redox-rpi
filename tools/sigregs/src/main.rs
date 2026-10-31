@@ -13,9 +13,11 @@
 //! process, `thread` with pthread_kill() from another thread. They take
 //! different paths in the signal entry. A third mode, `sender`, checks
 //! si_pid of one signal from another thread and one from a child process.
-//! Without an argument all three run.
+//! Without an argument these three run. `segv` (only when named) makes
+//! loads from an unmapped address: each must raise SIGSEGV, and the program
+//! continues after the handler moved pc past the load (relibc 0014).
 //!
-//! Usage: sigregs [process|thread|sender] [-n <signals>] [--x18]
+//! Usage: sigregs [process|thread|sender|segv] [-n <signals>] [--x18]
 //! Exit code 0 if every mode passed.
 
 use std::{
@@ -326,6 +328,48 @@ fn sender() -> bool {
     }
 }
 
+/// Address of the faulting load in the `segv` mode; unmapped on Redox.
+const BAD_ADDR: u64 = 0x10;
+/// Offset of the interrupted pc in the context relibc passes to a handler:
+/// the 64-byte head of SigStack, then x30-x1, sp and nzcv (ArchIntRegs).
+const CTX_PC: usize = 64 + 30 * 8 + 2 * 8;
+/// si_addr of the last SIGSEGV; 0 until one arrives.
+static SEGV_ADDR: AtomicU64 = AtomicU64::new(0);
+
+extern "C" fn on_sigsegv(_: libc::c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
+    SEGV_ADDR.store(unsafe { (*info).si_addr() } as u64, Ordering::SeqCst);
+    // Continue after the faulting load, one 4-byte instruction.
+    unsafe { *ctx.cast::<u8>().add(CTX_PC).cast::<u64>() += 4 };
+}
+
+/// `segv` mode: `count` loads from BAD_ADDR. Each must raise SIGSEGV with
+/// si_addr BAD_ADDR and return to the next instruction, through the
+/// exception entry's return (`svc #0x5352`).
+fn segv(count: u64) -> bool {
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_sigsegv
+            as extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void)
+            as usize;
+        action.sa_flags = libc::SA_SIGINFO;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
+    }
+    for i in 0..count {
+        SEGV_ADDR.store(0, Ordering::SeqCst);
+        unsafe {
+            std::arch::asm!("ldr {v}, [{addr}]", addr = in(reg) BAD_ADDR, v = out(reg) _, options(nostack));
+        }
+        let addr = SEGV_ADDR.load(Ordering::SeqCst);
+        if addr != BAD_ADDR {
+            println!("FAIL segv: load {i}: si_addr {addr:#x}, expected {BAD_ADDR:#x}");
+            return false;
+        }
+    }
+    println!("PASS segv: {count} faults, each handled and continued");
+    true
+}
+
 fn process_sender() -> Box<dyn FnOnce()> {
     let parent = unsafe { libc::getpid() };
     match unsafe { libc::fork() } {
@@ -370,9 +414,9 @@ fn main() {
         match arg.as_str() {
             "-n" => count = args.next().and_then(|n| n.parse().ok()).expect("-n <signals>"),
             "--x18" => x18 = true,
-            "process" | "thread" | "sender" => modes.push(arg),
+            "process" | "thread" | "sender" | "segv" => modes.push(arg),
             _ => {
-                eprintln!("usage: sigregs [process|thread|sender] [-n <signals>] [--x18]");
+                eprintln!("usage: sigregs [process|thread|sender|segv] [-n <signals>] [--x18]");
                 std::process::exit(2);
             }
         }
@@ -393,6 +437,7 @@ fn main() {
         passed &= match mode.as_str() {
             "process" => run(mode, count, x18, process_sender),
             "thread" => run(mode, count, x18, thread_sender),
+            "segv" => segv(count),
             _ => sender(),
         };
     }
