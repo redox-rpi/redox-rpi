@@ -24,7 +24,11 @@
   (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
   instead of panicking). Pi rerun #101 passed (2026-10-30): 2.9 s of
   `sshd` CPU after 22 sessions, 10 dropped sessions without an Ion
-  exception or leftovers. Pull request #78.
+  exception or leftovers. Pull request #78. Branch `sshd-keys` (on top
+  of it): netstack keeps spare listening sockets, so `ssh-keyscan` with
+  several types gets every key (connections that came in together were
+  reset), and sshd also reads `authorized_keys` from the data partition,
+  so keys survive a reset of the network-boot image. Pi test #120 passed.
   Ctrl-C while a program starts:
   [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
