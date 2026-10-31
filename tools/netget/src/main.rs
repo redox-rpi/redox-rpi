@@ -1,9 +1,10 @@
-//! netget URL [OUT] [--slow MS]
+//! netget URL [OUT] [--slow MS] [--pause S]
 //!
 //! Fetches URL over plain HTTP/1.0 and prints the speed every 16 MiB, so a
 //! download that gets slower shows where. OUT is a file to write; without it
 //! the data is thrown away. --slow MS sleeps MS after every read, to act like
-//! a slow card and let the receive window fill up.
+//! a slow card and let the receive window fill up. --pause S stops reading
+//! for S seconds after every 16 MiB, so the window stays closed that long.
 
 use std::env;
 use std::fs::File;
@@ -20,9 +21,12 @@ fn main() {
     let mut url = None;
     let mut out = None;
     let mut slow = 0u64;
+    let mut pause = 0u64;
     while let Some(a) = args.next() {
         if a == "--slow" {
             slow = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        } else if a == "--pause" {
+            pause = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
         } else if url.is_none() {
             url = Some(a);
         } else {
@@ -30,7 +34,7 @@ fn main() {
         }
     }
     let Some(url) = url else {
-        eprintln!("usage: netget URL [OUT] [--slow MS]");
+        eprintln!("usage: netget URL [OUT] [--slow MS] [--pause S]");
         exit(2);
     };
     let Some(rest) = url.strip_prefix("http://") else {
@@ -96,7 +100,10 @@ fn main() {
             let now = Instant::now();
             let mbs = (total - last.1) as f64 / now.duration_since(last.0).as_secs_f64() / 1e6;
             println!("{:5} MiB  {:6.1} s  {:.2} MB/s", total >> 20, start.elapsed().as_secs_f64(), mbs);
-            last = (now, total);
+            if pause > 0 {
+                sleep(Duration::from_secs(pause));
+            }
+            last = (Instant::now(), total);
         }
         if slow > 0 {
             sleep(Duration::from_millis(slow));
