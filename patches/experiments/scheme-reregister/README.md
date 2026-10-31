@@ -25,11 +25,14 @@ but not after a crash or SIGKILL.
 
 ## Fix
 
-`base/0001`: when the name is taken, `register` checks the old scheme with
-a `dup` of its capability, which is what opening `/scheme/<name>` does too.
-If the kernel answers `ENODEV`, the scheme has ended and the new one takes
-the name (`nsmgr: scheme <name> ended, registering it again`). A live
-scheme keeps it, and `register` still gives `EEXIST`.
+`base/0001`: when the name is taken, `register` checks the old capability
+with `fcntl(F_GETFD)`. For that the kernel looks up the scheme without
+sending it a request, and answers `ENODEV` when the scheme is gone; then
+the new scheme takes the name (`nsmgr: scheme <name> ended, registering
+it again`). A live scheme is not asked anything, keeps its name, and
+`register` still gives `EEXIST`. (A `dup` with an empty buffer, the first
+try, never reaches the scheme: the kernel only copies the file
+description, so it never failed.)
 
 Not changed: a dead name is still listed in `/scheme` until it is
 registered again, and namespaces forked before the restart keep the old

@@ -1,4 +1,4 @@
-From 7d4e1b8838ffaa03ec6bbf834b852b1d2eb64a1d Mon Sep 17 00:00:00 2001
+From dee45078bffffa88c35436e1c36b98deb30ce926 Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Sat, 31 Oct 2026 07:58:02 +0000
 Subject: [PATCH] initnsmgr: register a scheme name again after its scheme
@@ -10,18 +10,19 @@ scheme, which the kernel answers with ENODEV. Registering the name again
 failed with EEXIST, so a restarted driver, or a USB device that came
 back, could not get its old name.
 
-On a name that is taken, check the old scheme with a dup of its
-capability (what opening it does too). If the kernel answers ENODEV,
-the scheme has ended and the new one takes the name.
+On a name that is taken, check the old capability with fcntl(F_GETFD).
+The kernel looks up the scheme for it without sending the scheme a
+request, and answers ENODEV if the scheme is gone; then the new scheme
+takes the name.
 ---
- bootstrap/src/initnsmgr.rs | 15 +++++++++++++--
- 1 file changed, 13 insertions(+), 2 deletions(-)
+ bootstrap/src/initnsmgr.rs | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
 
 diff --git a/bootstrap/src/initnsmgr.rs b/bootstrap/src/initnsmgr.rs
-index 707b896d..d2b43059 100644
+index 707b896d..9b2e1fbb 100644
 --- a/bootstrap/src/initnsmgr.rs
 +++ b/bootstrap/src/initnsmgr.rs
-@@ -81,14 +81,25 @@ struct SchemeRegister {
+@@ -81,14 +81,30 @@ struct SchemeRegister {
  impl SchemeRegister {
      fn register(&self, fd: FdGuard) -> Result<()> {
          let mut ns = self.target_namespace.borrow_mut();
@@ -40,10 +41,15 @@ index 707b896d..d2b43059 100644
  }
  
 +/// Whether the process that served a scheme has ended. The name stays in the
-+/// namespace after that, because nothing tells the namespace manager; the
-+/// kernel then answers every call to the scheme with ENODEV.
++/// namespace after that, because nothing tells the namespace manager, and
++/// the kernel answers calls through the old capability with ENODEV. F_GETFD
++/// looks up the scheme in the kernel without sending it a request, so a live
++/// scheme is not asked anything.
 +fn scheme_ended(cap_fd: &FdGuard) -> bool {
-+    matches!(cap_fd.dup(&[]), Err(err) if err.errno == ENODEV)
++    matches!(
++        redox_rt::sys::fcntl(cap_fd.as_raw_fd(), syscall::F_GETFD, 0),
++        Err(err) if err.errno == ENODEV
++    )
 +}
 +
  #[derive(Debug, Clone)]
