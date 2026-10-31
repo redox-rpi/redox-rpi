@@ -4,7 +4,7 @@ Issues: [#140](https://github.com/redox-rpi/redox-rpi/issues/140),
 [#141](https://github.com/redox-rpi/redox-rpi/issues/141); both seen in
 #119.
 
-**Default since PR [#PRNUM](https://github.com/redox-rpi/redox-rpi/pull/PRNUM):** base patch `0082`
+**Default since PR [#144](https://github.com/redox-rpi/redox-rpi/pull/144):** base patch `0082`
 (`patches/base/`). The name `netstack-arp-ack` is still accepted and does
 nothing.
 
