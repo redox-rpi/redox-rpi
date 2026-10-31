@@ -84,3 +84,9 @@ nano runs again. A second `restore` copies nothing. The boot copy line came
 after `redox login:`: the login prompt does not depend on the data
 partition (see above). The service is a `oneshot` since, for services
 that depend on it.
+
+Recheck, test 127 with `v0.3.0-dev-464-g3835c4d+xc526` (oneshot): passes.
+The boot copy of the same 214 files takes 3940 ms (the install's copy
+3736 ms) and now comes right after `redox login:` and before both
+timesync lines, so the services after it start about 4 s later when
+packages are on the data partition. nano runs after the reboot.
