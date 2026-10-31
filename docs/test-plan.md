@@ -113,13 +113,10 @@ it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
 ## Stable image
 
 <!-- stable-image: written by scripts/update-stable.sh -->
-Staged on the TFTP server whenever no test runs:
-`v0.3.0-dev-15-g24fbb96+x9f76` (`main` 24fbb96, `--experiment timesync
---experiment rtl8152`, SD card through `bcm2835-sdhcid`), tested 2026-10-28
-with `scripts/pi-test.py`: all checks pass, 0 of 300 starts failed
-([report](test-reports.md)). A copy is in
-`/srv/tftp/backup-v0.3.0-dev-15-g24fbb96+x9f76/`, and `/srv/tftp/stable`
-points to it.
+Staged on the TFTP server whenever no test runs: `v0.3.0-dev-533-g6c729cd+x9f76`, tested
+2026-10-31 with `scripts/pi-test.py` ([report](test-reports.md), starts:
+0 of 300 failed). A copy is in `/srv/tftp/backup-v0.3.0-dev-533-g6c729cd+x9f76/`, and
+`/srv/tftp/stable` points to it.
 <!-- /stable-image -->
 
 ### Nightly update

@@ -3867,3 +3867,16 @@ assistant fell back to "tools only". These are not real readings.
 
 Next try: the download needs about 25 minutes at this speed, and the runner now
 allows 50. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-533-g6c729cd+x9f76`
+
+Built 2026-10-31T03:30:26Z, `libc.so` `d8e9a5ac4a3e35a3…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-533-g6c729cd+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-533-g6c729cd+x9f76.toml |
+| ps | pass | 42 processes (piped) |
+| ps-tty | pass | 42 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
