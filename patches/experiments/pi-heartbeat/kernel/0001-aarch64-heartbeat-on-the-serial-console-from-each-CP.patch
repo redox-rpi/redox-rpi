@@ -114,12 +114,11 @@ diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
  pub struct SerialPort {
      base: usize,
      data_reg: u8,
-@@ -156,6 +177,8 @@
+@@ -257,6 +278,7 @@
      }
  
-     pub fn init(&mut self, with_irq: bool) {
+     pub fn enable_irq(&mut self) {
 +        RAW_BASE.store(self.base, Ordering::Relaxed);
-+
-         //Disable UART first
-         self.write_reg(self.ctrl_reg, 0x0);
+         self.clear_all_irqs();
  
+         self.drain_fifo();
