@@ -5896,3 +5896,73 @@ relibc-tests self-exit-status timesync`; `+xdd51` with `rt-call-flags`).
   (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, the 168 download again with `throttled`)
+
+Real Pi 3B+ over netboot. Test 171 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**The download completed this time (`382156480 bytes in 385.2 s, 0.99 MB/s`),
+although the USB hub dropped 8 times and came back every time. `throttled` read
+`0x00000000` before, during and after: no undervoltage (bit 16 never set).** Same
+image as #167/#168 (md5 `15e52989`), staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Before: `throttled` `0x00000000`; `/scheme/data` 393.7M used, no old files.
+- Every 30 s from a second devsh (11 readings, 22:12:05 to 22:18:17): `throttled`
+  **`0x00000000` every time**; devsh answered every time. `free` used 185744 →
+  190932, 197688 at the end of the download, 183076 after. `netget.bin`:
+   44819700,  81799239,  137663334,  170732067,  203508243,  237738846,  258632514,  278771868,  319671519,  364532904,  382156480
+  bytes.
+- Each drop on the serial console was `dwc2d: hub 1 port 1: device at address 2
+  removed`, `keyboard removed`, then `hub 1 port 1: device connected`, the whole
+  tree enumerated again, `LAN78xx no link yet`, `network on the adapter at address
+  3`. So dwc2d brought the hub and the network back each time, and TCP carried on.
+  In #168, the same image did not bring it back after its one drop.
+- netget and drop lines in order:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    16 MiB    18.5 s  0.91 MB/s
+netget:    32 MiB    26.0 s  2.24 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    48 MiB    46.4 s  0.82 MB/s
+netget:    64 MiB    54.3 s  2.14 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    80 MiB    77.4 s  0.73 MB/s
+netget:    96 MiB    85.2 s  2.17 MB/s
+netget:   112 MiB    94.9 s  1.73 MB/s
+netget:   128 MiB   106.8 s  1.41 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   144 MiB   133.1 s  0.64 MB/s
+netget:   160 MiB   144.9 s  1.43 MB/s
+netget:   176 MiB   164.7 s  0.85 MB/s
+netget:   192 MiB   182.2 s  0.96 MB/s
+netget:   208 MiB   202.1 s  0.84 MB/s
+netget:   224 MiB   215.7 s  1.24 MB/s
+netget:   240 MiB   225.5 s  1.72 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   256 MiB   281.3 s  0.30 MB/s
+netget:   272 MiB   288.3 s  2.42 MB/s
+netget:   288 MiB   301.9 s  1.24 MB/s
+netget:   304 MiB   318.0 s  1.05 MB/s
+netget:   320 MiB   326.3 s  2.02 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   336 MiB   344.8 s  0.91 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   352 MiB   371.6 s  0.63 MB/s
+netget: 382156480 bytes in 385.2 s, 0.99 MB/s
+```
+
+- After the download: `ls -l` 382156480 bytes; `throttled` `0x00000000`;
+  `/tmp/dwc2d-netstats` `uptime_ms 430142`, `rx_frames 271000`, `rx_errors 0`,
+  `tx_frames 121678`, `tx_errors 0`, `irqs 227065`. `netget.bin` removed.
+- No `Dropped`, `smolnetd` or `sdhost` error line, no panic. The plug read 4.2 to
+  4.3 W during the download.
+- The drops come in the slow 16 MiB steps (0.30 to 0.91 MB/s). The first came
+  right after `HTTP/1.0 200 OK`, before much was written. With no undervoltage
+  flag, a power dip at the hub that the firmware does not flag can't be ruled out,
+  but dwc2d losing the hub under card load is now the more likely cause.
+
+Stable image restored afterwards.
