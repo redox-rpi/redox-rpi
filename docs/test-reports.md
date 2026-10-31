@@ -5966,3 +5966,79 @@ netget: 382156480 bytes in 385.2 s, 0.99 MB/s
   but dwc2d losing the hub under card load is now the more likely cause.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-857-g7ed9070+xa901` (dwc2d hub-drop fix, the 171 download again)
+
+Real Pi 3B+ over netboot. Test 172 (#151 follow-up, USB session), Pi test agent.
+
+**Pass: the download completed (`382156480 bytes in 429.6 s, 0.89 MB/s`) with
+no hub drop at all (#171 on the old image: 8 drops). dwc2d counted 0 USB errors
+and 0 recoveries, and `throttled` stayed `0x00000000`.** Image
+`~/redox-rpi-usb/keep/hubdrop-v0.3.0-dev-857-g7ed9070+xa901.img` (manifest next
+to it; `experiments: dwc2d-netstats netget timesync usb-hub-drop`), staged with
+`~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Serial: 0 `device at address 2 removed` lines; the only `network on the
+  adapter` is the boot's (`LAN78xx link up after 1737 ms`). No `Dropped`,
+  `smolnetd` or panic line.
+- Second devsh every 30 s, 12 readings from 22:20:40 to 22:27:47 (`throttled`,
+  file size, then rc):
+
+| time | throttled | `netget.bin` | rc |
+|---|---|---|---|
+| 22:20:40 | 0x00000000 | 55885428 | rc=0 |
+| 22:21:19 | 0x00000000 | 101310174 | rc=0 |
+| 22:21:57 | 0x00000000 | 136131708 | rc=0 |
+| 22:22:40 | 0x00000000 | 164645694 | rc=0 |
+| 22:23:14 | 0x00000000 | 201046317 | rc=124 |
+| 22:24:09 | 0x00000000 | 221145252 | rc=0 |
+| 22:24:43 | 0x00000000 | 259483101 | rc=0 |
+| 22:25:16 | 0x00000000 | 296764140 | rc=0 |
+| 22:25:55 | 0x00000000 | 326639163 | rc=0 |
+| 22:26:34 | 0x00000000 | 351882966 | rc=0 |
+| 22:27:13 | 0x00000000 | 375474162 | rc=0 |
+| 22:27:47 | 0x00000000 | - | rc=124 |
+
+  The two `rc=124` readings were slow, not lost: at 22:23:14 `throttled` took
+  7.0 s and `free` 10.2 s under the download, then the 25 s limit ran out. At
+  22:27:47 the first connect needed a retry. devsh answered the next reading
+  both times.
+- Near the end (22:27:13): `/tmp/dwc2d-usbstats` `xact_errors 0`, `babbles 0`,
+  `stalls 0`, `toggle_errors 0`, `ahb_errors 0`, `timeouts 0`, `port_events 0`,
+  `root_events 1`, **`recoveries 0`**, `hprt0 0x1405`, `gintsts 0x54000009`;
+  `/tmp/dwc2d-step` `447920 idle`; netstats `rx_frames 266157`, `rx_errors 0`,
+  `tx_frames 107807`, `tx_errors 0`.
+- netget lines from the serial console:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB    12.4 s  1.36 MB/s
+netget:    32 MiB    19.8 s  2.26 MB/s
+netget:    48 MiB    30.1 s  1.64 MB/s
+netget:    64 MiB    49.1 s  0.88 MB/s
+netget:    80 MiB    58.0 s  1.90 MB/s
+netget:    96 MiB    72.0 s  1.20 MB/s
+netget:   112 MiB    85.5 s  1.25 MB/s
+netget:   128 MiB   115.8 s  0.56 MB/s
+netget:   144 MiB   131.0 s  1.11 MB/s
+netget:   160 MiB   153.9 s  0.73 MB/s
+netget:   176 MiB   171.5 s  0.95 MB/s
+netget:   192 MiB   223.5 s  0.32 MB/s
+2026-10-31T22-23-59.316Z [smolnetd@netstack::link::ethernet:246 WARN] Dropped packet on eth0 because
+netget:   208 MiB   237.8 s  1.18 MB/s
+netget:   224 MiB   252.1 s  1.17 MB/s
+netget:   240 MiB   265.6 s  1.24 MB/s
+netget:   256 MiB   280.0 s  1.17 MB/s
+netget:   272 MiB   306.1 s  0.64 MB/s
+netget:   288 MiB   316.4 s  1.63 MB/s
+netget:   304 MiB   341.2 s  0.68 MB/s
+netget:   320 MiB   359.8 s  0.91 MB/s
+netget:   336 MiB   385.7 s  0.65 MB/s
+netget:   352 MiB   419.8 s  0.50 MB/s
+netget: 382156480 bytes in 429.6 s, 0.89 MB/s
+```
+
+- Afterwards `netget.bin` 382156480 bytes, removed; `/scheme/data` 394.2M used.
+
+Stable image restored afterwards.
