@@ -1,23 +1,24 @@
-From ad2188a88205066e75d8326a301d249513efed8a Mon Sep 17 00:00:00 2001
+From 60565568a31aad6ae605c10cfd19c8165198d64a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 31 Oct 2026 07:21:33 +0100
 Subject: [PATCH] netstack, dhcpd: renew leases, drop adapters that go away,
  move the default route
 
 ---
- dhcpd/src/main.rs                     | 229 +++++++++++++++++++++++---
+ dhcpd/src/main.rs                     | 238 +++++++++++++++++++++++---
  drivers/net/testnetd/src/main.rs      |  49 ++++--
- drivers/net/testnetd/src/responder.rs |  47 ++++--
- netstack/src/adapters.rs              |  73 +++++---
- netstack/src/link/mod.rs              |   7 +
- netstack/src/main.rs                  |   9 +-
+ drivers/net/testnetd/src/responder.rs |  47 +++--
+ netstack/src/adapters.rs              | 107 +++++++++---
+ netstack/src/link/ethernet.rs         |  13 +-
+ netstack/src/link/mod.rs              |  12 ++
+ netstack/src/main.rs                  |  14 +-
  netstack/src/router/route_table.rs    |   5 +
- netstack/src/scheme/mod.rs            |  18 ++
+ netstack/src/scheme/mod.rs            |  28 +++
  netstack/src/scheme/netcfg/mod.rs     |  12 ++
- 9 files changed, 377 insertions(+), 72 deletions(-)
+ 10 files changed, 447 insertions(+), 78 deletions(-)
 
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
-index 1eb4f1d..6f374a8 100644
+index 1eb4f1d..291959d 100644
 --- a/dhcpd/src/main.rs
 +++ b/dhcpd/src/main.rs
 @@ -106,6 +106,25 @@ struct Lease {
@@ -167,7 +168,7 @@ index 1eb4f1d..6f374a8 100644
      })
  }
  
-@@ -420,17 +484,115 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+@@ -420,17 +484,124 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
      None
  }
  
@@ -191,10 +192,15 @@ index 1eb4f1d..6f374a8 100644
 +        Held { lease, since, next }
 +    }
 +
-+    fn expired(&self) -> bool {
++    /// When the lease ends, if it does.
++    fn end(&self) -> Option<Instant> {
 +        self.lease
 +            .times
-+            .is_some_and(|t| self.since.elapsed() >= Duration::from_secs(t.lease.into()))
++            .map(|t| self.since + Duration::from_secs(t.lease.into()))
++    }
++
++    fn expired(&self) -> bool {
++        self.end().is_some_and(|end| Instant::now() >= end)
 +    }
 +}
 +
@@ -251,6 +257,12 @@ index 1eb4f1d..6f374a8 100644
 +            here
 +        });
 +        failed.retain(|name, _| ifaces.contains(name));
++        held.retain(|name, h| {
++            if h.expired() {
++                println!("DHCP: {name} lease of {} ended", fmt_ip(h.lease.addr));
++            }
++            !h.expired()
++        });
 +
 +        let due: Vec<String> = held
 +            .iter()
@@ -271,12 +283,10 @@ index 1eb4f1d..6f374a8 100644
 +                }
 +                Err(err) => {
 +                    eprintln!("dhcpd: {iface}: renewal: {err}");
-+                    if h.expired() {
-+                        println!("DHCP: {iface} lease of {} ended", fmt_ip(h.lease.addr));
-+                        held.remove(&iface);
-+                    } else {
-+                        h.next = Some(Instant::now() + RENEW_RETRY);
-+                    }
++                    // Ask again, but not after the lease ended: then the
++                    // next pass drops it.
++                    let retry = Instant::now() + RENEW_RETRY;
++                    h.next = Some(h.end().map_or(retry, |end| retry.min(end)));
 +                }
 +            }
 +        }
@@ -288,7 +298,7 @@ index 1eb4f1d..6f374a8 100644
                  continue;
              }
              if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
-@@ -439,21 +601,13 @@ fn watch(verbose: bool) -> ! {
+@@ -439,21 +610,13 @@ fn watch(verbose: bool) -> ! {
              match try_lease(&iface, verbose) {
                  Some(lease) => {
                      failed.remove(&iface);
@@ -312,7 +322,7 @@ index 1eb4f1d..6f374a8 100644
          }
          thread::sleep(SCAN);
      }
-@@ -517,6 +671,29 @@ mod test {
+@@ -517,6 +680,29 @@ mod test {
          assert!(parse_reply(&reply(2, 7, mac.bytes, &[3, 200]), 7, &mac, false).is_some());
      }
  
@@ -586,27 +596,32 @@ index 4fcd55a..83ac6ed 100644
      }
  }
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
-index 8499e04..d1e63c7 100644
+index 8499e04..6a505a3 100644
 --- a/netstack/src/adapters.rs
 +++ b/netstack/src/adapters.rs
-@@ -5,8 +5,12 @@
+@@ -5,8 +5,13 @@
  //! USB Ethernet plugged in later) gets its own interface. The `/scheme`
  //! directory is opened once before netstack enters the null namespace;
  //! later lookups go through that handle.
 +//!
-+//! An adapter whose scheme leaves `/scheme` (its driver ended, the USB
-+//! adapter was pulled) is reported as gone, so netstack drops its interface.
-+//! When the same scheme comes back, it gets its old name again.
++//! An adapter whose scheme leaves `/scheme`, or whose file cannot be read
++//! any more (its driver ended, the USB adapter was pulled), is dropped
++//! with its interface. When the same scheme comes back, it gets its old
++//! name again.
  
 -use std::collections::BTreeSet;
 +use std::collections::{BTreeMap, BTreeSet};
  
  use libredox::flag::{O_CLOEXEC, O_DIRECTORY, O_NONBLOCK, O_RDONLY, O_RDWR};
  use libredox::Fd;
-@@ -29,6 +33,10 @@ pub struct Adapters {
+@@ -27,8 +32,12 @@ pub struct Adapters {
+     /// A copy of the namespace netstack started in; `setrens` closes the
+     /// original.
      ns: Option<Fd>,
-     /// Schemes already in use, or that failed to open (logged once).
-     seen: BTreeSet<String>,
+-    /// Schemes already in use, or that failed to open (logged once).
+-    seen: BTreeSet<String>,
++    /// Schemes that failed to open (logged once; tried again each scan).
++    warned: BTreeSet<String>,
 +    /// Schemes in use: their interface name and file descriptor.
 +    in_use: BTreeMap<String, (String, usize)>,
 +    /// Every name given so far, by scheme, for adapters that come back.
@@ -614,10 +629,12 @@ index 8499e04..d1e63c7 100644
      eth: usize,
      wlan: usize,
  }
-@@ -47,18 +55,36 @@ impl Adapters {
+@@ -46,47 +55,93 @@ impl Adapters {
+         Adapters {
              root,
              ns,
-             seen: BTreeSet::new(),
+-            seen: BTreeSet::new(),
++            warned: BTreeSet::new(),
 +            in_use: BTreeMap::new(),
 +            names: BTreeMap::new(),
              eth: 0,
@@ -639,26 +656,31 @@ index 8499e04..d1e63c7 100644
 +            return (Vec::new(), Vec::new());
 +        };
 +        let listed: BTreeSet<String> = listed
-             .into_iter()
--            .filter(|s| s.starts_with("network") && !self.seen.contains(s))
++            .into_iter()
 +            .filter(|s| s.starts_with("network"))
 +            .collect();
 +        let mut gone = Vec::new();
-+        for scheme in self.seen.difference(&listed).cloned().collect::<Vec<_>>() {
-+            self.seen.remove(&scheme);
-+            if let Some((name, fd)) = self.in_use.remove(&scheme) {
-+                info!("adapter {scheme} ({name}) went away");
-+                gone.push((name, fd));
-+            }
++        let left: Vec<String> = self
++            .in_use
++            .keys()
++            .filter(|s| !listed.contains(*s))
++            .cloned()
++            .collect();
++        for scheme in left {
++            let (name, fd) = self.in_use.remove(&scheme).unwrap();
++            info!("adapter {scheme} ({name}) went away");
++            gone.push((name, fd));
 +        }
++        self.warned.retain(|s| listed.contains(s));
 +        let mut new: Vec<String> = listed
-+            .into_iter()
-+            .filter(|s| !self.seen.contains(s))
+             .into_iter()
+-            .filter(|s| s.starts_with("network") && !self.seen.contains(s))
++            .filter(|s| !self.in_use.contains_key(s))
              .collect();
          new.sort_by_key(|s| (is_wlan(s), s.clone()));
          let mut adapters = Vec::new();
-@@ -66,27 +92,32 @@ impl Adapters {
-             self.seen.insert(scheme.clone());
+         for scheme in new {
+-            self.seen.insert(scheme.clone());
              match self.open(&scheme) {
                  Ok((file, mac)) => {
 -                    let name = if is_wlan(&scheme) {
@@ -679,11 +701,17 @@ index 8499e04..d1e63c7 100644
 +                        }
                      };
                      info!("adapter {scheme} as {name}, MAC {mac}");
++                    self.warned.remove(&scheme);
 +                    self.names.insert(scheme.clone(), name.clone());
 +                    self.in_use.insert(scheme.clone(), (name.clone(), file.raw()));
                      adapters.push(Adapter { scheme, name, file, mac });
                  }
-                 Err(e) => warn!("cannot use adapter {scheme}: {e}"),
+-                Err(e) => warn!("cannot use adapter {scheme}: {e}"),
++                Err(e) => {
++                    if self.warned.insert(scheme.clone()) {
++                        warn!("cannot use adapter {scheme}: {e}");
++                    }
++                }
              }
          }
 -        adapters
@@ -695,6 +723,20 @@ index 8499e04..d1e63c7 100644
 -        let Some(root) = &self.root else {
 -            return Vec::new();
 -        };
++    /// Forgets the adapter of interface `name`, whose file failed, so its
++    /// scheme is opened again when it comes back; returns its file
++    /// descriptor.
++    pub fn forget(&mut self, name: &str) -> Option<usize> {
++        let scheme = self
++            .in_use
++            .iter()
++            .find(|(_, (n, _))| n == name)
++            .map(|(s, _)| s.clone())?;
++        let (_, fd) = self.in_use.remove(&scheme)?;
++        info!("adapter {scheme} ({name}) cannot be read any more");
++        Some(fd)
++    }
++
 +    /// Names in `/scheme`; None if it cannot be read (then nothing counts
 +    /// as gone).
 +    fn list(&self) -> Option<Vec<String>> {
@@ -702,7 +744,7 @@ index 8499e04..d1e63c7 100644
          let mut names = Vec::new();
          let mut buf = [0u8; 4096];
          let mut opaque = 0;
-@@ -96,7 +127,7 @@ impl Adapters {
+@@ -96,7 +151,7 @@ impl Adapters {
                  Ok(n) => n,
                  Err(e) => {
                      warn!("cannot list /scheme: {e}");
@@ -711,7 +753,7 @@ index 8499e04..d1e63c7 100644
                  }
              };
              let mut last = None;
-@@ -114,7 +145,7 @@ impl Adapters {
+@@ -114,7 +169,7 @@ impl Adapters {
                  _ => break,
              }
          }
@@ -720,11 +762,73 @@ index 8499e04..d1e63c7 100644
      }
  
      fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress), String> {
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 5f32a47..cb34e2b 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -43,6 +43,8 @@ pub struct EthernetLink {
+     network_file: File,
+     hardware_address: Option<EthernetAddress>,
+     ip_address: Option<Ipv4Cidr>,
++    /// The network file failed: the driver is gone.
++    gone: bool,
+ }
+ 
+ impl EthernetLink {
+@@ -66,6 +68,7 @@ impl EthernetLink {
+             waiting_packets,
+             hardware_address: None,
+             ip_address: None,
++            gone: false,
+             input_buffer: vec![0u8; Self::MTU],
+             output_buffer: Vec::with_capacity(Self::MTU),
+             arp_state: Default::default(),
+@@ -345,12 +348,16 @@ impl LinkDevice for EthernetLink {
+         let Some(hardware_address) = self.hardware_address else {
+             return None;
+         };
++        if self.gone {
++            return None;
++        }
+ 
+         let mut input_buffer = std::mem::replace(&mut self.input_buffer, Vec::new());
+         loop {
+             if let Err(e) = self.network_file.read(&mut input_buffer) {
+                 if e.kind() != ErrorKind::WouldBlock {
+-                    error!("Failed to read ethernet device on link {}", self.name);
++                    error!("Failed to read ethernet device on link {}: {e}; dropping it", self.name);
++                    self.gone = true;
+                 } else {
+                     // No packet to read but we check if we have arp to send
+                     self.send_arp(now);
+@@ -393,6 +400,10 @@ impl LinkDevice for EthernetLink {
+         false
+     }
+ 
++    fn is_gone(&self) -> bool {
++        self.gone
++    }
++
+     fn mac_address(&self) -> Option<EthernetAddress> {
+         self.hardware_address
+     }
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index e36e331..b985b59 100644
+index e36e331..dc0416d 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
-@@ -55,6 +55,13 @@ impl DeviceList {
+@@ -29,6 +29,11 @@ pub trait LinkDevice {
+ 
+     fn ip_address(&self) -> Option<IpCidr>;
+     fn set_ip_address(&mut self, addr: IpCidr);
++
++    /// True once the device cannot be read any more (its driver ended).
++    fn is_gone(&self) -> bool {
++        false
++    }
+ }
+ 
+ #[derive(Default)]
+@@ -55,6 +60,13 @@ impl DeviceList {
              .map(|device| device.as_mut())
      }
  
@@ -739,7 +843,7 @@ index e36e331..b985b59 100644
          self.inner.iter().map(|b| b.as_ref())
      }
 diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 6b36c62..0d2b505 100644
+index 6b36c62..b35c81d 100644
 --- a/netstack/src/main.rs
 +++ b/netstack/src/main.rs
 @@ -24,7 +24,7 @@ const ADAPTER_SCAN: std::time::Duration = std::time::Duration::from_secs(2);
@@ -751,12 +855,17 @@ index 6b36c62..0d2b505 100644
      if first.is_empty() {
          warn!("no network adapter yet");
      }
-@@ -145,7 +145,12 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -145,7 +145,17 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
              EventSource::Time => {
                  if last_scan.elapsed() >= ADAPTER_SCAN {
                      last_scan = std::time::Instant::now();
 -                    for adapter in adapters.scan() {
-+                    let (new, gone) = adapters.scan();
++                    let (new, mut gone) = adapters.scan();
++                    for name in smolnetd.gone_devices() {
++                        if let Some(fd) = adapters.forget(&name) {
++                            gone.push((name, fd));
++                        }
++                    }
 +                    for (name, fd) in gone {
 +                        let _ = event_queue.unsubscribe(fd);
 +                        smolnetd.remove_adapter(&name);
@@ -782,7 +891,7 @@ index 51943c9..47fb0ec 100644
          for rule in self.rules.iter_mut().filter(|rule| rule.src == old_src) {
              rule.src = new_src;
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index e5cd6d3..ca3ab43 100644
+index e5cd6d3..24b41aa 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
 @@ -57,6 +57,7 @@ fn getcfg(key: &str) -> Result<String> {
@@ -801,10 +910,20 @@ index e5cd6d3..ca3ab43 100644
              iface: Rc::clone(&iface),
              router_device: network_device,
              socket_set: Rc::clone(&socket_set),
-@@ -176,6 +178,22 @@ impl Smolnetd {
+@@ -176,6 +178,32 @@ impl Smolnetd {
          self.netcfg_scheme.interface_added(&name);
      }
  
++    /// Interfaces whose device cannot be read any more.
++    pub fn gone_devices(&self) -> Vec<String> {
++        self.devices
++            .borrow()
++            .iter()
++            .filter(|dev| dev.is_gone())
++            .map(|dev| dev.name().to_string())
++            .collect()
++    }
++
 +    /// Drops the interface of an adapter that went away: its address, its
 +    /// routes (a default route through it among them) and the device.
 +    pub fn remove_adapter(&mut self, name: &str) {
