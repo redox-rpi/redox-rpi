@@ -192,3 +192,10 @@ Pi test #120 (`v0.3.0-dev-407-g741b667+x4ec1`, 2026-10-30) passed:
 `ssh-keyscan` returns 3 keys with and without `-t`; key login with the key
 only on the data partition works, also after a reset, with the same host key
 fingerprints; `ssh-session.exp` passes. Report: `docs/test-reports.md` on main.
+
+## Pi test #132, no TODO lines (2026-10-31)
+
+Branch `relibc-quiet` (#109). Pi test #132 (`v0.3.0-dev-410-g313d292+x4ec1`)
+passed: key logins and `ssh-session.exp` work, and the serial log has no
+`TODO: madvise`, `getsockopt` or `setsockopt` lines from sshd any more.
+Report: `docs/test-reports.md` on main.

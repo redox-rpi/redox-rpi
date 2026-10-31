@@ -27,7 +27,8 @@
   and `TCP_NODELAY` reports 0 (netstack's state) instead of ENOSYS, and
   `setsockopt` of both succeeds without a log line. relibc `0045` in
   experiment `sshd`, branch `relibc-quiet`. QEMU: key logins work, no TODO
-  lines; Pi test #132 queued. Switching Nagle off needs netstack support.
+  lines; Pi test #132 passed (2026-10-31). Switching Nagle off needs netstack
+  support.
 - [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on Redox: experiment `relibc-tests` (branch
   `t13-relibc-tests`) runs upstream's suite in QEMU. `scripts/relibc-tests.sh`
   builds, runs it and compares with `config/relibc-tests-expected.txt`
