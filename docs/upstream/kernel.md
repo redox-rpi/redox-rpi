@@ -26,10 +26,11 @@ secondary CPU (`src/arch/aarch64/device/cpu/boot.rs`).
 - **Reproduce:** a Pi 3B+ (or any real aarch64 board) with our
   `tools/icachetest`: `icachetest 10000`; its `new-page` and `same-page`
   tests count rounds that ran old code.
-- **Our fix:** experiment `icache-sync` (PR #148), kernel patches `0001`
-  (sync on `mprotect` to executable and at the exec address space switch)
-  and `0002` (executable `fmap`, and page faults that copy a frame or take
-  one from a scheme). Both apply to upstream master `1a1295b` as they are.
+- **Our fix:** kernel patches `0010` (sync on `mprotect` to executable
+  and at the exec address space switch) and `0011` (executable `fmap`, and
+  page faults that copy a frame or take one from a scheme), default in our
+  images; first as experiment `icache-sync` (PR #148). Both apply to
+  upstream master `1a1295b` as they are.
 - **Tested:** Pi 3B+ test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)): without the patches
   3146 and 3244 of 10000 `new-page` rounds and 5310 and 5349 `same-page`
   rounds ran stale code; with them 0 in every test on both boots, 0 of 1000

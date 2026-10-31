@@ -59,7 +59,8 @@
   dropped sessions leave nothing; real Pi (#21): 13 dropped sessions
   leave nothing. Ready to merge.
 
-- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
+- [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`, default on branch
+  `icache-default` as kernel `0010`, `0011`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
   executable and at exec (`0001`), and for executable file maps and page
@@ -67,7 +68,9 @@
   Without it, the new stress test `icachetest` ran stale code in about a
   third of the rounds on a fresh page and half on a reused one; with it,
   0 on both boots, 0 of 1000 failed starts and no measurable cost. Pull
-  request #148; upstream note in `docs/upstream/kernel.md`. Found on the way: RedoxFS maps the old data of a freed disk block
+  request #148; as default kernel patches pull request #153, Pi test 169
+  passed (0 stale rounds, 0 of 1000 failed starts). Upstream note in
+  `docs/upstream/kernel.md`. Found on the way: RedoxFS maps the old data of a freed disk block
   (a file deleted or truncated, then a new one written), in QEMU too.
 
 ## Next

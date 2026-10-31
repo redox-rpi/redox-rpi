@@ -2,6 +2,11 @@
 
 For [#3](https://github.com/redox-rpi/redox-rpi/issues/3).
 
+**Default now:** the two patches are kernel `0010` and `0011` in
+[`patches/kernel/`](../../kernel/), in every image (after Pi test 162
+showed stale code without them). `--experiment icache-sync` adds nothing
+any more; this page keeps the history.
+
 ## The gap
 
 On AArch64, instruction fetch does not see data that is still in the data
@@ -33,7 +38,7 @@ correctness fix for real hardware.
 
 ## The change
 
-Kernel patch `0001`:
+Kernel patch `0001` (default `0010`):
 
 - `AddrSpace::mprotect`: when pages become executable, clean each mapped
   page to the point of unification through the kernel's linear mapping,
@@ -42,7 +47,7 @@ Kernel patch `0001`:
   executable grant of the new address space, before the context runs in
   it.
 
-Kernel patch `0002`, the other ways code reaches an executable page:
+Kernel patch `0002` (default `0011`), the other ways code reaches an executable page:
 
 - `mmap` of a file with `PROT_EXEC` (`borrow_fmap`): the scheme filled the
   pages as data;
@@ -124,3 +129,8 @@ builds, A, B, A, B on fresh boots:
 1000 starts failed with both builds, no exception, and no measurable cost:
 the `ls` loop took 116.8 s with and 118.9 s without on the first boots.
 Upstream note: [docs/upstream/kernel.md](../../../docs/upstream/kernel.md).
+
+Real Pi 3B+, 2026-10-31, test 169 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-845-g7590e1cx8a5e-icache-default-icache-sync-as-default-kernel-patches)), the default image
+with kernel `0010`, `0011` (`v0.3.0-dev-845-g7590e1c+x8a5e`, plus
+`icachetest`): 0 stale rounds in all four tests, 0 of 1000 starts failed,
+standard checks pass, `ls` loop 116.9 s.
