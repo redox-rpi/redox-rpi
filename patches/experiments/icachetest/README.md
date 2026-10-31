@@ -14,7 +14,8 @@ On Redox: `icachetest [rounds]` (default 10000 per test). Each round writes
 
 - `new-page`: a fresh page each round, made executable with `mprotect`;
 - `same-page`: one page, rewritten each round, `mprotect` in between;
-- `file-map`: a file rewritten each round and mapped read-execute;
+- `file-map`: a new file each round, mapped read-execute (a new name, because
+  RedoxFS hands out the old pages for a file truncated and written again);
 - `user-flush`: one read-write-execute page with the maintenance done in
   user space (`dc cvau`, `ic ivau`), as a JIT does.
 

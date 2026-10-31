@@ -101,15 +101,18 @@ fn same_page(rounds: usize) -> usize {
     wrong
 }
 
-/// A file rewritten every round and mapped read-execute (no mprotect).
-fn file_map(rounds: usize, path: &str) -> Option<usize> {
-    let cpath = CString::new(path).unwrap();
+/// A new file every round, mapped read-execute (no mprotect). A new name,
+/// because RedoxFS hands out the old pages for a file that was truncated
+/// and written again.
+fn file_map(rounds: usize, base: &str) -> Option<usize> {
     let mut wrong = 0;
     let mut old_data = 0;
     let buf = anon(libc::PROT_READ | libc::PROT_WRITE);
     for round in 0..rounds {
         let n = value(round);
         unsafe { fill(buf, n) };
+        let path = format!("{base}.{round}");
+        let cpath = CString::new(path.as_str()).unwrap();
         let fd = unsafe {
             libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC, 0o600)
         };
@@ -148,9 +151,9 @@ fn file_map(rounds: usize, path: &str) -> Option<usize> {
             libc::munmap(p as *mut _, PAGE);
             libc::close(fd);
         }
+        let _ = std::fs::remove_file(&path);
     }
     unsafe { libc::munmap(buf as *mut _, PAGE) };
-    let _ = std::fs::remove_file(path);
     if old_data > 0 {
         println!("file-map: {old_data} of {rounds} mappings held old file data (not a cache problem)");
     }
