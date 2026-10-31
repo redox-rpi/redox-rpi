@@ -26,6 +26,13 @@
   `cputop`): CPU time per core and per thread over an interval, to find
   what keeps a core busy. It found the idle Pi for the ondemand governor
   (#23, Pi tests #82 and #93).
+- Power-saving mode ([#126](https://github.com/redox-rpi/redox-rpi/issues/126),
+  v0.5.0), branch `power-save`, experiment `power-save`: `rpi-firmwared`
+  `display` (HDMI power off/on, blank) and `power_domains` (the firmware's
+  power domains; `usb` and `uart0` refused). Idle cores already sleep
+  (`wfi` in the kernel's idle loop); Bluetooth and Wi-Fi are off at boot.
+  Row 147 measures the baseline and each switch with the Shelly plug
+  (test 93: 3.05 W idle with the ondemand governor).
 
 ## Bluetooth
 
@@ -56,8 +63,11 @@ and a clock written to `/scheme/btuart/clock` by hand stays through
 wants the flow control lines asserted low (`auto-low`, now the start
 setting) and that the receive thread lost bytes between sleeps. Step 10:
 `bt info` answers (BCM4345C0, build 0) with no bytes lost; `bt up` sent
-its Reset too soon after power-on. Step 11 waits longer, retries, and
-tests the firmware upload.
+its Reset too soon after power-on. Step 11 waited longer and retried, but
+the chip stayed silent, and so did `bt info` after it: `bt up` never
+switched WL_ON on, only `bt diag` did (step 10's `bt info` came after
+`bt diag`). Step 12 switches WL_ON on in `bt up`'s power cycle and tests
+the firmware upload.
 
 Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
 higher baud rates. The mini UART's baud rate follows the core clock, so
