@@ -98,6 +98,18 @@ HAT. No code yet.
   macOS) registered as `network.usb-gadget`, CDC-NCM later for Windows.
   The port is host or device, not both. The Pi 3B+ can't do device mode
   (its DWC2 sits behind the LAN7515 hub).
+- **Next to `dwc2d` or instead of it:** one controller, so one driver
+  owns it. `dwc2d` starts from initfs (`40_dwc2d.service`), finds the
+  controller in the device tree by `compatible` and maps its registers;
+  Redox's init can't pick a service by a device-tree value, so a separate
+  gadget daemon would start next to `dwc2d` and both would take the same
+  registers. Better: the same binary reads `dr_mode` from the controller's
+  node at start and runs either today's host code or a new device part
+  (`device.rs` for the core and endpoint 0, `ecm_gadget.rs` for the
+  function), sharing `regs.rs`, the register mapping and the network
+  scheme code. The host code stays as it is; nothing changes on the Pi
+  3B+ or on a Zero 2 W without the overlay. Switching at run time (OTG ID
+  pin, host and device on one port) is not needed and left out.
 - **Testing:** QEMU's DWC2 model is host only, so: a host model in Rust
   that plays a host's enumeration against the code, then a Zero 2 W cabled
   to homenodellm (powered by it, `cdc_ether` on the Linux side, tests over
