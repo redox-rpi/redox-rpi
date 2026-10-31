@@ -39,4 +39,10 @@ Applies after [`dwc2d-netstats`](../dwc2d-netstats/README.md):
 
 ## Tests
 
-- QEMU: see below.
+- QEMU 2026-10-31, `v0.3.0-dev-857-g7ed9070+xa901` (`netget`,
+  `dwc2d-netstats`, `timesync`, `usb-hub-drop`): boots, `test-hotplug.sh`
+  15/15, keyboard test pass, network port cycle comes back with devsh. An
+  unplug prints e.g. `hub 1 port 2: device at address 3 removed, status
+  0x0100 (power) change 0x0003 (connection enable)` and the error counts;
+  `/tmp/dwc2d-usbstats` and `/tmp/dwc2d-step` (`idle`) are written. QEMU
+  never loses a sleep, so the hang itself is not reproduced here.
