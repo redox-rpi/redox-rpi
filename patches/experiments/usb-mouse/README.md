@@ -30,3 +30,7 @@ because `0035` is USB serial (PR #70).
   switched off and on, unplugged; the tablet's middle (16384 of 32767)
   arrives as 32768. `scripts/test-hotplug.sh` still passes (keyboard and
   network).
+- QEMU 2026-10-31 on main, `v0.3.0-dev-820-g77ba1ac+x0c8f`:
+  `scripts/test-usb-mouse.sh` 18/18, `scripts/test-keyboard.sh` pass,
+  `scripts/test-hotplug.sh` 15/15.
+- Pi: test #56, needs a person with a USB mouse (USB visit).
