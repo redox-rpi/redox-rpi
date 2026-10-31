@@ -4667,6 +4667,8 @@ ps-tty, sdcard, 0 of 300 starts failed).
 - `netget`'s lines only reach devsh when it ends, so the step 4 progress is lost.
   A rerun could write them to the serial console or a file to show how far it got.
 - The Pi's clock read 1970 (no timesync in this image).
+- Found during #143: the hang left `/scheme/data/netget.bin` with 359464809 of
+  382156480 bytes (94 %, 342.8 MiB), so step 4 hung late in the download. Removed.
 
 Stable image staged afterwards; the Pi needs a power cycle to boot it.
 
