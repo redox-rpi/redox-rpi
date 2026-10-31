@@ -51,6 +51,9 @@
     (ctx-leak fix, #31) makes a process whose last thread ends with
     `pthread_exit` report SIGKILL instead of 0. Every image with main
     merged has it; without `0008` the test passes 20 of 20.
+    Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
+    [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
+    10 of 10 runs exit 0 and the #31 leak stays fixed. Pi row 133.
   - `pthread/rwlock_randtest` does not hang: 1,000,000 lock operations
     take 11-17 s in QEMU, more than the verifier's 10 s. It passes.
   - `signals/kill-child`, `kill-permission`, `killpg0-self`: 45 of 45
