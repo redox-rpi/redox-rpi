@@ -107,3 +107,52 @@ Pi test 66 (real Pi 3B+, same build) passed the same checks; `date -u` was
 in the same second as the build host. Again in QEMU with current main and
 `timerd` merged (`v0.3.0-dev-495-g2d6bf55+x7f63`, 2026-10-30): the same
 results, and `date -u` after `timesync` matched the host to the second.
+
+## Checked answers and several servers
+
+`timesync` checks every NTP answer before it uses it:
+
+- it comes from the address asked, and its origin time is the transmit
+  time of the request (otherwise: `answer does not match the request`);
+- the server is synchronized: leap indicator not 3, stratum 1 to 15;
+- a kiss-of-death (stratum 0) is printed with its code. After `RATE` that
+  address is not asked again in this sync; after `DENY` or `RSTR` it is not
+  asked again at all;
+- the transmit time is not zero.
+
+It asks up to three addresses (`pool.ntp.org` has several) and uses the
+median offset, so one wrong server does not move the clock. Two answers
+more than a second apart are not used: it waits for a third. After the
+first sync (with `-d`, every hour) it leaves the clock alone when the
+offset is below 50 ms, and a jump of more than an hour needs two answers
+that agree. Each sync prints the offset of every answer:
+
+```
+timesync: clock set to 2026-10-31 15:46:50 UTC, offset +326.372 s (pool.ntp.org (185.170.216.123) +326.371 s, pool.ntp.org (31.58.102.164) +326.375 s, pool.ntp.org (141.144.241.16) +326.372 s)
+```
+
+A server can be given as `address:port`. [`fake-ntp.py`](fake-ntp.py)
+runs nine test servers on ports 12301 to 12309, one per kind of answer
+(good, leap indicator 3, `RATE`, wrong origin, two hours ahead, stratum
+16, a second good one, transmit time 0, `DENY`).
+
+**Result on Linux** (homenodellm, 2026-10-31): every bad kind is refused
+with its message; `RATE` and `DENY` are asked once per run; good, ahead
+and good gives offset 0.000 s; good and ahead alone wait for a third
+answer; `pool.ntp.org` gives three answers within 4 ms.
+
+**Result in QEMU** (`v0.3.0-dev-773-g2ffa68b+x7f63`, `--experiment
+ldso-diagnostics --experiment timesync --experiment timerd`, `--usb-net`,
+fake servers at `10.0.2.2`, 2026-10-31):
+
+| Check | Result |
+|---|---|
+| Boot | `clock set … from the build time`, then `offset +326.372 s` from three `pool.ntp.org` addresses; `timerd: clock set by timesync` |
+| `timesync -n` | three `pool.ntp.org` answers, offset +0.001 s |
+| Ports 12302, 12303, 12304, 12306, 12308, 12309 | refused: leap indicator 3, `kiss-of-death RATE`, `answer does not match the request`, stratum 16, `no transmit time`, `kiss-of-death DENY`; RATE and DENY servers got one request each |
+| 12301, 12305, 12307 | offset -0.003 s, the +7200 s answer outvoted |
+| 12301, 12305 | `two answers 7200 s apart, waiting for a third`, clock not set |
+| `timesync 10.0.2.2:12305`, then `timesync` | clock 2 h ahead (a single answer at the first sync), then back by -7199.995 s from three pool answers |
+
+The hourly rules of `-d` (keep below 50 ms, no lone jump over an hour) are
+covered by the unit tests (`cargo test` in `tools/timesync`).
