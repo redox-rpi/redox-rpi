@@ -1,0 +1,4 @@
+# Test only: boots with the governor set from /etc (#23).
+[[files]]
+path = "/etc/rpi-firmware/governor"
+data = "performance\n"
