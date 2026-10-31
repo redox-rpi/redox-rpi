@@ -10,7 +10,11 @@ use std::process;
 /// else 8883 with TLS and 1883 without.
 ///
 /// TLS is on with `--tls` or `--cafile`, with `$MQTT_CAFILE`, or when
-/// `/etc/mqtt-ca.crt` exists; `--no-tls` turns it off.
+/// `/etc/mqtt-ca.crt` exists; `--no-tls` turns it off. With TLS, a client
+/// certificate comes from `--cert`, else `$MQTT_CERT`, else
+/// `/etc/mqtt-client.crt` if it exists; its key from `--key`, else
+/// `$MQTT_KEY`, else `/etc/mqtt-client.key` if it exists, else the
+/// certificate file.
 pub struct Common {
     pub host: String,
     /// True when `-h` was given; else `host` is the default.
@@ -19,6 +23,8 @@ pub struct Common {
     pub port: Option<u16>,
     pub tls: Tls,
     pub ca_file: Option<String>,
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
     pub options: mqtt::Options,
     pub qos: mqtt::QoS,
     pub topics: Vec<String>,
@@ -28,6 +34,9 @@ pub struct Common {
 const HOST_FILE: &str = "/etc/mqtt-host";
 /// The broker's CA certificate; if it exists, the tools use TLS.
 const CA_FILE: &str = "/etc/mqtt-ca.crt";
+/// This system's client certificate and key, for brokers that want one.
+const CERT_FILE: &str = "/etc/mqtt-client.crt";
+const KEY_FILE: &str = "/etc/mqtt-client.key";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tls {
@@ -45,6 +54,8 @@ impl Common {
             port: env::var("MQTT_PORT").ok().and_then(|p| p.parse().ok()),
             tls: Tls::Auto,
             ca_file: None,
+            cert_file: None,
+            key_file: None,
             options: mqtt::Options::new(&format!("{name}-{}", process::id())),
             qos: mqtt::QoS::AtMostOnce,
             topics: Vec::new(),
@@ -66,6 +77,8 @@ impl Common {
                 self.ca_file = Some(value());
                 self.tls = Tls::On;
             }
+            "--cert" => self.cert_file = Some(value()),
+            "--key" => self.key_file = Some(value()),
             "-t" => self.topics.push(value()),
             "-q" => {
                 self.qos = value()
@@ -99,6 +112,25 @@ impl Common {
         }
     }
 
+    /// The client certificate and key files; the key may be None (in the
+    /// certificate file).
+    fn client_identity(&self) -> Option<(String, Option<String>)> {
+        let from = |given: &Option<String>, var: &str, file: &str| {
+            given
+                .clone()
+                .or_else(|| env::var(var).ok().filter(|f| !f.is_empty()))
+                .or_else(|| Path::new(file).exists().then(|| file.to_string()))
+        };
+        let cert = from(&self.cert_file, "MQTT_CERT", CERT_FILE)?;
+        Some((cert, from(&self.key_file, "MQTT_KEY", KEY_FILE)))
+    }
+
+    /// True when the connection will show a client certificate.
+    #[allow(dead_code)] // only ha-bridge reports it
+    pub fn uses_client_cert(&self) -> bool {
+        self.uses_tls() && self.client_identity().is_some()
+    }
+
     pub fn uses_tls(&self) -> bool {
         self.tls_ca_file().is_some()
     }
@@ -120,9 +152,13 @@ impl Common {
         let mut options = self.options.clone();
         #[cfg(feature = "tls")]
         {
-            options.tls = self
-                .tls_ca_file()
-                .map(|ca_file| mqtt::Tls { ca_file: ca_file.map(Into::into), server_name: None });
+            let identity = self.client_identity();
+            options.tls = self.tls_ca_file().map(|ca_file| mqtt::Tls {
+                ca_file: ca_file.map(Into::into),
+                server_name: None,
+                cert_file: identity.as_ref().map(|(cert, _)| cert.into()),
+                key_file: identity.as_ref().and_then(|(_, key)| key.as_ref().map(Into::into)),
+            });
         }
         options
     }
@@ -153,6 +189,10 @@ pub const COMMON_USAGE: &str = "  -h host     broker (default $MQTT_HOST, else /
   --cafile f  TLS, trusting the CA certificates in PEM file f
               (default $MQTT_CAFILE, else /etc/mqtt-ca.crt, else the system's)
   --no-tls    plain TCP even if a CA file is set
+  --cert f    TLS client certificate, PEM (default $MQTT_CERT, else
+              /etc/mqtt-client.crt if it exists)
+  --key f     its private key, PEM (default $MQTT_KEY, else
+              /etc/mqtt-client.key if it exists, else in the --cert file)
   -q 0|1      QoS (default 0)
   -i id       client id (default <tool>-<pid>)
   -k seconds  keep-alive (default 60)

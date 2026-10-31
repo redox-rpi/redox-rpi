@@ -11,7 +11,7 @@ use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "tls")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// TLS settings for [`crate::Options::tls`].
 #[cfg(feature = "tls")]
@@ -24,6 +24,13 @@ pub struct Tls {
     /// The name the broker's certificate must have. None: the host part of
     /// the address (a name or an IP address).
     pub server_name: Option<String>,
+    /// PEM file with this client's certificate (and the intermediate
+    /// certificates after it), for brokers that want one (Mosquitto
+    /// `require_certificate`). None: no client certificate.
+    pub cert_file: Option<PathBuf>,
+    /// PEM file with the private key of `cert_file`. None: the key is in
+    /// `cert_file` too.
+    pub key_file: Option<PathBuf>,
 }
 
 #[cfg(feature = "tls")]
@@ -53,11 +60,17 @@ impl Link {
         let name = ServerName::try_from(name.to_string())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("bad TLS server name {name:?}")))?;
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let config = rustls::ClientConfig::builder_with_provider(provider)
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .map_err(tls_error)?
-            .with_root_certificates(root_store(settings)?)
-            .with_no_client_auth();
+            .with_root_certificates(root_store(settings)?);
+        let config = match &settings.cert_file {
+            None => builder.with_no_client_auth(),
+            Some(cert_file) => {
+                let (certs, key) = client_identity(cert_file, settings.key_file.as_deref().unwrap_or(cert_file))?;
+                builder.with_client_auth_cert(certs, key).map_err(tls_error)?
+            }
+        };
         let mut conn = rustls::ClientConnection::new(Arc::new(config), name).map_err(tls_error)?;
         while conn.is_handshaking() {
             conn.complete_io(&mut sock).map_err(add_time_hint)?;
@@ -172,6 +185,26 @@ fn root_store(settings: &Tls) -> io::Result<rustls::RootCertStore> {
     Ok(store)
 }
 
+/// The client certificate chain and its private key.
+#[cfg(feature = "tls")]
+fn client_identity(
+    cert_file: &Path,
+    key_file: &Path,
+) -> io::Result<(Vec<rustls::pki_types::CertificateDer<'static>>, rustls::pki_types::PrivateKeyDer<'static>)> {
+    use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+
+    let bad = |file: &Path, e: &dyn std::fmt::Display| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", file.display()));
+    let certs = CertificateDer::pem_file_iter(cert_file)
+        .map_err(|e| bad(cert_file, &e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| bad(cert_file, &e))?;
+    if certs.is_empty() {
+        return Err(bad(cert_file, &"no certificate"));
+    }
+    let key = PrivateKeyDer::from_pem_file(key_file).map_err(|e| bad(key_file, &e))?;
+    Ok((certs, key))
+}
+
 #[cfg(feature = "tls")]
 fn tls_error(e: rustls::Error) -> io::Error {
     add_time_hint(io::Error::new(io::ErrorKind::InvalidData, format!("TLS: {e}")))
@@ -188,6 +221,10 @@ fn add_time_hint(e: io::Error) -> io::Error {
         io::Error::new(e.kind(), format!("{text} (is the clock right? check with date -u)"))
     } else if text.contains("UnknownIssuer") {
         io::Error::new(e.kind(), format!("{text} (give the broker's CA certificate with --cafile)"))
+    } else if text.contains("CertificateRequired") {
+        io::Error::new(e.kind(), format!("{text} (the broker wants a client certificate: give it with --cert and --key)"))
+    } else if text.contains("UnknownCA") || text.contains("BadCertificate") || text.contains("CertificateUnknown") {
+        io::Error::new(e.kind(), format!("{text} (the broker does not accept this client certificate)"))
     } else {
         e
     }
