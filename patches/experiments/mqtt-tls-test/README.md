@@ -99,3 +99,51 @@ free memory fell **0.21 MB a minute** over 30 minutes with the service and
 the timer over TLS (test 89: 5.5). `ha-bridge` and `redoxfs` stay the same;
 `netstack` grows about 58 KB a minute and `randd`'s shared memory 12 KB a
 minute ([report](../../../docs/test-reports.md)).
+
+## Client certificates (#115)
+
+[#115](https://github.com/redox-rpi/redox-rpi/issues/115): brokers that
+want a client certificate. Two scripts here, no change to the image:
+
+- `client-cert-broker.sh [address] [seconds]` (on the build host) makes,
+  once, a client certificate signed by the test CA (CN `redox-rpi`) and one
+  signed by another CA in `~/mqtt-broker/client/`, then runs mosquitto on
+  `<address>:8884` with `require_certificate true` and
+  `use_identity_as_username true`. A subscriber logs every message to
+  `~/mqtt-test/client-cert-broker.out`. QEMU: `127.0.0.1` (the guest uses
+  `10.0.2.2:8884`); Pi: `192.168.178.120`.
+- `install-client-cert.py <host> <port> <cert> <key>` writes them into a
+  running system over devsh as `/etc/mqtt-client.crt` and
+  `/etc/mqtt-client.key`.
+
+The keys are test files made by the script and stay on the build host;
+none is in the repository or an image config.
+
+**Linux** (the tools built natively on homenodellm), against the broker on
+`127.0.0.1:8884` (2026-10-31):
+
+| Check | Result |
+|---|---|
+| `--cert client.crt --key client.key`, QoS 1 | at the broker, user name `redox-rpi` |
+| no certificate | `TLS: received fatal alert: CertificateRequired (the broker wants a client certificate: give it with --cert and --key)`, exit 1 |
+| certificate from another CA | `TLS: received fatal alert: UnknownCA (the broker does not accept this client certificate)`, exit 1 |
+| `$MQTT_CERT` and `$MQTT_KEY` | works |
+| certificate and key in one file, `--cert` only | works |
+| key of another certificate | `keys may not be consistent: KeyMismatch`, exit 1 |
+| `--key /nope` | `/nope: I/O error: No such file or directory`, exit 1 |
+| `mqtt-sub` with the certificate | gets the message |
+| certificate to the 8883 broker (no `require_certificate`) | works |
+
+**QEMU** `raspi3b`, build `v0.3.0-dev-490-gd8d1494+x125f` (experiments
+`ldso-diagnostics timesync timerd mqtt ha-bridge mqtt-tls-test`), files put
+in place with `install-client-cert.py` (2026-10-31):
+
+| Check | Result |
+|---|---|
+| `mqtt-pub -p 8884 -t cc/qemu -m default-files -q 1` (no option: `/etc/mqtt-client.*`) | exit 0, at the broker as `redox-rpi` |
+| `mqtt-pub -r`, then `mqtt-sub -p 8884 -C 1 -v` | gets the retained message |
+| `--key /etc/hostname` | `/etc/hostname: no items found`, exit 1 (now `no private key`) |
+| `/etc/mqtt-client.crt` moved away | `CertificateRequired (the broker wants a client certificate …)`, exit 1 |
+| `mqtt-pub` to the 8883 broker with the files present | exit 0 |
+| `ha-bridge -p 8884` (values once) | state at the broker |
+| `ha-bridge -d -p 8884 -i cc-bridge` | `6 sensors announced on 10.0.2.2:8884 (TLS, client certificate)`; availability, six configs and state at the broker; `availability offline` (last will) after QEMU stopped |

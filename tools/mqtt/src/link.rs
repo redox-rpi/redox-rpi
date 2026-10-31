@@ -201,7 +201,10 @@ fn client_identity(
     if certs.is_empty() {
         return Err(bad(cert_file, &"no certificate"));
     }
-    let key = PrivateKeyDer::from_pem_file(key_file).map_err(|e| bad(key_file, &e))?;
+    let key = PrivateKeyDer::from_pem_file(key_file).map_err(|e| match e {
+        rustls::pki_types::pem::Error::NoItemsFound => bad(key_file, &"no private key"),
+        e => bad(key_file, &e),
+    })?;
     Ok((certs, key))
 }
 

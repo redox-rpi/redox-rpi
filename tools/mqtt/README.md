@@ -85,6 +85,30 @@ Other errors: `UnknownIssuer` means the CA file is missing or wrong
 not name that address; `unexpected end of file` usually means a plain MQTT
 port (1883) with TLS.
 
+### Client certificates
+
+Some brokers let a client in only with its own certificate (Mosquitto
+`require_certificate true`, often with `use_identity_as_username true`, so
+the certificate's name is the user name). Give the certificate and its key
+as PEM files with `--cert` and `--key`, or `$MQTT_CERT` and `$MQTT_KEY`, or
+put them in place once for all tools, as root:
+
+```sh
+cat > /etc/mqtt-client.crt   # the client certificate (and any intermediate ones after it)
+cat > /etc/mqtt-client.key   # its private key
+chmod 600 /etc/mqtt-client.key
+```
+
+The key may also sit in the certificate file, after the certificate. The
+files are used only with TLS, and a broker that does not ask for a
+certificate does not get one. `ha-bridge -d` says `(TLS, client
+certificate)` when it uses one.
+
+Errors: `CertificateRequired` means the broker wants a certificate and none
+is set; `UnknownCA` or `BadCertificate` means the broker does not trust the
+certificate (signed by another CA, or expired); `KeyMismatch` means the key
+file belongs to another certificate.
+
 ## ha-bridge: Home Assistant
 
 `ha-bridge` announces the Pi's sensors to Home Assistant by
