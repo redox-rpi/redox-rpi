@@ -5,9 +5,16 @@ Diagnostic kernel patch for the whole-machine freeze in
 on the real Pi, tests 166, 170, 173). Not meant for main.
 
 Every 1000 timer interrupts (10 s at 100 Hz) each CPU writes
-`[hb <cpu> <n>]` to the serial console, straight to the PL011 data
+`[hb <cpu> <n> s<sched> w<switch> i<idle> p<pit>]` to the serial console, straight to the PL011 data
 register and without the COM1 lock (`uart_pl011::raw_write`). Output can
 interleave with other console output.
+
+The counters: `s` calls of `schedule()`, `w` real switches to another
+context and `i` idle results, all since this CPU's last beat; `p` its
+`pit_ticks`, timer ticks since its last `schedule()` (normally below 3).
+A CPU that beats with `s0` and a growing `p` takes interrupts but no
+longer schedules: the starvation seen in #174 (a runnable `netget` that
+never ran).
 
 What a freeze then shows in the serial log:
 - all CPUs keep writing: the CPUs take timer interrupts; the freeze is

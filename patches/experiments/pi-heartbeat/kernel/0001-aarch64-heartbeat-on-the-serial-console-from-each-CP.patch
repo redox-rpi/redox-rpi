@@ -1,8 +1,9 @@
 From: stephan-xyz <stephan@zehrer.xyz>
 Subject: [PATCH] aarch64: heartbeat on the serial console from each CPU timer interrupt
 
-Diagnostic for #14: every 10 s each CPU writes [hb <cpu> <n>] straight to
-the PL011, without the COM1 lock.
+Diagnostic for #14: every 10 s each CPU writes [hb <cpu> <n> s.. w.. i..
+p..] straight to the PL011, without the COM1 lock: schedule() calls, real
+switches, idle results since the last beat, and pit_ticks.
 ---
 diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
 --- a/src/arch/aarch64/device/generic_timer.rs
@@ -12,37 +13,32 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  use spin::Once;
  
  use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
-@@ -193,6 +194,54 @@
+@@ -193,6 +194,77 @@
      write_ctrl(config, ctrl);
  }
  
 +// Heartbeat (experiment pi-heartbeat, #14): every HEARTBEAT_TICKS timer
-+// interrupts each CPU writes "[hb <cpu> <n>]" straight to the PL011, without
-+// the console lock. If the machine stops, the last lines show which CPUs
-+// still took timer interrupts.
++// interrupts each CPU writes "[hb <cpu> <n> s<sched> w<switch> i<idle>
++// p<pit>]" straight to the PL011, without the console lock: schedule()
++// calls, real context switches and idle results since its last beat, and
++// its pit_ticks (timer ticks since the last schedule()). If the machine
++// stops, the last lines show which CPUs still took timer interrupts and
++// whether their scheduler still ran.
 +const HEARTBEAT_TICKS: u32 = 1000; // 10 s at 100 Hz
 +static HEARTBEAT: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
++static HB_LAST: [[AtomicU32; 3]; 8] = [const { [const { AtomicU32::new(0) }; 3] }; 8];
 +
-+fn heartbeat(cpu: u32) {
-+    let Some(counter) = HEARTBEAT.get(cpu as usize) else {
-+        return;
-+    };
-+    let ticks = counter.fetch_add(1, Ordering::Relaxed) + 1;
-+    if ticks % HEARTBEAT_TICKS != 0 {
-+        return;
++fn push_bytes(buf: &mut [u8; 96], len: &mut usize, bytes: &[u8]) {
++    for &b in bytes {
++        if *len < buf.len() {
++            buf[*len] = b;
++            *len += 1;
++        }
 +    }
-+    let mut buf = [0u8; 32];
-+    let mut len = 0;
-+    for &b in b"\r\n[hb " {
-+        buf[len] = b;
-+        len += 1;
-+    }
-+    buf[len] = b'0' + (cpu % 10) as u8;
-+    len += 1;
-+    buf[len] = b' ';
-+    len += 1;
++}
++
++fn push_num(buf: &mut [u8; 96], len: &mut usize, mut n: u32) {
 +    let mut digits = [0u8; 10];
-+    let mut n = ticks / HEARTBEAT_TICKS;
 +    let mut d = 0;
 +    loop {
 +        digits[d] = b'0' + (n % 10) as u8;
@@ -54,20 +50,48 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +    }
 +    while d > 0 {
 +        d -= 1;
-+        buf[len] = digits[d];
-+        len += 1;
++        push_bytes(buf, len, &[digits[d]]);
 +    }
-+    for &b in b"]\r\n" {
-+        buf[len] = b;
-+        len += 1;
++}
++
++fn heartbeat(cpu: u32) {
++    let idx = cpu as usize;
++    let (Some(counter), Some(last)) = (HEARTBEAT.get(idx), HB_LAST.get(idx)) else {
++        return;
++    };
++    let ticks = counter.fetch_add(1, Ordering::Relaxed) + 1;
++    if ticks % HEARTBEAT_TICKS != 0 {
++        return;
 +    }
++    use crate::context::switch::{HB_IDLE, HB_SCHED, HB_SWITCH};
++    let now = [
++        HB_SCHED[idx].load(Ordering::Relaxed),
++        HB_SWITCH[idx].load(Ordering::Relaxed),
++        HB_IDLE[idx].load(Ordering::Relaxed),
++    ];
++    let pit = crate::context::switch::hb_pit_ticks();
++
++    let mut buf = [0u8; 96];
++    let mut len = 0;
++    push_bytes(&mut buf, &mut len, b"\r\n[hb ");
++    push_num(&mut buf, &mut len, cpu);
++    push_bytes(&mut buf, &mut len, b" ");
++    push_num(&mut buf, &mut len, ticks / HEARTBEAT_TICKS);
++    for (k, tag) in [b" s", b" w", b" i"].iter().enumerate() {
++        push_bytes(&mut buf, &mut len, *tag);
++        push_num(&mut buf, &mut len, now[k].wrapping_sub(last[k].load(Ordering::Relaxed)));
++        last[k].store(now[k], Ordering::Relaxed);
++    }
++    push_bytes(&mut buf, &mut len, b" p");
++    push_num(&mut buf, &mut len, pit as u32);
++    push_bytes(&mut buf, &mut len, b"]\r\n");
 +    crate::devices::uart_pl011::raw_write(&buf[..len]);
 +}
 +
  pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bool {
      let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
          return false;
-@@ -215,6 +264,7 @@
+@@ -215,6 +287,7 @@
      // switch to a context which may subsequently resume on another CPU.
      irqchip::end_root(raw_iar);
      program_current(config);
@@ -75,6 +99,60 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  
      if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
          timeout::trigger(token);
+diff -ruN a/src/context/switch.rs b/src/context/switch.rs
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -113,6 +113,26 @@
+ /// switch if the counter reaches a set threshold (e.g., every 3 ticks).
+ ///
+ /// The function also calls the signal handler after switching contexts.
++// Per-CPU scheduler counters for the heartbeat (experiment pi-heartbeat,
++// #14): schedule() calls, real switches to another context, and idle results.
++pub static HB_SCHED: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++pub static HB_SWITCH: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++pub static HB_IDLE: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++
++/// Timer ticks since this CPU last ran schedule().
++pub fn hb_pit_ticks() -> usize {
++    PercpuBlock::current().switch_internals.pit_ticks.get()
++}
++
++fn hb_count(counters: &[core::sync::atomic::AtomicU32; 8]) {
++    if let Some(c) = counters.get(crate::cpu_id().get() as usize) {
++        c.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
++    }
++}
++
+ pub fn tick(token: &mut CleanLockToken) {
+     let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
+ 
+@@ -210,6 +230,7 @@
+             ),
+             // didn't change sched context, so will not change current context
+             ScheduleResult::AllContextsIdle => {
++                hb_count(&HB_IDLE);
+                 percpu.stats.set_state(cpu_stats::CpuState::Idle);
+ 
+                 return SwitchResult::AllContextsIdle;
+@@ -246,6 +267,7 @@
+ 
+     let switch_time = schedule_time;
+ 
++    hb_count(&HB_SWITCH);
+     unsafe {
+         switch_to(
+             percpu,
+@@ -282,6 +304,7 @@
+     schedule_time: u128,
+     token: &mut CleanLockToken,
+ ) -> ScheduleResult {
++    hb_count(&HB_SCHED);
+     percpu.stats.add_context_switch(percpu.inside_syscall.get());
+ 
+     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
 diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
 --- a/src/devices/uart_pl011.rs
 +++ b/src/devices/uart_pl011.rs
