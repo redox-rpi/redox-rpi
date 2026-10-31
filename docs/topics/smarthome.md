@@ -35,6 +35,12 @@ All three on branch `mqtt-tls` (it contains `mqtt`, which is based on
   part was the connect watchdog thread, which the kernel did not free
   (#31, kernel `0008`, on main). **Pi test 111 passed** with main merged:
   0.21 MB a minute over 30 minutes, `ha-bridge` does not grow.
+- [#115](https://github.com/redox-rpi/redox-rpi/issues/115) TLS client
+  certificates (Mosquitto `require_certificate`): `--cert`, `--key`,
+  `$MQTT_CERT`, `$MQTT_KEY`, `/etc/mqtt-client.crt` and
+  `/etc/mqtt-client.key` for all three tools ([client
+  certificates](../../tools/mqtt/README.md#client-certificates)). Branch
+  `mqtt-cert` (on top of `mqtt-tls`); QEMU passes.
 
 ## Next
 
@@ -45,7 +51,6 @@ All three on branch `mqtt-tls` (it contains `mqtt`, which is based on
   test 137 reruns test 111 with both.
 - Check `ha-bridge` against a real Home Assistant.
 - Let other recipes use the library (now only by copying `src/lib.rs`).
-- TLS client certificates (Mosquitto `require_certificate`).
 
 ## Later
 

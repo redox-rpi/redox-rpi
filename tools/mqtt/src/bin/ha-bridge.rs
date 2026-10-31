@@ -261,7 +261,11 @@ fn serve(bridge: &Bridge, common: &Common) -> std::io::Result<()> {
     bridge.publish_values(&mut client, &values)?;
     let status = format!("{}/status", bridge.prefix);
     client.subscribe(&[(&status, QoS::AtLeastOnce)])?;
-    let tls = if common.uses_tls() { " (TLS)" } else { "" };
+    let tls = match (common.uses_tls(), common.uses_client_cert()) {
+        (true, true) => " (TLS, client certificate)",
+        (true, false) => " (TLS)",
+        _ => "",
+    };
     eprintln!("{NAME}: {count} sensors announced on {}{tls} as {}", common.address(), bridge.base());
     loop {
         let message = client.recv()?;

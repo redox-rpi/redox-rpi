@@ -3,8 +3,8 @@
 //! It speaks MQTT 3.1.1 over plain TCP, or over TLS with the feature `tls`
 //! (on by default, rustls with ring): connect (with user name, password and
 //! last will), publish with QoS 0 or 1 and retain, subscribe, ping and
-//! disconnect. No QoS 2, no MQTT 5, no client certificates. Without `tls`
-//! it needs only `std`.
+//! disconnect; over TLS also with a client certificate. No QoS 2, no MQTT 5.
+//! Without `tls` it needs only `std`.
 //!
 //! ```no_run
 //! let mut client = mqtt::Client::connect("broker.local:1883", &mqtt::Options::new("demo"))?;
