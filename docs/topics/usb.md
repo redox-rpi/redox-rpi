@@ -23,6 +23,12 @@
   person (`scripts/test-hotplug.sh` in QEMU, `scripts/pi-hotplug-test.sh`
   on the Pi). Pi tests #35 and #67 ([reports](../test-reports.md)). The
   Anker hub steps stay with test #4.
+- `lsusb` ([#35](https://github.com/redox-rpi/redox-rpi/issues/35), base
+  `0053`, package `hwinfo`): `dwc2d` lists its devices in
+  `/scheme/usb.dwc2/devices` and updates the list after each hotplug scan
+  that found a change. `lsusb` names the Pi's own chips and describes
+  other devices by their class; `-t` shows the hub tree, `-v` the
+  interfaces. Pi tests #32 (as experiment) and #125 passed.
 
 ## In progress
 
@@ -109,9 +115,6 @@ HAT. No code yet.
   not the code.
 
 ## Later
-
-- `lsusb` ([#35](https://github.com/redox-rpi/redox-rpi/issues/35), firmware
-  session).
 
 Keyboard layouts are in inputd, not dwc2d:
 [#36](https://github.com/redox-rpi/redox-rpi/issues/36), branch
