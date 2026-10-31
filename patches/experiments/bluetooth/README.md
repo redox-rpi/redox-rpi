@@ -20,7 +20,11 @@ Our serial console keeps the PL011 on GPIO 14/15 (`dtoverlay=disable-bt`
 in `config.txt`). So Bluetooth gets the mini UART (AUX) on ALT5 of those
 pins, with RTS/CTS flow control. This is the split of Linux's
 `miniuart-bt` overlay. BT_ON, the chip's Bluetooth power line, is pin 0 of
-the firmware's GPIO expander (firmware GPIO 128).
+the firmware's GPIO expander (firmware GPIO 128). WL_ON, the Wi-Fi half's
+power line, is pin 1 (firmware GPIO 129); Linux switches it on at boot,
+before Bluetooth starts. Base `0052` serves it as `wifi_power` (and
+`wifi_power_config`), the same file name as the Wi-Fi experiment, so a
+merge keeps one entry.
 
 The mini UART's baud rate is derived from the core clock. The driver
 programs it from the rate `rpi-firmwared` reports, and `bt up` tells it

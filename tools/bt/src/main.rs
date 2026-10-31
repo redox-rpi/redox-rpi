@@ -31,6 +31,8 @@ const FLOW: &str = "/scheme/btuart/flow";
 const STATUS: &str = "/scheme/btuart/status";
 const LPO: &str = "/scheme/btuart/lpo";
 const POWER_CONFIG: &str = "/scheme/rpi-firmware/bt_power_config";
+const WL_POWER: &str = "/scheme/rpi-firmware/wifi_power";
+const WL_POWER_CONFIG: &str = "/scheme/rpi-firmware/wifi_power_config";
 /// CTS, RTS, TX and RX of the mini UART, and GPIO 43 (GPCLK2 in Linux's
 /// devicetree for the 3B+, the chip's 32 kHz sleep clock).
 const DIAG_PINS: &[u32] = &[30, 31, 32, 33, 43];
@@ -409,6 +411,53 @@ fn seconds(arg: Option<&String>) -> u64 {
 fn print_power_config(when: &str) {
     let config = fs::read_to_string(POWER_CONFIG).unwrap_or_else(|e| format!("({e})"));
     println!("bt_power_config {when}: {}", config.lines().collect::<Vec<_>>().join(", "));
+    let config = fs::read_to_string(WL_POWER_CONFIG).unwrap_or_else(|e| format!("({e})"));
+    println!("wifi_power_config {when}: {}", config.lines().collect::<Vec<_>>().join(", "));
+}
+
+fn gpio_read(pin: u32, file: &str) -> String {
+    fs::read_to_string(format!("/scheme/gpio/{pin}/{file}")).map(|v| v.trim().to_string()).unwrap_or_default()
+}
+
+/// Whether the chip drives its UART lines at all: our pull down on GPIO 33
+/// (the chip's TX, idle high when powered) and pull up on GPIO 30 (the
+/// chip's RTS, low when it is ready). With the chip off, the pulls win:
+/// 33 reads 0 and 30 reads 1. Switches BT_ON off, then on, and watches both
+/// pins for 2 s; leaves BT_ON on and the pulls as they were.
+fn drive_test(label: &str) {
+    let pulls = [(30, gpio_read(30, "pull")), (33, gpio_read(33, "pull"))];
+    fs::write("/scheme/gpio/30/pull", "up").ok();
+    fs::write("/scheme/gpio/33/pull", "down").ok();
+    fs::write(POWER, "0").ok();
+    sleep(Duration::from_millis(200));
+    println!("drive test, {label}: BT_ON 0: gpio 30 {}, gpio 33 {}", gpio_read(30, "value"), gpio_read(33, "value"));
+    let start = Instant::now();
+    fs::write(POWER, "1").ok();
+    let (mut rts_low, mut tx_high) = (None, None);
+    let (mut samples, mut rts_low_count, mut tx_high_count) = (0, 0, 0);
+    while start.elapsed() < Duration::from_secs(2) {
+        let (rts, tx) = (gpio_read(30, "value"), gpio_read(33, "value"));
+        samples += 1;
+        if rts == "0" {
+            rts_low_count += 1;
+            rts_low.get_or_insert(start.elapsed());
+        }
+        if tx == "1" {
+            tx_high_count += 1;
+            tx_high.get_or_insert(start.elapsed());
+        }
+    }
+    let first = |t: Option<Duration>| t.map_or("never".to_string(), |t| format!("first after {} ms", t.as_millis()));
+    println!(
+        "drive test, {label}: BT_ON 1, {samples} samples in 2 s: gpio 30 low {rts_low_count} ({}), gpio 33 high {tx_high_count} ({})",
+        first(rts_low),
+        first(tx_high)
+    );
+    for (pin, pull) in pulls {
+        if !pull.is_empty() {
+            fs::write(format!("/scheme/gpio/{pin}/pull"), pull).ok();
+        }
+    }
 }
 
 /// One line from the driver's status file, without its name.
@@ -453,6 +502,18 @@ fn diag() -> io::Result<()> {
     println!("lpo: {}", lpo.lines().collect::<Vec<_>>().join(", "));
     println!("bt_power: {}", fs::read_to_string(POWER).unwrap_or_default().trim());
     print_power_config("before");
+    if fs::metadata(POWER).is_ok() {
+        drive_test("WL_ON as found");
+        // Linux powers the Wi-Fi half (WL_ON) at boot, before Bluetooth.
+        match fs::write(WL_POWER, "1") {
+            Ok(()) => {
+                sleep(Duration::from_millis(200));
+                println!("wifi_power: {}", fs::read_to_string(WL_POWER).unwrap_or_default().trim());
+                drive_test("WL_ON 1");
+            }
+            Err(err) => println!("wifi_power: {err}"),
+        }
+    }
     power_cycle();
     print_power_config("after");
     update_clock();
