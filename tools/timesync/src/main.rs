@@ -273,7 +273,7 @@ fn choose(offsets: &[i128], first: bool) -> Result<i128, String> {
     let offset = match sorted[..] {
         [] => return Err("no answer".into()),
         [a, b] if b - a > AGREE_NS => {
-            return Err(format!("two answers {} apart, waiting for a third", seconds(b - a)));
+            return Err(format!("two answers {:.0} s apart, waiting for a third", (b - a) as f64 / 1e9));
         }
         [a, b] => a + (b - a) / 2,
         _ => sorted[sorted.len() / 2],
