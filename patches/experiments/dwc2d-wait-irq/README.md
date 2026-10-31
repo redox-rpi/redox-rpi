@@ -7,7 +7,7 @@ halted. Network receive waits for the interrupt (base `0022`), but every sent
 frame, every 64 KiB USB stick chunk and every control request spun, so a
 stick write kept a core busy.
 
-- **base `0053`:** `transfer_on` spins for 50 µs, about a full-size
+- **base `0071`:** `transfer_on` spins for 50 µs, about a full-size
   network frame or a control request, and then waits for the channel's halt
   interrupt. dwc2d opens a second handle on its irq for this, with its own
   event queue and a 2 ms timer as the fallback (opened with `O_STAT`: the
