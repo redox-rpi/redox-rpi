@@ -207,6 +207,11 @@ be drawn into the buffer still on screen and could tear.
   `rpi-fbd: no vsync from the firmware, frames may tear` once (QEMU has no
   such tag), then frames by DMA as before, login. The wait itself only
   runs on the Pi.
+- QEMU, branch `graphics-dma-order`, `v0.3.0-dev-205-g6b46fc0+xced2`
+  (2026-10-31), `RPI_FB=1824x984` (the NanoKVM's mode): without kernel
+  `0049` both dumb buffers logged `in normal memory: Out of memory` with
+  785 MB free; with it none does, every frame is blitted by DMA (7.1 MB
+  each), login, 154 MiB used.
 - The image above was built at commit `ae30bad`, when the patches were
   still numbered `0023` and `0024` (same content).
 - Real Pi: queued in [docs/test-plan.md](../../../docs/test-plan.md).
