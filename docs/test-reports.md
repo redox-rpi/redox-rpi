@@ -5151,3 +5151,31 @@ Model on the card (341455552 bytes). 4 threads (`RAYON_NUM_THREADS=4`);
   kept.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-806-gb2dd152` wait-irq `+x98e9` and tx-irq `+x3388` (sent frames without the spin)
+
+Real Pi 3B+ over netboot. Test 152, tx-irq row ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent. (The queue had two rows numbered 152; this is the `dwc2d-tx-irq` one, the other is the timesync report above.)
+
+**Pass: the host counted 16777216 bytes in all four runs, and devshd answered
+afterwards.** dwc2d's ACTTIME is **not lower with tx-irq**: +1.22 and +1.10 s
+per 16 MiB against +1.03 and +1.14 s for wait-irq. Sending is about as fast
+(7.1 to 8.3 MB/s). Images from `~/redox-rpi-usb/keep/` with their manifests
+(match), stable bootloader, wait-irq first. Standard checks with `--manifest`
+pass on both (0 of 300 starts failed). Host side: `nc -l <port> | wc -c`.
+
+| image | run | `tcp-send` | host bytes | dwc2d ACTTIME before → after | SCHTIME before → after |
+|---|---|---|---|---|---|
+| wait-irq | 1 | `16777216 bytes in 2.31 s, 7.28 MB/s` | 16777216 | 1.74 → 2.77 s (**+1.03**) | 1.88 → 1.91 s (+0.03) |
+| wait-irq | 2 | `16777216 bytes in 2.02 s, 8.30 MB/s` | 16777216 | 2.97 → 4.11 s (**+1.14**) | 2.10 → 2.22 s (+0.12) |
+| tx-irq | 1 | `16777216 bytes in 2.36 s, 7.12 MB/s` | 16777216 | 1.61 → 2.83 s (**+1.22**) | 1.74 → 1.76 s (+0.02) |
+| tx-irq | 2 | `16777216 bytes in 2.11 s, 7.94 MB/s` | 16777216 | 2.90 → 4.00 s (**+1.10**) | 1.82 → 1.85 s (+0.03) |
+
+- ACTTIME as in #144 (first time column of `/scheme/sys/context`); each pair
+  also covers about 0.4 s of devsh between the commands.
+- #144 (wait-irq `451`): +0.99 and +1.00 s at 8.3 MB/s. So the time dwc2d spends
+  per 16 MiB sent is unchanged on all three builds.
+- No dwc2d line on the serial console about the transmit interrupt or spin (only
+  the enumeration). `free` afterwards: 138928 used (wait-irq), 140308 (tx-irq) of
+  739432. No panic.
+
+Stable image restored afterwards.
