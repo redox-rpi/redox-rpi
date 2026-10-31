@@ -32,7 +32,8 @@
   Still an upstream problem (RedoxFS
   [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51),
   [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57)); the
-  user reports it to Redox.
+  user reports it to Redox (pointers for that, also for the rename bug #57:
+  [docs/upstream/redoxfs.md](../upstream/redoxfs.md)).
 
 ## Next
 
