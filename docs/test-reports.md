@@ -5365,3 +5365,41 @@ PASS sender: si_pid 55 from the thread, 56 from the child
   300 starts failed**.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-800-g1682576+x4590` (assistant-speed, candle's pool spin limit)
+
+Real Pi 3B+ over netboot. Test 159 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**A spin limit of 250000 or more removes the pool sleeps. Writing goes from 1.38
+to about 2.0 t/s with 3 threads, and 4 threads with the high limit give
+2.56 t/s.** The default (25000) sleeps 236 times per token when cool and 48 times
+when warm. Image `~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-800-g1682576+x4590.img`,
+manifest matches, stable bootloader. Standard checks pass (0 of 300 starts
+failed). Model on the card (341455552 bytes). `rinfer
+/scheme/data/Qwen3-0.6B-Q4_0e.gguf 'Name three colours.' 32`; every run
+answered `Three colours are blue, green, and red.` (10 tokens).
+
+| run | threads | spin limit | prompt (20 tokens) | generated (10 tokens) | per token | temp after | throttled after |
+|---|---|---|---|---|---|---|---|
+| before | | | | | | 54.8 °C | `0x00000000` |
+| 1 | 3 | 25000 (default) | 9.7 s, 2.06 t/s | 7.2 s, **1.38 t/s** | model 723 ms, sampling 1 ms, **pool sleeps 236** | 58.0 °C | `0x00080000` |
+| 2 | 3 | 250000 | 7.4 s, 2.69 t/s | 5.0 s, **2.00 t/s** | model 498 ms, sampling 1 ms, pool sleeps 0 | 60.1 °C | `0x00080008` |
+| 3 | 3 | 2500000 | 7.6 s, 2.62 t/s | 5.2 s, 1.91 t/s | model 523 ms, sampling 1 ms, pool sleeps 0 | 61.8 °C | `0x00080008` |
+| 4 | 3 | 25000000 | 7.9 s, 2.52 t/s | 5.0 s, 2.01 t/s | model 498 ms, sampling 1 ms, pool sleeps 0 | 62.3 °C | `0x00080008` |
+| 5 | 4 | 25000000 | 5.8 s, 3.45 t/s | 3.9 s, **2.56 t/s** | model 389 ms, sampling 1 ms, pool sleeps 0 | 63.4 °C | `0x00080008` |
+| 6 | 3 | 25000 (again) | 8.2 s, 2.43 t/s | 5.9 s, 1.70 t/s | model 588 ms, sampling 1 ms, **pool sleeps 48** | 60.1 °C | `0x00080008` |
+
+- Each run's first line was `neon: true, threads: N, pool spin limit: …` as in
+  the table (run 1 `(default)`).
+- Run 6 repeats run 1 warm (soft temperature limit active), and it sleeps less
+  (48 vs 236) and writes faster (1.70 vs 1.38 t/s). A slower clock under the soft
+  limit seems to make the 25000 spins last longer. The default's number depends
+  on heat.
+- `loaded in` 20.5 to 31.1 s (539 reads); the longer loads (runs 3 and 4) came
+  with the second devsh (run 3) and the hotter chip.
+- `free` from a second devsh during run 3 (18:00:37, while loading): 674112 used,
+  196532 free of 870644.
+- `throttled` showed the soft temperature limit from run 1 on (`0x00080000`,
+  then `0x00080008`). No `oom`, no kernel panic, no `RELIBC PANIC`. Model kept.
+
+Stable image restored afterwards.
