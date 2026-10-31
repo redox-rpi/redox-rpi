@@ -46,8 +46,8 @@
   (base `0058`): dhcpd renews leases and drops them at their end or on a
   NAK; netstack drops an adapter that goes away (scheme gone or file
   failing) with its address and routes; the default route moves to the
-  next interface or is removed. QEMU passes with two testnetds; Pi test
-  #140. Not done: link state (a pulled cable shows only when the lease
+  next interface or is removed. QEMU passes with two testnetds; **Pi test
+  140 passed**. Not done: link state (a pulled cable shows only when the lease
   ends); a restarted driver cannot take its old scheme name again
   ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
@@ -82,7 +82,9 @@
   connection, `/scheme/rand` per random read) left one 4 KiB page mapped in
   the daemon. Kernel `0057`, draft PR
   [#114](https://github.com/redox-rpi/redox-rpi/pull/114), merge after #90;
-  QEMU: no growth over 800 MQTT runs. Pi test #136.
+  QEMU: no growth over 800 MQTT runs. **Pi test 136 passed** (no
+  `SHARED` growth). Also upstream; see
+  [docs/upstream/netstack.md](../upstream/netstack.md).
 - [#37](https://github.com/redox-rpi/redox-rpi/issues/37) mDNS: the Pi
   answers as `redox-rpi.local` and announces `_devsh._tcp` and `_ssh._tcp`
   (each only while its program is on the image); **Pi test 96 passed**,
@@ -92,7 +94,15 @@
 - [#105](https://github.com/redox-rpi/redox-rpi/issues/105) `ls` of a
   netcfg directory failed with `Not a directory`: upstream's netcfg scheme
   has no `getdents`. Base `0056` (branch `netcfg-ls`) lists the names a
-  directory node already reads as; QEMU passes, Pi test #128.
+  directory node already reads as; QEMU passes, **Pi test 128 passed**,
+  draft PR [#107](https://github.com/redox-rpi/redox-rpi/pull/107).
+  Upstream problem; pointers for the user's report:
+  [docs/upstream/netstack.md](../upstream/netstack.md).
+- [#119](https://github.com/redox-rpi/redox-rpi/issues/119) long downloads
+  on the Pi run at 0.24 MB/s or less and once ended with `os error 107`
+  (test 126). QEMU doesn't show it: 3.9 MB/s steady, also with the receive
+  window closed for 300 s. Diagnosis on the Pi, network alone and with
+  card writes: test 141 (branch `tcp-slow`, test downloader `netget`).
 
 ## Later
 
