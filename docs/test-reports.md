@@ -5568,3 +5568,76 @@ line.
   300 starts failed**. Serial: 0 `FATAL` or `panicked` lines.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-772-g8dc59fc+x0e02` (main 8dc59fc, prebuilt programs installed with `pkg`)
+
+Real Pi 3B+ over netboot. Test 163 ([#40](https://github.com/redox-rpi/redox-rpi/issues/40)), Pi test agent.
+
+**Pass: the 26 programs of step 2, git, python312 and sqlite3 all print `T40
+PASS`, the standard checks pass, and no exception or panic.** Much faster than
+QEMU: the 26-package install took 3 minutes. Image
+`~/redox-rpi-t40/keep/t40A-harddrive.img` (md5 `d5e0fd76`), staged with
+`~/redox-rpi-boot/scripts/netboot.sh` (bootloader md5 `64685a6f`).
+
+**Boot 1**
+
+- (1) Standard checks `--starts 300`: all pass, 0 of 300 starts failed.
+- (2) `pkg install --yes bash dash … rldd`: 19:47:10 to 19:50:09 UTC (**3 min**),
+  ends `Download complete.`, `Commit complete.`
+- (3) `t40.sh`:
+
+```
+T40 PASS bash
+T40 PASS dash
+T40 PASS nano
+T40 FAIL vim (127): /tmp/t40.sh: line 12: vim: command not found
+T40 PASS kibi
+T40 PASS smith
+T40 PASS ripgrep
+T40 PASS gawk
+T40 PASS sed
+T40 PASS findutils
+T40 PASS diffutils
+T40 PASS patch
+T40 PASS file
+T40 FAIL python312 (127): /tmp/t40.sh: line 12: python3.12: command not found
+T40 FAIL rustpython (127): /tmp/t40.sh: line 12: rustpython: command not found
+T40 PASS sqlite3
+T40 FAIL git (127): bash: line 1: git: command not found
+T40 PASS curl
+T40 PASS wget
+T40 PASS tmux
+T40 FAIL xz (1): bash: line 1: xz: command not found bash: line 1: xz: command not found
+T40 PASS zstd
+T40 PASS bzip2
+T40 PASS lz4
+T40 PASS gnu-make
+T40 FAIL rsync (127): bash: line 1: rsync: command not found
+T40 PASS bottom
+T40 PASS pls
+T40 PASS miniserve
+T40 PASS nasm
+T40 PASS patchelf
+T40 PASS rldd
+T40 DONE
+```
+
+  The six expected failures (`vim`, `python312`, `rustpython`, `git`, `xz`,
+  `rsync`, not installed yet) end in `command not found`. The other 26 pass.
+  `curl` prints four `TODO: setsockopt(… ) - unknown option` info lines.
+- (4) `pkg install --yes git`: 19:50:26 to 19:51:09 (**43 s**, install size
+  24.0 MB), `Commit complete.`; `T40 PASS git`.
+- (5) `df -h /`: 222.0M size, 205.9M used, **16.1M free** (92 %).
+
+**Boot 2** (fresh boot of the same image)
+
+- (6) `pkg install --yes bash curl python312`: 19:52:01 to 20:00:49 (**8 min
+  48 s**), `Commit complete.` (one `usr/bin/reset … (already exists)` line from
+  ncursesw).
+- (7) `T40 PASS python312`, `T40 PASS sqlite3`.
+- (8) `df -h /`: 222.0M, 210.3M used, **11.7M free** (94 %).
+- Serial log over both boots: 0 lines with `FATAL`, `exception` or `panicked`.
+- The root filesystem is nearly full after these sets (11.7M to 16.1M free).
+  Bigger sets need a larger image or a disk.
+
+Stable image restored afterwards.
