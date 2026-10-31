@@ -28,9 +28,16 @@ The experiment has no patches, only a [`config.toml`](config.toml): it adds
 the `timesync` package and the service `65_timesync.service`, which runs
 `timesync -d`. Named 65, it starts after `60_data.service` has mounted the
 data partition (network-boot image). It does not wait for `10_net.target`:
-it sets the saved time at once, then tries `pool.ntp.org` and
-`time.cloudflare.com` for up to a minute, because DHCP may still be
-running, and again every hour.
+it sets the saved time at once, waits until DHCP has set a default route
+(`/scheme/netcfg/route/list`), then tries `pool.ntp.org` and
+`time.cloudflare.com`. If no server answers within a minute it tries again
+every 30 seconds until one does, then every hour. After the first answer
+it writes `/tmp/timesync.synced`, which `timerd` waits for.
+
+Redox' DNS lookup (relibc) waits for its answer without a timeout. On the
+real Pi (test #27) `timesync` hung there when it asked before DHCP was
+done. So it waits for the route first and runs each lookup in its own
+thread with a 5-second timeout.
 
 By hand:
 
@@ -67,3 +74,10 @@ part of v0.2.0. NTP time matches the build host and the daemon writes
 `/scheme/data/timesync.last` (Pi 3B+, netboot). On the v0.3.0-rc1 SD card
 the boot set the build time, then the saved time, then the time from
 `pool.ntp.org`. Also works on the Zero 2 W through an RTL8152 adapter.
+
+**Late DHCP** (branch `timerd`, build `v0.3.0-dev-95-g0d47c4f+x43ba`,
+QEMU with experiment [`late-dhcp`](../late-dhcp/README.md), which starts
+`dhcpd` 90 seconds late, 2026-10-29): `no time server answered within a
+minute (last: no default route (DHCP not done))`, `trying again every 30 s`,
+then `clock set to 2026-10-29 11:02:00 UTC from pool.ntp.org`, and
+`timerd: clock set by timesync` a second later.

@@ -1,0 +1,210 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 12:43:14 +0100
+Subject: [PATCH 76/81] bcm2835-btuartd: flow and status files to find out what
+ the chip needs
+
+flow selects hardware RTS/CTS with the reset assert levels (auto, the
+start setting), with both lines asserted low (auto-low), or no flow
+control with RTS held asserted (none). status shows the CTS line, RTS,
+the FIFO levels and the raw registers.
+---
+ drivers/bcm2835-btuartd/src/main.rs | 29 ++++++++++--
+ drivers/bcm2835-btuartd/src/uart.rs | 68 ++++++++++++++++++++++++++++-
+ 2 files changed, 92 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
+index 588991b..ef0283a 100644
+--- a/drivers/bcm2835-btuartd/src/main.rs
++++ b/drivers/bcm2835-btuartd/src/main.rs
+@@ -10,6 +10,11 @@
+ //! - `/scheme/btuart/clock`: the core clock in Hz that the baud rate is
+ //!   derived from; writing a new rate (after the firmware changed it)
+ //!   programs the baud rate again.
++//! - `/scheme/btuart/flow`: `auto` (hardware RTS/CTS, the start setting),
++//!   `auto-low` (the same with both lines asserted low) or `none` (no flow
++//!   control, RTS held asserted). For finding out what the chip needs.
++//! - `/scheme/btuart/status`: CTS line, RTS, FIFO levels and the raw
++//!   registers.
+ //!
+ //! The serial console keeps the PL011 (`dtoverlay=disable-bt`), so this is
+ //! the split of Linux's `miniuart-bt` overlay. At start the driver sets
+@@ -37,7 +42,7 @@ use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
+ 
+ mod uart;
+ 
+-use uart::MiniUart;
++use uart::{Flow, MiniUart};
+ 
+ /// Bus address of the AUX block, used if the devicetree has no mini UART.
+ const AUX_BUS_ADDR: usize = 0x7e21_5000;
+@@ -88,12 +93,13 @@ fn check_sleep() -> bool {
+     false
+ }
+ 
+-const FILES: &[&str] = &["baud", "clock", "data"];
++const FILES: &[&str] = &["baud", "clock", "data", "flow", "status"];
+ 
+ #[derive(Clone, Copy)]
+ enum Setting {
+     Baud,
+     Clock,
++    Flow,
+ }
+ 
+ enum Handle {
+@@ -116,6 +122,7 @@ struct BtUartScheme {
+     received: Arc<Mutex<Received>>,
+     core_hz: u32,
+     baud: u32,
++    flow: Flow,
+     handles: HandleMap<Handle>,
+ }
+ 
+@@ -124,10 +131,16 @@ impl BtUartScheme {
+         match setting {
+             Setting::Baud => format!("{}\n", self.baud),
+             Setting::Clock => format!("{}\n", self.core_hz),
++            Setting::Flow => format!("{}\n", self.flow.name()),
+         }
+     }
+ 
+     fn set(&mut self, setting: Setting, value: &str) -> Result<()> {
++        if let Setting::Flow = setting {
++            self.flow = Flow::parse(value).ok_or(Error::new(EINVAL))?;
++            self.uart.set_flow(self.flow);
++            return Ok(());
++        }
+         let value = value.parse::<u32>().ok().filter(|&v| v > 0).ok_or(Error::new(EINVAL))?;
+         let baud = match setting {
+             Setting::Baud => value,
+@@ -135,6 +148,7 @@ impl BtUartScheme {
+                 self.core_hz = value;
+                 self.baud
+             }
++            Setting::Flow => unreachable!(),
+         };
+         self.baud = self.uart.set_baud(self.core_hz, baud);
+         Ok(())
+@@ -185,8 +199,14 @@ impl SchemeSync for BtUartScheme {
+         let handle = match path.trim_matches('/') {
+             "" => Handle::Dir,
+             "data" => Handle::Data,
+-            name @ ("baud" | "clock") => {
+-                let setting = if name == "baud" { Setting::Baud } else { Setting::Clock };
++            "status" if write => return Err(Error::new(EROFS)),
++            "status" => Handle::File(self.uart.status().into_bytes()),
++            name @ ("baud" | "clock" | "flow") => {
++                let setting = match name {
++                    "baud" => Setting::Baud,
++                    "clock" => Setting::Clock,
++                    _ => Setting::Flow,
++                };
+                 if write {
+                     Handle::Write(setting)
+                 } else {
+@@ -397,6 +417,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         received,
+         core_hz,
+         baud,
++        flow: Flow::Auto,
+         handles: HandleMap::new(),
+     };
+     let socket = Socket::create().expect("bcm2835-btuartd: failed to create the btuart scheme");
+diff --git a/drivers/bcm2835-btuartd/src/uart.rs b/drivers/bcm2835-btuartd/src/uart.rs
+index fa3e00c..f5b9aaf 100644
+--- a/drivers/bcm2835-btuartd/src/uart.rs
++++ b/drivers/bcm2835-btuartd/src/uart.rs
+@@ -12,7 +12,9 @@ const MU_IIR: usize = 0x48;
+ const MU_LCR: usize = 0x4c;
+ const MU_MCR: usize = 0x50;
+ const MU_LSR: usize = 0x54;
++const MU_MSR: usize = 0x58;
+ const MU_CNTL: usize = 0x60;
++const MU_STAT: usize = 0x64;
+ const MU_BAUD: usize = 0x68;
+ 
+ const ENABLE_MINI_UART: u32 = 1 << 0;
+@@ -32,6 +34,42 @@ const CNTL_AUTO_RTS: u32 = 1 << 2;
+ const CNTL_AUTO_CTS: u32 = 1 << 3;
+ /// Deassert RTS when only 4 places are left in the receive FIFO.
+ const CNTL_RTS_AT_4: u32 = 0b11 << 4;
++/// RTS and CTS asserted when low. The datasheet says "high" for a clear
++/// bit; UART flow control lines are normally active low.
++const CNTL_RTS_LOW: u32 = 1 << 6;
++const CNTL_CTS_LOW: u32 = 1 << 7;
++/// Set: the RTS line is low.
++const MCR_RTS: u32 = 1 << 1;
++
++/// How the flow control lines are used.
++#[derive(Clone, Copy, PartialEq, Eq)]
++pub enum Flow {
++    /// The hardware handles RTS and CTS, assert levels as reset (clear).
++    Auto,
++    /// The hardware handles RTS and CTS, both asserted when low.
++    AutoLow,
++    /// No flow control; RTS held low (the other side may send).
++    None,
++}
++
++impl Flow {
++    pub fn parse(text: &str) -> Option<Self> {
++        match text {
++            "auto" => Some(Self::Auto),
++            "auto-low" => Some(Self::AutoLow),
++            "none" => Some(Self::None),
++            _ => None,
++        }
++    }
++
++    pub fn name(self) -> &'static str {
++        match self {
++            Self::Auto => "auto",
++            Self::AutoLow => "auto-low",
++            Self::None => "none",
++        }
++    }
++}
+ 
+ pub struct MiniUart {
+     regs: *mut u32,
+@@ -53,10 +91,38 @@ impl MiniUart {
+         uart.write(MU_LCR, LCR_8BIT);
+         uart.write(MU_MCR, 0);
+         uart.write(MU_IIR, IIR_CLEAR_FIFOS);
+-        uart.write(MU_CNTL, CNTL_RX | CNTL_TX | CNTL_AUTO_RTS | CNTL_AUTO_CTS | CNTL_RTS_AT_4);
++        uart.set_flow(Flow::Auto);
+         uart
+     }
+ 
++    /// Sets the flow control and clears both FIFOs.
++    pub fn set_flow(&self, flow: Flow) {
++        let auto = CNTL_AUTO_RTS | CNTL_AUTO_CTS | CNTL_RTS_AT_4;
++        let (cntl, mcr) = match flow {
++            Flow::Auto => (auto, 0),
++            Flow::AutoLow => (auto | CNTL_RTS_LOW | CNTL_CTS_LOW, 0),
++            Flow::None => (0, MCR_RTS),
++        };
++        self.write(MU_CNTL, 0);
++        self.write(MU_MCR, mcr);
++        self.write(MU_IIR, IIR_CLEAR_FIFOS);
++        self.write(MU_CNTL, CNTL_RX | CNTL_TX | cntl);
++    }
++
++    /// The line and FIFO state, for diagnosis: the CTS input (`1` = high),
++    /// the RTS output, the FIFO fill levels and the raw registers.
++    pub fn status(&self) -> String {
++        let (lsr, msr, cntl, stat) = (self.read(MU_LSR), self.read(MU_MSR), self.read(MU_CNTL), self.read(MU_STAT));
++        format!(
++            "cts_line {}\nrts_status {}\ntx_fifo {}\nrx_fifo {}\ntx_done {}\nlsr 0x{lsr:02x}\nmsr 0x{msr:02x}\ncntl 0x{cntl:02x}\nstat 0x{stat:08x}\n",
++            stat >> 7 & 1,
++            stat >> 6 & 1,
++            stat >> 24 & 0xf,
++            stat >> 16 & 0xf,
++            stat >> 9 & 1,
++        )
++    }
++
+     fn read(&self, offset: usize) -> u32 {
+         unsafe { self.regs.add(offset / 4).read_volatile() }
+     }
