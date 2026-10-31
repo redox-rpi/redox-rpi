@@ -5179,3 +5179,123 @@ pass on both (0 of 300 starts failed). Host side: `nc -l <port> | wc -c`.
   739432. No panic.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-795-g187edb8+xff6c` (netstack-arp-ack, stale ARP and reads after a TCP reset)
+
+Real Pi 3B+ over netboot. Test 156 ([#140](https://github.com/redox-rpi/redox-rpi/issues/140), [#141](https://github.com/redox-rpi/redox-rpi/issues/141)), Pi test agent.
+
+**Pass: after a reset, netget still reads the 65535 buffered bytes. Three
+downloads of 382 MB complete at 7.67–7.78 MB/s, with no `waiting queue was
+full` line.** Image `~/redox-rpi-zrtl/keep/arpack-v0.3.0-dev-795-g187edb8+xff6c.img`
+(manifest in the image), stable bootloader. Standard checks pass before and
+after (0 of 300 starts failed each time).
+
+(1) Reset test, `rstserver.py 18998 1000000`:
+
+```
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+```
+
+Server: `17:39:00 192.168.178.148: header, 437576 body bytes into the socket,
+then reset`, and the same at 17:39:11. N = 65535 both times (pass: above 30000).
+
+(2) ARP, `netget http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf --log /scheme/debug` three times:
+
+| run | result | 16 MiB steps |
+|---|---|---|
+| 1 | `382156480 bytes in 49.8 s, 7.67 MB/s` | 7.38–7.97 MB/s |
+| 2 | `382156480 bytes in 49.1 s, 7.78 MB/s` | 7.6–7.9 MB/s |
+| 3 | `382156480 bytes in 49.6 s, 7.71 MB/s` | 7.4–7.9 MB/s |
+
+- Serial during the three runs: **0 `waiting queue was full`** lines, no
+  `Dropped` and no `smolnetd` line. The whole boot had none either. No panic.
+- The three runs took about 2.5 minutes together, so they spanned two or three
+  60 s ARP refreshes.
+- Every `netget:` line from the serial log (`--log /scheme/debug`):
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.75 MB/s
+netget:    32 MiB     4.3 s  7.87 MB/s
+netget:    48 MiB     6.6 s  7.45 MB/s
+netget:    64 MiB     8.8 s  7.64 MB/s
+netget:    80 MiB    11.0 s  7.65 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.78 MB/s
+netget:   128 MiB    17.5 s  7.69 MB/s
+netget:   144 MiB    19.6 s  7.92 MB/s
+netget:   160 MiB    21.7 s  7.95 MB/s
+netget:   176 MiB    23.9 s  7.75 MB/s
+netget:   192 MiB    26.0 s  7.92 MB/s
+netget:   208 MiB    28.3 s  7.38 MB/s
+netget:   224 MiB    30.6 s  7.46 MB/s
+netget:   240 MiB    32.8 s  7.60 MB/s
+netget:   256 MiB    35.0 s  7.55 MB/s
+netget:   272 MiB    37.2 s  7.70 MB/s
+netget:   288 MiB    39.4 s  7.71 MB/s
+netget:   304 MiB    41.5 s  7.82 MB/s
+netget:   320 MiB    43.7 s  7.97 MB/s
+netget:   336 MiB    45.9 s  7.58 MB/s
+netget:   352 MiB    48.1 s  7.38 MB/s
+netget: 382156480 bytes in 49.8 s, 7.67 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.63 MB/s
+netget:    32 MiB     4.4 s  7.64 MB/s
+netget:    48 MiB     6.6 s  7.73 MB/s
+netget:    64 MiB     8.7 s  7.77 MB/s
+netget:    80 MiB    10.9 s  7.85 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.66 MB/s
+netget:   128 MiB    17.5 s  7.67 MB/s
+netget:   144 MiB    19.6 s  7.89 MB/s
+netget:   160 MiB    21.8 s  7.77 MB/s
+netget:   176 MiB    23.9 s  7.80 MB/s
+netget:   192 MiB    26.1 s  7.75 MB/s
+netget:   208 MiB    28.2 s  7.90 MB/s
+netget:   224 MiB    30.4 s  7.84 MB/s
+netget:   240 MiB    32.5 s  7.89 MB/s
+netget:   256 MiB    34.6 s  7.86 MB/s
+netget:   272 MiB    36.8 s  7.80 MB/s
+netget:   288 MiB    38.9 s  7.93 MB/s
+netget:   304 MiB    41.1 s  7.76 MB/s
+netget:   320 MiB    43.2 s  7.86 MB/s
+netget:   336 MiB    45.4 s  7.79 MB/s
+netget:   352 MiB    47.5 s  7.89 MB/s
+netget: 382156480 bytes in 49.1 s, 7.78 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.74 MB/s
+netget:    32 MiB     4.3 s  7.80 MB/s
+netget:    48 MiB     6.4 s  8.01 MB/s
+netget:    64 MiB     8.6 s  7.75 MB/s
+netget:    80 MiB    10.7 s  7.87 MB/s
+netget:    96 MiB    12.9 s  7.83 MB/s
+netget:   112 MiB    15.2 s  7.35 MB/s
+netget:   128 MiB    17.4 s  7.60 MB/s
+netget:   144 MiB    19.6 s  7.52 MB/s
+netget:   160 MiB    21.8 s  7.81 MB/s
+netget:   176 MiB    23.9 s  7.82 MB/s
+netget:   192 MiB    26.1 s  7.69 MB/s
+netget:   208 MiB    28.3 s  7.76 MB/s
+netget:   224 MiB    30.5 s  7.79 MB/s
+netget:   240 MiB    32.7 s  7.64 MB/s
+netget:   256 MiB    34.8 s  7.89 MB/s
+netget:   272 MiB    37.0 s  7.78 MB/s
+netget:   288 MiB    39.1 s  7.70 MB/s
+netget:   304 MiB    41.4 s  7.63 MB/s
+netget:   320 MiB    43.5 s  7.64 MB/s
+netget:   336 MiB    45.7 s  7.66 MB/s
+netget:   352 MiB    47.9 s  7.67 MB/s
+netget: 382156480 bytes in 49.6 s, 7.71 MB/s
+```
+
+Stable image restored afterwards.
