@@ -345,7 +345,7 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   allocator change itself ran without trouble. Likely cause: "zeroed" DMA
   memory that is not zero, because the kernel clears it through a cached
   mapping and the driver reads it uncached. Patch `0068` clears the test
-  buffer itself and logs what was there; Pi test #138. Pi test #130
+  buffer itself and logs what was there; Pi test #138
   (serial only). Boots 2–3 of #116 set `RPI_FB*` through
   `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
   file in `/srv/tftp/`.
