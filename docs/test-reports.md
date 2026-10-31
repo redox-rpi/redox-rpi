@@ -4179,3 +4179,37 @@ cat /scheme/netcfg/ifaces/eth0/addr/list  → 192.168.178.148/24
 ```
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-205-g6b46fc0+xced2` (graphics-dma-order, kernel `0049`)
+
+Real Pi 3B+ over netboot, NanoKVM on HDMI, serial only. Test 130 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**Not shown: `rpi-fbd` didn't use DMA at all, so the larger DMA buffers were
+never allocated.** Its DMA test blit failed (`test blit of 2 rows moved 4`), and it
+fell back to CPU blits. There is no `DMA channel 5 … rows` line, and also no
+`dumb buffer … in normal memory` line. No kernel panic and no `out of memory`.
+Standard checks pass. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-205-g6b46fc0+xced2.img`, manifest
+matches, with the new stable's bootloader.
+
+- Display lines in the serial log:
+
+```
+vesad: 1824x984 stride 1824 at 0x3E914000
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: blits with the CPU: test blit of 2 rows moved 4
+fbcond: Performing handoff
+```
+
+- The boot log also has `thread 'main' (1) panicked at
+  drivers/pcid/src/cfg_access/fallback.rs:88:9`. That's pcid in userspace: this
+  image is based on dev-205, from before pcid was left out on the Pi. It is not
+  a kernel panic.
+- `free`: 137,020 KB used of 743,312 (606,292 free).
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest matches, ps 48,
+  ps-tty, sdcard, 0 of 300 starts failed). No new panic or `out of memory` during them.
+
+So the allocator change ran under 300 starts without trouble, but the DMA path
+it is meant for wasn't reached. Next: why the DMA test blit moves 4 instead of
+2 rows. Stable image restored afterwards.
