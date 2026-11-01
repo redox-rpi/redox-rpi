@@ -38,15 +38,11 @@ diff --git a/Makefile b/Makefile
 index 263a5c4..0af422a 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -17,7 +17,7 @@ INITFS_BINS = ipcd init logd ramfs randd zerod \
- 	pcid pcid-spawner rtcd vesad
- INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+@@ -19,3 +19,3 @@ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
  BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
 -DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
 +DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
  	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
- 
- ifeq ($(TARGET),aarch64-unknown-redox)
 diff --git a/drivers/net/testnetd/Cargo.toml b/drivers/net/testnetd/Cargo.toml
 new file mode 100644
 index 0000000..49459b3
