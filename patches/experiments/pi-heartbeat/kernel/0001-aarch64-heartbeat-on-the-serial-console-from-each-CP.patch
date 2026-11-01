@@ -6,15 +6,15 @@ straight to the PL011, without the COM1 lock, and reports a CPU that stops
 taking timer interrupts or stops scheduling. CPU 0 dumps the context list
 ([hbctx ...] lines) at its second beat and when user space stops switching.
 ---
-diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
+diff -ruN -x 'b.*' a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
 --- a/src/arch/aarch64/device/generic_timer.rs	2026-10-31 22:36:40.922237049 +0000
-+++ b/src/arch/aarch64/device/generic_timer.rs	2026-11-01 06:29:40.005601319 +0000
++++ b/src/arch/aarch64/device/generic_timer.rs	2026-11-01 07:28:07.150412770 +0000
 @@ -1,3 +1,4 @@
 +use core::sync::atomic::{AtomicU32, Ordering};
  use spin::Once;
  
  use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
-@@ -193,6 +194,279 @@
+@@ -193,6 +194,293 @@
      write_ctrl(config, ctrl);
  }
  
@@ -150,13 +150,27 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +        let skips = |c: &[AtomicU32; 8]| c[cpu].load(Ordering::Relaxed);
 +        let _ = write!(
 +            line,
-+            "[hbcpu {cpu} w{} q{queue_len} sl{} sa{} sr{}]\r\n",
++            "[hbcpu {cpu} w{} q{queue_len} sl{} sa{} sr{} sv{} ss{}]\r\n",
 +            switches[cpu],
 +            skips(&crate::context::switch::HB_SKIP_LOCK),
 +            skips(&crate::context::switch::HB_SKIP_ADDR),
 +            skips(&crate::context::switch::HB_SKIP_RUN),
++            skips(&crate::context::switch::HB_SKIP_VTIME),
++            skips(&crate::context::switch::HB_SKIP_SELF),
 +        );
 +        crate::devices::uart_pl011::raw_write(&line.buf[..line.len]);
++    }
++    for cpu in 0..cpus.min(8) {
++        let mut out = |args: core::fmt::Arguments| {
++            let mut line = LineBuf { buf: [0; 160], len: 0 };
++            let _ = line.write_fmt(args);
++            let _ = line.write_str("\r\n");
++            crate::devices::uart_pl011::raw_write(&line.buf[..line.len]);
++        };
++        let cpu_id = crate::cpu_set::LogicalCpuId::new(cpu as u32);
++        if !crate::context::switch::hb_dump_queue(cpu_id, token, &mut out) {
++            crate::devices::uart_pl011::raw_write(b"[hbq locked]\r\n");
++        }
 +    }
 +    let Some(mut contexts) = context::try_contexts(token.downgrade()) else {
 +        crate::devices::uart_pl011::raw_write(b"[hbctx list locked]\r\n");
@@ -294,7 +308,7 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bool {
      let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
          return false;
-@@ -215,6 +489,7 @@
+@@ -215,6 +503,7 @@
      // switch to a context which may subsequently resume on another CPU.
      irqchip::end_root(raw_iar);
      program_current(config);
@@ -302,7 +316,7 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  
      if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
          timeout::trigger(token);
-diff -ruN a/src/context/mod.rs b/src/context/mod.rs
+diff -ruN -x 'b.*' a/src/context/mod.rs b/src/context/mod.rs
 --- a/src/context/mod.rs	2026-11-01 01:58:32.735467536 +0000
 +++ b/src/context/mod.rs	2026-11-01 01:59:00.941310867 +0000
 @@ -137,6 +137,14 @@
@@ -320,10 +334,10 @@ diff -ruN a/src/context/mod.rs b/src/context/mod.rs
  /// Get per cpu contexts, mutable
  pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
      CONTEXTS.write(token)
-diff -ruN a/src/context/switch.rs b/src/context/switch.rs
+diff -ruN -x 'b.*' a/src/context/switch.rs b/src/context/switch.rs
 --- a/src/context/switch.rs	2026-10-31 23:30:00.823222597 +0000
-+++ b/src/context/switch.rs	2026-11-01 06:29:40.004597162 +0000
-@@ -113,6 +113,35 @@
++++ b/src/context/switch.rs	2026-11-01 07:28:07.150321281 +0000
+@@ -113,6 +113,83 @@
  /// switch if the counter reaches a set threshold (e.g., every 3 ticks).
  ///
  /// The function also calls the signal handler after switching contexts.
@@ -344,6 +358,54 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
 +    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
 +pub static HB_SKIP_RUN: [core::sync::atomic::AtomicU32; 8] =
 +    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++// The silent skips before those: the vtime filter, and the entry being the
++// idle or the current sched context.
++pub static HB_SKIP_VTIME: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++pub static HB_SKIP_SELF: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++
++/// Writes a CPU's run queue for the heartbeat dump (#157): `v`, length and
++/// total weight, then per entry (at most 8) its vtime and the context's pid
++/// and name, with `own` if the context's queue_key is this entry and `stale`
++/// if not. Returns false if the queue lock is taken.
++pub fn hb_dump_queue(
++    cpu: LogicalCpuId,
++    token: &mut CleanLockToken,
++    out: &mut dyn FnMut(core::fmt::Arguments),
++) -> bool {
++    let Some(percpu) = get_percpu_block(cpu) else {
++        return false;
++    };
++    let Some(queue) = percpu.switch_internals.run_queue.try_lock() else {
++        return false;
++    };
++    let id = cpu.get();
++    out(format_args!(
++        "[hbq {id} v{} n{} tw{}]",
++        queue.v,
++        queue.queue.len(),
++        queue.total_weight
++    ));
++    for (key, value) in queue.queue.iter().take(8) {
++        let Some(lock) = value.context_ref.upgrade() else {
++            out(format_args!("[hbq {id} vt{} id{} gone]", value.vtime, key.ctxt_id));
++            continue;
++        };
++        match lock.try_read(token.token()) {
++            Some(c) => out(format_args!(
++                "[hbq {id} vt{} id{} {} {} {}]",
++                value.vtime,
++                key.ctxt_id,
++                c.pid,
++                c.name.as_str(),
++                if c.queue_key == Some(*key) { "own" } else { "stale" }
++            )),
++            None => out(format_args!("[hbq {id} vt{} id{} locked]", value.vtime, key.ctxt_id)),
++        }
++    }
++    true
++}
 +
 +/// Timer ticks since this CPU last ran schedule().
 +pub fn hb_pit_ticks() -> usize {
@@ -359,7 +421,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
  pub fn tick(token: &mut CleanLockToken) {
      let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
  
-@@ -210,6 +239,7 @@
+@@ -210,6 +287,7 @@
              ),
              // didn't change sched context, so will not change current context
              ScheduleResult::AllContextsIdle => {
@@ -367,7 +429,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
                  percpu.stats.set_state(cpu_stats::CpuState::Idle);
  
                  return SwitchResult::AllContextsIdle;
-@@ -246,6 +276,7 @@
+@@ -246,6 +324,7 @@
  
      let switch_time = schedule_time;
  
@@ -375,7 +437,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
      unsafe {
          switch_to(
              percpu,
-@@ -282,6 +313,7 @@
+@@ -282,6 +361,7 @@
      schedule_time: u128,
      token: &mut CleanLockToken,
  ) -> ScheduleResult {
@@ -383,7 +445,20 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
      percpu.stats.add_context_switch(percpu.inside_syscall.get());
  
      //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
-@@ -608,6 +640,7 @@
+@@ -587,6 +667,7 @@
+     ) in contexts_data.queue.iter()
+     {
+         if *vtime > ineligible_min_vtime && *vtime > contexts_data.v {
++            hb_count(&HB_SKIP_VTIME);
+             continue;
+         }
+ 
+@@ -604,10 +685,12 @@
+         let next_is_current_ctxt = context::is_current(&context_lock);
+ 
+         if Arc::ptr_eq(&context_lock, &idle_context) || next_is_current_sched {
++            hb_count(&HB_SKIP_SELF);
+             continue;
          }
  
          let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
@@ -391,7 +466,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
              continue;
          };
  
-@@ -638,6 +671,7 @@
+@@ -638,6 +721,7 @@
          }
  
          if !matches!(sw, UpdateResult::CanSwitch) {
@@ -399,7 +474,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
              continue;
          }
  
-@@ -647,6 +681,7 @@
+@@ -647,6 +731,7 @@
              if let Some(addr) = addr_space.inner.try_read(t.token()) {
                  best_addr_space = Some(unsafe { AddrSpaceSwitchReadGuard::new(addr) });
              } else {
@@ -407,7 +482,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
                  continue;
              }
          }
-diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
+diff -ruN -x 'b.*' a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
 --- a/src/devices/uart_pl011.rs	2026-10-31 22:36:40.921150416 +0000
 +++ b/src/devices/uart_pl011.rs	2026-10-31 22:40:47.382425512 +0000
 @@ -1,6 +1,9 @@
