@@ -31,3 +31,11 @@ scripts/build-image.sh --experiment relibc-tests --experiment futex-wake-efault
 ```
 
 ## Results
+
+QEMU raspi3b, 2026-11-01, test build `v0.3.0-dev-906-g13b2b1a+xf576`
+(`relibc-tests`, `timesync`, `futex-wake-efault`): 319 tests, 18 failed, 17
+of them known. The one new failure is `pthread/exit` (SIGKILL), which also
+failed in 11 of 38 earlier suite runs without this patch (builds 417 to
+803), so it is not caused by this change. 5 tests on the known list passed.
+The panic itself never showed in QEMU (0 in 40 runs before the fix), so the
+real check is the Pi.
