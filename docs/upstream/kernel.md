@@ -35,4 +35,4 @@ Our [#158](https://github.com/redox-rpi/redox-rpi/issues/158).
   are not atomic when the queue has less room than that.
 - **Tested:** QEMU: `dd bs=1M count=16 |` passes 16777216 bytes
   (`16+0 records out`), `dd … | sha256sum` matches the file, and
-  `dd … | head -c 100` ends with `Broken pipe` instead of hanging. Pi test 180 (queued).
+  `dd … | head -c 100` ends with `Broken pipe` instead of hanging. Pi 3B+ test 180 passed.
