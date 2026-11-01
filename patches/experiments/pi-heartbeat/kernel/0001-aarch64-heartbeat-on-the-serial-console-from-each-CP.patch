@@ -1,20 +1,20 @@
 From: stephan-xyz <stephan@zehrer.xyz>
-Subject: [PATCH] aarch64: heartbeat and stall watch on the serial console
+Subject: [PATCH] aarch64: heartbeat on the serial console from each CPU timer interrupt
 
-Diagnostic for #14 and #157: every 60 s each CPU writes [hb <cpu> <n> s..
-w.. i.. p..] straight to the PL011, without the COM1 lock, and each CPU
-reports once when another CPU takes no timer interrupt ([hb stall]) or
-runs no schedule() ([hb nosched]) for 2 s.
+Diagnostic for #14 and #157: every 60 s each CPU writes [hb <cpu> <n> ...]
+straight to the PL011, without the COM1 lock, and reports a CPU that stops
+taking timer interrupts or stops scheduling. CPU 0 dumps the context list
+([hbctx ...] lines) at its second beat and when user space stops switching.
 ---
 diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
---- a/src/arch/aarch64/device/generic_timer.rs
-+++ b/src/arch/aarch64/device/generic_timer.rs
+--- a/src/arch/aarch64/device/generic_timer.rs	2026-10-31 22:36:40.922237049 +0000
++++ b/src/arch/aarch64/device/generic_timer.rs	2026-11-01 01:59:00.941399756 +0000
 @@ -1,3 +1,4 @@
 +use core::sync::atomic::{AtomicU32, Ordering};
  use spin::Once;
  
  use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
-@@ -193,6 +194,134 @@
+@@ -193,6 +194,227 @@
      write_ctrl(config, ctrl);
  }
  
@@ -26,8 +26,17 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +// Between beats each CPU watches the others: when another CPU took no
 +// timer interrupt, or did not run schedule(), for STALL_TICKS, it writes
 +// "[hb stall <cpu> ...]" or "[hb nosched <cpu> ...]" once.
++// CPU 0 also dumps the context list, one "[hbctx ...]" line per context,
++// once at its second beat (a baseline) and when all CPUs together made
++// fewer than DUMP_SWITCHES context switches since its last beat (at most
++// DUMP_MAX times): user space has stopped, and the dump shows what each
++// context waits on.
 +const HEARTBEAT_TICKS: u32 = 6000; // 60 s at 100 Hz
 +const STALL_TICKS: u32 = 200; // 2 s
++const DUMP_SWITCHES: u32 = 100;
++const DUMP_MAX: u32 = 3;
++static DUMP_LAST_SWITCHES: AtomicU32 = AtomicU32::new(0);
++static DUMPS: AtomicU32 = AtomicU32::new(0);
 +static HEARTBEAT: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
 +static HB_LAST: [[AtomicU32; 3]; 8] = [const { [const { AtomicU32::new(0) }; 3] }; 8];
 +// Per watching CPU and watched CPU: last seen tick and schedule() counts,
@@ -111,7 +120,88 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +    }
 +}
 +
-+fn heartbeat(cpu: u32) {
++struct LineBuf {
++    buf: [u8; 160],
++    len: usize,
++}
++
++impl core::fmt::Write for LineBuf {
++    fn write_str(&mut self, s: &str) -> core::fmt::Result {
++        for &b in s.as_bytes() {
++            if self.len < self.buf.len() {
++                self.buf[self.len] = b;
++                self.len += 1;
++            }
++        }
++        Ok(())
++    }
++}
++
++fn dump_contexts(beat: u32, switches: u32, token: &mut CleanLockToken) {
++    use core::fmt::Write;
++    let mut line = LineBuf { buf: [0; 160], len: 0 };
++    let _ = write!(line, "\r\n[hbctx begin beat {beat} w{switches}]\r\n");
++    crate::devices::uart_pl011::raw_write(&line.buf[..line.len]);
++    let Some(mut contexts) = context::try_contexts(token.downgrade()) else {
++        crate::devices::uart_pl011::raw_write(b"[hbctx list locked]\r\n");
++        return;
++    };
++    let (contexts, mut token) = contexts.token_split();
++    for context_ref in contexts.iter() {
++        line.len = 0;
++        match context_ref.try_read(token.token()) {
++            Some(c) => {
++                let stat = match &c.status {
++                    context::Status::Runnable => "R",
++                    context::Status::Blocked if c.wake.is_some() => "S",
++                    context::Status::Blocked => "B",
++                    context::Status::HardBlocked { .. } => "H",
++                    context::Status::Dead { .. } => "Z",
++                };
++                let _ = write!(
++                    line,
++                    "[hbctx {} {} {}{}{} cpu{} {}",
++                    c.pid,
++                    c.name.as_str(),
++                    stat,
++                    if c.running { "+" } else { "" },
++                    if c.inside_syscall { " sys" } else { "" },
++                    c.cpu_id.map_or(99, |id| id.get()),
++                    c.status_reason,
++                );
++                if let context::Status::HardBlocked { reason } = &c.status {
++                    let _ = write!(line, " {:?}", reason);
++                }
++                let _ = write!(line, "]\r\n");
++            }
++            None => {
++                let _ = write!(line, "[hbctx locked]\r\n");
++            }
++        }
++        if line.len == line.buf.len() {
++            line.buf[line.len - 3..].copy_from_slice(b"]\r\n");
++        }
++        crate::devices::uart_pl011::raw_write(&line.buf[..line.len]);
++    }
++    crate::devices::uart_pl011::raw_write(b"[hbctx end]\r\n");
++}
++
++fn maybe_dump(beat: u32, token: &mut CleanLockToken) {
++    use crate::context::switch::HB_SWITCH;
++    let cpus = crate::CPU_COUNT.load(Ordering::Relaxed) as usize;
++    let total = (0..cpus.min(8)).fold(0u32, |sum, c| {
++        sum.wrapping_add(HB_SWITCH[c].load(Ordering::Relaxed))
++    });
++    let switches = total.wrapping_sub(DUMP_LAST_SWITCHES.swap(total, Ordering::Relaxed));
++    if beat == 2 || (beat > 2 && switches < DUMP_SWITCHES && DUMPS.load(Ordering::Relaxed) < DUMP_MAX) {
++        if beat != 2 {
++            DUMPS.fetch_add(1, Ordering::Relaxed);
++        }
++        dump_contexts(beat, switches, token);
++    }
++}
++
++fn heartbeat(cpu: u32, token: &mut CleanLockToken) {
 +    let idx = cpu as usize;
 +    let (Some(counter), Some(last)) = (HEARTBEAT.get(idx), HB_LAST.get(idx)) else {
 +        return;
@@ -144,22 +234,43 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +    push_num(&mut buf, &mut len, pit as u32);
 +    push_bytes(&mut buf, &mut len, b"]\r\n");
 +    crate::devices::uart_pl011::raw_write(&buf[..len]);
++    if idx == 0 {
++        maybe_dump(ticks / HEARTBEAT_TICKS, token);
++    }
 +}
 +
  pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bool {
      let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
          return false;
-@@ -215,6 +344,7 @@
+@@ -215,6 +437,7 @@
      // switch to a context which may subsequently resume on another CPU.
      irqchip::end_root(raw_iar);
      program_current(config);
-+    heartbeat(cpu_id.get());
++    heartbeat(cpu_id.get(), token);
  
      if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
          timeout::trigger(token);
+diff -ruN a/src/context/mod.rs b/src/context/mod.rs
+--- a/src/context/mod.rs	2026-11-01 01:58:32.735467536 +0000
++++ b/src/context/mod.rs	2026-11-01 01:59:00.941310867 +0000
+@@ -137,6 +137,14 @@
+     CONTEXTS.read(token)
+ }
+ 
++/// Get the context list without waiting, for the heartbeat dump from an
++/// interrupt handler (experiment pi-heartbeat)
++pub fn try_contexts(
++    token: LockToken<'_, L1>,
++) -> Option<RwLockReadGuard<'_, L2, BTreeSet<ContextRef>>> {
++    CONTEXTS.try_read(token)
++}
++
+ /// Get per cpu contexts, mutable
+ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
+     CONTEXTS.write(token)
 diff -ruN a/src/context/switch.rs b/src/context/switch.rs
---- a/src/context/switch.rs
-+++ b/src/context/switch.rs
+--- a/src/context/switch.rs	2026-10-31 23:30:00.823222597 +0000
++++ b/src/context/switch.rs	2026-10-31 23:30:11.485652771 +0000
 @@ -113,6 +113,26 @@
  /// switch if the counter reaches a set threshold (e.g., every 3 ticks).
  ///
@@ -212,8 +323,8 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
  
      //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
 diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
---- a/src/devices/uart_pl011.rs
-+++ b/src/devices/uart_pl011.rs
+--- a/src/devices/uart_pl011.rs	2026-10-31 22:36:40.921150416 +0000
++++ b/src/devices/uart_pl011.rs	2026-10-31 22:40:47.382425512 +0000
 @@ -1,6 +1,9 @@
  #![allow(unused)]
  
