@@ -6,8 +6,9 @@ To get the image onto an SD card and boot it first, see
 [getting started](getting-started.md). Every command here was tried on the stable image
 `v0.3.0-dev-15-g24fbb96+x9f76` in QEMU (2026-10-29), except the keys of the
 full-screen programs `kibi` and `less`, which come from their
-documentation. Things that are missing or behave differently are listed
-at the end.
+documentation. The [USB devices](#usb-devices) section was checked on
+today's main in QEMU and against the Pi tests (2026-11-01). Things that
+are missing or behave differently are listed at the end.
 
 Redox looks like a Unix system: there is a shell, `/home`, `ls`, `cat`
 and most of the usual tools. Two things are different: the shell is
@@ -149,13 +150,13 @@ USB hub. These work today:
 |---|---|
 | USB keyboard | types on the screen console, US layout; plug it in at any time |
 | Built-in Ethernet (LAN7800 on the 3B+) | the network at boot |
-| USB Ethernet adapter with an RTL8152 or RTL8153 (e.g. Zero 2 W Ethernet HATs, many USB-C hubs) | used as soon as it has a link; the network moves to it and keeps its address |
+| USB Ethernet adapter with an RTL8152 or RTL8153 (e.g. Zero 2 W Ethernet HATs, the Anker 565 hub) | used as soon as it has a link; the network moves to it and keeps its address |
 | USB hubs | devices behind them work like the others |
 
 When several network adapters are plugged in, the network uses an RTL815x
 with a cable first, then the built-in LAN7800, then an RTL815x without a
 cable. The network keeps the same MAC address and DHCP lease when it
-moves, so open connections may survive the move.
+moves.
 
 To see what `dwc2d` found, look at its lines on the screen or the serial
 console at boot and whenever something is plugged in or out:
