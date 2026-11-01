@@ -6468,3 +6468,20 @@ Image `hbusb3-…`, own bootloader, the download of 172 as in 181. A stall means
 - Power cycles: 05:54:09, 06:03:08, 06:14:08.
 
 Stable image restored afterwards (the nightly's `v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-906-g13b2b1a+xf576` (`rwlock_randtest` with the `futex_wake` EFAULT fix)
+
+Real Pi 3B+ over netboot. Test 184 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+Stable bootloader, staged 06:14 (power cycle). Each run is its own devsh command with a 60 s client timeout, with stderr kept, as in 178.
+
+**57 runs passed, then run 58 froze the Pi.**
+- **No `RELIBC PANIC`** in the stderr of any run, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial. So the panic of 176/178 did not show in 57 runs. It came about once in 40 runs before, so 57 clean runs is a hint, not proof.
+- Runs 1–57: all `rc=0`. `real` times were 1.27–1.47 s, median 1.37 s.
+- Run 58 started about 06:24 and printed nothing: no output, no `rc`, client timeout after 65 s.
+  - devsh no longer answered.
+  - Serial showed nothing new in the 90 s after the freeze.
+  - This image has no heartbeat, so there is no kernel view of the freeze.
+- This is the same kind of freeze as in 170 and 173 (run 12).
+- Power cycle at 06:27:11 with stable staged.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
