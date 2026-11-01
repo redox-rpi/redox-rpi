@@ -83,7 +83,8 @@ throttling garbles it.
   minutes under load); show the measured ARM clock (tag `0x30047`) next to
   the requested one.
 - [#21](https://github.com/redox-rpi/redox-rpi/issues/21) a common DMA plan for the Pi, including the BCM2835 DMA
-  controller and the firmware's channel mask (milestone v0.4.0).
+  controller and the firmware's channel mask (milestone v0.4.0). Draft:
+  [topics/dma.md](dma.md) on branch `dma-plan`.
 - [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).
 - Power domains, GPIO expander, DMA channel mask, display, VCHIQ
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
