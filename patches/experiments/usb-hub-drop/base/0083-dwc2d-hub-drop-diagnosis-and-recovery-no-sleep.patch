@@ -1,7 +1,7 @@
-From 700078a3c12eaf648af0229ff8aca7ae52f23669 Mon Sep 17 00:00:00 2001
+From f2447057c1236f137f0ce35cebdc1ef11e84af88 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 31 Oct 2026 21:44:29 +0000
-Subject: [PATCH 2/2] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
+Subject: [PATCH] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
 
 A hub port that changed, lost its enable bit, went over current or lost
 power is logged with its status and change bits, the change bits are
@@ -16,9 +16,9 @@ sleeps hung dwc2d in QEMU; on the Pi it stopped right after a hub drop,
 test 168). delay() yields until the time has passed.
 ---
  drivers/usb/dwc2d/src/dwc2.rs      |  66 ++++++++++++--
- drivers/usb/dwc2d/src/enumerate.rs | 124 ++++++++++++++++++++++----
+ drivers/usb/dwc2d/src/enumerate.rs | 122 ++++++++++++++++++++++----
  drivers/usb/dwc2d/src/lan78xx.rs   |   8 +-
- drivers/usb/dwc2d/src/main.rs      |   7 +-
+ drivers/usb/dwc2d/src/main.rs      |   9 +-
  drivers/usb/dwc2d/src/rtl8152.rs   |  12 +--
  drivers/usb/dwc2d/src/usbdiag.rs   | 135 +++++++++++++++++++++++++++++
  6 files changed, 316 insertions(+), 36 deletions(-)
@@ -175,7 +175,7 @@ index dfc5d19a..959bba87 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 624907b5..8fe28fb7 100644
+index 7ffe442b..495f0848 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -2,12 +2,13 @@
@@ -285,18 +285,9 @@ index 624907b5..8fe28fb7 100644
 -        sleep(power_on_delay.max(Duration::from_millis(20)));
 +        delay(power_on_delay.max(Duration::from_millis(20)));
  
-         // Devices take a while to signal their connection after power-on
-         // (the Pi 3B+'s LAN7800 was missed after 100 ms). Collect the ports
-@@ -336,7 +363,7 @@ impl Bus {
-             if connected[1..].iter().all(|&c| c) || start.elapsed() > Duration::from_secs(1) {
-                 break;
-             }
--            sleep(Duration::from_millis(50));
-+            delay(Duration::from_millis(50));
-         }
- 
-         for port in 1..=ports {
-@@ -353,12 +380,13 @@ impl Bus {
+         // Take the ports connected now. Devices take a while to signal
+         // their connection after power-on (the Pi 3B+'s LAN7800 was missed
+@@ -341,12 +368,13 @@ impl Bus {
      fn attach(&mut self, hub: Hub, port: u16) -> Result<(), Error> {
          let Hub { address, max_packet, speed, depth, tt: hub_tt, .. } = hub;
          let indent = "  ".repeat(depth);
@@ -311,7 +302,7 @@ index 624907b5..8fe28fb7 100644
              let (status, _) = self.port_status(address, max_packet, speed, port)?;
              if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
                  break status;
-@@ -375,7 +403,7 @@ impl Bus {
+@@ -363,7 +391,7 @@ impl Bus {
          };
          self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
          // Reset recovery time.
@@ -320,7 +311,7 @@ index 624907b5..8fe28fb7 100644
  
          let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
              Speed::Low
-@@ -449,7 +477,7 @@ impl Bus {
+@@ -437,7 +465,7 @@ impl Bus {
          let start = Instant::now();
          let mut gone = false;
          while start.elapsed() < Duration::from_secs(2) {
@@ -329,7 +320,7 @@ index 624907b5..8fe28fb7 100644
              let (status, _) = self.port_status(a, mp, sp, port)?;
              if status & PORT_STAT_CONNECTION == 0 {
                  gone = true;
-@@ -468,7 +496,7 @@ impl Bus {
+@@ -456,7 +484,7 @@ impl Bus {
              self.remove(address, removed);
          }
          self.failed.remove(&slot);
@@ -338,7 +329,7 @@ index 624907b5..8fe28fb7 100644
          println!("dwc2d: cycle: hub {a} port {port} power on");
          self.request(a, mp, sp, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
          // The next scan finds the device again.
-@@ -492,8 +520,30 @@ impl Bus {
+@@ -480,8 +508,30 @@ impl Bus {
          let mut changes = Changes::default();
          let before: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
  
@@ -371,7 +362,7 @@ index 624907b5..8fe28fb7 100644
          if !root && (root_device || self.failed.contains(&None)) {
              println!("dwc2d: device on root port removed");
              for address in before.iter().copied() {
-@@ -535,29 +585,65 @@ impl Bus {
+@@ -523,29 +573,65 @@ impl Bus {
      }
  
      fn scan_port(&mut self, hub: Hub, port: u16, removed: &mut Vec<u8>) -> Result<(), Error> {
@@ -444,7 +435,7 @@ index 624907b5..8fe28fb7 100644
          Ok(())
      }
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index 70d39395..2fa9972f 100644
+index 8127826d..750cf15d 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
 @@ -5,13 +5,13 @@
@@ -462,7 +453,7 @@ index 70d39395..2fa9972f 100644
  use crate::dwc2::{Dwc2, Error, Phase, Speed};
  use crate::enumerate::{Bus, Device};
  use crate::regs::{EPTYPE_BULK, PID_DATA0};
-@@ -176,7 +176,7 @@ impl Regs<'_> {
+@@ -182,7 +182,7 @@ impl Regs<'_> {
              if start.elapsed() > Duration::from_secs(1) {
                  return Err(Error::Timeout(what));
              }
@@ -471,7 +462,7 @@ index 70d39395..2fa9972f 100644
          }
          Ok(())
      }
-@@ -271,7 +271,7 @@ pub fn init(
+@@ -277,7 +277,7 @@ pub fn init(
          if start.elapsed() > Duration::from_secs(1) {
              return Err(Error::Timeout("PHY BMCR reset"));
          }
@@ -480,8 +471,8 @@ index 70d39395..2fa9972f 100644
      }
      r.mii_write(MII_ANAR, ANAR_ALL)?;
      let bmcr = r.mii_read(MII_BMCR)?;
-@@ -307,7 +307,7 @@ pub fn init(
-             println!("dwc2d: LAN78xx no link yet");
+@@ -314,7 +314,7 @@ pub fn init(
+             }
              break false;
          }
 -        sleep(Duration::from_millis(100));
@@ -490,7 +481,7 @@ index 70d39395..2fa9972f 100644
      Ok((mac, link))
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1c19c7ef..c4780848 100644
+index 1b260fd3..7ebbee56 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -23,6 +23,7 @@ mod lan78xx;
@@ -501,7 +492,16 @@ index 1c19c7ef..c4780848 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -563,6 +564,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -485,7 +486,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             break;
+         }
+-        std::thread::sleep(Duration::from_millis(50));
++        dwc2::delay(Duration::from_millis(50));
+         let changes = bus.scan();
+         boot_probe(&mut bus, &mut net, &mut keyboard, changes.added);
+     }
+@@ -601,6 +602,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
@@ -509,7 +509,7 @@ index 1c19c7ef..c4780848 100644
                  let mut cycled = Vec::new();
                  if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
                      let _ = std::fs::remove_file(CYCLE_REQUEST);
-@@ -607,6 +609,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -645,6 +647,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
                          continue;
                      };
@@ -517,7 +517,7 @@ index 1c19c7ef..c4780848 100644
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
                          Some(Found::Keyboard(f)) if keyboard.is_none() => {
-@@ -619,6 +622,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -657,6 +660,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  net.refresh_links(&mut bus);
                  net.select(&mut bus);
                  scheme.tick().expect("dwc2d: network scheme failed");
@@ -526,7 +526,7 @@ index 1c19c7ef..c4780848 100644
                  hotplug.arm(HOTPLUG_INTERVAL);
              }
          }
-@@ -649,7 +654,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+@@ -687,7 +692,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
              }
              Err(err) if attempt < ATTEMPTS => {
                  println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
