@@ -6892,3 +6892,21 @@ Image `~/redox-rpi-rel/keep/v0.3.0-rc4-netboot.img`, staged 15:36 with the stabl
 - **Note:** `~/redox-rpi-rel/build/manifests/netboot-v0.3.0-dev-963-g15e885d+x12cb.toml` was rewritten at 15:42, after this test's staging. Since then, `stage.sh` says `MANIFEST MISMATCH` for the 15:11 image `v0.3.0-rc4-netboot.img`. The pi-test above ran against the manifest as it was at 15:36 and passed. The build agent should check which manifest belongs to the release image.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh at 15:58.
+
+## 2026-11-01: `v0.3.0-dev-967-g311e46d+x9b05` (`ifconfig` shows the MAC address)
+
+Real Pi 3B+ over netboot. Test 194 ([#171](https://github.com/redox-rpi/redox-rpi/issues/171)), Pi test agent. Image `ifcmac-v0.3.0-dev-967-g311e46d+x9b05.img` (branch `ifconfig-mac`), staged 16:07 with the stable bootloader. Network on the LAN7800 (`dwc2d: LAN7800 at address 4`).
+
+**Pass:**
+- `ifconfig` over devsh, rc 0:
+  ```
+  eth0:
+  MAC Address: b8:27:eb:08:e0:aa
+  IP Address: 192.168.178.148
+  Netmask: 255.255.255.0
+  ```
+- `cat /scheme/netcfg/ifaces/eth0/mac` gives `b8-27-eb-08-e0-aa`, the same address. It is not `00:00:00:00:00:00`.
+- Standard checks: version, manifest present, `ps` (45), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+- No panic or `FATAL` line.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
