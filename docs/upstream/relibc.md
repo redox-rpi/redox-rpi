@@ -42,12 +42,29 @@ Our [#127](https://github.com/redox-rpi/redox-rpi/issues/127).
 
 Our [#51](https://github.com/redox-rpi/redox-rpi/issues/51).
 
+- **Which standard:** `clock_settime` is POSIX and not optional: since
+  POSIX.1-2008 the Timers option is mandatory, every system has to support
+  `CLOCK_REALTIME`, and a caller without the right gets `EPERM`
+  ([POSIX.1-2024, `clock_settime`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getres.html);
+  [`_POSIX_TIMERS` "shall always be set"](https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/unistd.h.html)).
+  `settimeofday` is not POSIX: it comes from 4.3BSD and SVr4 and is kept
+  by Linux and the BSDs; Linux's man page lists it under "Standards: None"
+  and points to `clock_settime` instead
+  ([Linux `settimeofday(2)`](https://man7.org/linux/man-pages/man2/settimeofday.2.html),
+  [FreeBSD `settimeofday(2)`](https://man.freebsd.org/cgi/man.cgi?query=settimeofday&sektion=2)).
+  relibc reports `_POSIX_VERSION 200809L` (POSIX.1-2008, Issue 7) in
+  [`unistd.h`](https://gitlab.redox-os.org/redox-os/relibc/-/blob/545a55c43d533fb0be7883a2aa8d5b6d625cf855/src/header/unistd/cbindgen.toml#L26),
+  while its code comments link to POSIX.1-2024 (Issue 8). So the request
+  upstream is: `clock_settime` as a missing POSIX function, `settimeofday`
+  as a BSD/Linux extension for programs that still use it.
 - **What's missing:** a program can't set the clock through the normal API.
   `clock_settime` fails with `ENOSYS` and logs a TODO line; `settimeofday`
   doesn't exist, so programs that call it don't link.
-- **Where:** `src/platform/redox/mod.rs`, lines 238–241: `clock_settime`
-  is `todo_skip!(...)` then `Err(Errno(ENOSYS))`. `src/header/sys_time/`
-  has no `settimeofday`; only the `__NR_settimeofday` syscall numbers
+- **Where** (relibc `master` at `545a55c`, 2026-10-31):
+  [`src/platform/redox/mod.rs`, lines 238–241](https://gitlab.redox-os.org/redox-os/relibc/-/blob/545a55c43d533fb0be7883a2aa8d5b6d625cf855/src/platform/redox/mod.rs#L238-241): `clock_settime`
+  is `todo_skip!(...)` then `Err(Errno(ENOSYS))`.
+  [`src/header/sys_time/mod.rs`](https://gitlab.redox-os.org/redox-os/relibc/-/blob/545a55c43d533fb0be7883a2aa8d5b6d625cf855/src/header/sys_time/mod.rs#L89)
+  has `gettimeofday` (line 89) but no `settimeofday`; only the `__NR_settimeofday` syscall numbers
   exist. The kernel already supports it: it keeps the real time as boot
   time plus monotonic time and takes a new boot time written to
   `/scheme/sys/update_time_offset` (root only).
