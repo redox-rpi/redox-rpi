@@ -29,7 +29,6 @@
 ./bins_dynamic/stdio/mutex flaky              # ftrylockfile succeeds in another thread; passed in builds 906 and 916 (2026-11-01)
 ./bins_dynamic/time/timer fail                # sem_wait EINVAL
 ./bins_dynamic/pthread/rwlock_randtest fail   # hangs
-./bins_dynamic/pthread/exit fail              # SIGKILL, #108; passes with experiment self-exit-status
 ./bins_dynamic/redox_ring_ramfs fail
 
 # No network in QEMU

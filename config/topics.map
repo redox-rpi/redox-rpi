@@ -73,7 +73,6 @@ patches/experiments/rpi-fb/*            graphics
 patches/experiments/orbital/*           graphics
 patches/experiments/relibc-tests/*      relibc
 patches/experiments/sig*                relibc,stability
-patches/experiments/self-exit-status/*  relibc,stability
 patches/experiments/ldso-*              stability
 patches/experiments/kernel-*            stability
 patches/experiments/t1-*                stability

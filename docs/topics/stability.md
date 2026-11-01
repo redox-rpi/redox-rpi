@@ -51,6 +51,14 @@
 
 ## In progress
 
+- [#108](https://github.com/redox-rpi/redox-rpi/issues/108) (branch `t108-self-exit-default`): kernel patch `0013`, before
+  experiment `self-exit-status`. Since kernel `0008` (#31 leak fix) a
+  thread that ends itself was reported as ForceKilled, so a process whose
+  last thread calls `pthread_exit` ended with SIGKILL instead of 0 (relibc
+  test `pthread/exit`). `0013` marks such a thread `exiting_itself` and
+  reports it as Dead; real kills stay ForceKilled, the leak fix stays.
+  QEMU and Pi test 133 passed as an experiment; now on by default.
+
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
   `devshd-hangup`): devshd kept `login` and the shell running when a client
   closed the connection without `exit`, two threads each, so every dropped
