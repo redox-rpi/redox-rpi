@@ -4034,3 +4034,2243 @@ reset at the driver's clock, flow none: 04 0e 04 01 03 1c 01  <- Command Complet
 
 No `firmware: …, 323 records` line: `bt up` never got that far. Step 4 still
 waits for the user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-560-gc85276b+x4590` (test 126, tries 2 and 3, no result)
+
+Real Pi 3B+ over netboot. Test 126 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**No result: the model download didn't finish, so nothing about the saved
+prompt state or the writing speed could be measured.** The standard checks pass
+(6 of 6) in both boots. No kernel panic and no `RELIBC PANIC`.
+
+- **Try 2** (03:55–04:54 UTC): my runner allowed 3000 s. In that time 322,202,182 of
+  341,455,552 bytes arrived (about 0.1 MB/s). The devsh connection closed
+  before the end, and every model load then stopped with `Error: tensor needs
+  1769472 bytes at offset 321972928, only 229254 remaining in file`.
+- **Try 3** (05:02–06:01 UTC), a fresh download with 5400 s allowed. **`rinfer
+  --download` stopped by itself**:
+
+```
+part 000, 16 MiB
+…
+part 011, 192 MiB
+Error: after 204051684 bytes: Transport endpoint is not connected (os error 107)
+```
+
+  That is 204 MB in 59 minutes, about 0.058 MB/s, slower than try 2 and much
+  slower than try 1's 0.25 MB/s. The first `assistant --ask` afterwards
+  printed `The language model did not start (Interrupted system call (os error 4))`.
+  The later ones stopped on the short file
+  (`tensor needs 4096 bytes at offset 206833344, only 0 remaining`).
+- `temperature` was 52–53 °C before and after, and `throttled` was
+  `0x00000000` throughout. `free` was 736,592 KB at the start and 629,620 KB at
+  the end. The lowest reading during the failed loads was 673,380 KB.
+- The short model file (204 MB) is still on `/scheme/data`. The next image
+  resumes the download.
+
+Requeued with the assistant session's new image `v0.3.0-dev-561-g3118d0a+x4590`
+(download resumes). Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-462-gf830bfd+x7d9f` (test 109 step 10, flow auto-low, no baud drift)
+
+Real Pi 3B+ over netboot. Test 109 step 10 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**First full answer from the chip: with flow `none`, `bt info` reads `version:
+Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119,
+firmware build 0`, `name: BCM4345C0`. But `bt up` still gets no answer to Reset
+(`0c03`) with either flow, so there's no firmware upload yet.** No bytes were
+lost in (a) and (b); 224 were lost during (c), which includes `bt diag`.
+Image `~/redox-rpi-cpu/keep/v0.3.0-dev-462-gf830bfd+x7d9f/harddrive.img`, with
+the new stable's bootloader. Boot log:
+`bcm2835-btuartd: mini UART at 0x3f215000, 115207 baud (core 400 MHz)`.
+Booted with a serial-console reset: the devsh reset from the #126 image didn't
+take.
+
+- (a) `cat /scheme/btuart/flow /scheme/btuart/baud /scheme/btuart/clock` →
+  `auto-low`, `115207`, `400000000` / `firmware`, as expected.
+- (b)
+  - `bt up` → `power: cycled`, `uart: core clock 400000000 Hz set by firmware
+    (firmware measures 400000000), 115207 baud, flow auto-low`,
+    **`bt: no answer to HCI command 0c03`**.
+  - `bt info` → no answer to `1001`.
+  - `bt scan 10` and `bt inquiry 10` → `bt: Connection timed out (os error 110)`.
+  - **0 `received bytes lost` lines** up to here.
+- (c) `bt diag` (from the clock lines on):
+
+```
+core clock idle: firmware reports 250000000, measures 400000000
+core clock under load: firmware reports 250000000, measures 400000000
+core clock after: firmware reports 250000000, measures 400000000
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+flow auto:
+before: cts_line 0, rts 1, tx_fifo 0, rx_fifo 0, cntl 0x3f, msr 0x10
+after: cts_line 0, rts 1, tx_fifo 4, rx_fifo 0, cntl 0x3f, msr 0x10
+received: nothing
+flow auto-low:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0xff, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+flow none:
+before: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+after: cts_line 0, rts 0, tx_fifo 0, rx_fifo 0, cntl 0x03, msr 0x10
+received 7 bytes: 04 0e 04 01 03 0c 00
+answered with flow: auto-low, none
+baud sweep: cts_line 0 after 0 ms
+assumed core 250 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 275 MHz (firmware reports 250000000, measures 400000000): 18 0c 84 03 0c 80
+assumed core 300 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 325 MHz (firmware reports 250000000, measures 400000000): 08 03 28 20 00
+assumed core 350 MHz (firmware reports 250000000, measures 399999000): 04 c1 12 08 e0
+assumed core 375 MHz (firmware reports 250000000, measures 400000000): 04 10 01 00
+assumed core 400 MHz (firmware reports 250000000, measures 400000000): 04 0e 04 01 03 0c 00  <- Command Complete
+assumed core 450 MHz (firmware reports 250000000, measures 400000000): nothing
+assumed core 500 MHz (firmware reports 250000000, measures 400000000): nothing
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow none
+baud sweep answered for core MHz: 400
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+reset at the driver's clock, flow auto-low: 04 0e 04 01 03 1c 01  <- Command Complete
+reset at the driver's clock, flow none: nothing
+```
+
+  Then `echo none > /scheme/btuart/flow`:
+  - `bt up` → `… 115207 baud, flow none`, **`bt: no answer to HCI command 0c03`**.
+  - `bt info` → **answered**:
+
+```
+version: Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119, firmware build 0
+address: AA:AA:AA:AA:AA:AA
+name: BCM4345C0
+```
+
+  - `status` → `cts_line 0, rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1,
+    lsr 0x60, msr 0x10, cntl 0x03, stat 0x0000030e`.
+- (d) **0 lost bytes after (a)/(b), 224 after (c)** (`224 received bytes lost so far`).
+  So the bytes were lost during `bt diag` or the `bt up`/`bt info` with flow `none`.
+- In `bt diag`, the baud rate stays 115207 throughout (no drift, as intended).
+  The reset at the driver's clock with `auto-low` still answers `03 1c 01`
+  instead of `03 0c 00`.
+- Reading: the chip talks (version, BCM4345C0, the default address before the
+  firmware is loaded). `bt up`'s Reset right after the power cycle gets no
+  answer, while a later `bt info` does. That looks like `bt up` sends too soon
+  after power-on.
+
+Step 4 still waits for the user's OK. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-548-ge36b623` (`ls` on the netcfg directories)
+
+Real Pi 3B+ over netboot. Test 128 ([#105](https://github.com/redox-rpi/redox-rpi/issues/105)), Pi test agent.
+
+**Pass: every `ls` lists what the row expects, with no `Not a directory`.**
+Image `~/redox-rpi-zrtl/keep/ncls-v0.3.0-dev-548-ge36b623.img` (no manifest next
+to it; the one in the image passes), with the new stable's bootloader. No panic.
+
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest present,
+  ps 46, ps-tty, sdcard, 0 of 300 starts failed).
+- Over devsh:
+
+```
+ls /scheme/netcfg                         → ifaces  resolv  route
+ls /scheme/netcfg/ifaces                  → eth0
+ls /scheme/netcfg/ifaces/eth0             → addr  mac
+ls /scheme/netcfg/ifaces/eth0/addr        → list  set
+ls /scheme/netcfg/route                   → add  list  rm
+cat /scheme/netcfg/ifaces/eth0/addr/list  → 192.168.178.148/24
+```
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-205-g6b46fc0+xced2` (graphics-dma-order, kernel `0049`)
+
+Real Pi 3B+ over netboot, NanoKVM on HDMI, serial only. Test 130 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**Not shown: `rpi-fbd` didn't use DMA at all, so the larger DMA buffers were
+never allocated.** Its DMA test blit failed (`test blit of 2 rows moved 4`), and it
+fell back to CPU blits. There is no `DMA channel 5 … rows` line, and also no
+`dumb buffer … in normal memory` line. No kernel panic and no `out of memory`.
+Standard checks pass. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-205-g6b46fc0+xced2.img`, manifest
+matches, with the new stable's bootloader.
+
+- Display lines in the serial log:
+
+```
+vesad: 1824x984 stride 1824 at 0x3E914000
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: blits with the CPU: test blit of 2 rows moved 4
+fbcond: Performing handoff
+```
+
+- The boot log also has `thread 'main' (1) panicked at
+  drivers/pcid/src/cfg_access/fallback.rs:88:9`. That's pcid in userspace: this
+  image is based on dev-205, from before pcid was left out on the Pi. It is not
+  a kernel panic.
+- `free`: 137,020 KB used of 743,312 (606,292 free).
+- `scripts/pi-test.py` standard checks: **pass** (version, manifest matches, ps 48,
+  ps-tty, sdcard, 0 of 300 starts failed). No new panic or `out of memory` during them.
+
+So the allocator change ran under 300 starts without trouble, but the DMA path
+it is meant for wasn't reached. Next: why the DMA test blit moves 4 instead of
+2 rows. Stable image restored afterwards.
+
+## 2026-10-31: test 127, icache-sync cost, like for like (`v0.3.0-dev-469-g7021aa9`)
+
+Real Pi 3B+ over netboot. Test 127 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Both images pass 1000 starts without a failure or exception. With the patch,
+the `ls` loop is 1.0 s slower per 500 runs (about 1.3 %, 2 ms per program
+start), the same in both rounds.** Images A
+`~/redox-rpi-icache/build/icache-base.img` (`+x12cb`, without) and B
+`icache-icache.img` (`+x12c9`, with `icache-sync`), run A, B, A, B, each on a fresh
+boot with the new stable's bootloader. Both run at `arm 1400000000`.
+
+- `scripts/pi-test.py --starts 1000` (first boot of each image): **pass** for A
+  and B, 0 of 1000 starts failed.
+- No exception and no panic in the serial log of any of the four boots (not
+  even the `pcid` one).
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`, three times per boot:
+
+| round | A without | B with `icache-sync` |
+|---|---|---|
+| 1 | 77.77 s, 77.81 s, 77.76 s | 78.75 s, 78.77 s, 78.84 s |
+| 2 | 77.59 s, 77.46 s, 77.61 s | 78.62 s, 78.55 s, 78.55 s |
+| mean | **77.67 s** | **78.68 s** (+1.01 s, +1.3 %) |
+
+Within a boot, the runs vary by less than 0.15 s, so the difference is real but
+small. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-417-gd2482d8+x9903` (tls-variant1, static TLS layout in `ld.so`)
+
+Real Pi 3B+ over netboot. Test 129 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**Pass.** `stdio/mutex`, `tls_align` (dynamic and static) and `tls_shared` are
+`FIXED`. The only `NEW` line is `pthread/exit` (SIGKILL), which the row allows.
+Image `~/redox-rpi-t12/build/tls-pi.img`, with the new stable's bootloader.
+
+- `scripts/pi-test.py --starts 1000`: **pass**, 0 of 1000 starts failed. No
+  exception in the serial log during the starts.
+- `cd /usr/share/relibc-tests`, 10 × `./bins_dynamic/stdio/mutex`: **10 × `rc=0`**.
+- `ion /usr/share/relibc-tests/run.ion` (60 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t-tls-mutex`:
+
+```
+NEW ./bins_dynamic/pthread/exit: # ./bins_dynamic/pthread/exit: process exited unsuccessfully: signal: 9 (SIGKILL)
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/stdio/mutex: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+FIXED ./bins_dynamic/tls_align: on the list, but passed
+FIXED ./bins_dynamic/tls_shared: on the list, but passed
+FIXED ./bins_static/tls_align: on the list, but passed
+SUMMARY v0.3.0-dev-417-gd2482d8+x9903: 319 tests, 13 failed (12 known, 0 flaky, 1 new), 10 fixed
+```
+
+- The 6 `FATAL: Not an SVC induced synchronous exception` lines in the serial log
+  all come from the known signal tests in `run.ion` (`signals/sigprocmask…`,
+  `sigpause-…`, `sigsegv`, `sigset-5`, `stackoverflow`). None came from the 1000 starts.
+
+Raw output: homenodellm `~/pitest-tools/t129/`. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-515-gf41008d+x810f` (ctrlc-raw, Ctrl-C 0.01–0.03 s after Enter)
+
+Real Pi 3B+ over netboot. Test 131 (left over from [#86](https://github.com/redox-rpi/redox-rpi/issues/86)), Pi test agent.
+
+**Pass: on the serial console all 19 Ctrl-Cs stopped `sleep 40` 0.1 s after the
+Ctrl-C, including the 15 at 0.01–0.03 s after Enter. Over devsh, 10 of 10.**
+Staged with `~/t18-work/c86-stage/scripts/netboot.sh` (bootloader md5
+`4fccdb94…`), image `~/t18-work/image-craw/harddrive.img` (md5 `2d55fab0…`),
+manifest next to it.
+
+- Serial console, logged in as root after the boot had settled (devshd answering).
+  Delays `3,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.01,0.02,0.03,0.05,0.1,1`:
+  **every round `stopped by SIGINT 0.1 s after Ctrl-C`**, `PASS: 0 late of 19`.
+  The serial log has 19 times `ended by signal SIGINT`.
+- How, as in #118: not `serial-ctrlc-test.py` itself, which reads
+  `/dev/ttyUSB0` directly. I ran the same rounds and checks with
+  `~/pitest-tools/ctrlc118.py`: the logging service stayed on and the script
+  read its file. `sleep 40` was typed one character every 0.15 s, and the delay
+  counts from the Enter. The Ctrl-C is one byte.
+- devsh: `patches/experiments/pty-sigint/ctrlc-test.py 192.168.178.148 --rounds 10
+  --delays 0,0.01,0.02,0.03,0.1` (from `ctrlc-raw`): 10 of 10 `stopped by SIGINT
+  0.1 s after Ctrl-C`, and after a Ctrl-C at the prompt the shell still answers: **PASS**.
+- Standard checks with `--manifest`: all pass (manifest matches, 0 of 300 starts failed).
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-410-g313d292+x4ec1` (relibc-quiet, sshd without TODO lines)
+
+Real Pi 3B+ over netboot. Test 132 ([#109](https://github.com/redox-rpi/redox-rpi/issues/109)), Pi test agent.
+
+**Pass: 5 key logins and `ssh-session.exp` work, and the serial log has no
+`TODO: madvise`, `getsockopt` or `setsockopt` line.** The only `TODO` line in
+the whole boot is one `TODO: ioctl TIOCSCTTY` from the `ssh-session.exp` session
+(a terminal session, not one of the three this row is about). Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-410-g313d292+x4ec1.img` (no manifest
+next to it), with the new stable's bootloader. Same setup as #120.
+
+- `TODO` lines in the serial log after boot, before any login: **0**.
+- The test key (`ed25519`) went into `/scheme/data/home/root/.ssh/authorized_keys`, as in #120.
+- 5 × `ssh -i <key> root@192.168.178.148 echo ok`: **5 × `ok`**, 0.98–1.06 s each.
+- `ssh-session.exp`: command, prompt again, backspace, `exit` all ok; it exits at once.
+- `TODO` lines after all of this: 1, `[INFO sshd-session@src/header/sys_ioctl/redox/mod.rs:141]
+  TODO: ioctl TIOCSCTTY`. No `madvise`, `getsockopt` or `setsockopt` (#101 had
+  several per connection).
+- `ssh-keyscan -t rsa,ecdsa,ed25519 192.168.178.148`: **3 keys** (`ssh-rsa`,
+  `ecdsa-sha2-nistp256`, `ssh-ed25519`).
+- Standard checks: all pass (manifest present in the image, 0 of 300 starts
+  failed). No panic or unhandled exception.
+- The key file was removed from `/scheme/data/home/root/.ssh/`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-574-g55e47fb+xb3d9` (self-exit-status, `pthread_exit` of the last thread)
+
+Real Pi 3B+ over netboot. Test 133 ([#108](https://github.com/redox-rpi/redox-rpi/issues/108)), Pi test agent.
+
+**Pass: `pthread/exit` exits with status 0 (10 of 10), no memory growth over
+200 `dd` runs, and the relibc suite has no `NEW` line.** Image
+`~/redox-rpi-t12/keep/selfexit-v0.3.0-dev-574-g55e47fb+xb3d9.img` (no manifest
+next to it; the one in the image passes), with the new stable's bootloader.
+
+- Standard checks: all pass (manifest present in the image, 0 of 300 starts failed).
+- `cd /usr/share/relibc-tests`, 10 × `./bins_dynamic/pthread/exit`: **10 × `rc=0`** (6.5 s).
+- `free` → 137,348 KB used. Then 200 × `dd if=/dev/zero of=/dev/null bs=1k count=1`
+  (33 s). `free` → 138,172 KB used: **+824 KB**, about 4 KB per run (before
+  `0008`: about 76 KB per run). Under the 1 MB limit.
+- `ion /usr/share/relibc-tests/run.ion` (65 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t13-relibc-tests`:
+
+```
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+SUMMARY v0.3.0-dev-574-g55e47fb+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 0 new), 6 fixed
+```
+
+  No `NEW` line, and `pthread/exit` passes in the suite too (in #129 it was `NEW` with SIGKILL).
+
+Raw output: homenodellm `~/pitest-tools/t133/`. Stable image restored afterwards.
+
+## 2026-10-31: test 135, dwc2d waits for the channel interrupt (baseline vs `dwc2d-wait-irq`)
+
+Real Pi 3B+ over netboot. Test 135 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Partly done. Both images pass the standard checks and hotplug (network 3 of 3,
+keyboard 1 of 1) with no hang, and the wait-irq image has no `transfers spin`
+line. The TCP step was not measured: the Pi's `nc` doesn't send what it reads
+from a pipe. No USB stick was in, so the stick step falls to the USB visit.** So
+the main comparison, dwc2d ACTTIME during long transfers, is still open.
+Images `~/redox-rpi-usb/keep/storage3-v0.3.0-dev-441-g81d8d88+xf757.img`
+(baseline, as #71) and `wait-irq-v0.3.0-dev-449-g461061e+x885b.img`, both
+manifests match, with the new stable's bootloader.
+
+- Boot log, both images: `dwc2d: interrupt /scheme/irq/phandle-1/1,9`,
+  `dwc2d: keyboard at address 5` (the NanoKVM's USB), no `mass storage` line, no
+  panic. The wait-irq image has **no `dwc2d: transfers spin` line**.
+- Standard checks with `--manifest`: **pass** for both (0 of 300 starts failed).
+- dwc2d ACTTIME (from `grep dwc2d /scheme/sys/context`) before → after:
+
+| step | baseline | wait-irq |
+|---|---|---|
+| (1) 30 s idle | 1.77 → 2.49 s (**+0.72 s**) | 2.14 → 2.96 s (**+0.82 s**) |
+| (3) `pi-hotplug-test.sh 3` with `KEYBOARD=1` | 9.88 → 11.02 s (+1.14 s) | 10.35 → 11.30 s (+0.95 s) |
+| (2) TCP send | not measured | not measured |
+| (4) stick | no stick | no stick |
+
+- (3) Hotplug: **pass on both**. Network: port off, device removed, found again,
+  network on the adapter again, devshd answers again, 3 of 3 each. Keyboard:
+  1 of 1. `cycle: hub 2 port 1 disconnected after` 102–114 ms (baseline) and
+  101–113 ms (wait-irq).
+- (2) Why no TCP number: the Pi's `nc` (`nc [-l] host:port`) connects
+  (`Remote host: 192.168.178.120:5135`), but with
+  `dd if=/dev/zero bs=65536 count=256 | nc 192.168.178.120:5135` the host
+  receives 0 bytes and `dd` stops with `Broken pipe` after `0+0 records`. The
+  same happens with `echo hello`. A try the other way round, with the Pi
+  listening (`nc -l 0.0.0.0:5136 > /dev/null`), accepted the connection but gave
+  no clear byte count. There's no `sh`, `curl` or `wget` on these images.
+  During these tries dwc2d's ACTTIME on the wait-irq image rose from 18.7 s to
+  34.4 s, so the failed connections cost CPU in dwc2d. That needs a look, but it's
+  no measurement.
+
+The row stays queued for the TCP step, which needs a sender that works on the Pi.
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-568-g81ac5d9` (kernel `0057`, scheme-root open leaves no page)
+
+Real Pi 3B+ over netboot. Test 136 ([#88](https://github.com/redox-rpi/redox-rpi/issues/88)), Pi test agent.
+
+**Pass: `SHARED` of netstack and randd is the same before and after 200 opens
+of each scheme root, and the standard checks pass.** Image
+`~/redox-rpi-zrtl/keep/tail-v0.3.0-dev-568-g81ac5d9.img` (no manifest next to it;
+the one in the image passes), with the new stable's bootloader. No panic.
+
+- `scripts/pi-test.py` standard checks: **pass** (manifest present, ps 41, ps-tty,
+  sdcard, 0 of 300 starts failed).
+- One devsh command (65 s), the four `grep` lines:
+
+```
+22    0     0     UB    #2    F          00:00:00.20 00:00:00.24 3.22 MB 16.0 KB /usr/bin/netstack
+3     0     0     UB    #3    F          00:00:00.00 00:00:00.01 1.55 MB 0 B     /scheme/initfs/bin/randd
+22    0     0     UB    #0    F          00:00:00.30 00:00:00.36 3.22 MB 16.0 KB /usr/bin/netstack
+3     0     0     UB    #2    F          00:00:00.01 00:00:00.01 1.55 MB 0 B     /scheme/initfs/bin/randd
+```
+
+  netstack `SHARED` 16.0 KB → 16.0 KB, randd 0 B → 0 B. Without the fix, each
+  grows about 800 KB. PRIVATE didn't change either.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-482-g7623557` (netstack-multi2, lease renewal and an adapter that goes away)
+
+Real Pi 3B+ over netboot. Test 140 ([#53](https://github.com/redox-rpi/redox-rpi/issues/53)), Pi test agent.
+
+**Pass: renewals, dropping a lost adapter, a new adapter, and a lease running
+out all work. eth0 kept the default route and devsh answered throughout.**
+Image `~/redox-rpi-zrtl/keep/nsm2-v0.3.0-dev-482-g7623557.img` (no manifest next
+to it; the one in the image passes), with the new stable's bootloader. No panic.
+
+- Standard checks before and after: **pass** both times (ps 47 then 50, 0 of 300 starts failed).
+- (1) `/usr/lib/drivers/testnetd network.test0 30 &`, then 50 s:
+  `DHCP: eth1 got 10.0.9.2/24` and three `DHCP: eth1 renewed 10.0.9.2 for 30 s`
+  (a fourth came later). `/tmp/testnetd.log`:
+  `dhcp 5 dhcp_foreign 0 foreign_src 0 ping 0 renew 3`. `route/list` keeps
+  `default via 192.168.178.1 dev eth0`, plus `10.0.9.0/24 dev eth1`.
+- (2) `kill $(cat /tmp/network.test0.pid)` (pid 368), then 10 s: `… link eth1:
+  No such device (os error 19); dropping it` and `DHCP: eth1 is gone`.
+  `route/list` has **no eth1 line** and still the eth0 default route.
+  `cat /scheme/netcfg/ifaces/eth1/addr/list` fails with `Invalid argument`.
+- (3) `/usr/lib/drivers/testnetd network.test1 30 &`, then 30 s:
+  `DHCP: eth2 got 10.0.9.2/24`, `ping -c 3 10.0.9.1` **3/3** (2.8–3.7 ms),
+  `route/list` has `10.0.9.0/24 dev eth2` and the same eth0 default route.
+- (4) `echo x > /tmp/testnetd-nodhcp`, then 50 s: `DHCP: eth2 lease of 10.0.9.2
+  ended`; eth0 default route unchanged. After `rm /tmp/testnetd-nodhcp`, eth2 got
+  the lease again and renewed it.
+- Every `DHCP:` line and the `dropping it` line from the serial log:
+
+```
+DHCP: eth0 got 192.168.178.148/24
+DHCP: default route via 192.168.178.1 (eth0)
+DHCP: eth1 got 10.0.9.2/24
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+DHCP: eth1 renewed 10.0.9.2 for 30 s
+smolnetd@netstack::link::ethernet:359 ERROR] Failed to read ethernet device on link eth1: No such device (os error 19); dropping it
+DHCP: eth1 is gone
+DHCP: eth2 got 10.0.9.2/24
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+DHCP: eth2 lease of 10.0.9.2 ended
+DHCP: eth2 got 10.0.9.2/24
+DHCP: eth2 renewed 10.0.9.2 for 30 s
+```
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-562-g55a1014+x4590` (test 126, saved prompt state and writing speed)
+
+Real Pi 3B+ over netboot. Test 126 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**The download now finishes, the assistant answers with the time, and writing
+speed is measured. The saved prompt state doesn't work on the Pi:** the cache is
+written as `prompt.kv.part` with exactly 43,581,693 bytes but never renamed to
+`prompt.kv`. So there is no `saved` line, and the second run reads the 380
+tokens again instead of loading them. This looks like the rename problem on
+`/scheme/data` that test 124's image fixed in RedoxFS; this image doesn't have
+that fix. **After the first run, devshd stopped accepting connections**
+(`Connection refused`); the serial console still worked and the devshd process
+was still there. Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-562-g55a1014+x4590.img`, with the
+new stable's bootloader. Standard checks pass (6 of 6).
+
+- Download (resumed): `kept parts 000 to 011 from an earlier try, 192 MiB`, then
+  parts 012–020 at 0.48–1.95 MB/s, `341455552 bytes in 126 s`. Two
+  `smolnetd: Dropped packet on eth0 because waiting queue was full` lines at 07:57.
+- First `assistant --ask 'What time is it?'` (07:58):
+  `loaded in 21.6 s`, **`rinfer: read 380 tokens in 166.1 s`** (#112: about 170 s),
+  then the answer `It is Saturday, 31 October 2026, 08:01 UTC.` Then devsh went
+  silent; the next commands got `Connection refused`. `ls -l /scheme/data` over
+  the serial console: `prompt.kv.part` 43,581,693 bytes, no `prompt.kv`. I
+  reset over the serial console, with the same image and the model kept.
+- Second `assistant --ask` after the reset (09:01–09:05, 255 s total):
+  `loaded in 20.7 s`, again **`read 380 tokens in 170.5 s`** (no `loaded 380 tokens`),
+  answer `It is Saturday, 31 October 2026, 09:05 UTC.` Again only `prompt.kv.part`.
+  devsh kept working this time.
+- Writing speed, `rinfer … 'Name three colours.' 32` (answer `Three colours are
+  blue, green, and red.`):
+
+| threads | load | prompt | **generated** |
+|---|---|---|---|
+| 4 (default) | 20.7 s | 20 tokens, 2.03 t/s | **10 tokens in 12.8 s, 0.78 t/s** |
+| 3 (`RAYON_NUM_THREADS=3`) | 20.5 s | 20 tokens, 2.25 t/s | **10 tokens in 8.1 s, 1.24 t/s** |
+
+  In the assistant runs, the writing speed was 0.86–1.22 t/s (#112: 1.0).
+- Temperature: 52.1 °C and `throttled 0x00000000` before. After the runs, 60.1 °C
+  and `0x00080000`: the soft temperature limit was hit, and the console logged
+  `soft temperature limit … 60.1 °C, ARM 1400 MHz` and `no longer throttled`
+  many times. So the 4-thread numbers may be held back by the heat.
+- `free` from a second devsh: the lowest was 120,256 KB during the first run and
+  130,444 KB during the second (start 736,520 KB), so it never got near 50 MB.
+  Heap peak 430 MiB. No kernel panic, `oom` or `RELIBC PANIC` on the console.
+- At the end, `prompt.kv.part` was removed. The model stays on the card
+  (`/scheme/data/Qwen3-0.6B-Q4_0e.gguf`, 341,455,552 bytes).
+
+Stable image restored afterwards.
+
+## 2026-10-31: test 134, boot time without U-Boot countdown and `boot_delay` (stable `v0.3.0-dev-533-g6c729cd+x9f76`)
+
+Real Pi 3B+ over netboot. Test 134 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), Pi test agent. Run with the user's OK.
+
+**Stopped as the row says: with `/srv/tftp/ed08e0aa` in place, the Pi still
+counted `2 1 0` and ran the same U-Boot build, so it didn't use the folder.**
+B boots 1 and 2 are the same as A to within 0.1 s. Most likely the Pi loads its
+firmware and U-Boot from its SD card (U-Boot then fetches only
+`/redox/harddrive.img.gz` and `bootloader-live.efi` over HTTP, as the server log
+shows), so bootcode.bin never asks for `/srv/tftp/<serial>/`. tftpd-hpa runs
+without request logging, so I can't confirm this from the TFTP side.
+
+Seconds after the start of the timeline (reset over devsh), with `boot-timeline.py`:
+
+| boot | `kreset` | U-Boot banner | autoboot `2` / `1` / `0` | DHCP bound | `redox login:` |
+|---|---|---|---|---|---|
+| A1 | 1.55 | 3.76 | 8.27 / 9.27 / 9.27 | 11.22 | 33.51 |
+| A2 | 1.55 | 3.76 | 8.28 / 9.29 / 9.29 | 11.19 | 33.04 |
+| A3 | 1.56 | 3.77 | 8.24 / 9.25 / 9.25 | 11.21 | 33.11 |
+| B1 (folder in place) | 1.55 | 3.75 | 8.26 / 9.26 / 9.26 | 11.16 | 33.11 |
+| B2 (folder in place) | 1.55 | 3.76 | 8.26 / 9.26 / 9.26 | 11.17 | 33.12 |
+
+- The U-Boot banner is `U-Boot 2026.10 (Oct 25 2026 - 08:30:37 +0000)` in every
+  boot, A and B, so the branch's `u-boot.bin` was not used either.
+- Reset to banner is 2.2 s; banner to `redox login:` is about 29.3 s.
+- After B2: the runner was stopped, `rm -r /srv/tftp/ed08e0aa` was done (checked:
+  gone), and one more boot of stable counted `2 1 0` and reached `redox login:` at
+  32.96 s. No standard checks for B, since B never ran the new files.
+
+To test this, the new `config.txt` and `u-boot.bin` must go where this Pi really
+loads them from, likely the SD card's FAT partition, which needs a card swap or
+another approach. The row stays queued. Stable image in place.
+
+## 2026-10-31: test 135 step 2 again, TCP send from a file (`v0.3.0-dev-449-g461061e+x885b`)
+
+Real Pi 3B+ over netboot. Test 135 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Not measurable: the file form doesn't send anything either.** On the
+wait-irq image, `dd if=/dev/zero of=/tmp/tx bs=65536 count=256` made
+`/tmp/tx` (16,777,216 bytes). Then twice `time nc 192.168.178.120:5135 < /tmp/tx`:
+each printed `Remote host: 192.168.178.120:5135` and ended after 0.04 s
+(`real 0.043949064s`, `0.042097759s`). `nc -l 5135 | wc -c` on homenodellm counted
+**0 bytes** both times. dwc2d ACTTIME across each `nc`: 0.64 → 0.65 s and
+7.74 → 7.76 s. Between the two tries it rose at its idle rate (about 1.6 s per
+minute, as in step 1), so the failed sends themselves cost nothing.
+`/tmp/tx` was removed afterwards.
+
+With this, step 2 is recorded as not measurable, as the usb session asked; the
+rest is in the first 135 report. Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-561-g772e33b+x4af4` (PR #113 image with `0068`, DMA test blit)
+
+Real Pi 3B+ over netboot, NanoKVM on HDMI, serial only. Test 138 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**DMA now works (`2D mode moves YLENGTH+1 rows`, no `not zero` line), but the
+first boot hung right after `init: switchroot to /usr /etc`: no login, no
+network, no devsh, from 09:25 UTC on.** Only a power cycle can get the Pi back,
+and that waits for the user's OK. So there is no second boot, `free` or
+standard check yet. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-561-g772e33b+x4af4.img`, manifest
+matches, with the new stable's bootloader.
+
+- Boot 1, serial log:
+
+```
+redox-rpi: network boot from 192.168.178.120
+redox-rpi: image loaded over HTTP
+init: switchroot to /scheme/initfs /scheme/initfs/etc
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+Finished graphical debug
+fbbootlogd: handoff requested
+init: switchroot to /usr /etc
+```
+
+  Nothing came after that, not even the `fbcond: Performing handoff` that
+  follows in a normal boot. There's no `DMA test buffer had N of 64 words not
+  zero` line, no `blits with the CPU` line, no `dumb buffer … in normal memory`
+  line, and no panic or `out of memory` line.
+- The Pi is unreachable (`No route to host`). The Shelly plug reads `output: true`,
+  4.1 W. The stable image is staged again, so the power cycle boots stable.
+
+The hang comes after rpi-fbd started DMA blits, around the handoff to fbcond.
+That fits the DMA path or the large DMA buffers (`0049`) stalling the boot, but
+the log doesn't prove it. The row stays queued for the second boot and the checks.
+
+## 2026-10-31: `v0.3.0-dev-491-g67c7d1d+x125f` (mqtt-cert, MQTT client certificates)
+
+Real Pi 3B+ over netboot. Test 139 ([#115](https://github.com/redox-rpi/redox-rpi/issues/115)), Pi test agent.
+
+**Pass: all three steps and the standard checks.** Image
+`~/mqtt-test/keep/cc-netboot-v0.3.0-dev-491-g67c7d1d+x125f.img`, manifest
+matches, with the stable bootloader. Broker `client-cert-broker.sh
+192.168.178.120 3600` from branch `mqtt-cert` (port 8884, `require_certificate`);
+certificate installed with `install-client-cert.py` (`/etc/mqtt-client.crt`
+595 bytes, `/etc/mqtt-client.key` 241 bytes, mode 600).
+
+| check | result |
+|---|---|
+| standard checks | **pass**: version, manifest, ps, ps-tty, sdcard; 0 of 300 starts failed |
+| (1) `mqtt-pub -p 8884 -t cc/pi -m with-cert -q 1` | **pass**: exit 0; broker subscriber `2026-10-31T12:49:18+0000 cc/pi with-cert`; mosquitto `New client connected from 192.168.178.148:49157 as mqtt-pub-396 (p2, c1, k60, u'redox-rpi')` |
+| (2) without the certificate | **pass**: exit 1, `mqtt-pub: 192.168.178.120:8884: TLS: received fatal alert: CertificateRequired (the broker wants a client certificate: give it with --cert and --key)`; nothing new at the subscriber; mosquitto `peer did not return a certificate`, `Client <unknown> disconnected: Protocol error.` |
+| (3) `ha-bridge -p 8884` | **pass**: exit 0; `redox-rpi/redox/state {"cpu_temperature":54.8,"cpu_clock":1400,"throttled":"OFF","uptime":135,"memory_free":576.3,"memory_used":20.6}`; mosquitto `as ha-bridge-402 (… u'redox-rpi')` |
+
+- `free` afterwards: 743612 total, 152048 used, 591564 free; `throttled`
+  `0x00000000`; no `panicked` or `RELIBC PANIC` on the serial console.
+- Broker stopped afterwards (port 8884 closed); the other test brokers on
+  homenodellm were left running.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-601-g5db6321+x675f` (tcp-slow, long download)
+
+Real Pi 3B+ over netboot. Test 141 ([#119](https://github.com/redox-rpi/redox-rpi/issues/119)), Pi test agent.
+
+**Network alone is fast and steady: 382156480 bytes in 51.5 s, 7.42 MB/s, no
+errors. Network and card: the Pi hung.** No serial line and no `netget` output
+before it stopped. Image
+`~/redox-rpi-zrtl/keep/tcpdiag-v0.3.0-dev-601-g5db6321+x675f.img` (manifest in
+the image), stable bootloader. Standard checks pass (version, manifest, ps,
+ps-tty, sdcard, 0 of 300 starts failed).
+
+| step | result |
+|---|---|
+| (1) at uptime 61 s | `rx_frames 624`, `rx_errors 0`, `tx_frames 257`, `tx_errors 0`, `irqs 598`, `ticks 3149`; netstack 0.19 s / 0.23 s, dwc2d 1.81 s / 2.88 s; ping 1.7–94.6 ms, avg 35.6 ms, 0 % loss |
+| (2) network only | `HTTP/1.0 200 OK`, then each 16 MiB in 2.2–2.4 s (7.25 to 7.60 MB/s, no slowdown), **`382156480 bytes in 51.5 s, 7.42 MB/s`** |
+| (2) second devsh (5 min, after the download) | ping 1.34–1.55 ms; `rx_frames 270989`, `rx_errors 0`, `tx_frames 131961`, `tx_errors 0`, `irqs 259198`, `ticks 703506` |
+| (3) at uptime 397 s | `rx_frames 271082`, `rx_errors 0`, `tx_errors 0`; netstack 21.24 s / 34.06 s, dwc2d 22.47 s / 9.80 s; ping 1.8–22.9 ms, 0 % loss |
+| (4) network and card | `netget … /scheme/data/netget.bin` started 12:59:03 UTC (server log: GET at 12:59:05). **No output in 60 minutes; the Pi hung.** The serial console wrote nothing after the boot. The HTTP server kept sending until `OSError: [Errno 113] No route to host` at 13:19:57, so the Pi stopped answering some time before that. No ping, ARP incomplete |
+| (5) | not run (Pi unreachable) |
+
+- Serial lines with `Dropped`, `netstack` or `dwc2d`: the boot's `dwc2d`
+  enumeration (LAN7800, `link up after 1710 ms`) and two `smolnetd … Dropped
+  packet on eth0 because waiting queue was full` at uptime 151 s (during step 2).
+  Nothing later; no panic line.
+- `df` does not list `/scheme/data`; the card has room for #126's 341 MB model.
+- `netget`'s lines only reach devsh when it ends, so the step 4 progress is lost.
+  A rerun could write them to the serial console or a file to show how far it got.
+- The Pi's clock read 1970 (no timesync in this image).
+- Found during #143: the hang left `/scheme/data/netget.bin` with 359464809 of
+  382156480 bytes (94 %, 342.8 MiB), so step 4 hung late in the download. Removed.
+
+Stable image staged afterwards; the Pi needs a power cycle to boot it.
+
+## 2026-10-31: `v0.3.0-dev-564-gfaa76a7+x4590` (assistant, saved prompt state)
+
+Real Pi 3B+ over netboot. Test 143 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Pass: the prompt state is saved as `prompt.kv` and loaded on the next run.**
+The prompt step goes from 179.4 s to 2.3 s, and the whole question from 266 s to
+75 s. Image `~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-564-gfaa76a7+x4590.img`,
+manifest matches, stable bootloader. Standard checks pass (0 of 300 starts
+failed). The model was on the card (`Qwen3-0.6B-Q4_0e.gguf` 341455552 bytes);
+no `prompt.kv.part` or `prompt.kv` before.
+
+| | first run | second run |
+|---|---|---|
+| model | `loaded in 21.2 s`, threads 3 | `loaded in 20.7 s` |
+| prompt | `read 380 tokens in 179.4 s`, **`saved 380 tokens in 5.8 s`** | **`loaded 380 tokens in 2.3 s`** |
+| answer | `It is Saturday, 31 October 2026, 14:35 UTC.`, then `The current time is 14:35 UTC.` | same, 14:37 UTC |
+| writing | 1.24 t/s and 1.06 t/s | 1.44 t/s and 1.23 t/s |
+| total (`date -u` before/after) | 14:31:40 to 14:36:06, 266 s | 14:36:20 to 14:37:35, 75 s |
+| peak heap | 430 MiB | 407 MiB |
+
+- `prompt.kv` after the first run: 43581693 bytes, as expected.
+- The first run prints `rinfer: No such file or directory (os error 2)` once
+  before reading the prompt (no cache yet); harmless.
+- devsh accepted connections after each run (#126: `Connection refused`).
+- `free` from a second devsh during the second run (14:37:10): 733584 used,
+  140844 free of 874428; after it 237548 used.
+- Temperature 52.6 °C before, 62.3 °C after; `throttled` `0x00000000` before,
+  **`0x00080008` after** (soft temperature limit reached and active).
+- No panic, no `oom`, no `RELIBC PANIC`. `prompt.kv` removed; the model kept.
+- Also removed `/scheme/data/netget.bin` left by #141's hang. It held
+  359464809 of 382156480 bytes (94 %), so the #141 hang came late in the
+  download to the card.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-451-g7203785` baseline `+x644c` and wait-irq `+x98e9` (TCP send)
+
+Real Pi 3B+ over netboot. Test 144 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104)), Pi test agent.
+
+**Pass: the host counted 16777216 bytes in all four runs, and devshd answered
+afterwards.** Both images send at 8.3 to 8.9 MB/s. dwc2d's ACTTIME rises the same
+on both, by about 1.0 s per 16 MiB send, so wait-irq is not higher, but also no
+lower. Images from `~/redox-rpi-usb/keep/` with their manifests (match), stable
+bootloader. Standard checks with `--manifest` pass on both (0 of 300 starts
+failed). Host side: OpenBSD `nc -l <port> | wc -c`.
+
+| image | run | `tcp-send` | host bytes | dwc2d ACTTIME before → after | SCHTIME before → after |
+|---|---|---|---|---|---|
+| baseline | 1 | `16777216 bytes in 1.89 s, 8.88 MB/s` | 16777216 | 1.80 → 2.80 s (**+1.00**) | 1.93 → 2.05 s (+0.12) |
+| baseline | 2 | `16777216 bytes in 2.00 s, 8.39 MB/s` | 16777216 | 2.95 → 3.96 s (**+1.01**) | 2.19 → 2.22 s (+0.03) |
+| wait-irq | 1 | `16777216 bytes in 2.01 s, 8.33 MB/s` | 16777216 | 1.67 → 2.66 s (**+0.99**) | 1.82 → 1.84 s (+0.02) |
+| wait-irq | 2 | `16777216 bytes in 2.01 s, 8.36 MB/s` | 16777216 | 2.72 → 3.72 s (**+1.00**) | 1.89 → 1.91 s (+0.02) |
+
+- ACTTIME is the first time column of `/scheme/sys/context` (as in #135); each
+  before/after pair also covers about 0.4 s of devsh between the commands.
+- So dwc2d is busy about half the 2 s a send takes, the same with and without
+  wait-irq: the sent frames still spin, as the row expected.
+- `free` afterwards: baseline 134300 used of 743188, wait-irq 145984 of 743180.
+  No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-562-g9a33382+x4af4` (rpi-fb-pr, DMA test with CPU fallback)
+
+Real Pi 3B+ over netboot. Test 145 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent.
+
+**Boot hung during the DMA test, at the 64-row blit.** The 3 s fallback did not
+catch it; the machine stopped. Image
+`~/redox-rpi-graphics/keep/netboot-v0.3.0-dev-562-g9a33382+x4af4.img` (manifest
+next to it), stable bootloader, staged and reset over devsh at about 14:42 UTC.
+
+Every `rpi-fbd` line, in order (serial console):
+
+```
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: DMA test buffer had 34 of 64 words not zero
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+rpi-fbd: DMA test: buffer of 1824x984
+rpi-fbd: DMA test: 1 rows into the framebuffer
+rpi-fbd: DMA test: 64 rows into the framebuffer
+```
+
+- **Last line: `DMA test: 64 rows into the framebuffer`**, then nothing; the
+  serial log stopped at 14:43:38. By the row's key: the 64-row DMA blit stopped
+  the machine (the full-screen buffer and the 1-row blit worked). No
+  `984 rows`, no `whole screen in`, no `blits with the CPU` line, no
+  `fbcond: Performing handoff`, no login, no panic line.
+- The last init line before it was `init: switchroot to /scheme/initfs
+  /scheme/initfs/etc` (#138 got as far as `switchroot to /usr /etc`).
+- The Pi did not answer ping (ARP incomplete) 10 minutes later.
+- Stable staged, then the Pi was power-cycled with the Shelly plug at 14:53
+  UTC; stable booted to login and devsh answered.
+- As the coordinator asked, no second graphics image today.
+
+## 2026-10-31: `v0.3.0-dev-671-g157dad0+x9d6b` (t117-test, a scheme name registered again)
+
+Real Pi 3B+ over netboot. Test 146 ([#117](https://github.com/redox-rpi/redox-rpi/issues/117)), Pi test agent.
+
+**Pass: after `pkill -9 fatfsd`, a new fatfsd registers `t117` again and serves
+the boot files; no `File exists`.** Image
+`~/redox-rpi-sd/keep/t117-v0.3.0-dev-671-g157dad0+x9d6b.img`, manifest matches,
+stable bootloader. Standard checks with `--manifest` pass (0 of 300 starts
+failed). Read only, on the FAT boot partition `/scheme/disk.mmc/0p0`.
+
+| step | result |
+|---|---|
+| `fatfsd /scheme/disk.mmc/0p0 t117 &`, `ls /scheme/t117` | `ion: bg [0] 364`; lists `LICENCE.broadcom`, `bcm2710-rpi-3-b-plus.dtb`, `boot.scr`, `bootcode.bin`, `config.txt`, `fixup.dat`, `overlays`, `start.elf`, `u-boot.bin` … |
+| `pkill -9 fatfsd`, `ps` | no fatfsd in `ps` |
+| `ls -1 /scheme` | still lists `t117` |
+| `ls /scheme/t117` | `No such device` (os error 19) |
+| `fatfsd /scheme/disk.mmc/0p0 t117 &`, `ls /scheme/t117` | `ion: bg [0] 381`; **lists the boot files again**; no `File exists (os error 17)` |
+| serial | `[src/initnsmgr.rs:92 WARN] nsmgr: scheme t117 ended, registering it again` |
+| `pkill fatfsd` | `fatfsd: unmounting /scheme/t117`, `fatfsd: unmounted, the disk can be removed`; no fatfsd left |
+
+- The `fatfsd: serving /scheme/t117` line did not show: a background job's
+  output does not reach devsh, and fatfsd does not write to the serial console.
+  The second fatfsd served the files, which shows it registered.
+- No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-464-gff58612+x7d9f` (bluetooth, step 11: power-on wait and Reset retries)
+
+Real Pi 3B+ over netboot. Test 109 step 11 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**The chip did not answer Reset on any try, with `auto-low` or `none`, so no
+upload ran.** No `ignored` events, no lost bytes. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-464-gff58612+x7d9f/harddrive.img`, manifest
+matches, stable bootloader. Standard checks with `--manifest` pass (0 of 300
+starts failed). Flow at start: `auto-low`.
+
+(a) flow `auto-low`:
+
+```
+### bt up  (12.0 s)
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow auto-low
+reset: try 1: no answer to HCI command 0c03, again
+reset: try 2: no answer to HCI command 0c03, again
+bt: Connection timed out (os error 110)
+### bt info  (0.9 s)
+bt: Connection timed out (os error 110)
+### bt scan 10  (0.9 s)
+bt: Connection timed out (os error 110)
+### bt inquiry 10  (5.8 s)
+bt: Connection timed out (os error 110)
+```
+
+(b) flow `none`:
+
+```
+### bt up  (8.6 s)
+power: cycled
+uart: core clock 400000000 Hz set by firmware (firmware measures 400000000), 115207 baud, flow none
+reset: try 1: no answer to HCI command 0c03, again
+reset: try 2: no answer to HCI command 0c03, again
+bt: no answer to HCI command 0c03
+### bt info  (2.4 s)
+bt: no answer to HCI command 1001
+### cat /scheme/btuart/status
+cts_line 1, rts_status 0, tx_fifo 0, rx_fifo 0, tx_done 1, lsr 0x60, msr 0x00, cntl 0x03, stat 0x0000038e
+```
+
+- (c) `received bytes lost` lines on the serial console: **0**. No
+  `(event … ignored: …)` line and no `reset: answered` in either run. Serial:
+  `bcm2835-btuartd: mini UART at 0x3f215000, 115207 baud (core 400 MHz)`. No
+  panic.
+- With `auto-low` the third try ends in `Connection timed out (os error 110)`;
+  after that every `bt` command times out at once (0.9 s). With `none` the third
+  try ends in `no answer`.
+- Unlike step 10, `bt info` with `none` did not answer here either. In step 10 it
+  ran before any `bt up`; here it came after two `bt up` power cycles. CTS
+  stays `1` (high) after both.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-466-g54ea9bf+x7d9f` (bluetooth, step 12: WL_ON before `bt up`)
+
+Real Pi 3B+ over netboot. Test 109 step 12 ([#54](https://github.com/redox-rpi/redox-rpi/issues/54)), Pi test agent.
+
+**Pass: Bluetooth comes up.** With WL_ON switched on first, Reset answers, the
+323-record firmware loads in 5.9 s, the chip reports build 382 with a real
+address, and an LE scan finds 22 devices. Image
+`~/redox-rpi-cpu/keep/v0.3.0-dev-466-g54ea9bf+x7d9f/harddrive.img` (no manifest
+next to it), stable bootloader. Nothing else ran over devsh before; flow at
+`auto-low`.
+
+```
+### cat /scheme/rpi-firmware/wifi_power
+0
+### bt up  (7.9 s)
+power: wifi_power was 0, switched on
+power: cycled
+uart: core clock 399999000 Hz set by firmware (firmware measures 399999000), 115207 baud, flow auto-low
+version: Bluetooth 4.1 (HCI 7, LMP 7), manufacturer 15 (Broadcom), subversion 6119, firmware build 0
+firmware: /usr/lib/firmware/brcm/BCM4345C0.hcd, 323 records in 5866 ms
+version: Bluetooth 5.0 (HCI 9, LMP 9), manufacturer 305, subversion 6119, firmware build 382
+up
+### bt info  (0.4 s)
+version: Bluetooth 5.0 (HCI 9, LMP 9), manufacturer 305, subversion 6119, firmware build 382
+address: 43:45:C0:00:1F:AC
+name: BCM43455 37.4MHz Raspberry Pi 3+-0190
+### bt scan 10  (10.4 s)
+scan: LE for 10 s
+… 22 lines, among them ShellyPlugSG3-543204689994 rssi -44, ShellyPlus1-441793A8302C rssi -70,
+  Qingping Alarm Clock rssi -69, Govee_H70B3_2B93 rssi -85, SBBT-002C rssi -68
+scan: 22 devices
+### bt inquiry 10  (10.6 s)
+inquiry: 10 s
+inquiry: 0 devices
+### cat /scheme/rpi-firmware/wifi_power
+1
+```
+
+- (c) not needed: (b) worked with `auto-low`.
+- (e) `received bytes lost` lines on the serial console: **0**. No `reset:`
+  line (Reset answered on the first try, which `bt up` does not print) and no
+  `ignored` event.
+- Classic inquiry found 0 devices without an error: nothing near was
+  discoverable over BR/EDR (passes by the row's reading).
+- So WL_ON was the difference between `bt diag` and `bt up` (steps 10 and 11).
+- No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-703-g7ce5389+x9024` (power-save, idle power per switch)
+
+Real Pi 3B+ over netboot. Test 147 ([#126](https://github.com/redox-rpi/redox-rpi/issues/126)), Pi test agent.
+
+**Idle power: 3.23 W on stable, 2.99 W on the power-save image. No single switch
+saves 0.1 W or more.** Driver: every write was taken and devsh and the serial
+console kept working. But the unused power domains were **already off at
+boot**, and writing `on` leaves them off. Shelly plug read only (`shelly-sample.sh`
+from `origin/power-save`, 18 readings 10 s apart), nothing over devsh during a
+sample. Image `~/redox-rpi-cpu/keep/v0.3.0-dev-703-g7ce5389+x9024/harddrive.img`
+(manifest in the image), stable bootloader. Each sample started 3 minutes after
+`redox login:` or right after the step's command.
+
+| sample | mean | min | max | vs previous |
+|---|---|---|---|---|
+| A-stable (`v0.3.0-dev-533-g6c729cd+x9f76`) | 3.23 W | 3.1 | 3.3 | |
+| B1-idle | 2.99 W | 2.9 | 3.1 | −0.24 W vs stable |
+| B2-blank | 2.91 W | 2.8 | 3.0 | −0.08 (none) |
+| B3-hdmi-off | 2.99 W | 2.9 | 3.1 | +0.08 (none) |
+| B4-power-led-off | 2.99 W | 2.9 | 3.1 | 0 |
+| B5-act-led-off | 3.02 W | 2.9 | 3.1 | +0.03 (none) |
+| B6-domains-off | 2.99 W | 2.9 | 3.0 | −0.03 (none) |
+| B7-all-powersave | 3.00 W | 2.9 | 3.1 | +0.01 (none) |
+
+(2) before any switch:
+
+```
+sd on / uart0 off / uart1 off / usb on / i2c0 off / i2c1 off / i2c2 off / spi off / ccp2tx off
+display: on
+power_led: on
+gpio 29 mode: out, value: 0
+governor: mode ondemand, target max, load 100, switches 4, min 600000000, max 1400000000, time_min_ms 356209, time_max_ms 14644
+```
+
+(6) each `echo "<name> off"` was taken (no error), and devsh answered after each
+(`alive`). `cat power_domains` afterwards shows the same list as in (2): **all six
+were already off.** `usb` and `uart0` were not touched.
+
+(8) `cputop 30` (governor back at ondemand):
+
+```
+cputop: 30.0 s, 44 threads
+cpu0  busy   0 %  (0 ms busy, 30011 ms idle, 107 switches/s)
+cpu1  busy   2 %  (741 ms busy, 29269 ms idle, 291 switches/s)
+cpu2  busy   0 %  (34 ms busy, 29974 ms idle, 174 switches/s)
+cpu3  busy   0 %  (114 ms busy, 29894 ms idle, 186 switches/s)
+16  2.4  0:00:35.8  UB #1  dwc2d
+ 8  0.4  0:00:04.9  US #3  rpi-firmwared
+25  0.1  0:00:02.2  UB #1  netstack
+```
+
+(9) everything back: each write taken. But **`power_domains` still lists all six
+`off`** after `echo "<name> on"` (the firmware answers `[id, 0]`, state 0, to `on`
+as well). `display` and `power_led` read `on`, governor `ondemand`. Standard
+checks pass (0 of 300 starts failed). The picture on the NanoKVM was not checked
+(no person, no screenshot).
+
+`rpi-firmwared:` lines on the serial console:
+
+```
+rpi-firmwared: mailbox at 0x3f00b880, revision 0x00a020d3, model Raspberry Pi 3 Model B+
+rpi-firmwared: ARM clock 600 -> 1400 MHz
+rpi-firmwared: display blank (firmware answered [1])
+rpi-firmwared: display unblank (firmware answered [0])
+rpi-firmwared: display off (firmware answered [0])
+rpi-firmwared: power domain i2c0 off (firmware answered [4, 0])
+rpi-firmwared: power domain i2c2 off (firmware answered [6, 0])
+rpi-firmwared: power domain uart1 off (firmware answered [2, 0])
+rpi-firmwared: power domain ccp2tx off (firmware answered [8, 0])
+rpi-firmwared: power domain i2c1 off (firmware answered [5, 0])
+rpi-firmwared: power domain spi off (firmware answered [7, 0])
+rpi-firmwared: governor powersave
+rpi-firmwared: governor ondemand
+rpi-firmwared: power domain i2c0 on (firmware answered [4, 0])
+rpi-firmwared: power domain i2c2 on (firmware answered [6, 0])
+rpi-firmwared: power domain uart1 on (firmware answered [2, 0])
+rpi-firmwared: power domain ccp2tx on (firmware answered [8, 0])
+rpi-firmwared: power domain i2c1 on (firmware answered [5, 0])
+rpi-firmwared: power domain spi on (firmware answered [7, 0])
+rpi-firmwared: display on (firmware answered [0])
+```
+
+- `power_led` and the GPIO 29 writes log nothing on the serial console.
+- GPIO 29 (activity LED) was already `out`/`0` at boot, so B5 changed nothing.
+- `display off` answered `[0]` and saved nothing measurable. On the 3B+ HDMI
+  off may need more than the blank call (power domain or clock).
+- The 0.24 W between stable and B1 is the clearest difference, but stable and
+  the power-save image differ in more than the switches (base `spi`/PR #87).
+- No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-553-gf4b1432+x12cb` (boot-time-2, 192 MiB network-boot image)
+
+Real Pi 3B+ over netboot. Test 142 ([#47](https://github.com/redox-rpi/redox-rpi/issues/47)), Pi test agent.
+
+**Pass: three of three B boots reach `redox login:` with network, standard checks
+pass, nano installs.** Image loaded to kernel start is only **0.25 s shorter**
+(8.18 s → 7.93 s). The total memory is **64 MiB larger** (743612 → 809060 KiB).
+A: stable as staged. B: `cp ~/redox-rpi-boot/keep/bt2A-redox/* /srv/tftp/redox/`.
+Times are seconds after `kreset`, from `boot-timeline.py`
+(`origin/boot-time`).
+
+| boot | image loaded over HTTP | mode menu | kernel start (first `kernel::` line) | `redox login:` | loaded → kernel |
+|---|---|---|---|---|---|
+| A stable (256 MiB) | 13.48 | 15.94 | 21.66 | 31.58 | 8.18 |
+| B1 (192 MiB) | 13.49 | 15.80 | 21.41 | 31.35 | 7.92 |
+| B2 | 13.44 | 15.74 | 21.35 | 31.33 | 7.91 |
+| B3 | 13.48 | 15.83 | 21.40 | 31.34 | 7.92 |
+
+- The download hardly changes: gzip 43112933 bytes (A) and 43037135 bytes (B),
+  both 11.3 MiB/s, about 3.64 s. The unused space compresses to almost nothing.
+  The saving left is U-Boot unpacking less and the bootloader copying
+  `live: 158/158 MiB` instead of `222/222 MiB`. Both copies took 0.2 to 0.3 s on
+  the console. Login comes about 0.25 s sooner.
+- Most of the time between image loaded and the kernel is the bootloader's
+  5 s mode menu (`Continuing with the selected mode in 5 seconds`).
+- `df -h /`: A `222.0M` size, 86.5M used, 135.5M free; B `158.0M`, 86.6M used,
+  71.4M free (as expected), after nano 91.7M used, 66.3M free.
+- `free -m` (prints KiB here): A total 743612, free 596720; B total 809060, free
+  671616 (+65448 KiB total, +74896 KiB free).
+- `pkg install --yes nano` took 27.4 s and committed 214 files; `nano --version`
+  prints `GNU nano, version 9.2`. One `TODO: setsockopt(7, 6, 1, …) - unknown
+  option` info line from pkg.
+- Network on every B boot: `dwc2d: LAN78xx link up after 1710 ms`. Standard
+  checks with `--manifest` pass (0 of 300 starts failed). No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-764-gcf2025e+x9f76` (main cf2025e, start-crash recount)
+
+Real Pi 3B+ over netboot. Test 149 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), Pi test agent.
+
+**Pass: 0 of 3000 starts failed** (test 94 on `v0.3.0-dev-339`: 0 of 3000).
+Image `~/redox-rpi-t12/keep/t1-v0.3.0-dev-764-gcf2025e+x9f76.img`, manifest
+matches, stable bootloader. `scripts/pi-test.py 192.168.178.148 --starts 3000
+--manifest … --serial-log ~/redox-rpi/logs/serial.log --crash-log
+t149-crashes.jsonl`:
+
+```
+PASS version: v0.3.0-dev-764-gcf2025e+x9f76
+PASS manifest: build ID and libc.so hash match netboot-v0.3.0-dev-764-gcf2025e+x9f76.toml
+PASS ps: 51 processes (piped)
+PASS ps-tty: 51 lines straight to the terminal, rc=0
+PASS sdcard: write, read back, delete on /scheme/data
+PASS starts: 0 of 3000 failed
+```
+
+- The crash log stayed empty (no file written: no failed start, so no
+  FAR/ELR/ESR to report).
+- Serial log during the starts (16:17 to 16:25 UTC): **0** lines with `FATAL`,
+  `exception`, `panicked`, `Data abort` or `Instruction abort`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-773-g2ffa68b+x7f63` (timesync-harden, checked answers and several servers)
+
+Real Pi 3B+ over netboot. Test 152 (follow-up to [#51](https://github.com/redox-rpi/redox-rpi/issues/51)), Pi test agent.
+
+**Pass: every check as expected, and the standard checks pass.** Image
+`~/ntp-test/keep/ntp-v0.3.0-dev-773-g2ffa68b+x7f63.img`, manifest matches, stable
+bootloader. `fake-ntp.py 192.168.178.120 1800` from `origin/timesync-harden`
+(UDP 12301–12309). H = 192.168.178.120.
+
+**Boot** (serial):
+
+```
+timesync: clock set to 2026-10-31 16:17:43 UTC from the saved time
+timesync: clock set to 2026-10-31 16:27:07 UTC, offset +564.272 s (pool.ntp.org (139.177.202.26) +564.281 s, pool.ntp.org (162.254.225.152) +564.272 s, pool.ntp.org (67.223.208.241) +564.266 s)
+timerd: clock set by timesync, 2026-10-31 16:27:08 UTC
+```
+
+| step | result |
+|---|---|
+| (1) `timesync -n` | `offset +0.004 s (clock not set; pool.ntp.org (139.177.202.26) +0.009 s, pool.ntp.org (162.254.225.152) +0.004 s, pool.ntp.org (67.223.208.241) -0.007 s)` |
+| (2) `timesync -n H:12301 H:12305 H:12307` | `offset -0.007 s (… 12301 -0.007 s, 12305 +7199.993 s, 12307 -0.007 s)`: the +7200 s answer is outvoted |
+| (3a) 12302 | `server not synchronized (leap indicator 3)`, then `no time server answered within a minute (last: …)` |
+| (3b) 12303 | `kiss-of-death RATE`, then `no time server answered within a minute (last: …)` |
+| (3c) 12304 | `answer does not match the request`, then `no time server answered within a minute (last: …)` |
+| (3d) 12301 + 12305 | `two answers 7200 s apart, waiting for a third`, then `no time server answered within a minute (last: …)` |
+| (4) `timesync H:12305; date -u` | `clock set to 2026-10-31 18:29:41 UTC, offset +7199.994 s`; `date -u` `18:29:41` |
+| (4) `timesync; date -u` | `clock set to 2026-10-31 16:29:42 UTC, offset -7199.999 s` (three pool answers −7200.000, −7199.999, −7199.998 s); `date -u` `16:29:42`, host `16:29:47` (5 s later, after the command) |
+| `grep -c rate fake-ntp.log` | **1** |
+
+- The saved time was 9 min 24 s behind at boot (the Pi was off since the last
+  save); pool answers fixed it.
+- No panic. `fake-ntp.py` stopped afterwards.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-768-g7d71e64+x1258` (sigreturn-default, aarch64 signal return as default patches)
+
+Real Pi 3B+ over netboot. Test 154 ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)), Pi test agent.
+
+**Pass: normal boot to login with no `FATAL` or panic, four of four `sigregs`
+runs PASS, and the standard checks pass.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-768-g7d71e64+x1258.img`, manifest
+matches, stable bootloader.
+
+```
+### sigregs process --x18 -n 500  (13.0 s)
+process: sending from child 47 to 46
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 50 to 49
+PASS process: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs process -n 500  (20.1 s)
+process: sending from child 56 to 55
+PASS process: 500 signals, all registers kept
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+- `sigregs thread` not run (fails on main too until PR #64).
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-816-g7376c46+x4590` (assistant + devshd-accept, devshd under a memory-heavy run)
+
+Real Pi 3B+ over netboot. Test 153 ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)), Pi test agent.
+
+**Pass: devsh accepted a new connection after each of the three assistant runs.**
+The serial console's only `devshd:` line was the start-up `devshd: listening on
+port 2323`: no accept errors, no rebind, no session thread error. #126's
+`Connection refused` did not come back. Image
+`~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-816-g7376c46+x4590.img`, manifest
+matches, stable bootloader. Standard checks pass (0 of 300 starts failed).
+Model on the card (341455552 bytes). 4 threads (`RAYON_NUM_THREADS=4`);
+`prompt.kv` removed before each run, so each run read the system prompt.
+
+| run | total (`date -u`) | prompt read | saved | answers | writing | new devsh `echo alive` |
+|---|---|---|---|---|---|---|
+| 1 | 16:48:58 → 16:53:14 (256 s) | 380 tokens in 167.2 s | 6.1 s | `It is Saturday, 31 October 2026, 16:52 UTC.`, `The current time is 16:52 UTC.` | 1.21, 0.72 t/s | **alive** at 16:53:14 |
+| 2 | 16:53:18 → 16:58:40 (322 s) | 166.1 s | 11.3 s | same, 16:56 UTC | 1.33, **0.15** t/s | **alive** at 16:58:40 |
+| 3 | 16:58:50 → 17:03:32 (283 s) | 174.4 s | 8.6 s | same, 17:02 UTC (second: `… 31 October 2026 at 17:02 UTC.`) | **0.16**, 0.87 t/s | **alive** at 17:03:33 |
+
+- `free` from a second devsh during run 2 (16:54:51): 725120 used, 145524 free
+  of 870644. That connection needed one retry (`no output for: echo start`),
+  then answered. After the runs: 254104 used, 616540 free.
+- Writing slowed to 0.15–0.16 t/s in two answers (#126 with 4 threads:
+  0.78 t/s). Both came after the chip reached its soft temperature limit
+  (below); the second devsh during run 2 may also have cost time.
+- End: temperature 61.2 °C, `throttled` `0x00080008` (soft temperature limit
+  reached and active).
+- No `oom`, no kernel panic, no `RELIBC PANIC`. `prompt.kv` removed; the model
+  kept.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-806-gb2dd152` wait-irq `+x98e9` and tx-irq `+x3388` (sent frames without the spin)
+
+Real Pi 3B+ over netboot. Test 155 ([#104](https://github.com/redox-rpi/redox-rpi/issues/104), sent frames without the spin), Pi test agent. (Queued as a second 152 by mistake; renumbered to 155.)
+
+**Pass: the host counted 16777216 bytes in all four runs, and devshd answered
+afterwards.** dwc2d's ACTTIME is **not lower with tx-irq**: +1.22 and +1.10 s
+per 16 MiB against +1.03 and +1.14 s for wait-irq. Sending is about as fast
+(7.1 to 8.3 MB/s). Images from `~/redox-rpi-usb/keep/` with their manifests
+(match), stable bootloader, wait-irq first. Standard checks with `--manifest`
+pass on both (0 of 300 starts failed). Host side: `nc -l <port> | wc -c`.
+
+| image | run | `tcp-send` | host bytes | dwc2d ACTTIME before → after | SCHTIME before → after |
+|---|---|---|---|---|---|
+| wait-irq | 1 | `16777216 bytes in 2.31 s, 7.28 MB/s` | 16777216 | 1.74 → 2.77 s (**+1.03**) | 1.88 → 1.91 s (+0.03) |
+| wait-irq | 2 | `16777216 bytes in 2.02 s, 8.30 MB/s` | 16777216 | 2.97 → 4.11 s (**+1.14**) | 2.10 → 2.22 s (+0.12) |
+| tx-irq | 1 | `16777216 bytes in 2.36 s, 7.12 MB/s` | 16777216 | 1.61 → 2.83 s (**+1.22**) | 1.74 → 1.76 s (+0.02) |
+| tx-irq | 2 | `16777216 bytes in 2.11 s, 7.94 MB/s` | 16777216 | 2.90 → 4.00 s (**+1.10**) | 1.82 → 1.85 s (+0.03) |
+
+- ACTTIME as in #144 (first time column of `/scheme/sys/context`); each pair
+  also covers about 0.4 s of devsh between the commands.
+- #144 (wait-irq `451`): +0.99 and +1.00 s at 8.3 MB/s. So the time dwc2d spends
+  per 16 MiB sent is unchanged on all three builds.
+- No dwc2d line on the serial console about the transmit interrupt or spin (only
+  the enumeration). `free` afterwards: 138928 used (wait-irq), 140308 (tx-irq) of
+  739432. No panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-795-g187edb8+xff6c` (netstack-arp-ack, stale ARP and reads after a TCP reset)
+
+Real Pi 3B+ over netboot. Test 156 ([#140](https://github.com/redox-rpi/redox-rpi/issues/140), [#141](https://github.com/redox-rpi/redox-rpi/issues/141)), Pi test agent.
+
+**Pass: after a reset, netget still reads the 65535 buffered bytes. Three
+downloads of 382 MB complete at 7.67–7.78 MB/s, with no `waiting queue was
+full` line.** Image `~/redox-rpi-zrtl/keep/arpack-v0.3.0-dev-795-g187edb8+xff6c.img`
+(manifest in the image), stable bootloader. Standard checks pass before and
+after (0 of 300 starts failed each time).
+
+(1) Reset test, `rstserver.py 18998 1000000`:
+
+```
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+### netget http://192.168.178.120:18998/x --slow 5000  (10.3 s)
+GET http://192.168.178.120:18998/x
+HTTP/1.0 200 OK
+read after 65535 bytes, 10.0 s: Transport endpoint is not connected (os error 107)
+```
+
+Server: `17:39:00 192.168.178.148: header, 437576 body bytes into the socket,
+then reset`, and the same at 17:39:11. N = 65535 both times (pass: above 30000).
+
+(2) ARP, `netget http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf --log /scheme/debug` three times:
+
+| run | result | 16 MiB steps |
+|---|---|---|
+| 1 | `382156480 bytes in 49.8 s, 7.67 MB/s` | 7.38–7.97 MB/s |
+| 2 | `382156480 bytes in 49.1 s, 7.78 MB/s` | 7.6–7.9 MB/s |
+| 3 | `382156480 bytes in 49.6 s, 7.71 MB/s` | 7.4–7.9 MB/s |
+
+- Serial during the three runs: **0 `waiting queue was full`** lines, no
+  `Dropped` and no `smolnetd` line. The whole boot had none either. No panic.
+- The three runs took about 2.5 minutes together, so they spanned two or three
+  60 s ARP refreshes.
+- Every `netget:` line from the serial log (`--log /scheme/debug`):
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.75 MB/s
+netget:    32 MiB     4.3 s  7.87 MB/s
+netget:    48 MiB     6.6 s  7.45 MB/s
+netget:    64 MiB     8.8 s  7.64 MB/s
+netget:    80 MiB    11.0 s  7.65 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.78 MB/s
+netget:   128 MiB    17.5 s  7.69 MB/s
+netget:   144 MiB    19.6 s  7.92 MB/s
+netget:   160 MiB    21.7 s  7.95 MB/s
+netget:   176 MiB    23.9 s  7.75 MB/s
+netget:   192 MiB    26.0 s  7.92 MB/s
+netget:   208 MiB    28.3 s  7.38 MB/s
+netget:   224 MiB    30.6 s  7.46 MB/s
+netget:   240 MiB    32.8 s  7.60 MB/s
+netget:   256 MiB    35.0 s  7.55 MB/s
+netget:   272 MiB    37.2 s  7.70 MB/s
+netget:   288 MiB    39.4 s  7.71 MB/s
+netget:   304 MiB    41.5 s  7.82 MB/s
+netget:   320 MiB    43.7 s  7.97 MB/s
+netget:   336 MiB    45.9 s  7.58 MB/s
+netget:   352 MiB    48.1 s  7.38 MB/s
+netget: 382156480 bytes in 49.8 s, 7.67 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.63 MB/s
+netget:    32 MiB     4.4 s  7.64 MB/s
+netget:    48 MiB     6.6 s  7.73 MB/s
+netget:    64 MiB     8.7 s  7.77 MB/s
+netget:    80 MiB    10.9 s  7.85 MB/s
+netget:    96 MiB    13.1 s  7.75 MB/s
+netget:   112 MiB    15.3 s  7.66 MB/s
+netget:   128 MiB    17.5 s  7.67 MB/s
+netget:   144 MiB    19.6 s  7.89 MB/s
+netget:   160 MiB    21.8 s  7.77 MB/s
+netget:   176 MiB    23.9 s  7.80 MB/s
+netget:   192 MiB    26.1 s  7.75 MB/s
+netget:   208 MiB    28.2 s  7.90 MB/s
+netget:   224 MiB    30.4 s  7.84 MB/s
+netget:   240 MiB    32.5 s  7.89 MB/s
+netget:   256 MiB    34.6 s  7.86 MB/s
+netget:   272 MiB    36.8 s  7.80 MB/s
+netget:   288 MiB    38.9 s  7.93 MB/s
+netget:   304 MiB    41.1 s  7.76 MB/s
+netget:   320 MiB    43.2 s  7.86 MB/s
+netget:   336 MiB    45.4 s  7.79 MB/s
+netget:   352 MiB    47.5 s  7.89 MB/s
+netget: 382156480 bytes in 49.1 s, 7.78 MB/s
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB     2.2 s  7.74 MB/s
+netget:    32 MiB     4.3 s  7.80 MB/s
+netget:    48 MiB     6.4 s  8.01 MB/s
+netget:    64 MiB     8.6 s  7.75 MB/s
+netget:    80 MiB    10.7 s  7.87 MB/s
+netget:    96 MiB    12.9 s  7.83 MB/s
+netget:   112 MiB    15.2 s  7.35 MB/s
+netget:   128 MiB    17.4 s  7.60 MB/s
+netget:   144 MiB    19.6 s  7.52 MB/s
+netget:   160 MiB    21.8 s  7.81 MB/s
+netget:   176 MiB    23.9 s  7.82 MB/s
+netget:   192 MiB    26.1 s  7.69 MB/s
+netget:   208 MiB    28.3 s  7.76 MB/s
+netget:   224 MiB    30.5 s  7.79 MB/s
+netget:   240 MiB    32.7 s  7.64 MB/s
+netget:   256 MiB    34.8 s  7.89 MB/s
+netget:   272 MiB    37.0 s  7.78 MB/s
+netget:   288 MiB    39.1 s  7.70 MB/s
+netget:   304 MiB    41.4 s  7.63 MB/s
+netget:   320 MiB    43.5 s  7.64 MB/s
+netget:   336 MiB    45.7 s  7.66 MB/s
+netget:   352 MiB    47.9 s  7.67 MB/s
+netget: 382156480 bytes in 49.6 s, 7.71 MB/s
+```
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-798-gb225933+x1258` (t4-with-137, signals sent to a thread)
+
+Real Pi 3B+ over netboot. Test 157 ([#4](https://github.com/redox-rpi/redox-rpi/issues/4)), Pi test agent.
+
+**Pass: boot to login with no `FATAL` or panic, all five `sigregs` runs PASS
+(signals to a thread now arrive, 500 of 500), and the standard checks pass.**
+Image `~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-798-gb225933+x1258.img`,
+manifest matches, stable bootloader.
+
+```
+### sigregs thread --x18 -n 500  (15.3 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (15.2 s)
+PASS thread: 500 signals, all registers kept
+### sigregs thread --x18 -n 500  (20.1 s)
+PASS thread: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (15.2 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs sender  (0.2 s)
+PASS sender: si_pid 55 from the thread, 56 from the child
+```
+
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: version,
+  manifest (build ID and libc.so hash), ps, ps-tty, sdcard pass; **0 of 300
+  starts failed**.
+- Serial console from the boot to the end: 0 lines with `FATAL` or `panicked`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-799-g68620a9+x1258` (sigsegv-main, signals for CPU exceptions)
+
+Real Pi 3B+ over netboot. Test 158 (PR #143), Pi test agent.
+
+**Pass: 2 × 500 faults each handled and continued; thread, process and sender
+pass; standard checks pass; no panic.** Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-799-g68620a9+x1258.img`, manifest
+matches, stable bootloader. The boot reached login.
+
+```
+### sigregs segv -n 500  (76.8 s)
+PASS segv: 500 faults, each handled and continued
+### sigregs segv -n 500  (76.8 s)
+PASS segv: 500 faults, each handled and continued
+### sigregs thread --x18 -n 500  (15.3 s)
+PASS thread: 500 signals, all registers kept
+### sigregs process --x18 -n 500  (20.1 s)
+process: sending from child 53 to 52
+PASS process: 500 signals, all registers kept
+### sigregs sender  (0.3 s)
+PASS sender: si_pid 55 from the thread, 56 from the child
+```
+
+- Kernel register dumps on the serial console: exactly **1000** (one per fault),
+  each `FATAL: Not an SVC induced synchronous exception (ty=100100)`,
+  `FAR_EL1: 0x10`, `ESR_EL1: 0000000092000007` (data abort at EL0), from
+  `synchronous_exception_at_el0`. Expected by the row. No other `FATAL` line, 0
+  `panicked`.
+- Each `segv -n 500` run takes 77 s, longer than devshd's 60 s guide, because
+  the 500 dumps go out over the 115200-baud console. pirun waited (300 s
+  timeout), and both runs completed.
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: all pass, **0 of
+  300 starts failed**.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-800-g1682576+x4590` (assistant-speed, candle's pool spin limit)
+
+Real Pi 3B+ over netboot. Test 159 ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**A spin limit of 250000 or more removes the pool sleeps. Writing goes from 1.38
+to about 2.0 t/s with 3 threads, and 4 threads with the high limit give
+2.56 t/s.** The default (25000) sleeps 236 times per token when cool and 48 times
+when warm. Image `~/redox-rpi-assistant/keep/netboot-v0.3.0-dev-800-g1682576+x4590.img`,
+manifest matches, stable bootloader. Standard checks pass (0 of 300 starts
+failed). Model on the card (341455552 bytes). `rinfer
+/scheme/data/Qwen3-0.6B-Q4_0e.gguf 'Name three colours.' 32`; every run
+answered `Three colours are blue, green, and red.` (10 tokens).
+
+| run | threads | spin limit | prompt (20 tokens) | generated (10 tokens) | per token | temp after | throttled after |
+|---|---|---|---|---|---|---|---|
+| before | | | | | | 54.8 °C | `0x00000000` |
+| 1 | 3 | 25000 (default) | 9.7 s, 2.06 t/s | 7.2 s, **1.38 t/s** | model 723 ms, sampling 1 ms, **pool sleeps 236** | 58.0 °C | `0x00080000` |
+| 2 | 3 | 250000 | 7.4 s, 2.69 t/s | 5.0 s, **2.00 t/s** | model 498 ms, sampling 1 ms, pool sleeps 0 | 60.1 °C | `0x00080008` |
+| 3 | 3 | 2500000 | 7.6 s, 2.62 t/s | 5.2 s, 1.91 t/s | model 523 ms, sampling 1 ms, pool sleeps 0 | 61.8 °C | `0x00080008` |
+| 4 | 3 | 25000000 | 7.9 s, 2.52 t/s | 5.0 s, 2.01 t/s | model 498 ms, sampling 1 ms, pool sleeps 0 | 62.3 °C | `0x00080008` |
+| 5 | 4 | 25000000 | 5.8 s, 3.45 t/s | 3.9 s, **2.56 t/s** | model 389 ms, sampling 1 ms, pool sleeps 0 | 63.4 °C | `0x00080008` |
+| 6 | 3 | 25000 (again) | 8.2 s, 2.43 t/s | 5.9 s, 1.70 t/s | model 588 ms, sampling 1 ms, **pool sleeps 48** | 60.1 °C | `0x00080008` |
+
+- Each run's first line was `neon: true, threads: N, pool spin limit: …` as in
+  the table (run 1 `(default)`).
+- Run 6 repeats run 1 warm (soft temperature limit active), and it sleeps less
+  (48 vs 236) and writes faster (1.70 vs 1.38 t/s). A slower clock under the soft
+  limit seems to make the 25000 spins last longer. The default's number depends
+  on heat.
+- `loaded in` 20.5 to 31.1 s (539 reads); the longer loads (runs 3 and 4) came
+  with the second devsh (run 3) and the hotter chip.
+- `free` from a second devsh during run 3 (18:00:37, while loading): 674112 used,
+  196532 free of 870644.
+- `throttled` showed the soft temperature limit from run 1 on (`0x00080000`,
+  then `0x00080008`). No `oom`, no kernel panic, no `RELIBC PANIC`. Model kept.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-823-ga961ba0+xb3d9` (t-pin-redoxfs + t13-relibc-tests, redoxfs pinned)
+
+Real Pi 3B+ over netboot. Test 160 ([#145](https://github.com/redox-rpi/redox-rpi/issues/145)), Pi test agent.
+
+**Pass: the pinned redoxfs boots and runs (0 of 1000 starts failed), the four
+Unix socket tests pass, and the relibc suite has no new failure.** Image
+`~/redox-rpi-t12/keep/pinfs-v0.3.0-dev-823-ga961ba0+xb3d9.img` (manifest in the
+image, none next to it), stable bootloader.
+
+- `scripts/pi-test.py --starts 1000 --serial-log …`: version, manifest (present),
+  ps, ps-tty, sdcard pass; **0 of 1000 starts failed**.
+- In `/usr/share/relibc-tests/bins_dynamic/sys_socket`:
+  - `./unixrecvfrom`: `send lorem`, `recvfrom lorem`, **rc=0**
+  - `./unixrecv`: `send ipsum`, `recv ipsum`, **rc=0**
+  - `./unixnonblock`: `send ipsum`, `recv ipsum`, **rc=0**
+  - `./unixsocketpair`: SOCK_STREAM and SOCK_DGRAM `child: ping`, `parent: pong`, **rc=0**
+  - no `connect failed: Invalid argument`; 0 `handle_bind` lines on the serial
+    console.
+- `ion /usr/share/relibc-tests/run.ion` (64.6 s, `COMMAND_TIMEOUT=60`), compared
+  with `relibc-tests-compare.py` and `config/relibc-tests-expected.txt` from
+  `t13-relibc-tests` (the suite prints to devsh, so I compared the devsh output):
+
+```
+FIXED ./bins_dynamic/netdb/getaddrinfo: on the list, but passed
+FIXED ./bins_dynamic/pthread/rwlock_randtest: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getpeername: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/getsockopt: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recv: on the list, but passed
+FIXED ./bins_dynamic/sys_socket/recvfrom: on the list, but passed
+SUMMARY v0.3.0-dev-823-ga961ba0+xb3d9: 319 tests, 16 failed (16 known, 0 flaky, 0 new), 6 fixed
+```
+
+  **No `NEW` line**, the same as #133.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-793-g9ba1d403` (A) and `+x3d23` (B) (governor-config, CPU clock setting at boot)
+
+Real Pi 3B+ over netboot. Test 161 ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), Pi test agent.
+
+**Pass: the default image stays on ondemand with no error. The test image boots
+in `performance` from `/etc/rpi-firmware/governor`, and writing the file plus
+`governor.ion` switches to fixed 600 MHz and back to ondemand. Standard checks
+pass on both.** One point is not as the row expected: `switches` did not grow
+during A's standard checks, because the clock was already at max when they
+started (details below). Images from `~/redox-rpi-cpu/keep/` (manifest in the
+image), stable bootloader.
+
+**(A) default image** (no file in `/etc`). Serial: no `governor.ion … failed`
+line (the only `failed` lines are the usual U-Boot `mmc 2`, randd and redoxfs
+probe lines).
+
+| read | mode | target | load | switches | time_min_ms | time_max_ms |
+|---|---|---|---|---|---|---|
+| 3 min after login | ondemand | max | 81 | 6 | 187810 | 16021 |
+| 60 s later | ondemand | max | 100 | 12 | 249966 (**+62156**) | 23560 |
+| after the standard checks | ondemand | max | 64 | 12 (**+0**) | 249966 | 76138 (+52578) |
+
+- The 60 s wait put 62.2 s at the minimum clock (pass: at least 50000).
+- During the standard checks the clock stayed at 1400 MHz the whole time
+  (`time_max_ms` +52.6 s, `time_min_ms` +0). The second read had already sent
+  it to max (`load 100`), so it went up before the checks rather than during
+  them. Standard checks pass (0 of 300 starts failed).
+
+**(B) test image** (`/etc/rpi-firmware/governor` = `performance`):
+
+- Serial, after `init: switchroot to /usr /etc`: `rpi-firmwared: governor
+  performance`.
+- `arm_clock` 3 min after login and 60 s later: `1400000000` both.
+  `governor`: `mode performance`, `switches 0`, `time_min_ms 0`.
+- Shelly (read only): `B-performance: mean 3.26 W, min 3.2, max 3.4, n 18`
+  (test 93: 3.20 W performance, 3.05 W ondemand).
+- `echo 600000000 > /etc/rpi-firmware/governor; ion /usr/lib/rpi-firmware/governor.ion; cat …`:
+  `600000000`, `mode fixed`, `target -`. Serial `rpi-firmwared: ARM clock 600
+  MHz, governor off`. **The command also printed `cat: /etc/rpi-firmware/governor:
+  Invalid argument` once**, before the values; the clock was set anyway.
+- `echo ondemand > …; ion …governor.ion; cat …`: `mode ondemand`, `switches 1`.
+  Serial `rpi-firmwared: governor ondemand`.
+- Standard checks pass (0 of 300 starts failed). No panic in A or B.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-801-gea8b5c2` without (`+x8a5e`) and with `icache-sync` (`+x9080`) (instruction cache stress test)
+
+Real Pi 3B+ over netboot. Test 162 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Pass, with a clear result. Without `icache-sync` the Cortex-A53 runs stale
+code: 31–33 % of `new-page` rounds and 53 % of `same-page` rounds. With
+`icache-sync` it is 0 of 10000 in every test, on both boots.** 0 of 1000 starts
+failed on both images, and the serial log shows no exception. Images
+`~/t18-work/image-t3/without.img` (md5 `32ee2042…`) and `with.img` (md5
+`1437c1b6…`), staged with `~/t18-work/t3-stage/scripts/netboot.sh` (bootloader md5
+`4fccdb94` each time), order A, B, A, B, each a fresh boot over a devsh reset.
+
+`icachetest 10000`:
+
+| test | A1 (without) | B1 (with) | A2 (without) | B2 (with) |
+|---|---|---|---|---|
+| `new-page` | **3146** of 10000 stale | 0 | **3244** | 0 |
+| `same-page` | **5310** | 0 | **5349** | 0 |
+| `file-map` | 0 | 0 | 0 | 0 |
+| `user-flush` | 0 | 0 | 0 | 0 |
+| result | `FAIL` (68.2 s) | **`PASS`** (67.8 s) | `FAIL` (62.7 s) | **`PASS`** (63.3 s) |
+
+- `pi-test.py --starts 1000` on the first boot of each: **0 of 1000 failed** for
+  A1 and B1. All standard checks pass.
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`, three times:
+
+| boot | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| A1 | 118.87 s | 118.99 s | 119.06 s |
+| B1 | 116.77 s | 116.75 s | 116.86 s |
+| A2 | 116.19 s | 116.79 s | 116.83 s |
+| B2 | 114.34 s | 114.44 s | 114.29 s |
+
+  `icache-sync` costs nothing measurable; B was even 1–2 s faster. These loops
+  take longer than test 127's 77.7 vs 78.7 s, because this image is a newer main
+  with more in `/usr`; A and B are like for like.
+- Serial log of each boot: 0 lines with `FATAL`, `exception` or `panicked`. The
+  stale rounds in A did not crash anything, because `icachetest` checks the
+  result itself.
+- So the gap is real on the Pi (`file-map` and `user-flush` are already safe),
+  and `icache-sync` closes it.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-770-g0b9da6d+x9f76` (prebuilt-default, nine prebuilt programs in the image)
+
+Real Pi 3B+ over netboot. Test 165 ([#40](https://github.com/redox-rpi/redox-rpi/issues/40)), Pi test agent.
+
+**Pass: 450 of 450 starts succeed, the bash loop prints `LOOPa50` 5 of 5 times,
+and the standard checks pass.** But `/etc/ssh` is not in this image, so the
+`find` loop counted 50 runs of `find` on a missing path (details below). Image
+`~/redox-rpi-relibc/keep/netboot-v0.3.0-dev-770-g0b9da6d+x9f76.img`, manifest
+matches, stable bootloader. The boot reached login with no `FATAL` or panic
+line.
+
+| program, 50 runs in an Ion loop | succeeded |
+|---|---|
+| `bash -c true` | 50 |
+| `nano --version` | 50 |
+| `vim --version` | 50 |
+| `find /etc/ssh` | 50 (see below) |
+| `gawk --version` | 50 |
+| `tmux -V` | 50 |
+| `rg --version` | 50 |
+| `curl --version` | 50 |
+| `wget --version` | 50 |
+
+- `bash -c 'for j in $(seq 1 50); do true; /usr/bin/true; x=$(echo a); done; echo LOOP$x$j'`
+  five times: `LOOPa50` each time.
+- `df -h`: `/` 222.0M size, **162.3M used, 59.7M free** (73 %); QEMU had 162 MiB
+  used.
+- `find`: `/etc/ssh` does not exist here (`ls: cannot access '/etc/ssh'`; this
+  image has no SSH experiment). Each run printed `Error: /etc/ssh: description()
+  is deprecated; use Display` and still exited 0. `find /nonexistent` does the
+  same, rc=0. GNU find exits 1 and says `No such file or directory`. On a real
+  directory `find /etc -maxdepth 1` lists the entries (`/etc`,
+  `/etc/login_schemes.toml`, `/etc/hostname`, `/etc/net`, `/etc/os-release` …),
+  rc=0. `find --version` is `Unrecognized flag`.
+- `scripts/pi-test.py --manifest … --starts 300 --serial-log …`: all pass, **0 of
+  300 starts failed**. Serial: 0 `FATAL` or `panicked` lines.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-772-g8dc59fc+x0e02` (main 8dc59fc, prebuilt programs installed with `pkg`)
+
+Real Pi 3B+ over netboot. Test 163 ([#40](https://github.com/redox-rpi/redox-rpi/issues/40)), Pi test agent.
+
+**Pass: the 26 programs of step 2, git, python312 and sqlite3 all print `T40
+PASS`, the standard checks pass, and no exception or panic.** Much faster than
+QEMU: the 26-package install took 3 minutes. Image
+`~/redox-rpi-t40/keep/t40A-harddrive.img` (md5 `d5e0fd76`), staged with
+`~/redox-rpi-boot/scripts/netboot.sh` (bootloader md5 `64685a6f`).
+
+**Boot 1**
+
+- (1) Standard checks `--starts 300`: all pass, 0 of 300 starts failed.
+- (2) `pkg install --yes bash dash … rldd`: 19:47:10 to 19:50:09 UTC (**3 min**),
+  ends `Download complete.`, `Commit complete.`
+- (3) `t40.sh`:
+
+```
+T40 PASS bash
+T40 PASS dash
+T40 PASS nano
+T40 FAIL vim (127): /tmp/t40.sh: line 12: vim: command not found
+T40 PASS kibi
+T40 PASS smith
+T40 PASS ripgrep
+T40 PASS gawk
+T40 PASS sed
+T40 PASS findutils
+T40 PASS diffutils
+T40 PASS patch
+T40 PASS file
+T40 FAIL python312 (127): /tmp/t40.sh: line 12: python3.12: command not found
+T40 FAIL rustpython (127): /tmp/t40.sh: line 12: rustpython: command not found
+T40 PASS sqlite3
+T40 FAIL git (127): bash: line 1: git: command not found
+T40 PASS curl
+T40 PASS wget
+T40 PASS tmux
+T40 FAIL xz (1): bash: line 1: xz: command not found bash: line 1: xz: command not found
+T40 PASS zstd
+T40 PASS bzip2
+T40 PASS lz4
+T40 PASS gnu-make
+T40 FAIL rsync (127): bash: line 1: rsync: command not found
+T40 PASS bottom
+T40 PASS pls
+T40 PASS miniserve
+T40 PASS nasm
+T40 PASS patchelf
+T40 PASS rldd
+T40 DONE
+```
+
+  The six expected failures (`vim`, `python312`, `rustpython`, `git`, `xz`,
+  `rsync`, not installed yet) end in `command not found`. The other 26 pass.
+  `curl` prints four `TODO: setsockopt(… ) - unknown option` info lines.
+- (4) `pkg install --yes git`: 19:50:26 to 19:51:09 (**43 s**, install size
+  24.0 MB), `Commit complete.`; `T40 PASS git`.
+- (5) `df -h /`: 222.0M size, 205.9M used, **16.1M free** (92 %).
+
+**Boot 2** (fresh boot of the same image)
+
+- (6) `pkg install --yes bash curl python312`: 19:52:01 to 20:00:49 (**8 min
+  48 s**), `Commit complete.` (one `usr/bin/reset … (already exists)` line from
+  ncursesw).
+- (7) `T40 PASS python312`, `T40 PASS sqlite3`.
+- (8) `df -h /`: 222.0M, 210.3M used, **11.7M free** (94 %).
+- Serial log over both boots: 0 lines with `FATAL`, `exception` or `panicked`.
+- The root filesystem is nearly full after these sets (11.7M to 16.1M free).
+  Bigger sets need a larger image or a disk.
+
+Stable image restored afterwards.
+
+## 2026-10-31: stable `v0.3.0-dev-533-g6c729cd+x9f76` (does the network stay up when idle)
+
+Real Pi 3B+ over netboot. Test 164 ([#92](https://github.com/redox-rpi/redox-rpi/issues/92)), Pi test agent.
+
+**Pass: the network stayed up for 62 minutes idle.** devsh answered all five
+readings (0, 15, 30, 47 and 62 min), the address stayed, and 180 of 180 TCP
+probes in the second half were answered. The serial console had no `netstack`,
+`dwc2d` or `Dropped` line. Two notes: the Pi does not answer ICMP echo from
+the build host, and netstack's memory grew by 1.1 MB in the hour. Stable as
+staged, reset over devsh; standard checks pass (0 of 300 starts failed).
+
+- **ICMP ping does not work here:** the build host has no `ping`, and
+  `ping.py` (ICMP datagram socket) got **0 of 180** answers from the Pi
+  (20:02:55 to 20:32:45). It also got 0 of 3 later while devsh answered; the
+  router 192.168.178.1 answers 2 of 2. So the Pi (or netstack) does not answer
+  echo requests from this host. I took that half as not measurable.
+- **Instead, minutes 32 to 62:** a TCP connect to closed port 9 every 10 s;
+  each reset counts as answered. Result: **180 of 180 answered**, 2.1 to 87.0 ms.
+- Readings over devsh (`uptime`; netstack and dwc2d ACTTIME and memory;
+  `eth0` address; `free` used):
+
+| uptime | netstack ACTTIME / mem | dwc2d ACTTIME / mem | eth0 | used |
+|---|---|---|---|---|
+| 1m 26s | 0.19 s / 3.59 MB | 1.52 s / 1.70 MB | 192.168.178.148/24 | 137600 |
+| 16m 29s | 0.70 s / 3.72 MB | 21.57 s / 1.70 MB | same | 137980 |
+| 31m 26s | 1.22 s / 3.84 MB | 41.50 s / 1.70 MB | same | 138368 |
+| 47m 36s | 1.78 s / 3.97 MB | 62.95 s / 1.70 MB | same | 138748 |
+| 1h 2m 26s | 2.29 s / **4.72 MB** | 82.62 s / 1.70 MB | same | 139984 |
+
+- netstack memory grows about 0.13 MB per 15 minutes, then +0.75 MB in the last
+  15 (the 180 probe connections). dwc2d stays flat at 1.70 MB but uses 1.33 s of
+  CPU per idle minute (about 2 %). `free` used grows 2.4 MB in the hour.
+- Serial: no `netstack`, `dwc2d` or `smolnetd` error or warning, no `Dropped`,
+  no panic.
+
+Stable image stays staged.
+
+## 2026-10-31: `v0.3.0-dev-848-gdc1da3e+xdd51` (t14-ring-call + t13-relibc-tests, rt-call-flags)
+
+Real Pi 3B+ over netboot. Test 166 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**Partly: 0 of 1000 starts failed and `redox_ring_ramfs` passes (rc=0, no `Bad
+file number`). But the relibc suite hung the whole Pi at
+`pthread/rwlock_randtest`**, after 98 tests: no answer on devsh, TCP or serial.
+The Pi needed a power cycle. Image
+`~/redox-rpi-t12/keep/rcf-v0.3.0-dev-848-gdc1da3e+xdd51.img` (manifest in the
+image), stable bootloader.
+
+- `scripts/pi-test.py --starts 1000 --serial-log …`: version, manifest
+  (present), ps, ps-tty, sdcard pass; **0 of 1000 starts failed**.
+- `./bins_dynamic/redox_ring_ramfs`: `Write Benchmark: 32000 ops in 0.622 seconds
+  (200.82 MB/s)`, `Read Benchmark: 32000 ops in 1.897 seconds (65.90 MB/s)`,
+  `Tests finished successfully!`, **rc=0**.
+- `ion /usr/share/relibc-tests/run.ion` (`COMMAND_TIMEOUT=60`): the last test
+  started was `./bins_dynamic/pthread/rwlock_randtest` (`# waiting 1011ms`). Then
+  no more output; devsh gave up after 305 s of silence. The serial log stopped
+  at 21:08:47. Afterwards devsh `No route to host`, TCP probe 0 of 2. In #160
+  (same suite, without `rt-call-flags`) `rwlock_randtest` passed.
+- `relibc-tests-compare.py`: `the suite did not finish (98 tests started, no
+  'RELIBC-TESTS rc=' line)`, so no FIXED/NEW verdict.
+- Serial during the suite: kernel dumps for the signal tests that are on the
+  known list (`sigprocmask-3`, `sigpause-revert`, `sigsegv`, `sigset-5`,
+  `stackoverflow`; `UNHANDLED EXCEPTION`), and `get_connected_peer … Bad file
+  number` twice from the socket tests. No kernel panic line before the hang; the
+  hang left no message.
+- Stable staged, Pi power-cycled with the Shelly plug at 21:14 UTC; stable booted
+  to login and devsh answers.
+
+Next: run the suite again on this image, or `rwlock_randtest` alone a few
+times, to tell a hang from `rt-call-flags` from a rare one.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, long write to the card without network load)
+
+Real Pi 3B+ over netboot. Test 167 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**Pass: all 25 steps of 16 MiB finished, 400 MiB in 64 KiB writes in 182 s of
+dd time (1.1 to 3.6 MB/s). devsh answered after each step, and the serial
+console showed no error.** So the card alone takes a long write; test 141's
+hang needs the network as well. Image
+`~/redox-rpi-sd/keep/t151-v0.3.0-dev-838-g64fa695+x8116.img` (md5 `15e52989`),
+staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- (1) `df -h /scheme/data`: 960.0M size, 393.7M used, 566.3M free. No
+  `netget.bin` (removed after #141, see #143); `rm` said `No such file`.
+- (2) `dd if=/scheme/rand of=/tmp/r16 bs=65536 count=256`: 16 MiB in 0.76 s.
+  `free` used 162280.
+- (3) the 25 steps (`dd … seek=<i×256> conv=notrunc`, then `free`):
+
+| step | start (UTC) | dd time | rate | `free` used |
+|---|---|---|---|---|
+| 0 | 21:16:38 | 14.9571 s | 1.1 MB/s | 183964 |
+| 1 | 21:16:55 | 7.82 s | 2.1 MB/s | 191280 |
+| 2 | 21:17:10 | 5.33287 s | 3.1 MB/s | 193724 |
+| 3 | 21:17:22 | 6.40854 s | 2.6 MB/s | 194708 |
+| 4 | 21:17:40 | 6.21403 s | 2.7 MB/s | 195280 |
+| 5 | 21:17:58 | 10.9027 s | 1.5 MB/s | 195696 |
+| 6 | 21:18:11 | 5.65799 s | 3.0 MB/s | 196084 |
+| 7 | 21:18:24 | 5.45208 s | 3.1 MB/s | 196468 |
+| 8 | 21:18:41 | 10.9754 s | 1.5 MB/s | 196848 |
+| 9 | 21:18:54 | 5.22359 s | 3.2 MB/s | 197236 |
+| 10 | 21:19:01 | 6.25465 s | 2.7 MB/s | 197608 |
+| 11 | 21:19:09 | 12.9977 s | 1.3 MB/s | 197976 |
+| 12 | 21:19:24 | 6.26754 s | 2.7 MB/s | 198380 |
+| 13 | 21:19:32 | 5.2923 s | 3.2 MB/s | 198748 |
+| 14 | 21:19:49 | 5.97413 s | 2.8 MB/s | 199132 |
+| 15 | 21:20:07 | 6.8708 s | 2.4 MB/s | 199500 |
+| 16 | 21:20:21 | 6.47109 s | 2.6 MB/s | 199896 |
+| 17 | 21:20:34 | 5.08902 s | 3.3 MB/s | 200268 |
+| 18 | 21:20:46 | 4.71222 s | 3.6 MB/s | 200664 |
+| 19 | 21:20:53 | 12.5595 s | 1.3 MB/s | 201028 |
+| 20 | 21:21:07 | 4.8601 s | 3.5 MB/s | 201412 |
+| 21 | 21:21:24 | 6.60228 s | 2.5 MB/s | 201784 |
+| 22 | 21:21:32 | 4.8109 s | 3.5 MB/s | 202164 |
+| 23 | 21:21:49 | 8.61827 s | 1.9 MB/s | 202540 |
+| 24 | 21:22:04 | 5.31831 s | 3.2 MB/s | 202920 |
+
+- Every step `rc=0`, devsh answered at once. Writes alternate between about
+  3 MB/s and slower steps (1.1 to 1.9 MB/s, steps 0, 5, 8, 11, 19, 23): the
+  card's own pauses, no trend. Memory: +21.7 MB in step 0 (first write to the
+  file), then about +0.38 MB per step (`used` 183964 → 202920).
+- (4) `ls -l /scheme/data/w151.bin`: **419430400** bytes. `df -h`: 793.8M used,
+  166.2M free. `rm` worked, so the partition is back to the model only.
+- Serial: only the usual boot lines (`bcm2835-sdhostd: SDHC/SDXC card, 15193 MiB,
+  4-bit bus, high speed, up to 50 MHz`); no `sdhost` or `redoxfs` error, no panic.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, the test 141 download into the card again)
+
+Real Pi 3B+ over netboot. Test 168 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**The hang came back, and it is not a frozen machine: the Pi's USB hub with the
+network chip dropped off.** The last serial lines are `dwc2d: hub 1 port 1:
+device at address 2 removed` and `dwc2d: keyboard removed`, at 160 MiB. The
+system kept running: login over the serial console worked, `free` normal. But
+the network was gone, and reading netstack's address list hung. The plug read
+**2.0 W** (idle with network about 3.0 W). Image
+`~/redox-rpi-sd/keep/t151-v0.3.0-dev-838-g64fa695+x8116.img` (md5 `15e52989`),
+staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- (1) `df -h /scheme/data`: 960.0M, 393.7M used, 566.3M free; no `netget.bin`
+  or `w151.bin`.
+- (2) `netget http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf /scheme/data/netget.bin --log /scheme/debug`,
+  serial lines:
+
+```
+netget: HTTP/1.0 200 OK
+netget:    16 MiB    15.0 s  1.12 MB/s
+netget:    32 MiB    22.1 s  2.35 MB/s
+netget:    48 MiB    30.6 s  2.00 MB/s
+netget:    64 MiB    40.9 s  1.63 MB/s
+netget:    80 MiB    55.7 s  1.13 MB/s
+netget:    96 MiB    69.4 s  1.24 MB/s
+netget:   112 MiB   100.2 s  0.54 MB/s
+netget:   128 MiB   106.9 s  2.53 MB/s
+netget:   144 MiB   122.0 s  1.11 MB/s
+netget:   160 MiB   142.6 s  0.82 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+dwc2d: keyboard removed
+```
+
+  (The serial log stopped at 21:26:36.)
+- (3) second devsh every 30 s:
+
+| time | `free` used | `netget.bin` | dwc2d `rx_frames` | rx/tx errors |
+|---|---|---|---|---|
+| 21:24:29 | 186572 | 49887006 | 29338 | 0 / 0 |
+| 21:25:01 | 188236 | 88552524 | 64001 | 0 / 0 |
+| 21:25:39 | 188780 | 141738264 | 99397 | 0 / 0 |
+| 21:26:21 | 189220 | 174441981 | 122256 | 0 / 0 |
+| 21:26:58 to 21:32:02 | no answer (10 tries) | | | |
+
+- **Over the serial console afterwards** (logged in as root at about 21:33):
+  - `uptime` 9m 58s and `free` 184824 used, 555000 free: the system ran on.
+  - `ls -l /scheme/data/netget.bin`: 182400465 bytes.
+  - `/tmp/dwc2d-netstats` frozen at `uptime_ms 167953`: `rx_frames 128439`,
+    `rx_errors 0`, `tx_frames 59314`, `tx_errors 0`, `irqs 110830`.
+  - `ps`: netget (PID 59) still there, blocked. **`bcm2835-sdhostd` ACTTIME
+    2:16.26 in 10 minutes** (the card driver busy most of the time). `redoxfs`
+    (31) SCHTIME 1:27.10. dwc2d 11.0 s, state `US`. netstack 10.7 s.
+  - `cat /scheme/netcfg/ifaces/eth0/addr/list` never returned: netstack is
+    stuck. `throttled` was not read (it was typed behind the stuck command).
+- Power-cycled with the Shelly plug at 21:35 UTC (same image). After the reboot
+  `ls -l /scheme/data/netget.bin`: **182400465** bytes (174 MiB) kept, then
+  removed.
+- No panic line. #167 (the same writes without network) passed. So the card
+  writes alone are fine, but together with the network the USB hub drops. The
+  2.0 W reading and the hub removal point at power to the USB hub/LAN chip, or
+  at dwc2d losing the hub, rather than at redoxfs.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-845-g7590e1c+x8a5e` (icache-default, icache-sync as default kernel patches)
+
+Real Pi 3B+ over netboot. Test 169 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Pass: `icachetest 10000` PASS with 0 stale rounds in all four tests, standard
+checks pass, 0 of 1000 starts failed, and no exception or panic.** Image
+`~/t18-work/image-icd/harddrive.img` (md5 `511ef4ab`), staged with
+`~/t18-work/t3-stage/scripts/netboot.sh` (bootloader md5 `4fccdb94`, as in
+tests 131 and 162).
+
+```
+### icachetest 10000  (68.0 s)
+new-page: 0 of 10000 rounds ran stale code
+same-page: 0 of 10000 rounds ran stale code
+file-map: 0 of 10000 rounds ran stale code
+user-flush: 0 of 10000 rounds ran stale code
+PASS
+```
+
+(test 162 without `icache-sync`: up to 3244 `new-page` and 5349 `same-page`.)
+
+- `scripts/pi-test.py --starts 1000`: version, manifest (present), ps, ps-tty,
+  sdcard pass; **0 of 1000 starts failed**.
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`: **116.99 s,
+  116.87 s, 116.93 s** (test 162 with `icache-sync`: 116.8 s; without: 116.2 to
+  119.1 s).
+- Serial log from the boot to the end: 0 `FATAL`, `exception` or `panicked`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-848-gdc1da3e` without (`+xb3d9`) and with `rt-call-flags` (`+xdd51`) (`rwlock_randtest` hang from 166)
+
+Real Pi 3B+ over netboot. Test 170 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**`rt-call-flags` does not cause the hang. The image without it (A) froze the
+whole Pi twice in 9 runs. The image with it (B) passed 20 of 20.** Each run was
+its own devsh command with a 60 s client timeout. Images
+`~/redox-rpi-t12/keep/rcfbase-dc1da3e.img` (A) and
+`rcf-v0.3.0-dev-848-gdc1da3e+xdd51.img` (B, the image of 166), stable
+bootloader. The banners confirmed each boot (`+xb3d9` with `experiments:
+relibc-tests self-exit-status timesync`; `+xdd51` with `rt-call-flags`).
+
+| image | runs | passed | timed out | after the timeout |
+|---|---|---|---|---|
+| A1 (without) | 1 | 0 | **1** (run 1) | devsh dead, 0 serial bytes since the run started, power cycle 21:56 |
+| B1 (with) | 20 | **20** | 0 | |
+| A2 (without) | 9 | 8 | **1** (run 9) | devsh dead, 0 serial bytes, power cycle 22:09 |
+
+- A passing run takes **1.3–1.5 s** (`real 1.31` to `1.48 s`), not the 11–17 s
+  the row expected; the same for A and B.
+- In both hangs the Pi stopped completely: no devsh answer within 10 s, no new
+  serial output. The serial log around them holds nothing (1 byte). It looks
+  like test 166: a machine-wide stop, not a slow run.
+- With 2 hangs in 10 A runs and 0 in 20 B runs, `rt-call-flags` is not the cause
+  (if anything B looks better, but 20 runs can't show that). Neither image has the
+  futex fix `futex-wait-lock` (#98), the likely next suspect.
+- Stable staged and the Pi power-cycled at the end; stable runs
+  (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, the 168 download again with `throttled`)
+
+Real Pi 3B+ over netboot. Test 171 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**The download completed this time (`382156480 bytes in 385.2 s, 0.99 MB/s`),
+although the USB hub dropped 8 times and came back every time. `throttled` read
+`0x00000000` before, during and after: no undervoltage (bit 16 never set).** Same
+image as #167/#168 (md5 `15e52989`), staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Before: `throttled` `0x00000000`; `/scheme/data` 393.7M used, no old files.
+- Every 30 s from a second devsh (11 readings, 22:12:05 to 22:18:17): `throttled`
+  **`0x00000000` every time**; devsh answered every time. `free` used 185744 →
+  190932, 197688 at the end of the download, 183076 after. `netget.bin`:
+   44819700,  81799239,  137663334,  170732067,  203508243,  237738846,  258632514,  278771868,  319671519,  364532904,  382156480
+  bytes.
+- Each drop on the serial console was `dwc2d: hub 1 port 1: device at address 2
+  removed`, `keyboard removed`, then `hub 1 port 1: device connected`, the whole
+  tree enumerated again, `LAN78xx no link yet`, `network on the adapter at address
+  3`. So dwc2d brought the hub and the network back each time, and TCP carried on.
+  In #168, the same image did not bring it back after its one drop.
+- netget and drop lines in order:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    16 MiB    18.5 s  0.91 MB/s
+netget:    32 MiB    26.0 s  2.24 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    48 MiB    46.4 s  0.82 MB/s
+netget:    64 MiB    54.3 s  2.14 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    80 MiB    77.4 s  0.73 MB/s
+netget:    96 MiB    85.2 s  2.17 MB/s
+netget:   112 MiB    94.9 s  1.73 MB/s
+netget:   128 MiB   106.8 s  1.41 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   144 MiB   133.1 s  0.64 MB/s
+netget:   160 MiB   144.9 s  1.43 MB/s
+netget:   176 MiB   164.7 s  0.85 MB/s
+netget:   192 MiB   182.2 s  0.96 MB/s
+netget:   208 MiB   202.1 s  0.84 MB/s
+netget:   224 MiB   215.7 s  1.24 MB/s
+netget:   240 MiB   225.5 s  1.72 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   256 MiB   281.3 s  0.30 MB/s
+netget:   272 MiB   288.3 s  2.42 MB/s
+netget:   288 MiB   301.9 s  1.24 MB/s
+netget:   304 MiB   318.0 s  1.05 MB/s
+netget:   320 MiB   326.3 s  2.02 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   336 MiB   344.8 s  0.91 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   352 MiB   371.6 s  0.63 MB/s
+netget: 382156480 bytes in 385.2 s, 0.99 MB/s
+```
+
+- After the download: `ls -l` 382156480 bytes; `throttled` `0x00000000`;
+  `/tmp/dwc2d-netstats` `uptime_ms 430142`, `rx_frames 271000`, `rx_errors 0`,
+  `tx_frames 121678`, `tx_errors 0`, `irqs 227065`. `netget.bin` removed.
+- No `Dropped`, `smolnetd` or `sdhost` error line, no panic. The plug read 4.2 to
+  4.3 W during the download.
+- The drops come in the slow 16 MiB steps (0.30 to 0.91 MB/s). The first came
+  right after `HTTP/1.0 200 OK`, before much was written. With no undervoltage
+  flag, a power dip at the hub that the firmware does not flag can't be ruled out,
+  but dwc2d losing the hub under card load is now the more likely cause.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-857-g7ed9070+xa901` (dwc2d hub-drop fix, the 171 download again)
+
+Real Pi 3B+ over netboot. Test 172 (#151 follow-up, USB session), Pi test agent.
+
+**Pass: the download completed (`382156480 bytes in 429.6 s, 0.89 MB/s`) with
+no hub drop at all (#171 on the old image: 8 drops). dwc2d counted 0 USB errors
+and 0 recoveries, and `throttled` stayed `0x00000000`.** Image
+`~/redox-rpi-usb/keep/hubdrop-v0.3.0-dev-857-g7ed9070+xa901.img` (manifest next
+to it; `experiments: dwc2d-netstats netget timesync usb-hub-drop`), staged with
+`~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Serial: 0 `device at address 2 removed` lines; the only `network on the
+  adapter` is the boot's (`LAN78xx link up after 1737 ms`). No `Dropped`,
+  `smolnetd` or panic line.
+- Second devsh every 30 s, 12 readings from 22:20:40 to 22:27:47 (`throttled`,
+  file size, then rc):
+
+| time | throttled | `netget.bin` | rc |
+|---|---|---|---|
+| 22:20:40 | 0x00000000 | 55885428 | rc=0 |
+| 22:21:19 | 0x00000000 | 101310174 | rc=0 |
+| 22:21:57 | 0x00000000 | 136131708 | rc=0 |
+| 22:22:40 | 0x00000000 | 164645694 | rc=0 |
+| 22:23:14 | 0x00000000 | 201046317 | rc=124 |
+| 22:24:09 | 0x00000000 | 221145252 | rc=0 |
+| 22:24:43 | 0x00000000 | 259483101 | rc=0 |
+| 22:25:16 | 0x00000000 | 296764140 | rc=0 |
+| 22:25:55 | 0x00000000 | 326639163 | rc=0 |
+| 22:26:34 | 0x00000000 | 351882966 | rc=0 |
+| 22:27:13 | 0x00000000 | 375474162 | rc=0 |
+| 22:27:47 | 0x00000000 | - | rc=124 |
+
+  The two `rc=124` readings were slow, not lost: at 22:23:14 `throttled` took
+  7.0 s and `free` 10.2 s under the download, then the 25 s limit ran out. At
+  22:27:47 the first connect needed a retry. devsh answered the next reading
+  both times.
+- Near the end (22:27:13): `/tmp/dwc2d-usbstats` `xact_errors 0`, `babbles 0`,
+  `stalls 0`, `toggle_errors 0`, `ahb_errors 0`, `timeouts 0`, `port_events 0`,
+  `root_events 1`, **`recoveries 0`**, `hprt0 0x1405`, `gintsts 0x54000009`;
+  `/tmp/dwc2d-step` `447920 idle`; netstats `rx_frames 266157`, `rx_errors 0`,
+  `tx_frames 107807`, `tx_errors 0`.
+- netget lines from the serial console:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB    12.4 s  1.36 MB/s
+netget:    32 MiB    19.8 s  2.26 MB/s
+netget:    48 MiB    30.1 s  1.64 MB/s
+netget:    64 MiB    49.1 s  0.88 MB/s
+netget:    80 MiB    58.0 s  1.90 MB/s
+netget:    96 MiB    72.0 s  1.20 MB/s
+netget:   112 MiB    85.5 s  1.25 MB/s
+netget:   128 MiB   115.8 s  0.56 MB/s
+netget:   144 MiB   131.0 s  1.11 MB/s
+netget:   160 MiB   153.9 s  0.73 MB/s
+netget:   176 MiB   171.5 s  0.95 MB/s
+netget:   192 MiB   223.5 s  0.32 MB/s
+2026-10-31T22-23-59.316Z [smolnetd@netstack::link::ethernet:246 WARN] Dropped packet on eth0 because
+netget:   208 MiB   237.8 s  1.18 MB/s
+netget:   224 MiB   252.1 s  1.17 MB/s
+netget:   240 MiB   265.6 s  1.24 MB/s
+netget:   256 MiB   280.0 s  1.17 MB/s
+netget:   272 MiB   306.1 s  0.64 MB/s
+netget:   288 MiB   316.4 s  1.63 MB/s
+netget:   304 MiB   341.2 s  0.68 MB/s
+netget:   320 MiB   359.8 s  0.91 MB/s
+netget:   336 MiB   385.7 s  0.65 MB/s
+netget:   352 MiB   419.8 s  0.50 MB/s
+netget: 382156480 bytes in 429.6 s, 0.89 MB/s
+```
+
+- Afterwards `netget.bin` 382156480 bytes, removed; `/scheme/data` 394.2M used.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-855-g81b7717+x8ea9` (image A of 170 plus `futex-wait-lock`)
+
+Real Pi 3B+ over netboot. Test 173 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Fail: `futex-wait-lock` does not stop the freeze. 11 runs passed, then run 12
+froze the whole Pi.** Same as in 170: no devsh, no serial output, power cycle.
+Image `~/redox-rpi-t12/keep/rwfutex-v0.3.0-dev-855-g81b7717+x8ea9.img`, stable
+bootloader; banner `redox-rpi v0.3.0-dev-855-g81b7717+x8ea9`.
+
+- `./bins_dynamic/pthread/rwlock_randtest`, each its own devsh command with a
+  60 s client timeout: runs 1–11 **pass**, `real` 1.27 to 1.43 s.
+- Run 12 (started about 22:33): no result after 65 s, `echo ok` no answer,
+  **0 serial bytes** since the run started. Power-cycled at 22:34:13 with stable
+  staged.
+- `cond_stress` not run (the freeze ended the row).
+- Together: A (170) froze in 2 of 10 runs, B with `rt-call-flags` (170) 0 of
+  20, C with `futex-wait-lock` 1 of 12, and the suite in 166 once. It is neither
+  `rt-call-flags` nor the futex deadlock of `57ccc8f`. The whole machine stops
+  without a word (no panic), which points at the kernel (a lock or IRQ path on
+  aarch64), not at relibc's rwlock.
+
+Stable image restored afterwards.
+
+## 2026-10-31/11-01: hub-drop fix `v0.3.0-dev-857-g7ed9070+xa901` (new) against `v0.3.0-dev-838-g64fa695+x8116` (old), alternating
+
+Real Pi 3B+ over netboot. Test 174 (#151 follow-up, USB session), Pi test agent.
+
+**The new image never dropped the hub (0 in 3 runs); the old one dropped it 12
+and 4 times. But two of the three new-image runs stalled without a drop.**
+Analysis of N2 while it was stalled: a runnable `netget` that never got CPU, and
+a zero TCP window. This looks like a scheduler problem, not USB. `throttled` was
+`0x00000000` before and after every run. Each run on a fresh boot, staged with
+`~/redox-rpi-boot/scripts/netboot.sh`; download `netget …/Qwen3-0.6B-Q4_0.gguf
+/scheme/data/netget.bin --log /scheme/debug`, no 30 s readings.
+
+| run | image | result | last netget line | hub drops / back |
+|---|---|---|---|---|
+| N1 | new | **stalled**, then no devsh after (power cycle 22:58) | `160 MiB 121.4 s 1.11 MB/s` | 0 / 0 |
+| O1 | old | **complete** | `382156480 bytes in 445.0 s, 0.86 MB/s` | 12 / 12 |
+| N2 | new | **stalled** at 208147776 bytes from 23:10 | `192 MiB 137.1 s 0.87 MB/s` | 0 / 0 |
+| O2 | old | **stalled**, then no devsh (power cycle 23:51) | `224 MiB 226.3 s 0.76 MB/s` | 4 / **3**, the last drop not recovered |
+| N3 | new (extra run) | **complete** | `382156480 bytes in 345.1 s, 1.11 MB/s` | 0 / 0 |
+
+**N2 during the stall (23:26–23:29, devsh worked):**
+- `/tmp/dwc2d-usbstats`: all error counters 0, `port_events 0`, `root_events 1`,
+  `recoveries 0`, `hprt0 0x1005`. `/tmp/dwc2d-step` `1159257 idle`.
+  `throttled` `0x00000000`.
+- `netget` (PID 55) `UR` on CPU #0, ACTTIME 0.94 s and SCHTIME 7.23 s,
+  **unchanged in two samples 10 s apart**. `bcm2835-sdhostd` 2:16.44 and the
+  user redoxfs (8.44 s / 1:28.23) unchanged too; initfs redoxfs 15.58 → 16.13 s.
+- Host side (`ss -tin`): `Send-Q 390987`, `backoff:15`, `lastsnd:1032951` ms,
+  `lastack:73299` ms. The Pi still answered window probes but took no data,
+  because netget never ran to read.
+- I did not get the full `/scheme/sys/context` (dwc2d's CPU) before N2's run
+  timed out. N3 was added to capture it on a stall, but N3 completed.
+
+So `usb-hub-drop` stops the hub drops (0 of 3 runs against 16 drops in 2 old
+runs). The stalls in N1 and N2 (and the end of O2) have another cause: the
+scheduler freeze/starvation seen in #170 and #173 is the likely one.
+
+Stable image restored afterwards (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+## 2026-11-01: `v0.3.0-dev-859-g56364c4+xc41d` (A, main) and `v0.3.0-dev-886-g548e397+xc41d` (B, PR #73 write coalescing) (card write speed by write size)
+
+Real Pi 3B+ over netboot. Test 175 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Data check passes: every file's sha256 matches its source, on both images.
+Coalescing (B) makes small writes much faster and cuts the card writes for them
+by about 23 times.** 4 KiB writes go from 121–240 kB/s to 2.7–2.9 MB/s, and
+64 KiB from 2.4–2.7 to 6.1–6.5 MB/s. 1 MiB writes get a little slower (11–12 →
+7.8–8.7 MB/s). Images from `~/redox-rpi-sd/keep/` with manifests (match), stable
+bootloader, each on a fresh boot. Clocks before and after on both: `arm
+1400000000 1400000000`, `core 250000000 400000000`. `/scheme/data` 394.5M used
+before each.
+
+| write | A pass 1 | A pass 2 | B pass 1 | B pass 2 |
+|---|---|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 34.7 s, **121 kB/s** | 17.47 s, 240 kB/s | 1.43 s, **2.9 MB/s** | 1.55 s, 2.7 MB/s |
+| 64 KiB × 256 (16 MiB) | 6.16 s, 2.7 MB/s | 7.12 s, 2.4 MB/s | 2.60 s, **6.5 MB/s** | 2.73 s, 6.1 MB/s |
+| 1 MiB × 16 (16 MiB) | 1.44 s, **12 MB/s** | 1.57 s, 11 MB/s | 2.15 s, 7.8 MB/s | 1.93 s, 8.7 MB/s |
+
+- sha256: `/tmp/r16` `94b79f96…`, its first 4 MiB `2fae7622…`. Every 64 KiB and
+  1 MiB file `94b79f96…`, every 4 KiB file `2fae7622…`. **All match.**
+- `bcm2835-sdhostd` statistics. A prints a line every 5 s while busy; B prints
+  one line per busy period (`28 s:`, `22 s:` …). Lines come at the end of an
+  interval, so they don't split exactly at the dd boundaries. The read lines with
+  about 33000–37000 blocks are the `sha256sum` reads.
+- **4 KiB write, pass 1:** A wrote 1755 + 1833 + 1075 + 2314 + 164 + 127 + 993
+  requests, **232744 blocks** (about 114 MiB on the card for a 4 MiB file),
+  about 31 s of write time. B wrote 275 requests, **10136 blocks** (5 MiB),
+  1022 ms (397 ms busy).
+- All lines in order:
+
+A:
+```
+bcm2835-sdhostd: 43 s: read 532 requests 4242 blocks 245 ms; write 25 requests 200 blocks 37 ms, 16 ms of it busy
+bcm2835-sdhostd: 5 s: read 140 requests 1864 blocks 76 ms; write 1755 requests 48760 blocks 4416 ms, 1387 ms of it busy
+bcm2835-sdhostd: 5 s: read 491 requests 6256 blocks 262 ms; write 1833 requests 51864 blocks 4190 ms, 1461 ms of it busy
+bcm2835-sdhostd: 5 s: read 279 requests 3704 blocks 145 ms; write 1075 requests 30432 blocks 4536 ms, 897 ms of it busy
+bcm2835-sdhostd: 5 s: read 665 requests 9600 blocks 351 ms; write 2314 requests 65376 blocks 3950 ms, 1647 ms of it busy
+bcm2835-sdhostd: 5 s: read 54 requests 1224 blocks 43 ms; write 164 requests 3792 blocks 4941 ms, 201 ms of it busy
+bcm2835-sdhostd: 5 s: read 37 requests 296 blocks 18 ms; write 127 requests 3800 blocks 4983 ms, 444 ms of it busy
+bcm2835-sdhostd: 18 s: read 273 requests 3784 blocks 151 ms; write 993 requests 28720 blocks 4116 ms, 741 ms of it busy
+bcm2835-sdhostd: 5 s: read 389 requests 10784 blocks 341 ms; write 773 requests 23480 blocks 2268 ms, 735 ms of it busy
+bcm2835-sdhostd: 17 s: read 349 requests 3512 blocks 173 ms; write 1306 requests 40256 blocks 2909 ms, 1043 ms of it busy
+bcm2835-sdhostd: 8 s: read 620 requests 36704 blocks 995 ms; write 9 requests 72 blocks 9 ms, 4 ms of it busy
+bcm2835-sdhostd: 20 s: read 46 requests 368 blocks 26 ms; write 249 requests 33736 blocks 1212 ms, 306 ms of it busy
+bcm2835-sdhostd: 6 s: read 210 requests 33424 blocks 795 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 5 s: read 158 requests 1512 blocks 72 ms; write 1722 requests 47008 blocks 2831 ms, 1006 ms of it busy
+bcm2835-sdhostd: 5 s: read 716 requests 9640 blocks 376 ms; write 2223 requests 62896 blocks 3949 ms, 1542 ms of it busy
+bcm2835-sdhostd: 5 s: read 762 requests 9616 blocks 387 ms; write 2181 requests 61616 blocks 3955 ms, 1615 ms of it busy
+bcm2835-sdhostd: 22 s: read 810 requests 8768 blocks 379 ms; write 2144 requests 61296 blocks 3009 ms, 1198 ms of it busy
+bcm2835-sdhostd: 5 s: read 324 requests 10264 blocks 312 ms; write 432 requests 12776 blocks 2478 ms, 467 ms of it busy
+bcm2835-sdhostd: 23 s: read 601 requests 5888 blocks 274 ms; write 1647 requests 50960 blocks 3574 ms, 1312 ms of it busy
+bcm2835-sdhostd: 8 s: read 693 requests 37288 blocks 1003 ms; write 9 requests 72 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 23 s: read 41 requests 328 blocks 20 ms; write 250 requests 33744 blocks 1348 ms, 347 ms of it busy
+```
+
+B:
+```
+bcm2835-sdhostd: 48 s: read 580 requests 4626 blocks 269 ms; write 25 requests 200 blocks 292 ms, 65 ms of it busy
+bcm2835-sdhostd: 28 s: read 0 requests 0 blocks 0 ms; write 275 requests 10136 blocks 1022 ms, 397 ms of it busy
+bcm2835-sdhostd: 22 s: read 56 requests 448 blocks 26 ms; write 1058 requests 40328 blocks 2100 ms, 868 ms of it busy
+bcm2835-sdhostd: 6 s: read 323 requests 34328 blocks 840 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 6 s: read 2 requests 16 blocks 2 ms; write 10 requests 80 blocks 11 ms, 5 ms of it busy
+bcm2835-sdhostd: 20 s: read 27 requests 216 blocks 15 ms; write 249 requests 33736 blocks 1933 ms, 364 ms of it busy
+bcm2835-sdhostd: 6 s: read 196 requests 33312 blocks 797 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 22 s: read 15 requests 120 blocks 18 ms; write 284 requests 10208 blocks 1113 ms, 502 ms of it busy
+bcm2835-sdhostd: 6 s: read 0 requests 0 blocks 0 ms; write 8 requests 64 blocks 10 ms, 3 ms of it busy
+bcm2835-sdhostd: 26 s: read 53 requests 424 blocks 25 ms; write 1047 requests 40240 blocks 2246 ms, 790 ms of it busy
+bcm2835-sdhostd: 8 s: read 451 requests 35352 blocks 901 ms; write 10 requests 80 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 25 s: read 46 requests 368 blocks 28 ms; write 249 requests 33736 blocks 1701 ms, 484 ms of it busy
+```
+
+- No panic or error on the serial console.
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-894-g593bd2c+xccf1` (image C of 173 plus `pi-heartbeat`)
+
+Real Pi 3B+ over netboot. Test 176 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent.
+
+**No freeze: 40 of 40 `rwlock_randtest` runs passed** (`real` 1.25 to 1.45 s),
+each its own devsh command with a 60 s client timeout. All four CPUs beat every
+10 s the whole time. 173 froze at run 12 on the same image without the
+heartbeat, so the heartbeat may change the timing enough to hide the freeze.
+Image `~/redox-rpi-t12/keep/hb-v0.3.0-dev-894-g593bd2c+xccf1.img`, stable
+bootloader.
+
+- Heartbeat lines after boot and at the end (`[hb <cpu> <n> s<sched> w<switch> i<idle> p<pit>]`):
+
+```
+[hb 1 1 s1284 w96 i1188 p0]
+[hb 2 1 s1647 w426 i1220 p0]
+[hb 3 1 s1523 w194 i1329 p0]
+[hb 0 1 s1706 w854 i839 p0]
+[hb 1 2 s1307 w3 i1304 p0]
+[hb 2 2 s1308 w0 i1308 p0]
+[hb 3 2 s1474 w411 i1063 p0]
+[hb 0 2 s2722 w1605 i1116 p0]
+…
+[hb 1 36 s1739 w675 i1061 p0]
+[hb 2 36 s2102 w146 i1956 p0]
+[hb 3 36 s2124 w168 i1956 p0]
+[hb 0 36 s2957 w1995 i959 p0]
+```
+
+  Every CPU scheduled 1300 to 3000 times per 10 s with `p0`–`p2`; none showed
+  `s0`.
+- One `rwlock_randtest` run (PID 216, CPU #3, about beat 23) hit `FATAL: Not an
+  SVC induced synchronous exception (ty=111100)`, `ESR_EL1 F2000001` (a `brk`
+  trap, as from an abort or assert), `FAR_EL1 0x583000`, `ELR_EL1 0x516C4`, then
+  `UNHANDLED EXCEPTION … NAME ./bins_dynamic/pthread/rwlock_ra`. All 40 devsh runs
+  still reported `rc=0`, so it was probably a thread of a run or its exit. Worth
+  a look.
+- No freeze, so no `/scheme/sys/context` capture and no power cycle. Stable
+  staged and the Pi reset into it (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-898-g34bafa2+x03d3` (C, `sdhost-bigreq` on coalescing) and the #175 images A and B again (larger sdhost commands)
+
+Real Pi 3B+ over netboot. Test 177 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Pass: every sha256 matches, and no `bcm2835-sdhostd: write of block …` or
+`read of block …` line on any image.** But `sdhost-bigreq` changes almost
+nothing: 1 MiB writes on C average **130.5 blocks per request** (A 127.7, B
+129.2), so few requests are larger than 128 blocks. 1 MiB write speed is the same
+on all three within the scatter. Images from `~/redox-rpi-sd/keep/` with
+manifests, stable bootloader, each on a fresh boot (C 00:19, A 00:25, B 00:29
+UTC). Clocks before and after on all: `core 250000000 400000000`. `/tmp/r16`
+sha256 `6b359fc8…`, its first 4 MiB `e14fc5a4…`.
+
+**C only**
+
+| step | dd | sha256 |
+|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 1.08 s, **3.9 MB/s** (B in #175: 2.7–2.9) | `e14fc5a4…` match |
+| 64 KiB × 256, 1 | 5.35 s, 3.1 MB/s | `6b359fc8…` match |
+| 64 KiB × 256, 2 | 3.17 s, 5.3 MB/s | match |
+| 64 MiB file, 4 × 16 MiB writes | 1.58, 1.53, 1.56, 5.96 s (11, 11, 11, 2.8 MB/s) | see below |
+| 64 MiB read to `/dev/null` | 3.35 s, **20 MB/s** | |
+
+- 64 MiB readback: the row's `dd … skip=… count=16 | sha256sum` gave
+  `0+16 records out`, `1048576 bytes`: **a pipe takes 64 KiB per write, and dd
+  does not retry the short writes**, so only 1 MiB reached `sha256sum` (all four
+  `c8a4fdbf…`). That is a pipe/dd effect, not the card. Rechecked on a fresh
+  boot of C through a file: four 16 MiB writes (10–11 MB/s), then `dd
+  if=big.bin of=/tmp/p bs=1048576 skip=<16×i> count=16; sha256sum /tmp/p`: **all
+  four `6b359fc8…`, match** (reads 16–17 MB/s). `big.bin` 67108864 bytes, removed.
+
+**1 MiB × 16 (16 MiB), 5 times each**
+
+| image | 1 | 2 | 3 | 4 | 5 | sha256 |
+|---|---|---|---|---|---|---|
+| A (main) | 10 MB/s | 11 | 4.5 | 11 | 9.9 | all match |
+| B (coalescing) | 11 MB/s | 9.7 | 5.3 | 10 | 6.3 | all match |
+| C (+ bigreq) | 8.5 MB/s | 7.7 | 9.6 | 6.4 | 4.1 | all match |
+
+(dd times: A 1.66, 1.57, 3.72, 1.56, 1.69 s; B 1.59, 1.72, 3.14, 1.62, 2.68 s; C 1.98, 2.19, 1.74, 2.60, 4.12 s.)
+
+- So the #175 result (B slower than A at 1 MiB) does not hold: over 5 repeats A
+  and B are alike, with one slow run each. C is a little slower on average.
+- sdhost statistics for the 1 MiB writes (sum of the `write` parts): A 1061
+  requests / 135464 blocks, B 1310 / 169200, C 1296 / 169088, about 128–130
+  blocks per request on all three. C's 4 KiB and 64 KiB steps: 2411 requests /
+  90952 blocks (37.7 per request).
+- `bcm2835-sdhostd` lines per step are kept on homenodellm
+  (`~/pitest-tools/t177/*-stats.txt`). No error line, no panic.
+
+Stable image restored afterwards.

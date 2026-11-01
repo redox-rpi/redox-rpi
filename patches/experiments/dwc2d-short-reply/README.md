@@ -24,9 +24,9 @@ have the same code; `usb-hotplug` has it at line 216.
   request fails with `Error::Short` instead of panicking. A device behind
   a hub that still fails is logged and skipped; the others come up as
   before.
-- It applies on main. On top of `usb-hotplug` and `dwc2d-boottime` (base
-  `0031`–`0034`) it needs a 3-way merge in `enumerate.rs`, so whichever
-  of PR #84 and PR #68 merges second refreshes `0037` against the other.
+- PR #84 merged first; PR #68 (hotplug, base `0031`–`0033`) refreshed
+  `0037` against those, since both change `enumerate.rs`. Same code, other
+  context lines.
 
 ## Tests
 
