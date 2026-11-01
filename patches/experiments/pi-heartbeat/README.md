@@ -52,7 +52,23 @@ often that CPU's `select_next_context` passed over a queued context because
 its context lock was taken (`sl`), its address space lock was taken (`sa`),
 or `update_runnable` said Skip (`sr`: running elsewhere, currently scheduled,
 affinity). The counter that grows from one dump to the next names the reason
-a queued context is not picked. It takes the locks with `try_read`,
+a queued context is not picked. `sv` counts entries skipped by the vtime
+filter, `ss` entries that are the idle or the current sched context. After
+the CPU lines each CPU's real run queue follows: `[hbq <cpu> v<v> n<entries>
+tw<total weight>]`, then per entry (at most 8) `[hbq <cpu> vt<vtime>
+id<ctxt id> <pid> <name> own|stale]` (`stale`: the context's own queue key
+is a different entry). Besides `baseline` and the two triggers, a `timed`
+list comes every 2nd beat (about every 2 min), at most 12 times.
+
+The scheduler also checks virtual time at the five places that change it:
+the wakeup in `schedule()` (1), the previous context's account in
+`select_next_context` (2), work stealing (3), `v += v_advance` (4) and
+`v = ineligible_min_vtime` (5). The first value above 2^62 at each place is
+kept with its inputs and written at the next beat as `[hbv <place> cpu<n>
+<value> <a> <b> <c>]`: 1 old vtime, queue v, context id; 2 old vtime (or the
+penalty), elapsed ns (or the weight), queue v; 3 old vtime, the other
+queue's v, own v; 4 old v, elapsed ns, total weight; 5 old v, whether the
+previous context was runnable, elapsed ns. It takes the locks with `try_read`,
 so a locked list or context shows as `[hbctx ... locked]` instead of a
 deadlock.
 
