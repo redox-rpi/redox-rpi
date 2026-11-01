@@ -6523,3 +6523,19 @@ beat 7: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2209 q0 sl850 sa271 sr1332] [h
 - **Power cycles:** 06:56:45, 07:04:44.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-915-gc9b7a47+x913e` (`rwlock_randtest` with the futex fix and the heartbeat)
+
+Real Pi 3B+ over netboot. Test 186 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent. Stable bootloader, staged 07:12.
+80 single runs as in 184: each run is its own devsh command, with a 60 s client timeout and stderr kept.
+
+**Pass: 80 of 80 runs, all `rc=0`, no freeze.**
+- No `RELIBC PANIC` in any run's stderr, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial.
+- Run times: median 1.37 s, range 1.28–3.40 s. Run 41 took 3.40 s and run 11 took 2.42 s; all others took ≤ 1.54 s.
+- **Heartbeat:** 10 beats per CPU, plus the baseline dump at beat 2.
+  - One `[hb stall 0 seen-by 2 t33997 s74738]` came between beats 5 and 6: CPU 2 saw CPU 0 take no timer interrupt for 2 s.
+  - CPU 0 kept beating afterwards (`[hb 0 6 s13485 w7386 …]` … `[hb 0 9 …]`).
+  - No `runnable-on-idle-cpu` dump and no `[hb nosched …]`.
+- Note: the freeze of 184 (run 58) did not come back in 80 runs. With 170/173/184 it showed about once in 12–60 runs, so this is a hint, not proof.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
