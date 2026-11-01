@@ -31,6 +31,10 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0043`: `ld.so` finds a program whose argv[0] starts with "-"
   (a login shell, "-ion"); it looks the program up by argv[0] and stopped
   with "failed to locate '-ion'".
+- relibc `0045`: quiet `madvise` hints (`MADV_DONTDUMP` from OpenSSL on every
+  connection), `getsockopt` of `IP_TOS` and `TCP_NODELAY` reports 0 (netstack's
+  state: TOS 0, Nagle on) instead of ENOSYS, `setsockopt` of both succeeds
+  without an INFO line (#109). Real `TCP_NODELAY` needs netstack support.
 - base `0040` (after the default base patches): `procmgr` sends SIGCHLD
   for an exited process without the permission check of `kill()`. The
   pre-authentication child runs as user `sshd`; its SIGCHLD to the root
@@ -188,3 +192,10 @@ Pi test #120 (`v0.3.0-dev-407-g741b667+x4ec1`, 2026-10-30) passed:
 `ssh-keyscan` returns 3 keys with and without `-t`; key login with the key
 only on the data partition works, also after a reset, with the same host key
 fingerprints; `ssh-session.exp` passes. Report: `docs/test-reports.md` on main.
+
+## Pi test #132, no TODO lines (2026-10-31)
+
+Branch `relibc-quiet` (#109). Pi test #132 (`v0.3.0-dev-410-g313d292+x4ec1`)
+passed: key logins and `ssh-session.exp` work, and the serial log has no
+`TODO: madvise`, `getsockopt` or `setsockopt` lines from sshd any more.
+Report: `docs/test-reports.md` on main.
