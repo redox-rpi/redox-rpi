@@ -10,6 +10,10 @@
 
 ## Next
 
+- [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
+  answer ping (test 164): netstack left out smoltcp's feature
+  `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
+  draft PR); QEMU 10 of 10 answered, Pi test 196 queued.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
