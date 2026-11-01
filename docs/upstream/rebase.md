@@ -132,3 +132,34 @@ Five pull requests add `redoxfs` to `config/upstream.lock` (#66, #72, #73,
   merge, so today it stops at base `0001`, and after that patch it checks
   nothing more. The per-patch check here (each patch, 3-way, reverse) was a
   one-off script and is not in the repository yet.
+
+## Update 2026-11-01: fdt 0.2 in base, storage patches
+
+Checked by the SD Card & Storage session against base `8424d392`
+(2026-10-31) and redoxfs master `5ba45a6`, each patch in order with a 3-way
+merge (the one-off check, as above).
+
+- **base moved to fdt `0.2.0-alpha3`** (`919f8268` "Update to fdt
+  0.2.0-alpha3", `Cargo.toml`: `fdt = "0.2.0-alpha3"`). Upstream's own
+  drivers changed with it: `reg.starting_address as usize` became
+  `reg.address`, and `ranges()` now needs
+  `.iter::<usize, usize, usize>()` with `Result` items and `len` instead of
+  `size`. **Every base patch of ours that reads the devicetree uses the old
+  API**: `0001` (dwc2d), `0018` (rpi-firmwared), `0025` (bcm2835-sdhostd),
+  `0045`/`0047`/`0048` (GPIO, I2C, SPI). They may still apply, but they
+  won't compile against the new base. Our own `fdt` pin (`8fa4388`, with
+  patch `fdt/0001`) is then unused by base. So the next lock move is no
+  longer just new line numbers: each of those drivers needs a small port to
+  fdt 0.2, by its owner.
+- 3-way results on base `8424d392`, all default patches in order: **`0015`**
+  (sdhcid pin routing) conflicted on the ioremap `println` that upstream
+  changed. Fixed on branch `storage-upstream`: the call moved into the init
+  block, and it now applies to both the pinned and the newest base. Still
+  conflicting: `0024` (getty) and `0045`, `0047`, `0048` (GPIO, I2C, SPI,
+  workspace lines). `0001` and `0018` apply with 3-way (PR #124 makes them
+  apply as they are). The sdhost patches `0025`–`0028` apply.
+- **redoxfs master** (`5ba45a6`, 4 commits after our pin `db847d87`) is the
+  version that broke Unix sockets (PR #146). `0036`, `0038` and `0039`
+  apply; `0037` conflicts on import lines only (the 2024 edition commit).
+  Nothing to do until upstream fixes the sockets.
+
