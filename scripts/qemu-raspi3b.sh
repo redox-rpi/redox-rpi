@@ -25,6 +25,10 @@
 #                     QEMU's hub is full speed, and dwc2d has no split bulk
 #                     transfers. Needs read-write access to the device node
 #                     (udev rule, see patches/experiments/rtl8152/README.md)
+#   --device <spec>   add this QEMU device (repeatable), e.g.
+#                     ds1338,bus=i2c-bus.1,address=0x68 for a clock on I2C
+#                     bus 1 (QEMU has no DS3231; the DS1338 has the same
+#                     time registers)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
 #   --test            boot without user input and exit 0 once every --expect
@@ -68,6 +72,7 @@ data=no
 usb_net=no
 usb_host=""
 monitor=(-monitor none)
+devices=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -81,6 +86,7 @@ while [ $# -gt 0 ]; do
         --uboot) uboot="$2"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
+        --device) devices+=(-device "$2"); shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -174,6 +180,7 @@ qemu=(qemu-system-aarch64
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
     -display none "${monitor[@]}"
+    ${devices[@]+"${devices[@]}"}
     -usb)
 if [ -n "$usb_host" ]; then
     if [ "$usb_net" = yes ]; then

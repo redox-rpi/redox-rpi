@@ -1,0 +1,621 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:15:51 +0100
+Subject: [PATCH] bcm2835-i2cd: I2C bus 1 of the Raspberry Pi as a scheme
+
+/scheme/i2c/1/scan lists the addresses that answer; /scheme/i2c/1/<addr>
+reads and writes the device's registers at the file offset. GPIO 2 and 3
+go to ALT0 through bcm2835-gpiod, SCL is 100 kHz from the firmware's core
+clock. Polled BSC1, no interrupts.
+
+Refs #39
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                            |  41 ++++
+ Cargo.toml                            |   1 +
+ Makefile                              |   2 +-
+ drivers/bcm2835-i2cd/Cargo.toml       |  18 ++
+ drivers/bcm2835-i2cd/src/bsc.rs       | 154 +++++++++++++
+ drivers/bcm2835-i2cd/src/main.rs      | 308 ++++++++++++++++++++++++++
+ init.initfs.d/40_drivers.target       |   1 +
+ init.initfs.d/41_bcm2835-i2cd.service |   9 +
+ 8 files changed, 533 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/bcm2835-i2cd/Cargo.toml
+ create mode 100644 drivers/bcm2835-i2cd/src/bsc.rs
+ create mode 100644 drivers/bcm2835-i2cd/src/main.rs
+ create mode 100644 init.initfs.d/41_bcm2835-i2cd.service
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 44910fd..a5f72da 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -254,2 +254,28 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+ 
++[[package]]
++name = "bcm2835-gpiod"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
++[[package]]
++name = "bcm2835-i2cd"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+@@ -744,3 +770,5 @@ dependencies = [
+  "fdt 0.2.0-alpha1",
++ "inputd",
+  "libredox",
++ "orbclient",
+  "redox_syscall 0.9.5",
+@@ -2211,2 +2239,15 @@ dependencies = [
+ 
++[[package]]
++name = "rpi-firmwared"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+diff --git a/Cargo.toml b/Cargo.toml
+index 5d73326..d8958bc 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -57,2 +57,3 @@ members = [
+     "drivers/bcm2835-gpiod",
++    "drivers/bcm2835-i2cd",
+     "drivers/rpi-firmwared",
+diff --git a/Makefile b/Makefile
+index 7ad0f20..4692458 100644
+--- a/Makefile
++++ b/Makefile
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
+ endif
+diff --git a/drivers/bcm2835-i2cd/Cargo.toml b/drivers/bcm2835-i2cd/Cargo.toml
+new file mode 100644
+index 0000000..f65ebaa
+--- /dev/null
++++ b/drivers/bcm2835-i2cd/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "bcm2835-i2cd"
++description = "I2C (BSC) controller of the Raspberry Pi (BCM2835/BCM2837)"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../common" }
++daemon = { path = "../../daemon" }
++scheme-utils = { path = "../../scheme-utils" }
++
++libredox.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/bcm2835-i2cd/src/bsc.rs b/drivers/bcm2835-i2cd/src/bsc.rs
+new file mode 100644
+index 0000000..bdde046
+--- /dev/null
++++ b/drivers/bcm2835-i2cd/src/bsc.rs
+@@ -0,0 +1,154 @@
++//! The BSC (Broadcom Serial Controller) I2C master of the BCM2835 and
++//! BCM2837 (BCM2835 ARM Peripherals, chapter 3). Polled, 16-byte FIFO.
++
++use std::time::{Duration, Instant};
++
++const C: usize = 0x00;
++const S: usize = 0x04;
++const DLEN: usize = 0x08;
++const A: usize = 0x0c;
++const FIFO: usize = 0x10;
++const DIV: usize = 0x14;
++
++const C_I2CEN: u32 = 1 << 15;
++const C_ST: u32 = 1 << 7;
++const C_CLEAR: u32 = 0b11 << 4;
++const C_READ: u32 = 1 << 0;
++
++const S_CLKT: u32 = 1 << 9;
++const S_ERR: u32 = 1 << 8;
++const S_RXD: u32 = 1 << 5;
++const S_TXD: u32 = 1 << 4;
++const S_DONE: u32 = 1 << 1;
++
++/// Longest transfer: a register page of 256 bytes, plus its address.
++pub const MAX_LEN: usize = 257;
++/// At 100 kHz a byte takes 90 µs; this is far more than any transfer here.
++const TIMEOUT: Duration = Duration::from_millis(100);
++
++#[derive(Debug, PartialEq)]
++pub enum Error {
++    /// No device answered at the address, or it refused a byte.
++    Nack,
++    /// A device held the clock low for too long.
++    ClockStretch,
++    Timeout,
++}
++
++pub struct Bsc {
++    regs: *mut u32,
++}
++
++impl Bsc {
++    /// `regs` points at the C register.
++    pub fn new(regs: *mut u32) -> Self {
++        Self { regs }
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    /// Sets the SCL frequency from the core clock that drives the BSC.
++    pub fn set_speed(&self, core_hz: u32, scl_hz: u32) -> u32 {
++        let mut div = core_hz.div_ceil(scl_hz);
++        // The divider is rounded down to an even number by the hardware.
++        if div % 2 == 1 {
++            div += 1;
++        }
++        let div = div.clamp(2, 0xfffe);
++        self.write(DIV, div);
++        core_hz / div
++    }
++
++    /// Clears the FIFO and the status flags, sets address and length.
++    fn start(&self, address: u8, len: usize, flags: u32) {
++        self.write(C, C_CLEAR);
++        self.write(S, S_CLKT | S_ERR | S_DONE);
++        self.write(A, u32::from(address));
++        self.write(DLEN, len as u32);
++        self.write(C, C_I2CEN | C_ST | flags);
++    }
++
++    /// Ends a transfer: error flags, then clear for the next one.
++    fn finish(&self, status: u32) -> Result<(), Error> {
++        self.write(S, S_CLKT | S_ERR | S_DONE);
++        self.write(C, C_CLEAR);
++        if status & S_ERR != 0 {
++            Err(Error::Nack)
++        } else if status & S_CLKT != 0 {
++            Err(Error::ClockStretch)
++        } else {
++            Ok(())
++        }
++    }
++
++    pub fn write_bytes(&self, address: u8, data: &[u8]) -> Result<(), Error> {
++        assert!(!data.is_empty() && data.len() <= MAX_LEN);
++        self.start(address, data.len(), 0);
++        let deadline = Instant::now() + TIMEOUT;
++        let mut sent = 0;
++        loop {
++            let status = self.read(S);
++            while sent < data.len() && self.read(S) & S_TXD != 0 {
++                self.write(FIFO, u32::from(data[sent]));
++                sent += 1;
++            }
++            if status & (S_DONE | S_ERR | S_CLKT) != 0 {
++                return self.finish(status);
++            }
++            if Instant::now() > deadline {
++                let _ = self.finish(status);
++                return Err(Error::Timeout);
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    pub fn read_bytes(&self, address: u8, buf: &mut [u8]) -> Result<(), Error> {
++        assert!(!buf.is_empty() && buf.len() <= MAX_LEN);
++        self.start(address, buf.len(), C_READ);
++        let deadline = Instant::now() + TIMEOUT;
++        let mut got = 0;
++        loop {
++            let status = self.read(S);
++            while got < buf.len() && self.read(S) & S_RXD != 0 {
++                buf[got] = self.read(FIFO) as u8;
++                got += 1;
++            }
++            if status & (S_ERR | S_CLKT) != 0 || (status & S_DONE != 0 && got == buf.len()) {
++                return self.finish(status);
++            }
++            if Instant::now() > deadline {
++                let _ = self.finish(status);
++                return Err(Error::Timeout);
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Reads registers from `reg` on: the register address as a write, then
++    /// a read (with a stop between them, which the DS3231 and most sensors
++    /// accept).
++    pub fn read_registers(&self, address: u8, reg: u8, buf: &mut [u8]) -> Result<(), Error> {
++        self.write_bytes(address, &[reg])?;
++        self.read_bytes(address, buf)
++    }
++
++    pub fn write_registers(&self, address: u8, reg: u8, data: &[u8]) -> Result<(), Error> {
++        let mut message = Vec::with_capacity(data.len() + 1);
++        message.push(reg);
++        message.extend_from_slice(data);
++        self.write_bytes(address, &message)
++    }
++
++    /// Whether a device answers at `address`: a one-byte read, like
++    /// `i2cdetect -r`.
++    pub fn probe(&self, address: u8) -> bool {
++        self.read_bytes(address, &mut [0]).is_ok()
++    }
++}
+diff --git a/drivers/bcm2835-i2cd/src/main.rs b/drivers/bcm2835-i2cd/src/main.rs
+new file mode 100644
+index 0000000..039fe39
+--- /dev/null
++++ b/drivers/bcm2835-i2cd/src/main.rs
+@@ -0,0 +1,308 @@
++//! I2C bus 1 of the Raspberry Pi (BSC1 on GPIO 2 and 3, header pins 3 and
++//! 5), as a scheme:
++//!
++//! - `/scheme/i2c/1/scan`: the addresses that answer, one per line in hex,
++//!   like `i2cdetect -r`
++//! - `/scheme/i2c/1/<address>` (two hex digits, `03` to `77`): the device's
++//!   registers. Reading or writing at offset N reads or writes from
++//!   register N on: the register number as a write, then the transfer. So
++//!   `cat` dumps all 256 registers. No transfers without a register number
++//!   yet.
++//!
++//! At start the driver sets GPIO 2 and 3 to ALT0 through `bcm2835-gpiod`
++//! and the clock to 100 kHz from the core clock that `rpi-firmwared`
++//! reports.
++
++use std::process;
++
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, ENXIO, EROFS, ETIMEDOUT};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
++
++mod bsc;
++
++use bsc::Bsc;
++
++/// Bus address of BSC1, used if the devicetree has none.
++const BSC1_BUS_ADDR: usize = 0x7e80_4000;
++const PAGE_SIZE: usize = 4096;
++const BUS: &str = "1";
++/// The pins of BSC1 and their function.
++const PINS: &[u32] = &[2, 3];
++const SCL_HZ: u32 = 100_000;
++/// Core clock of the Pi 3, if `rpi-firmwared` does not say.
++const DEFAULT_CORE_HZ: u32 = 250_000_000;
++/// Register space of a device file.
++const REGISTERS: u64 = 256;
++
++enum Handle {
++    Root,
++    Top,
++    Bus,
++    File(Vec<u8>),
++    Device(u8),
++}
++
++struct I2cScheme {
++    bsc: Bsc,
++    handles: HandleMap<Handle>,
++}
++
++fn error(err: bsc::Error) -> Error {
++    Error::new(match err {
++        bsc::Error::Nack => ENXIO,
++        bsc::Error::ClockStretch => EIO,
++        bsc::Error::Timeout => ETIMEDOUT,
++    })
++}
++
++/// `"68"` to 0x68: two hex digits, the 7-bit addresses that are not
++/// reserved.
++fn parse_address(text: &str) -> Option<u8> {
++    let address = u8::from_str_radix(text, 16).ok()?;
++    (text.len() == 2 && (0x03..=0x77).contains(&address) && text == format!("{address:02x}")).then_some(address)
++}
++
++impl I2cScheme {
++    fn scan(&self) -> String {
++        (0x03..=0x77u8)
++            .filter(|&address| self.bsc.probe(address))
++            .map(|address| format!("{address:02x}\n"))
++            .collect()
++    }
++}
++
++impl SchemeSync for I2cScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        // O_RDWR includes the O_WRONLY bit.
++        let write = flags & O_WRONLY != 0;
++        let handle = match path.trim_matches('/').split('/').collect::<Vec<_>>()[..] {
++            [""] => Handle::Top,
++            [BUS] => Handle::Bus,
++            [BUS, "scan"] if write => return Err(Error::new(EROFS)),
++            [BUS, "scan"] => Handle::File(self.scan().into_bytes()),
++            [BUS, address] => Handle::Device(parse_address(address).ok_or(Error::new(ENOENT))?),
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++                let len = buf.len().min(data.len() - start);
++                buf[..len].copy_from_slice(&data[start..start + len]);
++                Ok(len)
++            }
++            &Handle::Device(address) => {
++                if offset >= REGISTERS || buf.is_empty() {
++                    return Ok(0);
++                }
++                let len = buf.len().min((REGISTERS - offset) as usize);
++                self.bsc.read_registers(address, offset as u8, &mut buf[..len]).map_err(error)?;
++                Ok(len)
++            }
++            _ => Err(Error::new(EISDIR)),
++        }
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let &Handle::Device(address) = self.handles.get(id)? else {
++            return Err(Error::new(EBADF));
++        };
++        if buf.is_empty() {
++            return Ok(0);
++        }
++        if offset + buf.len() as u64 > REGISTERS {
++            return Err(Error::new(EINVAL));
++        }
++        self.bsc.write_registers(address, offset as u8, buf).map_err(error)?;
++        Ok(buf.len())
++    }
++
++    // Shells truncate a file before writing to it; registers stay.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Device(_) => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        let (name, kind) = match self.handles.get(id)? {
++            Handle::Top => (BUS, DirentKind::Directory),
++            Handle::Bus => ("scan", DirentKind::Regular),
++            _ => return Err(Error::new(ENOTDIR)),
++        };
++        if opaque_offset == 0 {
++            buf.entry(DirEntry {
++                inode: 0,
++                name,
++                kind,
++                next_opaque_id: 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Device(_) => {
++                stat.st_mode = 0o644 | MODE_FILE;
++                stat.st_size = REGISTERS;
++            }
++            Handle::Root | Handle::Top | Handle::Bus => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File(data) => Ok(data.len() as u64),
++            Handle::Device(_) => Ok(REGISTERS),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "i2c", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// The CPU physical address of BSC1, from the devicetree.
++fn bsc1_phys(fdt: &Fdt) -> usize {
++    let bus_addr = fdt
++        .all_nodes()
++        .filter(|node| node.compatible().is_some_and(|c| c.all().any(|c| c == "brcm,bcm2835-i2c")))
++        .filter_map(|node| node.reg()?.next())
++        .map(|reg| reg.starting_address as usize)
++        .find(|&addr| addr & 0xff_ffff == BSC1_BUS_ADDR & 0xff_ffff)
++        .unwrap_or(BSC1_BUS_ADDR);
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// The core clock from `/scheme/rpi-firmware/clocks` (`core <rate> <max>`).
++fn core_clock() -> Option<u32> {
++    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").ok()?;
++    clocks.lines().find_map(|line| line.strip_prefix("core ")?.split_whitespace().next()?.parse().ok())
++}
++
++/// GPIO 2 and 3 to ALT0 (SDA1, SCL1).
++fn route_pins() {
++    for pin in PINS {
++        if let Err(err) = std::fs::write(format!("/scheme/gpio/{pin}/mode"), "alt0") {
++            eprintln!("bcm2835-i2cd: cannot set GPIO {pin} to alt0 ({err}); leaving it to the firmware");
++        }
++    }
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-i2cd: no devicetree");
++        process::exit(0);
++    };
++    let phys = bsc1_phys(&fdt);
++    let regs = unsafe {
++        common::physmap(phys, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-i2cd: failed to map registers")
++    } as *mut u32;
++    route_pins();
++    let bsc = Bsc::new(regs);
++    let core = core_clock().unwrap_or(DEFAULT_CORE_HZ);
++    let scl = bsc.set_speed(core, SCL_HZ);
++    println!("bcm2835-i2cd: bus {BUS} at 0x{phys:08x}, {} kHz (core {} MHz)", scl / 1000, core / 1_000_000);
++
++    let mut scheme = I2cScheme {
++        bsc,
++        handles: HandleMap::new(),
++    };
++    let socket = Socket::create().expect("bcm2835-i2cd: failed to create the i2c scheme");
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++
++    libredox::call::setrens(0, 0).expect("bcm2835-i2cd: failed to enter the null namespace");
++
++    handler
++        .process_requests_blocking(scheme)
++        .expect("bcm2835-i2cd: failed to process requests");
++}
++
++#[cfg(test)]
++mod tests {
++    use super::parse_address;
++
++    #[test]
++    fn addresses() {
++        assert_eq!(parse_address("68"), Some(0x68));
++        assert_eq!(parse_address("03"), Some(0x03));
++        assert_eq!(parse_address("77"), Some(0x77));
++        assert_eq!(parse_address("78"), None);
++        assert_eq!(parse_address("02"), None);
++        assert_eq!(parse_address("8"), None);
++        assert_eq!(parse_address("6A"), None);
++        assert_eq!(parse_address("scan"), None);
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 286d5fa..d4f0993 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -7,2 +7,3 @@ requires_weak = [
+     "40_bcm2835-gpiod.service",
++    "41_bcm2835-i2cd.service",
+     "40_bcm2835-sdhostd.service",
+diff --git a/init.initfs.d/41_bcm2835-i2cd.service b/init.initfs.d/41_bcm2835-i2cd.service
+new file mode 100644
+index 0000000..c0b0e2c
+--- /dev/null
++++ b/init.initfs.d/41_bcm2835-i2cd.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "Raspberry Pi I2C bus 1"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["40_bcm2835-gpiod.service", "40_rpi-firmwared.service"]
++
++[service]
++cmd = "bcm2835-i2cd"
++type = { scheme = "i2c" }

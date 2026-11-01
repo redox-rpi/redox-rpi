@@ -40,9 +40,7 @@ diff --git a/Makefile b/Makefile
 index 6b454de..0de2883 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -20,6 +20,10 @@ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd net
- DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+@@ -22,4 +22,8 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  
 +ifeq ($(TARGET),aarch64-unknown-redox)
 +	INITFS_BINS += rpi-firmwared
