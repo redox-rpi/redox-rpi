@@ -548,9 +548,7 @@ index b3d0834b..4b867ae6 100644
  
      let sep = memchr::memchr(b':', &unparsed_addr).expect("missing port");
      let (raw_addr, rest) = unparsed_addr.split_at_mut(sep);
-@@ -557,7 +609,7 @@ impl PalSocket for Sys {
- 
-     fn bind(socket: c_int, address_raw: &[u8]) -> Result<()> {
+@@ -559,5 +611,5 @@ impl PalSocket for Sys {
          match extract_sa_family(address_raw)? {
 -            AF_INET => {
 +            AF_INET | AF_INET6 => {
