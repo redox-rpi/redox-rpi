@@ -1,0 +1,105 @@
+From 141c16b12d0d95ea9639398cade2e916c760df55 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 18:10:02 +0100
+Subject: [PATCH] netstack: keep a stale ARP address while asking again; read
+ buffered data before ENOTCONN
+
+An ARP entry expired 60 s after it was learned, and every packet then
+waited in a queue of 10 until the reply came, so a busy connection dropped
+ACKs once a minute. Now an expired entry stays usable for 10 s more while
+an ARP request asks again (like Linux's stale state); only an entry that
+stays unanswered is removed.
+
+A read after a TCP reset returned ENOTCONN although data that arrived
+before the reset was still buffered (smoltcp keeps it). read_buf now
+hands out buffered data first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/link/ethernet.rs | 26 ++++++++++++++++++++++++--
+ netstack/src/scheme/tcp.rs    |  6 ++++--
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 5f32a47..7266959 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -52,6 +52,11 @@ impl EthernetLink {
+     const WAITING_PACKET_BUFFER_SIZE: usize = Self::MTU * Self::MAX_WAITING_PACKET_COUNT;
+ 
+     const NEIGHBOR_LIVE_TIME: Duration = Duration::from_secs(60);
++    // After NEIGHBOR_LIVE_TIME an entry is stale: packets still go to the old
++    // address while an ARP request asks again, so a busy connection doesn't
++    // queue (and drop) its packets once a minute. Only an entry that stays
++    // unanswered this much longer is removed.
++    const NEIGHBOR_STALE_TIME: Duration = Duration::from_secs(10);
+     const ARP_SILENCE_TIME: Duration = Duration::from_secs(1);
+ 
+     pub fn new(name: &str, network_file: File) -> Self {
+@@ -263,6 +268,19 @@ impl EthernetLink {
+         }
+     }
+ 
++    // Ask again for a stale neighbor, unless an ARP request is already going.
++    fn refresh_neighbor(&mut self, next_hop: IpAddress, now: Instant) {
++        let IpAddress::Ipv4(target) = next_hop;
++        if let ArpState::Discovered = self.arp_state {
++            self.arp_state = ArpState::Discovering {
++                target,
++                tries: 0,
++                silent_until: Instant::ZERO,
++            };
++            self.send_arp(now)
++        }
++    }
++
+     fn send_arp(&mut self, now: Instant) {
+         let Some(hardware_address) = self.hardware_address else {
+             return;
+@@ -325,17 +343,21 @@ impl LinkDevice for EthernetLink {
+         match self.neighbor_cache.entry(next_hop) {
+             Entry::Vacant(_) => self.handle_missing_neighbor(next_hop, packet, now),
+             Entry::Occupied(e) => {
+-                if e.get().expires_at < now {
++                if e.get().expires_at + Self::NEIGHBOR_STALE_TIME < now {
+                     e.remove();
+                     self.handle_missing_neighbor(next_hop, packet, now)
+                 } else {
+                     let mac = e.get().hardware_address;
++                    let stale = e.get().expires_at < now;
+                     self.send_to(
+                         mac,
+                         packet.len(),
+                         |buf| buf.copy_from_slice(packet),
+                         EthernetProtocol::Ipv4,
+-                    )
++                    );
++                    if stale {
++                        self.refresh_neighbor(next_hop, now);
++                    }
+                 }
+             }
+         }
+diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
+index 949f3db..940fc98 100644
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -179,11 +179,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+     ) -> SyscallResult<usize> {
+         if !file.read_enabled {
+             Ok(0)
+-        } else if !self.is_active() {
+-            Err(SyscallError::new(syscall::ENOTCONN))
+         } else if self.can_recv(&file.data) {
++            // Data that arrived before a reset is still in the buffer (smoltcp
++            // keeps it when the socket closes), so hand it out first.
+             let length = self.recv_slice(buf).expect("Can't receive slice");
+             Ok(length)
++        } else if !self.is_active() {
++            Err(SyscallError::new(syscall::ENOTCONN))
+         } else if !self.may_recv() {
+             Ok(0)
+         } else if file.flags & syscall::O_NONBLOCK == syscall::O_NONBLOCK {
+-- 
+2.54.0 (Apple Git-157)
+
