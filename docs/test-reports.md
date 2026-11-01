@@ -7009,3 +7009,27 @@ Real Pi 3B+ over netboot. Test 197 ([#14](https://github.com/redox-rpi/redox-rpi
 - Not run: standard checks.
 
 Stable image staged afterwards (`v0.3.0-dev-891-g55d0446+x9f76`). **The Pi is still running the frozen test image and needs a person.**
+
+## 2026-11-01: `v0.4.0-dev-15-geaa48df+xa731` (graphics, kernel 0050 DMA cache fix)
+
+Real Pi 3B+ over netboot. Test 198 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. Image `~/redox-rpi-graphics/keep/netboot-v0.4.0-dev-15-geaa48df+xa731.img` (manifest matches), staged with the stable bootloader. Plain netboot, no `cmdline.txt`. Two boots: a devsh reset, then a Shelly power cycle.
+
+**Pass for the DMA fix: no `not zero` line, whole-screen DMA blit works. Boot 1 lost its network after the checks; boot 2 did not.**
+
+`rpi-fbd` lines, the same on both boots:
+```
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+rpi-fbd: DMA test: buffer of 1824x984
+rpi-fbd: DMA test: 1 rows into the framebuffer
+rpi-fbd: DMA test: 64 rows into the framebuffer
+rpi-fbd: DMA test: 984 rows into the framebuffer
+rpi-fbd: DMA test: whole screen in 29.8 ms      (boot 2: 20.5 ms)
+fbcond: Performing handoff
+```
+- No `DMA test buffer had N of 64 words not zero` line (#151: 33). No `blits with the CPU` line. No panic.
+- pi-test (`--manifest`) passes on both boots: version, manifest, `ps` (52), `ps-tty`, SD card; 0 of 300 starts failed.
+- **Boot 1:** right after pi-test, devsh and ping from the host stopped (`No route to host`), and `free` could not run. The serial console still worked: `dwc2d` sleeping (`US`, CPU time stuck at 1.71 s), `netstack` blocked, nothing busy. On the Pi, `ifconfig` printed nothing and `ping -c 2 192.168.178.120` never returned. No USB or network error in the serial log. This image has no `sched-vtime-clamp` and no dwc2d stats files, so I can't tell whether this is the known netstack/USB stall (#188, #189) or 0050. In #151 (same image without 0050) the network stayed up after pi-test.
+- **Boot 2** (power cycle): pi-test passes, then `free` (used 159428 KB), `ping -c 3` 3 of 3, then three runs of `dd if=/dev/zero bs=65536 count=800` over devsh (52 MB each, about 200 s each; the client only got dd's status lines), then `ping -c 20` 20 of 20, `free` used 167876 KB. 35 `Dropped packet on eth0 because waiting queue was full` warnings at 19:46 during pi-test. The image has no `netget`, so no large download.
+- Shelly check before the test: plug off gave 0 W, no ping, then a fresh U-Boot boot, so power cycles work again.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
