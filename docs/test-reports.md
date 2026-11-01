@@ -6784,3 +6784,43 @@ Real Pi 3B+ over netboot. Test 190 ([#151](https://github.com/redox-rpi/redox-rp
 - The download stall itself looks the same as #189 run 5, and the new code does detect it (`controller stuck`).
 
 Afterwards: power cycle 12:03:44 with stable staged. `rm /scheme/data/netget.bin` was not done at the end because devsh was dead; the stable image does not use that file. Stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-978-gf2e0318+x809a` (dwc2d restarts a stuck USB controller, second try)
+
+Real Pi 3B+ over netboot. Test 191 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 12:15.
+
+**Pass:**
+- Part A: both forced restarts recovered, each with a single `restart 1`, and devsh answered again after 17 s and 24 s.
+- Part B: **6 of 6 downloads completed**, so the stuck controller of 189/190 did not show and the restart was not needed during a download.
+
+**Part A (forced restart while idle):** reset 12:15:55, at login 12:16:15.
+- Restart 1, at 12:16:35. devsh was back after 17 s:
+  ```
+  dwc2d: restart 1 (up to 5 in a row without devices)
+  dwc2d: controller stuck, restarting it: GINTSTS 0x56000029 HPRT0 0x1005 HFNUM 0x12cf1b05 GNPTXSTS 0x8080400 HPTXSTS 0x1f080400 HAINT 0x2 GRSTCTL 0x80000000; …
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: network on the adapter at address 5
+  ```
+- Restart 2, at 12:17:52. devsh was back after 24 s, with the same sequence (`GINTSTS 0x54000009 HPRT0 0x1005 …`).
+- No `failed` and no `Timeout` line.
+- `/tmp/dwc2d-usbstats` afterwards (over devsh): `restarts 2`, `halt_failures 0`, `timeouts 0`.
+- In `/scheme/sys/context`, `dwc2d` and `netstack` are both `UB`, which is normal.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result |
+|---|---|---|
+| 1 | 12:19:28 (reset) | **complete**, 378.5 s, 1.01 MB/s |
+| 2 | 12:26:53 (power cycle) | **complete**, 293.1 s, 1.30 MB/s |
+| 3 | 12:33:05 (power cycle) | **complete**, 261.5 s, 1.46 MB/s |
+| 4 | 12:38:40 (power cycle) | **complete**, 296.3 s, 1.29 MB/s |
+| 5 | 12:44:59 (power cycle) | **complete**, 361.2 s, 1.06 MB/s |
+| 6 | 12:52:23 (power cycle) | **complete**, 267.9 s, 1.43 MB/s |
+
+- No `restart`, `stuck`, `restarted`, `failed`, `removed` or `Timeout` line in any run.
+- After run 6: `restarts 0`, `halt_failures 0`, `timeouts 0`.
+- So a restart during a real stuck download is still untested on the Pi. It came 1 time in 6 runs in 189 and in 190.
+
+Afterwards `rm /scheme/data/netget.bin`, then stable restored (`v0.3.0-dev-891-g55d0446+x9f76`), reset, and stable came up to login.
