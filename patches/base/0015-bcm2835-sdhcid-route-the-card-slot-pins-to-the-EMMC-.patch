@@ -17,14 +17,13 @@ diff --git a/drivers/storage/bcm2835-sdhcid/src/main.rs b/drivers/storage/bcm283
 index 09c3ece..af953c6 100644
 --- a/drivers/storage/bcm2835-sdhcid/src/main.rs
 +++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
-@@ -68,6 +68,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-         "ioremap 0x{:08x} to 0x{:08x} 2222",
-         reg.starting_address as usize, addr
-     );
-+    unsafe { route_sd_pins(reg_addr) };
+@@ -71,5 +71,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      let mut sdhci = sd::SdHostCtrl::new(addr);
      unsafe {
++        route_sd_pins(reg_addr);
          sdhci.init();
+         /*
+         let mut buf1 = [0u32; 512];
 @@ -126,3 +127,77 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      }
      process::exit(0);
