@@ -8,13 +8,13 @@ taking timer interrupts or stops scheduling. CPU 0 dumps the context list
 ---
 diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
 --- a/src/arch/aarch64/device/generic_timer.rs	2026-10-31 22:36:40.922237049 +0000
-+++ b/src/arch/aarch64/device/generic_timer.rs	2026-11-01 02:38:35.783748563 +0000
++++ b/src/arch/aarch64/device/generic_timer.rs	2026-11-01 06:29:40.005601319 +0000
 @@ -1,3 +1,4 @@
 +use core::sync::atomic::{AtomicU32, Ordering};
  use spin::Once;
  
  use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
-@@ -193,6 +194,271 @@
+@@ -193,6 +194,279 @@
      write_ctrl(config, ctrl);
  }
  
@@ -147,7 +147,15 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +        let queue_len = crate::percpu::get_percpu_block(crate::cpu_set::LogicalCpuId::new(cpu as u32))
 +            .map_or(99, |p| p.switch_internals.queue_len.load(Ordering::Relaxed));
 +        line.len = 0;
-+        let _ = write!(line, "[hbcpu {cpu} w{} q{queue_len}]\r\n", switches[cpu]);
++        let skips = |c: &[AtomicU32; 8]| c[cpu].load(Ordering::Relaxed);
++        let _ = write!(
++            line,
++            "[hbcpu {cpu} w{} q{queue_len} sl{} sa{} sr{}]\r\n",
++            switches[cpu],
++            skips(&crate::context::switch::HB_SKIP_LOCK),
++            skips(&crate::context::switch::HB_SKIP_ADDR),
++            skips(&crate::context::switch::HB_SKIP_RUN),
++        );
 +        crate::devices::uart_pl011::raw_write(&line.buf[..line.len]);
 +    }
 +    let Some(mut contexts) = context::try_contexts(token.downgrade()) else {
@@ -286,7 +294,7 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bool {
      let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
          return false;
-@@ -215,6 +481,7 @@
+@@ -215,6 +489,7 @@
      // switch to a context which may subsequently resume on another CPU.
      irqchip::end_root(raw_iar);
      program_current(config);
@@ -314,8 +322,8 @@ diff -ruN a/src/context/mod.rs b/src/context/mod.rs
      CONTEXTS.write(token)
 diff -ruN a/src/context/switch.rs b/src/context/switch.rs
 --- a/src/context/switch.rs	2026-10-31 23:30:00.823222597 +0000
-+++ b/src/context/switch.rs	2026-10-31 23:30:11.485652771 +0000
-@@ -113,6 +113,26 @@
++++ b/src/context/switch.rs	2026-11-01 06:29:40.004597162 +0000
+@@ -113,6 +113,35 @@
  /// switch if the counter reaches a set threshold (e.g., every 3 ticks).
  ///
  /// The function also calls the signal handler after switching contexts.
@@ -326,6 +334,15 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
 +pub static HB_SWITCH: [core::sync::atomic::AtomicU32; 8] =
 +    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
 +pub static HB_IDLE: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++// Why select_next_context passed over a queued context (#157): its context
++// lock was taken, its address space lock was taken, or update_runnable said
++// Skip (running elsewhere, currently scheduled, affinity).
++pub static HB_SKIP_LOCK: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++pub static HB_SKIP_ADDR: [core::sync::atomic::AtomicU32; 8] =
++    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
++pub static HB_SKIP_RUN: [core::sync::atomic::AtomicU32; 8] =
 +    [const { core::sync::atomic::AtomicU32::new(0) }; 8];
 +
 +/// Timer ticks since this CPU last ran schedule().
@@ -342,7 +359,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
  pub fn tick(token: &mut CleanLockToken) {
      let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
  
-@@ -210,6 +230,7 @@
+@@ -210,6 +239,7 @@
              ),
              // didn't change sched context, so will not change current context
              ScheduleResult::AllContextsIdle => {
@@ -350,7 +367,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
                  percpu.stats.set_state(cpu_stats::CpuState::Idle);
  
                  return SwitchResult::AllContextsIdle;
-@@ -246,6 +267,7 @@
+@@ -246,6 +276,7 @@
  
      let switch_time = schedule_time;
  
@@ -358,7 +375,7 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
      unsafe {
          switch_to(
              percpu,
-@@ -282,6 +304,7 @@
+@@ -282,6 +313,7 @@
      schedule_time: u128,
      token: &mut CleanLockToken,
  ) -> ScheduleResult {
@@ -366,6 +383,30 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
      percpu.stats.add_context_switch(percpu.inside_syscall.get());
  
      //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
+@@ -608,6 +640,7 @@
+         }
+ 
+         let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
++            hb_count(&HB_SKIP_LOCK);
+             continue;
+         };
+ 
+@@ -638,6 +671,7 @@
+         }
+ 
+         if !matches!(sw, UpdateResult::CanSwitch) {
++            hb_count(&HB_SKIP_RUN);
+             continue;
+         }
+ 
+@@ -647,6 +681,7 @@
+             if let Some(addr) = addr_space.inner.try_read(t.token()) {
+                 best_addr_space = Some(unsafe { AddrSpaceSwitchReadGuard::new(addr) });
+             } else {
++                hb_count(&HB_SKIP_ADDR);
+                 continue;
+             }
+         }
 diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
 --- a/src/devices/uart_pl011.rs	2026-10-31 22:36:40.921150416 +0000
 +++ b/src/devices/uart_pl011.rs	2026-10-31 22:40:47.382425512 +0000
