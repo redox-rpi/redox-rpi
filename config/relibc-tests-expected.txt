@@ -26,14 +26,10 @@
 # stdio, time, threads
 ./bins_dynamic/stdio/fscanf_offby1 fail       # off by one
 ./bins_dynamic/stdio/ungetc_ftell fail        # off by one
-./bins_dynamic/stdio/mutex fail               # ftrylockfile succeeds in another thread; passed once with #4 and #14 fixes
+./bins_dynamic/stdio/mutex flaky              # ftrylockfile succeeds in another thread; passed in builds 906 and 916 (2026-11-01)
 ./bins_dynamic/time/timer fail                # sem_wait EINVAL
 ./bins_dynamic/pthread/rwlock_randtest fail   # hangs
 ./bins_dynamic/redox_ring_ramfs fail
 
 # No network in QEMU
 ./bins_dynamic/netdb/getaddrinfo fail
-./bins_dynamic/sys_socket/getpeername fail
-./bins_dynamic/sys_socket/getsockopt fail
-./bins_dynamic/sys_socket/recv fail
-./bins_dynamic/sys_socket/recvfrom fail
