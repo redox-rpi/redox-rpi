@@ -47,7 +47,9 @@
   command line (`cmdline.txt`) go into the environment. The MAC address
   probably comes from the firmware's devicetree; to check at the first Pi
   test with the serial console. `make-sdcard.sh --direct` writes a card
-  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md).
+  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md),
+  card rebuilt on v0.4.0-dev (2026-11-01). #15 is with the firmware session
+  now.
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
@@ -99,7 +101,10 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. Pi tests
+  also says when the clock makes a certificate look invalid (seen in QEMU
+  at 1970, 2026-11-01; the experiment now builds pkgutils itself, before
+  it relied on `pkg-hold` for that). Install speed on the Pi: nano 27 s,
+  26 small programs 3 min, python312 9 min (#142, #163). Pi tests
   #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
   [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
 

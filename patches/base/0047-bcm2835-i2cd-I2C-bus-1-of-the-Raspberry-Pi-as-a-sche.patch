@@ -1,7 +1,7 @@
-From 982c233a3e03fecc3e1c7bf50c6ebc9ad2722da8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:51 +0100
-Subject: [PATCH 47/48] bcm2835-i2cd: I2C bus 1 of the Raspberry Pi as a scheme
+Subject: [PATCH] bcm2835-i2cd: I2C bus 1 of the Raspberry Pi as a scheme
 
 /scheme/i2c/1/scan lists the addresses that answer; /scheme/i2c/1/<addr>
 reads and writes the device's registers at the file offset. GPIO 2 and 3
@@ -27,12 +27,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-i2cd.service
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 44910fdc..a5f72da9 100644
+index 44910fd..a5f72da 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -252,6 +252,32 @@ version = "0.22.1"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+@@ -254,2 +254,28 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
  
 +[[package]]
 +name = "bcm2835-gpiod"
@@ -61,21 +59,13 @@ index 44910fdc..a5f72da9 100644
 +]
 +
  [[package]]
- name = "bcm2835-sdhcid"
- version = "0.1.0"
-@@ -742,7 +768,9 @@ dependencies = [
-  "daemon",
-  "driver-network",
+@@ -744,3 +770,5 @@ dependencies = [
   "fdt 0.2.0-alpha1",
 + "inputd",
   "libredox",
 + "orbclient",
   "redox_syscall 0.9.5",
- ]
- 
-@@ -2209,6 +2237,19 @@ dependencies = [
-  "serde_derive",
- ]
+@@ -2211,2 +2239,15 @@ dependencies = [
  
 +[[package]]
 +name = "rpi-firmwared"
@@ -91,36 +81,26 @@ index 44910fdc..a5f72da9 100644
 +]
 +
  [[package]]
- name = "rtcd"
- version = "0.1.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 5d733268..d8958bce 100644
+index 5d73326..d8958bc 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -55,6 +55,7 @@ members = [
-     "drivers/net/virtio-netd",
- 
+@@ -57,2 +57,3 @@ members = [
      "drivers/bcm2835-gpiod",
 +    "drivers/bcm2835-i2cd",
      "drivers/rpi-firmwared",
-     "drivers/redoxerd",
- 
 diff --git a/Makefile b/Makefile
-index 7ad0f20d..4692458f 100644
+index 7ad0f20..4692458 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
- 
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
  endif
- 
- ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-i2cd/Cargo.toml b/drivers/bcm2835-i2cd/Cargo.toml
 new file mode 100644
-index 00000000..f65ebaa2
+index 0000000..f65ebaa
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -144,7 +124,7 @@ index 00000000..f65ebaa2
 +workspace = true
 diff --git a/drivers/bcm2835-i2cd/src/bsc.rs b/drivers/bcm2835-i2cd/src/bsc.rs
 new file mode 100644
-index 00000000..bdde046d
+index 0000000..bdde046
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/src/bsc.rs
 @@ -0,0 +1,154 @@
@@ -304,7 +284,7 @@ index 00000000..bdde046d
 +}
 diff --git a/drivers/bcm2835-i2cd/src/main.rs b/drivers/bcm2835-i2cd/src/main.rs
 new file mode 100644
-index 00000000..039fe395
+index 0000000..039fe39
 --- /dev/null
 +++ b/drivers/bcm2835-i2cd/src/main.rs
 @@ -0,0 +1,308 @@
@@ -617,20 +597,16 @@ index 00000000..039fe395
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 286d5fa0..d4f0993e 100644
+index 286d5fa..d4f0993 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -5,6 +5,7 @@ requires_weak = [
-     "20_graphics.target",
-     "40_ps2d.service",
+@@ -7,2 +7,3 @@ requires_weak = [
      "40_bcm2835-gpiod.service",
 +    "41_bcm2835-i2cd.service",
      "40_bcm2835-sdhostd.service",
-     "40_dwc2d.service",
-     "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-i2cd.service b/init.initfs.d/41_bcm2835-i2cd.service
 new file mode 100644
-index 00000000..c0b0e2c4
+index 0000000..c0b0e2c
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-i2cd.service
 @@ -0,0 +1,9 @@
@@ -643,6 +619,3 @@ index 00000000..c0b0e2c4
 +[service]
 +cmd = "bcm2835-i2cd"
 +type = { scheme = "i2c" }
--- 
-2.53.0
-

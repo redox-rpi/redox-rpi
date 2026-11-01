@@ -32,7 +32,11 @@
   `libgcc_s`. In QEMU 31 programs pass, including git, vim, python312 and
   rustpython ([allowlist](https://github.com/redox-rpi/redox-rpi/blob/t40-prebuilt/patches/experiments/prebuilt-programs/allowlist.txt));
   `xz` ships no `xz` program and `rsync -a` hangs. The 256 MiB image is
-  the limit: big ones must be installed alone. Pi test #163 queued.
+  the limit: big ones must be installed alone. Pi test #163 passed
+  (2026-10-31): the 26 small programs, git, python312 and sqlite3 install
+  and run on the Pi; the 26 took 3 minutes. 11.7 to 16.1 MB stay free on
+  `/`, so free space on the root filesystem is the limit for any package
+  library idea: bigger sets need a larger image or the SD data partition.
 - Static programs (`sigregs`) carry the relibc they were linked with;
   `build-image.sh` now relinks `sigregs` on every build (branch
   `t1-sigreturn`), before that a relibc-only change kept the old binary.
@@ -85,12 +89,12 @@
     the kernel read the list address as one fd. Upstream relibc
     `112eb43c` fixes it; backport as experiment `rt-call-flags` (branch
     `t14-ring-call`), QEMU: `redox_ring_ramfs` passes, nothing else
-    changes. Same bug in the DRM `PRIME_FD_TO_HANDLE` ioctl and in
+    changes. Pi row 166. Same bug in the DRM `PRIME_FD_TO_HANDLE` ioctl and in
     libredox calls with two fds.
   - `sys_socket/unixrecv`, `unixrecvfrom`, `unixnonblock` fail in every
     build since 2026-10-31 midday (`connect` gives `EINVAL`): redoxfs was
     not pinned and upstream `5ba45a6` changed Unix socket connect.
-    [#145](https://github.com/redox-rpi/redox-rpi/issues/145), branch `t-pin-redoxfs` pins it; QEMU: no new failures. Pi row 160.
+    [#145](https://github.com/redox-rpi/redox-rpi/issues/145), redoxfs is pinned since PR #146 (Pi test 160 passed).
   - For sshd, bash, nano and MQTT, next in this order: (1) the TLS layout
     (`tls-variant1`), since stdio locking across threads is broken without
     it; (2) the signal tests under load (job control in
@@ -149,6 +153,22 @@ commits in `config/upstream.lock`.
     `signals/sigpause-revert`, `signals/sigprocmask-3` and
     `signals/sigset-5` fail on aarch64 and pass with the patches. Our
     `sigregs thread` and `sigregs sender` (tools/sigregs) show it directly.
+- **Panic when a joined thread wakes its joiner** (relibc `0015`,
+  [#14](https://github.com/redox-rpi/redox-rpi/issues/14)). Not aarch64-specific; a race.
+  - Where: `src/sync/mod.rs` `futex_wake_ptr`, called from `Waitval::post`
+    (`src/sync/waitval.rs`) on thread exit.
+  - Broken: `Waitval::post` stores the value with `state = 1` and then
+    wakes the futex on `state`. The joining thread can see `state == 1`
+    without waiting, return from `pthread_join` and free the exiting
+    thread's `Pthread` before the wake. The kernel returns `EFAULT` for the
+    unmapped address and `futex_wake_ptr` unwraps it: the exiting thread
+    prints `RELIBC PANIC: panicked at src/sync/mod.rs:103:54: called
+    Result::unwrap() on an Err value: Errno(14)` and dies at the `brk` in
+    `relibc_panic`. The process still exits 0.
+  - Reproduce: `pthread/rwlock_randtest`, many runs with stderr kept. About
+    1 run in 40 on the Pi 3B+ (tests 176, 178), none in 40 in QEMU.
+  - Fix: a failed wake counts as zero threads woken. With `0015`, 57 + 80
+    Pi runs without the panic (tests 184, 186).
 - **No signals for CPU exceptions, aarch64** (relibc `0010`; PR #65).
   - Where: `redox-rt/src/arch/aarch64.rs`, `redox-rt/src/signal.rs`.
   - Broken: relibc registers no exception handler on aarch64. A bad memory
