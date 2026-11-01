@@ -1,0 +1,28 @@
+# Experiment: pkg-hold, keep our patched packages on `pkg update`
+
+`pkg update` replaces every installed package whose hash differs from the
+upstream repository, `static.redox-os.org`. On our images that includes our
+own builds of `kernel`, `relibc`, `base` and `bootloader` with the Pi
+patches, so an update would take them away
+([#44](https://github.com/redox-rpi/redox-rpi/issues/44)).
+
+The experiment patches `pkgutils` (pinned in `config/upstream.lock`) with a
+hold list:
+
+- `/etc/pkg/hold` lists package names, one per line, `#` starts a comment.
+- `pkg install` and `pkg update` leave an installed package from the list
+  alone and print `<name> is held (etc/pkg/hold), keeping the installed version`.
+- Packages that are not installed yet can still be installed.
+
+The image gets `/etc/pkg/hold` with `base`, `base-initfs`, `bootloader`,
+`kernel`, `relibc` and `pkgutils`. Without `pkgutils` in the list, an update
+would replace pkg with the upstream one, which has no hold support.
+
+```bash
+scripts/build-image.sh --experiment timesync --experiment pkg-hold
+```
+
+`pkg` needs the clock to be set for HTTPS, hence `timesync`.
+
+To remove a package from the list, edit `/etc/pkg/hold`; `pkg update` then
+installs the upstream version.
