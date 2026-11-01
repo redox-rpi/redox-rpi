@@ -42,16 +42,12 @@ diff --git a/Makefile b/Makefile
 index 00c38a18..a522c22d 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
- 
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid rpi-fbd
  endif
- 
- ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
-diff --git a/drivers/graphics/rpi-fbd/Cargo.toml b/drivers/graphics/rpi-fbd/Cargo.toml
+ diff --git a/drivers/graphics/rpi-fbd/Cargo.toml b/drivers/graphics/rpi-fbd/Cargo.toml
 new file mode 100644
 index 00000000..a0bb8392
 --- /dev/null
