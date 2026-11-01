@@ -1,7 +1,7 @@
-From 3bb810927b60202583342ae5fef9deaee42e1e32 Mon Sep 17 00:00:00 2001
+From 9bbf18baa637ba254ee552c2ed3b9c31a09a2b0d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 09:37:49 +0000
-Subject: [PATCH 25/25] rpi-fbd: Raspberry Pi display through the firmware
+Subject: [PATCH] rpi-fbd: Raspberry Pi display through the firmware
 
 A display driver for the framebuffer that the Pi firmware scans out. It
 asks the firmware, through rpi-firmwared, for a framebuffer of the size a
@@ -27,7 +27,7 @@ RPI_FB=off leaves the display to vesad.
  create mode 100644 init.initfs.d/40_rpi-fbd.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 471b8778..66fc317e 100644
+index fe176046..228121aa 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -41,6 +41,7 @@ members = [
@@ -39,15 +39,15 @@ index 471b8778..66fc317e 100644
      "drivers/graphics/virtio-gpud",
  
 diff --git a/Makefile b/Makefile
-index 0de28837..6d60bbe5 100644
+index 00c38a18..a522c22d 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
  
  ifeq ($(TARGET),aarch64-unknown-redox)
--	INITFS_BINS += rpi-firmwared
-+	INITFS_BINS += rpi-firmwared rpi-fbd
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid rpi-fbd
  endif
  
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
@@ -739,10 +739,10 @@ index 00000000..8f55839b
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 8741d3dd..177058c3 100644
+index 2c05be86..f46f45ff 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -9,4 +9,5 @@ requires_weak = [
+@@ -12,4 +12,5 @@ requires_weak = [
      "40_hwd.service",
      "40_pcid-spawner-initfs.service",
      "40_rpi-firmwared.service",
