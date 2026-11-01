@@ -240,3 +240,31 @@ merge (the one-off check, as above).
   apply; `0037` conflicts on import lines only (the 2024 edition commit).
   Nothing to do until upstream fixes the sockets.
 
+
+## Update 2026-11-01: network patches
+
+Checked by the network session against base `8424d392` and relibc
+`545a55c4` (both 2026-10-31), next to the pinned `eddcaa21` and `c3031359`.
+Each patch was applied in order, as it is first and with a 3-way merge only
+if needed; then `cargo check --target aarch64-unknown-redox` of `netstack`,
+`dhcpd`, `dwc2d` and, where the branch has them, `testnetd` and
+`bcm2835-sdiod`, and of relibc for the IPv6 patches.
+
+- **Apply as they are to both bases:** the network default patches on
+  `main` (`0005`–`0010` CDC and LAN7800, `0020` RTL8152/8153, `0022`,
+  `0023`, `0032` dhcpd, `0056` netcfg `getdents`); `0041`–`0043` and `0058`
+  (PRs #81, #118); `0049` (PR #90); `0082` (PR #144); the Wi-Fi patches
+  `0030`–`0034` of experiment `wifi-sdio` (branch `wifi-join`); the
+  experiments `ipv6`, `multicast` and `lan78xx-multicast` in base (PRs #82,
+  #93).
+- **Fixed:** `0044` (testnetd, PR #81) needed a 3-way merge on the
+  Makefile: upstream added `udsd` to the initfs lines above it. Its hunk now
+  keeps only lines that are the same in both (`netstack-multi` `12aa285`,
+  merged into `netstack-multi2`). The IPv6 relibc patch `0002` (PR #82)
+  needed one for `bind()`, where upstream added a signal lock line; its hunk
+  now starts below it (`ipv6` `e75c49c`, merged into `mdns`).
+- **Builds:** all of the above pass `cargo check` on both bases, also with
+  `0001` and `0018` merged 3-way (PR #124). No change to netstack's or
+  smoltcp's API upstream touches us.
+- Branch `wifi-join` still carries the old `0044`; it gets the fixed one
+  when it takes `netstack-multi` again.
