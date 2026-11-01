@@ -32,3 +32,12 @@ Test: `dd if=/dev/zero bs=1M count=16 | wc -c` prints `16777216`, and dd
 reports `16+0 records out`.
 
 ## Results
+
+QEMU, 2026-11-01:
+
+| Build | `dd if=/dev/zero bs=1M count=4 \| wc -c` | `dd bs=1M count=16 \| sha256sum` | `dd … \| head -c 100` |
+|---|---|---|---|
+| main (`v0.3.0-dev-770`, without) | 262144 bytes, `0+4 records out` | — | — |
+| `v0.3.0-dev-877-g6879e2a+x4d89` (with) | 16 MiB: 16777216 bytes, `16+0 records out` | matches `sha256sum` of the file | `0+1 records out`, then `Broken pipe`, no hang |
+
+Standard checks (`pi-test.py`) pass with the patch, 0 of 300 starts failed.
