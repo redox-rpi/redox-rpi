@@ -1,0 +1,90 @@
+From 34f0f355bf5e313794696ab91637d92c2c80d753 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 00:55:09 +0000
+Subject: [PATCH] bcm2835-sdhostd: fdt 0.2 from the workspace
+
+Base moved to fdt 0.2.0-alpha3 (919f8268). Same changes as that commit
+made to bcm2835-sdhcid: Fdt::new_unaligned, all_compatible().next(),
+reg and ranges through iter::<..>() with .address and .len.
+---
+ drivers/storage/bcm2835-sdhostd/Cargo.toml  |  2 +-
+ drivers/storage/bcm2835-sdhostd/src/main.rs | 29 ++++++++++++++-------
+ 2 files changed, 21 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/Cargo.toml b/drivers/storage/bcm2835-sdhostd/Cargo.toml
+index b4ef26bb..3c8cf1fc 100644
+--- a/drivers/storage/bcm2835-sdhostd/Cargo.toml
++++ b/drivers/storage/bcm2835-sdhostd/Cargo.toml
+@@ -5,7 +5,7 @@ version = "0.1.0"
+ edition = "2021"
+ 
+ [dependencies]
+-fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++fdt.workspace = true
+ common = { path = "../../common" }
+ daemon = { path = "../../../daemon" }
+ driver-block = { path = "../driver-block" }
+diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
+index 7725b894..19398677 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/main.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
+@@ -14,10 +14,18 @@ use std::{env, fs, process};
+ 
+ use driver_block::{DiskScheme, ExecutorTrait, TrivialExecutor};
+ use event::{EventFlags, RawEventQueue};
+-use fdt::Fdt;
+ 
+ mod host;
+ 
++/// fdt 0.2 is generic over the parser; `Fdt::new_unaligned` picks this one.
++type Fdt<'a> = fdt::Fdt<
++    'a,
++    (
++        fdt::parsing::unaligned::UnalignedParser<'a>,
++        fdt::parsing::Panic,
++    ),
++>;
++
+ /// Bus address of sdhost on all BCM283x, used if the devicetree has no node.
+ const SDHOST_BUS_ADDR: usize = 0x7e20_2000;
+ const SDHOST_SIZE: usize = 0x100;
+@@ -52,17 +60,20 @@ fn main() {
+ /// there even when an overlay (`dtoverlay=mmc`) disabled it.
+ fn sdhost_phys(fdt: &Fdt) -> usize {
+     let bus_addr = fdt
+-        .find_compatible(&["brcm,bcm2835-sdhost"])
++        .all_compatible(&["brcm,bcm2835-sdhost"])
++        .next()
+         .and_then(|node| node.reg())
+-        .and_then(|mut reg| reg.next())
+-        .map(|reg| reg.starting_address as usize)
++        .and_then(|reg| reg.iter::<usize, usize>().next())
++        .and_then(Result::ok)
++        .map(|reg| reg.address)
+         .unwrap_or(SDHOST_BUS_ADDR);
+     fdt.find_node("/soc")
+         .and_then(|soc| soc.ranges())
+-        .and_then(|mut ranges| {
+-            ranges.find(|r| {
+-                r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
+-            })
++        .and_then(|ranges| {
++            ranges
++                .iter::<usize, usize, usize>()
++                .filter_map(Result::ok)
++                .find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.len)
+         })
+         .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
+         .unwrap_or(bus_addr)
+@@ -129,7 +140,7 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+         println!("bcm2835-sdhostd: no devicetree");
+         process::exit(0);
+     }
+-    let fdt = Fdt::new(&dtb_data).unwrap();
++    let fdt = Fdt::new_unaligned(&dtb_data).unwrap();
+     let phys = sdhost_phys(&fdt);
+     println!("bcm2835-sdhostd: controller at 0x{phys:08x}");
+ 
+-- 
+2.53.0
+
