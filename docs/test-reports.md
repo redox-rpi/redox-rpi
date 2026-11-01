@@ -6593,3 +6593,74 @@ Image `hbusb5-…`, own bootloader, as in 185. A stall means no new `netget:` li
 - Power cycles: 08:08:05, 08:16:32.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-889-g7349b1c+x741f` (netget stall: where the scheduler's virtual time wraps)
+
+Real Pi 3B+ over netboot. Test 188 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb6-…`, own bootloader, as in 187. A stall means no new `netget:` line for 5.5 min. A host-side watcher on the serial log wrote down the time of every `[hbv …]`, `[hbctx begin …]` and `netget:` line.
+
+**1 of 3 runs stalled. In the stall, `netstack` sits in CPU 1's queue as `Rqa` with `vt18446744073709551615` = exactly 2^64 − 1 (`u64::MAX`), and CPU 1 does nothing (`w0 q1`).**
+- This value shows from the dump at the moment of the stall (beat 6, 08:57:22; last progress 08:57:23) through all later dumps, unchanged.
+- The `[hbv]` lines (virtual time above 2^62) come in **every** run, including the two that completed. They all appear together, about 40 s into the download.
+
+| Run | Start (UTC) | Result | Size reached | Dumps |
+|---|---|---|---|---|
+| 1 | 08:37:12 (reset) | **complete**: `382156480 bytes in 308.0 s, 1.24 MB/s` | all | baseline, timed beat 4 |
+| 2 | 08:43:36 (power cycle) | **complete**: `382156480 bytes in 357.2 s, 1.07 MB/s` | all | baseline, timed 4, 6 |
+| 3 | 08:50:57 (power cycle) | stalled, last progress 08:57:23 | 336 MiB at 332.1 s | baseline, timed 4, 6, 8, 10; `runnable-on-idle-cpu` 7, 9, 11 |
+
+**`[hbv …]` lines with the time they appeared.** Each set came in one block, between the `48 MiB` and `64 MiB` netget lines:
+- run 1, 08:38:47 (download started 08:38:05):
+  ```
+  [hbv 1 cpu3 5429956981653779096 5429956981653779096 2036253472034782219 36]
+  [hbv 2 cpu0 15611067510684501972 15611067510670520911 30000104 15611067510671305635]
+  [hbv 3 cpu3 5429956981653779096 3393734875881000556 31366261423856 2036253472034202396]
+  [hbv 4 cpu3 5429956981653805407 5429956981653779096 56459 1024]
+  [hbv 5 cpu3 5429956981653779096 2036253472034782219 0 56459]
+  ```
+- run 2, 08:45:00:
+  ```
+  [hbv 1 cpu2 5087070066968239213 5087070066968239213 2543574260915891133 36]
+  [hbv 2 cpu1 17049878228753944369 17049878228740317518 29240052 17049878228741964617]
+  [hbv 3 cpu2 5087070066968239213 2543574260914814450 78454861415877 2543574260914840640]
+  [hbv 4 cpu2 5087070066968261252 5087070066968239213 47291 1024]
+  [hbv 5 cpu2 5087070066968239213 2543574260915891133 0 47291]
+  ```
+- run 3, 08:52:21:
+  ```
+  [hbv 1 cpu2 7054430493981558515 7054430493981558515 3527878091474425974 36]
+  [hbv 2 cpu2 14324592221479799892 14324592221479610154 407135 14324592221480627588]
+  [hbv 3 cpu2 7054430493981558515 3527878091473271231 1325688965024312 3527878091473311596]
+  [hbv 4 cpu2 7054430493981578199 7054430493981558515 42239 1024]
+  [hbv 5 cpu2 7054430493981558515 3527878091474425974 0 42239]
+  ```
+
+**Run 3, the first dump after the stall** (beat 7, 08:58:22, `runnable-on-idle-cpu`):
+```
+[hbcpu 0 w1115 q0 sl228 sa235 sr471 sv5327 ss161]
+[hbcpu 1 w0 q1 sl964 sa368 sr2748 sv1524 ss215]
+[hbcpu 2 w0 q0 sl1036 sa468 sr3058 sv506 ss210]
+[hbcpu 3 w8645 q0 sl441 sa153 sr1359 sv8283 ss87]
+[hbq 0 v296843 n0 tw15028]
+[hbq 1 v126242 n1 tw7168]
+[hbq 1 vt18446744073709551615 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744073451387897 n0 tw0]
+[hbq 3 v18446744073455149703 n0 tw10572]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu1 ]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- The other user contexts are blocked or asleep.
+- The timed dump at beat 6 (08:57:22) already has the same `hbq 1` lines. Its `[hbcpu 1 w5058 q1 …]` shows CPU 1 still switching in that minute.
+- The beat-4 dump (08:55:22) shows CPU 1's queue `v3459342 n0`, so it was empty then.
+- From beat 6 on, `[hbq 1 v126242 n1 tw7168]` and the netstack entry do not change.
+- CPU 1's counters stay the same from beat 7 on. `sv` (vtime filter) does not grow, so the entry is not counted as filtered either.
+
+**Runs 1 and 2 (complete):** their dumps show queue entries near 2^64 that later cleared up.
+- run 1: `[hbq 1 vt18446744073709550695 id27 16 dwc2d own]` and `[hbq 3 vt18446744073564933720 id36 25 netstack stale]`.
+- run 2: netstack `stale` in CPU 0's queue across several dumps (`vt18446744072764220028` …), then `own` with `vt18446744073709551450`.
+
+**Other notes:**
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- Power cycles: 08:43:36, 08:50:57, 09:03:12.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
