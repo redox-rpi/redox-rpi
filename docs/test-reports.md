@@ -6824,3 +6824,31 @@ Real Pi 3B+ over netboot. Test 191 ([#151](https://github.com/redox-rpi/redox-rp
 - So a restart during a real stuck download is still untested on the Pi. It came 1 time in 6 runs in 189 and in 190.
 
 Afterwards `rm /scheme/data/netget.bin`, then stable restored (`v0.3.0-dev-891-g55d0446+x9f76`), reset, and stable came up to login.
+
+## 2026-11-01: test 193, v0.3.0-rc4 SD card with the user (`v0.3.0-dev-963-g15e885d+x12cb`)
+
+Release checklist tests 6–9, one visit. Card written from
+`redox-rpi-v0.3.0-rc4.img.xz` (SHA-256 `bd6e9f8f…f35c`), built with
+`--release v0.3.0-rc4 --experiment timesync --sdcard`. Sources: the serial
+log of the Pi 3B+ (15:18 UTC) and the user's report, relayed by the
+coordinator. The Zero 2 W has no serial console here, so its results are
+from the user alone.
+
+| Test | Pi 3B+ | Zero 2 W | Detail |
+|---|---|---|---|
+| 6 SD card boot | **pass** | **pass** (user) | Serial banner `redox-rpi v0.3.0-rc4 (v0.3.0-dev-963-g15e885d+x12cb) (sdcard)`, then `redox login:`. The `dd`/`sha256sum` write check was not reported. |
+| 7 HDMI, keyboard, `Super`+`F1`/`F2` | **pass** (user) | **pass** (user) | "Super F1/F2 hat funktioniert." |
+| 8 USB hotplug | **pass** | **pass** (user) | The keyboard worked before and after it was unplugged and plugged in again (found at address 4 on the 3B+). The cable was plugged in after boot: link up on the LAN7800, `dhcpd` configured the address, `timesync` set the clock from `pool.ntp.org`. |
+| 9 Zero 2 W with the RTL8153 hub | — | **pass** (user) | Boots from the same card, keyboard and `Super`+`F1`/`F2` work. Not confirmed from a log. |
+
+Remarks:
+- One undervoltage throttle on the 3B+ (ARM clock to 600 MHz) right
+  before the cable was plugged in, then `no longer throttled`. That is the
+  power supply, not a failure.
+- `ifconfig` shows no MAC address, on both boards. To be checked; not a
+  release blocker.
+- There is no `ip` command. The visit steps wrongly named it; use
+  `ifconfig` and the boot log.
+
+Afterwards the netboot card goes back into the Pi 3B+; then row 192 (rc4
+automated) can run.
