@@ -6984,3 +6984,28 @@ Real Pi 3B+ over netboot. Test 196 ([#177](https://github.com/redox-rpi/redox-rp
 - **Standard checks:** version, manifest present, `ps` (45), `ps-tty`, SD card all pass; 0 of 300 starts failed. No panic or `FATAL` line.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-14-g52d9598+x424d` (`rwlock_randtest` with `sched-vtime-clamp`, no heartbeat)
+
+Real Pi 3B+ over netboot. Test 197 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent. Image `vcrw-v0.4.0-dev-14-g52d9598+x424d.img`, staged 16:38 with the stable bootloader. Runs as in 184: one devsh command per run, 60 s client timeout, stderr kept.
+
+**Fail: the freeze is still there. 7 runs passed, then run 8 froze.** The fix of PR #168 does not cure it.
+
+- **Runs 1–7:** all `rc=0`, `real` 1.25–1.38 s (median 1.33 s). No `RELIBC PANIC`, `brk`, `UNHANDLED EXCEPTION` or `FATAL` anywhere.
+- **Run 8, started about 16:40:40:** no output, then the client timed out (16:41:46). devsh did not answer any more.
+  - The only serial line since the run started: `[src/procmgr.rs:297 WARN] Cancellation for unknown id Id(4)`.
+- **Not a whole-Pi freeze this time.** The serial console still worked:
+  - I logged in as root over serial at about 16:53 and ran `cat /scheme/sys/context`;
+  - `rwlock_randtest` was gone (exited);
+  - all user contexts were `UB`/`US`, except the initfs `redoxfs` (pid 20), which was `UR` on CPU 2 and never running;
+  - `dwc2d` was `US`, and `netstack` and the `devshd` threads were `UB`, all on CPU 2;
+  - CPU 2's `[kmain]` showed `RR` without `+` while my `cat` ran there (`UR+`). The other three idle contexts were `RR+`.
+  - `ping -c 2 192.168.178.1` on the serial console printed `PING …` and then hung for good. Ctrl-C did not stop it, so the network stack is stuck.
+- `rpi-firmwared` still printed (`warning: undervoltage, throttled (flags 0x00050005 …)`, `no longer throttled`) when the plug was switched off.
+- **Recovery failed:**
+  - Shelly power cycles at 16:43:39 (12 s off), 16:49:47 (12 s off) and 16:58:39 (40 s off, the plug read `apower 0.0`). Each time the Pi only logged a brief undervoltage, kept running the frozen image, and never rebooted.
+  - **Since the user's visit, the Pi gets power from another source**, probably the HDMI or USB cables to the NanoKVM or the keyboard. Remote recovery is not possible until that is fixed.
+  - Stable is staged in `/srv/tftp/redox`.
+- Not run: standard checks.
+
+Stable image staged afterwards (`v0.3.0-dev-891-g55d0446+x9f76`). **The Pi is still running the frozen test image and needs a person.**
