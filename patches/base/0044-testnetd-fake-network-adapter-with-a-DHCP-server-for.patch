@@ -1,0 +1,493 @@
+From c86cca8ca408a2e6efdd1d10888476623e6effb7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 16:20:08 +0100
+Subject: [PATCH 44/44] testnetd: fake network adapter with a DHCP server, for
+ netstack tests
+
+testnetd registers network.test0 (or the scheme given as argument) with
+one host behind it, 10.0.9.1, that answers ARP, ping and DHCP (offers
+10.0.9.2/24). It counts DHCP messages for other MACs and packets with a
+source outside 10.0.9.0/24 in /tmp/testnetd.log. Started from a shell
+it re-runs itself as a daemon.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                            |   1 +
+ Makefile                              |   2 +-
+ drivers/net/testnetd/Cargo.toml       |  16 ++
+ drivers/net/testnetd/src/main.rs      | 131 ++++++++++++
+ drivers/net/testnetd/src/responder.rs | 283 ++++++++++++++++++++++++++
+ 5 files changed, 432 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/net/testnetd/Cargo.toml
+ create mode 100644 drivers/net/testnetd/src/main.rs
+ create mode 100644 drivers/net/testnetd/src/responder.rs
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 4bded67..6051ff9 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -51,6 +51,7 @@ members = [
+     "drivers/net/e1000d",
+     "drivers/net/ixgbed",
+     "drivers/net/rtl8139d",
++    "drivers/net/testnetd",
+     "drivers/net/rtl8168d",
+     "drivers/net/virtio-netd",
+ 
+diff --git a/Makefile b/Makefile
+index 263a5c4..0af422a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -19,3 +19,3 @@ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+ BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
+-DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
++DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
+ 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+diff --git a/drivers/net/testnetd/Cargo.toml b/drivers/net/testnetd/Cargo.toml
+new file mode 100644
+index 0000000..49459b3
+--- /dev/null
++++ b/drivers/net/testnetd/Cargo.toml
+@@ -0,0 +1,16 @@
++[package]
++name = "testnetd"
++description = "Fake network adapter with a DHCP server behind it, for netstack tests"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++libredox.workspace = true
++redox_event.workspace = true
++redox_syscall.workspace = true
++
++daemon = { path = "../../../daemon" }
++driver-network = { path = "../driver-network" }
++
++[lints]
++workspace = true
+diff --git a/drivers/net/testnetd/src/main.rs b/drivers/net/testnetd/src/main.rs
+new file mode 100644
+index 0000000..32432d3
+--- /dev/null
++++ b/drivers/net/testnetd/src/main.rs
+@@ -0,0 +1,131 @@
++//! testnetd: a fake network adapter for netstack tests.
++//!
++//! It registers `network.test0` (or the scheme named as the first argument,
++//! such as `network.wlan_test0`) with a small network behind it: one host,
++//! 10.0.9.1, that answers ARP, ping and DHCP. netstack should pick it up
++//! while it runs, dhcpd should get 10.0.9.2/24 on it, and no packet of
++//! another interface should arrive here. The counters are written to
++//! `/tmp/testnetd.log` after each change.
++//!
++//! Run from a shell: it starts itself again as a daemon and returns once
++//! the scheme is registered.
++
++use std::collections::VecDeque;
++use std::process::Command;
++
++use driver_network::{NetworkAdapter, NetworkScheme};
++use event::{user_data, EventQueue};
++use syscall::{Error, Result, EINVAL};
++
++mod responder;
++
++use responder::{Counters, Responder};
++
++const NIC_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x02];
++const LOG: &str = "/tmp/testnetd.log";
++
++struct TestAdapter {
++    responder: Responder,
++    rx: VecDeque<Vec<u8>>,
++    logged: Counters,
++}
++
++impl TestAdapter {
++    fn log(&mut self) {
++        let c = &self.responder.counters;
++        if *c == self.logged {
++            return;
++        }
++        let line = format!(
++            "dhcp {} dhcp_foreign {} foreign_src {} ping {}\n",
++            c.dhcp, c.dhcp_foreign, c.foreign_src, c.ping
++        );
++        let _ = std::fs::write(LOG, &line);
++        self.logged = c.clone();
++    }
++}
++
++impl NetworkAdapter for TestAdapter {
++    fn mac_address(&mut self) -> [u8; 6] {
++        NIC_MAC
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        self.rx.len()
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
++        let Some(frame) = self.rx.pop_front() else {
++            return Ok(None);
++        };
++        if frame.len() > buf.len() {
++            return Err(Error::new(EINVAL));
++        }
++        buf[..frame.len()].copy_from_slice(&frame);
++        Ok(Some(frame.len()))
++    }
++
++    fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
++        let replies = self.responder.handle(buf);
++        self.rx.extend(replies);
++        self.log();
++        Ok(buf.len())
++    }
++}
++
++fn main() {
++    let scheme = std::env::args()
++        .nth(1)
++        .unwrap_or_else(|| "network.test0".to_string());
++
++    // A login shell may have an INIT_NOTIFY of its own, so the daemon run
++    // is marked with a variable of ours.
++    if std::env::var_os("TESTNETD_DAEMON").is_none() {
++        // Started from a shell: run again with a readiness pipe, as init would.
++        let exe = std::env::current_exe().expect("testnetd: no executable path");
++        let mut cmd = Command::new(exe);
++        cmd.arg(&scheme).env("TESTNETD_DAEMON", "1");
++        #[allow(deprecated)]
++        daemon::Daemon::spawn(cmd);
++        println!("testnetd: {scheme} registered, counters in {LOG}");
++        return;
++    }
++
++    daemon::Daemon::new(move |daemon| run(daemon, scheme));
++}
++
++fn run(daemon: daemon::Daemon, scheme_name: String) -> ! {
++    let _ = std::fs::write(LOG, "dhcp 0 dhcp_foreign 0 foreign_src 0 ping 0\n");
++    let mut scheme = NetworkScheme::new(
++        || TestAdapter {
++            responder: Responder::new(NIC_MAC),
++            rx: VecDeque::new(),
++            logged: Counters::default(),
++        },
++        daemon,
++        scheme_name,
++    );
++
++    user_data! {
++        enum Source {
++            Scheme,
++        }
++    }
++
++    let event_queue = EventQueue::<Source>::new().expect("testnetd: no event queue");
++    event_queue
++        .subscribe(
++            scheme.event_handle().raw(),
++            Source::Scheme,
++            event::EventFlags::READ,
++        )
++        .expect("testnetd: cannot listen to the scheme");
++
++    scheme.tick().expect("testnetd: tick");
++    for event in event_queue.map(|e| e.expect("testnetd: event error")) {
++        match event.user_data {
++            Source::Scheme => scheme.tick().expect("testnetd: tick"),
++        }
++    }
++    unreachable!()
++}
+diff --git a/drivers/net/testnetd/src/responder.rs b/drivers/net/testnetd/src/responder.rs
+new file mode 100644
+index 0000000..4fcd55a
+--- /dev/null
++++ b/drivers/net/testnetd/src/responder.rs
+@@ -0,0 +1,283 @@
++//! The fake network behind testnetd: one host, 10.0.9.1, that answers ARP,
++//! ping and DHCP (it offers 10.0.9.2/24, router and DNS 10.0.9.1).
++//!
++//! It also counts what should never arrive here when netstack keeps its
++//! interfaces apart: DHCP messages for another adapter's MAC, and packets
++//! with a source address outside 10.0.9.0/24.
++
++pub const HOST_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x01];
++pub const HOST_IP: [u8; 4] = [10, 0, 9, 1];
++pub const CLIENT_IP: [u8; 4] = [10, 0, 9, 2];
++const BROADCAST_MAC: [u8; 6] = [0xff; 6];
++
++#[derive(Debug, Default, Clone, PartialEq)]
++pub struct Counters {
++    pub dhcp: usize,
++    pub dhcp_foreign: usize,
++    pub foreign_src: usize,
++    pub ping: usize,
++}
++
++pub struct Responder {
++    pub mac: [u8; 6],
++    pub counters: Counters,
++}
++
++fn checksum(data: &[u8]) -> u16 {
++    let mut sum = 0u32;
++    for chunk in data.chunks(2) {
++        let word = u16::from_be_bytes([chunk[0], *chunk.get(1).unwrap_or(&0)]);
++        sum += u32::from(word);
++    }
++    while sum > 0xffff {
++        sum = (sum & 0xffff) + (sum >> 16);
++    }
++    !(sum as u16)
++}
++
++fn ethernet(dst: [u8; 6], src: [u8; 6], ethertype: u16, payload: &[u8]) -> Vec<u8> {
++    let mut frame = Vec::with_capacity(14 + payload.len());
++    frame.extend_from_slice(&dst);
++    frame.extend_from_slice(&src);
++    frame.extend_from_slice(&ethertype.to_be_bytes());
++    frame.extend_from_slice(payload);
++    frame
++}
++
++fn ipv4(src: [u8; 4], dst: [u8; 4], protocol: u8, payload: &[u8]) -> Vec<u8> {
++    let len = (20 + payload.len()) as u16;
++    let mut packet = vec![0x45, 0];
++    packet.extend_from_slice(&len.to_be_bytes());
++    packet.extend_from_slice(&[0, 0, 0x40, 0, 64, protocol, 0, 0]);
++    packet.extend_from_slice(&src);
++    packet.extend_from_slice(&dst);
++    let sum = checksum(&packet);
++    packet[10..12].copy_from_slice(&sum.to_be_bytes());
++    packet.extend_from_slice(payload);
++    packet
++}
++
++/// A UDP datagram without checksum (allowed for IPv4).
++fn udp(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
++    let mut datagram = Vec::with_capacity(8 + payload.len());
++    datagram.extend_from_slice(&src_port.to_be_bytes());
++    datagram.extend_from_slice(&dst_port.to_be_bytes());
++    datagram.extend_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
++    datagram.extend_from_slice(&[0, 0]);
++    datagram.extend_from_slice(payload);
++    datagram
++}
++
++impl Responder {
++    pub fn new(mac: [u8; 6]) -> Self {
++        Responder {
++            mac,
++            counters: Counters::default(),
++        }
++    }
++
++    /// Handles one frame netstack sent; returns the frames to give back.
++    pub fn handle(&mut self, frame: &[u8]) -> Vec<Vec<u8>> {
++        if frame.len() < 14 {
++            return Vec::new();
++        }
++        let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
++        let payload = &frame[14..];
++        match ethertype {
++            0x0806 => self.arp(payload).into_iter().collect(),
++            0x0800 => self.ip(payload).into_iter().collect(),
++            _ => Vec::new(),
++        }
++    }
++
++    fn arp(&mut self, arp: &[u8]) -> Option<Vec<u8>> {
++        // Ethernet/IPv4 request for the host's address.
++        if arp.len() < 28 || arp[0..8] != [0, 1, 8, 0, 6, 4, 0, 1] || arp[24..28] != HOST_IP {
++            return None;
++        }
++        let mut reply = Vec::with_capacity(28);
++        reply.extend_from_slice(&[0, 1, 8, 0, 6, 4, 0, 2]);
++        reply.extend_from_slice(&HOST_MAC);
++        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&arp[8..18]);
++        Some(ethernet(self.mac_of(&arp[8..14]), HOST_MAC, 0x0806, &reply))
++    }
++
++    fn mac_of(&self, bytes: &[u8]) -> [u8; 6] {
++        let mut mac = [0; 6];
++        mac.copy_from_slice(bytes);
++        mac
++    }
++
++    fn ip(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
++        if packet.len() < 20 || packet[0] >> 4 != 4 {
++            return None;
++        }
++        let header_len = usize::from(packet[0] & 0xf) * 4;
++        let total = usize::from(u16::from_be_bytes([packet[2], packet[3]])).min(packet.len());
++        if total < header_len {
++            return None;
++        }
++        let src: [u8; 4] = packet[12..16].try_into().unwrap();
++        let dst: [u8; 4] = packet[16..20].try_into().unwrap();
++        if src != [0; 4] && src[..3] != HOST_IP[..3] {
++            self.counters.foreign_src += 1;
++        }
++        let body = &packet[header_len..total];
++        match packet[9] {
++            1 if dst == HOST_IP => self.icmp(src, body),
++            17 => self.udp(body),
++            _ => None,
++        }
++    }
++
++    fn icmp(&mut self, src: [u8; 4], icmp: &[u8]) -> Option<Vec<u8>> {
++        if icmp.len() < 8 || icmp[0] != 8 {
++            return None;
++        }
++        self.counters.ping += 1;
++        let mut reply = icmp.to_vec();
++        reply[0] = 0;
++        reply[2..4].copy_from_slice(&[0, 0]);
++        let sum = checksum(&reply);
++        reply[2..4].copy_from_slice(&sum.to_be_bytes());
++        let packet = ipv4(HOST_IP, src, 1, &reply);
++        Some(ethernet(self.mac, HOST_MAC, 0x0800, &packet))
++    }
++
++    fn udp(&mut self, datagram: &[u8]) -> Option<Vec<u8>> {
++        if datagram.len() < 8 {
++            return None;
++        }
++        let dst_port = u16::from_be_bytes([datagram[2], datagram[3]]);
++        if dst_port != 67 {
++            return None;
++        }
++        self.dhcp(&datagram[8..])
++    }
++
++    fn dhcp(&mut self, msg: &[u8]) -> Option<Vec<u8>> {
++        if msg.len() < 240 || msg[0] != 1 || msg[236..240] != [0x63, 0x82, 0x53, 0x63] {
++            return None;
++        }
++        if msg[28..34] != self.mac {
++            self.counters.dhcp_foreign += 1;
++            return None;
++        }
++        self.counters.dhcp += 1;
++        let msg_type = dhcp_option(&msg[240..], 53).and_then(|d| d.first().copied())?;
++        let reply_type = match msg_type {
++            1 => 2, // Discover → Offer
++            3 => 5, // Request → Ack
++            _ => return None,
++        };
++        let mut reply = vec![0u8; 240];
++        reply[0] = 2;
++        reply[1] = 1;
++        reply[2] = 6;
++        reply[4..8].copy_from_slice(&msg[4..8]); // xid
++        reply[10..12].copy_from_slice(&msg[10..12]); // flags
++        reply[16..20].copy_from_slice(&CLIENT_IP); // yiaddr
++        reply[20..24].copy_from_slice(&HOST_IP); // siaddr
++        reply[28..44].copy_from_slice(&msg[28..44]); // chaddr
++        reply[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]);
++        reply.extend_from_slice(&[53, 1, reply_type]);
++        reply.extend_from_slice(&[54, 4]);
++        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&[51, 4, 0, 0, 0x0e, 0x10]); // one hour
++        reply.extend_from_slice(&[1, 4, 255, 255, 255, 0]);
++        reply.extend_from_slice(&[3, 4]);
++        reply.extend_from_slice(&HOST_IP);
++        reply.extend_from_slice(&[6, 4]);
++        reply.extend_from_slice(&HOST_IP);
++        reply.push(255);
++        let packet = ipv4(HOST_IP, [255; 4], 17, &udp(67, 68, &reply));
++        Some(ethernet(BROADCAST_MAC, HOST_MAC, 0x0800, &packet))
++    }
++}
++
++fn dhcp_option(mut options: &[u8], code: u8) -> Option<&[u8]> {
++    while let Some((&opt, rest)) = options.split_first() {
++        match opt {
++            0 => options = rest,
++            255 => return None,
++            _ => {
++                let (&len, rest) = rest.split_first()?;
++                let data = rest.get(..usize::from(len))?;
++                if opt == code {
++                    return Some(data);
++                }
++                options = &rest[usize::from(len)..];
++            }
++        }
++    }
++    None
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const NIC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x02];
++
++    fn dhcp_frame(chaddr: [u8; 6], msg_type: u8, src: [u8; 4]) -> Vec<u8> {
++        let mut msg = vec![0u8; 240];
++        msg[0] = 1;
++        msg[4..8].copy_from_slice(&[1, 2, 3, 4]);
++        msg[28..34].copy_from_slice(&chaddr);
++        msg[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]);
++        msg.extend_from_slice(&[53, 1, msg_type, 255]);
++        let packet = ipv4(src, [255; 4], 17, &udp(68, 67, &msg));
++        ethernet(BROADCAST_MAC, chaddr, 0x0800, &packet)
++    }
++
++    #[test]
++    fn dhcp_offer_and_ack() {
++        let mut r = Responder::new(NIC);
++        let out = r.handle(&dhcp_frame(NIC, 1, [0; 4]));
++        assert_eq!(out.len(), 1);
++        let msg = &out[0][14 + 20 + 8..];
++        assert_eq!(msg[0], 2);
++        assert_eq!(&msg[4..8], &[1, 2, 3, 4]);
++        assert_eq!(&msg[16..20], &CLIENT_IP);
++        assert_eq!(dhcp_option(&msg[240..], 53), Some(&[2u8][..]));
++        assert_eq!(dhcp_option(&msg[240..], 3), Some(&HOST_IP[..]));
++        let out = r.handle(&dhcp_frame(NIC, 3, [0; 4]));
++        assert_eq!(dhcp_option(&out[0][14 + 20 + 8 + 240..], 53), Some(&[5u8][..]));
++        assert_eq!(r.counters.dhcp, 2);
++        assert_eq!(checksum(&out[0][14..34]), 0);
++    }
++
++    #[test]
++    fn counts_leaks() {
++        let mut r = Responder::new(NIC);
++        assert!(r.handle(&dhcp_frame([2, 0, 0, 0, 0, 7], 1, [10, 0, 2, 15])).is_empty());
++        assert_eq!(r.counters.dhcp_foreign, 1);
++        assert_eq!(r.counters.foreign_src, 1);
++        assert_eq!(r.counters.dhcp, 0);
++    }
++
++    #[test]
++    fn arp_and_ping() {
++        let mut r = Responder::new(NIC);
++        let mut arp = vec![0, 1, 8, 0, 6, 4, 0, 1];
++        arp.extend_from_slice(&NIC);
++        arp.extend_from_slice(&CLIENT_IP);
++        arp.extend_from_slice(&[0; 6]);
++        arp.extend_from_slice(&HOST_IP);
++        let out = r.handle(&ethernet(BROADCAST_MAC, NIC, 0x0806, &arp));
++        assert_eq!(&out[0][0..6], &NIC);
++        assert_eq!(&out[0][14 + 8..14 + 14], &HOST_MAC);
++
++        let mut echo = vec![8, 0, 0, 0, 0, 1, 0, 1, 0xaa, 0xbb];
++        let sum = checksum(&echo);
++        echo[2..4].copy_from_slice(&sum.to_be_bytes());
++        let out = r.handle(&ethernet(HOST_MAC, NIC, 0x0800, &ipv4(CLIENT_IP, HOST_IP, 1, &echo)));
++        let icmp = &out[0][14 + 20..];
++        assert_eq!(icmp[0], 0);
++        assert_eq!(checksum(icmp), 0);
++        assert_eq!(&out[0][14 + 16..14 + 20], &CLIENT_IP);
++        assert_eq!(r.counters.ping, 1);
++        assert_eq!(r.counters.foreign_src, 0);
++    }
++}
