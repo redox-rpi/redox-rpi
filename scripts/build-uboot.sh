@@ -42,17 +42,17 @@ CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 if [ ! -d "$SRC" ]; then
     git clone --depth 1 --branch "$UBOOT_TAG" https://source.denx.de/u-boot/u-boot.git "$SRC"
 fi
-if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
+if ! git -C "$SRC" rev-parse -q --verify "refs/tags/$UBOOT_TAG" >/dev/null; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
-    git -C "$SRC" checkout -q -f "$UBOOT_TAG"
 fi
-# Our fixes to U-Boot, each applied once (skipped if already in the tree).
+# The pinned tag plus our fixes, from a clean tree every time: a tree left
+# with other or older changes to the same files still builds.
+git -C "$SRC" checkout -q -f "$UBOOT_TAG"
+git -C "$SRC" clean -qfd
 for patch in "$ROOT"/patches/u-boot/*.patch; do
     [ -e "$patch" ] || continue
-    if ! git -C "$SRC" apply --reverse --check "$patch" 2>/dev/null; then
-        git -C "$SRC" apply "$patch"
-        echo "u-boot: applied $(basename "$patch")"
-    fi
+    git -C "$SRC" apply "$patch"
+    echo "u-boot: applied $(basename "$patch")"
 done
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
