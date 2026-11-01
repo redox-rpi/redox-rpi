@@ -6391,3 +6391,26 @@ Built 2026-11-01T03:30:25Z, `libc.so` `d8e9a5ac4a3e35a3…`, real Pi 3B+ over ne
 | ps-tty | pass | 46 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## 2026-11-01: `v0.3.0-dev-946-gd7fa50e+x4ec1` (sshd with relibc `0040`/`0041` reworked)
+
+Real Pi 3B+ over netboot. Test 182 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45)), Pi test agent. Stable bootloader.
+Staged 04:44, and the boot reached login with no `FATAL` or panic line.
+
+**Partly: logins, the session script and pi-test pass. The login grace time does not work as asked:**
+- With an idle TCP connection, sshd never closed it: not in 200, 240 or 331 s.
+- `Timeout before authentication` is written to serial only **after the client closes the connection**, not about 2 min after it opens.
+
+- `ls /etc/ssh`: the host keys were already there at the first look (04:45), ed25519, ecdsa, rsa and mldsa44_ed25519.
+- The test key `/tmp/qkey.pub` went into `/home/root/.ssh/authorized_keys` over devsh, in single quotes. `wc -c` gives `100` (the same as the file on homenodellm).
+- 5 key logins `ssh -i /tmp/qkey root@192.168.178.148 'echo loginN'`: `login1` … `login5`, all rc 0, with no failed login.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace, prompt-again, exit, all `ok`, rc 0.
+- **Login grace time:** the client sent nothing after the server banner `SSH-2.0-OpenSSH_10.5`. Three tries:
+  - held 200 s: the server did not close. The line (`pid = 99`) was in the log right after the client closed.
+  - held 240 s, log checked every 5 s: no line while open. The line (`pid = 101`) appeared after the close.
+  - held 331 s, log checked every 3 s: no line and no close from the server while open. The line (`pid = 109`) appeared after the client closed.
+  - So the `SIGALRM` from `setitimer` seems not to reach sshd while it waits in `read`. It only acts once the read returns.
+- Serial: no `setitimer`/`setgroups` error and no `madvise`/`getsockopt`/`setsockopt` TODO line. The only TODO is `sshd-session: TODO: ioctl TIOCSCTTY`.
+- pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
+
+Stable restored afterwards: the nightly's new stable `v0.3.0-dev-891-g55d0446+x9f76` from 03:30, which is now the backup in `tftp-stable`. It came up to devsh.
