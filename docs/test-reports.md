@@ -6274,3 +6274,25 @@ sha256 `6b359fc8…`, its first 4 MiB `e14fc5a4…`.
   (`~/pitest-tools/t177/*-stats.txt`). No error line, no panic.
 
 Stable image restored afterwards.
+
+## 2026-11-01: C `v0.3.0-dev-855-g81b7717+x8ea9` and D `v0.3.0-dev-895-gff40d9c+xf49c` (`rwlock_randtest`: control run and a quiet heartbeat)
+
+Real Pi 3B+ over netboot. Test 178 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent.
+
+**No freeze on either image: C (no heartbeat, the image of 173) 40 of 40, and D
+(quiet heartbeat + `t1-memmap`) 40 of 40.** So the freeze of 173 (run 12) is
+rare even without a heartbeat. Each run was its own devsh command with a 60 s
+client timeout. C staged 00:36:57, D 00:42:24; stable bootloader.
+
+- C: one `rwlock_randtest` thread hit the same `brk` as in 176: `FATAL: Not an
+  SVC induced synchronous exception (ty=111100)`, `ESR_EL1 F2000001`, `FAR_EL1
+  0xa7efc0`, **`ELR_EL1 0x516C4` (the same address as in 176)**, then
+  `UNHANDLED EXCEPTION, CPU #0, PID 168, NAME ./bins_dynamic/pthread/rwlock_ra`.
+  All 40 runs still reported `rc=0`. C has no `t1-memmap`, so there is no memory
+  map.
+- D: no exception in 40 runs, so `t1-memmap` printed nothing. Heartbeat: 16 beats
+  (4 per CPU, one per 60 s), e.g. `[hb 0 1 s13505 w2929 i10565 p0]` … `[hb 0 4
+  s10987 w2919 i8064 p0]`. **No `[hb stall …]` or `[hb nosched …]` line.**
+- No power cycle needed.
+
+Stable image restored afterwards.
