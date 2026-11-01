@@ -63,6 +63,26 @@ buffer sharing, no way to submit GPU commands. Mesa runs on Redox only as
 the software renderer (llvmpipe/OSMesa); Orbital, the desktop, composites
 on the CPU into a dumb buffer.
 
+## Step plan at a glance
+
+From the firmware's framebuffer to the GPU, each step on top of the one
+before. "Before" is the estimate written before any code, "Now" what
+QEMU showed by 2026-10-30 (details in the step sections, In progress and
+Effort below).
+
+| Step | What | Before | Now | Left, new estimate |
+|---|---|---|---|---|
+| 1a | Firmware framebuffer: `rpi-fbd` gets its buffer, modes and EDID through the mailbox (`rpi-firmwared`), boot stub framebuffer for direct boot | 1–2 weeks | works in QEMU (`graphics-fb`) | Pi test #34; a few days of calendar time |
+| 1b | Double buffering by page flip: two screens in one buffer, the mailbox's virtual offset (tag `0x00048009`) shows the finished one; EDID polling, blanking | part of 1a | works in QEMU (`graphics-fb2`, patch `0026`); waiting for the vertical blank after a flip on `graphics-vsync` (patch `0036`, tag `0x0004800e`, falls back where the firmware lacks it, as in QEMU) | Pi tests #43 and #97. Missing: two screens at 1920x1080/1200 (need `gpu_mem` 32 or more, two 8–9 MiB screens); 1–3 days with Pi tests |
+| 2a | DMA blits: the copy to the screen by the DMA controller | 2–4 weeks | prototype in QEMU (`graphics-fb3`) | Pi test #44 decides if it pays; cached dumb buffers need cache maintenance from user space (kernel, DMA plan #21); a few days |
+| – | Desktop: Orbital on `rpi-fbd`, keyboard, terminal, mouse | not planned | works in QEMU (`graphics-gui`, `graphics-gui-mouse`) | Pi test #54 and the mouse test; faster terminal is upstream work |
+| 2b | Own display driver (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware | 2–3 months | not started | unchanged; no template in Redox, debugging on the Pi with someone at the screen (the NanoKVM helps) |
+| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | not started | unchanged; needs render nodes and buffer sharing in upstream Redox first |
+
+Steps 1 and 2a went fast because Redox had a template for every part and
+the firmware does the HDMI work; 2b and 3 have neither, so their
+estimates stand.
+
 ## Step 1: a firmware framebuffer driver
 
 A new driver (or a second scheme inside `rpi-firmwared`, which already owns
@@ -229,15 +249,119 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   measures drawing and blits both ways. QEMU cannot say whether it pays
   off: uncached dumb buffers make drawing slower, DMA makes the blit
   cheaper; Pi test #44.
+- **Branch [`graphics-gui`](https://github.com/redox-rpi/redox-rpi/tree/graphics-gui)**
+  (on `graphics-fb3`), **effort probe: Orbital, Redox's desktop**, works in
+  QEMU at 1280x720 (`v0.3.0-dev-193-g2983d13+xdf3e`, experiment
+  [`orbital`](https://github.com/redox-rpi/redox-rpi/tree/graphics-gui/patches/experiments/orbital)):
+  - **It runs unchanged.** Orbital, its login window, launcher and
+    terminal come as binary packages (upstream's `desktop-minimal`
+    config); `rpi-fbd` is a normal Redox display to it, with DMA blits.
+  - **Two `rpi-fbd` fixes it showed:** double buffering copied the whole
+    screen every frame after a while (the damage of both buffers was kept
+    as a union that only grew; in `graphics-fb2` too, costs speed only),
+    and Orbital composes in the buffer it gets, which with DMA is uncached
+    memory, slow to read; clients now draw into a shadow buffer in normal
+    memory and only copy the changed part over.
+  - **Input:** the USB keyboard works (`dwc2d`, one keyboard in the boot
+    protocol), but **there is no mouse driver**, so Orbital is keyboard
+    only. `dwc2-interrupts` (a default patch on main) is needed; without
+    it `dwc2d` polls on a whole core.
+  - **Memory:** 140 MiB used without Orbital, about 160 MiB with the
+    desktop, of 932 MiB (QEMU, `free`). Fits the Pi's 1 GB easily.
+  - **Frame rate:** QEMU's DMA model is slow (30 to 57 frames per second
+    for 512x512 in `drawbench`), so the real number comes from the Pi
+    test #54. The login to desktop takes under 90 s in QEMU (earlier runs
+    measured minutes, but the test helper caused that; see Mouse), to be
+    timed on the Pi.
+  - **Keyboard and terminal** (`v0.3.0-dev-195-g671b427+xdf3e`):
+    `dwc2d`'s existing keyboard events reach Orbital and the terminal
+    window without changes (`echo Hi` typed in `orbterm` ran; Super-F12
+    shows Orbital's FPS counter). The launcher's Super-T asks for
+    `cosmic-term`, which is not packaged; the image links it to `orbterm`.
+    Without a mouse, Super-Numpad-0 turns on Orbital's mouse keys.
+  - **Terminal speed:** about 4 ms per output line for drawing (`ls -R
+    /usr`, 679 lines: 5.6 s in `orbterm`, 2.7–3.0 s to `/dev/null`).
+    `orbterm` renders each character with `rusttype` without a glyph
+    cache and sends its whole window (1024x600, 2.4 MB) on every update;
+    the DMA blits are not the limit. A faster terminal is upstream work in
+    `orbterm`/`orbfont` (glyph cache, only the changed rows as damage).
+  - **Memory with a terminal:** 194 MiB used (login window plus
+    `orbterm`); the biggest part is the decoded background picture (84
+    MB in `background`).
+  - **Mouse** (branch `graphics-gui-mouse`, this work merged with the
+    USB session's `usb-mouse`, #48; image
+    `v0.3.0-dev-222-g67cef7a+xd99d`): in QEMU the pointer moves, hovering
+    shows the launcher's tooltips and the buttons arrive, with no change
+    in Orbital or `rpi-fbd`. **The whole desktop works by keyboard and
+    mouse** (2026-10-30): Enter at the login window, the desktop within 90
+    s, a click on the launcher's terminal icon opens `orbterm` within 90
+    s, and `echo hi` typed there prints `hi`. Earlier runs showed late
+    moves, logins of minutes, a click that opened nothing and `getty` and
+    `bcm2835-sdhci` at 12 minutes of CPU; all of that came from the test
+    helper, which did not read QEMU's serial output while sending input,
+    so programs writing to the console blocked.
+  - **Memory for the desktop with `gpu_mem=16`:** in QEMU (`free`, 932 MiB
+    for Redox) 194 MiB used at the login window and 270 MiB with the
+    desktop and a terminal: `background` 82 MB (the decoded picture),
+    `orbital` 25 MB, `launcher` 9 MB, `orbterm` 6 MB. On the Pi,
+    `gpu_mem=16` leaves Redox about 1008 MiB, more than QEMU's 932, so
+    the desktop uses about a quarter of it. The framebuffer itself is in
+    the GPU's 16 MiB (1280x720 double buffered 7 MiB, 1920x1080 single 8
+    MiB); the clients' buffers and shadow copies are in Redox's memory
+    and are part of the 270 MiB. The biggest single saving would be a
+    smaller background picture.
+  - **NanoKVM:** the Pi's HDMI now goes to a NanoKVM. Its EDID will set
+    the display size (probably 1920x1080, then single buffered with
+    `gpu_mem=16`), and its USB side can be the Pi's keyboard (and later
+    mouse) for #54. Once the user has signed in, screenshots from it can
+    replace the person for the screen checks of #34, #43, #44 and #54
+    (see the test plan rows).
 
 ## Next
 
+- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
+  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
+  main, the base patches renumbered to `0060`–`0067` (main now uses
+  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
+  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
+  2–3 and #130 pass.
+- **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
+  judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
+  `drawbench` and the vsync line, without a screen. If it passes, a draft
+  PR from `graphics-vsync` brings experiment `rpi-fb` (patches `0024`–
+  `0029`, `0036`) and experiment `orbital` (a config file) to main, still
+  as experiments, not default; the report goes into the PR. Making
+  `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
+  #54 with #108), which checks what the screen shows.
+  Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
+  `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
+  free. The cause is the kernel: its page allocator hands out at most 4
+  MiB of physically contiguous memory (11 orders), however much is free,
+  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
+  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
+  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. On the Pi (#130)
+  the DMA test blit at start failed (`test blit of 2 rows moved 4`, while
+  #116 got 3 with the same code), so the DMA path was not reached; the
+  allocator change itself ran without trouble. Likely cause: "zeroed" DMA
+  memory that is not zero, because the kernel clears it through a cached
+  mapping and the driver reads it uncached. Patch `0068` clears the test
+  buffer itself and logs what was there; Pi test #138
+  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
+  `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
+  file in `/srv/tftp/`.
 - Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
 - Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
   boot (is `monitor connected` logged?), and double buffering at 1280x720.
 - Pi test #44 (`graphics-fb3`), same visit: the DMA row count and the
   benchmark, CPU against DMA. If DMA wins, cached dumb buffers with cache
   maintenance (DMA plan step 2, a kernel change) are the next gain.
+- Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
+  login to desktop time, frame rate with `drawbench`, terminal speed,
+  memory. With the NanoKVM most screen checks need no person.
+- For a usable desktop: the USB mouse works in QEMU (`usb-mouse` on
+  `usb-hotplug`, #48, keyboard and mouse at the same time); next is the
+  Pi test with a mouse (the NanoKVM's USB can be one) and then `usb-mouse`
+  and the graphics branches on main once their Pi tests pass.
 
 ## Effort: estimate and what it took
 
@@ -252,6 +376,11 @@ on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 | Monitor turned on later: diagnosis and `config.txt` fix | not planned | 10 minutes | 14 |
 | EDID polling, double buffering, blanking (`graphics-fb2`) | part of 1–2 weeks | 40 minutes, half of it build and QEMU | 220 |
 | Step 2 prototype: DMA blits (`graphics-fb3`), with a benchmark | 2–4 weeks | 35 minutes, half of it three builds and QEMU | 350 (`dma.rs`, 200 of them copied from `bcm2835-sdhostd`), 240 (driver) |
+| Orbital on `rpi-fbd` (`graphics-gui`): login window on screen | not estimated | 20 minutes (a config file, binary packages) | 25 (config) |
+| … then input, memory, frame rate, two `rpi-fbd` fixes, `drawbench` | not estimated | 1 hour more, most of it QEMU runs (each 5 to 15 minutes, the emulated desktop is slow) | 20 (driver), 3 (Makefile) |
+| … keyboard in Orbital, terminal window, its speed and memory | not estimated | 1.5 hours, almost all QEMU runs (keys get lost while the emulated desktop is busy) | 5 (config: `cosmic-term` link) |
+| … mouse in Orbital (the USB session's `usb-mouse` merged in) | a few hours | 1 hour, one build and two QEMU runs; the driver was the USB session's | 0 |
+| Waiting for the vertical blank after a flip (`graphics-vsync`) | part of 1–3 days | 40 minutes, with one build and a QEMU run; the tag is undocumented, so the Pi test decides | 55 |
 
 So the code of step 1 took about **2 hours instead of 1–2 weeks**. Why
 it went fast: every part had a template in Redox (`vesad` for the
@@ -284,6 +413,13 @@ if it pays off, cached dumb buffers, which need cache maintenance from
 user space (a kernel change, DMA plan step 2, shared with #21). New
 estimate for DMA blits: **a few days** of calendar time, set by the Pi
 test and that kernel change, not by the driver.
+
+The desktop probe went the same way: Orbital needed no code, because
+`rpi-fbd` speaks the same display interface as every Redox display
+driver, and the hour after the first picture went into measuring and
+into two `rpi-fbd` fixes that only a real client showed. What a usable
+Pi desktop still needs is a mouse driver (hours) and the Pi's own
+numbers (frame rate, login time), which wait for the visit.
 
 The other two estimates stay as they are, unchecked: own display driver
 2–3 months, V3D 6+ months. Neither has a template in Redox, and their
