@@ -3,6 +3,9 @@
 For [#158](https://github.com/redox-rpi/redox-rpi/issues/158). Kernel
 patch `0001` (`src/scheme/pipe.rs`).
 
+**Default kernel patch now** (`kernel/0010`, Pi test 180). The name is
+still accepted and does nothing.
+
 ## The bug
 
 A blocking write to a pipe copied what fit into the kernel's 64 KiB pipe
@@ -23,6 +26,8 @@ takes what fits, and `EAGAIN` when nothing does.
 Not changed: writes of up to `PIPE_BUF` (4096) bytes are still not atomic
 when the queue has less room than that; POSIX asks for that too, but it
 needs a separate wait condition and no program here has shown a problem.
+
+Before it became a default patch:
 
 ```bash
 scripts/build-image.sh --experiment pipe-write-all
