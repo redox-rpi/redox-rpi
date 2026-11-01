@@ -4,15 +4,16 @@
 //! The main thread loads a known pattern into x1-x17, x19-x29 and v0-v31
 //! and checks them in a loop while signals arrive. The handler overwrites
 //! all of them. A register that differs after a signal shows a bug in the
-//! signal entry or return. Not checked: x18 (the signal entry may use it),
-//! x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
+//! signal entry or return. x18 only with `--x18`: macOS reserves it, and
+//! Redox keeps it only with experiment `sigreturn-svc` (redox-rpi #1).
+//! Not checked: x30 (scratch register of the loop), x0 (points to `STATE`), nzcv and
 //! sp.
 //!
 //! Two modes: `process` sends the signals with kill() from a child
 //! process, `thread` with pthread_kill() from another thread. They take
 //! different paths in the signal entry. Without an argument both run.
 //!
-//! Usage: sigregs [process|thread] [-n <signals>]
+//! Usage: sigregs [process|thread] [-n <signals>] [--x18]
 //! Exit code 0 if every mode passed.
 
 use std::{
@@ -57,11 +58,11 @@ macro_rules! pattern {
 }
 
 macro_rules! check_loop {
-    (ints: $($n:literal)*; vectors: $($v:literal $lo:ident $hi:ident)*) => {
+    ($name:ident; ints: $($n:literal)*; vectors: $($v:literal $lo:ident $hi:ident)*) => {
         /// Returns 0 when `remaining` reached 0, ABORTED when the watchdog
         /// stopped it, otherwise the number of the register that changed.
         #[unsafe(naked)]
-        extern "C" fn check_loop(state: *const State) -> u64 {
+        extern "C" fn $name(state: *const State) -> u64 {
             std::arch::naked_asm!(concat!(
             // Save the registers the C ABI wants back.
             "    stp x29, x30, [sp, #-16]!\n",
@@ -136,7 +137,21 @@ macro_rules! check_loop {
     };
 }
 
+// With x18: an ordinary register on Linux and Redox, it must survive a
+// signal too (redox-rpi #1); on macOS the system owns it.
 check_loop!(
+    check_loop_x18;
+    ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29;
+    vectors:
+        0 x1 x8 1 x2 x9 2 x3 x10 3 x4 x11 4 x5 x12 5 x6 x13 6 x7 x14 7 x8 x15
+        8 x9 x16 9 x10 x17 10 x11 x19 11 x12 x20 12 x13 x21 13 x14 x22
+        14 x15 x23 15 x16 x24 16 x17 x25 17 x19 x26 18 x20 x27 19 x21 x28
+        20 x22 x29 21 x23 x1 22 x24 x2 23 x25 x3 24 x26 x4 25 x27 x5
+        26 x28 x6 27 x29 x7 28 x1 x20 29 x2 x21 30 x3 x22 31 x4 x23
+);
+
+check_loop!(
+    check_loop;
     ints: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 19 20 21 22 23 24 25 26 27 28 29;
     vectors:
         0 x1 x8 1 x2 x9 2 x3 x10 3 x4 x11 4 x5 x12 5 x6 x13 6 x7 x14 7 x8 x15
@@ -190,7 +205,7 @@ fn describe(code: u64) -> String {
 /// Runs the check loop until `count` signals arrived or none arrived for
 /// five seconds. `start_sender` starts sending and returns a function that
 /// stops it.
-fn run(mode: &str, count: u64, start_sender: impl FnOnce() -> Box<dyn FnOnce()>) -> bool {
+fn run(mode: &str, count: u64, x18: bool, start_sender: impl FnOnce() -> Box<dyn FnOnce()>) -> bool {
     STATE.remaining.store(count, Ordering::SeqCst);
     STATE.abort.store(0, Ordering::SeqCst);
 
@@ -213,7 +228,7 @@ fn run(mode: &str, count: u64, start_sender: impl FnOnce() -> Box<dyn FnOnce()>)
             thread::sleep(Duration::from_millis(100));
         }
     });
-    let code = check_loop(&STATE);
+    let code = if x18 { check_loop_x18(&STATE) } else { check_loop(&STATE) };
     stop();
     // Let the watchdog end, also when the loop ended on a difference.
     STATE.abort.store(1, Ordering::SeqCst);
@@ -288,13 +303,15 @@ fn thread_sender() -> Box<dyn FnOnce()> {
 fn main() {
     let mut modes = Vec::new();
     let mut count = 1000;
+    let mut x18 = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-n" => count = args.next().and_then(|n| n.parse().ok()).expect("-n <signals>"),
+            "--x18" => x18 = true,
             "process" | "thread" => modes.push(arg),
             _ => {
-                eprintln!("usage: sigregs [process|thread] [-n <signals>]");
+                eprintln!("usage: sigregs [process|thread] [-n <signals>] [--x18]");
                 std::process::exit(2);
             }
         }
@@ -316,7 +333,7 @@ fn main() {
             "process" => process_sender,
             _ => thread_sender,
         };
-        passed &= run(mode, count, sender);
+        passed &= run(mode, count, x18, sender);
     }
     std::process::exit(if passed { 0 } else { 1 });
 }

@@ -225,7 +225,7 @@ EOF
 # Other recipes: pin them and add our patches to their [source] section.
 # pkgutils only when an experiment patches it (pkg-hold); otherwise the
 # image takes the upstream binary.
-for name in bootloader base relibc pkgutils; do
+for name in bootloader base relibc redoxfs pkgutils; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
     if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
         continue
@@ -236,17 +236,20 @@ for name in bootloader base relibc pkgutils; do
 done
 
 # Our own packages, built from this repository.
-for tool in devshd reboot sigregs timesync; do
+for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
-    # relibc recipe, not the toolchain's.
+    # relibc recipe, not the toolchain's. Cargo does not see a new libc.a,
+    # so its fingerprint goes first: otherwise a build with other relibc
+    # patches keeps the old sigregs.
     build='template = "cargo"'
     if [ "$tool" = sigregs ]; then
         build='template = "custom"
 dependencies = ["relibc"]
 script = """
 export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
+rm -rf "${COOKBOOK_BUILD}"/target/*/release/.fingerprint/sigregs-*
 COOKBOOK_CARGO_PATH=. cookbook_cargo
 """'
     fi
