@@ -6345,3 +6345,36 @@ Real Pi 3B+ over netboot. Test 180 (relibc), Pi test agent. Stable bootloader.
 - pi-test: version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
 
 Stable image restored afterwards, and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-881-g394af65+x741f` (netget stall with a kernel context dump)
+
+Real Pi 3B+ over netboot. Test 181 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb2-v0.3.0-dev-881-g394af65+x741f.img`, staged with its own bootloader.
+Download of 172 to `/scheme/data/netget.bin`. Progress was read from the `netget:` lines on serial, and a stall meant no new line for 5.5 min. After each run: `cat /scheme/sys/context` over devsh, then a power cycle.
+
+**2 of 3 runs stalled. Unlike 179, devsh still answered, and the picture is the same as in 174:**
+- `netget` is **runnable (`UR`) on CPU 0**.
+- CPU 0 does **almost no work** (`w0`–`w24` per minute after the stall, against several thousand before).
+- The kernel's automatic dump did not fire, because the other CPUs still switch contexts.
+
+| Run | Start (UTC) | Result | Size reached |
+|---|---|---|---|
+| 1 | 02:07:16 (reset) | stalled, last progress 02:12:41 | 272 MiB at 255.5 s (0.86 MB/s) |
+| 2 | 02:18:25 (power cycle) | **complete**: `382156480 bytes in 313.3 s, 1.22 MB/s` | all |
+| 3 | 02:24:52 (power cycle) | stalled, last progress 02:28:57 | 256 MiB at 187.3 s |
+
+- **`[hbctx …]` dumps:** only the baseline dump, about 2 min after boot (`[hbctx begin beat 2 w…]` … `[hbctx end]`), in each run.
+  - No dump came after either stall, 5.5 min in each case.
+  - The trigger, fewer than 100 switches per minute on all CPUs together, was never met. The other CPUs still made about 6000–18000 schedule calls per minute.
+  - In the baseline dump, `netget` (pid 54) is `B` in `UserInner::call`, `netstack` in `EventQueue::read`, `dwc2d` in `EventQueue::read`, and `redoxfs` in `UserInner::call`/`UserInner::read (v2)`.
+- **After the stall, `/scheme/sys/context` (devsh):**
+  - run 1: `54 UR #0 /usr/bin/netget`, `20 UR #2 /scheme/initfs/bin/redoxfs`, `25 UB #3 netstack`, `16 UB #3 dwc2d`, `31 UB #0 /usr/bin/redoxfs`;
+  - run 3: the same, with `netget UR #0` and initfs `redoxfs UR #3`.
+- **Heartbeat after the stall:**
+  - CPU 0: run 1 `[hb 0 10 s6440 w0 i6440]`, run 3 `[hb 0 9 s6436 w0 i6436]`.
+  - So CPU 0 takes its timer and calls `schedule()`, but always picks idle, while `netget` waits on its run queue.
+  - The other CPUs keep doing some work, e.g. `[hb 2 10 s18139 w8243 …]`.
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop in any run.
+- Suggestion: the dump could also trigger on "a CPU did no work for 60 s while one of its contexts was runnable".
+
+Stable image restored afterwards (02:34), and stable came up to devsh.
