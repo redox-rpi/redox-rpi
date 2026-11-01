@@ -1,4 +1,4 @@
-From 8fe2c65feeabe5f960ba895aafc60a0ed1973773 Mon Sep 17 00:00:00 2001
+From 8bad9f870be19bfaf5649abea384f31ea5e1b0af Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 13:42:42 +0100
 Subject: [PATCH] setgroups on Redox: succeed for root instead of ENOSYS
@@ -13,23 +13,14 @@ requires.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/platform/redox/mod.rs | 17 ++++++++++++-----
- 1 file changed, 12 insertions(+), 5 deletions(-)
+ src/platform/redox/mod.rs | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
 
 diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
-index f2b73427..f4cb7fa4 100644
+index b3230f8..061e7ed 100644
 --- a/src/platform/redox/mod.rs
 +++ b/src/platform/redox/mod.rs
-@@ -30,7 +30,7 @@ use crate::{
-     header::{
-         errno::{
-             EBADF, EBADFD, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EMFILE, ENAMETOOLONG, ENOENT,
--            ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP,
-+            ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP, EPERM,
-         },
-         fcntl::{
-             self, AT_EACCESS, AT_EMPTY_PATH, AT_FDCWD, AT_REMOVEDIR, AT_SYMLINK_FOLLOW, F_GETLK,
-@@ -1188,10 +1188,17 @@ impl Pal for Sys {
+@@ -1277,10 +1277,19 @@ impl Pal for Sys {
          Ok(())
      }
  
@@ -41,6 +32,8 @@ index f2b73427..f4cb7fa4 100644
 +        // The kernel has no supplementary groups (getgroups reads them from
 +        // /etc/group), so there is nothing to set: a process that drops its
 +        // groups loses none, one that sets groups gains none.
++        use crate::header::errno::EPERM;
++
 +        if Self::geteuid() != 0 {
 +            return Err(Errno(EPERM));
 +        }
