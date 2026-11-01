@@ -1,0 +1,18 @@
+[packages]
+# Built from source with patches/experiments/pkg-hold/pkgutils/.
+pkgutils = "source"
+
+# Our own builds that `pkg install` and `pkg update` must not replace with
+# the versions from static.redox-os.org. pkgutils is in the list so that
+# an update cannot drop the hold support itself.
+[[files]]
+path = "/etc/pkg/hold"
+data = """
+# Packages pkg keeps as installed (patches/experiments/pkg-hold).
+base
+base-initfs
+bootloader
+kernel
+relibc
+pkgutils
+"""
