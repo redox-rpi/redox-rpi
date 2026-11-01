@@ -82,3 +82,8 @@ times, and looks for the complete output line in
   `v0.3.0-dev-164-gf8f70a5+x9f76`: a line of about 1050 characters on the
   serial console, 3 of 3 runs complete, no getty panic (#32; stable: 4 of
   7 runs panicked).
+- `0024` reworked so it applies to the newest upstream base too
+  (2026-11-01, `docs/upstream/rebase.md`). QEMU `raspi3b`, five commands of
+  200 characters in one write: `v0.3.0-dev-893-ge59eb292` (pinned base)
+  3 of 3 runs complete, and a local build with base at upstream
+  `8424d392` 3 of 3, no getty panic in either.
