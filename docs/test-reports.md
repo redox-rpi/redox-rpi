@@ -6972,3 +6972,15 @@ fbcond: Performing handoff
 - No power cycle needed.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-13-g41cfa03+x0fb0` (the Pi answers ping)
+
+Real Pi 3B+ over netboot. Test 196 ([#177](https://github.com/redox-rpi/redox-rpi/issues/177)), Pi test agent. Image `icmp-v0.4.0-dev-13-g41cfa03+x0fb0.img` (branch `icmp-echo`), staged 16:35 with the stable bootloader. homenodellm has no `ping` binary, so I used `ping.py` (ICMP datagram socket, one request per second, 2 s timeout).
+
+**Pass:**
+- **Before, with stable 891:** 0 of 3 answered.
+- **This image:** `ping.py 192.168.178.148 20` → **20 of 20 answered**, times 0.8–12.4 ms.
+- **On the Pi:** `ping -c 3 192.168.178.1` → `3 packets transmitted, 3 packets received, 0.00% packet loss`, rtt 0.825/1.970/3.424 ms.
+- **Standard checks:** version, manifest present, `ps` (45), `ps-tty`, SD card all pass; 0 of 300 starts failed. No panic or `FATAL` line.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
