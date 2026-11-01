@@ -7063,3 +7063,26 @@ Real Pi 3B+ over netboot. Test 198 rerun ([#33](https://github.com/redox-rpi/red
 - No unplanned reboot (one U-Boot, from the reset).
 
 Stable image restored afterwards and came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-17-g8ca190f+x58dc` (relibc tests, `sched-vtime-clamp`, `pi-heartbeat` with kernel spin watches)
+
+Real Pi 3B+ over netboot. Test 200 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14) `rwlock_randtest` hard freeze: which CPU spins where?), Pi test agent. Image `~/redox-rpi-icache/keep/spin-v0.4.0-dev-17-g8ca190f+x58dc.img`, staged 20:22 with the stable bootloader. Boot line: `experiments: pi-heartbeat relibc-tests sched-vtime-clamp timesync`.
+
+**Fail: froze at run 54. No `[spin …]` line at all. The kernel kept beating on all 4 CPUs, and nothing was runnable.**
+
+- Runs 1–53: `rc=0` (run 53: `real 1.348210692s`).
+- Run 54 started at about 20:30:47 and the client timed out at 20:31:52. devsh was dead and stayed dead after 5 min.
+- After 5 min, Enter on the serial console gave a fresh `redox login:` prompt. So getty and the serial driver were still working (unlike 199). I did not log in.
+- **`[spin …]` lines: none**, in the whole boot. There were also no `[hb stall …]`, `[hb nosched …]`, `few-switches` or `runnable-on-idle-cpu` lines.
+- Beats from run 54 on (`[hb <cpu> <beat> s… w… i… p…]`):
+  - beat 8 (run 54 running): CPU 0 `w735`, CPU 1 `w5134`, CPU 2 `w1456`, CPU 3 `w2810`.
+  - beats 9–14 (after the freeze): CPUs 0, 1 and 2 `w0` (beat 14: CPU 1 `w100`), CPU 3 about `w2200` every beat. `s` ≈ `i` + `w` on every CPU, so every CPU still takes timer interrupts and runs `schedule()`.
+- Dumps (`timed`, beats 8, 10, 12, 14):
+  - `[hbq n] … n0` on every CPU: all run queues are empty. Only `hbq 3`'s `v` keeps growing (140.1e9 → 147.3e9 → 157.2e9 → 164.4e9); `hbq 0–2` stay unchanged from beat 8 on.
+  - The only `R` contexts are the four `[kmain]` idle contexts (`R+c cpu0`–`cpu3`).
+  - **No `rwlock_randtest` context in any dump**, already in the beat 8 dump while run 54 was still running. Its shell, `ion` (417), is `B sys cpu3 UserInner::call`.
+  - Blocked in `UserInner::call` (waiting for an answer from a scheme): `init` (1), `netstack` (25), `devshd` (34, several threads), `login` (31, 36, 416), `ion` (417). `dwc2d` is `S nanosleep`, and the rest wait in `UserInner::read`/`EventQueue::read` as usual.
+  - The `hbcpu` counters `sl sa sr sv ss` don't change from beat 8 to 14.
+- Serial log from the start of run 54 to the power cycle: 269 lines, all beats and dumps.
+
+Shelly power cycle at 20:37 after the 5 min wait, then stable restored. Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh.
