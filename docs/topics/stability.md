@@ -57,7 +57,8 @@
   last thread calls `pthread_exit` ended with SIGKILL instead of 0 (relibc
   test `pthread/exit`). `0013` marks such a thread `exiting_itself` and
   reports it as Dead; real kills stay ForceKilled, the leak fix stays.
-  QEMU and Pi test 133 passed as an experiment; now on by default.
+  QEMU and Pi test 133 passed as an experiment, Pi test 195 as the
+  default patch (pthread/exit 10 of 10 exit 0, no leak).
 
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
   `devshd-hangup`): devshd kept `login` and the shell running when a client
