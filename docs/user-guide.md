@@ -6,9 +6,8 @@ To get the image onto an SD card and boot it first, see
 [getting started](getting-started.md). Every command here was tried on the stable image
 `v0.3.0-dev-15-g24fbb96+x9f76` in QEMU (2026-10-29), except the keys of the
 full-screen programs `kibi` and `less`, which come from their
-documentation. The [USB devices](#usb-devices) section was checked on
-today's main in QEMU and against the Pi tests (2026-11-01). Things that
-are missing or behave differently are listed at the end.
+documentation. Things that are missing or behave differently are listed
+at the end.
 
 Redox looks like a Unix system: there is a shell, `/home`, `ls`, `cat`
 and most of the usual tools. Two things are different: the shell is
@@ -28,9 +27,8 @@ Change a password with `passwd`. Log out with `exit`.
 
 Where to type:
 
-- **Keyboard and screen** on the Pi. A USB keyboard works whether it is
-  plugged in before or after power-on (see [USB devices](#usb-devices)).
-  US layout only.
+- **Keyboard and screen** on the Pi. Plug the USB keyboard in before you
+  power on: a keyboard plugged in later is not found. US layout only.
 - **Serial console** (pins 8 and 10 of the Pi header, 115200 baud), for
   example `screen /dev/ttyUSB0 115200` on Linux or macOS.
 - **Over the network**, only with the network-boot image: `devshd` on port
@@ -182,6 +180,9 @@ adapters for Zigbee or Thread sticks and Arduinos
 ([#35](https://github.com/redox-rpi/redox-rpi/issues/35)). Other USB
 devices (sound, cameras, Wi-Fi sticks, printers) are not supported.
 
+This section was checked on today's main in QEMU and against the Pi
+tests (2026-11-01).
+
 ## Time and time zones
 
 The Pi has no battery-backed clock. At boot `timesync` sets the clock to
@@ -295,5 +296,4 @@ Found while checking this guide on the stable image (QEMU, 2026-10-29):
 | `pkg search` | lists many packages that do not match |
 | `sudo --help` | not an option: `sudo` runs its first argument as a command |
 | `/etc/hostname` | has no line end, so `cat` runs into the next prompt |
-| Keyboard | US layout only |
-| USB | keyboard, Ethernet adapters and hubs only; no sticks, serial adapters or mice yet ([USB devices](#usb-devices)) |
+| Keyboard | US layout only; plug in before power-on |
