@@ -40,11 +40,11 @@
   write, unplug, plug in again); not yet on the Pi.
 
 - [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
-  tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
-  experiment `usb-mouse` (base `0035` there). Events go
+  tablet, branch [`t48-mouse`](https://github.com/redox-rpi/redox-rpi/tree/t48-mouse)
+  (on main, PR #149), experiment `usb-mouse` (base `0059`). Events go
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
-  passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
-  visit as #50.
+  passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
+  same visit as #50.
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
@@ -75,6 +75,23 @@
   hotplug 15/15, keyboard), but sticks are slower there (128 instead of
   182 MB/s), since QEMU finishes a chunk at once; the real check is Pi test
   #135, like for like against #71's image, no person needed.
+
+- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) the Pi's
+  inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
+  during a download into the SD card, once with dwc2d stuck afterwards:
+  branch [`usb-hub-drop`](https://github.com/redox-rpi/redox-rpi/tree/usb-hub-drop)
+  (on main, PR #156), experiments `dwc2d-netstats` (`0052`) and
+  `usb-hub-drop` (`0083`). No `sleep` in dwc2d any more (a `nanosleep`
+  could hang it); a removal logs the hub port's status and change bits and
+  the channel errors; a disabled or unpowered port is brought back, a
+  failed device gets three more tries; counters in `/tmp/dwc2d-usbstats`,
+  the hotplug step in `/tmp/dwc2d-step`. **Pi: 0 hub drops in 4 downloads**
+  (tests [172](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-857-g7ed9070xa901-dwc2d-hub-drop-fix-the-171-download-again),
+  [174](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-3111-01-hub-drop-fix-v030-dev-857-g7ed9070xa901-new-against-v030-dev-838-g64fa695x8116-old-alternating)),
+  against 8, 12 and 4 on the old image (171, 174); no undervoltage. Why
+  the drops stop without `sleep` is not known. The download stalls that
+  remain are a lost wakeup in the scheduler (#181, relibc topic), not
+  dwc2d.
 
 ## Next
 
