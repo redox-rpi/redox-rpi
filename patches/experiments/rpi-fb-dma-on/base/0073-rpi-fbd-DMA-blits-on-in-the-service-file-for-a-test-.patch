@@ -1,0 +1,25 @@
+From 3aa583453c1b9dc1f8188165094fff8eca45be9a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 16:19:48 +0000
+Subject: [PATCH] rpi-fbd: DMA blits on in the service file, for a test image
+
+---
+ init.initfs.d/40_rpi-fbd.service | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/init.initfs.d/40_rpi-fbd.service b/init.initfs.d/40_rpi-fbd.service
+index 470c819a..86844575 100644
+--- a/init.initfs.d/40_rpi-fbd.service
++++ b/init.initfs.d/40_rpi-fbd.service
+@@ -9,6 +9,8 @@ requires_weak = [
+ 
+ [service]
+ cmd = "rpi-fbd"
++# Test image only (experiment rpi-fb-dma-on): DMA blits without cmdline.txt.
++envs = { RPI_FB_DMA = "on" }
+ inherit_envs = [
+     "FRAMEBUFFER_ADDR",
+     "FRAMEBUFFER_WIDTH",
+-- 
+2.53.0
+
