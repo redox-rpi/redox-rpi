@@ -5835,3 +5835,233 @@ dwc2d: keyboard removed
   at dwc2d losing the hub, rather than at redoxfs.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-845-g7590e1c+x8a5e` (icache-default, icache-sync as default kernel patches)
+
+Real Pi 3B+ over netboot. Test 169 ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), Pi test agent.
+
+**Pass: `icachetest 10000` PASS with 0 stale rounds in all four tests, standard
+checks pass, 0 of 1000 starts failed, and no exception or panic.** Image
+`~/t18-work/image-icd/harddrive.img` (md5 `511ef4ab`), staged with
+`~/t18-work/t3-stage/scripts/netboot.sh` (bootloader md5 `4fccdb94`, as in
+tests 131 and 162).
+
+```
+### icachetest 10000  (68.0 s)
+new-page: 0 of 10000 rounds ran stale code
+same-page: 0 of 10000 rounds ran stale code
+file-map: 0 of 10000 rounds ran stale code
+user-flush: 0 of 10000 rounds ran stale code
+PASS
+```
+
+(test 162 without `icache-sync`: up to 3244 `new-page` and 5349 `same-page`.)
+
+- `scripts/pi-test.py --starts 1000`: version, manifest (present), ps, ps-tty,
+  sdcard pass; **0 of 1000 starts failed**.
+- `time ion -c "for i in 1..=500; ls /usr > /dev/null; end"`: **116.99 s,
+  116.87 s, 116.93 s** (test 162 with `icache-sync`: 116.8 s; without: 116.2 to
+  119.1 s).
+- Serial log from the boot to the end: 0 `FATAL`, `exception` or `panicked`.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-848-gdc1da3e` without (`+xb3d9`) and with `rt-call-flags` (`+xdd51`) (`rwlock_randtest` hang from 166)
+
+Real Pi 3B+ over netboot. Test 170 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+
+**`rt-call-flags` does not cause the hang. The image without it (A) froze the
+whole Pi twice in 9 runs. The image with it (B) passed 20 of 20.** Each run was
+its own devsh command with a 60 s client timeout. Images
+`~/redox-rpi-t12/keep/rcfbase-dc1da3e.img` (A) and
+`rcf-v0.3.0-dev-848-gdc1da3e+xdd51.img` (B, the image of 166), stable
+bootloader. The banners confirmed each boot (`+xb3d9` with `experiments:
+relibc-tests self-exit-status timesync`; `+xdd51` with `rt-call-flags`).
+
+| image | runs | passed | timed out | after the timeout |
+|---|---|---|---|---|
+| A1 (without) | 1 | 0 | **1** (run 1) | devsh dead, 0 serial bytes since the run started, power cycle 21:56 |
+| B1 (with) | 20 | **20** | 0 | |
+| A2 (without) | 9 | 8 | **1** (run 9) | devsh dead, 0 serial bytes, power cycle 22:09 |
+
+- A passing run takes **1.3–1.5 s** (`real 1.31` to `1.48 s`), not the 11–17 s
+  the row expected; the same for A and B.
+- In both hangs the Pi stopped completely: no devsh answer within 10 s, no new
+  serial output. The serial log around them holds nothing (1 byte). It looks
+  like test 166: a machine-wide stop, not a slow run.
+- With 2 hangs in 10 A runs and 0 in 20 B runs, `rt-call-flags` is not the cause
+  (if anything B looks better, but 20 runs can't show that). Neither image has the
+  futex fix `futex-wait-lock` (#98), the likely next suspect.
+- Stable staged and the Pi power-cycled at the end; stable runs
+  (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-838-g64fa695+x8116` (t151-test, the 168 download again with `throttled`)
+
+Real Pi 3B+ over netboot. Test 171 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+
+**The download completed this time (`382156480 bytes in 385.2 s, 0.99 MB/s`),
+although the USB hub dropped 8 times and came back every time. `throttled` read
+`0x00000000` before, during and after: no undervoltage (bit 16 never set).** Same
+image as #167/#168 (md5 `15e52989`), staged with `~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Before: `throttled` `0x00000000`; `/scheme/data` 393.7M used, no old files.
+- Every 30 s from a second devsh (11 readings, 22:12:05 to 22:18:17): `throttled`
+  **`0x00000000` every time**; devsh answered every time. `free` used 185744 →
+  190932, 197688 at the end of the download, 183076 after. `netget.bin`:
+   44819700,  81799239,  137663334,  170732067,  203508243,  237738846,  258632514,  278771868,  319671519,  364532904,  382156480
+  bytes.
+- Each drop on the serial console was `dwc2d: hub 1 port 1: device at address 2
+  removed`, `keyboard removed`, then `hub 1 port 1: device connected`, the whole
+  tree enumerated again, `LAN78xx no link yet`, `network on the adapter at address
+  3`. So dwc2d brought the hub and the network back each time, and TCP carried on.
+  In #168, the same image did not bring it back after its one drop.
+- netget and drop lines in order:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    16 MiB    18.5 s  0.91 MB/s
+netget:    32 MiB    26.0 s  2.24 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    48 MiB    46.4 s  0.82 MB/s
+netget:    64 MiB    54.3 s  2.14 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:    80 MiB    77.4 s  0.73 MB/s
+netget:    96 MiB    85.2 s  2.17 MB/s
+netget:   112 MiB    94.9 s  1.73 MB/s
+netget:   128 MiB   106.8 s  1.41 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   144 MiB   133.1 s  0.64 MB/s
+netget:   160 MiB   144.9 s  1.43 MB/s
+netget:   176 MiB   164.7 s  0.85 MB/s
+netget:   192 MiB   182.2 s  0.96 MB/s
+netget:   208 MiB   202.1 s  0.84 MB/s
+netget:   224 MiB   215.7 s  1.24 MB/s
+netget:   240 MiB   225.5 s  1.72 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   256 MiB   281.3 s  0.30 MB/s
+netget:   272 MiB   288.3 s  2.42 MB/s
+netget:   288 MiB   301.9 s  1.24 MB/s
+netget:   304 MiB   318.0 s  1.05 MB/s
+netget:   320 MiB   326.3 s  2.02 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   336 MiB   344.8 s  0.91 MB/s
+dwc2d: hub 1 port 1: device at address 2 removed
+netget:   352 MiB   371.6 s  0.63 MB/s
+netget: 382156480 bytes in 385.2 s, 0.99 MB/s
+```
+
+- After the download: `ls -l` 382156480 bytes; `throttled` `0x00000000`;
+  `/tmp/dwc2d-netstats` `uptime_ms 430142`, `rx_frames 271000`, `rx_errors 0`,
+  `tx_frames 121678`, `tx_errors 0`, `irqs 227065`. `netget.bin` removed.
+- No `Dropped`, `smolnetd` or `sdhost` error line, no panic. The plug read 4.2 to
+  4.3 W during the download.
+- The drops come in the slow 16 MiB steps (0.30 to 0.91 MB/s). The first came
+  right after `HTTP/1.0 200 OK`, before much was written. With no undervoltage
+  flag, a power dip at the hub that the firmware does not flag can't be ruled out,
+  but dwc2d losing the hub under card load is now the more likely cause.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-857-g7ed9070+xa901` (dwc2d hub-drop fix, the 171 download again)
+
+Real Pi 3B+ over netboot. Test 172 (#151 follow-up, USB session), Pi test agent.
+
+**Pass: the download completed (`382156480 bytes in 429.6 s, 0.89 MB/s`) with
+no hub drop at all (#171 on the old image: 8 drops). dwc2d counted 0 USB errors
+and 0 recoveries, and `throttled` stayed `0x00000000`.** Image
+`~/redox-rpi-usb/keep/hubdrop-v0.3.0-dev-857-g7ed9070+xa901.img` (manifest next
+to it; `experiments: dwc2d-netstats netget timesync usb-hub-drop`), staged with
+`~/redox-rpi-boot/scripts/netboot.sh`.
+
+- Serial: 0 `device at address 2 removed` lines; the only `network on the
+  adapter` is the boot's (`LAN78xx link up after 1737 ms`). No `Dropped`,
+  `smolnetd` or panic line.
+- Second devsh every 30 s, 12 readings from 22:20:40 to 22:27:47 (`throttled`,
+  file size, then rc):
+
+| time | throttled | `netget.bin` | rc |
+|---|---|---|---|
+| 22:20:40 | 0x00000000 | 55885428 | rc=0 |
+| 22:21:19 | 0x00000000 | 101310174 | rc=0 |
+| 22:21:57 | 0x00000000 | 136131708 | rc=0 |
+| 22:22:40 | 0x00000000 | 164645694 | rc=0 |
+| 22:23:14 | 0x00000000 | 201046317 | rc=124 |
+| 22:24:09 | 0x00000000 | 221145252 | rc=0 |
+| 22:24:43 | 0x00000000 | 259483101 | rc=0 |
+| 22:25:16 | 0x00000000 | 296764140 | rc=0 |
+| 22:25:55 | 0x00000000 | 326639163 | rc=0 |
+| 22:26:34 | 0x00000000 | 351882966 | rc=0 |
+| 22:27:13 | 0x00000000 | 375474162 | rc=0 |
+| 22:27:47 | 0x00000000 | - | rc=124 |
+
+  The two `rc=124` readings were slow, not lost: at 22:23:14 `throttled` took
+  7.0 s and `free` 10.2 s under the download, then the 25 s limit ran out. At
+  22:27:47 the first connect needed a retry. devsh answered the next reading
+  both times.
+- Near the end (22:27:13): `/tmp/dwc2d-usbstats` `xact_errors 0`, `babbles 0`,
+  `stalls 0`, `toggle_errors 0`, `ahb_errors 0`, `timeouts 0`, `port_events 0`,
+  `root_events 1`, **`recoveries 0`**, `hprt0 0x1405`, `gintsts 0x54000009`;
+  `/tmp/dwc2d-step` `447920 idle`; netstats `rx_frames 266157`, `rx_errors 0`,
+  `tx_frames 107807`, `tx_errors 0`.
+- netget lines from the serial console:
+
+```
+netget: GET http://192.168.178.120:8080/models/Qwen3-0.6B-Q4_0.gguf
+netget: HTTP/1.0 200 OK
+netget:    16 MiB    12.4 s  1.36 MB/s
+netget:    32 MiB    19.8 s  2.26 MB/s
+netget:    48 MiB    30.1 s  1.64 MB/s
+netget:    64 MiB    49.1 s  0.88 MB/s
+netget:    80 MiB    58.0 s  1.90 MB/s
+netget:    96 MiB    72.0 s  1.20 MB/s
+netget:   112 MiB    85.5 s  1.25 MB/s
+netget:   128 MiB   115.8 s  0.56 MB/s
+netget:   144 MiB   131.0 s  1.11 MB/s
+netget:   160 MiB   153.9 s  0.73 MB/s
+netget:   176 MiB   171.5 s  0.95 MB/s
+netget:   192 MiB   223.5 s  0.32 MB/s
+2026-10-31T22-23-59.316Z [smolnetd@netstack::link::ethernet:246 WARN] Dropped packet on eth0 because
+netget:   208 MiB   237.8 s  1.18 MB/s
+netget:   224 MiB   252.1 s  1.17 MB/s
+netget:   240 MiB   265.6 s  1.24 MB/s
+netget:   256 MiB   280.0 s  1.17 MB/s
+netget:   272 MiB   306.1 s  0.64 MB/s
+netget:   288 MiB   316.4 s  1.63 MB/s
+netget:   304 MiB   341.2 s  0.68 MB/s
+netget:   320 MiB   359.8 s  0.91 MB/s
+netget:   336 MiB   385.7 s  0.65 MB/s
+netget:   352 MiB   419.8 s  0.50 MB/s
+netget: 382156480 bytes in 429.6 s, 0.89 MB/s
+```
+
+- Afterwards `netget.bin` 382156480 bytes, removed; `/scheme/data` 394.2M used.
+
+Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-855-g81b7717+x8ea9` (image A of 170 plus `futex-wait-lock`)
+
+Real Pi 3B+ over netboot. Test 173 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Fail: `futex-wait-lock` does not stop the freeze. 11 runs passed, then run 12
+froze the whole Pi.** Same as in 170: no devsh, no serial output, power cycle.
+Image `~/redox-rpi-t12/keep/rwfutex-v0.3.0-dev-855-g81b7717+x8ea9.img`, stable
+bootloader; banner `redox-rpi v0.3.0-dev-855-g81b7717+x8ea9`.
+
+- `./bins_dynamic/pthread/rwlock_randtest`, each its own devsh command with a
+  60 s client timeout: runs 1–11 **pass**, `real` 1.27 to 1.43 s.
+- Run 12 (started about 22:33): no result after 65 s, `echo ok` no answer,
+  **0 serial bytes** since the run started. Power-cycled at 22:34:13 with stable
+  staged.
+- `cond_stress` not run (the freeze ended the row).
+- Together: A (170) froze in 2 of 10 runs, B with `rt-call-flags` (170) 0 of
+  20, C with `futex-wait-lock` 1 of 12, and the suite in 166 once. It is neither
+  `rt-call-flags` nor the futex deadlock of `57ccc8f`. The whole machine stops
+  without a word (no panic), which points at the kernel (a lock or IRQ path on
+  aarch64), not at relibc's rwlock.
+
+Stable image restored afterwards.
