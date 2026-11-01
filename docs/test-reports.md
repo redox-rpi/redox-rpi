@@ -6414,3 +6414,57 @@ Staged 04:44, and the boot reached login with no `FATAL` or panic line.
 - pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
 
 Stable restored afterwards: the nightly's new stable `v0.3.0-dev-891-g55d0446+x9f76` from 03:30, which is now the backup in `tftp-stable`. It came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-883-g62d7c39+x741f` (netget stall, context dump with run queue state)
+
+Real Pi 3B+ over netboot. Test 183 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb3-…`, own bootloader, the download of 172 as in 181. A stall means no new `netget:` line for 5.5 min.
+
+**2 of 3 runs stalled, and the new dump fired after both stalls.**
+- It shows a user context that is **runnable, in its CPU's run queue and active (`Rqa`), never running**.
+- Its CPU shows `q1` but makes **no switch at all (`w0`)**, while `[kmain]` (idle) stays `R+c` on that CPU.
+- The stuck context was not `netget` itself: it was `dwc2d` in run 2 and `netstack` in run 3. `netget` is blocked (`B`) behind it.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 05:47:13 (reset) | **complete**: `382156480 bytes in 351.4 s, 1.09 MB/s` | all | – (only the baseline dump) |
+| 2 | 05:54:09 (power cycle) | stalled, last progress 05:57:25 | 192 MiB at 145.2 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 3 | 06:03:08 (power cycle) | stalled, last progress 06:08:19 | 304 MiB at 264.7 s | 3 × `runnable-on-idle-cpu` (beats 7, 8, 9) |
+
+**Run 2:** the first dump after the stall, `[hbctx begin beat 5 runnable-on-idle-cpu]`. Beats 6 and 7 are the same.
+```
+[hbcpu 0 w24 q0]
+[hbcpu 1 w0 q1]
+[hbcpu 2 w2182 q0]
+[hbcpu 3 w0 q0]
+[hbctx 0 [kmain] R+c cpu1 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d Rqa sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 UserInner::call]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu1, `UserInner::call`.
+
+**Run 3:** the dump at beat 7. Beats 8 and 9 are the same.
+```
+[hbcpu 0 w0 q1]
+[hbcpu 1 w9380 q0]
+[hbcpu 2 w0 q0]
+[hbcpu 3 w24 q0]
+[hbctx 0 [kmain] R+c cpu0 ]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu0 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d B sys cpu1 EventQueue::read]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu0 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu0 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu0, `UserInner::call`.
+
+**Other details:**
+- In all dumps, the only non-blocked user contexts besides the stuck one are `rpi-firmwared` and `timesync` (`S`, `nanosleep`).
+- devsh did not log in after either stall (`pirun` login failed), so there is no `/scheme/sys/context` from devsh this time.
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop in any run.
+- Power cycles: 05:54:09, 06:03:08, 06:14:08.
+
+Stable image restored afterwards (the nightly's `v0.3.0-dev-891-g55d0446+x9f76`).
