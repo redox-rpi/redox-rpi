@@ -198,6 +198,7 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
+| 2026-11-01 | 198 rerun: kernel 0050 DMA cache fix (#33) | `v0.4.0-dev-15-geaa48df+xa731` | **pass**: no `not zero`, whole screen in 29.8 ms, checks pass, network stable under 3x52 MB load (first run interrupted by a power change) |
 | 2026-11-01 | 199: `rwlock_randtest` freeze with heartbeat (#14) | `v0.4.0-dev-15-gac0e81c+x58dc` | **fail**: froze at run 2, hard freeze: no `[hb` line at all, serial console dead too |
 | 2026-11-01 | 198: kernel 0050 DMA cache fix (#33) | `v0.4.0-dev-15-geaa48df+xa731` | **pass** for DMA: no `not zero`, whole screen in 29.8/20.5 ms, checks pass; boot 1 lost the network after pi-test (boot 2 fine) |
 | 2026-11-01 | 197 `rwlock_randtest` with `sched-vtime-clamp`, no heartbeat ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent | `v0.4.0-dev-14-g52d9598+x424d` | [report](test-reports.md): **fail**: froze at run 8 (runs 1–7 rc=0, 1.25–1.38 s). devsh and network dead (ping on the serial console hangs), serial console alive; initfs `redoxfs` `UR` on CPU 2. **Shelly power cycles do not reset the Pi any more** (it is back-powered since the visit), so it still runs the frozen image. Stable staged |

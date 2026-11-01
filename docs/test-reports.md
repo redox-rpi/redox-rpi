@@ -7047,3 +7047,19 @@ Real Pi 3B+ over netboot. Test 199 ([#14](https://github.com/redox-rpi/redox-rpi
 - The first beat comes one minute after the kernel starts, so the freeze probably came before any beat. After it, the kernel printed nothing more, not even the stall check that should fire after 2 s.
 
 Stable image restored, then a Shelly power cycle (20:05). Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh. The power cycle worked; the plug resets the Pi again.
+
+## 2026-11-01: `v0.4.0-dev-15-geaa48df+xa731` (graphics, kernel 0050 DMA cache fix, rerun)
+
+Real Pi 3B+ over netboot. Test 198 rerun ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. The first run (report above) was interrupted: the user was rearranging the Pi's power supply, and the serial log shows a reboot at about 19:41 that no test caused. Boot 1's network loss in that report happened during that work, so it may be a power problem. Same image (manifest matches), staged 20:08, devsh reset.
+
+**Pass: DMA fix works, standard checks pass, network stable for 12 minutes of load.**
+
+- `rpi-fbd`: `DMA test:` 1, 64 and 984 rows, then `whole screen in 29.8 ms`. No `not zero` line, no `blits with the CPU`. `fbcond: Performing handoff`, login, no panic.
+- pi-test (`--manifest`): version, manifest, `ps` (52), `ps-tty`, SD card pass; 0 of 300 starts failed.
+- `free`: used 159428 KB; `ping -c 3` 3 of 3.
+- Three runs of `dd if=/dev/zero bs=65536 count=800` over devsh, 52 MB each, 159–167 s each (about 320 kB/s), all `rc=0`.
+- Then `ping -c 20` 20 of 20, `free` used 166028 KB, `throttled` `0x00000000`.
+- 34 `Dropped packet on eth0 because waiting queue was full` warnings (also in the first run). No other errors.
+- No unplanned reboot (one U-Boot, from the reset).
+
+Stable image restored afterwards and came up to devsh.
