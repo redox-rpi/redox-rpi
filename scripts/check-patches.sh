@@ -42,6 +42,8 @@ needs() {
         sdhost-boot) echo sdhost-driver ;;
         sdhost-stats) echo sdhost-driver sdhost-boot ;;
         dwc2-interrupts) echo rtl8152 ;;
+        # Or the experiment's own file "needs" (the relibc CI reads it too).
+        *) cat "$ROOT/patches/experiments/$1/needs" 2>/dev/null || true ;;
     esac
 }
 

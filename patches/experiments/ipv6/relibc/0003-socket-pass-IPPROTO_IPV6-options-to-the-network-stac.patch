@@ -1,0 +1,46 @@
+From 9f213d41698a01b2d65ae18a0d54a615a3463095 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:13:38 +0100
+Subject: [PATCH] socket: pass IPPROTO_IPV6 options to the network stack
+
+IPV6_JOIN_GROUP and IPV6_LEAVE_GROUP join IPv6 multicast groups, the way
+IPPROTO_IP options already do for IPv4.
+---
+ src/platform/redox/socket.rs | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index 4b867ae6..8a504cea 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -23,7 +23,7 @@ use crate::{
+             EPIPE, EPROTONOSUPPORT,
+         },
+         fcntl,
+-        netinet_in::{IPPROTO_IP, in_addr, in_port_t, in6_addr, sockaddr_in, sockaddr_in6},
++        netinet_in::{IPPROTO_IP, IPPROTO_IPV6, in_addr, in_port_t, in6_addr, sockaddr_in, sockaddr_in6},
+         signal::SIGPIPE,
+         sys_select::timeval,
+         sys_socket::{
+@@ -1061,13 +1061,14 @@ impl PalSocket for Sys {
+                 }
+             }
+         }
+-        // IP options such as IP_ADD_MEMBERSHIP go to the network stack, with
+-        // the level as third metadata word so they do not mix with SO_*.
+-        if level == IPPROTO_IP as c_int {
++        // IP and IPv6 options such as IP_ADD_MEMBERSHIP and IPV6_JOIN_GROUP
++        // go to the network stack, with the level as third metadata word so
++        // they do not mix with SO_*.
++        if level == IPPROTO_IP as c_int || level == IPPROTO_IPV6 as c_int {
+             let metadata = [
+                 SocketCall::SetSockOpt as u64,
+                 option_name as u64,
+-                IPPROTO_IP as u64,
++                level as u64,
+             ];
+             redox_rt::sys::sys_call_wo(
+                 socket as usize,
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,36 @@
+From d9e2bfca220d04d837b9915966268a4117fb0b02 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:02:15 +0100
+Subject: [PATCH] netstack: read and write timeouts for recvmsg and sendmsg
+
+SO_RCVTIMEO and SO_SNDTIMEO applied only to plain reads and writes.
+recvfrom with an address (std's UdpSocket::recv_from) is a recvmsg call
+and waited forever.
+---
+ netstack/src/scheme/socket.rs | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
+index 254bce8..5e2ae77 100644
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -331,6 +331,16 @@ where
+         let mut timeout = match op {
+             Op::Read(_) => read_timeout,
+             Op::Write(_) => write_timeout,
++            // recvmsg and sendmsg (recvfrom, sendto with flags) come as calls
++            Op::Call(call) => match call
++                .metadata()
++                .first()
++                .and_then(|verb| SocketCall::try_from_raw(*verb as usize))
++            {
++                Some(SocketCall::RecvMsg) => read_timeout,
++                Some(SocketCall::SendMsg) => write_timeout,
++                _ => None,
++            },
+             _ => None,
+         };
+ 
+-- 
+2.54.0 (Apple Git-157)
+
