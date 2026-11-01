@@ -1,0 +1,72 @@
+From bb391cda7a38290a8e9bd112d7e522f6b6615694 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 09:50:23 +0100
+Subject: [PATCH] initnsmgr: list the namespace root from a snapshot of its
+ scheme names
+
+The names live in a hash map and getdents paged through it by position.
+A scheme registered between two getdents calls can grow the map and
+reorder it, so a listing skipped or repeated names. relibc reads a
+directory 512 bytes at a time, so listing /scheme takes several calls;
+netstack sometimes found no network.* scheme at boot this way.
+
+Each listing now goes through the names as they were when it started,
+sorted.
+---
+ bootstrap/src/initnsmgr.rs | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/bootstrap/src/initnsmgr.rs b/bootstrap/src/initnsmgr.rs
+index 707b896..fd3545f 100644
+--- a/bootstrap/src/initnsmgr.rs
++++ b/bootstrap/src/initnsmgr.rs
+@@ -100,6 +100,11 @@ enum Handle {
+ pub struct NamespaceScheme<'sock> {
+     socket: &'sock Socket,
+     handles: HashMap<usize, Handle>,
++    /// The scheme names a directory listing of the namespace root goes
++    /// through, taken when it starts. The names live in a hash map whose
++    /// order changes when a scheme is registered, so paging through the map
++    /// itself would skip or repeat names registered meanwhile.
++    listings: HashMap<usize, Vec<String>>,
+     root_namespace: Namespace,
+     next_id: usize,
+     scheme_creation_cap: Rc<FdGuardUpper>,
+@@ -116,6 +121,7 @@ impl<'sock> NamespaceScheme<'sock> {
+         Self {
+             socket,
+             handles: HashMap::new(),
++            listings: HashMap::new(),
+             root_namespace: Namespace { schemes },
+             next_id: 0,
+             scheme_creation_cap: Rc::new(scheme_creation_cap),
+@@ -240,6 +246,7 @@ impl<'sock> NamespaceScheme<'sock> {
+ 
+     fn on_close(&mut self, id: usize) {
+         let _ = self.handles.remove(&id);
++        let _ = self.listings.remove(&id);
+     }
+ }
+ 
+@@ -459,10 +466,15 @@ impl<'sock> SchemeSync for NamespaceScheme<'sock> {
+             return Err(Error::new(EACCES));
+         }
+ 
+-        let ns = ns_access.namespace.borrow();
+-
+         let opaque_offset = opaque_offset as usize;
+-        for (i, (name, _)) in ns.schemes.iter().enumerate().skip(opaque_offset) {
++        if opaque_offset == 0 || !self.listings.contains_key(&id) {
++            let mut names: Vec<String> = ns_access.namespace.borrow().schemes.keys().cloned().collect();
++            names.sort();
++            self.listings.insert(id, names);
++        }
++        let names = &self.listings[&id];
++
++        for (i, name) in names.iter().enumerate().skip(opaque_offset) {
+             if name.is_empty() {
+                 continue;
+             }
+-- 
+2.54.0 (Apple Git-157)
+
