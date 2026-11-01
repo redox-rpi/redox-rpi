@@ -33,15 +33,23 @@ CPU took no timer interrupt for 2 s it writes `[hb stall <cpu> seen-by
 
 Context dump (after test 179, where netget, devsh, sdhostd and redoxfs all
 stopped while every CPU kept beating with `w0`): CPU 0 writes the context
-list, `[hbctx begin beat <n> w<switches>]`, then one line per context
-`[hbctx <pid> <name> <stat>[+][ sys] cpu<n> <reason>]`, then `[hbctx end]`.
+list, `[hbctx begin beat <n> <why>]`, then one line per CPU
+`[hbcpu <cpu> w<switches since the last beat> q<run queue length>]`, then one
+line per context `[hbctx <pid> <name> <stat><flags>[ sys] cpu<n> <reason>]`,
+then `[hbctx end]`.
 `<stat>` is R runnable, S sleeping with a timeout, B blocked, H hard-blocked
-(with its reason), Z dead; `+` running, `sys` inside a syscall; `<reason>` is
-what the context blocked on (`futex`, `nanosleep`, `UserInner::call` for a
-scheme call). It writes the list once at beat 2 (a baseline) and when all CPUs
-together made fewer than 100 context switches since CPU 0's last beat, at most
-3 times. It takes the locks with `try_read`, so a locked list or context shows
-as `[hbctx ... locked]` instead of a deadlock.
+(with its reason), Z dead. `<flags>`: `+` running, `c` currently_scheduled,
+`q` in a run queue (queue_key set), `a` active; `sys` inside a syscall.
+`<reason>` is what the context blocked on (`futex`, `nanosleep`,
+`UserInner::call` for a scheme call). `<why>` is `baseline` (once at beat 2),
+`few-switches` (all CPUs together made fewer than 100 context switches since
+CPU 0's last beat) or `runnable-on-idle-cpu` (a CPU made no switch since the
+last beat while a runnable, not running user context has that CPU as its
+`cpu_id`). After the baseline it writes at most 3 lists. A runnable context
+without `q` points to a lost wakeup; one with `q` or `c` that its CPU never
+picks points to the run queue selection. It takes the locks with `try_read`,
+so a locked list or context shows as `[hbctx ... locked]` instead of a
+deadlock.
 
 ```bash
 scripts/build-image.sh --experiment pi-heartbeat
