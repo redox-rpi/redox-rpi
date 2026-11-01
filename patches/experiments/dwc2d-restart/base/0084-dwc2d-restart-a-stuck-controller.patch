@@ -1,4 +1,4 @@
-From 2d8fa79d2fe6c786f7bb49d4e0b77ae46fa12264 Mon Sep 17 00:00:00 2001
+From 5f3fe1aec688ca86794da7fdaf11b63151c7db43 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 10:25:06 +0000
 Subject: [PATCH] dwc2d: restart a stuck controller (#151)
@@ -12,18 +12,18 @@ forgets every device, resets and sets up the controller again, and the
 next rescan enumerates the devices anew. "restart" in
 /tmp/dwc2d-cycle does the same, for tests.
 ---
- drivers/usb/dwc2d/src/dwc2.rs      | 64 ++++++++++++++++++++++++++++--
- drivers/usb/dwc2d/src/enumerate.rs | 39 +++++++++++++++++-
+ drivers/usb/dwc2d/src/dwc2.rs      | 62 ++++++++++++++++++++++++++++--
+ drivers/usb/dwc2d/src/enumerate.rs | 39 ++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs      | 25 +++++++++++-
  drivers/usb/dwc2d/src/regs.rs      |  6 +++
  drivers/usb/dwc2d/src/usbdiag.rs   |  6 +++
- 5 files changed, 133 insertions(+), 7 deletions(-)
+ 5 files changed, 131 insertions(+), 7 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 959bba87..69092c5f 100644
+index 959bba87..0f126937 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -341,15 +341,72 @@ impl Dwc2 {
+@@ -341,15 +341,70 @@ impl Dwc2 {
                  return Ok(status);
              }
              if start.elapsed() > timeout {
@@ -84,13 +84,11 @@ index 959bba87..69092c5f 100644
 +    /// then the same reset and setup as at start. The devices are enumerated
 +    /// again by the next rescan.
 +    pub fn restart(&mut self) -> Result<(), Error> {
++        // Let every channel halt first: a transfer still running when the
++        // core resets is undefined (QEMU aborts on it).
 +        for ch in 0..self.channels {
-+            let value = self.read(hcchar(ch));
-+            if value & HCCHAR_CHENA != 0 {
-+                self.write(hcchar(ch), value | HCCHAR_CHDIS);
-+            }
++            self.stop_channel(ch);
 +        }
-+        delay(Duration::from_millis(10));
 +        self.write(GAHBCFG, 0);
 +        self.init_host()
 +    }
@@ -98,7 +96,7 @@ index 959bba87..69092c5f 100644
      /// Bytes moved by the last transfer on a channel and the data PID for
      /// the next one.
      fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
-@@ -512,9 +569,8 @@ impl Dwc2 {
+@@ -512,9 +567,8 @@ impl Dwc2 {
              }
              if start.elapsed() > timeout {
                  // Halt the channel so it can be reused.
