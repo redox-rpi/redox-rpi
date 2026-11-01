@@ -6327,3 +6327,21 @@ Image `hbusb-v0.3.0-dev-879-gdb4fdca+x741f.img` (`t14-hb-usb`), staged with its 
 - Power cycles: 01:10:27, 01:31:33, 01:52:59 (the last one with stable staged; stable came up to login and devsh).
 
 Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-877-g6879e2a+x4d89` (pipe write takes all bytes)
+
+Real Pi 3B+ over netboot. Test 180 (relibc), Pi test agent. Stable bootloader.
+
+**Pass: a pipe write now takes the whole 1 MiB block.** This was 64 KiB before, `0+16 records out`, see 177.
+
+- `dd if=/dev/zero bs=1M count=16 | wc -c`: `16+0 records out`, `wc` counts **16777216**.
+- `dd if=/dev/urandom of=/tmp/r16 bs=1M count=16`, then `sha256sum /tmp/r16`, `dd if=/tmp/r16 bs=1M count=16 | sha256sum` and `cat /tmp/r16 | sha256sum`:
+  - all three give the same hash, `6b359fc8…b3bae775bc`;
+  - `dd` shows `16+0 records out`.
+- `dd if=/dev/zero bs=1M count=16 | head -c 100 | wc -c`:
+  - prints `100`;
+  - `dd` stops with `dd: IO error: Broken pipe` after `0+2 records out` (64 KiB);
+  - returns at once, and the next command (`echo prompt-back`) runs normally.
+- pi-test: version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
+
+Stable image restored afterwards, and stable came up to devsh.
