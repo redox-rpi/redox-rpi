@@ -12,6 +12,11 @@
   passes; a failure goes to the issue "Nightly: main fails on the Pi"
   ([test-plan.md](../test-plan.md#nightly-update)). The Pi may reboot at
   night.
+- Every Monday the "Upstream drift" job applies every patch, experiments
+  included, on the pinned and on the newest upstream commits
+  (`scripts/check-upstream-drift.py`) and updates the issue "Upstream drift
+  report": per patch applies, 3-way, already upstream or conflicts, with the
+  upstream commits behind each conflict. It never fails.
 
 ## In progress
 

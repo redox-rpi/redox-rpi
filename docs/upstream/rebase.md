@@ -115,7 +115,11 @@ Five pull requests add `redoxfs` to `config/upstream.lock` (#66, #72, #73,
    two each, plus their Pi tests).
 4. **From then on, move the lock every week or two.** The weekly
    "Latest upstream" job (`.github/workflows/upstream-weekly.yml`) shows when
-   a patch stops applying. At one week behind, the move is mostly
+   a patch stops applying. The weekly "Upstream drift" job
+   (`scripts/check-upstream-drift.py`) tries every patch, also the
+   experiments, on the pin and on the head and keeps the result in the issue
+   "Upstream drift report": which patches conflict, and the upstream commits
+   that cause it. At one week behind, the move is mostly
    mechanical; the relibc refactor shows how quickly a month would add real
    work.
 
