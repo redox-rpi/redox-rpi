@@ -29,6 +29,12 @@
   rewrote its 128 KiB record plus about 7 metadata blocks, 28 times the data
   for 4 KiB writes; now 1.3 times. On the Pi (test 70, 2026-10-30) 1 MiB
   copied at `bs=4k` takes 0.49 s instead of 12.7 s; data waits at most 2 s.
+  Pi tests 175 and 177 (2026-11-01, RedoxFS `db847d87`,
+  [#155](https://github.com/redox-rpi/redox-rpi/issues/155)): 4 KiB writes
+  0.12–0.24 → 2.7–3.9 MB/s, 64 KiB 2.4–2.7 → 3.1–6.5 MB/s, 1 MiB unchanged
+  (4–11 MB/s, the card's own pauses). The sdhost driver isn't the limit:
+  larger commands (experiment `sdhost-bigreq`, branch `sd-write-speed`)
+  gain nothing.
   Still an upstream problem (RedoxFS
   [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51),
   [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57)); the
