@@ -1,0 +1,76 @@
+From 9ea7727d2b6d9812b282f948fce7679215c50342 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:59:51 +0000
+Subject: [PATCH 3/3] tests: tls_probe prints the TLS layout relative to the
+ thread pointer
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tests/Makefile          |  4 ++++
+ tests/Makefile.tests.mk |  1 +
+ tests/tls_probe.c       | 26 ++++++++++++++++++++++++++
+ 3 files changed, 31 insertions(+)
+ create mode 100644 tests/tls_probe.c
+
+diff --git a/tests/Makefile b/tests/Makefile
+index b4828d37..0f0b2a71 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -180,6 +180,10 @@ $(BUILD)/bins_dynamic/tls_shared: tls_shared.c $(BUILD)/bins_dynamic/libtlsshare
+ 	mkdir -p "$$(dirname "$@")"
+ 	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS) -L $(BUILD)/bins_dynamic -ltlsshared
+ 
++$(BUILD)/bins_dynamic/tls_probe: tls_probe.c $(BUILD)/bins_dynamic/libtlsshared.so $(DEPS)
++	mkdir -p "$$(dirname "$@")"
++	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS) -L $(BUILD)/bins_dynamic -ltlsshared
++
+ $(BUILD)/bins_dynamic/dlopen_scopes: dlopen_scopes.c $(BUILD)/bins_dynamic/libfoobar.so $(BUILD)/bins_dynamic/libfoo.so $(DEPS)
+ 	mkdir -p "$$(dirname "$@")"
+ 	@$(CC) "$<" -o "$@" $(FLAGS) $(DYNAMIC_FLAGS)
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index 11daa924..7a85ce64 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -232,6 +232,7 @@ EXPECT_NAMES=\
+ # Binaries that may generate varied output
+ VARIED_NAMES=\
+ 	dirent/main \
++	tls_probe \
+ 	dirent/posix_getdents \
+ 	includes \
+ 	kill-waitpid \
+diff --git a/tests/tls_probe.c b/tests/tls_probe.c
+new file mode 100644
+index 00000000..09225b50
+--- /dev/null
++++ b/tests/tls_probe.c
+@@ -0,0 +1,26 @@
++#include <errno.h>
++#include <stdint.h>
++#include <stdio.h>
++
++// Not a pass/fail test: prints where thread-local data ends up relative to
++// the aarch64 thread pointer, to compare the loader's layout with the
++// linker's (redox-rpi #14).
++extern _Thread_local int lib_gd;
++extern __attribute__((tls_model("initial-exec"))) _Thread_local int lib_ie;
++int *lib_addr_gd(void);
++int *lib_addr_ie(void);
++_Alignas(64) _Thread_local int exe_var = 33;
++
++int main(void) {
++    uintptr_t tp;
++    __asm__("mrs %0, tpidr_el0" : "=r"(tp));
++    uintptr_t tcb = *(uintptr_t *)tp;
++    printf("tp %#lx, tcb page %#lx (tp + %#lx)\n", tp, tcb, tcb - tp);
++    printf("exe_var: tp + %#lx = %d\n", (uintptr_t)&exe_var - tp, exe_var);
++    printf("errno: tp + %#lx\n", (uintptr_t)&errno - tp);
++    printf("lib_gd: tp + %#lx (lib says + %#lx) = %d\n", (uintptr_t)&lib_gd - tp,
++           (uintptr_t)lib_addr_gd() - tp, lib_gd);
++    printf("lib_ie: tp + %#lx (lib says + %#lx) = %d\n", (uintptr_t)&lib_ie - tp,
++           (uintptr_t)lib_addr_ie() - tp, lib_ie);
++    return 0;
++}
+-- 
+2.53.0
+

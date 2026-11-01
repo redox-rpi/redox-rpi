@@ -6104,3 +6104,384 @@ runs). The stalls in N1 and N2 (and the end of O2) have another cause: the
 scheduler freeze/starvation seen in #170 and #173 is the likely one.
 
 Stable image restored afterwards (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+## 2026-11-01: `v0.3.0-dev-859-g56364c4+xc41d` (A, main) and `v0.3.0-dev-886-g548e397+xc41d` (B, PR #73 write coalescing) (card write speed by write size)
+
+Real Pi 3B+ over netboot. Test 175 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Data check passes: every file's sha256 matches its source, on both images.
+Coalescing (B) makes small writes much faster and cuts the card writes for them
+by about 23 times.** 4 KiB writes go from 121–240 kB/s to 2.7–2.9 MB/s, and
+64 KiB from 2.4–2.7 to 6.1–6.5 MB/s. 1 MiB writes get a little slower (11–12 →
+7.8–8.7 MB/s). Images from `~/redox-rpi-sd/keep/` with manifests (match), stable
+bootloader, each on a fresh boot. Clocks before and after on both: `arm
+1400000000 1400000000`, `core 250000000 400000000`. `/scheme/data` 394.5M used
+before each.
+
+| write | A pass 1 | A pass 2 | B pass 1 | B pass 2 |
+|---|---|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 34.7 s, **121 kB/s** | 17.47 s, 240 kB/s | 1.43 s, **2.9 MB/s** | 1.55 s, 2.7 MB/s |
+| 64 KiB × 256 (16 MiB) | 6.16 s, 2.7 MB/s | 7.12 s, 2.4 MB/s | 2.60 s, **6.5 MB/s** | 2.73 s, 6.1 MB/s |
+| 1 MiB × 16 (16 MiB) | 1.44 s, **12 MB/s** | 1.57 s, 11 MB/s | 2.15 s, 7.8 MB/s | 1.93 s, 8.7 MB/s |
+
+- sha256: `/tmp/r16` `94b79f96…`, its first 4 MiB `2fae7622…`. Every 64 KiB and
+  1 MiB file `94b79f96…`, every 4 KiB file `2fae7622…`. **All match.**
+- `bcm2835-sdhostd` statistics. A prints a line every 5 s while busy; B prints
+  one line per busy period (`28 s:`, `22 s:` …). Lines come at the end of an
+  interval, so they don't split exactly at the dd boundaries. The read lines with
+  about 33000–37000 blocks are the `sha256sum` reads.
+- **4 KiB write, pass 1:** A wrote 1755 + 1833 + 1075 + 2314 + 164 + 127 + 993
+  requests, **232744 blocks** (about 114 MiB on the card for a 4 MiB file),
+  about 31 s of write time. B wrote 275 requests, **10136 blocks** (5 MiB),
+  1022 ms (397 ms busy).
+- All lines in order:
+
+A:
+```
+bcm2835-sdhostd: 43 s: read 532 requests 4242 blocks 245 ms; write 25 requests 200 blocks 37 ms, 16 ms of it busy
+bcm2835-sdhostd: 5 s: read 140 requests 1864 blocks 76 ms; write 1755 requests 48760 blocks 4416 ms, 1387 ms of it busy
+bcm2835-sdhostd: 5 s: read 491 requests 6256 blocks 262 ms; write 1833 requests 51864 blocks 4190 ms, 1461 ms of it busy
+bcm2835-sdhostd: 5 s: read 279 requests 3704 blocks 145 ms; write 1075 requests 30432 blocks 4536 ms, 897 ms of it busy
+bcm2835-sdhostd: 5 s: read 665 requests 9600 blocks 351 ms; write 2314 requests 65376 blocks 3950 ms, 1647 ms of it busy
+bcm2835-sdhostd: 5 s: read 54 requests 1224 blocks 43 ms; write 164 requests 3792 blocks 4941 ms, 201 ms of it busy
+bcm2835-sdhostd: 5 s: read 37 requests 296 blocks 18 ms; write 127 requests 3800 blocks 4983 ms, 444 ms of it busy
+bcm2835-sdhostd: 18 s: read 273 requests 3784 blocks 151 ms; write 993 requests 28720 blocks 4116 ms, 741 ms of it busy
+bcm2835-sdhostd: 5 s: read 389 requests 10784 blocks 341 ms; write 773 requests 23480 blocks 2268 ms, 735 ms of it busy
+bcm2835-sdhostd: 17 s: read 349 requests 3512 blocks 173 ms; write 1306 requests 40256 blocks 2909 ms, 1043 ms of it busy
+bcm2835-sdhostd: 8 s: read 620 requests 36704 blocks 995 ms; write 9 requests 72 blocks 9 ms, 4 ms of it busy
+bcm2835-sdhostd: 20 s: read 46 requests 368 blocks 26 ms; write 249 requests 33736 blocks 1212 ms, 306 ms of it busy
+bcm2835-sdhostd: 6 s: read 210 requests 33424 blocks 795 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 5 s: read 158 requests 1512 blocks 72 ms; write 1722 requests 47008 blocks 2831 ms, 1006 ms of it busy
+bcm2835-sdhostd: 5 s: read 716 requests 9640 blocks 376 ms; write 2223 requests 62896 blocks 3949 ms, 1542 ms of it busy
+bcm2835-sdhostd: 5 s: read 762 requests 9616 blocks 387 ms; write 2181 requests 61616 blocks 3955 ms, 1615 ms of it busy
+bcm2835-sdhostd: 22 s: read 810 requests 8768 blocks 379 ms; write 2144 requests 61296 blocks 3009 ms, 1198 ms of it busy
+bcm2835-sdhostd: 5 s: read 324 requests 10264 blocks 312 ms; write 432 requests 12776 blocks 2478 ms, 467 ms of it busy
+bcm2835-sdhostd: 23 s: read 601 requests 5888 blocks 274 ms; write 1647 requests 50960 blocks 3574 ms, 1312 ms of it busy
+bcm2835-sdhostd: 8 s: read 693 requests 37288 blocks 1003 ms; write 9 requests 72 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 23 s: read 41 requests 328 blocks 20 ms; write 250 requests 33744 blocks 1348 ms, 347 ms of it busy
+```
+
+B:
+```
+bcm2835-sdhostd: 48 s: read 580 requests 4626 blocks 269 ms; write 25 requests 200 blocks 292 ms, 65 ms of it busy
+bcm2835-sdhostd: 28 s: read 0 requests 0 blocks 0 ms; write 275 requests 10136 blocks 1022 ms, 397 ms of it busy
+bcm2835-sdhostd: 22 s: read 56 requests 448 blocks 26 ms; write 1058 requests 40328 blocks 2100 ms, 868 ms of it busy
+bcm2835-sdhostd: 6 s: read 323 requests 34328 blocks 840 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 6 s: read 2 requests 16 blocks 2 ms; write 10 requests 80 blocks 11 ms, 5 ms of it busy
+bcm2835-sdhostd: 20 s: read 27 requests 216 blocks 15 ms; write 249 requests 33736 blocks 1933 ms, 364 ms of it busy
+bcm2835-sdhostd: 6 s: read 196 requests 33312 blocks 797 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 22 s: read 15 requests 120 blocks 18 ms; write 284 requests 10208 blocks 1113 ms, 502 ms of it busy
+bcm2835-sdhostd: 6 s: read 0 requests 0 blocks 0 ms; write 8 requests 64 blocks 10 ms, 3 ms of it busy
+bcm2835-sdhostd: 26 s: read 53 requests 424 blocks 25 ms; write 1047 requests 40240 blocks 2246 ms, 790 ms of it busy
+bcm2835-sdhostd: 8 s: read 451 requests 35352 blocks 901 ms; write 10 requests 80 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 25 s: read 46 requests 368 blocks 28 ms; write 249 requests 33736 blocks 1701 ms, 484 ms of it busy
+```
+
+- No panic or error on the serial console.
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-894-g593bd2c+xccf1` (image C of 173 plus `pi-heartbeat`)
+
+Real Pi 3B+ over netboot. Test 176 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent.
+
+**No freeze: 40 of 40 `rwlock_randtest` runs passed** (`real` 1.25 to 1.45 s),
+each its own devsh command with a 60 s client timeout. All four CPUs beat every
+10 s the whole time. 173 froze at run 12 on the same image without the
+heartbeat, so the heartbeat may change the timing enough to hide the freeze.
+Image `~/redox-rpi-t12/keep/hb-v0.3.0-dev-894-g593bd2c+xccf1.img`, stable
+bootloader.
+
+- Heartbeat lines after boot and at the end (`[hb <cpu> <n> s<sched> w<switch> i<idle> p<pit>]`):
+
+```
+[hb 1 1 s1284 w96 i1188 p0]
+[hb 2 1 s1647 w426 i1220 p0]
+[hb 3 1 s1523 w194 i1329 p0]
+[hb 0 1 s1706 w854 i839 p0]
+[hb 1 2 s1307 w3 i1304 p0]
+[hb 2 2 s1308 w0 i1308 p0]
+[hb 3 2 s1474 w411 i1063 p0]
+[hb 0 2 s2722 w1605 i1116 p0]
+…
+[hb 1 36 s1739 w675 i1061 p0]
+[hb 2 36 s2102 w146 i1956 p0]
+[hb 3 36 s2124 w168 i1956 p0]
+[hb 0 36 s2957 w1995 i959 p0]
+```
+
+  Every CPU scheduled 1300 to 3000 times per 10 s with `p0`–`p2`; none showed
+  `s0`.
+- One `rwlock_randtest` run (PID 216, CPU #3, about beat 23) hit `FATAL: Not an
+  SVC induced synchronous exception (ty=111100)`, `ESR_EL1 F2000001` (a `brk`
+  trap, as from an abort or assert), `FAR_EL1 0x583000`, `ELR_EL1 0x516C4`, then
+  `UNHANDLED EXCEPTION … NAME ./bins_dynamic/pthread/rwlock_ra`. All 40 devsh runs
+  still reported `rc=0`, so it was probably a thread of a run or its exit. Worth
+  a look.
+- No freeze, so no `/scheme/sys/context` capture and no power cycle. Stable
+  staged and the Pi reset into it (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-898-g34bafa2+x03d3` (C, `sdhost-bigreq` on coalescing) and the #175 images A and B again (larger sdhost commands)
+
+Real Pi 3B+ over netboot. Test 177 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Pass: every sha256 matches, and no `bcm2835-sdhostd: write of block …` or
+`read of block …` line on any image.** But `sdhost-bigreq` changes almost
+nothing: 1 MiB writes on C average **130.5 blocks per request** (A 127.7, B
+129.2), so few requests are larger than 128 blocks. 1 MiB write speed is the same
+on all three within the scatter. Images from `~/redox-rpi-sd/keep/` with
+manifests, stable bootloader, each on a fresh boot (C 00:19, A 00:25, B 00:29
+UTC). Clocks before and after on all: `core 250000000 400000000`. `/tmp/r16`
+sha256 `6b359fc8…`, its first 4 MiB `e14fc5a4…`.
+
+**C only**
+
+| step | dd | sha256 |
+|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 1.08 s, **3.9 MB/s** (B in #175: 2.7–2.9) | `e14fc5a4…` match |
+| 64 KiB × 256, 1 | 5.35 s, 3.1 MB/s | `6b359fc8…` match |
+| 64 KiB × 256, 2 | 3.17 s, 5.3 MB/s | match |
+| 64 MiB file, 4 × 16 MiB writes | 1.58, 1.53, 1.56, 5.96 s (11, 11, 11, 2.8 MB/s) | see below |
+| 64 MiB read to `/dev/null` | 3.35 s, **20 MB/s** | |
+
+- 64 MiB readback: the row's `dd … skip=… count=16 | sha256sum` gave
+  `0+16 records out`, `1048576 bytes`: **a pipe takes 64 KiB per write, and dd
+  does not retry the short writes**, so only 1 MiB reached `sha256sum` (all four
+  `c8a4fdbf…`). That is a pipe/dd effect, not the card. Rechecked on a fresh
+  boot of C through a file: four 16 MiB writes (10–11 MB/s), then `dd
+  if=big.bin of=/tmp/p bs=1048576 skip=<16×i> count=16; sha256sum /tmp/p`: **all
+  four `6b359fc8…`, match** (reads 16–17 MB/s). `big.bin` 67108864 bytes, removed.
+
+**1 MiB × 16 (16 MiB), 5 times each**
+
+| image | 1 | 2 | 3 | 4 | 5 | sha256 |
+|---|---|---|---|---|---|---|
+| A (main) | 10 MB/s | 11 | 4.5 | 11 | 9.9 | all match |
+| B (coalescing) | 11 MB/s | 9.7 | 5.3 | 10 | 6.3 | all match |
+| C (+ bigreq) | 8.5 MB/s | 7.7 | 9.6 | 6.4 | 4.1 | all match |
+
+(dd times: A 1.66, 1.57, 3.72, 1.56, 1.69 s; B 1.59, 1.72, 3.14, 1.62, 2.68 s; C 1.98, 2.19, 1.74, 2.60, 4.12 s.)
+
+- So the #175 result (B slower than A at 1 MiB) does not hold: over 5 repeats A
+  and B are alike, with one slow run each. C is a little slower on average.
+- sdhost statistics for the 1 MiB writes (sum of the `write` parts): A 1061
+  requests / 135464 blocks, B 1310 / 169200, C 1296 / 169088, about 128–130
+  blocks per request on all three. C's 4 KiB and 64 KiB steps: 2411 requests /
+  90952 blocks (37.7 per request).
+- `bcm2835-sdhostd` lines per step are kept on homenodellm
+  (`~/pitest-tools/t177/*-stats.txt`). No error line, no panic.
+
+Stable image restored afterwards.
+
+## 2026-11-01: C `v0.3.0-dev-855-g81b7717+x8ea9` and D `v0.3.0-dev-895-gff40d9c+xf49c` (`rwlock_randtest`: control run and a quiet heartbeat)
+
+Real Pi 3B+ over netboot. Test 178 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent.
+
+**No freeze on either image: C (no heartbeat, the image of 173) 40 of 40, and D
+(quiet heartbeat + `t1-memmap`) 40 of 40.** So the freeze of 173 (run 12) is
+rare even without a heartbeat. Each run was its own devsh command with a 60 s
+client timeout. C staged 00:36:57, D 00:42:24; stable bootloader.
+
+- C: one `rwlock_randtest` thread hit the same `brk` as in 176: `FATAL: Not an
+  SVC induced synchronous exception (ty=111100)`, `ESR_EL1 F2000001`, `FAR_EL1
+  0xa7efc0`, **`ELR_EL1 0x516C4` (the same address as in 176)**, then
+  `UNHANDLED EXCEPTION, CPU #0, PID 168, NAME ./bins_dynamic/pthread/rwlock_ra`.
+  All 40 runs still reported `rc=0`. C has no `t1-memmap`, so there is no memory
+  map.
+- D: no exception in 40 runs, so `t1-memmap` printed nothing. Heartbeat: 16 beats
+  (4 per CPU, one per 60 s), e.g. `[hb 0 1 s13505 w2929 i10565 p0]` … `[hb 0 4
+  s10987 w2919 i8064 p0]`. **No `[hb stall …]` or `[hb nosched …]` line.**
+- No power cycle needed.
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-879-gdb4fdca+x741f` (netget download stall with a quiet heartbeat)
+
+Real Pi 3B+ over netboot. Test 179 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb-v0.3.0-dev-879-gdb4fdca+x741f.img` (`t14-hb-usb`), staged with its own bootloader. Download of 172 (`netget` of the 382156480-byte model to
+`/scheme/data/netget.bin`), file size polled over devsh every 30 s.
+
+**All 3 runs stalled, and this time the whole user side stopped: devsh stopped answering too.**
+**The kernel did not: all 4 CPUs kept beating once per 60 s until the power cycle.**
+**No `[hb stall …]` or `[hb nosched …]` line in any run.**
+
+| Run | Start (UTC) | Last netget line | Last size seen | devsh |
+|---|---|---|---|---|
+| 1 | 00:48:46 (reset) | 240 MiB at 226 s | 221636586 | no answer from 00:53:40 on |
+| 2 | 01:10:27 (power cycle) | 128 MiB at 108 s | 139827684 | no answer from 01:13:40 on |
+| 3 | 01:31:33 (power cycle) | 272 MiB at 267 s | 258316644 | no answer from 01:37:19 on |
+
+- No `hub drop` (`address 2 removed`) in any run.
+- Speed before the stall: 0.3–2.3 MB/s (writing to the card), slowing down in the last minute before each stall.
+- Heartbeat: 20 beats per CPU in every run (`[hb <cpu> <n> s… w… i… p…]`). The beats went on for about 17 minutes after the stall, until the next power cycle.
+  - Before the stall, the CPUs are busy, e.g. run 2 `[hb 1 2 s35267 w11390 i23856 p0]`.
+  - After the stall, the numbers freeze at a low, flat level, e.g. run 2 from beat 4 on, every minute: `[hb 1 n s7638 w1092 i6546]`, `[hb 2 n s7635 w1090 i6545]`, `[hb 3 n s6569 w24 i6545]`, `[hb 0 n s6000 w0 i6000]`.
+  - Runs 1 and 3 look the same. In run 1, CPU 3 keeps `w≈8500` per minute.
+  - So the timer and `schedule()` run on every CPU, but almost nothing is runnable.
+- **Not captured:** `/scheme/sys/context` and the dwc2d stats. devsh was already dead at the first poll after the stall, so the runner's stall check (two equal sizes) never fired.
+- **Not checked:** whether the network stack still answered TCP.
+- For a rerun: read the context over the serial console when devsh stops.
+- This differs from 174, where devsh still answered and `netget` sat runnable on CPU 0.
+- Power cycles: 01:10:27, 01:31:33, 01:52:59 (the last one with stable staged; stable came up to login and devsh).
+
+Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-877-g6879e2a+x4d89` (pipe write takes all bytes)
+
+Real Pi 3B+ over netboot. Test 180 (relibc), Pi test agent. Stable bootloader.
+
+**Pass: a pipe write now takes the whole 1 MiB block.** This was 64 KiB before, `0+16 records out`, see 177.
+
+- `dd if=/dev/zero bs=1M count=16 | wc -c`: `16+0 records out`, `wc` counts **16777216**.
+- `dd if=/dev/urandom of=/tmp/r16 bs=1M count=16`, then `sha256sum /tmp/r16`, `dd if=/tmp/r16 bs=1M count=16 | sha256sum` and `cat /tmp/r16 | sha256sum`:
+  - all three give the same hash, `6b359fc8…b3bae775bc`;
+  - `dd` shows `16+0 records out`.
+- `dd if=/dev/zero bs=1M count=16 | head -c 100 | wc -c`:
+  - prints `100`;
+  - `dd` stops with `dd: IO error: Broken pipe` after `0+2 records out` (64 KiB);
+  - returns at once, and the next command (`echo prompt-back`) runs normally.
+- pi-test: version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
+
+Stable image restored afterwards, and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-881-g394af65+x741f` (netget stall with a kernel context dump)
+
+Real Pi 3B+ over netboot. Test 181 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb2-v0.3.0-dev-881-g394af65+x741f.img`, staged with its own bootloader.
+Download of 172 to `/scheme/data/netget.bin`. Progress was read from the `netget:` lines on serial, and a stall meant no new line for 5.5 min. After each run: `cat /scheme/sys/context` over devsh, then a power cycle.
+
+**2 of 3 runs stalled. Unlike 179, devsh still answered, and the picture is the same as in 174:**
+- `netget` is **runnable (`UR`) on CPU 0**.
+- CPU 0 does **almost no work** (`w0`–`w24` per minute after the stall, against several thousand before).
+- The kernel's automatic dump did not fire, because the other CPUs still switch contexts.
+
+| Run | Start (UTC) | Result | Size reached |
+|---|---|---|---|
+| 1 | 02:07:16 (reset) | stalled, last progress 02:12:41 | 272 MiB at 255.5 s (0.86 MB/s) |
+| 2 | 02:18:25 (power cycle) | **complete**: `382156480 bytes in 313.3 s, 1.22 MB/s` | all |
+| 3 | 02:24:52 (power cycle) | stalled, last progress 02:28:57 | 256 MiB at 187.3 s |
+
+- **`[hbctx …]` dumps:** only the baseline dump, about 2 min after boot (`[hbctx begin beat 2 w…]` … `[hbctx end]`), in each run.
+  - No dump came after either stall, 5.5 min in each case.
+  - The trigger, fewer than 100 switches per minute on all CPUs together, was never met. The other CPUs still made about 6000–18000 schedule calls per minute.
+  - In the baseline dump, `netget` (pid 54) is `B` in `UserInner::call`, `netstack` in `EventQueue::read`, `dwc2d` in `EventQueue::read`, and `redoxfs` in `UserInner::call`/`UserInner::read (v2)`.
+- **After the stall, `/scheme/sys/context` (devsh):**
+  - run 1: `54 UR #0 /usr/bin/netget`, `20 UR #2 /scheme/initfs/bin/redoxfs`, `25 UB #3 netstack`, `16 UB #3 dwc2d`, `31 UB #0 /usr/bin/redoxfs`;
+  - run 3: the same, with `netget UR #0` and initfs `redoxfs UR #3`.
+- **Heartbeat after the stall:**
+  - CPU 0: run 1 `[hb 0 10 s6440 w0 i6440]`, run 3 `[hb 0 9 s6436 w0 i6436]`.
+  - So CPU 0 takes its timer and calls `schedule()`, but always picks idle, while `netget` waits on its run queue.
+  - The other CPUs keep doing some work, e.g. `[hb 2 10 s18139 w8243 …]`.
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop in any run.
+- Suggestion: the dump could also trigger on "a CPU did no work for 60 s while one of its contexts was runnable".
+
+Stable image restored afterwards (02:34), and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-891-g55d0446+x9f76`
+
+Built 2026-11-01T03:30:25Z, `libc.so` `d8e9a5ac4a3e35a3…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-891-g55d0446+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-891-g55d0446+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-11-01: `v0.3.0-dev-946-gd7fa50e+x4ec1` (sshd with relibc `0040`/`0041` reworked)
+
+Real Pi 3B+ over netboot. Test 182 ([#45](https://github.com/redox-rpi/redox-rpi/issues/45)), Pi test agent. Stable bootloader.
+Staged 04:44, and the boot reached login with no `FATAL` or panic line.
+
+**Partly: logins, the session script and pi-test pass. The login grace time does not work as asked:**
+- With an idle TCP connection, sshd never closed it: not in 200, 240 or 331 s.
+- `Timeout before authentication` is written to serial only **after the client closes the connection**, not about 2 min after it opens.
+
+- `ls /etc/ssh`: the host keys were already there at the first look (04:45), ed25519, ecdsa, rsa and mldsa44_ed25519.
+- The test key `/tmp/qkey.pub` went into `/home/root/.ssh/authorized_keys` over devsh, in single quotes. `wc -c` gives `100` (the same as the file on homenodellm).
+- 5 key logins `ssh -i /tmp/qkey root@192.168.178.148 'echo loginN'`: `login1` … `login5`, all rc 0, with no failed login.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace, prompt-again, exit, all `ok`, rc 0.
+- **Login grace time:** the client sent nothing after the server banner `SSH-2.0-OpenSSH_10.5`. Three tries:
+  - held 200 s: the server did not close. The line (`pid = 99`) was in the log right after the client closed.
+  - held 240 s, log checked every 5 s: no line while open. The line (`pid = 101`) appeared after the close.
+  - held 331 s, log checked every 3 s: no line and no close from the server while open. The line (`pid = 109`) appeared after the client closed.
+  - So the `SIGALRM` from `setitimer` seems not to reach sshd while it waits in `read`. It only acts once the read returns.
+- Serial: no `setitimer`/`setgroups` error and no `madvise`/`getsockopt`/`setsockopt` TODO line. The only TODO is `sshd-session: TODO: ioctl TIOCSCTTY`.
+- pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
+
+Stable restored afterwards: the nightly's new stable `v0.3.0-dev-891-g55d0446+x9f76` from 03:30, which is now the backup in `tftp-stable`. It came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-883-g62d7c39+x741f` (netget stall, context dump with run queue state)
+
+Real Pi 3B+ over netboot. Test 183 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb3-…`, own bootloader, the download of 172 as in 181. A stall means no new `netget:` line for 5.5 min.
+
+**2 of 3 runs stalled, and the new dump fired after both stalls.**
+- It shows a user context that is **runnable, in its CPU's run queue and active (`Rqa`), never running**.
+- Its CPU shows `q1` but makes **no switch at all (`w0`)**, while `[kmain]` (idle) stays `R+c` on that CPU.
+- The stuck context was not `netget` itself: it was `dwc2d` in run 2 and `netstack` in run 3. `netget` is blocked (`B`) behind it.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 05:47:13 (reset) | **complete**: `382156480 bytes in 351.4 s, 1.09 MB/s` | all | – (only the baseline dump) |
+| 2 | 05:54:09 (power cycle) | stalled, last progress 05:57:25 | 192 MiB at 145.2 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 3 | 06:03:08 (power cycle) | stalled, last progress 06:08:19 | 304 MiB at 264.7 s | 3 × `runnable-on-idle-cpu` (beats 7, 8, 9) |
+
+**Run 2:** the first dump after the stall, `[hbctx begin beat 5 runnable-on-idle-cpu]`. Beats 6 and 7 are the same.
+```
+[hbcpu 0 w24 q0]
+[hbcpu 1 w0 q1]
+[hbcpu 2 w2182 q0]
+[hbcpu 3 w0 q0]
+[hbctx 0 [kmain] R+c cpu1 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d Rqa sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 UserInner::call]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu1, `UserInner::call`.
+
+**Run 3:** the dump at beat 7. Beats 8 and 9 are the same.
+```
+[hbcpu 0 w0 q1]
+[hbcpu 1 w9380 q0]
+[hbcpu 2 w0 q0]
+[hbcpu 3 w24 q0]
+[hbctx 0 [kmain] R+c cpu0 ]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu0 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d B sys cpu1 EventQueue::read]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu0 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu0 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu0, `UserInner::call`.
+
+**Other details:**
+- In all dumps, the only non-blocked user contexts besides the stuck one are `rpi-firmwared` and `timesync` (`S`, `nanosleep`).
+- devsh did not log in after either stall (`pirun` login failed), so there is no `/scheme/sys/context` from devsh this time.
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop in any run.
+- Power cycles: 05:54:09, 06:03:08, 06:14:08.
+
+Stable image restored afterwards (the nightly's `v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-906-g13b2b1a+xf576` (`rwlock_randtest` with the `futex_wake` EFAULT fix)
+
+Real Pi 3B+ over netboot. Test 184 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+Stable bootloader, staged 06:14 (power cycle). Each run is its own devsh command with a 60 s client timeout, with stderr kept, as in 178.
+
+**57 runs passed, then run 58 froze the Pi.**
+- **No `RELIBC PANIC`** in the stderr of any run, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial. So the panic of 176/178 did not show in 57 runs. It came about once in 40 runs before, so 57 clean runs is a hint, not proof.
+- Runs 1–57: all `rc=0`. `real` times were 1.27–1.47 s, median 1.37 s.
+- Run 58 started about 06:24 and printed nothing: no output, no `rc`, client timeout after 65 s.
+  - devsh no longer answered.
+  - Serial showed nothing new in the 90 s after the freeze.
+  - This image has no heartbeat, so there is no kernel view of the freeze.
+- This is the same kind of freeze as in 170 and 173 (run 12).
+- Power cycle at 06:27:11 with stable staged.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
