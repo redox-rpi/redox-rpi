@@ -18,6 +18,15 @@ pub const DEFAULT_MODEL: &str = "/usr/share/assistant/models/Qwen3-0.6B-Q4_0.ggu
 const MAX_REPLY: usize = 200;
 /// Most tool calls the model may make for one question.
 const MAX_ROUNDS: usize = 3;
+/// Room kept free in the conversation for the next question, its tool
+/// calls and replies. rinfer holds at most RINFER_MAX_CONTEXT tokens (1024 by
+/// default; running out of memory panics the Redox kernel); with less room
+/// left than this, the assistant starts over from the system prompt.
+const ROOM: usize = 300;
+/// Longest tool result given back to the model, in bytes: a folder with many
+/// entries would otherwise fill the conversation. File names take about 2.5
+/// bytes per token, so this is up to about 250 tokens.
+const MAX_RESPONSE: usize = 600;
 
 const EOT: u8 = 0x04;
 
@@ -25,6 +34,18 @@ pub struct Model {
     child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
+    /// The system message, and the saved state after it (file and key).
+    system: String,
+    saved: Option<(String, String)>,
+    /// Tokens in the conversation, as rinfer last said, and right after the
+    /// system prompt.
+    used: usize,
+    base: usize,
+}
+
+/// The conversation limit rinfer uses.
+fn max_context() -> usize {
+    std::env::var("RINFER_MAX_CONTEXT").ok().and_then(|v| v.parse().ok()).unwrap_or(1024)
 }
 
 impl Model {
@@ -45,26 +66,49 @@ impl Model {
             .spawn()?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
-        let mut m = Model { child, stdin, stdout };
-        m.answer(|_| {})?;
-        // Reading the system prompt takes minutes on a Pi 3; the model's
-        // state after it is saved once and loaded on later starts.
         let system = format!("<|im_start|>system\n{}<|im_end|>\n", system_prompt());
-        match saved_prompt_file() {
-            Some(file) => {
-                let key = prompt_key(path, &system);
-                if m.request(&format!("load {file} {key}"))? != "ok" {
-                    m.feed(&system)?;
-                    if let Some(dir) = std::path::Path::new(&file).parent() {
-                        let _ = std::fs::create_dir_all(dir);
-                    }
-                    // A failed save only costs the same wait next time.
-                    m.request(&format!("save {file} {key}"))?;
-                }
-            }
-            None => m.feed(&system)?,
-        }
+        let saved = saved_prompt_file().map(|file| {
+            let key = prompt_key(path, &system);
+            (file, key)
+        });
+        let mut m = Model { child, stdin, stdout, system, saved, used: 0, base: 0 };
+        m.answer(|_| {})?;
+        m.begin()?;
         Ok(m)
+    }
+
+    /// Start the conversation: the system prompt only. Reading it takes
+    /// minutes on a Pi 3; the model's state after it is saved once and
+    /// loaded on later starts.
+    fn begin(&mut self) -> std::io::Result<()> {
+        self.load_system()?;
+        self.base = self.used;
+        Ok(())
+    }
+
+    fn load_system(&mut self) -> std::io::Result<()> {
+        let system = self.system.clone();
+        match self.saved.clone() {
+            Some((file, key)) => {
+                if self.request(&format!("load {file} {key}"))? == "ok" {
+                    // Nothing to read: rinfer only says how many tokens
+                    // the loaded conversation has.
+                    self.feed("")?;
+                    return Ok(());
+                }
+                self.feed(&system)?;
+                if let Some(dir) = std::path::Path::new(&file).parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                // A failed save only costs the same wait next time.
+                self.request(&format!("save {file} {key}"))?;
+            }
+            None => {
+                self.request("reset")?;
+                self.feed(&system)?;
+            }
+        }
+        Ok(())
     }
 
     /// Send a one-line request and return the answer.
@@ -101,10 +145,18 @@ impl Model {
         }
     }
 
-    fn feed(&mut self, text: &str) -> std::io::Result<()> {
+    /// Add text to the conversation; false if rinfer refused it as too long.
+    fn feed(&mut self, text: &str) -> std::io::Result<bool> {
         write!(self.stdin, "feed {}\n{text}", text.len())?;
         self.stdin.flush()?;
-        self.answer(|_| {}).map(|_| ())
+        let answer = self.answer(|_| {})?;
+        if answer == "full" {
+            return Ok(false);
+        }
+        if let Ok(n) = answer.parse() {
+            self.used = n;
+        }
+        Ok(true)
     }
 
     fn gen(&mut self, on_text: impl FnMut(&str)) -> std::io::Result<String> {
@@ -123,11 +175,22 @@ impl Model {
         call: &mut dyn FnMut(&str) -> String,
     ) -> std::io::Result<()> {
         // The previous reply ended with <|im_end|>; its newline follows here.
-        let mut turn = format!(
+        let first = format!(
             "\n<|im_start|>user\n{question} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
         );
+        if self.used > self.base && self.used + ROOM > max_context() {
+            self.start_over(print)?;
+        }
+        let mut turn = first.clone();
         for _ in 0..MAX_ROUNDS {
-            self.feed(&turn)?;
+            if !self.feed(&turn)? {
+                // Too long even so: start over with the question alone.
+                self.start_over(print)?;
+                if !self.feed(&first)? {
+                    print("(The question is too long for the model.)\n");
+                    return Ok(());
+                }
+            }
             let mut hide = Hider::default();
             let reply = self.gen(|t| print(&hide.visible(t)))?;
             print(&hide.rest());
@@ -140,7 +203,7 @@ impl Model {
             }
             let mut responses = String::new();
             for c in calls {
-                responses.push_str(&format!("<tool_response>\n{}\n</tool_response>\n", call(&c)));
+                responses.push_str(&format!("<tool_response>\n{}\n</tool_response>\n", shorten(&call(&c))));
             }
             turn = format!(
                 "\n<|im_start|>user\n{responses}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
@@ -149,6 +212,12 @@ impl Model {
         print("(Stopped after three tool calls.)\n");
         Ok(())
     }
+
+    /// Forget the conversation except the system prompt, and say so.
+    fn start_over(&mut self, print: &mut dyn FnMut(&str)) -> std::io::Result<()> {
+        print("(The conversation got too long; I start over and forget the earlier messages.)\n");
+        self.begin()
+    }
 }
 
 impl Drop for Model {
@@ -156,6 +225,19 @@ impl Drop for Model {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// A tool result cut to MAX_RESPONSE bytes, at a line end where there is one.
+fn shorten(result: &str) -> String {
+    if result.len() <= MAX_RESPONSE {
+        return result.to_string();
+    }
+    let mut end = MAX_RESPONSE;
+    while !result.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = result[..end].rfind('\n').filter(|&n| n > end / 2).unwrap_or(end);
+    format!("{}\n(… cut, {} more bytes)", &result[..cut], result.len() - cut)
 }
 
 /// The text between `<tool_call>` and `</tool_call>`, for each call.
@@ -362,5 +444,17 @@ mod tests {
         for line in tools.lines() {
             crate::json::parse(line).unwrap();
         }
+    }
+
+    #[test]
+    fn long_tool_results_are_cut() {
+        assert_eq!(shorten("short"), "short");
+        let long: String = (0..400).map(|i| format!("entry{i}\n")).collect();
+        let cut = shorten(&long);
+        assert!(cut.len() < MAX_RESPONSE + 40);
+        assert!(cut.ends_with("more bytes)"));
+        assert!(cut.contains("entry0\n"));
+        let wide = "ä".repeat(1000);
+        assert!(shorten(&wide).starts_with("ää"));
     }
 }

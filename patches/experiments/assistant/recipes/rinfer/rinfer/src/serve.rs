@@ -13,11 +13,16 @@
 //!   load <path> <key>
 //!               continue from such a file, if it has the same key
 //!
-//! Every answer ends with the byte 0x04 (EOT): `feed` and `reset` answer with
-//! nothing else, `gen` with the reply text as it is written, `save` and
-//! `load` with `ok` or `no` (`load` then starts a new conversation). The
-//! first EOT, before any request, says the model is loaded. Timings go to
-//! stderr.
+//! Every answer ends with the byte 0x04 (EOT): `feed` answers with the number
+//! of tokens now in the conversation, or `full` if the text would pass the
+//! limit (then nothing is added); `reset` with nothing else, `gen` with the
+//! reply text as it is written, `save` and `load` with `ok` or `no` (`load`
+//! then starts a new conversation). The first EOT, before any request, says
+//! the model is loaded. Timings go to stderr.
+//!
+//! The conversation holds at most RINFER_MAX_CONTEXT tokens (default 1024):
+//! its key/value cache takes 112 KiB per token, and running out of memory
+//! panics the Redox kernel. `gen` stops at the limit.
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::time::Instant;
@@ -43,6 +48,8 @@ struct Session<'a> {
     pending: Option<u32>,
     /// Logits after the last token run, for the first token of a reply.
     logits: Option<Tensor>,
+    /// Most tokens in the conversation.
+    max: usize,
 }
 
 impl Session<'_> {
@@ -68,11 +75,17 @@ impl Session<'_> {
         Ok(())
     }
 
-    fn feed(&mut self, text: &str) -> anyhow::Result<()> {
+    /// Add text to the conversation; false if it would pass the limit.
+    fn feed(&mut self, text: &str) -> anyhow::Result<bool> {
         let t = Instant::now();
-        let mut tokens: Vec<u32> = self.pending.take().into_iter().collect();
+        let mut tokens: Vec<u32> = self.pending.into_iter().collect();
         let enc = self.tokenizer.encode(text, false).map_err(anyhow::Error::msg)?;
         tokens.extend_from_slice(enc.get_ids());
+        if self.pos + tokens.len() > self.max {
+            eprintln!("rinfer: {} tokens would pass the limit of {}", self.pos + tokens.len(), self.max);
+            return Ok(false);
+        }
+        self.pending = None;
         self.run(&tokens)?;
         eprintln!(
             "rinfer: read {} tokens in {:.1} s, heap {} MiB (peak {} MiB)",
@@ -81,7 +94,7 @@ impl Session<'_> {
             super::heap_mib(),
             super::peak_mib()
         );
-        Ok(())
+        Ok(true)
     }
 
     fn gen(&mut self, max: usize, out: &mut impl Write) -> anyhow::Result<()> {
@@ -99,7 +112,9 @@ impl Session<'_> {
         let mut shown = 0;
         loop {
             let next = lp.sample(&logits)?;
-            if Some(next) == eos || reply.len() == max {
+            // The next token runs through the model with the next feed, so
+            // stop one short of the limit.
+            if Some(next) == eos || reply.len() == max || self.pos + 1 >= self.max {
                 // Run through the model with the next feed, so the cache
                 // holds the whole conversation.
                 self.pending = Some(next);
@@ -200,7 +215,8 @@ fn status(result: anyhow::Result<()>, out: &mut impl Write) -> anyhow::Result<()
 }
 
 pub fn serve(model: &mut ModelWeights, tokenizer: &Tokenizer) -> anyhow::Result<()> {
-    let mut s = Session { model, tokenizer, device: Device::Cpu, pos: 0, pending: None, logits: None };
+    let max = std::env::var("RINFER_MAX_CONTEXT").ok().and_then(|v| v.parse().ok()).unwrap_or(1024);
+    let mut s = Session { model, tokenizer, device: Device::Cpu, pos: 0, pending: None, logits: None, max };
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let stdout = std::io::stdout();
@@ -220,7 +236,11 @@ pub fn serve(model: &mut ModelWeights, tokenizer: &Tokenizer) -> anyhow::Result<
                 let mut buf = vec![0; n.parse().unwrap()];
                 input.read_exact(&mut buf)?;
                 let text = String::from_utf8(buf)?;
-                s.feed(&text)
+                match s.feed(&text) {
+                    Ok(true) => write!(out, "{}", s.pos).map_err(Into::into),
+                    Ok(false) => out.write_all(b"full").map_err(Into::into),
+                    Err(e) => Err(e),
+                }
             }
             ["gen", max] if max.parse::<usize>().is_ok() => s.gen(max.parse().unwrap(), &mut out),
             ["reset"] => {
