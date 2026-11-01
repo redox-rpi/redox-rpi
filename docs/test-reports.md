@@ -6065,3 +6065,42 @@ bootloader; banner `redox-rpi v0.3.0-dev-855-g81b7717+x8ea9`.
   aarch64), not at relibc's rwlock.
 
 Stable image restored afterwards.
+
+## 2026-10-31/11-01: hub-drop fix `v0.3.0-dev-857-g7ed9070+xa901` (new) against `v0.3.0-dev-838-g64fa695+x8116` (old), alternating
+
+Real Pi 3B+ over netboot. Test 174 (#151 follow-up, USB session), Pi test agent.
+
+**The new image never dropped the hub (0 in 3 runs); the old one dropped it 12
+and 4 times. But two of the three new-image runs stalled without a drop.**
+Analysis of N2 while it was stalled: a runnable `netget` that never got CPU, and
+a zero TCP window. This looks like a scheduler problem, not USB. `throttled` was
+`0x00000000` before and after every run. Each run on a fresh boot, staged with
+`~/redox-rpi-boot/scripts/netboot.sh`; download `netget …/Qwen3-0.6B-Q4_0.gguf
+/scheme/data/netget.bin --log /scheme/debug`, no 30 s readings.
+
+| run | image | result | last netget line | hub drops / back |
+|---|---|---|---|---|
+| N1 | new | **stalled**, then no devsh after (power cycle 22:58) | `160 MiB 121.4 s 1.11 MB/s` | 0 / 0 |
+| O1 | old | **complete** | `382156480 bytes in 445.0 s, 0.86 MB/s` | 12 / 12 |
+| N2 | new | **stalled** at 208147776 bytes from 23:10 | `192 MiB 137.1 s 0.87 MB/s` | 0 / 0 |
+| O2 | old | **stalled**, then no devsh (power cycle 23:51) | `224 MiB 226.3 s 0.76 MB/s` | 4 / **3**, the last drop not recovered |
+| N3 | new (extra run) | **complete** | `382156480 bytes in 345.1 s, 1.11 MB/s` | 0 / 0 |
+
+**N2 during the stall (23:26–23:29, devsh worked):**
+- `/tmp/dwc2d-usbstats`: all error counters 0, `port_events 0`, `root_events 1`,
+  `recoveries 0`, `hprt0 0x1005`. `/tmp/dwc2d-step` `1159257 idle`.
+  `throttled` `0x00000000`.
+- `netget` (PID 55) `UR` on CPU #0, ACTTIME 0.94 s and SCHTIME 7.23 s,
+  **unchanged in two samples 10 s apart**. `bcm2835-sdhostd` 2:16.44 and the
+  user redoxfs (8.44 s / 1:28.23) unchanged too; initfs redoxfs 15.58 → 16.13 s.
+- Host side (`ss -tin`): `Send-Q 390987`, `backoff:15`, `lastsnd:1032951` ms,
+  `lastack:73299` ms. The Pi still answered window probes but took no data,
+  because netget never ran to read.
+- I did not get the full `/scheme/sys/context` (dwc2d's CPU) before N2's run
+  timed out. N3 was added to capture it on a stall, but N3 completed.
+
+So `usb-hub-drop` stops the hub drops (0 of 3 runs against 16 drops in 2 old
+runs). The stalls in N1 and N2 (and the end of O2) have another cause: the
+scheduler freeze/starvation seen in #170 and #173 is the likely one.
+
+Stable image restored afterwards (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
