@@ -404,9 +404,20 @@ git).
   and 4 were measured only with rinfer alone. `RAYON_NUM_THREADS=4` and
   `CANDLE_BARRIER_POOL_SPIN_LIMIT` still override. The Pi was at its soft
   temperature limit from the first run; warm, the default slept only 48
-  times (1.70), so heat changes the numbers. Not worth it now: a smaller quantization (the weights are
-  already Q4_0) and a shorter answer cap (answers are 24 to 33 tokens, the
-  cap is 200); the q4_0 kernel only if the model time stays high.
+  times (1.70), so heat changes the numbers. Not worth it now: a smaller
+  quantization (the weights are already Q4_0) and a shorter answer cap
+  (answers are 24 to 33 tokens, the cap is 200); the q4_0 kernel only if
+  the model time stays high.
+- **Conversation cap, 2026-11-01 (branch `assistant-cap`,
+  [#175](https://github.com/redox-rpi/redox-rpi/issues/175)):** the key and
+  value cache takes 112 KiB per token, and running out of memory panics the
+  kernel. `rinfer --serve` now holds at most `RINFER_MAX_CONTEXT` tokens
+  (default 1024, which should leave about 65 to 85 MB free on the Pi): it
+  refuses text past the limit and stops writing at it. The assistant starts
+  over from the saved system prompt (2 s on the Pi) when less than 300
+  tokens are left, says so, and cuts tool results to 600 bytes (a big
+  folder listing took 500 tokens). Build host with a limit of 800: the
+  third question started over, a cut folder listing took 251 tokens.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -439,7 +450,7 @@ git).
   ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)).
 - Move the SD-card recipe `qwen3-model` to the smaller model file.
 - A grammar mask while a tool call is written, and a test set of
-  questions; a cap on the conversation length (memory).
+  questions.
 
 ## Later
 
