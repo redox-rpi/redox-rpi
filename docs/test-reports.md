@@ -6485,3 +6485,41 @@ Stable bootloader, staged 06:14 (power cycle). Each run is its own devsh command
 - Power cycle at 06:27:11 with stable staged.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-885-g626efe2+x741f` (netget stall: scheduler skip counters)
+
+Real Pi 3B+ over netboot. Test 185 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb4-…`, own bootloader, as in 183. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled. On the stuck CPU none of the three skip counters grows after the stall.**
+- The queued context `Rqa` on CPU 0 (this time `bcm2835-sdhostd`) is never passed over for a taken lock or a Skip.
+- So `select_next_context` on CPU 0 seems not to look at it at all, or CPU 0 never gets that far: `w0` and the same counters in all 3 dumps.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 06:47:02 (reset) | stalled, last progress 06:50:58 | 208 MiB at 162.7 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 2 | 06:56:45 (power cycle) | **complete**: `382156480 bytes in 402.8 s, 0.95 MB/s` | all | – (baseline only) |
+| 3 | 07:04:44 (power cycle) | **complete**: `382156480 bytes in 398.4 s, 0.96 MB/s` | all | – (baseline only) |
+
+Run 1, the baseline dump at beat 2, during the download:
+```
+[hbcpu 0 w3605 q1 sl24 sa22 sr141]
+[hbcpu 1 w11252 q0 sl671 sa240 sr943]
+[hbcpu 2 w10169 q0 sl664 sa206 sr1198]
+[hbcpu 3 w9043 q0 sl523 sa140 sr1130]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu0 ]
+```
+Run 1, the dumps after the stall. The `[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos Rqa cpu0 ]` line is the same in all three. It has no `sys` field, unlike `dwc2d`/`netstack` in 183.
+```
+beat 5: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w1130 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8941 q0 sl945 sa209 sr1814]
+beat 6: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2203 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8199 q0 sl945 sa209 sr1814]
+beat 7: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2209 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8210 q0 sl945 sa209 sr1814]
+```
+- **Counters after the stall:**
+  - All counters stay the same from beat 5 to beat 7, on every CPU, including CPU 3, which still switches (`w8199`, `w8210`).
+  - Between the baseline and beat 5, CPU 0's counters grew (`sl24→85`, `sa22→45`, `sr141→264`) while it still worked.
+- **Other contexts:** `netget` is `B sys cpu0 UserInner::call`, `/usr/bin/redoxfs` is `B sys cpu0 UserInner::call`, and `dwc2d`, `netstack` and the initfs `redoxfs` are `B` on cpu3.
+- **Not seen:** no `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- **Power cycles:** 06:56:45, 07:04:44.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
