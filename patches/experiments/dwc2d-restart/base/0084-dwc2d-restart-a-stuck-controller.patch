@@ -1,4 +1,4 @@
-From 5f3fe1aec688ca86794da7fdaf11b63151c7db43 Mon Sep 17 00:00:00 2001
+From 40e4fd39a1066ce9abaa2f8319251c2991b959a4 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 10:25:06 +0000
 Subject: [PATCH] dwc2d: restart a stuck controller (#151)
@@ -13,11 +13,11 @@ next rescan enumerates the devices anew. "restart" in
 /tmp/dwc2d-cycle does the same, for tests.
 ---
  drivers/usb/dwc2d/src/dwc2.rs      | 62 ++++++++++++++++++++++++++++--
- drivers/usb/dwc2d/src/enumerate.rs | 39 ++++++++++++++++++-
+ drivers/usb/dwc2d/src/enumerate.rs | 44 ++++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs      | 25 +++++++++++-
  drivers/usb/dwc2d/src/regs.rs      |  6 +++
  drivers/usb/dwc2d/src/usbdiag.rs   |  6 +++
- 5 files changed, 131 insertions(+), 7 deletions(-)
+ 5 files changed, 136 insertions(+), 7 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
 index 959bba87..0f126937 100644
@@ -108,7 +108,7 @@ index 959bba87..0f126937 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 495f0848..11e67920 100644
+index 495f0848..8f9c0969 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -116,8 +116,14 @@ pub struct Bus {
@@ -126,7 +126,7 @@ index 495f0848..11e67920 100644
  impl Bus {
      pub fn new(hc: &Dwc2) -> Self {
          Self {
-@@ -130,9 +136,30 @@ impl Bus {
+@@ -130,9 +136,35 @@ impl Bus {
              hubs: Vec::new(),
              failed: HashSet::new(),
              retries: HashMap::new(),
@@ -144,7 +144,12 @@ index 495f0848..11e67920 100644
 +    /// Forget every device, before the controller is restarted; returns
 +    /// their addresses.
 +    pub fn forget_all(&mut self) -> Vec<u8> {
-+        let removed = self.devices.iter().map(|d| d.address).collect();
++        let removed: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
++        // Stop their channels as on unplugging (QEMU otherwise goes on
++        // retrying a NAKed poll into the reset and aborts).
++        for &address in &removed {
++            self.hc.halt_device(address);
++        }
 +        self.devices.clear();
 +        self.hubs.clear();
 +        self.tts.clear();
@@ -157,7 +162,7 @@ index 495f0848..11e67920 100644
      /// The lowest address no device uses.
      fn free_address(&self) -> Result<u8, Error> {
          (1..=127)
-@@ -169,12 +196,20 @@ impl Bus {
+@@ -169,12 +201,20 @@ impl Bus {
                  &mut self.setup,
                  &mut self.data,
              ) {
@@ -179,7 +184,7 @@ index 495f0848..11e67920 100644
                      println!(
                          "dwc2d: request {:02x?} to address {address} (max packet {max_packet}, {speed:?} speed) failed: {err:?}",
                          *self.setup
-@@ -554,7 +589,7 @@ impl Bus {
+@@ -554,7 +594,7 @@ impl Bus {
          hubs.sort_by_key(|h| h.depth);
          for hub in hubs {
              for port in 1..=hub.ports {
