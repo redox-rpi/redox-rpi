@@ -6910,3 +6910,17 @@ Real Pi 3B+ over netboot. Test 194 ([#171](https://github.com/redox-rpi/redox-rp
 - No panic or `FATAL` line.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-3-g5ea80f3+x36c5` (kernel `0013` self-exit-status as a default patch)
+
+Real Pi 3B+ over netboot. Test 195 ([#108](https://github.com/redox-rpi/redox-rpi/issues/108)), Pi test agent. Image `sx-v0.3.0-3-g5ea80f3+x36c5.img` (branch `t108-self-exit-default`), staged 16:11 with the stable bootloader.
+
+**Pass:**
+- **(1)** In `/usr/share/relibc-tests`, `./bins_dynamic/pthread/exit; echo rc=$?` 10 times: **10 of 10 `rc=0`**, 1.6 s in total.
+- **(2)** `free` before and after 200 runs of `dd if=/dev/zero of=/dev/null bs=4k count=1` (all 200 printed `records out`, 32.3 s):
+  - used memory went from 151084 to 141188 KB, so it **fell by 9.9 MB**, with no growth;
+  - test 133 had +824 KB, and #31 was about 76 KB per run.
+- **(3)** Standard checks: version, manifest present, `ps` (46), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+- No panic or `FATAL` line on serial.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
