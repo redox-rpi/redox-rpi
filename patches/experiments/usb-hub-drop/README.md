@@ -39,7 +39,15 @@ Applies after [`dwc2d-netstats`](../dwc2d-netstats/README.md):
 
 ## Tests
 
-- Pi: test #172 (after #171).
+- Pi, the 382 MB download into `/scheme/data` (`throttled` 0 throughout):
+  - old image (#171, #174 O1/O2): 8, 12 and 4 hub drops; O2's last drop did
+    not come back and the Pi stopped answering.
+  - this image (#172, #174 N1/N2/N3): **0 hub drops in 4 runs**, dwc2d's
+    USB error and port counters all 0. Two runs (N1, N2) stalled anyway:
+    netget runnable on CPU 0 but not running, its TCP window closed. That
+    stall happens on the old image too and looks like the scheduler problem
+    of #170/#173, not dwc2d. Why the drops stop without `sleep` is not
+    known yet.
 - QEMU 2026-10-31, `v0.3.0-dev-857-g7ed9070+xa901` (`netget`,
   `dwc2d-netstats`, `timesync`, `usb-hub-drop`): boots, `test-hotplug.sh`
   15/15, keyboard test pass, network port cycle comes back with devsh. An
