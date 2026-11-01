@@ -101,7 +101,10 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. Pi tests
+  also says when the clock makes a certificate look invalid (seen in QEMU
+  at 1970, 2026-11-01; the experiment now builds pkgutils itself, before
+  it relied on `pkg-hold` for that). Install speed on the Pi: nano 27 s,
+  26 small programs 3 min, python312 9 min (#142, #163). Pi tests
   #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
   [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
 
