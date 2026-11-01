@@ -1,5 +1,9 @@
 [packages]
 pkg-persist = "source"
+# Built from source with patches/experiments/pkg-persist/pkgutils/ (--root
+# and the clock hint). Without this line the image takes upstream's binary
+# unless pkg-hold is in the same build.
+pkgutils = "source"
 # Built from source with patches/experiments/pkg-persist/redoxfs/: rename
 # fails on /scheme/data without it, and pkg renames every file it installs.
 redoxfs = "source"
