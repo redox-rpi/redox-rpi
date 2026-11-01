@@ -123,5 +123,7 @@ HAT. No code yet.
 
 Keyboard layouts are in inputd, not dwc2d:
 [#36](https://github.com/redox-rpi/redox-rpi/issues/36), branch
-[`keyboard-layouts`](https://github.com/redox-rpi/redox-rpi/tree/keyboard-layouts)
-(t18 session), Pi test #64 with a person.
+[`t36-keymap`](https://github.com/redox-rpi/redox-rpi/tree/t36-keymap)
+(t18 session), experiment `keyboard-de`: German layout with AltGr and dead
+keys, set at boot from `/etc/keymap`. QEMU passes; Pi test #150 with a
+person and a German USB keyboard.
