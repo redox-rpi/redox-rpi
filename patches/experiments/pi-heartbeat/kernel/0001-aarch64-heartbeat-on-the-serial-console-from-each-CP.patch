@@ -352,6 +352,25 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  
      if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
          timeout::trigger(token);
+diff -ruN a/src/context/memory.rs b/src/context/memory.rs
+--- a/src/context/memory.rs	2026-11-01 20:09:25.536016661 +0000
++++ b/src/context/memory.rs	2026-11-01 20:09:25.536715920 +0000
+@@ -3042,8 +3042,15 @@
+         #[cfg(target_arch = "aarch64")]
+         let mut stall_watch = crate::arch::misc::StallWatch::start(2);
+ 
++        let mut hb_spin = crate::sync::HbSpin::new();
+         while self.state.ackword.load(Ordering::SeqCst) < affected_cpu_count {
+             PercpuBlock::current().maybe_handle_tlb_shootdown();
++            hb_spin.poll(
++                "tlb-ack",
++                line!(),
++                self.state.ackword.load(Ordering::SeqCst) as usize,
++                affected_cpu_count,
++            );
+             #[cfg(target_arch = "aarch64")]
+             if stall_watch.stalled() {
+                 error!(
 diff -ruN a/src/context/mod.rs b/src/context/mod.rs
 --- a/src/context/mod.rs	2026-11-01 01:58:32.735467536 +0000
 +++ b/src/context/mod.rs	2026-11-01 01:59:00.941310867 +0000
@@ -643,3 +662,167 @@ diff -ruN a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
          self.clear_all_irqs();
  
          self.drain_fifo();
+diff -ruN a/src/percpu.rs b/src/percpu.rs
+--- a/src/percpu.rs	2026-11-01 20:09:25.536188938 +0000
++++ b/src/percpu.rs	2026-11-01 20:09:25.536804719 +0000
+@@ -102,6 +102,7 @@
+             warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
+             return;
+         };
++        let mut hb_spin = crate::sync::HbSpin::new();
+         #[expect(clippy::bool_comparison)]
+         while percpublock
+             .wants_tlb_shootdown
+@@ -111,6 +112,7 @@
+             // Load is faster than CAS or on x86, LOCK BTS
+             while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
+                 my_percpublock.maybe_handle_tlb_shootdown();
++                hb_spin.poll("tlb-flag", line!(), target.get() as usize, 0);
+                 core::hint::spin_loop();
+             }
+         }
+diff -ruN a/src/sync/mod.rs b/src/sync/mod.rs
+--- a/src/sync/mod.rs	2026-11-01 20:09:25.535749215 +0000
++++ b/src/sync/mod.rs	2026-11-01 20:09:25.536295557 +0000
+@@ -3,3 +3,53 @@
+ pub mod ordered;
+ pub mod wait_condition;
+ pub mod wait_queue;
++
++/// Spin watch for the heartbeat experiment (pi-heartbeat, #14). Kernel code
++/// on aarch64 runs with interrupts masked, so a CPU that spins in a lock or
++/// a TLB shootdown takes no timer interrupt and writes no beat. A watch made
++/// before the spin writes one line straight to the PL011 once the spin has
++/// lasted 2 s: `[spin <cpu> <what> <line> <a> <b>]`.
++pub struct HbSpin {
++    start: u64,
++    done: bool,
++}
++
++impl HbSpin {
++    pub fn new() -> Self {
++        Self {
++            start: unsafe { crate::arch::device::cpu::registers::control_regs::cntvct_el0() },
++            done: false,
++        }
++    }
++
++    pub fn poll(&mut self, what: &str, line: u32, a: usize, b: usize) {
++        use crate::arch::device::cpu::registers::control_regs;
++        if self.done {
++            return;
++        }
++        let now = unsafe { control_regs::cntvct_el0() };
++        let freq = u64::from(unsafe { control_regs::cntfrq_el0() });
++        if now.wrapping_sub(self.start) < freq.saturating_mul(2) {
++            return;
++        }
++        self.done = true;
++        struct Buf {
++            buf: [u8; 96],
++            len: usize,
++        }
++        impl core::fmt::Write for Buf {
++            fn write_str(&mut self, s: &str) -> core::fmt::Result {
++                let n = s.len().min(self.buf.len() - self.len);
++                self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
++                self.len += n;
++                Ok(())
++            }
++        }
++        let mut out = Buf { buf: [0; 96], len: 0 };
++        let _ = core::fmt::Write::write_fmt(
++            &mut out,
++            format_args!("\r\n[spin {} {what} {line} {a:#x} {b}]\r\n", crate::cpu_id().get()),
++        );
++        crate::devices::uart_pl011::raw_write(&out.buf[..out.len]);
++    }
++}
+diff -ruN a/src/sync/ordered.rs b/src/sync/ordered.rs
+--- a/src/sync/ordered.rs	2026-11-01 20:09:25.535888923 +0000
++++ b/src/sync/ordered.rs	2026-11-01 20:09:25.536480674 +0000
+@@ -230,12 +230,14 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+ 
+             loop {
+                 match self.inner.try_lock() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -376,11 +378,13 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -416,11 +420,13 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+             loop {
+                 match self.inner.try_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -447,11 +453,13 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -503,11 +511,13 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -533,11 +543,13 @@
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut hb_spin = crate::sync::HbSpin::new();
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        hb_spin.poll("lock", line!(), self as *const Self as usize, 0);
+                         core::hint::spin_loop();
+                         #[cfg(feature = "busy_panic")]
+                         {
