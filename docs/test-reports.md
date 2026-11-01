@@ -6485,3 +6485,182 @@ Stable bootloader, staged 06:14 (power cycle). Each run is its own devsh command
 - Power cycle at 06:27:11 with stable staged.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-885-g626efe2+x741f` (netget stall: scheduler skip counters)
+
+Real Pi 3B+ over netboot. Test 185 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb4-…`, own bootloader, as in 183. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled. On the stuck CPU none of the three skip counters grows after the stall.**
+- The queued context `Rqa` on CPU 0 (this time `bcm2835-sdhostd`) is never passed over for a taken lock or a Skip.
+- So `select_next_context` on CPU 0 seems not to look at it at all, or CPU 0 never gets that far: `w0` and the same counters in all 3 dumps.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 06:47:02 (reset) | stalled, last progress 06:50:58 | 208 MiB at 162.7 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 2 | 06:56:45 (power cycle) | **complete**: `382156480 bytes in 402.8 s, 0.95 MB/s` | all | – (baseline only) |
+| 3 | 07:04:44 (power cycle) | **complete**: `382156480 bytes in 398.4 s, 0.96 MB/s` | all | – (baseline only) |
+
+Run 1, the baseline dump at beat 2, during the download:
+```
+[hbcpu 0 w3605 q1 sl24 sa22 sr141]
+[hbcpu 1 w11252 q0 sl671 sa240 sr943]
+[hbcpu 2 w10169 q0 sl664 sa206 sr1198]
+[hbcpu 3 w9043 q0 sl523 sa140 sr1130]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu0 ]
+```
+Run 1, the dumps after the stall. The `[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos Rqa cpu0 ]` line is the same in all three. It has no `sys` field, unlike `dwc2d`/`netstack` in 183.
+```
+beat 5: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w1130 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8941 q0 sl945 sa209 sr1814]
+beat 6: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2203 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8199 q0 sl945 sa209 sr1814]
+beat 7: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2209 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8210 q0 sl945 sa209 sr1814]
+```
+- **Counters after the stall:**
+  - All counters stay the same from beat 5 to beat 7, on every CPU, including CPU 3, which still switches (`w8199`, `w8210`).
+  - Between the baseline and beat 5, CPU 0's counters grew (`sl24→85`, `sa22→45`, `sr141→264`) while it still worked.
+- **Other contexts:** `netget` is `B sys cpu0 UserInner::call`, `/usr/bin/redoxfs` is `B sys cpu0 UserInner::call`, and `dwc2d`, `netstack` and the initfs `redoxfs` are `B` on cpu3.
+- **Not seen:** no `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- **Power cycles:** 06:56:45, 07:04:44.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-915-gc9b7a47+x913e` (`rwlock_randtest` with the futex fix and the heartbeat)
+
+Real Pi 3B+ over netboot. Test 186 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent. Stable bootloader, staged 07:12.
+80 single runs as in 184: each run is its own devsh command, with a 60 s client timeout and stderr kept.
+
+**Pass: 80 of 80 runs, all `rc=0`, no freeze.**
+- No `RELIBC PANIC` in any run's stderr, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial.
+- Run times: median 1.37 s, range 1.28–3.40 s. Run 41 took 3.40 s and run 11 took 2.42 s; all others took ≤ 1.54 s.
+- **Heartbeat:** 10 beats per CPU, plus the baseline dump at beat 2.
+  - One `[hb stall 0 seen-by 2 t33997 s74738]` came between beats 5 and 6: CPU 2 saw CPU 0 take no timer interrupt for 2 s.
+  - CPU 0 kept beating afterwards (`[hb 0 6 s13485 w7386 …]` … `[hb 0 9 …]`).
+  - No `runnable-on-idle-cpu` dump and no `[hb nosched …]`.
+- Note: the freeze of 184 (run 58) did not come back in 80 runs. With 170/173/184 it showed about once in 12–60 runs, so this is a hint, not proof.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-887-g19628e3+x741f` (netget stall: the real run queue in the dump)
+
+Real Pi 3B+ over netboot. Test 187 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb5-…`, own bootloader, as in 185. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled, but this time no dump followed the stall.**
+- Neither `runnable-on-idle-cpu` nor the low-switch trigger fired, so there are no `[hbq …]` lines from after the stall. Only the baseline dump exists.
+- After the stall, CPU 1 makes no switch (`w0`) for 3 beats. A dump did not fire, so there was presumably no queued runnable user context on CPU 1 this time.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 08:00:55 (reset) | **complete**: `382156480 bytes in 367.5 s, 1.04 MB/s` | all | – |
+| 2 | 08:08:05 (power cycle) | stalled, last progress 08:10:46 | 144 MiB at 104.4 s | **none** |
+| 3 | 08:16:32 (power cycle) | **complete**: `382156480 bytes in 378.9 s, 1.01 MB/s` | all | – |
+
+**Run 2 heartbeat after the stall.** It was the same every minute from beat 5 to beat 7, with no `[hb stall …]`/`[hb nosched …]`:
+```
+[hb 1 5 s6549 w0 i6549 p0]
+[hb 2 5 s7674 w1124 i6550 p0]
+[hb 3 5 s7551 w1100 i6451 p0]
+[hb 0 5 s13981 w7647 i6334 p0]
+```
+- CPU 1 does nothing.
+- CPU 0 keeps up about 7700 switches per minute, against about 1100 on CPUs 2 and 3. In 181/183/185 the stuck CPU showed `w0` and one other CPU stayed busy, so the pattern is similar.
+
+**Run 2 baseline dump** (beat 2, during the download, before the stall):
+```
+[hbcpu 0 w5076 q0 sl27 sa10 sr292 sv1304 ss33]
+[hbcpu 1 w16618 q1 sl819 sa469 sr855 sv71 ss245]
+[hbcpu 2 w5569 q0 sl573 sa140 sr1369 sv10 ss139]
+[hbcpu 3 w8648 q0 sl446 sa102 sr1676 sv6 ss123]
+[hbq 0 v96422 n0 tw48460]
+[hbq 1 v1076625898 n1 tw2048]
+[hbq 1 vt18446744073709409936 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744072109357999 n0 tw0]
+[hbq 3 v18446744073488998990 n0 tw0]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 EventQueue::read]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+
+**Points for the t1 session:**
+- In the baseline, `netstack` is in CPU 1's queue (`own`) while its state is `B` (blocked in `EventQueue::read`).
+- Several `vt`/`v` values are near 2^64. CPU 2's and CPU 3's queue `v` and netstack's `vt` look like a negative number wrapped around (`vt` = 2^64 − 141680).
+- CPU 0's queue has `n0` but `tw48460`.
+
+**Other notes:**
+- devsh no longer logged in after the stall, so there is no `/scheme/sys/context`.
+- Run 2 had 3 `smolnetd … Dropped packet on eth0 because waiting queue was full` warnings at 08:09:40, about 1 min before the stall. Run 3 had 1 and completed; run 1 had none.
+- No hub drop in any run.
+- Power cycles: 08:08:05, 08:16:32.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-889-g7349b1c+x741f` (netget stall: where the scheduler's virtual time wraps)
+
+Real Pi 3B+ over netboot. Test 188 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb6-…`, own bootloader, as in 187. A stall means no new `netget:` line for 5.5 min. A host-side watcher on the serial log wrote down the time of every `[hbv …]`, `[hbctx begin …]` and `netget:` line.
+
+**1 of 3 runs stalled. In the stall, `netstack` sits in CPU 1's queue as `Rqa` with `vt18446744073709551615` = exactly 2^64 − 1 (`u64::MAX`), and CPU 1 does nothing (`w0 q1`).**
+- This value shows from the dump at the moment of the stall (beat 6, 08:57:22; last progress 08:57:23) through all later dumps, unchanged.
+- The `[hbv]` lines (virtual time above 2^62) come in **every** run, including the two that completed. They all appear together, about 40 s into the download.
+
+| Run | Start (UTC) | Result | Size reached | Dumps |
+|---|---|---|---|---|
+| 1 | 08:37:12 (reset) | **complete**: `382156480 bytes in 308.0 s, 1.24 MB/s` | all | baseline, timed beat 4 |
+| 2 | 08:43:36 (power cycle) | **complete**: `382156480 bytes in 357.2 s, 1.07 MB/s` | all | baseline, timed 4, 6 |
+| 3 | 08:50:57 (power cycle) | stalled, last progress 08:57:23 | 336 MiB at 332.1 s | baseline, timed 4, 6, 8, 10; `runnable-on-idle-cpu` 7, 9, 11 |
+
+**`[hbv …]` lines with the time they appeared.** Each set came in one block, between the `48 MiB` and `64 MiB` netget lines:
+- run 1, 08:38:47 (download started 08:38:05):
+  ```
+  [hbv 1 cpu3 5429956981653779096 5429956981653779096 2036253472034782219 36]
+  [hbv 2 cpu0 15611067510684501972 15611067510670520911 30000104 15611067510671305635]
+  [hbv 3 cpu3 5429956981653779096 3393734875881000556 31366261423856 2036253472034202396]
+  [hbv 4 cpu3 5429956981653805407 5429956981653779096 56459 1024]
+  [hbv 5 cpu3 5429956981653779096 2036253472034782219 0 56459]
+  ```
+- run 2, 08:45:00:
+  ```
+  [hbv 1 cpu2 5087070066968239213 5087070066968239213 2543574260915891133 36]
+  [hbv 2 cpu1 17049878228753944369 17049878228740317518 29240052 17049878228741964617]
+  [hbv 3 cpu2 5087070066968239213 2543574260914814450 78454861415877 2543574260914840640]
+  [hbv 4 cpu2 5087070066968261252 5087070066968239213 47291 1024]
+  [hbv 5 cpu2 5087070066968239213 2543574260915891133 0 47291]
+  ```
+- run 3, 08:52:21:
+  ```
+  [hbv 1 cpu2 7054430493981558515 7054430493981558515 3527878091474425974 36]
+  [hbv 2 cpu2 14324592221479799892 14324592221479610154 407135 14324592221480627588]
+  [hbv 3 cpu2 7054430493981558515 3527878091473271231 1325688965024312 3527878091473311596]
+  [hbv 4 cpu2 7054430493981578199 7054430493981558515 42239 1024]
+  [hbv 5 cpu2 7054430493981558515 3527878091474425974 0 42239]
+  ```
+
+**Run 3, the first dump after the stall** (beat 7, 08:58:22, `runnable-on-idle-cpu`):
+```
+[hbcpu 0 w1115 q0 sl228 sa235 sr471 sv5327 ss161]
+[hbcpu 1 w0 q1 sl964 sa368 sr2748 sv1524 ss215]
+[hbcpu 2 w0 q0 sl1036 sa468 sr3058 sv506 ss210]
+[hbcpu 3 w8645 q0 sl441 sa153 sr1359 sv8283 ss87]
+[hbq 0 v296843 n0 tw15028]
+[hbq 1 v126242 n1 tw7168]
+[hbq 1 vt18446744073709551615 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744073451387897 n0 tw0]
+[hbq 3 v18446744073455149703 n0 tw10572]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu1 ]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- The other user contexts are blocked or asleep.
+- The timed dump at beat 6 (08:57:22) already has the same `hbq 1` lines. Its `[hbcpu 1 w5058 q1 …]` shows CPU 1 still switching in that minute.
+- The beat-4 dump (08:55:22) shows CPU 1's queue `v3459342 n0`, so it was empty then.
+- From beat 6 on, `[hbq 1 v126242 n1 tw7168]` and the netstack entry do not change.
+- CPU 1's counters stay the same from beat 7 on. `sv` (vtime filter) does not grow, so the entry is not counted as filtered either.
+
+**Runs 1 and 2 (complete):** their dumps show queue entries near 2^64 that later cleared up.
+- run 1: `[hbq 1 vt18446744073709550695 id27 16 dwc2d own]` and `[hbq 3 vt18446744073564933720 id36 25 netstack stale]`.
+- run 2: netstack `stale` in CPU 0's queue across several dumps (`vt18446744072764220028` …), then `own` with `vt18446744073709551450`.
+
+**Other notes:**
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- Power cycles: 08:43:36, 08:50:57, 09:03:12.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
