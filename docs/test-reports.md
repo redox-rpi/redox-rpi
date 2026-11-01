@@ -6378,3 +6378,16 @@ Download of 172 to `/scheme/data/netget.bin`. Progress was read from the `netget
 - Suggestion: the dump could also trigger on "a CPU did no work for 60 s while one of its contexts was runnable".
 
 Stable image restored afterwards (02:34), and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-891-g55d0446+x9f76`
+
+Built 2026-11-01T03:30:25Z, `libc.so` `d8e9a5ac4a3e35a3…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.3.0-dev-891-g55d0446+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.3.0-dev-891-g55d0446+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
