@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 1 Nov 2026 05:08:36 +0100
+Subject: [PATCH] rpi-firmwared: fdt 0.2 from the workspace
+
+Upstream base moved to fdt 0.2.0-alpha3 (919f8268). rpi-firmwared had its
+own fdt git pin (059bb23); now it uses the workspace fdt and the 0.2 API,
+as upstream's bcm2835-sdhcid does: all_compatible, reg()/ranges() iterators
+with Result items, address/len, Fdt::new_unaligned.
+---
+ drivers/rpi-firmwared/Cargo.toml  |  2 +-
+ drivers/rpi-firmwared/src/main.rs | 23 ++++++++++++++---------
+ 2 files changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/Cargo.toml b/drivers/rpi-firmwared/Cargo.toml
+index 3b13382..30d6c37 100644
+--- a/drivers/rpi-firmwared/Cargo.toml
++++ b/drivers/rpi-firmwared/Cargo.toml
+@@ -5,7 +5,7 @@ version = "0.1.0"
+ edition = "2021"
+ 
+ [dependencies]
+-fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++fdt.workspace = true
+ common = { path = "../common" }
+ daemon = { path = "../../daemon" }
+ scheme-utils = { path = "../../scheme-utils" }
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 5875830..613bbd8 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -35,7 +35,9 @@ use std::sync::{Arc, Mutex};
+ use std::thread;
+ use std::time::Duration;
+ 
+-use fdt::Fdt;
++/// The devicetree, read from an unaligned buffer (fdt 0.2 is generic over
++/// its parser).
++type Fdt<'a> = fdt::Fdt<'a, (fdt::parsing::unaligned::UnalignedParser<'a>, fdt::parsing::Panic)>;
+ use redox_scheme::scheme::SchemeSync;
+ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::{Blocking, FpathWriter, HandleMap};
+@@ -432,17 +434,20 @@ fn get_dtb() -> Vec<u8> {
+ /// The CPU physical address of the mailbox, from the devicetree.
+ fn mbox_phys(fdt: &Fdt) -> usize {
+     let bus_addr = fdt
+-        .find_compatible(&["brcm,bcm2835-mbox"])
++        .all_compatible(&["brcm,bcm2835-mbox"])
++        .next()
+         .and_then(|node| node.reg())
+-        .and_then(|mut reg| reg.next())
+-        .map(|reg| reg.starting_address as usize)
++        .and_then(|reg| reg.iter::<usize, usize>().next())
++        .and_then(Result::ok)
++        .map(|reg| reg.address)
+         .unwrap_or(MBOX_BUS_ADDR);
+     fdt.find_node("/soc")
+         .and_then(|soc| soc.ranges())
+-        .and_then(|mut ranges| {
+-            ranges.find(|r| {
+-                r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
+-            })
++        .and_then(|ranges| {
++            ranges
++                .iter::<usize, usize, usize>()
++                .filter_map(Result::ok)
++                .find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.len)
+         })
+         .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
+         .unwrap_or(bus_addr)
+@@ -455,7 +460,7 @@ fn main() {
+ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+     common::init();
+     let dtb = get_dtb();
+-    let Ok(fdt) = Fdt::new(&dtb) else {
++    let Ok(fdt) = Fdt::new_unaligned(&dtb) else {
+         eprintln!("rpi-firmwared: no devicetree");
+         process::exit(0);
+     };
