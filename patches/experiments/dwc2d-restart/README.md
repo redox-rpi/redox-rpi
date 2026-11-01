@@ -27,6 +27,13 @@ dwc2d-restart`.
   - `echo restart > /tmp/dwc2d-cycle` does the same, for tests.
   - A rescan stops asking hub ports once the controller is stuck, instead
     of one second per port.
+  - After Pi test 190: the restart resets the core even when its AHB master
+    does not get idle (`GRSTCTL` 0x40000000, a DMA request pending, two
+    channels that never halted), and waits for idle after the reset, as
+    Linux does. The reset switches the root port's power off on the Pi
+    (`HPRT0` 0x400 after the restart, nothing found), so the restart
+    switches it on again. When the devices are not back after a restart,
+    dwc2d tries again every 10 s, up to 5 restarts in a row.
 
 ## Tests
 
@@ -38,4 +45,7 @@ dwc2d-restart`.
   aborted on the restart (`usb_ep_get: dev != NULL`): its DWC2 goes on
   retrying a NAKed poll after the channel is halted, so the devices'
   channels are now halted as on unplugging before the reset.
-- Pi: see the test plan (after #189).
+- Pi test 190: the forced restart left the root port unpowered (nothing
+  enumerated again); in a long download the controller got stuck and the
+  restart failed with `Timeout("AHB idle")`. Fixed as above.
+- Pi: see the test plan (after #190).
