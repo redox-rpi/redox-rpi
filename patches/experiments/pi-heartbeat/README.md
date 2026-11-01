@@ -4,7 +4,7 @@ Diagnostic kernel patch for the whole-machine freeze in
 [#14](https://github.com/redox-rpi/redox-rpi/issues/14) (`pthread/rwlock_randtest`
 on the real Pi, tests 166, 170, 173). Not meant for main.
 
-Every 1000 timer interrupts (10 s at 100 Hz) each CPU writes
+Every 6000 timer interrupts (60 s at 100 Hz; 10 s until test 176) each CPU writes
 `[hb <cpu> <n> s<sched> w<switch> i<idle> p<pit>]` to the serial console, straight to the PL011 data
 register and without the COM1 lock (`uart_pl011::raw_write`). Output can
 interleave with other console output.
@@ -24,6 +24,12 @@ What a freeze then shows in the serial log:
   in interrupt context, or a fault loop).
 - all stop at once: the whole machine (interrupt controller, bus, memory)
   or every CPU in the same lock.
+
+Stall watch (after test 176, where the 10 s beat may have hidden the
+freeze): on every timer interrupt each CPU checks the others. When another
+CPU took no timer interrupt for 2 s it writes `[hb stall <cpu> seen-by
+<cpu> t<ticks> s<sched>]` once; when another CPU still ticks but ran no
+`schedule()` for 2 s, `[hb nosched ...]`. Quiet otherwise.
 
 ```bash
 scripts/build-image.sh --experiment pi-heartbeat

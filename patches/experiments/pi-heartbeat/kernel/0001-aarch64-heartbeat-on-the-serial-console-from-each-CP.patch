@@ -1,9 +1,10 @@
 From: stephan-xyz <stephan@zehrer.xyz>
-Subject: [PATCH] aarch64: heartbeat on the serial console from each CPU timer interrupt
+Subject: [PATCH] aarch64: heartbeat and stall watch on the serial console
 
-Diagnostic for #14: every 10 s each CPU writes [hb <cpu> <n> s.. w.. i..
-p..] straight to the PL011, without the COM1 lock: schedule() calls, real
-switches, idle results since the last beat, and pit_ticks.
+Diagnostic for #14 and #157: every 60 s each CPU writes [hb <cpu> <n> s..
+w.. i.. p..] straight to the PL011, without the COM1 lock, and each CPU
+reports once when another CPU takes no timer interrupt ([hb stall]) or
+runs no schedule() ([hb nosched]) for 2 s.
 ---
 diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/generic_timer.rs
 --- a/src/arch/aarch64/device/generic_timer.rs
@@ -13,20 +14,26 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  use spin::Once;
  
  use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
-@@ -193,6 +194,77 @@
+@@ -193,6 +194,134 @@
      write_ctrl(config, ctrl);
  }
  
-+// Heartbeat (experiment pi-heartbeat, #14): every HEARTBEAT_TICKS timer
-+// interrupts each CPU writes "[hb <cpu> <n> s<sched> w<switch> i<idle>
-+// p<pit>]" straight to the PL011, without the console lock: schedule()
-+// calls, real context switches and idle results since its last beat, and
-+// its pit_ticks (timer ticks since the last schedule()). If the machine
-+// stops, the last lines show which CPUs still took timer interrupts and
-+// whether their scheduler still ran.
-+const HEARTBEAT_TICKS: u32 = 1000; // 10 s at 100 Hz
++// Heartbeat (experiment pi-heartbeat, #14, #157): every HEARTBEAT_TICKS
++// timer interrupts each CPU writes "[hb <cpu> <n> s<sched> w<switch>
++// i<idle> p<pit>]" straight to the PL011, without the console lock:
++// schedule() calls, real context switches and idle results since its last
++// beat, and its pit_ticks (timer ticks since the last schedule()).
++// Between beats each CPU watches the others: when another CPU took no
++// timer interrupt, or did not run schedule(), for STALL_TICKS, it writes
++// "[hb stall <cpu> ...]" or "[hb nosched <cpu> ...]" once.
++const HEARTBEAT_TICKS: u32 = 6000; // 60 s at 100 Hz
++const STALL_TICKS: u32 = 200; // 2 s
 +static HEARTBEAT: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
 +static HB_LAST: [[AtomicU32; 3]; 8] = [const { [const { AtomicU32::new(0) }; 3] }; 8];
++// Per watching CPU and watched CPU: last seen tick and schedule() counts,
++// own ticks when they last changed, and whether a stall was reported.
++static WATCH_SEEN: [[[AtomicU32; 4]; 8]; 8] =
++    [const { [const { [const { AtomicU32::new(0) }; 4] }; 8] }; 8];
 +
 +fn push_bytes(buf: &mut [u8; 96], len: &mut usize, bytes: &[u8]) {
 +    for &b in bytes {
@@ -54,12 +61,63 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
 +    }
 +}
 +
++fn watch_others(idx: usize, my_ticks: u32) {
++    use crate::context::switch::HB_SCHED;
++    let cpus = crate::CPU_COUNT.load(Ordering::Relaxed) as usize;
++    for other in 0..cpus.min(8) {
++        if other == idx {
++            continue;
++        }
++        let seen = &WATCH_SEEN[idx][other];
++        let t = HEARTBEAT[other].load(Ordering::Relaxed);
++        let sc = HB_SCHED[other].load(Ordering::Relaxed);
++        if t == 0 {
++            // not started yet
++            continue;
++        }
++        // seen: [0] ticks, [1] schedule() count, [2] own ticks at the last
++        // change of [0], [3] own ticks at the last change of [1]
++        if t != seen[0].load(Ordering::Relaxed) {
++            seen[0].store(t, Ordering::Relaxed);
++            seen[2].store(my_ticks, Ordering::Relaxed);
++        }
++        if sc != seen[1].load(Ordering::Relaxed) {
++            seen[1].store(sc, Ordering::Relaxed);
++            seen[3].store(my_ticks, Ordering::Relaxed);
++        }
++        let tick_age = my_ticks.wrapping_sub(seen[2].load(Ordering::Relaxed));
++        let sched_age = my_ticks.wrapping_sub(seen[3].load(Ordering::Relaxed));
++        let what: &[u8] = if tick_age == STALL_TICKS {
++            b"stall"
++        } else if sched_age == STALL_TICKS && tick_age < STALL_TICKS {
++            b"nosched"
++        } else {
++            continue;
++        };
++        let mut buf = [0u8; 96];
++        let mut len = 0;
++        push_bytes(&mut buf, &mut len, b"\r\n[hb ");
++        push_bytes(&mut buf, &mut len, what);
++        push_bytes(&mut buf, &mut len, b" ");
++        push_num(&mut buf, &mut len, other as u32);
++        push_bytes(&mut buf, &mut len, b" seen-by ");
++        push_num(&mut buf, &mut len, idx as u32);
++        push_bytes(&mut buf, &mut len, b" t");
++        push_num(&mut buf, &mut len, t);
++        push_bytes(&mut buf, &mut len, b" s");
++        push_num(&mut buf, &mut len, sc);
++        push_bytes(&mut buf, &mut len, b"]\r\n");
++        crate::devices::uart_pl011::raw_write(&buf[..len]);
++    }
++}
++
 +fn heartbeat(cpu: u32) {
 +    let idx = cpu as usize;
 +    let (Some(counter), Some(last)) = (HEARTBEAT.get(idx), HB_LAST.get(idx)) else {
 +        return;
 +    };
 +    let ticks = counter.fetch_add(1, Ordering::Relaxed) + 1;
++    watch_others(idx, ticks);
 +    if ticks % HEARTBEAT_TICKS != 0 {
 +        return;
 +    }
@@ -91,7 +149,7 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
  pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bool {
      let Some(config) = TIMER.get().filter(|config| config.hwirq == hwirq) else {
          return false;
-@@ -215,6 +287,7 @@
+@@ -215,6 +344,7 @@
      // switch to a context which may subsequently resume on another CPU.
      irqchip::end_root(raw_iar);
      program_current(config);
