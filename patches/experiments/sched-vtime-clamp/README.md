@@ -43,3 +43,14 @@ It applies with and without `pi-heartbeat`, in either order. With
 appear.
 
 ## Results
+
+QEMU raspi3b, 2026-11-01:
+- Download test build `v0.3.0-dev-890-gfa908ca+x578b` (branch `t157-vc-usb`,
+  with `pi-heartbeat`): the 382 MB download of Pi test 172 over QEMU's USB
+  network completes in 110 s, with no `[hbv]` line. The same run without the
+  fix (`v0.3.0-dev-889-g7349b1c+x741f`) also completes without `[hbv]`, so
+  QEMU does not show the wrap; only the Pi can confirm the fix (row 189).
+- relibc suite `v0.3.0-dev-916-gcb7d599+xbadd` (`relibc-tests`, `timesync`,
+  `futex-wake-efault`, `sched-vtime-clamp`): 18 failed, 17 known, the same
+  result as without this patch (the new one, `pthread/exit` SIGKILL, is an
+  old intermittent failure).
