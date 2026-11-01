@@ -27,7 +27,8 @@ have the same code; `usb-hotplug` has it at line 216.
 - PR #84 merged first; PR #68 (hotplug, base `0031`–`0033`) refreshed
   `0037` against those, since both change `enumerate.rs`. Same code, other
   context lines. PR #69 (boot time, base `0034`) refreshed it once more
-  on top of `0034`.
+  on top of `0034`. PR #70 (USB serial, base `0035`)
+  refreshed it on top of `0035`.
 
 ## Tests
 
