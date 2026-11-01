@@ -6296,3 +6296,34 @@ client timeout. C staged 00:36:57, D 00:42:24; stable bootloader.
 - No power cycle needed.
 
 Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-879-gdb4fdca+x741f` (netget download stall with a quiet heartbeat)
+
+Real Pi 3B+ over netboot. Test 179 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb-v0.3.0-dev-879-gdb4fdca+x741f.img` (`t14-hb-usb`), staged with its own bootloader. Download of 172 (`netget` of the 382156480-byte model to
+`/scheme/data/netget.bin`), file size polled over devsh every 30 s.
+
+**All 3 runs stalled, and this time the whole user side stopped: devsh stopped answering too.**
+**The kernel did not: all 4 CPUs kept beating once per 60 s until the power cycle.**
+**No `[hb stall …]` or `[hb nosched …]` line in any run.**
+
+| Run | Start (UTC) | Last netget line | Last size seen | devsh |
+|---|---|---|---|---|
+| 1 | 00:48:46 (reset) | 240 MiB at 226 s | 221636586 | no answer from 00:53:40 on |
+| 2 | 01:10:27 (power cycle) | 128 MiB at 108 s | 139827684 | no answer from 01:13:40 on |
+| 3 | 01:31:33 (power cycle) | 272 MiB at 267 s | 258316644 | no answer from 01:37:19 on |
+
+- No `hub drop` (`address 2 removed`) in any run.
+- Speed before the stall: 0.3–2.3 MB/s (writing to the card), slowing down in the last minute before each stall.
+- Heartbeat: 20 beats per CPU in every run (`[hb <cpu> <n> s… w… i… p…]`). The beats went on for about 17 minutes after the stall, until the next power cycle.
+  - Before the stall, the CPUs are busy, e.g. run 2 `[hb 1 2 s35267 w11390 i23856 p0]`.
+  - After the stall, the numbers freeze at a low, flat level, e.g. run 2 from beat 4 on, every minute: `[hb 1 n s7638 w1092 i6546]`, `[hb 2 n s7635 w1090 i6545]`, `[hb 3 n s6569 w24 i6545]`, `[hb 0 n s6000 w0 i6000]`.
+  - Runs 1 and 3 look the same. In run 1, CPU 3 keeps `w≈8500` per minute.
+  - So the timer and `schedule()` run on every CPU, but almost nothing is runnable.
+- **Not captured:** `/scheme/sys/context` and the dwc2d stats. devsh was already dead at the first poll after the stall, so the runner's stall check (two equal sizes) never fired.
+- **Not checked:** whether the network stack still answered TCP.
+- For a rerun: read the context over the serial console when devsh stops.
+- This differs from 174, where devsh still answered and `netget` sat runnable on CPU 0.
+- Power cycles: 01:10:27, 01:31:33, 01:52:59 (the last one with stable staged; stable came up to login and devsh).
+
+Stable image restored afterwards.
