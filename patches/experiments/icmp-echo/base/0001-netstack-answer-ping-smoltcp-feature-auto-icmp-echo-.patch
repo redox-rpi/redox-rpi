@@ -1,0 +1,26 @@
+From 5d43f1c9c537f2ab2711eae9443d38b5d0390f75 Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 16:24:35 +0000
+Subject: [PATCH] netstack: answer ping (smoltcp feature auto-icmp-echo-reply)
+
+smoltcp answers ICMP echo requests only with its feature
+auto-icmp-echo-reply. It is a default feature, but netstack turns the
+defaults off and did not list it, so the Pi did not answer ping from
+other hosts.
+---
+ netstack/Cargo.toml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
+index 520f7d96..b38ae9bd 100644
+--- a/netstack/Cargo.toml
++++ b/netstack/Cargo.toml
+@@ -31,4 +31,5 @@ features = [
+     "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
+     "iface-max-addr-count-8",
++    "auto-icmp-echo-reply",
+     "log"
+ ]
+-- 
+2.53.0
+
