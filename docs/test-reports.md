@@ -6539,3 +6539,57 @@ Real Pi 3B+ over netboot. Test 186 ([#14](https://github.com/redox-rpi/redox-rpi
 - Note: the freeze of 184 (run 58) did not come back in 80 runs. With 170/173/184 it showed about once in 12–60 runs, so this is a hint, not proof.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-887-g19628e3+x741f` (netget stall: the real run queue in the dump)
+
+Real Pi 3B+ over netboot. Test 187 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb5-…`, own bootloader, as in 185. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled, but this time no dump followed the stall.**
+- Neither `runnable-on-idle-cpu` nor the low-switch trigger fired, so there are no `[hbq …]` lines from after the stall. Only the baseline dump exists.
+- After the stall, CPU 1 makes no switch (`w0`) for 3 beats. A dump did not fire, so there was presumably no queued runnable user context on CPU 1 this time.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 08:00:55 (reset) | **complete**: `382156480 bytes in 367.5 s, 1.04 MB/s` | all | – |
+| 2 | 08:08:05 (power cycle) | stalled, last progress 08:10:46 | 144 MiB at 104.4 s | **none** |
+| 3 | 08:16:32 (power cycle) | **complete**: `382156480 bytes in 378.9 s, 1.01 MB/s` | all | – |
+
+**Run 2 heartbeat after the stall.** It was the same every minute from beat 5 to beat 7, with no `[hb stall …]`/`[hb nosched …]`:
+```
+[hb 1 5 s6549 w0 i6549 p0]
+[hb 2 5 s7674 w1124 i6550 p0]
+[hb 3 5 s7551 w1100 i6451 p0]
+[hb 0 5 s13981 w7647 i6334 p0]
+```
+- CPU 1 does nothing.
+- CPU 0 keeps up about 7700 switches per minute, against about 1100 on CPUs 2 and 3. In 181/183/185 the stuck CPU showed `w0` and one other CPU stayed busy, so the pattern is similar.
+
+**Run 2 baseline dump** (beat 2, during the download, before the stall):
+```
+[hbcpu 0 w5076 q0 sl27 sa10 sr292 sv1304 ss33]
+[hbcpu 1 w16618 q1 sl819 sa469 sr855 sv71 ss245]
+[hbcpu 2 w5569 q0 sl573 sa140 sr1369 sv10 ss139]
+[hbcpu 3 w8648 q0 sl446 sa102 sr1676 sv6 ss123]
+[hbq 0 v96422 n0 tw48460]
+[hbq 1 v1076625898 n1 tw2048]
+[hbq 1 vt18446744073709409936 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744072109357999 n0 tw0]
+[hbq 3 v18446744073488998990 n0 tw0]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 EventQueue::read]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+
+**Points for the t1 session:**
+- In the baseline, `netstack` is in CPU 1's queue (`own`) while its state is `B` (blocked in `EventQueue::read`).
+- Several `vt`/`v` values are near 2^64. CPU 2's and CPU 3's queue `v` and netstack's `vt` look like a negative number wrapped around (`vt` = 2^64 − 141680).
+- CPU 0's queue has `n0` but `tw48460`.
+
+**Other notes:**
+- devsh no longer logged in after the stall, so there is no `/scheme/sys/context`.
+- Run 2 had 3 `smolnetd … Dropped packet on eth0 because waiting queue was full` warnings at 08:09:40, about 1 min before the stall. Run 3 had 1 and completed; run 1 had none.
+- No hub drop in any run.
+- Power cycles: 08:08:05, 08:16:32.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
