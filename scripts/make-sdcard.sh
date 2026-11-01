@@ -22,7 +22,7 @@
 # Usage:
 #   scripts/make-sdcard.sh [--tftp-dir <dir>] [--dir <name>] [--out <file>]
 #                          [--boot-size <MiB>] [--data-size <MiB>]
-#   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
+#   scripts/make-sdcard.sh --local <harddrive.img> [--small] [--out <file>]
 #
 #   --dir <name>       the directory of scripts/netboot.sh --dir whose boot.scr
 #                      goes on the card (default redox; redox-zero2w for the
@@ -32,6 +32,10 @@
 #                      partition is FAT16, which the Pi firmware reads as well.
 #                      With --data-size 0 this is the whole image: 32 fits a
 #                      64 MB card.
+#   --small            with --local: shrink the root RedoxFS to its contents
+#                      (redoxfs-resize min) and make the root partition just
+#                      as large. Needs the grow-root experiment in the image,
+#                      which grows both to the whole card on the first boot.
 #   --data-size <MiB>  size of the data partition (default 960, 0 for none).
 #                      RedoxFS does not grow with the card, so pick the size
 #                      you want to use.
@@ -57,6 +61,7 @@ dir=redox
 out="$ROOT/build/sdcard-netboot.img"
 data_mib=960
 image=
+small=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -65,6 +70,7 @@ while [ $# -gt 0 ]; do
         --out) out="$2"; shift 2 ;;
         --data-size) data_mib="$2"; shift 2 ;;
         --local) image="$2"; shift 2 ;;
+        --small) small=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -79,6 +85,25 @@ if [ -n "$image" ]; then
     read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$image")
     data_mib=$(((root_sectors + 2047) / 2048))
     [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-redox.img"
+    if [ "$small" = yes ]; then
+        # The root RedoxFS in its own file, shrunk to what its files use.
+        resize="$ROOT/upstream/redox/build/fstools/bin/redoxfs-resize"
+        [ -x "$resize" ] || { echo "$resize missing, run scripts/build-image.sh first" >&2; exit 1; }
+        root_fs="$out.root"
+        dd if="$image" of="$root_fs" bs=512 skip="$root_start" count="$root_sectors" status=none
+        "$resize" "$root_fs" min | grep -E "^(new size|redoxfs-resize)"
+        # Its size, from the newest of the 256 headers at the start.
+        fs_bytes=$(python3 - "$root_fs" <<'PY'
+import struct, sys
+ring = open(sys.argv[1], "rb").read(256 * 4096)
+headers = [ring[i:i + 4096] for i in range(0, len(ring), 4096) if ring[i:i + 8] == b"RedoxFS\0"]
+newest = max(headers, key=lambda h: struct.unpack_from("<Q", h, 40)[0])
+print(struct.unpack_from("<Q", newest, 32)[0])
+PY
+)
+        data_mib=$(((fs_bytes + (1 << 20) - 1) >> 20))
+        truncate -s "${data_mib}M" "$root_fs"
+    fi
 else
     [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 fi
@@ -144,7 +169,10 @@ mdir -i "$fat" -/ ::
 dd if="$fat" of="$out" bs=1M seek=1 conv=notrunc status=none
 rm -f "$fat"
 
-if [ -n "$image" ]; then
+if [ -n "$image" ] && [ "$small" = yes ]; then
+    dd if="$root_fs" of="$out" bs=1M seek="$BOOT_MIB" conv=notrunc status=none
+    rm -f "$root_fs"
+elif [ -n "$image" ]; then
     dd if="$image" of="$out" bs=512 skip="$root_start" count="$root_sectors" \
         seek="$((BOOT_MIB * 2048))" conv=notrunc status=none
 elif [ "$data_mib" -gt 0 ]; then
