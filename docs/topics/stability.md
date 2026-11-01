@@ -51,7 +51,7 @@
 
 ## In progress
 
-- [#157](https://github.com/redox-rpi/redox-rpi/issues/157) (branch `t157-vtime-pr`, PR #PRNUM): long downloads stalled because the
+- [#157](https://github.com/redox-rpi/redox-rpi/issues/157) (branch `t157-vtime-pr`, PR #168): long downloads stalled because the
   scheduler's virtual time ran away and wrapped past `u64::MAX`; a runnable
   context then stayed queued and was never picked. Kernel patch `0012` caps
   a context's virtual time at one slice ahead of the run queue it joins.

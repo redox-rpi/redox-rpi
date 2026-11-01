@@ -67,7 +67,7 @@ Our [#157](https://github.com/redox-rpi/redox-rpi/issues/157) and [#151](https:/
   fires in every 382 MB download on the Pi 3B+, about 40 s in (Pi test
   188).
 - **Our fix:** kernel patch `0012` (experiment `sched-vtime-clamp`, PR
-  [#PRNUM](https://github.com/redox-rpi/redox-rpi/pull/PRNUM)). A context that
+  [#168](https://github.com/redox-rpi/redox-rpi/pull/168)). A context that
   joins a run queue, on wakeup in `schedule()` and when stolen, gets at most
   one slice of virtual time ahead of that queue's `v`
   (`(BASE_SLICE_TICKS * SCALE) / weight`). A context that is behind keeps
