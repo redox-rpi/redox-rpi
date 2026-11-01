@@ -6664,3 +6664,62 @@ Image `hbusb6-…`, own bootloader, as in 187. A stall means no new `netget:` li
 - Power cycles: 08:43:36, 08:50:57, 09:03:12.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-890-gfa908ca+x578b` (netget download stall: confirm `sched-vtime-clamp`)
+
+Real Pi 3B+ over netboot. Test 189 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `vc-…`, own bootloader, as in 188. 6 runs, with a power cycle before each run after the first. A stall means no new `netget:` line for 5.5 min.
+
+**The virtual time no longer runs away:**
+- no `[hbv …]` line in any of the 6 runs;
+- the largest `v`/`vt` value in any dump is 3.38e13, far below 2^62 (4.6e18), where 188 had about 5e18–1.8e19 in every run;
+- no `runnable-on-idle-cpu` dump in any run.
+
+**But only 5 of 6 runs completed.** Run 5 stalled at 320 MiB from a different cause: **the USB controller (`dwc2d`) stopped working**. Every hub request then timed out with `Timeout("channel halt")`, and the scheduler state looked normal.
+
+| Run | Start (UTC) | Result | Time, speed | `[hbv]` | largest v/vt |
+|---|---|---|---|---|---|
+| 1 | 09:27:06 (reset) | **complete** | 868.1 s, 0.44 MB/s (slow stretch at 0.07–0.4 MB/s near the start) | 0 | 3.36e13 |
+| 2 | 09:43:02 (power cycle) | **complete** | 305.7 s, 1.25 MB/s | 0 | 3.34e13 |
+| 3 | 09:49:33 (power cycle) | **complete** | 308.9 s, 1.24 MB/s | 0 | 3.38e13 |
+| 4 | 09:55:50 (power cycle) | **complete** | 288.5 s, 1.32 MB/s | 0 | 3.36e13 |
+| 5 | 10:01:41 (power cycle) | **stalled**, last progress 10:07:09 | 320 MiB at 275.1 s | 0 | 3.34e13 |
+| 6 | 10:12:55 (power cycle) | **complete** | 422.4 s, 0.90 MB/s | 0 | 3.34e13 |
+
+**Run 5, the order of events on serial:**
+- 10:04:18 and 10:05:18: 6 × `smolnetd … Dropped packet on eth0 because waiting queue was full`. The download kept going.
+- After `netget: 320 MiB 275.1 s`:
+  - at 10:07:43, 2 × `smolnetd … ERROR Dropped outboud packet on eth0 (failed to write to network file)`;
+  - then `dwc2d: request [a3, 00, 00, 00, 01, 00, 04, 00] to address 1 (max packet 64, High speed) failed: Timeout("channel halt")` / `dwc2d: hub 1 port 1: Timeout("channel halt")`;
+  - the same follows for every port of hub 1 and hub 2, over and over: 542 `channel halt` lines in all.
+- No `address 2 removed` (hub drop) line.
+
+**Run 5, the first dump after the stall** (beat 8, `timed`):
+```
+[hbcpu 0 w629 q0 sl180 sa179 sr448 sv1 ss297]
+[hbcpu 1 w0 q0 sl854 sa153 sr1717 sv50 ss155]
+[hbcpu 2 w2424 q0 sl924 sa313 sr1898 sv71 ss280]
+[hbcpu 3 w0 q0 sl677 sa121 sr971 sv130 ss81]
+[hbq 0 v33351827909844 n0 tw55656]
+[hbq 1 v37594558179 n0 tw48128]
+[hbq 2 v45102940205 n0 tw0]
+[hbq 3 v27713052001 n0 tw115380]
+[hbctx 0 [kmain] R cpu0 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d R+ca cpu0 ]
+[hbctx 25 /usr/bin/netstack B sys cpu0 UserInner::call]
+[hbctx 54 /usr/bin/netget B sys cpu0 UserInner::call]
+```
+- All run queues are empty (`n0`), and nothing is left queued.
+- `dwc2d` is the running context on CPU 0, with no `sys`.
+- Everything else on the network path waits behind it.
+- devsh did not log in after the stall.
+
+**`[hb nosched …]` lines**, which did not show in 188:
+- run 2: `[hb nosched 3 seen-by 2 t317 s1531587]` (and seen by 1);
+- run 3: `[hb nosched 0 seen-by 1 t300 s1515061]`;
+- run 5: `[hb nosched 0 seen-by 1 t55 s87007]` (and seen by 3), at boot before login;
+- run 6: `[hb nosched 0 seen-by 3 t299 s1528449]` (and seen by 1).
+
+Each came once per run, and the CPU kept beating afterwards. No `[hb stall …]` line and no hub drop in any run.
+
+Power cycles: 09:43:02, 09:49:33, 09:55:50, 10:01:41, 10:12:55. Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
