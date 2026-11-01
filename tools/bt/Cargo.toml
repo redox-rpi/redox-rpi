@@ -1,0 +1,8 @@
+[package]
+name = "bt"
+description = "Bring up the Pi 3B+ Bluetooth chip over /scheme/btuart: firmware upload, HCI version, LE scan and inquiry"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

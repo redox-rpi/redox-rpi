@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 31 Oct 2026 04:52:41 +0100
+Subject: [PATCH 80/81] bcm2835-btuartd: a core clock written by hand stays,
+ firmware rates only apply without one; start with the measured core clock
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/bcm2835-btuartd/src/main.rs | 29 +++++++++++++++++++++++++----
+ 1 file changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/bcm2835-btuartd/src/main.rs b/drivers/bcm2835-btuartd/src/main.rs
+index c5eef12..3832670 100644
+--- a/drivers/bcm2835-btuartd/src/main.rs
++++ b/drivers/bcm2835-btuartd/src/main.rs
+@@ -8,8 +8,11 @@
+ //! - `/scheme/btuart/baud`: the baud rate; writing sets the nearest one the
+ //!   divider allows (115200 at start, the chip's default).
+ //! - `/scheme/btuart/clock`: the core clock in Hz that the baud rate is
+-//!   derived from; writing a new rate (after the firmware changed it)
+-//!   programs the baud rate again.
++//!   derived from, and on a second line who set it (`firmware` or `hand`).
++//!   Writing a rate in Hz sets it by hand and programs the baud rate again;
++//!   `firmware <rate>` (what `bt` writes) does the same unless a rate was
++//!   set by hand, and `firmware` alone gives the control back. Pi test #109
++//!   step 8 needed 400 MHz by hand while the firmware said 250 MHz.
+ //! - `/scheme/btuart/flow`: `auto` (hardware RTS/CTS, the start setting),
+ //!   `auto-low` (the same with both lines asserted low) or `none` (no flow
+ //!   control, RTS held asserted). For finding out what the chip needs.
+@@ -131,6 +134,8 @@ struct BtUartScheme {
+     cm: Option<usize>,
+     received: Arc<Mutex<Received>>,
+     core_hz: u32,
++    /// Whether `core_hz` was written by hand; `firmware` rates leave it then.
++    clock_by_hand: bool,
+     baud: u32,
+     flow: Flow,
+     handles: HandleMap<Handle>,
+@@ -140,7 +145,7 @@ impl BtUartScheme {
+     fn contents(&self, setting: Setting) -> String {
+         match setting {
+             Setting::Baud => format!("{}\n", self.baud),
+-            Setting::Clock => format!("{}\n", self.core_hz),
++            Setting::Clock => format!("{}\n{}\n", self.core_hz, if self.clock_by_hand { "hand" } else { "firmware" }),
+             Setting::Flow => format!("{}\n", self.flow.name()),
+         }
+     }
+@@ -151,11 +156,21 @@ impl BtUartScheme {
+             self.uart.set_flow(self.flow);
+             return Ok(());
+         }
++        let (value, from_firmware) = match value.strip_prefix("firmware") {
++            Some("") if matches!(setting, Setting::Clock) => {
++                self.clock_by_hand = false;
++                return Ok(());
++            }
++            Some(rate) if matches!(setting, Setting::Clock) => (rate.trim(), true),
++            _ => (value, false),
++        };
+         let value = value.parse::<u32>().ok().filter(|&v| v > 0).ok_or(Error::new(EINVAL))?;
+         let baud = match setting {
+             Setting::Baud => value,
++            Setting::Clock if from_firmware && self.clock_by_hand => return Ok(()),
+             Setting::Clock => {
+                 self.core_hz = value;
++                self.clock_by_hand = !from_firmware;
+                 self.baud
+             }
+             Setting::Flow => unreachable!(),
+@@ -410,8 +425,13 @@ fn bus_to_phys(fdt: &Fdt, bus_addr: usize) -> usize {
+         .unwrap_or(bus_addr)
+ }
+ 
+-/// The core clock from `/scheme/rpi-firmware/clocks` (`core <rate> <max>`).
++/// The core clock the firmware measures (`/scheme/rpi-firmware/core_clock`),
++/// else the one it reports in `/scheme/rpi-firmware/clocks` (`core <rate>
++/// <max>`).
+ fn core_clock() -> Option<u32> {
++    if let Some(hz) = std::fs::read_to_string("/scheme/rpi-firmware/core_clock").ok().and_then(|s| s.trim().parse().ok()) {
++        return Some(hz);
++    }
+     let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").ok()?;
+     clocks.lines().find_map(|line| line.strip_prefix("core ")?.split_whitespace().next()?.parse().ok())
+ }
+@@ -466,6 +486,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         cm,
+         received,
+         core_hz,
++        clock_by_hand: false,
+         baud,
+         flow: Flow::Auto,
+         handles: HandleMap::new(),
