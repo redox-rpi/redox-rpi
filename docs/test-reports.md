@@ -6924,3 +6924,23 @@ Real Pi 3B+ over netboot. Test 195 ([#108](https://github.com/redox-rpi/redox-rp
 - No panic or `FATAL` line on serial.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-13-g16d3ba8+x4af4` (graphics PR #113 as it stands: DMA off, CPU blits)
+
+Real Pi 3B+ over netboot. Test 148 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. Image `netboot-v0.4.0-dev-13-g16d3ba8+x4af4.img`, staged 16:15 with the stable bootloader. Default boot, no typing.
+
+**Pass: the boot does not hang.**
+- Serial:
+  ```
+  rpi-fbd: EDID 256 bytes, monitor NanoKVM
+  rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+  rpi-fbd: blits with the CPU (DMA only with RPI_FB_DMA=on)
+  fbcond: Performing handoff
+  ```
+- No `DMA test` or `DMA channel` line.
+- Login at 16:16, about 40 s after the reset.
+- No panic or `FATAL` line of any kind.
+- `free`: total 737928, used 143528, free 594400 KB.
+- pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps` (52), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
