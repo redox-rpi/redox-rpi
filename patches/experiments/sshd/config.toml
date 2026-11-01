@@ -62,6 +62,10 @@ cmd = "/usr/lib/redox-rpi/sshd-keys"
 type = "oneshot"
 """
 
+# authorized_keys is read from the home directory and from the data
+# partition: /home/root/.ssh/authorized_keys lives in memory on the
+# network-boot image and is gone after a reset, the copy at
+# /scheme/data/home/root/.ssh/authorized_keys stays.
 [[files]]
 path = "/usr/lib/init.d/92_sshd.service"
 data = """
@@ -71,6 +75,6 @@ requires_weak = ["10_net.target", "91_sshd-keys.service"]
 
 [service]
 cmd = "/usr/bin/sshd"
-args = ["-D", "-e"]
+args = ["-D", "-e", "-o", "AuthorizedKeysFile=.ssh/authorized_keys /scheme/data%h/.ssh/authorized_keys"]
 type = "oneshot_async"
 """
