@@ -6222,3 +6222,55 @@ bootloader.
   staged and the Pi reset into it (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
 
 Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-898-g34bafa2+x03d3` (C, `sdhost-bigreq` on coalescing) and the #175 images A and B again (larger sdhost commands)
+
+Real Pi 3B+ over netboot. Test 177 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Pass: every sha256 matches, and no `bcm2835-sdhostd: write of block …` or
+`read of block …` line on any image.** But `sdhost-bigreq` changes almost
+nothing: 1 MiB writes on C average **130.5 blocks per request** (A 127.7, B
+129.2), so few requests are larger than 128 blocks. 1 MiB write speed is the same
+on all three within the scatter. Images from `~/redox-rpi-sd/keep/` with
+manifests, stable bootloader, each on a fresh boot (C 00:19, A 00:25, B 00:29
+UTC). Clocks before and after on all: `core 250000000 400000000`. `/tmp/r16`
+sha256 `6b359fc8…`, its first 4 MiB `e14fc5a4…`.
+
+**C only**
+
+| step | dd | sha256 |
+|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 1.08 s, **3.9 MB/s** (B in #175: 2.7–2.9) | `e14fc5a4…` match |
+| 64 KiB × 256, 1 | 5.35 s, 3.1 MB/s | `6b359fc8…` match |
+| 64 KiB × 256, 2 | 3.17 s, 5.3 MB/s | match |
+| 64 MiB file, 4 × 16 MiB writes | 1.58, 1.53, 1.56, 5.96 s (11, 11, 11, 2.8 MB/s) | see below |
+| 64 MiB read to `/dev/null` | 3.35 s, **20 MB/s** | |
+
+- 64 MiB readback: the row's `dd … skip=… count=16 | sha256sum` gave
+  `0+16 records out`, `1048576 bytes`: **a pipe takes 64 KiB per write, and dd
+  does not retry the short writes**, so only 1 MiB reached `sha256sum` (all four
+  `c8a4fdbf…`). That is a pipe/dd effect, not the card. Rechecked on a fresh
+  boot of C through a file: four 16 MiB writes (10–11 MB/s), then `dd
+  if=big.bin of=/tmp/p bs=1048576 skip=<16×i> count=16; sha256sum /tmp/p`: **all
+  four `6b359fc8…`, match** (reads 16–17 MB/s). `big.bin` 67108864 bytes, removed.
+
+**1 MiB × 16 (16 MiB), 5 times each**
+
+| image | 1 | 2 | 3 | 4 | 5 | sha256 |
+|---|---|---|---|---|---|---|
+| A (main) | 10 MB/s | 11 | 4.5 | 11 | 9.9 | all match |
+| B (coalescing) | 11 MB/s | 9.7 | 5.3 | 10 | 6.3 | all match |
+| C (+ bigreq) | 8.5 MB/s | 7.7 | 9.6 | 6.4 | 4.1 | all match |
+
+(dd times: A 1.66, 1.57, 3.72, 1.56, 1.69 s; B 1.59, 1.72, 3.14, 1.62, 2.68 s; C 1.98, 2.19, 1.74, 2.60, 4.12 s.)
+
+- So the #175 result (B slower than A at 1 MiB) does not hold: over 5 repeats A
+  and B are alike, with one slow run each. C is a little slower on average.
+- sdhost statistics for the 1 MiB writes (sum of the `write` parts): A 1061
+  requests / 135464 blocks, B 1310 / 169200, C 1296 / 169088, about 128–130
+  blocks per request on all three. C's 4 KiB and 64 KiB steps: 2411 requests /
+  90952 blocks (37.7 per request).
+- `bcm2835-sdhostd` lines per step are kept on homenodellm
+  (`~/pitest-tools/t177/*-stats.txt`). No error line, no panic.
+
+Stable image restored afterwards.
