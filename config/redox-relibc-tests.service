@@ -1,0 +1,16 @@
+# Nightly relibc test suite in QEMU (scripts/relibc-tests.sh, #13): builds
+# origin/main with the experiment relibc-tests in its own clone and compares
+# the failures with config/relibc-tests-expected.txt. Needs no Pi.
+# Install on the build host as a systemd user unit, after
+#   git clone https://github.com/redox-rpi/redox-rpi.git ~/redox-rpi-relibc-tests
+#   cp config/redox-relibc-tests.service config/redox-relibc-tests.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now redox-relibc-tests.timer
+[Unit]
+Description=redox-rpi: relibc test suite in QEMU, compared with the known failures
+
+[Service]
+Type=oneshot
+# The checkout happens before the script starts, so that bash does not read
+# a script that changes under it. For systemd, $$ is a literal $.
+ExecStart=/bin/bash -lc 'source ~/.cargo/env 2>/dev/null; mkdir -p ~/redox-rpi/logs/relibc-tests; cd ~/redox-rpi-relibc-tests && git fetch -q --tags --prune origin && git checkout -q --detach origin/main && exec scripts/relibc-tests.sh --issue >> ~/redox-rpi/logs/relibc-tests/$$(date -u +%%Y-%%m-%%d).log 2>&1'
+TimeoutStartSec=2h

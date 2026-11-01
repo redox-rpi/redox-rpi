@@ -1,8 +1,8 @@
-From 967421b863c4da4ca682dee6a5823931a3620652 Mon Sep 17 00:00:00 2001
+From eb4e91495eaac2996f5553c8ee4b4743c078c7fa Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:51:43 +0100
-Subject: [PATCH] dwc2d: USB serial adapters as the scheme usb-serial (CDC-ACM,
- FTDI, CP210x, CH340)
+Subject: [PATCH 1/8] dwc2d: USB serial adapters as the scheme usb-serial
+ (CDC-ACM, FTDI, CP210x, CH340)
 
 A CDC-ACM device (communications interface 2/2 with a data interface)
 or a known FTDI (0403:6001/6010/6011/6014/6015), CP210x (10c4:ea60...)
@@ -39,7 +39,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 drivers/usb/dwc2d/src/serial.rs
 
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
-index de3a4ea..f95b19d 100644
+index de3a4ea5..f95b19d9 100644
 --- a/drivers/usb/dwc2d/Cargo.toml
 +++ b/drivers/usb/dwc2d/Cargo.toml
 @@ -10,9 +10,11 @@ common = { path = "../../common" }
@@ -55,7 +55,7 @@ index de3a4ea..f95b19d 100644
  redox_syscall = { workspace = true, features = ["std"] }
  
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 279d8eb..9c98524 100644
+index 279d8eb9..9c98524e 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -166,33 +166,39 @@ impl Dwc2 {
@@ -172,10 +172,10 @@ index 279d8eb..9c98524 100644
      fn split_transfer(&self, ch: usize, phase: &Phase, tt: (u8, u8), timeout: Duration) -> Result<usize, Error> {
          let mps = usize::from(phase.max_packet);
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 1b97738..ff4dc66 100644
+index 9320af94..cf1121e3 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
-@@ -438,6 +438,22 @@ impl Bus {
+@@ -426,6 +426,22 @@ impl Bus {
          Ok(())
      }
  
@@ -199,7 +199,7 @@ index 1b97738..ff4dc66 100644
      pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
          self.devices.iter().find(|d| d.address == address)?.parent
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa..9f04d02 100644
+index 12be94ad..1efe7777 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -22,6 +22,7 @@ mod hid;
@@ -210,7 +210,7 @@ index 28cc7aa..9f04d02 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -206,6 +207,8 @@ enum Found {
+@@ -209,6 +210,8 @@ enum Found {
      Net(Adapter, [u8; 6], bool),
      /// A keyboard, configured.
      Keyboard(hid::KeyboardFunction),
@@ -219,7 +219,7 @@ index 28cc7aa..9f04d02 100644
  }
  
  /// Recognize a device and bring it up. `link_wait` is how long a network
-@@ -261,7 +264,7 @@ fn probe(
+@@ -264,7 +267,7 @@ fn probe(
              }
          };
      }
@@ -228,7 +228,7 @@ index 28cc7aa..9f04d02 100644
  }
  
  /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
-@@ -386,9 +389,11 @@ impl Timer {
+@@ -389,9 +392,11 @@ impl Timer {
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
@@ -242,7 +242,7 @@ index 28cc7aa..9f04d02 100644
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -401,6 +406,7 @@ user_data! {
+@@ -406,6 +411,7 @@ user_data! {
          Scheme,
          Time,
          Hotplug,
@@ -250,23 +250,23 @@ index 28cc7aa..9f04d02 100644
      }
  }
  
-@@ -439,6 +445,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-     };
+@@ -446,6 +452,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
      let mut keyboard = None;
+     let mut macs = Vec::new();
 +    let mut serial_found = Vec::new();
-     for device in bus.devices.clone() {
-         match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
-             Some(Found::Net(adapter, mac, link)) => {
-@@ -451,6 +458,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                 net.adapters.push((adapter, link));
+     let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, keyboard: &mut Option<Keyboard>, addresses: Vec<u8>| {
+         for address in addresses {
+             let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+@@ -457,6 +464,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     net.adapters.push((adapter, link));
+                 }
+                 Some(Found::Keyboard(f)) if keyboard.is_none() => *keyboard = Keyboard::new(hc.clone(), f),
++                Some(Found::Serial(f)) => serial_found.push(f),
+                 _ => {}
              }
-             Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
-+            Some(Found::Serial(f)) => serial_found.push(f),
-             _ => {}
          }
-     }
-@@ -509,6 +517,18 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -547,6 +555,18 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the scheme");
  
@@ -285,7 +285,7 @@ index 28cc7aa..9f04d02 100644
      scheme.tick().expect("dwc2d: network scheme failed");
      for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
          match event.user_data {
-@@ -523,6 +543,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -561,6 +581,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
              }
              Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
@@ -301,7 +301,7 @@ index 28cc7aa..9f04d02 100644
              Source::Time => {
                  timer.fired();
                  let mut next = None;
-@@ -534,6 +563,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -572,6 +601,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let due = k.poll();
                      next = Some(next.map_or(due, |n: Duration| n.min(due)));
                  }
@@ -315,7 +315,7 @@ index 28cc7aa..9f04d02 100644
                  if let Some(next) = next {
                      timer.arm(next);
                  }
-@@ -548,6 +584,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -586,6 +622,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let port = match request {
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
@@ -326,7 +326,7 @@ index 28cc7aa..9f04d02 100644
                          _ => {
                              let mut words = request.split_whitespace().map(str::parse::<u16>);
                              match (words.next(), words.next()) {
-@@ -579,6 +619,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -617,6 +657,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
@@ -336,7 +336,7 @@ index 28cc7aa..9f04d02 100644
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -590,12 +633,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -628,12 +671,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                              keyboard = Keyboard::new(hc.clone(), f);
                              timer.arm(Duration::ZERO);
                          }
@@ -361,7 +361,7 @@ index 28cc7aa..9f04d02 100644
          }
 diff --git a/drivers/usb/dwc2d/src/serial.rs b/drivers/usb/dwc2d/src/serial.rs
 new file mode 100644
-index 0000000..98548fb
+index 00000000..98548fb8
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/serial.rs
 @@ -0,0 +1,897 @@
@@ -1263,5 +1263,5 @@ index 0000000..98548fb
 +    }
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

@@ -8,4 +8,6 @@ kernel        c951af42c02ba6b7e6355923d46650ea4eadb367
 relibc        c303135936e6a7e77812f371b3b9d0aa468ec3bc
 base          eddcaa21fb2d11b4a6bd64478e0639153266dc04
 bootloader    cc922ec0bb3f9dd31cce589bb513ab2f15ac9746
+pkgutils      fe21bfd95d869cafd356bcdec4d1a81739ede5ee
 fdt           8fa4388e056e48826e8898557a1c8600f9ee5d6a
+redoxfs       db847d87c68052618d1427537c7277293a626a18

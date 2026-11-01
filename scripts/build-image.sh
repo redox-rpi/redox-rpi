@@ -17,7 +17,9 @@
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
-#                 patches, and its config.toml (packages, files) if it has one
+#                 patches, its config.toml (packages, files) if it has one,
+#                 and its recipes/<path>/recipe.toml, which replace the
+#                 upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md)
@@ -223,8 +225,13 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 EOF
 
 # Other recipes: pin them and add our patches to their [source] section.
-for name in bootloader base relibc; do
+# pkgutils only when an experiment patches it (pkg-hold); otherwise the
+# image takes the upstream binary.
+for name in bootloader base relibc redoxfs pkgutils; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
+    if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
+        continue
+    fi
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
         "$REDOX/recipes/core/$name/recipe.toml"
@@ -235,13 +242,16 @@ for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
-    # relibc recipe, not the toolchain's.
+    # relibc recipe, not the toolchain's. Cargo does not see a new libc.a,
+    # so its fingerprint goes first: otherwise a build with other relibc
+    # patches keeps the old sigregs.
     build='template = "cargo"'
     if [ "$tool" = sigregs ]; then
         build='template = "custom"
 dependencies = ["relibc"]
 script = """
 export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
+rm -rf "${COOKBOOK_BUILD}"/target/*/release/.fingerprint/sigregs-*
 COOKBOOK_CARGO_PATH=. cookbook_cargo
 """'
     fi
@@ -253,6 +263,26 @@ path = "$ROOT/tools/$tool"
 [build]
 $build
 EOF
+done
+
+# Upstream recipes replaced by an experiment: every such recipe goes back to
+# upstreams first, then the selected experiments versions are put in and
+# their old build is cleaned, so they build from scratch: a static program
+# would otherwise keep the relibc it was first linked with.
+for file in "$ROOT"/patches/experiments/*/recipes/*/*/recipe.toml; do
+    [ -e "$file" ] || continue
+    rel="${file#"$ROOT"/patches/experiments/*/recipes/}"
+    git -C "$REDOX" checkout -q -- "recipes/$rel"
+done
+for exp in "${experiments[@]}"; do
+    for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+        [ -e "$file" ] || continue
+        rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
+        cp "$file" "$REDOX/recipes/$rel"
+        if [ -x "$REDOX/target/release/repo" ]; then
+            (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
+        fi
+    done
 done
 
 # Uncommitted changes to anything that goes into the image.
@@ -321,6 +351,9 @@ manifest_head="$(mktemp)"
     for exp in "${experiments[@]}"; do
         conf="$ROOT/patches/experiments/$exp/config.toml"
         [ -f "$conf" ] && echo "\"experiments/$exp/config.toml\" = \"$(sha256sum < "$conf" | cut -c1-16)\""
+        for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+            [ -e "$file" ] && echo "\"${file#"$ROOT/patches/"}\" = \"$(sha256sum < "$file" | cut -c1-16)\""
+        done
     done
 } > "$manifest_head"
 

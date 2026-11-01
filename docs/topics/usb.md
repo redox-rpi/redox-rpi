@@ -23,6 +23,11 @@
   person (`scripts/test-hotplug.sh` in QEMU, `scripts/pi-hotplug-test.sh`
   on the Pi). Pi tests #35 and #67 ([reports](../test-reports.md)). The
   Anker hub steps stay with test #4.
+- Shorter boot (#47, base `0034`): hubs take the ports that are connected
+  after power-good instead of waiting for empty ones, and the wait for the
+  network link overlaps with rescans for late devices. On the Pi 3B+ dwc2d
+  is ready after 3.3 s instead of 6.2 s (2.1 s of it is the LAN7800's
+  link), kernel to login 7.4 s instead of 10.3 s (test #67).
 
 ## In progress
 
@@ -54,15 +59,6 @@
   QEMU (no LAN7800 there); the Pi check rides on the network session's
   test #47.
 
-- `dwc2d` boot time (#47): branch [`dwc2d-boottime`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-boottime)
-  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0034` there, PR #69).
-  Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
-  waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
-  what is connected, and the link wait overlaps with rescans. QEMU: ready
-  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15. **Pi test
-  #67 passes**: ready after 3.3 s instead of 6.2 s (2.1 s of it is the
-  LAN7800's link), kernel to login 7.4 s instead of 10.3 s, hotplug 15/15.
-
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
   [`usb-storage-more`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage-more)
@@ -71,7 +67,7 @@
 
 - [#104](https://github.com/redox-rpi/redox-rpi/issues/104) no busy-waiting
   in dwc2d: branch [`dwc2d-wait-irq`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-wait-irq)
-  (on `usb-storage-more`), experiment `dwc2d-wait-irq` (base `0053` there).
+  (on `usb-storage-more`), experiment `dwc2d-wait-irq` (base `0071` there).
   Sent frames, stick chunks and control requests spun until the channel
   halted; now they spin 50 µs and then wait for the channel's interrupt on
   a second irq handle, with a 2 ms timer as the fallback. A first try with
@@ -98,6 +94,18 @@ HAT. No code yet.
   macOS) registered as `network.usb-gadget`, CDC-NCM later for Windows.
   The port is host or device, not both. The Pi 3B+ can't do device mode
   (its DWC2 sits behind the LAN7515 hub).
+- **Next to `dwc2d` or instead of it:** one controller, so one driver
+  owns it. `dwc2d` starts from initfs (`40_dwc2d.service`), finds the
+  controller in the device tree by `compatible` and maps its registers;
+  Redox's init can't pick a service by a device-tree value, so a separate
+  gadget daemon would start next to `dwc2d` and both would take the same
+  registers. Better: the same binary reads `dr_mode` from the controller's
+  node at start and runs either today's host code or a new device part
+  (`device.rs` for the core and endpoint 0, `ecm_gadget.rs` for the
+  function), sharing `regs.rs`, the register mapping and the network
+  scheme code. The host code stays as it is; nothing changes on the Pi
+  3B+ or on a Zero 2 W without the overlay. Switching at run time (OTG ID
+  pin, host and device on one port) is not needed and left out.
 - **Testing:** QEMU's DWC2 model is host only, so: a host model in Rust
   that plays a host's enumeration against the code, then a Zero 2 W cabled
   to homenodellm (powered by it, `cdc_ether` on the Linux side, tests over
