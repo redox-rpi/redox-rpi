@@ -31,6 +31,18 @@ CPU took no timer interrupt for 2 s it writes `[hb stall <cpu> seen-by
 <cpu> t<ticks> s<sched>]` once; when another CPU still ticks but ran no
 `schedule()` for 2 s, `[hb nosched ...]`. Quiet otherwise.
 
+Context dump (after test 179, where netget, devsh, sdhostd and redoxfs all
+stopped while every CPU kept beating with `w0`): CPU 0 writes the context
+list, `[hbctx begin beat <n> w<switches>]`, then one line per context
+`[hbctx <pid> <name> <stat>[+][ sys] cpu<n> <reason>]`, then `[hbctx end]`.
+`<stat>` is R runnable, S sleeping with a timeout, B blocked, H hard-blocked
+(with its reason), Z dead; `+` running, `sys` inside a syscall; `<reason>` is
+what the context blocked on (`futex`, `nanosleep`, `UserInner::call` for a
+scheme call). It writes the list once at beat 2 (a baseline) and when all CPUs
+together made fewer than 100 context switches since CPU 0's last beat, at most
+3 times. It takes the locks with `try_read`, so a locked list or context shows
+as `[hbctx ... locked]` instead of a deadlock.
+
 ```bash
 scripts/build-image.sh --experiment pi-heartbeat
 ```
