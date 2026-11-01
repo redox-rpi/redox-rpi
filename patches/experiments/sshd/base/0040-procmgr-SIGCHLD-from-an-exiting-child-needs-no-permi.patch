@@ -1,0 +1,58 @@
+From 0e52a20fa465c9a110229a8983f75303adc6314a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 12:58:00 +0000
+Subject: [PATCH] procmgr: SIGCHLD from an exiting child needs no permission
+
+When a process exits, procmgr sends SIGCHLD to the parent through the
+same permission check as kill(). A child that dropped its privileges
+(OpenSSH privilege separation: the pre-authentication child runs as
+user sshd) could not notify its root parent: "failed to send SIGCHLD to
+parent PID ...: Operation not permitted", and sshd-session waited for
+the child forever. As on Unix, signals the system sends for an exited
+process (SIGCHLD to its parent) skip the check.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ bootstrap/src/procmgr.rs | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/bootstrap/src/procmgr.rs b/bootstrap/src/procmgr.rs
+index dd0118a9..a2253ead 100644
+--- a/bootstrap/src/procmgr.rs
++++ b/bootstrap/src/procmgr.rs
+@@ -2358,13 +2358,17 @@ impl<'a> ProcScheme<'a> {
+             FullQ,
+             Invalid,
+         }
+-        let (caller_euid, caller_ruid) = {
++        let (caller_euid, caller_ruid, caller_exited) = {
+             let caller = self
+                 .processes
+                 .get(&caller_pid)
+                 .ok_or(Error::new(ESRCH))?
+                 .borrow();
+-            (caller.euid, caller.ruid)
++            (
++                caller.euid,
++                caller.ruid,
++                matches!(caller.status, ProcessStatus::Exited { .. }),
++            )
+         };
+ 
+         let result = (|| {
+@@ -2377,7 +2381,11 @@ impl<'a> ProcScheme<'a> {
+             let mut target_proc_guard = target_proc_rc.borrow_mut();
+             let mut target_proc = &mut *target_proc_guard;
+ 
+-            if caller_euid != 0
++            // An exited process sends only what the system sends for it (SIGCHLD
++            // to its parent), which needs no permission: a child that dropped
++            // its privileges must still be able to notify its root parent.
++            if !caller_exited
++                && caller_euid != 0
+                 && caller_euid != target_proc.ruid
+                 && caller_ruid != target_proc.ruid
+             {
+-- 
+2.53.0
+

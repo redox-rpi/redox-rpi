@@ -1,0 +1,43 @@
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -140,7 +140,7 @@
+             let socket = socket_set.get_mut::<SocketT>(socket_handle);
+ 
+             if events & syscall::EVENT_READ.bits() == syscall::EVENT_READ.bits()
+-                && (socket.can_recv(data) || !socket.may_recv())
++                && socket.read_ready(data)
+             {
+                 if !*read_notified {
+                     *read_notified = true;
+@@ -186,6 +186,11 @@
+     fn can_recv(&mut self, data: &Self::DataT) -> bool;
+     fn may_recv(&self) -> bool;
+ 
++    /// Whether a read (or an accept) would not block, for EVENT_READ.
++    fn read_ready(&mut self, data: &Self::DataT) -> bool {
++        self.can_recv(data) || !self.may_recv()
++    }
++
+     fn hop_limit(&self) -> u8;
+     fn set_hop_limit(&mut self, hop_limit: u8);
+ 
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -39,6 +39,17 @@
+         self.may_recv()
+     }
+ 
++    fn read_ready(&mut self, data: &Self::DataT) -> bool {
++        if data.is_some() {
++            // A listening socket: an accept would not block once a connection
++            // has come in. In the Listen state may_recv() is false, which the
++            // default took for end of stream, so poll() always said readable.
++            self.is_active()
++        } else {
++            smoltcp::socket::tcp::Socket::can_recv(self) || !self.may_recv()
++        }
++    }
++
+     fn hop_limit(&self) -> u8 {
+         self.hop_limit().unwrap_or(64)
+     }

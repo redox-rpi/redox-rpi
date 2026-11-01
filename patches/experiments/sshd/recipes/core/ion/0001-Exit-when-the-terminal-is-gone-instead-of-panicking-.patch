@@ -1,0 +1,71 @@
+From 23a57cfaa8e3f70578f8242ddd604c063c98cfd4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 07:46:43 +0000
+Subject: [PATCH] Exit when the terminal is gone instead of panicking or
+ reading it forever
+
+When an SSH session ends, the PTY goes away under the shell. At the
+prompt, liner returned an empty line at end of file, so ion read the
+dead terminal forever; any message to the terminal (a flush error, the
+report that the foreground job ended by SIGHUP) panicked and aborted
+ion. Check the terminal after each read, and turn a panic while the
+terminal is gone into exit status 129, like a SIGHUP.
+---
+ src/binary/mod.rs    | 10 ++++++++++
+ src/binary/readln.rs | 12 +++++++++++-
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/src/binary/mod.rs b/src/binary/mod.rs
+index 7fa4b8d..027877e 100644
+--- a/src/binary/mod.rs
++++ b/src/binary/mod.rs
+@@ -114,6 +114,16 @@ impl<'a> InteractiveShell<'a> {
+     /// Creates an interactive session that reads from a prompt provided by
+     /// Liner.
+     pub fn execute_interactive(self) -> ! {
++        // When the terminal is gone (an SSH session ended), every message
++        // to it panics, for example the report that the foreground job
++        // ended by SIGHUP. Exit like on SIGHUP instead of aborting.
++        let default_hook = std::panic::take_hook();
++        std::panic::set_hook(Box::new(move |info| {
++            if !nix::unistd::isatty(0).unwrap_or(false) {
++                std::process::exit(129);
++            }
++            default_hook(info)
++        }));
+         let context_bis = self.context.clone();
+         let huponexit = self.huponexit.clone();
+         let prep_for_exit = &move |shell: &mut Shell<'_>| {
+diff --git a/src/binary/readln.rs b/src/binary/readln.rs
+index 4e24ce0..52f8fd9 100644
+--- a/src/binary/readln.rs
++++ b/src/binary/readln.rs
+@@ -6,7 +6,8 @@ use std::io::ErrorKind;
+ impl<'a> InteractiveShell<'a> {
+     /// Make sure to reset the fd to blocking mode
+     fn change_blocking(fd: std::os::unix::io::RawFd) {
+-        fcntl(fd, FcntlArg::F_SETFL(OFlag::O_RDWR)).unwrap();
++        // Fails when the terminal is gone; the read below notices that.
++        let _ = fcntl(fd, FcntlArg::F_SETFL(OFlag::O_RDWR));
+     }
+ 
+     /// Ion's interface to Liner's `read_line` method, which handles everything related to
+@@ -22,6 +23,15 @@ impl<'a> InteractiveShell<'a> {
+             &mut IonCompleter::new(&self.shell.borrow()),
+         );
+ 
++        // The terminal is gone (an SSH session ended): liner gives an empty
++        // line at end of file, or an error. Exit like on SIGHUP instead of
++        // reading it again forever.
++        if !nix::unistd::isatty(0).unwrap_or(false) {
++            let mut shell = self.shell.borrow_mut();
++            prep_for_exit(&mut shell);
++            std::process::exit(129)
++        }
++
+         match line {
+             Ok(line) => {
+                 if line.bytes().next() != Some(b'#')
+-- 
+2.53.0
+

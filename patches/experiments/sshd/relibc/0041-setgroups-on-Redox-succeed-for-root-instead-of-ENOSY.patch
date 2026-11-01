@@ -1,0 +1,49 @@
+From 8bad9f870be19bfaf5649abea384f31ea5e1b0af Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 13:42:42 +0100
+Subject: [PATCH] setgroups on Redox: succeed for root instead of ENOSYS
+
+The kernel has no supplementary groups; getgroups reads them from
+/etc/group. setgroups returned ENOSYS, so programs that drop their
+groups before setuid stop there (OpenSSH's privilege separation does
+setgroups(1, [sshd]) and exits on failure). It now succeeds for root,
+since dropping groups loses none and setting groups gains none, and
+returns EPERM for other users and EINVAL above NGROUPS_MAX, as POSIX
+requires.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/platform/redox/mod.rs | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
+index b3230f8..061e7ed 100644
+--- a/src/platform/redox/mod.rs
++++ b/src/platform/redox/mod.rs
+@@ -1277,10 +1277,19 @@ impl Pal for Sys {
+         Ok(())
+     }
+ 
+-    unsafe fn setgroups(size: size_t, list: *const gid_t) -> Result<()> {
+-        // TODO
+-        todo_skip!(0, "setgroups({}, {:p}): not implemented", size, list);
+-        Err(Errno(ENOSYS))
++    unsafe fn setgroups(size: size_t, _list: *const gid_t) -> Result<()> {
++        // The kernel has no supplementary groups (getgroups reads them from
++        // /etc/group), so there is nothing to set: a process that drops its
++        // groups loses none, one that sets groups gains none.
++        use crate::header::errno::EPERM;
++
++        if Self::geteuid() != 0 {
++            return Err(Errno(EPERM));
++        }
++        if size > limits::NGROUPS_MAX {
++            return Err(Errno(EINVAL));
++        }
++        Ok(())
+     }
+ 
+     fn setpgid(pid: pid_t, pgid: pid_t) -> Result<()> {
+-- 
+2.54.0 (Apple Git-157)
+
