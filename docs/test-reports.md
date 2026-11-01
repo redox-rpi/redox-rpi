@@ -6042,3 +6042,141 @@ netget: 382156480 bytes in 429.6 s, 0.89 MB/s
 - Afterwards `netget.bin` 382156480 bytes, removed; `/scheme/data` 394.2M used.
 
 Stable image restored afterwards.
+
+## 2026-10-31: `v0.3.0-dev-855-g81b7717+x8ea9` (image A of 170 plus `futex-wait-lock`)
+
+Real Pi 3B+ over netboot. Test 173 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), Pi test agent.
+
+**Fail: `futex-wait-lock` does not stop the freeze. 11 runs passed, then run 12
+froze the whole Pi.** Same as in 170: no devsh, no serial output, power cycle.
+Image `~/redox-rpi-t12/keep/rwfutex-v0.3.0-dev-855-g81b7717+x8ea9.img`, stable
+bootloader; banner `redox-rpi v0.3.0-dev-855-g81b7717+x8ea9`.
+
+- `./bins_dynamic/pthread/rwlock_randtest`, each its own devsh command with a
+  60 s client timeout: runs 1–11 **pass**, `real` 1.27 to 1.43 s.
+- Run 12 (started about 22:33): no result after 65 s, `echo ok` no answer,
+  **0 serial bytes** since the run started. Power-cycled at 22:34:13 with stable
+  staged.
+- `cond_stress` not run (the freeze ended the row).
+- Together: A (170) froze in 2 of 10 runs, B with `rt-call-flags` (170) 0 of
+  20, C with `futex-wait-lock` 1 of 12, and the suite in 166 once. It is neither
+  `rt-call-flags` nor the futex deadlock of `57ccc8f`. The whole machine stops
+  without a word (no panic), which points at the kernel (a lock or IRQ path on
+  aarch64), not at relibc's rwlock.
+
+Stable image restored afterwards.
+
+## 2026-10-31/11-01: hub-drop fix `v0.3.0-dev-857-g7ed9070+xa901` (new) against `v0.3.0-dev-838-g64fa695+x8116` (old), alternating
+
+Real Pi 3B+ over netboot. Test 174 (#151 follow-up, USB session), Pi test agent.
+
+**The new image never dropped the hub (0 in 3 runs); the old one dropped it 12
+and 4 times. But two of the three new-image runs stalled without a drop.**
+Analysis of N2 while it was stalled: a runnable `netget` that never got CPU, and
+a zero TCP window. This looks like a scheduler problem, not USB. `throttled` was
+`0x00000000` before and after every run. Each run on a fresh boot, staged with
+`~/redox-rpi-boot/scripts/netboot.sh`; download `netget …/Qwen3-0.6B-Q4_0.gguf
+/scheme/data/netget.bin --log /scheme/debug`, no 30 s readings.
+
+| run | image | result | last netget line | hub drops / back |
+|---|---|---|---|---|
+| N1 | new | **stalled**, then no devsh after (power cycle 22:58) | `160 MiB 121.4 s 1.11 MB/s` | 0 / 0 |
+| O1 | old | **complete** | `382156480 bytes in 445.0 s, 0.86 MB/s` | 12 / 12 |
+| N2 | new | **stalled** at 208147776 bytes from 23:10 | `192 MiB 137.1 s 0.87 MB/s` | 0 / 0 |
+| O2 | old | **stalled**, then no devsh (power cycle 23:51) | `224 MiB 226.3 s 0.76 MB/s` | 4 / **3**, the last drop not recovered |
+| N3 | new (extra run) | **complete** | `382156480 bytes in 345.1 s, 1.11 MB/s` | 0 / 0 |
+
+**N2 during the stall (23:26–23:29, devsh worked):**
+- `/tmp/dwc2d-usbstats`: all error counters 0, `port_events 0`, `root_events 1`,
+  `recoveries 0`, `hprt0 0x1005`. `/tmp/dwc2d-step` `1159257 idle`.
+  `throttled` `0x00000000`.
+- `netget` (PID 55) `UR` on CPU #0, ACTTIME 0.94 s and SCHTIME 7.23 s,
+  **unchanged in two samples 10 s apart**. `bcm2835-sdhostd` 2:16.44 and the
+  user redoxfs (8.44 s / 1:28.23) unchanged too; initfs redoxfs 15.58 → 16.13 s.
+- Host side (`ss -tin`): `Send-Q 390987`, `backoff:15`, `lastsnd:1032951` ms,
+  `lastack:73299` ms. The Pi still answered window probes but took no data,
+  because netget never ran to read.
+- I did not get the full `/scheme/sys/context` (dwc2d's CPU) before N2's run
+  timed out. N3 was added to capture it on a stall, but N3 completed.
+
+So `usb-hub-drop` stops the hub drops (0 of 3 runs against 16 drops in 2 old
+runs). The stalls in N1 and N2 (and the end of O2) have another cause: the
+scheduler freeze/starvation seen in #170 and #173 is the likely one.
+
+Stable image restored afterwards (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+## 2026-11-01: `v0.3.0-dev-859-g56364c4+xc41d` (A, main) and `v0.3.0-dev-886-g548e397+xc41d` (B, PR #73 write coalescing) (card write speed by write size)
+
+Real Pi 3B+ over netboot. Test 175 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Data check passes: every file's sha256 matches its source, on both images.
+Coalescing (B) makes small writes much faster and cuts the card writes for them
+by about 23 times.** 4 KiB writes go from 121–240 kB/s to 2.7–2.9 MB/s, and
+64 KiB from 2.4–2.7 to 6.1–6.5 MB/s. 1 MiB writes get a little slower (11–12 →
+7.8–8.7 MB/s). Images from `~/redox-rpi-sd/keep/` with manifests (match), stable
+bootloader, each on a fresh boot. Clocks before and after on both: `arm
+1400000000 1400000000`, `core 250000000 400000000`. `/scheme/data` 394.5M used
+before each.
+
+| write | A pass 1 | A pass 2 | B pass 1 | B pass 2 |
+|---|---|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 34.7 s, **121 kB/s** | 17.47 s, 240 kB/s | 1.43 s, **2.9 MB/s** | 1.55 s, 2.7 MB/s |
+| 64 KiB × 256 (16 MiB) | 6.16 s, 2.7 MB/s | 7.12 s, 2.4 MB/s | 2.60 s, **6.5 MB/s** | 2.73 s, 6.1 MB/s |
+| 1 MiB × 16 (16 MiB) | 1.44 s, **12 MB/s** | 1.57 s, 11 MB/s | 2.15 s, 7.8 MB/s | 1.93 s, 8.7 MB/s |
+
+- sha256: `/tmp/r16` `94b79f96…`, its first 4 MiB `2fae7622…`. Every 64 KiB and
+  1 MiB file `94b79f96…`, every 4 KiB file `2fae7622…`. **All match.**
+- `bcm2835-sdhostd` statistics. A prints a line every 5 s while busy; B prints
+  one line per busy period (`28 s:`, `22 s:` …). Lines come at the end of an
+  interval, so they don't split exactly at the dd boundaries. The read lines with
+  about 33000–37000 blocks are the `sha256sum` reads.
+- **4 KiB write, pass 1:** A wrote 1755 + 1833 + 1075 + 2314 + 164 + 127 + 993
+  requests, **232744 blocks** (about 114 MiB on the card for a 4 MiB file),
+  about 31 s of write time. B wrote 275 requests, **10136 blocks** (5 MiB),
+  1022 ms (397 ms busy).
+- All lines in order:
+
+A:
+```
+bcm2835-sdhostd: 43 s: read 532 requests 4242 blocks 245 ms; write 25 requests 200 blocks 37 ms, 16 ms of it busy
+bcm2835-sdhostd: 5 s: read 140 requests 1864 blocks 76 ms; write 1755 requests 48760 blocks 4416 ms, 1387 ms of it busy
+bcm2835-sdhostd: 5 s: read 491 requests 6256 blocks 262 ms; write 1833 requests 51864 blocks 4190 ms, 1461 ms of it busy
+bcm2835-sdhostd: 5 s: read 279 requests 3704 blocks 145 ms; write 1075 requests 30432 blocks 4536 ms, 897 ms of it busy
+bcm2835-sdhostd: 5 s: read 665 requests 9600 blocks 351 ms; write 2314 requests 65376 blocks 3950 ms, 1647 ms of it busy
+bcm2835-sdhostd: 5 s: read 54 requests 1224 blocks 43 ms; write 164 requests 3792 blocks 4941 ms, 201 ms of it busy
+bcm2835-sdhostd: 5 s: read 37 requests 296 blocks 18 ms; write 127 requests 3800 blocks 4983 ms, 444 ms of it busy
+bcm2835-sdhostd: 18 s: read 273 requests 3784 blocks 151 ms; write 993 requests 28720 blocks 4116 ms, 741 ms of it busy
+bcm2835-sdhostd: 5 s: read 389 requests 10784 blocks 341 ms; write 773 requests 23480 blocks 2268 ms, 735 ms of it busy
+bcm2835-sdhostd: 17 s: read 349 requests 3512 blocks 173 ms; write 1306 requests 40256 blocks 2909 ms, 1043 ms of it busy
+bcm2835-sdhostd: 8 s: read 620 requests 36704 blocks 995 ms; write 9 requests 72 blocks 9 ms, 4 ms of it busy
+bcm2835-sdhostd: 20 s: read 46 requests 368 blocks 26 ms; write 249 requests 33736 blocks 1212 ms, 306 ms of it busy
+bcm2835-sdhostd: 6 s: read 210 requests 33424 blocks 795 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 5 s: read 158 requests 1512 blocks 72 ms; write 1722 requests 47008 blocks 2831 ms, 1006 ms of it busy
+bcm2835-sdhostd: 5 s: read 716 requests 9640 blocks 376 ms; write 2223 requests 62896 blocks 3949 ms, 1542 ms of it busy
+bcm2835-sdhostd: 5 s: read 762 requests 9616 blocks 387 ms; write 2181 requests 61616 blocks 3955 ms, 1615 ms of it busy
+bcm2835-sdhostd: 22 s: read 810 requests 8768 blocks 379 ms; write 2144 requests 61296 blocks 3009 ms, 1198 ms of it busy
+bcm2835-sdhostd: 5 s: read 324 requests 10264 blocks 312 ms; write 432 requests 12776 blocks 2478 ms, 467 ms of it busy
+bcm2835-sdhostd: 23 s: read 601 requests 5888 blocks 274 ms; write 1647 requests 50960 blocks 3574 ms, 1312 ms of it busy
+bcm2835-sdhostd: 8 s: read 693 requests 37288 blocks 1003 ms; write 9 requests 72 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 23 s: read 41 requests 328 blocks 20 ms; write 250 requests 33744 blocks 1348 ms, 347 ms of it busy
+```
+
+B:
+```
+bcm2835-sdhostd: 48 s: read 580 requests 4626 blocks 269 ms; write 25 requests 200 blocks 292 ms, 65 ms of it busy
+bcm2835-sdhostd: 28 s: read 0 requests 0 blocks 0 ms; write 275 requests 10136 blocks 1022 ms, 397 ms of it busy
+bcm2835-sdhostd: 22 s: read 56 requests 448 blocks 26 ms; write 1058 requests 40328 blocks 2100 ms, 868 ms of it busy
+bcm2835-sdhostd: 6 s: read 323 requests 34328 blocks 840 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 6 s: read 2 requests 16 blocks 2 ms; write 10 requests 80 blocks 11 ms, 5 ms of it busy
+bcm2835-sdhostd: 20 s: read 27 requests 216 blocks 15 ms; write 249 requests 33736 blocks 1933 ms, 364 ms of it busy
+bcm2835-sdhostd: 6 s: read 196 requests 33312 blocks 797 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 22 s: read 15 requests 120 blocks 18 ms; write 284 requests 10208 blocks 1113 ms, 502 ms of it busy
+bcm2835-sdhostd: 6 s: read 0 requests 0 blocks 0 ms; write 8 requests 64 blocks 10 ms, 3 ms of it busy
+bcm2835-sdhostd: 26 s: read 53 requests 424 blocks 25 ms; write 1047 requests 40240 blocks 2246 ms, 790 ms of it busy
+bcm2835-sdhostd: 8 s: read 451 requests 35352 blocks 901 ms; write 10 requests 80 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 25 s: read 46 requests 368 blocks 28 ms; write 249 requests 33736 blocks 1701 ms, 484 ms of it busy
+```
+
+- No panic or error on the serial console.
+
+Stable image restored afterwards.
