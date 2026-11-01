@@ -68,7 +68,19 @@ kept with its inputs and written at the next beat as `[hbv <place> cpu<n>
 <value> <a> <b> <c>]`: 1 old vtime, queue v, context id; 2 old vtime (or the
 penalty), elapsed ns (or the weight), queue v; 3 old vtime, the other
 queue's v, own v; 4 old v, elapsed ns, total weight; 5 old v, whether the
-previous context was runnable, elapsed ns. It takes the locks with `try_read`,
+previous context was runnable, elapsed ns.
+
+Kernel code on aarch64 runs with interrupts masked, so CPUs that deadlock
+while spinning take no timer interrupt and write no beat at all (Pi test
+199: no line after the freeze). So the spin loops watch the time
+themselves: the six loops of the ordered locks (`src/sync/ordered.rs`), the
+wait for TLB shootdown acknowledgements (`Flusher::flush`) and the wait for
+another CPU's shootdown flag (`shootdown_tlb_ipi`). A spin that lasts 2 s
+writes one line straight to the PL011: `[spin <cpu> lock <line> <lock
+address> 0]`, `[spin <cpu> tlb-ack <line> <acks> <expected>]` or `[spin
+<cpu> tlb-flag <line> <target cpu> 0]`. No line after a freeze means the
+CPUs spin somewhere else (for example a `spin` crate lock such as the run
+queue). It takes the locks with `try_read`,
 so a locked list or context shows as `[hbctx ... locked]` instead of a
 deadlock.
 
