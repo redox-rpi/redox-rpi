@@ -6180,3 +6180,45 @@ bcm2835-sdhostd: 25 s: read 46 requests 368 blocks 28 ms; write 249 requests 337
 - No panic or error on the serial console.
 
 Stable image restored afterwards.
+
+## 2026-11-01: `v0.3.0-dev-894-g593bd2c+xccf1` (image C of 173 plus `pi-heartbeat`)
+
+Real Pi 3B+ over netboot. Test 176 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent.
+
+**No freeze: 40 of 40 `rwlock_randtest` runs passed** (`real` 1.25 to 1.45 s),
+each its own devsh command with a 60 s client timeout. All four CPUs beat every
+10 s the whole time. 173 froze at run 12 on the same image without the
+heartbeat, so the heartbeat may change the timing enough to hide the freeze.
+Image `~/redox-rpi-t12/keep/hb-v0.3.0-dev-894-g593bd2c+xccf1.img`, stable
+bootloader.
+
+- Heartbeat lines after boot and at the end (`[hb <cpu> <n> s<sched> w<switch> i<idle> p<pit>]`):
+
+```
+[hb 1 1 s1284 w96 i1188 p0]
+[hb 2 1 s1647 w426 i1220 p0]
+[hb 3 1 s1523 w194 i1329 p0]
+[hb 0 1 s1706 w854 i839 p0]
+[hb 1 2 s1307 w3 i1304 p0]
+[hb 2 2 s1308 w0 i1308 p0]
+[hb 3 2 s1474 w411 i1063 p0]
+[hb 0 2 s2722 w1605 i1116 p0]
+…
+[hb 1 36 s1739 w675 i1061 p0]
+[hb 2 36 s2102 w146 i1956 p0]
+[hb 3 36 s2124 w168 i1956 p0]
+[hb 0 36 s2957 w1995 i959 p0]
+```
+
+  Every CPU scheduled 1300 to 3000 times per 10 s with `p0`–`p2`; none showed
+  `s0`.
+- One `rwlock_randtest` run (PID 216, CPU #3, about beat 23) hit `FATAL: Not an
+  SVC induced synchronous exception (ty=111100)`, `ESR_EL1 F2000001` (a `brk`
+  trap, as from an abort or assert), `FAR_EL1 0x583000`, `ELR_EL1 0x516C4`, then
+  `UNHANDLED EXCEPTION … NAME ./bins_dynamic/pthread/rwlock_ra`. All 40 devsh runs
+  still reported `rc=0`, so it was probably a thread of a run or its exit. Worth
+  a look.
+- No freeze, so no `/scheme/sys/context` capture and no power cycle. Stable
+  staged and the Pi reset into it (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+Stable image restored afterwards.
