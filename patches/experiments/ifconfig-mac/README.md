@@ -16,4 +16,8 @@ Build: `--experiment ifconfig-mac`.
 
 ## Tests
 
-- QEMU `raspi3b`: see the pull request.
+- QEMU `raspi3b` (`v0.3.0-dev-967-g311e46d+x9b05`): `ifconfig` shows
+  `MAC Address: 52:54:00:12:34:57` and `Netmask: 255.255.255.0`; the `mac`
+  file has `52-54-00-12-34-57`. Without the experiment (`v0.3.0-dev-795`):
+  `00:00:00:00:00:00` and `24`.
+- Pi 3B+: test 194.
