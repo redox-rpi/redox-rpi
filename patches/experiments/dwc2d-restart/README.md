@@ -48,4 +48,8 @@ dwc2d-restart`.
 - Pi test 190: the forced restart left the root port unpowered (nothing
   enumerated again); in a long download the controller got stuck and the
   restart failed with `Timeout("AHB idle")`. Fixed as above.
-- Pi: see the test plan (after #190).
+- Pi test 191 (`v0.3.0-dev-978-gf2e0318+x809a`): **pass**. Both forced
+  restarts recover (one restart each, devsh back after 17 s and 24 s,
+  `halt_failures` 0); 6 of 6 downloads of the #189 file complete without a
+  stuck controller, so a restart during a real stall is not tested yet (it
+  came 1 in 6 runs in #189 and #190).
