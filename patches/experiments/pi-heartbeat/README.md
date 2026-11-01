@@ -34,7 +34,7 @@ CPU took no timer interrupt for 2 s it writes `[hb stall <cpu> seen-by
 Context dump (after test 179, where netget, devsh, sdhostd and redoxfs all
 stopped while every CPU kept beating with `w0`): CPU 0 writes the context
 list, `[hbctx begin beat <n> <why>]`, then one line per CPU
-`[hbcpu <cpu> w<switches since the last beat> q<run queue length>]`, then one
+`[hbcpu <cpu> w<switches since the last beat> q<run queue length> sl<n> sa<n> sr<n>]`, then one
 line per context `[hbctx <pid> <name> <stat><flags>[ sys] cpu<n> <reason>]`,
 then `[hbctx end]`.
 `<stat>` is R runnable, S sleeping with a timeout, B blocked, H hard-blocked
@@ -47,7 +47,12 @@ CPU 0's last beat) or `runnable-on-idle-cpu` (a CPU made no switch since the
 last beat while a runnable, not running user context has that CPU as its
 `cpu_id`). After the baseline it writes at most 3 lists. A runnable context
 without `q` points to a lost wakeup; one with `q` or `c` that its CPU never
-picks points to the run queue selection. It takes the locks with `try_read`,
+picks points to the run queue selection. `sl`, `sa` and `sr` count, since boot, how
+often that CPU's `select_next_context` passed over a queued context because
+its context lock was taken (`sl`), its address space lock was taken (`sa`),
+or `update_runnable` said Skip (`sr`: running elsewhere, currently scheduled,
+affinity). The counter that grows from one dump to the next names the reason
+a queued context is not picked. It takes the locks with `try_read`,
 so a locked list or context shows as `[hbctx ... locked]` instead of a
 deadlock.
 
