@@ -6414,3 +6414,441 @@ Staged 04:44, and the boot reached login with no `FATAL` or panic line.
 - pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps`, `ps` to the terminal and SD card all pass; 0 of 300 starts failed.
 
 Stable restored afterwards: the nightly's new stable `v0.3.0-dev-891-g55d0446+x9f76` from 03:30, which is now the backup in `tftp-stable`. It came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-883-g62d7c39+x741f` (netget stall, context dump with run queue state)
+
+Real Pi 3B+ over netboot. Test 183 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb3-…`, own bootloader, the download of 172 as in 181. A stall means no new `netget:` line for 5.5 min.
+
+**2 of 3 runs stalled, and the new dump fired after both stalls.**
+- It shows a user context that is **runnable, in its CPU's run queue and active (`Rqa`), never running**.
+- Its CPU shows `q1` but makes **no switch at all (`w0`)**, while `[kmain]` (idle) stays `R+c` on that CPU.
+- The stuck context was not `netget` itself: it was `dwc2d` in run 2 and `netstack` in run 3. `netget` is blocked (`B`) behind it.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 05:47:13 (reset) | **complete**: `382156480 bytes in 351.4 s, 1.09 MB/s` | all | – (only the baseline dump) |
+| 2 | 05:54:09 (power cycle) | stalled, last progress 05:57:25 | 192 MiB at 145.2 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 3 | 06:03:08 (power cycle) | stalled, last progress 06:08:19 | 304 MiB at 264.7 s | 3 × `runnable-on-idle-cpu` (beats 7, 8, 9) |
+
+**Run 2:** the first dump after the stall, `[hbctx begin beat 5 runnable-on-idle-cpu]`. Beats 6 and 7 are the same.
+```
+[hbcpu 0 w24 q0]
+[hbcpu 1 w0 q1]
+[hbcpu 2 w2182 q0]
+[hbcpu 3 w0 q0]
+[hbctx 0 [kmain] R+c cpu1 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d Rqa sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 UserInner::call]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu1, `UserInner::call`.
+
+**Run 3:** the dump at beat 7. Beats 8 and 9 are the same.
+```
+[hbcpu 0 w0 q1]
+[hbcpu 1 w9380 q0]
+[hbcpu 2 w0 q0]
+[hbcpu 3 w24 q0]
+[hbctx 0 [kmain] R+c cpu0 ]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu0 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d B sys cpu1 EventQueue::read]
+[hbctx 20 /scheme/initfs/bin/redoxfs B sys cpu1 UserInner::read (v2)]
+[hbctx 32 /usr/bin/redoxfs B sys cpu0 UserInner::read (v2)]
+[hbctx 54 /usr/bin/netget B sys cpu0 UserInner::call]
+```
+- `netget`: `B`, no flags, cpu0, `UserInner::call`.
+
+**Other details:**
+- In all dumps, the only non-blocked user contexts besides the stuck one are `rpi-firmwared` and `timesync` (`S`, `nanosleep`).
+- devsh did not log in after either stall (`pirun` login failed), so there is no `/scheme/sys/context` from devsh this time.
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop in any run.
+- Power cycles: 05:54:09, 06:03:08, 06:14:08.
+
+Stable image restored afterwards (the nightly's `v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-906-g13b2b1a+xf576` (`rwlock_randtest` with the `futex_wake` EFAULT fix)
+
+Real Pi 3B+ over netboot. Test 184 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14)), Pi test agent.
+Stable bootloader, staged 06:14 (power cycle). Each run is its own devsh command with a 60 s client timeout, with stderr kept, as in 178.
+
+**57 runs passed, then run 58 froze the Pi.**
+- **No `RELIBC PANIC`** in the stderr of any run, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial. So the panic of 176/178 did not show in 57 runs. It came about once in 40 runs before, so 57 clean runs is a hint, not proof.
+- Runs 1–57: all `rc=0`. `real` times were 1.27–1.47 s, median 1.37 s.
+- Run 58 started about 06:24 and printed nothing: no output, no `rc`, client timeout after 65 s.
+  - devsh no longer answered.
+  - Serial showed nothing new in the 90 s after the freeze.
+  - This image has no heartbeat, so there is no kernel view of the freeze.
+- This is the same kind of freeze as in 170 and 173 (run 12).
+- Power cycle at 06:27:11 with stable staged.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-885-g626efe2+x741f` (netget stall: scheduler skip counters)
+
+Real Pi 3B+ over netboot. Test 185 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb4-…`, own bootloader, as in 183. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled. On the stuck CPU none of the three skip counters grows after the stall.**
+- The queued context `Rqa` on CPU 0 (this time `bcm2835-sdhostd`) is never passed over for a taken lock or a Skip.
+- So `select_next_context` on CPU 0 seems not to look at it at all, or CPU 0 never gets that far: `w0` and the same counters in all 3 dumps.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 06:47:02 (reset) | stalled, last progress 06:50:58 | 208 MiB at 162.7 s | 3 × `runnable-on-idle-cpu` (beats 5, 6, 7) |
+| 2 | 06:56:45 (power cycle) | **complete**: `382156480 bytes in 402.8 s, 0.95 MB/s` | all | – (baseline only) |
+| 3 | 07:04:44 (power cycle) | **complete**: `382156480 bytes in 398.4 s, 0.96 MB/s` | all | – (baseline only) |
+
+Run 1, the baseline dump at beat 2, during the download:
+```
+[hbcpu 0 w3605 q1 sl24 sa22 sr141]
+[hbcpu 1 w11252 q0 sl671 sa240 sr943]
+[hbcpu 2 w10169 q0 sl664 sa206 sr1198]
+[hbcpu 3 w9043 q0 sl523 sa140 sr1130]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu0 ]
+```
+Run 1, the dumps after the stall. The `[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos Rqa cpu0 ]` line is the same in all three. It has no `sys` field, unlike `dwc2d`/`netstack` in 183.
+```
+beat 5: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w1130 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8941 q0 sl945 sa209 sr1814]
+beat 6: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2203 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8199 q0 sl945 sa209 sr1814]
+beat 7: [hbcpu 0 w0 q1 sl85 sa45 sr264] [hbcpu 1 w2209 q0 sl850 sa271 sr1332] [hbcpu 2 w24 q0 sl943 sa283 sr1659] [hbcpu 3 w8210 q0 sl945 sa209 sr1814]
+```
+- **Counters after the stall:**
+  - All counters stay the same from beat 5 to beat 7, on every CPU, including CPU 3, which still switches (`w8199`, `w8210`).
+  - Between the baseline and beat 5, CPU 0's counters grew (`sl24→85`, `sa22→45`, `sr141→264`) while it still worked.
+- **Other contexts:** `netget` is `B sys cpu0 UserInner::call`, `/usr/bin/redoxfs` is `B sys cpu0 UserInner::call`, and `dwc2d`, `netstack` and the initfs `redoxfs` are `B` on cpu3.
+- **Not seen:** no `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- **Power cycles:** 06:56:45, 07:04:44.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-915-gc9b7a47+x913e` (`rwlock_randtest` with the futex fix and the heartbeat)
+
+Real Pi 3B+ over netboot. Test 186 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent. Stable bootloader, staged 07:12.
+80 single runs as in 184: each run is its own devsh command, with a 60 s client timeout and stderr kept.
+
+**Pass: 80 of 80 runs, all `rc=0`, no freeze.**
+- No `RELIBC PANIC` in any run's stderr, and no `brk`/`UNHANDLED EXCEPTION`/`FATAL` on serial.
+- Run times: median 1.37 s, range 1.28–3.40 s. Run 41 took 3.40 s and run 11 took 2.42 s; all others took ≤ 1.54 s.
+- **Heartbeat:** 10 beats per CPU, plus the baseline dump at beat 2.
+  - One `[hb stall 0 seen-by 2 t33997 s74738]` came between beats 5 and 6: CPU 2 saw CPU 0 take no timer interrupt for 2 s.
+  - CPU 0 kept beating afterwards (`[hb 0 6 s13485 w7386 …]` … `[hb 0 9 …]`).
+  - No `runnable-on-idle-cpu` dump and no `[hb nosched …]`.
+- Note: the freeze of 184 (run 58) did not come back in 80 runs. With 170/173/184 it showed about once in 12–60 runs, so this is a hint, not proof.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-887-g19628e3+x741f` (netget stall: the real run queue in the dump)
+
+Real Pi 3B+ over netboot. Test 187 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb5-…`, own bootloader, as in 185. A stall means no new `netget:` line for 5.5 min.
+
+**1 of 3 runs stalled, but this time no dump followed the stall.**
+- Neither `runnable-on-idle-cpu` nor the low-switch trigger fired, so there are no `[hbq …]` lines from after the stall. Only the baseline dump exists.
+- After the stall, CPU 1 makes no switch (`w0`) for 3 beats. A dump did not fire, so there was presumably no queued runnable user context on CPU 1 this time.
+
+| Run | Start (UTC) | Result | Size reached | Dumps after the stall |
+|---|---|---|---|---|
+| 1 | 08:00:55 (reset) | **complete**: `382156480 bytes in 367.5 s, 1.04 MB/s` | all | – |
+| 2 | 08:08:05 (power cycle) | stalled, last progress 08:10:46 | 144 MiB at 104.4 s | **none** |
+| 3 | 08:16:32 (power cycle) | **complete**: `382156480 bytes in 378.9 s, 1.01 MB/s` | all | – |
+
+**Run 2 heartbeat after the stall.** It was the same every minute from beat 5 to beat 7, with no `[hb stall …]`/`[hb nosched …]`:
+```
+[hb 1 5 s6549 w0 i6549 p0]
+[hb 2 5 s7674 w1124 i6550 p0]
+[hb 3 5 s7551 w1100 i6451 p0]
+[hb 0 5 s13981 w7647 i6334 p0]
+```
+- CPU 1 does nothing.
+- CPU 0 keeps up about 7700 switches per minute, against about 1100 on CPUs 2 and 3. In 181/183/185 the stuck CPU showed `w0` and one other CPU stayed busy, so the pattern is similar.
+
+**Run 2 baseline dump** (beat 2, during the download, before the stall):
+```
+[hbcpu 0 w5076 q0 sl27 sa10 sr292 sv1304 ss33]
+[hbcpu 1 w16618 q1 sl819 sa469 sr855 sv71 ss245]
+[hbcpu 2 w5569 q0 sl573 sa140 sr1369 sv10 ss139]
+[hbcpu 3 w8648 q0 sl446 sa102 sr1676 sv6 ss123]
+[hbq 0 v96422 n0 tw48460]
+[hbq 1 v1076625898 n1 tw2048]
+[hbq 1 vt18446744073709409936 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744072109357999 n0 tw0]
+[hbq 3 v18446744073488998990 n0 tw0]
+[hbctx 17 /scheme/initfs/bin/bcm2835-sdhos R+ca sys cpu1 ]
+[hbctx 25 /usr/bin/netstack B sys cpu1 EventQueue::read]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+
+**Points for the t1 session:**
+- In the baseline, `netstack` is in CPU 1's queue (`own`) while its state is `B` (blocked in `EventQueue::read`).
+- Several `vt`/`v` values are near 2^64. CPU 2's and CPU 3's queue `v` and netstack's `vt` look like a negative number wrapped around (`vt` = 2^64 − 141680).
+- CPU 0's queue has `n0` but `tw48460`.
+
+**Other notes:**
+- devsh no longer logged in after the stall, so there is no `/scheme/sys/context`.
+- Run 2 had 3 `smolnetd … Dropped packet on eth0 because waiting queue was full` warnings at 08:09:40, about 1 min before the stall. Run 3 had 1 and completed; run 1 had none.
+- No hub drop in any run.
+- Power cycles: 08:08:05, 08:16:32.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-889-g7349b1c+x741f` (netget stall: where the scheduler's virtual time wraps)
+
+Real Pi 3B+ over netboot. Test 188 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `hbusb6-…`, own bootloader, as in 187. A stall means no new `netget:` line for 5.5 min. A host-side watcher on the serial log wrote down the time of every `[hbv …]`, `[hbctx begin …]` and `netget:` line.
+
+**1 of 3 runs stalled. In the stall, `netstack` sits in CPU 1's queue as `Rqa` with `vt18446744073709551615` = exactly 2^64 − 1 (`u64::MAX`), and CPU 1 does nothing (`w0 q1`).**
+- This value shows from the dump at the moment of the stall (beat 6, 08:57:22; last progress 08:57:23) through all later dumps, unchanged.
+- The `[hbv]` lines (virtual time above 2^62) come in **every** run, including the two that completed. They all appear together, about 40 s into the download.
+
+| Run | Start (UTC) | Result | Size reached | Dumps |
+|---|---|---|---|---|
+| 1 | 08:37:12 (reset) | **complete**: `382156480 bytes in 308.0 s, 1.24 MB/s` | all | baseline, timed beat 4 |
+| 2 | 08:43:36 (power cycle) | **complete**: `382156480 bytes in 357.2 s, 1.07 MB/s` | all | baseline, timed 4, 6 |
+| 3 | 08:50:57 (power cycle) | stalled, last progress 08:57:23 | 336 MiB at 332.1 s | baseline, timed 4, 6, 8, 10; `runnable-on-idle-cpu` 7, 9, 11 |
+
+**`[hbv …]` lines with the time they appeared.** Each set came in one block, between the `48 MiB` and `64 MiB` netget lines:
+- run 1, 08:38:47 (download started 08:38:05):
+  ```
+  [hbv 1 cpu3 5429956981653779096 5429956981653779096 2036253472034782219 36]
+  [hbv 2 cpu0 15611067510684501972 15611067510670520911 30000104 15611067510671305635]
+  [hbv 3 cpu3 5429956981653779096 3393734875881000556 31366261423856 2036253472034202396]
+  [hbv 4 cpu3 5429956981653805407 5429956981653779096 56459 1024]
+  [hbv 5 cpu3 5429956981653779096 2036253472034782219 0 56459]
+  ```
+- run 2, 08:45:00:
+  ```
+  [hbv 1 cpu2 5087070066968239213 5087070066968239213 2543574260915891133 36]
+  [hbv 2 cpu1 17049878228753944369 17049878228740317518 29240052 17049878228741964617]
+  [hbv 3 cpu2 5087070066968239213 2543574260914814450 78454861415877 2543574260914840640]
+  [hbv 4 cpu2 5087070066968261252 5087070066968239213 47291 1024]
+  [hbv 5 cpu2 5087070066968239213 2543574260915891133 0 47291]
+  ```
+- run 3, 08:52:21:
+  ```
+  [hbv 1 cpu2 7054430493981558515 7054430493981558515 3527878091474425974 36]
+  [hbv 2 cpu2 14324592221479799892 14324592221479610154 407135 14324592221480627588]
+  [hbv 3 cpu2 7054430493981558515 3527878091473271231 1325688965024312 3527878091473311596]
+  [hbv 4 cpu2 7054430493981578199 7054430493981558515 42239 1024]
+  [hbv 5 cpu2 7054430493981558515 3527878091474425974 0 42239]
+  ```
+
+**Run 3, the first dump after the stall** (beat 7, 08:58:22, `runnable-on-idle-cpu`):
+```
+[hbcpu 0 w1115 q0 sl228 sa235 sr471 sv5327 ss161]
+[hbcpu 1 w0 q1 sl964 sa368 sr2748 sv1524 ss215]
+[hbcpu 2 w0 q0 sl1036 sa468 sr3058 sv506 ss210]
+[hbcpu 3 w8645 q0 sl441 sa153 sr1359 sv8283 ss87]
+[hbq 0 v296843 n0 tw15028]
+[hbq 1 v126242 n1 tw7168]
+[hbq 1 vt18446744073709551615 id36 25 /usr/bin/netstack own]
+[hbq 2 v18446744073451387897 n0 tw0]
+[hbq 3 v18446744073455149703 n0 tw10572]
+[hbctx 25 /usr/bin/netstack Rqa sys cpu1 ]
+[hbctx 54 /usr/bin/netget B sys cpu1 UserInner::call]
+```
+- The other user contexts are blocked or asleep.
+- The timed dump at beat 6 (08:57:22) already has the same `hbq 1` lines. Its `[hbcpu 1 w5058 q1 …]` shows CPU 1 still switching in that minute.
+- The beat-4 dump (08:55:22) shows CPU 1's queue `v3459342 n0`, so it was empty then.
+- From beat 6 on, `[hbq 1 v126242 n1 tw7168]` and the netstack entry do not change.
+- CPU 1's counters stay the same from beat 7 on. `sv` (vtime filter) does not grow, so the entry is not counted as filtered either.
+
+**Runs 1 and 2 (complete):** their dumps show queue entries near 2^64 that later cleared up.
+- run 1: `[hbq 1 vt18446744073709550695 id27 16 dwc2d own]` and `[hbq 3 vt18446744073564933720 id36 25 netstack stale]`.
+- run 2: netstack `stale` in CPU 0's queue across several dumps (`vt18446744072764220028` …), then `own` with `vt18446744073709551450`.
+
+**Other notes:**
+- No `[hb stall …]`/`[hb nosched …]` line and no hub drop.
+- Power cycles: 08:43:36, 08:50:57, 09:03:12.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-890-gfa908ca+x578b` (netget download stall: confirm `sched-vtime-clamp`)
+
+Real Pi 3B+ over netboot. Test 189 ([#157](https://github.com/redox-rpi/redox-rpi/issues/157), [#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent.
+Image `vc-…`, own bootloader, as in 188. 6 runs, with a power cycle before each run after the first. A stall means no new `netget:` line for 5.5 min.
+
+**The virtual time no longer runs away:**
+- no `[hbv …]` line in any of the 6 runs;
+- the largest `v`/`vt` value in any dump is 3.38e13, far below 2^62 (4.6e18), where 188 had about 5e18–1.8e19 in every run;
+- no `runnable-on-idle-cpu` dump in any run.
+
+**But only 5 of 6 runs completed.** Run 5 stalled at 320 MiB from a different cause: **the USB controller (`dwc2d`) stopped working**. Every hub request then timed out with `Timeout("channel halt")`, and the scheduler state looked normal.
+
+| Run | Start (UTC) | Result | Time, speed | `[hbv]` | largest v/vt |
+|---|---|---|---|---|---|
+| 1 | 09:27:06 (reset) | **complete** | 868.1 s, 0.44 MB/s (slow stretch at 0.07–0.4 MB/s near the start) | 0 | 3.36e13 |
+| 2 | 09:43:02 (power cycle) | **complete** | 305.7 s, 1.25 MB/s | 0 | 3.34e13 |
+| 3 | 09:49:33 (power cycle) | **complete** | 308.9 s, 1.24 MB/s | 0 | 3.38e13 |
+| 4 | 09:55:50 (power cycle) | **complete** | 288.5 s, 1.32 MB/s | 0 | 3.36e13 |
+| 5 | 10:01:41 (power cycle) | **stalled**, last progress 10:07:09 | 320 MiB at 275.1 s | 0 | 3.34e13 |
+| 6 | 10:12:55 (power cycle) | **complete** | 422.4 s, 0.90 MB/s | 0 | 3.34e13 |
+
+**Run 5, the order of events on serial:**
+- 10:04:18 and 10:05:18: 6 × `smolnetd … Dropped packet on eth0 because waiting queue was full`. The download kept going.
+- After `netget: 320 MiB 275.1 s`:
+  - at 10:07:43, 2 × `smolnetd … ERROR Dropped outboud packet on eth0 (failed to write to network file)`;
+  - then `dwc2d: request [a3, 00, 00, 00, 01, 00, 04, 00] to address 1 (max packet 64, High speed) failed: Timeout("channel halt")` / `dwc2d: hub 1 port 1: Timeout("channel halt")`;
+  - the same follows for every port of hub 1 and hub 2, over and over: 542 `channel halt` lines in all.
+- No `address 2 removed` (hub drop) line.
+
+**Run 5, the first dump after the stall** (beat 8, `timed`):
+```
+[hbcpu 0 w629 q0 sl180 sa179 sr448 sv1 ss297]
+[hbcpu 1 w0 q0 sl854 sa153 sr1717 sv50 ss155]
+[hbcpu 2 w2424 q0 sl924 sa313 sr1898 sv71 ss280]
+[hbcpu 3 w0 q0 sl677 sa121 sr971 sv130 ss81]
+[hbq 0 v33351827909844 n0 tw55656]
+[hbq 1 v37594558179 n0 tw48128]
+[hbq 2 v45102940205 n0 tw0]
+[hbq 3 v27713052001 n0 tw115380]
+[hbctx 0 [kmain] R cpu0 ]
+[hbctx 16 /scheme/initfs/bin/dwc2d R+ca cpu0 ]
+[hbctx 25 /usr/bin/netstack B sys cpu0 UserInner::call]
+[hbctx 54 /usr/bin/netget B sys cpu0 UserInner::call]
+```
+- All run queues are empty (`n0`), and nothing is left queued.
+- `dwc2d` is the running context on CPU 0, with no `sys`.
+- Everything else on the network path waits behind it.
+- devsh did not log in after the stall.
+
+**`[hb nosched …]` lines**, which did not show in 188:
+- run 2: `[hb nosched 3 seen-by 2 t317 s1531587]` (and seen by 1);
+- run 3: `[hb nosched 0 seen-by 1 t300 s1515061]`;
+- run 5: `[hb nosched 0 seen-by 1 t55 s87007]` (and seen by 3), at boot before login;
+- run 6: `[hb nosched 0 seen-by 3 t299 s1528449]` (and seen by 1).
+
+Each came once per run, and the CPU kept beating afterwards. No `[hb stall …]` line and no hub drop in any run.
+
+Power cycles: 09:43:02, 09:49:33, 09:55:50, 10:01:41, 10:12:55. Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-974-g3cf2086+x809a` (dwc2d restarts a stuck USB controller)
+
+Real Pi 3B+ over netboot. Test 190 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 10:57.
+
+**Fail: the restart runs, but the network never comes back.**
+- Part A: the first forced restart printed `controller restarted`, but no device came back and devsh was gone for good. The second forced restart printed nothing.
+- Part B: 4 of 5 valid runs completed. In run 6 the controller got stuck at 240 MiB, and the restart failed with `controller restart failed: Timeout("AHB idle")`. The network did not come back.
+
+**Part A (forced restart while idle):** reset 10:57:19, at login 10:57:40.
+- Restart 1, at 10:58:00 (`echo restart > /tmp/dwc2d-cycle` over devsh). Serial:
+  ```
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000009 HPRT0 0x1405 HFNUM 0xbf93e2
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 0, last 0x0 at address 0 endpoint 0, 12060 ms ago
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  ```
+  - Then nothing more from dwc2d: no `device on root port`, no `network on the adapter`.
+  - devsh did not answer within 264 s (or later).
+- Restart 2: not sent. devsh was dead, so the command did not reach the Pi, and there was no new dwc2d line.
+- Read over the serial console at 11:10 (`/tmp/dwc2d-usbstats`):
+  - `restarts 1`, `halt_failures 0`, `timeouts 0`, `recoveries 0`;
+  - **`hprt0 0x400`** (port power on, no device connected), `last_hprt0 0x100f`, `gintsts 0x54000029`;
+  - `/tmp/dwc2d-step`: `795232 idle`.
+- `grep -E … /scheme/sys/context` did not run: Redox `grep` answers `Invalid parameter '-E'`.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result | Bytes, seconds |
+|---|---|---|---|
+| 1 | 11:11 | **not run**: the Pi was still without network from part A, and the runner's reset goes over devsh, so the Pi was never reset (my runner's fault, not the image's) | – |
+| 2 | 11:26:05 (power cycle) | **complete** | 382156480 in 366.8 s, 1.04 MB/s |
+| 3 | 11:33:33 (power cycle) | **complete** | 382156480 in 309.1 s, 1.24 MB/s |
+| 4 | 11:39:53 (power cycle) | **complete** | 382156480 in 292.4 s, 1.31 MB/s |
+| 5 | 11:45:57 (power cycle) | **complete** | 382156480 in 333.4 s, 1.15 MB/s |
+| 6 | 11:52:51 (power cycle) | **stalled** at `240 MiB 196.2 s`, last progress 11:57:03 | – |
+
+- Runs 2–5: no `stuck`, `restarted`, `removed` or `Timeout` line.
+- Run 6, in order:
+  ```
+  netget:   240 MiB   196.2 s  1.81 MB/s
+  [smolnetd … ERROR] Dropped outboud packet on eth0 (failed to write to network file)    (11:57:10)
+  dwc2d: request [a3, 00, 00, 00, 01, 00, 04, 00] to address 1 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: hub 1 port 1: Timeout("channel halt")
+  … the same for hub 1 ports 2, 3, 4 …
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000039 HPRT0 0x1005 HFNUM 0x2033c6 GNPTXSTS 0x8080400 HPTXSTS 0x9d080400 HAINT 0x0 GRSTCTL 0x40000000; ch0 HCCHAR 0xc0500040 HCINT 0x0 HCTSIZ 0x60080008; ch1 HCCHAR 0x81588a00 HCINT 0x20 HCTSIZ 0xc0d83800; ch2 …
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 31, last 0x80000000 at address 1 endpoint 0, 59 ms ago
+  dwc2d: controller restart failed: Timeout("AHB idle")
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: request [80, 06, 00, 01, 00, 00, 08, 00] to address 0 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: root port: Timeout("channel halt")
+  dwc2d: root port: HPRT0 0x100d
+  ```
+  - Then nothing more. The full `controller stuck` line, with all channels, is in `t190/r6-stuckline.txt` on homenodellm.
+  - Lines in run 6: `stuck` 1, `restarted` 0, `removed` 1 (`keyboard removed`), `Timeout` 11.
+  - Read over serial at 12:02, `/tmp/dwc2d-usbstats`: `halt_failures 40`, `restarts 1`, `timeouts 36`, `last_error 0x80000000`, `root_events 2`, `hprt0 0x1005`, `last_hprt0 0x100d`, `gintsts 0x54000039`. `/tmp/dwc2d-step`: `582139 idle`.
+  - netget's TCP connection did not survive, and the network did not come back within 6 min. devsh was dead.
+- The download stall itself looks the same as #189 run 5, and the new code does detect it (`controller stuck`).
+
+Afterwards: power cycle 12:03:44 with stable staged. `rm /scheme/data/netget.bin` was not done at the end because devsh was dead; the stable image does not use that file. Stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-978-gf2e0318+x809a` (dwc2d restarts a stuck USB controller, second try)
+
+Real Pi 3B+ over netboot. Test 191 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 12:15.
+
+**Pass:**
+- Part A: both forced restarts recovered, each with a single `restart 1`, and devsh answered again after 17 s and 24 s.
+- Part B: **6 of 6 downloads completed**, so the stuck controller of 189/190 did not show and the restart was not needed during a download.
+
+**Part A (forced restart while idle):** reset 12:15:55, at login 12:16:15.
+- Restart 1, at 12:16:35. devsh was back after 17 s:
+  ```
+  dwc2d: restart 1 (up to 5 in a row without devices)
+  dwc2d: controller stuck, restarting it: GINTSTS 0x56000029 HPRT0 0x1005 HFNUM 0x12cf1b05 GNPTXSTS 0x8080400 HPTXSTS 0x1f080400 HAINT 0x2 GRSTCTL 0x80000000; …
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: network on the adapter at address 5
+  ```
+- Restart 2, at 12:17:52. devsh was back after 24 s, with the same sequence (`GINTSTS 0x54000009 HPRT0 0x1005 …`).
+- No `failed` and no `Timeout` line.
+- `/tmp/dwc2d-usbstats` afterwards (over devsh): `restarts 2`, `halt_failures 0`, `timeouts 0`.
+- In `/scheme/sys/context`, `dwc2d` and `netstack` are both `UB`, which is normal.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result |
+|---|---|---|
+| 1 | 12:19:28 (reset) | **complete**, 378.5 s, 1.01 MB/s |
+| 2 | 12:26:53 (power cycle) | **complete**, 293.1 s, 1.30 MB/s |
+| 3 | 12:33:05 (power cycle) | **complete**, 261.5 s, 1.46 MB/s |
+| 4 | 12:38:40 (power cycle) | **complete**, 296.3 s, 1.29 MB/s |
+| 5 | 12:44:59 (power cycle) | **complete**, 361.2 s, 1.06 MB/s |
+| 6 | 12:52:23 (power cycle) | **complete**, 267.9 s, 1.43 MB/s |
+
+- No `restart`, `stuck`, `restarted`, `failed`, `removed` or `Timeout` line in any run.
+- After run 6: `restarts 0`, `halt_failures 0`, `timeouts 0`.
+- So a restart during a real stuck download is still untested on the Pi. It came 1 time in 6 runs in 189 and in 190.
+
+Afterwards `rm /scheme/data/netget.bin`, then stable restored (`v0.3.0-dev-891-g55d0446+x9f76`), reset, and stable came up to login.
+
+## 2026-11-01: test 193, v0.3.0-rc4 SD card with the user (`v0.3.0-dev-963-g15e885d+x12cb`)
+
+Release checklist tests 6–9, one visit. Card written from
+`redox-rpi-v0.3.0-rc4.img.xz` (SHA-256 `bd6e9f8f…f35c`), built with
+`--release v0.3.0-rc4 --experiment timesync --sdcard`. Sources: the serial
+log of the Pi 3B+ (15:18 UTC) and the user's report, relayed by the
+coordinator. The Zero 2 W has no serial console here, so its results are
+from the user alone.
+
+| Test | Pi 3B+ | Zero 2 W | Detail |
+|---|---|---|---|
+| 6 SD card boot | **pass** | **pass** (user) | Serial banner `redox-rpi v0.3.0-rc4 (v0.3.0-dev-963-g15e885d+x12cb) (sdcard)`, then `redox login:`. The `dd`/`sha256sum` write check was not reported. |
+| 7 HDMI, keyboard, `Super`+`F1`/`F2` | **pass** (user) | **pass** (user) | "Super F1/F2 hat funktioniert." |
+| 8 USB hotplug | **pass** | **pass** (user) | The keyboard worked before and after it was unplugged and plugged in again (found at address 4 on the 3B+). The cable was plugged in after boot: link up on the LAN7800, `dhcpd` configured the address, `timesync` set the clock from `pool.ntp.org`. |
+| 9 Zero 2 W with the RTL8153 hub | — | **pass** (user) | Boots from the same card, keyboard and `Super`+`F1`/`F2` work. Not confirmed from a log. |
+
+Remarks:
+- One undervoltage throttle on the 3B+ (ARM clock to 600 MHz) right
+  before the cable was plugged in, then `no longer throttled`. That is the
+  power supply, not a failure.
+- `ifconfig` shows no MAC address, on both boards. To be checked; not a
+  release blocker.
+- There is no `ip` command. The visit steps wrongly named it; use
+  `ifconfig` and the boot log.
+
+Afterwards the netboot card goes back into the Pi 3B+; then row 192 (rc4
+automated) can run.

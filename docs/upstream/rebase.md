@@ -53,7 +53,7 @@ the experiments they need first.
 |---|---|---|---|
 | kernel | 8 (0001–0008) | all apply as they are | all apply |
 | relibc | 7 (0001–0007) | all apply as they are | all apply |
-| base | 28 (0001–0037) | 26 apply as they are; **0001** (dwc2d) and **0018** (rpi-firmwared) need a 3-way merge | all apply |
+| base | 28 (0001–0037) | 26 apply as they are; **0001** (dwc2d) and **0018** (rpi-firmwared) need a 3-way merge (refreshed since, see below) | all apply |
 | bootloader | 2 | apply as they are | — |
 | fdt | 1 | applies as it is | — |
 
@@ -62,6 +62,15 @@ to the workspace `members` in `Cargo.toml`, and before the aarch64 block of
 the `Makefile` (`virtio-fsd`, `udsd`). Our added lines stay the same.
 Refreshing the base patches with `git format-patch` gives the same patches
 with new line numbers.
+
+**Refreshed on 2026-10-31** (branch `refresh-0001`): `0001` and `0018` now
+apply as they are to both the pinned base commit and the head (`2ec1b19d`),
+so `scripts/check-patches.sh --latest` gets past them. Their hunks for
+`Cargo.toml` and the `Makefile` keep only context that is the same in both:
+`dwc2d` now comes after `xhcid` in the workspace `members` (order does not
+matter there), and `0018`'s Makefile hunk has one line of leading context.
+On the pinned commit the patched tree differs from before only in that
+order.
 
 **Already upstream:** none. Upstream has nothing for the Raspberry Pi since
 our pins (no commit in base or kernel mentions BCM2835, dwc2, sdhost or
@@ -268,3 +277,48 @@ if needed; then `cargo check --target aarch64-unknown-redox` of `netstack`,
   smoltcp's API upstream touches us.
 - Branch `wifi-join` still carries the old `0044`; it gets the fixed one
   when it takes `netstack-multi` again.
+
+
+## Update 2026-11-01: graphics patches
+
+Checked by the graphics session against base `8424d392` and kernel
+`1a1295b0` (both 2026-10-31), next to the pinned `eddcaa21` and `c951af42`.
+The graphics work is all in experiment `rpi-fb` on draft PR #113 (branch
+`rpi-fb-pr`): base `0060`–`0072` (`rpi-firmwared` property file,
+`rpi-fbd`) and kernel `0049`; experiment `orbital` is a config file only.
+Branches `graphics-fb`, `graphics-fb2` and `graphics-fb3` are older subsets
+of it, with the old numbers, and are not kept up.
+
+- **Drift was on our side, not upstream's.** PR #113 no longer built on
+  current `main` (pinned base): `0060` conflicted with `main`'s own
+  `rpi-firmwared` patches `0040` (governor) and `0046` (power LED), which
+  landed after the PR branched. `main` names its single-tag helper `call()`,
+  so `0060`'s raw message call is `call_raw()` now, and `set_property()`
+  keeps the empty answer from `0046`. `0061` also had to add `rpi-fbd` to the
+  `INITFS_BINS` line that `0045`/`0047`/`0048` extended. Fixed on
+  `rpi-fb-pr` (`123ca91`, `fbe140a`, with `main` merged in), so PR #113
+  covers it and no extra PR is needed.
+- **Newest base:** with the open PRs' versions of the default patches
+  (#161 `0015`, #164 `0024`, #165 `0045`/`0047`/`0048`), all of
+  `0060`–`0072` apply. The only fix was `0061`'s `Makefile` hunk: upstream's
+  new `SELFTEST` lines sit above the aarch64 block, so it now has one line
+  of context, like the `0045`/`0047`/`0048` hunks in #165. The same files
+  apply to the pinned base.
+- **Kernel `0049`** (13 orders, blocks of up to 16 MiB) applies as it is to
+  `1a1295b0` with offsets. Upstream's new code in `src/memory/mod.rs`
+  already sizes its own arrays with `ORDER_COUNT`; the closure the patch
+  changes still has the hard-coded `11`. `git am` refuses the file only
+  because it has no mail header; `patch`, which the build uses, takes it.
+- **fdt:** `rpi-fbd` (DMA channel, `dma-ranges`) and `rpi-firmwared` name
+  their own `fdt` git rev `059bb23`, like the other drivers in the storage
+  section above, so they build next to fdt 0.2. Porting them is the same
+  clean-up as there and can wait for the lock move.
+- **Builds:** `cargo check -p rpi-fbd -p rpi-firmwared --target
+  aarch64-unknown-redox` passes on both bases. Image
+  `v0.3.0-dev-908-gfbe140a+x4af4` (pinned, `--experiment timesync
+  --experiment rpi-fb`) in QEMU with the Pi's memory layout: CPU blits by
+  default, and with `RPI_FB_DMA=on` the DMA test of the whole screen, then
+  `fbcond` handoff and login.
+- Pi rows #148 (default) and #151 (`RPI_FB_DMA=on`) now name this image.
+  The screen checks stay with the screen visit (#34, #43, #44, #54 with
+  #108).
