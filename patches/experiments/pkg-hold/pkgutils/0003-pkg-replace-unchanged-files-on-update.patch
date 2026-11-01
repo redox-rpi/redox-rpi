@@ -1,0 +1,121 @@
+From d7d74f02538cec3fc2fe65839180823b45abcf73 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:22:03 +0000
+Subject: [PATCH] pkg: replace unchanged files on update
+
+Without --nocheck, pkg update replaced no file: replace_diff (pkgar
+0.2.4) removes the path from its map before it looks it up, so every
+file of the new version counts as new, and install_one skips files that
+exist. packages.toml still recorded the new version.
+
+upgrade() now skips files whose content is the same in both versions
+and replaces files the old version installed when they are unchanged on
+disk. Files changed locally are still left alone.
+---
+ Cargo.lock                               |  1 +
+ pkg-lib/Cargo.toml                       |  3 +-
+ pkg-lib/src/backend/pkgar_backend/mod.rs | 43 ++++++++++++++++++++++--
+ 3 files changed, 44 insertions(+), 3 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 215b18b..c9d8de2 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -652,6 +652,7 @@ dependencies = [
+ name = "redox-pkg"
+ version = "0.3.3"
+ dependencies = [
++ "blake3",
+  "hex",
+  "indicatif",
+  "pkgar",
+diff --git a/pkg-lib/Cargo.toml b/pkg-lib/Cargo.toml
+index 4a2e3c3..52dda26 100644
+--- a/pkg-lib/Cargo.toml
++++ b/pkg-lib/Cargo.toml
+@@ -17,6 +17,7 @@ path = "tests/integration_test.rs"
+ required-features = ["library"]
+ 
+ [dependencies]
++blake3 = { version = "1.8", optional = true }
+ hex = { version = "0.4", features = ["serde"] }
+ indicatif = { version = "0.18", optional = true, default-features = false }
+ pkgar = { version = "0.2.4", optional = true }
+@@ -29,7 +30,7 @@ toml = "1"
+ [features]
+ default = ["library"]
+ indicatif = ["dep:indicatif"]
+-library = ["pkgar", "pkgar-core", "ureq"]
++library = ["blake3", "pkgar", "pkgar-core", "ureq"]
+ 
+ [dependencies.ureq]
+ version = "3.4"
+diff --git a/pkg-lib/src/backend/pkgar_backend/mod.rs b/pkg-lib/src/backend/pkgar_backend/mod.rs
+index 154dadd..396c079 100644
+--- a/pkg-lib/src/backend/pkgar_backend/mod.rs
++++ b/pkg-lib/src/backend/pkgar_backend/mod.rs
+@@ -5,7 +5,7 @@ use std::{
+     rc::Rc,
+ };
+ 
+-use pkgar::{PackageFile, Transaction};
++use pkgar::{ext::EntryExt, PackageFile, Transaction};
+ use pkgar_core::PackageSrc;
+ 
+ use super::{Backend, Error};
+@@ -234,8 +234,31 @@ impl Backend for PkgarBackend {
+         let old_entries = old.read_entries()?;
+         let new_entries = new.read_entries()?;
+         let (to_install, to_remove) = self.commits.replace_diff(&old_entries, &new_entries)?;
++        // replace_diff (pkgar 0.2.4) lists every new file as changed, and
++        // install_one skips files that exist, so without --nocheck nothing
++        // was replaced. Files the old version installed: skip them when the
++        // content is the same, replace them when nobody changed them since.
++        let old_hashes: std::collections::BTreeMap<PathBuf, blake3::Hash> = old_entries
++            .iter()
++            .filter_map(|e| Some((e.check_path().ok()?.to_path_buf(), e.blake3())))
++            .collect();
++        let mut fresh = Vec::new();
++        let mut replace = Vec::new();
++        for entry in to_install {
++            let path = entry.check_path().map_err(|e| Error::Pkgar(Box::new(e.into())))?;
++            match old_hashes.get(path) {
++                Some(hash) if *hash == entry.blake3() => {}
++                Some(hash) if on_disk_hash(&self.install_path, path).as_ref() == Some(hash) => replace.push(entry),
++                _ => fresh.push(entry),
++            }
++        }
+         self.uninstall_inner(name, &old, to_remove)?;
+-        self.install_inner(package, &mut new, to_install)?;
++        self.install_inner(package, &mut new, fresh)?;
++        let check = self.skip_local_check;
++        self.skip_local_check = true;
++        let replaced = self.install_inner(package, &mut new, replace);
++        self.skip_local_check = check;
++        replaced?;
+         self.create_head(&mut new, name)?;
+         Ok(())
+     }
+@@ -322,3 +345,19 @@ impl Backend for PkgarBackend {
+         self.skip_local_check = nocheck;
+     }
+ }
++
++/// blake3 of an installed file or symlink target, as pkgar hashes it.
++fn on_disk_hash(install_path: &Path, path: &Path) -> Option<blake3::Hash> {
++    let target = install_path.join(path);
++    let meta = fs::symlink_metadata(&target).ok()?;
++    if meta.is_symlink() {
++        let link = fs::read_link(&target).ok()?;
++        Some(blake3::hash(link.as_os_str().as_encoded_bytes()))
++    } else if meta.is_file() {
++        let mut hasher = blake3::Hasher::new();
++        hasher.update_reader(fs::File::open(&target).ok()?).ok()?;
++        Some(hasher.finalize())
++    } else {
++        None
++    }
++}
+-- 
+2.53.0
+
