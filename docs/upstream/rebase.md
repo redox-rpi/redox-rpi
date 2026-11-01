@@ -132,3 +132,111 @@ Five pull requests add `redoxfs` to `config/upstream.lock` (#66, #72, #73,
   merge, so today it stops at base `0001`, and after that patch it checks
   nothing more. The per-patch check here (each patch, 3-way, reverse) was a
   one-off script and is not in the repository yet.
+
+## Update 2026-11-01: fdt 0.2 in base, storage patches
+
+Checked by the SD Card & Storage session against base `8424d392`
+(2026-10-31) and redoxfs master `5ba45a6`, each patch in order with a 3-way
+merge (the one-off check, as above).
+
+- **base moved to fdt `0.2.0-alpha3`** (`919f8268` "Update to fdt
+  0.2.0-alpha3", `Cargo.toml`: `fdt = "0.2.0-alpha3"`). Upstream's own
+  drivers changed with it: `reg.starting_address as usize` became
+  `reg.address`, and `ranges()` now needs
+  `.iter::<usize, usize, usize>()` with `Result` items and `len` instead of
+  `size`. Every base patch of ours that reads the devicetree uses the old
+  API: `0001` (dwc2d), `0018` (rpi-firmwared), `0025` (bcm2835-sdhostd),
+  `0045`/`0047`/`0048` (GPIO, I2C, SPI). **Correction:** they still
+  compile against the new base. Each of these drivers names its own
+  `fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }`
+  and not the workspace `fdt`, so cargo builds that old fdt as a second
+  crate next to 0.2 (checked: unchanged `bcm2835-sdhostd` passes
+  `cargo check` on `8424d392` with all default patches up to `0028`). Our
+  `fdt` pin (`8fa4388` with `fdt/0001`) is only patched into the kernel
+  build, not into base, so it doesn't change this. The port to fdt 0.2 is
+  clean-up, not a build fix: one fdt in base, and the same API as
+  upstream's drivers. It can wait for the lock move.
+- **Pattern for the port**, from upstream's `bcm2835-sdhcid` in `919f8268`
+  and our `bcm2835-sdhostd` (experiment `sdhost-fdt02`, branch
+  `sdhost-fdt02`):
+
+  | fdt 0.1 (`git 059bb23`) | fdt 0.2 (`fdt.workspace = true`) |
+  | --- | --- |
+  | `fdt = { git = ..., rev = "059bb23" }` in `Cargo.toml` | `fdt.workspace = true` |
+  | `Fdt::new(&dtb)` | `Fdt::new_unaligned(&dtb)` |
+  | `use fdt::Fdt;` and `fn f(fdt: &Fdt)` | a type alias (below), `Fdt` is generic over its parser |
+  | `fdt.find_compatible(&with)` | `fdt.all_compatible(&with).next()` |
+  | `node.reg()?.next()` | `node.reg()?.iter::<usize, usize>().next()?` gives a `Result` |
+  | `reg.starting_address as usize` | `reg.address` |
+  | `reg.size.unwrap()` | `reg.len` |
+  | `ranges.find(\|r\| ... r.size)` | `ranges.iter::<usize, usize, usize>()` with `Result` items, `r.len` |
+  | `node.property("x")` (raw bytes) | `node.raw_property("x")` |
+
+  `sdhost_phys` before and after:
+
+  ```rust
+  // fdt 0.1
+  let bus_addr = fdt
+      .find_compatible(&["brcm,bcm2835-sdhost"])
+      .and_then(|node| node.reg())
+      .and_then(|mut reg| reg.next())
+      .map(|reg| reg.starting_address as usize)
+      .unwrap_or(SDHOST_BUS_ADDR);
+  fdt.find_node("/soc")
+      .and_then(|soc| soc.ranges())
+      .and_then(|mut ranges| {
+          ranges.find(|r| {
+              r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
+          })
+      })
+      .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
+      .unwrap_or(bus_addr)
+
+  // fdt 0.2
+  type Fdt<'a> = fdt::Fdt<
+      'a,
+      (fdt::parsing::unaligned::UnalignedParser<'a>, fdt::parsing::Panic),
+  >;
+
+  let bus_addr = fdt
+      .all_compatible(&["brcm,bcm2835-sdhost"])
+      .next()
+      .and_then(|node| node.reg())
+      .and_then(|reg| reg.iter::<usize, usize>().next())
+      .and_then(Result::ok)
+      .map(|reg| reg.address)
+      .unwrap_or(SDHOST_BUS_ADDR);
+  fdt.find_node("/soc")
+      .and_then(|soc| soc.ranges())
+      .and_then(|ranges| {
+          ranges
+              .iter::<usize, usize, usize>()
+              .filter_map(Result::ok)
+              .find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.len)
+      })
+      .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
+      .unwrap_or(bus_addr)
+  ```
+
+  The type alias is only needed where an `Fdt` is passed to a function;
+  code that keeps it in a local `let` (like `sdhcid`) needs none.
+  Interrupts, phandles and `#address-cells` changed more: see upstream's
+  `drivers/pcid/src/cfg_access/mod.rs` in `919f8268`
+  (`dt.root().resolve_phandle(PHandle::new(..))`,
+  `node.property::<AddressCells>()`, `node.property::<InterruptCells>()`).
+  Quick check without an image build: in a base clone at the new rev with
+  our patches applied, `cargo check -p <driver> --target
+  aarch64-unknown-redox` with the cookbook's
+  `prefix/aarch64-unknown-redox/rust-install/bin` first in `PATH`.
+- 3-way results on base `8424d392`, all default patches in order: **`0015`**
+  (sdhcid pin routing) conflicted on the ioremap `println` that upstream
+  changed. Fixed on branch `storage-upstream`: the call moved into the init
+  block, and it now applies to both the pinned and the newest base. Still
+  conflicting: `0024` (getty) and `0045`, `0047`, `0048` (GPIO, I2C, SPI,
+  workspace lines). `0001` and `0018` apply with 3-way (PR #124 makes them
+  apply as they are). The sdhost patches `0025`–`0028` apply.
+- **redoxfs master** (`5ba45a6`, 4 commits after our pin `db847d87`) is the
+  version that broke Unix sockets (PR #146). `0036`, `0038` and `0039`
+  apply; `0037` conflicts on import lines only (the 2024 edition commit).
+  Nothing to do until upstream fixes the sockets.
+
