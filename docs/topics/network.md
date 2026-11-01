@@ -14,7 +14,7 @@
   showed `00:00:00:00:00:00` as the MAC address (a placeholder in upstream
   `netutils`) and the prefix length as the netmask. Experiment
   `ifconfig-mac` (netutils `0001`, netutils now pinned) reads the address
-  from `netcfg` (draft PR
+  from `netcfg` (PR
   [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
   and on the Pi (**test 194 passed**).
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
