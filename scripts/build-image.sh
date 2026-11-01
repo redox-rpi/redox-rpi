@@ -224,45 +224,48 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 """
 EOF
 
-# Other recipes: pin them and add our patches to their [source] section.
-# pkgutils only when an experiment patches it (pkg-hold); otherwise the
-# image takes the upstream binary.
-for name in bootloader base relibc redoxfs pkgutils; do
+# Other core recipes we pin: each one with a line in config/upstream.lock
+# (also without patches: an unpinned recipe builds the newest upstream
+# commit, #145), and each one with patches in patches/<recipe>/ or in
+# patches/experiments/<name>/<recipe>/ of a selected experiment, which must
+# then have a lock line. A new one needs no change here. The first three
+# keep their old order (it decides the order in the manifest). pkgutils
+# only when an experiment patches it (pkg-hold); otherwise the image takes
+# the upstream binary.
+recipes=(bootloader base relibc)
+while read -r name; do
+    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
+    [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
+    recipes+=("$name")
+done < <(
+    awk '!/^#/ && NF == 2 { print $1 }' "$LOCK"
+    for dir in "$ROOT"/patches/*/; do basename "$dir"; done
+    for exp in "${experiments[@]}"; do
+        for dir in "$ROOT/patches/experiments/$exp"/*/; do [ -d "$dir" ] && basename "$dir"; done
+    done | sort -u
+)
+
+# Pin them and add our patches to their [source] section.
+for name in "${recipes[@]}"; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
-    if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
-        continue
-    fi
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
         "$REDOX/recipes/core/$name/recipe.toml"
 done
 
-# Our own packages, built from this repository.
-for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
-    # sigregs is linked statically (the cargo template links dynamically):
-    # dynamically linked, it fails at start on a real Pi before it can test
-    # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
-    # relibc recipe, not the toolchain's. Cargo does not see a new libc.a,
-    # so its fingerprint goes first: otherwise a build with other relibc
-    # patches keeps the old sigregs.
-    build='template = "cargo"'
-    if [ "$tool" = sigregs ]; then
-        build='template = "custom"
-dependencies = ["relibc"]
-script = """
-export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
-rm -rf "${COOKBOOK_BUILD}"/target/*/release/.fingerprint/sigregs-*
-COOKBOOK_CARGO_PATH=. cookbook_cargo
-"""'
-    fi
+# Our own packages, built from this repository: every tools/<name>/ with a
+# recipe.toml, which holds the [build] part of its recipe. Host tools
+# (redoxfs-file) have none.
+for file in "$ROOT"/tools/*/recipe.toml; do
+    tool="$(basename "$(dirname "$file")")"
     mkdir -p "$REDOX/recipes/other/$tool"
-    cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
-[source]
-path = "$ROOT/tools/$tool"
-
-[build]
-$build
-EOF
+    {
+        echo "[source]"
+        echo "path = \"$ROOT/tools/$tool\""
+        echo
+        cat "$file"
+    } > "$REDOX/recipes/other/$tool/recipe.toml"
 done
 
 # Upstream recipes replaced by an experiment: every such recipe goes back to
@@ -343,7 +346,7 @@ manifest_head="$(mktemp)"
     awk '!/^#/ && NF == 2 { printf "%s = \"%s\"\n", $1, $2 }' "$LOCK"
     echo
     echo "[patches]"
-    for name in fdt kernel bootloader base relibc; do
+    for name in fdt kernel "${recipes[@]}"; do
         patch_files "$name" | while read -r patch; do
             echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
         done
