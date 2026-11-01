@@ -7033,3 +7033,17 @@ fbcond: Performing handoff
 - Shelly check before the test: plug off gave 0 W, no ping, then a fresh U-Boot boot, so power cycles work again.
 
 Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.4.0-dev-15-gac0e81c+x58dc` (relibc tests, `sched-vtime-clamp`, `pi-heartbeat`)
+
+Real Pi 3B+ over netboot. Test 199 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14) `rwlock_randtest` freeze with the heartbeat), Pi test agent. Image `~/redox-rpi-icache/keep/vcrwhb-v0.4.0-dev-15-gac0e81c+x58dc.img`, staged 19:57 with the stable bootloader. Boot line: `experiments: pi-heartbeat relibc-tests sched-vtime-clamp timesync`.
+
+**Fail: froze at run 2, a hard freeze. No heartbeat line came at all, and the serial console died too.**
+
+- Run 1: `rc=0`, `real 1.378597498s`.
+- Run 2 started at about 19:58:40, about one minute after the kernel started. The client timed out at 19:59:44. devsh was dead and ping got no answer.
+- I waited 6 minutes without a reset, as the row asks. The serial log has **no** `[hb …]` line, no `[hb stall …]`/`[hb nosched …]`, and no dump, not even from before the freeze. The last serial output is the `redox login:` prompt at about 19:58:25. Nothing came after that.
+- Serial console: Enter and `root` (one character every 0.15 s) got no echo, 0 new bytes. So I could not run `cat /scheme/sys/context`. In #197 the serial console still answered after the freeze.
+- The first beat comes one minute after the kernel starts, so the freeze probably came before any beat. After it, the kernel printed nothing more, not even the stall check that should fire after 2 s.
+
+Stable image restored, then a Shelly power cycle (20:05). Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh. The power cycle worked; the plug resets the Pi again.
