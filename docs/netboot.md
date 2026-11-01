@@ -131,21 +131,21 @@ Tested in QEMU's `virt` machine with `-m 512` and the Zero's RAM addresses
 (`redox_img_addr`/`redox_gz_addr` 128 and 256 MiB above the start of RAM):
 it boots to `redox login:`.
 
-On a real Zero 2 W, U-Boot gets DHCP and loads `netboot.scr` over TFTP
-through the HAT's RTL8152, but the HTTP transfer of the image fails with
-`Rx: failed to receive: -5` from U-Boot's r8152 driver. So `--board zero2w`
-loads everything over TFTP (`--tftp-only`, `redox_http none`): slower, about
-a minute for the image.
+On a real Zero 2 W with an unpatched U-Boot, the HTTP transfer of the
+image failed with `Rx: failed to receive: -5` from U-Boot's r8152 driver,
+and so did TFTP with the default 1468-byte blocks, after a few dozen KiB.
+Only TFTP with 512-byte blocks got through, at a few KB/s: many minutes
+for the 42 MB image (2026-10-27). The driver receives into a 2048-byte
+buffer (`RTL8152_AGG_BUF_SZ`), and the adapter packs frames that arrive
+close together into one USB transfer; two full-size frames do not fit.
+U-Boot `master` has the same buffer.
 
-TFTP with U-Boot's default 1468-byte blocks failed the same way on the
-Zero, after a few dozen KiB of the image. The driver receives into a
-2048-byte buffer (`RTL8152_AGG_BUF_SZ`), and the adapter packs frames that
-arrive close together into one USB transfer; two full-size frames do not
-fit. `--board zero2w` therefore also sets `tftpblocksize 512`
-(`--tftp-blocksize`). With it, a real Zero 2 W loaded the whole image and
-booted Redox to the login prompt (2026-10-27). It is slow: many minutes for
-the 42 MB image, at times only a few KB/s, not timed exactly. A larger
-receive buffer in U-Boot's driver would allow full blocks and HTTP again.
+[`patches/u-boot/0001`](../patches/u-boot/) raises the buffer to 16 KiB;
+`scripts/build-uboot.sh` applies everything in `patches/u-boot/` on top of
+the pinned tag. With it, `--board zero2w` uses HTTP and full TFTP blocks
+again, like the Pi 3B+. **Not yet tested on a Zero** ([#19](https://github.com/redox-rpi/redox-rpi/issues/19)).
+A card with an older U-Boot needs `netboot.sh --board zero2w --tftp-only
+--tftp-blocksize 512`.
 
 The Redox system itself runs from RAM and starts fresh on every boot; keep
 anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:

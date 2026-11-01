@@ -23,15 +23,15 @@
 #   --tftp-dir <dir>  TFTP root (default: build/tftp)
 #   --image <file>    disk image (default: the image from build-image.sh, for
 #                     zero2w the one from build-image.sh --zero2w)
-#   --tftp-only       load everything over TFTP, not HTTP (default for zero2w:
-#                     U-Boot's r8152 driver fails to receive the HTTP transfer)
-#   --http            use HTTP, with TFTP as fallback (default for rpi, qemu)
+#   --tftp-only       load everything over TFTP, not HTTP
+#   --http            use HTTP, with TFTP as fallback (default)
 #   --tftp-blocksize <bytes>
-#                     TFTP block size (default: U-Boot's 1468, for zero2w
-#                     512: U-Boot's r8152 driver receives into a 2048-byte
-#                     buffer, and two full-size frames that the adapter
-#                     packs into one USB transfer overflow it; tested on a
-#                     real Zero 2 W)
+#                     TFTP block size (default: U-Boot's 1468). A Zero 2 W
+#                     card with a U-Boot built before patches/u-boot/0001
+#                     needs --tftp-only --tftp-blocksize 512: its r8152
+#                     driver receives into a 2048-byte buffer, and two
+#                     full-size frames that the adapter packs into one USB
+#                     transfer overflow it
 
 set -euo pipefail
 
@@ -78,10 +78,7 @@ if [ -z "$image" ]; then
     if [ "$board" = zero2w ]; then image="$REDOX/build/aarch64/zero2w/harddrive.img"
     else image="$REDOX/build/aarch64/minimal/harddrive.img"; fi
 fi
-if [ -z "$http" ]; then
-    if [ "$board" = zero2w ]; then http=0; else http=1; fi
-fi
-if [ -z "$blocksize" ] && [ "$board" = zero2w ]; then blocksize=512; fi
+if [ -z "$http" ]; then http=1; fi
 if [ "$http" = 1 ]; then http_url="http://$server:8080/"; else http_url=none; fi
 if [ -z "$dir" ]; then
     if [ "$board" = zero2w ]; then dir=redox-zero2w; else dir=redox; fi

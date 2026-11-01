@@ -11,6 +11,9 @@
 ## Next
 
 - [#19](https://github.com/redox-rpi/redox-rpi/issues/19) fast network boot: U-Boot's r8152 receive buffer is too small.
+  Branch `zero2w-fastnet` (U-Boot patch `0001`, 16 KiB like Linux; U-Boot
+  master has no fix) builds and boots the Pi 3B+ path in QEMU; Pi test
+  row 31 waits for a person with the Zero, its HAT and a LAN cable.
 - [#17](https://github.com/redox-rpi/redox-rpi/issues/17) USB hotplug, the same as on the Pi 3B+.
 
 ## Later
