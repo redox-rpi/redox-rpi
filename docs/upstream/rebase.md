@@ -53,7 +53,7 @@ the experiments they need first.
 |---|---|---|---|
 | kernel | 8 (0001–0008) | all apply as they are | all apply |
 | relibc | 7 (0001–0007) | all apply as they are | all apply |
-| base | 28 (0001–0037) | 26 apply as they are; **0001** (dwc2d) and **0018** (rpi-firmwared) need a 3-way merge | all apply |
+| base | 28 (0001–0037) | 26 apply as they are; **0001** (dwc2d) and **0018** (rpi-firmwared) need a 3-way merge (refreshed since, see below) | all apply |
 | bootloader | 2 | apply as they are | — |
 | fdt | 1 | applies as it is | — |
 
@@ -62,6 +62,15 @@ to the workspace `members` in `Cargo.toml`, and before the aarch64 block of
 the `Makefile` (`virtio-fsd`, `udsd`). Our added lines stay the same.
 Refreshing the base patches with `git format-patch` gives the same patches
 with new line numbers.
+
+**Refreshed on 2026-10-31** (branch `refresh-0001`): `0001` and `0018` now
+apply as they are to both the pinned base commit and the head (`2ec1b19d`),
+so `scripts/check-patches.sh --latest` gets past them. Their hunks for
+`Cargo.toml` and the `Makefile` keep only context that is the same in both:
+`dwc2d` now comes after `xhcid` in the workspace `members` (order does not
+matter there), and `0018`'s Makefile hunk has one line of leading context.
+On the pinned commit the patched tree differs from before only in that
+order.
 
 **Already upstream:** none. Upstream has nothing for the Raspberry Pi since
 our pins (no commit in base or kernel mentions BCM2835, dwc2, sdhost or
