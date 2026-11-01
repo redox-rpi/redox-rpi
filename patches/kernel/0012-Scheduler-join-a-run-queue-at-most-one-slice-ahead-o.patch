@@ -1,0 +1,45 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] Scheduler: join a run queue at most one slice ahead of its v
+
+Each CPU has its own virtual time v, and they drift far apart. A woken
+context kept vtime.max(v), so one that last ran on a busier CPU arrived far
+ahead of a quiet CPU v; v = ineligible_min_vtime and work stealing (own v
+plus the gap to the other queue) then pushed v and vtime up step by step
+until they wrapped past u64::MAX, and a runnable context was never picked.
+On wakeup and when stolen, clamp vtime to at most one slice ahead of the
+queue v.
+---
+diff -ruN a/src/context/switch.rs b/src/context/switch.rs
+--- a/src/context/switch.rs	2026-11-01 09:07:01.512266225 +0000
++++ b/src/context/switch.rs	2026-11-01 09:07:01.521063630 +0000
+@@ -397,6 +397,14 @@
+                 let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
+                 let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
+ 
++                // Join this queue at most one slice ahead of its v. v differs a
++                // lot between CPUs, so a context that last ran on a busier CPU
++                // would otherwise arrive far ahead; `v = ineligible_min_vtime`
++                // and work stealing then push v and vtime up step by step until
++                // they wrap past u64::MAX, and the context is never picked.
++                let new_vtime = new_vtime.min(run_queue.v.saturating_add(scaled_slice as u64));
++                guard.vtime = new_vtime;
++
+                 if !guard.is_active {
+                     guard.is_active = true;
+                     run_queue.total_weight += weight;
+@@ -870,6 +878,15 @@
+                     let scaled_slice = guard.rem_slice / weight;
+                     guard.vd = guard.vtime.saturating_add(scaled_slice);
+ 
++                    // As on wakeup: join at most one slice ahead of this queue's v.
++                    let max_vtime = contexts_data
++                        .v
++                        .saturating_add(((BASE_SLICE_TICKS as u128 * SCALE) / weight as u128) as u64);
++                    if guard.vtime > max_vtime {
++                        guard.vtime = max_vtime;
++                        guard.vd = guard.vtime.saturating_add(scaled_slice);
++                    }
++
+                     if final_winner.is_none() && !prev_runnable {
+                         final_winner = Some((guard, addr_space));
+                     } else {

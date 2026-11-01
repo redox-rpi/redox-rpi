@@ -51,6 +51,14 @@
 
 ## In progress
 
+- [#157](https://github.com/redox-rpi/redox-rpi/issues/157) (branch `t157-vtime-pr`, PR #168): long downloads stalled because the
+  scheduler's virtual time ran away and wrapped past `u64::MAX`; a runnable
+  context then stayed queued and was never picked. Kernel patch `0012` caps
+  a context's virtual time at one slice ahead of the run queue it joins.
+  Pi test 189: no wrap in 6 downloads. Found with experiment `pi-heartbeat`
+  (tests 179–188). Upstream note in
+  [docs/upstream/kernel.md](../upstream/kernel.md).
+
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
   `devshd-hangup`): devshd kept `login` and the shell running when a client
   closed the connection without `exit`, two threads each, so every dropped
