@@ -17,7 +17,9 @@
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
-#                 patches, and its config.toml (packages, files) if it has one
+#                 patches, its config.toml (packages, files) if it has one,
+#                 and its recipes/<path>/recipe.toml, which replace the
+#                 upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md)
@@ -227,10 +229,13 @@ EOF
 # commit, #145), and each one with patches in patches/<recipe>/ or in
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
-# keep their old order (it decides the order in the manifest).
+# keep their old order (it decides the order in the manifest). pkgutils
+# only when an experiment patches it (pkg-hold); otherwise the image takes
+# the upstream binary.
 recipes=(bootloader base relibc)
 while read -r name; do
     case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
 done < <(
@@ -261,6 +266,26 @@ for file in "$ROOT"/tools/*/recipe.toml; do
         echo
         cat "$file"
     } > "$REDOX/recipes/other/$tool/recipe.toml"
+done
+
+# Upstream recipes replaced by an experiment: every such recipe goes back to
+# upstreams first, then the selected experiments versions are put in and
+# their old build is cleaned, so they build from scratch: a static program
+# would otherwise keep the relibc it was first linked with.
+for file in "$ROOT"/patches/experiments/*/recipes/*/*/recipe.toml; do
+    [ -e "$file" ] || continue
+    rel="${file#"$ROOT"/patches/experiments/*/recipes/}"
+    git -C "$REDOX" checkout -q -- "recipes/$rel"
+done
+for exp in "${experiments[@]}"; do
+    for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+        [ -e "$file" ] || continue
+        rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
+        cp "$file" "$REDOX/recipes/$rel"
+        if [ -x "$REDOX/target/release/repo" ]; then
+            (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
+        fi
+    done
 done
 
 # Uncommitted changes to anything that goes into the image.
@@ -329,6 +354,9 @@ manifest_head="$(mktemp)"
     for exp in "${experiments[@]}"; do
         conf="$ROOT/patches/experiments/$exp/config.toml"
         [ -f "$conf" ] && echo "\"experiments/$exp/config.toml\" = \"$(sha256sum < "$conf" | cut -c1-16)\""
+        for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+            [ -e "$file" ] && echo "\"${file#"$ROOT/patches/"}\" = \"$(sha256sum < "$file" | cut -c1-16)\""
+        done
     done
 } > "$manifest_head"
 
