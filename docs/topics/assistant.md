@@ -404,9 +404,10 @@ git).
   and 4 were measured only with rinfer alone. `RAYON_NUM_THREADS=4` and
   `CANDLE_BARRIER_POOL_SPIN_LIMIT` still override. The Pi was at its soft
   temperature limit from the first run; warm, the default slept only 48
-  times (1.70), so heat changes the numbers. Not worth it now: a smaller quantization (the weights are
-  already Q4_0) and a shorter answer cap (answers are 24 to 33 tokens, the
-  cap is 200); the q4_0 kernel only if the model time stays high.
+  times (1.70), so heat changes the numbers. Not worth it now: a smaller
+  quantization (the weights are already Q4_0) and a shorter answer cap
+  (answers are 24 to 33 tokens, the cap is 200); the q4_0 kernel only if
+  the model time stays high.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
