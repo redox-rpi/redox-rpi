@@ -20,6 +20,34 @@
   0 of 1000 at 600 MHz and 0 of 7000 at 1400 MHz (before, #13: 276 of
   5100). [Details](../../patches/experiments/sigentry-x18/README.md).
   Programs and other libraries still use x18, see Next.
+- Start crashes on main, 2026-10-30 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)): today's main
+  (`v0.3.0-dev-339-g801d1fe+x9f76`, stable-image experiments) had **0 of
+  3000** failed starts on the Pi at 1400 MHz (test 94) and 0 of 1300 in
+  QEMU, with no crash dump at all. The stable image `v0.3.0-dev-15`
+  (without the x18 fix) had 6 of 1000 the same day (test 92). Its crash
+  log, symbolized against its `libc.so` (ld.so loaded at `0xa80000`):
+  5 of 6 are one crash, a read fault in `GnuHashTable::find` (ELR
+  `0xc15c0c`), called from `DSO::relocate` → `Scope::_get_sym` →
+  `DSO::get_sym`. `DSO::relocate` keeps the DSO pointer in x18 and passes
+  `x18 + 0x30` (the DSO's hash table) down, so a corrupted x18 gives a
+  bad table address. The sixth jumped to address 1 from `load_object`'s
+  init function loop (`blr x8`), likely a value relocated with the same
+  bad DSO pointer. No other crash type is left on the Pi 3B+.
+- Recount on main, 2026-10-31 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), after PR #122
+  (self-exit-status) and PR #61 (which adds `sigreturn-svc` as an
+  experiment, not built here): main cf2025e, `v0.3.0-dev-764-gcf2025e+x9f76` (stable-image experiments),
+  QEMU raspi3b: **0 of 5000** starts failed (5 boots of 1000 starts,
+  `pi-test.py --crash-log`), crash log empty, no exception in any
+  serial log. Before: 0 of 1300 on `v0.3.0-dev-339`. Real Pi, same
+  image, test 149: **0 of 3000**, no FATAL or exception on the serial
+  console. No start crash is left; #1 can be closed.
+- Base `0024` and kernel `0007` (2026-10-29, [#28](https://github.com/redox-rpi/redox-rpi/issues/28), [#32](https://github.com/redox-rpi/redox-rpi/issues/32)): fast input on
+  the serial console no longer loses characters (the kernel keeps PL011
+  input while it writes to the port), and getty no longer panics when the
+  shell reads late (it keeps the input and retries). Real Pi: 20 of 20
+  lines of 200 characters at full speed; QEMU: a line of 1050 characters
+  4 of 7 runs panicked before, 0 after.
+  [Details](../../patches/experiments/serial-rx/README.md).
 
 ## In progress
 
@@ -31,23 +59,19 @@
   dropped sessions leave nothing; real Pi (#21): 13 dropped sessions
   leave nothing. Ready to merge.
 
-- [#28](https://github.com/redox-rpi/redox-rpi/issues/28) the serial console loses characters of fast input. Experiment
-  `serial-rx` (the kernel keeps the input while it
-  writes to the port, getty no longer panics on a full PTY) passes on a
-  Pi 3B+ (test #22): 20 of 20 lines of 200 characters at full speed,
-  `pi-test.py` all checks pass. On `main` as experiment `serial-rx` since 2026-10-29.
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
-  executable and at exec. QEMU: 0 of 700 starts fail, loop 6-8 % slower.
-  No known failure needs it; waiting for the Pi test.
+  executable and at exec. QEMU: 0 of 700 starts fail; on one base built
+  with and without it (main merged, 2026-10-30) the loop is about 3 %
+  slower, within the host's noise. No known failure needs it: Pi test 28
+  had 0 of 1000 at 1400 MHz, the same as main without it (test 94: 0 of
+  3000). Pi test 127 measures the cost on the Pi with both builds.
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
-  x18, so the signal entry can still corrupt it there. Either reserve x18
-  in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
-  rebuilt) or return from the signal entry without clobbering a register.
+- x18-safe signal return for programs other than relibc: experiment
+  `sigreturn-svc` on main (PR #61), opt-in; no start crash needs it.
 
 ## Later
 

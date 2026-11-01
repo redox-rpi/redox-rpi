@@ -1,0 +1,610 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:10:38 +0100
+Subject: [PATCH] bcm2835-gpiod: GPIO pins of the Raspberry Pi as a scheme
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+/scheme/gpio/pins lists every pin with mode and level;
+/scheme/gpio/<pin>/mode, value and pull read and set one pin. The pins
+of the serial console and the SD card are refused.
+
+Refs redox-rpi/redox-rpi#38
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Writing a pull spins for the 10 µs the pull setting needs instead of
+sleeping: a 10 µs nanosleep never came back in QEMU.
+---
+ Cargo.toml                             |   1 +
+ Makefile                               |   2 +-
+ drivers/bcm2835-gpiod/Cargo.toml       |  18 ++
+ drivers/bcm2835-gpiod/src/gpio.rs      | 179 ++++++++++++++
+ drivers/bcm2835-gpiod/src/main.rs      | 324 +++++++++++++++++++++++++
+ init.initfs.d/40_bcm2835-gpiod.service |   8 +
+ init.initfs.d/40_drivers.target        |   1 +
+ 7 files changed, 532 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/bcm2835-gpiod/Cargo.toml
+ create mode 100644 drivers/bcm2835-gpiod/src/gpio.rs
+ create mode 100644 drivers/bcm2835-gpiod/src/main.rs
+ create mode 100644 init.initfs.d/40_bcm2835-gpiod.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 4bded67..5d73326 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -56,2 +56,3 @@ members = [
+ 
++    "drivers/bcm2835-gpiod",
+     "drivers/rpi-firmwared",
+diff --git a/Makefile b/Makefile
+index 263a5c4..7ad0f20 100644
+--- a/Makefile
++++ b/Makefile
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod
+ endif
+diff --git a/drivers/bcm2835-gpiod/Cargo.toml b/drivers/bcm2835-gpiod/Cargo.toml
+new file mode 100644
+index 0000000..ce60ee0
+--- /dev/null
++++ b/drivers/bcm2835-gpiod/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "bcm2835-gpiod"
++description = "GPIO pins of the Raspberry Pi (BCM2835/BCM2837): mode, level and pull"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../common" }
++daemon = { path = "../../daemon" }
++scheme-utils = { path = "../../scheme-utils" }
++
++libredox.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/bcm2835-gpiod/src/gpio.rs b/drivers/bcm2835-gpiod/src/gpio.rs
+new file mode 100644
+index 0000000..8128ca7
+--- /dev/null
++++ b/drivers/bcm2835-gpiod/src/gpio.rs
+@@ -0,0 +1,179 @@
++//! The GPIO registers of the BCM2835 and BCM2837 (BCM2835 ARM Peripherals,
++//! chapter 6).
++
++use std::time::{Duration, Instant};
++
++pub const PINS: u32 = 54;
++
++const GPFSEL0: usize = 0x00;
++const GPSET0: usize = 0x1c;
++const GPCLR0: usize = 0x28;
++const GPLEV0: usize = 0x34;
++const GPPUD: usize = 0x94;
++const GPPUDCLK0: usize = 0x98;
++
++#[derive(Clone, Copy, PartialEq, Debug)]
++pub enum Mode {
++    In,
++    Out,
++    Alt(u8),
++}
++
++impl Mode {
++    /// The 3-bit function select code.
++    fn code(self) -> u32 {
++        match self {
++            Mode::In => 0b000,
++            Mode::Out => 0b001,
++            Mode::Alt(0) => 0b100,
++            Mode::Alt(1) => 0b101,
++            Mode::Alt(2) => 0b110,
++            Mode::Alt(3) => 0b111,
++            Mode::Alt(4) => 0b011,
++            Mode::Alt(_) => 0b010,
++        }
++    }
++
++    fn from_code(code: u32) -> Self {
++        match code & 0b111 {
++            0b000 => Mode::In,
++            0b001 => Mode::Out,
++            0b100 => Mode::Alt(0),
++            0b101 => Mode::Alt(1),
++            0b110 => Mode::Alt(2),
++            0b111 => Mode::Alt(3),
++            0b011 => Mode::Alt(4),
++            _ => Mode::Alt(5),
++        }
++    }
++
++    pub fn parse(text: &str) -> Option<Self> {
++        match text {
++            "in" => Some(Mode::In),
++            "out" => Some(Mode::Out),
++            _ => match text.strip_prefix("alt")?.parse::<u8>().ok()? {
++                n @ 0..=5 => Some(Mode::Alt(n)),
++                _ => None,
++            },
++        }
++    }
++
++    pub fn name(self) -> String {
++        match self {
++            Mode::In => "in".into(),
++            Mode::Out => "out".into(),
++            Mode::Alt(n) => format!("alt{n}"),
++        }
++    }
++}
++
++#[derive(Clone, Copy, PartialEq, Debug)]
++pub enum Pull {
++    None,
++    Down,
++    Up,
++}
++
++impl Pull {
++    pub fn parse(text: &str) -> Option<Self> {
++        match text {
++            "none" => Some(Pull::None),
++            "down" => Some(Pull::Down),
++            "up" => Some(Pull::Up),
++            _ => None,
++        }
++    }
++
++    pub fn name(self) -> &'static str {
++        match self {
++            Pull::None => "none",
++            Pull::Down => "down",
++            Pull::Up => "up",
++        }
++    }
++}
++
++pub struct Gpio {
++    regs: *mut u32,
++}
++
++impl Gpio {
++    /// `regs` points at GPFSEL0.
++    pub fn new(regs: *mut u32) -> Self {
++        Self { regs }
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    /// Register offset and bit of a pin in a two-register bank (set, clear,
++    /// level, pull clock).
++    fn bank(base: usize, pin: u32) -> (usize, u32) {
++        (base + (pin as usize / 32) * 4, 1 << (pin % 32))
++    }
++
++    pub fn mode(&self, pin: u32) -> Mode {
++        let reg = GPFSEL0 + (pin as usize / 10) * 4;
++        Mode::from_code(self.read(reg) >> ((pin % 10) * 3))
++    }
++
++    pub fn set_mode(&self, pin: u32, mode: Mode) {
++        let reg = GPFSEL0 + (pin as usize / 10) * 4;
++        let shift = (pin % 10) * 3;
++        let value = self.read(reg) & !(0b111 << shift) | (mode.code() << shift);
++        self.write(reg, value);
++    }
++
++    pub fn level(&self, pin: u32) -> bool {
++        let (reg, bit) = Self::bank(GPLEV0, pin);
++        self.read(reg) & bit != 0
++    }
++
++    pub fn set_level(&self, pin: u32, high: bool) {
++        let (reg, bit) = Self::bank(if high { GPSET0 } else { GPCLR0 }, pin);
++        self.write(reg, bit);
++    }
++
++    /// The BCM2835 sequence: control signal, wait, clock it into the pin,
++    /// wait, remove both. The waits must be at least 150 cycles.
++    pub fn set_pull(&self, pin: u32, pull: Pull) {
++        let (reg, bit) = Self::bank(GPPUDCLK0, pin);
++        self.write(GPPUD, pull as u32);
++        settle();
++        self.write(reg, bit);
++        settle();
++        self.write(GPPUD, 0);
++        self.write(reg, 0);
++    }
++}
++
++/// The 150 cycles the pull control signal needs to settle (BCM2835 ARM
++/// Peripherals, GPPUDCLK), as 10 µs. A spin, not a sleep: in QEMU a 10 µs
++/// `nanosleep` did not come back.
++fn settle() {
++    let end = Instant::now() + Duration::from_micros(10);
++    while Instant::now() < end {
++        std::hint::spin_loop();
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn mode_codes_round_trip() {
++        for name in ["in", "out", "alt0", "alt1", "alt2", "alt3", "alt4", "alt5"] {
++            let mode = Mode::parse(name).unwrap();
++            assert_eq!(Mode::from_code(mode.code()), mode);
++            assert_eq!(mode.name(), name);
++        }
++        assert_eq!(Mode::parse("alt6"), None);
++        assert_eq!(Mode::parse("output"), None);
++    }
++}
+diff --git a/drivers/bcm2835-gpiod/src/main.rs b/drivers/bcm2835-gpiod/src/main.rs
+new file mode 100644
+index 0000000..c2d10b1
+--- /dev/null
++++ b/drivers/bcm2835-gpiod/src/main.rs
+@@ -0,0 +1,324 @@
++//! GPIO pins of the Raspberry Pi (BCM2835 and BCM2837), as a scheme:
++//!
++//! - `/scheme/gpio/pins`: one line per pin, `pin mode level`
++//! - `/scheme/gpio/<pin>/mode`: `in`, `out` or `alt0` to `alt5`
++//! - `/scheme/gpio/<pin>/value`: the level, `0` or `1`; writing sets the
++//!   output level (it shows on the pin in mode `out`)
++//! - `/scheme/gpio/<pin>/pull`: writing `up`, `down` or `none` sets the pull
++//!   resistor; reading gives the last setting, or `unknown` (the hardware
++//!   cannot be read back)
++//!
++//! The pins of the serial console (14, 15) and of the SD card (48 to 53)
++//! cannot be changed here: a wrong mode would cut the console or the root
++//! file system. No edge events yet.
++
++use std::fmt::Write as _;
++use std::process;
++
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTDIR, EPERM, EROFS};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
++
++mod gpio;
++
++use gpio::{Gpio, Mode, Pull, PINS};
++
++/// Bus address of the GPIO block on the BCM2835 to BCM2837, used if the
++/// devicetree has none.
++const GPIO_BUS_ADDR: usize = 0x7e20_0000;
++const PAGE_SIZE: usize = 4096;
++
++/// Pins this driver does not change: serial console, SD card.
++const PROTECTED: &[u32] = &[14, 15, 48, 49, 50, 51, 52, 53];
++
++const PIN_FILES: &[&str] = &["mode", "pull", "value"];
++
++#[derive(Clone, Copy, PartialEq)]
++enum Setting {
++    Mode,
++    Pull,
++    Value,
++}
++
++impl Setting {
++    fn parse(name: &str) -> Option<Self> {
++        match name {
++            "mode" => Some(Setting::Mode),
++            "pull" => Some(Setting::Pull),
++            "value" => Some(Setting::Value),
++            _ => None,
++        }
++    }
++}
++
++enum Handle {
++    Root,
++    /// The top directory: `pins` and the pin numbers.
++    Top,
++    PinDir,
++    File(Vec<u8>),
++    /// A pin file opened for writing.
++    Write(u32, Setting),
++}
++
++struct GpioScheme {
++    gpio: Gpio,
++    /// The last pull setting of each pin.
++    pulls: [Option<Pull>; PINS as usize],
++    handles: HandleMap<Handle>,
++}
++
++impl GpioScheme {
++    fn pins(&self) -> String {
++        let mut text = String::new();
++        for pin in 0..PINS {
++            let _ = writeln!(text, "{pin} {} {}", self.gpio.mode(pin).name(), u8::from(self.gpio.level(pin)));
++        }
++        text
++    }
++
++    fn contents(&self, pin: u32, setting: Setting) -> String {
++        match setting {
++            Setting::Mode => format!("{}\n", self.gpio.mode(pin).name()),
++            Setting::Value => format!("{}\n", u8::from(self.gpio.level(pin))),
++            Setting::Pull => format!("{}\n", self.pulls[pin as usize].map_or("unknown", Pull::name)),
++        }
++    }
++
++    fn set(&mut self, pin: u32, setting: Setting, value: &str) -> Result<()> {
++        if PROTECTED.contains(&pin) {
++            return Err(Error::new(EPERM));
++        }
++        match setting {
++            Setting::Mode => self.gpio.set_mode(pin, Mode::parse(value).ok_or(Error::new(EINVAL))?),
++            Setting::Value => match value {
++                "0" => self.gpio.set_level(pin, false),
++                "1" => self.gpio.set_level(pin, true),
++                _ => return Err(Error::new(EINVAL)),
++            },
++            Setting::Pull => {
++                let pull = Pull::parse(value).ok_or(Error::new(EINVAL))?;
++                self.gpio.set_pull(pin, pull);
++                self.pulls[pin as usize] = Some(pull);
++            }
++        }
++        Ok(())
++    }
++}
++
++/// `"17"` to pin 17; no leading zeros, no pins past the last.
++fn parse_pin(text: &str) -> Option<u32> {
++    let pin: u32 = text.parse().ok()?;
++    (pin < PINS && pin.to_string() == text).then_some(pin)
++}
++
++impl SchemeSync for GpioScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        let path = path.trim_matches('/');
++        // O_RDWR includes the O_WRONLY bit.
++        let write = flags & O_WRONLY != 0;
++        let handle = match path.split('/').collect::<Vec<_>>()[..] {
++            [""] => Handle::Top,
++            ["pins"] if write => return Err(Error::new(EROFS)),
++            ["pins"] => Handle::File(self.pins().into_bytes()),
++            [pin] => {
++                parse_pin(pin).ok_or(Error::new(ENOENT))?;
++                Handle::PinDir
++            }
++            [pin, file] => {
++                let pin = parse_pin(pin).ok_or(Error::new(ENOENT))?;
++                let setting = Setting::parse(file).ok_or(Error::new(ENOENT))?;
++                if write {
++                    Handle::Write(pin, setting)
++                } else {
++                    Handle::File(self.contents(pin, setting).into_bytes())
++                }
++            }
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let data = match self.handles.get(id)? {
++            Handle::File(data) => data,
++            Handle::Write(..) => return Err(Error::new(EBADF)),
++            _ => return Err(Error::new(EISDIR)),
++        };
++        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++        let len = buf.len().min(data.len() - start);
++        buf[..len].copy_from_slice(&data[start..start + len]);
++        Ok(len)
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let Handle::Write(pin, setting) = *self.handles.get(id)? else {
++            return Err(Error::new(EBADF));
++        };
++        let value = std::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.trim();
++        self.set(pin, setting, value)?;
++        Ok(buf.len())
++    }
++
++    // Shells truncate a file before writing to it.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Write(..) => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        let names: Vec<(String, DirentKind)> = match self.handles.get(id)? {
++            Handle::Top => std::iter::once(("pins".to_string(), DirentKind::Regular))
++                .chain((0..PINS).map(|pin| (pin.to_string(), DirentKind::Directory)))
++                .collect(),
++            Handle::PinDir => PIN_FILES.iter().map(|name| (name.to_string(), DirentKind::Regular)).collect(),
++            _ => return Err(Error::new(ENOTDIR)),
++        };
++        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
++        for (i, (name, kind)) in names.iter().enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: i as u64,
++                name,
++                kind: *kind,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Write(..) => stat.st_mode = 0o644 | MODE_FILE,
++            Handle::Root | Handle::Top | Handle::PinDir => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "gpio", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// The CPU physical address of the GPIO block, from the devicetree.
++fn gpio_phys(fdt: &Fdt) -> usize {
++    let bus_addr = fdt
++        .find_compatible(&["brcm,bcm2835-gpio", "brcm,bcm2711-gpio"])
++        .and_then(|node| node.reg())
++        .and_then(|mut reg| reg.next())
++        .map(|reg| reg.starting_address as usize)
++        .unwrap_or(GPIO_BUS_ADDR);
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-gpiod: no devicetree");
++        process::exit(0);
++    };
++    let phys = gpio_phys(&fdt);
++    let regs = unsafe {
++        common::physmap(phys, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-gpiod: failed to map registers")
++    } as *mut u32;
++    let mut scheme = GpioScheme {
++        gpio: Gpio::new(regs),
++        pulls: [None; PINS as usize],
++        handles: HandleMap::new(),
++    };
++    println!("bcm2835-gpiod: {PINS} pins at 0x{phys:08x}");
++
++    let socket = Socket::create().expect("bcm2835-gpiod: failed to create the gpio scheme");
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++
++    libredox::call::setrens(0, 0).expect("bcm2835-gpiod: failed to enter the null namespace");
++
++    handler
++        .process_requests_blocking(scheme)
++        .expect("bcm2835-gpiod: failed to process requests");
++}
++
++#[cfg(test)]
++mod tests {
++    use super::parse_pin;
++
++    #[test]
++    fn pin_names() {
++        assert_eq!(parse_pin("0"), Some(0));
++        assert_eq!(parse_pin("53"), Some(53));
++        assert_eq!(parse_pin("54"), None);
++        assert_eq!(parse_pin("07"), None);
++        assert_eq!(parse_pin("x"), None);
++    }
++}
+diff --git a/init.initfs.d/40_bcm2835-gpiod.service b/init.initfs.d/40_bcm2835-gpiod.service
+new file mode 100644
+index 0000000..3668b51
+--- /dev/null
++++ b/init.initfs.d/40_bcm2835-gpiod.service
+@@ -0,0 +1,8 @@
++[unit]
++description = "Raspberry Pi GPIO pins"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "bcm2835-gpiod"
++type = { scheme = "gpio" }
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 89351d0..286d5fa 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -6,2 +6,3 @@ requires_weak = [
+     "40_ps2d.service",
++    "40_bcm2835-gpiod.service",
+     "40_bcm2835-sdhostd.service",

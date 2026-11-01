@@ -1,0 +1,133 @@
+From 2313cde4e3e486bac0a434d0dfbfe316123c312f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 28 Oct 2026 08:38:20 +0000
+Subject: [PATCH] Leave out pcid, pcid-spawner, audiod and rtcd on the
+ Raspberry Pi 3
+
+The Raspberry Pi 3 has no PCI bus, so pcid panics (Pci::CfgAccess::read is
+not implemented on aarch64) and both pcid-spawners fail with ENODEV. There
+is no sound driver for it yet, so audiod stops with No such device. rtcd
+does nothing outside x86.
+
+Add condition_board_not to init units, use it for the pcid-spawner and
+audiod units, do not spawn pcid from hwd on raspi3bp, and run rtcd on x86
+only, like ps2d.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/hwd/src/main.rs                      |  7 +++++--
+ init.d/00_pcid-spawner.service               |  2 ++
+ init.d/20_audiod.service                     |  2 ++
+ init.initfs.d/00_rtcd.service                |  2 ++
+ init.initfs.d/40_pcid-spawner-initfs.service |  2 ++
+ init/src/unit.rs                             | 11 +++++++++++
+ 6 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hwd/src/main.rs b/drivers/hwd/src/main.rs
+index 79360e34..0654fd01 100644
+--- a/drivers/hwd/src/main.rs
++++ b/drivers/hwd/src/main.rs
+@@ -37,8 +37,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     //TODO: launch pcid based on backend information?
+     // Must launch after acpid but before probe calls /scheme/acpi/symbols
+-    #[allow(deprecated, reason = "we can't yet move this to init")]
+-    daemon::Daemon::spawn(process::Command::new("pcid"));
++    // The Raspberry Pi 3 has no PCI bus
++    if option_env!("BOARD") != Some("raspi3bp") {
++        #[allow(deprecated, reason = "we can't yet move this to init")]
++        daemon::Daemon::spawn(process::Command::new("pcid"));
++    }
+ 
+     daemon.ready();
+ 
+diff --git a/init.d/00_pcid-spawner.service b/init.d/00_pcid-spawner.service
+index 8ba6fc6c..ad7a78e5 100644
+--- a/init.d/00_pcid-spawner.service
++++ b/init.d/00_pcid-spawner.service
+@@ -1,5 +1,7 @@
+ [unit]
+ description = "PCI driver spawner"
++# The Raspberry Pi 3 has no PCI bus
++condition_board_not = ["raspi3bp"]
+ 
+ [service]
+ cmd = "pcid-spawner"
+diff --git a/init.d/20_audiod.service b/init.d/20_audiod.service
+index 572d1c9d..92f0615b 100644
+--- a/init.d/20_audiod.service
++++ b/init.d/20_audiod.service
+@@ -3,6 +3,8 @@ description = "Audio multiplexer"
+ requires_weak = [
+     "00_base.target",
+ ]
++# No sound driver for the Raspberry Pi 3 yet
++condition_board_not = ["raspi3bp"]
+ 
+ [service]
+ cmd = "audiod"
+diff --git a/init.initfs.d/00_rtcd.service b/init.initfs.d/00_rtcd.service
+index ffe8ea2e..4b1199d3 100644
+--- a/init.initfs.d/00_rtcd.service
++++ b/init.initfs.d/00_rtcd.service
+@@ -1,6 +1,8 @@
+ [unit]
+ description = "Set time from realtime clock"
+ default_dependencies = false
++# rtcd does nothing on other architectures yet
++condition_architecture = ["x86", "x86_64"]
+ 
+ [service]
+ cmd = "rtcd"
+diff --git a/init.initfs.d/40_pcid-spawner-initfs.service b/init.initfs.d/40_pcid-spawner-initfs.service
+index 6945b9ea..080b8e02 100644
+--- a/init.initfs.d/40_pcid-spawner-initfs.service
++++ b/init.initfs.d/40_pcid-spawner-initfs.service
+@@ -1,6 +1,8 @@
+ [unit]
+ description = "PCI driver spawner"
+ requires_weak = ["10_inputd.service", "20_graphics.target", "40_hwd.service"]
++# The Raspberry Pi 3 has no PCI bus
++condition_board_not = ["raspi3bp"]
+ 
+ [service]
+ cmd = "pcid-spawner"
+diff --git a/init/src/unit.rs b/init/src/unit.rs
+index 98053cb2..97a5dfa3 100644
+--- a/init/src/unit.rs
++++ b/init/src/unit.rs
+@@ -125,6 +125,7 @@ pub struct UnitInfo {
+     pub condition_architecture: Option<Vec<String>>,
+     // FIXME replace this with hwd reading from the devicetree
+     pub condition_board: Option<Vec<String>>,
++    pub condition_board_not: Option<Vec<String>>,
+ }
+ 
+ fn true_bool() -> bool {
+@@ -190,6 +191,7 @@ impl Unit {
+                     requires_weak: script.1,
+                     condition_architecture: None,
+                     condition_board: None,
++                    condition_board_not: None,
+                 },
+                 kind: UnitKind::LegacyScript { script: script.0 },
+             });
+@@ -246,6 +248,15 @@ impl Unit {
+             }
+         }
+ 
++        if let Some(condition_board_not) = &self.info.condition_board_not {
++            if condition_board_not
++                .iter()
++                .any(|board| Some(&**board) == option_env!("BOARD"))
++            {
++                return false;
++            }
++        }
++
+         true
+     }
+ }
+-- 
+2.53.0
+

@@ -1,5 +1,9 @@
 # Experiment: bcm2835-sdhostd, a driver for the sdhost SD controller
 
+> **Now default.** Since branch `sdhost-default` ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) these patches are
+> base patches `0025`–`0028`, and every image boots with `bcm2835-sdhostd`.
+> This README keeps the history of the experiment.
+
 New driver for the BCM2835 sdhost controller (`brcm,bcm2835-sdhost`), the
 one Linux uses for the card slot. It routes GPIO 48–53 to the controller,
 initializes the card and serves it as a disk scheme.

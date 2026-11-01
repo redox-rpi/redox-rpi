@@ -1,0 +1,271 @@
+From e6435137eb71d987589fc945b0f796c245a4a4a9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 27 Oct 2026 17:24:31 +0100
+Subject: [PATCH 23/25] bcm2835-sdhostd: high speed mode, transfer statistics
+
+Switch the card to high speed mode with CMD6 and run it at up to 50 MHz.
+The divider still assumes a 400 MHz core clock, which the firmware may
+raise to at any time; at the usual 250 MHz the card runs at 31 MHz instead
+of 15.6 MHz in default speed mode.
+
+With SDHOSTD_STATS set, print request counts, blocks and times of reads
+and writes every 5 seconds while there is disk activity.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 158 ++++++++++++++++++--
+ drivers/storage/bcm2835-sdhostd/src/main.rs |   3 +
+ 2 files changed, 149 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
+index b72ccb6..98b26e0 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/host.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
+@@ -84,12 +84,15 @@ const FIFO_THRESHOLD: u32 = 4;
+ const FIFO_BURST: usize = 8;
+ const MAX_CDIV: u32 = 0x7ff;
+ 
+-/// The divider runs off the VPU core clock. It is 400 MHz on the Pi 3B+
+-/// and may drop to 250 MHz when idle; dividing for 400 MHz keeps the SD
+-/// clock at or below the target either way.
++/// The divider runs off the VPU core clock. The firmware moves it between
++/// 250 MHz and 400 MHz on the Pi 3B+ while the system runs; dividing for
++/// 400 MHz keeps the SD clock at or below the target either way.
+ const CORE_CLOCK: u32 = 400_000_000;
+ const IDENT_CLOCK: u32 = 400_000;
++/// Default speed mode: at most 25 MHz.
+ const DATA_CLOCK: u32 = 25_000_000;
++/// High speed mode (CMD6), which every SDHC card has: at most 50 MHz.
++const HIGH_SPEED_CLOCK: u32 = 50_000_000;
+ 
+ const BLOCK_SIZE: usize = 512;
+ /// Blocks per read or write command (SDHBLC has 9 bits).
+@@ -147,6 +150,66 @@ pub struct SdHost {
+     /// Block addressing (SDHC/SDXC); byte addressing otherwise.
+     high_capacity: bool,
+     size: u64,
++    /// The SD clock aimed at, at a 400 MHz core clock.
++    clock: u32,
++    stats: Option<Stats>,
++}
++
++/// Transfer counts and times, printed every few seconds when the driver
++/// runs with SDHOSTD_STATS set.
++#[derive(Default)]
++struct Counter {
++    requests: u64,
++    blocks: u64,
++    time: Duration,
++    /// Time the card spent programming after a write.
++    busy: Duration,
++}
++
++impl Counter {
++    fn count(&mut self, len: usize, start: Instant) {
++        self.requests += 1;
++        self.blocks += (len / BLOCK_SIZE) as u64;
++        self.time += start.elapsed();
++    }
++}
++
++struct Stats {
++    read: Counter,
++    write: Counter,
++    since: Instant,
++}
++
++impl Stats {
++    const INTERVAL: Duration = Duration::from_secs(5);
++
++    fn print_due(&mut self) {
++        if self.since.elapsed() < Self::INTERVAL {
++            return;
++        }
++        let ms = |d: Duration| d.as_millis();
++        let (r, w) = (&self.read, &self.write);
++        println!(
++            "bcm2835-sdhostd: {} s: read {} requests {} blocks {} ms; write {} requests {} blocks {} ms, {} ms of it busy",
++            self.since.elapsed().as_secs(),
++            r.requests,
++            r.blocks,
++            ms(r.time),
++            w.requests,
++            w.blocks,
++            ms(w.time),
++            ms(w.busy)
++        );
++        *self = Stats::new();
++    }
++
++    fn new() -> Self {
++        Stats {
++            read: Counter::default(),
++            write: Counter::default(),
++            since: Instant::now(),
++        }
++    }
+ }
+ 
+ // The registers belong to this driver alone.
+@@ -160,9 +223,16 @@ impl SdHost {
+             rca: 0,
+             high_capacity: false,
+             size: 0,
++            clock: 0,
++            stats: None,
+         }
+     }
+ 
++    /// Count transfers and print the counts every few seconds.
++    pub fn enable_stats(&mut self) {
++        self.stats = Some(Stats::new());
++    }
++
+     fn reg(&self, offset: usize) -> u32 {
+         unsafe { self.regs.add(offset / 4).read_volatile() }
+     }
+@@ -205,6 +275,42 @@ impl SdHost {
+         let clock = CORE_CLOCK / (div + 2);
+         self.set_reg(SDCDIV, div);
+         self.set_reg(SDTOUT, clock / 2);
++        self.clock = clock;
++    }
++
++    /// Switch the card to high speed mode with CMD6, if it has it. The
++    /// 64-byte switch status says which functions the card supports and
++    /// which one it selected; bytes are in the order the card sends them.
++    fn switch_high_speed(&mut self) -> SdResult<bool> {
++        let mut status = [0u8; 64];
++        // Mode 0: check whether group 1 (access mode) has function 1.
++        self.read_data(6, 0x00ff_fff1, &mut status)?;
++        if status[13] & 0b10 == 0 {
++            return Ok(false);
++        }
++        // Mode 1: switch to it.
++        self.read_data(6, 0x80ff_fff1, &mut status)?;
++        // The card switches within 8 clocks after the status.
++        thread::sleep(Duration::from_millis(1));
++        Ok(status[16] & 0xf == 1)
++    }
++
++    /// A command that returns one short data block, such as CMD6.
++    fn read_data(&mut self, index: u32, arg: u32, buffer: &mut [u8]) -> SdResult<()> {
++        self.set_reg(SDHBCT, buffer.len() as u32);
++        self.set_reg(SDHBLC, 1);
++        self.command(index, arg, Response::Short, Data::Read)?;
++        let result = self.pio(
++            buffer.len() / 4,
++            |i, value| {
++                buffer[i * 4..i * 4 + 4].copy_from_slice(&value.unwrap_or(0).to_le_bytes());
++                0
++            },
++            true,
++        );
++        self.set_reg(SDHBCT, BLOCK_SIZE as u32);
++        result?;
++        self.wait_transfer_complete()
+     }
+ 
+     fn wait_command_done(&self) -> SdResult<u32> {
+@@ -335,12 +441,24 @@ impl SdHost {
+             self.command(16, BLOCK_SIZE as u32, Response::Short, Data::None)?;
+         }
+         self.set_clock(DATA_CLOCK);
++        let high_speed = match self.switch_high_speed() {
++            Ok(high_speed) => high_speed,
++            Err(err) => {
++                println!("bcm2835-sdhostd: no high speed mode: {err}");
++                self.set_reg(SDHSTS, HSTS_CLEAR);
++                false
++            }
++        };
++        if high_speed {
++            self.set_clock(HIGH_SPEED_CLOCK);
++        }
+ 
+         println!(
+-            "bcm2835-sdhostd: {} card, {} MiB, 4-bit bus, up to {} MHz",
++            "bcm2835-sdhostd: {} card, {} MiB, 4-bit bus, {} speed, up to {} MHz",
+             if self.high_capacity { "SDHC/SDXC" } else { "SDSC" },
+             self.size >> 20,
+-            DATA_CLOCK / 1_000_000
++            if high_speed { "high" } else { "default" },
++            self.clock / 1_000_000
+         );
+         Ok(())
+     }
+@@ -458,10 +576,15 @@ impl SdHost {
+             false,
+         )?;
+         self.wait_transfer_complete()?;
++        let busy = Instant::now();
+         if blocks > 1 {
+             self.command(12, 0, Response::ShortBusy, Data::None)?;
+         }
+-        self.wait_card_ready()
++        self.wait_card_ready()?;
++        if let Some(stats) = &mut self.stats {
++            stats.write.busy += busy.elapsed();
++        }
++        Ok(())
+     }
+ 
+     /// After a failed transfer: clear the errors, stop the card's transfer
+@@ -554,23 +677,34 @@ impl Disk for SdHost {
+     }
+ 
+     async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+-        let len = buffer.len();
+-        self.chunked(
++        let (len, start) = (buffer.len(), Instant::now());
++        let result = self.chunked(
+             block,
+             buffer,
+             len,
+             |host, lba, buffer, range| host.read_blocks(lba, &mut buffer[range]),
+             "read",
+-        )
++        );
++        if let Some(stats) = &mut self.stats {
++            stats.read.count(len, start);
++            stats.print_due();
++        }
++        result
+     }
+ 
+     async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+-        self.chunked(
++        let (len, start) = (buffer.len(), Instant::now());
++        let result = self.chunked(
+             block,
+             buffer,
+-            buffer.len(),
++            len,
+             |host, lba, buffer, range| host.write_blocks(lba, &buffer[range]),
+             "write",
+-        )
++        );
++        if let Some(stats) = &mut self.stats {
++            stats.write.count(len, start);
++            stats.print_due();
++        }
++        result
+     }
+ }
+diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
+index 929f829..e112026 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/main.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
+@@ -103,6 +103,9 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+     unsafe { route_sd_pins(phys - GPIO_OFFSET) };
+ 
+     let mut sdhost = host::SdHost::new(regs);
++    if env::var_os("SDHOSTD_STATS").is_some() {
++        sdhost.enable_stats();
++    }
+     if let Err(err) = sdhost.init_card() {
+         println!("bcm2835-sdhostd: no usable card: {err}");
+         process::exit(1);
+-- 
+2.54.0 (Apple Git-157)
+
