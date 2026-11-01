@@ -1,0 +1,95 @@
+From 166781fa6306bb0746e444d4c03541b2feb95231 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 00:13:17 +0000
+Subject: [PATCH] bcm2835-sdhostd: up to 1024 blocks per read or write command
+ (redox-rpi #155)
+
+The driver split every request into commands of at most 128 blocks
+(64 KiB). Every write command ends with CMD12 and a wait while the card
+programs, so a 128 KiB RedoxFS record cost two of those waits. Linux
+sends up to 512 KiB per command to this controller. SDHOSTD_MAX_BLOCKS
+sets another limit for tests.
+---
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 17 +++++++++++++----
+ drivers/storage/bcm2835-sdhostd/src/main.rs |  5 +++++
+ 2 files changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
+index 1b5b27d8..6f451849 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/host.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
+@@ -96,8 +96,9 @@ const DATA_CLOCK: u32 = 25_000_000;
+ const HIGH_SPEED_CLOCK: u32 = 50_000_000;
+ 
+ const BLOCK_SIZE: usize = 512;
+-/// Blocks per read or write command (SDHBLC has 9 bits).
+-const MAX_BLOCKS: usize = 128;
++/// Blocks per read or write command by default: 512 KiB, the largest
++/// request Linux sends to this controller (`max_req_size` in bcm2835.c).
++const MAX_BLOCKS: usize = 1024;
+ const TRANSFER_ATTEMPTS: usize = 3;
+ 
+ const CMD_TIMEOUT: Duration = Duration::from_millis(500);
+@@ -155,6 +156,8 @@ pub struct SdHost {
+     core_clock: u32,
+     /// The SD clock aimed at, at that core clock.
+     clock: u32,
++    /// Blocks per read or write command.
++    max_blocks: usize,
+     stats: Option<Stats>,
+ }
+ 
+@@ -229,10 +232,16 @@ impl SdHost {
+             high_capacity: false,
+             size: 0,
+             clock: 0,
++            max_blocks: MAX_BLOCKS,
+             stats: None,
+         }
+     }
+ 
++    /// Send at most `blocks` blocks per read or write command.
++    pub fn set_max_blocks(&mut self, blocks: usize) {
++        self.max_blocks = blocks.max(1);
++    }
++
+     /// Count transfers and print the counts every few seconds.
+     pub fn enable_stats(&mut self) {
+         self.stats = Some(Stats::new());
+@@ -610,7 +619,7 @@ impl SdHost {
+         }
+     }
+ 
+-    /// Run `transfer` on each chunk of at most MAX_BLOCKS blocks, retrying
++    /// Run `transfer` on each chunk of at most `max_blocks` blocks, retrying
+     /// a failed chunk after `recover`.
+     fn chunked<B>(
+         &mut self,
+@@ -625,7 +634,7 @@ impl SdHost {
+         }
+         let mut offset = 0;
+         while offset < len {
+-            let end = (offset + MAX_BLOCKS * BLOCK_SIZE).min(len);
++            let end = (offset + self.max_blocks * BLOCK_SIZE).min(len);
+             let lba = block + (offset / BLOCK_SIZE) as u64;
+             let mut attempt = 1;
+             loop {
+diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
+index 7725b894..3bd9c605 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/main.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/main.rs
+@@ -148,6 +148,11 @@ fn daemon(daemon: Option<daemon::Daemon>) -> ! {
+     if env::var_os("SDHOSTD_STATS").is_some() {
+         sdhost.enable_stats();
+     }
++    // For speed tests: blocks per command (default 1024).
++    if let Some(blocks) = env::var("SDHOSTD_MAX_BLOCKS").ok().and_then(|v| v.parse().ok()) {
++        sdhost.set_max_blocks(blocks);
++        println!("bcm2835-sdhostd: at most {blocks} blocks per command");
++    }
+     if let Err(err) = sdhost.init_card() {
+         println!("bcm2835-sdhostd: no usable card: {err}");
+         process::exit(1);
+-- 
+2.53.0
+
