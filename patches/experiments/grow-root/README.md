@@ -46,4 +46,10 @@ Again after the merge of main, `v0.3.0-dev-564-g69799a6+x99f2`
 85 → 4032 MiB and restart, RedoxFS 84 → 4032 MiB, a third boot without
 `growfs` lines.
 
+Again after the merge of main with the redoxfs pin `db847d87`,
+`v0.3.0-dev-888-ga7b56f0+x99f2` (2026-11-01), `--small` image (151 MiB) on a
+4 GiB card: partition 87 → 4032 MiB and restart, RedoxFS 86 → 4032 MiB,
+`df -h /` 3.9G with 86.3M used, a third boot without `growfs` lines and no
+`os error 75`.
+
 On the Pi: test 29 in `docs/test-plan.md` (needs a person to swap the card).
