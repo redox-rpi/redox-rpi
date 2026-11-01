@@ -6104,3 +6104,79 @@ runs). The stalls in N1 and N2 (and the end of O2) have another cause: the
 scheduler freeze/starvation seen in #170 and #173 is the likely one.
 
 Stable image restored afterwards (`BUILD_ID="v0.3.0-dev-533-g6c729cd+x9f76"`).
+
+## 2026-11-01: `v0.3.0-dev-859-g56364c4+xc41d` (A, main) and `v0.3.0-dev-886-g548e397+xc41d` (B, PR #73 write coalescing) (card write speed by write size)
+
+Real Pi 3B+ over netboot. Test 175 ([#155](https://github.com/redox-rpi/redox-rpi/issues/155)), Pi test agent.
+
+**Data check passes: every file's sha256 matches its source, on both images.
+Coalescing (B) makes small writes much faster and cuts the card writes for them
+by about 23 times.** 4 KiB writes go from 121–240 kB/s to 2.7–2.9 MB/s, and
+64 KiB from 2.4–2.7 to 6.1–6.5 MB/s. 1 MiB writes get a little slower (11–12 →
+7.8–8.7 MB/s). Images from `~/redox-rpi-sd/keep/` with manifests (match), stable
+bootloader, each on a fresh boot. Clocks before and after on both: `arm
+1400000000 1400000000`, `core 250000000 400000000`. `/scheme/data` 394.5M used
+before each.
+
+| write | A pass 1 | A pass 2 | B pass 1 | B pass 2 |
+|---|---|---|---|---|
+| 4 KiB × 1024 (4 MiB) | 34.7 s, **121 kB/s** | 17.47 s, 240 kB/s | 1.43 s, **2.9 MB/s** | 1.55 s, 2.7 MB/s |
+| 64 KiB × 256 (16 MiB) | 6.16 s, 2.7 MB/s | 7.12 s, 2.4 MB/s | 2.60 s, **6.5 MB/s** | 2.73 s, 6.1 MB/s |
+| 1 MiB × 16 (16 MiB) | 1.44 s, **12 MB/s** | 1.57 s, 11 MB/s | 2.15 s, 7.8 MB/s | 1.93 s, 8.7 MB/s |
+
+- sha256: `/tmp/r16` `94b79f96…`, its first 4 MiB `2fae7622…`. Every 64 KiB and
+  1 MiB file `94b79f96…`, every 4 KiB file `2fae7622…`. **All match.**
+- `bcm2835-sdhostd` statistics. A prints a line every 5 s while busy; B prints
+  one line per busy period (`28 s:`, `22 s:` …). Lines come at the end of an
+  interval, so they don't split exactly at the dd boundaries. The read lines with
+  about 33000–37000 blocks are the `sha256sum` reads.
+- **4 KiB write, pass 1:** A wrote 1755 + 1833 + 1075 + 2314 + 164 + 127 + 993
+  requests, **232744 blocks** (about 114 MiB on the card for a 4 MiB file),
+  about 31 s of write time. B wrote 275 requests, **10136 blocks** (5 MiB),
+  1022 ms (397 ms busy).
+- All lines in order:
+
+A:
+```
+bcm2835-sdhostd: 43 s: read 532 requests 4242 blocks 245 ms; write 25 requests 200 blocks 37 ms, 16 ms of it busy
+bcm2835-sdhostd: 5 s: read 140 requests 1864 blocks 76 ms; write 1755 requests 48760 blocks 4416 ms, 1387 ms of it busy
+bcm2835-sdhostd: 5 s: read 491 requests 6256 blocks 262 ms; write 1833 requests 51864 blocks 4190 ms, 1461 ms of it busy
+bcm2835-sdhostd: 5 s: read 279 requests 3704 blocks 145 ms; write 1075 requests 30432 blocks 4536 ms, 897 ms of it busy
+bcm2835-sdhostd: 5 s: read 665 requests 9600 blocks 351 ms; write 2314 requests 65376 blocks 3950 ms, 1647 ms of it busy
+bcm2835-sdhostd: 5 s: read 54 requests 1224 blocks 43 ms; write 164 requests 3792 blocks 4941 ms, 201 ms of it busy
+bcm2835-sdhostd: 5 s: read 37 requests 296 blocks 18 ms; write 127 requests 3800 blocks 4983 ms, 444 ms of it busy
+bcm2835-sdhostd: 18 s: read 273 requests 3784 blocks 151 ms; write 993 requests 28720 blocks 4116 ms, 741 ms of it busy
+bcm2835-sdhostd: 5 s: read 389 requests 10784 blocks 341 ms; write 773 requests 23480 blocks 2268 ms, 735 ms of it busy
+bcm2835-sdhostd: 17 s: read 349 requests 3512 blocks 173 ms; write 1306 requests 40256 blocks 2909 ms, 1043 ms of it busy
+bcm2835-sdhostd: 8 s: read 620 requests 36704 blocks 995 ms; write 9 requests 72 blocks 9 ms, 4 ms of it busy
+bcm2835-sdhostd: 20 s: read 46 requests 368 blocks 26 ms; write 249 requests 33736 blocks 1212 ms, 306 ms of it busy
+bcm2835-sdhostd: 6 s: read 210 requests 33424 blocks 795 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 5 s: read 158 requests 1512 blocks 72 ms; write 1722 requests 47008 blocks 2831 ms, 1006 ms of it busy
+bcm2835-sdhostd: 5 s: read 716 requests 9640 blocks 376 ms; write 2223 requests 62896 blocks 3949 ms, 1542 ms of it busy
+bcm2835-sdhostd: 5 s: read 762 requests 9616 blocks 387 ms; write 2181 requests 61616 blocks 3955 ms, 1615 ms of it busy
+bcm2835-sdhostd: 22 s: read 810 requests 8768 blocks 379 ms; write 2144 requests 61296 blocks 3009 ms, 1198 ms of it busy
+bcm2835-sdhostd: 5 s: read 324 requests 10264 blocks 312 ms; write 432 requests 12776 blocks 2478 ms, 467 ms of it busy
+bcm2835-sdhostd: 23 s: read 601 requests 5888 blocks 274 ms; write 1647 requests 50960 blocks 3574 ms, 1312 ms of it busy
+bcm2835-sdhostd: 8 s: read 693 requests 37288 blocks 1003 ms; write 9 requests 72 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 23 s: read 41 requests 328 blocks 20 ms; write 250 requests 33744 blocks 1348 ms, 347 ms of it busy
+```
+
+B:
+```
+bcm2835-sdhostd: 48 s: read 580 requests 4626 blocks 269 ms; write 25 requests 200 blocks 292 ms, 65 ms of it busy
+bcm2835-sdhostd: 28 s: read 0 requests 0 blocks 0 ms; write 275 requests 10136 blocks 1022 ms, 397 ms of it busy
+bcm2835-sdhostd: 22 s: read 56 requests 448 blocks 26 ms; write 1058 requests 40328 blocks 2100 ms, 868 ms of it busy
+bcm2835-sdhostd: 6 s: read 323 requests 34328 blocks 840 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 6 s: read 2 requests 16 blocks 2 ms; write 10 requests 80 blocks 11 ms, 5 ms of it busy
+bcm2835-sdhostd: 20 s: read 27 requests 216 blocks 15 ms; write 249 requests 33736 blocks 1933 ms, 364 ms of it busy
+bcm2835-sdhostd: 6 s: read 196 requests 33312 blocks 797 ms; write 0 requests 0 blocks 0 ms, 0 ms of it busy
+bcm2835-sdhostd: 22 s: read 15 requests 120 blocks 18 ms; write 284 requests 10208 blocks 1113 ms, 502 ms of it busy
+bcm2835-sdhostd: 6 s: read 0 requests 0 blocks 0 ms; write 8 requests 64 blocks 10 ms, 3 ms of it busy
+bcm2835-sdhostd: 26 s: read 53 requests 424 blocks 25 ms; write 1047 requests 40240 blocks 2246 ms, 790 ms of it busy
+bcm2835-sdhostd: 8 s: read 451 requests 35352 blocks 901 ms; write 10 requests 80 blocks 10 ms, 4 ms of it busy
+bcm2835-sdhostd: 25 s: read 46 requests 368 blocks 28 ms; write 249 requests 33736 blocks 1701 ms, 484 ms of it busy
+```
+
+- No panic or error on the serial console.
+
+Stable image restored afterwards.
