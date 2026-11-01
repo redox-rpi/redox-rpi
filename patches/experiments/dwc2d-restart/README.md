@@ -30,4 +30,12 @@ dwc2d-restart`.
 
 ## Tests
 
-- QEMU: see below.
+- QEMU 2026-11-01, `v0.3.0-dev-974-g3cf2086+x809a` (with `netget`,
+  `timesync` and `sched-vtime-clamp`, branch `t151-restart-test`): three
+  `restart` requests in a row, each time the controller is reset, the hub,
+  keyboard and network card are found again and devsh answers; keyboard
+  test pass, `test-hotplug.sh` 15/15 without a false restart. QEMU first
+  aborted on the restart (`usb_ep_get: dev != NULL`): its DWC2 goes on
+  retrying a NAKed poll after the channel is halted, so the devices'
+  channels are now halted as on unplugging before the reset.
+- Pi: see the test plan (after #189).
