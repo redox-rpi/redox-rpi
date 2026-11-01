@@ -47,7 +47,9 @@
   command line (`cmdline.txt`) go into the environment. The MAC address
   probably comes from the firmware's devicetree; to check at the first Pi
   test with the serial console. `make-sdcard.sh --direct` writes a card
-  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md).
+  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md),
+  card rebuilt on v0.4.0-dev (2026-11-01). #15 is with the firmware session
+  now.
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
