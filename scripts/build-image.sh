@@ -238,7 +238,7 @@ for name in bootloader base relibc redoxfs pkgutils; do
 done
 
 # Our own packages, built from this repository.
-for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
+for tool in cputop devshd i2c reboot sigregs spi termios-check timerd timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
@@ -246,7 +246,9 @@ for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
     # so its fingerprint goes first: otherwise a build with other relibc
     # patches keeps the old sigregs.
     build='template = "cargo"'
-    if [ "$tool" = sigregs ]; then
+    # termios-check the same way: it tests the termios functions of our
+    # relibc (experiment termios-speed).
+    if [ "$tool" = sigregs ] || [ "$tool" = termios-check ]; then
         build='template = "custom"
 dependencies = ["relibc"]
 script = """
