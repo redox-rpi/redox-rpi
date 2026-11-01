@@ -6723,3 +6723,64 @@ Image `vc-…`, own bootloader, as in 188. 6 runs, with a power cycle before eac
 Each came once per run, and the CPU kept beating afterwards. No `[hb stall …]` line and no hub drop in any run.
 
 Power cycles: 09:43:02, 09:49:33, 09:55:50, 10:01:41, 10:12:55. Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-974-g3cf2086+x809a` (dwc2d restarts a stuck USB controller)
+
+Real Pi 3B+ over netboot. Test 190 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 10:57.
+
+**Fail: the restart runs, but the network never comes back.**
+- Part A: the first forced restart printed `controller restarted`, but no device came back and devsh was gone for good. The second forced restart printed nothing.
+- Part B: 4 of 5 valid runs completed. In run 6 the controller got stuck at 240 MiB, and the restart failed with `controller restart failed: Timeout("AHB idle")`. The network did not come back.
+
+**Part A (forced restart while idle):** reset 10:57:19, at login 10:57:40.
+- Restart 1, at 10:58:00 (`echo restart > /tmp/dwc2d-cycle` over devsh). Serial:
+  ```
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000009 HPRT0 0x1405 HFNUM 0xbf93e2
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 0, last 0x0 at address 0 endpoint 0, 12060 ms ago
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  ```
+  - Then nothing more from dwc2d: no `device on root port`, no `network on the adapter`.
+  - devsh did not answer within 264 s (or later).
+- Restart 2: not sent. devsh was dead, so the command did not reach the Pi, and there was no new dwc2d line.
+- Read over the serial console at 11:10 (`/tmp/dwc2d-usbstats`):
+  - `restarts 1`, `halt_failures 0`, `timeouts 0`, `recoveries 0`;
+  - **`hprt0 0x400`** (port power on, no device connected), `last_hprt0 0x100f`, `gintsts 0x54000029`;
+  - `/tmp/dwc2d-step`: `795232 idle`.
+- `grep -E … /scheme/sys/context` did not run: Redox `grep` answers `Invalid parameter '-E'`.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result | Bytes, seconds |
+|---|---|---|---|
+| 1 | 11:11 | **not run**: the Pi was still without network from part A, and the runner's reset goes over devsh, so the Pi was never reset (my runner's fault, not the image's) | – |
+| 2 | 11:26:05 (power cycle) | **complete** | 382156480 in 366.8 s, 1.04 MB/s |
+| 3 | 11:33:33 (power cycle) | **complete** | 382156480 in 309.1 s, 1.24 MB/s |
+| 4 | 11:39:53 (power cycle) | **complete** | 382156480 in 292.4 s, 1.31 MB/s |
+| 5 | 11:45:57 (power cycle) | **complete** | 382156480 in 333.4 s, 1.15 MB/s |
+| 6 | 11:52:51 (power cycle) | **stalled** at `240 MiB 196.2 s`, last progress 11:57:03 | – |
+
+- Runs 2–5: no `stuck`, `restarted`, `removed` or `Timeout` line.
+- Run 6, in order:
+  ```
+  netget:   240 MiB   196.2 s  1.81 MB/s
+  [smolnetd … ERROR] Dropped outboud packet on eth0 (failed to write to network file)    (11:57:10)
+  dwc2d: request [a3, 00, 00, 00, 01, 00, 04, 00] to address 1 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: hub 1 port 1: Timeout("channel halt")
+  … the same for hub 1 ports 2, 3, 4 …
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000039 HPRT0 0x1005 HFNUM 0x2033c6 GNPTXSTS 0x8080400 HPTXSTS 0x9d080400 HAINT 0x0 GRSTCTL 0x40000000; ch0 HCCHAR 0xc0500040 HCINT 0x0 HCTSIZ 0x60080008; ch1 HCCHAR 0x81588a00 HCINT 0x20 HCTSIZ 0xc0d83800; ch2 …
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 31, last 0x80000000 at address 1 endpoint 0, 59 ms ago
+  dwc2d: controller restart failed: Timeout("AHB idle")
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: request [80, 06, 00, 01, 00, 00, 08, 00] to address 0 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: root port: Timeout("channel halt")
+  dwc2d: root port: HPRT0 0x100d
+  ```
+  - Then nothing more. The full `controller stuck` line, with all channels, is in `t190/r6-stuckline.txt` on homenodellm.
+  - Lines in run 6: `stuck` 1, `restarted` 0, `removed` 1 (`keyboard removed`), `Timeout` 11.
+  - Read over serial at 12:02, `/tmp/dwc2d-usbstats`: `halt_failures 40`, `restarts 1`, `timeouts 36`, `last_error 0x80000000`, `root_events 2`, `hprt0 0x1005`, `last_hprt0 0x100d`, `gintsts 0x54000039`. `/tmp/dwc2d-step`: `582139 idle`.
+  - netget's TCP connection did not survive, and the network did not come back within 6 min. devsh was dead.
+- The download stall itself looks the same as #189 run 5, and the new code does detect it (`controller stuck`).
+
+Afterwards: power cycle 12:03:44 with stable staged. `rm /scheme/data/netget.bin` was not done at the end because devsh was dead; the stable image does not use that file. Stable came up to devsh.
