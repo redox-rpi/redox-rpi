@@ -354,7 +354,7 @@ diff -ruN a/src/arch/aarch64/device/generic_timer.rs b/src/arch/aarch64/device/g
          timeout::trigger(token);
 diff -ruN a/src/context/memory.rs b/src/context/memory.rs
 --- a/src/context/memory.rs	2026-11-01 20:09:25.536016661 +0000
-+++ b/src/context/memory.rs	2026-11-01 20:09:25.536715920 +0000
++++ b/src/context/memory.rs	2026-11-01 20:10:29.067925120 +0000
 @@ -3042,8 +3042,15 @@
          #[cfg(target_arch = "aarch64")]
          let mut stall_watch = crate::arch::misc::StallWatch::start(2);
@@ -366,7 +366,7 @@ diff -ruN a/src/context/memory.rs b/src/context/memory.rs
 +                "tlb-ack",
 +                line!(),
 +                self.state.ackword.load(Ordering::SeqCst) as usize,
-+                affected_cpu_count,
++                affected_cpu_count as usize,
 +            );
              #[cfg(target_arch = "aarch64")]
              if stall_watch.stalled() {
