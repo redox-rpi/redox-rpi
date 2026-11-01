@@ -1,0 +1,436 @@
+diff --git a/candle-nn/src/attention/cpu_flash/causal.rs b/candle-nn/src/attention/cpu_flash/causal.rs
+index bc0d233..1cb6c7b 100644
+--- a/candle-nn/src/attention/cpu_flash/causal.rs
++++ b/candle-nn/src/attention/cpu_flash/causal.rs
+@@ -29,6 +29,41 @@ fn vec_add(acc: &mut [f32], v: &[f32]) {
+     acc.iter_mut().zip(v).for_each(|(a, e)| *a += e);
+ }
+ 
++/// Element type of an interleaved key/value cache: f32, or bf16 for half the
++/// memory (bf16 to f32 is a shift, cheap on CPUs without fp16 support).
++pub trait KvElem: WithDType {
++    const ZERO: Self;
++    /// Write `src` into `dst`, converting.
++    fn store(dst: &mut [Self], src: &[f32]);
++    /// `src` as f32: itself, or converted into `buf`.
++    fn row<'a>(src: &'a [Self], buf: &'a mut [f32]) -> &'a [f32];
++}
++
++impl KvElem for f32 {
++    const ZERO: Self = 0.0;
++    fn store(dst: &mut [Self], src: &[f32]) {
++        dst.copy_from_slice(src);
++    }
++    #[inline(always)]
++    fn row<'a>(src: &'a [Self], _buf: &'a mut [f32]) -> &'a [f32] {
++        src
++    }
++}
++
++impl KvElem for half::bf16 {
++    const ZERO: Self = half::bf16::ZERO;
++    fn store(dst: &mut [Self], src: &[f32]) {
++        dst.iter_mut().zip(src).for_each(|(d, s)| *d = half::bf16::from_f32(*s));
++    }
++    #[inline(always)]
++    fn row<'a>(src: &'a [Self], buf: &'a mut [f32]) -> &'a [f32] {
++        buf.iter_mut()
++            .zip(src)
++            .for_each(|(b, s)| *b = f32::from_bits((s.to_bits() as u32) << 16));
++        &buf[..src.len()]
++    }
++}
++
+ /// Prefetch a cache line for read.
+ #[inline(always)]
+ fn prefetch_read(ptr: *const f32) {
+@@ -386,9 +421,9 @@ fn causal_decode_f32_lean(
+ 
+ /// Decode with interleaved KV cache. No ALiBi, no softcap.
+ #[allow(clippy::too_many_arguments)]
+-pub fn causal_decode_f32_interleaved(
++pub fn causal_decode_f32_interleaved<T: KvElem>(
+     q_data: &[f32],
+-    kv_data: &[f32],
++    kv_data: &[T],
+     h_q: usize,
+     h_kv: usize,
+     d: usize,
+@@ -420,7 +455,9 @@ pub fn causal_decode_f32_interleaved(
+         }
+         let acc = std::slice::from_raw_parts_mut((scratch_ptr as *mut f32).add(tid * d), d);
+         let q_data = std::slice::from_raw_parts(q_ptr as *const f32, h_q * d);
+-        let kv_data = std::slice::from_raw_parts(kv_ptr as *const f32, kv_len * kv_seq_stride);
++        let kv_data = std::slice::from_raw_parts(kv_ptr as *const T, kv_len * kv_seq_stride);
++        let mut kbuf = vec![0f32; d];
++        let mut vbuf = vec![0f32; d];
+ 
+         for h_i in start_h..end_h {
+             let out_chunk = std::slice::from_raw_parts_mut((out_ptr as *mut f32).add(h_i * d), d);
+@@ -433,11 +470,11 @@ pub fn causal_decode_f32_interleaved(
+ 
+             for kv_pos in 0..kv_len {
+                 let kv_base = kv_pos * kv_seq_stride + kv_head_off;
+-                let k_row = &kv_data[kv_base..kv_base + d];
+-                let v_row = &kv_data[kv_base + d..kv_base + 2 * d];
++                let k_row = T::row(&kv_data[kv_base..kv_base + d], &mut kbuf);
++                let v_row = T::row(&kv_data[kv_base + d..kv_base + 2 * d], &mut vbuf);
+ 
+                 if kv_pos + 1 < kv_len {
+-                    prefetch_read(kv_data[kv_base + kv_seq_stride..].as_ptr());
++                    prefetch_read(kv_data[kv_base + kv_seq_stride..].as_ptr() as *const f32);
+                 }
+ 
+                 let mut score = 0.0f32;
+@@ -462,9 +499,9 @@ pub fn causal_decode_f32_interleaved(
+ 
+ /// GQA-2 specialization: each pair of query heads (h*2, h*2+1) shares a KV head.
+ /// Loads K and V once per position, accumulates into both heads simultaneously.
+-fn causal_decode_f32_interleaved_gqa2(
++fn causal_decode_f32_interleaved_gqa2<T: KvElem>(
+     q_data: &[f32],
+-    kv_data: &[f32],
++    kv_data: &[T],
+     h_kv: usize,
+     d: usize,
+     kv_len: usize,
+@@ -495,7 +532,9 @@ fn causal_decode_f32_interleaved_gqa2(
+         let acc1 =
+             std::slice::from_raw_parts_mut((scratch_ptr as *mut f32).add(tid * 2 * d + d), d);
+         let q_data = std::slice::from_raw_parts(q_ptr as *const f32, h_q * d);
+-        let kv_data = std::slice::from_raw_parts(kv_ptr as *const f32, kv_len * kv_seq_stride);
++        let kv_data = std::slice::from_raw_parts(kv_ptr as *const T, kv_len * kv_seq_stride);
++        let mut kbuf = vec![0f32; d];
++        let mut vbuf = vec![0f32; d];
+ 
+         for kv_h in start_h..end_h {
+             let out0 = std::slice::from_raw_parts_mut((out_ptr as *mut f32).add(kv_h * 2 * d), d);
+@@ -514,11 +553,11 @@ fn causal_decode_f32_interleaved_gqa2(
+ 
+             for kv_pos in 0..kv_len {
+                 let kv_base = kv_pos * kv_seq_stride + kv_head_off;
+-                let k_row = &kv_data[kv_base..kv_base + d];
+-                let v_row = &kv_data[kv_base + d..kv_base + 2 * d];
++                let k_row = T::row(&kv_data[kv_base..kv_base + d], &mut kbuf);
++                let v_row = T::row(&kv_data[kv_base + d..kv_base + 2 * d], &mut vbuf);
+ 
+                 if kv_pos + 1 < kv_len {
+-                    prefetch_read(kv_data[kv_base + kv_seq_stride..].as_ptr());
++                    prefetch_read(kv_data[kv_base + kv_seq_stride..].as_ptr() as *const f32);
+                 }
+ 
+                 let mut sc0 = 0.0f32;
+diff --git a/candle-nn/src/kv_cache.rs b/candle-nn/src/kv_cache.rs
+index 8ca8410..279aad4 100644
+--- a/candle-nn/src/kv_cache.rs
++++ b/candle-nn/src/kv_cache.rs
+@@ -1037,26 +1037,32 @@ impl InterleavedKvCache {
+     }
+ }
+ 
++pub use crate::attention::cpu_flash::causal::KvElem;
++pub use half::bf16;
++
+ // Work with KV cache directly in interleaved space.
+ #[derive(Debug, Clone)]
+-pub struct RawInterleavedKvCache {
+-    buf: Vec<f32>,
++pub struct RawInterleavedKvCache<T = f32> {
++    buf: Vec<T>,
+     h_kv: usize,
+     d: usize,
+     pos_stride: usize,
+     len: usize,
++    /// Elements added when the buffer is full (a quarter of the starting size).
++    grow: usize,
+ }
+ 
+-impl RawInterleavedKvCache {
++impl<T: KvElem> RawInterleavedKvCache<T> {
+     /// Create a new cache with space for `max_seq` positions.
+     pub fn new(h_kv: usize, d: usize, max_seq: usize) -> Self {
+         let pos_stride = h_kv * 2 * d;
+         Self {
+-            buf: vec![0f32; max_seq * pos_stride],
++            buf: vec![T::ZERO; max_seq * pos_stride],
+             h_kv,
+             d,
+             pos_stride,
+             len: 0,
++            grow: max_seq.div_ceil(4) * pos_stride,
+         }
+     }
+ 
+@@ -1078,17 +1084,21 @@ impl RawInterleavedKvCache {
+         let base = pos * self.pos_stride;
+         let d = self.d;
+ 
+-        // Grow buffer if needed
++        // Grow buffer if needed, by a quarter of the starting size: doubling a
++        // large cache overshoots by up to half, which a board without swap
++        // cannot spare.
+         if base + self.pos_stride > self.buf.len() {
+-            self.buf.resize(self.buf.len() * 2, 0.0);
++            let step = self.grow.max(self.pos_stride);
++            self.buf.reserve_exact(step);
++            self.buf.resize(self.buf.len() + step, T::ZERO);
+         }
+ 
+         for h in 0..self.h_kv {
+             let k_src = h * d;
+             let v_src = h * d;
+             let dst = base + h * 2 * d;
+-            self.buf[dst..dst + d].copy_from_slice(&k_flat[k_src..k_src + d]);
+-            self.buf[dst + d..dst + 2 * d].copy_from_slice(&v_flat[v_src..v_src + d]);
++            T::store(&mut self.buf[dst..dst + d], &k_flat[k_src..k_src + d]);
++            T::store(&mut self.buf[dst + d..dst + 2 * d], &v_flat[v_src..v_src + d]);
+         }
+ 
+         self.len += 1;
+@@ -1107,7 +1117,7 @@ impl RawInterleavedKvCache {
+     }
+ 
+     /// Get the active portion of the cache as a slice: `(len * H_kv * 2 * D)` elements.
+-    pub fn data(&self) -> &[f32] {
++    pub fn data(&self) -> &[T] {
+         &self.buf[..self.len * self.pos_stride]
+     }
+ 
+@@ -1115,6 +1125,33 @@ impl RawInterleavedKvCache {
+         self.len = 0;
+     }
+ 
++    /// The cached positions as bytes, to save them.
++    pub fn as_bytes(&self) -> &[u8] {
++        let d = self.data();
++        // SAFETY: plain numbers, no padding.
++        unsafe { std::slice::from_raw_parts(d.as_ptr() as *const u8, std::mem::size_of_val(d)) }
++    }
++
++    /// Replace the cache with `len` positions read from `r`, as written by
++    /// `as_bytes`.
++    pub fn read_from(&mut self, len: usize, r: &mut impl std::io::Read) -> std::io::Result<()> {
++        let n = len * self.pos_stride;
++        if self.buf.len() < n {
++            let step = self.grow.max(self.pos_stride);
++            let want = n.div_ceil(step) * step;
++            self.buf.reserve_exact(want - self.buf.len());
++            self.buf.resize(want, T::ZERO);
++        }
++        self.len = 0;
++        // SAFETY: plain numbers, every bit pattern is a valid value.
++        let bytes = unsafe {
++            std::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as *mut u8, n * std::mem::size_of::<T>())
++        };
++        r.read_exact(bytes)?;
++        self.len = len;
++        Ok(())
++    }
++
+     pub fn h_kv(&self) -> usize {
+         self.h_kv
+     }
+diff --git a/candle-transformers/src/models/quantized_qwen3.rs b/candle-transformers/src/models/quantized_qwen3.rs
+index 3fa0044..318c90a 100644
+--- a/candle-transformers/src/models/quantized_qwen3.rs
++++ b/candle-transformers/src/models/quantized_qwen3.rs
+@@ -12,11 +12,68 @@ use candle::quantized::{gguf_file, QTensor};
+ use candle::{DType, Device, Result, Storage, Tensor};
+ use candle_nn::attention::cpu_flash::causal::causal_decode_f32_interleaved;
+ use candle_nn::attention::{flash_attn, AttnMask};
+-use candle_nn::kv_cache::{ConcatKvCache, InterleavedKvCache, RawInterleavedKvCache};
+-use candle_nn::{Activation, Embedding, Module};
++use candle_nn::kv_cache::{bf16, ConcatKvCache, InterleavedKvCache, RawInterleavedKvCache};
++use candle_nn::{Activation, Module};
+ use std::io::{Read, Seek};
+ use std::sync::Arc;
+ 
++/// Token embedding that stays quantized: only the rows of the tokens in
++/// the input are dequantized. Dequantizing the whole table (151936 x 1024
++/// for Qwen3 0.6B) takes 622 MB as f32, more than a 1 GiB board can spare.
++#[derive(Clone)]
++struct QEmbedding {
++    weight: Arc<QTensor>,
++    hidden_size: usize,
++}
++
++impl std::fmt::Debug for QEmbedding {
++    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
++        write!(f, "QEmbedding({:?}, {})", self.weight.dtype(), self.hidden_size)
++    }
++}
++
++impl QEmbedding {
++    fn forward(&self, ids: &Tensor) -> Result<Tensor> {
++        let (b, l) = ids.dims2()?;
++        let dtype = self.weight.dtype();
++        let device = self.weight.device();
++        let row_bytes = self.hidden_size / dtype.block_size() * dtype.type_size();
++        let data = self.weight.data()?;
++        let mut rows = Vec::with_capacity(b * l);
++        for id in ids.flatten_all()?.to_vec1::<u32>()? {
++            let start = id as usize * row_bytes;
++            let raw = data
++                .get(start..start + row_bytes)
++                .ok_or_else(|| candle::Error::Msg(format!("token id {id} out of range")))?;
++            let row = candle::quantized::ggml_file::qtensor_from_ggml(
++                dtype,
++                raw,
++                vec![self.hidden_size],
++                &device,
++            )?;
++            rows.push(row.dequantize(&device)?);
++        }
++        Tensor::stack(&rows, 0)?.reshape((b, l, self.hidden_size))
++    }
++}
++
++/// Positions the CPU key/value cache starts with, preallocated per layer as
++/// bf16; it grows by a quarter of that when full. 4096 take 16 MiB per layer
++/// of Qwen3 0.6B, 450 MiB for its 28 layers. `CANDLE_KV_CACHE_LEN` sets a
++/// smaller start for boards without swap, where untouched memory still costs
++/// RAM.
++fn kv_cache_len() -> usize {
++    std::env::var("CANDLE_KV_CACHE_LEN")
++        .ok()
++        .and_then(|s| s.parse().ok())
++        .filter(|&n| n > 0)
++        .unwrap_or(4096)
++}
++
++/// Positions with rotary tables. Qwen3 allows 40,960, but the tables then
++/// take 30 MiB, and a cache that long does not fit a small board anyway.
++const MAX_POSITIONS: usize = 4096;
++
+ pub struct Gguf<R: Read + Seek> {
+     ct: gguf_file::Content,
+     reader: R,
+@@ -167,7 +224,7 @@ struct AttentionWeights {
+     rotary_emb: Arc<RotaryEmbedding>,
+     kv_cache: Option<ConcatKvCache>,
+     interleaved_cache: Option<InterleavedKvCache>,
+-    raw_cache: Option<RawInterleavedKvCache>,
++    raw_cache: Option<RawInterleavedKvCache<bf16>>,
+     span_attn: tracing::Span,
+ }
+ 
+@@ -208,7 +265,8 @@ impl AttentionWeights {
+             None
+         };
+         let raw_cache = if on_cpu {
+-            Some(RawInterleavedKvCache::new(num_kv_heads, head_dim, 4096))
++            // bf16 halves the cache: 112 KiB per position for Qwen3 0.6B.
++            Some(RawInterleavedKvCache::new(num_kv_heads, head_dim, kv_cache_len()))
+         } else {
+             None
+         };
+@@ -312,11 +370,8 @@ impl AttentionWeights {
+ 
+                 ctx.reshape((b, l, self.hidden_size))?.apply(&self.o_proj)
+             } else {
+-                // Prefill: interleaved cache + flash_attn; also populate raw cache for decode.
+-                let ic = self.interleaved_cache.as_mut().unwrap();
+-                let kv = ic.append(&k, &v)?;
+-
+-                // Populate raw cache for subsequent decode steps
++                // Prefill: write K, V into the raw cache and run flash_attn on a
++                // copy of it. (A second, tensor cache cost as much memory again.)
+                 {
+                     let k_cont = k.squeeze(0)?.transpose(0, 1)?.contiguous()?;
+                     let v_cont = v.squeeze(0)?.transpose(0, 1)?.contiguous()?;
+@@ -332,6 +387,13 @@ impl AttentionWeights {
+                     };
+                     self.raw_cache.as_mut().unwrap().write_kv_batch(k_d, v_d, l);
+                 }
++                let rc = self.raw_cache.as_ref().unwrap();
++                let kv = Tensor::from_slice(
++                    rc.data(),
++                    (rc.len(), self.num_kv_heads, 2 * self.head_dim),
++                    x.device(),
++                )?
++                .to_dtype(DType::F32)?;
+ 
+                 let kv_k = kv.narrow(2, 0, self.head_dim)?.unsqueeze(0)?;
+                 let kv_v = kv.narrow(2, self.head_dim, self.head_dim)?.unsqueeze(0)?;
+@@ -449,7 +511,7 @@ impl LayerWeights {
+ 
+ #[derive(Debug, Clone)]
+ pub struct ModelWeights {
+-    embed_tokens: Embedding,
++    embed_tokens: QEmbedding,
+     layers: Vec<LayerWeights>,
+     norm: RmsNorm,
+     lm_head: QMatMul,
+@@ -489,13 +551,16 @@ impl ModelWeights {
+             None => DType::F16,
+         };
+ 
+-        let embed_tensor = gg.tensor("token_embd.weight")?;
+-        let embed_tokens = Embedding::new(embed_tensor.dequantize(device)?, hidden_size);
++        let embed_tensor = Arc::new(gg.tensor("token_embd.weight")?);
++        let embed_tokens = QEmbedding {
++            weight: embed_tensor.clone(),
++            hidden_size,
++        };
+ 
+         let rotary = Arc::new(RotaryEmbedding::new(
+             dtype,
+             head_dim,
+-            max_position_embeddings,
++            max_position_embeddings.min(MAX_POSITIONS),
+             rope_freq_base,
+             device,
+         )?);
+@@ -516,11 +581,12 @@ impl ModelWeights {
+ 
+         let norm = gg.rms_norm("output_norm.weight", rms_norm_eps)?;
+         // Load output projection tensor, falling back to tied embeddings like gemma3
++        // (shares the quantized table instead of reading it a second time).
+         let lm_head_tensor = match gg.tensor("output.weight") {
+-            Ok(tensor) => tensor,
+-            Err(_) => gg.tensor("token_embd.weight")?,
++            Ok(tensor) => Arc::new(tensor),
++            Err(_) => embed_tensor,
+         };
+-        let lm_head = QMatMul::from_weights(lm_head_tensor.into())?;
++        let lm_head = QMatMul::from_weights(lm_head_tensor)?;
+         let span = tracing::span!(tracing::Level::TRACE, "model");
+         let span_output = tracing::span!(tracing::Level::TRACE, "output");
+         Ok(Self {
+@@ -565,4 +631,36 @@ impl ModelWeights {
+             layer.clear_kv_cache();
+         }
+     }
++
++    /// Write the CPU key/value cache of every layer to `w`, to load it again
++    /// with `load_kv_cache` (for example the state after a fixed system
++    /// prompt). Returns the number of positions.
++    pub fn save_kv_cache(&self, w: &mut impl std::io::Write) -> Result<usize> {
++        let mut len = 0;
++        for layer in &self.layers {
++            let Some(c) = &layer.self_attn.raw_cache else {
++                candle::bail!("no CPU key/value cache to save")
++            };
++            len = c.len();
++            w.write_all(&(len as u64).to_le_bytes())?;
++            w.write_all(c.as_bytes())?;
++        }
++        Ok(len)
++    }
++
++    /// Replace the key/value cache with one written by `save_kv_cache`.
++    /// Returns the number of positions.
++    pub fn load_kv_cache(&mut self, r: &mut impl std::io::Read) -> Result<usize> {
++        let mut len = 0;
++        for layer in &mut self.layers {
++            let Some(c) = &mut layer.self_attn.raw_cache else {
++                candle::bail!("no CPU key/value cache to load into")
++            };
++            let mut n = [0u8; 8];
++            r.read_exact(&mut n)?;
++            len = u64::from_le_bytes(n) as usize;
++            c.read_from(len, r)?;
++        }
++        Ok(len)
++    }
+ }

@@ -14,7 +14,11 @@ clock, disk and memory, files in the home folder, later Wi-Fi on and off.
 
 ## State
 
-Nothing on `main`. Work is on the branch `assistant` (see In progress).
+Nothing on `main` yet; the branch `assistant` is ready for review (PR for #43). On a
+network-booted Pi 3B+ the assistant answers with the Qwen3 0.6B model and
+its tools: 21 s to load, a saved system prompt loaded in 2 s, writing at
+about 2 tokens per second with 3 threads (#159). Pi tests #112, #126,
+#143, #159.
 
 ## The limits of a Pi 3B+
 
@@ -210,9 +214,9 @@ the prompt. This matters more for good answers than the choice of model.
 | Step | What | Size |
 |---|---|---|
 | 1 | Reference: llama.cpp built for Redox, the model answers in QEMU; recipe and SD image | done; Pi test #51 for reference numbers |
-| 2 | Rust runtime: candle built for Redox with an `sdot` fallback, a small test program, recipe in the experiment; answers in QEMU, speed against llama.cpp on the Pi | answers in QEMU, worker-pool hang fixed (4 days); Pi speed test open |
+| 2 | Rust runtime: candle built for Redox with an `sdot` fallback, a small test program, recipe in the experiment; answers in QEMU, speed against llama.cpp on the Pi | answers on the Pi (#112, #126, #159): about 2 tokens per second writing with 3 threads and a longer pool spin, heap peak 430 MiB |
 | 2b | Only if candle is too big or slow: our own Qwen3 runtime in Rust (GGUF, Q4_0/Q8_0 NEON kernels for ARMv8.0, tokenizer) | 2 to 3 weeks |
-| 3 | The `assistant` program in Rust: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | chat loop and tools with the model run in QEMU (1 day); saved prompt state and grammar mask open, about 1 week |
+| 3 | The `assistant` program in Rust: chat loop with Qwen3's template, saved prompt state, grammar-limited tool calls, the look-only tools | chat loop, tools and saved prompt state run on the Pi (#143); grammar mask open |
 | 4 | Tools that change things, with confirmation; the namespace sandbox; the Redox help text and a test set of 50 to 100 questions from macOS, Windows and Linux users | 1 to 2 weeks |
 | 5 | Optional: fine-tune the model (LoRA) on the tools and the help text, off the Pi | 2 to 4 weeks |
 | 6 | Later: other models (FunctionGemma for the Zero 2 W); a Rust 1.58-bit kernel once a small BitNet model exists | open (kernel 1 to 2 weeks) |
@@ -375,8 +379,35 @@ git).
   saved, then loaded in 18 s instead of 325 s). **devshd refused
   connections after the first assistant run** (`Connection refused`, the
   process still there; the serial console worked); after a reset it did
-  not happen again. Rerun of the saved state: test #143.
+  not happen again ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)). Rerun of the saved state: test #143.
   [Report](../test-reports.md).
+- **Pi test 143, 2026-10-31, network boot: pass.** The first run read the
+  system prompt in 179 s and saved it in 6 s (`prompt.kv`, 43.6 MB); the
+  second loaded it in 2.3 s, so the whole question took 75 s instead of
+  266 s. Writing 1.06 to 1.44 tokens per second with 3 threads, heap peak
+  430 MiB, then 407 MiB; devsh kept working after each run; the soft
+  temperature limit was reached (`throttled` 0x00080008 at the end).
+  [Report](../test-reports.md).
+- **Writing speed, 2026-10-31 (branch `assistant-speed`):** the answers at
+  0.15 tokens per second (#112, #153) all ran with 4 threads; with 3 they
+  stayed at 1.06 to 1.44. Heat alone (1.4 to 1.2 GHz) would cost about
+  15 %. The likely cost is candle's worker pool: a worker that runs out of
+  spins sleeps, and on Redox a sleep lasts until the next timer tick, up
+  to 10 ms, while a token needs about 200 matrix products. rinfer now
+  prints per written token the model time, the sampling time and the pool
+  sleeps. QEMU with 3 threads: spin limit 25,000 (the default) gave 438
+  sleeps per token and 0.44 tokens per second, 2,500,000 gave 1 sleep and
+  1.05. **Pi test #159:** the default slept 236 times per token (1.38
+  tokens per second); from 250,000 on no sleeps and 2.0 tokens per second
+  with 3 threads, 2.56 with 4. rinfer now sets 250,000 on Redox and keeps
+  3 threads: with 4, any other process stalls a worker (the 0.15 answers),
+  and 4 were measured only with rinfer alone. `RAYON_NUM_THREADS=4` and
+  `CANDLE_BARRIER_POOL_SPIN_LIMIT` still override. The Pi was at its soft
+  temperature limit from the first run; warm, the default slept only 48
+  times (1.70), so heat changes the numbers. Not worth it now: a smaller
+  quantization (the weights are already Q4_0) and a shorter answer cap
+  (answers are 24 to 33 tokens, the cap is 200); the q4_0 kernel only if
+  the model time stays high.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
@@ -396,13 +427,17 @@ git).
 
 ## Next
 
-- Writing runs at 1 token per second on the Pi (goal 2). Profile it
+- Writing reaches about 2 tokens per second on the Pi with 3 threads and
+  the longer spin (#159), at the soft temperature limit (a heat sink may
+  help); next, the assistant itself at this speed, and maybe 4 threads. Profile it
   before deciding on our own loop (step 2b): the worker pool's 200 µs
   sleep (the kernel futex fix would allow parking again; yield and longer
   spinning were worse in QEMU), the q4_0 kernels
   without `sdot`, and the slow answer after a tool call. Pi test #51 (SD
   card, llama.cpp numbers) would show how far llama.cpp gets; it still
   waits for a card swap.
+- devshd stops accepting connections after a long, memory-heavy run
+  ([#129](https://github.com/redox-rpi/redox-rpi/issues/129)).
 - Move the SD-card recipe `qwen3-model` to the smaller model file.
 - A grammar mask while a tool call is written, and a test set of
   questions; a cap on the conversation length (memory).
