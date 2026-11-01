@@ -36,3 +36,45 @@ spi = "source"
 # start with today's prebuilt aarch64 packages, in QEMU too; see
 # docs/status.md.
 diffutils = {}
+
+# CPU clock at boot (#23): rpi-firmwared starts in the initfs, before /etc
+# is there, with the ondemand governor. If /etc/rpi-firmware/governor
+# exists, its word goes to the governor if it is `ondemand`, `performance`
+# or `powersave`, else to arm_clock, so a rate in Hz (or `max`, `min`)
+# keeps a fixed clock, like force_turbo=1 on Linux. rpi-firmwared logs what it set.
+[[files]]
+path = "/usr/lib/rpi-firmware/governor.ion"
+data = """
+# A mode goes to the governor, anything else (a rate, max, min) to arm_clock.
+# Choosing first keeps the governor's refusal out of the log (Pi test 161:
+# cat: /etc/rpi-firmware/governor: Invalid argument).
+if test -f /etc/rpi-firmware/governor
+    let mode = $(cat /etc/rpi-firmware/governor)
+    match $mode
+        case ondemand
+            echo $mode > /scheme/rpi-firmware/governor
+        case performance
+            echo $mode > /scheme/rpi-firmware/governor
+        case powersave
+            echo $mode > /scheme/rpi-firmware/governor
+        case _
+            echo $mode > /scheme/rpi-firmware/arm_clock
+    end
+else
+    # No file: keep the ondemand governor; init counts status 1 as failed.
+    true
+end
+"""
+
+[[files]]
+path = "/usr/lib/init.d/15_rpi-governor.service"
+data = """
+[unit]
+description = "CPU clock setting from /etc/rpi-firmware/governor"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "ion"
+args = ["/usr/lib/rpi-firmware/governor.ion"]
+type = "oneshot"
+"""
