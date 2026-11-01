@@ -1,0 +1,63 @@
+name: Upstream drift
+
+# Once a week: every patch, one by one, on the pinned and on the newest
+# upstream commits (scripts/check-upstream-drift.py). The result goes into
+# one issue, "Upstream drift report", which is updated each week; a comment
+# is added when the headline changes. The job stays green even when patches
+# conflict: drift is a report for the next lock move, not a failure of main.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Try every patch on the pinned and the newest upstream
+        run: scripts/check-upstream-drift.py --out drift.md --json drift.json
+
+      - name: Job summary
+        run: cat drift.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-drift
+          path: |
+            drift.md
+            drift.json
+
+      - name: Update the issue "Upstream drift report"
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Upstream drift report"
+          {
+            echo "Written by the weekly workflow \"Upstream drift\" ([run]($RUN_URL), $(date -u +%Y-%m-%d))."
+            echo "How to read it: [scripts/check-upstream-drift.py]($REPO_URL/blob/main/scripts/check-upstream-drift.py)."
+            echo
+            cat drift.md
+          } > body.md
+          num="$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+                 --jq ".[] | select(.title == \"$title\") | .number" | head -1)"
+          if [ -z "$num" ]; then
+            gh issue create --title "$title" --body-file body.md
+            exit 0
+          fi
+          old="$(gh issue view "$num" --json body --jq .body | sed -n '/^\*\*/{p;q}')"
+          new="$(sed -n '/^\*\*/{p;q}' drift.md)"
+          gh issue edit "$num" --body-file body.md
+          if [ "$old" != "$new" ]; then
+            gh issue comment "$num" --body "$new ([run]($RUN_URL))"
+          fi
