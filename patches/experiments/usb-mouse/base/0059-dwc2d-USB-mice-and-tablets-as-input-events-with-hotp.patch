@@ -1,16 +1,16 @@
-From 1383b5fdc5e42e786035804b4d2d889adaa87cfb Mon Sep 17 00:00:00 2001
+From 600bde65289ba1ea28edb8e8898b6480bd508bdb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:59:57 +0100
 Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
 
 ---
- drivers/usb/dwc2d/src/main.rs  |  89 +++++--
+ drivers/usb/dwc2d/src/main.rs  |  99 +++++--
  drivers/usb/dwc2d/src/mouse.rs | 471 +++++++++++++++++++++++++++++++++
- 2 files changed, 536 insertions(+), 24 deletions(-)
+ 2 files changed, 543 insertions(+), 27 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/mouse.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 28cc7aa2..7dcf47a5 100644
+index 12be94ad..a9b077e2 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -40,7 +40,7 @@ index 28cc7aa2..7dcf47a5 100644
  use rtl8152::Rtl8152;
  
  /// A network adapter on the bus, initialized. It receives only while the
-@@ -204,8 +206,9 @@ impl NetworkAdapter for UsbNet {
+@@ -207,8 +209,9 @@ impl NetworkAdapter for UsbNet {
  enum Found {
      /// A network adapter, initialized, with its own MAC address and link.
      Net(Adapter, [u8; 6], bool),
@@ -52,7 +52,7 @@ index 28cc7aa2..7dcf47a5 100644
  }
  
  /// Recognize a device and bring it up. `link_wait` is how long a network
-@@ -249,19 +252,28 @@ fn probe(
+@@ -252,19 +255,28 @@ fn probe(
              }
          };
      }
@@ -94,7 +94,7 @@ index 28cc7aa2..7dcf47a5 100644
  }
  
  /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
-@@ -386,9 +398,12 @@ impl Timer {
+@@ -389,9 +401,12 @@ impl Timer {
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
@@ -109,31 +109,54 @@ index 28cc7aa2..7dcf47a5 100644
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -439,6 +454,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -445,8 +460,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      };
      let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
      let mut keyboard = None;
 +    let mut mouse = None;
-     for device in bus.devices.clone() {
-         match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
-             Some(Found::Net(adapter, mac, link)) => {
-@@ -450,7 +466,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let mut macs = Vec::new();
+-    let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, keyboard: &mut Option<Keyboard>, addresses: Vec<u8>| {
++    let mut boot_probe = |bus: &mut Bus,
++                          net: &mut UsbNet,
++                          keyboard: &mut Option<Keyboard>,
++                          mouse: &mut Option<Mouse>,
++                          addresses: Vec<u8>| {
+         for address in addresses {
+             let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+                 continue;
+@@ -456,13 +476,20 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     macs.push((adapter.address(), mac));
+                     net.adapters.push((adapter, link));
                  }
-                 net.adapters.push((adapter, link));
+-                Some(Found::Keyboard(f)) if keyboard.is_none() => *keyboard = Keyboard::new(hc.clone(), f),
++                Some(Found::Input(k, m)) => {
++                    if keyboard.is_none() {
++                        *keyboard = k.and_then(|f| Keyboard::new(hc.clone(), f));
++                    }
++                    if mouse.is_none() {
++                        *mouse = m.and_then(|f| Mouse::new(hc.clone(), f));
++                    }
++                }
+                 _ => {}
              }
--            Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
-+            Some(Found::Input(k, m)) => {
-+                if keyboard.is_none() {
-+                    keyboard = k.and_then(|f| Keyboard::new(hc.clone(), f));
-+                }
-+                if mouse.is_none() {
-+                    mouse = m.and_then(|f| Mouse::new(hc.clone(), f));
-+                }
-+            }
-             _ => {}
          }
+     };
+     let addresses = bus.devices.iter().map(|d| d.address).collect();
+-    boot_probe(&mut bus, &mut net, &mut keyboard, addresses);
++    boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, addresses);
+     // Wait for a network adapter's link, so DHCP does not start into a dead
+     // cable, or, without an adapter, a moment for devices that connect late
+     // after power-on. Rescans meanwhile take devices that connect now, so
+@@ -483,7 +510,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         }
+         std::thread::sleep(Duration::from_millis(50));
+         let changes = bus.scan();
+-        boot_probe(&mut bus, &mut net, &mut keyboard, changes.added);
++        boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
      }
-@@ -490,12 +513,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
+     // The network stack keeps the address of the adapter it starts with.
+@@ -528,12 +555,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
      }
  
@@ -149,7 +172,7 @@ index 28cc7aa2..7dcf47a5 100644
          timer.arm(Duration::ZERO);
      }
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
-@@ -534,6 +558,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -572,6 +600,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let due = k.poll();
                      next = Some(next.map_or(due, |n: Duration| n.min(due)));
                  }
@@ -160,7 +183,7 @@ index 28cc7aa2..7dcf47a5 100644
                  if let Some(next) = next {
                      timer.arm(next);
                  }
-@@ -548,6 +576,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -586,6 +618,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let port = match request {
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
@@ -168,7 +191,7 @@ index 28cc7aa2..7dcf47a5 100644
                          _ => {
                              let mut words = request.split_whitespace().map(str::parse::<u16>);
                              match (words.next(), words.next()) {
-@@ -579,6 +608,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -617,6 +650,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
@@ -179,7 +202,7 @@ index 28cc7aa2..7dcf47a5 100644
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -586,13 +619,21 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -624,13 +661,21 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      };
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
