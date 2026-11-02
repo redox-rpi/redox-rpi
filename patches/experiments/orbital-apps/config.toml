@@ -4,8 +4,9 @@
 # left out: experiment orbital keeps orbterm as the terminal.
 
 [packages]
-# Web browser on Orbital (netsurf-fb).
-netsurf = {}
+# No browser yet: netsurf-fb 3.11 (upstream package) stops at start with a
+# relibc panic in pthread_getspecific (tls.rs:42, "RefCell already
+# borrowed"), see README.md.
 # Text editor and file manager (libcosmic).
 cosmic-edit = {}
 cosmic-files = {}
