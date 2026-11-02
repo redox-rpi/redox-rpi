@@ -10,8 +10,9 @@
 - **Desktop (user report, 2026-11-02):** the Pi 3B+ screen-visit SD image
   of #202 (`v0.4.0-dev-60-ga206e99`, experiments `rpi-fb`, `rpi-fb-dma-on`,
   `orbital`, no mouse) boots on the Zero 2 W with Orbital on the screen and
-  "runs well". No network, as expected (no USB Ethernet adapter was
-  plugged in). No serial log from that boot. See the
+  "runs well". **No network**, although the Ethernet HAT (RTL8152) was
+  plugged in and connected; v0.2.0 had network over the same HAT. Cause
+  unknown, no serial log from that boot. See the
   [graphics topic](graphics.md) and [#33](https://github.com/redox-rpi/redox-rpi/issues/33).
 
 ## Next
