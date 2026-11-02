@@ -7136,3 +7136,17 @@ Test 56 ([#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse in `d
 - Serial: `dwc2d: mouse at address 3: relative, 3 button(s), wheel` for the user's wired mouse `093a:2510`. The keyboard (`keyboard at address 5`) works at the same time.
 - User at the screen, in Orbital: the pointer moves, clicks work, a terminal opens.
 - Not checked in 203: the `/tmp/dwc2d-input-log` lines (move, each button, wheel), unplugging and plugging the mouse in again, and `echo mouse > /tmp/dwc2d-cycle`.
+
+## 2026-11-02: `v0.4.0-dev-67-g47859bc+x227e` (graphics screen visit with USB mouse)
+
+Real Pi 3B+ over netboot, user at the HDMI monitor with USB keyboard and mouse. Test 203 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent. Image `~/redox-rpi-graphics/keep/netboot-v0.4.0-dev-67-g47859bc+x227e.img` (manifest matches), staged with the stable bootloader, Shelly power cycle 17:11. `experiments: orbital rpi-fb rpi-fb-dma-on timesync usb-mouse`.
+
+**Pass: mouse, keyboard, screen and Orbital work; dragging windows is slow.**
+
+- `rpi-fbd: EDID 256 bytes, monitor ANMITE`, `boot framebuffer 1920x1200 stride 1920`, `DMA test:` 1, 64 and 1200 rows, `whole screen in 49.6 ms`; no `blits with the CPU`.
+- `dwc2d: mouse at address 3: relative, 3 button(s), wheel` (`093a:2510`), `dwc2d: keyboard at address 5` (`04d9:0006`).
+- `fbcond: Performing handoff`, login 32 s after power-on, no panic.
+- devsh: `free` used 331068 of 737908 KB; `throttled` `0x00000000`.
+- User at the screen: the mouse pointer and clicks work, a terminal opens. Dragging windows is slow (with the background picture and the transparent terminal).
+
+Stable image restored afterwards (`v0.4.0-dev-35-gc13ceff+x9f76`, the nightly of 2026-11-02), Shelly power cycle 20:37, stable came up to devsh.
