@@ -5,7 +5,8 @@
 [packages]
 orbdata = {}
 orbital = {}
-orbterm = {}
+# Built from source: opaque window (recipes/gui/orbterm/recipe.toml).
+orbterm = "source"
 orbutils = {}
 
 # Orbital on VT 3, with the login window and then the launcher.
@@ -28,3 +29,33 @@ data = """
 path = "/usr/bin/cosmic-term"
 data = "orbterm"
 symlink = true
+
+# Light desktop (#56): a plain colour instead of the background picture.
+# Orbital fills the screen with background_color where no window is. The
+# launcher still starts "background", which now only runs true and exits, so
+# no full-screen picture window is composed on every redraw. Written after
+# the packages (postinstall) to replace orbdata's and orbutils' files.
+[[files]]
+path = "/usr/share/ui/orbital.toml"
+postinstall = true
+data = """
+cursor = "/usr/share/ui/left_ptr.png"
+bottom_left_corner = "/usr/share/ui/bottom_left_corner.png"
+bottom_right_corner = "/usr/share/ui/bottom_right_corner.png"
+bottom_side = "/usr/share/ui/bottom_side.png"
+left_side = "/usr/share/ui/left_side.png"
+right_side = "/usr/share/ui/right_side.png"
+window_max = "/usr/share/ui/window_max.png"
+window_max_unfocused = "/usr/share/ui/window_max_unfocused.png"
+window_close = "/usr/share/ui/window_close.png"
+window_close_unfocused = "/usr/share/ui/window_close_unfocused.png"
+background_color = { data = 0xFF2E3440 }
+"""
+
+[[files]]
+path = "/usr/bin/background"
+postinstall = true
+mode = 0o755
+data = """
+#!/usr/bin/true
+"""
