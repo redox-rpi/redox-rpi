@@ -6,12 +6,16 @@
 //! `/etc/redox-rpi-release`) and the time saved by an earlier run. Then it
 //! asks NTP servers (SNTP, RFC 4330) for the time and saves it.
 //!
-//! The clock is set by writing the boot time, in nanoseconds since 1970, to
-//! the kernel's `/scheme/sys/update_time_offset`. Needs root.
+//! The clock is set with `clock_settime`; with a relibc that does not have it
+//! yet (ENOSYS), by writing the boot time, in nanoseconds since 1970, to the
+//! kernel's `/scheme/sys/update_time_offset`, which is what it does. Needs root.
 //!
 //! Usage: `timesync [-n | -d] [server]...` (default: pool.ntp.org time.cloudflare.com).
 //! `-n` only prints the time without setting the clock.
 //! `-d` keeps running: asks the servers again and saves the time every hour.
+//! `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` (UTC) or `-s @<seconds since 1970>`
+//! sets the clock by hand, for a Pi without a network (Redox' `date` cannot
+//! set it) and saves it.
 //! Waits until DHCP has set a default route, then tries the servers in turn
 //! until one answers, for up to a minute. With `-d` it tries again every 30
 //! seconds until the first answer: Redox' DNS lookup has no timeout, so a
@@ -67,10 +71,59 @@ fn realtime_secs() -> u64 {
 }
 
 /// Set the clock so that it showed `unix_ns` at monotonic time `at_monotonic`.
+/// Sets the clock to `unix_ns`, the time at monotonic time `at_monotonic`.
 fn set_clock(unix_ns: u128, at_monotonic: u128) -> io::Result<()> {
-    // The kernel's real time is boot time plus monotonic time.
+    let now = unix_ns + monotonic_ns().saturating_sub(at_monotonic);
+    let ts = libc::timespec {
+        tv_sec: (now / 1_000_000_000) as libc::time_t,
+        tv_nsec: (now % 1_000_000_000) as libc::c_long,
+    };
+    if unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } == 0 {
+        return Ok(());
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::ENOSYS) {
+        return Err(err);
+    }
+    // An older relibc: the kernel's real time is boot time plus monotonic time.
     let boot = unix_ns - at_monotonic;
     fs::write(TIME_OFFSET, boot.to_ne_bytes())
+}
+
+/// `timesync -s`: `YYYY-MM-DD HH:MM[:SS]` or `YYYY-MM-DDTHH:MM[:SS]` in
+/// UTC, or `@<seconds since 1970>`.
+fn parse_time_arg(text: &str) -> Option<u64> {
+    if let Some(secs) = text.strip_prefix('@') {
+        return secs.parse().ok();
+    }
+    let (date, time) = text.trim().split_once([' ', 'T'])?;
+    let time = if time.len() == 5 { format!("{time}:00") } else { time.to_string() };
+    let num = |s: &str, range: std::ops::Range<usize>| s.get(range)?.parse::<u64>().ok();
+    let (month, day) = (num(date, 5..7)?, num(date, 8..10)?);
+    let (hour, minute, second) = (num(&time, 0..2)?, num(&time, 3..5)?, num(&time, 6..8)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    parse_utc(&format!("{date}T{time}Z"))
+}
+
+/// `timesync -s`: set the clock by hand.
+fn set_by_hand(text: &str) -> ! {
+    let Some(unix) = parse_time_arg(text) else {
+        eprintln!("timesync: -s wants 'YYYY-MM-DD HH:MM[:SS]' (UTC) or @<seconds>, not {text:?}");
+        process::exit(2);
+    };
+    match set_clock(u128::from(unix) * 1_000_000_000, monotonic_ns()) {
+        Ok(()) => {
+            println!("timesync: clock set to {} UTC by hand", format_utc(unix));
+            save_time();
+            process::exit(0);
+        }
+        Err(err) => {
+            eprintln!("timesync: cannot set the clock: {err}");
+            process::exit(1);
+        }
+    }
 }
 
 /// The server's IPv4 address. The lookup runs in its own thread, so a lookup
@@ -256,6 +309,15 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("-s") {
+        match args.get(1) {
+            Some(text) if args.len() == 2 => set_by_hand(text),
+            _ => {
+                eprintln!("usage: timesync -s 'YYYY-MM-DD HH:MM[:SS]' | timesync -s @<seconds>");
+                process::exit(2);
+            }
+        }
+    }
     let flag = args.first().filter(|a| *a == "-n" || *a == "-d").cloned();
     if flag.is_some() {
         args.remove(0);
@@ -306,6 +368,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_arg() {
+        assert_eq!(parse_time_arg("1970-01-01 00:00"), Some(0));
+        assert_eq!(parse_time_arg("2026-07-01 12:00:00"), Some(1_782_907_200));
+        assert_eq!(parse_time_arg("2026-10-29T14:05:30"), Some(1_793_282_730));
+        assert_eq!(parse_time_arg("@1793282730"), Some(1_793_282_730));
+        assert_eq!(parse_time_arg("2024-02-29 00:00"), Some(1_709_164_800));
+        assert_eq!(parse_time_arg("2026-13-01 00:00"), None);
+        assert_eq!(parse_time_arg("2026-10-29"), None);
+        assert_eq!(parse_time_arg("2026-10-29 9:00"), None);
+        assert_eq!(format_utc(parse_time_arg("2026-12-31 23:59:59").unwrap()), "2026-12-31 23:59:59");
+    }
 
     #[test]
     fn utc_round_trip() {

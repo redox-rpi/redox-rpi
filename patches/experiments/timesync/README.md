@@ -5,7 +5,7 @@ are dated January 1st. [`tools/timesync`](../../../tools/timesync) asks an
 NTP server (SNTP) for the time once the network is up and sets the clock.
 It writes the boot time, in nanoseconds since 1970, to
 `/scheme/sys/update_time_offset`, the same interface `rtcd` uses on PCs;
-relibc has no `clock_settime` yet.
+With relibc patch `0011` it uses `clock_settime`, which writes the same file.
 
 ```bash
 scripts/build-image.sh --experiment timesync
@@ -81,3 +81,29 @@ QEMU with experiment [`late-dhcp`](../late-dhcp/README.md), which starts
 minute (last: no default route (DHCP not done))`, `trying again every 30 s`,
 then `clock set to 2026-10-29 11:02:00 UTC from pool.ntp.org`, and
 `timerd: clock set by timesync` a second later.
+
+## Setting the clock by hand (branch `clock-settime`)
+
+Redox' `date` cannot set the clock, so `timesync` does:
+
+```sh
+timesync -s '2026-10-29 14:05'       # UTC; seconds optional
+timesync -s '@1793282730'            # seconds since 1970 (quote the @ in Ion)
+```
+
+It sets the clock with `clock_settime`, which relibc patch `0011` adds
+([#51](https://github.com/redox-rpi/redox-rpi/issues/51)), and saves the
+time like an NTP answer. With a relibc without the patch (ENOSYS) it writes
+`/scheme/sys/update_time_offset` itself, as before.
+
+QEMU (build `v0.3.0-dev-98-g723b343+x7f63`): `timesync -s "2030-01-02 03:04:05"`
+→ `date -u` shows 2030 and a new file gets that time; a later `timesync`
+sets the clock back from NTP through the same call and saves it; a bad
+argument gives exit code 2. The built `libc.so` exports `clock_settime`
+and `settimeofday`. `date -s` still says "setting the date is not supported
+by Redox" (uutils turns it off for Redox).
+
+Pi test 66 (real Pi 3B+, same build) passed the same checks; `date -u` was
+in the same second as the build host. Again in QEMU with current main and
+`timerd` merged (`v0.3.0-dev-495-g2d6bf55+x7f63`, 2026-10-30): the same
+results, and `date -u` after `timesync` matched the host to the second.
