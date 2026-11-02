@@ -52,3 +52,9 @@ Orbital's login screen (the Orbital login does not get through in QEMU):
   the relibc linked into the upstream package. Not yet checked whether it
   also happens on an image without this project's kernel patches, or on
   x86.
+- `v0.4.0-dev-71-gfcbf1d5+x6d96` (without NetSurf): `df` 176.1 of 222 MB
+  used, 45.9 MB free on the netboot image, so its 256 MB size stays.
+  `/usr/share/ui/apps` has `10_terminal`, `20_cosmic-files`,
+  `30_cosmic-edit` and `60_viewer`: the launcher shows the terminal,
+  the file manager, the editor and the image viewer. Both COSMIC apps
+  open again; `free` 314 MB used of 965 MB with both open.
