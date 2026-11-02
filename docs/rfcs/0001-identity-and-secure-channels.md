@@ -119,7 +119,7 @@ secure:listen/7000                  open: accept connections on port 7000
 ```
 trust:/devices/<name>      the pinned public key of a device
 trust:/services/<name>     the pinned public key of a service
-trust:/roots/<name>        a root key (for example a Matter fabric root)
+trust:/roots/<name>        a root key (for example a Matter device maker root)
 ```
 
 Sources: a code or QR code scanned at registration, trust on first use
@@ -177,17 +177,26 @@ the asking daemon.
 
 ## Matter
 
-Matter uses its own security protocols, which are fixed by the standard,
-so `secure:` does not replace them. The same building blocks still hold
-the keys and the trust:
+Matter is not built into Redox. The HomeNode project, a separate project
+based on the `rs-matter` library, runs the Matter fabric on the Pi: it
+holds the fabric root, issues the operational certificates and bridges
+devices. The controller is an iOS app. Matter's own security protocols
+(PASE, CASE, device attestation) stay inside `rs-matter`; `secure:` does
+not replace them.
 
-| Matter needs | Building block |
+What Redox has to provide so that HomeNode runs on it:
+
+| HomeNode needs | Redox provides |
 |---|---|
-| Fabric root key (RCAC) and the controller's operational key (NOC) | `keys:` (P-256) |
-| Trusted device makers (PAA roots), fabric roots | `trust:/roots/` |
-| Approving the commissioning of a new device | `consent:` |
-| PASE (setup code, SPAKE2+) and CASE (certificate session) over UDP | a `matter:` daemon that uses `keys:` for every signature |
-| Group keys for multicast | `keys:` |
+| UDP over IPv6, with multicast | `udp:` with IPv6 and multicast groups |
+| Finding and announcing devices (DNS-SD) | mDNS |
+| Good random numbers for keys | `rand:` |
+| Storage for the fabric (certificates, ACLs, counters) that survives a reboot | files; later optionally `keys:` and `trust:` |
+| Building with Rust std on Redox | the Redox target and a pure-Rust crypto backend for `rs-matter` |
+
+Optional, once the building blocks exist: HomeNode keeps the fabric root
+key (RCAC) in `keys:` so it can sign certificates without reading the key,
+and the trusted device makers (PAA roots) in `trust:/roots/`.
 
 ## Security considerations
 
@@ -225,5 +234,5 @@ the keys and the trust:
 |---|---|---|
 | 1 | v0.6.0 | `keyd` with `keys:` (Ed25519, X25519), `securenetd` with `secure:` (Noise over TCP), test Redox to Redox in QEMU |
 | 2 | v0.7.0 | `accountd`, registration with a QR code; `sshd` host key from `keys:`, SSH login with keys from `accounts:`; a small phone test app |
-| 3 | v0.8.0 | `trustd`; Matter keys and fabric roots in `keys:` and `trust:`; `consentd` for commissioning |
+| 3 | v0.8.0 | `trustd`; the HomeNode Matter fabric (`rs-matter`) runs on Redox: UDP/IPv6 multicast, mDNS, fabric storage; optionally its root key in `keys:` |
 | 4 | later | `syncd` (several machines), `profiled` (personal data) |
