@@ -7,6 +7,9 @@
 //! `FRAMEBUFFER_*` environment variables the Redox bootloader writes. `vesad`
 //! and the kernel's graphical debug take it from there unchanged.
 //!
+//! The same mailbox switches the USB controller's power on (`power_on`), as
+//! U-Boot's `board_init` does (issue #15).
+//!
 //! Tags: https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 
 use core::fmt::Write;
@@ -39,6 +42,14 @@ const TAG_SET_DEPTH: u32 = 0x0004_8005;
 const TAG_SET_PIXEL_ORDER: u32 = 0x0004_8006;
 const TAG_SET_ALPHA_MODE: u32 = 0x0004_8007;
 const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
+const TAG_GET_POWER_STATE: u32 = 0x0002_0001;
+const TAG_SET_POWER_STATE: u32 = 0x0002_8001;
+
+/// Power domain of the USB controller (DWC2), which the 3B+ network chip
+/// and the on-board hub hang on.
+pub const POWER_USB_HCD: u32 = 3;
+/// SET_POWER_STATE: bit 0 on, bit 1 wait until the domain is stable.
+const POWER_ON_AND_WAIT: u32 = 3;
 
 /// Pixel order 1 ("RGB" in the firmware's words) gives the byte order
 /// B, G, R, x in memory: a little-endian 0x00RRGGBB, what Redox draws.
@@ -115,6 +126,30 @@ impl Message {
 
 fn word(i: usize) -> u32 {
     unsafe { (*addr_of!(BUF)).0[i] }
+}
+
+/// The state of a power domain (bit 0 on, bit 1 no such device), None
+/// without an answer.
+pub fn power_state(device: u32) -> Option<u32> {
+    let mut msg = Message::new();
+    let i = msg.tag(TAG_GET_POWER_STATE, &[device], 2);
+    if msg.call() && word(i) == device {
+        Some(word(i + 1))
+    } else {
+        None
+    }
+}
+
+/// Switches a power domain on and waits for it. Returns the state the
+/// firmware answers (bit 0 on, bit 1 no such device), None without an answer.
+pub fn power_on(device: u32) -> Option<u32> {
+    let mut msg = Message::new();
+    let i = msg.tag(TAG_SET_POWER_STATE, &[device, POWER_ON_AND_WAIT], 2);
+    if msg.call() && word(i) == device {
+        Some(word(i + 1))
+    } else {
+        None
+    }
 }
 
 /// `RPI_FB=WIDTHxHEIGHT` on the command line asks for that size instead of
