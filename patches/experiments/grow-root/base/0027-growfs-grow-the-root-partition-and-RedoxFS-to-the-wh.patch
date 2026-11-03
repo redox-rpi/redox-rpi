@@ -1,0 +1,282 @@
+From 684e16f8e2bee668318a457c76078adc61f7e72a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 28 Oct 2026 21:05:24 +0100
+Subject: [PATCH] growfs: grow the root partition and RedoxFS to the whole SD
+ card
+
+Runs in the initfs before the root filesystem is mounted. If the last MBR
+partition holds the root RedoxFS and ends well before the end of the card,
+extend it and restart; if the RedoxFS is smaller than its partition, grow
+it with redoxfs-resize, which is now in the initfs too. Compares sizes
+only, so it does nothing once the card is in use.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                         |   1 +
+ Makefile                           |   6 +-
+ drivers/storage/growfs/Cargo.toml  |   8 ++
+ drivers/storage/growfs/src/main.rs | 170 +++++++++++++++++++++++++++++
+ init.initfs.d/45_growfs.service    |  10 ++
+ init.initfs.d/50_rootfs.service    |   2 +-
+ 6 files changed, 195 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/storage/growfs/Cargo.toml
+ create mode 100644 drivers/storage/growfs/src/main.rs
+ create mode 100644 init.initfs.d/45_growfs.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 4bded67..92121e7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -61,6 +61,7 @@ members = [
+     "drivers/storage/bcm2835-sdhcid",
+     "drivers/storage/bcm2835-sdhostd",
+     "drivers/storage/driver-block",
++    "drivers/storage/growfs",
+     "drivers/storage/ided",
+     "drivers/storage/lived",          # TODO: not really a driver...
+     "drivers/storage/nbdd",
+diff --git a/Makefile b/Makefile
+index 263a5c4..9ea42cc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -31,7 +31,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+ endif
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
++	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d growfs
+ endif
+ 
+ # For testing/benchmarking only
+@@ -116,6 +116,10 @@ install-base: base $(SYSROOT)/bin/redoxfs
+ 		cp -v "$(TARGET_DIR)/$$bin" "$(BUILD_DIR)/initfs/lib/drivers"; \
+ 	done
+ 	cp "$(SYSROOT)/bin/redoxfs" "$(BUILD_DIR)/initfs/bin"
++ifeq ($(TARGET),aarch64-unknown-redox)
++# growfs grows the root filesystem with it before it is mounted.
++	cp "$(SYSROOT)/bin/redoxfs-resize" "$(BUILD_DIR)/initfs/bin"
++endif
+ # Copy initfs config files
+ 	@mkdir -p "$(BUILD_DIR)/initfs/lib/init.d" "$(BUILD_DIR)/initfs/lib/pcid.d"
+ 	cp "$(SRC_DIR)/init.initfs.d"/* "$(BUILD_DIR)/initfs/lib/init.d/"
+diff --git a/drivers/storage/growfs/Cargo.toml b/drivers/storage/growfs/Cargo.toml
+new file mode 100644
+index 0000000..e7be148
+--- /dev/null
++++ b/drivers/storage/growfs/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "growfs"
++description = "Grow the root partition and its RedoxFS to the whole SD card"
++version = "0.1.0"
++edition = "2021"
++
++[lints]
++workspace = true
+diff --git a/drivers/storage/growfs/src/main.rs b/drivers/storage/growfs/src/main.rs
+new file mode 100644
+index 0000000..5b9e226
+--- /dev/null
++++ b/drivers/storage/growfs/src/main.rs
+@@ -0,0 +1,170 @@
++//! Grow the root partition and its RedoxFS to the whole SD card.
++//!
++//! Runs in the initfs before the root filesystem is mounted, on every boot.
++//! It compares sizes only, so it needs no marker and does nothing once the
++//! card is in use:
++//!
++//! 1. If the last partition in the MBR holds a RedoxFS and ends well before
++//!    the end of the card, extend it to the end of the card and restart:
++//!    the disk driver reads the partition table only when it starts.
++//! 2. If that RedoxFS is smaller than its partition, grow it with
++//!    `redoxfs-resize <partition> max`.
++//!
++//! Usage: `growfs [uuid]`. With a uuid (the bootloader's `REDOXFS_UUID`)
++//! only a filesystem with that uuid is touched, so a network boot, whose
++//! root is not on the card, leaves the card alone.
++
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Seek, SeekFrom, Write};
++use std::process::{self, Command};
++use std::{env, thread, time::Duration};
++
++const DISK: &str = "/scheme/disk.mmc/0";
++const SECTOR: u64 = 512;
++/// Grow only when at least this much would be gained, so a card that is a
++/// little larger than the image is left alone.
++const MIN_GROWTH: u64 = 64 << 20;
++/// RedoxFS keeps its header in a ring of 256 blocks of 4 KiB at the start;
++/// the newest one has the highest generation.
++const BLOCK_SIZE: u64 = 4096;
++const HEADER_RING: u64 = 256;
++const SIGNATURE: &[u8; 8] = b"RedoxFS\0";
++
++struct Partition {
++    /// Position in the MBR, which is also the disk scheme's `p<n>`.
++    index: usize,
++    start: u64,
++    sectors: u64,
++}
++
++struct RedoxFs {
++    uuid: [u8; 16],
++    size: u64,
++}
++
++fn main() {
++    let wanted = env::args().nth(1).filter(|uuid| !uuid.is_empty() && !uuid.starts_with('$'));
++    let disk = match OpenOptions::new().read(true).write(true).open(DISK) {
++        Ok(disk) => disk,
++        // No SD card driver or no card: nothing to grow.
++        Err(_) => process::exit(0),
++    };
++    if let Err(err) = run(disk, wanted.as_deref()) {
++        println!("growfs: {err}");
++    }
++}
++
++fn run(mut disk: File, wanted: Option<&str>) -> Result<(), String> {
++    let disk_sectors = disk
++        .seek(SeekFrom::End(0))
++        .map_err(|err| format!("disk size: {err}"))?
++        / SECTOR;
++
++    let mut mbr = [0u8; SECTOR as usize];
++    read_at(&mut disk, 0, &mut mbr)?;
++    if mbr[510..512] != [0x55, 0xaa] {
++        return Ok(());
++    }
++    let Some(part) = last_partition(&mbr) else {
++        return Ok(());
++    };
++    let Some(fs) = redoxfs_header(&mut disk, part.start * SECTOR)? else {
++        return Ok(());
++    };
++    if let Some(wanted) = wanted {
++        if !uuid_matches(&fs.uuid, wanted) {
++            return Ok(());
++        }
++    }
++
++    // 1. The partition. MBR sector counts are 32 bits (2 TiB); keep the end
++    // on a 4 KiB boundary.
++    let end = disk_sectors.min(part.start + u32::MAX as u64);
++    let new_sectors = (end - part.start) / (BLOCK_SIZE / SECTOR) * (BLOCK_SIZE / SECTOR);
++    if new_sectors > part.sectors && (new_sectors - part.sectors) * SECTOR >= MIN_GROWTH {
++        println!(
++            "growfs: partition {} from {} MiB to {} MiB (the whole card), then restart",
++            part.index + 1,
++            part.sectors * SECTOR >> 20,
++            new_sectors * SECTOR >> 20
++        );
++        let entry = 446 + part.index * 16;
++        mbr[entry + 12..entry + 16].copy_from_slice(&(new_sectors as u32).to_le_bytes());
++        write_at(&mut disk, 0, &mbr)?;
++        disk.sync_all().map_err(|err| format!("sync: {err}"))?;
++        restart();
++    }
++
++    // 2. The filesystem.
++    let part_bytes = part.sectors * SECTOR;
++    if part_bytes > fs.size && part_bytes - fs.size >= MIN_GROWTH {
++        let path = format!("{DISK}p{}", part.index);
++        println!(
++            "growfs: RedoxFS on {path} from {} MiB to {} MiB",
++            fs.size >> 20,
++            part_bytes >> 20
++        );
++        // The disk driver locks the whole disk while a partition is open
++        // and the other way round.
++        drop(disk);
++        match Command::new("redoxfs-resize").arg(&path).arg("max").status() {
++            Ok(status) if status.success() => {}
++            Ok(status) => return Err(format!("redoxfs-resize failed: {status}")),
++            Err(err) => return Err(format!("redoxfs-resize: {err}")),
++        }
++    }
++    Ok(())
++}
++
++/// The used MBR entry that starts last.
++fn last_partition(mbr: &[u8]) -> Option<Partition> {
++    (0..4)
++        .filter_map(|index| {
++            let entry = &mbr[446 + index * 16..446 + (index + 1) * 16];
++            let start = u32::from_le_bytes(entry[8..12].try_into().unwrap()) as u64;
++            let sectors = u32::from_le_bytes(entry[12..16].try_into().unwrap()) as u64;
++            (entry[4] != 0 && sectors > 0).then_some(Partition { index, start, sectors })
++        })
++        .max_by_key(|part| part.start)
++}
++
++/// The newest RedoxFS header at `offset`, if there is one.
++fn redoxfs_header(disk: &mut File, offset: u64) -> Result<Option<RedoxFs>, String> {
++    let mut ring = vec![0u8; (HEADER_RING * BLOCK_SIZE) as usize];
++    read_at(disk, offset, &mut ring)?;
++    let newest = ring
++        .chunks(BLOCK_SIZE as usize)
++        .filter(|block| &block[0..8] == SIGNATURE)
++        .max_by_key(|block| u64::from_le_bytes(block[40..48].try_into().unwrap()));
++    Ok(newest.map(|block| RedoxFs {
++        uuid: block[16..32].try_into().unwrap(),
++        size: u64::from_le_bytes(block[32..40].try_into().unwrap()),
++    }))
++}
++
++fn uuid_matches(uuid: &[u8; 16], text: &str) -> bool {
++    let hex: String = text.chars().filter(|c| c.is_ascii_hexdigit()).collect();
++    hex.len() == 32
++        && (0..16).all(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16) == Ok(uuid[i]))
++}
++
++fn read_at(disk: &mut File, offset: u64, buf: &mut [u8]) -> Result<(), String> {
++    disk.seek(SeekFrom::Start(offset))
++        .and_then(|_| disk.read_exact(buf))
++        .map_err(|err| format!("read at {offset}: {err}"))
++}
++
++fn write_at(disk: &mut File, offset: u64, buf: &[u8]) -> Result<(), String> {
++    disk.seek(SeekFrom::Start(offset))
++        .and_then(|_| disk.write_all(buf))
++        .map_err(|err| format!("write at {offset}: {err}"))
++}
++
++/// Restart through the kernel (the same as `echo reset > /scheme/sys/kstop`).
++fn restart() -> ! {
++    if let Err(err) = File::create("/scheme/sys/kstop").and_then(|mut kstop| kstop.write_all(b"reset")) {
++        println!("growfs: restart failed ({err}); restart by hand");
++    }
++    thread::sleep(Duration::from_secs(10));
++    process::exit(1);
++}
+diff --git a/init.initfs.d/45_growfs.service b/init.initfs.d/45_growfs.service
+new file mode 100644
+index 0000000..4491dd6
+--- /dev/null
++++ b/init.initfs.d/45_growfs.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Grow the root partition and RedoxFS to the whole SD card"
++requires_weak = ["40_drivers.target"]
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "growfs"
++args = ["$REDOXFS_UUID"]
++type = "oneshot"
+diff --git a/init.initfs.d/50_rootfs.service b/init.initfs.d/50_rootfs.service
+index c2d8e47..2d5b01b 100644
+--- a/init.initfs.d/50_rootfs.service
++++ b/init.initfs.d/50_rootfs.service
+@@ -1,6 +1,6 @@
+ [unit]
+ description = "Rootfs"
+-requires_weak = ["40_drivers.target"]
++requires_weak = ["40_drivers.target", "45_growfs.service"]
+ 
+ [service]
+ cmd = "redoxfs"
+-- 
+2.54.0 (Apple Git-157)
+
