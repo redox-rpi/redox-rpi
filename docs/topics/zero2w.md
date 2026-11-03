@@ -7,6 +7,12 @@
 - No image of its own is needed: the same image runs on both boards
   ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed). For network boot,
   `scripts/netboot.sh --board zero2w` uses a smaller image for the 512 MB RAM.
+- **Desktop (user report, 2026-11-02):** the Pi 3B+ screen-visit SD image
+  of #202 (`v0.4.0-dev-60-ga206e99`, experiments `rpi-fb`, `rpi-fb-dma-on`,
+  `orbital`, no mouse) boots on the Zero 2 W with Orbital on the screen and
+  "runs well". No network, as expected: the Ethernet HAT was on, but no
+  cable was plugged in. No serial log from that boot. See the
+  [graphics topic](graphics.md) and [#33](https://github.com/redox-rpi/redox-rpi/issues/33).
 
 ## Next
 
