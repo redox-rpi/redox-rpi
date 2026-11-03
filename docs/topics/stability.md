@@ -51,6 +51,14 @@
 
 ## In progress
 
+- [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
+  `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
+  uutils `dd` does not retry short writes, so `dd bs=1M … | cmd` passed on
+  64 KiB of each block (Pi test 177). Kernel `0010` makes the write wait
+  until every byte is in. QEMU and Pi test 180: `dd bs=1M count=16 |`
+  passes all 16 MiB, checksums match. Upstream notes in
+  [docs/upstream/kernel.md](../upstream/kernel.md).
+
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
   `devshd-hangup`): devshd kept `login` and the shell running when a client
   closed the connection without `exit`, two threads each, so every dropped
