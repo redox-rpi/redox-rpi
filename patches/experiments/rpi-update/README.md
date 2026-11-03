@@ -8,7 +8,7 @@ comes up, it stays; if not, the watchdog (or the next reset) starts the
 old one.
 
 ```bash
-scripts/build-image.sh --experiment redox-fatfs2 --experiment rpi-fb --experiment rpi-update
+scripts/build-image.sh --experiment redox-fatfs2 --experiment rpi-update
 scripts/make-sdcard.sh --direct upstream/redox/build/aarch64/minimal/harddrive.img
 # later, after a newer build:
 scripts/publish-rpi-update.sh        # to /srv/tftp/update
@@ -23,8 +23,10 @@ rpi-update try       # tryboot flag, reboot
 # the new system commits itself at boot (90_rpi-update-commit.service)
 ```
 
-`rpi-fb` is needed for `try`: it adds `/scheme/rpi-firmware/property`
-(patch 0024), through which `rpi-update` sets the tryboot flag.
+`try` needs `/scheme/rpi-firmware/property`, through which `rpi-update`
+sets the tryboot flag. Base patch `0060` adds it; it is the first patch of
+the `rpi-fb` experiment (#113, same number and text), so do not select
+`rpi-fb` together with this experiment until one of them drops its copy.
 
 ## Layout
 
