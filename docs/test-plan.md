@@ -196,7 +196,7 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 
 | Date | Test | Build ID | Result |
 |---|---|---|---|
-| 2026-11-03 | #205 direct firmware boot with USB fix (rerun of #18) + new power supply | v0.4.0-dev-36-g1107e5f7+x95e1 | **pass**: USB power on (was Some(0)), High speed, LAN7800 b8:27:eb:08:e0:aa, no channel halt; pi-test pass; /scheme/data and fatfsd /scheme/boot (config.txt) work; throttled 0x0 idle and under 4-core load (new supply). Keyboard: user asked separately. Report in test-reports.md |
+| 2026-11-03 | #205 direct firmware boot with USB fix (rerun of #18) + new power supply | v0.4.0-dev-36-g1107e5f7+x95e1 | **pass**: USB power on (was Some(0)), High speed, LAN7800 b8:27:eb:08:e0:aa, no channel halt; pi-test pass; /scheme/data and fatfsd /scheme/boot (config.txt) work; throttled 0x0 idle and under 4-core load (new supply). USB keyboard works at the login prompt (reported by the user). Report in test-reports.md |
 | 2026-11-02 | 18: direct firmware boot (#15), card | `v0.4.0-dev-35-gc6faab6d+x95e1` | **partly**: stub, framebuffer 1920x1200, kernel, login, board MAC, card data and FAT boot partitions work; USB enumeration fails (`channel halt`, full speed on the root port) on both boots, so no network and no pi-test |
 | 2026-11-02 | 203: screen visit with USB mouse (#33) | `v0.4.0-dev-67-g47859bc+x227e` | **pass**: mouse found (3 buttons, wheel), pointer and clicks work, terminal opens; window drag slow; DMA whole screen 49.6 ms |
 | 2026-11-02 | 56: USB mouse (#48) | covered by 203, `v0.4.0-dev-67-g47859bc+x227e` | **pass** (via 203): mouse found, pointer and clicks work in Orbital; input log, replug and port cycle not checked |
