@@ -453,14 +453,17 @@ the screen.
 Upstream Redox takes no AI-written code, so `vc4d` may be GPL; the user
 approved that for this driver only.
 
-- `vc4d` lives in its own directory, `tools/vc4d/`.
-- It is **GPL-2.0-only**, because Linux `vc4` is GPL-2.0-only.
-- The directory has its own `LICENSE`, every file an SPDX header
+- `vc4d` lives in its own repo,
+  [redox-rpi/vc4d](https://github.com/redox-rpi/vc4d).
+- It is **GPL-2.0-only**, because Linux `vc4` is GPL-2.0-only. The repo
+  has the GPL-2.0 `LICENSE`; every file gets an SPDX header
   (`SPDX-License-Identifier: GPL-2.0-only`) and a note naming the Linux
   files and the kernel version it was translated from.
-- The rest of the repo stays MIT; no GPL code outside `tools/vc4d/`.
+- redox-rpi stays MIT completely and holds no `vc4d` source. Later it
+  only gets a recipe, `tools/vc4d/recipe.toml`, that builds a fixed
+  commit of redox-rpi/vc4d.
 - Images that contain `vc4d` distribute GPL code. The image manifest
-  names the exact commit, which covers the source.
+  names the recipe's commit, which covers the source.
 
 ## Sources
 
