@@ -1,0 +1,34 @@
+[packages]
+timerd = "source"
+
+# Named 70 to start after 65_timesync.service (experiment timesync) and
+# 60_data.service (network-boot image), which mounts /scheme/data where
+# the last runs are saved. timerd waits for timesync's clock itself.
+[[files]]
+path = "/usr/lib/init.d/70_timerd.service"
+data = """
+[unit]
+description = "Run commands at set times (/etc/timer.d)"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "timerd"
+type = "oneshot_async"
+"""
+
+[[files]]
+path = "/etc/timer.d/README"
+data = """
+Timer files for timerd, one per timer, named <name>.toml. Example:
+
+[timer]
+description = "Nightly backup"
+schedule = "30 3 * * *"   # minute hour day month weekday, in UTC
+persistent = true         # run once at start if a run was missed
+
+[service]
+cmd = "backup"
+args = ["--all"]
+
+timerd -l lists the timers with their next and last run.
+"""

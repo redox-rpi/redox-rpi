@@ -391,6 +391,14 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     // from its own memory, which should not overlap /memory, but if it does,
     // the kernel must not hand it out.
     let bootargs = chosen.property("bootargs").and_then(|p| p.as_str());
+    // U-Boot switches the USB power domain on in board_init; without it
+    // dwc2d sees the hub only at full speed and its channels never halt.
+    let before = fb::power_state(fb::POWER_USB_HCD);
+    match fb::power_on(fb::POWER_USB_HCD) {
+        Some(state) if state & 1 == 1 => println!("rpi-boot-stub: USB power on (was {:x?})", before),
+        Some(state) => println!("rpi-boot-stub: USB power state {:#x}, not on (was {:x?})", state, before),
+        None => println!("rpi-boot-stub: no answer to USB power on (was {:x?})", before),
+    }
     let framebuffer = fb::setup(fb::Request::from_bootargs(bootargs));
     match &framebuffer {
         Some(f) => println!(

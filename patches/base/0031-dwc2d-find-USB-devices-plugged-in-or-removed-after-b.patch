@@ -1,0 +1,1268 @@
+From b78212cc0fbb99737ce89955c5d4e288ce257bfb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:41:02 +0100
+Subject: [PATCH 30/31] dwc2d: find USB devices plugged in or removed after
+ boot
+
+Every second dwc2d asks the root port and every port of every hub for
+connection changes. A new device is reset and enumerated, a hub with
+everything behind it; a removed one is forgotten and its address reused.
+
+A keyboard plugged in later is used if there is none. All network
+adapters are kept, but only one receives: the network stack sees the
+best by link (an RTL815x with a link, else the LAN7800, else an RTL815x
+without a link, else CDC Ethernet) and is moved to another adapter when
+one is plugged in or removed or the link of an RTL815x changes. The
+adapter that takes over gets the MAC address the stack started with, so
+the stack and its DHCP lease keep working. Adapters plugged in later do
+not wait for their link; the rescan looks at it.
+
+Without any adapter at boot, the scheme is still registered (as
+network.usb, with the board's address), so an adapter plugged in later
+works.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/dwc2.rs      |  18 ++
+ drivers/usb/dwc2d/src/ecm.rs       |  19 +-
+ drivers/usb/dwc2d/src/enumerate.rs | 271 +++++++++++++---
+ drivers/usb/dwc2d/src/hid.rs       |   4 +
+ drivers/usb/dwc2d/src/lan78xx.rs   |  47 ++-
+ drivers/usb/dwc2d/src/main.rs      | 477 +++++++++++++++++++----------
+ drivers/usb/dwc2d/src/rtl8152.rs   |  48 ++-
+ 7 files changed, 656 insertions(+), 228 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 316df76..0f4dfe3 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -142,6 +142,24 @@ impl Dwc2 {
+         self.write(GAHBCFG, self.read(GAHBCFG) | GAHBCFG_GLBL_INTR_EN);
+     }
+ 
++    /// Stop a channel started with [`Dwc2::start`], e.g. a receive transfer
++    /// to a device that went away, and wait until it halts.
++    pub fn halt(&self, ch: usize) {
++        let value = self.read(hcchar(ch));
++        if value & HCCHAR_CHENA != 0 {
++            self.write(hcchar(ch), value | HCCHAR_CHDIS);
++            let _ = self.wait("channel halt", Duration::from_millis(100), |s| {
++                s.read(hcint(ch)) & HCINT_CH_HLTD != 0
++            });
++        }
++        self.write(hcint(ch), u32::MAX);
++    }
++
++    /// Whether a device is connected to the root port.
++    pub fn root_connected(&self) -> bool {
++        self.read(HPRT0) & HPRT0_CONN_STS != 0
++    }
++
+     fn write_port(&self, set: u32, clear: u32) {
+         let value = self.read(HPRT0) & !HPRT0_W1C;
+         self.write(HPRT0, (value | set) & !clear);
+diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
+index d748e55..77cfeee 100644
+--- a/drivers/usb/dwc2d/src/ecm.rs
++++ b/drivers/usb/dwc2d/src/ecm.rs
+@@ -34,6 +34,7 @@ const TX_CHANNEL: usize = 2;
+ const BUF_SIZE: usize = 2048;
+ 
+ /// Where a CDC Ethernet function lives on a device.
++#[derive(Clone)]
+ pub struct EcmFunction {
+     pub address: u8,
+     pub speed: Speed,
+@@ -161,7 +162,7 @@ pub fn activate(bus: &mut Bus, max_packet: u16, function: &EcmFunction) -> Resul
+ 
+ impl Ecm {
+     pub fn new(hc: Dwc2, function: EcmFunction, mac: [u8; 6]) -> Self {
+-        let mut ecm = Self {
++        Self {
+             hc,
+             function,
+             mac,
+@@ -173,9 +174,7 @@ impl Ecm {
+             rx_ready: None,
+             rx_frames: 0,
+             tx_frames: 0,
+-        };
+-        ecm.arm_rx();
+-        ecm
++        }
+     }
+ 
+     fn phase(&self, dir_in: bool, len: usize) -> Phase {
+@@ -220,6 +219,18 @@ impl Ecm {
+         }
+     }
+ 
++    pub fn function(&self) -> &EcmFunction {
++        &self.function
++    }
++
++    /// Start receiving again after [`Dwc2::halt`] stopped the receive
++    /// channel for another adapter.
++    pub fn resume(&mut self) {
++        if self.rx_ready.is_none() {
++            self.arm_rx();
++        }
++    }
++
+     pub fn mac(&self) -> [u8; 6] {
+         self.mac
+     }
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 2710053..06ebceb 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -1,6 +1,7 @@
+-//! Device enumeration on the root port and behind hubs.
++//! Device enumeration on the root port and behind hubs, and rescanning
++//! for devices plugged in or removed later.
+ 
+-use std::collections::HashMap;
++use std::collections::{HashMap, HashSet};
+ use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+@@ -50,11 +51,34 @@ pub struct Device {
+     /// Hub address and port of the transaction translator, for a full- or
+     /// low-speed device behind a high-speed hub.
+     pub tt: Option<(u8, u8)>,
++    /// Hub address and port the device is plugged into; `None` on the root
++    /// port.
++    pub parent: Option<(u8, u16)>,
+ }
+ 
+-pub struct Bus<'a> {
+-    hc: &'a Dwc2,
+-    next_address: u8,
++/// A configured hub, for rescanning its ports.
++#[derive(Clone, Copy)]
++struct Hub {
++    address: u8,
++    max_packet: u16,
++    speed: Speed,
++    depth: usize,
++    /// The hub's own transaction translator, if it needs one.
++    tt: Option<(u8, u8)>,
++    ports: u16,
++}
++
++/// Devices that came and went in a [`Bus::scan`].
++#[derive(Default)]
++pub struct Changes {
++    /// Addresses of new devices, hubs and what is behind them included.
++    pub added: Vec<u8>,
++    /// Addresses of devices that are gone; they may be reused by `added`.
++    pub removed: Vec<u8>,
++}
++
++pub struct Bus {
++    hc: Dwc2,
+     setup: Dma<[u8; 8]>,
+     data: Dma<[u8; 512]>,
+     /// Transaction translator of every device that needs one, by address.
+@@ -62,21 +86,33 @@ pub struct Bus<'a> {
+     /// Transaction translator of the device being enumerated at address 0.
+     new_device_tt: Option<(u8, u8)>,
+     pub devices: Vec<Device>,
++    hubs: Vec<Hub>,
++    /// Ports with a device that failed to enumerate; tried again only after
++    /// it is plugged in anew.
++    failed: HashSet<Option<(u8, u16)>>,
+ }
+ 
+-impl<'a> Bus<'a> {
+-    pub fn new(hc: &'a Dwc2) -> Self {
++impl Bus {
++    pub fn new(hc: &Dwc2) -> Self {
+         Self {
+-            hc,
+-            next_address: 1,
++            hc: hc.clone(),
+             setup: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
+             data: Dma::new([0; 512]).expect("dwc2d: DMA allocation failed"),
+             tts: HashMap::new(),
+             new_device_tt: None,
+             devices: Vec::new(),
++            hubs: Vec::new(),
++            failed: HashSet::new(),
+         }
+     }
+ 
++    /// The lowest address no device uses.
++    fn free_address(&self) -> Result<u8, Error> {
++        (1..=127)
++            .find(|&a| !self.devices.iter().any(|d| d.address == a))
++            .ok_or(Error::Timeout("no free USB address"))
++    }
++
+     pub(crate) fn request(
+         &mut self,
+         address: u8,
+@@ -161,8 +197,15 @@ impl<'a> Bus<'a> {
+ 
+     /// Enumerate the device that was just reset on a port (address 0) and,
+     /// if it is a hub, everything behind it. `tt` is the transaction
+-    /// translator for a full- or low-speed device behind a high-speed hub.
+-    pub fn enumerate(&mut self, speed: Speed, depth: usize, tt: Option<(u8, u8)>) -> Result<(), Error> {
++    /// translator for a full- or low-speed device behind a high-speed hub;
++    /// `parent` the hub and port the device is plugged into.
++    pub fn enumerate(
++        &mut self,
++        speed: Speed,
++        depth: usize,
++        tt: Option<(u8, u8)>,
++        parent: Option<(u8, u16)>,
++    ) -> Result<(), Error> {
+         let indent = "  ".repeat(depth);
+         self.new_device_tt = tt;
+ 
+@@ -172,8 +215,7 @@ impl<'a> Bus<'a> {
+         let head = self.request(0, initial_max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 8)?;
+         let max_packet = u16::from(head[7]);
+ 
+-        let address = self.next_address;
+-        self.next_address += 1;
++        let address = self.free_address()?;
+         self.request(0, max_packet, speed, 0x00, REQ_SET_ADDRESS, u16::from(address), 0, 0)?;
+         if let Some(tt) = tt {
+             self.tts.insert(address, tt);
+@@ -191,6 +233,7 @@ impl<'a> Bus<'a> {
+             configurations: d[17],
+             depth,
+             tt,
++            parent,
+         };
+         println!(
+             "dwc2d: {indent}address {}: {:04x}:{:04x}, USB {:x}.{:02x}, class {:#04x}, {:?} speed",
+@@ -228,6 +271,8 @@ impl<'a> Bus<'a> {
+         let ports = u16::from(desc[2]);
+         let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
+         println!("dwc2d: {indent}hub at address {hub}: {ports} ports");
++        let this = Hub { address: hub, max_packet, speed, depth, tt: hub_tt, ports };
++        self.hubs.push(this);
+ 
+         for port in 1..=ports {
+             self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
+@@ -254,46 +299,176 @@ impl<'a> Bus<'a> {
+         }
+ 
+         for port in 1..=ports {
+-            if !connected[usize::from(port)] {
+-                continue;
++            if connected[usize::from(port)] {
++                self.attach(this, port)?;
++            }
++        }
++        Ok(())
++    }
++
++    /// Reset the device that connected to a hub port and enumerate it.
++    /// Errors of the device itself are logged and remembered; errors talking
++    /// to the hub are returned.
++    fn attach(&mut self, hub: Hub, port: u16) -> Result<(), Error> {
++        let Hub { address, max_packet, speed, depth, tt: hub_tt, .. } = hub;
++        let indent = "  ".repeat(depth);
++        self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
++
++        self.request(address, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_RESET, port, 0)?;
++        let start = Instant::now();
++        let status = loop {
++            sleep(Duration::from_millis(10));
++            let (status, _) = self.port_status(address, max_packet, speed, port)?;
++            if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
++                break status;
++            }
++            if status & PORT_STAT_CONNECTION == 0 {
++                println!("dwc2d: {indent}hub {address} port {port}: device gone during reset");
++                return Ok(());
++            }
++            if start.elapsed() > Duration::from_millis(500) {
++                println!("dwc2d: {indent}hub {address} port {port}: reset timed out");
++                self.failed.insert(Some((address, port)));
++                return Ok(());
+             }
+-            self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
+-
+-            self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_RESET, port, 0)?;
+-            let start = Instant::now();
+-            let status = loop {
+-                sleep(Duration::from_millis(10));
+-                let (status, _) = self.port_status(hub, max_packet, speed, port)?;
+-                if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
+-                    break status;
++        };
++        self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
++        // Reset recovery time.
++        sleep(Duration::from_millis(20));
++
++        let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
++            Speed::Low
++        } else if status & PORT_STAT_HIGH_SPEED != 0 {
++            Speed::High
++        } else {
++            Speed::Full
++        };
++        // A high-speed hub translates for full- and low-speed devices on
++        // its ports; deeper down, the translator of the hub applies.
++        let child_tt = if speed == Speed::High && child_speed != Speed::High {
++            Some((address, port as u8))
++        } else {
++            hub_tt
++        };
++        println!("dwc2d: {indent}hub {address} port {port}: device connected");
++        if let Err(err) = self.enumerate(child_speed, depth + 1, child_tt, Some((address, port))) {
++            println!("dwc2d: {indent}hub {address} port {port}: {err:?}");
++            self.failed.insert(Some((address, port)));
++            // A half-enumerated device may hold an address.
++            if let Some(d) = self.devices.iter().find(|d| d.parent == Some((address, port))) {
++                let a = d.address;
++                self.remove(a, &mut Vec::new());
++            }
++        }
++        Ok(())
++    }
++
++    /// Forget a device and everything behind it if it is a hub; collects the
++    /// addresses in `removed`.
++    fn remove(&mut self, address: u8, removed: &mut Vec<u8>) {
++        let children: Vec<u8> = self
++            .devices
++            .iter()
++            .filter(|d| d.parent.is_some_and(|(hub, _)| hub == address))
++            .map(|d| d.address)
++            .collect();
++        for child in children {
++            self.remove(child, removed);
++        }
++        self.devices.retain(|d| d.address != address);
++        self.hubs.retain(|h| h.address != address);
++        self.tts.remove(&address);
++        self.failed.retain(|p| !p.is_some_and(|(hub, _)| hub == address));
++        removed.push(address);
++    }
++
++    /// Enumerate the device on the root port, after a reset of the port.
++    /// On failure the root port is tried again only after a new connection.
++    pub fn enumerate_root(&mut self) -> Result<(), Error> {
++        let speed = self.hc.reset_port()?;
++        println!("dwc2d: device on root port, {:?} speed", speed);
++        self.enumerate(speed, 0, None, None)
++    }
++
++    /// Leave the root port alone until its device is unplugged: it failed
++    /// to enumerate.
++    pub fn give_up_root(&mut self) {
++        self.failed.insert(None);
++    }
++
++    /// Look for devices plugged in or removed since the last call: on the
++    /// root port and on every port of every hub.
++    pub fn scan(&mut self) -> Changes {
++        let mut changes = Changes::default();
++        let before: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
++
++        let root = self.hc.root_connected();
++        let root_device = self.devices.iter().any(|d| d.parent.is_none());
++        if !root && (root_device || self.failed.contains(&None)) {
++            println!("dwc2d: device on root port removed");
++            for address in before.iter().copied() {
++                changes.removed.push(address);
++            }
++            self.devices.clear();
++            self.hubs.clear();
++            self.tts.clear();
++            self.failed.clear();
++        } else if root && !root_device && !self.failed.contains(&None) {
++            if let Err(err) = self.enumerate_root() {
++                println!("dwc2d: root port: {err:?}");
++                self.failed.insert(None);
++            }
++        }
++
++        // Hubs closer to the root first, so the ports of a hub that is gone
++        // are not asked.
++        let mut hubs = self.hubs.clone();
++        hubs.sort_by_key(|h| h.depth);
++        for hub in hubs {
++            for port in 1..=hub.ports {
++                if !self.hubs.iter().any(|h| h.address == hub.address) {
++                    break;
+                 }
+-                if start.elapsed() > Duration::from_millis(500) {
+-                    return Err(Error::Timeout("hub port reset"));
++                if let Err(err) = self.scan_port(hub, port, &mut changes.removed) {
++                    println!("dwc2d: hub {} port {port}: {err:?}", hub.address);
+                 }
+-            };
+-            self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
+-            // Reset recovery time.
+-            sleep(Duration::from_millis(20));
+-
+-            let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
+-                Speed::Low
+-            } else if status & PORT_STAT_HIGH_SPEED != 0 {
+-                Speed::High
+-            } else {
+-                Speed::Full
+-            };
+-            // A high-speed hub translates for full- and low-speed devices on
+-            // its ports; deeper down, the translator of the hub applies.
+-            let child_tt = if speed == Speed::High && child_speed != Speed::High {
+-                Some((hub, port as u8))
+-            } else {
+-                hub_tt
+-            };
+-            println!("dwc2d: {indent}hub {hub} port {port}: device connected");
+-            if let Err(err) = self.enumerate(child_speed, depth + 1, child_tt) {
+-                println!("dwc2d: {indent}hub {hub} port {port}: {err:?}");
+             }
+         }
++
++        changes.added = self
++            .devices
++            .iter()
++            .map(|d| d.address)
++            .filter(|a| !before.contains(a) || changes.removed.contains(a))
++            .collect();
++        changes
++    }
++
++    fn scan_port(&mut self, hub: Hub, port: u16, removed: &mut Vec<u8>) -> Result<(), Error> {
++        let (status, change) = self.port_status(hub.address, hub.max_packet, hub.speed, port)?;
++        let connected = status & PORT_STAT_CONNECTION != 0;
++        let changed = change & 1 != 0;
++        let slot = Some((hub.address, port));
++        let present = self.devices.iter().find(|d| d.parent == slot).map(|d| d.address);
++        let failed = self.failed.contains(&slot);
++
++        // Gone, or unplugged and plugged in again between two scans.
++        if (present.is_some() || failed) && (!connected || changed) {
++            if let Some(address) = present {
++                println!("dwc2d: hub {} port {port}: device at address {address} removed", hub.address);
++                self.remove(address, removed);
++            }
++            self.failed.remove(&slot);
++        }
++        if changed && !connected {
++            self.request(hub.address, hub.max_packet, hub.speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
++        }
++        let present = self.devices.iter().any(|d| d.parent == slot);
++        if connected && !present && !self.failed.contains(&slot) {
++            // Debounce, as required by the USB specification.
++            sleep(Duration::from_millis(100));
++            self.attach(hub, port)?;
++        }
+         Ok(())
+     }
+ }
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index c881ad8..7e55d02 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -134,6 +134,10 @@ impl Keyboard {
+         })
+     }
+ 
++    pub fn address(&self) -> u8 {
++        self.f.address
++    }
++
+     /// Fetch a report when the poll interval has passed and send the key
+     /// changes. Errors are dropped: the next poll tries again.
+     /// Poll the keyboard and repeat a held key when due. Returns the time
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index 7de1c28..ccdc7b4 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -103,6 +103,7 @@ const TX_CHANNEL: usize = 2;
+ const RX_BUF_SIZE: usize = 16 * 1024;
+ const TX_BUF_SIZE: usize = 2048;
+ 
++#[derive(Clone)]
+ pub struct Lan78xxFunction {
+     pub address: u8,
+     pub speed: Speed,
+@@ -148,12 +149,12 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<Lan78xxFunction> {
+     (function.ep_in != 0 && function.ep_out != 0).then_some(function)
+ }
+ 
+-struct Regs<'a, 'b> {
+-    bus: &'a mut Bus<'b>,
++struct Regs<'a> {
++    bus: &'a mut Bus,
+     f: &'a Lan78xxFunction,
+ }
+ 
+-impl Regs<'_, '_> {
++impl Regs<'_> {
+     fn read(&mut self, reg: u16) -> Result<u32, Error> {
+         let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
+         Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
+@@ -203,8 +204,14 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ /// receiver and transmitter. `dt_mac` is the address from the devicetree,
+ /// if any; `led_modes` the PHY's `microchip,led-modes` (one entry per LED,
+ /// at most four). Returns the MAC address in use.
+-/// Returns the MAC address and whether the link came up.
+-pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_modes: &[u32]) -> Result<([u8; 6], bool), Error> {
++/// Returns the MAC address and whether the link came up within `link_wait`.
++pub fn init(
++    bus: &mut Bus,
++    f: &Lan78xxFunction,
++    dt_mac: Option<[u8; 6]>,
++    led_modes: &[u32],
++    link_wait: Duration,
++) -> Result<([u8; 6], bool), Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, 1, 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+@@ -296,7 +303,7 @@ pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_mod
+             println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
+             break true;
+         }
+-        if start.elapsed() > Duration::from_secs(5) {
++        if start.elapsed() >= link_wait {
+             println!("dwc2d: LAN78xx no link yet");
+             break false;
+         }
+@@ -305,6 +312,18 @@ pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_mod
+     Ok((mac, link))
+ }
+ 
++/// Receive frames for `mac`: the address the network stack uses, when the
++/// adapter takes over from another one.
++pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
++    let mut r = Regs { bus, f };
++    let address_low = u32::from_le_bytes([mac[0], mac[1], mac[2], mac[3]]);
++    let address_high = u32::from(mac[4]) | u32::from(mac[5]) << 8;
++    r.write(RX_ADDRL, address_low)?;
++    r.write(RX_ADDRH, address_high)?;
++    r.write(MAF_LO0, address_low)?;
++    r.write(MAF_HI0, address_high | MAF_HI_VALID)
++}
++
+ pub struct Lan78xx {
+     hc: Dwc2,
+     f: Lan78xxFunction,
+@@ -319,7 +338,7 @@ pub struct Lan78xx {
+ 
+ impl Lan78xx {
+     pub fn new(hc: Dwc2, f: Lan78xxFunction, mac: [u8; 6]) -> Self {
+-        let mut lan = Self {
++        Self {
+             hc,
+             f,
+             mac,
+@@ -329,9 +348,17 @@ impl Lan78xx {
+             tx: Dma::new([0; TX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
+             rx_armed: false,
+             frames: VecDeque::new(),
+-        };
+-        lan.arm_rx();
+-        lan
++        }
++    }
++
++    pub fn function(&self) -> &Lan78xxFunction {
++        &self.f
++    }
++
++    /// Start receiving again after [`Dwc2::halt`] stopped the receive
++    /// channel for another adapter.
++    pub fn resume(&mut self) {
++        self.arm_rx();
+     }
+ 
+     fn phase(&self, dir_in: bool, len: usize) -> Phase {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 5a0bc4a..3972850 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -25,59 +25,243 @@ mod rtl8152;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+-use ecm::{Ecm, EcmFunction};
+-use enumerate::Bus;
++use ecm::Ecm;
++use enumerate::{Bus, Device};
+ use event::{user_data, EventQueue};
+ use hid::Keyboard;
+-use lan78xx::{Lan78xx, Lan78xxFunction};
+-use rtl8152::{Rtl8152, Rtl8152Function};
+-
+-/// A network function found during enumeration, already initialized.
+-enum NetFunction {
+-    Ecm(EcmFunction),
+-    Lan78xx(Lan78xxFunction),
+-    Rtl8152(Rtl8152Function),
+-}
++use lan78xx::Lan78xx;
++use rtl8152::Rtl8152;
+ 
+-/// The network adapter running on top of the controller.
+-enum UsbNet {
++/// A network adapter on the bus, initialized. It receives only while the
++/// network stack uses it.
++enum Adapter {
+     Ecm(Ecm),
+     Lan78xx(Lan78xx),
+     Rtl8152(Rtl8152),
+ }
+ 
+-impl NetworkAdapter for UsbNet {
+-    fn mac_address(&mut self) -> [u8; 6] {
++impl Adapter {
++    fn address(&self) -> u8 {
+         match self {
+-            Self::Ecm(a) => a.mac_address(),
+-            Self::Lan78xx(a) => a.mac_address(),
+-            Self::Rtl8152(a) => a.mac_address(),
++            Self::Ecm(a) => a.function().address,
++            Self::Lan78xx(a) => a.function().address,
++            Self::Rtl8152(a) => a.function().address,
+         }
+     }
+ 
+-    fn available_for_read(&mut self) -> usize {
++    fn net(&mut self) -> &mut dyn NetworkAdapter {
+         match self {
+-            Self::Ecm(a) => a.available_for_read(),
+-            Self::Lan78xx(a) => a.available_for_read(),
+-            Self::Rtl8152(a) => a.available_for_read(),
++            Self::Ecm(a) => a,
++            Self::Lan78xx(a) => a,
++            Self::Rtl8152(a) => a,
+         }
+     }
+ 
+-    fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
++    fn resume(&mut self) {
+         match self {
+-            Self::Ecm(a) => a.read_packet(buf),
+-            Self::Lan78xx(a) => a.read_packet(buf),
+-            Self::Rtl8152(a) => a.read_packet(buf),
++            Self::Ecm(a) => a.resume(),
++            Self::Lan78xx(a) => a.resume(),
++            Self::Rtl8152(a) => a.resume(),
+         }
+     }
+ 
+-    fn write_packet(&mut self, buf: &[u8]) -> syscall::Result<usize> {
++    /// Lower is better. A plugged-in RTL8152 or RTL8153 wins over the
++    /// onboard LAN7800, but only with a link: an adapter without a cable
++    /// would leave the Pi without network. CDC Ethernet comes last.
++    fn rank(&self, link: bool) -> u8 {
++        match (self, link) {
++            (Self::Rtl8152(_), true) => 0,
++            (Self::Lan78xx(_), _) => 1,
++            (Self::Rtl8152(_), false) => 2,
++            (Self::Ecm(_), _) => 3,
++        }
++    }
++
++    fn scheme_name(&self) -> &'static str {
+         match self {
+-            Self::Ecm(a) => a.write_packet(buf),
+-            Self::Lan78xx(a) => a.write_packet(buf),
+-            Self::Rtl8152(a) => a.write_packet(buf),
++            Self::Ecm(_) => "network.usb_ecm",
++            Self::Lan78xx(_) => "network.usb_lan78xx",
++            Self::Rtl8152(_) => "network.usb_rtl8152",
++        }
++    }
++}
++
++/// The network adapters on the bus. The network stack sees one of them, the
++/// best by [`Adapter::rank`], and is moved to another when adapters are
++/// plugged in or removed or a link comes up or goes down.
++struct UsbNet {
++    hc: Dwc2,
++    /// The address the network stack uses. An adapter that takes over is
++    /// set to it, so the stack and DHCP keep working with the same address.
++    mac: [u8; 6],
++    /// The adapters and their link state. The link is kept up to date only
++    /// for the RTL815x, the only adapter where it decides.
++    adapters: Vec<(Adapter, bool)>,
++    /// Bus address of the adapter in use.
++    active: Option<u8>,
++}
++
++impl UsbNet {
++    fn rank_of(&self, address: u8) -> Option<u8> {
++        self.adapters
++            .iter()
++            .find(|(a, _)| a.address() == address)
++            .map(|(a, link)| a.rank(*link))
++    }
++
++    fn active_adapter(&mut self) -> Option<&mut Adapter> {
++        let address = self.active?;
++        self.adapters.iter_mut().map(|(a, _)| a).find(|a| a.address() == address)
++    }
++
++    /// Forget an adapter that was unplugged.
++    fn remove(&mut self, address: u8) {
++        if self.active == Some(address) {
++            self.hc.halt(RX_CHANNEL);
++            self.active = None;
++        }
++        self.adapters.retain(|(a, _)| a.address() != address);
++    }
++
++    /// Read the link of every RTL815x.
++    fn refresh_links(&mut self, bus: &mut Bus) {
++        for (adapter, link) in self.adapters.iter_mut() {
++            if let Adapter::Rtl8152(a) = adapter {
++                if let Ok(now) = rtl8152::link(bus, a.function()) {
++                    if now != *link {
++                        let state = if now { "up" } else { "down" };
++                        println!("dwc2d: link {state} on the RTL815x at address {}", a.function().address);
++                        *link = now;
++                    }
++                }
++            }
++        }
++    }
++
++    /// Hand the network stack to the best adapter, unless the one it has is
++    /// as good.
++    fn select(&mut self, bus: &mut Bus) {
++        let best = self
++            .adapters
++            .iter()
++            .min_by_key(|(a, link)| a.rank(*link))
++            .map(|(a, _)| a.address());
++        let keep = match (self.active, best) {
++            (Some(active), Some(best)) => self.rank_of(active) == self.rank_of(best),
++            (None, None) => true,
++            _ => false,
++        };
++        if keep {
++            return;
++        }
++        self.hc.halt(RX_CHANNEL);
++        self.active = best;
++        let mac = self.mac;
++        let Some(adapter) = self.active_adapter() else {
++            println!("dwc2d: no network adapter left");
++            return;
++        };
++        let result = match adapter {
++            Adapter::Rtl8152(a) => rtl8152::set_mac(bus, a.function(), mac),
++            Adapter::Lan78xx(a) => lan78xx::set_mac(bus, a.function(), mac),
++            // QEMU's CDC Ethernet does not filter by address.
++            Adapter::Ecm(_) => Ok(()),
++        };
++        if let Err(err) = result {
++            println!("dwc2d: cannot set the MAC address: {err:?}");
++        }
++        adapter.resume();
++        println!("dwc2d: network on the adapter at address {}", adapter.address());
++    }
++}
++
++impl NetworkAdapter for UsbNet {
++    fn mac_address(&mut self) -> [u8; 6] {
++        self.mac
++    }
++
++    fn available_for_read(&mut self) -> usize {
++        self.active_adapter().map_or(0, |a| a.net().available_for_read())
++    }
++
++    fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
++        match self.active_adapter() {
++            Some(a) => a.net().read_packet(buf),
++            None => Ok(None),
+         }
+     }
++
++    fn write_packet(&mut self, buf: &[u8]) -> syscall::Result<usize> {
++        match self.active_adapter() {
++            Some(a) => a.net().write_packet(buf),
++            // No adapter: the frame is lost, like on a cable that is out.
++            None => Ok(buf.len()),
++        }
++    }
++}
++
++/// What a device turned out to be.
++enum Found {
++    /// A network adapter, initialized, with its own MAC address and link.
++    Net(Adapter, [u8; 6], bool),
++    /// A keyboard, configured.
++    Keyboard(hid::KeyboardFunction),
++}
++
++/// Recognize a device and bring it up. `link_wait` is how long a network
++/// adapter may wait for its link.
++fn probe(
++    bus: &mut Bus,
++    hc: &Dwc2,
++    device: &Device,
++    dt_mac: Option<[u8; 6]>,
++    led_modes: &[u32],
++    link_wait: Duration,
++) -> Option<Found> {
++    let address = device.address;
++    if let Some(f) = rtl8152::find(bus, device) {
++        println!("dwc2d: RTL815x at address {address}");
++        return match rtl8152::init(bus, &f, link_wait) {
++            Ok((mac, link)) => Some(Found::Net(Adapter::Rtl8152(Rtl8152::new(hc.clone(), f, mac)), mac, link)),
++            Err(err) => {
++                println!("dwc2d: RTL815x: {err:?}");
++                None
++            }
++        };
++    }
++    if let Some(f) = lan78xx::find(bus, device) {
++        println!("dwc2d: LAN7800 at address {address}");
++        return match lan78xx::init(bus, &f, dt_mac, led_modes, link_wait) {
++            Ok((mac, link)) => Some(Found::Net(Adapter::Lan78xx(Lan78xx::new(hc.clone(), f, mac)), mac, link)),
++            Err(err) => {
++                println!("dwc2d: LAN7800: {err:?}");
++                None
++            }
++        };
++    }
++    if let Some(f) = ecm::find(bus, device) {
++        println!("dwc2d: CDC Ethernet at address {address}");
++        return match ecm::activate(bus, device.max_packet, &f) {
++            Ok(mac) => Some(Found::Net(Adapter::Ecm(Ecm::new(hc.clone(), f, mac)), mac, true)),
++            Err(err) => {
++                println!("dwc2d: CDC Ethernet: {err:?}");
++                None
++            }
++        };
++    }
++    if let Some(f) = hid::find(bus, device) {
++        return match hid::init(bus, &f) {
++            Ok(()) => {
++                println!("dwc2d: keyboard at address {address}");
++                Some(Found::Keyboard(f))
++            }
++            Err(err) => {
++                println!("dwc2d: keyboard at address {address}: {err:?}");
++                None
++            }
++        };
++    }
++    None
+ }
+ 
+ /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
+@@ -199,11 +383,20 @@ impl Timer {
+     }
+ }
+ 
++/// How often to look for devices plugged in or removed.
++const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
++/// How long a network adapter found at boot may wait for its link, so DHCP
++/// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
++/// can take longer than 5 s. Adapters plugged in later do not wait: their
++/// link is looked at with every rescan.
++const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
++
+ user_data! {
+     enum Source {
+         Irq,
+         Scheme,
+         Time,
++        Hotplug,
+     }
+ }
+ 
+@@ -232,47 +425,48 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-    let (network, keyboard) = match enumerate(&mut hc, dt_mac, &led_modes) {
+-        Ok(found) => found,
++    let mut bus = match start_bus(&mut hc) {
++        Ok(bus) => bus,
+         Err(err) => {
+             eprintln!("dwc2d: {:?}", err);
+-            (None, None)
++            daemon.ready();
++            process::exit(0);
+         }
+     };
+-    let mut keyboard = keyboard.and_then(|f| Keyboard::new(hc.clone(), f));
+-
+-    // Printing from here on can block for good: nobody may read our stdout
+-    // after boot. Errors before the loop go to stderr while it still works.
+-    let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
+-    let mut timer = None;
+-    if keyboard.is_some() {
+-        match Timer::new() {
+-            Ok(mut t) => {
+-                events
+-                    .subscribe(t.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
+-                    .expect("dwc2d: failed to subscribe to the timer");
+-                t.arm(Duration::ZERO);
+-                timer = Some(t);
++    let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
++    let mut keyboard = None;
++    for device in bus.devices.clone() {
++        match probe(&mut bus, &hc, &device, dt_mac, &led_modes, BOOT_LINK_WAIT) {
++            Some(Found::Net(adapter, mac, link)) => {
++                // The network stack keeps the address of the adapter it
++                // starts with.
++                let rank = adapter.rank(link);
++                if net.adapters.iter().all(|(a, l)| a.rank(*l) > rank) {
++                    net.mac = mac;
++                }
++                net.adapters.push((adapter, link));
+             }
+-            Err(err) => eprintln!("dwc2d: no timer for the keyboard: {err}"),
++            Some(Found::Keyboard(f)) if keyboard.is_none() => keyboard = Keyboard::new(hc.clone(), f),
++            _ => {}
+         }
+     }
+-
+-    let Some((function, mac)) = network else {
+-        daemon.ready();
+-        for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
+-            if let (Source::Time, Some(t), Some(k)) = (event.user_data, timer.as_mut(), keyboard.as_mut()) {
+-                t.fired();
+-                t.arm(k.poll());
+-            }
+-        }
+-        unreachable!()
+-    };
+-
++    net.select(&mut bus);
++    // Without an adapter at boot, the network stack still gets a scheme, so
++    // an adapter plugged in later works; it takes the board's address.
++    let name = net.active_adapter().map_or("network.usb", |a| a.scheme_name());
++    if net.active.is_none() {
++        net.mac = dt_mac.unwrap_or([0x02, 0x52, 0x65, 0x64, 0x6F, 0x78]);
++    }
++    let mac = net.mac;
+     println!(
+-        "dwc2d: network adapter {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
++        "dwc2d: network address {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+     );
++
++    // stdout goes to logd from here on; rescans print only when something
++    // changes.
++    let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
++
+     // The receive channel's halt raises the controller's interrupt; without
+     // it, fall back to a timer that polls.
+     let irq_path = Fdt::new(&dtb).ok().and_then(|fdt| find_irq(&fdt));
+@@ -291,29 +485,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         }
+         _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
+     }
+-    if irq_file.is_none() && timer.is_none() {
+-        let mut t = Timer::new().expect("dwc2d: failed to open /scheme/time");
+-        events
+-            .subscribe(t.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
+-            .expect("dwc2d: failed to subscribe to the timer");
+-        t.arm(Duration::ZERO);
+-        timer = Some(t);
++
++    // The keyboard's polls and, without an interrupt, the receive polls.
++    let mut timer = Timer::new().expect("dwc2d: failed to open /scheme/time");
++    events
++        .subscribe(timer.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++        .expect("dwc2d: failed to subscribe to the timer");
++    if keyboard.is_some() || irq_file.is_none() {
++        timer.arm(Duration::ZERO);
+     }
++    let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
++    events
++        .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
++        .expect("dwc2d: failed to subscribe to the timer");
++    hotplug.arm(HOTPLUG_INTERVAL);
+ 
+-    let name = match function {
+-        NetFunction::Ecm(_) => "network.usb_ecm",
+-        NetFunction::Lan78xx(_) => "network.usb_lan78xx",
+-        NetFunction::Rtl8152(_) => "network.usb_rtl8152",
+-    };
+-    let mut scheme = NetworkScheme::new(
+-        move || match function {
+-            NetFunction::Ecm(f) => UsbNet::Ecm(Ecm::new(hc, f, mac)),
+-            NetFunction::Lan78xx(f) => UsbNet::Lan78xx(Lan78xx::new(hc, f, mac)),
+-            NetFunction::Rtl8152(f) => UsbNet::Rtl8152(Rtl8152::new(hc, f, mac)),
+-        },
+-        daemon,
+-        name.to_string(),
+-    );
++    let mut scheme = NetworkScheme::new(move || net, daemon, name.to_string());
+     events
+         .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
+         .expect("dwc2d: failed to subscribe to the scheme");
+@@ -333,29 +520,58 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
+             Source::Time => {
+-                let t = timer.as_mut().unwrap();
+-                t.fired();
+-                let mut next = POLL_FALLBACK;
++                timer.fired();
++                let mut next = None;
+                 if irq_file.is_none() {
+                     scheme.tick().expect("dwc2d: network scheme failed");
++                    next = Some(POLL_FALLBACK);
+                 }
+                 if let Some(k) = keyboard.as_mut() {
+-                    next = next.min(k.poll());
++                    let due = k.poll();
++                    next = Some(next.map_or(due, |n: Duration| n.min(due)));
++                }
++                if let Some(next) = next {
++                    timer.arm(next);
+                 }
+-                t.arm(next);
++            }
++            Source::Hotplug => {
++                hotplug.fired();
++                let changes = bus.scan();
++                let net = scheme.adapter_mut();
++                for &address in &changes.removed {
++                    net.remove(address);
++                    if keyboard.as_ref().is_some_and(|k| k.address() == address) {
++                        println!("dwc2d: keyboard removed");
++                        keyboard = None;
++                    }
++                }
++                for &address in &changes.added {
++                    let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
++                        continue;
++                    };
++                    match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
++                        Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
++                        Some(Found::Keyboard(f)) if keyboard.is_none() => {
++                            keyboard = Keyboard::new(hc.clone(), f);
++                            timer.arm(Duration::ZERO);
++                        }
++                        _ => {}
++                    }
++                }
++                net.refresh_links(&mut bus);
++                net.select(&mut bus);
++                scheme.tick().expect("dwc2d: network scheme failed");
++                hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
+     }
+     unreachable!()
+ }
+ 
+-/// Enumerate all devices; returns a network function, initialized, with its
+-/// MAC address, and a keyboard, configured.
+-fn enumerate(
+-    hc: &mut Dwc2,
+-    dt_mac: Option<[u8; 6]>,
+-    led_modes: &[u32],
+-) -> Result<(Option<(NetFunction, [u8; 6])>, Option<hid::KeyboardFunction>), dwc2::Error> {
++/// Bring up the controller and enumerate the devices behind the root port.
++/// With nothing on the root port, the bus starts empty and a later rescan
++/// finds what is plugged in.
++fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
+@@ -363,75 +579,26 @@ fn enumerate(
+     // real Pi 3B+ hub); reset the port and start over, like Linux does.
+     const ATTEMPTS: usize = 3;
+     for attempt in 1..=ATTEMPTS {
+-        let speed = hc.reset_port()?;
+-        println!("dwc2d: device on root port, {:?} speed", speed);
+-
+         let mut bus = Bus::new(hc);
+-        match bus.enumerate(speed, 0, None) {
++        match bus.enumerate_root() {
+             Ok(()) => {
+                 println!("dwc2d: {} device(s) enumerated", bus.devices.len());
+-                // Candidates for the network adapter, with their link state.
+-                let mut rtl = None;
+-                let mut lan = None;
+-                let mut ecm = None;
+-                let mut keyboard = None;
+-                for device in bus.devices.clone() {
+-                    if rtl.is_none() {
+-                        if let Some(function) = rtl8152::find(&mut bus, &device) {
+-                            println!("dwc2d: RTL815x at address {}", device.address);
+-                            match rtl8152::init(&mut bus, &function) {
+-                                Ok((mac, link)) => {
+-                                    rtl = Some((NetFunction::Rtl8152(function), mac, link));
+-                                    continue;
+-                                }
+-                                Err(err) => println!("dwc2d: RTL815x: {err:?}"),
+-                            }
+-                        }
+-                    }
+-                    if lan.is_none() {
+-                        if let Some(function) = lan78xx::find(&mut bus, &device) {
+-                            println!("dwc2d: LAN7800 at address {}", device.address);
+-                            let (mac, link) = lan78xx::init(&mut bus, &function, dt_mac, led_modes)?;
+-                            lan = Some((NetFunction::Lan78xx(function), mac, link));
+-                            continue;
+-                        }
+-                    }
+-                    if ecm.is_none() && rtl.is_none() && lan.is_none() {
+-                        if let Some(function) = ecm::find(&mut bus, &device) {
+-                            println!("dwc2d: CDC Ethernet at address {}", device.address);
+-                            let mac = ecm::activate(&mut bus, device.max_packet, &function)?;
+-                            ecm = Some((NetFunction::Ecm(function), mac));
+-                            continue;
+-                        }
+-                    }
+-                    if keyboard.is_none() {
+-                        if let Some(function) = hid::find(&mut bus, &device) {
+-                            match hid::init(&mut bus, &function) {
+-                                Ok(()) => {
+-                                    println!("dwc2d: keyboard at address {}", device.address);
+-                                    keyboard = Some(function);
+-                                }
+-                                Err(err) => println!("dwc2d: keyboard at address {}: {err:?}", device.address),
+-                            }
+-                        }
+-                    }
+-                }
+-                // A plugged-in RTL8152 or RTL8153 wins over the onboard
+-                // LAN7800, but only with a link: an adapter without a cable
+-                // would leave the Pi without network.
+-                let network = match (rtl, lan) {
+-                    (Some((f, mac, true)), _) => Some((f, mac)),
+-                    (_, Some((f, mac, _))) => Some((f, mac)),
+-                    (Some((f, mac, false)), None) => Some((f, mac)),
+-                    (None, None) => ecm,
+-                };
+-                return Ok((network, keyboard));
++                return Ok(bus);
++            }
++            Err(_) if !hc.root_connected() => {
++                println!("dwc2d: nothing on the root port");
++                return Ok(Bus::new(hc));
+             }
+             Err(err) if attempt < ATTEMPTS => {
+                 println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
+                 std::thread::sleep(std::time::Duration::from_millis(100));
+             }
+-            Err(err) => return Err(err),
++            Err(err) => {
++                println!("dwc2d: enumeration failed: {err:?}");
++                let mut bus = Bus::new(hc);
++                bus.give_up_root();
++                return Ok(bus);
++            }
+         }
+     }
+     unreachable!()
+diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
+index 9c8ae8c..54d6f80 100644
+--- a/drivers/usb/dwc2d/src/rtl8152.rs
++++ b/drivers/usb/dwc2d/src/rtl8152.rs
+@@ -316,6 +316,7 @@ impl Chip {
+     }
+ }
+ 
++#[derive(Clone)]
+ pub struct Rtl8152Function {
+     pub address: u8,
+     pub speed: Speed,
+@@ -371,12 +372,12 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<Rtl8152Function> {
+ 
+ /// Register access. The chip reads and writes whole aligned dwords; byte
+ /// enables in wIndex select the bytes a write changes.
+-struct Regs<'a, 'b> {
+-    bus: &'a mut Bus<'b>,
++struct Regs<'a> {
++    bus: &'a mut Bus,
+     f: &'a Rtl8152Function,
+ }
+ 
+-impl Regs<'_, '_> {
++impl Regs<'_> {
+     fn read_mem(&mut self, reg: u16, index: u16, len: u16) -> Result<Vec<u8>, Error> {
+         let data = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_REGISTER, reg, index, len)?;
+         if data.len() < usize::from(len) {
+@@ -787,8 +788,8 @@ fn valid_mac(mac: &[u8; 6]) -> bool {
+ 
+ /// Bring the chip up: chip setup, reset, MAC address, filters, PHY, and
+ /// enable receiver and transmitter. Returns the MAC address in use.
+-/// Returns the MAC address and whether the link came up.
+-pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<([u8; 6], bool), Error> {
++/// Returns the MAC address and whether the link came up within `link_wait`.
++pub fn init(bus: &mut Bus, f: &Rtl8152Function, link_wait: Duration) -> Result<([u8; 6], bool), Error> {
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(f.configuration), 0, 0)?;
+     let mut r = Regs { bus, f };
+ 
+@@ -872,8 +873,8 @@ pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<([u8; 6], bool), Error
+     // Wait for the link, so DHCP does not start into a dead cable. Gigabit
+     // autonegotiation on the RTL8153 can take longer than 5 s.
+     let wait = match chip {
+-        Chip::Rtl8152 => Duration::from_secs(5),
+-        _ => Duration::from_secs(10),
++        Chip::Rtl8152 => link_wait.min(Duration::from_secs(5)),
++        _ => link_wait,
+     };
+     let start = Instant::now();
+     let link = loop {
+@@ -904,6 +905,23 @@ pub fn init(bus: &mut Bus, f: &Rtl8152Function) -> Result<([u8; 6], bool), Error
+     Ok((mac, link))
+ }
+ 
++/// Whether the link is up.
++pub fn link(bus: &mut Bus, f: &Rtl8152Function) -> Result<bool, Error> {
++    let mut r = Regs { bus, f };
++    Ok(r.read2(PLA_PHYSTATUS, MCU_TYPE_PLA)? & PHYSTATUS_LINK != 0)
++}
++
++/// Receive frames for `mac` and send with it: the address the network
++/// stack uses, when the adapter takes over from another one.
++pub fn set_mac(bus: &mut Bus, f: &Rtl8152Function, mac: [u8; 6]) -> Result<(), Error> {
++    let mut r = Regs { bus, f };
++    let mut idr = [0; 8];
++    idr[..6].copy_from_slice(&mac);
++    r.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_CONFIG)?;
++    r.write_mem(PLA_IDR, MCU_TYPE_PLA | BYTE_EN_SIX_BYTES, &idr)?;
++    r.write1(PLA_CRWECR, MCU_TYPE_PLA, CRWECR_NORMAL)
++}
++
+ pub struct Rtl8152 {
+     hc: Dwc2,
+     f: Rtl8152Function,
+@@ -918,7 +936,7 @@ pub struct Rtl8152 {
+ 
+ impl Rtl8152 {
+     pub fn new(hc: Dwc2, f: Rtl8152Function, mac: [u8; 6]) -> Self {
+-        let mut nic = Self {
++        Self {
+             hc,
+             f,
+             mac,
+@@ -928,9 +946,17 @@ impl Rtl8152 {
+             tx: Dma::new([0; TX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
+             rx_armed: false,
+             frames: VecDeque::new(),
+-        };
+-        nic.arm_rx();
+-        nic
++        }
++    }
++
++    pub fn function(&self) -> &Rtl8152Function {
++        &self.f
++    }
++
++    /// Start receiving again after [`Dwc2::halt`] stopped the receive
++    /// channel for another adapter.
++    pub fn resume(&mut self) {
++        self.arm_rx();
+     }
+ 
+     fn phase(&self, dir_in: bool, len: usize) -> Phase {
+-- 
+2.54.0 (Apple Git-157)
+

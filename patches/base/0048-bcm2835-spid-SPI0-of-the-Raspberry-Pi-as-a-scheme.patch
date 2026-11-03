@@ -1,0 +1,527 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 11:52:27 +0100
+Subject: [PATCH] bcm2835-spid: SPI0 of the Raspberry Pi as a scheme
+
+/scheme/spi/0/cs0 and cs1: a write is one full-duplex transfer, the next
+read gives the bytes clocked in; speed and mode files. GPIO 7 to 11 go to
+ALT0 through bcm2835-gpiod. Polled, no DMA.
+
+Refs #42
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                            |   1 +
+ Makefile                              |   2 +-
+ drivers/bcm2835-spid/Cargo.toml       |  18 ++
+ drivers/bcm2835-spid/src/main.rs      | 316 ++++++++++++++++++++++++++
+ drivers/bcm2835-spid/src/spi.rs       | 109 +++++++++
+ init.initfs.d/40_drivers.target       |   1 +
+ init.initfs.d/41_bcm2835-spid.service |   9 +
+ 7 files changed, 455 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/bcm2835-spid/Cargo.toml
+ create mode 100644 drivers/bcm2835-spid/src/main.rs
+ create mode 100644 drivers/bcm2835-spid/src/spi.rs
+ create mode 100644 init.initfs.d/41_bcm2835-spid.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index d8958bc..fe17604 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -58,2 +58,3 @@ members = [
+     "drivers/bcm2835-i2cd",
++    "drivers/bcm2835-spid",
+     "drivers/rpi-firmwared",
+diff --git a/Makefile b/Makefile
+index 4692458..00c38a1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
+ endif
+diff --git a/drivers/bcm2835-spid/Cargo.toml b/drivers/bcm2835-spid/Cargo.toml
+new file mode 100644
+index 0000000..e4ac465
+--- /dev/null
++++ b/drivers/bcm2835-spid/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++name = "bcm2835-spid"
++description = "SPI0 controller of the Raspberry Pi (BCM2835/BCM2837)"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../common" }
++daemon = { path = "../../daemon" }
++scheme-utils = { path = "../../scheme-utils" }
++
++libredox.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/bcm2835-spid/src/main.rs b/drivers/bcm2835-spid/src/main.rs
+new file mode 100644
+index 0000000..f9698bc
+--- /dev/null
++++ b/drivers/bcm2835-spid/src/main.rs
+@@ -0,0 +1,316 @@
++//! SPI0 of the Raspberry Pi (header pins 19 MOSI, 21 MISO, 23 SCLK, 24 CE0,
++//! 26 CE1), as a scheme:
++//!
++//! - `/scheme/spi/0/cs0`, `/scheme/spi/0/cs1`: each write is one
++//!   full-duplex transfer with that chip select held for all its bytes; the
++//!   next read on the same handle returns the bytes clocked in during it
++//!   (once, then the read gives 0 bytes). Offsets are ignored.
++//! - `/scheme/spi/0/speed`: SCLK in Hz; writing picks the nearest speed the
++//!   divider allows at or below it.
++//! - `/scheme/spi/0/mode`: SPI mode `0` to `3` (CPOL, CPHA).
++//!
++//! At start the driver sets GPIO 7 to 11 to ALT0 through `bcm2835-gpiod`
++//! and the speed to 1 MHz, mode 0, from the core clock that
++//! `rpi-firmwared` reports.
++
++use std::process;
++
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{Blocking, FpathWriter, HandleMap};
++use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, EMSGSIZE, ENOENT, ENOTDIR, EROFS, ETIMEDOUT};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
++
++mod spi;
++
++use spi::Spi;
++
++/// Bus address of SPI0, used if the devicetree has none.
++const SPI0_BUS_ADDR: usize = 0x7e20_4000;
++const PAGE_SIZE: usize = 4096;
++const BUS: &str = "0";
++/// CE1, CE0, MISO, MOSI, SCLK.
++const PINS: &[u32] = &[7, 8, 9, 10, 11];
++const DEFAULT_HZ: u32 = 1_000_000;
++/// Core clock of the Pi 3, if `rpi-firmwared` does not say.
++const DEFAULT_CORE_HZ: u32 = 250_000_000;
++
++const BUS_FILES: &[&str] = &["cs0", "cs1", "mode", "speed"];
++
++#[derive(Clone, Copy)]
++enum Setting {
++    Mode,
++    Speed,
++}
++
++enum Handle {
++    Root,
++    Top,
++    Bus,
++    File(Vec<u8>),
++    Write(Setting),
++    /// A chip select and what its last transfer clocked in.
++    Device(u32, Vec<u8>),
++}
++
++struct SpiScheme {
++    spi: Spi,
++    core_hz: u32,
++    handles: HandleMap<Handle>,
++}
++
++impl SpiScheme {
++    fn contents(&self, setting: Setting) -> String {
++        match setting {
++            Setting::Mode => format!("{}\n", self.spi.mode()),
++            Setting::Speed => format!("{}\n", self.spi.speed()),
++        }
++    }
++
++    fn set(&mut self, setting: Setting, value: &str) -> Result<()> {
++        match setting {
++            Setting::Mode => match value.parse::<u8>() {
++                Ok(mode @ 0..=3) => self.spi.set_mode(mode),
++                _ => return Err(Error::new(EINVAL)),
++            },
++            Setting::Speed => match value.parse::<u32>() {
++                Ok(hz) if hz > 0 => {
++                    self.spi.set_speed(self.core_hz, hz);
++                }
++                _ => return Err(Error::new(EINVAL)),
++            },
++        }
++        Ok(())
++    }
++}
++
++impl SchemeSync for SpiScheme {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        flags: usize,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        // O_RDWR includes the O_WRONLY bit.
++        let write = flags & O_WRONLY != 0;
++        let handle = match path.trim_matches('/').split('/').collect::<Vec<_>>()[..] {
++            [""] => Handle::Top,
++            [BUS] => Handle::Bus,
++            [BUS, "cs0"] => Handle::Device(0, Vec::new()),
++            [BUS, "cs1"] => Handle::Device(1, Vec::new()),
++            [BUS, name @ ("mode" | "speed")] => {
++                let setting = if name == "mode" { Setting::Mode } else { Setting::Speed };
++                if write {
++                    Handle::Write(setting)
++                } else {
++                    Handle::File(self.contents(setting).into_bytes())
++                }
++            }
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match self.handles.get_mut(id)? {
++            Handle::File(data) => {
++                let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++                let len = buf.len().min(data.len() - start);
++                buf[..len].copy_from_slice(&data[start..start + len]);
++                Ok(len)
++            }
++            Handle::Device(_, received) => {
++                let len = buf.len().min(received.len());
++                buf[..len].copy_from_slice(&received[..len]);
++                received.drain(..len);
++                Ok(len)
++            }
++            Handle::Write(_) => Err(Error::new(EBADF)),
++            _ => Err(Error::new(EISDIR)),
++        }
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match *self.handles.get(id)? {
++            Handle::Write(setting) => {
++                let value = std::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.trim();
++                self.set(setting, value)?;
++            }
++            Handle::Device(chip, _) => {
++                if buf.len() > spi::MAX_LEN {
++                    return Err(Error::new(EMSGSIZE));
++                }
++                let received = if buf.is_empty() {
++                    Vec::new()
++                } else {
++                    self.spi.transfer(chip, buf).map_err(|spi::Error::Timeout| Error::new(ETIMEDOUT))?
++                };
++                if let Handle::Device(_, last) = self.handles.get_mut(id)? {
++                    *last = received;
++                }
++            }
++            _ => return Err(Error::new(EBADF)),
++        }
++        Ok(buf.len())
++    }
++
++    // Shells truncate a file before writing to it.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Write(_) | Handle::Device(..) => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn getdents<'buf>(
++        &mut self,
++        id: usize,
++        mut buf: DirentBuf<&'buf mut [u8]>,
++        opaque_offset: u64,
++    ) -> Result<DirentBuf<&'buf mut [u8]>> {
++        let names: &[&str] = match self.handles.get(id)? {
++            Handle::Top => &[BUS],
++            Handle::Bus => BUS_FILES,
++            _ => return Err(Error::new(ENOTDIR)),
++        };
++        let kind = if names == [BUS] { DirentKind::Directory } else { DirentKind::Regular };
++        let skip = usize::try_from(opaque_offset).unwrap_or(usize::MAX);
++        for (i, name) in names.iter().enumerate().skip(skip) {
++            buf.entry(DirEntry {
++                inode: i as u64,
++                name,
++                kind,
++                next_opaque_id: i as u64 + 1,
++            })?;
++        }
++        Ok(buf)
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::File(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Write(_) | Handle::Device(..) => stat.st_mode = 0o644 | MODE_FILE,
++            Handle::Root | Handle::Top | Handle::Bus => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::File(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "spi", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// The CPU physical address of SPI0, from the devicetree.
++fn spi0_phys(fdt: &Fdt) -> usize {
++    let bus_addr = fdt
++        .all_nodes()
++        .filter(|node| node.compatible().is_some_and(|c| c.all().any(|c| c == "brcm,bcm2835-spi")))
++        .filter_map(|node| node.reg()?.next())
++        .map(|reg| reg.starting_address as usize)
++        .find(|&addr| addr & 0xff_ffff == SPI0_BUS_ADDR & 0xff_ffff)
++        .unwrap_or(SPI0_BUS_ADDR);
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// The core clock from `/scheme/rpi-firmware/clocks` (`core <rate> <max>`).
++fn core_clock() -> Option<u32> {
++    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").ok()?;
++    clocks.lines().find_map(|line| line.strip_prefix("core ")?.split_whitespace().next()?.parse().ok())
++}
++
++/// GPIO 7 to 11 to ALT0 (SPI0).
++fn route_pins() {
++    for pin in PINS {
++        if let Err(err) = std::fs::write(format!("/scheme/gpio/{pin}/mode"), "alt0") {
++            eprintln!("bcm2835-spid: cannot set GPIO {pin} to alt0 ({err}); leaving it to the firmware");
++        }
++    }
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-spid: no devicetree");
++        process::exit(0);
++    };
++    let phys = spi0_phys(&fdt);
++    let regs = unsafe {
++        common::physmap(phys, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-spid: failed to map registers")
++    } as *mut u32;
++    route_pins();
++    let core_hz = core_clock().unwrap_or(DEFAULT_CORE_HZ);
++    let mut spi = Spi::new(regs);
++    let hz = spi.set_speed(core_hz, DEFAULT_HZ);
++    println!("bcm2835-spid: bus {BUS} at 0x{phys:08x}, {} kHz (core {} MHz)", hz / 1000, core_hz / 1_000_000);
++
++    let mut scheme = SpiScheme {
++        spi,
++        core_hz,
++        handles: HandleMap::new(),
++    };
++    let socket = Socket::create().expect("bcm2835-spid: failed to create the spi scheme");
++    let handler = Blocking::new(Box::new(socket), 16);
++    let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
++
++    libredox::call::setrens(0, 0).expect("bcm2835-spid: failed to enter the null namespace");
++
++    handler
++        .process_requests_blocking(scheme)
++        .expect("bcm2835-spid: failed to process requests");
++}
+diff --git a/drivers/bcm2835-spid/src/spi.rs b/drivers/bcm2835-spid/src/spi.rs
+new file mode 100644
+index 0000000..a26e918
+--- /dev/null
++++ b/drivers/bcm2835-spid/src/spi.rs
+@@ -0,0 +1,109 @@
++//! The SPI0 master of the BCM2835 and BCM2837 (BCM2835 ARM Peripherals,
++//! chapter 10). Polled, 64-byte FIFOs, no DMA.
++
++use std::time::{Duration, Instant};
++
++const CS: usize = 0x00;
++const FIFO: usize = 0x04;
++const CLK: usize = 0x08;
++
++const CS_CPHA: u32 = 1 << 2;
++const CS_CPOL: u32 = 1 << 3;
++const CS_CLEAR: u32 = 0b11 << 4;
++const CS_TA: u32 = 1 << 7;
++const CS_DONE: u32 = 1 << 16;
++const CS_RXD: u32 = 1 << 17;
++const CS_TXD: u32 = 1 << 18;
++
++/// Longest transfer.
++pub const MAX_LEN: usize = 4096;
++
++#[derive(Debug, PartialEq)]
++pub enum Error {
++    Timeout,
++}
++
++pub struct Spi {
++    regs: *mut u32,
++    /// CPOL and CPHA bits of the current mode.
++    mode_bits: u32,
++    scl_hz: u32,
++}
++
++impl Spi {
++    /// `regs` points at the CS register.
++    pub fn new(regs: *mut u32) -> Self {
++        Self {
++            regs,
++            mode_bits: 0,
++            scl_hz: 0,
++        }
++    }
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    /// Sets SCLK as close to `hz` as the divider allows without going over;
++    /// returns the speed it got.
++    pub fn set_speed(&mut self, core_hz: u32, hz: u32) -> u32 {
++        let mut div = core_hz.div_ceil(hz.max(1));
++        // The divider must be even (the hardware ignores bit 0).
++        if div % 2 == 1 {
++            div += 1;
++        }
++        let div = div.clamp(2, 0xfffe);
++        self.write(CLK, div);
++        self.scl_hz = core_hz / div;
++        self.scl_hz
++    }
++
++    pub fn speed(&self) -> u32 {
++        self.scl_hz
++    }
++
++    /// SPI mode 0 to 3: bit 1 is CPOL, bit 0 is CPHA.
++    pub fn set_mode(&mut self, mode: u8) {
++        self.mode_bits = if mode & 2 != 0 { CS_CPOL } else { 0 } | if mode & 1 != 0 { CS_CPHA } else { 0 };
++    }
++
++    pub fn mode(&self) -> u8 {
++        u8::from(self.mode_bits & CS_CPOL != 0) << 1 | u8::from(self.mode_bits & CS_CPHA != 0)
++    }
++
++    /// One full-duplex transfer on chip select `chip` (0 or 1), held for the
++    /// whole of `data`; returns the bytes clocked in.
++    pub fn transfer(&self, chip: u32, data: &[u8]) -> Result<Vec<u8>, Error> {
++        assert!(chip < 2 && data.len() <= MAX_LEN);
++        let base = self.mode_bits | chip;
++        self.write(CS, base | CS_CLEAR);
++        self.write(CS, base | CS_TA);
++        // Twice the time on the wire, plus room for the scheduler.
++        let wire = Duration::from_micros(data.len() as u64 * 8 * 1_000_000 / u64::from(self.scl_hz.max(1)));
++        let deadline = Instant::now() + wire * 2 + Duration::from_millis(100);
++        let mut received = Vec::with_capacity(data.len());
++        let mut sent = 0;
++        let result = loop {
++            while sent < data.len() && self.read(CS) & CS_TXD != 0 {
++                self.write(FIFO, u32::from(data[sent]));
++                sent += 1;
++            }
++            while received.len() < data.len() && self.read(CS) & CS_RXD != 0 {
++                received.push(self.read(FIFO) as u8);
++            }
++            if received.len() == data.len() && self.read(CS) & CS_DONE != 0 {
++                break Ok(received);
++            }
++            if Instant::now() > deadline {
++                break Err(Error::Timeout);
++            }
++            std::hint::spin_loop();
++        };
++        self.write(CS, base | CS_CLEAR);
++        result
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index d4f0993..2c05be8 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -8,2 +8,3 @@ requires_weak = [
+     "41_bcm2835-i2cd.service",
++    "41_bcm2835-spid.service",
+     "40_bcm2835-sdhostd.service",
+diff --git a/init.initfs.d/41_bcm2835-spid.service b/init.initfs.d/41_bcm2835-spid.service
+new file mode 100644
+index 0000000..47a6f02
+--- /dev/null
++++ b/init.initfs.d/41_bcm2835-spid.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "Raspberry Pi SPI0"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["40_bcm2835-gpiod.service", "40_rpi-firmwared.service"]
++
++[service]
++cmd = "bcm2835-spid"
++type = { scheme = "spi" }

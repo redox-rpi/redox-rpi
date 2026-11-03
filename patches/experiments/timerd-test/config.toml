@@ -1,0 +1,28 @@
+# Test timers for the timerd experiment: use together with --experiment
+# timerd. Not for images people use, it runs every minute.
+
+# Runs every minute, logs the time.
+[[files]]
+path = "/etc/timer.d/test-minute.toml"
+data = """
+[timer]
+description = "Test: every minute"
+schedule = "* * * * *"
+
+[service]
+cmd = "date"
+"""
+
+# Persistent: after a restart it catches up the minute it missed.
+[[files]]
+path = "/etc/timer.d/test-catchup.toml"
+data = """
+[timer]
+description = "Test: catch up after a restart"
+schedule = "*/2 * * * *"
+persistent = true
+
+[service]
+cmd = "uname"
+args = ["-a"]
+"""
