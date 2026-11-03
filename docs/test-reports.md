@@ -7280,3 +7280,35 @@ Zero from it. Same image `v0.4.0-dev-135-g2416130`. **Pass.**
   - The 10 MiB of zeros added only 40 KB, so RedoxFS seems to store zero blocks
     without taking space. 23 MB is what real data can use.
 - Free memory 186920 of 333068 KB, `throttled` 0x0.
+
+## #207: sshd ends an idle connection after the login grace time (2026-11-03, Pi test agent)
+
+Image `v0.4.0-dev-195-g28be1ddd+x4ec1` (test branch `tcp-close-test` = PR #185 with
+PR #90, experiments timesync, rtl8152, sshd). Real Pi 3B+ over netboot, reset at
+19:38 UTC. The boot reached login with no `FATAL` or panic line. **Pass.** Fixes the
+failed grace-time step of #182 ([#184](https://github.com/redox-rpi/redox-rpi/issues/184)).
+
+**Login grace time**
+- The host keys were in `/etc/ssh` at the first look (19:38:56).
+- Each try opened a TCP connection from homenodellm to port 22, read the banner
+  `SSH-2.0-OpenSSH_10.5`, and sent nothing.
+  - Try 1: **the Pi closed the connection after 125 s** (FIN, `recv` returned empty).
+    Serial: `Timeout before authentication for connection from 192.168.178.120 to
+    192.168.178.148, pid = 60`, at the same time.
+  - Try 2: closed after **124 s**, with the same line (`pid = 62`).
+  - That matches QEMU (122-127 s). In #182 the connection stayed open until the
+    client closed it.
+
+**Other #182 steps**
+- Test key into `/home/root/.ssh/authorized_keys` over devsh, in single quotes:
+  `wc -c` 100.
+- 5 key logins `ssh -i /tmp/qkey root@192.168.178.148 'echo loginN'`: login1 to
+  login5, all rc 0.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace,
+  prompt-again and exit all `ok`, rc 0.
+- 40 devsh connections in a row: 40/40.
+- pi-test (`--manifest --starts 300 --serial-log`): version, manifest, ps (53), ps-tty
+  and sdcard pass, and 0 of 300 starts failed.
+- Serial: the only TODO line is `sshd-session: TODO: ioctl TIOCSCTTY` (known).
+
+Stable `v0.4.0-dev-64-g954be33+x9f76` was restored afterwards (19:46) and devsh answers.
