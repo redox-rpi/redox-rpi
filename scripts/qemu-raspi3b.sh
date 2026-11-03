@@ -31,6 +31,8 @@
 #                     time registers)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
+#   --qmp <path>      QMP on this Unix socket, e.g. for absolute pointer
+#                     events (`input-send-event`)
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -73,6 +75,7 @@ usb_net=no
 usb_host=""
 monitor=(-monitor none)
 devices=()
+qmp=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -88,6 +91,7 @@ while [ $# -gt 0 ]; do
         --usb-host) usb_host="$2"; shift 2 ;;
         --device) devices+=(-device "$2"); shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
+        --qmp) qmp=(-qmp "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -179,7 +183,7 @@ qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
-    -display none "${monitor[@]}"
+    -display none "${monitor[@]}" ${qmp[@]+"${qmp[@]}"}
     ${devices[@]+"${devices[@]}"}
     -usb)
 if [ -n "$usb_host" ]; then

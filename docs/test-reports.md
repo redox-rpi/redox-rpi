@@ -6723,3 +6723,517 @@ Image `vc-…`, own bootloader, as in 188. 6 runs, with a power cycle before eac
 Each came once per run, and the CPU kept beating afterwards. No `[hb stall …]` line and no hub drop in any run.
 
 Power cycles: 09:43:02, 09:49:33, 09:55:50, 10:01:41, 10:12:55. Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.3.0-dev-974-g3cf2086+x809a` (dwc2d restarts a stuck USB controller)
+
+Real Pi 3B+ over netboot. Test 190 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 10:57.
+
+**Fail: the restart runs, but the network never comes back.**
+- Part A: the first forced restart printed `controller restarted`, but no device came back and devsh was gone for good. The second forced restart printed nothing.
+- Part B: 4 of 5 valid runs completed. In run 6 the controller got stuck at 240 MiB, and the restart failed with `controller restart failed: Timeout("AHB idle")`. The network did not come back.
+
+**Part A (forced restart while idle):** reset 10:57:19, at login 10:57:40.
+- Restart 1, at 10:58:00 (`echo restart > /tmp/dwc2d-cycle` over devsh). Serial:
+  ```
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000009 HPRT0 0x1405 HFNUM 0xbf93e2
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 0, last 0x0 at address 0 endpoint 0, 12060 ms ago
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  ```
+  - Then nothing more from dwc2d: no `device on root port`, no `network on the adapter`.
+  - devsh did not answer within 264 s (or later).
+- Restart 2: not sent. devsh was dead, so the command did not reach the Pi, and there was no new dwc2d line.
+- Read over the serial console at 11:10 (`/tmp/dwc2d-usbstats`):
+  - `restarts 1`, `halt_failures 0`, `timeouts 0`, `recoveries 0`;
+  - **`hprt0 0x400`** (port power on, no device connected), `last_hprt0 0x100f`, `gintsts 0x54000029`;
+  - `/tmp/dwc2d-step`: `795232 idle`.
+- `grep -E … /scheme/sys/context` did not run: Redox `grep` answers `Invalid parameter '-E'`.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result | Bytes, seconds |
+|---|---|---|---|
+| 1 | 11:11 | **not run**: the Pi was still without network from part A, and the runner's reset goes over devsh, so the Pi was never reset (my runner's fault, not the image's) | – |
+| 2 | 11:26:05 (power cycle) | **complete** | 382156480 in 366.8 s, 1.04 MB/s |
+| 3 | 11:33:33 (power cycle) | **complete** | 382156480 in 309.1 s, 1.24 MB/s |
+| 4 | 11:39:53 (power cycle) | **complete** | 382156480 in 292.4 s, 1.31 MB/s |
+| 5 | 11:45:57 (power cycle) | **complete** | 382156480 in 333.4 s, 1.15 MB/s |
+| 6 | 11:52:51 (power cycle) | **stalled** at `240 MiB 196.2 s`, last progress 11:57:03 | – |
+
+- Runs 2–5: no `stuck`, `restarted`, `removed` or `Timeout` line.
+- Run 6, in order:
+  ```
+  netget:   240 MiB   196.2 s  1.81 MB/s
+  [smolnetd … ERROR] Dropped outboud packet on eth0 (failed to write to network file)    (11:57:10)
+  dwc2d: request [a3, 00, 00, 00, 01, 00, 04, 00] to address 1 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: hub 1 port 1: Timeout("channel halt")
+  … the same for hub 1 ports 2, 3, 4 …
+  dwc2d: controller stuck, restarting it: GINTSTS 0x54000039 HPRT0 0x1005 HFNUM 0x2033c6 GNPTXSTS 0x8080400 HPTXSTS 0x9d080400 HAINT 0x0 GRSTCTL 0x40000000; ch0 HCCHAR 0xc0500040 HCINT 0x0 HCTSIZ 0x60080008; ch1 HCCHAR 0x81588a00 HCINT 0x20 HCTSIZ 0xc0d83800; ch2 …
+  dwc2d: errors so far: xact 0 babble 0 stall 0 toggle 0 ahb 0 timeouts 31, last 0x80000000 at address 1 endpoint 0, 59 ms ago
+  dwc2d: controller restart failed: Timeout("AHB idle")
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: request [80, 06, 00, 01, 00, 00, 08, 00] to address 0 (max packet 64, High speed) failed: Timeout("channel halt")
+  dwc2d: root port: Timeout("channel halt")
+  dwc2d: root port: HPRT0 0x100d
+  ```
+  - Then nothing more. The full `controller stuck` line, with all channels, is in `t190/r6-stuckline.txt` on homenodellm.
+  - Lines in run 6: `stuck` 1, `restarted` 0, `removed` 1 (`keyboard removed`), `Timeout` 11.
+  - Read over serial at 12:02, `/tmp/dwc2d-usbstats`: `halt_failures 40`, `restarts 1`, `timeouts 36`, `last_error 0x80000000`, `root_events 2`, `hprt0 0x1005`, `last_hprt0 0x100d`, `gintsts 0x54000039`. `/tmp/dwc2d-step`: `582139 idle`.
+  - netget's TCP connection did not survive, and the network did not come back within 6 min. devsh was dead.
+- The download stall itself looks the same as #189 run 5, and the new code does detect it (`controller stuck`).
+
+Afterwards: power cycle 12:03:44 with stable staged. `rm /scheme/data/netget.bin` was not done at the end because devsh was dead; the stable image does not use that file. Stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-dev-978-gf2e0318+x809a` (dwc2d restarts a stuck USB controller, second try)
+
+Real Pi 3B+ over netboot. Test 191 ([#151](https://github.com/redox-rpi/redox-rpi/issues/151)), Pi test agent. Stable bootloader, staged 12:15.
+
+**Pass:**
+- Part A: both forced restarts recovered, each with a single `restart 1`, and devsh answered again after 17 s and 24 s.
+- Part B: **6 of 6 downloads completed**, so the stuck controller of 189/190 did not show and the restart was not needed during a download.
+
+**Part A (forced restart while idle):** reset 12:15:55, at login 12:16:15.
+- Restart 1, at 12:16:35. devsh was back after 17 s:
+  ```
+  dwc2d: restart 1 (up to 5 in a row without devices)
+  dwc2d: controller stuck, restarting it: GINTSTS 0x56000029 HPRT0 0x1005 HFNUM 0x12cf1b05 GNPTXSTS 0x8080400 HPTXSTS 0x1f080400 HAINT 0x2 GRSTCTL 0x80000000; …
+  dwc2d: controller restarted
+  dwc2d: keyboard removed
+  dwc2d: device on root port, High speed
+  dwc2d: network on the adapter at address 5
+  ```
+- Restart 2, at 12:17:52. devsh was back after 24 s, with the same sequence (`GINTSTS 0x54000009 HPRT0 0x1005 …`).
+- No `failed` and no `Timeout` line.
+- `/tmp/dwc2d-usbstats` afterwards (over devsh): `restarts 2`, `halt_failures 0`, `timeouts 0`.
+- In `/scheme/sys/context`, `dwc2d` and `netstack` are both `UB`, which is normal.
+
+**Part B (the #189 download, 382156480 bytes):**
+
+| Run | Start (UTC) | Result |
+|---|---|---|
+| 1 | 12:19:28 (reset) | **complete**, 378.5 s, 1.01 MB/s |
+| 2 | 12:26:53 (power cycle) | **complete**, 293.1 s, 1.30 MB/s |
+| 3 | 12:33:05 (power cycle) | **complete**, 261.5 s, 1.46 MB/s |
+| 4 | 12:38:40 (power cycle) | **complete**, 296.3 s, 1.29 MB/s |
+| 5 | 12:44:59 (power cycle) | **complete**, 361.2 s, 1.06 MB/s |
+| 6 | 12:52:23 (power cycle) | **complete**, 267.9 s, 1.43 MB/s |
+
+- No `restart`, `stuck`, `restarted`, `failed`, `removed` or `Timeout` line in any run.
+- After run 6: `restarts 0`, `halt_failures 0`, `timeouts 0`.
+- So a restart during a real stuck download is still untested on the Pi. It came 1 time in 6 runs in 189 and in 190.
+
+Afterwards `rm /scheme/data/netget.bin`, then stable restored (`v0.3.0-dev-891-g55d0446+x9f76`), reset, and stable came up to login.
+
+## 2026-11-01: test 193, v0.3.0-rc4 SD card with the user (`v0.3.0-dev-963-g15e885d+x12cb`)
+
+Release checklist tests 6–9, one visit. Card written from
+`redox-rpi-v0.3.0-rc4.img.xz` (SHA-256 `bd6e9f8f…f35c`), built with
+`--release v0.3.0-rc4 --experiment timesync --sdcard`. Sources: the serial
+log of the Pi 3B+ (15:18 UTC) and the user's report, relayed by the
+coordinator. The Zero 2 W has no serial console here, so its results are
+from the user alone.
+
+| Test | Pi 3B+ | Zero 2 W | Detail |
+|---|---|---|---|
+| 6 SD card boot | **pass** | **pass** (user) | Serial banner `redox-rpi v0.3.0-rc4 (v0.3.0-dev-963-g15e885d+x12cb) (sdcard)`, then `redox login:`. The `dd`/`sha256sum` write check was not reported. |
+| 7 HDMI, keyboard, `Super`+`F1`/`F2` | **pass** (user) | **pass** (user) | "Super F1/F2 hat funktioniert." |
+| 8 USB hotplug | **pass** | **pass** (user) | The keyboard worked before and after it was unplugged and plugged in again (found at address 4 on the 3B+). The cable was plugged in after boot: link up on the LAN7800, `dhcpd` configured the address, `timesync` set the clock from `pool.ntp.org`. |
+| 9 Zero 2 W with the RTL8153 hub | — | **pass** (user) | Boots from the same card, keyboard and `Super`+`F1`/`F2` work. Not confirmed from a log. |
+
+Remarks:
+- One undervoltage throttle on the 3B+ (ARM clock to 600 MHz) right
+  before the cable was plugged in, then `no longer throttled`. That is the
+  power supply, not a failure.
+- `ifconfig` shows no MAC address, on both boards. To be checked; not a
+  release blocker.
+- There is no `ip` command. The visit steps wrongly named it; use
+  `ifconfig` and the boot log.
+
+Afterwards the netboot card goes back into the Pi 3B+; then row 192 (rc4
+automated) can run.
+
+## 2026-11-01: `v0.3.0-rc4` (`v0.3.0-dev-963-g15e885d+x12cb`), automated checklist 1–5, 11, 13, 14
+
+Real Pi 3B+ over netboot, after the user's visit (#193). Test 192, Pi test agent.
+Image `~/redox-rpi-rel/keep/v0.3.0-rc4-netboot.img`, staged 15:36 with the stable bootloader. The manifest matched at staging.
+
+**Pass: all checks.**
+
+- **(1) pi-test** `--starts 1000 --manifest netboot-v0.3.0-dev-963-g15e885d+x12cb.toml`:
+  - `PASS version: v0.3.0-rc4 (v0.3.0-dev-963-g15e885d+x12cb)`;
+  - manifest (build ID and `libc.so` hash), `ps` (51), `ps-tty`, SD card all pass;
+  - **0 of 1000 starts failed**;
+  - no panic, `FATAL` or `dwc2d` panic in any of the 6 boots (first boot plus 5 reboots).
+- **(2) clock:**
+  - every boot logs `rpi-firmwared: ARM clock 600 -> 1400 MHz`;
+  - `throttled` is `0x00000000`, with no throttle or undervoltage line;
+  - `clocks`: `arm 1400000000 1400000000`, `core 250000000 400000000`, `emmc 200000000`, `sdram 400000000 450000000`;
+  - sdhost: `SDHC/SDXC card, 15193 MiB, 4-bit bus, high speed, up to 50 MHz`.
+- **(3)** No `pcid`, `audiod` or `rtcd` line in any of the 6 boots.
+- **(4) time:**
+  - `timesync: clock set to 2026-11-01 15:37:08 UTC from pool.ntp.org`;
+  - `date -u` on the Pi gave `Sun Nov 1 15:37:56 UTC 2026`, the same second as homenodellm.
+- **(5)** `reboot` over devsh, 5 times: each came back to `redox login:` (20–22 s) and devsh answered (15:44:39 … 15:48:22).
+- **(11)** `serial-input-test.sh 20` (logged in as root on the console): **20 of 20 lines complete**.
+- **(13) governor:**
+  - `mode ondemand`, `min 600000000`, `max 1400000000`;
+  - during the 1000 starts, three `clocks` reads all gave `arm 1400000000`.
+  - Idle needed a second boot. Staged 15:53 without the manifest, see the note below. I read the governor 2 min after login, then twice more, 30 s apart:
+    - each read itself shows `target max` and `arm 1400000000`, because the devsh login loads the CPU (`load 55–100`);
+    - but between the reads `time_min_ms` grew by 28062 and 29563 ms, and `time_max_ms` by only 4031 and 5674 ms;
+    - in total, 130 s at 600 MHz against 12 s at 1400 MHz since boot.
+  - So when idle it runs at 600 MHz, and it goes to 1400 MHz under load and while being looked at.
+- **(14)** `nowire-check.py` (as test 99): **21 of 21 checks passed**.
+  - GPIO 5 output reads back, GPIO 6 follows its pulls, the activity and power LEDs take writes, and the pins table has 54 rows.
+  - I2C pins are in alt0; `i2c detect` finishes (`answering: none`); a missing address gives `No such device or address (os error 6)`.
+  - SPI pins 7–11 are in alt0; the MISO pull reads `ff`/`00` at 1 and 10 MHz on cs0 and cs1; the 4096-byte transfer finishes.
+  - `ls /scheme/gpio` lists `0` … `53` and `pins`.
+- **Note:** `~/redox-rpi-rel/build/manifests/netboot-v0.3.0-dev-963-g15e885d+x12cb.toml` was rewritten at 15:42, after this test's staging. Since then, `stage.sh` says `MANIFEST MISMATCH` for the 15:11 image `v0.3.0-rc4-netboot.img`. The pi-test above ran against the manifest as it was at 15:36 and passed. The build agent should check which manifest belongs to the release image.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh at 15:58.
+
+## 2026-11-01: `v0.3.0-dev-967-g311e46d+x9b05` (`ifconfig` shows the MAC address)
+
+Real Pi 3B+ over netboot. Test 194 ([#171](https://github.com/redox-rpi/redox-rpi/issues/171)), Pi test agent. Image `ifcmac-v0.3.0-dev-967-g311e46d+x9b05.img` (branch `ifconfig-mac`), staged 16:07 with the stable bootloader. Network on the LAN7800 (`dwc2d: LAN7800 at address 4`).
+
+**Pass:**
+- `ifconfig` over devsh, rc 0:
+  ```
+  eth0:
+  MAC Address: b8:27:eb:08:e0:aa
+  IP Address: 192.168.178.148
+  Netmask: 255.255.255.0
+  ```
+- `cat /scheme/netcfg/ifaces/eth0/mac` gives `b8-27-eb-08-e0-aa`, the same address. It is not `00:00:00:00:00:00`.
+- Standard checks: version, manifest present, `ps` (45), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+- No panic or `FATAL` line.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.3.0-3-g5ea80f3+x36c5` (kernel `0013` self-exit-status as a default patch)
+
+Real Pi 3B+ over netboot. Test 195 ([#108](https://github.com/redox-rpi/redox-rpi/issues/108)), Pi test agent. Image `sx-v0.3.0-3-g5ea80f3+x36c5.img` (branch `t108-self-exit-default`), staged 16:11 with the stable bootloader.
+
+**Pass:**
+- **(1)** In `/usr/share/relibc-tests`, `./bins_dynamic/pthread/exit; echo rc=$?` 10 times: **10 of 10 `rc=0`**, 1.6 s in total.
+- **(2)** `free` before and after 200 runs of `dd if=/dev/zero of=/dev/null bs=4k count=1` (all 200 printed `records out`, 32.3 s):
+  - used memory went from 151084 to 141188 KB, so it **fell by 9.9 MB**, with no growth;
+  - test 133 had +824 KB, and #31 was about 76 KB per run.
+- **(3)** Standard checks: version, manifest present, `ps` (46), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+- No panic or `FATAL` line on serial.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-13-g16d3ba8+x4af4` (graphics PR #113 as it stands: DMA off, CPU blits)
+
+Real Pi 3B+ over netboot. Test 148 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. Image `netboot-v0.4.0-dev-13-g16d3ba8+x4af4.img`, staged 16:15 with the stable bootloader. Default boot, no typing.
+
+**Pass: the boot does not hang.**
+- Serial:
+  ```
+  rpi-fbd: EDID 256 bytes, monitor NanoKVM
+  rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+  rpi-fbd: blits with the CPU (DMA only with RPI_FB_DMA=on)
+  fbcond: Performing handoff
+  ```
+- No `DMA test` or `DMA channel` line.
+- Login at 16:16, about 40 s after the reset.
+- No panic or `FATAL` line of any kind.
+- `free`: total 737928, used 143528, free 594400 KB.
+- pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps` (52), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-14-g735e3ea+xa731` (graphics, DMA on through the service file)
+
+Real Pi 3B+ over netboot. Test 151 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. Image `netboot-v0.4.0-dev-14-g735e3ea+xa731.img` (branch `rpi-fb-dma-test`, `rpi-fb-dma-on`), staged 16:31 with the stable bootloader. Plain netboot, no `cmdline.txt`, no typing.
+
+**Partly: no freeze, but DMA was not used.** The 1-row and 64-row DMA blits went through; the 64-row one froze the Pi in #145. The whole-screen blit (984 rows) then gave a wrong row 0, so `rpi-fbd` fell back to the CPU, as designed.
+
+`rpi-fbd` lines, in order:
+```
+rpi-fbd: EDID 256 bytes, monitor NanoKVM
+rpi-fbd: boot framebuffer 1824x984 stride 1824 at 0x3e914000
+rpi-fbd: DMA test buffer had 33 of 64 words not zero
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+rpi-fbd: DMA test: buffer of 1824x984
+rpi-fbd: DMA test: 1 rows into the framebuffer
+rpi-fbd: DMA test: 64 rows into the framebuffer
+rpi-fbd: DMA test: 984 rows into the framebuffer
+rpi-fbd: blits with the CPU: DMA test: row 0 wrong after a blit of 984 rows
+fbcond: Performing handoff
+```
+- No `whole screen in N ms` line.
+- Login reached about 40 s after the reset.
+- No panic or `FATAL` line.
+- `free`: total 737928, used 143640, free 594288 KB.
+- pi-test (`--manifest`): version, manifest (build ID and `libc.so` hash), `ps` (52), `ps-tty`, SD card all pass; 0 of 300 starts failed.
+- No power cycle needed.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-13-g41cfa03+x0fb0` (the Pi answers ping)
+
+Real Pi 3B+ over netboot. Test 196 ([#177](https://github.com/redox-rpi/redox-rpi/issues/177)), Pi test agent. Image `icmp-v0.4.0-dev-13-g41cfa03+x0fb0.img` (branch `icmp-echo`), staged 16:35 with the stable bootloader. homenodellm has no `ping` binary, so I used `ping.py` (ICMP datagram socket, one request per second, 2 s timeout).
+
+**Pass:**
+- **Before, with stable 891:** 0 of 3 answered.
+- **This image:** `ping.py 192.168.178.148 20` → **20 of 20 answered**, times 0.8–12.4 ms.
+- **On the Pi:** `ping -c 3 192.168.178.1` → `3 packets transmitted, 3 packets received, 0.00% packet loss`, rtt 0.825/1.970/3.424 ms.
+- **Standard checks:** version, manifest present, `ps` (45), `ps-tty`, SD card all pass; 0 of 300 starts failed. No panic or `FATAL` line.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`), and stable came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-14-g52d9598+x424d` (`rwlock_randtest` with `sched-vtime-clamp`, no heartbeat)
+
+Real Pi 3B+ over netboot. Test 197 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14), [#157](https://github.com/redox-rpi/redox-rpi/issues/157)), Pi test agent. Image `vcrw-v0.4.0-dev-14-g52d9598+x424d.img`, staged 16:38 with the stable bootloader. Runs as in 184: one devsh command per run, 60 s client timeout, stderr kept.
+
+**Fail: the freeze is still there. 7 runs passed, then run 8 froze.** The fix of PR #168 does not cure it.
+
+- **Runs 1–7:** all `rc=0`, `real` 1.25–1.38 s (median 1.33 s). No `RELIBC PANIC`, `brk`, `UNHANDLED EXCEPTION` or `FATAL` anywhere.
+- **Run 8, started about 16:40:40:** no output, then the client timed out (16:41:46). devsh did not answer any more.
+  - The only serial line since the run started: `[src/procmgr.rs:297 WARN] Cancellation for unknown id Id(4)`.
+- **Not a whole-Pi freeze this time.** The serial console still worked:
+  - I logged in as root over serial at about 16:53 and ran `cat /scheme/sys/context`;
+  - `rwlock_randtest` was gone (exited);
+  - all user contexts were `UB`/`US`, except the initfs `redoxfs` (pid 20), which was `UR` on CPU 2 and never running;
+  - `dwc2d` was `US`, and `netstack` and the `devshd` threads were `UB`, all on CPU 2;
+  - CPU 2's `[kmain]` showed `RR` without `+` while my `cat` ran there (`UR+`). The other three idle contexts were `RR+`.
+  - `ping -c 2 192.168.178.1` on the serial console printed `PING …` and then hung for good. Ctrl-C did not stop it, so the network stack is stuck.
+- `rpi-firmwared` still printed (`warning: undervoltage, throttled (flags 0x00050005 …)`, `no longer throttled`) when the plug was switched off.
+- **Recovery failed:**
+  - Shelly power cycles at 16:43:39 (12 s off), 16:49:47 (12 s off) and 16:58:39 (40 s off, the plug read `apower 0.0`). Each time the Pi only logged a brief undervoltage, kept running the frozen image, and never rebooted.
+  - **Since the user's visit, the Pi gets power from another source**, probably the HDMI or USB cables to the NanoKVM or the keyboard. Remote recovery is not possible until that is fixed.
+  - Stable is staged in `/srv/tftp/redox`.
+- Not run: standard checks.
+
+Stable image staged afterwards (`v0.3.0-dev-891-g55d0446+x9f76`). **The Pi is still running the frozen test image and needs a person.**
+
+## 2026-11-01: `v0.4.0-dev-15-geaa48df+xa731` (graphics, kernel 0050 DMA cache fix)
+
+Real Pi 3B+ over netboot. Test 198 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. Image `~/redox-rpi-graphics/keep/netboot-v0.4.0-dev-15-geaa48df+xa731.img` (manifest matches), staged with the stable bootloader. Plain netboot, no `cmdline.txt`. Two boots: a devsh reset, then a Shelly power cycle.
+
+**Pass for the DMA fix: no `not zero` line, whole-screen DMA blit works. Boot 1 lost its network after the checks; boot 2 did not.**
+
+`rpi-fbd` lines, the same on both boots:
+```
+rpi-fbd: DMA channel 5 at 0x3f007000, 2D mode moves YLENGTH+1 rows
+rpi-fbd: DMA test: buffer of 1824x984
+rpi-fbd: DMA test: 1 rows into the framebuffer
+rpi-fbd: DMA test: 64 rows into the framebuffer
+rpi-fbd: DMA test: 984 rows into the framebuffer
+rpi-fbd: DMA test: whole screen in 29.8 ms      (boot 2: 20.5 ms)
+fbcond: Performing handoff
+```
+- No `DMA test buffer had N of 64 words not zero` line (#151: 33). No `blits with the CPU` line. No panic.
+- pi-test (`--manifest`) passes on both boots: version, manifest, `ps` (52), `ps-tty`, SD card; 0 of 300 starts failed.
+- **Boot 1:** right after pi-test, devsh and ping from the host stopped (`No route to host`), and `free` could not run. The serial console still worked: `dwc2d` sleeping (`US`, CPU time stuck at 1.71 s), `netstack` blocked, nothing busy. On the Pi, `ifconfig` printed nothing and `ping -c 2 192.168.178.120` never returned. No USB or network error in the serial log. This image has no `sched-vtime-clamp` and no dwc2d stats files, so I can't tell whether this is the known netstack/USB stall (#188, #189) or 0050. In #151 (same image without 0050) the network stayed up after pi-test.
+- **Boot 2** (power cycle): pi-test passes, then `free` (used 159428 KB), `ping -c 3` 3 of 3, then three runs of `dd if=/dev/zero bs=65536 count=800` over devsh (52 MB each, about 200 s each; the client only got dd's status lines), then `ping -c 20` 20 of 20, `free` used 167876 KB. 35 `Dropped packet on eth0 because waiting queue was full` warnings at 19:46 during pi-test. The image has no `netget`, so no large download.
+- Shelly check before the test: plug off gave 0 W, no ping, then a fresh U-Boot boot, so power cycles work again.
+
+Stable image restored afterwards (`v0.3.0-dev-891-g55d0446+x9f76`).
+
+## 2026-11-01: `v0.4.0-dev-15-gac0e81c+x58dc` (relibc tests, `sched-vtime-clamp`, `pi-heartbeat`)
+
+Real Pi 3B+ over netboot. Test 199 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14) `rwlock_randtest` freeze with the heartbeat), Pi test agent. Image `~/redox-rpi-icache/keep/vcrwhb-v0.4.0-dev-15-gac0e81c+x58dc.img`, staged 19:57 with the stable bootloader. Boot line: `experiments: pi-heartbeat relibc-tests sched-vtime-clamp timesync`.
+
+**Fail: froze at run 2, a hard freeze. No heartbeat line came at all, and the serial console died too.**
+
+- Run 1: `rc=0`, `real 1.378597498s`.
+- Run 2 started at about 19:58:40, about one minute after the kernel started. The client timed out at 19:59:44. devsh was dead and ping got no answer.
+- I waited 6 minutes without a reset, as the row asks. The serial log has **no** `[hb …]` line, no `[hb stall …]`/`[hb nosched …]`, and no dump, not even from before the freeze. The last serial output is the `redox login:` prompt at about 19:58:25. Nothing came after that.
+- Serial console: Enter and `root` (one character every 0.15 s) got no echo, 0 new bytes. So I could not run `cat /scheme/sys/context`. In #197 the serial console still answered after the freeze.
+- The first beat comes one minute after the kernel starts, so the freeze probably came before any beat. After it, the kernel printed nothing more, not even the stall check that should fire after 2 s.
+
+Stable image restored, then a Shelly power cycle (20:05). Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh. The power cycle worked; the plug resets the Pi again.
+
+## 2026-11-01: `v0.4.0-dev-15-geaa48df+xa731` (graphics, kernel 0050 DMA cache fix, rerun)
+
+Real Pi 3B+ over netboot. Test 198 rerun ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [PR #113](https://github.com/redox-rpi/redox-rpi/pull/113)), Pi test agent. The first run (report above) was interrupted: the user was rearranging the Pi's power supply, and the serial log shows a reboot at about 19:41 that no test caused. Boot 1's network loss in that report happened during that work, so it may be a power problem. Same image (manifest matches), staged 20:08, devsh reset.
+
+**Pass: DMA fix works, standard checks pass, network stable for 12 minutes of load.**
+
+- `rpi-fbd`: `DMA test:` 1, 64 and 984 rows, then `whole screen in 29.8 ms`. No `not zero` line, no `blits with the CPU`. `fbcond: Performing handoff`, login, no panic.
+- pi-test (`--manifest`): version, manifest, `ps` (52), `ps-tty`, SD card pass; 0 of 300 starts failed.
+- `free`: used 159428 KB; `ping -c 3` 3 of 3.
+- Three runs of `dd if=/dev/zero bs=65536 count=800` over devsh, 52 MB each, 159–167 s each (about 320 kB/s), all `rc=0`.
+- Then `ping -c 20` 20 of 20, `free` used 166028 KB, `throttled` `0x00000000`.
+- 34 `Dropped packet on eth0 because waiting queue was full` warnings (also in the first run). No other errors.
+- No unplanned reboot (one U-Boot, from the reset).
+
+Stable image restored afterwards and came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-17-g8ca190f+x58dc` (relibc tests, `sched-vtime-clamp`, `pi-heartbeat` with kernel spin watches)
+
+Real Pi 3B+ over netboot. Test 200 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14) `rwlock_randtest` hard freeze: which CPU spins where?), Pi test agent. Image `~/redox-rpi-icache/keep/spin-v0.4.0-dev-17-g8ca190f+x58dc.img`, staged 20:22 with the stable bootloader. Boot line: `experiments: pi-heartbeat relibc-tests sched-vtime-clamp timesync`.
+
+**Fail: froze at run 54. No `[spin …]` line at all. The kernel kept beating on all 4 CPUs, and nothing was runnable.**
+
+- Runs 1–53: `rc=0` (run 53: `real 1.348210692s`).
+- Run 54 started at about 20:30:47 and the client timed out at 20:31:52. devsh was dead and stayed dead after 5 min.
+- After 5 min, Enter on the serial console gave a fresh `redox login:` prompt. So getty and the serial driver were still working (unlike 199). I did not log in.
+- **`[spin …]` lines: none**, in the whole boot. There were also no `[hb stall …]`, `[hb nosched …]`, `few-switches` or `runnable-on-idle-cpu` lines.
+- Beats from run 54 on (`[hb <cpu> <beat> s… w… i… p…]`):
+  - beat 8 (run 54 running): CPU 0 `w735`, CPU 1 `w5134`, CPU 2 `w1456`, CPU 3 `w2810`.
+  - beats 9–14 (after the freeze): CPUs 0, 1 and 2 `w0` (beat 14: CPU 1 `w100`), CPU 3 about `w2200` every beat. `s` ≈ `i` + `w` on every CPU, so every CPU still takes timer interrupts and runs `schedule()`.
+- Dumps (`timed`, beats 8, 10, 12, 14):
+  - `[hbq n] … n0` on every CPU: all run queues are empty. Only `hbq 3`'s `v` keeps growing (140.1e9 → 147.3e9 → 157.2e9 → 164.4e9); `hbq 0–2` stay unchanged from beat 8 on.
+  - The only `R` contexts are the four `[kmain]` idle contexts (`R+c cpu0`–`cpu3`).
+  - **No `rwlock_randtest` context in any dump**, already in the beat 8 dump while run 54 was still running. Its shell, `ion` (417), is `B sys cpu3 UserInner::call`.
+  - Blocked in `UserInner::call` (waiting for an answer from a scheme): `init` (1), `netstack` (25), `devshd` (34, several threads), `login` (31, 36, 416), `ion` (417). `dwc2d` is `S nanosleep`, and the rest wait in `UserInner::read`/`EventQueue::read` as usual.
+  - The `hbcpu` counters `sl sa sr sv ss` don't change from beat 8 to 14.
+- Serial log from the start of run 54 to the power cycle: 269 lines, all beats and dumps.
+
+Shelly power cycle at 20:37 after the 5 min wait, then stable restored. Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh.
+
+## 2026-11-01: `v0.4.0-dev-19-g73763d6+x7f75` (relibc tests, `sched-vtime-clamp`, `pi-heartbeat`, `dwc2d-netstats`, `usb-hub-drop`)
+
+Real Pi 3B+ over netboot. Test 201 ([#14](https://github.com/redox-rpi/redox-rpi/issues/14) `rwlock_randtest` freeze, now without the dwc2d hang), Pi test agent. Image `~/redox-rpi-icache/keep/hubdrop-v0.4.0-dev-19-g73763d6+x7f75.img`, staged 20:55 with the stable bootloader. Boot line: `experiments: dwc2d-netstats pi-heartbeat relibc-tests sched-vtime-clamp timesync usb-hub-drop`.
+
+**Pass: 120 of 120 runs, no freeze.**
+
+- 120 single runs of `./bins_dynamic/pthread/rwlock_randtest` over devsh, all `rc=0`. `real` average 1.34 s, max 1.43 s.
+- Whole serial log of the boot: no `[spin …]` line, no `[hb stall …]`, `[hb nosched …]`, `few-switches` or `runnable-on-idle-cpu` line, and no panic. Beats came through beat 12.
+- For comparison: 197 froze at run 8, 199 at run 2, 200 at run 54 (dwc2d's sleep loop). 186 also passed 80 of 80 without a fix, so one clean series is good but not proof.
+- No power cycle needed.
+
+Stable image restored afterwards (devsh reset). Stable `v0.3.0-dev-891-g55d0446+x9f76` came up to devsh.
+
+## 2026-11-02: `v0.4.0-dev-35-gc13ceff+x9f76`
+
+Built 2026-11-02T03:30:26Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-35-gc13ceff+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-35-gc13ceff+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## 2026-11-02: `v0.4.0-dev-60-ga206e99+x6bdd` (graphics screen visit, SD card)
+
+Real Pi 3B+, user at the HDMI monitor. Test 202 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), in place of #34, #43, #44, #54), Pi test agent on the serial console. The user booted the SD card image of the same build (`redox-rpi-graphics-visit-v0.4.0-dev-60-ga206e99.img.xz`), not netboot: `redox-rpi v0.4.0-dev-60-ga206e99+x6bdd (sdcard)`, `experiments: orbital rpi-fb rpi-fb-dma-on timesync`.
+
+**Pass: screen, DMA blits, Orbital and keyboard work. No mouse driver in this image (as expected).**
+
+- `rpi-fbd: EDID 256 bytes, monitor ANMITE`, `boot framebuffer 1920x1200 stride 1920`, `DMA test:` 1, 64 and 1200 rows, `whole screen in 49.3 ms`; no `blits with the CPU`.
+- `fbcond: Performing handoff`, login, no panic.
+- USB: keyboard `04d9:0006` at address 5 works. Mouse `093a:2510` (low-speed HID boot mouse) enumerated, but no driver.
+- `free` (serial console, the SD image has no devshd): used 298172 of 965316 KB. `throttled`: `0x00050000` (undervoltage and throttling since boot; the user was rearranging the power supply that day).
+- User at the screen: boots fast; Orbital desktop with correct colours (blue) and the taskbar. Misses the mouse, so test 203 followed with the mouse image.
+
+Ended when the Pi was rebooted over netboot for 203.
+
+## 2026-11-02: row 56 (USB mouse, #48), covered by test 203
+
+Test 56 ([#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse in `dwc2d`) was not run on its own image. Test 203 (screen visit with the mouse, `v0.4.0-dev-67-g47859bc+x227e`, experiment `usb-mouse`) covers its main point.
+
+**Pass (covered by 203).**
+
+- Serial: `dwc2d: mouse at address 3: relative, 3 button(s), wheel` for the user's wired mouse `093a:2510`. The keyboard (`keyboard at address 5`) works at the same time.
+- User at the screen, in Orbital: the pointer moves, clicks work, a terminal opens.
+- Not checked in 203: the `/tmp/dwc2d-input-log` lines (move, each button, wheel), unplugging and plugging the mouse in again, and `echo mouse > /tmp/dwc2d-cycle`.
+
+## 2026-11-02: `v0.4.0-dev-67-g47859bc+x227e` (graphics screen visit with USB mouse)
+
+Real Pi 3B+ over netboot, user at the HDMI monitor with USB keyboard and mouse. Test 203 ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), Pi test agent. Image `~/redox-rpi-graphics/keep/netboot-v0.4.0-dev-67-g47859bc+x227e.img` (manifest matches), staged with the stable bootloader, Shelly power cycle 17:11. `experiments: orbital rpi-fb rpi-fb-dma-on timesync usb-mouse`.
+
+**Pass: mouse, keyboard, screen and Orbital work; dragging windows is slow.**
+
+- `rpi-fbd: EDID 256 bytes, monitor ANMITE`, `boot framebuffer 1920x1200 stride 1920`, `DMA test:` 1, 64 and 1200 rows, `whole screen in 49.6 ms`; no `blits with the CPU`.
+- `dwc2d: mouse at address 3: relative, 3 button(s), wheel` (`093a:2510`), `dwc2d: keyboard at address 5` (`04d9:0006`).
+- `fbcond: Performing handoff`, login 32 s after power-on, no panic.
+- devsh: `free` used 331068 of 737908 KB; `throttled` `0x00000000`.
+- User at the screen: the mouse pointer and clicks work, a terminal opens. Dragging windows is slow (with the background picture and the transparent terminal).
+
+Stable image restored afterwards (`v0.4.0-dev-35-gc13ceff+x9f76`, the nightly of 2026-11-02), Shelly power cycle 20:37, stable came up to devsh.
+
+## 2026-11-02: `v0.4.0-dev-35-gc6faab6d+x95e1` (direct firmware boot, card)
+
+Real Pi 3B+, user at the Pi, card `redox-rpi-t18-direct-v0.4.0-dev-35-gc6faab6d+x95e1.img.xz` flashed and put in by the user. Test 18 ([#15](https://github.com/redox-rpi/redox-rpi/issues/15) direct firmware boot without U-Boot), Pi test agent on the serial console. Two boots: the user's, then a Shelly power cycle at 20:46.
+
+**Partly: the direct boot works (stub, framebuffer, kernel, login, board MAC, card partitions), but USB does not come up, so there is no network, no keyboard and no pi-test.**
+
+- No U-Boot. `rpi-boot-stub:` lines: `devicetree at 0x1f972100`, `initramfs 0x1f97b000..0x2f000000, 252436 KiB`, `framebuffer 1920x1200 stride 1920 at 0x3e731000`, `live disk 0x21200000, 222 MiB`, `starting the kernel at 0xffffff00000a2678`.
+- Banner `redox-rpi v0.4.0-dev-35-gc6faab6d+x95e1 (netboot, 2026-11-01T16:00:24Z)` (it says netboot on a card boot), `experiments: redox-fatfs2 timesync`, `redox login:` 28 s after power-on, no panic.
+- `dwc2d: network address b8:27:eb:08:e0:aa`: the board MAC, not the fallback.
+- **USB fails on both boots:** `dwc2d: device on root port, Full speed`, then `request [80, 06, 00, 01, …] to address 0 (max packet 8, Full speed) failed: Timeout("channel halt")`, two retries, `enumeration failed: Timeout("channel halt")`. With U-Boot (netboot) the same Pi sees the on-board hub at high speed and finds the LAN7800, keyboard and mouse. So no LAN7800: `dhcpd: failed to receive offer: Connection timed out`, no devsh, and pi-test could not run. The USB keyboard did not work either.
+- Serial console (root): `ls /scheme/data` shows `README.txt  timesync.last` (data partition from the card). `fatfsd /scheme/disk.mmc/0p0 boot &` gives `Fat32, label "REDOXBOOT"`, `serving /scheme/boot`, and `ls /scheme/boot` shows `config.txt`, `kernel8.img`, `initramfs`, `start.elf`, `start_cd.elf`, `bootcode.bin`, the dtbs and `overlays`. `throttled` `0x00000000`. `free`: used 145712 of 765548 KB.
+- Likely cause: without U-Boot nobody resets the on-board USB hub/LAN chip or powers it up the way U-Boot's `usb start` does, so the root port sees a full-speed device that does not answer. That needs a look in `dwc2d` or the stub.
+
+Afterwards the netboot card goes back in and stable is restored.
+
+## 2026-11-03: `v0.4.0-dev-64-g954be33+x9f76`
+
+Built 2026-11-03T03:30:25Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-64-g954be33+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-64-g954be33+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## #205: direct firmware boot with the USB fix, plus new power supply (2026-11-03, Pi test agent)
+
+Card `redox-rpi-t18-direct-v0.4.0-dev-36-g1107e5f7+x95e1` (branch `fw-direct-boot`),
+real Pi 3B+, booted at 16:29 UTC on the new power supply. **Pass**. The user reports
+that the USB keyboard works at the login prompt.
+
+**Boot, serial log**
+- `rpi-boot-stub: USB power on (was Some(0))`.
+- `dwc2d: device on root port, High speed` (row 18 had Full speed).
+- Hubs 0424:2514 ×2 and 05e3:0610 found.
+- Keyboard 04d9:0006 at address 4 (`dwc2d: keyboard at address 4`).
+- LAN7800 at address 6, link up, `network address b8:27:eb:08:e0:aa`.
+- No `channel halt` or timeout lines.
+- `redox login:`.
+- Small thing: the banner says `(netboot, 2026-11-02T20:49:36Z)` on a direct-boot image.
+
+**Checks over devsh**
+- pi-test: version, manifest (build ID and libc.so hash), ps (57), ps-tty, sdcard,
+  starts 0/300, all PASS.
+- `/scheme/data` from the card: shows `README.txt` and `timesync.last`. Writing,
+  reading back and deleting a file work.
+- `fatfsd /scheme/disk.mmc/0p0 boot &` then `ls /scheme/boot` shows `config.txt`,
+  `kernel8.img`, `initramfs`, the firmware and the dtbs. `config.txt` reads correctly.
+- Ping to the server: 5/5 at idle.
+
+**New power supply**
+- With the old supply, row 202 showed `throttled 0x50000`.
+- `throttled` read 0x00000000 at every reading:
+  - idle (53.7 °C);
+  - after pi-test;
+  - 10 readings during 5 min with dd on all 4 cores (1.0 GB/s each), peak 55.8 °C,
+    plug 4.4 W;
+  - 3 readings during 4 cores plus 3×50 MB of output over devsh (321 kB/s, the same
+    as netboot in row 198);
+  - after the load.
+- Earlier the same afternoon, stable dev-64 on the netboot card (16:18 UTC) also
+  read 0x0 at idle, after pi-test (pass) and under 2-core load.
+- The image has no `netget`, so the download test was replaced by output over devsh.
+
+**Seen under combined load**
+- netstack logged 12 `Dropped packet on eth0 because waiting queue was full`.
+- One ping out of 5 was lost right after the load.
+- devsh stayed up and no reboot happened.
+
+## New power supply (2026-11-03, Pi test agent)
+
+The user put a new power supply on the Pi. The old one showed `throttled 0x50000`
+in row 202 (under-voltage had happened).
+
+- Stable `v0.4.0-dev-64-g954be33+x9f76` on the netboot card booted at 16:18 UTC and
+  devsh answers. `throttled` 0x0 at idle (44 °C), after pi-test (all pass) and during
+  2-core dd load (6 readings, peak 50 °C, plug 3.2 W).
+- On the #205 direct-boot card (dev-36-g1107e5f7): `throttled` 0x0 at idle, after
+  pi-test, at 10 readings during 5 min of dd on all 4 cores (peak 55.8 °C, plug 4.4 W),
+  at 3 readings during 4 cores plus 3×50 MB of network output over devsh, and after
+  the load.
+- The image has no `netget`, so the download was replaced by output over devsh.
+- **Result:** no under-voltage with the new supply. Details in the #205 report above.
