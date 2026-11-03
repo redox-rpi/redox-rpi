@@ -69,7 +69,7 @@
     (ctx-leak fix, #31) makes a process whose last thread ends with
     `pthread_exit` report SIGKILL instead of 0. Every image with main
     merged has it; without `0008` the test passes 20 of 20.
-    Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
+    Fix: kernel patch `0013` (was experiment `self-exit-status`,
     [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
     10 of 10 runs exit 0 and the #31 leak stays fixed. Pi test 133
     passed (10 of 10 exit 0, no new suite failures).
