@@ -7261,3 +7261,22 @@ person restarted it by unplugging the PoE plug. **Pass**, except `/scheme/data`
 - Network: ping to the server 5/5, 1.3-1.7 ms. Time from NTP is correct.
 - Free memory: 191068 of 333196 KB free after boot (142 MB used), 46 processes.
 - `throttled` 0x0, 53.7 °C.
+
+### #206 second boot: new netboot card with a data partition (2026-11-03)
+
+The user flashed a 64 MB card with
+`redox-rpi-zero2w-netboot-v0.4.0-dev-135-g2416130-b32-d24.img.xz`
+(`make-sdcard.sh --dir redox-zero2w --boot-size 32 --data-size 24`, 56 MiB:
+FAT16 boot partition of 31 MiB and a RedoxFS data partition of 24 MiB) and booted the
+Zero from it. Same image `v0.4.0-dev-135-g2416130`. **Pass.**
+
+- pi-test: version, manifest, ps (46), ps-tty, **sdcard**, starts (0 of 300 failed),
+  all PASS.
+- `/scheme/data` is mounted from `/scheme/disk.mmc/0p1`. It shows `README.txt` and
+  `timesync.last` (timesync writes it after boot).
+- Writing, reading back and deleting a small file work.
+- A 10 MiB file of zeros was written at 385 kB/s and deleted again.
+- `df /scheme/data`: 24576 KB, 23512 KB free before and 23480 KB after.
+  - The 10 MiB of zeros added only 40 KB, so RedoxFS seems to store zero blocks
+    without taking space. 23 MB is what real data can use.
+- Free memory 186920 of 333068 KB, `throttled` 0x0.

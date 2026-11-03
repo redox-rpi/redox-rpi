@@ -18,10 +18,11 @@
   (`build-image.sh --zero2w`, `timesync` and `rtl8152`, no graphics: the user
   finds the desktop too slow on the Zero) boots over the PoE HAT. devsh
   answers on 192.168.178.194, pi-test passes except the SD card check, and
-  191 of 333 MB are free after boot (46 processes). The old netboot card has
-  no data partition, so `/scheme/data` is missing. A card from
-  `scripts/make-sdcard.sh` would have one. See the
-  [test report](../test-reports.md).
+  191 of 333 MB are free after boot (46 processes). The old netboot card had
+  no data partition. A new card from
+  `scripts/make-sdcard.sh --dir redox-zero2w --boot-size 32 --data-size 24`
+  (56 MiB, fits a 64 MB card) has one: `/scheme/data` mounts with 23 MB free,
+  and pi-test passes in full. See the [test report](../test-reports.md).
 
 ## Next
 
