@@ -1,7 +1,7 @@
-From b40d9bb860afe0759e26a992ff9ec982bf81d6b4 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:52:27 +0100
-Subject: [PATCH 48/48] bcm2835-spid: SPI0 of the Raspberry Pi as a scheme
+Subject: [PATCH] bcm2835-spid: SPI0 of the Raspberry Pi as a scheme
 
 /scheme/spi/0/cs0 and cs1: a write is one full-duplex transfer, the next
 read gives the bytes clocked in; speed and mode files. GPIO 7 to 11 go to
@@ -25,33 +25,25 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-spid.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index d8958bce..fe176046 100644
+index d8958bc..fe17604 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -56,6 +56,7 @@ members = [
- 
-     "drivers/bcm2835-gpiod",
+@@ -58,2 +58,3 @@ members = [
      "drivers/bcm2835-i2cd",
 +    "drivers/bcm2835-spid",
      "drivers/rpi-firmwared",
-     "drivers/redoxerd",
- 
 diff --git a/Makefile b/Makefile
-index 4692458f..00c38a18 100644
+index 4692458..00c38a1 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
- 
+@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
  endif
- 
- ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-spid/Cargo.toml b/drivers/bcm2835-spid/Cargo.toml
 new file mode 100644
-index 00000000..e4ac4657
+index 0000000..e4ac465
 --- /dev/null
 +++ b/drivers/bcm2835-spid/Cargo.toml
 @@ -0,0 +1,18 @@
@@ -75,7 +67,7 @@ index 00000000..e4ac4657
 +workspace = true
 diff --git a/drivers/bcm2835-spid/src/main.rs b/drivers/bcm2835-spid/src/main.rs
 new file mode 100644
-index 00000000..f9698bc2
+index 0000000..f9698bc
 --- /dev/null
 +++ b/drivers/bcm2835-spid/src/main.rs
 @@ -0,0 +1,316 @@
@@ -397,7 +389,7 @@ index 00000000..f9698bc2
 +}
 diff --git a/drivers/bcm2835-spid/src/spi.rs b/drivers/bcm2835-spid/src/spi.rs
 new file mode 100644
-index 00000000..a26e9189
+index 0000000..a26e918
 --- /dev/null
 +++ b/drivers/bcm2835-spid/src/spi.rs
 @@ -0,0 +1,109 @@
@@ -511,20 +503,16 @@ index 00000000..a26e9189
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index d4f0993e..2c05be86 100644
+index d4f0993..2c05be8 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -6,6 +6,7 @@ requires_weak = [
-     "40_ps2d.service",
-     "40_bcm2835-gpiod.service",
+@@ -8,2 +8,3 @@ requires_weak = [
      "41_bcm2835-i2cd.service",
 +    "41_bcm2835-spid.service",
      "40_bcm2835-sdhostd.service",
-     "40_dwc2d.service",
-     "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-spid.service b/init.initfs.d/41_bcm2835-spid.service
 new file mode 100644
-index 00000000..47a6f02b
+index 0000000..47a6f02
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-spid.service
 @@ -0,0 +1,9 @@
@@ -537,6 +525,3 @@ index 00000000..47a6f02b
 +[service]
 +cmd = "bcm2835-spid"
 +type = { scheme = "spi" }
--- 
-2.53.0
-
