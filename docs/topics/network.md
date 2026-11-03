@@ -32,7 +32,9 @@
   next interface or is removed. QEMU passes with two testnetds; **Pi test
   140 passed**. Not done: link state (a pulled cable shows only when the lease
   ends); a restarted driver cannot take its old scheme name again
-  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117): the namespace
+  manager keeps the name; fixed by experiment `scheme-reregister`, PR
+  [#128](https://github.com/redox-rpi/redox-rpi/pull/128), Pi test 146).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
