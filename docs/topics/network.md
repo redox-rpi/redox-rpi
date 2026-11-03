@@ -32,7 +32,9 @@
   next interface or is removed. QEMU passes with two testnetds; **Pi test
   140 passed**. Not done: link state (a pulled cable shows only when the lease
   ends); a restarted driver cannot take its old scheme name again
-  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117): the namespace
+  manager keeps the name; fixed by experiment `scheme-reregister`, PR
+  [#128](https://github.com/redox-rpi/redox-rpi/pull/128), Pi test 146).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
@@ -87,6 +89,16 @@
   (7.4 MB/s, steady, 0 USB errors) with the network alone; the same
   download written to `/scheme/data` hung the whole Pi. The card writes
   during a download cause it; the hang is with the SD card & storage area.
+- [#140](https://github.com/redox-rpi/redox-rpi/issues/140) an ARP entry
+  expired during a busy connection and ACKs were dropped from the full
+  queue; [#141](https://github.com/redox-rpi/redox-rpi/issues/141) a read
+  after a TCP reset gave `ENOTCONN` although data was still buffered. Both
+  seen in #119, both upstream code. Experiment `netstack-arp-ack` (base
+  `0082`): a stale entry stays in use while ARP asks again; buffered data
+  comes first. **Pi test 156 passed** (65535 buffered bytes read after a
+  reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
+  [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
+  patch `0082`.
 
 ## Later
 
