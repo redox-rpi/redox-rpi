@@ -7312,3 +7312,51 @@ failed grace-time step of #182 ([#184](https://github.com/redox-rpi/redox-rpi/is
 - Serial: the only TODO line is `sshd-session: TODO: ioctl TIOCSCTTY` (known).
 
 Stable `v0.4.0-dev-64-g954be33+x9f76` was restored afterwards (19:46) and devsh answers.
+
+## #134: U-Boot without countdown, firmware boot_delay=0, U-Boot settings on the card (2026-11-03, Pi test agent)
+
+Card variant. The person copied the new `u-boot.bin` and `config.txt` from
+`redox-rpi-t134-netboot-bootfiles.zip` onto the network-boot card (old files kept as
+`.orig`). The Pi booted at about 20:45 UTC. Stable image `v0.4.0-dev-64-g954be33+x9f76`.
+**Pass.** One expected gain did not show: the U-Boot banner comes no earlier.
+
+**First boot (person, 20:45)**
+- `U-Boot 2026.10 (Oct 31 2026 - 15:23:39 +0000)`.
+- `Loading Environment from FAT...Unable to read "uboot.env" from mmc2:1...`. The
+  old `Bad device specification mmc 0` is gone.
+- `Hit any key to stop autoboot: 0` with no countdown.
+- It reached `redox login:`.
+
+**Three timed boots** (`boot-timeline.py`, seconds after the devsh reset; A = 2026-10-31,
+old card files, image dev-533, server on Wi-Fi)
+
+| Step | A1 | N1 | N2 | N3 |
+|---|---|---|---|---|
+| U-Boot banner | 3.76 | 3.78 | 3.76 | 3.76 |
+| autoboot starts (`Hit any key … 0`) | 9.27 | 7.25 | 7.21 | 7.22 |
+| DHCP bound | 11.22 | 10.43 | 10.37 | 10.37 |
+| image loaded over HTTP | 15.03 | 12.38 | 12.38 | 12.38 |
+| `Redox OS starting` | 23.44 | | 20.44 (N2) | |
+| `redox login:` | 33.5 | 29.62 | 29.31 | 29.32 |
+
+- **U-Boot countdown gone:** autoboot starts about 2 s earlier, and DHCP is bound
+  0.85 s earlier.
+- **`boot_delay=0`/`disable_splash=1`:** no effect seen. The U-Boot banner comes at
+  3.76 s as in A. (These are devsh resets, as in A.)
+- **Login 4.2 s earlier,** but only part of it comes from this change:
+  - the download took 2.0 s instead of 3.7 s, because homenodellm is now on cable;
+  - the image is newer (kernel start to login 8.9 s instead of 10.1 s).
+- pi-test (`--manifest`): version, manifest, ps (51), ps-tty, sdcard and 300 starts
+  (0 failed) all pass.
+
+**Saving settings from the network** (stable's `netboot.cmd` matched, so the env
+test ran)
+- Boot E1: `Saving Environment to FAT... OK` and `redox-rpi: saved redoxtest`, then
+  login.
+- Boot E2: `Loading Environment from FAT... OK` and
+  `redox-rpi: uboot.env has redoxtest=kept`, then login.
+- Stable's `netboot.scr` was put back.
+- Boot E3: `Loading Environment from FAT... OK` (the card keeps `uboot.env`),
+  normal boot, login at 29.82 s.
+- `/srv/tftp/redox` equals the stable backup again, and devsh answers. The new files
+  stay on the card.
