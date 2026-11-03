@@ -238,7 +238,7 @@ for name in bootloader base relibc redoxfs pkgutils; do
 done
 
 # Our own packages, built from this repository.
-for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
+for tool in assistant cputop devshd i2c reboot sigregs spi timerd timesync; do
     # sigregs is linked statically (the cargo template links dynamically):
     # dynamically linked, it fails at start on a real Pi before it can test
     # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
@@ -282,6 +282,21 @@ for exp in "${experiments[@]}"; do
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
         fi
+    done
+done
+
+# Whole new recipes from an experiment, one level deep
+# (patches/experiments/<name>/recipes/<recipe>/, with their patches and
+# sources), copied fresh into recipes/other on every run.
+for exp in "${experiments[@]}"; do
+    for recipe in "$ROOT/patches/experiments/$exp/recipes/"*/; do
+        # recipes/<group>/<name>/ belongs to the loop above.
+        [ -f "$recipe/recipe.toml" ] || continue
+        name="$(basename "$recipe")"
+        dest="$REDOX/recipes/other/$name"
+        mkdir -p "$dest"
+        find "$dest" -mindepth 1 -maxdepth 1 ! -name source ! -name target -exec rm -rf {} +
+        cp -r "$recipe"* "$dest/"
     done
 done
 
