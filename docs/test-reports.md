@@ -7178,3 +7178,47 @@ Built 2026-11-03T03:30:25Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over ne
 | ps-tty | pass | 46 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## #205: direct firmware boot with the USB fix, plus new power supply (2026-11-03, Pi test agent)
+
+Card `redox-rpi-t18-direct-v0.4.0-dev-36-g1107e5f7+x95e1` (branch `fw-direct-boot`),
+real Pi 3B+, booted at 16:29 UTC on the new power supply. **Pass** (keyboard: the
+coordinator asks the user).
+
+**Boot, serial log**
+- `rpi-boot-stub: USB power on (was Some(0))`.
+- `dwc2d: device on root port, High speed` (row 18 had Full speed).
+- Hubs 0424:2514 ×2 and 05e3:0610 found.
+- Keyboard 04d9:0006 at address 4 (`dwc2d: keyboard at address 4`).
+- LAN7800 at address 6, link up, `network address b8:27:eb:08:e0:aa`.
+- No `channel halt` or timeout lines.
+- `redox login:`.
+- Small thing: the banner says `(netboot, 2026-11-02T20:49:36Z)` on a direct-boot image.
+
+**Checks over devsh**
+- pi-test: version, manifest (build ID and libc.so hash), ps (57), ps-tty, sdcard,
+  starts 0/300, all PASS.
+- `/scheme/data` from the card: shows `README.txt` and `timesync.last`. Writing,
+  reading back and deleting a file work.
+- `fatfsd /scheme/disk.mmc/0p0 boot &` then `ls /scheme/boot` shows `config.txt`,
+  `kernel8.img`, `initramfs`, the firmware and the dtbs. `config.txt` reads correctly.
+- Ping to the server: 5/5 at idle.
+
+**New power supply**
+- With the old supply, row 202 showed `throttled 0x50000`.
+- `throttled` read 0x00000000 at every reading:
+  - idle (53.7 °C);
+  - after pi-test;
+  - 10 readings during 5 min with dd on all 4 cores (1.0 GB/s each), peak 55.8 °C,
+    plug 4.4 W;
+  - 3 readings during 4 cores plus 3×50 MB of output over devsh (321 kB/s, the same
+    as netboot in row 198);
+  - after the load.
+- Earlier the same afternoon, stable dev-64 on the netboot card (16:18 UTC) also
+  read 0x0 at idle, after pi-test (pass) and under 2-core load.
+- The image has no `netget`, so the download test was replaced by output over devsh.
+
+**Seen under combined load**
+- netstack logged 12 `Dropped packet on eth0 because waiting queue was full`.
+- One ping out of 5 was lost right after the load.
+- devsh stayed up and no reboot happened.
