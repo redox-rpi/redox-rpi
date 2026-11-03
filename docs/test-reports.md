@@ -7237,3 +7237,27 @@ in row 202 (under-voltage had happened).
   the load.
 - The image has no `netget`, so the download was replaced by output over devsh.
 - **Result:** no under-voltage with the new supply. Details in the #205 report above.
+
+## #206: current network-boot image on the Pi Zero 2 W (2026-11-03, Pi test agent)
+
+Image `v0.4.0-dev-135-g2416130+x9f76` (`build-image.sh --zero2w`, main 2416130,
+experiments `timesync` and `rtl8152`, no graphics). It replaces the alpha-90 image
+of 2026-10-27 in `/srv/tftp/redox-zero2w`; the old files are backed up on
+homenodellm in `~/pitest-tools/tftp-zero2w-alpha90`. The Zero has the PoE HAT
+(RTL8152 `00:e0:4c:36:0e:47`, 192.168.178.194) and its old netboot card. The
+person restarted it by unplugging the PoE plug. **Pass**, except `/scheme/data`
+(this card has no data partition).
+
+- Boot: devsh on .194 answered at 18:36 UTC, uptime 1 min 38 s. The old image
+  showed a login prompt on devsh; this one opens the shell as on the Pi 3B+.
+- `/etc/redox-rpi-release`: `v0.4.0-dev-135-g2416130`, `IMAGE="zero2w"`.
+- pi-test:
+  - PASS: version, manifest (build ID and libc.so hash), ps (45), ps-tty,
+    starts (0 of 300 failed).
+  - FAIL: sdcard. `/scheme/data` is missing (`No such device`). The card has only
+    the boot partition (`/scheme/disk.mmc/0p0`, 32 MB, card 62 MB), and
+    `60_data.service` wants `0p1`. That is the card, not the image. A card from
+    `scripts/make-sdcard.sh` with a data partition would fix it.
+- Network: ping to the server 5/5, 1.3-1.7 ms. Time from NTP is correct.
+- Free memory: 191068 of 333196 KB free after boot (142 MB used), 46 processes.
+- `throttled` 0x0, 53.7 °C.

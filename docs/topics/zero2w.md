@@ -14,6 +14,15 @@
   cable was plugged in. No serial log from that boot. See the
   [graphics topic](graphics.md) and [#33](https://github.com/redox-rpi/redox-rpi/issues/33).
 
+- **Network boot, current image (#206, 2026-11-03):** `v0.4.0-dev-135-g2416130`
+  (`build-image.sh --zero2w`, `timesync` and `rtl8152`, no graphics: the user
+  finds the desktop too slow on the Zero) boots over the PoE HAT. devsh
+  answers on 192.168.178.194, pi-test passes except the SD card check, and
+  191 of 333 MB are free after boot (46 processes). The old netboot card has
+  no data partition, so `/scheme/data` is missing. A card from
+  `scripts/make-sdcard.sh` would have one. See the
+  [test report](../test-reports.md).
+
 ## Next
 
 - [#19](https://github.com/redox-rpi/redox-rpi/issues/19) fast network boot: U-Boot's r8152 receive buffer is too small.
