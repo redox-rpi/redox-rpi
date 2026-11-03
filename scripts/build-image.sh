@@ -125,7 +125,10 @@ drift_report="$(mktemp)"
 trap 'rm -f "$drift_report"' EXIT
 
 # Compare a source checkout with its commit plus patches. Lock files and the
-# .cargo directory are left out: cargo and the kernel recipe write them.
+# .cargo directory are left out: cargo and the kernel recipe write them. So
+# are the *.orig and *.rej files patch(1) leaves when the cookbook applies a
+# patch with an offset or fuzz (kernel 0012 after 0008): they made every
+# second build fail.
 check_drift() {
     local label="$1" src="$2"
     shift 2
@@ -144,7 +147,8 @@ check_drift() {
         git -C "$src" read-tree HEAD
         git -C "$src" add -A .
         actual="$(git -C "$src" write-tree)"
-        git -C "$src" diff "$expected" "$actual" -- . ':!Cargo.lock' ':!.cargo'
+        git -C "$src" diff "$expected" "$actual" -- . ':!Cargo.lock' ':!.cargo' \
+            ':(glob,exclude)**/*.orig' ':(glob,exclude)**/*.rej'
     )"
     if [ -n "$diff" ]; then
         echo "$label: source differs from its commit plus patches" >&2
