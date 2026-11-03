@@ -6,6 +6,7 @@
 # built by scripts/build-image.sh and writes:
 #   <out>/kernel8.img  rpi-boot-stub with the kernel built in
 #   <out>/initramfs    the initfs, then the RedoxFS partition (live disk)
+#   <out>/harddrive.img a copy of the image whose banner says "direct"
 #
 # With --qemu it boots them in QEMU raspi3b with -kernel, -initrd and -dtb,
 # the way the Pi firmware loads kernel8.img and the initramfs; --test waits
@@ -48,6 +49,20 @@ tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 [ -x "$tool" ] || cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
 "$tool" "$image" get usr/lib/boot/kernel "$out/kernel"
 "$tool" "$image" get usr/lib/boot/initfs "$out/initfs"
+
+# build-image.sh names a minimal image "netboot" in the login banner and the
+# release files. The live disk of this boot comes from the card: call it
+# "direct" there, in a copy of the image.
+[ "$image" = "$out/harddrive.img" ] || cp "$image" "$out/harddrive.img"
+image="$out/harddrive.img"
+for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
+    "$tool" "$image" get "$file" "$out/release-file"
+    sed -i -e 's/^\(redox-rpi .*\) (netboot, /\1 (direct, /' \
+        -e 's/^IMAGE="netboot"$/IMAGE="direct"/' \
+        -e 's/^image = "netboot"$/image = "direct"/' "$out/release-file"
+    "$tool" "$image" put "$file" "$out/release-file"
+done
+rm "$out/release-file"
 
 stub="$ROOT/tools/rpi-boot-stub"
 # Cargo reads the stub's .cargo/config.toml (target, linker script) only
@@ -92,6 +107,7 @@ trap 'kill $pid 2>/dev/null || true' EXIT
 for _ in $(seq 1 180); do
     if [ -f "$log" ] && tr -d '\000' < "$log" | grep -aq 'redox login:'; then
         echo "PASS: login prompt $((SECONDS - started)) s after the start of QEMU ($log)"
+        tr -d '\000' < "$log" | grep -a '^redox-rpi ' | tail -1
         exit 0
     fi
     kill -0 $pid 2>/dev/null || break
