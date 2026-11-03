@@ -113,9 +113,9 @@ it prints to `~/redox-rpi/logs/serial.log` and restarts by itself.
 ## Stable image
 
 <!-- stable-image: written by scripts/update-stable.sh -->
-Staged on the TFTP server whenever no test runs: `v0.4.0-dev-35-gc13ceff+x9f76`, tested
-2026-11-02 with `scripts/pi-test.py` ([report](test-reports.md), starts:
-0 of 300 failed). A copy is in `/srv/tftp/backup-v0.4.0-dev-35-gc13ceff+x9f76/`, and
+Staged on the TFTP server whenever no test runs: `v0.4.0-dev-64-g954be33+x9f76`, tested
+2026-11-03 with `scripts/pi-test.py` ([report](test-reports.md), starts:
+0 of 300 failed). A copy is in `/srv/tftp/backup-v0.4.0-dev-64-g954be33+x9f76/`, and
 `/srv/tftp/stable` points to it.
 <!-- /stable-image -->
 
