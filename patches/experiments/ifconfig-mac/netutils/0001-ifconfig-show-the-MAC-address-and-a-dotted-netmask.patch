@@ -1,0 +1,107 @@
+From d7205a50f1680e7cebeb305e197f7b90811ff827 Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 16:35:40 +0100
+Subject: [PATCH] ifconfig: show the MAC address and a dotted netmask
+
+The MAC address was a fixed placeholder, 00:00:00:00:00:00. netstack has
+it in /scheme/netcfg/ifaces/<name>/mac as 52-54-00-12-34-57; read it
+there and print it with colons. The netmask column showed the prefix
+length from addr/list (24); print it as 255.255.255.0.
+---
+ src/ifconfig/interface.rs | 24 +++++++++++++++++++++---
+ src/ifconfig/main.rs      |  6 ++----
+ 2 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/src/ifconfig/interface.rs b/src/ifconfig/interface.rs
+index 0212c07..8b90240 100644
+--- a/src/ifconfig/interface.rs
++++ b/src/ifconfig/interface.rs
+@@ -55,8 +55,11 @@ impl NetworkInterface {
+         let addr_data = get_iface_cfg_value(iface, "addr/list")?;
+         let (ip_address, netmask) = parse_ip_and_netmask(&addr_data)?;
+ 
+-        // Placeholder for MAC address (not available in this structure)
+-        let mac_address = "00:00:00:00:00:00".to_string();
++        // netstack gives the MAC address as "52-54-00-12-34-57"
++        let mac_address = match get_iface_cfg_value(iface, "mac") {
++            Ok(mac) => mac.replace('-', ":"),
++            Err(_) => "unknown".to_string(),
++        };
+ 
+         // Create the NetworkInterface instance
+         Ok(NetworkInterface {
+@@ -86,10 +89,17 @@ fn parse_ip_and_netmask(addr_data: &str) -> Result<(String, String), InterfaceEr
+         return Err(InterfaceError::InvalidIpAddress(addr_data.to_string()));
+     }
+     let ip_address = parts[0].to_string();
+-    let netmask = parts[1].to_string();
++    let netmask = prefix_to_netmask(parts[1]).unwrap_or_else(|| parts[1].to_string());
+     Ok((ip_address, netmask))
+ }
+ 
++/// Turns an IPv4 prefix length such as "24" into "255.255.255.0"
++fn prefix_to_netmask(prefix: &str) -> Option<String> {
++    let len: u32 = prefix.parse().ok().filter(|&len| len <= 32)?;
++    let mask = u32::MAX.checked_shl(32 - len).unwrap_or(0);
++    Some(std::net::Ipv4Addr::from(mask).to_string())
++}
++
+ /// Reads the value of a configuration file for a given interface
+ fn get_iface_cfg_value(iface: &str, cfg: &str) -> Result<String, InterfaceError> {
+     let base_path = Path::new("/scheme/netcfg/ifaces").join(iface).join(cfg);
+@@ -207,6 +217,14 @@ mod tests {
+         assert!(validate_ip_address("::1").is_ok()); // IPv6 loopback
+     }
+ 
++    #[test]
++    fn test_prefix_to_netmask() {
++        assert_eq!(prefix_to_netmask("24").as_deref(), Some("255.255.255.0"));
++        assert_eq!(prefix_to_netmask("0").as_deref(), Some("0.0.0.0"));
++        assert_eq!(prefix_to_netmask("32").as_deref(), Some("255.255.255.255"));
++        assert_eq!(prefix_to_netmask("33"), None);
++    }
++
+     #[test]
+     fn test_parse_iface_names() {
+         assert_eq!(parse_iface_names("eth0\nlo\n"), vec!["eth0", "lo"]);
+diff --git a/src/ifconfig/main.rs b/src/ifconfig/main.rs
+index a79ceda..d3edc7e 100644
+--- a/src/ifconfig/main.rs
++++ b/src/ifconfig/main.rs
+@@ -6,7 +6,7 @@ Entry point for the ifconfig utility on Redox OS.
+ This program implements a basic `ifconfig` utility for Redox OS. It allows users to:
+ 
+ * **Display information** about network interfaces on the system.
+-* **List all interfaces** with their IP addresses, netmasks, and (placeholder) MAC addresses.
++* **List all interfaces** with their IP addresses, netmasks, and MAC addresses.
+ * **Display details** for a specific interface provided as an argument.
+ 
+ The program supports the following options:
+@@ -17,7 +17,6 @@ The program supports the following options:
+ **Limitations:**
+ 
+ * Currently, the program cannot configure network interfaces (work in progress).
+-* The displayed MAC address is a placeholder.
+ 
+ */
+ 
+@@ -39,7 +38,7 @@ DESCRIPTION//! ## ifconfig Utility for Redox OS
+ This program implements a basic `ifconfig` utility for Redox OS. It allows users to:
+ 
+ * **Display information** about network interfaces on the system.
+-* **List all interfaces** with their IP addresses, netmasks, and (placeholder) MAC addresses.
++* **List all interfaces** with their IP addresses, netmasks, and MAC addresses.
+ * **Display details** for a specific interface provided as an argument.
+ 
+ The program supports the following options:
+@@ -50,7 +49,6 @@ The program supports the following options:
+ **Limitations:**
+ 
+ * Currently, the program cannot configure network interfaces (work in progress).
+-* The displayed MAC address is a placeholder (Redox OS implementation might differ).
+ 
+ **Dependencies:**
+ 
+-- 
+2.54.0 (Apple Git-157)
+
