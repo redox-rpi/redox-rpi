@@ -12,6 +12,14 @@
   passes; a failure goes to the issue "Nightly: main fails on the Pi"
   ([test-plan.md](../test-plan.md#nightly-update)). The Pi may reboot at
   night.
+- `scripts/pi-test.py --serial-log --crash-log` records the crash output of
+  every failed start (#10). `scripts/qemu-raspi3b.sh --data` gives QEMU a
+  data partition, so all standard checks also run in QEMU.
+- `scripts/pr-order.py` lists the open pull requests in an order they can be
+  merged in, with CI, Pi test, patch numbers and conflicts.
+- The "Topic pages" job warns when a pull request or a push to main
+  changes a topic's files without touching its page here.
+  `config/topics.map` maps paths to topics. It is a warning only.
 
 ## In progress
 

@@ -18,9 +18,18 @@
   test Pi loads firmware and U-Boot from its SD card (the TFTP serial
   directory changed nothing, test #134), and U-Boot cannot save settings
   there (`Bad device specification mmc 0`), so Pi test #134 now copies two
-  files onto the network-boot card at the card-swap visit of #18 and #72. Also on the branch: the network-boot image is
+  files onto the network-boot card at the card-swap visit of #18 and #72.
+  Branch `uboot-env` fixes the settings file: with `dtoverlay=mmc` the
+  card is `mmc 2`, not 0 (`CONFIG_ENV_FAT_DEVICE_AND_PART="2:1"`). In QEMU
+  with the firmware devicetree `saveenv` works and a value survives the
+  reboot; #134's `u-boot.bin` has both changes and also checks a value
+  saved from the network script. Also on the branch: the network-boot image is
   192 MiB instead of 256 (71 MB free in QEMU; less to unpack and copy, more
-  RAM), Pi test #142. Left as they are: U-Boot's USB start (2.8 s), the
+  RAM): Pi test #142 passed (2026-10-31), 64 MiB more RAM and nano still
+  installs, but image loaded to kernel start is only 0.25 s shorter
+  (8.18 s to 7.93 s), because the gzip download stays the same size. Most
+  of that time is the bootloader's 5 s mode menu; PR #85's bootloader
+  patch (1 s instead of 5) is the bigger win once it is on main. Left as they are: U-Boot's USB start (2.8 s), the
   LAN7800 link (1.7 s) and the 43 MB image download (3.8 s; gzip is at its
   best, U-Boot has no zstd command).
 
@@ -35,10 +44,16 @@
   `fw-direct-boot`: `tools/rpi-boot-stub` as `kernel8.img` wraps the
   unchanged kernel; boots to the login prompt in QEMU `raspi3b`
   (`scripts/fw-direct-boot.sh --test`). `NAME=value` words of the
-  command line (`cmdline.txt`) go into the environment. The MAC address
-  probably comes from the firmware's devicetree; to check at the first Pi
-  test with the serial console. `make-sdcard.sh --direct` writes a card
-  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md).
+  command line (`cmdline.txt`) go into the environment.
+  `make-sdcard.sh --direct` writes a card for it. The stub switches the
+  firmware's USB power domain on, as U-Boot's `board_init` does: without
+  it Pi test #18 had no USB (no network, no keyboard). **Pi test #205
+  passed** (2026-11-03): USB at high speed, keyboard, LAN7800 with the
+  board MAC from the firmware's devicetree, pi-test, `/scheme/data`, and
+  the FAT boot partition through `fatfsd`. The banner says `direct`
+  instead of `netboot`. **PR [#183](https://github.com/redox-rpi/redox-rpi/pull/183)**
+  (firmware session). Open: the root runs from the 222 MiB live disk in
+  RAM, and updates go through the FAT partition (`rpi-update`, test #72).
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
@@ -90,7 +105,10 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. Pi tests
+  also says when the clock makes a certificate look invalid (seen in QEMU
+  at 1970, 2026-11-01; the experiment now builds pkgutils itself, before
+  it relied on `pkg-hold` for that). Install speed on the Pi: nano 27 s,
+  26 small programs 3 min, python312 9 min (#142, #163). Pi tests
   #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
   [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
 
