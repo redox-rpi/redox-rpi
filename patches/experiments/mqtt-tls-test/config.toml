@@ -1,0 +1,20 @@
+# Test only: the CA of the TLS test broker on the build host
+# (~/mqtt-broker/tls/ca.crt on homenodellm, listener 127.0.0.1:8883). With
+# /etc/mqtt-ca.crt present, mqtt-pub, mqtt-sub and ha-bridge use TLS and
+# port 8883 by default. Needs experiment mqtt. Not for release images: a
+# real setup puts its own broker's CA here.
+[[files]]
+path = "/etc/mqtt-ca.crt"
+data = """
+-----BEGIN CERTIFICATE-----
+MIIBjDCCATOgAwIBAgIUJsmeFKtuDgEfDrExktFyOAoj8YMwCgYIKoZIzj0EAwIw
+HDEaMBgGA1UEAwwRcmVkb3gtcnBpIHRlc3QgQ0EwHhcNMjYxMDI5MTY1MzQxWhcN
+MzYxMDI2MTY1MzQxWjAcMRowGAYDVQQDDBFyZWRveC1ycGkgdGVzdCBDQTBZMBMG
+ByqGSM49AgEGCCqGSM49AwEHA0IABJSlQs/aDDCQJLfPkKLEpVz/KWhoi/XigqRU
+Wi3pfWp8wAxHiW6kmQsAm+ChYrKPzgDO3NNnTipklJG70cqWeeqjUzBRMB0GA1Ud
+DgQWBBTB1XXxDcWVliCUO7BsRzd0a0y2ujAfBgNVHSMEGDAWgBTB1XXxDcWVliCU
+O7BsRzd0a0y2ujAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIDvN
+JK8EoYD3nQNN9QLreP2PnHdzTECXGZtRljLI5xaXAiArO0WXQctOBUlmt60kmRve
+1LK3AWMZdNWKjg8a35C7BQ==
+-----END CERTIFICATE-----
+"""

@@ -1,0 +1,31 @@
+# Home Assistant MQTT discovery for the Pi's sensors (tools/mqtt, ha-bridge).
+# Use with --experiment timesync --experiment timerd --experiment mqtt; the
+# broker is the one in /etc/mqtt-host.
+
+# The service announces the sensors and keeps the availability topic online,
+# with a last will of offline. It tries again every 30 s until the broker
+# answers, so it needs no ordering after the network.
+[[files]]
+path = "/usr/lib/init.d/75_ha-bridge.service"
+data = """
+[unit]
+description = "Home Assistant MQTT discovery for the Pi's sensors"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "ha-bridge"
+args = ["-d"]
+type = "oneshot_async"
+"""
+
+# The values, every minute (sensors expire after 3 minutes without one).
+[[files]]
+path = "/usr/lib/timer.d/ha-bridge.toml"
+data = """
+[timer]
+description = "Home Assistant: send the sensor values"
+schedule = "* * * * *"
+
+[service]
+cmd = "ha-bridge"
+"""
