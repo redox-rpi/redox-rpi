@@ -7614,3 +7614,26 @@ No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `resta
   and the watch thread printed nothing within 4 min. Either the main loop was not inside a
   device read or write, or the watch thread was stuck too. Next time, snapshot
   `cat /scheme/sys/context` (whole) as well.
+
+## #214: #92, where netstack hangs, second try with a heartbeat and timesync (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-287-g5baac82a+x53a7` (branch `t92-netstack-watch`, experiments
+`netstack-watch` with heartbeat, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`,
+`timesync`) on a real Pi 3B+ over netboot, reset at 12:07:13 UTC.
+- The boot log has `timesync: clock set to 2026-11-04 12:07:32 UTC from pool.ntp.org`.
+- `40_redox-rpi` was set to pkg-t44, and there was no `/scheme/data/pkg`.
+- devsh `echo ok` ran every 30 s from homenodellm.
+
+**Result: 5 installs without a hang. Pass (second criterion). #92 did not show this time.**
+No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `restart` line.
+
+- Five times, `pkg install --yes vim` (10.3 MiB, last shown rate 3.0 to 4.1 MiB/s, about 5 min each with the commit) ended in `Commit complete.`. Each was followed by `pkg remove --yes vim` (20 to 25 s). This ran from 12:07:44 to 12:35:15.
+- devsh answered 51 of 51.
+- **Heartbeat:** 30 `netstack-watch: alive …` lines, one every 60 s from 60 s to 1805 s.
+  - All of them say `idle for 0 s`, except the last one, which says `timer event for 0 s`.
+  - Events grew from 13240 to 113320 (79356 network), and frames in from 9845 to 76033.
+  - Each install shows as a jump of about 10000 events between two heartbeats.
+  - There was no `stuck` line.
+- After install 5, dwc2d counted rx 74848 and tx 34019 frames, with no errors, timeouts or restarts.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset. devsh answers, and `/scheme/data` has no `pkg`.
+- Counting test 213 run 3 (3 installs, clock set by hand), that is 8 vim installs in a row without the hang on this branch. The one hang (213 run 1) came at a 1970 clock, 28 s after a `pkg install` that had to fail on its certificate.
