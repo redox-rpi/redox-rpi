@@ -18,6 +18,8 @@
 //! pkg-persist copied it itself during this boot (so an update replaces
 //! it). The data partition gets the image's etc/pkg.d and etc/pkg/hold
 //! before every pkg run, so the same repositories and holds apply.
+//! install and update refuse to run while the clock is not set (1970),
+//! with a message that says so, instead of pkg's certificate error.
 //! PKG_PERSIST_ROOT overrides the directory, PKG_PERSIST_DEST the target
 //! (/, for tests).
 
@@ -27,7 +29,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ROOT: &str = "/scheme/data/pkg";
 /// The files pkg-persist copied into / during this boot, relative to the
@@ -35,6 +37,26 @@ const DEFAULT_ROOT: &str = "/scheme/data/pkg";
 const COPIED: &str = "var/lib/pkg-persist/copied";
 /// pkg's own state and configuration in the root, never copied into /.
 const SKIP: [&str; 4] = ["etc/pkg", "etc/pkg.d", "var/lib/packages", "pkg"];
+
+/// Before this (2025-01-01) the clock is not set: the Pi has no battery
+/// clock and starts at 1970 until timesync sets it.
+const CLOCK_SET_AFTER: u64 = 1_735_689_600;
+
+/// HTTPS downloads from static.redox-os.org fail while the clock is wrong,
+/// with a certificate error that does not say why: refuse with a clear
+/// message instead.
+fn check_clock() -> io::Result<()> {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    if secs >= CLOCK_SET_AFTER {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "the clock is not set (it is at {}), so downloads over HTTPS would fail \
+         with a certificate error. Wait until timesync has set it (check `date`), \
+         then try again",
+        1970 + secs / 31_556_952
+    )))
+}
 
 fn root() -> PathBuf {
     env::var_os("PKG_PERSIST_ROOT").map_or_else(|| PathBuf::from(DEFAULT_ROOT), PathBuf::from)
@@ -186,8 +208,10 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let root = root();
     let result = match args.first().map(String::as_str) {
-        Some("install") if args.len() > 1 => pkg(&root, &args).and_then(|_| restore(&root)),
-        Some("update") => pkg(&root, &args).and_then(|_| restore(&root)),
+        Some("install") if args.len() > 1 => {
+            check_clock().and_then(|_| pkg(&root, &args)).and_then(|_| restore(&root))
+        }
+        Some("update") => check_clock().and_then(|_| pkg(&root, &args)).and_then(|_| restore(&root)),
         Some("remove") if args.len() > 1 => pkg(&root, &args).map(|_| {
             println!("pkg-persist: removed from {}; the copies in / stay until the next reset", root.display())
         }),

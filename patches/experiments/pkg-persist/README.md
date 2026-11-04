@@ -43,7 +43,11 @@ Also in this experiment:
   and pkg renames every file it installs. Built from source and held.
 - pkgutils patch 0002: when a download fails because the certificate is
   "not valid yet" (or expired), pkg says what year the clock is at and to
-  set the clock first, instead of only the TLS error.
+  set the clock first, instead of only the TLS error (seen in QEMU at 1970,
+  2026-11-01). `pkg-persist install` and `update` check the clock before
+  they start and refuse with a plain message while it is not set.
+  Signatures (pkgar) do not depend on the clock; our own repository is
+  plain HTTP, so only static.redox-os.org needs it.
 
 The boot copy is a `oneshot` service, so a service that names
 `61_pkg-persist.service` in `requires_weak` starts only once the packages
