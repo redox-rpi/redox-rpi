@@ -13,8 +13,8 @@ clock_settime and ignores the obsolete time zone argument.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/header/sys_time/mod.rs | 31 +++++++++++++++++++++++++++++--
- src/platform/redox/mod.rs  | 37 +++++++++++++++++++++++++++++++++----
- 2 files changed, 62 insertions(+), 6 deletions(-)
+ src/platform/redox/mod.rs  | 35 +++++++++++++++++++++++++++++++++--
+ 2 files changed, 62 insertions(+), 4 deletions(-)
 
 diff --git a/src/header/sys_time/mod.rs b/src/header/sys_time/mod.rs
 index 28cc560b..c06f1a18 100644
@@ -68,21 +68,10 @@ index 28cc560b..c06f1a18 100644
  
  /// See <https://pubs.opengroup.org/onlinepubs/9699919799/functions/getitimer.html>.
 diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
-index f2b73427..073938d8 100644
+index f2b73427..bfa5cf06 100644
 --- a/src/platform/redox/mod.rs
 +++ b/src/platform/redox/mod.rs
-@@ -29,8 +29,8 @@ use crate::{
-     fs::File,
-     header::{
-         errno::{
--            EBADF, EBADFD, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EMFILE, ENAMETOOLONG, ENOENT,
--            ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP,
-+            EACCES, EBADF, EBADFD, EEXIST, EFAULT, EFBIG, EINTR, EINVAL, EIO, EMFILE, ENAMETOOLONG,
-+            ENOENT, ENOEXEC, ENOMEM, ENOSYS, EOPNOTSUPP, EPERM,
-         },
-         fcntl::{
-             self, AT_EACCESS, AT_EMPTY_PATH, AT_FDCWD, AT_REMOVEDIR, AT_SYMLINK_FOLLOW, F_GETLK,
-@@ -232,8 +232,37 @@ impl Pal for Sys {
+@@ -232,8 +232,39 @@ impl Pal for Sys {
      }
  
      unsafe fn clock_settime(clk_id: clockid_t, tp: *const timespec) -> Result<()> {
@@ -92,6 +81,8 @@ index f2b73427..073938d8 100644
 +        // time plus the monotonic time, and takes a new boot time, in
 +        // nanoseconds since 1970, written to /scheme/sys/update_time_offset
 +        // (root only).
++        use crate::header::errno::{EACCES, EPERM};
++
 +        if clk_id != CLOCK_REALTIME {
 +            return Err(Errno(EINVAL));
 +        }
