@@ -1,0 +1,41 @@
+From ae67af9d1fa83fd1439084e49011e5977330e2b4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 13:19:04 +0000
+Subject: [PATCH] pkg: name the allowed remote when a held package is skipped
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ pkg-lib/src/library.rs | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/pkg-lib/src/library.rs b/pkg-lib/src/library.rs
+index 1fd0ab0..e289bc4 100644
+--- a/pkg-lib/src/library.rs
++++ b/pkg-lib/src/library.rs
+@@ -171,11 +171,18 @@ impl Library {
+                         }
+                     };
+                     if allowed.as_ref() != Some(&remote) {
+-                        eprintln!(
+-                            "{} is held ({}), keeping the installed version",
+-                            p.as_str(),
+-                            HOLD_PATH
+-                        );
++                        match &allowed {
++                            Some(allowed) => eprintln!(
++                                "{} is held to {allowed} ({}), not taking it from {remote}",
++                                p.as_str(),
++                                HOLD_PATH
++                            ),
++                            None => eprintln!(
++                                "{} is held ({}), keeping the installed version",
++                                p.as_str(),
++                                HOLD_PATH
++                            ),
++                        }
+                         continue;
+                     }
+                 }
+-- 
+2.53.0
+
