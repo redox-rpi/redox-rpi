@@ -75,3 +75,27 @@ Power cuts are not in the script: the Shelly plug is switched only by the
 Pi test agent (separate test-plan row).
 
 ## Results
+
+QEMU raspi3b, 2026-11-04, `v0.4.0-dev-346-g5bc468d7+xa1cf` (and the two
+builds before it, which differ only in `fill`, `net` and diagnostics),
+`--usb-net --data` (256 MiB data partition):
+
+- **Stressor:** 70 rounds over all kinds. Everything passes except
+  `signals`, which fails every time: children send thousands of signals
+  with `kill()`, it returns 0, and the handler never runs
+  ([#205](https://github.com/redox-rpi/redox-rpi/issues/205)). `memory`
+  goes down to 41–44 MiB free and gets it all back; `fds` reaches 4096
+  without `EMFILE`; `fill` writes 253 MiB in 93–133 s until `ENOSPC`, a
+  small write still works, and the space comes back after deleting;
+  `killio` kills every worker within 10 s; `schemes` makes 380–820 calls on
+  8 schemes with no hang.
+- **Host faults:** 26 rounds over `server`, `pkg`, `dwc2d` and `stressor`.
+  devsh is back after 2–5 s each time. The QEMU clock is at 1970, so `pkg`
+  over TLS stops at the certificate date check. Over plain HTTP it reports
+  "response header is too big" and "Peer disconnected" cleanly. A
+  `network` port cycle in QEMU only forgets and finds the adapter again
+  (QEMU's hub cannot disconnect it).
+- No panic and no crash dump in the serial log during any run.
+- Early runs found two bugs in the test itself, both fixed: `fill` ran
+  into the round deadline on the slow card and left its file behind, and
+  `net` rounds against stalling replies were cut off by the deadline.

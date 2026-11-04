@@ -7,7 +7,8 @@ Usage:
                           [--serve-addr <addr>] [--serve-port 18080]
                           [--serial-log <file>] [--recover 180]
                           [--netem] [--iface <dev>] [--print-sudo]
-                          [--stressor-rounds 20] [--log <file.jsonl>]
+                          [--stressor-rounds 20] [--stressor-kinds K,K]
+                          [--log <file.jsonl>]
 
 Each round picks one fault (from --faults, by --seed), injects it, and then
 checks that the Pi recovers: devsh answers within --recover seconds and the
@@ -325,7 +326,8 @@ def serial_check(path, mark):
 
 def fault_stressor(ctx, rng):
     seed = rng.getrandbits(48)
-    cmd = f"chaos --rounds {ctx.args.stressor_rounds} --seed {seed} --quiet"
+    kinds = f" --kind {ctx.args.stressor_kinds}" if ctx.args.stressor_kinds else ""
+    cmd = f"chaos --rounds {ctx.args.stressor_rounds} --seed {seed} --quiet{kinds}"
     log(f"  on the Pi: {cmd}")
     out = run_on_pi(ctx.host, ctx.port, cmd, ctx.args.stressor_rounds * 120 + 60)
     if out is None:
@@ -431,6 +433,7 @@ def main():
     ap.add_argument("--iface")
     ap.add_argument("--dwc2d-restart", action="store_true", help="full controller restart (experiment dwc2d-restart)")
     ap.add_argument("--stressor-rounds", type=int, default=20)
+    ap.add_argument("--stressor-kinds", help="chaos --kind list, e.g. to leave out a known failure")
     ap.add_argument("--log", help="append one JSON object per round")
     args = ap.parse_args()
 
