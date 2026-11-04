@@ -58,6 +58,7 @@ patches/experiments/sshd/*              network
 patches/experiments/mqtt*               network
 patches/experiments/ha-bridge/*         network
 patches/experiments/late-dhcp/*         network,time
+patches/experiments/wifi-*              network
 patches/experiments/timerd*             time
 patches/experiments/timesync/*          time
 patches/experiments/timezone/*          time
@@ -104,6 +105,7 @@ tools/devshd/*                          ci
 tools/sigregs/*                         relibc,stability
 tools/timerd/*                          time
 tools/timesync/*                        time
+tools/wifi-firmware/*                   network
 tools/redoxfs-file/*                    sdcard
 tools/reboot/*                          boot
 .github/workflows/relibc.yml            relibc,ci
