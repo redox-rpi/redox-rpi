@@ -1,0 +1,41 @@
+From efad7ef8f8049f7e8d9991295318302afa186595 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:57:54 +0100
+Subject: [PATCH] ld.so: find a login shell whose argv[0] starts with "-"
+
+ld.so finds the program it runs through argv[0]. A login shell gets "-"
+in front of its name ("-ion" from sshd or login), so ld.so stopped with
+"failed to locate '-ion'" and every SSH login with a terminal ended.
+If argv[0] cannot be found and starts with "-", try the name without
+it. Passing the executable's path to ld.so (AT_EXECFN) would be the
+general fix.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ld_so/start.rs | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/ld_so/start.rs b/src/ld_so/start.rs
+index cb667001..59d61205 100644
+--- a/src/ld_so/start.rs
++++ b/src/ld_so/start.rs
+@@ -495,7 +495,15 @@ fn stage2(
+         crate::platform::init_inner(auxv);
+     }
+ 
+-    let Some((path, _name)) = resolve_path_name(&name_or_path, &envs) else {
++    // A login shell gets "-" in front of its name in argv[0] ("-ion" from
++    // login or sshd); ld.so finds the program through argv[0], so try the name
++    // without it. TODO: pass the executable's path (AT_EXECFN) instead.
++    let resolved = resolve_path_name(&name_or_path, &envs).or_else(|| {
++        name_or_path
++            .strip_prefix('-')
++            .and_then(|name| resolve_path_name(name, &envs))
++    });
++    let Some((path, _name)) = resolved else {
+         eprintln!("[ld.so]: failed to locate '{name_or_path}'");
+         unistd::_exit(1);
+     };
+-- 
+2.54.0 (Apple Git-157)
+
