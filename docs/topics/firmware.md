@@ -43,7 +43,7 @@
   Plan for the rest on #126 (2026-11-04): step 1 Ethernet at 100 Mbit/s
   instead of gigabit (branch `power-eth`, experiment `eth-speed`:
   `echo 100 > /tmp/dwc2d-link` makes `dwc2d` renegotiate; QEMU 4 of 4,
-  Pi test #225 queued, measured with the Shelly plug), then EEE on the
+  Pi test #228 queued, measured with the Shelly plug), then EEE on the
   LAN7800, `dwc2d` idle wakeups (#139), and reading the firmware's clock
   states.
 
