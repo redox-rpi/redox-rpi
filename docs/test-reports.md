@@ -7927,3 +7927,261 @@ the clock is at 1970 and the HTTPS certificate check fails.**
   - With `--experiment timesync`, as in the stable image, it should work.
 - pi-test: version, manifest, ps (50), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (16:03). devsh answers.
+
+## #228 #126 power saving step 1: idle power with Ethernet at 100 Mbit/s against gigabit (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-355-g20e2dfc1+x0e33` (branch `power-eth` 20e2dfc1, experiment `eth-speed`,
+base `0090`). Real Pi 3B+ over netboot, reset at 17:27:59 UTC. The Shelly plug was only read.
+**Result: 100 Mbit/s saves about 0.35 W at idle** (3.24 W to 2.89 W, about 11 %). That is
+well above the plug's 0.1 W step, and the same in both rounds.
+
+- Boot: `redox login:` 20 s after the reset. The switch port is gigabit. The boot line reads
+  `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s`, not the
+  `LAN78xx link up after N ms` that the row expected.
+- pi-test passes: manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed.
+- Each sample: `shelly-sample.sh <label> 36 10`, 36 readings over 6 min, idle, nothing else
+  running. The speed was changed on the serial console.
+
+| Sample | Link | Mean | Min | Max |
+|---|---|---|---|---|
+| g1 | 1000 Mbit/s | 3.23 W | 3.2 | 3.3 |
+| m1 | 100 Mbit/s | 2.89 W | 2.8 | 3.2 |
+| g2 | 1000 Mbit/s | 3.24 W | 3.2 | 3.4 |
+| m2 | 100 Mbit/s | 2.88 W | 2.7 | 3.1 |
+
+- Gigabit mean 3.235 W, 100 Mbit/s mean 2.885 W, **difference 0.35 W**.
+  - The higher first reading in m1 and m2 (3.2 and 3.1) is the time just after the switch.
+    Leaving it out gives 2.88 and 2.87 W.
+- Every change: `dwc2d: link: advertising up to N Mbit/s, negotiating again`, then
+  `link up on the LAN7800 at address 6, N Mbit/s` within 4 s. `ping -c 3` to the server gave
+  3 of 3 every time. devsh answered at the end at 1000 Mbit/s.
+- Small finding, not about the image: after the third change (`echo 100`), my serial helper did
+  not see the shell prompt for 120 s. The link line was already there, so it only made the gap
+  before m2 longer.
+- The plug's `aenergy.total` counter updates only in steps, so it can't give a finer number
+  over 6 min. I used the `apower` readings only.
+- Afterwards `echo 1000 > /tmp/dwc2d-link`, then stable `v0.4.0-dev-201-gb714bca+x9f76`
+  restored with a devsh reset: banner after 20 s, devsh answers, `/srv/tftp/redox` matches the
+  backup.
+
+## #229 #53 rerun of test 122 on PR #81 with testnetd as the second adapter (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-362-gbde20707` (branch `netstack-multi` bde20707, PR #81, no experiments).
+Real Pi 3B+ over netboot, reset at 17:59:44 UTC, `redox login:` after 21 s.
+**Result: the second interface works, but the network was lost afterwards.** All the
+step-2 checks pass, including the directory listing that failed in 122. Then, during the
+second pi-test, eth0 stopped answering. It looks like #92.
+
+- **(1) pi-test** before testnetd: pass (manifest matches, 0 of 300 starts failed).
+- **(2) After `/usr/lib/drivers/testnetd &`** (18:03:09, on serial):
+  - testnetd printed `testnetd: network.test0 registered`, then `DHCP: eth1 got 10.0.9.2/24`.
+  - `ls /scheme/netcfg/ifaces` gave `eth0  eth1`. This fails in 122; it passes now.
+  - `eth1/addr/list` gave `10.0.9.2/24`; `eth0/addr/list` gave `192.168.178.148/24`.
+  - `route/list` had exactly one `default via 192.168.178.1 dev eth0`, plus
+    `10.0.9.0/24 dev eth1`, `192.168.178.0/24 dev eth0` and loopback.
+  - `ping -c 3 10.0.9.1`: 3/3, about 2.5 ms. `ping -c 3 192.168.178.1`: 3/3.
+  - `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`.
+- **(3) pi-test again: fail.** version, manifest, ps, ps-tty and sdcard passed. The 300-start
+  loop over devsh then got no output, and devsh could not reconnect.
+- **Serial console** about 15 min later (18:19):
+  - The shell answered. `cat /scheme/sys/context` showed netstack blocked with little CPU
+    (0.8 s), dwc2d sleeping, and testnetd still running.
+  - The initfs `redoxfs` (pid 20) was running with 52 s CPU. Most of that is probably the
+    600 starts.
+  - `ping -c 3 192.168.178.120` printed its first line, then hung, and Ctrl-C did not stop it.
+  - This is the #92 picture as in tests 211 and 213. It came after a second interface was
+    added, but this run cannot say whether testnetd is the cause.
+- **(4) Serial log:** `DHCP client bound to address 192.168.178.148` twice at boot,
+  `DHCP: eth0 got 192.168.178.148/24`, `DHCP: default route via 192.168.178.1 (eth0)`, and
+  `DHCP: eth1 got 10.0.9.2/24`. There was no panic and no netstack error line before or
+  after the loss.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 18:23:18 (the
+  network was gone). The banner came after 30 s, devsh answers, and `/srv/tftp/redox`
+  matches the backup.
+
+## #230 #155 small writes collected up to 1 MiB, A/B against PR #73 (2026-11-04, Pi test agent)
+
+Real Pi 3B+ over netboot, the same card as #175, `/scheme/data` on the SD card.
+- **A:** `v0.4.0-dev-157-g71d7ba7d+x08c5` (PR #73 + `sdhost-stats`), reset at 18:24:34.
+- **B:** `v0.4.0-dev-158-gb1e99de3+xcad5` (`sd-write-1m` + `sdhost-stats` + `redoxfs-coalesce-1m`),
+  reset at 18:29:30.
+
+**Result: pass.** All 18 written files match the sha256 of `/tmp/r4` (`c4c401d0…`). There
+is no `write of block`/`read of block` error, and pi-test passes on both images (0 of 300
+starts failed). **B sends small writes to the card the way 1 MiB writes go.** For 4 MiB in
+4 KiB calls, B needs 86 requests of about 100 blocks, against 283 of 36 on A. That is about
+as few as 1 MiB writes take (77–78 requests).
+
+**dd MB/s** (4 MiB, `conv=fsync`, runs 1 / 2 / 3):
+
+| Size | A | B |
+|---|---|---|
+| 4096 | 1.9 / 3.7 / 3.7 | 5.4 / 3.9 / 5.2 |
+| 65536 | 1.1 / 4.9 / 5.5 | 7.9 / 8.8 / 5.1 |
+| 1048576 | 9.2 / 10 / 8.0 | 6.7 / 10 / 9.6 |
+
+**sdhostd statistics**, one line per run, write part (requests, blocks, ms, busy ms):
+
+| Size | A | B |
+|---|---|---|
+| 4096 | 283 req, 10200 blk, 1730 / 671 / 666 ms, busy 253 / 253 / 240 ms | 86 / 86 / 85 req, 8624 / 8624 / 8616 blk, 335 / 634 / 358 ms, busy 109 / 113 / 105 ms |
+| 65536 | 274 req 10248 blk 3805 ms busy 253 (run 1; with a 9-request line after it), then 283 req 10320 blk 705 / 626 ms, busy 243 / 252 ms | 86 / 85 / 86 req, 8744 / 8736 / 8744 blk, 465 / 361 / 720 ms, busy 97 / 85 / 99 ms |
+| 1048576 | 77 / 78 req, 8552 / 8560 blk, 391 / 346 ms, busy 103 / 111 ms | 78 / 77 req, 8560 / 8552 blk, 569 / 350 ms, busy 109 / 115 ms |
+
+- On both images, the line for the third 1 MiB run came after the serial log was cut, so
+  it is missing.
+- A 4 KiB: 283 requests of 36 blocks, as in #175 (275 of 37).
+- B 4 KiB and 64 KiB: 85–86 requests, 8616–8744 blocks, and busy 85–113 ms. That is the same
+  as 1 MiB writes on either image (77–78 requests, 8552–8560 blocks, busy 103–115 ms).
+- Disk blocks per 4 MiB: A 10200 against B 8620, which is 1.22 to 1.03 times the data
+  (8192 blocks).
+- dd MB/s is noisy, and the first run on A is slow at every size. Still, B's 4 KiB and 64 KiB
+  runs (3.9–8.8 MB/s) are clearly closer to 1 MiB (6.7–10 MB/s) than A's (1.1–5.5).
+- After each run, `sha256sum` of the file and `rm` went fine.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #231 #126 power saving step 2: Ethernet speed as a boot setting, and firmware clock states (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-356-g4270128b+xdd41` (branch `power-eth` 4270128b, experiments
+`clock-states eth-speed eth-speed-test`, `/etc/eth-speed` = `100`). Real Pi 3B+ over netboot,
+reset at 18:35:24 UTC, `redox login:` after 20 s. The Shelly plug was only read.
+
+**Result: the boot setting works, and idle power is 2.88 W, the same as the 100 Mbit/s
+samples of #228.** One finding: `clock_states` reports `off` for `arm`, `core` and `sdram`,
+which are clearly running, so its on/off reading looks wrong.
+
+- **Boot log:**
+  - `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s` during the initfs.
+  - After the banner: `devshd: listening on port 2323`, then
+    `dwc2d: link: advertising up to 100 Mbit/s, negotiating again`,
+    `link down on the LAN7800 at address 6`, `link up … 100 Mbit/s`.
+  - devsh answered after that, and pi-test started at once.
+  - There is a `kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2` line just
+    before.
+  - No `DHCP:` line from Redox in this image, but the address is 192.168.178.148 and devsh
+    works.
+- **pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **`cat /scheme/rpi-firmware/clock_states`**, every line:
+  `emmc off`, `uart on`, `arm off`, `core off`, `v3d off`, `h264 off`, `isp off`,
+  `sdram off`, `pixel off`, `pwm off`.
+  - The ARM, core and SDRAM clocks can't really be off while the system runs, and `clocks`
+    shows them at full rate. So the state bit is probably read wrongly, and `v3d h264 isp
+    pwm pixel off` can't be trusted yet.
+- **`cat /scheme/rpi-firmware/clocks`** (current, max in Hz), every line:
+  `emmc 200000000 200000000`, `uart 48000000 1000000000`, `arm 1400000000 1400000000`,
+  `core 250000000 400000000`, `v3d 250000000 300000000`, `h264 250000000 300000000`,
+  `isp 250000000 300000000`, `sdram 400000000 450000000`.
+  - There is no line for `pixel` or `pwm`.
+- **Idle power** (`shelly-sample.sh boot100 36 10`, 6 min, nothing else running):
+  **mean 2.88 W**, min 2.8, max 2.9, n 36. #228 had 2.89 and 2.88 W at 100 Mbit/s, and
+  3.23–3.24 W at gigabit.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #233 #53 rerun of 229 on PR #81 with the netstack hang fix (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-363-gd0e656c4` (branch `netstack-multi` d0e656c4, PR #81, no experiments).
+Real Pi 3B+ over netboot, no HDMI connected. **Result: pass. The network was not lost in
+two boots, 40 pi-test runs, and 34 minutes with testnetd running.**
+
+- **Boot 1** (reset 20:18:03, `redox login:` after 20 s):
+  - pi-test pass. `/usr/lib/drivers/testnetd &` at 20:21:28, then step 2 as in 229.
+  - pi-test three more times in a row, all pass (0 of 300 starts failed each).
+  - Each run takes only about 50 s, so testnetd ran only about 4 min here. In 229, the
+    second run only looked long because it hung. So I added boot 2.
+- **Boot 2** (reset 20:26:42, login after 20 s):
+  - pi-test pass. testnetd at 20:30:04, then step 2 again.
+  - Then pi-test in a loop for 30 min: **36 runs, all pass**, each with 0 of 300 starts
+    failed and devsh never lost.
+  - At 21:01 on serial, `/tmp/testnetd.log` showed `dhcp 2 dhcp_foreign 0 foreign_src 0
+    ping 3`, and `ping -c 3 10.0.9.1` gave 3/3.
+- **Step 2, the same in both boots:**
+  - testnetd: `network.test0 registered`, then `DHCP: eth1 got 10.0.9.2/24`.
+  - `ls /scheme/netcfg/ifaces` gave `eth0  eth1`. eth1 had `10.0.9.2/24`, and eth0 had
+    `192.168.178.148/24`.
+  - `route/list` had exactly one `default via 192.168.178.1 dev eth0`, plus
+    `10.0.9.0/24 dev eth1`.
+  - `ping -c 3 10.0.9.1` and `ping -c 3 192.168.178.1`: 3/3 each.
+  - `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`.
+- **Serial log:** `DHCP: eth0 got 192.168.178.148/24`, `DHCP: default route via
+  192.168.178.1 (eth0)`, `DHCP: eth1 got 10.0.9.2/24`. There was no netstack error line and
+  no panic.
+- 229 lost the network in its second pi-test, about 10 min after testnetd started. Here
+  testnetd ran 4 + 30 min and more than 11000 program starts went over devsh with no loss.
+  The hang window is small, so this is good evidence, not proof.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each boot with a devsh reset:
+  banner after 20 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #232 #126 power saving step 2b: fixed clock_states, RPI_ETH_SPEED from the command line (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-357-g347fc319+x6f4a` (branch `power-eth` 347fc319, experiments
+`clock-states eth-speed`, no `/etc/eth-speed`). Real Pi 3B+ over netboot, reset at 21:04:04
+UTC, `redox login:` after 20 s. No HDMI connected.
+
+**Result: clock_states is fixed. RPI_ETH_SPEED did not reach the Pi.** The firmware does not
+read `/srv/tftp/cmdline.txt` in this setup. So this run can't say whether U-Boot or the
+bootloader passes the firmware command line on.
+
+- **(1) RPI_ETH_SPEED:**
+  - `/srv/tftp/cmdline.txt` = `RPI_ETH_SPEED=100` (one line) was created at 21:03:49, before
+    the reset.
+  - The boot log has no `RPI_ETH_SPEED` line at all. The only link line is
+    `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s`.
+  - Why: this Pi starts the GPU firmware (`start.elf`) and U-Boot **from its SD card**. The
+    log shows `Loading Environment from FAT... OK` and `bootflow 'mmc@7e300000.bootdev.part_1'
+    with script`. Only then does U-Boot fetch `redox/netboot.scr` and the image from
+    homenodellm.
+  - The firmware reads `cmdline.txt` from the card's FAT partition, so the file in
+    `/srv/tftp` is never read. dnsmasq logged only DHCP for the Pi, and no TFTP request for
+    `cmdline.txt`.
+  - To test the path, `RPI_ETH_SPEED=100` must go into `cmdline.txt` on the netboot card
+    (that needs a person and a card swap), or into U-Boot's `bootargs` in `netboot.scr`.
+- **(2) pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **(3) `cat /scheme/rpi-firmware/clock_states`** (name, state, measured Hz, state word), every
+  line:
+  `emmc on 200000000 0x0`, `uart on 48000000 0x1`, `arm on 1399998000 0x0`,
+  `core on 400000000 0x0`, `v3d on 300000000 0x0`, `h264 off 0 0x0`, `isp off 0 0x0`,
+  `sdram off 0 0x0`, `pixel off 0 0x0`, `pwm off 0 0x0`.
+  - arm and core now read `on` with a measured rate (#231 had them `off`).
+  - **sdram still reads `off 0`**, although `clocks` says 400 MHz. So the firmware's measured
+    rate for SDRAM seems to be 0 (not measurable this way), and the state is derived from it.
+  - core is measured at 400 MHz while `clocks` reports 250 MHz current; v3d is measured at
+    300 MHz against 250.
+  - h264, isp, pixel and pwm read off at idle.
+- **`cat /scheme/rpi-firmware/clocks`**, every line:
+  `emmc 200000000 200000000`, `uart 48000000 1000000000`, `arm 1400000000 1400000000`,
+  `core 250000000 400000000`, `v3d 250000000 300000000`, `h264 250000000 300000000`,
+  `isp 250000000 300000000`, `sdram 400000000 450000000`.
+- **(4)** `/srv/tftp/cmdline.txt` was deleted at 21:05:21, before the restore. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s, devsh
+  answers, and `/srv/tftp/redox` matches the backup.
+
+## #234 #126 power saving step 2c: Ethernet speed through U-Boot bootargs (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-358-ga2f7248b+x6f4a` (branch `power-eth` a2f7248b, experiments `eth-speed`
+and `clock-states`). Real Pi 3B+ over netboot, no HDMI connected. **Result: pass. The setting
+reaches the kernel, and the first link is 100 Mbit/s.**
+
+- **(1)** After staging, `netboot-bootargs.sh "RPI_ETH_SPEED=100"` (from `power-eth`
+  5f6ceaf0) put `# netboot-bootargs.sh` and the `setenv bootargs` line at lines 55–56 of
+  `/srv/tftp/redox/netboot.cmd`, before `bootefi` (line 57), and compiled `netboot.scr`.
+- **(2)** Reset at 21:17:39 UTC, `redox login:` after 18 s. Boot log:
+  - `dwc2d: RPI_ETH_SPEED=100 from the command line`
+  - `dwc2d: LAN78xx advertising up to 100 Mbit/s (RPI_ETH_SPEED)`
+  - `dwc2d: link up on the LAN7800 at address 6, 100 Mbit/s`. This is the first link line;
+    there is no 1000 line at all.
+  - Side note: in this boot the LAN7800 disappeared once right after the setting was applied
+    (`hub 2 port 1: device at address 6 removed`, then `device connected`). It was set up
+    again with the same advertising line, and the `link up … 100 Mbit/s` line came twice.
+    `devices ready after 4262 ms` (#228/#231–#233: 4666–4828 ms, and none of those boots
+    had the removal). The network worked normally.
+- **(3) pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **(4) `cat /scheme/rpi-firmware/clock_states`:**
+  `emmc on 200000000 0x0`, `uart on 48000000 0x1`, `arm on 1400000000 0x0`,
+  `core on 399999000 0x0`, `v3d on 300000000 0x0`, `h264 off 0 0x0`, `isp off 0 0x0`,
+  **`sdram unknown 0 0x0`**, `pixel off 0 0x0`, `pwm off 0 0x0`.
+  - sdram reads `unknown` as intended; the others are as in #232.
+  - `clocks` is unchanged from #232.
+- **(5)** Stable `v0.4.0-dev-201-gb714bca+x9f76` restored, including `netboot.scr` without the
+  line: banner after 18 s, devsh answers, and `/srv/tftp/redox` matches the backup.
