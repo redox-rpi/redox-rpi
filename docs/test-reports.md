@@ -7835,3 +7835,30 @@ md5 `da1a7595…`. Real Pi 3B+ over netboot, reset at 14:45:08 UTC, `devshd: lis
   `Ctrl-C at the prompt: shell still answers`.
 - pi-test `--starts 300`: version, manifest, ps (52), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (14:48). devsh answers, and the serial logger is running again.
+
+## #226: #92 netstack hang, fourth try: long downloads with netstack-watch and dwc2d-watch (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-349-g1bf74324+x7850` (branch `t92-netstack-watch` 1bf74324, experiments
+`netstack-watch`, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`, `dwc2d-watch`, `timesync`),
+`~/redox-rpi-zrtl/keep/t92pi4-v0.4.0-dev-349-g1bf74324+x7850.img`. Real Pi 3B+ over netboot,
+reset at 14:55:45 UTC. The clock was right (`date`: `Wed Nov 4 14:56:29 UTC 2026`). The loop
+`for i in 1..9; echo ROUND $i; pkg install --yes vim; pkg remove --yes vim; ping -c 1 192.168.178.1; end`
+(8 rounds) was typed on the serial console and ran from 14:56:45 to 15:39:03 (about 5.3 min a
+round). **Result: 8 rounds without a hang (pass). No `stuck` or `back after` line from
+either watch. But round 8's install failed with `No space left on device`.**
+
+- **Rounds 1–7:** `pkg install --yes vim` downloaded the 10 MB `vim.pkgar` and ended in
+  `Commit complete.`. `pkg remove --yes vim` also ended in `Commit complete.`. Ping answered 1 of 1.
+- **Round 8:** the download finished, then
+  `error: pkgar error: No space left on device (os error 28) (None) "Copying and hashing file"`.
+  The remove had nothing to do, and ping answered.
+  - So after 7 install/remove cycles the netboot root filesystem is full. Something, maybe
+    pkg's download cache, is not freed by `pkg remove`.
+  - The network and both watches were not affected.
+- **Watches:** no `netstack-watch: … stuck`, no `dwc2d-watch: … stuck`, and no `back after` line in the whole run.
+  - Heartbeats kept coming every 60 s from both: 39 from netstack and 42 from dwc2d. All say `idle for 0 s`.
+  - Last ones: `netstack-watch: alive at 2526 s, idle for 0 s, 109378 events (95486 network), 84376 frames in`
+    and `dwc2d-watch: alive at 2530 s, idle for 0 s, events: 42284 interrupt, 219143 scheme, 119050 other`.
+- No panic, exception, `FATAL` or `UNHANDLED` line, and no dwc2d `Timeout`, `removed` or `restart` line.
+- Step 3 (a hang) was not needed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (15:39). devsh answers.
