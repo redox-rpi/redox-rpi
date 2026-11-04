@@ -430,8 +430,40 @@ the screen.
 
 - DMA blits beyond the prototype once #21's common DMA code and cache
   maintenance exist.
-- Steps 2 (own display driver) and 3 (V3D) only if upstream Redox grows a
-  3D path, or if someone wants to do it as a project of its own.
+- **`vc4d`, a VideoCore IV display and 3D driver ported from Linux `vc4`
+  ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)).** A plan,
+  no code, no milestone yet. It replaces steps 2b and 3 above, in three
+  stages:
+  - (a) display only: `vc4d` programs the HVS and replaces `rpi-fbd`;
+    pointer and windows as hardware planes, so moving them copies
+    nothing. The first and smallest stage, and most of the gain for a 2D
+    desktop.
+  - (b) 3D jobs on the V3D with the command list and shader checks, plus
+    Mesa `vc4` (MIT) with a Redox winsys: OpenGL ES 2.0 in hardware.
+    Needs render nodes and buffer sharing in `driver-graphics`.
+  - (c) Orbital composes on the GPU.
+
+  Prerequisites: physically contiguous memory (kernel `0049`, `0050`,
+  later a larger pool), and either `start.elf` with more GPU memory or
+  `vc4d` taking buffers from Redox memory like Linux's KMS driver
+  (`start_cd.elf` with `gpu_mem=16` has no room for 3D).
+
+## License rule for `vc4d`
+
+Upstream Redox takes no AI-written code, so `vc4d` may be GPL; the user
+approved that for this driver only.
+
+- `vc4d` lives in its own repo,
+  [redox-rpi/vc4d](https://github.com/redox-rpi/vc4d).
+- It is **GPL-2.0-only**, because Linux `vc4` is GPL-2.0-only. The repo
+  has the GPL-2.0 `LICENSE`; every file gets an SPDX header
+  (`SPDX-License-Identifier: GPL-2.0-only`) and a note naming the Linux
+  files and the kernel version it was translated from.
+- redox-rpi stays MIT completely and holds no `vc4d` source. Later it
+  only gets a recipe, `tools/vc4d/recipe.toml`, that builds a fixed
+  commit of redox-rpi/vc4d.
+- Images that contain `vc4d` distribute GPL code. The image manifest
+  names the recipe's commit, which covers the source.
 
 ## Sources
 
