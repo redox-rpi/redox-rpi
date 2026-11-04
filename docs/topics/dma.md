@@ -92,6 +92,17 @@ written, and invalidate a receive buffer before handing it to the device
 too (so no dirty line is written back over the data later). Cache lines
 are 64 bytes; buffers start and end on a line boundary.
 
+**Also for uncached buffers (found on the Pi, graphics tests #151 and
+#198):** the kernel zeroes new frames through its cached mapping, so a new
+`Dma` buffer can still have dirty lines in the cache. The device then
+reads stale data, and a later write-back overwrites what was written
+uncached. In #151 a new buffer had 33 of 64 words not zero, and the
+whole-screen blit came out wrong. Kernel patch `0050` (experiment
+`rpi-fb`, PR #113) cleans and invalidates the data cache over new
+phys-contiguous memory; with it #198 had no stale words and a correct
+whole-screen blit. Every DMA user needs this, so it should become a
+default kernel patch with the first DMA driver that reaches main.
+
 ### 3. The DMA controller and the channel mask
 
 The controller is at bus `0x7E00_7000` (ARM `0x3F00_7000`): channel *n* at
@@ -192,6 +203,11 @@ is aborted (`CS.ABORT`, then `CS.RESET`) the same way.
   (`FRAMEBUFFER_ADDR`) and converts it with the `BusMap`.
 - Needs cache maintenance step 2 for a cached back buffer; until then the
   back buffer is a `Dma` buffer (uncached), which works but draws slowly.
+- Pi results (`rpi-fb`, PR #113, channel 5): with kernel `0050`, test #198
+  blitted the whole 1824x984 screen in 20.5–29.8 ms and passed the
+  checks. Without it (#151) the 984-row test blit was wrong, and `rpi-fbd`
+  fell back to CPU blits as designed. DMA blits stay off unless
+  `RPI_FB_DMA=on`.
 
 ## Prototype results (sdhost)
 
@@ -223,6 +239,8 @@ the last 3 words of multi-block reads.
 - `common::bus::BusMap` and `common::bcm2835_dma` out of the sdhost driver
   when the display driver needs them (blits, channel 5).
 - Decide cache maintenance step 2 with the graphics session.
+- Kernel `0050` (cache clean over new DMA memory) as a default patch, with
+  the first DMA user on main (sdhost DMA or #113).
 
 ## Later
 
