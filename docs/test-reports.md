@@ -8040,3 +8040,41 @@ as few as 1 MiB writes take (77–78 requests).
 - After each run, `sha256sum` of the file and `rm` went fine.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #231 #126 power saving step 2: Ethernet speed as a boot setting, and firmware clock states (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-356-g4270128b+xdd41` (branch `power-eth` 4270128b, experiments
+`clock-states eth-speed eth-speed-test`, `/etc/eth-speed` = `100`). Real Pi 3B+ over netboot,
+reset at 18:35:24 UTC, `redox login:` after 20 s. The Shelly plug was only read.
+
+**Result: the boot setting works, and idle power is 2.88 W, the same as the 100 Mbit/s
+samples of #228.** One finding: `clock_states` reports `off` for `arm`, `core` and `sdram`,
+which are clearly running, so its on/off reading looks wrong.
+
+- **Boot log:**
+  - `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s` during the initfs.
+  - After the banner: `devshd: listening on port 2323`, then
+    `dwc2d: link: advertising up to 100 Mbit/s, negotiating again`,
+    `link down on the LAN7800 at address 6`, `link up … 100 Mbit/s`.
+  - devsh answered after that, and pi-test started at once.
+  - There is a `kernel::scheme::user:DEBUG -- call_fdread: payload: 8 metadata: 2` line just
+    before.
+  - No `DHCP:` line from Redox in this image, but the address is 192.168.178.148 and devsh
+    works.
+- **pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **`cat /scheme/rpi-firmware/clock_states`**, every line:
+  `emmc off`, `uart on`, `arm off`, `core off`, `v3d off`, `h264 off`, `isp off`,
+  `sdram off`, `pixel off`, `pwm off`.
+  - The ARM, core and SDRAM clocks can't really be off while the system runs, and `clocks`
+    shows them at full rate. So the state bit is probably read wrongly, and `v3d h264 isp
+    pwm pixel off` can't be trusted yet.
+- **`cat /scheme/rpi-firmware/clocks`** (current, max in Hz), every line:
+  `emmc 200000000 200000000`, `uart 48000000 1000000000`, `arm 1400000000 1400000000`,
+  `core 250000000 400000000`, `v3d 250000000 300000000`, `h264 250000000 300000000`,
+  `isp 250000000 300000000`, `sdram 400000000 450000000`.
+  - There is no line for `pixel` or `pwm`.
+- **Idle power** (`shelly-sample.sh boot100 36 10`, 6 min, nothing else running):
+  **mean 2.88 W**, min 2.8, max 2.9, n 36. #228 had 2.89 and 2.88 W at 100 Mbit/s, and
+  3.23–3.24 W at gigabit.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
