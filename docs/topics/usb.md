@@ -48,7 +48,7 @@
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
-  (on `usb-hotplug`), experiment `usb-serial` (base `0035` there, PR #70). Each is
+  (on `usb-hotplug`), base `0035` (PR #70, waits for #62). Each is
   `/scheme/usb-serial/<ports>` with a `baud` file and termios calls,
   hotplug. **QEMU passes** (`scripts/test-usb-serial.sh`, 15/15 with
   QEMU's FTDI); Pi test #62 with a person, same visit as #50 and #56.
