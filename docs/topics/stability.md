@@ -33,6 +33,14 @@
   bad table address. The sixth jumped to address 1 from `load_object`'s
   init function loop (`blr x8`), likely a value relocated with the same
   bad DSO pointer. No other crash type is left on the Pi 3B+.
+- Recount on main, 2026-10-31 ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)), after PR #122
+  (self-exit-status) and PR #61 (which adds `sigreturn-svc` as an
+  experiment, not built here): main cf2025e, `v0.3.0-dev-764-gcf2025e+x9f76` (stable-image experiments),
+  QEMU raspi3b: **0 of 5000** starts failed (5 boots of 1000 starts,
+  `pi-test.py --crash-log`), crash log empty, no exception in any
+  serial log. Before: 0 of 1300 on `v0.3.0-dev-339`. Real Pi, same
+  image, test 149: **0 of 3000**, no FATAL or exception on the serial
+  console. No start crash is left; #1 can be closed.
 - Base `0024` and kernel `0007` (2026-10-29, [#28](https://github.com/redox-rpi/redox-rpi/issues/28), [#32](https://github.com/redox-rpi/redox-rpi/issues/32)): fast input on
   the serial console no longer loses characters (the kernel keeps PL011
   input while it writes to the port), and getty no longer panics when the
@@ -42,6 +50,22 @@
   [Details](../../patches/experiments/serial-rx/README.md).
 
 ## In progress
+
+- [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
+  `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
+  uutils `dd` does not retry short writes, so `dd bs=1M … | cmd` passed on
+  64 KiB of each block (Pi test 177). Kernel `0010` makes the write wait
+  until every byte is in. QEMU and Pi test 180: `dd bs=1M count=16 |`
+  passes all 16 MiB, checksums match. Upstream notes in
+  [docs/upstream/kernel.md](../upstream/kernel.md).
+
+- [#157](https://github.com/redox-rpi/redox-rpi/issues/157) (branch `t157-vtime-pr`, PR #168): long downloads stalled because the
+  scheduler's virtual time ran away and wrapped past `u64::MAX`; a runnable
+  context then stayed queued and was never picked. Kernel patch `0012` caps
+  a context's virtual time at one slice ahead of the run queue it joins.
+  Pi test 189: no wrap in 6 downloads. Found with experiment `pi-heartbeat`
+  (tests 179–188). Upstream note in
+  [docs/upstream/kernel.md](../upstream/kernel.md).
 
 - [#11](https://github.com/redox-rpi/redox-rpi/issues/11) (branch
   `devshd-hangup`): devshd kept `login` and the shell running when a client
@@ -62,15 +86,8 @@
 
 ## Next
 
-- [#1](https://github.com/redox-rpi/redox-rpi/issues/1) complete fix: programs and libraries other than relibc still use
-  x18, so the signal entry can still corrupt it there. Either reserve x18
-  in the whole toolchain (Rust target, GCC `-ffixed-x18`, all packages
-  rebuilt) or return from the signal entry without clobbering a register.
-  The second is on branch `t1-sigreturn` (experiment `sigreturn-svc`,
-  kernel and relibc): QEMU passes `sigregs` with x18 and 0 of 700 starts;
-  Pi test 36: `sigregs process` keeps x18, 0 of 1000 starts. No start
-  crash needs it today (the dynamic linker is relibc); it matters for
-  programs that use x18 themselves and get signals.
+- x18-safe signal return for programs other than relibc: experiment
+  `sigreturn-svc` on main (PR #61), opt-in; no start crash needs it.
 
 ## Later
 
