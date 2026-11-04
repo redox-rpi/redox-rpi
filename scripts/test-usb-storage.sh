@@ -2,10 +2,13 @@
 # Check USB sticks in dwc2d (experiment usb-storage) in QEMU: plug a stick
 # in through QEMU's monitor after boot, read its first block through the
 # disk scheme, copy it to block 2048, check the copy in the image on the
-# host, unplug the stick, and plug it in again.
+# host, unplug the stick, and plug it in again. Then a card reader (QEMU's
+# usb-bot) with cards in slots 0 and 2 and an empty slot 1, next to the
+# stick: both are read, the reader is unplugged, the stick still works.
 #
-# Needs an image built with --experiment usb-storage (hotplug is base
-# 0031-0033 on usb-hotplug). devshd port 12323, or STORAGE_PORT=<port>.
+# Needs an image built with --experiment usb-storage --experiment
+# usb-storage-more (hotplug is base 0031-0033 on usb-hotplug). devshd port
+# 12323, or STORAGE_PORT=<port>.
 #
 # Usage:
 #   scripts/test-usb-storage.sh [image]
@@ -17,6 +20,8 @@ image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 socket="$ROOT/images/qemu-monitor-storage.sock"
 log="$ROOT/images/qemu-usb-storage.log"
 stick="$ROOT/images/usb-stick-test.img"
+card0="$ROOT/images/usb-card0-test.img"
+card2="$ROOT/images/usb-card2-test.img"
 port=${STORAGE_PORT:-12323}
 marker="REDOX-RPI-USB-STICK-TEST-$$"
 failed=0
@@ -97,7 +102,7 @@ devsh "dd if=$scheme/0 of=/tmp/block0 bs=512 count=1; dd if=/tmp/block0 of=$sche
 sleep 1
 
 monitor "device_del stick0" > /dev/null
-check "stick removed" wait_log "dwc2d: mass storage removed" 10
+check "stick removed" wait_log "dwc2d: mass storage /scheme/disk.* removed" 10
 check "disk gone" bash -c "! python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'ls -l $scheme/' 2>/dev/null | grep -aqE ' 16777216 .* 0\b'"
 
 # QEMU writes through to the image file.
@@ -107,7 +112,43 @@ check "block 2048 written" bash -c "dd if='$stick' bs=512 skip=2048 count=1 stat
 # same name, which needs the old one gone from the namespace.
 monitor "drive_add 0 if=none,id=stick2,file=$stick,format=raw" \
     "device_add usb-storage,drive=stick2,id=stick1,port=1.3" > /dev/null
-check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/') -ge 2 ] && exit 0; sleep 1; done; exit 1"
-check "same scheme name" bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage $scheme:') -ge 2 ]"
+check "stick found again" bash -c "for _ in \$(seq 30); do [ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage /scheme/.*/0:') -ge 2 ] && exit 0; sleep 1; done; exit 1"
+check "same scheme name" bash -c "[ \$(tr -d '\r' < '$log' | grep -ac 'dwc2d: mass storage $scheme/0:') -ge 2 ]"
 check "block 2048 read after plugging in again" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
+
+# A card reader next to the stick: LUN 0 and 2 have a card (8 and 4 MiB),
+# LUN 1 is a CD drive without a disc (an empty slot). QEMU attaches the
+# reader only once all its LUNs are there.
+echo "== card reader"
+truncate -s 0 "$card0" "$card2"
+truncate -s 8M "$card0"
+truncate -s 4M "$card2"
+printf '%s' "CARD0-$marker" | dd of="$card0" conv=notrunc status=none
+printf '%s' "CARD2-$marker" | dd of="$card2" conv=notrunc status=none
+monitor "device_add usb-bot,id=reader,attached=false" \
+    "drive_add 0 if=none,id=card0,file=$card0,format=raw" \
+    "device_add scsi-hd,bus=reader.0,lun=0,drive=card0" \
+    "drive_add 0 if=none,id=cd1" \
+    "device_add scsi-cd,bus=reader.0,lun=1,drive=cd1" \
+    "drive_add 0 if=none,id=card2,file=$card2,format=raw" \
+    "device_add scsi-hd,bus=reader.0,lun=2,drive=card2" \
+    "qom-set reader attached true" > /dev/null
+check "reader slot 2 found" wait_log "dwc2d: mass storage /scheme/disk\.usb-dwc2\+[0-9.]+-scsi/2: .*, 4 MiB" 30
+reader=$(tr -d '\r' < "$log" | grep -aoE "/scheme/disk\.usb-dwc2\+[0-9.]+-scsi/2:" | tail -1 | sed 's|/2:$||')
+tr -d '\r' < "$log" | grep -aE "dwc2d: mass storage" | tail -4 | sed 's/^/      /'
+# The scheme name as a pattern: "+" and "." are taken literally.
+reader_re=$(printf '%s' "$reader" | sed 's/[.+]/\\&/g')
+check "reader slot 0 found" bash -c "tr -d '\r' < '$log' | grep -aqE 'dwc2d: mass storage $reader_re/0: .*, 8 MiB'"
+# QEMU answers REQUEST SENSE for a LUN other than 0 with "LUN not
+# supported" instead of "medium not present", so the slot is left out only
+# after the 5 s a stick may take to get ready; a real reader says "no
+# medium" at once.
+check "empty slot 1 left out" bash -c "tr -d '\r' < '$log' | grep -aqE 'LUN 1: Timeout' && ! tr -d '\r' < '$log' | grep -aqE 'mass storage $reader_re/1:'"
+check "reader slot 0 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/0 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD0-$marker'"
+check "reader slot 2 read" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$reader/2 bs=512 count=1 | head -c 64' 2>/dev/null | grep -aq 'CARD2-$marker'"
+check "stick read next to the reader" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
+monitor "device_del reader" > /dev/null
+check "reader removed" wait_log "dwc2d: mass storage $reader_re removed" 10
+check "stick still read after the reader is gone" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'dd if=$scheme/0 bs=512 skip=2048 count=1 | head -c ${#marker}' 2>/dev/null | grep -aq '$marker'"
+check "devshd still answers" bash -c "python3 '$ROOT/scripts/devsh.py' 127.0.0.1 $port 'echo ready' 2>/dev/null | grep -q ready"
 exit $failed
