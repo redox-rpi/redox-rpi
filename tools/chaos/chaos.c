@@ -510,7 +510,7 @@ static const char *deny_open[] = {
     "display", "serio", "acpi", "pci", "usb", "xhci", "dwc2", "gpio", "i2c",
     "spi", "firmware", "network", "kernel", "audio", "orbital", "initfs",
     "sudo", "escalate", "log", "tcp", "udp", "ip", "icmp", "chan", "uds",
-    "shm", "event", NULL
+    "shm", "event", "rpi-", "fbcon", "logging", "netcfg", NULL
 };
 static const char *allow_write[] = { "null", "zero", "pipe", NULL };
 /* /scheme/sys entries that change the system or block */
@@ -683,9 +683,16 @@ static int f_fill(void *arg)
     for (size_t i = 0; i < sizeof buf; i++)
         buf[i] = (char)rnd();
     uint64_t written = 0, cap = (uint64_t)fill_max_mb * CHUNK;
-    int err = 0;
+    int err = 0, out_of_time = 0;
     uint64_t start = now_ms();
+    /* stop on our own before the round's deadline kills us: a slow card
+     * (QEMU: about 3 MB/s) may not fill up within one round */
+    uint64_t end = start + (timeout_s > 20 ? timeout_s - 15 : timeout_s / 2) * 1000ULL;
     while (!cap || written < cap) {
+        if (now_ms() >= end) {
+            out_of_time = 1;
+            break;
+        }
         ssize_t w = write(fd, buf, sizeof buf);
         if (w < 0) {
             err = errno;
@@ -700,7 +707,8 @@ static int f_fill(void *arg)
     fsync(fd);
     note("fill: wrote %llu MiB in %llu ms of %llu MiB free (%s)",
          (unsigned long long)(written >> 20), (unsigned long long)(now_ms() - start),
-         (unsigned long long)(free0 >> 20), err ? strerror(err) : "cap");
+         (unsigned long long)(free0 >> 20),
+         err ? strerror(err) : out_of_time ? "out of time, not full" : "cap");
     int rc = 0;
     if (err && err != ENOSPC && err != EDQUOT) {
         note("fill: write failed with %s instead of ENOSPC", strerror(err));
@@ -905,6 +913,28 @@ static int f_net(void *arg)
     return 0;
 }
 
+/* Files a fault leaves behind when it was killed: a full data partition
+ * would fail every later round. */
+static void cleanup_files(void)
+{
+    const char *dirs[] = { "/tmp", data_dir };
+    for (int i = 0; i < 2; i++) {
+        DIR *d = opendir(dirs[i]);
+        if (!d)
+            continue;
+        struct dirent *e;
+        char path[512];
+        while ((e = readdir(d))) {
+            if (strncmp(e->d_name, "chaos-", 6) != 0)
+                continue;
+            snprintf(path, sizeof path, "%s/%s", dirs[i], e->d_name);
+            if (unlink(path) == 0)
+                note("removed %s, left behind", path);
+        }
+        closedir(d);
+    }
+}
+
 /* ---- rounds ------------------------------------------------------------- */
 
 struct fault {
@@ -1059,6 +1089,8 @@ int main(int argc, char **argv)
         uint64_t start = now_ms();
         int res = run_child(f->fn, NULL, timeout_s * 1000);
         char why[64];
+        if (res != 0)
+            cleanup_files();
         int hres = health();
         uint64_t ms = now_ms() - start;
         if (res == 0 && hres == 0) {
