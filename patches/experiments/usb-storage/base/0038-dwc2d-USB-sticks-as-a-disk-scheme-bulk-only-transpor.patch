@@ -1,7 +1,7 @@
-From 6e6ff305ecc83bb6c2e802ab175982326ddcd6eb Mon Sep 17 00:00:00 2001
+From 56d6ffd288fba89522d9906c759e99ded31923bc Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 12:15:04 +0100
-Subject: [PATCH] dwc2d: USB sticks as a disk scheme (bulk-only transport,
+Subject: [PATCH 1/2] dwc2d: USB sticks as a disk scheme (bulk-only transport,
  SCSI)
 
 A bulk-only SCSI interface (class 8, subclass 6, protocol 0x50) found at
@@ -20,12 +20,11 @@ supported (no split bulk transfers).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- Cargo.lock                         |   1 +
- drivers/usb/dwc2d/Cargo.toml       |   1 +
- drivers/usb/dwc2d/src/enumerate.rs |  16 ++
- drivers/usb/dwc2d/src/main.rs      |  75 +++++-
- drivers/usb/dwc2d/src/storage.rs   | 419 +++++++++++++++++++++++++++++
- 5 files changed, 509 insertions(+), 3 deletions(-)
+ Cargo.lock                       |   1 +
+ drivers/usb/dwc2d/Cargo.toml     |   1 +
+ drivers/usb/dwc2d/src/main.rs    |  75 +++++-
+ drivers/usb/dwc2d/src/storage.rs | 419 +++++++++++++++++++++++++++++++
+ 4 files changed, 493 insertions(+), 3 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/storage.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -41,7 +40,7 @@ index a5f72da9..4a8b1b6c 100644
   "fdt 0.2.0-alpha1",
   "inputd",
 diff --git a/drivers/usb/dwc2d/Cargo.toml b/drivers/usb/dwc2d/Cargo.toml
-index de3a4ea5..0e10948c 100644
+index f95b19d9..7d6b3582 100644
 --- a/drivers/usb/dwc2d/Cargo.toml
 +++ b/drivers/usb/dwc2d/Cargo.toml
 @@ -8,6 +8,7 @@ edition = "2021"
@@ -51,36 +50,9 @@ index de3a4ea5..0e10948c 100644
 +driver-block = { path = "../../storage/driver-block" }
  driver-network = { path = "../../net/driver-network" }
  inputd = { path = "../../inputd" }
- 
-diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 7ffe442b..a2793bdb 100644
---- a/drivers/usb/dwc2d/src/enumerate.rs
-+++ b/drivers/usb/dwc2d/src/enumerate.rs
-@@ -463,6 +463,22 @@ impl Bus {
-         Ok(())
-     }
- 
-+    /// The ports from the root to a device, e.g. `1.3` for port 3 of the hub
-+    /// on port 1 of the root hub; `0` for the device on the root port.
-+    pub fn port_path(&self, address: u8) -> String {
-+        let mut ports = Vec::new();
-+        let mut current = address;
-+        while let Some((hub, port)) = self.port_of(current) {
-+            ports.push(port.to_string());
-+            current = hub;
-+        }
-+        if ports.is_empty() {
-+            return "0".to_string();
-+        }
-+        ports.reverse();
-+        ports.join(".")
-+    }
-+
-     /// The hub and port a device is plugged into.
-     pub fn port_of(&self, address: u8) -> Option<(u8, u16)> {
-         self.devices.iter().find(|d| d.address == address)?.parent
+ scheme-utils = { path = "../../../scheme-utils" }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..235e171d 100644
+index 1efe7777..81c06070 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -94,17 +66,17 @@ index 12be94ad..235e171d 100644
  //! scheme to class drivers yet.
  
  use std::fs::{File, OpenOptions};
-@@ -22,7 +22,9 @@ mod hid;
- mod lan78xx;
+@@ -23,7 +23,9 @@ mod lan78xx;
  mod regs;
  mod rtl8152;
+ mod serial;
 +mod storage;
  
 +use driver_block::{DiskScheme, ExecutorTrait, FuturesExecutor};
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
  use ecm::Ecm;
-@@ -31,6 +33,7 @@ use event::{user_data, EventQueue};
+@@ -32,6 +34,7 @@ use event::{user_data, EventQueue};
  use hid::Keyboard;
  use lan78xx::Lan78xx;
  use rtl8152::Rtl8152;
@@ -112,16 +84,16 @@ index 12be94ad..235e171d 100644
  
  /// A network adapter on the bus, initialized. It receives only while the
  /// network stack uses it.
-@@ -209,6 +212,8 @@ enum Found {
-     Net(Adapter, [u8; 6], bool),
-     /// A keyboard, configured.
+@@ -212,6 +215,8 @@ enum Found {
      Keyboard(hid::KeyboardFunction),
+     /// A USB serial adapter, set up when the scheme takes it.
+     Serial(serial::SerialFunction),
 +    /// A USB stick, not set up yet.
 +    Storage(StorageFunction),
  }
  
  /// Recognize a device and bring it up. `link_wait` is how long a network
-@@ -252,6 +257,10 @@ fn probe(
+@@ -255,6 +260,10 @@ fn probe(
              }
          };
      }
@@ -132,10 +104,10 @@ index 12be94ad..235e171d 100644
      if let Some(f) = hid::find(bus, device) {
          return match hid::init(bus, &f) {
              Ok(()) => {
-@@ -406,9 +415,38 @@ user_data! {
-         Scheme,
+@@ -412,9 +421,38 @@ user_data! {
          Time,
          Hotplug,
+         Serial,
 +        Disk,
      }
  }
@@ -171,24 +143,24 @@ index 12be94ad..235e171d 100644
  fn main() {
      daemon::Daemon::new(daemon);
  }
-@@ -446,6 +484,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-     let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
+@@ -453,6 +491,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      let mut keyboard = None;
      let mut macs = Vec::new();
+     let mut serial_found = Vec::new();
 +    // Sticks found at boot; their schemes start with the event queue.
 +    let mut sticks = Vec::new();
      let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, keyboard: &mut Option<Keyboard>, addresses: Vec<u8>| {
          for address in addresses {
              let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -457,6 +497,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                     net.adapters.push((adapter, link));
+@@ -465,6 +505,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
                  Some(Found::Keyboard(f)) if keyboard.is_none() => *keyboard = Keyboard::new(hc.clone(), f),
+                 Some(Found::Serial(f)) => serial_found.push(f),
 +                Some(Found::Storage(f)) => sticks.push(f),
                  _ => {}
              }
          }
-@@ -508,6 +549,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -516,6 +557,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      // stdout goes to logd from here on; rescans print only when something
      // changes.
      let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
@@ -197,8 +169,8 @@ index 12be94ad..235e171d 100644
  
      // The receive channel's halt raises the controller's interrupt; without
      // it, fall back to a timer that polls.
-@@ -548,7 +591,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-         .expect("dwc2d: failed to subscribe to the scheme");
+@@ -568,7 +611,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let mut serial_polling = false;
  
      scheme.tick().expect("dwc2d: network scheme failed");
 -    for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
@@ -206,10 +178,10 @@ index 12be94ad..235e171d 100644
          match event.user_data {
              Source::Irq => {
                  let file = irq_file.as_mut().unwrap();
-@@ -561,6 +604,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -590,6 +633,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     timer.arm(Duration::ZERO);
                  }
              }
-             Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
 +            Source::Disk => {
 +                if let Some(d) = disk.as_mut() {
 +                    if let Err(err) = FuturesExecutor.block_on(d.scheme.tick()) {
@@ -220,9 +192,9 @@ index 12be94ad..235e171d 100644
              Source::Time => {
                  timer.fired();
                  let mut next = None;
-@@ -617,6 +667,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                         println!("dwc2d: keyboard removed");
-                         keyboard = None;
+@@ -660,6 +710,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     if let Some(s) = serial.as_mut() {
+                         s.remove(address);
                      }
 +                    // Dropping the scheme makes open handles fail; its name
 +                    // stays in the namespace until unlinked there, and a
@@ -243,9 +215,9 @@ index 12be94ad..235e171d 100644
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -628,6 +694,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                             keyboard = Keyboard::new(hc.clone(), f);
-                             timer.arm(Duration::ZERO);
+@@ -676,6 +742,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                                 s.add(&mut bus, f);
+                             }
                          }
 +                        Some(Found::Storage(f)) if disk.is_none() => {
 +                            disk = start_disk(&mut bus, &hc, f, &events);

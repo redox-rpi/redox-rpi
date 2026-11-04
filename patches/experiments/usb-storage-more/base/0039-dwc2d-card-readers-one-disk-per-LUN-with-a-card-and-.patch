@@ -1,4 +1,4 @@
-From 3c101bc28e6ce6d1f198a65e8841df2af9f71a14 Mon Sep 17 00:00:00 2001
+From db9b93bc01c0bd34b31ed8e438c08ac64be3a9de Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:09:09 +0100
 Subject: [PATCH 2/2] dwc2d: card readers (one disk per LUN with a card) and
@@ -22,10 +22,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 144 insertions(+), 69 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 930aca98..689851a9 100644
+index 81c06070..c5c032a9 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -33,7 +33,7 @@ use event::{user_data, EventQueue};
+@@ -34,7 +34,7 @@ use event::{user_data, EventQueue};
  use hid::Keyboard;
  use lan78xx::Lan78xx;
  use rtl8152::Rtl8152;
@@ -34,7 +34,7 @@ index 930aca98..689851a9 100644
  
  /// A network adapter on the bus, initialized. It receives only while the
  /// network stack uses it.
-@@ -414,28 +414,38 @@ user_data! {
+@@ -425,28 +425,38 @@ user_data! {
      }
  }
  
@@ -85,7 +85,7 @@ index 930aca98..689851a9 100644
      events
          .subscribe(scheme.event_handle().raw(), Source::Disk, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the disk scheme");
-@@ -511,8 +521,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -557,8 +567,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      // stdout goes to logd from here on; rescans print only when something
      // changes.
      let events = EventQueue::<Source>::new().expect("dwc2d: failed to create event queue");
@@ -95,9 +95,9 @@ index 930aca98..689851a9 100644
  
      // The receive channel's halt raises the controller's interrupt; without
      // it, fall back to a timer that polls.
-@@ -567,9 +576,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -634,9 +643,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
              }
-             Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
              Source::Disk => {
 -                if let Some(d) = disk.as_mut() {
 +                for d in disks.iter_mut() {
@@ -107,7 +107,7 @@ index 930aca98..689851a9 100644
                      }
                  }
              }
-@@ -633,8 +642,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -714,8 +723,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      // stays in the namespace until unlinked there, and a
                      // stick plugged into the same port again needs it.
                      // (Unlinking the path would ask the scheme itself.)
@@ -118,7 +118,7 @@ index 930aca98..689851a9 100644
                          let _ = events.unsubscribe(scheme.event_handle().raw());
                          drop(scheme);
                          let unlinked = libredox::call::getns().map_err(|e| e.to_string()).and_then(|ns| {
-@@ -643,7 +652,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -724,7 +733,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          if let Err(err) = unlinked {
                              println!("dwc2d: mass storage: /scheme/{name} stays: {err}");
                          }
@@ -127,9 +127,9 @@ index 930aca98..689851a9 100644
                      }
                  }
                  for &address in &changes.added {
-@@ -656,9 +665,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                             keyboard = Keyboard::new(hc.clone(), f);
-                             timer.arm(Duration::ZERO);
+@@ -742,9 +751,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                                 s.add(&mut bus, f);
+                             }
                          }
 -                        Some(Found::Storage(f)) if disk.is_none() => {
 -                            disk = start_disk(&mut bus, &hc, f, &events);
