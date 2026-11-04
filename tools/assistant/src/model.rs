@@ -23,6 +23,10 @@ const MAX_ROUNDS: usize = 3;
 /// default; running out of memory panics the Redox kernel); with less room
 /// left than this, the assistant starts over from the system prompt.
 const ROOM: usize = 300;
+/// Most bytes of earlier questions and answers kept when the assistant
+/// starts over (about 150 to 250 tokens, read again in 1 to 2 minutes on a
+/// Pi 3): the newest exchanges that fit.
+const KEEP: usize = 600;
 /// Longest tool result given back to the model, in bytes: a folder with many
 /// entries would otherwise fill the conversation. File names take about 2.5
 /// bytes per token, so this is up to about 250 tokens.
@@ -41,6 +45,8 @@ pub struct Model {
     /// system prompt.
     used: usize,
     base: usize,
+    /// Earlier questions and the answers shown, oldest first.
+    history: Vec<(String, String)>,
 }
 
 /// The conversation limit rinfer uses.
@@ -71,7 +77,7 @@ impl Model {
             let key = prompt_key(path, &system);
             (file, key)
         });
-        let mut m = Model { child, stdin, stdout, system, saved, used: 0, base: 0 };
+        let mut m = Model { child, stdin, stdout, system, saved, used: 0, base: 0, history: Vec::new() };
         m.answer(|_| {})?;
         m.begin()?;
         Ok(m)
@@ -199,6 +205,10 @@ impl Model {
                 calls.extend(plain_call(&reply));
             }
             if calls.is_empty() {
+                self.history.push((question.to_string(), reply.trim().to_string()));
+                if self.history.len() > 16 {
+                    self.history.remove(0);
+                }
                 return Ok(());
             }
             let mut responses = String::new();
@@ -213,10 +223,22 @@ impl Model {
         Ok(())
     }
 
-    /// Forget the conversation except the system prompt, and say so.
+    /// Start the conversation again from the system prompt with only the
+    /// newest exchanges that fit in KEEP bytes, and say so.
     fn start_over(&mut self, print: &mut dyn FnMut(&str)) -> std::io::Result<()> {
-        print("(The conversation got too long; I start over and forget the earlier messages.)\n");
-        self.begin()
+        self.begin()?;
+        let (text, n) = kept_turns(&self.history, KEEP);
+        if n > 0 && self.feed(&text)? {
+            self.history.drain(..self.history.len() - n);
+            print(&format!(
+                "(The conversation got long; I keep only the last {} and forget the rest.)\n",
+                if n == 1 { "exchange".to_string() } else { format!("{n} exchanges") }
+            ));
+        } else {
+            self.history.clear();
+            print("(The conversation got too long; I start over and forget the earlier messages.)\n");
+        }
+        Ok(())
     }
 }
 
@@ -225,6 +247,26 @@ impl Drop for Model {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// The newest exchanges of `history` that fit in `budget` bytes, in the chat
+/// template (oldest first), and how many they are.
+fn kept_turns(history: &[(String, String)], budget: usize) -> (String, usize) {
+    let mut turns = Vec::new();
+    let mut size = 0;
+    for (q, a) in history.iter().rev() {
+        let t = format!(
+            "\n<|im_start|>user\n{q} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{a}<|im_end|>"
+        );
+        if size + t.len() > budget {
+            break;
+        }
+        size += t.len();
+        turns.push(t);
+    }
+    let n = turns.len();
+    turns.reverse();
+    (turns.concat(), n)
 }
 
 /// A tool result cut to MAX_RESPONSE bytes, at a line end where there is one.
@@ -456,5 +498,17 @@ mod tests {
         assert!(cut.contains("entry0\n"));
         let wide = "ä".repeat(1000);
         assert!(shorten(&wide).starts_with("ää"));
+    }
+
+    #[test]
+    fn newest_turns_that_fit_are_kept() {
+        let h: Vec<(String, String)> =
+            (0..5).map(|i| (format!("question {i}"), "x".repeat(100))).collect();
+        let (text, n) = kept_turns(&h, 400);
+        assert_eq!(n, 2);
+        assert!(text.find("question 3").unwrap() < text.find("question 4").unwrap());
+        assert!(!text.contains("question 2"));
+        assert!(text.ends_with("<|im_end|>"));
+        assert_eq!(kept_turns(&h, 10), (String::new(), 0));
     }
 }
