@@ -1,0 +1,68 @@
+From 8ca3fb28da20580b087a5121d4167fabec379fd4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 19:52:35 +0100
+Subject: [PATCH] netstack: free an accepted TCP connection when it is closed
+
+dup("listen") hands the accepted connection the socket the listening
+file had and moves the file on to a new listening socket. The reference
+counts got that wrong: the connection's socket was counted twice and the
+new listening socket not at all. So an accepted connection never reached
+a count of 0 when it was closed, and its socket with 2 x 64 KiB of
+buffers stayed in the socket set for good. Now the connection keeps the
+file's reference and the new listening socket gets its own.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/scheme/socket.rs | 30 ++++++++++++++----------------
+ 1 file changed, 14 insertions(+), 16 deletions(-)
+
+diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
+index 2251f6f..d2ef7af 100644
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -815,28 +815,26 @@ where
+                 },
+             };
+ 
+-            if let Some((socket_handle, data)) = update_with {
+-                if let SchemeFile::Socket(ref mut file) = *file {
+-                    // We replace the socket_handle pointed by file so update the ref_counts
+-                    // accordingly
+-                    self.ref_counts
+-                        .entry(file.socket_handle)
+-                        .and_modify(|e| *e = e.saturating_sub(1))
+-                        .or_insert(0);
+-
++            match update_with {
++                // An accepted connection: the new handle takes over the
++                // socket the file had (and its reference), and the file
++                // moves on to the new listening socket. Counting the old
++                // socket twice here kept every accepted connection, with
++                // its buffers, in the socket set after it was closed.
++                Some((socket_handle, data)) => {
++                    if let SchemeFile::Socket(ref mut file) = *file {
++                        *self.ref_counts.entry(socket_handle).or_insert(0) += 1;
++                        file.socket_handle = socket_handle;
++                        file.data = data;
++                    }
++                }
++                None => {
+                     *self
+                         .ref_counts
+                         .entry(new_handle.socket_handle())
+                         .or_insert(0) += 1;
+-
+-                    file.socket_handle = socket_handle;
+-                    file.data = data;
+                 }
+             }
+-            *self
+-                .ref_counts
+-                .entry(new_handle.socket_handle())
+-                .or_insert(0) += 1;
+             new_handle
+         };
+ 
+-- 
+2.54.0 (Apple Git-157)
+

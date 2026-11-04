@@ -153,6 +153,22 @@ commits in `config/upstream.lock`.
     `signals/sigpause-revert`, `signals/sigprocmask-3` and
     `signals/sigset-5` fail on aarch64 and pass with the patches. Our
     `sigregs thread` and `sigregs sender` (tools/sigregs) show it directly.
+- **Panic when a joined thread wakes its joiner** (relibc `0015`,
+  [#14](https://github.com/redox-rpi/redox-rpi/issues/14)). Not aarch64-specific; a race.
+  - Where: `src/sync/mod.rs` `futex_wake_ptr`, called from `Waitval::post`
+    (`src/sync/waitval.rs`) on thread exit.
+  - Broken: `Waitval::post` stores the value with `state = 1` and then
+    wakes the futex on `state`. The joining thread can see `state == 1`
+    without waiting, return from `pthread_join` and free the exiting
+    thread's `Pthread` before the wake. The kernel returns `EFAULT` for the
+    unmapped address and `futex_wake_ptr` unwraps it: the exiting thread
+    prints `RELIBC PANIC: panicked at src/sync/mod.rs:103:54: called
+    Result::unwrap() on an Err value: Errno(14)` and dies at the `brk` in
+    `relibc_panic`. The process still exits 0.
+  - Reproduce: `pthread/rwlock_randtest`, many runs with stderr kept. About
+    1 run in 40 on the Pi 3B+ (tests 176, 178), none in 40 in QEMU.
+  - Fix: a failed wake counts as zero threads woken. With `0015`, 57 + 80
+    Pi runs without the panic (tests 184, 186).
 - **No signals for CPU exceptions, aarch64** (relibc `0010`; PR #65).
   - Where: `redox-rt/src/arch/aarch64.rs`, `redox-rt/src/signal.rs`.
   - Broken: relibc registers no exception handler on aarch64. A bad memory
