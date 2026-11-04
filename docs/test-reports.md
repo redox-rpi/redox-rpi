@@ -7532,3 +7532,34 @@ download. That points to #92.
   `reboot` was not possible. A Shelly power cycle at 10:48:05 brought stable up, and
   devsh answers.
   - `/scheme/data/pkg` is removed (boot C).
+
+## #212: rerun of #209 step 6, `pkg update` after a new publish with persisted packages (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-269-gd3ebd24c+x42ad` (branch `pkg-persist` d3ebd24, PR #106),
+`~/redox-rpi-boot/keep/t44p-v1.img` (md5 `fec05fb1…`). Repositories are `pkg-t44` and
+`pkg-t44-v2`. Real Pi 3B+ over netboot, reset at 10:55:49 UTC, login after 20 s.
+devsh `echo ok` every 30 s on both boots. The only miss was the probe that fell into the
+reboot. **The network stayed up (no #92 this time). No panic, exception or `FATAL`
+line. Pass.**
+
+- **(1) Boot 1:**
+  - The `date` command gave `Wed Nov 4 10:56:12 UTC 2026`.
+  - `/scheme/data/pkg` did not exist (removed in #211), so no extra reset was needed.
+  - pi-test `--starts 300`: version, manifest, ps (48), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- **(2)** `40_redox-rpi` was set to pkg-t44.
+  - `pkg-persist install nano` ended with `pkg-persist: 214 files copied into /, 2 kept from the image (3965 ms)` (50 s in all).
+  - `pkg-persist list` shows nano, ncursesw and terminfo. Then `reboot`.
+- **(3) Boot 2** (login 11:02:12): the serial log has
+  `pkg-persist: 214 files copied into /, 2 kept from the image (3979 ms)` right after `redox login:`.
+  - It is 214 and not 215 because this row persisted nano only, not redox-fatfs2.
+  - `nano --version` prints `GNU nano, version 9.2`.
+  - `/etc/pkg.d/40_redox-rpi` was back to the image's `…:8080/pkg`. /etc is not persisted, and step 5 sets it anyway.
+- **(4)** `head -1 /tmp/p.txt` gave `usage: pkg-persist install|remove <package>... | update | list | restore`.
+- **(5)** `40_redox-rpi` was set to pkg-t44-v2, then `pkg update --yes` ran.
+  - It ended with `Download complete.` and `Commit complete.` in **15 s** (11:02:38 to 11:02:53).
+  - Then `head -1` gave `usage (t44 v2): pkg-persist install|remove <package>... | update | list | restore`.
+  - `nano --version` still prints 9.2, and `pkg-persist list` is unchanged.
+- **(6)** `rm -r /scheme/data/pkg` done, and `ls /scheme/data` no longer shows `pkg`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored. devsh `echo reset > /scheme/sys/kstop`
+  did not reset the Pi this time (devsh needed 5 s for `echo start`). A Shelly power cycle
+  at 11:09:43 brought stable up, devsh answers, and `/scheme/data` has no `pkg`.
