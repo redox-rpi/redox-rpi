@@ -7749,3 +7749,36 @@ mdnsd: redox-rpi.local is 192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1
   - The other devices on the LAN that answered are left out here.
 - pi-test: version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:35). devsh answers.
+
+## #219: #55/#86 Ctrl-C, PR #121 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-314-g9b7948a8+xc169` (branch `ctrlc-raw` with main merged, experiments
+`timesync`, `pty-sigint`), `~/t18-work/image-c121/harddrive.img` (md5 `f5e80496…`).
+Staged with `~/t18-work/c121-stage/scripts/netboot.sh`; the bootloader is md5 `da1a7595…`.
+Real Pi 3B+ over netboot, reset at 13:36:38 UTC, `devshd: listening` at 13:36:58. No panic,
+exception or `FATAL` line. **Fail: on the serial console, 3 of 10 rounds were not
+stopped, the same 3 in two runs. devsh 10 of 10 and the standard checks pass.**
+
+- **Serial** (from 13:37:36, about 40 s after `devshd: listening`; root login with
+  `sercmd.py`, then the logger was paused while
+  `serial-ctrlc-test.py --device /dev/ttyUSB0 --delays 0.01,0.02,0.03,0.01,0.02,0.03,0.05,0.1,0.3,1` ran).
+  Both runs gave exactly the same result:
+
+  | Round | Delay after Enter | Run 1 (13:37) | Run 2 (13:41) |
+  |---|---|---|---|
+  | 1 | 0.01 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 2 | 0.02 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 3 | 0.03 s | SIGINT after 0.1 s | SIGINT after 0.1 s |
+  | 4 | 0.01 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 5 | 0.02 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 6 | 0.03 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 7–10 | 0.05, 0.1, 0.3, 1 s | SIGINT after 0.0–0.1 s | the same |
+
+  - The pattern: after an early Ctrl-C (0.01–0.03 s) that worked, the next early one is missed. After a missed round, the next early one works again. From 0.05 s on, every round works.
+  - In the missed rounds the console shows `sleep 40` and then only the next prompt, with no `ended by signal SIGINT` line. That is what a `sleep 40` that ran to its end looks like.
+  - #131 (before the main merge) had 19 of 19 on the same delays.
+  - The logs are in `~/pitest-tools/t219/serial-ctrlc.log` and `serial-ctrlc2.log` on homenodellm.
+- **devsh:** `ctrlc-test.py 192.168.178.148 --delays 0,0.01,0.02,0.03,0.1` gave **10 of 10 stopped**
+  (0.1–0.2 s after Ctrl-C), `Ctrl-C at the prompt: shell still answers`, and devsh answered afterwards.
+- pi-test `--starts 300`: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:45). devsh answers, and the serial logger is running again.
