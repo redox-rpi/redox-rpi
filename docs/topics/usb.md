@@ -92,6 +92,14 @@
   the drops stop without `sleep` is not known. The download stalls that
   remain are a lost wakeup in the scheduler (#181, relibc topic), not
   dwc2d.
+  A different case came in test 189: the controller itself got stuck
+  (channels that do not halt, every request timing out). Branch
+  [`usb-restart`](https://github.com/redox-rpi/redox-rpi/tree/usb-restart)
+  (on `usb-hub-drop`), experiment `dwc2d-restart` (`0084`): after four
+  timeouts in a row dwc2d logs the registers, resets the controller, powers
+  the root port and finds the devices again (up to 5 tries, 10 s apart).
+  **Pi 191: forced restarts recover**; a real stall did not come in 6
+  downloads.
 
 ## Next
 
