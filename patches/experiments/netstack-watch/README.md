@@ -24,4 +24,13 @@ dwc2d-netstats` too, to see whether `dwc2d` still runs.
 
 ## Tests
 
-- QEMU `raspi3b`: see the pull request.
+- QEMU `raspi3b` (`v0.4.0-dev-279-gc08c4839+x42c6`): normal boot, DHCP and
+  `ping` work, no `netstack-watch` line. Then `kill -STOP` on `dwc2d` and a
+  `ping`: within 5 s `netstack-watch: main loop stuck in read from the
+  network device`, repeated every 30 s, and netstack answered nothing else:
+  the same picture as test 211 on the Pi. So a `dwc2d` that stops answering
+  is enough to give #92's symptoms; the device's `O_NONBLOCK` doesn't help
+  then.
+- Found on the way: `kill -CONT` on the stopped `dwc2d` crashed it
+  (`UNHANDLED EXCEPTION … dwc2d`), and netstack stayed in that read even
+  after `dwc2d` was gone.
