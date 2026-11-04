@@ -7815,3 +7815,23 @@ heartbeat said `idle for 0 s`.**
 - **For Network:** QEMU's stalls (6–11 s in 5 of 59 rounds) do not show on the Pi. Here a
   failed TLS start takes about 0.2 s, against several seconds in QEMU, so many more rounds
   fit in the same time and none stalled. The only Pi hang so far (213 run 1) is still unexplained.
+
+## #223: #55/#86 Ctrl-C, PR #121 with ptyd 0058 (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-315-g4f3ed615+xc169` (branch `ctrlc-raw` with main merged, experiments
+`timesync`, `pty-sigint` with ptyd `0057` and `0058`), `~/t18-work/image-c121/harddrive.img`
+(md5 `207316e4…`). Staged with `~/t18-work/c121-stage/scripts/netboot.sh`; the bootloader is
+md5 `da1a7595…`. Real Pi 3B+ over netboot, reset at 14:45:08 UTC, `devshd: listening` at
+14:45:28. No panic, exception or `FATAL` line. **Pass.**
+
+- **Serial** (from 14:46:07; root login with `sercmd.py`, then the logger was paused while
+  `serial-ctrlc-test.py --device /dev/ttyUSB0 --delays 0.01,0.02,0.03,0.01,0.02,0.03,0,0,0.05,0.1,0.3,1` ran):
+  **12 of 12 stopped by SIGINT** (`PASS: 0 late of 12`).
+  - 0.00–0.05 s after Enter: SIGINT 0.2 s after the Ctrl-C.
+  - 0.1 s: SIGINT after 0.1 s.
+  - 0.3 s and 1 s: SIGINT after 0.0 s.
+  - The rounds that failed in #219 (the second, fourth and sixth early Ctrl-C) now stop like the others, and so do the two rounds with no delay.
+- **devsh:** `ctrlc-test.py 192.168.178.148 --delays 0,0.01,0.02,0.03,0.1` gave **10 of 10 stopped**,
+  `Ctrl-C at the prompt: shell still answers`.
+- pi-test `--starts 300`: version, manifest, ps (52), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (14:48). devsh answers, and the serial logger is running again.
