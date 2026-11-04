@@ -1,4 +1,4 @@
-From 6cc59a779012936fa9288ad2b55e85eecb2d8230 Mon Sep 17 00:00:00 2001
+From 757dbef573230ecfc091308fd30e8d773407c5db Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:50:01 +0100
 Subject: [PATCH 30/34] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
@@ -9,37 +9,36 @@ firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
 1, writing 0 or 1 sets it. Pi 3B+ only.
 ---
  drivers/rpi-firmwared/src/main.rs | 56 +++++++++++++++++++++++++++++--
- drivers/rpi-firmwared/src/mbox.rs | 23 +++++++++++++
- 2 files changed, 77 insertions(+), 2 deletions(-)
+ 1 file changed, 54 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018..91d2e29 100644
+index 58758304..e4ca845f 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
-@@ -15,6 +15,10 @@
- //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
- //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
- //!   in Hz, `max` or `min` sets it
+@@ -23,6 +23,10 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
 +//! - `/scheme/rpi-firmware/wifi_power`: the WL_REG_ON line of the Pi 3B+
 +//!   Wi-Fi chip, `1` (on) or `0` (off); writing sets it. Like the power LED
 +//!   it hangs on the firmware's GPIO expander. Other boards do not have
 +//!   this file.
  //!
- //! At start it sets the ARM clock to its maximum; the firmware lowers it by
- //! itself when the SoC gets too hot or the supply voltage too low. A thread
-@@ -44,9 +48,9 @@ use mbox::*;
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -56,9 +60,9 @@ use mbox::*;
  const MBOX_BUS_ADDR: usize = 0x7e00_b880;
  const PAGE_SIZE: usize = 4096;
  
--const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled"];
-+const FILES: &[&str] = &["arm_clock", "board", "clocks", "temperature", "throttled", "wifi_power"];
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled", "wifi_power"];
  /// Files that can be written: settings.
--const WRITABLE: &[&str] = &["arm_clock"];
-+const WRITABLE: &[&str] = &["arm_clock", "wifi_power"];
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led", "wifi_power"];
  
  const THROTTLE_POLL: Duration = Duration::from_secs(5);
  
-@@ -94,6 +98,16 @@ impl FirmwareScheme {
+@@ -122,6 +126,16 @@ impl FirmwareScheme {
                  }
              }
              "board" => board(mbox, &mut text),
@@ -56,8 +55,8 @@ index 4a7a018..91d2e29 100644
              _ => return Err(Error::new(ENOENT)),
          }
          Ok(text)
-@@ -112,11 +126,49 @@ impl FirmwareScheme {
-                 println!("rpi-firmwared: ARM clock {} MHz", rate / 1_000_000);
+@@ -163,11 +177,49 @@ impl FirmwareScheme {
+                 println!("rpi-firmwared: ARM clock {} MHz, governor off", rate / 1_000_000);
                  Ok(())
              }
 +            "wifi_power" => {
@@ -106,54 +105,6 @@ index 4a7a018..91d2e29 100644
  /// Sets the ARM clock to its maximum and says from what to what.
  fn arm_clock_max(mbox: &mut Mailbox) {
      let before = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM);
-diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
-index 737398e..39ad30e 100644
---- a/drivers/rpi-firmwared/src/mbox.rs
-+++ b/drivers/rpi-firmwared/src/mbox.rs
-@@ -44,6 +44,8 @@ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
- pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
- pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
- pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
-+pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
-+pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
- 
- /// Clock id of the ARM cores.
- pub const CLOCK_ARM: u32 = 3;
-@@ -92,6 +94,24 @@ impl Mailbox {
-     /// value buffer, which has room for `response_words` words of answer.
-     /// Returns the answer, as long as the firmware says it is.
-     pub fn property(&mut self, tag: u32, request: &[u32], response_words: usize) -> Result<Vec<u32>, String> {
-+        self.call(tag, request, response_words, true)
-+    }
-+
-+    /// A property call that sets something. The firmware does
-+    /// SET_GPIO_STATE on the 3B+ without marking the tag as answered (Pi
-+    /// test #77: the pin changed, the call still failed), so only the
-+    /// message status counts; the answer is empty then.
-+    pub fn set_property(&mut self, tag: u32, request: &[u32]) -> Result<Vec<u32>, String> {
-+        self.call(tag, request, request.len(), false)
-+    }
-+
-+    fn call(
-+        &mut self,
-+        tag: u32,
-+        request: &[u32],
-+        response_words: usize,
-+        need_answer: bool,
-+    ) -> Result<Vec<u32>, String> {
-         let value_words = request.len().max(response_words);
-         let total = 6 + value_words;
-         if total > BUF_WORDS {
-@@ -138,6 +158,9 @@ impl Mailbox {
-             return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
-         }
-         if buf[4] & TAG_RESPONSE == 0 {
-+            if !need_answer {
-+                return Ok(Vec::new());
-+            }
-             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
-         }
-         let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
