@@ -7963,3 +7963,38 @@ well above the plug's 0.1 W step, and the same in both rounds.
 - Afterwards `echo 1000 > /tmp/dwc2d-link`, then stable `v0.4.0-dev-201-gb714bca+x9f76`
   restored with a devsh reset: banner after 20 s, devsh answers, `/srv/tftp/redox` matches the
   backup.
+
+## #229 #53 rerun of test 122 on PR #81 with testnetd as the second adapter (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-362-gbde20707` (branch `netstack-multi` bde20707, PR #81, no experiments).
+Real Pi 3B+ over netboot, reset at 17:59:44 UTC, `redox login:` after 21 s.
+**Result: the second interface works, but the network was lost afterwards.** All the
+step-2 checks pass, including the directory listing that failed in 122. Then, during the
+second pi-test, eth0 stopped answering. It looks like #92.
+
+- **(1) pi-test** before testnetd: pass (manifest matches, 0 of 300 starts failed).
+- **(2) After `/usr/lib/drivers/testnetd &`** (18:03:09, on serial):
+  - testnetd printed `testnetd: network.test0 registered`, then `DHCP: eth1 got 10.0.9.2/24`.
+  - `ls /scheme/netcfg/ifaces` gave `eth0  eth1`. This fails in 122; it passes now.
+  - `eth1/addr/list` gave `10.0.9.2/24`; `eth0/addr/list` gave `192.168.178.148/24`.
+  - `route/list` had exactly one `default via 192.168.178.1 dev eth0`, plus
+    `10.0.9.0/24 dev eth1`, `192.168.178.0/24 dev eth0` and loopback.
+  - `ping -c 3 10.0.9.1`: 3/3, about 2.5 ms. `ping -c 3 192.168.178.1`: 3/3.
+  - `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`.
+- **(3) pi-test again: fail.** version, manifest, ps, ps-tty and sdcard passed. The 300-start
+  loop over devsh then got no output, and devsh could not reconnect.
+- **Serial console** about 15 min later (18:19):
+  - The shell answered. `cat /scheme/sys/context` showed netstack blocked with little CPU
+    (0.8 s), dwc2d sleeping, and testnetd still running.
+  - The initfs `redoxfs` (pid 20) was running with 52 s CPU. Most of that is probably the
+    600 starts.
+  - `ping -c 3 192.168.178.120` printed its first line, then hung, and Ctrl-C did not stop it.
+  - This is the #92 picture as in tests 211 and 213. It came after a second interface was
+    added, but this run cannot say whether testnetd is the cause.
+- **(4) Serial log:** `DHCP client bound to address 192.168.178.148` twice at boot,
+  `DHCP: eth0 got 192.168.178.148/24`, `DHCP: default route via 192.168.178.1 (eth0)`, and
+  `DHCP: eth1 got 10.0.9.2/24`. There was no panic and no netstack error line before or
+  after the loss.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 18:23:18 (the
+  network was gone). The banner came after 30 s, devsh answers, and `/srv/tftp/redox`
+  matches the backup.
