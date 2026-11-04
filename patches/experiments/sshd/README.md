@@ -1,7 +1,7 @@
 # Experiment: sshd, OpenSSH server instead of devshd
 
 For [#45](https://github.com/redox-rpi/redox-rpi/issues/45). Builds
-OpenSSH 10.5p1 from Redox' recipe `net/openssh` (it is not in Redox'
+OpenSSH 10.6p1 (#190) with Redox' recipe `net/openssh` (it is not in Redox'
 prebuilt aarch64 repository) and starts `sshd` on port 22.
 
 - `91_sshd-keys.service` runs `/usr/lib/redox-rpi/sshd-keys` at boot: it
@@ -212,3 +212,23 @@ send buffer, then FIN), keeps the socket until CLOSED or TIME-WAIT and
 resets it after 60 s if the peer never closes. Accepted connections reach
 that point only with base `0049` of PR #90 (reference counts), which is not
 on main yet.
+
+## OpenSSH 10.6p1 (2026-11-04)
+
+Branch `openssh-10.6` ([#190](https://github.com/redox-rpi/redox-rpi/issues/190)): `recipes/net/openssh/recipe.toml` replaces upstream's
+recipe with one for the 10.6p1 tarball (security fixes; SHA256 from the
+release notes, signature checked). It lists the two patches above itself,
+because `build-image.sh` puts replaced recipes in after it appended the
+experiments' patches. `0002` is refreshed for 10.6p1.
+
+Privilege separation: configure finds `sendmsg`/`recvmsg` with
+`SCM_RIGHTS` (relibc has them), so fd passing is on and the 10.6 change
+for systems without it (GatewayPorts and StreamLocalForwarding forced off)
+does not apply. In QEMU, during a login of `user` the root `sshd-session`
+is only the monitor; the session process, the shell and its commands run
+as uid 1001, with and without a PTY. The PTY is allocated by the monitor
+and passed over `SCM_RIGHTS`, so that works too (same with 10.5p1).
+
+QEMU (`v0.4.0-dev-250-gbabedfd0+x4ec1`): 5 of 5 key logins,
+`ssh-session.exp` passes, an idle connection ends after 127 s with
+`Timeout before authentication` at 124 s.
