@@ -59,6 +59,7 @@ static int quiet;
 /* ---- small helpers ------------------------------------------------------ */
 
 static uint64_t rng_state;
+static pid_t runner_pid;  /* the process that runs the rounds */
 
 static uint64_t rnd(void)
 {
@@ -144,6 +145,7 @@ static int run_child(int (*fn)(void *), void *arg, unsigned timeout_ms)
         return -3;
     if (pid == 0)
         _exit(fn(arg));
+
 
     uint64_t end = now_ms() + timeout_ms;
     int status;
@@ -405,6 +407,11 @@ static int f_signals(void *arg)
     if (pipe(p) < 0)
         return 2;
     pid_t parent = getpid();
+    if (getppid() > 0) {
+        /* the round runner knows our pid from fork; a pipe would be
+         * overkill, so compare with getpid() of a fresh syscall */
+        note("signals: getpid() %d, getppid() %d, round runner %d", (int)parent, (int)getppid(), (int)runner_pid);
+    }
     unsigned senders = 1 + rnd_below(3), ms = 500 + rnd_below(2500);
     pid_t kids[4];
     for (unsigned i = 0; i < senders; i++) {
@@ -412,9 +419,15 @@ static int f_signals(void *arg)
         if (kids[i] == 0) {
             uint64_t end = now_ms() + ms;
             int sig = i % 2 ? SIGUSR2 : SIGUSR1;
-            while (now_ms() < end)
-                if (kill(parent, sig) < 0)
+            unsigned long sent = 0;
+            while (now_ms() < end) {
+                if (kill(parent, sig) < 0) {
+                    note("signals: sender %u: kill(%d) after %lu: %s", i, (int)parent, sent, strerror(errno));
                     _exit(5);
+                }
+                sent++;
+            }
+            note("signals: sender %u sent %lu to %d", i, sent, (int)parent);
             _exit(0);
         }
     }
@@ -441,13 +454,21 @@ static int f_signals(void *arg)
         }
         rounds_ok++;
     }
+    unsigned bad = 0;
     for (unsigned i = 0; i < senders; i++) {
-        int st;
+        int st = 0;
         waitpid(kids[i], &st, 0);
+        if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+            note("signals: sender %u ended with status 0x%x", i, st);
+            bad++;
+        }
     }
+    /* sig_count stays 0 when kill() worked but nothing arrived */
     note("signals: %u senders for %u ms, %ld signals, %lu pipe rounds, %lu EINTR (%s)",
          senders, ms, (long)sig_count, rounds_ok, eintr,
          sa.sa_flags ? "SA_RESTART" : "no SA_RESTART");
+    if (bad)
+        return 5;
     return sig_count ? 0 : 6;
 }
 
@@ -1087,6 +1108,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    runner_pid = getpid();
     seed_rng(master_seed);
     unsigned failed = 0;
     uint64_t t0 = now_ms();
