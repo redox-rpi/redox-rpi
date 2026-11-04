@@ -426,7 +426,7 @@ git).
   434 MiB at 760 tokens, the note came after question 11 and kept 3
   exchanges (104 tokens fed again in 77 s), then the heap stayed at
   434 MiB to the end (peak 450 MiB). The name from the first question was
-  forgotten, as expected. Pi test #225 is queued. In QEMU, long output on
+  forgotten, as expected. Pi test #235 is queued. In QEMU, long output on
   the serial console blocked the run (the PTY problem behind the getty
   panic), so the test wrote its output to a file.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
