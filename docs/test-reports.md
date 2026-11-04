@@ -7532,3 +7532,85 @@ download. That points to #92.
   `reboot` was not possible. A Shelly power cycle at 10:48:05 brought stable up, and
   devsh answers.
   - `/scheme/data/pkg` is removed (boot C).
+
+## #212: rerun of #209 step 6, `pkg update` after a new publish with persisted packages (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-269-gd3ebd24c+x42ad` (branch `pkg-persist` d3ebd24, PR #106),
+`~/redox-rpi-boot/keep/t44p-v1.img` (md5 `fec05fb1…`). Repositories are `pkg-t44` and
+`pkg-t44-v2`. Real Pi 3B+ over netboot, reset at 10:55:49 UTC, login after 20 s.
+devsh `echo ok` every 30 s on both boots. The only miss was the probe that fell into the
+reboot. **The network stayed up (no #92 this time). No panic, exception or `FATAL`
+line. Pass.**
+
+- **(1) Boot 1:**
+  - The `date` command gave `Wed Nov 4 10:56:12 UTC 2026`.
+  - `/scheme/data/pkg` did not exist (removed in #211), so no extra reset was needed.
+  - pi-test `--starts 300`: version, manifest, ps (48), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- **(2)** `40_redox-rpi` was set to pkg-t44.
+  - `pkg-persist install nano` ended with `pkg-persist: 214 files copied into /, 2 kept from the image (3965 ms)` (50 s in all).
+  - `pkg-persist list` shows nano, ncursesw and terminfo. Then `reboot`.
+- **(3) Boot 2** (login 11:02:12): the serial log has
+  `pkg-persist: 214 files copied into /, 2 kept from the image (3979 ms)` right after `redox login:`.
+  - It is 214 and not 215 because this row persisted nano only, not redox-fatfs2.
+  - `nano --version` prints `GNU nano, version 9.2`.
+  - `/etc/pkg.d/40_redox-rpi` was back to the image's `…:8080/pkg`. /etc is not persisted, and step 5 sets it anyway.
+- **(4)** `head -1 /tmp/p.txt` gave `usage: pkg-persist install|remove <package>... | update | list | restore`.
+- **(5)** `40_redox-rpi` was set to pkg-t44-v2, then `pkg update --yes` ran.
+  - It ended with `Download complete.` and `Commit complete.` in **15 s** (11:02:38 to 11:02:53).
+  - Then `head -1` gave `usage (t44 v2): pkg-persist install|remove <package>... | update | list | restore`.
+  - `nano --version` still prints 9.2, and `pkg-persist list` is unchanged.
+- **(6)** `rm -r /scheme/data/pkg` done, and `ls /scheme/data` no longer shows `pkg`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored. devsh `echo reset > /scheme/sys/kstop`
+  did not reset the Pi this time (devsh needed 5 s for `echo start`). A Shelly power cycle
+  at 11:09:43 brought stable up, devsh answers, and `/scheme/data` has no `pkg`.
+
+## #213: #92, where netstack hangs, with the netstack-watch image (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-280-gf1ba9a30+x5f6a` (branch `t92-netstack-watch`, experiments
+`netstack-watch`, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`) on a real Pi 3B+ over
+netboot. `40_redox-rpi` was set to pkg-t44 and there was no `/scheme/data/pkg`. devsh
+`echo ok` ran every 30 s from homenodellm. **Result: the hang came once (run 1) but no
+`netstack-watch` line was printed. After that, 3 installs passed without a hang (run 3).**
+No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `restart` line in any run.
+
+- **This image has no timesync, so the clock starts at 1970.** In run 2 every
+  `pkg install vim` stopped at once with `invalid peer certificate: certificate not valid
+  yet` and downloaded nothing, so run 2 does not count.
+  - For run 3, I copied stable's `timesync` binary to `/scheme/data/timesync-bin`, ran it
+    once after boot, and removed it at the end.
+  - Run 1 was also at 1970, so its pkg would have failed the same way within a second. The
+    network was lost anyway.
+- **Run 1** (reset 11:27:18): `pkg install --yes vim` started at 11:28:20.
+  - devsh failed from 11:28:48, 28 s later, and never came back. pkg's devsh call never
+    returned either.
+  - **No `netstack-watch:` line** on the serial console, from the loss until the power cycle
+    at 11:33:32 (more than 4 min). No dwc2d line either.
+  - Serial snapshots, 49 s apart (11:29:5x and 11:30:4x, uptime 2m37s and 3m26s):
+
+    | | snapshot 1 | snapshot 2 |
+    |---|---|---|
+    | `dwc2d-netstats` rx_frames | 1464 | 1775 (still receiving) |
+    | rx_last_ms | 140224 | 185178 |
+    | tx_frames | 452 | 455 (almost nothing sent) |
+    | tx_last_ms | 128975 | 163408 |
+    | rx/tx errors | 0 | 0 |
+    | `dwc2d-step` | `idle` | `idle` |
+    | `dwc2d-usbstats` | all errors, timeouts, recoveries, restarts 0; hprt0 0x1005 | the same; hprt0 0x1405 |
+
+    So dwc2d kept running and handing frames up, but almost nothing went out.
+  - The context check `grep -e netstack -e dwc2d /scheme/sys/context` failed: Redox grep
+    rejects two `-e` options ("Invalid parameters"). So there are no netstack or dwc2d
+    process states from this hang. I did not read `/scheme/netcfg`, as the row says.
+- **Run 3** (reset 11:40:21, clock set to 11:40:49 from pool.ntp.org): three times
+  `pkg install --yes vim` (10.3 MiB at 1.3–2.0 MiB/s, about 5 min each with the commit),
+  each ending in `Commit complete.`, then `pkg remove --yes vim`.
+  - devsh answered 30 of 30.
+  - After install 3, dwc2d counted rx 44660 and tx 20107 frames, with no errors, timeouts or restarts.
+  - No `netstack-watch` line, which is expected while netstack works.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each run (run 1 by a Shelly power
+  cycle, since the network was gone; runs 2 and 3 by a devsh reset). devsh answers.
+  `/scheme/data` has no `pkg` and no `timesync-bin`.
+- **For Network:** in run 1, netstack stopped sending for good while dwc2d kept receiving,
+  and the watch thread printed nothing within 4 min. Either the main loop was not inside a
+  device read or write, or the watch thread was stuck too. Next time, snapshot
+  `cat /scheme/sys/context` (whole) as well.
