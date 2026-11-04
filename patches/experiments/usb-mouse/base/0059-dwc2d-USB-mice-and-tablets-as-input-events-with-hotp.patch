@@ -1,4 +1,4 @@
-From 600bde65289ba1ea28edb8e8898b6480bd508bdb Mon Sep 17 00:00:00 2001
+From b26880f848fbf26bcf311d7db090eb57855f7f3a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:59:57 +0100
 Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
@@ -10,7 +10,7 @@ Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
  create mode 100644 drivers/usb/dwc2d/src/mouse.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..a9b077e2 100644
+index 9f24c8d2..e2894b83 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -21,18 +21,18 @@ index 12be94ad..a9b077e2 100644
 -//! protocol keyboard directly in this process. It does not offer the USB
 +//! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153), a boot
 +//! protocol keyboard and a mouse directly in this process. It does not offer the USB
- //! scheme to class drivers yet.
+ //! scheme to class drivers yet; `/scheme/usb.dwc2/devices` lists what it
+ //! found, for `lsusb` (`usbinfo.rs`).
  
- use std::fs::{File, OpenOptions};
-@@ -20,6 +20,7 @@ mod ecm;
+@@ -21,6 +21,7 @@ mod ecm;
  mod enumerate;
  mod hid;
  mod lan78xx;
 +mod mouse;
  mod regs;
  mod rtl8152;
- 
-@@ -30,6 +31,7 @@ use enumerate::{Bus, Device};
+ mod usbinfo;
+@@ -32,6 +33,7 @@ use enumerate::{Bus, Device};
  use event::{user_data, EventQueue};
  use hid::Keyboard;
  use lan78xx::Lan78xx;
@@ -40,7 +40,7 @@ index 12be94ad..a9b077e2 100644
  use rtl8152::Rtl8152;
  
  /// A network adapter on the bus, initialized. It receives only while the
-@@ -207,8 +209,9 @@ impl NetworkAdapter for UsbNet {
+@@ -209,8 +211,9 @@ impl NetworkAdapter for UsbNet {
  enum Found {
      /// A network adapter, initialized, with its own MAC address and link.
      Net(Adapter, [u8; 6], bool),
@@ -52,7 +52,7 @@ index 12be94ad..a9b077e2 100644
  }
  
  /// Recognize a device and bring it up. `link_wait` is how long a network
-@@ -252,19 +255,28 @@ fn probe(
+@@ -254,19 +257,28 @@ fn probe(
              }
          };
      }
@@ -94,7 +94,7 @@ index 12be94ad..a9b077e2 100644
  }
  
  /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
-@@ -389,9 +401,12 @@ impl Timer {
+@@ -391,9 +403,12 @@ impl Timer {
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
@@ -109,7 +109,7 @@ index 12be94ad..a9b077e2 100644
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -445,8 +460,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -447,8 +462,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      };
      let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
      let mut keyboard = None;
@@ -124,7 +124,7 @@ index 12be94ad..a9b077e2 100644
          for address in addresses {
              let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
                  continue;
-@@ -456,13 +476,20 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -458,13 +478,20 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      macs.push((adapter.address(), mac));
                      net.adapters.push((adapter, link));
                  }
@@ -147,7 +147,7 @@ index 12be94ad..a9b077e2 100644
      // Wait for a network adapter's link, so DHCP does not start into a dead
      // cable, or, without an adapter, a moment for devices that connect late
      // after power-on. Rescans meanwhile take devices that connect now, so
-@@ -483,7 +510,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -485,7 +512,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          }
          std::thread::sleep(Duration::from_millis(50));
          let changes = bus.scan();
@@ -156,7 +156,7 @@ index 12be94ad..a9b077e2 100644
      }
      println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
      // The network stack keeps the address of the adapter it starts with.
-@@ -528,12 +555,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -530,12 +557,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
      }
  
@@ -172,7 +172,7 @@ index 12be94ad..a9b077e2 100644
          timer.arm(Duration::ZERO);
      }
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
-@@ -572,6 +600,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -574,6 +602,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let due = k.poll();
                      next = Some(next.map_or(due, |n: Duration| n.min(due)));
                  }
@@ -183,7 +183,7 @@ index 12be94ad..a9b077e2 100644
                  if let Some(next) = next {
                      timer.arm(next);
                  }
-@@ -586,6 +618,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -588,6 +620,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let port = match request {
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
@@ -191,7 +191,7 @@ index 12be94ad..a9b077e2 100644
                          _ => {
                              let mut words = request.split_whitespace().map(str::parse::<u16>);
                              match (words.next(), words.next()) {
-@@ -617,6 +650,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -622,6 +655,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          println!("dwc2d: keyboard removed");
                          keyboard = None;
                      }
@@ -202,7 +202,7 @@ index 12be94ad..a9b077e2 100644
                  }
                  for &address in &changes.added {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
-@@ -624,13 +661,21 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -629,13 +666,21 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      };
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),

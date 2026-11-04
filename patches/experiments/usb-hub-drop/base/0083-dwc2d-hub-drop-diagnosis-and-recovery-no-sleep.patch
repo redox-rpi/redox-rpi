@@ -1,7 +1,7 @@
-From f2447057c1236f137f0ce35cebdc1ef11e84af88 Mon Sep 17 00:00:00 2001
+From 458837add8491041c2fc90bf891998fe669bf46a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 31 Oct 2026 21:44:29 +0000
-Subject: [PATCH] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
+Subject: [PATCH 2/3] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
 
 A hub port that changed, lost its enable bit, went over current or lost
 power is logged with its status and change bits, the change bits are
@@ -175,7 +175,7 @@ index dfc5d19a..959bba87 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 7ffe442b..495f0848 100644
+index 47e3e9cd..c40833fc 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -2,12 +2,13 @@
@@ -234,7 +234,7 @@ index 7ffe442b..495f0848 100644
  #[derive(Clone)]
  pub struct Device {
      pub address: u8,
-@@ -90,6 +114,8 @@ pub struct Bus {
+@@ -95,6 +119,8 @@ pub struct Bus {
      /// Ports with a device that failed to enumerate; tried again only after
      /// it is plugged in anew.
      failed: HashSet<Option<(u8, u16)>>,
@@ -243,7 +243,7 @@ index 7ffe442b..495f0848 100644
  }
  
  impl Bus {
-@@ -103,6 +129,7 @@ impl Bus {
+@@ -108,6 +134,7 @@ impl Bus {
              devices: Vec::new(),
              hubs: Vec::new(),
              failed: HashSet::new(),
@@ -251,7 +251,7 @@ index 7ffe442b..495f0848 100644
          }
      }
  
-@@ -145,7 +172,7 @@ impl Bus {
+@@ -150,7 +177,7 @@ impl Bus {
                  Ok(len) => return Ok(self.data[..len].to_vec()),
                  Err(Error::Stall) if attempt < ATTEMPTS => {
                      attempt += 1;
@@ -260,7 +260,7 @@ index 7ffe442b..495f0848 100644
                  }
                  Err(err) => {
                      println!(
-@@ -191,7 +218,7 @@ impl Bus {
+@@ -196,7 +223,7 @@ impl Bus {
                  return Err(Error::Short(data.len()));
              }
              attempt += 1;
@@ -269,7 +269,7 @@ index 7ffe442b..495f0848 100644
          }
      }
  
-@@ -257,7 +284,7 @@ impl Bus {
+@@ -262,7 +289,7 @@ impl Bus {
          if let Some(tt) = tt {
              self.tts.insert(address, tt);
          }
@@ -278,7 +278,7 @@ index 7ffe442b..495f0848 100644
  
          let d = self.request_min(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18, 18)?;
          let device = Device {
-@@ -319,7 +346,7 @@ impl Bus {
+@@ -329,7 +356,7 @@ impl Bus {
              self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
          }
          // Power-on-to-power-good time.
@@ -287,7 +287,7 @@ index 7ffe442b..495f0848 100644
  
          // Take the ports connected now. Devices take a while to signal
          // their connection after power-on (the Pi 3B+'s LAN7800 was missed
-@@ -341,12 +368,13 @@ impl Bus {
+@@ -351,12 +378,13 @@ impl Bus {
      fn attach(&mut self, hub: Hub, port: u16) -> Result<(), Error> {
          let Hub { address, max_packet, speed, depth, tt: hub_tt, .. } = hub;
          let indent = "  ".repeat(depth);
@@ -302,7 +302,7 @@ index 7ffe442b..495f0848 100644
              let (status, _) = self.port_status(address, max_packet, speed, port)?;
              if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
                  break status;
-@@ -363,7 +391,7 @@ impl Bus {
+@@ -373,7 +401,7 @@ impl Bus {
          };
          self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
          // Reset recovery time.
@@ -311,7 +311,7 @@ index 7ffe442b..495f0848 100644
  
          let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
              Speed::Low
-@@ -437,7 +465,7 @@ impl Bus {
+@@ -447,7 +475,7 @@ impl Bus {
          let start = Instant::now();
          let mut gone = false;
          while start.elapsed() < Duration::from_secs(2) {
@@ -320,7 +320,7 @@ index 7ffe442b..495f0848 100644
              let (status, _) = self.port_status(a, mp, sp, port)?;
              if status & PORT_STAT_CONNECTION == 0 {
                  gone = true;
-@@ -456,7 +484,7 @@ impl Bus {
+@@ -466,7 +494,7 @@ impl Bus {
              self.remove(address, removed);
          }
          self.failed.remove(&slot);
@@ -329,7 +329,7 @@ index 7ffe442b..495f0848 100644
          println!("dwc2d: cycle: hub {a} port {port} power on");
          self.request(a, mp, sp, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
          // The next scan finds the device again.
-@@ -480,8 +508,30 @@ impl Bus {
+@@ -490,8 +518,30 @@ impl Bus {
          let mut changes = Changes::default();
          let before: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
  
@@ -362,7 +362,7 @@ index 7ffe442b..495f0848 100644
          if !root && (root_device || self.failed.contains(&None)) {
              println!("dwc2d: device on root port removed");
              for address in before.iter().copied() {
-@@ -523,29 +573,65 @@ impl Bus {
+@@ -533,29 +583,65 @@ impl Bus {
      }
  
      fn scan_port(&mut self, hub: Hub, port: u16, removed: &mut Vec<u8>) -> Result<(), Error> {
@@ -481,18 +481,18 @@ index 8127826d..750cf15d 100644
      Ok((mac, link))
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1b260fd3..7ebbee56 100644
+index 43610443..7ba55cac 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -23,6 +23,7 @@ mod lan78xx;
- mod regs;
+@@ -25,6 +25,7 @@ mod regs;
  mod rtl8152;
+ mod usbinfo;
  mod stats;
 +mod usbdiag;
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -485,7 +486,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -487,7 +488,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              break;
          }
@@ -501,7 +501,7 @@ index 1b260fd3..7ebbee56 100644
          let changes = bus.scan();
          boot_probe(&mut bus, &mut net, &mut keyboard, changes.added);
      }
-@@ -601,6 +602,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -603,6 +604,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
@@ -509,7 +509,7 @@ index 1b260fd3..7ebbee56 100644
                  let mut cycled = Vec::new();
                  if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
                      let _ = std::fs::remove_file(CYCLE_REQUEST);
-@@ -645,6 +647,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -650,6 +652,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
                          continue;
                      };
@@ -517,7 +517,7 @@ index 1b260fd3..7ebbee56 100644
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
                          Some(Found::Keyboard(f)) if keyboard.is_none() => {
-@@ -657,6 +660,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -662,6 +665,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  net.refresh_links(&mut bus);
                  net.select(&mut bus);
                  scheme.tick().expect("dwc2d: network scheme failed");
@@ -526,7 +526,7 @@ index 1b260fd3..7ebbee56 100644
                  hotplug.arm(HOTPLUG_INTERVAL);
              }
          }
-@@ -687,7 +692,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+@@ -693,7 +698,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
              }
              Err(err) if attempt < ATTEMPTS => {
                  println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
