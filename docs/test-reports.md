@@ -8185,3 +8185,42 @@ reaches the kernel, and the first link is 100 Mbit/s.**
   - `clocks` is unchanged from #232.
 - **(5)** Stable `v0.4.0-dev-201-gb714bca+x9f76` restored, including `netboot.scr` without the
   line: banner after 18 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #91 #26 Wi-Fi steps 3–4, part A rerun on the wifi1 image (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-365-ge557d3fe+xe9a9` (branch `wifi-sdio`, PR #202, experiments
+`timesync wifi-sdio`). Real Pi 3B+ over netboot, `/srv/tftp/config.txt` unchanged
+(`gpu_mem=16`), no HDMI connected. Reset at 21:20:53 UTC, `redox login:` after 20 s.
+**Result: part A passes. Part B was not run** (see the end).
+
+- **Boot:**
+  - `bcm2835-sdiod: wifi_power was 0`, then `rpi-firmwared: Wi-Fi power 0, tag not marked
+    answered` and `Wi-Fi power 1, tag not marked answered`. There is **no `I/O error`**
+    anywhere in the log.
+  - The probe went up to `chip ID OK`: CMD5 3 functions, CIS 0x02d0, chip 0x4345 rev 6, 5 cores.
+  - Minimal firmware 548728 bytes written in 277 ms and read back, NVRAM 1748 bytes, ARM
+    started, HT clock on.
+  - Firmware 7.45.241, `MAC address b8:27:eb:5d:b5:ff`.
+- **`CLM loaded (2676 bytes, 2 chunks)`**, `radio up`, then **`10 networks`**, one line each
+  (BSSID, channel, dBm, security, name).
+  - All are `Wpa2`, on channels 1, 6, 11, 36, 100 and 116, at −53 to −83 dBm.
+  - Our own Fritz!Box networks `zehrer.net`/`zehrer.xyz` are on ch 100 (−53), ch 6
+    (−58/−59) and ch 1/116 (−77 to −81). 4 neighbour networks.
+  - Then `no /etc/net/wifi, not joining a network` and `bcm2835-sdiod: OK`.
+- **devsh:**
+  - `cat wifi_power` gave 1.
+  - `echo 0 > /scheme/rpi-firmware/wifi_power; echo $?` gave `0` (took 5 s), and `cat` gave 0.
+  - `echo 1 > …; echo $?` gave `0`, and `cat` gave 1.
+  - Each write logs `Wi-Fi power N, tag not marked answered`.
+- **`/usr/lib/drivers/bcm2835-sdiod` once more:**
+  - Power-cycled the chip (Wi-Fi power 0 and 1 logged), the same probe and firmware, CLM
+    loaded, radio up, **`15 networks`**, then `OK`, rc=0.
+  - The list overlaps the first one (the same own networks, the same channels, within
+    1–3 dB) plus 5 more neighbour networks that were weaker or not caught the first time.
+- **`free`:** total 739904 KiB, used 126640, free 613264.
+- **Part B (`gpu_mem=64`) not run.** It would change `/srv/tftp/config.txt`, but #232 showed
+  that this Pi loads `start.elf`, `config.txt` and U-Boot from its **SD card**. The TFTP
+  `config.txt` is never read, so a change there could not change the memory split.
+  Part B needs `gpu_mem=64` in `config.txt` on the netboot card (a person and a card swap).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s.
+  pi-test on stable passes (0 of 300 starts failed), and `/srv/tftp/redox` matches the backup.
