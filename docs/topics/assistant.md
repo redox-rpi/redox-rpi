@@ -408,7 +408,7 @@ git).
   quantization (the weights are already Q4_0) and a shorter answer cap
   (answers are 24 to 33 tokens, the cap is 200); the q4_0 kernel only if
   the model time stays high.
-- **Conversation cap, 2026-11-01 (branch `assistant-cap`,
+- **Conversation cap, 2026-11-01 (branch `assistant-history-cap`,
   [#175](https://github.com/redox-rpi/redox-rpi/issues/175)):** the key and
   value cache takes 112 KiB per token, and running out of memory panics the
   kernel. `rinfer --serve` now holds at most `RINFER_MAX_CONTEXT` tokens
@@ -418,6 +418,17 @@ git).
   tokens are left, says so, and cuts tool results to 600 bytes (a big
   folder listing took 500 tokens). Build host with a limit of 800: the
   third question started over, a cut folder listing took 251 tokens.
+  Since 2026-11-04 it keeps the newest exchanges that fit in 600 tokens
+  (at most 16) and feeds them again after the system prompt, and says
+  `(The conversation got long; I keep only the last N exchanges and
+  forget the rest.)`. QEMU `raspi3b` with 14 short questions at the
+  default limit: the heap grew from 399 MiB after the first answer to
+  434 MiB at 760 tokens, the note came after question 11 and kept 3
+  exchanges (104 tokens fed again in 77 s), then the heap stayed at
+  434 MiB to the end (peak 450 MiB). The name from the first question was
+  forgotten, as expected. Pi test #225 is queued. In QEMU, long output on
+  the serial console blocked the run (the PTY problem behind the getty
+  panic), so the test wrote its output to a file.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
   plain Rust with no crates (264 KB static binary for Redox). It runs tool
   calls in the form Qwen3 writes them
