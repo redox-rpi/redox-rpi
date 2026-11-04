@@ -110,15 +110,18 @@
   it relied on `pkg-hold` for that). Install speed on the Pi: nano 27 s,
   26 small programs 3 min, python312 9 min (#142, #163). Pi tests
   #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
-  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
+  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106): #66 and #75 are merged, main merged in
+  (2026-11-04); `pkg-persist install` and `update` refuse with a plain
+  message while the clock is at 1970. Pi test #209 (end to end with a
+  reset and an update after a new publish) queued.
 
 ## Next
 
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
-- Packages (#44): the nightly
-  run should publish our repository after a passing build; that needs
-  `scripts/publish-pkg-repo.sh` on main (PR #75) and a step in the nightly
-  script by its owner. Whether Redox's prebuilt programs run is #40
-  (relibc topic).
+- Packages (#44): the nightly run publishes our repository after a
+  passing stable build: draft PR #193 (one step in `update-stable.sh`,
+  to agree with Release & CI). The stable image itself is built without
+  `pkg-repo`/`pkg-hold`, so it does not ask our repository yet. Whether
+  Redox's prebuilt programs run is #40 (relibc topic, PR #152).
