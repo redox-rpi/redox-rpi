@@ -17,23 +17,25 @@ User docs, with examples: [docs/time.md](../time.md).
   `timerd-test` ([README](../../patches/experiments/timerd/README.md)).
   The same branch makes `timesync` wait for the network (default route,
   DNS with a timeout) and retry until a server answers. Pi tests #27
-  (`timerd`) and #41 (`timesync` with late DHCP) passed; pull request for
-  main open (v0.4.0).
+  (`timerd`) and #41 (`timesync` with late DHCP) passed; pull request #59 (v0.4.0).
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
   / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
-  passed.
+  passed; merged with #98. Upstream relibc does not have it yet (#51 stays
+  open, `waiting-upstream`), so `timesync -s` needs our patch.
 - [#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zones:
   `/etc/localtime` and zone files (package `zoneinfo`, Europe/Berlin and
   UTC), relibc patch `0012` (`tm_zone` is CET/CEST), `timerd` in local
-  time and `timerd -t`. Branch `timezone` (on top of `timerd`), experiment
+  time and `timerd -t`. Branch `timezone`, experiment
   `timezone` ([README](../../patches/experiments/timezone/README.md)).
   **Pi test 95 passed** (CET/CEST at both 2026 switches, no freeze in 20
-  minutes); draft pull request #102, after #59 (v0.5.0).
+  minutes); pull request #102 (v0.5.0).
 
 ## Next
 
 - Move `timesync` from an experiment into the default images.
+- `date -s` on Redox: uutils' `date` has the setting turned off for Redox;
+  with #51 it can call `clock_settime` (needs uutils built from source).
 
 ## Later
 
