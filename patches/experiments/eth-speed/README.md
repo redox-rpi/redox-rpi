@@ -55,6 +55,16 @@ staged `netboot.cmd` and compiles `netboot.scr` again; U-Boot writes
 bootloader. Restoring the stable image undoes it. A permanent option would
 belong in `scripts/netboot.sh` (Boot Process & Console).
 
+**Pi test 234:** with `netboot-bootargs.sh "RPI_ETH_SPEED=100"` the log
+shows `dwc2d: RPI_ETH_SPEED=100 from the command line`, and the first link
+comes up at 100 Mbit/s with no gigabit link before it. In that boot the
+LAN7800 dropped off its hub port once right after the advertising line and
+came back by itself (the network was fine); rows 228 and 231-233 did not
+show this. The setting adds one PHY register write (CTRL1000) before
+negotiation starts, with no reset and nothing on the USB side, so it is
+more likely the hub drop of #151 than this change. Watch for it in later
+runs.
+
 ## Measuring
 
 [`shelly-sample.sh`](shelly-sample.sh) reads the Shelly plug's power and
