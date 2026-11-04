@@ -21,6 +21,12 @@ Pi test 231 showed why the state word is not enough: it was 0 ("off") for
 the running ARM, core and SDRAM clocks and 1 only for `uart`. It seems to
 say whether a clock was asked for, not whether it runs.
 
+Pi test 232 (measured rates): at idle `arm` (1400 MHz), `core` (400 MHz),
+`v3d` (300 MHz), `emmc` and `uart` run; `h264`, `isp`, `pixel` and `pwm`
+are off. The firmware measures no SDRAM rate, so `sdram` reads `unknown`
+(the `clocks` file has its rate, 400 MHz). So `v3d`, the 3D block, is the
+one clock that runs for nothing on a headless server.
+
 Nothing is switched yet. If a clock of an unused block (for example `v3d`,
 `h264`, `isp`, `pwm`) runs at idle, a later step gates it and measures.
 

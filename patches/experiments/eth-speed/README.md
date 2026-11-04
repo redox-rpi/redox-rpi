@@ -44,8 +44,16 @@ the LAN7800, so the link never starts at gigabit. dwc2d logs
 `dwc2d: RPI_ETH_SPEED=100 from the command line` (or `environment`) at
 start and `dwc2d: LAN78xx advertising up to 100 Mbit/s (RPI_ETH_SPEED)`.
 On a direct-boot card the stub puts `cmdline.txt` words into the
-environment; whether `/chosen bootargs` survives U-Boot and the Redox
-bootloader on network boot is for the Pi test to show.
+environment.
+
+On network boot the test Pi loads its firmware from the SD card, so
+`cmdline.txt` on the TFTP server is never read (Pi test 232). Instead
+[`netboot-bootargs.sh`](netboot-bootargs.sh) `"RPI_ETH_SPEED=100"` adds
+`setenv bootargs "${bootargs} RPI_ETH_SPEED=100"` before `bootefi` in the
+staged `netboot.cmd` and compiles `netboot.scr` again; U-Boot writes
+`bootargs` into `/chosen bootargs` of the devicetree it hands to the Redox
+bootloader. Restoring the stable image undoes it. A permanent option would
+belong in `scripts/netboot.sh` (Boot Process & Console).
 
 ## Measuring
 
