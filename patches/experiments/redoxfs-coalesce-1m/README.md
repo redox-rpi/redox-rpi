@@ -19,5 +19,24 @@ scripts/build-image.sh --experiment redoxfs-coalesce-1m
 
 ## Results
 
-Pending: QEMU (`scripts/redoxfs-write-amp.py`, `scripts/sd-stress.py`), then
-the Pi.
+QEMU raspi3b, 2026-11-04. A is PR #73 (`v0.4.0-dev-157-g71d7ba7d+x08c5`),
+B is A plus this patch (`v0.4.0-dev-158-gb1e99de3+xcad5`), both with
+`sdhost-stats`.
+
+`scripts/redoxfs-write-amp.py` (1 MiB per run, three runs each, with
+`-usb -netdev user,id=n0 -device usb-net,netdev=n0`; without a USB network
+adapter the boot stops after `dwc2d`), bytes the disk saw per byte written:
+
+| Call size | A | B |
+|---|---|---|
+| 4 KiB | 1.3 (1351680 bytes) | 1.1–1.2 (1146880–1306624) |
+| 64 KiB | 1.3 (1413120) | 1.2 (1208320) |
+| 1 MiB | 1.1 (1114112) | 1.1 (1114112) |
+
+QEMU's SD card traces 512-byte blocks, not commands, so the number of
+requests needs the Pi's `sdhost-stats`.
+
+`scripts/sd-stress.py --big-mib 32 --small 300 --cycles 0` in
+`/home/root/stress`: pass on both (0 missing, 0 changed).
+
+Pi: test 230 queued (A/B as test 175).
