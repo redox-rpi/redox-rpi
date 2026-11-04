@@ -1,0 +1,112 @@
+From 7854df8cc33e721d43d10af00f793fe12a02179c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sun, 1 Nov 2026 01:39:26 +0100
+Subject: [PATCH] pipe: a blocking write waits until all bytes are in the pipe
+
+A blocking write to a pipe copied what fit into the 64 KiB queue and
+returned that count. POSIX says a blocking write returns the full count
+on normal completion; programs such as uutils dd do not retry short
+writes, so dd bs=1M into a pipe passed on only 64 KiB of each block.
+
+Now the write waits for the reader whenever the queue is full and goes
+on until every byte is in. It returns the count written so far if a
+signal interrupts it, if the reader goes away, or if the user buffer
+faults partway. A non-blocking write still takes what fits.
+(redox-rpi #158)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/scheme/pipe.rs | 44 +++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 33 insertions(+), 11 deletions(-)
+
+diff --git a/src/scheme/pipe.rs b/src/scheme/pipe.rs
+index 118012a..e251484 100644
+--- a/src/scheme/pipe.rs
++++ b/src/scheme/pipe.rs
+@@ -332,30 +332,48 @@ impl KernelScheme for PipeScheme {
+         }
+         let pipe = Self::get_pipe(key, token)?;
+ 
++        // A blocking write returns only when all bytes are in the pipe, as
++        // POSIX says, waiting for the reader whenever the queue is full. It
++        // returns the bytes written so far if a signal interrupts it or the
++        // reader goes away. A non-blocking write takes what fits.
++        let nonblock = fcntl_flags & O_NONBLOCK as u32 != 0;
++        let mut total = 0;
++
+         loop {
+             let vec = pipe.queue.lock(token.token());
+             let (mut vec, mut token) = vec.into_split();
+ 
+             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
+-                return Err(Error::new(EPIPE));
++                return if total > 0 {
++                    Ok(total)
++                } else {
++                    Err(Error::new(EPIPE))
++                };
+             }
+ 
++            let rest = user_buf
++                .advance(total)
++                .expect("total <= user_buf.len()");
+             let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
+-            let bytes_to_write = core::cmp::min(bytes_left, user_buf.len());
+-            let src_buf = user_buf
++            let bytes_to_write = core::cmp::min(bytes_left, rest.len());
++            let src_buf = rest
+                 .limit(bytes_to_write)
+-                .expect("bytes_to_write <= user_buf.len()");
++                .expect("bytes_to_write <= rest.len()");
+ 
+             const TMPBUF_SIZE: usize = 512;
+             let mut tmp_buf = [0_u8; TMPBUF_SIZE];
+ 
+             let mut bytes_written = 0;
++            let mut faulted = false;
+ 
+             // TODO: Modify VecDeque so that the unwritten portions can be accessed directly?
+             for (idx, chunk) in src_buf.in_variable_chunks(TMPBUF_SIZE).enumerate() {
+                 let chunk_byte_count = match chunk.copy_common_bytes_to_slice(&mut tmp_buf) {
+                     Ok(c) => c,
+-                    Err(_) if idx > 0 => break,
++                    Err(_) if idx > 0 || total > 0 => {
++                        faulted = true;
++                        break;
++                    }
+                     Err(error) => return Err(error),
+                 };
+                 vec.extend(&tmp_buf[..chunk_byte_count]);
+@@ -370,19 +388,23 @@ impl KernelScheme for PipeScheme {
+                     token.token(),
+                 );
+                 pipe.read_condition.notify_locked(token.token());
+-
+-                return Ok(bytes_written);
+-            } else if user_buf.is_empty() {
+-                return Ok(0);
++                total += bytes_written;
++            }
++            if total == user_buf.len() || faulted || (nonblock && total > 0) {
++                return Ok(total);
+             }
+ 
+-            if fcntl_flags & O_NONBLOCK as u32 != 0 {
++            if nonblock {
+                 return Err(Error::new(EAGAIN));
+             } else if !pipe
+                 .write_condition
+                 .wait(vec, "PipeWrite::write", &mut token)
+             {
+-                return Err(Error::new(EINTR));
++                return if total > 0 {
++                    Ok(total)
++                } else {
++                    Err(Error::new(EINTR))
++                };
+             }
+         }
+     }
+-- 
+2.54.0 (Apple Git-157)
+
