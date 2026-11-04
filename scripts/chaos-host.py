@@ -33,6 +33,8 @@ Faults:
                 root: with --netem they run through `sudo -n`; otherwise,
                 or with --print-sudo, the commands are printed and the
                 round is skipped. Never under QEMU (user networking).
+                Without iptables, tcp-reset kills this host's connections
+                with the Pi every second with `ss -K` instead.
 
 Power cuts are not here: they go through the Pi test agent (Shelly plug).
 
@@ -49,6 +51,7 @@ import os
 import random
 import re
 import shlex
+import shutil
 import socket
 import ssl
 import subprocess
@@ -196,6 +199,7 @@ class Netem:
     def __init__(self, pi, iface, run_sudo):
         self.pi, self.iface, self.run_sudo = pi, iface, run_sudo
         self.active = []
+        self.pulse_cmds = []
 
     def commands(self, fault, seconds):
         dev, pi = self.iface, self.pi
@@ -210,10 +214,15 @@ class Netem:
         if fault in netem:
             on = [add_prio[0], f"tc qdisc add dev {dev} parent 1:3 handle 30: netem {netem[fault]}", add_prio[1]]
             off = [f"tc qdisc del dev {dev} root"]
-        elif fault == "tcp-reset":
+        elif fault == "tcp-reset" and shutil.which("iptables"):
             rule = f"INPUT -s {pi} -p tcp -j REJECT --reject-with tcp-reset"
             on = [f"iptables -I {rule}"]
             off = [f"iptables -D {rule}"]
+        elif fault == "tcp-reset":
+            # No iptables (homenodellm): kill this host's TCP connections
+            # with the Pi every second instead; the kernel sends a reset.
+            on, off = [], []
+            self.pulse_cmds = [f"ss -K dst {pi}"]
         else:
             raise ValueError(fault)
         return on, off
@@ -230,7 +239,11 @@ class Netem:
             log(f"  needs root; run on {socket.gethostname()}:")
             for c in on:
                 log(f"    sudo {c}")
-            log(f"    sleep {seconds}")
+            if self.pulse_cmds:
+                log(f"    for i in $(seq {seconds}); do sudo {self.pulse_cmds[0]}; sleep 1; done")
+                self.pulse_cmds = []
+            else:
+                log(f"    sleep {seconds}")
             for c in off:
                 log(f"    sudo {c}")
             return False
@@ -240,10 +253,15 @@ class Netem:
             self.clear()
         return ok
 
+    def pulse(self):
+        for c in self.pulse_cmds:
+            subprocess.run(["sudo", "-n"] + shlex.split(c), capture_output=True)
+
     def clear(self):
         for c in self.active:
             self.sh(c)
         self.active = []
+        self.pulse_cmds = []
 
 
 def default_iface(addr):
@@ -401,9 +419,11 @@ def fault_netem(ctx, rng, fault):
     try:
         while time.time() < end:
             tries += 1
+            ctx.netem.pulse()
             out = run_on_pi(ctx.host, ctx.port, "echo chaos-alive", 20)
             ok += bool(out and "chaos-alive" in out)
-            time.sleep(2)
+            ctx.netem.pulse()
+            time.sleep(1)
     finally:
         ctx.netem.clear()
     log(f"  {ok} of {tries} devsh commands answered during the fault")

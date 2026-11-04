@@ -69,6 +69,8 @@ sudo tc filter add dev enp12s0 protocol ip parent 1:0 prio 3 u32 match ip dst 19
 sudo tc qdisc del dev enp12s0 root        # end of the fault
 sudo iptables -I INPUT -s 192.168.178.148 -p tcp -j REJECT --reject-with tcp-reset
 sudo iptables -D INPUT -s 192.168.178.148 -p tcp -j REJECT --reject-with tcp-reset
+# homenodellm has no iptables; there tcp-reset does this instead:
+for i in $(seq 60); do sudo ss -K dst 192.168.178.148; sleep 1; done
 ```
 
 Power cuts are not in the script: the Shelly plug is switched only by the
