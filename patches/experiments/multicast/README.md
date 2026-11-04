@@ -1,12 +1,18 @@
 # Experiment: IPv4 multicast
 
+**Default patches since branch `multicast-default`:** base `0083` (was
+`0024` here) and relibc `0016` (was `0001`), together with base `0084`, the
+LAN7800 multicast filter (was experiment `lan78xx-multicast`).
+`--experiment multicast` now only adds the test tool `mcast`. The text
+below keeps the old numbers.
+
 First step towards IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27),
 v0.6.0): IPv6 neighbor discovery and SLAAC need multicast, and so do mDNS
 and SSDP over IPv4. Redox's network stack had none: the Ethernet layer
 dropped multicast frames, and relibc skipped `IP_ADD_MEMBERSHIP`.
 
 ```bash
-scripts/build-image.sh --experiment multicast
+scripts/build-image.sh --experiment multicast   # only the mcast tool now
 ```
 
 - **base `0024`, `netstack`:** smoltcp's `multicast` feature on. A
