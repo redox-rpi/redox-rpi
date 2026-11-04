@@ -24,7 +24,7 @@ Nothing on `main` yet.
     devsh must answer and the serial log must have no panic.
 - QEMU, 2026-11-04: 30 stressor rounds, 29 pass; the misses are
   `signals`, see below. 18 host faults (server, pkg, dwc2d), all recover;
-  no panic, no crash dump in the serial log. Pi test 225 is queued.
+  no panic, no crash dump in the serial log. Pi test 237 is queued.
 
 ## Findings
 
@@ -34,7 +34,7 @@ Nothing on `main` yet.
 
 ## Next
 
-- Pi test 225: the stressor and the host faults on the real Pi, with the
+- Pi test 237: the stressor and the host faults on the real Pi, with the
   netem faults.
 - Power cuts in the middle of a `fill` or `killio` round, through the Pi
   test agent (Shelly plug), as their own test-plan row.
