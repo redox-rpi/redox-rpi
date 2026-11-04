@@ -1,0 +1,110 @@
+From 757dbef573230ecfc091308fd30e8d773407c5db Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 14:50:01 +0100
+Subject: [PATCH 30/34] rpi-firmwared: wifi_power, the WL_REG_ON line of the Pi
+ 3B+ Wi-Fi chip
+
+The Wi-Fi chip's power line hangs on the firmware's GPIO expander (pin 1,
+firmware GPIO 129), so only the firmware can switch it. Reading gives 0 or
+1, writing 0 or 1 sets it. Pi 3B+ only.
+---
+ drivers/rpi-firmwared/src/main.rs | 56 +++++++++++++++++++++++++++++--
+ 1 file changed, 54 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 58758304..e4ca845f 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -23,6 +23,10 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
++//! - `/scheme/rpi-firmware/wifi_power`: the WL_REG_ON line of the Pi 3B+
++//!   Wi-Fi chip, `1` (on) or `0` (off); writing sets it. Like the power LED
++//!   it hangs on the firmware's GPIO expander. Other boards do not have
++//!   this file.
+ //!
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -56,9 +60,9 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled", "wifi_power"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led", "wifi_power"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -122,6 +126,16 @@ impl FirmwareScheme {
+                 }
+             }
+             "board" => board(mbox, &mut text),
++            "wifi_power" => {
++                let gpio = wifi_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                // The firmware answers 0 in the first word on success, then
++                // the state (raspberrypi-exp-gpio in Linux).
++                let state = match mbox.property(TAG_GET_GPIO_STATE, &[gpio, 0], 2).map_err(log)?[..] {
++                    [0, state] => state,
++                    _ => return Err(log(format!("Wi-Fi power: firmware refused GPIO {gpio}"))),
++                };
++                writeln!(text, "{state}").unwrap();
++            }
+             _ => return Err(Error::new(ENOENT)),
+         }
+         Ok(text)
+@@ -163,11 +177,49 @@ impl FirmwareScheme {
+                 println!("rpi-firmwared: ARM clock {} MHz, governor off", rate / 1_000_000);
+                 Ok(())
+             }
++            "wifi_power" => {
++                let gpio = wifi_power_gpio(mbox).ok_or(Error::new(ENOENT))?;
++                let state = match value {
++                    "1" => 1,
++                    "0" => 0,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                // Only the first word (0 = done) matters, if there is an
++                // answer at all (#60, #77: the pin changed, the write failed).
++                // println: the serial log does not show this daemon's stderr.
++                let fail = |e: String| {
++                    println!("rpi-firmwared: Wi-Fi power: {e}");
++                    Error::new(syscall::EIO)
++                };
++                match mbox.set_property(TAG_SET_GPIO_STATE, &[gpio, state]).map_err(fail)?[..] {
++                    // Which of the two the firmware does may depend on the
++                    // start*.elf it runs (gpu_mem, Pi test #79); say so.
++                    [] => {
++                        println!("rpi-firmwared: Wi-Fi power {state}, tag not marked answered");
++                        Ok(())
++                    }
++                    [0, ..] => {
++                        println!("rpi-firmwared: Wi-Fi power {state}, tag answered");
++                        Ok(())
++                    }
++                    ref answer => Err(fail(format!("firmware refused GPIO {gpio}: {answer:x?}"))),
++                }
++            }
+             _ => Err(Error::new(EROFS)),
+         }
+     }
+ }
+ 
++/// The firmware GPIO of WL_REG_ON: pin 1 of the GPIO expander (128 + 1) on
++/// the Pi 3B+ (`wifi_pwrseq` in Linux's devicetree). High powers the chip.
++fn wifi_power_gpio(mbox: &mut Mailbox) -> Option<u32> {
++    let [revision] = mbox.property(TAG_BOARD_REVISION, &[], 1).ok()?[..] else {
++        return None;
++    };
++    // New-style code (bit 23), type 0x0d: Pi 3 Model B+.
++    (revision & (1 << 23) != 0 && (revision >> 4) & 0xff == 0x0d).then_some(129)
++}
++
+ /// Sets the ARM clock to its maximum and says from what to what.
+ fn arm_clock_max(mbox: &mut Mailbox) {
+     let before = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM);
+-- 
+2.53.0
+
