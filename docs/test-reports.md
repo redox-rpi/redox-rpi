@@ -7709,3 +7709,43 @@ line. **Pass.**
   - The two `[ERROR redoxfs] failed to open filesystem /scheme/disk.mmc/0…` lines are in
     every netboot image's log (rows 214–216 too), so they are not new.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:30). devsh answers.
+
+## #218: #37 mDNS, PR #93 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-346-gfd355e58+x3d8d` (branch `mdns`, experiments `multicast`, `ipv6`,
+`lan78xx-multicast`, `mdns`), `~/mdns-test/keep/mdns-v0.4.0-dev-346-gfd355e58+x3d8d.img`.
+Real Pi 3B+ over netboot, reset at 13:32:54 UTC. No panic, exception or `FATAL` line.
+**Pass.**
+
+Serial log:
+
+```
+mdnsd: redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2 services configured
+mdnsd: redox-rpi._devsh._tcp.local port 2323 announced
+mdnsd: redox-rpi.local is 192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1509:6101:ba27:ebff:fe08:e0aa, fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa
+```
+
+`mdns-query.py` from `origin/mdns`, run on homenodellm:
+
+- **(1)** `_devsh._tcp.local PTR`: one answer from the Pi with PTR, SRV, TXT, A and AAAA:
+  ```
+  192.168.178.148: _devsh._tcp.local PTR redox-rpi._devsh._tcp.local (ttl 4500)
+  192.168.178.148: redox-rpi._devsh._tcp.local SRV port 2323 target redox-rpi.local (ttl 120)
+  192.168.178.148: redox-rpi._devsh._tcp.local TXT 00 (ttl 4500)
+  192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA 2a02:590:1509:6101:ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+  ```
+- **(2)** `redox-rpi.local`: the Pi answers with A `192.168.178.148` and the three AAAA. The
+  Fritz!Box (192.168.178.1) also repeats the A with ttl 10.
+- **(3)** `redox-rpi.local AAAA -6 wlp13s0`: from `fe80::ba27:ebff:fe08:e0aa` (the Pi) came the
+  AAAA `fe80::…`, `2a02:590:1509:6101:…` and `fdeb:…`, plus the A. The router repeated
+  them with ttl 10.
+  - homenodellm is on cable now (`enp12s0`). The same query over `enp12s0` gives the same answers.
+- **(4)** `_services._dns-sd._udp.local PTR`: the Pi answers
+  `192.168.178.148: _services._dns-sd._udp.local PTR _devsh._tcp.local (ttl 4500)` (plus its
+  A/AAAA), and no `_ssh._tcp` from 192.168.178.148.
+  - The other devices on the LAN that answered are left out here.
+- pi-test: version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:35). devsh answers.
