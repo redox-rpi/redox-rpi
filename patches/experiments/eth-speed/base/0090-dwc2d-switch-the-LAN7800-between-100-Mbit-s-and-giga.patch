@@ -9,8 +9,8 @@ speeds up to that (CTRL1000) and negotiate again. The link-up lines name
 the negotiated speed. For measuring the idle power of each (#126).
 ---
  drivers/usb/dwc2d/src/lan78xx.rs | 43 +++++++++++++++++++++++++++++++-
- drivers/usb/dwc2d/src/main.rs    | 25 ++++++++++++++++++-
- 2 files changed, 66 insertions(+), 2 deletions(-)
+ drivers/usb/dwc2d/src/main.rs    | 28 ++++++++++++++++++++-
+ 2 files changed, 69 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
 index e1a48e1..a749cc8 100644
@@ -95,7 +95,7 @@ index e1a48e1..a749cc8 100644
  /// adapter takes over from another one.
  pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94a..570feee 100644
+index 12be94a..19ac992 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -134,7 +134,14 @@ impl UsbNet {
@@ -124,11 +124,14 @@ index 12be94a..570feee 100644
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -578,6 +588,19 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -578,6 +588,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
-+                if let Ok(request) = std::fs::read_to_string(LINK_REQUEST) {
++                // An empty file is one the shell has created but not yet
++                // written: leave it for the next rescan.
++                let link_request = std::fs::read_to_string(LINK_REQUEST).ok().filter(|r| !r.trim().is_empty());
++                if let Some(request) = link_request {
 +                    let _ = std::fs::remove_file(LINK_REQUEST);
 +                    let request = request.trim();
 +                    match (request.parse::<u32>(), scheme.adapter_mut().active_adapter()) {
