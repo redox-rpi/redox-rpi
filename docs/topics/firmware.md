@@ -16,6 +16,11 @@
   fast as with the fixed maximum. `/scheme/rpi-firmware/governor` shows
   the mode and the time at each rate; `performance` and `powersave` fix
   the clock. See [the experiment notes](../../patches/experiments/cpu-ondemand/README.md).
+- The mode at boot comes from `/etc/rpi-firmware/governor` if it exists
+  (`ondemand`, `performance`, `powersave`, or a rate in Hz, `max`, `min`
+  for a fixed clock), set by `15_rpi-governor.service` with
+  `/usr/lib/rpi-firmware/governor.ion` (`config/raspi3bp-sdcard.toml`,
+  Pi test #161). Without the file the clock follows the load.
 - `reboot` through the watchdog (kernel patch `0002`).
 
 ## In progress
@@ -35,6 +40,15 @@
   resolution; the domains were already off at boot. Idle cores already
   sleep (`wfi` in the kernel's idle loop). What still wakes them most is
   `dwc2d` (2.4 % of a core, about 290 switches/s), which #104 works on.
+  Plan for the rest on #126 (2026-11-04): step 1 Ethernet at 100 Mbit/s
+  instead of gigabit (branch `power-eth`, experiment `eth-speed`:
+  `echo 100 > /tmp/dwc2d-link` makes `dwc2d` renegotiate; QEMU 4 of 4,
+  Pi test #228: **100 Mbit/s saves about 0.35 W at idle**, 3.23 W against
+  2.89 W). Step 2 (same branch): `/etc/eth-speed` sets the speed at boot,
+  and `rpi-firmwared` `clock_states` (experiment `clock-states`) shows
+  which firmware clocks run; QEMU passes, Pi test #231 queued. Then EEE on
+  the LAN7800, `dwc2d` idle wakeups (#139), and gating clocks that run
+  for nothing.
 
 ## Bluetooth
 

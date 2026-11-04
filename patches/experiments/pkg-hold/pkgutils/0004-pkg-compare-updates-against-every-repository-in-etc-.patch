@@ -1,0 +1,86 @@
+From 2624fa3b1125867c0a7c45c153cd3f5e636d2a24 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 06:26:41 +0000
+Subject: [PATCH] pkg: compare updates against every repository in /etc/pkg.d
+
+get_repository_detail read only the first remote's repo.toml, so with our repository first pkg update no longer saw newer upstream packages. Merge the indexes in /etc/pkg.d order; the first remote that lists a package wins, as for downloads.
+---
+ pkg-lib/src/backend/pkgar_backend/mod.rs | 54 +++++++++++++++++++++---
+ 1 file changed, 49 insertions(+), 5 deletions(-)
+
+diff --git a/pkg-lib/src/backend/pkgar_backend/mod.rs b/pkg-lib/src/backend/pkgar_backend/mod.rs
+index 396c079..2465091 100644
+--- a/pkg-lib/src/backend/pkgar_backend/mod.rs
++++ b/pkg-lib/src/backend/pkgar_backend/mod.rs
+@@ -12,6 +12,7 @@ use super::{Backend, Error};
+ use crate::{
+     backend::wrap_io_err,
+     callback::Callback,
++    net_backend::DownloadBackendWriter,
+     package::{RemotePackage, Repository},
+     package_state::PackageState,
+     repo_manager::RepoManager,
+@@ -278,12 +279,55 @@ impl Backend for PkgarBackend {
+             .ok_or(Error::ValidRepoNotFound)
+     }
+ 
+-    /// TODO: Multiple repository support
++    /// Merges repo.toml of every remote in /etc/pkg.d order. A package listed
++    /// by several remotes keeps the first one, the remote install downloads it from.
+     fn get_repository_detail(&self) -> Result<Repository, Error> {
+-        let repo_str = PackageName::new("repo".to_string())?;
+-        let (toml, _) = self.repo_manager.get_package_toml(&repo_str)?;
+-
+-        Ok(Repository::from_toml(&toml)?)
++        let mut merged: Option<Repository> = None;
++        let mut last_err = None;
++        for rname in self.repo_manager.remotes.iter() {
++            let mut writer = DownloadBackendWriter::ToBuf(Vec::new());
++            let repo = match self
++                .repo_manager
++                .download("repo.toml", None, Some(rname), &mut writer)
++            {
++                Ok(_) => String::from_utf8(writer.to_inner_buf())
++                    .map_err(|_| Error::ContentIsNotValidUnicode("repo.toml".into()))
++                    .and_then(|toml| Ok(Repository::from_toml(&toml)?)),
++                Err(e) => Err(e),
++            };
++            let repo = match repo {
++                Ok(repo) => repo,
++                Err(e) => {
++                    eprintln!("skipping repository {}: {}", rname, e);
++                    last_err = Some(e);
++                    continue;
++                }
++            };
++            match merged.as_mut() {
++                None => merged = Some(repo),
++                Some(m) => {
++                    for (name, hash) in repo.packages {
++                        m.packages.entry(name).or_insert(hash);
++                    }
++                    for (name, id) in repo.outdated_packages {
++                        if !m.packages.contains_key(&name) {
++                            m.outdated_packages.entry(name).or_insert(id);
++                        }
++                    }
++                }
++            }
++        }
++        match merged {
++            Some(repo) => Ok(repo),
++            None => match last_err {
++                Some(e) => Err(e),
++                None => {
++                    let repo_str = PackageName::new("repo".to_string())?;
++                    let (toml, _) = self.repo_manager.get_package_toml(&repo_str)?;
++                    Ok(Repository::from_toml(&toml)?)
++                }
++            },
++        }
+     }
+ 
+     fn get_package_state(&self) -> PackageState {
+-- 
+2.53.0
+
