@@ -35,6 +35,11 @@
   (4–11 MB/s, the card's own pauses). The sdhost driver isn't the limit:
   larger commands (experiment `sdhost-bigreq`, branch `sd-write-speed`)
   gain nothing.
+  redoxfs `0040` collects up to 1 MiB instead of one record before
+  writing, so the metadata is written once per MiB, as for a 1 MiB write.
+  Pi test 230 (2026-11-04): 4 MiB in 4 KiB calls 283 → 86 card requests;
+  4 KiB writes 1.9–3.7 → 3.9–5.4 MB/s, 64 KiB 1.1–5.5 → 5.1–8.8 MB/s,
+  1 MiB unchanged.
   Still an upstream problem (RedoxFS
   [#51](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/51),
   [#57](https://gitlab.redox-os.org/redox-os/redoxfs/-/work_items/57)); the

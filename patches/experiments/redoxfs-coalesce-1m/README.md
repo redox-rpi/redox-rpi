@@ -1,4 +1,8 @@
-# Experiment: collect up to 1 MiB of small writes (redoxfs)
+# Collect up to 1 MiB of small writes (redoxfs, was experiment `redoxfs-coalesce-1m`)
+
+**Default with PR #73:** the patch is `patches/redoxfs/0040`, after
+`0037`–`0039`. `--experiment redoxfs-coalesce-1m` is still accepted and does
+nothing.
 
 On top of redoxfs `0037`–`0039` (PR #73, write collection). Those collect
 consecutive small writes of a handle and write them one record (128 KiB) at
@@ -12,10 +16,6 @@ at 2.7–3.9 MB/s, 1 MiB writes at 5–11 MB/s
 This patch collects up to 8 records (1 MiB) before writing, as a program
 writing 1 MiB at once would. Writes of 128 KiB and more, the 2 s timer and
 the on-disk format are unchanged.
-
-```bash
-scripts/build-image.sh --experiment redoxfs-coalesce-1m
-```
 
 ## Results
 
@@ -39,4 +39,14 @@ requests needs the Pi's `sdhost-stats`.
 `scripts/sd-stress.py --big-mib 32 --small 300 --cycles 0` in
 `/home/root/stress`: pass on both (0 missing, 0 changed).
 
-Pi: test 230 queued (A/B as test 175).
+Pi 3B+, test 230 (2026-11-04, A/B as test 175, report on main): all 18
+sha256 match, no transfer error, `pi-test.py` 0 of 300 starts failed on both.
+4 MiB written in 4 KiB calls: A 283 requests (10200 blocks, about 250 ms
+card busy), B 86 requests (8620 blocks, about 110 ms), the same as a 1 MiB
+write (77–78 requests, 8552 blocks).
+
+| Call size | A (dd MB/s) | B (dd MB/s) |
+|---|---|---|
+| 4 KiB | 1.9–3.7 | 3.9–5.4 |
+| 64 KiB | 1.1–5.5 | 5.1–8.8 |
+| 1 MiB | unchanged | unchanged |
