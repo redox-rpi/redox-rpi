@@ -6,45 +6,9 @@ Subject: [PATCH] init: report units that take 100 ms or more to start
 Each line gives the time since init started its first unit and how long
 the unit took until init went on (#47, boot time).
 ---
- Cargo.lock            | 16 ++++++++++++++++
  init/src/scheduler.rs | 19 +++++++++++++++++++
- 2 files changed, 35 insertions(+)
+ 1 file changed, 19 insertions(+)
 
-diff --git a/Cargo.lock b/Cargo.lock
-index 3823eb23..c6be138e 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -729,7 +729,10 @@ dependencies = [
-  "daemon",
-  "driver-network",
-  "fdt 0.2.0-alpha1",
-+ "inputd",
-  "libredox",
-+ "orbclient",
-+ "redox_event",
-  "redox_syscall 0.9.5",
- ]
- 
-@@ -2196,6 +2199,19 @@ dependencies = [
-  "serde_derive",
- ]
- 
-+[[package]]
-+name = "rpi-firmwared"
-+version = "0.1.0"
-+dependencies = [
-+ "common",
-+ "daemon",
-+ "fdt 0.2.0-alpha1",
-+ "libredox",
-+ "redox-scheme",
-+ "redox_syscall 0.9.5",
-+ "scheme-utils",
-+]
-+
- [[package]]
- name = "rtcd"
- version = "0.1.0"
 diff --git a/init/src/scheduler.rs b/init/src/scheduler.rs
 index d42a4e57..23540a9d 100644
 --- a/init/src/scheduler.rs

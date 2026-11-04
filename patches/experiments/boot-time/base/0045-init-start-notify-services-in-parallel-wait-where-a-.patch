@@ -35,9 +35,7 @@ diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
 index 8741d3dd..364eaf0b 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -5,7 +5,6 @@ requires_weak = [
-     "20_graphics.target",
-     "40_ps2d.service",
+@@ -7,5 +7,4 @@ requires_weak = [
      "40_bcm2835-sdhostd.service",
 -    "40_dwc2d.service",
      "40_hwd.service",
