@@ -23,10 +23,14 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 🚧 **Status: experimental (alpha). Boots on the Pi 3B+ and Zero 2 W, not for
 daily use.** Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
 with all four cores, a USB keyboard, Ethernet and a writable root
-filesystem; the same image boots on a Zero 2 W. A few programs still fail at
-start now and then ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)). See
-[docs/status.md](docs/status.md), [docs/known-issues.md](docs/known-issues.md)
-and [ROADMAP.md](ROADMAP.md).
+filesystem; the same image boots on a Zero 2 W. Since
+[v0.3.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.3.0) programs
+start reliably, USB devices can be plugged in at any time, the SD card has a
+faster driver, the CPU clock follows the load (600 to 1400 MHz), and there
+are first drivers for GPIO, I2C and SPI. Next is
+[v0.4.0](https://github.com/redox-rpi/redox-rpi/milestone/3), boot and
+storage. See [docs/status.md](docs/status.md),
+[docs/known-issues.md](docs/known-issues.md) and [ROADMAP.md](ROADMAP.md).
 
 **Try it on a Pi 3 Model B+:** flash the image from the
 [latest release](https://github.com/redox-rpi/redox-rpi/releases) to a microSD
@@ -71,7 +75,8 @@ documentation and images.
   pin header)
 - For the Zero 2 W: an Ethernet/USB hub HAT for networking
 - 3.3 V USB-to-UART adapter (e.g. CP2102 or FTDI)
-- microSD card and a 5 V power supply
+- microSD card and a 5.1 V, 2.5 A power supply (a weaker one makes the Pi
+  slow down and warn about undervoltage)
 - An x86_64 Linux machine (or VM) to build Redox
 
 ## Contributing

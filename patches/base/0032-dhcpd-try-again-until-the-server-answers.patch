@@ -1,0 +1,81 @@
+From 111bbfd7bdc21dfc2f474a13a2c17ca7c02dbd42 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:41:02 +0100
+Subject: [PATCH 31/31] dhcpd: try again until the server answers
+
+Without a link or a network adapter the first attempt failed and dhcpd
+exited, so a cable or adapter plugged in later left the Pi without an
+address. Now it waits 5 s for each answer and tries again 2 s later
+until it is configured, reporting only the first failure.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dhcpd/src/main.rs | 28 ++++++++++++++++++++++------
+ 1 file changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index a215312..4c20be3 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
+ use std::io::{Read, Write};
+ use std::net::{SocketAddr, UdpSocket};
+ use std::time::Duration;
+-use std::{env, process, time};
++use std::{env, thread, time};
+ 
+ use dhcp::Dhcp;
+ 
+@@ -98,6 +98,12 @@ impl MacAddr {
+     }
+ }
+ 
++/// How long to wait for each answer of the server.
++const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
++/// The pause before trying again, e.g. while the cable is out or until a
++/// network adapter is plugged in.
++const RETRY_PAUSE: Duration = Duration::from_secs(2);
++
+ fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+     let current_mac = MacAddr::from_str(get_iface_cfg_value(iface, "mac")?.trim());
+ 
+@@ -127,11 +133,11 @@ fn dhcp(iface: &str, verbose: bool) -> Result<(), String> {
+         "failed to connect udp"
+     );
+     try_fmt!(
+-        socket.set_read_timeout(Some(Duration::new(30, 0))),
++        socket.set_read_timeout(Some(ANSWER_TIMEOUT)),
+         "failed to set read timeout"
+     );
+     try_fmt!(
+-        socket.set_write_timeout(Some(Duration::new(30, 0))),
++        socket.set_write_timeout(Some(ANSWER_TIMEOUT)),
+         "failed to set write timeout"
+     );
+ 
+@@ -457,9 +463,19 @@ fn main() {
+         }
+     }
+ 
+-    if let Err(err) = dhcp(iface, verbose) {
+-        eprintln!("dhcpd: {err}");
+-        process::exit(1);
++    // Without a link or an adapter the server does not answer; keep trying,
++    // so the network comes up when the cable or adapter is plugged in.
++    // Only the first failure is reported.
++    let mut attempts = 1;
++    while let Err(err) = dhcp(iface, verbose) {
++        if attempts == 1 {
++            eprintln!("dhcpd: {err}, trying again every {}s", (ANSWER_TIMEOUT + RETRY_PAUSE).as_secs());
++        }
++        attempts += 1;
++        thread::sleep(RETRY_PAUSE);
++    }
++    if attempts > 1 {
++        eprintln!("dhcpd: configured after {attempts} attempts");
+     }
+ }
+ 
+-- 
+2.54.0 (Apple Git-157)
+

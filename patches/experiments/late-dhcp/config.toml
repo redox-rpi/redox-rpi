@@ -1,0 +1,16 @@
+# Test only: start dhcpd 90 seconds late, as on a real Pi where DHCP can
+# finish after timesync has started. Replaces base's 10_dhcpd.service.
+[[files]]
+path = "/usr/lib/init.d/10_dhcpd.service"
+data = """
+[unit]
+description = "Configure network using DHCP, 90 s late (experiment late-dhcp)"
+requires_weak = [
+    "10_smolnetd.service",
+]
+
+[service]
+cmd = "ion"
+args = ["-c", "sleep 90 && dhcpd"]
+type = "oneshot_async"
+"""

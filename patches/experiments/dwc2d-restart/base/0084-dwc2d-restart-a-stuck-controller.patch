@@ -1,0 +1,377 @@
+From 05a389cd3b6ca668808fc7dd3baaebec91782e47 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 10:25:06 +0000
+Subject: [PATCH] dwc2d: restart a stuck controller (#151)
+
+In Pi test 189 every hub request timed out for good after a network
+write failed: dwc2d spun through one-second timeouts and the network
+was gone. A channel that timed out was only told to stop; now dwc2d
+waits until it halts (and counts the channels that do not), and after
+four control requests in a row time out it logs the controller state,
+forgets every device, resets and sets up the controller again, and the
+next rescan enumerates the devices anew. "restart" in
+/tmp/dwc2d-cycle does the same, for tests.
+---
+ drivers/usb/dwc2d/src/dwc2.rs      | 85 +++++++++++++++++++++++++++---
+ drivers/usb/dwc2d/src/enumerate.rs | 49 ++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs      | 45 +++++++++++++++-
+ drivers/usb/dwc2d/src/regs.rs      |  6 +++
+ drivers/usb/dwc2d/src/usbdiag.rs   |  6 +++
+ 5 files changed, 182 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 959bba87..43b6c3ed 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -94,18 +94,33 @@ impl Dwc2 {
+ 
+     /// Reset the core and bring it up in host mode with DMA enabled.
+     pub fn init_host(&mut self) -> Result<(), Error> {
++        self.init_host_with(false)
++    }
++
++    /// [`Dwc2::init_host`]; with `force`, the core is reset even when its
++    /// AHB master does not get idle (a DMA request stuck, Pi test 190), and
++    /// then waited for, as Linux does.
++    fn init_host_with(&mut self, force: bool) -> Result<(), Error> {
+         let hwcfg2 = self.read(GHWCFG2);
+         self.channels =
+             ((hwcfg2 >> GHWCFG2_NUM_HOST_CHAN_SHIFT) & GHWCFG2_NUM_HOST_CHAN_MASK) as usize + 1;
+ 
+         // Core soft reset, after the AHB master is idle.
+-        self.wait("AHB idle", Duration::from_millis(100), |s| {
++        let idle = self.wait("AHB idle", Duration::from_millis(100), |s| {
+             s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
+-        })?;
++        });
++        if !force {
++            idle?;
++        }
+         self.write(GRSTCTL, GRSTCTL_CSFT_RST);
+         self.wait("core reset", Duration::from_millis(100), |s| {
+             s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
+         })?;
++        if force {
++            self.wait("AHB idle after reset", Duration::from_millis(100), |s| {
++                s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
++            })?;
++        }
+         delay(Duration::from_millis(1));
+ 
+         // Force host mode; the switch takes up to 25 ms.
+@@ -341,15 +356,74 @@ impl Dwc2 {
+                 return Ok(status);
+             }
+             if start.elapsed() > timeout {
+-                let value = self.read(hcchar(ch));
+-                self.write(hcchar(ch), value | HCCHAR_CHDIS);
+                 self.note_timeout(ch);
++                self.stop_channel(ch);
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+         }
+     }
+ 
++    /// Stop a channel whose transfer timed out and wait until it halts, so
++    /// the next transfer does not start on a channel that is still busy. A
++    /// channel that does not halt even then means the controller is stuck
++    /// (#151, Pi test 189); counted in `/tmp/dwc2d-usbstats`.
++    fn stop_channel(&self, ch: usize) {
++        let value = self.read(hcchar(ch));
++        if value & HCCHAR_CHENA != 0 {
++            self.write(hcchar(ch), value | HCCHAR_CHDIS);
++            if self
++                .wait("channel halt", Duration::from_millis(10), |s| s.read(hcint(ch)) & HCINT_CH_HLTD != 0)
++                .is_err()
++            {
++                crate::usbdiag::HALT_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            }
++        }
++        self.write(hcint(ch), u32::MAX);
++    }
++
++    /// The controller's state in one line, for the log before a restart.
++    pub fn dump(&self) -> String {
++        let mut s = format!(
++            "GINTSTS {:#x} HPRT0 {:#x} HFNUM {:#x} GNPTXSTS {:#x} HPTXSTS {:#x} HAINT {:#x} GRSTCTL {:#x}",
++            self.read(GINTSTS),
++            self.read(HPRT0),
++            self.read(HFNUM),
++            self.read(GNPTXSTS),
++            self.read(HPTXSTS),
++            self.read(HAINT),
++            self.read(GRSTCTL),
++        );
++        for ch in 0..self.channels {
++            let c = self.read(hcchar(ch));
++            if c != 0 {
++                s += &format!(
++                    "; ch{ch} HCCHAR {c:#x} HCINT {:#x} HCTSIZ {:#x}",
++                    self.read(hcint(ch)),
++                    self.read(hctsiz(ch))
++                );
++            }
++        }
++        s
++    }
++
++    /// Start the controller over after it got stuck: disable every channel,
++    /// then the same reset and setup as at start. The devices are enumerated
++    /// again by the next rescan.
++    pub fn restart(&mut self) -> Result<(), Error> {
++        // Let every channel halt first: a transfer still running when the
++        // core resets is undefined (QEMU aborts on it).
++        for ch in 0..self.channels {
++            self.stop_channel(ch);
++        }
++        self.write(GAHBCFG, 0);
++        self.init_host_with(true)?;
++        // The core reset switches the root port's power off on the Pi (not
++        // in QEMU); switch it on, so the hub connects again for the rescan.
++        self.write_port(HPRT0_PWR, 0);
++        Ok(())
++    }
++
+     /// Bytes moved by the last transfer on a channel and the data PID for
+     /// the next one.
+     fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
+@@ -512,9 +586,8 @@ impl Dwc2 {
+             }
+             if start.elapsed() > timeout {
+                 // Halt the channel so it can be reused.
+-                let value = self.read(hcchar(ch));
+-                self.write(hcchar(ch), value | HCCHAR_CHDIS);
+                 self.note_timeout(ch);
++                self.stop_channel(ch);
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 495f0848..fe8cfd3e 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -116,8 +116,14 @@ pub struct Bus {
+     failed: HashSet<Option<(u8, u16)>>,
+     /// Retries left for a failed port (see [`ATTACH_RETRIES`]).
+     retries: HashMap<Option<(u8, u16)>, u8>,
++    /// Requests that timed out since the last one that did not.
++    timeouts_in_a_row: u32,
+ }
+ 
++/// Requests timing out in a row after which the controller counts as stuck
++/// (#151, Pi test 189: every hub request timed out, for good).
++const STUCK_AFTER_TIMEOUTS: u32 = 4;
++
+ impl Bus {
+     pub fn new(hc: &Dwc2) -> Self {
+         Self {
+@@ -130,9 +136,35 @@ impl Bus {
+             hubs: Vec::new(),
+             failed: HashSet::new(),
+             retries: HashMap::new(),
++            timeouts_in_a_row: 0,
+         }
+     }
+ 
++    /// Whether the controller seems stuck: control requests keep timing
++    /// out. (A device that is unplugged makes its own polls time out, not
++    /// the hub requests of a rescan.)
++    pub fn stuck(&self) -> bool {
++        self.timeouts_in_a_row >= STUCK_AFTER_TIMEOUTS
++    }
++
++    /// Forget every device, before the controller is restarted; returns
++    /// their addresses.
++    pub fn forget_all(&mut self) -> Vec<u8> {
++        let removed: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
++        // Stop their channels as on unplugging (QEMU otherwise goes on
++        // retrying a NAKed poll into the reset and aborts).
++        for &address in &removed {
++            self.hc.halt_device(address);
++        }
++        self.devices.clear();
++        self.hubs.clear();
++        self.tts.clear();
++        self.failed.clear();
++        self.retries.clear();
++        self.timeouts_in_a_row = 0;
++        removed
++    }
++
+     /// The lowest address no device uses.
+     fn free_address(&self) -> Result<u8, Error> {
+         (1..=127)
+@@ -169,12 +201,20 @@ impl Bus {
+                 &mut self.setup,
+                 &mut self.data,
+             ) {
+-                Ok(len) => return Ok(self.data[..len].to_vec()),
++                Ok(len) => {
++                    self.timeouts_in_a_row = 0;
++                    return Ok(self.data[..len].to_vec());
++                }
+                 Err(Error::Stall) if attempt < ATTEMPTS => {
+                     attempt += 1;
+                     delay(Duration::from_millis(10));
+                 }
+                 Err(err) => {
++                    if matches!(err, Error::Timeout(_)) {
++                        self.timeouts_in_a_row += 1;
++                    } else {
++                        self.timeouts_in_a_row = 0;
++                    }
+                     println!(
+                         "dwc2d: request {:02x?} to address {address} (max packet {max_packet}, {speed:?} speed) failed: {err:?}",
+                         *self.setup
+@@ -498,6 +538,11 @@ impl Bus {
+ 
+     /// Leave the root port alone until its device is unplugged: it failed
+     /// to enumerate.
++    /// Whether the device on the root port failed to enumerate.
++    pub fn root_failed(&self) -> bool {
++        self.failed.contains(&None)
++    }
++
+     pub fn give_up_root(&mut self) {
+         self.failed.insert(None);
+     }
+@@ -554,7 +599,7 @@ impl Bus {
+         hubs.sort_by_key(|h| h.depth);
+         for hub in hubs {
+             for port in 1..=hub.ports {
+-                if !self.hubs.iter().any(|h| h.address == hub.address) {
++                if !self.hubs.iter().any(|h| h.address == hub.address) || self.stuck() {
+                     break;
+                 }
+                 if let Err(err) = self.scan_port(hub, port, &mut changes.removed) {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 7ebbee56..9de69c6c 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -390,6 +390,11 @@ impl Timer {
+     }
+ }
+ 
++/// Restarts of a stuck controller in a row before dwc2d gives up, and the
++/// time between them.
++const RESTART_TRIES: u32 = 5;
++const RESTART_AGAIN: Duration = Duration::from_secs(10);
++
+ /// How often to look for devices plugged in or removed.
+ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
+ /// A test without a person writes a port to this file; the next rescan
+@@ -541,6 +546,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     if keyboard.is_some() || irq_file.is_none() {
+         timer.arm(Duration::ZERO);
+     }
++    let mut restart_tries = 0u32;
++    let mut last_restart = std::time::Instant::now();
+     let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
+     events
+         .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
+@@ -604,11 +611,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 hotplug.fired();
+                 usbdiag::step("scan");
+                 let mut cycled = Vec::new();
++                let mut restart = false;
+                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
+                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+                     let net = scheme.adapter_mut();
+                     let request = request.trim();
++                    restart = request == "restart";
+                     let port = match request {
++                        // A controller restart, for tests (see below).
++                        "restart" => None,
+                         "network" => net.active.and_then(|a| bus.port_of(a)),
+                         "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
+                         _ => {
+@@ -630,11 +641,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                                 println!("dwc2d: cycle: {err:?}");
+                             }
+                         }
++                        None if restart => {}
+                         None => println!("dwc2d: cycle: no port for {request:?}"),
+                     }
+                 }
+-                let mut changes = bus.scan();
++                let mut changes = if restart { Default::default() } else { bus.scan() };
+                 changes.removed.extend(cycled);
++                // A stuck controller (every request times out) does not come
++                // back by itself: restart it and find the devices again.
++                // After a restart that did not bring the devices back (the
++                // controller still stuck, or nothing on the root port), try
++                // again every few seconds, a few times.
++                let again = restart_tries > 0
++                    && restart_tries < RESTART_TRIES
++                    && last_restart.elapsed() >= RESTART_AGAIN
++                    && (bus.root_failed() || bus.devices.is_empty());
++                if !bus.devices.is_empty() && !bus.root_failed() {
++                    restart_tries = 0;
++                }
++                if restart || bus.stuck() || again {
++                    restart_tries += 1;
++                    last_restart = std::time::Instant::now();
++                    usbdiag::step("restart");
++                    println!("dwc2d: restart {restart_tries} (up to {RESTART_TRIES} in a row without devices)");
++                    println!("dwc2d: controller stuck, restarting it: {}", hc.dump());
++                    println!("dwc2d: errors so far: {}", usbdiag::summary());
++                    usbdiag::RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                    changes.removed.extend(bus.forget_all());
++                    match hc.restart() {
++                        Ok(()) => {
++                            if irq_file.is_some() {
++                                hc.enable_rx_interrupt(RX_CHANNEL);
++                            }
++                            println!("dwc2d: controller restarted");
++                        }
++                        Err(err) => println!("dwc2d: controller restart failed: {err:?}"),
++                    }
++                }
+                 let net = scheme.adapter_mut();
+                 for &address in &changes.removed {
+                     net.remove(address);
+diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
+index afca2ca5..a68d6149 100644
+--- a/drivers/usb/dwc2d/src/regs.rs
++++ b/drivers/usb/dwc2d/src/regs.rs
+@@ -37,6 +37,12 @@ pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
+ pub const HCFG: usize = 0x400;
+ pub const HFIR: usize = 0x404;
+ pub const HFNUM: usize = 0x408;
++/// Periodic TX FIFO and request queue space.
++pub const HPTXSTS: usize = 0x410;
++/// Host channels with an interrupt.
++pub const HAINT: usize = 0x414;
++/// Non-periodic TX FIFO and request queue space.
++pub const GNPTXSTS: usize = 0x02C;
+ pub const HAINTMSK: usize = 0x418;
+ pub const HPRT0: usize = 0x440;
+ 
+diff --git a/drivers/usb/dwc2d/src/usbdiag.rs b/drivers/usb/dwc2d/src/usbdiag.rs
+index a4c39792..7ad56d2c 100644
+--- a/drivers/usb/dwc2d/src/usbdiag.rs
++++ b/drivers/usb/dwc2d/src/usbdiag.rs
+@@ -31,6 +31,10 @@ static LAST_PORT_MS: AtomicU64 = AtomicU64::new(0);
+ pub static ROOT_EVENTS: AtomicU64 = AtomicU64::new(0);
+ static LAST_HPRT0: AtomicU64 = AtomicU64::new(0);
+ pub static RECOVERIES: AtomicU64 = AtomicU64::new(0);
++/// Channels that did not halt after a timeout.
++pub static HALT_FAILURES: AtomicU64 = AtomicU64::new(0);
++/// Controller restarts.
++pub static RESTARTS: AtomicU64 = AtomicU64::new(0);
+ 
+ static START: OnceLock<Instant> = OnceLock::new();
+ 
+@@ -121,6 +125,8 @@ pub fn write(hprt0: u32, gintsts: u32) {
+         ("root_events", &ROOT_EVENTS),
+         ("last_hprt0", &LAST_HPRT0),
+         ("recoveries", &RECOVERIES),
++        ("halt_failures", &HALT_FAILURES),
++        ("restarts", &RESTARTS),
+     ] {
+         let value = value.load(Relaxed);
+         if name.starts_with("last_") && !name.ends_with("_ms") {
+-- 
+2.53.0
+
