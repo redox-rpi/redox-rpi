@@ -7489,3 +7489,46 @@ no panic, exception or `FATAL` line. **Pass.**
   and 0 of 300 starts failed.
 
 Stable `v0.4.0-dev-201-gb714bca+x9f76` restored (08:51); devsh answers.
+
+## #211: does the network loss of #209 come from the pkg-persist boot copy, or is it #92? (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-269-gd3ebd24c+x42ad` (branch `pkg-persist` d3ebd24, PR #106),
+`~/redox-rpi-boot/keep/t44p-v1.img`, repository `/srv/tftp/pkg-t44`. Real Pi 3B+ over
+netboot, reset at 09:21:26 UTC. On every boot, homenodellm ran a devsh `echo ok` every
+30 s. **Result: it is not the boot copy.** Both boots with persisted packages kept the
+network through every step. The control boot without packages lost it during the vim
+download. That points to #92.
+
+| Boot | Packages copied at boot | Idle 10 min | `pkg install vim` | 2× dd 52 MB | Watch 5 min |
+|---|---|---|---|---|---|
+| B1 | 215 files (4107 ms) | ok | ok (4:45 min) | ok (159 s each, 330 kB/s) | ok |
+| B2 | 215 files (4145 ms) | ok | ok (4:45 min) | ok (158 s each) | ok |
+| C2 (no `/scheme/data/pkg`) | "does not exist, nothing to copy" | ok | **network lost** about 40 s after the start | not run | not run |
+
+- **Boot A** (prepare): `40_redox-rpi` set to pkg-t44.
+  - `pkg-persist install redox-fatfs2` gave 1 file (158 ms).
+  - `pkg-persist install nano` gave 214 files and kept 2 from the image (3867 ms).
+  - Then `reboot`.
+- **B1, B2:** the copy line came right after `redox login:`, then timesync's NTP line
+  (09:23:08 and 09:50:21).
+  - devsh missed only the one probe that fell into each reboot.
+- **Boot C:** the copy line came again (215 files, 4151 ms). On the serial console,
+  `rm -r /scheme/data/pkg` and `reboot`.
+- **C2:** pkg-persist printed "does not exist, nothing to copy", and NTP came at 10:18:34.
+  - The 10 idle minutes passed with devsh ok.
+  - `pkg install --yes vim` started at 10:28:48. devsh failed from 10:29:27 and never
+    came back (22 fails until 10:41).
+  - The serial log has no error, panic or link-down line.
+- **#92 checklist on the serial console** (10:30:43, 12 min 38 s after boot):
+  - `cat /scheme/sys/context` answered. `pkg` (pid 138, 17 s CPU) was still running.
+  - netstack was blocked, with 1.6 s CPU and 224 KB shared.
+  - dwc2d was sleeping, with 16.6 s CPU.
+  - No process showed high CPU.
+  - `cat /scheme/netcfg/ifaces/eth0/addr/list` **never returned** (more than 120 s).
+    netstack no longer answers its own config scheme, so the serial shell hung too.
+    `route/list`, `ping`, `free` and `uptime` could not run after it.
+- **Not done:** pi-test (planned for boot C2), because the network was gone.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored. The serial shell was stuck, so a
+  `reboot` was not possible. A Shelly power cycle at 10:48:05 brought stable up, and
+  devsh answers.
+  - `/scheme/data/pkg` is removed (boot C).
