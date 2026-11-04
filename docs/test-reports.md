@@ -8156,3 +8156,32 @@ bootloader passes the firmware command line on.
 - **(4)** `/srv/tftp/cmdline.txt` was deleted at 21:05:21, before the restore. Stable
   `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s, devsh
   answers, and `/srv/tftp/redox` matches the backup.
+
+## #234 #126 power saving step 2c: Ethernet speed through U-Boot bootargs (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-358-ga2f7248b+x6f4a` (branch `power-eth` a2f7248b, experiments `eth-speed`
+and `clock-states`). Real Pi 3B+ over netboot, no HDMI connected. **Result: pass. The setting
+reaches the kernel, and the first link is 100 Mbit/s.**
+
+- **(1)** After staging, `netboot-bootargs.sh "RPI_ETH_SPEED=100"` (from `power-eth`
+  5f6ceaf0) put `# netboot-bootargs.sh` and the `setenv bootargs` line at lines 55–56 of
+  `/srv/tftp/redox/netboot.cmd`, before `bootefi` (line 57), and compiled `netboot.scr`.
+- **(2)** Reset at 21:17:39 UTC, `redox login:` after 18 s. Boot log:
+  - `dwc2d: RPI_ETH_SPEED=100 from the command line`
+  - `dwc2d: LAN78xx advertising up to 100 Mbit/s (RPI_ETH_SPEED)`
+  - `dwc2d: link up on the LAN7800 at address 6, 100 Mbit/s`. This is the first link line;
+    there is no 1000 line at all.
+  - Side note: in this boot the LAN7800 disappeared once right after the setting was applied
+    (`hub 2 port 1: device at address 6 removed`, then `device connected`). It was set up
+    again with the same advertising line, and the `link up … 100 Mbit/s` line came twice.
+    `devices ready after 4262 ms` (#228/#231–#233: 4666–4828 ms, and none of those boots
+    had the removal). The network worked normally.
+- **(3) pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **(4) `cat /scheme/rpi-firmware/clock_states`:**
+  `emmc on 200000000 0x0`, `uart on 48000000 0x1`, `arm on 1400000000 0x0`,
+  `core on 399999000 0x0`, `v3d on 300000000 0x0`, `h264 off 0 0x0`, `isp off 0 0x0`,
+  **`sdram unknown 0 0x0`**, `pixel off 0 0x0`, `pwm off 0 0x0`.
+  - sdram reads `unknown` as intended; the others are as in #232.
+  - `clocks` is unchanged from #232.
+- **(5)** Stable `v0.4.0-dev-201-gb714bca+x9f76` restored, including `netboot.scr` without the
+  line: banner after 18 s, devsh answers, and `/srv/tftp/redox` matches the backup.
