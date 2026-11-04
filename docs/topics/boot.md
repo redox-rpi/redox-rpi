@@ -44,12 +44,16 @@
   `fw-direct-boot`: `tools/rpi-boot-stub` as `kernel8.img` wraps the
   unchanged kernel; boots to the login prompt in QEMU `raspi3b`
   (`scripts/fw-direct-boot.sh --test`). `NAME=value` words of the
-  command line (`cmdline.txt`) go into the environment. The MAC address
-  probably comes from the firmware's devicetree; to check at the first Pi
-  test with the serial console. `make-sdcard.sh --direct` writes a card
-  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md),
-  card rebuilt on v0.4.0-dev (2026-11-01). #15 is with the firmware session
-  now.
+  command line (`cmdline.txt`) go into the environment.
+  `make-sdcard.sh --direct` writes a card for it. The stub switches the
+  firmware's USB power domain on, as U-Boot's `board_init` does: without
+  it Pi test #18 had no USB (no network, no keyboard). **Pi test #205
+  passed** (2026-11-03): USB at high speed, keyboard, LAN7800 with the
+  board MAC from the firmware's devicetree, pi-test, `/scheme/data`, and
+  the FAT boot partition through `fatfsd`. The banner says `direct`
+  instead of `netboot`. **PR [#183](https://github.com/redox-rpi/redox-rpi/pull/183)**
+  (firmware session). Open: the root runs from the 222 MiB live disk in
+  RAM, and updates go through the FAT partition (`rpi-update`, test #72).
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
