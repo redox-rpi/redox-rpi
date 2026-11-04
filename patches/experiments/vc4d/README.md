@@ -27,5 +27,23 @@ pointer. Details in the vc4d README.
 
 ## Results
 
-See the sections below as they come; the Pi check is a test-plan row (HDMI,
-NanoKVM or a person).
+QEMU (raspi3b has no HVS), image `v0.4.0-dev-74-g86cd4d9+x9736`
+(netboot) with vc4d `1aacade`:
+
+- Normal boot: the HVS reads as zeros, vc4d logs `the firmware left the HVS
+  off (or this is QEMU, which has none)` and exits; `vesad` keeps the
+  screen, Orbital runs on it.
+- `VC4D_FAKE=640x480` and `VC4D_FAKE=1920x1200` (an HVS in memory): fbcond
+  hands the console over to vc4d (`display.vc4`), then Orbital opens it and
+  uses the cursor plane. The lists in the log: the primary plane at the
+  full size with the buffer at a `0xc...` bus address, then the 64x64 ARGB
+  cursor plane on top. At 1920x1200 all dumb buffers (9.2 MB) got
+  contiguous memory.
+
+Not shown by QEMU: whether the HVS takes the list, colours, the pointer
+position, tearing. That is the Pi row (#218).
+
+Images: netboot `keep/netboot-v0.4.0-dev-74-g86cd4d9+x9736.img` on
+homenodellm, SD
+http://homenodellm:8080/sdcard/redox-rpi-graphics-vc4d-v0.4.0-dev-74-g86cd4d9.img.xz
+(sha256 `c9b241a2...31b8`).
