@@ -7686,3 +7686,99 @@ Real Pi 3B+ over netboot, reset at 13:19:21 UTC. No panic, exception or `FATAL` 
   - `env TZ=UTC timerd -t 1792890000` gave `2026-10-25 01:00:00 UTC = 2026-10-25 01:00:00 UTC (+00:00)`.
 - pi-test: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:21). devsh answers.
+
+## #217: PRs #161, #163 and #164 together on main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-296-g64a62d9+x9f76` (branch `pitest-161-163-164` on main 399bec8, experiments
+`timesync`, `rtl8152`), `~/redox-rpi-rebase/keep/pt-161-163-164.img` with its manifest.
+Real Pi 3B+ over netboot, reset at 13:24:33 UTC, login after 20 s. No panic, exception or `FATAL`
+line. **Pass.**
+
+- **(1)** `redox login:` on the serial console, no panic.
+- **(2)** The boot log has `timesync: clock set to 2026-11-04 13:24:52 UTC from pool.ntp.org`
+  (relibc `0011`). `date -u` on the Pi and on homenodellm both gave
+  `Wed Nov 4 13:25:10 UTC 2026`.
+- **(3)** Logged in on the serial console, then
+  `patches/experiments/serial-rx/serial-input-test.sh 20`: **20 of 20 lines complete**
+  (getty `0024`).
+- **(4)** pi-test `--starts 300` with the row's manifest: version, manifest (build ID and
+  libc.so hash match), ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- **`0015` does no harm:** the image starts `bcm2835-sdhostd`, which prints `SDHC/SDXC card,
+  15193 MiB, 4-bit bus, high speed` and `serving /scheme/disk.mmc`. There is no
+  `bcm2835-sdhcid` line.
+  - The two `[ERROR redoxfs] failed to open filesystem /scheme/disk.mmc/0…` lines are in
+    every netboot image's log (rows 214–216 too), so they are not new.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:30). devsh answers.
+
+## #218: #37 mDNS, PR #93 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-346-gfd355e58+x3d8d` (branch `mdns`, experiments `multicast`, `ipv6`,
+`lan78xx-multicast`, `mdns`), `~/mdns-test/keep/mdns-v0.4.0-dev-346-gfd355e58+x3d8d.img`.
+Real Pi 3B+ over netboot, reset at 13:32:54 UTC. No panic, exception or `FATAL` line.
+**Pass.**
+
+Serial log:
+
+```
+mdnsd: redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2 services configured
+mdnsd: redox-rpi._devsh._tcp.local port 2323 announced
+mdnsd: redox-rpi.local is 192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1509:6101:ba27:ebff:fe08:e0aa, fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa
+```
+
+`mdns-query.py` from `origin/mdns`, run on homenodellm:
+
+- **(1)** `_devsh._tcp.local PTR`: one answer from the Pi with PTR, SRV, TXT, A and AAAA:
+  ```
+  192.168.178.148: _devsh._tcp.local PTR redox-rpi._devsh._tcp.local (ttl 4500)
+  192.168.178.148: redox-rpi._devsh._tcp.local SRV port 2323 target redox-rpi.local (ttl 120)
+  192.168.178.148: redox-rpi._devsh._tcp.local TXT 00 (ttl 4500)
+  192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA 2a02:590:1509:6101:ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+  ```
+- **(2)** `redox-rpi.local`: the Pi answers with A `192.168.178.148` and the three AAAA. The
+  Fritz!Box (192.168.178.1) also repeats the A with ttl 10.
+- **(3)** `redox-rpi.local AAAA -6 wlp13s0`: from `fe80::ba27:ebff:fe08:e0aa` (the Pi) came the
+  AAAA `fe80::…`, `2a02:590:1509:6101:…` and `fdeb:…`, plus the A. The router repeated
+  them with ttl 10.
+  - homenodellm is on cable now (`enp12s0`). The same query over `enp12s0` gives the same answers.
+- **(4)** `_services._dns-sd._udp.local PTR`: the Pi answers
+  `192.168.178.148: _services._dns-sd._udp.local PTR _devsh._tcp.local (ttl 4500)` (plus its
+  A/AAAA), and no `_ssh._tcp` from 192.168.178.148.
+  - The other devices on the LAN that answered are left out here.
+- pi-test: version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:35). devsh answers.
+
+## #219: #55/#86 Ctrl-C, PR #121 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-314-g9b7948a8+xc169` (branch `ctrlc-raw` with main merged, experiments
+`timesync`, `pty-sigint`), `~/t18-work/image-c121/harddrive.img` (md5 `f5e80496…`).
+Staged with `~/t18-work/c121-stage/scripts/netboot.sh`; the bootloader is md5 `da1a7595…`.
+Real Pi 3B+ over netboot, reset at 13:36:38 UTC, `devshd: listening` at 13:36:58. No panic,
+exception or `FATAL` line. **Fail: on the serial console, 3 of 10 rounds were not
+stopped, the same 3 in two runs. devsh 10 of 10 and the standard checks pass.**
+
+- **Serial** (from 13:37:36, about 40 s after `devshd: listening`; root login with
+  `sercmd.py`, then the logger was paused while
+  `serial-ctrlc-test.py --device /dev/ttyUSB0 --delays 0.01,0.02,0.03,0.01,0.02,0.03,0.05,0.1,0.3,1` ran).
+  Both runs gave exactly the same result:
+
+  | Round | Delay after Enter | Run 1 (13:37) | Run 2 (13:41) |
+  |---|---|---|---|
+  | 1 | 0.01 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 2 | 0.02 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 3 | 0.03 s | SIGINT after 0.1 s | SIGINT after 0.1 s |
+  | 4 | 0.01 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 5 | 0.02 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 6 | 0.03 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 7–10 | 0.05, 0.1, 0.3, 1 s | SIGINT after 0.0–0.1 s | the same |
+
+  - The pattern: after an early Ctrl-C (0.01–0.03 s) that worked, the next early one is missed. After a missed round, the next early one works again. From 0.05 s on, every round works.
+  - In the missed rounds the console shows `sleep 40` and then only the next prompt, with no `ended by signal SIGINT` line. That is what a `sleep 40` that ran to its end looks like.
+  - #131 (before the main merge) had 19 of 19 on the same delays.
+  - The logs are in `~/pitest-tools/t219/serial-ctrlc.log` and `serial-ctrlc2.log` on homenodellm.
+- **devsh:** `ctrlc-test.py 192.168.178.148 --delays 0,0.01,0.02,0.03,0.1` gave **10 of 10 stopped**
+  (0.1–0.2 s after Ctrl-C), `Ctrl-C at the prompt: shell still answers`, and devsh answered afterwards.
+- pi-test `--starts 300`: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:45). devsh answers, and the serial logger is running again.
