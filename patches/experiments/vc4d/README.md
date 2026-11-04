@@ -41,7 +41,7 @@ QEMU (raspi3b has no HVS), image `v0.4.0-dev-74-g86cd4d9+x9736`
   contiguous memory.
 
 Not shown by QEMU: whether the HVS takes the list, colours, the pointer
-position, tearing. That is the Pi row (#218).
+position, tearing. That is the Pi row (#220).
 
 Images: netboot `keep/netboot-v0.4.0-dev-74-g86cd4d9+x9736.img` on
 homenodellm, SD
