@@ -145,7 +145,7 @@ class BadServer:
             if mode == "ok":
                 conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
             elif mode == "stall":
-                self.stop.wait(self.rng.uniform(5, 60))
+                self.stop.wait(self.rng.uniform(5, 20))
             elif mode == "garbage":
                 conn.sendall(os.urandom(self.rng.randint(1, 65536)))
             elif mode == "half":
@@ -160,7 +160,7 @@ class BadServer:
                     time.sleep(self.rng.uniform(0, 0.2))
             elif mode == "endless":
                 conn.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-                end = time.time() + self.rng.uniform(5, 30)
+                end = time.time() + self.rng.uniform(3, 15)
                 while time.time() < end and not self.stop.is_set():
                     conn.sendall(b"4000\r\n" + os.urandom(0x4000) + b"\r\n")
             elif mode == "bad-length":

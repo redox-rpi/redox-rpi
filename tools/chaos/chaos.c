@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -861,12 +862,22 @@ static int f_net(void *arg)
     static char buf[16384];
     unsigned conns = 5 + rnd_below(25), ok = 0, refused = 0, errors = 0;
     unsigned long got = 0;
+    /* no new connection in the last part of the round: a stalled reply
+     * may hold the last one until the server gives up */
+    uint64_t end = now_ms() + (timeout_s > 40 ? timeout_s - 30 : timeout_s / 2) * 1000ULL;
     for (unsigned c = 0; c < conns; c++) {
+        if (now_ms() >= end) {
+            conns = c;
+            break;
+        }
         int s = socket(AF_INET, SOCK_STREAM, 0);
         if (s < 0) {
             note("net: socket: %s", strerror(errno));
             return 3;
         }
+        /* netstack may not support it; the round deadline is the backstop */
+        struct timeval tv = { 10, 0 };
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
         if (connect(s, (struct sockaddr *)&sa, sizeof sa) < 0) {
             refused++;
             close(s);
@@ -898,7 +909,7 @@ static int f_net(void *arg)
             this_conn += (unsigned long)r;
             if (how == 4)
                 sleep_ms(rnd_below(50));
-            if (this_conn > 64UL * CHUNK)
+            if (this_conn > 8UL * CHUNK || now_ms() >= end + 20000)
                 break;
         }
         if (r < 0)
