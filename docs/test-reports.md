@@ -7404,3 +7404,60 @@ reached login with no `FATAL` or panic line. **Pass.**
 
 Stable is now the nightly `v0.4.0-dev-201-gb714bca+x9f76` (2026-11-04 03:30). It was
 restored afterwards (07:00), and devsh answers.
+
+## #209: package server end to end (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-269-gd3ebd24c+x42ad` (branch `pkg-persist` d3ebd24, PR #106), staged
+with `netboot.sh` from `~/redox-rpi-boot/keep/t44p-v1.img` (bootloader md5 `64685a6f…`),
+the usual network-boot card. **Partly: boot 1 and the reset pass, but in boot 2 the
+Pi loses its network, so step 6 (`pkg update` replaces files) could not be done.**
+
+**Boot 1** (reset 07:27:42 UTC)
+- (1) pi-test `--starts 300`: version, manifest, ps (51), ps-tty, sdcard pass, and 0
+  of 300 starts failed. `date`: 2026-11-04. `/scheme/data/pkg` did not exist.
+- (2) `pkg-t44` into `/etc/pkg.d/40_redox-rpi`, then `pkg update --yes`: `Commit
+  complete.` (it updated `uutils-procps`). Took **17 s**.
+- (3) `pkg-persist install redox-fatfs2`: `pkg-persist: 1 files copied into /, 0 kept
+  from the image (161 ms)`, **2 s** in all.
+- (3) `pkg-persist install nano`: `pkg-persist: 214 files copied into /, 2 kept from
+  the image (3895 ms)`, **50 s** in all.
+- `pkg info redox-fatfs2`: `remote: 192.168.178.120` (version 0.1.0).
+- `pkg info nano`: `remote: static.redox-os.org` (9.2).
+  - Both show `status: not installed`, which looks odd after the install.
+- `pkg-persist list`: nano, ncursesw, redox-fatfs2, terminfo.
+- (4) `reboot` at 07:30:26.
+
+**Boot 2** (after `reboot`)
+- Banner after 18 s, login at 07:30:44.
+- (5) Right after the login prompt: `pkg-persist: 215 files copied into /, 2 kept from
+  the image (4092 ms)`.
+- `timesync` set the clock from pool.ntp.org at 07:30:48 and `devshd: listening`, so
+  the network worked at first.
+- But homenodellm got `No route to host` (no ARP answer) on every devsh try for
+  6 minutes. Steps 5-7 got no answer, and the devsh reset for the restore did not get
+  through either: power cycle at 07:41.
+
+**Boot 2 again** (stable's devsh reset at 07:43:55, packages still on the card)
+- Login at 07:44:15, `pkg-persist: 215 files copied into /, 2 kept from the image
+  (4085 ms)`, NTP at 07:44:18.
+- devsh answered at 07:44:20.
+- (5) `nano --version`: `GNU nano, version 9.2`. `ls -l /usr/bin/fatfsd` exists.
+  `pkg-persist list` shows the four packages, so **the packages survived the reset**.
+- (6) `pkg-persist` without arguments: `usage: pkg-persist install|remove <package>... |
+  update | list | restore`.
+- (6) `pkg-t44-v2` into `40_redox-rpi`, then `pkg update --yes`: it started downloading
+  `uutils.pkgar` (3.07 MiB) and stopped at 149 KiB. From then on the Pi did not answer
+  on the network again (`No route to host`), and power cycle at 08:02.
+- The serial log has no error, panic, exception, USB removal or `channel halt` line
+  after login in either boot 2.
+
+**Result**
+- Steps 1-4 pass.
+- Step 5 passes: copy line after login, nano 9.2 and fatfsd after the reset.
+- Step 6 fails: in both boots with persisted packages, the network dies within the
+  first minutes, the second time during the `pkg update` download. Boot 1 (no
+  persisted packages) had the network for its whole 3 min, downloads included.
+- I cannot tell from this whether the persisted files or the boot are the cause.
+- (7) `rm -r /scheme/data/pkg` was done afterwards from stable.
+
+Stable `v0.4.0-dev-201-gb714bca+x9f76` restored (power cycle 08:02); devsh answers.
