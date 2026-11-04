@@ -6,24 +6,35 @@
 //! `/etc/redox-rpi-release`) and the time saved by an earlier run. Then it
 //! asks NTP servers (SNTP, RFC 4330) for the time and saves it.
 //!
-//! The clock is set by writing the boot time, in nanoseconds since 1970, to
-//! the kernel's `/scheme/sys/update_time_offset`. Needs root.
+//! The clock is set with `clock_settime`; with a relibc that does not have it
+//! yet (ENOSYS), by writing the boot time, in nanoseconds since 1970, to the
+//! kernel's `/scheme/sys/update_time_offset`, which is what it does. Needs root.
 //!
 //! Usage: `timesync [-n | -d] [server]...` (default: pool.ntp.org time.cloudflare.com).
 //! `-n` only prints the time without setting the clock.
 //! `-d` keeps running: asks the servers again and saves the time every hour.
-//! Tries the servers in turn until one answers, for up to a minute, because
-//! DHCP may still be running when it starts.
+//! `timesync -s 'YYYY-MM-DD HH:MM[:SS]'` (UTC) or `-s @<seconds since 1970>`
+//! sets the clock by hand, for a Pi without a network (Redox' `date` cannot
+//! set it) and saves it.
+//! Waits until DHCP has set a default route, then tries the servers in turn
+//! until one answers, for up to a minute. With `-d` it tries again every 30
+//! seconds until the first answer: Redox' DNS lookup has no timeout, so a
+//! lookup before the network is up would wait forever.
 
 use std::fs;
 use std::io;
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::process;
-use std::thread::sleep;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 const DEFAULT_SERVERS: &[&str] = &["pool.ntp.org", "time.cloudflare.com"];
 const TIME_OFFSET: &str = "/scheme/sys/update_time_offset";
+/// Written after the first answer from a server, for `timerd`. /tmp is new
+/// at each boot.
+const SYNCED: &str = "/tmp/timesync.synced";
 const RELEASE: &str = "/etc/redox-rpi-release";
 /// Where the time is saved: the SD card's data partition (network boot,
 /// where the root filesystem is lost at reboot), else the root filesystem.
@@ -35,6 +46,14 @@ const EARLIEST: u64 = 1_767_225_600;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 const GIVE_UP_AFTER: Duration = Duration::from_secs(60);
 const RESYNC_EVERY: Duration = Duration::from_secs(3600);
+/// With `-d`, until the first answer.
+const RETRY_EVERY: Duration = Duration::from_secs(30);
+const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Lookups that never returned; no new ones beyond this.
+const MAX_STUCK_LOOKUPS: usize = 4;
+static PENDING_LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+/// Routes set by DHCP (`default via …`), from smolnetd.
+const ROUTES: &str = "/scheme/netcfg/route/list";
 
 fn clock_ns(clock: libc::clockid_t) -> u128 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -52,19 +71,96 @@ fn realtime_secs() -> u64 {
 }
 
 /// Set the clock so that it showed `unix_ns` at monotonic time `at_monotonic`.
+/// Sets the clock to `unix_ns`, the time at monotonic time `at_monotonic`.
 fn set_clock(unix_ns: u128, at_monotonic: u128) -> io::Result<()> {
-    // The kernel's real time is boot time plus monotonic time.
+    let now = unix_ns + monotonic_ns().saturating_sub(at_monotonic);
+    let ts = libc::timespec {
+        tv_sec: (now / 1_000_000_000) as libc::time_t,
+        tv_nsec: (now % 1_000_000_000) as libc::c_long,
+    };
+    if unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } == 0 {
+        return Ok(());
+    }
+    let err = io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::ENOSYS) {
+        return Err(err);
+    }
+    // An older relibc: the kernel's real time is boot time plus monotonic time.
     let boot = unix_ns - at_monotonic;
     fs::write(TIME_OFFSET, boot.to_ne_bytes())
+}
+
+/// `timesync -s`: `YYYY-MM-DD HH:MM[:SS]` or `YYYY-MM-DDTHH:MM[:SS]` in
+/// UTC, or `@<seconds since 1970>`.
+fn parse_time_arg(text: &str) -> Option<u64> {
+    if let Some(secs) = text.strip_prefix('@') {
+        return secs.parse().ok();
+    }
+    let (date, time) = text.trim().split_once([' ', 'T'])?;
+    let time = if time.len() == 5 { format!("{time}:00") } else { time.to_string() };
+    let num = |s: &str, range: std::ops::Range<usize>| s.get(range)?.parse::<u64>().ok();
+    let (month, day) = (num(date, 5..7)?, num(date, 8..10)?);
+    let (hour, minute, second) = (num(&time, 0..2)?, num(&time, 3..5)?, num(&time, 6..8)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    parse_utc(&format!("{date}T{time}Z"))
+}
+
+/// `timesync -s`: set the clock by hand.
+fn set_by_hand(text: &str) -> ! {
+    let Some(unix) = parse_time_arg(text) else {
+        eprintln!("timesync: -s wants 'YYYY-MM-DD HH:MM[:SS]' (UTC) or @<seconds>, not {text:?}");
+        process::exit(2);
+    };
+    match set_clock(u128::from(unix) * 1_000_000_000, monotonic_ns()) {
+        Ok(()) => {
+            println!("timesync: clock set to {} UTC by hand", format_utc(unix));
+            save_time();
+            process::exit(0);
+        }
+        Err(err) => {
+            eprintln!("timesync: cannot set the clock: {err}");
+            process::exit(1);
+        }
+    }
+}
+
+/// The server's IPv4 address. The lookup runs in its own thread, so a lookup
+/// that never returns does not hang timesync.
+fn resolve(server: &str) -> io::Result<SocketAddr> {
+    if let Ok(ip) = server.parse::<Ipv4Addr>() {
+        return Ok((ip, 123).into());
+    }
+    if PENDING_LOOKUPS.load(Ordering::SeqCst) >= MAX_STUCK_LOOKUPS {
+        return Err(io::Error::new(io::ErrorKind::TimedOut, "earlier DNS lookups still hang"));
+    }
+    PENDING_LOOKUPS.fetch_add(1, Ordering::SeqCst);
+    let (tx, rx) = mpsc::channel();
+    let name = server.to_string();
+    thread::spawn(move || {
+        let addr = (name.as_str(), 123).to_socket_addrs().map(|mut a| a.find(SocketAddr::is_ipv4));
+        PENDING_LOOKUPS.fetch_sub(1, Ordering::SeqCst);
+        let _ = tx.send(addr);
+    });
+    match rx.recv_timeout(LOOKUP_TIMEOUT) {
+        Ok(Ok(Some(addr))) => Ok(addr),
+        Ok(Ok(None)) => Err(io::Error::new(io::ErrorKind::NotFound, "no IPv4 address")),
+        Ok(Err(err)) => Err(err),
+        Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "DNS lookup timed out")),
+    }
+}
+
+/// Whether there is a default route, that is, DHCP is done. True where
+/// smolnetd's route list cannot be read (other systems).
+fn network_up() -> bool {
+    fs::read_to_string(ROUTES).map_or(true, |routes| routes.contains("default"))
 }
 
 /// Ask one server. Returns the Unix time in nanoseconds and the monotonic
 /// clock at the moment the answer arrived.
 fn query(server: &str) -> io::Result<(u128, u128)> {
-    let addr = (server, 123)
-        .to_socket_addrs()?
-        .find(|a| a.is_ipv4())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no IPv4 address"))?;
+    let addr = resolve(server)?;
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_read_timeout(Some(QUERY_TIMEOUT))?;
     // Leap indicator 0, version 4, mode 3 (client).
@@ -182,8 +278,12 @@ fn restore() {
 /// Ask the servers in turn, for up to a minute. Returns the time it set.
 fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
     let start = Instant::now();
-    let mut last_error = String::new();
+    let mut last_error = String::from("no default route (DHCP not done)");
     while start.elapsed() < GIVE_UP_AFTER {
+        if !network_up() {
+            sleep(Duration::from_secs(1));
+            continue;
+        }
         for server in servers {
             match query(server) {
                 Ok((unix_ns, at_monotonic)) => {
@@ -196,6 +296,7 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
                         return Err(format!("cannot set the clock through {TIME_OFFSET}: {err}"));
                     }
                     println!("timesync: clock set to {} UTC from {server}", format_utc(unix));
+                    let _ = fs::write(SYNCED, format!("{unix}\n"));
                     return Ok(unix);
                 }
                 Err(err) => last_error = format!("{server}: {err}"),
@@ -208,6 +309,15 @@ fn sync(servers: &[&str], dry_run: bool) -> Result<u64, String> {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("-s") {
+        match args.get(1) {
+            Some(text) if args.len() == 2 => set_by_hand(text),
+            _ => {
+                eprintln!("usage: timesync -s 'YYYY-MM-DD HH:MM[:SS]' | timesync -s @<seconds>");
+                process::exit(2);
+            }
+        }
+    }
     let flag = args.first().filter(|a| *a == "-n" || *a == "-d").cloned();
     if flag.is_some() {
         args.remove(0);
@@ -223,9 +333,17 @@ fn main() {
     if !dry_run {
         restore();
     }
-    let result = sync(&servers, dry_run);
+    let mut result = sync(&servers, dry_run);
     if let Err(err) = &result {
         eprintln!("timesync: {err}");
+    }
+    if daemon && result.is_err() {
+        eprintln!("timesync: trying again every {} s", RETRY_EVERY.as_secs());
+        save_time();
+        while result.is_err() {
+            sleep(RETRY_EVERY);
+            result = sync(&servers, false);
+        }
     }
     if dry_run {
         process::exit(i32::from(result.is_err()));
@@ -250,6 +368,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_arg() {
+        assert_eq!(parse_time_arg("1970-01-01 00:00"), Some(0));
+        assert_eq!(parse_time_arg("2026-07-01 12:00:00"), Some(1_782_907_200));
+        assert_eq!(parse_time_arg("2026-10-29T14:05:30"), Some(1_793_282_730));
+        assert_eq!(parse_time_arg("@1793282730"), Some(1_793_282_730));
+        assert_eq!(parse_time_arg("2024-02-29 00:00"), Some(1_709_164_800));
+        assert_eq!(parse_time_arg("2026-13-01 00:00"), None);
+        assert_eq!(parse_time_arg("2026-10-29"), None);
+        assert_eq!(parse_time_arg("2026-10-29 9:00"), None);
+        assert_eq!(format_utc(parse_time_arg("2026-12-31 23:59:59").unwrap()), "2026-12-31 23:59:59");
+    }
 
     #[test]
     fn utc_round_trip() {
