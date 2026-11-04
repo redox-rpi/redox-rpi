@@ -8315,3 +8315,38 @@ Reset at 22:14:35 UTC, `redox login:` after 18 s.
 - The model and the new file were kept on `/scheme/data`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #237 #196 chaos test on the Pi (PR #206) (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-346-g5bc468d7+xa1cf` (branch `chaos-test`, experiment `chaos`, md5
+`e0ad950e…`), staged from `~/redox-rpi-chaos`. Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 22:22:49 UTC, `devshd: listening` after 20 s.
+
+**Result: the Pi hung completely in stressor round 2.** Steps 3 and 4 were not run.
+
+- **(1) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2) Stressor,** `chaos-host.py … --faults stressor --stressor-rounds 40 --stressor-kinds
+  memory,procs,threads,fds,schemes,fill,killio --rounds 2 --seed 237`:
+  - **Round 1 ok:** `chaos --rounds 40 --seed 142046529496316 --quiet --kind …` printed
+    `done: 40 rounds, 0 failed, 384 s, free-mem=504MiB`, and devsh was back after 1 s
+    (jsonl line at 22:30:33).
+  - **Round 2 hang:** `chaos --rounds 40 --seed 152374357964539 --quiet --kind
+    memory,procs,threads,fds,schemes,fill,killio` started at about 22:30:35 and never
+    finished.
+  - At 23:26 devsh no longer accepted connections (connect timeout). I stopped chaos-host,
+    so there is no jsonl line for round 2.
+  - The serial log has nine `kernel::context::memory:DEBUG -- Lacks grant` lines after the
+    login prompt, and nothing after them: no panic, no `oom`, no crash dump.
+  - The serial console did not even echo typed characters (`root` + Enter, 120 s), so the
+    whole system was stuck, not only the network.
+  - Repeat on the Pi: `chaos --rounds 40 --seed 152374357964539 --quiet --kind
+    memory,procs,threads,fds,schemes,fill,killio`, or from the host
+    `scripts/chaos-host.py 192.168.178.148 --faults stressor --stressor-rounds 40
+    --stressor-kinds memory,procs,threads,fds,schemes,fill,killio --seed 237 --rounds 2`.
+- **(3) signals and (4) host faults: not run** (the Pi was hung).
+  - For (4): homenodellm has **no iptables** (`sudo: 'iptables': command not found`), so
+    the `tcp-reset` fault could not run in any case.
+  - `tc` was saved before (`fq_codel` on enp12s0) and is still `fq_codel`; no netem was
+    ever applied.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 23:30:02:
+  banner after 39 s, devsh answers, and `/srv/tftp/redox` matches the backup.
