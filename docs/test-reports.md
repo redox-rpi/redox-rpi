@@ -8224,3 +8224,94 @@ Image `v0.4.0-dev-365-ge557d3fe+xe9a9` (branch `wifi-sdio`, PR #202, experiments
   Part B needs `gpu_mem=64` in `config.txt` on the netboot card (a person and a card swap).
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s.
   pi-test on stable passes (0 of 300 starts failed), and `/srv/tftp/redox` matches the backup.
+
+## #235 #175 assistant: the conversation cap keeps memory flat (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-47-g06188c2+x4590` (branch `assistant-history-cap`, experiments
+`timesync assistant assistant-netboot`). Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 21:38:46 UTC, `redox login:` after 20 s.
+
+**Result: pass, with one finding.**
+- All 14 answers came, and the note came once.
+- After the note, the heap stayed at 434 MiB to the end, and `free` stopped growing.
+- No `oom`, no `RELIBC PANIC`, no panic in the serial log. `assistant` ended with rc=0.
+- The finding: saving the prompt cache fails with `No space left on device`.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **`ls -l /scheme/data`:** `Qwen3-0.6B-Q4_0e.gguf` with 341455552 bytes.
+- **`free` before:** total 870656, used 126968, free 743688 KiB.
+- **`assistant < /tmp/q.txt`** with `ASSISTANT_DEBUG=1`, 21:40:11 to 21:53:46 (812.8 s):
+  - The model loaded in 22.1 s (heap 375 MiB), using neon and 3 threads.
+  - `rinfer: No such file or directory (os error 2)`: there was no saved prompt cache yet.
+  - System prompt: `read 380 tokens in 171.8 s, heap 392 MiB (peak 430 MiB)`.
+  - Then **`rinfer: No space left on device (os error 28)`** (saving `prompt.kv` fails).
+
+| Q | Answer | read | wrote | cache | heap (peak) |
+|---|---|---|---|---|---|
+| My name is Anna. | "Anna is a user who wants to know about their files and time. …" | 22 tok 12.1 s | 24 tok 21.7 s | 426 | 399 (430) |
+| capital of France | Paris | 25 / 14.8 s | 7 / 3.9 s | 458 | 406 (430) |
+| three colours | red, blue, green | 22 / 17.5 s | 10 / 14.3 s | 490 | 406 (430) |
+| capital of Italy | Rome | 25 / 15.1 s | 7 / 5.4 s | 522 | 413 (430) |
+| three animals | "a dog, a cat, and a dog" | 22 / 13.5 s | 13 / 10.0 s | 557 | 413 (430) |
+| capital of Spain | Madrid | 25 / 16.0 s | 7 / 5.5 s | 589 | 420 (430) |
+| three fruits | apple, banana, mango | 22 / 14.4 s | 13 / 8.2 s | 624 | 420 (431) |
+| capital of Germany | Berlin | 25 / 17.8 s | 7 / 4.1 s | 656 | 427 (439) |
+| three trees | oak, pine, maple | 22 / 15.5 s | 13 / 7.8 s | 691 | 427 (439) |
+| capital of Austria | Vienna | 25 / 18.1 s | 7 / 5.9 s | 723 | 434 (447) |
+| three birds | parrot, sparrow, robin | 22 / 17.0 s | 15 / 15.4 s | 760 | 434 (447) |
+| capital of Poland | Warsaw | 24 / 20.7 s | 7 / 11.4 s | 515 | 434 (472) |
+| three flowers | rose, daisy, sunflower | 22 / 19.1 s | 15 / 12.2 s | 552 | 434 (472) |
+| What is my name? | "My name is Alex." (Anna was forgotten, allowed) | 23 / 23.8 s | 5 / 2.9 s | 580 | 434 (472) |
+
+- **Restart before question 12**, after 760 tokens:
+  - `rinfer: /home/root/.cache/assistant/prompt.kv is for another model or prompt`.
+  - The system prompt was read again: `read 380 tokens in 188.1 s, heap 434 MiB (peak 472 MiB)`.
+  - `No space left on device` again.
+  - `read 104 tokens in 65.9 s` (the kept exchanges).
+  - Then **`(The conversation got long; I keep only the last 3 exchanges and forget the rest.)`**
+    once.
+  - The restart took about 4.5 min before the Poland answer. The cache went from 760 down
+    to 515 tokens.
+- **heap:** it grows by about 7 MiB every two answers up to 434 MiB at 760 tokens, then
+  **stays at 434 MiB** for all answers after the note. The peak rose once to 472 MiB during the
+  re-read. QEMU had 434 MiB and a peak of 450.
+- **`free` from a second devsh**, used KiB, total 870656:
+  21:41:41 709580; 21:43:13 746732; 21:44:44 728900; 21:46:16 746072;
+  21:47:52 766708; 21:49:24 791428 (during the restart); 21:50:55 767500; 21:52:28 768456.
+  - After the restart it is flat at about 768 MB used.
+  - The last sample (21:53:59) fell into the reset.
+- **Finding:** writing the prompt cache fails with `No space left on device (os error 28)`,
+  twice. So every start reads the 380-token system prompt again (172–188 s), and the
+  "for another model or prompt" line came at the restart. The model on `/scheme/data` was
+  kept.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #236 #175 assistant: the saved prompt state goes next to the model (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-432-g9357191+x4590` (branch `assistant-history-cap`, experiments
+`timesync assistant assistant-netboot`). Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 22:14:35 UTC, `redox login:` after 18 s.
+
+**Result: pass.** The second start takes 2.6 s for the system prompt instead of 191 s.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **`ls -l /scheme/data` before:** only `Qwen3-0.6B-Q4_0e.gguf` with 341455552 bytes.
+- **Run 1** (22:15:56–22:19:54):
+  - The model loaded in 21.9 s.
+  - `rinfer: No such file or directory (os error 2)` twice: no saved state next to the model
+    or in `~/.cache` yet.
+  - `read 380 tokens in 191.4 s`.
+  - **`rinfer: saved 380 tokens in 5.3 s`**, with no `os error 28`.
+  - "The capital of France is Paris." (7 tokens in 4.7 s), rc=0.
+- **Run 2** (22:19:54–22:20:38, 44 s in all):
+  - The model loaded in 22.2 s.
+  - **`rinfer: loaded 380 tokens in 2.6 s, heap 390 MiB`**, then `read 0 tokens in 0.0 s`.
+  - "The capital of France is Paris." (7 tokens in 3.9 s), rc=0.
+- **`ls -l /scheme/data` after:** `Qwen3-0.6B-Q4_0e.gguf.prompt.kv` with **43581693 bytes**,
+  next to the model.
+- **`free`:** used 126744 KiB before, 236764 after.
+- No panic, no `RELIBC PANIC`, no `oom` in the serial log.
+- The model and the new file were kept on `/scheme/data`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
