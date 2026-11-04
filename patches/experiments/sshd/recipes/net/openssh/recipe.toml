@@ -1,0 +1,49 @@
+# Upstream's recipes/net/openssh with OpenSSH 10.6p1 instead of 10.5p1 (#190,
+# security fixes). Checked against the release notes' SHA256 and Damien
+# Miller's signature. build-image.sh puts this recipe in after it appended
+# the experiments' patches to upstream's one, so the list below names them
+# itself: exp-sshd-<file> is patches/experiments/sshd/recipes/net/openssh/
+# <file>.
+[source]
+tar = "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.6p1.tar.gz"
+blake3 = "5b27910392630fe98eaef74e2ed72ad3416e108ee4234f1be7228c681e515137"
+patches = [
+    "redox.patch",
+    "exp-sshd-0001-sshd-auth-no-chroot-on-Redox.patch",
+    "exp-sshd-0002-sshpty-go-on-when-the-PTY-has-no-owner-Redox.patch",
+]
+[build]
+template = "custom"
+dependencies = [
+    "openssl3",
+    "libldns",
+    "libedit",
+    "zlib",
+    "zstd",
+]
+script = """
+DYNAMIC_INIT
+COOKBOOK_CONFIGURE_FLAGS+=(
+    --disable-strip
+    --with-ldns
+    --with-libedit
+    --sysconfdir=/etc/ssh
+    --disable-utmpx
+)
+export CFLAGS+=" -DSYSTEMD_NOTIFY=1"
+cookbook_configure
+mv "${COOKBOOK_STAGE}"/usr/sbin/sshd "${COOKBOOK_STAGE}"/usr/bin/sshd
+rmdir "${COOKBOOK_STAGE}"/usr/sbin
+
+# Extracted from `make host-key-force`
+# TODO: Postscript to generate this
+# ssh-keygen -t dsa -f "${COOKBOOK_STAGE}"/etc/ssh/ssh_host_dsa_key -N ""
+# ssh-keygen -t rsa -f "${COOKBOOK_STAGE}"/etc/ssh/ssh_host_rsa_key -N ""
+# ssh-keygen -t ed25519 -f "${COOKBOOK_STAGE}"/etc/ssh/ssh_host_ed25519_key -N ""
+# ssh-keygen -t ecdsa -f "${COOKBOOK_STAGE}"/etc/ssh/ssh_host_ecdsa_key -N ""
+
+CONFIG_FILE="${COOKBOOK_STAGE}"/etc/ssh/sshd_config
+
+# ipv6 is not working yet
+sed -i "s/#AddressFamily any/AddressFamily inet/g" "${CONFIG_FILE}"
+"""

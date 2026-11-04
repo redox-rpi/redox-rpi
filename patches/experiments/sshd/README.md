@@ -1,7 +1,7 @@
 # Experiment: sshd, OpenSSH server instead of devshd
 
 For [#45](https://github.com/redox-rpi/redox-rpi/issues/45). Builds
-OpenSSH 10.5p1 from Redox' recipe `net/openssh` (it is not in Redox'
+OpenSSH 10.6p1 (#190) with Redox' recipe `net/openssh` (it is not in Redox'
 prebuilt aarch64 repository) and starts `sshd` on port 22.
 
 - `91_sshd-keys.service` runs `/usr/lib/redox-rpi/sshd-keys` at boot: it

@@ -8,7 +8,7 @@ error is now logged at debug level and the session goes on.
 
 --- a/sshpty.c
 +++ b/sshpty.c
-@@ -158,6 +158,16 @@
+@@ -154,6 +154,16 @@
  	(void) ioctl(ptyfd, TIOCSWINSZ, &w);
  }
  
@@ -25,7 +25,7 @@ error is now logged at debug level and the session goes on.
  void
  pty_setowner(struct passwd *pw, const char *tty)
  {
-@@ -188,7 +198,11 @@
+@@ -184,7 +194,11 @@
  
  	if (st.st_uid != pw->pw_uid || st.st_gid != gid) {
  		if (chown(tty, pw->pw_uid, gid) == -1) {
@@ -38,7 +38,7 @@ error is now logged at debug level and the session goes on.
  			    (st.st_uid == pw->pw_uid || st.st_uid == 0))
  				debug("chown(%.100s, %u, %u) failed: %.100s",
  				    tty, (u_int)pw->pw_uid, (u_int)gid,
-@@ -202,7 +216,10 @@
+@@ -198,7 +212,10 @@
  
  	if ((st.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO)) != mode) {
  		if (chmod(tty, mode) == -1) {
