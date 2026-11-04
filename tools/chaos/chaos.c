@@ -12,7 +12,7 @@
  *
  *   chaos [--rounds N] [--seed S] [--kind K[,K]...] [--round-seed S]
  *         [--timeout SEC] [--mem-reserve MB] [--fill-max MB] [--data DIR]
- *         [--list] [--quiet]
+ *         [--net HOST:PORT] [--list] [--quiet]
  *
  * Exit code 0 when every round and health check passed, 1 otherwise.
  */
@@ -33,6 +33,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #define MAX_FDS 4096
 #define MAX_KIDS 64
@@ -49,6 +52,7 @@ static unsigned mem_reserve_mb = 48;
 static unsigned fill_max_mb;            /* 0: until the disk is full */
 static const char *data_dir = "/scheme/data";
 static const char *self_path = "/usr/bin/chaos";
+static const char *net_target;          /* host:port of scripts/chaos-host.py serve */
 static int quiet;
 
 /* ---- small helpers ------------------------------------------------------ */
@@ -822,6 +826,85 @@ static int f_killio(void *arg)
     return 0;
 }
 
+/* Network client against a misbehaving server (scripts/chaos-host.py
+ * serve): connections that send garbage, half-close, close early or read
+ * slowly. Whatever the server does, netstack must keep answering; a call
+ * that hangs is cut off by the round timeout, which also kills a process
+ * in the middle of a TCP read. */
+static int f_net(void *arg)
+{
+    (void)arg;
+    if (!net_target) {
+        note("net: no --net HOST:PORT, skipped");
+        return 0;
+    }
+    char host[64];
+    snprintf(host, sizeof host, "%s", net_target);
+    char *colon = strrchr(host, ':');
+    if (!colon)
+        return 2;
+    *colon = 0;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)atoi(colon + 1));
+    if (inet_pton(AF_INET, host, &sa.sin_addr) != 1)
+        return 2;
+    static char buf[16384];
+    unsigned conns = 5 + rnd_below(25), ok = 0, refused = 0, errors = 0;
+    unsigned long got = 0;
+    for (unsigned c = 0; c < conns; c++) {
+        int s = socket(AF_INET, SOCK_STREAM, 0);
+        if (s < 0) {
+            note("net: socket: %s", strerror(errno));
+            return 3;
+        }
+        if (connect(s, (struct sockaddr *)&sa, sizeof sa) < 0) {
+            refused++;
+            close(s);
+            continue;
+        }
+        unsigned how = rnd_below(6);
+        int len;
+        if (how == 0) {
+            /* garbage request */
+            len = 1 + (int)rnd_below(sizeof buf);
+            for (int i = 0; i < len; i++)
+                buf[i] = (char)rnd();
+        } else {
+            len = snprintf(buf, sizeof buf, "GET /chaos/%u HTTP/1.1\r\nHost: %s\r\n\r\n", c, host);
+        }
+        if (write(s, buf, (size_t)len) < 0)
+            errors++;
+        if (how == 1)
+            shutdown(s, SHUT_WR);
+        if (how == 2) {
+            /* close at once, with data unread */
+            close(s);
+            continue;
+        }
+        unsigned limit = how == 3 ? 1 + rnd_below(4096) : sizeof buf;
+        ssize_t r;
+        unsigned long this_conn = 0;
+        while ((r = read(s, buf, limit)) > 0) {
+            this_conn += (unsigned long)r;
+            if (how == 4)
+                sleep_ms(rnd_below(50));
+            if (this_conn > 64UL * CHUNK)
+                break;
+        }
+        if (r < 0)
+            errors++;
+        else
+            ok++;
+        got += this_conn;
+        close(s);
+    }
+    note("net: %u connections to %s, %u closed cleanly, %u refused, %u errors, %lu bytes",
+         conns, net_target, ok, refused, errors, got);
+    return 0;
+}
+
 /* ---- rounds ------------------------------------------------------------- */
 
 struct fault {
@@ -839,10 +922,12 @@ static const struct fault faults[] = {
     { "schemes", f_schemes, "random and invalid calls on /scheme/*" },
     { "fill",    f_fill,    "fill the data partition until ENOSPC" },
     { "killio",  f_killio,  "SIGKILL processes in the middle of I/O" },
+    { "net",     f_net,     "TCP client against --net HOST:PORT (only with --net)" },
 };
 #define N_FAULTS (sizeof faults / sizeof *faults)
 
 static int enabled[N_FAULTS];
+static int kinds_all = 1;          /* no --kind given */
 
 static int parse_kinds(const char *s)
 {
@@ -852,7 +937,7 @@ static int parse_kinds(const char *s)
     for (char *tok = strtok(tmp, ","); tok; tok = strtok(NULL, ",")) {
         if (strcmp(tok, "all") == 0) {
             for (size_t i = 0; i < N_FAULTS; i++)
-                enabled[i] = 1;
+                enabled[i] = strcmp(faults[i].name, "net") != 0;
             continue;
         }
         size_t i;
@@ -890,7 +975,7 @@ static void usage(void)
     fprintf(stderr,
             "usage: chaos [--rounds N] [--seed S] [--kind K[,K]...] [--round-seed S]\n"
             "             [--timeout SEC] [--mem-reserve MB] [--fill-max MB]\n"
-            "             [--data DIR] [--self PATH] [--list] [--quiet]\n");
+            "             [--data DIR] [--self PATH] [--net HOST:PORT] [--list] [--quiet]\n");
     exit(2);
 }
 
@@ -923,6 +1008,7 @@ int main(int argc, char **argv)
         else if (strcmp(a, "--kind") == 0) {
             if (parse_kinds(v) < 0)
                 return 2;
+            kinds_all = 0;
         } else if (strcmp(a, "--timeout") == 0)
             timeout_s = (unsigned)strtoul(v, NULL, 0);
         else if (strcmp(a, "--mem-reserve") == 0)
@@ -933,11 +1019,15 @@ int main(int argc, char **argv)
             data_dir = v;
         else if (strcmp(a, "--self") == 0)
             self_path = v;
+        else if (strcmp(a, "--net") == 0)
+            net_target = v;
         else
             usage();
         i++;
     }
 
+    if (net_target && kinds_all)
+        enabled[N_FAULTS - 1] = 1;
     unsigned kinds[N_FAULTS], n_kinds = 0;
     for (size_t k = 0; k < N_FAULTS; k++)
         if (enabled[k])
