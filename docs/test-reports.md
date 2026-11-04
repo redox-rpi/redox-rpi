@@ -7664,3 +7664,25 @@ line. **Pass.**
 - pi-test `--starts 300`: version, manifest, ps (51), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:17). devsh answers,
   and `/srv/tftp/redox` matches the stable copy.
+
+## #216: #46 time zones, PR #102 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-300-gf71c5a4+x0598` (branch `timezone`, experiments `ldso-diagnostics`,
+`timerd`, `timesync`, `timezone`), `~/tz-test/keep/tz-v0.4.0-dev-300-gf71c5a4+x0598.img`.
+Real Pi 3B+ over netboot, reset at 13:19:21 UTC. No panic, exception or `FATAL` line.
+**Pass:** every output as given.
+
+- Boot log:
+  - `timesync: clock set to 2026-11-04 13:19:41 UTC from pool.ntp.org`;
+  - `timerd: clock set by timesync, 2026-11-04 14:19:42 CET`.
+- Over devsh:
+  - `date` gave `Wed Nov 4 14:19:57 CET 2026`, and `date -u` gave `Wed Nov 4 13:19:57 UTC 2026` (one hour ahead, `CET`).
+  - `ls -l /etc/localtime` gave `/etc/localtime -> /usr/share/zoneinfo/Europe/Berlin`.
+  - `date -d '@1792890000'` gave `Sun Oct 25 02:00:00 CET 2026`.
+  - `timerd -t 1792886400 1792890000 1774746000` gave:
+    - `2026-10-25 00:00:00 UTC = 2026-10-25 02:00:00 CEST (+02:00)`
+    - `2026-10-25 01:00:00 UTC = 2026-10-25 02:00:00 CET (+01:00)`
+    - `2026-03-29 01:00:00 UTC = 2026-03-29 03:00:00 CEST (+02:00)`
+  - `env TZ=UTC timerd -t 1792890000` gave `2026-10-25 01:00:00 UTC = 2026-10-25 01:00:00 UTC (+00:00)`.
+- pi-test: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:21). devsh answers.
