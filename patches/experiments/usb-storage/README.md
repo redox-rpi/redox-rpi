@@ -32,4 +32,9 @@ Mounting is the boot topic's side: `fatfsd /scheme/disk.usb-dwc2+…/0p0 usb0
 - A scheme's name stays in the namespace after its socket is closed, so
   dwc2d unlinks it from the namespace on unplug; without that a stick
   plugged into the same port again could not register.
-- Not yet on the Pi.
+- QEMU 2026-11-04 on main (`0038` refreshed for dwc2d `0034`),
+  `v0.3.0-dev-1284-ge8976fa+x7627`: storage 9/9, keyboard pass, hotplug
+  15/15; with `usb-storage-more`, `v0.3.0-dev-1296-g129223b+xf757`:
+  storage 18/18.
+- Not yet on the Pi: test-plan rows #50 and #71 (one image, needs a person
+  with a stick and a card reader).
