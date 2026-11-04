@@ -126,6 +126,24 @@ program got no SIGINT, and the next prompt read the byte.
   `ctrlc-test.py --delays 0,0.01,0.02,0.03,0.1` 10 of 10; standard checks
   pass, 0 of 300 starts failed.
 
+## Enter and Ctrl-C in one write
+
+Pi test 219 (2026-11-04, on main as of v0.4.0-dev, before this patch): on
+the serial console 3 of 10 Ctrl-Cs 0.01–0.03 s after Enter were lost, in
+two runs; devsh 10 of 10. getty was still writing liner's output to the
+115200-baud console when Enter and the Ctrl-C arrived, and forwarded both
+in one write. In raw mode ptyd made that one packet, liner read it in one
+read through the buffered stdin, and the Ctrl-C stayed in liner's buffer.
+QEMU shows the same with no delay between Enter and Ctrl-C: 8 of 8 lost.
+
+- `base/0058` (ptyd): with ISIG off, an interrupt character starts a
+  packet of its own. The read that ends the line leaves it in ptyd, and
+  `0057` turns it into SIGINT when liner switches ISIG back on.
+- QEMU (`v0.4.0-dev-315-g4f3ed615+xc169`), serial console after the boot
+  had settled: no delay 8 of 8 stopped, 0.01–0.03 s 6 of 6, all within
+  0.5 s; the usual sequence 0.01–1 s 7 of 7 in two runs. Only the first
+  round after login comes late while services still start.
+
 ## Check
 
     patches/experiments/pty-sigint/ctrlc-test.py <host> [--port 2323] [--rounds 10]
