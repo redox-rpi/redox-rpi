@@ -1,0 +1,33 @@
+name: Topic pages
+
+# Warns when a pull request or a push to main changes files of a topic
+# (config/topics.map) without touching that topic's docs/topics/ page.
+# Only a warning: the job stays green either way.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  topics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check topic pages (pull request)
+        if: github.event_name == 'pull_request'
+        run: >
+          scripts/check-topics.py
+          --base ${{ github.event.pull_request.base.sha }}
+          --head ${{ github.event.pull_request.head.sha }}
+
+      - name: Check topic pages (push)
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: >
+          scripts/check-topics.py --range
+          --base ${{ github.event.before }}
+          --head ${{ github.event.after }}
