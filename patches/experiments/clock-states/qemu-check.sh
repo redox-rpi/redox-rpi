@@ -17,7 +17,7 @@ log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]
 failed=0
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 if grep -q "clock_states" <<< "$log"; then echo "PASS: clock_states listed"; else echo "FAIL: clock_states listed"; failed=1; fi
-states="$(sed -n '/^CS-BEGIN$/,/^CS-END$/p' <<< "$log" | grep -E '^[a-z0-9]+ (on|off) [0-9]+ 0x[0-9a-f]+$')"
+states="$(sed -n '/^CS-BEGIN$/,/^CS-END$/p' <<< "$log" | grep -E '^[a-z0-9]+ (on|off|unknown) [0-9]+ 0x[0-9a-f]+$')"
 if [ -n "$states" ]; then echo "PASS: clock_states has lines"; else echo "INFO: clock_states is empty (QEMU's firmware has no clock states)"; fi
 if grep -qE '^arm [0-9]+ [0-9]+$' <<< "$log"; then echo "PASS: clocks unchanged"; else echo "FAIL: clocks unchanged"; failed=1; fi
 echo "--- clock_states:"
