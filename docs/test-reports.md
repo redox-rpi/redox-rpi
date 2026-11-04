@@ -8286,3 +8286,32 @@ Reset at 21:38:46 UTC, `redox login:` after 20 s.
   kept.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #236 #175 assistant: the saved prompt state goes next to the model (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-432-g9357191+x4590` (branch `assistant-history-cap`, experiments
+`timesync assistant assistant-netboot`). Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 22:14:35 UTC, `redox login:` after 18 s.
+
+**Result: pass.** The second start takes 2.6 s for the system prompt instead of 191 s.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **`ls -l /scheme/data` before:** only `Qwen3-0.6B-Q4_0e.gguf` with 341455552 bytes.
+- **Run 1** (22:15:56–22:19:54):
+  - The model loaded in 21.9 s.
+  - `rinfer: No such file or directory (os error 2)` twice: no saved state next to the model
+    or in `~/.cache` yet.
+  - `read 380 tokens in 191.4 s`.
+  - **`rinfer: saved 380 tokens in 5.3 s`**, with no `os error 28`.
+  - "The capital of France is Paris." (7 tokens in 4.7 s), rc=0.
+- **Run 2** (22:19:54–22:20:38, 44 s in all):
+  - The model loaded in 22.2 s.
+  - **`rinfer: loaded 380 tokens in 2.6 s, heap 390 MiB`**, then `read 0 tokens in 0.0 s`.
+  - "The capital of France is Paris." (7 tokens in 3.9 s), rc=0.
+- **`ls -l /scheme/data` after:** `Qwen3-0.6B-Q4_0e.gguf.prompt.kv` with **43581693 bytes**,
+  next to the model.
+- **`free`:** used 126744 KiB before, 236764 after.
+- No panic, no `RELIBC PANIC`, no `oom` in the serial log.
+- The model and the new file were kept on `/scheme/data`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
