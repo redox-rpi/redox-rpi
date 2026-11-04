@@ -7237,3 +7237,227 @@ in row 202 (under-voltage had happened).
   the load.
 - The image has no `netget`, so the download was replaced by output over devsh.
 - **Result:** no under-voltage with the new supply. Details in the #205 report above.
+
+## #206: current network-boot image on the Pi Zero 2 W (2026-11-03, Pi test agent)
+
+Image `v0.4.0-dev-135-g2416130+x9f76` (`build-image.sh --zero2w`, main 2416130,
+experiments `timesync` and `rtl8152`, no graphics). It replaces the alpha-90 image
+of 2026-10-27 in `/srv/tftp/redox-zero2w`; the old files are backed up on
+homenodellm in `~/pitest-tools/tftp-zero2w-alpha90`. The Zero has the PoE HAT
+(RTL8152 `00:e0:4c:36:0e:47`, 192.168.178.194) and its old netboot card. The
+person restarted it by unplugging the PoE plug. **Pass**, except `/scheme/data`
+(this card has no data partition).
+
+- Boot: devsh on .194 answered at 18:36 UTC, uptime 1 min 38 s. The old image
+  showed a login prompt on devsh; this one opens the shell as on the Pi 3B+.
+- `/etc/redox-rpi-release`: `v0.4.0-dev-135-g2416130`, `IMAGE="zero2w"`.
+- pi-test:
+  - PASS: version, manifest (build ID and libc.so hash), ps (45), ps-tty,
+    starts (0 of 300 failed).
+  - FAIL: sdcard. `/scheme/data` is missing (`No such device`). The card has only
+    the boot partition (`/scheme/disk.mmc/0p0`, 32 MB, card 62 MB), and
+    `60_data.service` wants `0p1`. That is the card, not the image. A card from
+    `scripts/make-sdcard.sh` with a data partition would fix it.
+- Network: ping to the server 5/5, 1.3-1.7 ms. Time from NTP is correct.
+- Free memory: 191068 of 333196 KB free after boot (142 MB used), 46 processes.
+- `throttled` 0x0, 53.7 °C.
+
+### #206 second boot: new netboot card with a data partition (2026-11-03)
+
+The user flashed a 64 MB card with
+`redox-rpi-zero2w-netboot-v0.4.0-dev-135-g2416130-b32-d24.img.xz`
+(`make-sdcard.sh --dir redox-zero2w --boot-size 32 --data-size 24`, 56 MiB:
+FAT16 boot partition of 31 MiB and a RedoxFS data partition of 24 MiB) and booted the
+Zero from it. Same image `v0.4.0-dev-135-g2416130`. **Pass.**
+
+- pi-test: version, manifest, ps (46), ps-tty, **sdcard**, starts (0 of 300 failed),
+  all PASS.
+- `/scheme/data` is mounted from `/scheme/disk.mmc/0p1`. It shows `README.txt` and
+  `timesync.last` (timesync writes it after boot).
+- Writing, reading back and deleting a small file work.
+- A 10 MiB file of zeros was written at 385 kB/s and deleted again.
+- `df /scheme/data`: 24576 KB, 23512 KB free before and 23480 KB after.
+  - The 10 MiB of zeros added only 40 KB, so RedoxFS seems to store zero blocks
+    without taking space. 23 MB is what real data can use.
+- Free memory 186920 of 333068 KB, `throttled` 0x0.
+
+## #207: sshd ends an idle connection after the login grace time (2026-11-03, Pi test agent)
+
+Image `v0.4.0-dev-195-g28be1ddd+x4ec1` (test branch `tcp-close-test` = PR #185 with
+PR #90, experiments timesync, rtl8152, sshd). Real Pi 3B+ over netboot, reset at
+19:38 UTC. The boot reached login with no `FATAL` or panic line. **Pass.** Fixes the
+failed grace-time step of #182 ([#184](https://github.com/redox-rpi/redox-rpi/issues/184)).
+
+**Login grace time**
+- The host keys were in `/etc/ssh` at the first look (19:38:56).
+- Each try opened a TCP connection from homenodellm to port 22, read the banner
+  `SSH-2.0-OpenSSH_10.5`, and sent nothing.
+  - Try 1: **the Pi closed the connection after 125 s** (FIN, `recv` returned empty).
+    Serial: `Timeout before authentication for connection from 192.168.178.120 to
+    192.168.178.148, pid = 60`, at the same time.
+  - Try 2: closed after **124 s**, with the same line (`pid = 62`).
+  - That matches QEMU (122-127 s). In #182 the connection stayed open until the
+    client closed it.
+
+**Other #182 steps**
+- Test key into `/home/root/.ssh/authorized_keys` over devsh, in single quotes:
+  `wc -c` 100.
+- 5 key logins `ssh -i /tmp/qkey root@192.168.178.148 'echo loginN'`: login1 to
+  login5, all rc 0.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace,
+  prompt-again and exit all `ok`, rc 0.
+- 40 devsh connections in a row: 40/40.
+- pi-test (`--manifest --starts 300 --serial-log`): version, manifest, ps (53), ps-tty
+  and sdcard pass, and 0 of 300 starts failed.
+- Serial: the only TODO line is `sshd-session: TODO: ioctl TIOCSCTTY` (known).
+
+Stable `v0.4.0-dev-64-g954be33+x9f76` was restored afterwards (19:46) and devsh answers.
+
+## #134: U-Boot without countdown, firmware boot_delay=0, U-Boot settings on the card (2026-11-03, Pi test agent)
+
+Card variant. The person copied the new `u-boot.bin` and `config.txt` from
+`redox-rpi-t134-netboot-bootfiles.zip` onto the network-boot card (old files kept as
+`.orig`). The Pi booted at about 20:45 UTC. Stable image `v0.4.0-dev-64-g954be33+x9f76`.
+**Pass.** One expected gain did not show: the U-Boot banner comes no earlier.
+
+**First boot (person, 20:45)**
+- `U-Boot 2026.10 (Oct 31 2026 - 15:23:39 +0000)`.
+- `Loading Environment from FAT...Unable to read "uboot.env" from mmc2:1...`. The
+  old `Bad device specification mmc 0` is gone.
+- `Hit any key to stop autoboot: 0` with no countdown.
+- It reached `redox login:`.
+
+**Three timed boots** (`boot-timeline.py`, seconds after the devsh reset; A = 2026-10-31,
+old card files, image dev-533, server on Wi-Fi)
+
+| Step | A1 | N1 | N2 | N3 |
+|---|---|---|---|---|
+| U-Boot banner | 3.76 | 3.78 | 3.76 | 3.76 |
+| autoboot starts (`Hit any key … 0`) | 9.27 | 7.25 | 7.21 | 7.22 |
+| DHCP bound | 11.22 | 10.43 | 10.37 | 10.37 |
+| image loaded over HTTP | 15.03 | 12.38 | 12.38 | 12.38 |
+| `Redox OS starting` | 23.44 | | 20.44 (N2) | |
+| `redox login:` | 33.5 | 29.62 | 29.31 | 29.32 |
+
+- **U-Boot countdown gone:** autoboot starts about 2 s earlier, and DHCP is bound
+  0.85 s earlier.
+- **`boot_delay=0`/`disable_splash=1`:** no effect seen. The U-Boot banner comes at
+  3.76 s as in A. (These are devsh resets, as in A.)
+- **Login 4.2 s earlier,** but only part of it comes from this change:
+  - the download took 2.0 s instead of 3.7 s, because homenodellm is now on cable;
+  - the image is newer (kernel start to login 8.9 s instead of 10.1 s).
+- pi-test (`--manifest`): version, manifest, ps (51), ps-tty, sdcard and 300 starts
+  (0 failed) all pass.
+
+**Saving settings from the network** (stable's `netboot.cmd` matched, so the env
+test ran)
+- Boot E1: `Saving Environment to FAT... OK` and `redox-rpi: saved redoxtest`, then
+  login.
+- Boot E2: `Loading Environment from FAT... OK` and
+  `redox-rpi: uboot.env has redoxtest=kept`, then login.
+- Stable's `netboot.scr` was put back.
+- Boot E3: `Loading Environment from FAT... OK` (the card keeps `uboot.env`),
+  normal boot, login at 29.82 s.
+- `/srv/tftp/redox` equals the stable backup again, and devsh answers. The new files
+  stay on the card.
+
+## 2026-11-04: `v0.4.0-dev-201-gb714bca+x9f76`
+
+Built 2026-11-04T03:30:26Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-201-gb714bca+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-201-gb714bca+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## #208: sshd with OpenSSH 10.6p1 (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-250-gbabedfd0+x4ec1` (branch `openssh-10.6`, draft PR #191; experiments
+timesync, rtl8152, sshd). Real Pi 3B+ over netboot, reset at 06:53 UTC. The boot
+reached login with no `FATAL` or panic line. **Pass.**
+
+- Host keys were in `/etc/ssh` at the first look (06:53:49).
+- Banner from homenodellm: `SSH-2.0-OpenSSH_10.6`.
+- Test key into `/home/root/.ssh/authorized_keys` and `/home/user/.ssh/authorized_keys`
+  over devsh, in single quotes: `wc -c` 100 for both.
+  - `chown -R user:user` was rejected (`failed to parse uid user`: Redox `chown` wants
+    numbers), so the user's key file belongs to 0:0. The `user` login worked anyway.
+- 5 key logins as root: login1 to login5, all rc 0.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace,
+  prompt-again and exit all `ok`, rc 0.
+- **Privilege separation:** `ssh -tt -i /tmp/qkey user@… 'id; sleep 25'` printed
+  `uid=1001(user) gid=1001(user)`, rc 0. `cat /scheme/sys/context` during the session:
+  - `sshd` (pid 53) and the monitor `sshd-session` (pid 113) as EUID 0;
+  - the session `sshd-session` (pid 115), `ion` (116) and `sleep` (118) as
+    **EUID/EGID 1001**;
+  - the other `ion` as 0 is the devsh shell running `ps`.
+- Idle connection to port 22 (banner read, nothing sent): **closed by the Pi after
+  124 s**, with `Timeout before authentication … pid = 62` on serial.
+- 40 devsh connections in a row: 40/40.
+- pi-test (`--manifest --starts 300 --serial-log`): version, manifest, ps (53), ps-tty,
+  sdcard pass, and 0 of 300 starts failed.
+- Serial: the only TODO line is `sshd-session: TODO: ioctl TIOCSCTTY` (2×, known).
+
+Stable is now the nightly `v0.4.0-dev-201-gb714bca+x9f76` (2026-11-04 03:30). It was
+restored afterwards (07:00), and devsh answers.
+
+## #209: package server end to end (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-269-gd3ebd24c+x42ad` (branch `pkg-persist` d3ebd24, PR #106), staged
+with `netboot.sh` from `~/redox-rpi-boot/keep/t44p-v1.img` (bootloader md5 `64685a6f…`),
+the usual network-boot card. **Partly: boot 1 and the reset pass, but in boot 2 the
+Pi loses its network, so step 6 (`pkg update` replaces files) could not be done.**
+
+**Boot 1** (reset 07:27:42 UTC)
+- (1) pi-test `--starts 300`: version, manifest, ps (51), ps-tty, sdcard pass, and 0
+  of 300 starts failed. `date`: 2026-11-04. `/scheme/data/pkg` did not exist.
+- (2) `pkg-t44` into `/etc/pkg.d/40_redox-rpi`, then `pkg update --yes`: `Commit
+  complete.` (it updated `uutils-procps`). Took **17 s**.
+- (3) `pkg-persist install redox-fatfs2`: `pkg-persist: 1 files copied into /, 0 kept
+  from the image (161 ms)`, **2 s** in all.
+- (3) `pkg-persist install nano`: `pkg-persist: 214 files copied into /, 2 kept from
+  the image (3895 ms)`, **50 s** in all.
+- `pkg info redox-fatfs2`: `remote: 192.168.178.120` (version 0.1.0).
+- `pkg info nano`: `remote: static.redox-os.org` (9.2).
+  - Both show `status: not installed`, which looks odd after the install.
+- `pkg-persist list`: nano, ncursesw, redox-fatfs2, terminfo.
+- (4) `reboot` at 07:30:26.
+
+**Boot 2** (after `reboot`)
+- Banner after 18 s, login at 07:30:44.
+- (5) Right after the login prompt: `pkg-persist: 215 files copied into /, 2 kept from
+  the image (4092 ms)`.
+- `timesync` set the clock from pool.ntp.org at 07:30:48 and `devshd: listening`, so
+  the network worked at first.
+- But homenodellm got `No route to host` (no ARP answer) on every devsh try for
+  6 minutes. Steps 5-7 got no answer, and the devsh reset for the restore did not get
+  through either: power cycle at 07:41.
+
+**Boot 2 again** (stable's devsh reset at 07:43:55, packages still on the card)
+- Login at 07:44:15, `pkg-persist: 215 files copied into /, 2 kept from the image
+  (4085 ms)`, NTP at 07:44:18.
+- devsh answered at 07:44:20.
+- (5) `nano --version`: `GNU nano, version 9.2`. `ls -l /usr/bin/fatfsd` exists.
+  `pkg-persist list` shows the four packages, so **the packages survived the reset**.
+- (6) `pkg-persist` without arguments: `usage: pkg-persist install|remove <package>... |
+  update | list | restore`.
+- (6) `pkg-t44-v2` into `40_redox-rpi`, then `pkg update --yes`: it started downloading
+  `uutils.pkgar` (3.07 MiB) and stopped at 149 KiB. From then on the Pi did not answer
+  on the network again (`No route to host`), and power cycle at 08:02.
+- The serial log has no error, panic, exception, USB removal or `channel halt` line
+  after login in either boot 2.
+
+**Result**
+- Steps 1-4 pass.
+- Step 5 passes: copy line after login, nano 9.2 and fatfsd after the reset.
+- Step 6 fails: in both boots with persisted packages, the network dies within the
+  first minutes, the second time during the `pkg update` download. Boot 1 (no
+  persisted packages) had the network for its whole 3 min, downloads included.
+- I cannot tell from this whether the persisted files or the boot are the cause.
+- (7) `rm -r /scheme/data/pkg` was done afterwards from stable.
+
+Stable `v0.4.0-dev-201-gb714bca+x9f76` restored (power cycle 08:02); devsh answers.

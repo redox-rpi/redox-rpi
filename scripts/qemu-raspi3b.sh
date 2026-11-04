@@ -15,10 +15,15 @@
 #                     with the mainline devicetree adjusted like the config.txt
 #                     overlays on a real Pi (PL011 console, SD on Arasan)
 #   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
+#   --direct <dir>    no U-Boot: kernel8.img and initramfs from
+#                     scripts/fw-direct-boot.sh in <dir> (issue #15), loaded
+#                     the way the Pi firmware does; --image is then only the
+#                     SD card, e.g. build/sdcard-direct.img
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
-#                     host port 12323 forwards to devshd in the guest
-#                     (DEVSH_PORT=<port> picks another one, for parallel runs)
+#                     host port 12323 forwards to devshd in the guest,
+#                     12222 to sshd (DEVSH_PORT=<port> and SSH_PORT=<port>
+#                     pick other ones, for parallel runs)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
@@ -68,6 +73,7 @@ test=no
 expect=()
 timeout=900
 uboot=""
+direct=""
 run=()
 sd_size=""
 data=no
@@ -87,6 +93,7 @@ while [ $# -gt 0 ]; do
         --sd-size) sd_size="$2"; shift 2 ;;
         --data) data=yes; shift ;;
         --uboot) uboot="$2"; shift 2 ;;
+        --direct) uboot=direct; direct="$(cd "$2" && pwd)"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
         --device) devices+=(-device "$2"); shift 2 ;;
@@ -109,15 +116,19 @@ if [ -z "$uboot" ]; then
     if [ -f "$our_uboot" ]; then uboot=ours; else uboot=redox; fi
 fi
 case "$uboot" in
-    ours)
-        [ -f "$our_uboot" ] || { echo "$our_uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
+    ours|direct)
+        [ "$uboot" = direct ] || [ -f "$our_uboot" ] || { echo "$our_uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
         # Our U-Boot expects the devicetree from the Pi firmware. Use the
         # mainline one and apply what config.txt does on a real Pi:
         # disable-bt (console on the PL011) and mmc (SD card on Arasan).
         cp "$ROOT/build/u-boot/dtb/bcm2837-rpi-3-b-plus.dtb" qemu-3bp.dtb
         fdtput -t s qemu-3bp.dtb /chosen stdout-path "serial0:115200n8"
         fdtput -t s qemu-3bp.dtb /soc/mmc@7e202000 status disabled
-        firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
+        if [ "$uboot" = direct ]; then
+            firmware=(-kernel "$direct/kernel8.img" -initrd "$direct/initramfs" -dtb qemu-3bp.dtb)
+        else
+            firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
+        fi
         # The second serial port is the mini UART, which stays unused.
         extra_serial=(-serial null)
         ;;
@@ -196,8 +207,9 @@ else
     qemu+=(-device usb-kbd)
 fi
 if [ "$usb_net" = yes ]; then
-    # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest.
-    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323" -device usb-net,netdev=usbnet)
+    # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest,
+    # 12222 (or SSH_PORT) sshd (port 22).
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${SSH_PORT:-12222}-:22" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
