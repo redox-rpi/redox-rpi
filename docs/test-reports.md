@@ -7373,3 +7373,34 @@ Built 2026-11-04T03:30:26Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over ne
 | ps-tty | pass | 46 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## #208: sshd with OpenSSH 10.6p1 (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-250-gbabedfd0+x4ec1` (branch `openssh-10.6`, draft PR #191; experiments
+timesync, rtl8152, sshd). Real Pi 3B+ over netboot, reset at 06:53 UTC. The boot
+reached login with no `FATAL` or panic line. **Pass.**
+
+- Host keys were in `/etc/ssh` at the first look (06:53:49).
+- Banner from homenodellm: `SSH-2.0-OpenSSH_10.6`.
+- Test key into `/home/root/.ssh/authorized_keys` and `/home/user/.ssh/authorized_keys`
+  over devsh, in single quotes: `wc -c` 100 for both.
+  - `chown -R user:user` was rejected (`failed to parse uid user`: Redox `chown` wants
+    numbers), so the user's key file belongs to 0:0. The `user` login worked anyway.
+- 5 key logins as root: login1 to login5, all rc 0.
+- `ssh-session.exp` (port 22, Pi address): prompt, command, prompt-again, backspace,
+  prompt-again and exit all `ok`, rc 0.
+- **Privilege separation:** `ssh -tt -i /tmp/qkey user@… 'id; sleep 25'` printed
+  `uid=1001(user) gid=1001(user)`, rc 0. `cat /scheme/sys/context` during the session:
+  - `sshd` (pid 53) and the monitor `sshd-session` (pid 113) as EUID 0;
+  - the session `sshd-session` (pid 115), `ion` (116) and `sleep` (118) as
+    **EUID/EGID 1001**;
+  - the other `ion` as 0 is the devsh shell running `ps`.
+- Idle connection to port 22 (banner read, nothing sent): **closed by the Pi after
+  124 s**, with `Timeout before authentication … pid = 62` on serial.
+- 40 devsh connections in a row: 40/40.
+- pi-test (`--manifest --starts 300 --serial-log`): version, manifest, ps (53), ps-tty,
+  sdcard pass, and 0 of 300 starts failed.
+- Serial: the only TODO line is `sshd-session: TODO: ioctl TIOCSCTTY` (2×, known).
+
+Stable is now the nightly `v0.4.0-dev-201-gb714bca+x9f76` (2026-11-04 03:30). It was
+restored afterwards (07:00), and devsh answers.
