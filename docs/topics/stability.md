@@ -47,7 +47,10 @@
   shell reads late (it keeps the input and retries). Real Pi: 20 of 20
   lines of 200 characters at full speed; QEMU: a line of 1050 characters
   4 of 7 runs panicked before, 0 after.
-  [Details](../../patches/experiments/serial-rx/README.md).
+  [Details](../../patches/experiments/serial-rx/README.md). 2026-11-01:
+  `0024` reworked so it applies to the newest upstream base too, where
+  upstream's own getty fix still stalls the output
+  (`docs/upstream/rebase.md`).
 
 ## In progress
 

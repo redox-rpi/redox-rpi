@@ -322,3 +322,31 @@ of it, with the old numbers, and are not kept up.
 - Pi rows #148 (default) and #151 (`RPI_FB_DMA=on`) now name this image.
   The screen checks stay with the screen visit (#34, #43, #44, #54 with
   #108).
+
+## Update 2026-11-01: getty and the console and boot patches
+
+Checked against base `8424d392`, kernel `1a1295b` and bootloader
+`11b8516` (all 2026-10-31 or earlier).
+
+- **`0024` (getty)** conflicted because upstream fixed the same panic
+  in `a967532` ("getty: Fix panic when writing to tty"): the write after
+  the TTY read became `write_nonblocking(master, ...)`, which retries with
+  `yield_now` while the PTY refuses input. That still stops forwarding the
+  program's output meanwhile, so the stall our patch handles is still
+  there. `0024` now queues the input in the read arm itself and leaves that
+  write line untouched: it then writes an empty slice, with or without
+  upstream's change. Applies as it is to the pinned and the newest base.
+- My other console and boot patches apply as they are on the newest
+  sources: base `0030` (no pcid, audiod, rtcd), kernel `0007` (PL011 input),
+  bootloader `0001`, `0002`.
+- **Test build with the newest base:** with `0001`/`0018` from PR #124,
+  `0015` from PR #161, the new `0024`, and `0045`, `0047`, `0048` with one
+  line of leading context in their `Makefile` hunk (upstream added the
+  `SELFTEST_DIRS` lines above it), all 37 base patches apply as they are to
+  both `eddcaa21` and `8424d392`. A local build with base at `8424d392` and
+  everything else pinned (`v0.3.0-dev-894-g92c60d17`, never pushed) builds,
+  and QEMU raspi3b boots it to the login. The serial-rx long-line check
+  (five 200-character commands in one serial write) is complete in 3 of 3
+  runs, no getty panic; the same on the pinned build
+  `v0.3.0-dev-893-ge59eb292`. The `0045`/`0047`/`0048` change is in PR
+  #165.
