@@ -7637,3 +7637,30 @@ No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `resta
 - After install 5, dwc2d counted rx 74848 and tx 34019 frames, with no errors, timeouts or restarts.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset. devsh answers, and `/scheme/data` has no `pkg`.
 - Counting test 213 run 3 (3 installs, clock set by hand), that is 8 vim installs in a row without the hang on this branch. The one hang (213 run 1) came at a 1970 clock, 28 s after a `pkg install` that had to fail on its certificate.
+
+## #215: #47 boot time, PR #85 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-301-g7a735169+x5bf8` (branch `boot-time` with main merged, experiments
+`timesync`, `boot-time`), `~/t18-work/image-bt85/harddrive.img` (md5 `01676e7e…`). Staged
+with `~/t18-work/bt85-stage/scripts/netboot.sh`, and the bootloader on the TFTP server is the
+image's own (md5 `9036b6c2…`). Real Pi 3B+ over netboot, 3 boots, each with
+`echo reset > /scheme/sys/kstop`, timed on the serial log. No panic, exception or `FATAL`
+line. **Pass.**
+
+| Boot | `kreset` | `Continuing with the selected mode in 1 s` | `redox login:` | from `kreset` |
+|---|---|---|---|---|
+| 1 | 1.60 s | 14.98 s | **20.89 s** | 19.29 s |
+| 2 | 1.55 s | 14.77 s | **20.44 s** | 18.89 s |
+| 3 | 1.55 s | 14.88 s | **20.49 s** | 18.94 s |
+
+- The time is counted from the devsh reset command, as in #107 (21.0–21.2 s).
+  This run is 0.3 to 0.7 s faster.
+- On every boot, U-Boot asked DHCP once (bound at about 10.6 s), and the image came over
+  HTTP in about 1.9 s (21.9 MiB/s).
+- On every boot, about 10 s after devsh answered:
+  - `eth0` had `192.168.178.148/24` (DHCP lease);
+  - `/scheme/data` was mounted (`README.txt` and the other files there);
+  - the build ID was right.
+- pi-test `--starts 300`: version, manifest, ps (51), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:17). devsh answers,
+  and `/srv/tftp/redox` matches the stable copy.
