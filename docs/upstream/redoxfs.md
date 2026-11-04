@@ -1,8 +1,21 @@
 # RedoxFS: pointers for upstream
 
-Notes for the user, who reports to Redox. Both problems are in RedoxFS
-`c988cb8` (the commit we pin) and still in upstream master `db847d8`
-(`src/mount/redox/scheme.rs` and `src/transaction.rs` unchanged).
+Notes for the user, who reports to Redox. The first two problems were found
+in RedoxFS `c988cb8` and are still in upstream master `db847d8`, the commit
+we pin now (PR #146; `src/mount/redox/scheme.rs` and `src/transaction.rs`
+unchanged).
+
+**Upstream master `5ba45a6` (2026-11-01):** both are still there. The line
+numbers below are one higher in `src/mount/redox/scheme.rs` there
+(`frename_internal` 739, `validate_new_link` 610, `write` 934);
+`src/filesystem.rs` is unchanged. Our four patches rebased onto `5ba45a6`,
+ready for a merge request:
+[redoxfs-5ba45a6/](redoxfs-5ba45a6/) (`0001` = our `0036`, `0002`–`0004` =
+`0037`–`0039`; only import lines changed, after upstream's 2024 edition
+switch). Checked: `git am` onto `5ba45a6`, `cargo check --target
+aarch64-unknown-redox` without warnings, `cargo test` on Linux 47 passed.
+Not run on a Pi: we keep pinning `db847d8`, because `5ba45a6` breaks Unix
+sockets for us (PR #146).
 
 ## `rename` on a RedoxFS other than the root one
 
@@ -47,3 +60,22 @@ Notes for the user, who reports to Redox. Both problems are in RedoxFS
   unchanged. A fix in RedoxFS itself might rather keep one transaction open
   across calls.
 - **Tested:** QEMU, Pi 3B+ tests 46, 70 and 121 (no effect on large writes).
+
+## Opening a disk that isn't RedoxFS reads up to 256 MiB, past its end
+
+- **What breaks:** `redoxfs` on a partition without RedoxFS prints
+  `RedoxFS: IO ERROR: Value too large for defined data type (os error 75)`
+  and fails with EIO when the partition is smaller than 256 MiB, and reads
+  65536 blocks one at a time before failing with ENOENT when it is larger.
+  Harmless (nothing is written before a valid header is found), but
+  misleading in logs and slow on a large partition (our #159: the data
+  service mounting a 32 MiB FAT partition in QEMU).
+- **Why:** `FileSystem::open` (`src/filesystem.rs:42`, `db847d8`) tries
+  every block in `0..65536` as a header and reads it with `disk.read_at(…)?`,
+  without looking at `disk.size()`. Reading past the end of the partition
+  returns EOVERFLOW, which `src/disk/file.rs` prints as `IO ERROR`.
+- **Reproduce:** QEMU raspi3b, network-boot image without a data partition:
+  the boot log shows the lines for `/scheme/disk.mmc/0p1` (the EFI
+  partition). Or `redoxfs /scheme/disk.mmc/0p1 x` by hand.
+- **Possible fix:** limit the loop to `min(65536, disk.size()? / BLOCK_SIZE)`.
+  We don't patch it: our images mount only real RedoxFS partitions.
