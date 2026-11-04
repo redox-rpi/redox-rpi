@@ -1,0 +1,187 @@
+From 191efc4ef188418aee35049f455ced4b03bb5052 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 3 Nov 2026 20:24:50 +0100
+Subject: [PATCH] netstack: close a TCP connection with FIN when its last file
+ closes
+
+When the last file of a TCP socket was closed, netstack removed the
+socket from the socket set at once, without closing the connection. The
+peer got no FIN and kept the connection open until it sent something
+itself; that was then answered with a reset, since the socket was gone.
+A server that gives up on a client (sshd after its login grace time)
+could not end the connection.
+
+Now the socket is closed the TCP way first: what is left in the send
+buffer goes out, then FIN. The socket stays in the set until it reaches
+CLOSED or TIME-WAIT and is removed on a later poll. One that is still
+closing after 60 s (the peer does not answer or never closes its side)
+is reset, then removed. Other socket types are removed at once, as
+before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/scheme/mod.rs    |  2 ++
+ netstack/src/scheme/socket.rs | 44 ++++++++++++++++++++++++++++++++++-
+ netstack/src/scheme/tcp.rs    | 29 ++++++++++++++++++++++-
+ 3 files changed, 73 insertions(+), 2 deletions(-)
+
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index c7d7916..65a2821 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -469,6 +469,8 @@ where
+     }
+ 
+     pub fn notify_sockets(&mut self) -> Result<()> {
++        self.scheme.reap_closing();
++
+         let cur_time = libredox::call::clock_gettime(flag::CLOCK_MONOTONIC)
+             .map_err(|e| Error::from_syscall_error(e.into(), "Can't get time"))?;
+ 
+diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
+index 5f5936d..c060fe7 100644
+--- a/netstack/src/scheme/socket.rs
++++ b/netstack/src/scheme/socket.rs
+@@ -6,6 +6,7 @@ use std::marker::PhantomData;
+ use std::ops::{Deref, DerefMut};
+ use std::rc::Rc;
+ use std::str;
++use std::time::{Duration, Instant};
+ 
+ use libredox::flag::CLOCK_MONOTONIC;
+ use libredox::protocol::SocketCall;
+@@ -178,6 +179,9 @@ pub type DupResult<T> = Option<(
+     Option<(SocketHandle, <T as SchemeSocket>::DataT)>,
+ )>;
+ 
++/// How long a socket may take to close after its last file was closed.
++const CLOSE_TIMEOUT: Duration = Duration::from_secs(60);
++
+ pub trait SchemeSocket
+ where
+     Self: ::std::marker::Sized,
+@@ -211,6 +215,20 @@ where
+     /// removed: other sockets that belong to it go too.
+     fn remove_extra(_socket_set: &mut SocketSet, _data: &Self::DataT) {}
+ 
++    /// Called when the last file of a socket closes. True if the socket has
++    /// started to close (TCP sends its FIN) and stays in the socket set until
++    /// `closed` says it is done.
++    fn start_close(_socket_set: &mut SocketSet, _handle: SocketHandle) -> bool {
++        false
++    }
++
++    /// For a socket that `start_close` kept: true once it can be removed.
++    /// `expired`: it has been closing for too long and should give up (TCP
++    /// sends a reset).
++    fn closed(_socket_set: &mut SocketSet, _handle: SocketHandle, _expired: bool) -> bool {
++        true
++    }
++
+     fn hop_limit(&self) -> u8;
+     fn set_hop_limit(&mut self, hop_limit: u8);
+ 
+@@ -298,6 +316,9 @@ where
+ {
+     pub handles: HandleMap<Handle<SocketT>>,
+     ref_counts: BTreeMap<SocketHandle, usize>,
++    /// Sockets whose last file was closed and that are still closing, with
++    /// the time their close started.
++    closing: Vec<(SocketHandle, Instant)>,
+     context: Context,
+     pub socket_set: Rc<RefCell<SocketSet>>,
+     pub scheme_file: Socket,
+@@ -319,6 +340,7 @@ where
+         let mut scheme = SocketScheme {
+             handles: HandleMap::new(),
+             ref_counts: BTreeMap::new(),
++            closing: Vec::new(),
+             socket_set,
+             scheme_data: SocketT::new_scheme_data(),
+             scheme_file,
+@@ -330,6 +352,22 @@ where
+         Ok(scheme)
+     }
+ 
++    /// Removes the sockets that finished closing after their last file was
++    /// closed. One that is still closing after `CLOSE_TIMEOUT` (the peer
++    /// does not answer or never closes its side) is reset first.
++    pub fn reap_closing(&mut self) {
++        let mut socket_set = self.socket_set.borrow_mut();
++        self.closing.retain(|&(handle, since)| {
++            let expired = since.elapsed() >= CLOSE_TIMEOUT;
++            if SocketT::closed(&mut socket_set, handle, expired) {
++                socket_set.remove(handle);
++                false
++            } else {
++                true
++            }
++        });
++    }
++
+     pub fn handle_block(&mut self, op: &Op) -> SyscallResult<Option<TimeSpec>> {
+         let fd = op.file_id().expect("op is not fd based request");
+         let (read_timeout, write_timeout) = {
+@@ -712,7 +750,11 @@ where
+                     if let SchemeFile::Socket(ref file) = scheme_file {
+                         SocketT::remove_extra(&mut socket_set, &file.data);
+                     }
+-                    socket_set.remove(socket_handle);
++                    if SocketT::start_close(&mut socket_set, socket_handle) {
++                        self.closing.push((socket_handle, Instant::now()));
++                    } else {
++                        socket_set.remove(socket_handle);
++                    }
+                 }
+             }
+         }
+diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
+index 00e6470..37fd862 100644
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -5,7 +5,7 @@ use std::str;
+ use libredox::flag;
+ use scheme_utils::FpathWriter;
+ use smoltcp::iface::SocketHandle;
+-use smoltcp::socket::tcp::{Socket as TcpSocket, SocketBuffer as TcpSocketBuffer};
++use smoltcp::socket::tcp::{Socket as TcpSocket, SocketBuffer as TcpSocketBuffer, State as TcpState};
+ use smoltcp::wire::{IpEndpoint, IpListenEndpoint};
+ use syscall::{self, Error as SyscallError, Result as SyscallResult};
+ 
+@@ -96,6 +96,33 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         }
+     }
+ 
++    fn start_close(socket_set: &mut SocketSet, handle: SocketHandle) -> bool {
++        let socket = socket_set.get_mut::<TcpSocket>(handle);
++        match socket.state() {
++            // No peer to say goodbye to
++            TcpState::Closed | TcpState::Listen | TcpState::SynSent => false,
++            // Send what is left, then FIN
++            _ => {
++                socket.close();
++                true
++            }
++        }
++    }
++
++    fn closed(socket_set: &mut SocketSet, handle: SocketHandle, expired: bool) -> bool {
++        let socket = socket_set.get_mut::<TcpSocket>(handle);
++        match socket.state() {
++            TcpState::Closed | TcpState::TimeWait => true,
++            _ if expired => {
++                // Closed now; the reset goes out with the next poll, before
++                // the next call removes the socket
++                socket.abort();
++                false
++            }
++            _ => false,
++        }
++    }
++
+     fn hop_limit(&self) -> u8 {
+         self.hop_limit().unwrap_or(64)
+     }
+-- 
+2.54.0 (Apple Git-157)
+
