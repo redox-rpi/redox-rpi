@@ -7686,3 +7686,26 @@ Real Pi 3B+ over netboot, reset at 13:19:21 UTC. No panic, exception or `FATAL` 
   - `env TZ=UTC timerd -t 1792890000` gave `2026-10-25 01:00:00 UTC = 2026-10-25 01:00:00 UTC (+00:00)`.
 - pi-test: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:21). devsh answers.
+
+## #217: PRs #161, #163 and #164 together on main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-296-g64a62d9+x9f76` (branch `pitest-161-163-164` on main 399bec8, experiments
+`timesync`, `rtl8152`), `~/redox-rpi-rebase/keep/pt-161-163-164.img` with its manifest.
+Real Pi 3B+ over netboot, reset at 13:24:33 UTC, login after 20 s. No panic, exception or `FATAL`
+line. **Pass.**
+
+- **(1)** `redox login:` on the serial console, no panic.
+- **(2)** The boot log has `timesync: clock set to 2026-11-04 13:24:52 UTC from pool.ntp.org`
+  (relibc `0011`). `date -u` on the Pi and on homenodellm both gave
+  `Wed Nov 4 13:25:10 UTC 2026`.
+- **(3)** Logged in on the serial console, then
+  `patches/experiments/serial-rx/serial-input-test.sh 20`: **20 of 20 lines complete**
+  (getty `0024`).
+- **(4)** pi-test `--starts 300` with the row's manifest: version, manifest (build ID and
+  libc.so hash match), ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- **`0015` does no harm:** the image starts `bcm2835-sdhostd`, which prints `SDHC/SDXC card,
+  15193 MiB, 4-bit bus, high speed` and `serving /scheme/disk.mmc`. There is no
+  `bcm2835-sdhcid` line.
+  - The two `[ERROR redoxfs] failed to open filesystem /scheme/disk.mmc/0…` lines are in
+    every netboot image's log (rows 214–216 too), so they are not new.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:30). devsh answers.
