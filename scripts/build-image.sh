@@ -272,12 +272,18 @@ done
 for file in "$ROOT"/patches/experiments/*/recipes/*/*/recipe.toml; do
     [ -e "$file" ] || continue
     rel="${file#"$ROOT"/patches/experiments/*/recipes/}"
-    git -C "$REDOX" checkout -q -- "recipes/$rel"
+    # A recipe upstream does not have (vc4d) is removed instead.
+    if git -C "$REDOX" ls-files --error-unmatch "recipes/$rel" >/dev/null 2>&1; then
+        git -C "$REDOX" checkout -q -- "recipes/$rel"
+    else
+        rm -f "$REDOX/recipes/$rel"
+    fi
 done
 for exp in "${experiments[@]}"; do
     for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
         [ -e "$file" ] || continue
         rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
+        mkdir -p "$(dirname "$REDOX/recipes/$rel")"
         cp "$file" "$REDOX/recipes/$rel"
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
