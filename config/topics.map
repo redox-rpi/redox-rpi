@@ -1,0 +1,118 @@
+# Which topic page (docs/topics/<name>.md) belongs to which files, for
+# scripts/check-topics.py. When a change touches a file here, CI warns
+# unless the same change also touches one of its pages.
+#
+# One rule per line: a path pattern (shell glob, * also matches /) and the
+# topic pages, separated by commas; any one of them is enough. The first
+# matching rule wins, so specific rules come first. "-" means no topic
+# (shared files that many changes touch for their own topic).
+# Files in patches/, scripts/, tools/ and config/ that no rule matches get
+# a note in the job summary, so this map can be extended.
+
+# Shared by most changes
+scripts/build-image.sh                  -
+patches/README.md                       -
+config/upstream.lock                    ci
+
+# Default patches, by the program they change
+patches/base/*RTL8152*                  network,usb
+patches/base/*dwc2d*                    usb
+patches/base/*usb*                      usb
+patches/base/*sdhcid*                   sdcard
+patches/base/*sdhostd*                  sdcard
+patches/base/*rpi-firmwared*            firmware
+patches/base/*getty*                    stability
+patches/base/*netstack*                 network
+patches/base/*dhcpd*                    network
+patches/base/*testnetd*                 network
+patches/base/*pcid*                     boot
+patches/base/*gpiod*                    firmware
+patches/base/*i2cd*                     firmware
+patches/base/*spid*                     firmware
+patches/base/*                          boot
+patches/kernel/*                        stability
+patches/relibc/*                        relibc,stability
+patches/redoxfs/*                       sdcard
+patches/bootloader/*                    boot
+patches/fdt/*                           boot
+
+# Experiments, by name
+patches/experiments/cpu-*               firmware
+patches/experiments/cputop/*            firmware
+patches/experiments/hwinfo/*            firmware
+patches/experiments/gpio/*              firmware
+patches/experiments/i2c/*               firmware
+patches/experiments/spi/*               firmware
+patches/experiments/ctx-leak-fix/*      stability,sdcard
+patches/experiments/dwc2*               usb
+patches/experiments/usb-*               usb
+patches/experiments/termios-speed/*     usb
+patches/experiments/rtl8152/*           network,usb
+patches/experiments/lan78xx-*           network,usb
+patches/experiments/ipv6/*              network
+patches/experiments/mdns/*              network
+patches/experiments/multicast/*         network
+patches/experiments/netstack-*          network
+patches/experiments/ns-list-snapshot/*  network
+patches/experiments/sshd/*              network
+patches/experiments/mqtt*               network
+patches/experiments/ha-bridge/*         network
+patches/experiments/late-dhcp/*         network,time
+patches/experiments/timerd*             time
+patches/experiments/timesync/*          time
+patches/experiments/timezone/*          time
+patches/experiments/sdhost-*            sdcard
+patches/experiments/redoxfs-*           sdcard
+patches/experiments/grow-root/*         sdcard,boot
+patches/experiments/pi-clean-boot/*     boot
+patches/experiments/boot-time/*         boot
+patches/experiments/welcome/*           boot
+patches/experiments/pkg-*               boot
+patches/experiments/prebuilt-programs/* relibc,stability
+patches/experiments/rpi-fb/*            graphics
+patches/experiments/orbital/*           graphics
+patches/experiments/relibc-tests/*      relibc
+patches/experiments/sig*                relibc,stability
+patches/experiments/self-exit-status/*  relibc,stability
+patches/experiments/ldso-*              stability
+patches/experiments/kernel-*            stability
+patches/experiments/t1-*                stability
+patches/experiments/serial-rx/*         stability
+patches/experiments/pty-sigint*         stability
+
+# Scripts and tools
+scripts/check-patches.sh                ci
+scripts/check-topics.py                 ci
+scripts/pr-order.py                     ci
+scripts/pi-test.py                      ci
+scripts/devsh.py                        ci
+scripts/qemu-*                          ci
+scripts/with-build-lock.sh              ci
+scripts/update-stable.sh                ci
+scripts/relibc-checkout.sh              relibc
+scripts/make-sdcard.sh                  boot
+scripts/netboot*                        boot
+scripts/build-uboot.sh                  boot
+scripts/build-kernel.sh                 boot,ci
+scripts/rpi-firmware.sh                 boot
+scripts/sd-stress.py                    sdcard
+scripts/redoxfs-write-amp.py            sdcard
+scripts/test-keyboard.sh                usb
+scripts/*usb*                           usb
+scripts/*hotplug*                       usb
+tools/devshd/*                          ci
+tools/sigregs/*                         relibc,stability
+tools/timerd/*                          time
+tools/timesync/*                        time
+tools/redoxfs-file/*                    sdcard
+tools/reboot/*                          boot
+.github/workflows/relibc.yml            relibc,ci
+.github/workflows/*                     ci
+
+# Configuration
+config/stable-image.conf                ci
+config/redox-stable.*                   ci
+config/topics.map                       ci
+config/*relibc-tests*                   relibc,ci
+config/raspizero2w.toml                 zero2w
+config/*                                boot

@@ -1,0 +1,74 @@
+From 6fd7c0a5f0e8f789420b49f0e20f80d47e1232d7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:30:52 +0000
+Subject: [PATCH 3/4] Let reads of other files keep a run of collected writes
+ going (redox-rpi #16)
+
+A file copy reads the source between the writes to the copy. Each read
+wrote the collected data, so a copy in small blocks cost as much as
+before. Only a read of the file being written needs the data first.
+---
+ src/mount/redox/mod.rs    |  9 +++++++--
+ src/mount/redox/scheme.rs | 23 +++++++++++++++++++++++
+ 2 files changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
+index ddb83d6..6ef1e15 100644
+--- a/src/mount/redox/mod.rs
++++ b/src/mount/redox/mod.rs
+@@ -78,11 +78,16 @@ where
+             }
+         };
+         // Collected writes go to the disk before any other request, so
+-        // everything else (reads, stat, fsync, other handles) sees them.
++        // everything else (stat, fsync, reads of that file) sees them.
+         let caller = req.caller();
+         let response = match req.op() {
+             Ok(op) => {
+-                if !matches!(op, Op::Write(_)) {
++                let flush = match &op {
++                    Op::Write(_) => false,
++                    Op::Read(read) => scheme.read_needs_flush(read.fd),
++                    _ => true,
++                };
++                if flush {
+                     scheme.flush_pending();
+                 }
+                 op.handle_sync(caller, &mut scheme, &mut state)
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index dc89654..7f2b5ed 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -174,6 +174,29 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+         }
+     }
+ 
++    /// Whether a read of handle `id` has to wait for the collected data:
++    /// only a read of the same file does. Copying a file reads the source
++    /// between the writes to the copy, and those reads must not cut the
++    /// run.
++    pub fn read_needs_flush(&self, id: usize) -> bool {
++        let Some(pending) = self.pending.as_ref() else {
++            return false;
++        };
++        if pending.data.is_empty() {
++            return false;
++        }
++        let node = |id| {
++            self.handles
++                .get(&id)
++                .and_then(|handle| handle.resource().ok())
++                .map(|resource| resource.node_ptr().id())
++        };
++        match (node(id), node(pending.id)) {
++            (Some(read), Some(written)) => read == written,
++            _ => true,
++        }
++    }
++
+     /// The error of a failed write of collected data for handle `id`.
+     fn take_pending_error(&mut self, id: usize) -> Result<()> {
+         match self.pending_error {
+-- 
+2.53.0
+
