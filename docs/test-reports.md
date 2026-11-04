@@ -7614,3 +7614,204 @@ No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `resta
   and the watch thread printed nothing within 4 min. Either the main loop was not inside a
   device read or write, or the watch thread was stuck too. Next time, snapshot
   `cat /scheme/sys/context` (whole) as well.
+
+## #214: #92, where netstack hangs, second try with a heartbeat and timesync (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-287-g5baac82a+x53a7` (branch `t92-netstack-watch`, experiments
+`netstack-watch` with heartbeat, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`,
+`timesync`) on a real Pi 3B+ over netboot, reset at 12:07:13 UTC.
+- The boot log has `timesync: clock set to 2026-11-04 12:07:32 UTC from pool.ntp.org`.
+- `40_redox-rpi` was set to pkg-t44, and there was no `/scheme/data/pkg`.
+- devsh `echo ok` ran every 30 s from homenodellm.
+
+**Result: 5 installs without a hang. Pass (second criterion). #92 did not show this time.**
+No panic, exception or `FATAL` line, and no dwc2d `Timeout`, `removed` or `restart` line.
+
+- Five times, `pkg install --yes vim` (10.3 MiB, last shown rate 3.0 to 4.1 MiB/s, about 5 min each with the commit) ended in `Commit complete.`. Each was followed by `pkg remove --yes vim` (20 to 25 s). This ran from 12:07:44 to 12:35:15.
+- devsh answered 51 of 51.
+- **Heartbeat:** 30 `netstack-watch: alive …` lines, one every 60 s from 60 s to 1805 s.
+  - All of them say `idle for 0 s`, except the last one, which says `timer event for 0 s`.
+  - Events grew from 13240 to 113320 (79356 network), and frames in from 9845 to 76033.
+  - Each install shows as a jump of about 10000 events between two heartbeats.
+  - There was no `stuck` line.
+- After install 5, dwc2d counted rx 74848 and tx 34019 frames, with no errors, timeouts or restarts.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset. devsh answers, and `/scheme/data` has no `pkg`.
+- Counting test 213 run 3 (3 installs, clock set by hand), that is 8 vim installs in a row without the hang on this branch. The one hang (213 run 1) came at a 1970 clock, 28 s after a `pkg install` that had to fail on its certificate.
+
+## #215: #47 boot time, PR #85 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-301-g7a735169+x5bf8` (branch `boot-time` with main merged, experiments
+`timesync`, `boot-time`), `~/t18-work/image-bt85/harddrive.img` (md5 `01676e7e…`). Staged
+with `~/t18-work/bt85-stage/scripts/netboot.sh`, and the bootloader on the TFTP server is the
+image's own (md5 `9036b6c2…`). Real Pi 3B+ over netboot, 3 boots, each with
+`echo reset > /scheme/sys/kstop`, timed on the serial log. No panic, exception or `FATAL`
+line. **Pass.**
+
+| Boot | `kreset` | `Continuing with the selected mode in 1 s` | `redox login:` | from `kreset` |
+|---|---|---|---|---|
+| 1 | 1.60 s | 14.98 s | **20.89 s** | 19.29 s |
+| 2 | 1.55 s | 14.77 s | **20.44 s** | 18.89 s |
+| 3 | 1.55 s | 14.88 s | **20.49 s** | 18.94 s |
+
+- The time is counted from the devsh reset command, as in #107 (21.0–21.2 s).
+  This run is 0.3 to 0.7 s faster.
+- On every boot, U-Boot asked DHCP once (bound at about 10.6 s), and the image came over
+  HTTP in about 1.9 s (21.9 MiB/s).
+- On every boot, about 10 s after devsh answered:
+  - `eth0` had `192.168.178.148/24` (DHCP lease);
+  - `/scheme/data` was mounted (`README.txt` and the other files there);
+  - the build ID was right.
+- pi-test `--starts 300`: version, manifest, ps (51), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:17). devsh answers,
+  and `/srv/tftp/redox` matches the stable copy.
+
+## #216: #46 time zones, PR #102 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-300-gf71c5a4+x0598` (branch `timezone`, experiments `ldso-diagnostics`,
+`timerd`, `timesync`, `timezone`), `~/tz-test/keep/tz-v0.4.0-dev-300-gf71c5a4+x0598.img`.
+Real Pi 3B+ over netboot, reset at 13:19:21 UTC. No panic, exception or `FATAL` line.
+**Pass:** every output as given.
+
+- Boot log:
+  - `timesync: clock set to 2026-11-04 13:19:41 UTC from pool.ntp.org`;
+  - `timerd: clock set by timesync, 2026-11-04 14:19:42 CET`.
+- Over devsh:
+  - `date` gave `Wed Nov 4 14:19:57 CET 2026`, and `date -u` gave `Wed Nov 4 13:19:57 UTC 2026` (one hour ahead, `CET`).
+  - `ls -l /etc/localtime` gave `/etc/localtime -> /usr/share/zoneinfo/Europe/Berlin`.
+  - `date -d '@1792890000'` gave `Sun Oct 25 02:00:00 CET 2026`.
+  - `timerd -t 1792886400 1792890000 1774746000` gave:
+    - `2026-10-25 00:00:00 UTC = 2026-10-25 02:00:00 CEST (+02:00)`
+    - `2026-10-25 01:00:00 UTC = 2026-10-25 02:00:00 CET (+01:00)`
+    - `2026-03-29 01:00:00 UTC = 2026-03-29 03:00:00 CEST (+02:00)`
+  - `env TZ=UTC timerd -t 1792890000` gave `2026-10-25 01:00:00 UTC = 2026-10-25 01:00:00 UTC (+00:00)`.
+- pi-test: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:21). devsh answers.
+
+## #217: PRs #161, #163 and #164 together on main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-296-g64a62d9+x9f76` (branch `pitest-161-163-164` on main 399bec8, experiments
+`timesync`, `rtl8152`), `~/redox-rpi-rebase/keep/pt-161-163-164.img` with its manifest.
+Real Pi 3B+ over netboot, reset at 13:24:33 UTC, login after 20 s. No panic, exception or `FATAL`
+line. **Pass.**
+
+- **(1)** `redox login:` on the serial console, no panic.
+- **(2)** The boot log has `timesync: clock set to 2026-11-04 13:24:52 UTC from pool.ntp.org`
+  (relibc `0011`). `date -u` on the Pi and on homenodellm both gave
+  `Wed Nov 4 13:25:10 UTC 2026`.
+- **(3)** Logged in on the serial console, then
+  `patches/experiments/serial-rx/serial-input-test.sh 20`: **20 of 20 lines complete**
+  (getty `0024`).
+- **(4)** pi-test `--starts 300` with the row's manifest: version, manifest (build ID and
+  libc.so hash match), ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- **`0015` does no harm:** the image starts `bcm2835-sdhostd`, which prints `SDHC/SDXC card,
+  15193 MiB, 4-bit bus, high speed` and `serving /scheme/disk.mmc`. There is no
+  `bcm2835-sdhcid` line.
+  - The two `[ERROR redoxfs] failed to open filesystem /scheme/disk.mmc/0…` lines are in
+    every netboot image's log (rows 214–216 too), so they are not new.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:30). devsh answers.
+
+## #218: #37 mDNS, PR #93 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-346-gfd355e58+x3d8d` (branch `mdns`, experiments `multicast`, `ipv6`,
+`lan78xx-multicast`, `mdns`), `~/mdns-test/keep/mdns-v0.4.0-dev-346-gfd355e58+x3d8d.img`.
+Real Pi 3B+ over netboot, reset at 13:32:54 UTC. No panic, exception or `FATAL` line.
+**Pass.**
+
+Serial log:
+
+```
+mdnsd: redox-rpi.local on 224.0.0.251 and ff02::fb port 5353, 2 services configured
+mdnsd: redox-rpi._devsh._tcp.local port 2323 announced
+mdnsd: redox-rpi.local is 192.168.178.148, fe80::ba27:ebff:fe08:e0aa, 2a02:590:1509:6101:ba27:ebff:fe08:e0aa, fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa
+```
+
+`mdns-query.py` from `origin/mdns`, run on homenodellm:
+
+- **(1)** `_devsh._tcp.local PTR`: one answer from the Pi with PTR, SRV, TXT, A and AAAA:
+  ```
+  192.168.178.148: _devsh._tcp.local PTR redox-rpi._devsh._tcp.local (ttl 4500)
+  192.168.178.148: redox-rpi._devsh._tcp.local SRV port 2323 target redox-rpi.local (ttl 120)
+  192.168.178.148: redox-rpi._devsh._tcp.local TXT 00 (ttl 4500)
+  192.168.178.148: redox-rpi.local A 192.168.178.148 (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fe80::ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA 2a02:590:1509:6101:ba27:ebff:fe08:e0aa (ttl 120)
+  192.168.178.148: redox-rpi.local AAAA fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa (ttl 120)
+  ```
+- **(2)** `redox-rpi.local`: the Pi answers with A `192.168.178.148` and the three AAAA. The
+  Fritz!Box (192.168.178.1) also repeats the A with ttl 10.
+- **(3)** `redox-rpi.local AAAA -6 wlp13s0`: from `fe80::ba27:ebff:fe08:e0aa` (the Pi) came the
+  AAAA `fe80::…`, `2a02:590:1509:6101:…` and `fdeb:…`, plus the A. The router repeated
+  them with ttl 10.
+  - homenodellm is on cable now (`enp12s0`). The same query over `enp12s0` gives the same answers.
+- **(4)** `_services._dns-sd._udp.local PTR`: the Pi answers
+  `192.168.178.148: _services._dns-sd._udp.local PTR _devsh._tcp.local (ttl 4500)` (plus its
+  A/AAAA), and no `_ssh._tcp` from 192.168.178.148.
+  - The other devices on the LAN that answered are left out here.
+- pi-test: version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:35). devsh answers.
+
+## #219: #55/#86 Ctrl-C, PR #121 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-314-g9b7948a8+xc169` (branch `ctrlc-raw` with main merged, experiments
+`timesync`, `pty-sigint`), `~/t18-work/image-c121/harddrive.img` (md5 `f5e80496…`).
+Staged with `~/t18-work/c121-stage/scripts/netboot.sh`; the bootloader is md5 `da1a7595…`.
+Real Pi 3B+ over netboot, reset at 13:36:38 UTC, `devshd: listening` at 13:36:58. No panic,
+exception or `FATAL` line. **Fail: on the serial console, 3 of 10 rounds were not
+stopped, the same 3 in two runs. devsh 10 of 10 and the standard checks pass.**
+
+- **Serial** (from 13:37:36, about 40 s after `devshd: listening`; root login with
+  `sercmd.py`, then the logger was paused while
+  `serial-ctrlc-test.py --device /dev/ttyUSB0 --delays 0.01,0.02,0.03,0.01,0.02,0.03,0.05,0.1,0.3,1` ran).
+  Both runs gave exactly the same result:
+
+  | Round | Delay after Enter | Run 1 (13:37) | Run 2 (13:41) |
+  |---|---|---|---|
+  | 1 | 0.01 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 2 | 0.02 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 3 | 0.03 s | SIGINT after 0.1 s | SIGINT after 0.1 s |
+  | 4 | 0.01 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 5 | 0.02 s | SIGINT after 0.2 s | SIGINT after 0.2 s |
+  | 6 | 0.03 s | **not stopped in 50 s** | **not stopped in 50 s** |
+  | 7–10 | 0.05, 0.1, 0.3, 1 s | SIGINT after 0.0–0.1 s | the same |
+
+  - The pattern: after an early Ctrl-C (0.01–0.03 s) that worked, the next early one is missed. After a missed round, the next early one works again. From 0.05 s on, every round works.
+  - In the missed rounds the console shows `sleep 40` and then only the next prompt, with no `ended by signal SIGINT` line. That is what a `sleep 40` that ran to its end looks like.
+  - #131 (before the main merge) had 19 of 19 on the same delays.
+  - The logs are in `~/pitest-tools/t219/serial-ctrlc.log` and `serial-ctrlc2.log` on homenodellm.
+- **devsh:** `ctrlc-test.py 192.168.178.148 --delays 0,0.01,0.02,0.03,0.1` gave **10 of 10 stopped**
+  (0.1–0.2 s after Ctrl-C), `Ctrl-C at the prompt: shell still answers`, and devsh answered afterwards.
+- pi-test `--starts 300`: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:45). devsh answers, and the serial logger is running again.
+
+## #222: #92 netstack hang, third try: many fast HTTPS failures (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-287-g5baac82a+x5f6a` (branch `t92-netstack-watch`, experiments
+`netstack-watch`, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`, **no timesync**),
+`~/redox-rpi-zrtl/keep/t92pi3-v0.4.0-dev-287-g5baac82a+x5f6a.img`. Real Pi 3B+ over netboot.
+The clock stayed at 1970 (`date`: `Thu Jan 1 00:00:50 UTC 1970`), and I did not set it.
+The loop was typed on the serial console, as the row says. **Result: no stall and no hang
+in 6200 fast HTTPS failures. Not one `netstack-watch: … stuck` or `back after` line; every
+heartbeat said `idle for 0 s`.**
+
+- **Run 1, as in the row** (reset 14:18:08): `for i in 1..201; echo ROUND $i; pkg install --yes vim; ping -c 1 192.168.178.1; end`
+  (ion's `..` leaves out the end, so 200 rounds).
+  - It finished in **40 s** (14:19:04 to 14:19:44), not 20 to 40 min. On the Pi, every
+    `pkg` fails `invalid peer certificate: certificate not valid yet` in about 0.2 s.
+  - 200 of 200 rounds failed that way. Ping: 190 of 200 answered and 10 lost (single rounds).
+- **Run 2, longer, to give it the 20 minutes the row meant** (reset 14:20:58): the same loop with `1..6001`.
+  - 6000 rounds from 14:21:55 to 14:41:48 (about 300 rounds per minute). 5999 certificate failures.
+  - Heartbeats came every 60 s for the whole run (20 lines, at about every 300 rounds). Each
+    one we can read says `alive at … s, idle for 0 s`. Some lines are mixed with the loop's
+    own output on the console, but they are there.
+  - **No `stuck in …` and no `back after N s` line.** No dwc2d `Timeout`, `removed` or `restart` line.
+  - Ping: **5486 answered and 514 lost (8.6 %)**, almost all single rounds (472 groups,
+    longest 4 rounds in a row, 2599–2602), spread evenly over the whole run. The loop never slowed down.
+  - **Once, in round 2058, `pkg` itself crashed:** `FATAL: Not an SVC induced synchronous
+    exception (ty=100010)`, `ELR_EL1 0x9` (a jump to address 9),
+    `UNHANDLED EXCEPTION, CPU #3, PID 4155, NAME /usr/bin/pkg`. The loop went straight on with
+    the ping, and netstack was not affected. This is a pkg crash in user space, not #92.
+- Step 3 (a hang) was not needed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset after each run (14:20 and 14:42). devsh answers.
+- **For Network:** QEMU's stalls (6–11 s in 5 of 59 rounds) do not show on the Pi. Here a
+  failed TLS start takes about 0.2 s, against several seconds in QEMU, so many more rounds
+  fit in the same time and none stalled. The only Pi hang so far (213 run 1) is still unexplained.

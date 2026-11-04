@@ -24,6 +24,12 @@
 #                     host port 12323 forwards to devshd in the guest,
 #                     12222 to sshd (DEVSH_PORT=<port> and SSH_PORT=<port>
 #                     pick other ones, for parallel runs)
+#   --usb-net-socket <group:port>
+#                     the same card, but its Ethernet frames travel as UDP
+#                     datagrams to this host multicast group (QEMU's socket
+#                     netdev) instead of user networking, which drops
+#                     multicast; no DHCP there, the guest needs a static
+#                     address (patches/experiments/multicast/README.md)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
@@ -79,6 +85,7 @@ sd_size=""
 data=no
 usb_net=no
 usb_host=""
+usb_net_socket=""
 monitor=(-monitor none)
 devices=()
 qmp=()
@@ -95,6 +102,7 @@ while [ $# -gt 0 ]; do
         --uboot) uboot="$2"; shift 2 ;;
         --direct) uboot=direct; direct="$(cd "$2" && pwd)"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
+        --usb-net-socket) usb_net=yes; usb_net_socket="$2"; shift 2 ;;
         --usb-host) usb_host="$2"; shift 2 ;;
         --device) devices+=(-device "$2"); shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
@@ -206,7 +214,9 @@ if [ -n "$usb_host" ]; then
 else
     qemu+=(-device usb-kbd)
 fi
-if [ "$usb_net" = yes ]; then
+if [ -n "$usb_net_socket" ]; then
+    qemu+=(-netdev "socket,id=usbnet,mcast=$usb_net_socket" -device usb-net,netdev=usbnet)
+elif [ "$usb_net" = yes ]; then
     # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest,
     # 12222 (or SSH_PORT) sshd (port 22).
     qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${SSH_PORT:-12222}-:22" -device usb-net,netdev=usbnet)
