@@ -7927,3 +7927,39 @@ the clock is at 1970 and the HTTPS certificate check fails.**
   - With `--experiment timesync`, as in the stable image, it should work.
 - pi-test: version, manifest, ps (50), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (16:03). devsh answers.
+
+## #228 #126 power saving step 1: idle power with Ethernet at 100 Mbit/s against gigabit (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-355-g20e2dfc1+x0e33` (branch `power-eth` 20e2dfc1, experiment `eth-speed`,
+base `0090`). Real Pi 3B+ over netboot, reset at 17:27:59 UTC. The Shelly plug was only read.
+**Result: 100 Mbit/s saves about 0.35 W at idle** (3.24 W to 2.89 W, about 11 %). That is
+well above the plug's 0.1 W step, and the same in both rounds.
+
+- Boot: `redox login:` 20 s after the reset. The switch port is gigabit. The boot line reads
+  `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s`, not the
+  `LAN78xx link up after N ms` that the row expected.
+- pi-test passes: manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed.
+- Each sample: `shelly-sample.sh <label> 36 10`, 36 readings over 6 min, idle, nothing else
+  running. The speed was changed on the serial console.
+
+| Sample | Link | Mean | Min | Max |
+|---|---|---|---|---|
+| g1 | 1000 Mbit/s | 3.23 W | 3.2 | 3.3 |
+| m1 | 100 Mbit/s | 2.89 W | 2.8 | 3.2 |
+| g2 | 1000 Mbit/s | 3.24 W | 3.2 | 3.4 |
+| m2 | 100 Mbit/s | 2.88 W | 2.7 | 3.1 |
+
+- Gigabit mean 3.235 W, 100 Mbit/s mean 2.885 W, **difference 0.35 W**.
+  - The higher first reading in m1 and m2 (3.2 and 3.1) is the time just after the switch.
+    Leaving it out gives 2.88 and 2.87 W.
+- Every change: `dwc2d: link: advertising up to N Mbit/s, negotiating again`, then
+  `link up on the LAN7800 at address 6, N Mbit/s` within 4 s. `ping -c 3` to the server gave
+  3 of 3 every time. devsh answered at the end at 1000 Mbit/s.
+- Small finding, not about the image: after the third change (`echo 100`), my serial helper did
+  not see the shell prompt for 120 s. The link line was already there, so it only made the gap
+  before m2 longer.
+- The plug's `aenergy.total` counter updates only in steps, so it can't give a finer number
+  over 6 min. I used the `apower` readings only.
+- Afterwards `echo 1000 > /tmp/dwc2d-link`, then stable `v0.4.0-dev-201-gb714bca+x9f76`
+  restored with a devsh reset: banner after 20 s, devsh answers, `/srv/tftp/redox` matches the
+  backup.
