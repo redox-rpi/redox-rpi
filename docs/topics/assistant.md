@@ -432,7 +432,9 @@ git).
   on device`), so each start read the system prompt again (3 minutes). It
   now goes next to the model file (on the Pi `/scheme/data`), with
   `~/.cache` as the second choice, and rinfer deletes a file it could not
-  finish; Pi test #236 is queued. In QEMU, long output on
+  finish. Pi test #236 passes: the first start saved the 380 tokens in
+  5.3 s (43.6 MB on `/scheme/data`), the second loaded them in 2.6 s
+  instead of reading them again for about 190 s. In QEMU, long output on
   the serial console blocked the run (the PTY problem behind the getty
   panic), so the test wrote its output to a file.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
