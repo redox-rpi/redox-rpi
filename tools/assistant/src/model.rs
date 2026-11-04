@@ -38,9 +38,10 @@ pub struct Model {
     child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
-    /// The system message, and the saved state after it (file and key).
+    /// The system message, and where the state after it is saved (the
+    /// files to try, in order) with its key.
     system: String,
-    saved: Option<(String, String)>,
+    saved: (Vec<String>, String),
     /// Tokens in the conversation, as rinfer last said, and right after the
     /// system prompt.
     used: usize,
@@ -73,10 +74,7 @@ impl Model {
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let system = format!("<|im_start|>system\n{}<|im_end|>\n", system_prompt());
-        let saved = saved_prompt_file().map(|file| {
-            let key = prompt_key(path, &system);
-            (file, key)
-        });
+        let saved = (saved_prompt_files(path), prompt_key(path, &system));
         let mut m = Model { child, stdin, stdout, system, saved, used: 0, base: 0, history: Vec::new() };
         m.answer(|_| {})?;
         m.begin()?;
@@ -94,24 +92,25 @@ impl Model {
 
     fn load_system(&mut self) -> std::io::Result<()> {
         let system = self.system.clone();
-        match self.saved.clone() {
-            Some((file, key)) => {
-                if self.request(&format!("load {file} {key}"))? == "ok" {
-                    // Nothing to read: rinfer only says how many tokens
-                    // the loaded conversation has.
-                    self.feed("")?;
-                    return Ok(());
-                }
-                self.feed(&system)?;
-                if let Some(dir) = std::path::Path::new(&file).parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                // A failed save only costs the same wait next time.
-                self.request(&format!("save {file} {key}"))?;
+        let (files, key) = self.saved.clone();
+        for file in &files {
+            if self.request(&format!("load {file} {key}"))? == "ok" {
+                // Nothing to read: rinfer only says how many tokens the
+                // loaded conversation has.
+                self.feed("")?;
+                return Ok(());
             }
-            None => {
-                self.request("reset")?;
-                self.feed(&system)?;
+        }
+        self.request("reset")?;
+        self.feed(&system)?;
+        // The next place is tried if one is full (the network-boot root has
+        // no room for the 42 MB); if all fail, the same wait comes next time.
+        for file in &files {
+            if let Some(dir) = std::path::Path::new(file).parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if self.request(&format!("save {file} {key}"))? == "ok" {
+                break;
             }
         }
         Ok(())
@@ -362,15 +361,26 @@ impl Hider {
 
 /// The system message: who the assistant is for, and the tools in the form
 /// Qwen3 was trained on.
-/// Where the state after the system prompt is saved: ASSISTANT_CACHE (empty
-/// turns saving off), else ~/.cache/assistant/prompt.kv. None if the path
-/// has spaces (rinfer's requests are split at spaces).
-fn saved_prompt_file() -> Option<String> {
-    let file = match std::env::var("ASSISTANT_CACHE") {
-        Ok(f) => f,
-        Err(_) => format!("{}/.cache/assistant/prompt.kv", std::env::var("HOME").ok()?),
+/// Where the state after the system prompt is saved, in the order tried:
+/// ASSISTANT_CACHE (empty turns saving off), else next to the model file
+/// unless that is in /usr (on the Pi the model is on /scheme/data, which has
+/// room), then ~/.cache/assistant/prompt.kv. Paths with spaces are left out
+/// (rinfer's requests are split at spaces).
+fn saved_prompt_files(model: &str) -> Vec<String> {
+    let files = match std::env::var("ASSISTANT_CACHE") {
+        Ok(f) => vec![f],
+        Err(_) => {
+            let mut files = Vec::new();
+            if !model.starts_with("/usr/") {
+                files.push(format!("{model}.prompt.kv"));
+            }
+            if let Ok(home) = std::env::var("HOME") {
+                files.push(format!("{home}/.cache/assistant/prompt.kv"));
+            }
+            files
+        }
     };
-    (!file.is_empty() && !file.contains(char::is_whitespace)).then_some(file)
+    files.into_iter().filter(|f| !f.is_empty() && !f.contains(char::is_whitespace)).collect()
 }
 
 /// Marks a saved state as made by this model file and system prompt (FNV-1a

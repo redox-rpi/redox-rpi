@@ -249,6 +249,10 @@ pub fn serve(model: &mut ModelWeights, tokenizer: &Tokenizer) -> anyhow::Result<
             }
             ["save", path, key] => {
                 let r = s.save(path, key);
+                if r.is_err() {
+                    // A file cut short (a full disk) would only take room.
+                    let _ = std::fs::remove_file(path);
+                }
                 status(r, &mut out)
             }
             ["load", path, key] => {
