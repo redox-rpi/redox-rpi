@@ -1,4 +1,4 @@
-From f8c60d2dff9c6232c59dd1bde97943ad0b784e09 Mon Sep 17 00:00:00 2001
+From 1e29d5c9b7fa59d1ba8349e283abe7784b4e6d0e Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 11:48:23 +0100
 Subject: [PATCH] dwc2d: ask again for a reply shorter than the fields read
@@ -29,7 +29,7 @@ index 279d8eb..dfc5d19 100644
  
  #[derive(Clone)]
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 1b97738..624907b 100644
+index 9320af9..7ffe442 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -158,6 +158,43 @@ impl Bus {
