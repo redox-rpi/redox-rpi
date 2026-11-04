@@ -1,0 +1,294 @@
+From e05ea46bf232a2fee6804b98af42ea5806050b7e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 30 Oct 2026 21:30:10 +0100
+Subject: [PATCH 1/2] dwc2d: counters of the network adapter in
+ /tmp/dwc2d-netstats, for diagnosis
+
+RX/TX frames and errors with the last error code, the time of the last
+frame each way, interrupts and scheme events, written every 5 s. They
+tell whether frames still come from the adapter when the network stops
+(#92).
+---
+ drivers/usb/dwc2d/src/ecm.rs     |  17 +++++-
+ drivers/usb/dwc2d/src/lan78xx.rs |  18 +++++-
+ drivers/usb/dwc2d/src/main.rs    |  25 +++++++-
+ drivers/usb/dwc2d/src/stats.rs   | 100 +++++++++++++++++++++++++++++++
+ 4 files changed, 153 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/stats.rs
+
+diff --git a/drivers/usb/dwc2d/src/ecm.rs b/drivers/usb/dwc2d/src/ecm.rs
+index 77cfeeed..b43413bd 100644
+--- a/drivers/usb/dwc2d/src/ecm.rs
++++ b/drivers/usb/dwc2d/src/ecm.rs
+@@ -210,12 +210,16 @@ impl Ecm {
+                 self.in_pid = next_pid;
+                 self.rx_armed = false;
+                 if len > 0 {
++                    crate::stats::rx(Ok(1));
+                     self.rx_ready = Some(len);
+                 } else {
+                     self.arm_rx();
+                 }
+             }
+-            Some(Err(_)) => self.arm_rx(),
++            Some(Err(err)) => {
++                crate::stats::rx(Err(&err));
++                self.arm_rx();
++            }
+         }
+     }
+ 
+@@ -272,7 +276,10 @@ impl NetworkAdapter for Ecm {
+         let (_, next_pid) = self
+             .hc
+             .transfer_on(TX_CHANNEL, &phase, timeout)
+-            .map_err(|_| SysError::new(EIO))?;
++            .map_err(|err| {
++                crate::stats::tx(Err(&err));
++                SysError::new(EIO)
++            })?;
+         self.out_pid = next_pid;
+         // A frame that fills its last packet ends with a zero-length packet.
+         if len % usize::from(self.function.max_packet_out) == 0 {
+@@ -280,9 +287,13 @@ impl NetworkAdapter for Ecm {
+             let (_, next_pid) = self
+                 .hc
+                 .transfer_on(TX_CHANNEL, &phase, timeout)
+-                .map_err(|_| SysError::new(EIO))?;
++                .map_err(|err| {
++                    crate::stats::tx(Err(&err));
++                    SysError::new(EIO)
++                })?;
+             self.out_pid = next_pid;
+         }
++        crate::stats::tx(Ok(()));
+         Ok(len)
+     }
+ }
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index ccdc7b44..70d39395 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -407,10 +407,15 @@ impl Lan78xx {
+             None => {}
+             Some(Ok((len, next_pid))) => {
+                 self.in_pid = next_pid;
++                let before = self.frames.len();
+                 self.parse_rx(len);
++                crate::stats::rx(Ok((self.frames.len() - before) as u64));
++                self.arm_rx();
++            }
++            Some(Err(err)) => {
++                crate::stats::rx(Err(&err));
+                 self.arm_rx();
+             }
+-            Some(Err(_)) => self.arm_rx(),
+         }
+     }
+ }
+@@ -447,16 +452,23 @@ impl NetworkAdapter for Lan78xx {
+         let (_, next_pid) = self
+             .hc
+             .transfer_on(TX_CHANNEL, &phase, timeout)
+-            .map_err(|_| SysError::new(EIO))?;
++            .map_err(|err| {
++                crate::stats::tx(Err(&err));
++                SysError::new(EIO)
++            })?;
+         self.out_pid = next_pid;
+         if total % usize::from(self.f.max_packet_out) == 0 {
+             let phase = self.phase(false, 0);
+             let (_, next_pid) = self
+                 .hc
+                 .transfer_on(TX_CHANNEL, &phase, timeout)
+-                .map_err(|_| SysError::new(EIO))?;
++                .map_err(|err| {
++                    crate::stats::tx(Err(&err));
++                    SysError::new(EIO)
++                })?;
+             self.out_pid = next_pid;
+         }
++        crate::stats::tx(Ok(()));
+         Ok(len)
+     }
+ }
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 28cc7aa2..1c19c7ef 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -22,6 +22,7 @@ mod hid;
+ mod lan78xx;
+ mod regs;
+ mod rtl8152;
++mod stats;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+@@ -268,6 +269,8 @@ fn probe(
+ const RX_CHANNEL: usize = 1;
+ /// How often to look for received frames without an interrupt.
+ const POLL_FALLBACK: Duration = Duration::from_millis(10);
++/// How often the counters go to /tmp/dwc2d-netstats.
++const STATS_EVERY: Duration = Duration::from_secs(5);
+ 
+ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+@@ -399,6 +402,7 @@ user_data! {
+     enum Source {
+         Irq,
+         Scheme,
++        Stats,
+         Time,
+         Hotplug,
+     }
+@@ -508,6 +512,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     events
+         .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
+         .expect("dwc2d: failed to subscribe to the scheme");
++    // Counters for diagnosis in /tmp/dwc2d-netstats (experiment dwc2d-netstats).
++    stats::start();
++    let mut stats_timer = Timer::new().ok();
++    if let Some(t) = stats_timer.as_mut() {
++        events
++            .subscribe(t.0.as_raw_fd() as usize, Source::Stats, event::EventFlags::READ)
++            .expect("dwc2d: failed to subscribe to the stats timer");
++        t.arm(STATS_EVERY);
++    }
+ 
+     scheme.tick().expect("dwc2d: network scheme failed");
+     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
+@@ -515,6 +528,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Irq => {
+                 let file = irq_file.as_mut().unwrap();
+                 let mut irq = [0; 8];
++                stats::IRQS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                 if file.read(&mut irq).unwrap_or(0) == irq.len() {
+                     // tick() takes the received frame and clears the
+                     // channel's interrupt; only then unmask the line.
+@@ -522,7 +536,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let _ = file.write(&irq);
+                 }
+             }
+-            Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
++            Source::Scheme => {
++                stats::TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                scheme.tick().expect("dwc2d: network scheme failed")
++            }
++            Source::Stats => {
++                let t = stats_timer.as_mut().unwrap();
++                t.fired();
++                stats::write();
++                t.arm(STATS_EVERY);
++            }
+             Source::Time => {
+                 timer.fired();
+                 let mut next = None;
+diff --git a/drivers/usb/dwc2d/src/stats.rs b/drivers/usb/dwc2d/src/stats.rs
+new file mode 100644
+index 00000000..9508ff80
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/stats.rs
+@@ -0,0 +1,100 @@
++//! Counters of the network adapter for diagnosis, written to
++//! `/tmp/dwc2d-netstats` every few seconds. They tell whether frames still
++//! arrive from the adapter when the network stops working.
++//!
++//! Error codes: the HCINT bits of a halted channel, or `0x10000` for a
++//! stall, `0x20000` for a timeout, `0x30000` for a short reply.
++
++use std::fmt::Write;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::OnceLock;
++use std::time::Instant;
++
++use crate::dwc2::Error;
++
++pub static RX_FRAMES: AtomicU64 = AtomicU64::new(0);
++pub static RX_ERRORS: AtomicU64 = AtomicU64::new(0);
++static RX_LAST_ERROR: AtomicU64 = AtomicU64::new(0);
++static RX_LAST_MS: AtomicU64 = AtomicU64::new(0);
++pub static TX_FRAMES: AtomicU64 = AtomicU64::new(0);
++pub static TX_ERRORS: AtomicU64 = AtomicU64::new(0);
++static TX_LAST_ERROR: AtomicU64 = AtomicU64::new(0);
++static TX_LAST_MS: AtomicU64 = AtomicU64::new(0);
++pub static IRQS: AtomicU64 = AtomicU64::new(0);
++pub static TICKS: AtomicU64 = AtomicU64::new(0);
++
++static START: OnceLock<Instant> = OnceLock::new();
++
++/// Milliseconds since the counters started.
++fn now_ms() -> u64 {
++    START.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++fn code(err: &Error) -> u64 {
++    match err {
++        Error::Transfer(bits) => u64::from(*bits),
++        Error::Stall => 0x1_0000,
++        Error::Timeout(_) => 0x2_0000,
++        Error::Short(_) => 0x3_0000,
++    }
++}
++
++pub fn start() {
++    now_ms();
++}
++
++/// One transfer on the bulk IN endpoint ended, with frames or an error.
++pub fn rx(result: Result<u64, &Error>) {
++    match result {
++        Ok(frames) => {
++            RX_FRAMES.fetch_add(frames, Relaxed);
++            RX_LAST_MS.store(now_ms(), Relaxed);
++        }
++        Err(err) => {
++            RX_ERRORS.fetch_add(1, Relaxed);
++            RX_LAST_ERROR.store(code(err), Relaxed);
++        }
++    }
++}
++
++/// One frame went out on the bulk OUT endpoint, or failed.
++pub fn tx(result: Result<(), &Error>) {
++    match result {
++        Ok(()) => {
++            TX_FRAMES.fetch_add(1, Relaxed);
++            TX_LAST_MS.store(now_ms(), Relaxed);
++        }
++        Err(err) => {
++            TX_ERRORS.fetch_add(1, Relaxed);
++            TX_LAST_ERROR.store(code(err), Relaxed);
++        }
++    }
++}
++
++/// Write the counters, one `name value` per line. Errors are ignored: the
++/// file is only for diagnosis.
++pub fn write() {
++    let now = now_ms();
++    let mut s = String::new();
++    let _ = writeln!(s, "uptime_ms {now}");
++    for (name, value) in [
++        ("rx_frames", &RX_FRAMES),
++        ("rx_errors", &RX_ERRORS),
++        ("rx_last_error", &RX_LAST_ERROR),
++        ("rx_last_ms", &RX_LAST_MS),
++        ("tx_frames", &TX_FRAMES),
++        ("tx_errors", &TX_ERRORS),
++        ("tx_last_error", &TX_LAST_ERROR),
++        ("tx_last_ms", &TX_LAST_MS),
++        ("irqs", &IRQS),
++        ("ticks", &TICKS),
++    ] {
++        let value = value.load(Relaxed);
++        if name.ends_with("_error") {
++            let _ = writeln!(s, "{name} {value:#x}");
++        } else {
++            let _ = writeln!(s, "{name} {value}");
++        }
++    }
++    let _ = std::fs::write("/tmp/dwc2d-netstats", s);
++}
+-- 
+2.53.0
+
