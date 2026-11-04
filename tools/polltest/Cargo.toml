@@ -1,0 +1,9 @@
+[package]
+name = "polltest"
+description = "Check what poll() reports for a listening TCP socket with no connection waiting"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
