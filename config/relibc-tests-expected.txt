@@ -1,0 +1,39 @@
+# Known failures of relibc's test suite in QEMU raspi3b
+# (scripts/relibc-tests.sh, #13). One test per line: "fail" fails every
+# time, "flaky" passes or fails. A test that fails and is not listed fails
+# the run; a "fail" test that passes is reported as fixed: remove it here.
+# From three runs of v0.3.0-dev-218-gb8567d6+x2fad (main + relibc-tests),
+# 2026-10-29.
+
+# Signals
+./bins_dynamic/sigaction fail                 # second handler not called after raise, #4 (passes with sigentry-thread-signals)
+./bins_dynamic/sys_select/pselect fail        # SIGILL, #4 (passes with sigentry-thread-signals)
+./bins_dynamic/sigaltstack fail               # passes with sigsegv + sigentry-thread-signals
+./bins_dynamic/signals/sigpause-revert fail   # hangs, #4 (passes with sigentry-thread-signals)
+./bins_dynamic/signals/sigprocmask-3 fail      # #4 (passes with sigentry-thread-signals)
+./bins_dynamic/signals/sigsegv fail           # no exception handler on aarch64; passes with sigsegv
+./bins_dynamic/signals/sigset-5 fail          # #4 (passes with sigentry-thread-signals)
+./bins_dynamic/signals/stackoverflow fail     # passes with sigsegv
+./bins_dynamic/signals/kill-child flaky
+./bins_dynamic/signals/kill-permission flaky  # hangs sometimes
+./bins_dynamic/signals/killpg0-self flaky
+
+# TLS layout, #14 (pass with tls-variant1)
+./bins_dynamic/tls_align fail
+./bins_static/tls_align fail
+./bins_dynamic/tls_shared fail
+
+# stdio, time, threads
+./bins_dynamic/stdio/fscanf_offby1 fail       # off by one
+./bins_dynamic/stdio/ungetc_ftell fail        # off by one
+./bins_dynamic/stdio/mutex fail               # ftrylockfile succeeds in another thread; passed once with #4 and #14 fixes
+./bins_dynamic/time/timer fail                # sem_wait EINVAL
+./bins_dynamic/pthread/rwlock_randtest fail   # hangs
+./bins_dynamic/redox_ring_ramfs fail
+
+# No network in QEMU
+./bins_dynamic/netdb/getaddrinfo fail
+./bins_dynamic/sys_socket/getpeername fail
+./bins_dynamic/sys_socket/getsockopt fail
+./bins_dynamic/sys_socket/recv fail
+./bins_dynamic/sys_socket/recvfrom fail

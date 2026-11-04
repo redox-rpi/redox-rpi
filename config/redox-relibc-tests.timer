@@ -1,0 +1,10 @@
+# Starts redox-relibc-tests.service every night; see that file for installing.
+[Unit]
+Description=Nightly redox-rpi relibc test suite at 01:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 01:30:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target

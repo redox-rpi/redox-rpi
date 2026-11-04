@@ -42,6 +42,8 @@ needs() {
         sdhost-boot) echo sdhost-driver ;;
         sdhost-stats) echo sdhost-driver sdhost-boot ;;
         dwc2-interrupts) echo rtl8152 ;;
+        usb-hub-drop) echo dwc2d-netstats ;;
+        dwc2d-restart) echo dwc2d-netstats usb-hub-drop ;;
         usb-storage-more) echo usb-storage ;;
     esac
 }
