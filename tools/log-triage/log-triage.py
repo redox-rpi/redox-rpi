@@ -12,6 +12,7 @@ Standard library only. See README.md.
 """
 
 import argparse
+import concurrent.futures
 import gzip
 import json
 import os
@@ -29,12 +30,16 @@ DEFAULT_MODEL = os.environ.get("LOG_TRIAGE_MODEL", "gpt-oss-20b")
 # room for the instructions, the reasoning and the answer in 16k.
 CHUNK_CHARS = 18000
 TAIL_LINES = 40
+REPEAT_KEEP = 3
+# A boot that still needs more chunks: the first and the last ones are sent.
+MAX_CHUNKS = 4
 
 ANSI_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]")
 CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 # Ion's prompt and getty's login prompt are redrawn on every key press.
 PROMPT_RE = re.compile(r"(?:redox login: |[a-z_][\w-]*:[~/][^\s#$]*[#$] )")
 FISH_MARK_RE = re.compile(r"⏎\s{20,}")
+FDREAD_RE = re.compile(r"kernel::scheme::user:DEBUG -- call_fdread: payload: \d+ metadata: \d+")
 
 BOOT_RE = re.compile(r"^U-Boot 20\d\d\.")
 BANNER_RE = re.compile(r"^redox-rpi v\S+.*$")
@@ -91,6 +96,8 @@ def clean_line(text):
     text = ANSI_RE.sub("", text)
     text = FISH_MARK_RE.sub("", text)
     text = CTRL_RE.sub("", text)
+    # Kernel debug output lands in the middle of other lines, often the login prompt.
+    text = FDREAD_RE.sub("", text)
     prompts = list(PROMPT_RE.finditer(text))
     if len(prompts) > 1:
         text = text[prompts[-1].start():]
@@ -204,6 +211,9 @@ def hang_hint(boot):
                     break
             if not done:
                 hints.append(f"ping at L{n} never printed its statistics")
+    if boot and BOOT_RE.search(boot[0][1]) and not any(LOGIN_RE.search(t) for _, t, _ in boot):
+        n, t, _ = boot[-1]
+        hints.append(f"the boot stopped before the login prompt (reset, power cut or hang); last line L{n}: {t[:80]}")
     return "; ".join(hints) or None
 
 
@@ -218,11 +228,25 @@ def interesting(boot, baseline_sigs):
             keep.update(range(max(0, i - 2), min(i + 3, len(boot))))
         elif DAEMON_RE.search(t) or BANNER_RE.match(t) or LOGIN_RE.search(t) or WELCOME_RE.search(t):
             keep.add(i)
-    keep.update(range(max(0, len(boot) - TAIL_LINES), len(boot)))
+    tail = set(range(max(0, len(boot) - TAIL_LINES), len(boot)))
+    keep |= tail
+    # A fault or error that repeats thousands of times: the first ones, then a count.
+    total = {}
+    for i in keep - tail:
+        s = signature(boot[i][1])
+        total[s] = total.get(s, 0) + 1
+    seen = {}
     out = []
     for i in sorted(keep):
         n, t, c = boot[i]
-        mark = "=" if baseline_sigs is not None and signature(t) in baseline_sigs else "+"
+        s = signature(t)
+        if i not in tail:
+            seen[s] = seen.get(s, 0) + 1
+            if seen[s] == REPEAT_KEEP + 1:
+                out.append(f"~L{n}: ({total[s] - REPEAT_KEEP} more lines like this one follow, left out: {t[:200]})")
+            if seen[s] > REPEAT_KEEP:
+                continue
+        mark = "=" if baseline_sigs is not None and s in baseline_sigs else "+"
         rep = f" (x{c})" if c > 1 else ""
         out.append(f"{mark}L{n}: {t[:400]}{rep}")
     return out
@@ -266,26 +290,39 @@ hang, new_vs_good, summary. Remove duplicates, keep line numbers, write one summ
 
 
 def ask(url, model, system, user, timeout=600):
-    body = json.dumps({
-        "model": model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "max_tokens": 3000,
-        "temperature": 0,
-        "reasoning_effort": "low",
-        "response_format": {"type": "json_object"},
-    }).encode()
-    req = urllib.request.Request(url.rstrip("/") + "/chat/completions", data=body,
-                                 headers={"Content-Type": "application/json"})
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        resp = json.load(r)
-    content = resp["choices"][0]["message"].get("content") or ""
-    m = re.search(r"\{.*\}", content, re.S)
-    result = json.loads(m.group(0)) if m else {"summary": "model gave no JSON", "raw": content[:500]}
-    usage = resp.get("usage", {})
-    return result, {"seconds": round(time.time() - t0, 1),
-                    "prompt_tokens": usage.get("prompt_tokens"),
-                    "completion_tokens": usage.get("completion_tokens")}
+    tokens = [0, 0]
+    # At temperature 0 the model sometimes reasons in a loop until max_tokens and
+    # gives no answer. Answers need 100-700 tokens, so the first try stops early
+    # and a second one with more randomness and room gets out of the loop.
+    for temperature, max_tokens in ((0.2, 1500), (0.7, 3000)):
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "reasoning_effort": "low",
+            "response_format": {"type": "json_object"},
+        }).encode()
+        req = urllib.request.Request(url.rstrip("/") + "/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            resp = json.load(r)
+        usage = resp.get("usage", {})
+        tokens[0] += usage.get("prompt_tokens") or 0
+        tokens[1] += usage.get("completion_tokens") or 0
+        content = resp["choices"][0]["message"].get("content") or ""
+        m = re.search(r"\{.*\}", content, re.S)
+        try:
+            result = json.loads(m.group(0)) if m else None
+        except ValueError:
+            result = None
+        if result is not None:
+            break
+    if result is None:
+        result = {"summary": "model gave no JSON", "raw": content[:500]}
+    return result, {"seconds": round(time.time() - t0, 1), "tries": 1 if max_tokens == 1500 else 2,
+                    "prompt_tokens": tokens[0], "completion_tokens": tokens[1]}
 
 
 def ask_chunk(args, header, lines, stats):
@@ -317,6 +354,13 @@ def triage_boot(args, idx, boot, baseline_sigs):
               f"Regex facts (check them against the lines): {regex_facts(f)}\n\n")
     parts = []
     cs = list(chunks(sel, args.chunk_chars))
+    res["chunks"] = len(cs)
+    if len(cs) > args.max_chunks:
+        half = args.max_chunks // 2
+        dropped = sum(len(c) for c in cs[half:len(cs) - (args.max_chunks - half)])
+        cs = cs[:half] + cs[len(cs) - (args.max_chunks - half):]
+        header += f"({dropped} selected lines in the middle of the boot were left out.)\n"
+        res["lines_dropped"] = dropped
     for i, c in enumerate(cs):
         h = header + (f"Part {i + 1} of {len(cs)}.\n" if len(cs) > 1 else "")
         parts += ask_chunk(args, h, c, res["requests"])
@@ -329,10 +373,21 @@ def triage_boot(args, idx, boot, baseline_sigs):
     return res
 
 
+def triage_boot_safe(args, idx, boot, baseline_sigs):
+    """One boot the server could not answer must not lose the others."""
+    try:
+        return triage_boot(args, idx, boot, baseline_sigs)
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        res = triage_boot(argparse.Namespace(**{**vars(args), "no_model": True}), idx, boot, baseline_sigs)
+        res["model"] = {"summary": f"model request failed: {e}"}
+        return res
+
+
 def regex_facts(f):
     out = {"reached_login": f["reached_login"], "logged_in": f["logged_in"],
-           "panics": [(e["line"], e.get("program")) for e in f["panics"]],
-           "faults": [(e["line"], e.get("program")) for e in f["faults"]],
+           "panics": [(e["line"], e.get("program")) for e in f["panics"][:5]],
+           "faults": [(e["line"], e.get("program")) for e in f["faults"][:5]],
+           "panic_count": len(f["panics"]), "fault_count": len(f["faults"]),
            "hang_hint": f["hang_hint"]}
     return json.dumps(out)
 
@@ -409,6 +464,8 @@ def main():
     p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--chunk-chars", type=int, default=CHUNK_CHARS)
+    p.add_argument("--max-chunks", type=int, default=MAX_CHUNKS)
+    p.add_argument("--jobs", type=int, default=4, help="boots sent to the model at the same time")
     p.add_argument("--json", help="write the JSON report here")
     p.add_argument("--md", help="write the Markdown report here (default: stdout)")
     args = p.parse_args()
@@ -419,11 +476,10 @@ def main():
     lines, noise = clean(raw)
     boots = split_boots(lines, re.compile(args.boot_re))
     base = baseline_signatures(args.baseline) if args.baseline else None
-    results = []
-    for i, b in enumerate(boots, 1):
-        if args.boot and i not in args.boot:
-            continue
-        results.append(triage_boot(args, i, b, base))
+    todo = [(i, b) for i, b in enumerate(boots, 1) if not args.boot or i in args.boot]
+    # vLLM batches parallel requests, so a few boots at once are nearly free.
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+        results = list(pool.map(lambda ib: triage_boot_safe(args, ib[0], ib[1], base), todo))
     report = {"log": args.log, "boots": results, "meta": {
         "lines": len(raw), "noise_lines": noise, "model": args.model, "baseline": args.baseline,
         "requests": sum(len(r["requests"]) for r in results),

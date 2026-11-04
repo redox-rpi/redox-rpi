@@ -101,6 +101,7 @@ scripts/test-keyboard.sh                usb
 scripts/*usb*                           usb
 scripts/*hotplug*                       usb
 tools/devshd/*                          ci
+tools/log-triage/*                      ci
 tools/sigregs/*                         relibc,stability
 tools/timerd/*                          time
 tools/timesync/*                        time
