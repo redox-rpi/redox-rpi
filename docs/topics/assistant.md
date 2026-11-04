@@ -426,7 +426,13 @@ git).
   434 MiB at 760 tokens, the note came after question 11 and kept 3
   exchanges (104 tokens fed again in 77 s), then the heap stayed at
   434 MiB to the end (peak 450 MiB). The name from the first question was
-  forgotten, as expected. Pi test #235 is queued. In QEMU, long output on
+  forgotten, as expected. Pi test #235 passed the same way (14 of 14
+  answers, heap flat at 434 MiB after the note, peak 472 MiB), but the
+  saved prompt state did not fit on the network-boot root (`No space left
+  on device`), so each start read the system prompt again (3 minutes). It
+  now goes next to the model file (on the Pi `/scheme/data`), with
+  `~/.cache` as the second choice, and rinfer deletes a file it could not
+  finish; Pi test #236 is queued. In QEMU, long output on
   the serial console blocked the run (the PTY problem behind the getty
   panic), so the test wrote its output to a file.
 - **Tool layer, 2026-10-29:** [`tools/assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant/tools/assistant),
