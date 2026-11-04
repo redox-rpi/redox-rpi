@@ -25,7 +25,9 @@
 #      serial console and run scripts/pi-test.py.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
 #      /srv/tftp/stable at it, update "Stable image" in docs/test-plan.md,
-#      append the report to docs/test-reports.md, commit and push to main.
+#      append the report to docs/test-reports.md, publish its packages to
+#      the pkg repository /srv/tftp/pkg (scripts/publish-pkg-repo.sh), commit
+#      and push to main.
 #   6. Fail: stage the previous stable image again, reset the Pi, and open or
 #      update the issue "Nightly: main fails on the Pi".
 #
@@ -209,6 +211,11 @@ if [ "$passed" = 1 ]; then
     cp -p "$TFTP/redox"/* "$backup/"
     ln -sfn "$(basename "$backup")" "$STABLE_LINK"
     log "$build_id is the stable image, backup in $backup"
+    # Our pkg repository follows the stable image (#44). Never devshd, and
+    # the signing key stays in ~/.config/redox-rpi/pkg-key.
+    scripts/publish-pkg-repo.sh > "$backup/pkg-publish.log" 2>&1 &&
+        log "published the pkg repository: $(tail -n 1 "$backup/pkg-publish.log")" ||
+        log "publishing the pkg repository failed, see $backup/pkg-publish.log"
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
     # The docs change goes on top of the newest main.
