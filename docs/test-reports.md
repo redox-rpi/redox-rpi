@@ -7360,3 +7360,16 @@ test ran)
   normal boot, login at 29.82 s.
 - `/srv/tftp/redox` equals the stable backup again, and devsh answers. The new files
   stay on the card.
+
+## 2026-11-04: `v0.4.0-dev-201-gb714bca+x9f76`
+
+Built 2026-11-04T03:30:26Z, `libc.so` `a4ffbf84bf004b93…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-201-gb714bca+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-201-gb714bca+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
