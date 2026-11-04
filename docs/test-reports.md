@@ -7461,3 +7461,31 @@ Pi loses its network, so step 6 (`pkg update` replaces files) could not be done.
 - (7) `rm -r /scheme/data/pkg` was done afterwards from stable.
 
 Stable `v0.4.0-dev-201-gb714bca+x9f76` restored (power cycle 08:02); devsh answers.
+
+## #210: multicast and the LAN7800 multicast filter as default patches, with IPv6 (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-292-ge95959aa+xfa87` (branch `multicast-default` on PR #82, base
+`0083`, `0084`, relibc `0016`; experiments `multicast` (only the `mcast` tool) and
+`ipv6`). Real Pi 3B+ over netboot, reset at 08:47:58 UTC, login after 20 s. There was
+no panic, exception or `FATAL` line. **Pass.**
+
+- **(1) Multicast over the LAN7800:** `mcast recv 239.1.2.3 5000 3` on the Pi while
+  homenodellm sent 10 datagrams to 239.1.2.3:5000 (TTL 2).
+  - The Pi printed `mcast: joined 239.1.2.3, waiting on port 5000`, then
+    `hello 0`, `hello 1`, `hello 2` from 192.168.178.120, and `mcast: left 239.1.2.3`.
+- **(2) IPv6** (about a minute after boot):
+  - `/scheme/netcfg/ifaces/eth0/addr/list`:
+    - `fe80::ba27:ebff:fe08:e0aa/64`;
+    - `2a02:590:1509:6101:ba27:ebff:fe08:e0aa/64` (the provider's prefix has
+      changed since test 85);
+    - `fdeb:d4ef:a7ac:0:ba27:ebff:fe08:e0aa/64`.
+  - `/scheme/netcfg/route/list`: `default via fe80::b6fc:7dff:fe53:b289 dev eth0 src
+    2a02:…`, plus `ff00::/8` and `224.0.0.0/4` on eth0.
+  - ICMPv6 echo from homenodellm to the global address: 5/5 (0.4-8.3 ms); to the `fd…`
+    address: 3/3.
+    - homenodellm has no `ping` any more, so this used a small Python ICMPv6 socket
+      (`~/pitest-tools/ping6.py`).
+- **(3) Standard checks:** pi-test version, manifest, ps (45), ps-tty and sdcard pass,
+  and 0 of 300 starts failed.
+
+Stable `v0.4.0-dev-201-gb714bca+x9f76` restored (08:51); devsh answers.
