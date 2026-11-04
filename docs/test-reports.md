@@ -7893,3 +7893,37 @@ netboot, reset at 15:41:44 UTC. No panic, exception or `FATAL` line. **Pass.**
 - pi-test (devsh): version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - I did not check the NanoKVM (no screenshot needed). The second-boot check stays in QEMU, as the row says.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (15:50). devsh answers.
+
+## #227: #47 boot time step 2, PR #198 with today's main: the 192 MiB network-boot image (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-351-gece48235` (branch `boot-time-step2`, no experiments),
+`~/t18-work/image-bt2/harddrive.img` (md5 `33886bd0…`). Staged with
+`~/t18-work/bt2-stage/scripts/netboot.sh`; the bootloader is md5 `da1a7595…`. Real Pi 3B+ over
+netboot, 3 boots with `echo reset > /scheme/sys/kstop`, timed on the serial log. No panic,
+exception or `FATAL` line. **Pass, except `pkg install nano`: this image has no timesync, so
+the clock is at 1970 and the HTTPS certificate check fails.**
+
+| Boot | `kreset` | image loaded over HTTP | kernel read (`usr/lib/boot/kernel: 1/1 MiB`) | `redox login:` | reset → login |
+|---|---|---|---|---|---|
+| 1 | 1.90 s | 12.92 s | 20.53 s | 29.81 s | 27.9 s |
+| 2 | 1.55 s | 12.44 s | 20.06 s | 29.18 s | 27.6 s |
+| 3 | 1.55 s | 12.48 s | 20.09 s | 29.32 s | 27.8 s |
+
+- U-Boot reports `Uncompressed size: 201326592 = 0xC000000` (192 MiB). The bootloader copies `live: …/158 MiB`.
+- Image loaded → kernel read takes about 7.6 s. Of that, 5 s is the bootloader's wait
+  (`Continuing with the selected mode in 5 seconds`): this branch does not have #85's 1-second wait.
+  - Reset → login is 27.6–27.9 s, against 20.4–20.9 s in #215 with #85.
+- **Memory and disk, against stable dev-201 just before:**
+
+  | | stable | this image |
+  |---|---|---|
+  | `df -h` `/` | 222.0M, 133.6M free | 158.0M, **69.9M free** |
+  | `free -m` total | 739892 | **805296** (+65404, about 64 MiB more) |
+
+  (`free -m` prints KiB on Redox.)
+- DHCP lease `192.168.178.148/24` on every boot.
+- **`pkg install --yes nano`:** `error: Download error: … invalid peer certificate: certificate not valid yet: verification time 49 (UNIX)`.
+  - The image has no `timesync`, so the clock starts at 1970, and static.redox-os.org's certificate is "not valid yet". This is not a size problem: `/` still has 69.9M free.
+  - With `--experiment timesync`, as in the stable image, it should work.
+- pi-test: version, manifest, ps (50), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (16:03). devsh answers.
