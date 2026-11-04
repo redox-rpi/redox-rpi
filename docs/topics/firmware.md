@@ -16,6 +16,11 @@
   fast as with the fixed maximum. `/scheme/rpi-firmware/governor` shows
   the mode and the time at each rate; `performance` and `powersave` fix
   the clock. See [the experiment notes](../../patches/experiments/cpu-ondemand/README.md).
+- The mode at boot comes from `/etc/rpi-firmware/governor` if it exists
+  (`ondemand`, `performance`, `powersave`, or a rate in Hz, `max`, `min`
+  for a fixed clock), set by `15_rpi-governor.service` with
+  `/usr/lib/rpi-firmware/governor.ion` (`config/raspi3bp-sdcard.toml`,
+  Pi test #161). Without the file the clock follows the load.
 - `reboot` through the watchdog (kernel patch `0002`).
 
 ## In progress
