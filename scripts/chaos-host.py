@@ -198,7 +198,7 @@ class Netem:
 
     def commands(self, fault, seconds):
         dev, pi = self.iface, self.pi
-        add_prio = [f"tc qdisc add dev {dev} root handle 1: prio",
+        add_prio = [f"tc qdisc replace dev {dev} root handle 1: prio",
                     f"tc filter add dev {dev} protocol ip parent 1:0 prio 3 u32 match ip dst {pi}/32 flowid 1:3"]
         netem = {
             "netem-loss": "loss 30% 25%",
