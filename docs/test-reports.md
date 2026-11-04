@@ -7998,3 +7998,45 @@ second pi-test, eth0 stopped answering. It looks like #92.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 18:23:18 (the
   network was gone). The banner came after 30 s, devsh answers, and `/srv/tftp/redox`
   matches the backup.
+
+## #230 #155 small writes collected up to 1 MiB, A/B against PR #73 (2026-11-04, Pi test agent)
+
+Real Pi 3B+ over netboot, the same card as #175, `/scheme/data` on the SD card.
+- **A:** `v0.4.0-dev-157-g71d7ba7d+x08c5` (PR #73 + `sdhost-stats`), reset at 18:24:34.
+- **B:** `v0.4.0-dev-158-gb1e99de3+xcad5` (`sd-write-1m` + `sdhost-stats` + `redoxfs-coalesce-1m`),
+  reset at 18:29:30.
+
+**Result: pass.** All 18 written files match the sha256 of `/tmp/r4` (`c4c401d0…`). There
+is no `write of block`/`read of block` error, and pi-test passes on both images (0 of 300
+starts failed). **B sends small writes to the card the way 1 MiB writes go.** For 4 MiB in
+4 KiB calls, B needs 86 requests of about 100 blocks, against 283 of 36 on A. That is about
+as few as 1 MiB writes take (77–78 requests).
+
+**dd MB/s** (4 MiB, `conv=fsync`, runs 1 / 2 / 3):
+
+| Size | A | B |
+|---|---|---|
+| 4096 | 1.9 / 3.7 / 3.7 | 5.4 / 3.9 / 5.2 |
+| 65536 | 1.1 / 4.9 / 5.5 | 7.9 / 8.8 / 5.1 |
+| 1048576 | 9.2 / 10 / 8.0 | 6.7 / 10 / 9.6 |
+
+**sdhostd statistics**, one line per run, write part (requests, blocks, ms, busy ms):
+
+| Size | A | B |
+|---|---|---|
+| 4096 | 283 req, 10200 blk, 1730 / 671 / 666 ms, busy 253 / 253 / 240 ms | 86 / 86 / 85 req, 8624 / 8624 / 8616 blk, 335 / 634 / 358 ms, busy 109 / 113 / 105 ms |
+| 65536 | 274 req 10248 blk 3805 ms busy 253 (run 1; with a 9-request line after it), then 283 req 10320 blk 705 / 626 ms, busy 243 / 252 ms | 86 / 85 / 86 req, 8744 / 8736 / 8744 blk, 465 / 361 / 720 ms, busy 97 / 85 / 99 ms |
+| 1048576 | 77 / 78 req, 8552 / 8560 blk, 391 / 346 ms, busy 103 / 111 ms | 78 / 77 req, 8560 / 8552 blk, 569 / 350 ms, busy 109 / 115 ms |
+
+- On both images, the line for the third 1 MiB run came after the serial log was cut, so
+  it is missing.
+- A 4 KiB: 283 requests of 36 blocks, as in #175 (275 of 37).
+- B 4 KiB and 64 KiB: 85–86 requests, 8616–8744 blocks, and busy 85–113 ms. That is the same
+  as 1 MiB writes on either image (77–78 requests, 8552–8560 blocks, busy 103–115 ms).
+- Disk blocks per 4 MiB: A 10200 against B 8620, which is 1.22 to 1.03 times the data
+  (8192 blocks).
+- dd MB/s is noisy, and the first run on A is slow at every size. Still, B's 4 KiB and 64 KiB
+  runs (3.9–8.8 MB/s) are clearly closer to 1 MiB (6.7–10 MB/s) than A's (1.1–5.5).
+- After each run, `sha256sum` of the file and `rm` went fine.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
