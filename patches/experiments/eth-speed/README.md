@@ -33,7 +33,19 @@ and 3.24 W, 100 Mbit/s 2.89 and 2.88 W (alternating, 36 readings over
 copies it to `/tmp/dwc2d-link`, and dwc2d renegotiates a few seconds after
 boot (DHCP tries again meanwhile). Without the file nothing changes.
 Experiment [`eth-speed-test`](../eth-speed-test/README.md) writes the file
-with `100` for a test image.
+with `100` for a test image. Pi test 231: the link came up at gigabit and
+went to 100 Mbit/s when the rootfs services started; idle 2.88 W.
+
+**From the first negotiation (base `0092`):** `RPI_ETH_SPEED=100` (or
+`1000`) in the kernel environment or on the firmware's command line
+(`cmdline.txt`, which the firmware puts into the devicetree's `/chosen
+bootargs`) makes dwc2d advertise only up to that when it first brings up
+the LAN7800, so the link never starts at gigabit. dwc2d logs
+`dwc2d: RPI_ETH_SPEED=100 from the command line` (or `environment`) at
+start and `dwc2d: LAN78xx advertising up to 100 Mbit/s (RPI_ETH_SPEED)`.
+On a direct-boot card the stub puts `cmdline.txt` words into the
+environment; whether `/chosen bootargs` survives U-Boot and the Redox
+bootloader on network boot is for the Pi test to show.
 
 ## Measuring
 
