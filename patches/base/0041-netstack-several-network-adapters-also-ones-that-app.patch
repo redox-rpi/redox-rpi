@@ -1,8 +1,8 @@
-From 3bd14ecf8b3fe3ef3c3325d1b4cadc4c0be42f7e Mon Sep 17 00:00:00 2001
+From a50d30d8ca8b742eac5d3a6bb97fca86e8e9337a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 16:20:08 +0100
-Subject: [PATCH 41/44] netstack: several network adapters, also ones that
- appear after start
+Subject: [PATCH 41/44] netstack: several network adapters, also ones that appear
+ after start
 
 netstack opens every network.* scheme at start and looks again every
 2 s, so an adapter that comes up later (Wi-Fi, USB Ethernet plugged in)
@@ -11,18 +11,23 @@ wired ones first. netcfg lists the interfaces in ifaces/ and tells its
 readers when one is added. The address of the default route's interface
 is the first source address for smoltcp.
 
+The later lookups run on a thread of their own. Listing /scheme asks
+the namespace manager, and the namespace manager asks netstack when a
+program opens one of its schemes; with the lookup in the main loop, both
+could wait for each other for good (Pi test 229).
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  netstack/src/adapters.rs          | 146 ++++++++++++++++++++++++++++++
- netstack/src/main.rs              |  93 ++++++++-----------
+ netstack/src/main.rs              | 102 ++++++++++-----------
  netstack/src/scheme/mod.rs        |  32 +++++--
  netstack/src/scheme/netcfg/mod.rs | 120 +++++++++++++++++++++---
- 4 files changed, 318 insertions(+), 73 deletions(-)
+ 4 files changed, 327 insertions(+), 73 deletions(-)
  create mode 100644 netstack/src/adapters.rs
 
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
 new file mode 100644
-index 0000000..8499e04
+index 00000000..8499e041
 --- /dev/null
 +++ b/netstack/src/adapters.rs
 @@ -0,0 +1,146 @@
@@ -173,7 +178,7 @@ index 0000000..8499e04
 +    scheme.starts_with("network.wlan")
 +}
 diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 084c3d3..6b36c62 100644
+index 084c3d3d..e7f02c0f 100644
 --- a/netstack/src/main.rs
 +++ b/netstack/src/main.rs
 @@ -2,15 +2,15 @@
@@ -279,7 +284,7 @@ index 084c3d3..6b36c62 100644
          ip_fd,
          udp_fd,
          tcp_fd,
-@@ -158,8 +124,13 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -158,8 +124,25 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
      )
      .context("smolnetd: failed to initialize smolnetd")?;
  
@@ -289,11 +294,23 @@ index 084c3d3..6b36c62 100644
 +
      libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
  
-+    let mut last_scan = std::time::Instant::now();
++    // Later adapters are looked for on a thread of their own. Listing
++    // /scheme asks the namespace manager, and the namespace manager asks
++    // netstack when a program opens one of its schemes: if the main loop
++    // did the listing, both would wait for each other for good.
++    let (found, new_adapters) = std::sync::mpsc::channel();
++    std::thread::spawn(move || loop {
++        std::thread::sleep(ADAPTER_SCAN);
++        for adapter in adapters.scan() {
++            if found.send(adapter).is_err() {
++                return;
++            }
++        }
++    });
      let all = {
          use EventSource::*;
          [Network, Time, IpScheme, UdpScheme, IcmpScheme, NetcfgScheme].map(Ok)
-@@ -167,11 +138,27 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -167,11 +150,24 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
  
      for event_res in all
          .into_iter()
@@ -304,19 +321,16 @@ index 084c3d3..6b36c62 100644
              EventSource::Network => smolnetd.on_network_scheme_event(),
 -            EventSource::Time => smolnetd.on_time_event(),
 +            EventSource::Time => {
-+                if last_scan.elapsed() >= ADAPTER_SCAN {
-+                    last_scan = std::time::Instant::now();
-+                    for adapter in adapters.scan() {
-+                        if let Err(e) = event_queue.subscribe(
-+                            adapter.file.raw(),
-+                            EventSource::Network,
-+                            EventFlags::READ,
-+                        ) {
-+                            error!("cannot listen to {}: {:?}", adapter.scheme, e);
-+                            continue;
-+                        }
-+                        smolnetd.add_adapter(adapter);
++                while let Ok(adapter) = new_adapters.try_recv() {
++                    if let Err(e) = event_queue.subscribe(
++                        adapter.file.raw(),
++                        EventSource::Network,
++                        EventFlags::READ,
++                    ) {
++                        error!("cannot listen to {}: {:?}", adapter.scheme, e);
++                        continue;
 +                    }
++                    smolnetd.add_adapter(adapter);
 +                }
 +                smolnetd.on_time_event()
 +            }
@@ -324,7 +338,7 @@ index 084c3d3..6b36c62 100644
              EventSource::UdpScheme => smolnetd.on_udp_scheme_event(),
              EventSource::TcpScheme => smolnetd.on_tcp_scheme_event(),
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index c7d7916..e5cd6d3 100644
+index c7d7916e..e5cd6d34 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
 @@ -14,7 +14,7 @@ use smoltcp::phy::Tracer;
@@ -412,7 +426,7 @@ index c7d7916..e5cd6d3 100644
      let fevent_response = Response::post_fevent(id, flags);
      match socket.write_response(fevent_response, SignalBehavior::Restart) {
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index f344e28..1e0780b 100644
+index f344e285..1e0780b5 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -120,6 +120,7 @@ fn mk_root_node(
@@ -613,5 +627,5 @@ index f344e28..1e0780b 100644
          loop {
              match self
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
