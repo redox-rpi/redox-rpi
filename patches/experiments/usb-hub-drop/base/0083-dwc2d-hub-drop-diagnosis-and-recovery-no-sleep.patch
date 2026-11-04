@@ -1,0 +1,745 @@
+From f2447057c1236f137f0ce35cebdc1ef11e84af88 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 31 Oct 2026 21:44:29 +0000
+Subject: [PATCH] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
+
+A hub port that changed, lost its enable bit, went over current or lost
+power is logged with its status and change bits, the change bits are
+cleared, and a port without power is switched on again. A port whose
+device fails to enumerate gets three more tries. A disabled root port
+starts the enumeration over. Channel errors are counted by kind and
+written with the port events to /tmp/dwc2d-usbstats after every rescan;
+/tmp/dwc2d-step names the hotplug step dwc2d is in.
+
+dwc2d no longer calls sleep: a nanosleep sometimes never returned (50 us
+sleeps hung dwc2d in QEMU; on the Pi it stopped right after a hub drop,
+test 168). delay() yields until the time has passed.
+---
+ drivers/usb/dwc2d/src/dwc2.rs      |  66 ++++++++++++--
+ drivers/usb/dwc2d/src/enumerate.rs | 122 ++++++++++++++++++++++----
+ drivers/usb/dwc2d/src/lan78xx.rs   |   8 +-
+ drivers/usb/dwc2d/src/main.rs      |   9 +-
+ drivers/usb/dwc2d/src/rtl8152.rs   |  12 +--
+ drivers/usb/dwc2d/src/usbdiag.rs   | 135 +++++++++++++++++++++++++++++
+ 6 files changed, 316 insertions(+), 36 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/usbdiag.rs
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index dfc5d19a..959bba87 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -1,7 +1,6 @@
+ //! DWC2 host controller in buffer DMA mode, driven by polling.
+ 
+ use std::ptr::{read_volatile, write_volatile};
+-use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+@@ -12,6 +11,18 @@ use crate::regs::*;
+ /// aliased (uncached) at 0xC000_0000. QEMU's raspi machines alias it there too.
+ const DMA_BUS_OFFSET: usize = 0xC000_0000;
+ 
++/// Wait for `d` by giving the CPU away until the time has passed, instead of
++/// `sleep`. A `nanosleep` in dwc2d sometimes never returned: 50 µs sleeps
++/// hung it in QEMU, and on the Pi it stopped for good right after a hub
++/// dropped off (test 168, #151), where the hotplug code sleeps before it
++/// resets the port again.
++pub fn delay(d: Duration) {
++    let start = Instant::now();
++    while start.elapsed() < d {
++        std::thread::yield_now();
++    }
++}
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Speed {
+     High,
+@@ -95,7 +106,7 @@ impl Dwc2 {
+         self.wait("core reset", Duration::from_millis(100), |s| {
+             s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
+         })?;
+-        sleep(Duration::from_millis(1));
++        delay(Duration::from_millis(1));
+ 
+         // Force host mode; the switch takes up to 25 ms.
+         let usbcfg = self.read(GUSBCFG);
+@@ -103,7 +114,7 @@ impl Dwc2 {
+             GUSBCFG,
+             (usbcfg & !GUSBCFG_FORCE_DEV_MODE) | GUSBCFG_FORCE_HOST_MODE,
+         );
+-        sleep(Duration::from_millis(30));
++        delay(Duration::from_millis(30));
+         self.wait("host mode", Duration::from_millis(100), |s| {
+             s.read(GINTSTS) & GINTSTS_CUR_MODE_HOST != 0
+         })?;
+@@ -195,6 +206,42 @@ impl Dwc2 {
+         }
+     }
+ 
++    /// Device address and endpoint of a channel's last transfer.
++    fn channel_target(&self, ch: usize) -> (u8, u8) {
++        let value = self.read(hcchar(ch));
++        (((value >> HCCHAR_DEVADDR_SHIFT) & 0x7F) as u8, ((value >> 11) & 0xF) as u8)
++    }
++
++    fn note_error(&self, ch: usize, status: u32) {
++        let (address, endpoint) = self.channel_target(ch);
++        crate::usbdiag::channel_error(status, address, endpoint);
++    }
++
++    fn note_timeout(&self, ch: usize) {
++        let (address, endpoint) = self.channel_target(ch);
++        crate::usbdiag::timeout(address, endpoint);
++    }
++
++    /// HPRT0, after clearing its change bits (connect, enable and over
++    /// current changes); the returned value still has them.
++    pub fn root_port_events(&self) -> u32 {
++        let value = self.read(HPRT0);
++        let changes = value & (HPRT0_CONN_DET | HPRT0_ENA_CHG | HPRT0_OVR_CURR_CHG);
++        if changes != 0 {
++            // Writing 1 to the enable bit would disable the port: keep it 0.
++            self.write(HPRT0, (value & !HPRT0_W1C) | changes);
++        }
++        value
++    }
++
++    pub fn root_port_status(&self) -> u32 {
++        self.read(HPRT0)
++    }
++
++    pub fn gintsts(&self) -> u32 {
++        self.read(GINTSTS)
++    }
++
+     /// Whether a device is connected to the root port.
+     pub fn root_connected(&self) -> bool {
+         self.read(HPRT0) & HPRT0_CONN_STS != 0
+@@ -213,16 +260,16 @@ impl Dwc2 {
+             s.read(HPRT0) & HPRT0_CONN_STS != 0
+         })?;
+         // Debounce, as required by the USB specification.
+-        sleep(Duration::from_millis(100));
++        delay(Duration::from_millis(100));
+ 
+         self.write_port(HPRT0_RST, 0);
+-        sleep(Duration::from_millis(60));
++        delay(Duration::from_millis(60));
+         self.write_port(0, HPRT0_RST);
+         self.wait("port enable", Duration::from_millis(500), |s| {
+             s.read(HPRT0) & HPRT0_ENA != 0
+         })?;
+         // Recovery time after reset.
+-        sleep(Duration::from_millis(20));
++        delay(Duration::from_millis(20));
+ 
+         Ok(match (self.read(HPRT0) >> HPRT0_SPD_SHIFT) & HPRT0_SPD_MASK {
+             0 => Speed::High,
+@@ -288,11 +335,15 @@ impl Dwc2 {
+             let status = self.read(hcint(ch));
+             if status & HCINT_CH_HLTD != 0 {
+                 self.write(hcint(ch), u32::MAX);
++                if status & (HCINT_STALL | HCINT_AHB_ERR | HCINT_XACT_ERR | HCINT_BBL_ERR | HCINT_DATA_TGL_ERR) != 0 {
++                    self.note_error(ch, status);
++                }
+                 return Ok(status);
+             }
+             if start.elapsed() > timeout {
+                 let value = self.read(hcchar(ch));
+                 self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                self.note_timeout(ch);
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+@@ -435,11 +486,13 @@ impl Dwc2 {
+         self.write(hcint(ch), u32::MAX);
+ 
+         if status & HCINT_STALL != 0 {
++            self.note_error(ch, status);
+             return Some(Err(Error::Stall));
+         }
+         if status & HCINT_XFER_COMPL == 0
+             || status & (HCINT_AHB_ERR | HCINT_XACT_ERR | HCINT_BBL_ERR | HCINT_DATA_TGL_ERR) != 0
+         {
++            self.note_error(ch, status);
+             return Some(Err(Error::Transfer(status)));
+         }
+         let hctsiz_value = self.read(hctsiz(ch));
+@@ -461,6 +514,7 @@ impl Dwc2 {
+                 // Halt the channel so it can be reused.
+                 let value = self.read(hcchar(ch));
+                 self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                self.note_timeout(ch);
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 7ffe442b..495f0848 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -2,12 +2,13 @@
+ //! for devices plugged in or removed later.
+ 
+ use std::collections::{HashMap, HashSet};
+-use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+ 
+-use crate::dwc2::{Dwc2, Error, Speed};
++use crate::dwc2::{delay, Dwc2, Error, Speed};
++use crate::regs::{HPRT0_CONN_DET, HPRT0_CONN_STS, HPRT0_ENA, HPRT0_ENA_CHG, HPRT0_OVR_CURR_CHG};
++use crate::usbdiag;
+ 
+ const CLASS_HUB: u8 = 0x09;
+ 
+@@ -27,16 +28,39 @@ const DESC_HUB: u8 = 0x29;
+ const PORT_RESET: u16 = 4;
+ const PORT_POWER: u16 = 8;
+ const C_PORT_CONNECTION: u16 = 16;
++const C_PORT_ENABLE: u16 = 17;
++const C_PORT_SUSPEND: u16 = 18;
++const C_PORT_OVER_CURRENT: u16 = 19;
+ const C_PORT_RESET: u16 = 20;
+ const PORT_STAT_CONNECTION: u16 = 1 << 0;
+ const PORT_STAT_ENABLE: u16 = 1 << 1;
++const PORT_STAT_OVER_CURRENT: u16 = 1 << 3;
+ const PORT_STAT_RESET: u16 = 1 << 4;
++const PORT_STAT_POWER: u16 = 1 << 8;
+ const PORT_STAT_LOW_SPEED: u16 = 1 << 9;
+ const PORT_STAT_HIGH_SPEED: u16 = 1 << 10;
+ 
+ /// Hubs nest at most five deep below the root (USB 2.0, 4.1.1).
+ const MAX_HUB_DEPTH: usize = 5;
+ 
++/// How often a port whose device failed to enumerate is tried again before
++/// it waits for a new plug-in: after a hub drop the device may need a
++/// moment (#151).
++const ATTACH_RETRIES: u8 = 3;
++
++/// A hub port's status and change bits, with names, for the log.
++fn describe(status: u16, change: u16) -> String {
++    let names = |bits: u16, names: &[(u16, &str)]| {
++        let v: Vec<&str> = names.iter().filter(|(b, _)| bits & b != 0).map(|(_, n)| *n).collect();
++        if v.is_empty() { "none".to_string() } else { v.join(" ") }
++    };
++    format!(
++        "status {status:#06x} ({}) change {change:#06x} ({})",
++        names(status, &[(1, "connected"), (2, "enabled"), (4, "suspended"), (8, "over-current"), (16, "reset"), (256, "power")]),
++        names(change, &[(1, "connection"), (2, "enable"), (4, "suspend"), (8, "over-current"), (16, "reset")]),
++    )
++}
++
+ #[derive(Clone)]
+ pub struct Device {
+     pub address: u8,
+@@ -90,6 +114,8 @@ pub struct Bus {
+     /// Ports with a device that failed to enumerate; tried again only after
+     /// it is plugged in anew.
+     failed: HashSet<Option<(u8, u16)>>,
++    /// Retries left for a failed port (see [`ATTACH_RETRIES`]).
++    retries: HashMap<Option<(u8, u16)>, u8>,
+ }
+ 
+ impl Bus {
+@@ -103,6 +129,7 @@ impl Bus {
+             devices: Vec::new(),
+             hubs: Vec::new(),
+             failed: HashSet::new(),
++            retries: HashMap::new(),
+         }
+     }
+ 
+@@ -145,7 +172,7 @@ impl Bus {
+                 Ok(len) => return Ok(self.data[..len].to_vec()),
+                 Err(Error::Stall) if attempt < ATTEMPTS => {
+                     attempt += 1;
+-                    sleep(Duration::from_millis(10));
++                    delay(Duration::from_millis(10));
+                 }
+                 Err(err) => {
+                     println!(
+@@ -191,7 +218,7 @@ impl Bus {
+                 return Err(Error::Short(data.len()));
+             }
+             attempt += 1;
+-            sleep(Duration::from_millis(10));
++            delay(Duration::from_millis(10));
+         }
+     }
+ 
+@@ -257,7 +284,7 @@ impl Bus {
+         if let Some(tt) = tt {
+             self.tts.insert(address, tt);
+         }
+-        sleep(Duration::from_millis(10));
++        delay(Duration::from_millis(10));
+ 
+         let d = self.request_min(address, max_packet, speed, 0x80, REQ_GET_DESCRIPTOR, u16::from(DESC_DEVICE) << 8, 0, 18, 18)?;
+         let device = Device {
+@@ -319,7 +346,7 @@ impl Bus {
+             self.request(hub, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
+         }
+         // Power-on-to-power-good time.
+-        sleep(power_on_delay.max(Duration::from_millis(20)));
++        delay(power_on_delay.max(Duration::from_millis(20)));
+ 
+         // Take the ports connected now. Devices take a while to signal
+         // their connection after power-on (the Pi 3B+'s LAN7800 was missed
+@@ -341,12 +368,13 @@ impl Bus {
+     fn attach(&mut self, hub: Hub, port: u16) -> Result<(), Error> {
+         let Hub { address, max_packet, speed, depth, tt: hub_tt, .. } = hub;
+         let indent = "  ".repeat(depth);
++        usbdiag::step(&format!("attach hub {address} port {port}"));
+         self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
+ 
+         self.request(address, max_packet, speed, 0x23, REQ_SET_FEATURE, PORT_RESET, port, 0)?;
+         let start = Instant::now();
+         let status = loop {
+-            sleep(Duration::from_millis(10));
++            delay(Duration::from_millis(10));
+             let (status, _) = self.port_status(address, max_packet, speed, port)?;
+             if status & PORT_STAT_RESET == 0 && status & PORT_STAT_ENABLE != 0 {
+                 break status;
+@@ -363,7 +391,7 @@ impl Bus {
+         };
+         self.request(address, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_RESET, port, 0)?;
+         // Reset recovery time.
+-        sleep(Duration::from_millis(20));
++        delay(Duration::from_millis(20));
+ 
+         let child_speed = if status & PORT_STAT_LOW_SPEED != 0 {
+             Speed::Low
+@@ -437,7 +465,7 @@ impl Bus {
+         let start = Instant::now();
+         let mut gone = false;
+         while start.elapsed() < Duration::from_secs(2) {
+-            sleep(Duration::from_millis(100));
++            delay(Duration::from_millis(100));
+             let (status, _) = self.port_status(a, mp, sp, port)?;
+             if status & PORT_STAT_CONNECTION == 0 {
+                 gone = true;
+@@ -456,7 +484,7 @@ impl Bus {
+             self.remove(address, removed);
+         }
+         self.failed.remove(&slot);
+-        sleep(Duration::from_millis(500));
++        delay(Duration::from_millis(500));
+         println!("dwc2d: cycle: hub {a} port {port} power on");
+         self.request(a, mp, sp, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
+         // The next scan finds the device again.
+@@ -480,8 +508,30 @@ impl Bus {
+         let mut changes = Changes::default();
+         let before: Vec<u8> = self.devices.iter().map(|d| d.address).collect();
+ 
+-        let root = self.hc.root_connected();
+-        let root_device = self.devices.iter().any(|d| d.parent.is_none());
++        let hprt0 = self.hc.root_port_events();
++        let root = hprt0 & HPRT0_CONN_STS != 0;
++        let mut root_device = self.devices.iter().any(|d| d.parent.is_none());
++        if hprt0 & (HPRT0_CONN_DET | HPRT0_ENA_CHG | HPRT0_OVR_CURR_CHG) != 0 {
++            usbdiag::root_event(hprt0);
++            println!("dwc2d: root port: HPRT0 {hprt0:#x}");
++        }
++        // The controller disables the root port on a babble or another port
++        // error; everything behind it is gone then, although still
++        // connected. Start over with a port reset.
++        if root && root_device && hprt0 & HPRT0_ENA == 0 {
++            println!("dwc2d: root port disabled (HPRT0 {hprt0:#x}), errors so far: {}", usbdiag::summary());
++            println!("dwc2d: enumerating the root port again");
++            usbdiag::RECOVERIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            changes.removed.extend(before.iter().copied());
++            for address in before.iter().copied() {
++                self.hc.halt_device(address);
++            }
++            self.devices.clear();
++            self.hubs.clear();
++            self.tts.clear();
++            self.failed.clear();
++            root_device = false;
++        }
+         if !root && (root_device || self.failed.contains(&None)) {
+             println!("dwc2d: device on root port removed");
+             for address in before.iter().copied() {
+@@ -523,29 +573,65 @@ impl Bus {
+     }
+ 
+     fn scan_port(&mut self, hub: Hub, port: u16, removed: &mut Vec<u8>) -> Result<(), Error> {
+-        let (status, change) = self.port_status(hub.address, hub.max_packet, hub.speed, port)?;
++        let (a, mp, sp) = (hub.address, hub.max_packet, hub.speed);
++        let (status, change) = self.port_status(a, mp, sp, port)?;
+         let connected = status & PORT_STAT_CONNECTION != 0;
+         let changed = change & 1 != 0;
+-        let slot = Some((hub.address, port));
++        let slot = Some((a, port));
+         let present = self.devices.iter().find(|d| d.parent == slot).map(|d| d.address);
+         let failed = self.failed.contains(&slot);
++        if change != 0 {
++            usbdiag::port_event(a, port, status, change);
++        }
++        // The hub disables a port after a babble or an error on it, and on
++        // over current: its device is gone although still connected.
++        let disabled = present.is_some() && connected && status & PORT_STAT_ENABLE == 0;
+ 
+         // Gone, or unplugged and plugged in again between two scans.
+-        if (present.is_some() || failed) && (!connected || changed) {
++        if (present.is_some() || failed) && (!connected || changed || disabled) {
+             if let Some(address) = present {
+-                println!("dwc2d: hub {} port {port}: device at address {address} removed", hub.address);
++                println!("dwc2d: hub {a} port {port}: device at address {address} removed, {}", describe(status, change));
++                println!("dwc2d: hub {a} port {port}: errors so far: {}", usbdiag::summary());
+                 self.remove(address, removed);
+             }
+             self.failed.remove(&slot);
++            self.retries.remove(&slot);
++        } else if change & !1 != 0 {
++            println!("dwc2d: hub {a} port {port}: {}", describe(status, change));
+         }
+         if changed && !connected {
+-            self.request(hub.address, hub.max_packet, hub.speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
++            self.request(a, mp, sp, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
++        }
++        for (bit, feature) in [(2, C_PORT_ENABLE), (4, C_PORT_SUSPEND), (8, C_PORT_OVER_CURRENT)] {
++            if change & bit != 0 {
++                self.request(a, mp, sp, 0x23, REQ_CLEAR_FEATURE, feature, port, 0)?;
++            }
++        }
++        // A hub switches a port off on over current; switch it on again,
++        // the next scan finds its device.
++        if status & PORT_STAT_POWER == 0 && status & PORT_STAT_OVER_CURRENT == 0 {
++            println!("dwc2d: hub {a} port {port}: no power, switching it on again");
++            usbdiag::RECOVERIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            self.request(a, mp, sp, 0x23, REQ_SET_FEATURE, PORT_POWER, port, 0)?;
++            return Ok(());
++        }
++        // A device that failed right after a drop gets a few more tries.
++        if connected && self.failed.contains(&slot) {
++            let left = self.retries.entry(slot).or_insert(ATTACH_RETRIES);
++            if *left > 0 {
++                *left -= 1;
++                println!("dwc2d: hub {a} port {port}: trying again ({} left)", *left);
++                self.failed.remove(&slot);
++            }
+         }
+         let present = self.devices.iter().any(|d| d.parent == slot);
+         if connected && !present && !self.failed.contains(&slot) {
+             // Debounce, as required by the USB specification.
+-            sleep(Duration::from_millis(100));
++            delay(Duration::from_millis(100));
+             self.attach(hub, port)?;
++            if self.devices.iter().any(|d| d.parent == slot) {
++                self.retries.remove(&slot);
++            }
+         }
+         Ok(())
+     }
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index 8127826d..750cf15d 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -5,13 +5,13 @@
+ //! as reference for the initialization order. Polled, no interrupt endpoint.
+ 
+ use std::collections::VecDeque;
+-use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+ use driver_network::NetworkAdapter;
+ use syscall::error::{Error as SysError, Result as SysResult, EIO};
+ 
++use crate::dwc2::delay;
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+ use crate::enumerate::{Bus, Device};
+ use crate::regs::{EPTYPE_BULK, PID_DATA0};
+@@ -182,7 +182,7 @@ impl Regs<'_> {
+             if start.elapsed() > Duration::from_secs(1) {
+                 return Err(Error::Timeout(what));
+             }
+-            sleep(Duration::from_millis(1));
++            delay(Duration::from_millis(1));
+         }
+         Ok(())
+     }
+@@ -277,7 +277,7 @@ pub fn init(
+         if start.elapsed() > Duration::from_secs(1) {
+             return Err(Error::Timeout("PHY BMCR reset"));
+         }
+-        sleep(Duration::from_millis(10));
++        delay(Duration::from_millis(10));
+     }
+     r.mii_write(MII_ANAR, ANAR_ALL)?;
+     let bmcr = r.mii_read(MII_BMCR)?;
+@@ -314,7 +314,7 @@ pub fn init(
+             }
+             break false;
+         }
+-        sleep(Duration::from_millis(100));
++        delay(Duration::from_millis(100));
+     };
+     Ok((mac, link))
+ }
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 1b260fd3..7ebbee56 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -23,6 +23,7 @@ mod lan78xx;
+ mod regs;
+ mod rtl8152;
+ mod stats;
++mod usbdiag;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+@@ -485,7 +486,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             break;
+         }
+-        std::thread::sleep(Duration::from_millis(50));
++        dwc2::delay(Duration::from_millis(50));
+         let changes = bus.scan();
+         boot_probe(&mut bus, &mut net, &mut keyboard, changes.added);
+     }
+@@ -601,6 +602,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             Source::Hotplug => {
+                 hotplug.fired();
++                usbdiag::step("scan");
+                 let mut cycled = Vec::new();
+                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
+                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+@@ -645,6 +647,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+                         continue;
+                     };
++                    usbdiag::step(&format!("probe address {address}"));
+                     match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
+                         Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
+                         Some(Found::Keyboard(f)) if keyboard.is_none() => {
+@@ -657,6 +660,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 net.refresh_links(&mut bus);
+                 net.select(&mut bus);
+                 scheme.tick().expect("dwc2d: network scheme failed");
++                usbdiag::write(hc.root_port_status(), hc.gintsts());
++                usbdiag::step("idle");
+                 hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
+@@ -687,7 +692,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+             }
+             Err(err) if attempt < ATTEMPTS => {
+                 println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
+-                std::thread::sleep(std::time::Duration::from_millis(100));
++                dwc2::delay(std::time::Duration::from_millis(100));
+             }
+             Err(err) => {
+                 println!("dwc2d: enumeration failed: {err:?}");
+diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
+index 54d6f806..c958f5d2 100644
+--- a/drivers/usb/dwc2d/src/rtl8152.rs
++++ b/drivers/usb/dwc2d/src/rtl8152.rs
+@@ -8,13 +8,13 @@
+ //! (RTL8153B); not the RTL8156.
+ 
+ use std::collections::VecDeque;
+-use std::thread::sleep;
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+ use driver_network::NetworkAdapter;
+ use syscall::error::{Error as SysError, Result as SysResult, EIO};
+ 
++use crate::dwc2::delay;
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+ use crate::enumerate::{Bus, Device};
+ use crate::regs::{EPTYPE_BULK, PID_DATA0};
+@@ -449,7 +449,7 @@ impl Regs<'_> {
+             if start.elapsed() > Duration::from_secs(1) {
+                 return Err(Error::Timeout(what));
+             }
+-            sleep(Duration::from_millis(1));
++            delay(Duration::from_millis(1));
+         }
+         Ok(())
+     }
+@@ -487,7 +487,7 @@ impl Regs<'_> {
+     fn disable_aldps(&mut self) -> Result<(), Error> {
+         self.ocp_write(OCP_ALDPS_CONFIG, ENPDNPS | LINKENA | DIS_SDSAVE)?;
+         for _ in 0..20 {
+-            sleep(Duration::from_millis(1));
++            delay(Duration::from_millis(1));
+             if self.ocp_read(OCP_ALDPS_STATE)? & 0x0100 != 0 {
+                 break;
+             }
+@@ -517,7 +517,7 @@ impl Regs<'_> {
+                 println!("dwc2d: RTL815x PHY state {state}, still waiting for {desired}, going on");
+                 return Ok(state);
+             }
+-            sleep(Duration::from_millis(10));
++            delay(Duration::from_millis(10));
+         }
+     }
+ 
+@@ -529,7 +529,7 @@ impl Regs<'_> {
+                 println!("dwc2d: RTL815x autoload not done, going on");
+                 break;
+             }
+-            sleep(Duration::from_millis(10));
++            delay(Duration::from_millis(10));
+         }
+         Ok(())
+     }
+@@ -900,7 +900,7 @@ pub fn init(bus: &mut Bus, f: &Rtl8152Function, link_wait: Duration) -> Result<(
+             println!("dwc2d: {} no link yet", chip.name());
+             break false;
+         }
+-        sleep(Duration::from_millis(100));
++        delay(Duration::from_millis(100));
+     };
+     Ok((mac, link))
+ }
+diff --git a/drivers/usb/dwc2d/src/usbdiag.rs b/drivers/usb/dwc2d/src/usbdiag.rs
+new file mode 100644
+index 00000000..a4c39792
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/usbdiag.rs
+@@ -0,0 +1,135 @@
++//! USB diagnosis for #151 (experiment `usb-hub-drop`): channel errors by
++//! kind, hub and root port events, and the step the hotplug code is in. On
++//! the Pi the USB hub with the network chip dropped off during a download
++//! into the SD card (test 168), and dwc2d stopped right after. These files
++//! say what the controller saw first and where dwc2d was:
++//!
++//! - `/tmp/dwc2d-usbstats`, written after every rescan (once a second);
++//! - `/tmp/dwc2d-step`, written as the hotplug code goes, so it names the
++//!   step dwc2d is stuck in if it stops.
++
++use std::fmt::Write;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::OnceLock;
++use std::time::Instant;
++
++use crate::regs::*;
++
++pub static XACT_ERRORS: AtomicU64 = AtomicU64::new(0);
++pub static BABBLES: AtomicU64 = AtomicU64::new(0);
++pub static STALLS: AtomicU64 = AtomicU64::new(0);
++pub static TOGGLE_ERRORS: AtomicU64 = AtomicU64::new(0);
++pub static AHB_ERRORS: AtomicU64 = AtomicU64::new(0);
++pub static TIMEOUTS: AtomicU64 = AtomicU64::new(0);
++/// Last channel error: HCINT bits, device address << 32, endpoint << 40.
++static LAST_ERROR: AtomicU64 = AtomicU64::new(0);
++static LAST_ERROR_MS: AtomicU64 = AtomicU64::new(0);
++pub static PORT_EVENTS: AtomicU64 = AtomicU64::new(0);
++/// Last hub port event: change << 16 | status, hub << 32, port << 40.
++static LAST_PORT_EVENT: AtomicU64 = AtomicU64::new(0);
++static LAST_PORT_MS: AtomicU64 = AtomicU64::new(0);
++pub static ROOT_EVENTS: AtomicU64 = AtomicU64::new(0);
++static LAST_HPRT0: AtomicU64 = AtomicU64::new(0);
++pub static RECOVERIES: AtomicU64 = AtomicU64::new(0);
++
++static START: OnceLock<Instant> = OnceLock::new();
++
++pub fn now_ms() -> u64 {
++    START.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++/// A channel halted with an error, or a stall (HCINT bits).
++pub fn channel_error(status: u32, address: u8, endpoint: u8) {
++    for (bit, counter) in [
++        (HCINT_XACT_ERR, &XACT_ERRORS),
++        (HCINT_BBL_ERR, &BABBLES),
++        (HCINT_STALL, &STALLS),
++        (HCINT_DATA_TGL_ERR, &TOGGLE_ERRORS),
++        (HCINT_AHB_ERR, &AHB_ERRORS),
++    ] {
++        if status & bit != 0 {
++            counter.fetch_add(1, Relaxed);
++        }
++    }
++    LAST_ERROR.store(u64::from(status) | u64::from(address) << 32 | u64::from(endpoint) << 40, Relaxed);
++    LAST_ERROR_MS.store(now_ms(), Relaxed);
++}
++
++/// A channel did not halt in time.
++pub fn timeout(address: u8, endpoint: u8) {
++    TIMEOUTS.fetch_add(1, Relaxed);
++    LAST_ERROR.store(1 << 31 | u64::from(address) << 32 | u64::from(endpoint) << 40, Relaxed);
++    LAST_ERROR_MS.store(now_ms(), Relaxed);
++}
++
++/// A hub port reported a change.
++pub fn port_event(hub: u8, port: u16, status: u16, change: u16) {
++    PORT_EVENTS.fetch_add(1, Relaxed);
++    LAST_PORT_EVENT.store(
++        u64::from(status) | u64::from(change) << 16 | u64::from(hub) << 32 | u64::from(port) << 40,
++        Relaxed,
++    );
++    LAST_PORT_MS.store(now_ms(), Relaxed);
++}
++
++/// The root port reported a change (HPRT0).
++pub fn root_event(hprt0: u32) {
++    ROOT_EVENTS.fetch_add(1, Relaxed);
++    LAST_HPRT0.store(u64::from(hprt0), Relaxed);
++}
++
++/// The errors so far in one line, for the serial log when a device drops.
++pub fn summary() -> String {
++    let last = LAST_ERROR.load(Relaxed);
++    format!(
++        "xact {} babble {} stall {} toggle {} ahb {} timeouts {}, last {:#x} at address {} endpoint {}, {} ms ago",
++        XACT_ERRORS.load(Relaxed),
++        BABBLES.load(Relaxed),
++        STALLS.load(Relaxed),
++        TOGGLE_ERRORS.load(Relaxed),
++        AHB_ERRORS.load(Relaxed),
++        TIMEOUTS.load(Relaxed),
++        last & 0xFFFF_FFFF,
++        (last >> 32) & 0xFF,
++        (last >> 40) & 0xFF,
++        now_ms().saturating_sub(LAST_ERROR_MS.load(Relaxed)),
++    )
++}
++
++/// Note the step the hotplug code is in. Errors are ignored: the file is
++/// only for diagnosis.
++pub fn step(what: &str) {
++    let _ = std::fs::write("/tmp/dwc2d-step", format!("{} {what}\n", now_ms()));
++}
++
++/// Write the counters, one `name value` per line.
++pub fn write(hprt0: u32, gintsts: u32) {
++    let mut s = String::new();
++    let _ = writeln!(s, "uptime_ms {}", now_ms());
++    for (name, value) in [
++        ("xact_errors", &XACT_ERRORS),
++        ("babbles", &BABBLES),
++        ("stalls", &STALLS),
++        ("toggle_errors", &TOGGLE_ERRORS),
++        ("ahb_errors", &AHB_ERRORS),
++        ("timeouts", &TIMEOUTS),
++        ("last_error", &LAST_ERROR),
++        ("last_error_ms", &LAST_ERROR_MS),
++        ("port_events", &PORT_EVENTS),
++        ("last_port_event", &LAST_PORT_EVENT),
++        ("last_port_ms", &LAST_PORT_MS),
++        ("root_events", &ROOT_EVENTS),
++        ("last_hprt0", &LAST_HPRT0),
++        ("recoveries", &RECOVERIES),
++    ] {
++        let value = value.load(Relaxed);
++        if name.starts_with("last_") && !name.ends_with("_ms") {
++            let _ = writeln!(s, "{name} {value:#x}");
++        } else {
++            let _ = writeln!(s, "{name} {value}");
++        }
++    }
++    let _ = writeln!(s, "hprt0 {hprt0:#x}");
++    let _ = writeln!(s, "gintsts {gintsts:#x}");
++    let _ = std::fs::write("/tmp/dwc2d-usbstats", s);
++}
+-- 
+2.53.0
+

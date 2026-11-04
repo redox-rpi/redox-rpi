@@ -5,6 +5,18 @@ in RedoxFS `c988cb8` and are still in upstream master `db847d8`, the commit
 we pin now (PR #146; `src/mount/redox/scheme.rs` and `src/transaction.rs`
 unchanged).
 
+**Upstream master `5ba45a6` (2026-11-01):** both are still there. The line
+numbers below are one higher in `src/mount/redox/scheme.rs` there
+(`frename_internal` 739, `validate_new_link` 610, `write` 934);
+`src/filesystem.rs` is unchanged. Our four patches rebased onto `5ba45a6`,
+ready for a merge request:
+[redoxfs-5ba45a6/](redoxfs-5ba45a6/) (`0001` = our `0036`, `0002`–`0004` =
+`0037`–`0039`; only import lines changed, after upstream's 2024 edition
+switch). Checked: `git am` onto `5ba45a6`, `cargo check --target
+aarch64-unknown-redox` without warnings, `cargo test` on Linux 47 passed.
+Not run on a Pi: we keep pinning `db847d8`, because `5ba45a6` breaks Unix
+sockets for us (PR #146).
+
 ## `rename` on a RedoxFS other than the root one
 
 - **What breaks:** `mv /scheme/data/a /scheme/data/b` fails with

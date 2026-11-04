@@ -1,0 +1,84 @@
+From 30153c788fff1c8b75eabc069a3198bae31114ab Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 06:27:03 +0000
+Subject: [PATCH 1/4] Rename within a scheme named by an absolute path
+ (redox-rpi #57)
+
+relibc sends frename the target as an absolute path with its scheme,
+e.g. /scheme/data/b. frename_internal checked the scheme but then walked
+the whole path from the filesystem root, looking for a directory
+"scheme", so every rename on a filesystem other than the root one
+failed with ENOENT. Strip the own scheme like validate_new_link does.
+---
+ src/mount/redox/scheme.rs | 48 ++++++++++++++++++++++-----------------
+ 1 file changed, 27 insertions(+), 21 deletions(-)
+
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index f23cd82..9afdebd 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -755,27 +755,6 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+             .ok_or(Error::new(EINVAL))?
+             .canonical();
+ 
+-        let (old_path_parent, Some(old_name)) = old_path.dirname_split() else {
+-            return Err(Error::new(EPERM));
+-        };
+-        let (new_path_parent, Some(new_name)) = new_path.dirname_split() else {
+-            return Err(Error::new(EPERM));
+-        };
+-
+-        let scheme_name = &self.scheme_name;
+-
+-        if RedoxStr::from(old_path_parent)
+-            .as_abs()
+-            .and_then(|s| s.get_scheme())
+-            .is_some_and(|s| &s != scheme_name)
+-            || RedoxStr::from(new_path_parent)
+-                .as_abs()
+-                .and_then(|s| s.get_scheme())
+-                .is_some_and(|s| &s != scheme_name)
+-        {
+-            return Err(Error::new(EXDEV));
+-        }
+-
+         let old_start_ptr = if old_path.is_relative() {
+             old_start_ptr
+         } else {
+@@ -788,6 +767,33 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+             TreePtr::root()
+         };
+ 
++        let scheme_name = &self.scheme_name;
++
++        // An absolute path names its scheme (`/scheme/data/b`, as relibc
++        // sends the target); only the rest is a path in this filesystem.
++        let (old_path_parent, Some(old_name)) = old_path.dirname_split() else {
++            return Err(Error::new(EPERM));
++        };
++        let old_path = match RedoxStr::from(old_path_parent)
++            .as_abs()
++            .and_then(|s| s.as_parts())
++        {
++            Some((s, _)) if &s != scheme_name => return Err(Error::new(EXDEV)),
++            Some((_, r)) => r.join_checked(old_name.clone()),
++            None => old_path.clone(),
++        };
++        let (new_path_parent, Some(new_name)) = new_path.dirname_split() else {
++            return Err(Error::new(EPERM));
++        };
++        let new_path = match RedoxStr::from(new_path_parent)
++            .as_abs()
++            .and_then(|s| s.as_parts())
++        {
++            Some((s, _)) if &s != scheme_name => return Err(Error::new(EXDEV)),
++            Some((_, r)) => r.join_checked(new_name.clone()),
++            None => new_path.clone(),
++        };
++
+         let scheme_name = &self.scheme_name;
+         let old_name = old_name.as_ref();
+         self.fs.tx(|tx| {
+-- 
+2.53.0
+

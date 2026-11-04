@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Create an SD card image for the Raspberry Pi 3, 3B+ and Zero 2 W: for network
-# boot (default) or with Redox on the card (--local).
+# boot (default), with Redox on the card (--local), or started straight by
+# the Pi firmware without U-Boot (--direct).
 #
 # Network boot:
 # Partition 1 (FAT32, 63 MiB; --boot-size) holds the Raspberry Pi firmware, our U-Boot,
@@ -15,6 +16,13 @@
 # partition 1 additionally holds the Redox bootloader as EFI/BOOT/BOOTAA64.EFI,
 # which U-Boot starts; partition 2 is the Redox root filesystem from the image.
 #
+# Direct boot (--direct <harddrive.img>, experimental, issue #15): partition 1
+# holds the firmware, kernel8.img (tools/rpi-boot-stub with the kernel built
+# in) and the initramfs (initfs plus the RedoxFS partition of the image, which
+# runs from RAM as with network boot), made by scripts/fw-direct-boot.sh.
+# config.txt starts kernel8.img instead of U-Boot. Partition 2 is the data
+# partition, as for network boot.
+#
 # Needs: curl, sfdisk, partx, mtools, cargo (builds tools/redoxfs-file).
 # Run scripts/build-uboot.sh first, and for network boot
 # scripts/netboot.sh --server <ip>.
@@ -23,6 +31,7 @@
 #   scripts/make-sdcard.sh [--tftp-dir <dir>] [--dir <name>] [--out <file>]
 #                          [--boot-size <MiB>] [--data-size <MiB>]
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
+#   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
 #
 #   --dir <name>       the directory of scripts/netboot.sh --dir whose boot.scr
 #                      goes on the card (default redox; redox-zero2w for the
@@ -57,6 +66,7 @@ dir=redox
 out="$ROOT/build/sdcard-netboot.img"
 data_mib=960
 image=
+direct=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -65,14 +75,28 @@ while [ $# -gt 0 ]; do
         --out) out="$2"; shift 2 ;;
         --data-size) data_mib="$2"; shift 2 ;;
         --local) image="$2"; shift 2 ;;
+        --direct) direct="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
 
 uboot="$ROOT/build/u-boot/u-boot.bin"
 bootscr="$tftp/$dir/boot.scr"
-[ -f "$uboot" ] || { echo "$uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
-if [ -n "$image" ]; then
+if [ -n "$direct" ]; then
+    [ -z "$image" ] || { echo "--local and --direct do not go together" >&2; exit 1; }
+    fw="$ROOT/build/fw-direct"
+    "$ROOT/scripts/fw-direct-boot.sh" --image "$direct" --out "$fw"
+    # Room for the initramfs and the firmware files.
+    min_mib=$((($(wc -c < "$fw/initramfs") >> 20) + 32))
+    [ "$BOOT_MIB" -ge "$min_mib" ] || BOOT_MIB=$min_mib
+    [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-direct.img"
+elif [ ! -f "$uboot" ]; then
+    echo "$uboot missing, run scripts/build-uboot.sh" >&2
+    exit 1
+fi
+if [ -n "$direct" ]; then
+    :   # the boot files come from scripts/fw-direct-boot.sh above
+elif [ -n "$image" ]; then
     [ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh --sdcard" >&2; exit 1; }
     # The image's EFI partition (2) and RedoxFS partition (3), in sectors.
     read -r efi_start _ < <(partx -g -o START,SECTORS -n 2 "$image")
@@ -113,8 +137,19 @@ for file in "${FIRMWARE_FILES[@]}"; do
     [ "$(dirname "$file")" = . ] || mmd -i "$fat" -D s "::$(dirname "$file")" 2>/dev/null || true
     mcopy -i "$fat" "$cache/$file" "::$file"
 done
-mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
-if [ -n "$image" ]; then image_id=sdcard-redox; else image_id=sdcard-netboot; fi
+if [ -n "$direct" ]; then
+    # The firmware starts the stub and loads the initramfs right after it.
+    sed -e 's/^# Start U-Boot on the ARM cores/# Start rpi-boot-stub (kernel8.img, issue #15) on the ARM cores/' \
+        -e 's/^kernel=u-boot.bin$/kernel=kernel8.img\ninitramfs initramfs followkernel/' \
+        "$ROOT/config/config.txt" > "$out.config"
+    grep -q '^kernel=kernel8.img$' "$out.config" || { echo "config/config.txt has no kernel=u-boot.bin line" >&2; exit 1; }
+    mcopy -i "$fat" "$out.config" ::config.txt
+    rm -f "$out.config"
+else
+    mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
+fi
+if [ -n "$direct" ]; then image_id=sdcard-direct
+elif [ -n "$image" ]; then image_id=sdcard-redox; else image_id=sdcard-netboot; fi
 cat > "$out.uuid" <<EOF
 {
   "schemaVersion": 1,
@@ -129,14 +164,18 @@ cat > "$out.uuid" <<EOF
 EOF
 mcopy -i "$fat" "$out.uuid" ::.uuid
 rm -f "$out.uuid"
-mcopy -i "$fat" "$uboot" ::u-boot.bin
-if [ -n "$image" ]; then
+if [ -n "$direct" ]; then
+    mcopy -i "$fat" "$fw/kernel8.img" ::kernel8.img
+    mcopy -i "$fat" "$fw/initramfs" ::initramfs
+elif [ -n "$image" ]; then
+    mcopy -i "$fat" "$uboot" ::u-boot.bin
     efi="$out.efi"
     rm -rf "$efi"
     mcopy -s -i "$image@@$((efi_start * 512))" ::EFI "$efi"
     mcopy -s -i "$fat" "$efi" ::EFI
     rm -rf "$efi"
 else
+    mcopy -i "$fat" "$uboot" ::u-boot.bin
     mcopy -i "$fat" "$bootscr" ::boot.scr
 fi
 echo "Boot partition:"
@@ -162,13 +201,13 @@ elif [ "$data_mib" -gt 0 ]; then
 fi
 
 # The build manifest goes with the image it describes (docs/versioning.md).
-if [ -n "$image" ]; then
-    manifest="$(grep -l "\"harddrive.img\" = \"$(sha256sum < "$image" | cut -d' ' -f1)\"" \
+if [ -n "$image$direct" ]; then
+    manifest="$(grep -l "\"harddrive.img\" = \"$(sha256sum < "$image$direct" | cut -d' ' -f1)\"" \
         "$ROOT"/build/manifests/*.toml 2>/dev/null | head -1 || true)"
     if [ -n "$manifest" ]; then
         cp "$manifest" "$out.manifest.toml"
     else
-        echo "warning: no manifest in build/manifests/ matches $image" >&2
+        echo "warning: no manifest in build/manifests/ matches $image$direct" >&2
     fi
 fi
 

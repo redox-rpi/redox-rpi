@@ -1,0 +1,27 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] Do not panic when futex_wake finds the futex unmapped
+
+Waitval::post stores the value and then wakes the futex. A joining thread
+can see the value without waiting, return from pthread_join and free the
+exiting thread before the wake, so the kernel returns EFAULT and the
+unwrap in futex_wake_ptr panics in the exiting thread ("panicked at
+src/sync/mod.rs:103:54: ... Errno(14)", then brk in relibc_panic). Treat a
+failed wake as zero threads woken, as callers on Linux do.
+---
+diff -ruN a/src/sync/mod.rs b/src/sync/mod.rs
+--- a/src/sync/mod.rs	2026-11-01 02:07:23.266757348 +0000
++++ b/src/sync/mod.rs	2026-11-01 02:07:23.277691460 +0000
+@@ -99,8 +99,11 @@
+ }
+ 
+ pub unsafe fn futex_wake_ptr(ptr: *mut impl FutexTy, n: i32) -> usize {
+-    // TODO: unwrap_unchecked?
+-    unsafe { Sys::futex_wake(ptr.cast(), n as u32) }.unwrap() as usize
++    // The futex word may be gone by the time we wake: after Waitval::post
++    // stores the value, the joining thread can return from pthread_join and
++    // free the exiting thread before this call, and the kernel answers
++    // EFAULT. Nobody can wait on unmapped memory, so nobody was woken.
++    unsafe { Sys::futex_wake(ptr.cast(), n as u32) }.map_or(0, |woken| woken as usize)
+ }
+ pub unsafe fn futex_wait_ptr<T: FutexTy>(
+     ptr: *mut T,
