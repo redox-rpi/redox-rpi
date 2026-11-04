@@ -8112,3 +8112,47 @@ two boots, 40 pi-test runs, and 34 minutes with testnetd running.**
   The hang window is small, so this is good evidence, not proof.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each boot with a devsh reset:
   banner after 20 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #232 #126 power saving step 2b: fixed clock_states, RPI_ETH_SPEED from the command line (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-357-g347fc319+x6f4a` (branch `power-eth` 347fc319, experiments
+`clock-states eth-speed`, no `/etc/eth-speed`). Real Pi 3B+ over netboot, reset at 21:04:04
+UTC, `redox login:` after 20 s. No HDMI connected.
+
+**Result: clock_states is fixed. RPI_ETH_SPEED did not reach the Pi.** The firmware does not
+read `/srv/tftp/cmdline.txt` in this setup. So this run can't say whether U-Boot or the
+bootloader passes the firmware command line on.
+
+- **(1) RPI_ETH_SPEED:**
+  - `/srv/tftp/cmdline.txt` = `RPI_ETH_SPEED=100` (one line) was created at 21:03:49, before
+    the reset.
+  - The boot log has no `RPI_ETH_SPEED` line at all. The only link line is
+    `dwc2d: link up on the LAN7800 at address 6, 1000 Mbit/s`.
+  - Why: this Pi starts the GPU firmware (`start.elf`) and U-Boot **from its SD card**. The
+    log shows `Loading Environment from FAT... OK` and `bootflow 'mmc@7e300000.bootdev.part_1'
+    with script`. Only then does U-Boot fetch `redox/netboot.scr` and the image from
+    homenodellm.
+  - The firmware reads `cmdline.txt` from the card's FAT partition, so the file in
+    `/srv/tftp` is never read. dnsmasq logged only DHCP for the Pi, and no TFTP request for
+    `cmdline.txt`.
+  - To test the path, `RPI_ETH_SPEED=100` must go into `cmdline.txt` on the netboot card
+    (that needs a person and a card swap), or into U-Boot's `bootargs` in `netboot.scr`.
+- **(2) pi-test:** pass (version, manifest matches, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- **(3) `cat /scheme/rpi-firmware/clock_states`** (name, state, measured Hz, state word), every
+  line:
+  `emmc on 200000000 0x0`, `uart on 48000000 0x1`, `arm on 1399998000 0x0`,
+  `core on 400000000 0x0`, `v3d on 300000000 0x0`, `h264 off 0 0x0`, `isp off 0 0x0`,
+  `sdram off 0 0x0`, `pixel off 0 0x0`, `pwm off 0 0x0`.
+  - arm and core now read `on` with a measured rate (#231 had them `off`).
+  - **sdram still reads `off 0`**, although `clocks` says 400 MHz. So the firmware's measured
+    rate for SDRAM seems to be 0 (not measurable this way), and the state is derived from it.
+  - core is measured at 400 MHz while `clocks` reports 250 MHz current; v3d is measured at
+    300 MHz against 250.
+  - h264, isp, pixel and pwm read off at idle.
+- **`cat /scheme/rpi-firmware/clocks`**, every line:
+  `emmc 200000000 200000000`, `uart 48000000 1000000000`, `arm 1400000000 1400000000`,
+  `core 250000000 400000000`, `v3d 250000000 300000000`, `h264 250000000 300000000`,
+  `isp 250000000 300000000`, `sdram 400000000 450000000`.
+- **(4)** `/srv/tftp/cmdline.txt` was deleted at 21:05:21, before the restore. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s, devsh
+  answers, and `/srv/tftp/redox` matches the backup.
