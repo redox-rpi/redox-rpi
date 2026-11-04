@@ -15,18 +15,29 @@
 #                     with the mainline devicetree adjusted like the config.txt
 #                     overlays on a real Pi (PL011 console, SD on Arasan)
 #   --uboot redox     the prebuilt U-Boot 2022.07 from Redox
+#   --direct <dir>    no U-Boot: kernel8.img and initramfs from
+#                     scripts/fw-direct-boot.sh in <dir> (issue #15), loaded
+#                     the way the Pi firmware does; --image is then only the
+#                     SD card, e.g. build/sdcard-direct.img
 #   --usb-net         attach QEMU's USB network card (CDC Ethernet), with
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
-#                     host port 12323 forwards to devshd in the guest
-#                     (DEVSH_PORT=<port> picks another one, for parallel runs)
+#                     host port 12323 forwards to devshd in the guest,
+#                     12222 to sshd (DEVSH_PORT=<port> and SSH_PORT=<port>
+#                     pick other ones, for parallel runs)
 #   --usb-host <vid:pid>
 #                     pass this USB device of the host through to the guest,
 #                     alone on the root port (no USB keyboard, no --usb-net):
 #                     QEMU's hub is full speed, and dwc2d has no split bulk
 #                     transfers. Needs read-write access to the device node
 #                     (udev rule, see patches/experiments/rtl8152/README.md)
+#   --device <spec>   add this QEMU device (repeatable), e.g.
+#                     ds1338,bus=i2c-bus.1,address=0x68 for a clock on I2C
+#                     bus 1 (QEMU has no DS3231; the DS1338 has the same
+#                     time registers)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
+#   --qmp <path>      QMP on this Unix socket, e.g. for absolute pointer
+#                     events (`input-send-event`)
 #   --test            boot without user input and exit 0 once every --expect
 #                     pattern appeared on the serial console (default:
 #                     "redox login:"), 1 on a kernel panic or timeout.
@@ -36,6 +47,11 @@
 #                     serial console and run this shell command (repeatable,
 #                     implies --test); the output lands in the log, and the
 #                     script waits until all commands are done
+#   --data            add a RedoxFS data partition as the second GPT entry,
+#                     like on the network-boot SD card (scripts/make-sdcard.sh),
+#                     so Redox mounts it at /scheme/data. Doubles the SD card;
+#                     the image's BIOS entry (unused on aarch64) goes away.
+#                     Needs sfdisk (Linux)
 #   --sd-size <MiB>   size of QEMU's SD card (a power of two, at least the
 #                     image's size); above 2048 the card is SDHC
 #   --timeout <s>     give up after this many seconds (default 900)
@@ -57,11 +73,15 @@ test=no
 expect=()
 timeout=900
 uboot=""
+direct=""
 run=()
 sd_size=""
+data=no
 usb_net=no
 usb_host=""
 monitor=(-monitor none)
+devices=()
+qmp=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
@@ -71,10 +91,14 @@ while [ $# -gt 0 ]; do
         --timeout) timeout="$2"; shift 2 ;;
         --run) run+=("$2"); test=yes; shift 2 ;;
         --sd-size) sd_size="$2"; shift 2 ;;
+        --data) data=yes; shift ;;
         --uboot) uboot="$2"; shift 2 ;;
+        --direct) uboot=direct; direct="$(cd "$2" && pwd)"; shift 2 ;;
         --usb-net) usb_net=yes; shift ;;
         --usb-host) usb_host="$2"; shift 2 ;;
+        --device) devices+=(-device "$2"); shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
+        --qmp) qmp=(-qmp "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -92,15 +116,19 @@ if [ -z "$uboot" ]; then
     if [ -f "$our_uboot" ]; then uboot=ours; else uboot=redox; fi
 fi
 case "$uboot" in
-    ours)
-        [ -f "$our_uboot" ] || { echo "$our_uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
+    ours|direct)
+        [ "$uboot" = direct ] || [ -f "$our_uboot" ] || { echo "$our_uboot missing, run scripts/build-uboot.sh" >&2; exit 1; }
         # Our U-Boot expects the devicetree from the Pi firmware. Use the
         # mainline one and apply what config.txt does on a real Pi:
         # disable-bt (console on the PL011) and mmc (SD card on Arasan).
         cp "$ROOT/build/u-boot/dtb/bcm2837-rpi-3-b-plus.dtb" qemu-3bp.dtb
         fdtput -t s qemu-3bp.dtb /chosen stdout-path "serial0:115200n8"
         fdtput -t s qemu-3bp.dtb /soc/mmc@7e202000 status disabled
-        firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
+        if [ "$uboot" = direct ]; then
+            firmware=(-kernel "$direct/kernel8.img" -initrd "$direct/initramfs" -dtb qemu-3bp.dtb)
+        else
+            firmware=(-kernel "$our_uboot" -dtb qemu-3bp.dtb)
+        fi
         # The second serial port is the mini UART, which stays unused.
         extra_serial=(-serial null)
         ;;
@@ -134,17 +162,40 @@ while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
 if [ -n "$sd_size" ]; then sd=$((sd_size * 1024 * 1024)); fi
 [ "$sd" -eq "$size" ] || truncate -s "$sd" run.img
 
-if [ -n "$kernel" ]; then
-    tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+if [ -n "$kernel" ] || [ "$data" = yes ]; then
     [ -x "$tool" ] || cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
+fi
+if [ -n "$kernel" ]; then
     "$tool" run.img put usr/lib/boot/kernel "$kernel"
+fi
+
+if [ "$data" = yes ]; then
+    # Redox mounts the second GPT entry (/scheme/disk.mmc/0p1) at /scheme/data;
+    # in the image that is the EFI partition. New table: EFI, a data partition
+    # in the second half of the card, then the root filesystem. The bootloader
+    # skips RedoxFS partitions without a kernel.
+    half=$(($(wc -c < run.img) / 512))
+    part() { sfdisk -d run.img | grep "name=\"$1\"" | sed 's/^[^:]*: //'; }
+    efi="$(part EFI)" root="$(part REDOX)"
+    truncate -s $((half * 1024)) run.img
+    rm -f run.data
+    truncate -s $(((half - 2048) * 512)) run.data
+    echo "Data partition of the QEMU SD card (scripts/qemu-raspi3b.sh --data)." > run.readme
+    "$tool" run.data mkfs 7265646f-7872-7069-2d64-617461000001 run.readme > /dev/null
+    dd if=run.data of=run.img bs=512 seek="$half" conv=notrunc status=none
+    rm -f run.data run.readme
+    printf '%s\n' "label: gpt" "$efi" \
+        "start=$half, size=$((half - 2048)), type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=7265646F-7872-7069-2D64-617461000001, name=\"DATA\"" \
+        "$root" | sfdisk -q --no-reread --no-tell-kernel run.img
 fi
 
 qemu=(qemu-system-aarch64
     -M raspi3b -smp 4 -m 1024
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
-    -display none "${monitor[@]}"
+    -display none "${monitor[@]}" ${qmp[@]+"${qmp[@]}"}
+    ${devices[@]+"${devices[@]}"}
     -usb)
 if [ -n "$usb_host" ]; then
     if [ "$usb_net" = yes ]; then
@@ -156,8 +207,9 @@ else
     qemu+=(-device usb-kbd)
 fi
 if [ "$usb_net" = yes ]; then
-    # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest.
-    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323" -device usb-net,netdev=usbnet)
+    # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest,
+    # 12222 (or SSH_PORT) sshd (port 22).
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${SSH_PORT:-12222}-:22" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then

@@ -54,7 +54,9 @@ v0.2.0 added hardware; v0.3.0 makes it dependable. Planned:
    2.5 to 2.9 times faster than `bcm2835-sdhcid`. RedoxFS writing 36 times
    the data for small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16)) moves to v0.4.0.
 3. **USB hotplug** ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)): a keyboard or network adapter
-   plugged in after boot is found.
+   plugged in after boot is found. Moved to v0.4.0 (maintainer's decision,
+   2026-10-30): it passed its Pi tests but was not merged in time for the
+   release candidates (PR #68).
 4. **Clean boot** ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)): no `pcid` and `audiod` on the Pi.
 5. **Full CPU speed** ([#20](https://github.com/redox-rpi/redox-rpi/issues/20)): the ARM clock at 1.4 GHz
    instead of 600 MHz, set through the firmware, with a warning on
@@ -74,8 +76,8 @@ when a topic needs more time.
 
 | Release | Theme | Contents |
 |---|---|---|
-| v0.3.0 | Stable | sdhost as the default ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) with the kernel memory fix ([#31](https://github.com/redox-rpi/redox-rpi/issues/31)), USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), clean boot by default ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), serial input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)) |
-| v0.4.0 | Boot and storage | Boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream) |
+| v0.3.0 | Stable | sdhost as the default ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) with the kernel memory fix ([#31](https://github.com/redox-rpi/redox-rpi/issues/31)), clean boot by default ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), serial input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)) |
+| v0.4.0 | Boot and storage | USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream) |
 | v0.5.0 | Devices | `poweroff` and reboot ([#7](https://github.com/redox-rpi/redox-rpi/issues/7)), USB sticks with `redox-fatfs2` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)), `pkg install` for Pi packages, keyboard layouts |
 | v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first) |
 | v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info |

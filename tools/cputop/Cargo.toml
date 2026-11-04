@@ -1,0 +1,8 @@
+[package]
+name = "cputop"
+description = "CPU time per thread and per core over an interval, from /scheme/sys/context and /scheme/sys/stat"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

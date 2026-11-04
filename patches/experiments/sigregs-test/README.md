@@ -17,6 +17,7 @@ On the target:
 ```text
 sigregs                 # both modes, 1000 signals each
 sigregs thread -n 5000  # one mode, more signals
+sigregs --x18           # also check x18 (needs experiment sigreturn-svc)
 ```
 
 - `process`: a child process sends `SIGUSR1` with `kill()`.
