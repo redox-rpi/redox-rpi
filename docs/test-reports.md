@@ -8078,3 +8078,37 @@ which are clearly running, so its on/off reading looks wrong.
   3.23–3.24 W at gigabit.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #233 #53 rerun of 229 on PR #81 with the netstack hang fix (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-363-gd0e656c4` (branch `netstack-multi` d0e656c4, PR #81, no experiments).
+Real Pi 3B+ over netboot, no HDMI connected. **Result: pass. The network was not lost in
+two boots, 40 pi-test runs, and 34 minutes with testnetd running.**
+
+- **Boot 1** (reset 20:18:03, `redox login:` after 20 s):
+  - pi-test pass. `/usr/lib/drivers/testnetd &` at 20:21:28, then step 2 as in 229.
+  - pi-test three more times in a row, all pass (0 of 300 starts failed each).
+  - Each run takes only about 50 s, so testnetd ran only about 4 min here. In 229, the
+    second run only looked long because it hung. So I added boot 2.
+- **Boot 2** (reset 20:26:42, login after 20 s):
+  - pi-test pass. testnetd at 20:30:04, then step 2 again.
+  - Then pi-test in a loop for 30 min: **36 runs, all pass**, each with 0 of 300 starts
+    failed and devsh never lost.
+  - At 21:01 on serial, `/tmp/testnetd.log` showed `dhcp 2 dhcp_foreign 0 foreign_src 0
+    ping 3`, and `ping -c 3 10.0.9.1` gave 3/3.
+- **Step 2, the same in both boots:**
+  - testnetd: `network.test0 registered`, then `DHCP: eth1 got 10.0.9.2/24`.
+  - `ls /scheme/netcfg/ifaces` gave `eth0  eth1`. eth1 had `10.0.9.2/24`, and eth0 had
+    `192.168.178.148/24`.
+  - `route/list` had exactly one `default via 192.168.178.1 dev eth0`, plus
+    `10.0.9.0/24 dev eth1`.
+  - `ping -c 3 10.0.9.1` and `ping -c 3 192.168.178.1`: 3/3 each.
+  - `/tmp/testnetd.log`: `dhcp 2 dhcp_foreign 0 foreign_src 0 ping 3`.
+- **Serial log:** `DHCP: eth0 got 192.168.178.148/24`, `DHCP: default route via
+  192.168.178.1 (eth0)`, `DHCP: eth1 got 10.0.9.2/24`. There was no netstack error line and
+  no panic.
+- 229 lost the network in its second pi-test, about 10 min after testnetd started. Here
+  testnetd ran 4 + 30 min and more than 11000 program starts went over devsh with no loss.
+  The hang window is small, so this is good evidence, not proof.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each boot with a devsh reset:
+  banner after 20 s, devsh answers, and `/srv/tftp/redox` matches the backup.
