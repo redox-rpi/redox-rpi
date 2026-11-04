@@ -7862,3 +7862,34 @@ either watch. But round 8's install failed with `No space left on device`.**
 - No panic, exception, `FATAL` or `UNHANDLED` line, and no dwc2d `Timeout`, `removed` or `restart` line.
 - Step 3 (a hang) was not needed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (15:39). devsh answers.
+
+## #225: #24 first-boot welcome app, PR #77 with today's main (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-351-ga0bbce34+xda44` (branch `welcome-app` with main merged, experiments
+`timesync`, `welcome`), `~/t18-work/image-w77/harddrive.img` (md5 `fa627956…`). Staged with
+`~/t18-work/w77-stage/scripts/netboot.sh`; the bootloader is md5 `da1a7595…`. Real Pi 3B+ over
+netboot, reset at 15:41:44 UTC. No panic, exception or `FATAL` line. **Pass.**
+
+- The serial console showed `Welcome to Redox OS on the Raspberry Pi.` and waited, with no
+  `redox login:` and no banner before it.
+- The prompts were answered on serial (one character every 0.15 s, each after its prompt), 15:45:53 to 15:46:00:
+  - Enter at "Press Enter to set";
+  - `gb` at `Keyboard layout [us]:`;
+  - `pi-test` at `Name of this computer (hostname) [redox]:`;
+  - Enter at `Set a new root password? … [n]:`;
+  - `TestNet` at `Wi-Fi network name []:`;
+  - `secret123` at `Passphrase` (**not echoed**: the serial log has no `secret123` from this step).
+- Then `Saved; the Wi-Fi driver joins it at the next boot.`,
+  `Done. Log in as root. To change these settings later, run welcome --force.`, and right after
+  that the banner (`redox-rpi v0.4.0-dev-351-ga0bbce34+xda44 (netboot, …)`) and `redox login:`.
+  - The welcome also said `Time zone: no zone files in /usr/share/zoneinfo; the clock shows UTC.`
+    This image has no `timezone` experiment.
+- After a root login on serial:
+  - `cat /etc/keymap /etc/hostname /etc/net/wifi /etc/welcome.done` shows `gb`, `pi-test`,
+    `ssid=TestNet` / `psk=secret123`, and
+    `First-boot setup done. Delete this file to run it again before the next login.`
+    - Small detail: `/etc/hostname` has no newline at the end, so the next file's first line starts on the same line.
+  - `ls -l /etc/net/wifi` gives `-rw------- 1 root root 78 Nov 4 15:46 /etc/net/wifi`.
+- pi-test (devsh): version, manifest, ps (46), ps-tty, sdcard pass, and 0 of 300 starts failed.
+- I did not check the NanoKVM (no screenshot needed). The second-boot check stays in QEMU, as the row says.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (15:50). devsh answers.
