@@ -4,6 +4,9 @@
 # Ethernet, not a LAN7800, so the request is refused there; switching the
 # speed and the power it saves need the Pi.
 #
+# With experiment eth-speed-test in the image (/etc/eth-speed = 100), set
+# ETH_SPEED_TEST=1: the boot service then sends the request once more.
+#
 # Usage: patches/experiments/eth-speed/qemu-check.sh [image]
 
 set -uo pipefail
@@ -22,6 +25,10 @@ check() {
 [ $status -eq 0 ] || { echo "FAIL: QEMU run ($status)"; failed=1; }
 check "request read, no LAN7800 in QEMU" 'dwc2d: link: "100" needs 100 or 1000 and a LAN7800 in use'
 check "a bad value is refused" 'dwc2d: link: "fast" needs 100 or 1000'
+if [ "${ETH_SPEED_TEST:-0}" = 1 ]; then
+    n="$(grep -c 'dwc2d: link: "100" needs 100 or 1000' <<< "$log")"
+    if [ "$n" -ge 2 ]; then echo "PASS: boot setting /etc/eth-speed sent"; else echo "FAIL: boot setting /etc/eth-speed sent ($n requests)"; failed=1; fi
+fi
 after="$(sed -n '/^ETH-AFTER$/,$p' <<< "$log")"
 if grep -q "dwc2d-link" <<< "$after"; then echo "FAIL: request file removed"; failed=1; else echo "PASS: request file removed"; fi
 if grep -q "dwc2d" <<< "$after"; then echo "PASS: dwc2d still running"; else echo "FAIL: dwc2d still running"; failed=1; fi

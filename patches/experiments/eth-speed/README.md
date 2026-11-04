@@ -18,11 +18,22 @@ scripts/build-image.sh --experiment eth-speed
 - `echo 1000 > /tmp/dwc2d-link`: gigabit again.
 - dwc2d reads the file once a second (with its USB rescan) and deletes it.
   Anything else, or no LAN7800 in use, is refused with a log line.
-- The link-up lines name the speed: `dwc2d: LAN78xx link up after N ms,
-  1000 Mbit/s` at boot, `dwc2d: link up on the LAN7800 at address N,
-  100 Mbit/s` after a change.
+- The link-up lines name the speed: `dwc2d: link up on the LAN7800 at
+  address N, 1000 Mbit/s`, at boot and after a change. (`dwc2d: LAN78xx
+  link up after N ms, …` only appears for an adapter plugged in later.)
 
-If 100 Mbit/s saves enough, a later step makes it a boot setting.
+**Pi test 228:** 100 Mbit/s saves about **0.35 W** at idle: gigabit 3.23
+and 3.24 W, 100 Mbit/s 2.89 and 2.88 W (alternating, 36 readings over
+6 minutes each). Every change came back within 4 s, ping 3 of 3, pi-test
+0 of 300 failed starts.
+
+## Boot setting
+
+`/etc/eth-speed` with `100` (or `1000`): at boot `16_eth-speed.service`
+copies it to `/tmp/dwc2d-link`, and dwc2d renegotiates a few seconds after
+boot (DHCP tries again meanwhile). Without the file nothing changes.
+Experiment [`eth-speed-test`](../eth-speed-test/README.md) writes the file
+with `100` for a test image.
 
 ## Measuring
 
