@@ -4,7 +4,7 @@ Step 2 of [#27](https://github.com/redox-rpi/redox-rpi/issues/27) (IPv6,
 v0.6.0). Applies after the [`multicast`](../multicast) experiment (file `needs`, which the relibc CI reads).
 
 ```bash
-scripts/build-image.sh --experiment multicast --experiment ipv6
+scripts/build-image.sh --experiment multicast --experiment ipv6   # multicast: patches are default now, it adds the mcast tool
 ```
 
 Base `0025`, `netstack`:
