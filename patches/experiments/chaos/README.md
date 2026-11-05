@@ -101,3 +101,18 @@ builds before it, which differ only in `fill`, `net` and diagnostics),
 - Early runs found two bugs in the test itself, both fixed: `fill` ran
   into the round deadline on the slow card and left its file behind, and
   `net` rounds against stalling replies were cut off by the deadline.
+
+Real Pi 3B+, Pi tests 237–241 (2026-11-04/05, Pi test agent; reports in
+[test-reports.md](../../../docs/test-reports.md)):
+
+- **237:** pi-test passed, and the first 40 stressor rounds too. The second
+  run froze the whole Pi
+  ([#207](https://github.com/redox-rpi/redox-rpi/issues/207)). On a fresh
+  boot, `signals` failed 3 of 3 (#205), and 19 of 20 host faults
+  recovered within 1–6 s (delay, reordering, loss, pkg, server, dwc2d).
+  After round 20, an 85 s delay, the network did not come back (#92
+  picture). homenodellm has no iptables, so `tcp-reset` now uses `ss -K`.
+- **238, 240:** with the fix from PR #209, the freeze still came, but more
+  rarely: once in the first run in 238, once in 7 runs in 240.
+- **241:** with the fix and lock-wait watches, 34 runs of 40 rounds (1360
+  rounds) passed without a freeze.
