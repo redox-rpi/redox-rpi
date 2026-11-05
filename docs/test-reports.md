@@ -9209,3 +9209,16 @@ it got, and after the hang no new request reached it.**
   `hang-C-7-install-{serial.log,context.txt}`, and the per-round files.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: devsh answers, and
   `/srv/tftp/redox` matches the backup.
+
+## #251 open firmware step 2: librerpi/lk-overlay on the Pi 3B+ (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-lkoverlay-3bp-20261105.img.xz` (sha256 checked) on the user's 32 GB
+SDHC card. Real Pi 3B+, no HDMI connected. The plug was off at 19:32:18 UTC, the user put
+in the card, plug on at 19:34:11, 90 s of serial, off at 19:35:42.
+
+**Result: stage 1 starts, prints one line and stops.** Raw 52 bytes
+(`~/pitest-tools/t251/serial-lk.raw` on homenodellm): a `0x00` byte, then
+`U  0.001128 [VPU:PLATFORM:platform_early_init]: b` + CRLF, then nothing for the rest of
+the 90 s. No garbage, so no baud change. The Open firmware session traced it to a USB
+register write and fixed it in #253. The ARM was not reached. Stable was checked after #253
+(same card swap session).
