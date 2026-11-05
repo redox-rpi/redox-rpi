@@ -1,0 +1,324 @@
+From eadc071ac17f469cb52129977505b3689bb72934 Mon Sep 17 00:00:00 2001
+From: zehrer-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 10:53:50 +0000
+Subject: [PATCH] netstack: watchdog that names the call a stuck main loop is
+ in
+
+netstack runs on one thread: one call that never returns stops the whole
+stack, its netcfg scheme too (redox-rpi #92). The main loop now records
+which event it handles and whether it is writing to or reading from the
+network device. A second thread writes to /scheme/debug when that has
+taken more than 5 s, again every 30 s, and once more when the loop comes
+back. Every 60 s it also writes a heartbeat with the stage and counts of
+events and received frames, so a loop that waits for events that never
+come, or a watchdog that does not run, shows too.
+---
+ Cargo.lock                    |  14 +++
+ netstack/src/link/ethernet.rs |  13 ++-
+ netstack/src/main.rs          |  23 ++++-
+ netstack/src/watch.rs         | 168 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 215 insertions(+), 3 deletions(-)
+ create mode 100644 netstack/src/watch.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index a5f72da9..c0a52bfb 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -304,6 +304,19 @@ dependencies = [
+  "redox_syscall 0.9.5",
+ ]
+ 
++[[package]]
++name = "bcm2835-spid"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+ name = "bincode"
+ version = "1.3.3"
+@@ -771,6 +784,7 @@ dependencies = [
+  "inputd",
+  "libredox",
+  "orbclient",
++ "redox_event",
+  "redox_syscall 0.9.5",
+ ]
+ 
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 5f32a479..bd016fb0 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -94,7 +94,11 @@ impl EthernetLink {
+ 
+         f(frame.payload_mut());
+ 
+-        if let Err(_) = self.network_file.write_all(&self.output_buffer) {
++        let written = {
++            let _watch = crate::watch::Guard::new(crate::watch::Stage::DeviceWrite);
++            self.network_file.write_all(&self.output_buffer)
++        };
++        if let Err(_) = written {
+             error!(
+                 "Dropped outboud packet on {} (failed to write to network file)",
+                 self.name
+@@ -348,7 +352,11 @@ impl LinkDevice for EthernetLink {
+ 
+         let mut input_buffer = std::mem::replace(&mut self.input_buffer, Vec::new());
+         loop {
+-            if let Err(e) = self.network_file.read(&mut input_buffer) {
++            let read = {
++                let _watch = crate::watch::Guard::new(crate::watch::Stage::DeviceRead);
++                self.network_file.read(&mut input_buffer)
++            };
++            if let Err(e) = read {
+                 if e.kind() != ErrorKind::WouldBlock {
+                     error!("Failed to read ethernet device on link {}", self.name);
+                 } else {
+@@ -358,6 +366,7 @@ impl LinkDevice for EthernetLink {
+                 self.input_buffer = input_buffer;
+                 return None;
+             }
++            crate::watch::frame_in();
+             let packet = EthernetFrame::new_unchecked(&input_buffer[..]);
+             let Ok(repr) = EthernetRepr::parse(&packet) else {
+                 debug!("Dropped incomming frame on {} (Malformed)", self.name);
+diff --git a/netstack/src/main.rs b/netstack/src/main.rs
+index 084c3d3d..42b9334a 100644
+--- a/netstack/src/main.rs
++++ b/netstack/src/main.rs
+@@ -18,6 +18,7 @@ mod logger;
+ mod port_set;
+ mod router;
+ mod scheme;
++mod watch;
+ 
+ fn get_network_adapter() -> Result<String> {
+     use std::fs;
+@@ -158,6 +159,12 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     )
+     .context("smolnetd: failed to initialize smolnetd")?;
+ 
++    // Opened before the null namespace: the watchdog writes there (#92).
++    match std::fs::OpenOptions::new().write(true).open("/scheme/debug") {
++        Ok(debug) => watch::spawn(debug),
++        Err(err) => warn!("netstack-watch: no /scheme/debug: {err}"),
++    }
++
+     libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
+ 
+     let all = {
+@@ -169,7 +176,20 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+         .into_iter()
+         .chain(event_queue.map(|r| r.map(|e| e.user_data)))
+     {
+-        match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
++        use watch::Stage;
++        let source = event_res.map_err(|e| anyhow!("event result is error: {:?}", e))?;
++        let stage = match &source {
++            EventSource::Network => Stage::NetworkEvent,
++            EventSource::Time => Stage::TimeEvent,
++            EventSource::IpScheme => Stage::IpScheme,
++            EventSource::UdpScheme => Stage::UdpScheme,
++            EventSource::TcpScheme => Stage::TcpScheme,
++            EventSource::IcmpScheme => Stage::IcmpScheme,
++            EventSource::NetcfgScheme => Stage::NetcfgScheme,
++        };
++        watch::event(stage);
++        watch::set(stage);
++        match source {
+             EventSource::Network => smolnetd.on_network_scheme_event(),
+             EventSource::Time => smolnetd.on_time_event(),
+             EventSource::IpScheme => smolnetd.on_ip_scheme_event(),
+@@ -179,6 +199,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+             EventSource::NetcfgScheme => smolnetd.on_netcfg_scheme_event(),
+         }
+         .map_err(|e| error!("Received packet error: {:?}", e));
++        watch::set(Stage::Idle);
+     }
+     Ok(())
+ }
+diff --git a/netstack/src/watch.rs b/netstack/src/watch.rs
+new file mode 100644
+index 00000000..788bca39
+--- /dev/null
++++ b/netstack/src/watch.rs
+@@ -0,0 +1,168 @@
++//! Watchdog for a main loop that stops (redox-rpi #92).
++//!
++//! netstack runs on one thread, so one call that never returns stops the
++//! whole stack. The main loop records what it is doing; a second thread
++//! writes to the serial console when that has taken longer than 5 s, and
++//! again every 30 s, so a hang shows which call it is in. Every 60 s it also
++//! writes a heartbeat with the event counts: if those stop, the watchdog
++//! thread itself is not running; if they go on with "idle" and the counts
++//! stay, the main loop waits for events that do not come.
++
++use std::fs::File;
++use std::io::Write;
++use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
++use std::sync::OnceLock;
++use std::thread;
++use std::time::{Duration, Instant};
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++#[repr(u8)]
++pub enum Stage {
++    Idle = 0,
++    NetworkEvent,
++    TimeEvent,
++    IpScheme,
++    UdpScheme,
++    TcpScheme,
++    IcmpScheme,
++    NetcfgScheme,
++    DeviceWrite,
++    DeviceRead,
++}
++
++impl Stage {
++    fn from_u8(v: u8) -> Self {
++        match v {
++            1 => Stage::NetworkEvent,
++            2 => Stage::TimeEvent,
++            3 => Stage::IpScheme,
++            4 => Stage::UdpScheme,
++            5 => Stage::TcpScheme,
++            6 => Stage::IcmpScheme,
++            7 => Stage::NetcfgScheme,
++            8 => Stage::DeviceWrite,
++            9 => Stage::DeviceRead,
++            _ => Stage::Idle,
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Stage::Idle => "idle",
++            Stage::NetworkEvent => "network device event",
++            Stage::TimeEvent => "timer event",
++            Stage::IpScheme => "ip scheme request",
++            Stage::UdpScheme => "udp scheme request",
++            Stage::TcpScheme => "tcp scheme request",
++            Stage::IcmpScheme => "icmp scheme request",
++            Stage::NetcfgScheme => "netcfg scheme request",
++            Stage::DeviceWrite => "write to the network device",
++            Stage::DeviceRead => "read from the network device",
++        }
++    }
++}
++
++static STAGE: AtomicU8 = AtomicU8::new(0);
++// Milliseconds since START when STAGE was last set.
++static SINCE: AtomicU64 = AtomicU64::new(0);
++static START: OnceLock<Instant> = OnceLock::new();
++// Events the main loop took, all and from the network device.
++static EVENTS: AtomicU64 = AtomicU64::new(0);
++static NETWORK_EVENTS: AtomicU64 = AtomicU64::new(0);
++// Frames read from the network device.
++static FRAMES_IN: AtomicU64 = AtomicU64::new(0);
++
++fn now_ms() -> u64 {
++    START.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++/// Counts an event the main loop took.
++pub fn event(stage: Stage) {
++    EVENTS.fetch_add(1, Ordering::Relaxed);
++    if stage == Stage::NetworkEvent {
++        NETWORK_EVENTS.fetch_add(1, Ordering::Relaxed);
++    }
++}
++
++/// Counts a frame read from the network device.
++pub fn frame_in() {
++    FRAMES_IN.fetch_add(1, Ordering::Relaxed);
++}
++
++/// Records that the main loop now does `stage`; returns what it did before.
++pub fn set(stage: Stage) -> Stage {
++    SINCE.store(now_ms(), Ordering::Relaxed);
++    Stage::from_u8(STAGE.swap(stage as u8, Ordering::Relaxed))
++}
++
++/// Sets `stage` until the guard is dropped, then goes back to the stage before.
++pub struct Guard(Stage);
++
++impl Guard {
++    pub fn new(stage: Stage) -> Self {
++        Guard(set(stage))
++    }
++}
++
++impl Drop for Guard {
++    fn drop(&mut self) {
++        set(self.0);
++    }
++}
++
++/// Starts the watchdog thread. `debug` is the serial console, opened before
++/// netstack leaves its namespace.
++pub fn spawn(mut debug: File) {
++    now_ms();
++    thread::spawn(move || {
++        // Start of the stall that was last reported, and when.
++        let mut reported: Option<(u64, u64)> = None;
++        let mut heartbeat = 0u64;
++        loop {
++            thread::sleep(Duration::from_secs(1));
++            let stage = Stage::from_u8(STAGE.load(Ordering::Relaxed));
++            let since = SINCE.load(Ordering::Relaxed);
++            let now = now_ms();
++            if now.saturating_sub(heartbeat) >= 60_000 {
++                heartbeat = now;
++                let _ = writeln!(
++                    debug,
++                    "netstack-watch: alive at {} s, {} for {} s, {} events ({} network), {} frames in",
++                    now / 1000,
++                    stage.name(),
++                    now.saturating_sub(since) / 1000,
++                    EVENTS.load(Ordering::Relaxed),
++                    NETWORK_EVENTS.load(Ordering::Relaxed),
++                    FRAMES_IN.load(Ordering::Relaxed)
++                );
++            }
++            match reported {
++                Some((start, _)) if start != since || stage == Stage::Idle => {
++                    let _ = writeln!(
++                        debug,
++                        "netstack-watch: main loop back after {} s",
++                        (now.saturating_sub(start)) / 1000
++                    );
++                    reported = None;
++                }
++                _ => {}
++            }
++            if stage == Stage::Idle || now.saturating_sub(since) < 5000 {
++                continue;
++            }
++            let due = match reported {
++                None => true,
++                Some((_, last)) => now.saturating_sub(last) >= 30_000,
++            };
++            if due {
++                let _ = writeln!(
++                    debug,
++                    "netstack-watch: main loop stuck in {} for {} s",
++                    stage.name(),
++                    (now - since) / 1000
++                );
++                reported = Some((since, now));
++            }
++        }
++    });
++}
+-- 
+2.53.0
+

@@ -121,6 +121,21 @@ fn main() {
         .nth(1)
         .and_then(|p| p.parse().ok())
         .unwrap_or(2323);
+    // The bind waits for netstack; say so when that takes long (#217).
+    eprintln!("devshd: starting");
+    let bound = Arc::new(AtomicBool::new(false));
+    let waiting = bound.clone();
+    thread::spawn(move || {
+        let mut waited = 0;
+        for s in [30, 60, 120] {
+            thread::sleep(Duration::from_secs(s - waited));
+            waited = s;
+            if waiting.load(Ordering::Relaxed) {
+                return;
+            }
+            eprintln!("devshd: no answer from the network stack after {s} s");
+        }
+    });
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(listener) => listener,
         Err(err) => {
@@ -128,6 +143,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    bound.store(true, Ordering::Relaxed);
     eprintln!("devshd: listening on port {port}");
     for stream in listener.incoming().flatten() {
         thread::spawn(move || {
