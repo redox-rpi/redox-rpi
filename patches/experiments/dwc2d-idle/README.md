@@ -14,18 +14,8 @@ test 239): 2.5 % CPU and about 77 wakeups/s.
   - `/tmp/dwc2d-wakeups`, every 10 s: the event loop's wakeups by source
     (`irq`, `scheme`, `time`, `hotplug`), the time spent on each (wall
     time, blocked calls included), and the parts of a hotplug rescan.
-- **base `0091`:** the keyboard poll no longer spins on its channel. Pi
-  row 242 showed it is the idle cost: a low-speed keyboard behind a hub
-  needs a start split and a complete split, and each waited for its
-  microframe, about 130 µs 50 times a second. Now the channel's halt
-  raises the controller interrupt (as for the receive channel), and the
-  interrupt sends the complete split or takes the report. The timer
-  still starts each poll and looks at the channel too, in case an
-  interrupt is lost; a poll still running after 50 ms is stopped. Only
-  the wait for a start split window (not in microframes 5 to 7) still
-  spins. Without the controller interrupt the keyboard is polled as
-  before. `/tmp/dwc2d-wakeups` gets a line with the keyboard's polls,
-  reports, timeouts and the time spent starting polls.
+- A keyboard poll on the controller interrupt was tried and dropped
+  (Pi row 243, see below).
 
 What was looked at and left alone:
 - SOF interrupts are not enabled; only channel halt for the receive
@@ -81,4 +71,17 @@ What was looked at and left alone:
   replugged keyboard. In QEMU, dwc2d goes from 1.0 to 1.7 % CPU: QEMU's
   keyboard answers at once, so the extra interrupt wakeup per poll costs
   more than the spinning it saves. On the Pi each poll spun for two
-  microframes. Pi: row 243.
+  microframes.
+- Pi row 243, 2026-11-05, with the keyboard poll on the interrupt
+  (`v0.3.0-dev-1409-gb6b5aef+xceb2`, then base `0091`, commit 36a22d8):
+  **fail, and dropped.** dwc2d's CPU went down from 2.5 to 1.2 %, but its
+  wakeups went up from 77 to 240–480/s and irq line 50 from 7 to
+  170–410/s: after the start split the hub answers NYET to most complete
+  splits, so a poll took about 7 interrupts. 619 of 25984 polls never
+  halted (stopped after 50 ms), and dwc2d hung after the second power-on
+  in the hotplug test (no line after `cycle: … power on`, network gone).
+  Split transactions need answers within microframes; from a user-space
+  interrupt handler that is too slow (the Raspberry Pi Linux driver does
+  this part in a FIQ for the same reason). The poll stays blocking; a
+  cheaper keyboard poll needs another idea (for example a longer poll
+  interval while no key is pressed).
