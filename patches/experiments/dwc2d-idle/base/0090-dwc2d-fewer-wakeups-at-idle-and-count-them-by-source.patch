@@ -1,4 +1,4 @@
-From 4dbf03b36ee9f573b9db1d8edbfea0a6c8e4ad88 Mon Sep 17 00:00:00 2001
+From af9d7eea5c4c817410f3faf6527ed2aadaff5675 Mon Sep 17 00:00:00 2001
 From: dwc2d <dwc2d@localhost>
 Date: Thu, 5 Nov 2026 02:51:02 +0000
 Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
@@ -13,13 +13,13 @@ Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
   (irq, scheme, time, hotplug), the time spent on each, and the parts of
   a hotplug rescan.
 ---
- drivers/usb/dwc2d/src/main.rs    | 25 ++++++++++++-
- drivers/usb/dwc2d/src/wakeups.rs | 60 ++++++++++++++++++++++++++++++++
- 2 files changed, 84 insertions(+), 1 deletion(-)
+ drivers/usb/dwc2d/src/main.rs    | 39 +++++++++++++++++++--
+ drivers/usb/dwc2d/src/wakeups.rs | 58 ++++++++++++++++++++++++++++++++
+ 2 files changed, 95 insertions(+), 2 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/wakeups.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..79f19d17 100644
+index 12be94ad..f6197611 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
@@ -30,10 +30,15 @@ index 12be94ad..79f19d17 100644
  mod ecm;
  mod enumerate;
  mod hid;
-@@ -386,6 +387,10 @@ impl Timer {
+@@ -386,6 +387,15 @@ impl Timer {
      }
  }
  
++/// The test request in [`CYCLE_REQUEST`] is looked for on every so many
++/// rescans: a path lookup that fails is a round trip through the namespace
++/// manager and RedoxFS, a few wakeups each time (#126).
++const CYCLE_CHECK_EVERY: u32 = 3;
++
 +/// How often to ask the network adapters for their link: two PHY register
 +/// reads on the LAN7800, a few control transfers each (#126).
 +const LINK_INTERVAL: Duration = Duration::from_secs(5);
@@ -41,27 +46,37 @@ index 12be94ad..79f19d17 100644
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
-@@ -548,7 +553,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -548,7 +558,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          .expect("dwc2d: failed to subscribe to the scheme");
  
      scheme.tick().expect("dwc2d: network scheme failed");
 +    let mut wake = wakeups::Wakeups::new();
 +    let mut last_links = Instant::now();
++    let mut rescans = 0u32;
      for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
 +        let source = event.user_data;
 +        let woke = Instant::now();
          match event.user_data {
              Source::Irq => {
                  let file = irq_file.as_mut().unwrap();
-@@ -578,6 +587,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -578,8 +593,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
 +                let t = Instant::now();
                  let mut cycled = Vec::new();
-                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
+-                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
++                rescans = rescans.wrapping_add(1);
++                let request = if rescans % CYCLE_CHECK_EVERY == 0 {
++                    std::fs::read_to_string(CYCLE_REQUEST).ok()
++                } else {
++                    None
++                };
++                if let Some(request) = request {
                      let _ = std::fs::remove_file(CYCLE_REQUEST);
-@@ -608,7 +618,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let net = scheme.adapter_mut();
+                     let request = request.trim();
+@@ -608,7 +630,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          None => println!("dwc2d: cycle: no port for {request:?}"),
                      }
                  }
@@ -72,7 +87,7 @@ index 12be94ad..79f19d17 100644
                  changes.removed.extend(cycled);
                  let net = scheme.adapter_mut();
                  for &address in &changes.removed {
-@@ -631,12 +644,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -631,12 +656,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                          _ => {}
                      }
                  }
@@ -98,10 +113,10 @@ index 12be94ad..79f19d17 100644
  }
 diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
 new file mode 100644
-index 00000000..609a511d
+index 00000000..2841d11d
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/wakeups.rs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,58 @@
 +//! Wakeups of dwc2d's event loop by source, with the time spent on each,
 +//! in `/tmp/dwc2d-wakeups` every 10 s: what keeps the driver busy when the
 +//! Pi is idle (#126).
@@ -156,8 +171,6 @@ index 00000000..609a511d
 +            for (i, name) in PARTS.iter().enumerate() {
 +                text += &format!("hotplug {name} busy {} ms\n", self.parts[i].as_millis());
 +            }
-+            let s = |i: usize| crate::enumerate::HUB_STATUS[i].load(std::sync::atomic::Ordering::Relaxed);
-+            text += &format!("hub status changed {} nak {} error {}\n", s(0), s(1), s(2));
 +            let _ = std::fs::write(FILE, text);
 +        }
 +    }
