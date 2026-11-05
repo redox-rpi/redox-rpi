@@ -4,7 +4,7 @@ Issue [#211](https://github.com/redox-rpi/redox-rpi/issues/211), for #126
 (power). At idle, dwc2d is the main CPU load on the Pi 3B+ (cputop, Pi
 test 239): 2.5 % CPU and about 77 wakeups/s.
 
-- **base `0090`:**
+- **base `0093`** (`0090` in Pi rows 242 and 243):
   - The test request in `/tmp/dwc2d-cycle` (base `0033`) is looked for on
     every third rescan instead of every one. A path that doesn't exist is
     a round trip through the namespace manager and RedoxFS each time.
@@ -66,7 +66,7 @@ What was looked at and left alone:
   `pi-hotplug-test.sh` cycled the port twice, and its check of cycle 2
   came too early (fixed in the script: it now waits for the power-off
   line).
-- With `0091`, QEMU 2026-11-05 (`v0.3.0-dev-1402-g36a22d8+xd700`):
+- With the keyboard poll on the interrupt (then base `0091`, dropped), QEMU 2026-11-05 (`v0.3.0-dev-1402-g36a22d8+xd700`):
   keyboard test pass, `test-hotplug.sh` 15/15 including typing on the
   replugged keyboard. In QEMU, dwc2d goes from 1.0 to 1.7 % CPU: QEMU's
   keyboard answers at once, so the extra interrupt wakeup per poll costs
