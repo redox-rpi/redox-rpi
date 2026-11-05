@@ -8894,3 +8894,54 @@ against 2.6–2.7 % in A. #239's 76/s was on an older base
   `~/pitest-tools/t245/cputop-{before,after}.txt`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #246 #126 which merge raised the idle wakeups? (2026-11-05, Pi test agent)
+
+Three images (experiments `timesync rtl8152 cputop`, with PR #210's `cputop`), one after the
+other on the real Pi 3B+ over netboot, no HDMI connected.
+- **1** `v0.4.0-dev-418-g182177f+xe828`: before #203 and #194.
+- **2** `v0.4.0-dev-427-gf00b4e7+x949e`: after #203, plus `eth-speed`.
+- **3** `v0.4.0-dev-432-g8245e09+x949e`: after #194, plus `eth-speed`.
+
+**Result: #194 (multicast on by default) raised the idle wakeups.** From 2 to 3, dwc2d
+went from 82–84 to 108–112/s, netstack from 29–31 to 57–61/s, and IRQ line 50 from 8 to
+18–19/s. #203 with `eth-speed` (1 to 2) adds only about 3 dwc2d wakeups/s. All three
+booted, pi-test passed with the manifest (0 of 300 starts failed), and there was no panic.
+
+- **First try (08:39–09:24):** image 1 booted to `redox login:` but **had no network**.
+  - dwc2d was fine (LAN7800, link up, network address), but there was **no
+    `devshd: listening`**, and timesync set the clock `from the build time`.
+  - devsh did not answer for 8 min, so nothing could run. Images 2 and 3 were never booted
+    (the reset goes over devsh).
+  - This is the same picture as the first try of #242 this morning, with a different image.
+  - Stable came back with a power cycle.
+- **Second try (09:25–09:54):** with a fallback (power cycle once if there is no devshd
+  in 3 min). It was not needed: all three images got the network on the first boot
+  (`devshd: listening` after 20 s).
+  - So the no-network boot is intermittent. Two of about 10 test-image boots today had it
+    (#242 try 1, #246 try 1).
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | initnsmgr /s | redoxfs /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|---|---|
+| 1-1 | 79 (2.5) | 30 (0.1) | 1 | 1 (0.1) | 59 | 108 (8) |
+| 1-2 | 80 (2.5) | 31 (0.2) | 1 | 1 (0.1) | 63 | 108 (8) |
+| 1-3 | 80 (2.5) | 31 (0.2) | 1 | 1 (0.1) | 63 | 108 (8) |
+| 2-1 | 82 (2.6) | 29 (0.1) | 2 | 2 (0.1) | 58 | 108 (8) |
+| 2-2 | 82 (2.5) | 30 (0.2) | 2 | 2 (0.1) | 59 | 108 (8) |
+| 2-3 | 84 (2.6) | 31 (0.2) | 2 | 2 (0.1) | 60 | 108 (8) |
+| 3-1 | 109 (2.6) | 58 (0.3) | 2 | 2 (0.1) | 70 | 118 (18) |
+| 3-2 | 108 (2.6) | 57 (0.3) | 2 | 2 (0.1) | 74 | 118 (18) |
+| 3-3 | 112 (2.6) | 61 (0.3) | 2 | 2 (0.1) | 75 | 119 (19) |
+
+- **Busy core:**
+  - Image 1: cpu2 2 % (1653–1687 ms in 60 s).
+  - Image 2: cpu0 2 % (1706–1758 ms).
+  - Image 3: cpu2 3 % (2069–2105 ms).
+  - The other cores are about 0 % (about 210 ms on one core in 1 and 2).
+- With #194, about 10 more LAN7800 interrupts per second arrive. Each one wakes dwc2d and
+  netstack, which looks like multicast traffic on the LAN now being received (#194 opens the
+  LAN7800's multicast filter).
+- The full output is on homenodellm in `~/pitest-tools/t246b/cputop-{1,2,3}.txt`, and the
+  no-network boot log in `~/pitest-tools/t246/serial-1.log`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
