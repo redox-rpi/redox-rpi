@@ -455,8 +455,22 @@ the screen.
   64x64 cursor plane is Orbital's pointer. Branch `graphics-vc4d`,
   experiment `vc4d` (a recipe that pins a vc4d commit, instead of
   `rpi-fb`). QEMU has no HVS: it checks the start, the fallback and, with
-  `VC4D_FAKE`, the handover and the lists, not the picture. Pi test #220
-  (queued). `rpi-fbd` (#113) stays the fallback.
+  `VC4D_FAKE`, the handover and the lists, not the picture. `rpi-fbd`
+  (#113) stays the fallback.
+
+  **On the Pi, 2026-11-05 (row 220a, HDMI on the NanoKVM, no person):**
+  the firmware leaves HVS channel 1 running at 1920x1080 with one scaled
+  plane. vc4d's check without a screen (colour bars, a cursor plane
+  moved once, read back from the HVS) passed: the channel takes vc4d's
+  lists, the active word moves into them, frames go on, the cursor's
+  position word is the new one, and no underrun or other error bits are
+  set. Over two minutes with fbcond and then Orbital on vc4d's lists,
+  frames kept going and no errors appeared. The only failures were in the
+  read-back check, and they were the check's own fault: the HVS fills in
+  the context words of each plane while it scans it out (fixed in vc4d
+  `0f87698`). Without HDMI at power-on the firmware may not enable a
+  channel (not tested). Still open: the picture itself (colours, pointer
+  tip), Pi test #220 with a screen check by the user.
 
 ## License rule for `vc4d`
 
