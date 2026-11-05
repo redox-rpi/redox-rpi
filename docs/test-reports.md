@@ -8571,3 +8571,127 @@ chaos: round 4/40 kind=threads seed=0x1c478a6213952b27
 - The per-boot serial logs are on homenodellm in `~/pitest-tools/t240/serial-*.log`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset at the end: banner
   after 28 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #242 #211 dwc2d wakeups at idle, before and after (2026-11-05, Pi test agent)
+
+Second try with new images, both built on main 542e0947. The first try at 03:33 got no
+network on the before image (`v0.3.0-dev-1390-gc9b8cdf+xf5e2`: no `devshd: listening`).
+Real Pi 3B+ over netboot, no HDMI connected, NanoKVM USB unplugged.
+- **Before:** `v0.3.0-dev-1399-g0b9cd6c+xf5e2` (`timesync cputop`), reset at 05:37:21.
+- **After:** `v0.3.0-dev-1399-g0b9cd6c+xceb2` (`timesync cputop dwc2d-idle`), reset at 05:47:59.
+- Both reached `devshd: listening` after 20 s.
+
+**Result: pi-test passes on both, and dwc2d is not higher after. But it is also not
+lower:** 2.5 % CPU and 75–76 wakeups/s against 2.5–2.6 % and 76–78/s. `/tmp/dwc2d-wakeups`
+shows why. The main source is `time` at 50.0/s (6.6 s busy in 300 s); the hotplug check
+is only 1.0/s.
+- **Hotplug:** both port cycles happened (serial log), and devsh came back. The script
+  reports FAIL for cycle 2 because of a timing race (details below).
+
+| | before | after |
+|---|---|---|
+| dwc2d CPU % | 2.5 / 2.6 / 2.5 (‑w: 2.6) | 2.5 / 2.5 / 2.5 (‑w: 2.5) |
+| dwc2d wakeups/s | 76 / 78 / 76 (‑w: 77) | 75 / 75 / 76 (‑w: 76) |
+| netstack wakeups/s | 26 / 29 / 27 (‑w: 28) | 26 / 27 / 28 (‑w: 27) |
+| interrupts | 107/s: line 3 100/s, line 50 7/s (all rounds) | 107/s: line 3 100/s, line 50 7/s (all rounds) |
+| busiest core | cpu3 2 % (1622–1706 ms), others 0 % | 2 % on the core dwc2d runs on (cpu0 or cpu3, 1596–1674 ms), others 0 % |
+
+- **IRQ line 50 (LAN7800):** 7/s before and after, so it did not change.
+- **`/tmp/dwc2d-wakeups` (after)**, after the 5 idle minutes:
+
+```text
+seconds 300
+irq 2158 7.2/s busy 53 ms
+scheme 5730 19.1/s busy 73 ms
+time 14996 50.0/s busy 6558 ms
+hotplug 297 1.0/s busy 559 ms
+hotplug cycle-request busy 79 ms
+hotplug scan busy 445 ms
+hotplug links busy 26 ms
+hotplug select-tick busy 3 ms
+```
+
+  and after the cputop rounds:
+
+```text
+seconds 540
+irq 4025 7.5/s busy 101 ms
+scheme 10841 20.1/s busy 145 ms
+time 26998 50.0/s busy 11822 ms
+hotplug 534 1.0/s busy 1031 ms
+hotplug cycle-request busy 148 ms
+hotplug scan busy 801 ms
+hotplug links busy 66 ms
+hotplug select-tick busy 6 ms
+```
+
+- **Hotplug** (`pi-hotplug-test.sh 192.168.178.148 2`):
+  - Cycle 1 passes fully: port off, device removed, found again, network on the adapter,
+    devshd back after 9 s.
+  - Cycle 2: the serial log has the whole sequence again (`cycle: hub 2 port 1 power off`,
+    `disconnected after 104 ms`, `device at address 6 removed`, `power on`,
+    `LAN7800 at address 6`, `network on the adapter`, `link up`).
+  - But the script got "devshd answers again" after only 2 s, before dwc2d had read the
+    request (it now looks every 3 s), so it checked the log too early. It reports 4 FAILs.
+  - This is a race in the script, not a USB failure. The script should wait for the
+    `power off` line, or wait more than 3 s before polling devsh. devsh worked afterwards
+    (the stable reset went over devsh).
+- **Full cputop output:** homenodellm `~/pitest-tools/t242b/cputop*-{before,after}.txt`. The
+  `-w` rounds:
+
+before:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (191 ms busy, 59814 ms idle, 125 switches/s)
+cpu1  busy   0 %  (6 ms busy, 60000 ms idle, 168 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60006 ms idle, 168 switches/s)
+cpu3  busy   2 %  (1706 ms busy, 58298 ms idle, 297 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.6      77    0:00:13.8 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0      62    0:00:00.0 RR+   #3   [kmain]
+25    0.1      28    0:00:00.7 UB    #3   /usr/bin/netstack
+21    0.0      10    0:00:00.1 UB    #3   /usr/bin/ptyd
+0    0.0       9    0:00:00.0 RR    #0   [kmain]
+8    0.3       9    0:00:01.6 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       1    0:00:00.1 UB    #1   initnsmgr
+20    0.1       1    0:00:01.2 UB    #3   /scheme/initfs/bin/redoxfs
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 RR    #1   [kmain]
+0    0.0       0    0:00:00.0 UB    #3   procmgr
+50    0.0       0    0:00:00.0 UR+   #1   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #1   /scheme/initfs/bin/randd
+35    0.0       0    0:00:00.0 UB    #3   /usr/bin/devshd
+33    0.0       0    0:00:00.0 UB    #0   /usr/bin/redoxfs
+```
+
+after:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   2 %  (1596 ms busy, 58416 ms idle, 229 switches/s)
+cpu1  busy   0 %  (32 ms busy, 59981 ms idle, 112 switches/s)
+cpu2  busy   0 %  (200 ms busy, 59814 ms idle, 127 switches/s)
+cpu3  busy   0 %  (13 ms busy, 60000 ms idle, 124 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      76    0:00:13.8 UB    #0   /scheme/initfs/bin/dwc2d
+0    0.0      57    0:00:00.0 RR    #0   [kmain]
+25    0.1      27    0:00:00.7 UB    #0   /usr/bin/netstack
+21    0.0       9    0:00:00.1 UB    #3   /usr/bin/ptyd
+8    0.3       9    0:00:01.7 US    #2   /scheme/initfs/bin/rpi-firmwared
+0    0.0       9    0:00:00.0 RR+   #2   [kmain]
+0    0.0       7    0:00:00.0 RR+   #3   [kmain]
+20    0.0       2    0:00:01.4 UB    #0   /scheme/initfs/bin/redoxfs
+0    0.0       2    0:00:00.0 RR+   #1   [kmain]
+10    0.0       1    0:00:00.0 UB    #0   /scheme/initfs/bin/lived
+0    0.0       0    0:00:00.1 UB    #0   initnsmgr
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 UB    #0   procmgr
+55    0.0       0    0:00:00.0 UR+   #0   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #3   /scheme/initfs/bin/randd
+```
+
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
