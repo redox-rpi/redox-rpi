@@ -9024,3 +9024,51 @@ reading it fails, and the chainloader then crashes with `Undefined instruction` 
   `redox login:` after 28 s, and devsh answers. **pi-test pass** (version, manifest, ps,
   ps-tty, sdcard, 0 of 300 starts failed).
 - The full log went to the open-firmware session for `docs/topics/open-firmware.md`.
+
+## #248 #197 RedoxFS fix `redoxfs-truncate` (PR #208): pkg install/remove rounds (2026-11-05, Pi test agent)
+
+Image `t197-fix.img` (`boot-pkg-space` 6b650106, `v0.4.0-dev-373-g6b650106+x0247`,
+experiments `timesync redoxfs-truncate`, md5 `191c2462…`), with the mirror
+`/srv/tftp/pkg-mirror-t197`. Real Pi 3B+ over netboot, no HDMI connected. Reset at
+11:39:11 UTC, devsh after 20 s.
+
+**Result: fail. RedoxFS hangs during `pkg install vim`, 4 times.** The space fix itself
+works: in the rounds that finished, the free space after each remove stayed at
+124.6–124.8 MB, within 0.2 MB. Only 5 of 12 rounds finished.
+
+- **(1) pi-test** `--starts 300`: pass (0 of 300 starts failed). `date`: Thu Nov 5 2026.
+- **(2)** `50_redox` moved away, `40_mirror` set. **(3)** `df /`: 136764 KB free.
+- **(4) Rounds**, free KB after install / after remove; a "hang" stopped at 25 min:
+
+| Round | Boot | after install | after remove |
+|---|---|---|---|
+| 1 | 1 | **hang** (11:40–12:05) | – |
+| 1 | 2 | **hang** (12:10–12:35) | – |
+| 1 | 3 | 89308 | **124620** |
+| 2 | 3 | 89244 | **124836** |
+| 3 | 3 | 89172 | **124784** |
+| 4 | 3 | **hang** (12:55–13:20) | – |
+| 4 | 4 | 89304 | **124620** |
+| 5 | 4 | 89240 | **124836** |
+| 6 | 4 | **hang** (13:34–13:59), then stopped (more than 3 restarts) | – |
+
+  - Every finished install and remove ended with `Commit complete.` (rc=0). The remove
+    figures don't drop the way they did without the fix (QEMU 111.8, 98.4, …): rounds 1–3
+    on one boot give 124620, 124836, 124784.
+- **The hangs:** the last one (round 6) stopped at `Extracting vim [ 21%] … 493/2316` and
+  never moved on. Each time, devsh stopped answering, but the serial shell still worked.
+  `cat /scheme/sys/context` showed:
+  - **`/scheme/initfs/bin/redoxfs` (pid 20, the network-boot root) in state `UR`**, with
+    1:32 to 2:15 min of CPU and growing (99 MB in round 4).
+  - `pkg` blocked (`UB`), with 1–3.5 min of CPU.
+  - netstack blocked with little CPU (normal idle), dwc2d sleeping. No panic, no exception.
+  - So the root filesystem was busy without end while `pkg` wrote vim's files. It was not
+    a network loss (the mirror is local, and no `No route` came before the hang).
+  - Each time I power-cycled, set the mirror up again and repeated the round.
+  - This looks like the QEMU hang the row mentions (3 h in a `pkg remove`), but here it is
+    in the install, and much more often: 4 times in 9 install attempts.
+- **(5)** not run cleanly: after the last hang devsh did not answer, so `rm -r
+  /tmp/pkg_download` and `df` failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 14:08:10:
+  banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+- The context dumps are on homenodellm in `~/pitest-tools/t248/diag-{1,4,6}.txt`.
