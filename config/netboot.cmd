@@ -18,10 +18,13 @@
 echo "redox-rpi: network boot from ${redox_server}"
 
 # Ethernet on the Pi is a USB device. Harmless where there is no USB.
-usb start
-
-setenv autoload no
-dhcp || exit
+# boot.scr (scripts/netboot.sh) has started USB and asked DHCP already when
+# it loads this script; asking again costs seconds on the Pi (#47).
+if test -z "${ipaddr}"; then
+    usb start
+    setenv autoload no
+    dhcp || exit
+fi
 # DHCP may set serverip from the router; ours wins.
 setenv serverip ${redox_server}
 
