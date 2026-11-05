@@ -7782,3 +7782,36 @@ stopped, the same 3 in two runs. devsh 10 of 10 and the standard checks pass.**
   (0.1–0.2 s after Ctrl-C), `Ctrl-C at the prompt: shell still answers`, and devsh answered afterwards.
 - pi-test `--starts 300`: version, manifest, ps (47), ps-tty, sdcard pass, and 0 of 300 starts failed.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset (13:45). devsh answers, and the serial logger is running again.
+
+## #222: #92 netstack hang, third try: many fast HTTPS failures (2026-11-04, Pi test agent)
+
+Image `v0.4.0-dev-287-g5baac82a+x5f6a` (branch `t92-netstack-watch`, experiments
+`netstack-watch`, `dwc2d-netstats`, `usb-hub-drop`, `dwc2d-restart`, **no timesync**),
+`~/redox-rpi-zrtl/keep/t92pi3-v0.4.0-dev-287-g5baac82a+x5f6a.img`. Real Pi 3B+ over netboot.
+The clock stayed at 1970 (`date`: `Thu Jan 1 00:00:50 UTC 1970`), and I did not set it.
+The loop was typed on the serial console, as the row says. **Result: no stall and no hang
+in 6200 fast HTTPS failures. Not one `netstack-watch: … stuck` or `back after` line; every
+heartbeat said `idle for 0 s`.**
+
+- **Run 1, as in the row** (reset 14:18:08): `for i in 1..201; echo ROUND $i; pkg install --yes vim; ping -c 1 192.168.178.1; end`
+  (ion's `..` leaves out the end, so 200 rounds).
+  - It finished in **40 s** (14:19:04 to 14:19:44), not 20 to 40 min. On the Pi, every
+    `pkg` fails `invalid peer certificate: certificate not valid yet` in about 0.2 s.
+  - 200 of 200 rounds failed that way. Ping: 190 of 200 answered and 10 lost (single rounds).
+- **Run 2, longer, to give it the 20 minutes the row meant** (reset 14:20:58): the same loop with `1..6001`.
+  - 6000 rounds from 14:21:55 to 14:41:48 (about 300 rounds per minute). 5999 certificate failures.
+  - Heartbeats came every 60 s for the whole run (20 lines, at about every 300 rounds). Each
+    one we can read says `alive at … s, idle for 0 s`. Some lines are mixed with the loop's
+    own output on the console, but they are there.
+  - **No `stuck in …` and no `back after N s` line.** No dwc2d `Timeout`, `removed` or `restart` line.
+  - Ping: **5486 answered and 514 lost (8.6 %)**, almost all single rounds (472 groups,
+    longest 4 rounds in a row, 2599–2602), spread evenly over the whole run. The loop never slowed down.
+  - **Once, in round 2058, `pkg` itself crashed:** `FATAL: Not an SVC induced synchronous
+    exception (ty=100010)`, `ELR_EL1 0x9` (a jump to address 9),
+    `UNHANDLED EXCEPTION, CPU #3, PID 4155, NAME /usr/bin/pkg`. The loop went straight on with
+    the ping, and netstack was not affected. This is a pkg crash in user space, not #92.
+- Step 3 (a hang) was not needed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset after each run (14:20 and 14:42). devsh answers.
+- **For Network:** QEMU's stalls (6–11 s in 5 of 59 rounds) do not show on the Pi. Here a
+  failed TLS start takes about 0.2 s, against several seconds in QEMU, so many more rounds
+  fit in the same time and none stalled. The only Pi hang so far (213 run 1) is still unexplained.
