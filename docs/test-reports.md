@@ -8695,3 +8695,36 @@ PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
 
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #241 #207 catch the rare chaos freeze with lock watches (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-413-g7672b842+x6c52` (`t207-test` = `chaos-test` + `tlb-switch-shootdown`
+16d700a1, experiments `chaos kernel-switch-shootdown kernel-tlb-debug`, md5 `52119076…`).
+Real Pi 3B+ over netboot, no HDMI connected. It ran in three blocks around the 03:30
+nightly and row 242.
+
+**Result: no freeze in 34 loops (1360 rounds).** There were no `lock wait stalled`,
+`TLB shootdown stalled` or `CPU #N: in set …` lines, and no panic. The freeze of #237, #238
+and #240 did not show up.
+
+- **(1) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2) Seed 152374357964539** (`for i in 1..=15; echo LOOP $i > /scheme/debug; chaos
+  --rounds 40 --seed 152374357964539 --kind memory,procs,threads,fds,schemes,fill,killio
+  --quiet > /scheme/debug; end`):
+  - **Block 1**, boot 02:37:34: 4 loops `done: 40 rounds, 0 failed` (332–338 s each).
+    Loop 5 was stopped at 03:05 for the nightly.
+  - **Block 2**, fresh boot 04:10:44: **15 of 15 loops** done, 04:11–05:35.
+  - So 19 complete loops of this seed, each starting with the #240 sequence (fds, fill,
+    memory, threads).
+- **(3) Seed 241**, the same loop, fresh boot 06:01:00: **15 of 15 loops**
+  `done: 40 rounds, 0 failed` (246 s each), 06:01–07:03.
+- **Serial lines:**
+  - Only `kernel::context::memory:DEBUG -- Lacks grant` pairs: `page 0x216000, Read` and
+    `page 0x2a8000, Read`, on varying CPUs, in schemes rounds. Seed 241 had 15 of each.
+  - Plus once a new one, **`Lacks grant: page 0x3aa000, Write, CPU #2`**, in seed 241
+    round 3 (`threads`, seed `0xa60e4d449c5baf8a`) of one loop, without harm.
+  - `lock wait stalled` / `TLB shootdown stalled`: 0 in all three blocks.
+- The nightly at 03:30 skipped its work, because this row was still marked "on the Pi"
+  (see the coordinator's note). From now on, paused rows get "paused".
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each block with a devsh reset, last
+  at 07:04: devsh answers, and `/srv/tftp/redox` matches the backup.
