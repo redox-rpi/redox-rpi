@@ -13,14 +13,14 @@ UsbNet implements NetworkAdapter::set_multicast (base 0085): it keeps
 the list netstack writes to the `multicast` file, and the event loop,
 which has the bus, programs the LAN7800 in use after the scheme event
 and whenever another adapter takes over. Until netstack writes a list,
-all multicast passes as before. RTL815x and CDC Ethernet are unchanged.
+all multicast passes as before ("all" from netstack turns the filter off again). RTL815x and CDC Ethernet are unchanged.
 
 With only the joined groups, the LAN's other multicast (mDNS for
 others, SSDP, all IPv6) no longer wakes dwc2d and netstack (#126, #216).
 ---
  drivers/usb/dwc2d/src/lan78xx.rs | 96 ++++++++++++++++++++++++++++++++
- drivers/usb/dwc2d/src/main.rs    | 47 +++++++++++++++-
- 2 files changed, 141 insertions(+), 2 deletions(-)
+ drivers/usb/dwc2d/src/main.rs    | 50 ++++++++++++++++-
+ 2 files changed, 144 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
 index aedc682..f2e0703 100644
@@ -158,15 +158,15 @@ index aedc682..f2e0703 100644
 +    }
 +}
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94a..a41e15b 100644
+index 12be94a..57c62a3 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -99,6 +99,12 @@ struct UsbNet {
      adapters: Vec<(Adapter, bool)>,
      /// Bus address of the adapter in use.
      active: Option<u8>,
-+    /// The multicast addresses the network stack asked for, `None` until
-+    /// it does (then the adapters receive all multicast, as before).
++    /// The multicast addresses the network stack asked for; `None` is all
++    /// multicast, which is also what an adapter receives after its init.
 +    multicast: Option<Vec<[u8; 6]>>,
 +    /// The list changed or another adapter took over: the next
 +    /// [`UsbNet::apply_multicast`] programs the adapter in use.
@@ -174,7 +174,7 @@ index 12be94a..a41e15b 100644
  }
  
  impl UsbNet {
-@@ -175,6 +181,25 @@ impl UsbNet {
+@@ -175,6 +181,28 @@ impl UsbNet {
          }
          adapter.resume();
          println!("dwc2d: network on the adapter at address {}", adapter.address());
@@ -194,27 +194,30 @@ index 12be94a..a41e15b 100644
 +            return;
 +        };
 +        match lan78xx::set_multicast(bus, a.function(), groups.as_deref()) {
-+            Ok(()) => println!("dwc2d: LAN7800 multicast filter: {} groups", groups.map_or(0, |g| g.len())),
++            Ok(()) => match groups {
++                Some(g) => println!("dwc2d: LAN7800 multicast filter: {} groups", g.len()),
++                None => println!("dwc2d: LAN7800 multicast filter off, all multicast"),
++            },
 +            Err(err) => println!("dwc2d: LAN7800 multicast filter: {err:?}"),
 +        }
      }
  }
  
-@@ -201,6 +226,13 @@ impl NetworkAdapter for UsbNet {
+@@ -201,6 +229,13 @@ impl NetworkAdapter for UsbNet {
              None => Ok(buf.len()),
          }
      }
 +
 +    /// Kept for the event loop, which has the bus to program the adapter.
-+    fn set_multicast(&mut self, addrs: &[[u8; 6]]) -> syscall::Result<()> {
-+        self.multicast = Some(addrs.to_vec());
++    fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
++        self.multicast = addrs.map(<[_]>::to_vec);
 +        self.multicast_pending = true;
 +        Ok(())
 +    }
  }
  
  /// What a device turned out to be.
-@@ -443,7 +475,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -443,7 +478,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              process::exit(0);
          }
      };
@@ -230,7 +233,7 @@ index 12be94a..a41e15b 100644
      let mut keyboard = None;
      let mut macs = Vec::new();
      let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, keyboard: &mut Option<Keyboard>, addresses: Vec<u8>| {
-@@ -560,12 +599,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -560,12 +602,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let _ = file.write(&irq);
                  }
              }

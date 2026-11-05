@@ -28,8 +28,9 @@ like the whole LAN.
 ## Wiring (base `0085`, PR #218)
 
 The Network session's base patch `0085` (branch `mcast-filter`, merged
-into this branch) adds `NetworkAdapter::set_multicast` and a write-only
-`multicast` file to `driver-network`. netstack writes all-hosts
+into this branch) adds `NetworkAdapter::set_multicast(Option<&[[u8; 6]]>)`
+and a write-only `multicast` file to `driver-network`: a list of 6-byte
+addresses, an empty write for none, or `all` for all multicast. netstack writes all-hosts
 (01:00:5e:00:00:01) plus each joined IPv4 group, at start and on every
 change.
 
