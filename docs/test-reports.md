@@ -8509,3 +8509,65 @@ PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
 
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 18 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #240 #207 which chaos round freezes the Pi (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-411-gfaac52d7+x6c52` (`t207-test` = `chaos-test` + `tlb-switch-shootdown`
+0ff030fc, experiments `chaos kernel-tlb-debug kernel-switch-shootdown`, md5 `83fca0bd…`).
+Real Pi 3B+ over netboot, no HDMI connected. 1 freeze, so within the cap of 4. Stable was
+up by 02:23.
+
+**Result: one freeze, in a `threads` round (round 4), with no `Lacks grant` or TLB line. It
+did not happen again.** The same seed passed all 40 rounds on a later boot. Rounds 1–4 alone
+passed, and so did that exact threads round alone.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2) Boot A (reset 01:59:23):** `chaos --rounds 40 --seed 152374357964539 --kind
+  memory,procs,threads,fds,schemes,fill,killio > /scheme/debug` at 02:00:38. The last
+  `chaos:` lines before the freeze:
+
+```text
+chaos: start seed=0x8a956b7ab6fb rounds=40 timeout=60s mem-reserve=48MiB free-mem=603MiB
+chaos: round 1/40 kind=fds seed=0xb3de112de9c5e48
+chaos:   fds: 4096 open when stopped (limit)
+chaos: round 1 ok (535 ms)
+chaos: round 2/40 kind=fill seed=0xd5c789b4923dee9
+chaos:   fill: wrote 482 MiB in 45022 ms of 516 MiB free (out of time, not full)
+chaos:   fill: free after delete 516 MiB
+chaos: round 2 ok (45310 ms)
+chaos: round 3/40 kind=memory seed=0x642d11f9a2ec84e
+chaos:   memory: 464 MiB allocated (reserve), free before 508 MiB, at peak 43 MiB
+chaos: round 3 ok (728 ms)
+chaos: round 4/40 kind=threads seed=0x1c478a6213952b27
+```
+
+  - After that, nothing: **no `Lacks grant: page …` line, no `TLB shootdown stalled`, no
+    `CPU #N: in set …`**, and no panic.
+  - The serial log was silent for 3 min, and devsh did not answer twice. Freeze detected at
+    02:04:42, then a power cycle.
+- **(3) One kind per fresh boot** (power cycle each time), all `> /scheme/debug`, none froze:
+  - `chaos --kind memory --rounds 5`: 5 ok.
+  - `chaos --kind fill --rounds 3`: 3 ok (45 s each).
+  - `chaos --kind fds --rounds 5`: 5 ok.
+  - No `Lacks grant` line in any of them. `--mem-reserve 200` was not needed (memory did not
+    freeze).
+- **Extra, to narrow it down** (fresh boots, freeze 1 of 4, well before the 03:05 limit):
+  - The exact round alone, `chaos --kind threads --round-seed 0x1c478a6213952b27`: ok
+    (199 threads in 5 waves). Then `chaos --kind threads --rounds 5`: 5 ok.
+  - The same seed with `--rounds 4` (fds, fill 461 MiB, memory 464 MiB, threads): **4 ok**.
+  - **The same 40-round seed again: 40 of 40 ok** (332 s; 9 threads, 7 fill, 6 killio,
+    5 each of memory, procs and schemes, 3 fds).
+  - The only `Lacks grant` lines came in that run's round 18 (`schemes`, seed
+    `0x395ed8a72165b4f`): `Lacks grant: page 0x216000, Read, CPU #3` and
+    `Lacks grant: page 0x2a8000, Read, CPU #3`, 4 times each, without harm (QEMU saw the
+    same in schemes rounds).
+- **So:** the freeze is intermittent. It struck once in round 4 (`threads`) right after the
+  fds, fill and memory rounds. It is not tied to that round's seed, and in this freeze the
+  `Lacks grant` lines did not appear at all. #237 and #238 also ended with `Lacks grant`
+  lines. Here they only came from a `schemes` round that did not freeze, so they may be
+  unrelated noise.
+  - No `TLB shootdown stalled` line in any boot. If the freeze is in the kernel with
+    interrupts off on every CPU, that detector cannot fire.
+- The per-boot serial logs are on homenodellm in `~/pitest-tools/t240/serial-*.log`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset at the end: banner
+  after 28 s, devsh answers, and `/srv/tftp/redox` matches the backup.
