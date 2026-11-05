@@ -8,6 +8,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Topic | Page | Issues |
 |---|---|---|
 | Start crashes, kernel and signal bugs | [stability.md](stability.md) | [topic:stability](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Astability) |
+| Chaos test (fault injection, part of stability) | [chaos.md](chaos.md) | [topic:stability](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Astability) |
 | relibc on aarch64 | [relibc.md](relibc.md) | [topic:relibc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Arelibc) |
 | SD card | [sdcard.md](sdcard.md) | [topic:sdcard](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Asdcard) |
 | USB | [usb.md](usb.md) | [topic:usb](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Ausb) |
