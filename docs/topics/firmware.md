@@ -64,8 +64,15 @@
   wakeups/s before and after). The cost is the 10 ms keyboard poll: 50/s,
   about 130 µs each, 2.2 % of a core. The test Pi's low-speed keyboard
   sits behind a hub, so each poll is a split transaction that `dwc2d`
-  spins on. Next: poll without blocking and wait for the channel interrupt
-  instead. Without a keyboard, `dwc2d` should be well under 0.5 %. Then EEE on the LAN7800 and gating clocks that run for nothing.
+  spins on. Pi test #243 tried a keyboard poll that waits on the
+  controller interrupt, and it failed. `dwc2d` CPU went down to 1.2 %, but
+  its wakeups went up to 240–480/s, interrupts on line 50 to 170–410/s and
+  idle-thread wakeups to 460/s. 619 of 25984 polls never finished, and
+  `dwc2d` hung in the hotplug test. The reason: a split transaction needs
+  answers from user space within microframes, about 7 interrupts per poll.
+  The change was dropped; PR #212 keeps only the slower rescan and the
+  counters. So with the low-speed keyboard plugged in, idle stays at about
+  2.2 % of a core; without a keyboard it is much less. Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 ## Bluetooth
 
