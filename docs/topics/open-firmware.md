@@ -151,7 +151,7 @@ Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our P
 4. **USB and Ethernet** for network boot (LAN7515 behind dwc2), and HDMI
    much later (see [graphics.md](graphics.md), `vc4d`).
 
-## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
+## librerpi/lk-overlay compared (code read and built 2026-11-05)
 
 [librerpi/lk-overlay](https://github.com/librerpi/lk-overlay) (GPLv2+, last
 commit 2026-06-20, 252 commits) is the newer rewrite by the same community.
@@ -192,10 +192,23 @@ step 3. The gaps for us:
 - **U-Boot:** not in the chain yet. It would be loaded as
   `Image-aarch64`, but U-Boot asks the mailbox for the board revision and
   the memory size, and only the memory size is answered today.
-- **Build:** officially with Nix, which homenodellm doesn't have. The
-  stage-2 build embeds the ARM programs for Pi 1, 2 and 3, so all three
-  must be built first. Trying it with our own toolchains is the next step;
-  it waits for the maintainer's OK to build that code.
+- **Build (2026-11-05):** officially with Nix, which homenodellm doesn't
+  have. It also builds without Nix, with our VC4/ARM toolchains and the
+  host's aarch64 GCC: `redox-rpi/build-lk-overlay.sh` in our fork, with
+  lk-overlay pinned at `50c95c1`, takes about a minute. Three local changes
+  are needed:
+  - The libgcc path was a fixed `/nix/store` path; it now comes from the
+    compiler.
+  - The Pi 2 ARM program needs C++ headers we don't build, so it gets a
+    placeholder. A BCM2837 never starts it.
+  - An include directory so stage 2 finds the embedded ARM programs.
+
+  Result: stage 1 is 50 KB, stage 2 is 0.9 MB, the 64-bit ARM stage is
+  76 KB. Their VC4 GCC is 6.2.1-based too. Card image in their layout
+  (`redox-rpi/make-sdcard-lk.sh`): FAT with `bootcode.bin`, ext4 with
+  `/boot`. The ext4 is made without the newest e2fsprogs features, which
+  LK's driver doesn't know. Our 64-bit test program runs in QEMU.
+  **Pi test #251** is queued (card swap).
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
