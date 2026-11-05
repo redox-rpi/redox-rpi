@@ -9107,3 +9107,61 @@ to the Linux kernel...` → payload. No panic.
   manifest, ps, ps-tty, sdcard, 0 of 300 starts failed).
 - Logs on homenodellm: `~/pitest-tools/t249/serial-openfw-1433.log` (64 MB card) and
   `serial-2.log` (SDHC). The open-firmware session has the details.
+
+## #250 #197 / #157 the hang of #248: with the RedoxFS fix only, and is it the scheduler? (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected. Both images have `pi-heartbeat`:
+- **A:** `t197-hbA.img`, `v0.4.0-dev-374-g81dc5797+xf45c`, without `redoxfs-truncate`,
+  md5 `7401e17e…`.
+- **B:** `t197-hbB.img`, `v0.4.0-dev-374-g81dc5797+x212a`, with it, md5 `5ad79d99…`.
+- Run order A, B, A, B with 3 rounds each (14:50–16:05 UTC). Mirror `pkg-mirror-t197`.
+- A hang was declared when an install or remove did not finish within 8 min (a normal one
+  takes about 2.5 min).
+
+**Result: hangs only with the RedoxFS fix (B: 2 in 6 rounds, A: 0 in 6). It is not the
+#157 scheduler picture.** In both hangs no runnable context was waiting on an idle CPU:
+every run queue was empty, and the dump came from the 60 s timer, not from the
+runnable-on-idle check. The root's `redoxfs` (pid 20) was **blocked in
+`UserInner::read`**, waiting for new requests. At the same time `pkg`, `ion`, `devshd` and
+`login` were all **blocked in `UserInner::call`**, waiting for an answer. That looks like a
+request (or its wakeup) lost between the kernel and RedoxFS. No exception or panic.
+
+**Free space after each remove (KB):**
+- A: 111612, 98532, 85188 | 111612, 98528, 85184. It drops about 13.3 MB per round, as
+  expected without the fix.
+- B: 124588, –, 124580 | 124580, 124796, –. Flat (the fix works); "–" is a hang.
+
+| Part | Round 1 | Round 2 | Round 3 |
+|---|---|---|---|
+| A1 | ok | ok | ok |
+| B1 | ok | **hang** in install | ok (after power cycle) |
+| A2 | ok | ok | ok |
+| B2 | ok | ok | **hang** in install |
+
+- **Hang B1-2** (install from 15:11:08):
+  - Last progress line `Extracting vim [ 38%] … 871/2316`.
+  - `cat /scheme/sys/context`: initfs `redoxfs` pid 20 `UR` on #3, 52.8 s user CPU,
+    99.1 MB. `pkg` pid 72, two threads `UB` (one with 1:44 CPU). `/usr/bin/redoxfs`
+    (pid 32, `/scheme/data`) `UB`.
+  - Heartbeat dump `[hbctx begin beat 14 timed]`:
+    - `hbcpu 0 w1092 q0`, `hbcpu 1 w0 q0`, `hbcpu 2 w456 q0`, `hbcpu 3 w970 q0`.
+    - `hbq` n0 on all four CPUs.
+    - All four `[kmain] R+c` (idle).
+    - `redoxfs` pid 20 `B sys cpu3 UserInner::read (v2)`.
+    - `pkg` pid 72 `B sys cpu3 UserInner::call` and `B sys cpu1 futex`.
+    - `ion` 73 `B UserInner::call`, `devshd` 35 (4 threads) `B UserInner::call`, `login`
+      33/37/69 `B UserInner::call`, `netstack` `B UserInner::call`.
+- **Hang B2-3** (install from 15:53:46):
+  - Last progress line `Extracting vim [ 52%] … 1193/2316`.
+  - Context: `redoxfs` pid 20 `UR` on #2, 1:36 CPU. `pkg` pid 88 `UB` (2:14 CPU).
+  - Dump `[hbctx begin beat 20 timed]`: all `q0`, `hbq` n0, `[kmain] R+c` on all CPUs.
+    `redoxfs` pid 20 `B sys cpu2 UserInner::read (v2)`. `ion` 86/89, `devshd`, `login`
+    85, `netstack` `B UserInner::call`.
+- **Note:** `context` (taken first) shows pid 20 as `UR`, but the heartbeat dump 1–2 min
+  later shows it `B` in `UserInner::read`. So RedoxFS was busy at first, then went back to
+  waiting while the callers kept waiting.
+- Logs on homenodellm: `~/pitest-tools/t250/hang-{B1-2,B2-3}-install-{context.txt,serial.log}`,
+  and per round `t250/{A,B}{1,2}-k-{install,remove}.txt`.
+- After each hang, a power cycle and the mirror set up again. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored at the end with a power cycle: devsh answers,
+  and `/srv/tftp/redox` matches the backup.
