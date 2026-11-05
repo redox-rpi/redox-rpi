@@ -8394,3 +8394,337 @@ network was lost** (#92 picture). No panic.
 - The jsonl is at homenodellm `~/pitest-tools/t237b/chaos-237b.jsonl`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 00:06:00:
   banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #238 #207 fix for the chaos-test freeze (PR #209) (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-352-gc582b16d+x6c52` (`chaos-test` + `tlb-switch-shootdown`, experiments
+`chaos kernel-switch-shootdown kernel-tlb-debug`, md5 `5bca177b…`). Real Pi 3B+ over netboot,
+no HDMI connected. Reset at 01:27:37 UTC, `devshd: listening` after 20 s.
+
+**Result: fail. The Pi froze again in step 2, with the same seed as #237. No
+`TLB shootdown stalled` line came.**
+
+- **(1) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2)** `chaos --rounds 40 --seed 152374357964539 --quiet --kind
+  memory,procs,threads,fds,schemes,fill,killio` over devsh started at 01:28:58 and **never
+  finished**.
+  - The serial log has 8 `kernel::context::memory:DEBUG -- Lacks grant` lines after the login
+    prompt (silent from about 01:30), then nothing. That is the same as #237.
+  - **No `TLB shootdown stalled` line and no `CPU #N: in set …` lines**, although the
+    `kernel-tlb-debug` experiment is in the image (`experiments: chaos
+    kernel-switch-shootdown kernel-tlb-debug` in the banner). Its 5 s repeat never appeared.
+  - At 01:47, devsh gave `No route to host`. The serial console did not echo `root` + Enter.
+  - No panic, no `oom`.
+- **(3) threads loop and (4) chaos-host stressor: not run.**
+- Either the fix in #209 does not cover what freezes the Pi, or this is a second cause.
+  The stall detector didn't report anything, so either the freeze is not in a TLB shootdown
+  wait, or the detector itself can't run once it happens (for example, if every CPU is stuck
+  with interrupts off).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 01:47:48:
+  banner after 32 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #239 #58 cputop at idle: who keeps the Pi busy (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-394-g26cfa3f+xe828` (branch `cputop-58`, experiments
+`timesync rtl8152 cputop`, md5 `9a17615f…`). Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 01:49:36 UTC, `devshd: listening` after 20 s.
+
+**Result: pass.** `sys:cputime` answers, `WAKE/s` has numbers, and there was no panic.
+At idle the Pi is 98 % idle on cpu1 and close to 100 % on the others. **dwc2d is the main
+waker**, with 2.5 % CPU and about 77 wakeups/s, all on cpu1.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- 5 minutes idle (01:50:51–01:55:51), then the two cputop rounds over devsh.
+- **Top 5 by CPU %:**
+  1. dwc2d 2.5 % (78/s)
+  2. rpi-firmwared 0.3 % (9/s)
+  3. netstack 0.1 % (29/s)
+  4. redoxfs (initfs) 0.1 % (1/s)
+  5. ptyd 0.0 % (10/s)
+- **Top 5 by wakeups/s:**
+  1. dwc2d 76
+  2. [kmain] cpu1 62
+  3. netstack 27
+  4. [kmain] cpu3 10
+  5. rpi-firmwared 9 (ptyd 9 as well)
+- **Busy per core:** cpu0 0 %, cpu1 2 % (1681 ms in 60 s, 300 switches/s), cpu2 0 %,
+  cpu3 0 % (211 ms, 188 switches/s). cpu0 has 107 switches/s and cpu2 169.
+- **Interrupts per second:** 108/s in all; line 3 (the timer) 100/s, line 50 8/s (7/s in
+  the second round). `/scheme/sys/irq` lists only lines 3 and 50 as non-zero (48599 and 4258,
+  then 49743 and 4393 about 16 s later); every other line up to 223 is 0.
+
+`cputop -l 15 60`:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (0 ms busy, 60001 ms idle, 107 switches/s)
+cpu1  busy   2 %  (1681 ms busy, 58320 ms idle, 300 switches/s)
+cpu2  busy   0 %  (4 ms busy, 60000 ms idle, 169 switches/s)
+cpu3  busy   0 %  (211 ms busy, 59795 ms idle, 188 switches/s)
+irq   108/s  (3: 100, 50: 8)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      78    0:00:10.7 UB    #1   /scheme/initfs/bin/dwc2d
+8    0.3       9    0:00:01.3 US    #3   /scheme/initfs/bin/rpi-firmwared
+25    0.1      29    0:00:00.6 UB    #1   /usr/bin/netstack
+20    0.1       1    0:00:32.3 UB    #1   /scheme/initfs/bin/redoxfs
+21    0.0      10    0:00:00.2 UB    #1   /usr/bin/ptyd
+366    0.0       0    0:00:00.0 UR+   #2   /usr/bin/cputop
+0    0.0       1    0:00:00.3 UB    #2   initnsmgr
+35    0.0       1    0:00:00.0 UB    #1   /usr/bin/devshd
+8    0.0       0    0:00:00.0 US    #3   /scheme/initfs/bin/rpi-firmwared
+0    0.0      62    0:00:00.0 RR+   #1   [kmain]
+0    0.0      10    0:00:00.0 RR+   #3   [kmain]
+0    0.0       0    0:00:00.0 RR    #2   [kmain]
+27    0.0       0    0:00:00.5 UB    #2   /usr/bin/getty
+0    0.0       0    0:00:00.4 UB    #2   procmgr
+2    0.0       0    0:00:00.3 UB    #1   /scheme/initfs/bin/logd
+```
+
+`cputop -w -l 15 60`:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (4 ms busy, 60008 ms idle, 107 switches/s)
+cpu1  busy   2 %  (1680 ms busy, 58329 ms idle, 297 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60012 ms idle, 168 switches/s)
+cpu3  busy   0 %  (208 ms busy, 59805 ms idle, 187 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      76    0:00:12.3 UB    #1   /scheme/initfs/bin/dwc2d
+0    0.0      62    0:00:00.0 RR+   #1   [kmain]
+25    0.1      27    0:00:00.7 UB    #1   /usr/bin/netstack
+0    0.0      10    0:00:00.0 RR+   #3   [kmain]
+8    0.3       9    0:00:01.5 US    #3   /scheme/initfs/bin/rpi-firmwared
+21    0.0       9    0:00:00.2 UB    #1   /usr/bin/ptyd
+0    0.0       1    0:00:00.3 UB    #0   initnsmgr
+20    0.1       1    0:00:32.4 UB    #1   /scheme/initfs/bin/redoxfs
+35    0.0       1    0:00:00.0 UB    #1   /usr/bin/devshd
+8    0.0       0    0:00:00.0 US    #3   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 RR    #0   [kmain]
+0    0.0       0    0:00:00.4 UB    #1   procmgr
+371    0.0       0    0:00:00.0 UR+   #0   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #0   /scheme/initfs/bin/randd
+17    0.0       0    0:00:00.3 UB    #1   /scheme/initfs/bin/bcm2835-sdhos
+```
+
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 18 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #240 #207 which chaos round freezes the Pi (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-411-gfaac52d7+x6c52` (`t207-test` = `chaos-test` + `tlb-switch-shootdown`
+0ff030fc, experiments `chaos kernel-tlb-debug kernel-switch-shootdown`, md5 `83fca0bd…`).
+Real Pi 3B+ over netboot, no HDMI connected. 1 freeze, so within the cap of 4. Stable was
+up by 02:23.
+
+**Result: one freeze, in a `threads` round (round 4), with no `Lacks grant` or TLB line. It
+did not happen again.** The same seed passed all 40 rounds on a later boot. Rounds 1–4 alone
+passed, and so did that exact threads round alone.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2) Boot A (reset 01:59:23):** `chaos --rounds 40 --seed 152374357964539 --kind
+  memory,procs,threads,fds,schemes,fill,killio > /scheme/debug` at 02:00:38. The last
+  `chaos:` lines before the freeze:
+
+```text
+chaos: start seed=0x8a956b7ab6fb rounds=40 timeout=60s mem-reserve=48MiB free-mem=603MiB
+chaos: round 1/40 kind=fds seed=0xb3de112de9c5e48
+chaos:   fds: 4096 open when stopped (limit)
+chaos: round 1 ok (535 ms)
+chaos: round 2/40 kind=fill seed=0xd5c789b4923dee9
+chaos:   fill: wrote 482 MiB in 45022 ms of 516 MiB free (out of time, not full)
+chaos:   fill: free after delete 516 MiB
+chaos: round 2 ok (45310 ms)
+chaos: round 3/40 kind=memory seed=0x642d11f9a2ec84e
+chaos:   memory: 464 MiB allocated (reserve), free before 508 MiB, at peak 43 MiB
+chaos: round 3 ok (728 ms)
+chaos: round 4/40 kind=threads seed=0x1c478a6213952b27
+```
+
+  - After that, nothing: **no `Lacks grant: page …` line, no `TLB shootdown stalled`, no
+    `CPU #N: in set …`**, and no panic.
+  - The serial log was silent for 3 min, and devsh did not answer twice. Freeze detected at
+    02:04:42, then a power cycle.
+- **(3) One kind per fresh boot** (power cycle each time), all `> /scheme/debug`, none froze:
+  - `chaos --kind memory --rounds 5`: 5 ok.
+  - `chaos --kind fill --rounds 3`: 3 ok (45 s each).
+  - `chaos --kind fds --rounds 5`: 5 ok.
+  - No `Lacks grant` line in any of them. `--mem-reserve 200` was not needed (memory did not
+    freeze).
+- **Extra, to narrow it down** (fresh boots, freeze 1 of 4, well before the 03:05 limit):
+  - The exact round alone, `chaos --kind threads --round-seed 0x1c478a6213952b27`: ok
+    (199 threads in 5 waves). Then `chaos --kind threads --rounds 5`: 5 ok.
+  - The same seed with `--rounds 4` (fds, fill 461 MiB, memory 464 MiB, threads): **4 ok**.
+  - **The same 40-round seed again: 40 of 40 ok** (332 s; 9 threads, 7 fill, 6 killio,
+    5 each of memory, procs and schemes, 3 fds).
+  - The only `Lacks grant` lines came in that run's round 18 (`schemes`, seed
+    `0x395ed8a72165b4f`): `Lacks grant: page 0x216000, Read, CPU #3` and
+    `Lacks grant: page 0x2a8000, Read, CPU #3`, 4 times each, without harm (QEMU saw the
+    same in schemes rounds).
+- **So:** the freeze is intermittent. It struck once in round 4 (`threads`) right after the
+  fds, fill and memory rounds. It is not tied to that round's seed, and in this freeze the
+  `Lacks grant` lines did not appear at all. #237 and #238 also ended with `Lacks grant`
+  lines. Here they only came from a `schemes` round that did not freeze, so they may be
+  unrelated noise.
+  - No `TLB shootdown stalled` line in any boot. If the freeze is in the kernel with
+    interrupts off on every CPU, that detector cannot fire.
+- The per-boot serial logs are on homenodellm in `~/pitest-tools/t240/serial-*.log`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset at the end: banner
+  after 28 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #242 #211 dwc2d wakeups at idle, before and after (2026-11-05, Pi test agent)
+
+Second try with new images, both built on main 542e0947. The first try at 03:33 got no
+network on the before image (`v0.3.0-dev-1390-gc9b8cdf+xf5e2`: no `devshd: listening`).
+Real Pi 3B+ over netboot, no HDMI connected, NanoKVM USB unplugged.
+- **Before:** `v0.3.0-dev-1399-g0b9cd6c+xf5e2` (`timesync cputop`), reset at 05:37:21.
+- **After:** `v0.3.0-dev-1399-g0b9cd6c+xceb2` (`timesync cputop dwc2d-idle`), reset at 05:47:59.
+- Both reached `devshd: listening` after 20 s.
+
+**Result: pi-test passes on both, and dwc2d is not higher after. But it is also not
+lower:** 2.5 % CPU and 75–76 wakeups/s against 2.5–2.6 % and 76–78/s. `/tmp/dwc2d-wakeups`
+shows why. The main source is `time` at 50.0/s (6.6 s busy in 300 s); the hotplug check
+is only 1.0/s.
+- **Hotplug:** both port cycles happened (serial log), and devsh came back. The script
+  reports FAIL for cycle 2 because of a timing race (details below).
+
+| | before | after |
+|---|---|---|
+| dwc2d CPU % | 2.5 / 2.6 / 2.5 (‑w: 2.6) | 2.5 / 2.5 / 2.5 (‑w: 2.5) |
+| dwc2d wakeups/s | 76 / 78 / 76 (‑w: 77) | 75 / 75 / 76 (‑w: 76) |
+| netstack wakeups/s | 26 / 29 / 27 (‑w: 28) | 26 / 27 / 28 (‑w: 27) |
+| interrupts | 107/s: line 3 100/s, line 50 7/s (all rounds) | 107/s: line 3 100/s, line 50 7/s (all rounds) |
+| busiest core | cpu3 2 % (1622–1706 ms), others 0 % | 2 % on the core dwc2d runs on (cpu0 or cpu3, 1596–1674 ms), others 0 % |
+
+- **IRQ line 50 (LAN7800):** 7/s before and after, so it did not change.
+- **`/tmp/dwc2d-wakeups` (after)**, after the 5 idle minutes:
+
+```text
+seconds 300
+irq 2158 7.2/s busy 53 ms
+scheme 5730 19.1/s busy 73 ms
+time 14996 50.0/s busy 6558 ms
+hotplug 297 1.0/s busy 559 ms
+hotplug cycle-request busy 79 ms
+hotplug scan busy 445 ms
+hotplug links busy 26 ms
+hotplug select-tick busy 3 ms
+```
+
+  and after the cputop rounds:
+
+```text
+seconds 540
+irq 4025 7.5/s busy 101 ms
+scheme 10841 20.1/s busy 145 ms
+time 26998 50.0/s busy 11822 ms
+hotplug 534 1.0/s busy 1031 ms
+hotplug cycle-request busy 148 ms
+hotplug scan busy 801 ms
+hotplug links busy 66 ms
+hotplug select-tick busy 6 ms
+```
+
+- **Hotplug** (`pi-hotplug-test.sh 192.168.178.148 2`):
+  - Cycle 1 passes fully: port off, device removed, found again, network on the adapter,
+    devshd back after 9 s.
+  - Cycle 2: the serial log has the whole sequence again (`cycle: hub 2 port 1 power off`,
+    `disconnected after 104 ms`, `device at address 6 removed`, `power on`,
+    `LAN7800 at address 6`, `network on the adapter`, `link up`).
+  - But the script got "devshd answers again" after only 2 s, before dwc2d had read the
+    request (it now looks every 3 s), so it checked the log too early. It reports 4 FAILs.
+  - This is a race in the script, not a USB failure. The script should wait for the
+    `power off` line, or wait more than 3 s before polling devsh. devsh worked afterwards
+    (the stable reset went over devsh).
+- **Full cputop output:** homenodellm `~/pitest-tools/t242b/cputop*-{before,after}.txt`. The
+  `-w` rounds:
+
+before:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (191 ms busy, 59814 ms idle, 125 switches/s)
+cpu1  busy   0 %  (6 ms busy, 60000 ms idle, 168 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60006 ms idle, 168 switches/s)
+cpu3  busy   2 %  (1706 ms busy, 58298 ms idle, 297 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.6      77    0:00:13.8 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0      62    0:00:00.0 RR+   #3   [kmain]
+25    0.1      28    0:00:00.7 UB    #3   /usr/bin/netstack
+21    0.0      10    0:00:00.1 UB    #3   /usr/bin/ptyd
+0    0.0       9    0:00:00.0 RR    #0   [kmain]
+8    0.3       9    0:00:01.6 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       1    0:00:00.1 UB    #1   initnsmgr
+20    0.1       1    0:00:01.2 UB    #3   /scheme/initfs/bin/redoxfs
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 RR    #1   [kmain]
+0    0.0       0    0:00:00.0 UB    #3   procmgr
+50    0.0       0    0:00:00.0 UR+   #1   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #1   /scheme/initfs/bin/randd
+35    0.0       0    0:00:00.0 UB    #3   /usr/bin/devshd
+33    0.0       0    0:00:00.0 UB    #0   /usr/bin/redoxfs
+```
+
+after:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   2 %  (1596 ms busy, 58416 ms idle, 229 switches/s)
+cpu1  busy   0 %  (32 ms busy, 59981 ms idle, 112 switches/s)
+cpu2  busy   0 %  (200 ms busy, 59814 ms idle, 127 switches/s)
+cpu3  busy   0 %  (13 ms busy, 60000 ms idle, 124 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      76    0:00:13.8 UB    #0   /scheme/initfs/bin/dwc2d
+0    0.0      57    0:00:00.0 RR    #0   [kmain]
+25    0.1      27    0:00:00.7 UB    #0   /usr/bin/netstack
+21    0.0       9    0:00:00.1 UB    #3   /usr/bin/ptyd
+8    0.3       9    0:00:01.7 US    #2   /scheme/initfs/bin/rpi-firmwared
+0    0.0       9    0:00:00.0 RR+   #2   [kmain]
+0    0.0       7    0:00:00.0 RR+   #3   [kmain]
+20    0.0       2    0:00:01.4 UB    #0   /scheme/initfs/bin/redoxfs
+0    0.0       2    0:00:00.0 RR+   #1   [kmain]
+10    0.0       1    0:00:00.0 UB    #0   /scheme/initfs/bin/lived
+0    0.0       0    0:00:00.1 UB    #0   initnsmgr
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 UB    #0   procmgr
+55    0.0       0    0:00:00.0 UR+   #0   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #3   /scheme/initfs/bin/randd
+```
+
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #241 #207 catch the rare chaos freeze with lock watches (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-413-g7672b842+x6c52` (`t207-test` = `chaos-test` + `tlb-switch-shootdown`
+16d700a1, experiments `chaos kernel-switch-shootdown kernel-tlb-debug`, md5 `52119076…`).
+Real Pi 3B+ over netboot, no HDMI connected. It ran in three blocks around the 03:30
+nightly and row 242.
+
+**Result: no freeze in 34 loops (1360 rounds).** There were no `lock wait stalled`,
+`TLB shootdown stalled` or `CPU #N: in set …` lines, and no panic. The freeze of #237, #238
+and #240 did not show up.
+
+- **(1) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2) Seed 152374357964539** (`for i in 1..=15; echo LOOP $i > /scheme/debug; chaos
+  --rounds 40 --seed 152374357964539 --kind memory,procs,threads,fds,schemes,fill,killio
+  --quiet > /scheme/debug; end`):
+  - **Block 1**, boot 02:37:34: 4 loops `done: 40 rounds, 0 failed` (332–338 s each).
+    Loop 5 was stopped at 03:05 for the nightly.
+  - **Block 2**, fresh boot 04:10:44: **15 of 15 loops** done, 04:11–05:35.
+  - So 19 complete loops of this seed, each starting with the #240 sequence (fds, fill,
+    memory, threads).
+- **(3) Seed 241**, the same loop, fresh boot 06:01:00: **15 of 15 loops**
+  `done: 40 rounds, 0 failed` (246 s each), 06:01–07:03.
+- **Serial lines:**
+  - Only `kernel::context::memory:DEBUG -- Lacks grant` pairs: `page 0x216000, Read` and
+    `page 0x2a8000, Read`, on varying CPUs, in schemes rounds. Seed 241 had 15 of each.
+  - Plus once a new one, **`Lacks grant: page 0x3aa000, Write, CPU #2`**, in seed 241
+    round 3 (`threads`, seed `0xa60e4d449c5baf8a`) of one loop, without harm.
+  - `lock wait stalled` / `TLB shootdown stalled`: 0 in all three blocks.
+- The nightly at 03:30 skipped its work, because this row was still marked "on the Pi"
+  (see the coordinator's note). From now on, paused rows get "paused".
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each block with a devsh reset, last
+  at 07:04: devsh answers, and `/srv/tftp/redox` matches the backup.

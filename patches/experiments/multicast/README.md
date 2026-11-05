@@ -1,12 +1,23 @@
 # Experiment: IPv4 multicast
 
+**Default patches since branch `multicast-default`:** base `0083` (was
+`0024` here) and relibc `0016` (was `0001`), together with base `0084`, the
+LAN7800 multicast filter (was experiment `lan78xx-multicast`).
+`--experiment multicast` now only adds the test tool `mcast`. The text
+below keeps the old numbers.
+
+Pi 3B+, test 210 (`v0.4.0-dev-292-ge95959aa+xfa87`, with `ipv6`): **pass**
+([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#210-multicast-and-the-lan7800-multicast-filter-as-default-patches-with-ipv6-2026-11-04-pi-test-agent)). Multicast from homenodellm to `239.1.2.3` arrives over the
+LAN7800; IPv6 link-local, global and ULA addresses and the default route;
+ping 5/5 to the global and 3/3 to the ULA address; 0 of 300 starts failed.
+
 First step towards IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27),
 v0.6.0): IPv6 neighbor discovery and SLAAC need multicast, and so do mDNS
 and SSDP over IPv4. Redox's network stack had none: the Ethernet layer
 dropped multicast frames, and relibc skipped `IP_ADD_MEMBERSHIP`.
 
 ```bash
-scripts/build-image.sh --experiment multicast
+scripts/build-image.sh --experiment multicast   # only the mcast tool now
 ```
 
 - **base `0024`, `netstack`:** smoltcp's `multicast` feature on. A

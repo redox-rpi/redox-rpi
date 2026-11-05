@@ -66,6 +66,10 @@
   [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
+  Step 2, PR [#194](https://github.com/redox-rpi/redox-rpi/pull/194) on
+  top of #82: multicast (base `0083`, relibc `0016`) and the LAN7800
+  multicast filter (base `0084`) as default patches; QEMU passes, **Pi
+  test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
