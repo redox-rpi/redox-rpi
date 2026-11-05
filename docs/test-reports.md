@@ -8350,3 +8350,47 @@ Reset at 22:22:49 UTC, `devshd: listening` after 20 s.
     ever applied.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 23:30:02:
   banner after 39 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #237 part B: chaos test steps 3 and 4 on a fresh boot (2026-11-04/05, Pi test agent)
+
+The same image `v0.4.0-dev-346-g5bc468d7+xa1cf`, booted fresh. Reset at 23:31:58 UTC,
+`devshd: listening` after 20 s, no HDMI connected. The stressor was skipped, as the
+coordinator asked: the chaos session is chasing the part A hang in QEMU.
+
+**Result: signals fail as #205 says. Host faults pass 19 of 20 rounds, but after round 20 the
+network was lost** (#92 picture). No panic.
+
+- **(3) `chaos --kind signals --rounds 3 --seed 237`** over devsh: **3 of 3 rounds FAIL**,
+  exit 6, rc=1.
+  - **0 signals received every time**, although the senders sent between 997 and 109342
+    each. Round 1 had 3 senders for 873 ms (SA_RESTART); round 2, 3 senders for 2469 ms;
+    round 3, 1 sender for 1352 ms.
+  - Repeat commands: `chaos --kind signals --round-seed 0x94d1c519db3ce3b8`,
+    `… 0xff17862427248c42`, `… 0x903c52a17da8d2`.
+  - devsh was fine afterwards. This confirms #205 on real hardware.
+- **(4) Host faults:** `chaos-host.py … --faults
+  server,pkg,dwc2d,netem-loss,netem-delay,netem-reorder,netem-blackout --netem --rounds 20
+  --seed 237`, 23:33:15–00:00:56.
+  - No `tcp-reset`, because homenodellm has no iptables.
+  - tc ran through `sudo -n` only for 192.168.178.148, and a trap put enp12s0 back.
+- **Rounds 1–19 ok.** devsh was back after 1–6 s each time.
+  - netem-delay ×4, netem-reorder ×5, netem-loss ×4, pkg ×2, server ×3, dwc2d ×1.
+  - The dwc2d round power-cycled the LAN7800 port, and the network came back.
+  - The server served bad-length 5, drip 4, endless 4, half 5, huge-header 6, stall 5,
+    TLS garbage/reset and others.
+  - netem-blackout was never drawn by this seed.
+- **Round 20 FAIL:** `netem-delay` (400 ms ±200 ms) for 85 s.
+  - Only 1 of 9 devsh commands answered during the fault.
+  - After the delay was removed, **devsh did not come back within 180 s** (round ended after
+    355 s), and then `No route to host`.
+  - On serial, the shell answered (`echo hi`), but `ping -c 1 192.168.178.1` printed its
+    first line and hung, and the next command got no prompt either.
+  - That is the #92 picture: netstack stuck after heavy delay, with no error or panic line.
+  - Repeat from the host: `scripts/chaos-host.py 192.168.178.148 --faults
+    server,pkg,dwc2d,netem-loss,netem-delay,netem-reorder,netem-blackout --seed 237
+    --rounds 20` (with `--netem`).
+- **tc:** `tc qdisc show` after the run is the same as before (`fq_codel` on enp12s0, diff
+  empty). No iptables change was possible.
+- The jsonl is at homenodellm `~/pitest-tools/t237b/chaos-237b.jsonl`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 00:06:00:
+  banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
