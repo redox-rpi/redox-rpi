@@ -8728,3 +8728,84 @@ and #240 did not show up.
   (see the coordinator's note). From now on, paused rows get "paused".
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each block with a devsh reset, last
   at 07:04: devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #243 #211 dwc2d idle with the keyboard poll on the interrupt (2026-11-05, Pi test agent)
+
+Image `v0.3.0-dev-1409-gb6b5aef+xceb2` (`t-idle-cputop` b6b5aef, experiments
+`timesync cputop dwc2d-idle`, md5 `3d28f053…`). Real Pi 3B+ over netboot, no HDMI connected.
+The person part was not done (nobody at the Pi). Reset at 07:05:23,
+`devshd: listening` after 20 s.
+
+**Result: fail.**
+- After the second network-port cycle, the LAN7800 was never found again: the network was
+  lost and the Pi needed a power cycle.
+- dwc2d's CPU is lower (1.2 % against 2.5 % in #242). But its wakeups went up to 237–479/s,
+  IRQ line 50 to 168–408/s, and the keyboard poll has 619 timeouts (not near 0).
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **cputop after 5 min idle** (`-n 3 60`, three rounds):
+  - dwc2d 1.2 % / 237, 261, 258 wakeups/s; netstack 29–31/s.
+  - irq 268, 292, 287/s (line 50: 168, 192, 187; line 3: 100).
+  - cpu1 1 % (886–940 ms), others 0 % (cpu3 about 220 ms).
+  - Switches per second went up to 768–848 on cpu1 (#242: about 290).
+- **`cputop -w -l 15 60`:**
+  - dwc2d 1.7 % / 479 wakeups/s, [kmain] cpu3 460/s, netstack 31/s.
+  - irq 508/s (line 50: 408).
+  - cpu3 2 % busy (1498 ms), 1495 switches/s.
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (11 ms busy, 59994 ms idle, 521 switches/s)
+cpu1  busy   0 %  (3 ms busy, 60005 ms idle, 563 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60003 ms idle, 563 switches/s)
+cpu3  busy   2 %  (1498 ms busy, 58507 ms idle, 1495 switches/s)
+irq   508/s  (50: 408, 3: 100)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    1.7     479    0:00:08.2 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0     460    0:00:00.0 RR    #3   [kmain]
+25    0.2      31    0:00:00.8 UB    #3   /usr/bin/netstack
+8    0.3      10    0:00:01.7 US    #3   /scheme/initfs/bin/rpi-firmwared
+21    0.0       9    0:00:00.1 UB    #3   /usr/bin/ptyd
+0    0.0       6    0:00:00.0 RR+   #0   [kmain]
+36    0.0       2    0:00:00.0 UB    #0   /usr/bin/devshd
+20    0.1       2    0:00:01.2 UB    #3   /scheme/initfs/bin/redoxfs
+10    0.0       1    0:00:00.0 UB    #3   /scheme/initfs/bin/lived
+0    0.0       0    0:00:00.1 UB    #3   initnsmgr
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 UB    #3   procmgr
+50    0.0       0    0:00:00.0 UR+   #3   /usr/bin/cputop
+0    0.0       0    0:00:00.0 RR+   #1   [kmain]
+3    0.0       0    0:00:00.0 UB    #1   /scheme/initfs/bin/randd
+```
+
+- **`/tmp/dwc2d-wakeups`** after the cputop rounds (540 s since boot):
+
+```text
+seconds 540
+irq 182748 338.2/s busy 2198 ms
+scheme 11970 22.2/s busy 161 ms
+time 28027 51.9/s busy 2180 ms
+hotplug 534 1.0/s busy 1025 ms
+hotplug cycle-request busy 149 ms
+hotplug scan busy 804 ms
+hotplug links busy 56 ms
+hotplug select-tick busy 6 ms
+keyboard polls 25984 reports 0 timeouts 619 start busy 1867 ms
+```
+
+  - **keyboard polls 25984, reports 0, timeouts 619** (2.4 %). The irq source is now
+    338/s (#242: 7.5/s).
+  - The second `cat` after the hotplug test got no answer (no network).
+- **Hotplug** (`KEYBOARD=1 pi-hotplug-test.sh 192.168.178.148 2`, from `~/redox-rpi-usb`):
+  - **Cycle 1 passes:** port off, removed, LAN7800 found again, network on the adapter,
+    devshd back after 8 s.
+  - **Cycle 2 fails:** `cycle: hub 2 port 1 power off`, `disconnected after 101 ms`,
+    `device at address 6 removed`, `cycle: hub 2 port 1 power on`. **Then nothing more in
+    the serial log**: no `device connected`, no `LAN7800 at address`, and no other dwc2d
+    line.
+  - devshd did not come back (the script gave up after 258 s). The keyboard cycle could
+    not be requested (3× FAIL).
+  - This is not the early-check issue of #242: the device really did not come back.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 07:29:18
+  (no network for the devsh reset): banner after 30 s, devsh answers, and `/srv/tftp/redox`
+  matches the backup.
