@@ -51,6 +51,16 @@
 
 ## In progress
 
+- [#207](https://github.com/redox-rpi/redox-rpi/issues/207) (branch `tlb-switch-shootdown`): the chaos test's `threads`
+  round froze the whole Pi (test 237) and QEMU. The context switch waited
+  for a context lock with interrupts masked and without handling TLB
+  shootdowns (`RwLock::write_arc`), while the CPU holding the lock waited
+  for its shootdown acknowledgement. Experiment `kernel-switch-shootdown`
+  (kernel `0042`) handles shootdowns in that wait. QEMU: 600 `threads`
+  rounds pass; without it the first one freezes. Experiment
+  `kernel-tlb-debug` prints each CPU's shootdown state when one stalls.
+  Upstream note in [docs/upstream/kernel.md](../upstream/kernel.md).
+
 - [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
   `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
   uutils `dd` does not retry short writes, so `dd bs=1M … | cmd` passed on
