@@ -131,15 +131,55 @@ Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our P
 4. **USB and Ethernet** for network boot (LAN7515 behind dwc2), and HDMI
    much later (see [graphics.md](graphics.md), `vc4d`).
 
-**Compare with librerpi first.** Its successor project
-[librerpi/lk-overlay](https://github.com/librerpi/lk-overlay) (GPLv2+,
-still active, last push 2026-08) rewrote the VPU firmware on top of the
-little kernel (LK). It has a `rpi3-bootcode` build, an aarch64 ARM stage for
-the Pi 3, and composite video. Its README marks booting Linux, Ethernet
-(with the MAC address taken from the serial number), USB and SD as working
-on the Pi 2 and unknown on the Pi 3. It needs Nix to build. It may be a
-better base than the 2019 code for steps 1–4. A second card in the same
-visit could test its `bootcode.bin`.
+## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
+
+[librerpi/lk-overlay](https://github.com/librerpi/lk-overlay) (GPLv2+, last
+commit 2026-06-20, 252 commits) is the newer rewrite by the same community.
+Everything runs on the little kernel (LK), on the VPU and on the ARM.
+Its boot chain:
+
+1. **Stage 1** (`vc4-stage1`, our `bootcode.bin`). The SDRAM setup
+   (`rpi-ddr2/autoram`) is newer than the 2019 code. Stage 1 loads stage 2
+   as `/boot/lk.elf` from an ext2/ext4 partition: partition 2 of the SD card
+   (`sdhostp1`), behind a FAT partition that holds only `bootcode.bin`.
+   Builds for TFTP, USB and SPI exist too.
+2. **Stage 2** (`vc4-stage2`, `lk.elf`). It stays running on the VPU, with a
+   small **mailbox server** (`mailbox-property-server`). It starts the ARM
+   in **64-bit mode** on BCM2837 (it sets `ARM_C0_AARCH64`) with a built-in
+   ARM program. Optionally it uses Raspberry Pi's `armstub8`, which parks
+   cores 1–3 in the spin table.
+3. **ARM stage** (`rpi3-test`, aarch64 LK with `linux-bootloader`). It
+   loads `/boot/Image-aarch64`, `/boot/rpi3.dtb`, `cmdline.txt` and
+   `initrd` from the same ext partition and starts Linux. By default Linux
+   gets only one core; the `docs/booting-arm` notes list ways to fix that
+   (`armstub8`, PSCI in U-Boot or LK).
+
+That covers our step 1 (64-bit, spin table through `armstub8`) and part of
+step 3. The gaps for us:
+
+- **Mailbox:** the server answers only a few requests: firmware revision,
+  ARM memory, clocks list, throttled, reboot and display notices. Missing
+  are board model and revision, MAC address, serial number, clock rates,
+  temperature, power states and the framebuffer. `rpi-firmwared` and
+  U-Boot ask for some of these, so they would need new tags or changes on
+  our side.
+- **Network:** the USB Ethernet driver (`rpi-usb-nic`) only knows the SMSC
+  LAN9514 of the Pi 2/3B (chip ID `0xec000002`), not the **LAN7515/LAN7800
+  of the 3B+**. So no network boot from the VPU on our Pi. Linux or Redox
+  would still drive the LAN7800 themselves later.
+- **Pi 3B+ itself:** the README marks the Pi 3 as unknown for Linux, SD,
+  USB and Ethernet. Nobody has reported a 3B+.
+- **U-Boot:** not in the chain yet. It would be loaded as
+  `Image-aarch64`, but U-Boot asks the mailbox for the board revision and
+  the memory size, and only the memory size is answered today.
+- **Build:** officially with Nix, which homenodellm doesn't have. The
+  stage-2 build embeds the ARM programs for Pi 1, 2 and 3, so all three
+  must be built first. Trying it with our own toolchains is the next step;
+  it waits for the maintainer's OK to build that code.
+
+So lk-overlay is the better base for 64-bit and the mailbox. We would add
+board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
+U-Boot on the ARM side would bring up the LAN7800 rather than the VPU.
 
 ## Later
 
