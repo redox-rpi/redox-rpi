@@ -84,8 +84,11 @@ this repository stays MIT. Issue:
   - So on the 3B+, a fully open boot path reaches a kernel entry point:
     ROM, open `bootcode.bin`, SDRAM, ARM start, SD card, FAT, devicetree.
     Only in 32-bit mode for now.
-  - Still open: the same image on an SDHC card (4–32 GB), to see whether
-    the slower clock is needed there too.
+  - A 32 GB SDHC card, same visit: sector 0 read at the full data clock
+    with no retry, and the same chain ran to the test payload. So only the
+    old 64 MB card needs the slower clock. The card size in the log was
+    wrong (`1803MB`, a 32-bit overflow). That's fixed in the fork, but the
+    fix hasn't been seen on the Pi yet; it only changes the log line.
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
@@ -116,9 +119,8 @@ Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our P
   to it, so the voltages stay at their defaults. The thermal and
   undervoltage monitoring that the closed firmware does is missing.
 - **SD card.** The chainloader drives the sdhost controller on GPIO 48–53.
-  #224 used a 64 MB standard-capacity card: the card was found, but a read
-  at the data clock failed (see above). A common SDHC card (4–32 GB) is the
-  other case to try.
+  Tested: the old 64 MB card needs half the data clock (the driver now
+  does this by itself), and a 32 GB SDHC card works at full speed (#249).
 - **LAN7515 (USB hub and Ethernet).** The firmware turns on the USB power
   domain and the PHY, but nothing on the ARM side drives USB yet. With the
   closed firmware, the MAC address comes from OTP, either through the
