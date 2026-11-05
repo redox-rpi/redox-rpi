@@ -14,6 +14,18 @@ test 239): 2.5 % CPU and about 77 wakeups/s.
   - `/tmp/dwc2d-wakeups`, every 10 s: the event loop's wakeups by source
     (`irq`, `scheme`, `time`, `hotplug`), the time spent on each (wall
     time, blocked calls included), and the parts of a hotplug rescan.
+- **base `0091`:** the keyboard poll no longer spins on its channel. Pi
+  row 242 showed it is the idle cost: a low-speed keyboard behind a hub
+  needs a start split and a complete split, and each waited for its
+  microframe, about 130 µs 50 times a second. Now the channel's halt
+  raises the controller interrupt (as for the receive channel), and the
+  interrupt sends the complete split or takes the report. The timer
+  still starts each poll and looks at the channel too, in case an
+  interrupt is lost; a poll still running after 50 ms is stopped. Only
+  the wait for a start split window (not in microframes 5 to 7) still
+  spins. Without the controller interrupt the keyboard is polled as
+  before. `/tmp/dwc2d-wakeups` gets a line with the keyboard's polls,
+  reports, timeouts and the time spent starting polls.
 
 What was looked at and left alone:
 - SOF interrupts are not enabled; only channel halt for the receive
@@ -64,3 +76,9 @@ What was looked at and left alone:
   `pi-hotplug-test.sh` cycled the port twice, and its check of cycle 2
   came too early (fixed in the script: it now waits for the power-off
   line).
+- With `0091`, QEMU 2026-11-05 (`v0.3.0-dev-1402-g36a22d8+xd700`):
+  keyboard test pass, `test-hotplug.sh` 15/15 including typing on the
+  replugged keyboard. In QEMU, dwc2d goes from 1.0 to 1.7 % CPU: QEMU's
+  keyboard answers at once, so the extra interrupt wakeup per poll costs
+  more than the spinning it saves. On the Pi each poll spun for two
+  microframes. Pi: row 243.
