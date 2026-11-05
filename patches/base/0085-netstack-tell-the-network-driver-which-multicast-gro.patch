@@ -1,4 +1,4 @@
-From 1bb794af4d6d7c040aaaed6cfae0e9d993260e5f Mon Sep 17 00:00:00 2001
+From 38ef3dfa895de468d54f4e645feb22a5e68135ba Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 5 Nov 2026 10:09:57 +0000
 Subject: [PATCH] netstack: tell the network driver which multicast groups are
@@ -6,43 +6,45 @@ Subject: [PATCH] netstack: tell the network driver which multicast groups are
 
 A new write-only file multicast in the network adapter scheme
 (driver-network) takes the multicast Ethernet addresses the stack wants,
-six bytes each, the whole list each time. NetworkAdapter::set_multicast
-passes it to the driver; by default nothing changes, so a driver that
-does not filter keeps receiving what it received before.
+six bytes each, the whole list each time (empty: no multicast), or
+"all" for all multicast. NetworkAdapter::set_multicast gets Some(list)
+or None; by default nothing changes, so a driver that does not filter
+keeps receiving what it received before.
 
 netstack opens the file if the adapter has it and writes all-hosts
 (01:00:5e:00:00:01) plus the MAC of each joined IPv4 group, at start and
 whenever the joined groups change. A driver can then program its
 hardware filter instead of passing all multicast (#216).
 ---
- drivers/net/driver-network/src/lib.rs | 65 +++++++++++++++++++++++++++
+ drivers/net/driver-network/src/lib.rs | 71 +++++++++++++++++++++++++++
  netstack/src/link/ethernet.rs         | 22 +++++++++
- netstack/src/link/mod.rs              |  5 ++-
+ netstack/src/link/mod.rs              |  5 +-
  netstack/src/main.rs                  |  6 ++-
- netstack/src/scheme/mod.rs            | 36 +++++++++++++++
- netstack/src/scheme/socket.rs         |  5 +++
- 6 files changed, 137 insertions(+), 2 deletions(-)
+ netstack/src/scheme/mod.rs            | 36 ++++++++++++++
+ netstack/src/scheme/socket.rs         |  5 ++
+ 6 files changed, 143 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
-index 0df36f5a..25ebd1c1 100644
+index 0df36f5a..685b0358 100644
 --- a/drivers/net/driver-network/src/lib.rs
 +++ b/drivers/net/driver-network/src/lib.rs
-@@ -27,6 +27,14 @@ pub trait NetworkAdapter {
+@@ -27,6 +27,15 @@ pub trait NetworkAdapter {
      // FIXME support back pressure on writes by returning EWOULDBLOCK or not
      // returning from the write syscall until there is room.
      fn write_packet(&mut self, buf: &[u8]) -> Result<usize>;
 +
-+    /// The multicast Ethernet addresses the network stack wants to receive.
-+    /// The whole list comes each time. A driver that filters in hardware
-+    /// passes only these (plus its own address and broadcast); the default
-+    /// keeps receiving whatever it received before.
-+    fn set_multicast(&mut self, _addrs: &[[u8; 6]]) -> Result<()> {
++    /// The multicast Ethernet addresses the network stack wants to receive:
++    /// `Some(list)` means only these (an empty list: none, only the own
++    /// address and broadcast), `None` means all multicast. The whole list
++    /// comes each time. The default keeps receiving whatever it received
++    /// before.
++    fn set_multicast(&mut self, _addrs: Option<&[[u8; 6]]>) -> Result<()> {
 +        Ok(())
 +    }
  }
  
  pub struct NetworkScheme<T: NetworkAdapter> {
-@@ -122,6 +130,7 @@ resource_scheme! {
+@@ -122,6 +131,7 @@ resource_scheme! {
          SchemeRoot(SchemeRoot<T>),
          Data(Data<T>),
          Mac(Mac<T>),
@@ -50,7 +52,7 @@ index 0df36f5a..25ebd1c1 100644
      }
  }
  
-@@ -168,6 +177,10 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+@@ -168,6 +178,10 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
                  NetworkResource::Mac(Mac(PhantomData)),
                  NewFdFlags::POSITIONED,
              ),
@@ -61,12 +63,13 @@ index 0df36f5a..25ebd1c1 100644
              _ => return Err(Error::new(EINVAL)),
          };
  
-@@ -284,3 +297,55 @@ impl<T: NetworkAdapter> ResourceSync for Mac<T> {
+@@ -284,3 +298,60 @@ impl<T: NetworkAdapter> ResourceSync for Mac<T> {
          Ok(())
      }
  }
 +
-+/// Write-only: one write holds the whole list, six bytes per address.
++/// Write-only: one write holds the whole list, six bytes per address, or
++/// `all` for all multicast.
 +struct Multicast<T>(PhantomData<T>);
 +
 +impl<T> std::fmt::Debug for Multicast<T> {
@@ -96,6 +99,10 @@ index 0df36f5a..25ebd1c1 100644
 +        _offset: u64,
 +        _fcntl_flags: u32,
 +    ) -> Result<usize> {
++        if buf == b"all" {
++            scheme_data.adapter.set_multicast(None)?;
++            return Ok(buf.len());
++        }
 +        if buf.len() % 6 != 0 {
 +            return Err(Error::new(EINVAL));
 +        }
@@ -103,7 +110,7 @@ index 0df36f5a..25ebd1c1 100644
 +            .chunks_exact(6)
 +            .map(|c| c.try_into().unwrap())
 +            .collect();
-+        scheme_data.adapter.set_multicast(&addrs)?;
++        scheme_data.adapter.set_multicast(Some(&addrs))?;
 +        Ok(buf.len())
 +    }
 +
