@@ -7,16 +7,19 @@ Subject: [PATCH] dwc2d: switch the LAN7800 between 100 Mbit/s and gigabit at
 `100` or `1000` in /tmp/dwc2d-link makes the LAN7800 in use advertise
 speeds up to that (CTRL1000) and negotiate again. The link-up lines name
 the negotiated speed. For measuring the idle power of each (#126).
+
+The file is looked for on every fifth rescan (every 5 s), since a path
+lookup that fails costs a few wakeups each time.
 ---
  drivers/usb/dwc2d/src/lan78xx.rs | 43 +++++++++++++++++++++++++++++++-
- drivers/usb/dwc2d/src/main.rs    | 28 ++++++++++++++++++++-
- 2 files changed, 69 insertions(+), 2 deletions(-)
+ drivers/usb/dwc2d/src/main.rs    | 42 ++++++++++++++++++++++++++++++-
+ 2 files changed, 83 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index e1a48e1..a749cc8 100644
+index aedc682..baeee81 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
-@@ -79,6 +79,9 @@ const PHY_ADDR: u32 = 1;
+@@ -80,6 +80,9 @@ const PHY_ADDR: u32 = 1;
  const MII_BMCR: u32 = 0;
  const MII_BMSR: u32 = 1;
  const MII_ANAR: u32 = 4;
@@ -26,7 +29,7 @@ index e1a48e1..a749cc8 100644
  /// Vendor register: one 4-bit mode per LED.
  const PHY_LED_MODE: u32 = 29;
  const BMCR_AUTOEN: u16 = 1 << 12;
-@@ -87,6 +90,11 @@ const BMCR_RESET: u16 = 1 << 15;
+@@ -88,6 +91,11 @@ const BMCR_RESET: u16 = 1 << 15;
  const BMSR_LINK: u16 = 1 << 2;
  /// 10/100 half and full duplex, CSMA, symmetric and asymmetric pause.
  const ANAR_ALL: u16 = 0x0DE1;
@@ -38,7 +41,7 @@ index e1a48e1..a749cc8 100644
  
  // Frame headers
  const RX_HEADER_LEN: usize = 10;
-@@ -161,6 +169,21 @@ impl Regs<'_> {
+@@ -162,6 +170,21 @@ impl Regs<'_> {
          Ok(self.mii_read(MII_BMSR)? & BMSR_LINK != 0)
      }
  
@@ -60,7 +63,7 @@ index e1a48e1..a749cc8 100644
      fn read(&mut self, reg: u16) -> Result<u32, Error> {
          let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
          Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
-@@ -305,7 +328,8 @@ pub fn init(
+@@ -309,7 +332,8 @@ pub fn init(
      let start = Instant::now();
      let link = loop {
          if r.link()? {
@@ -70,7 +73,7 @@ index e1a48e1..a749cc8 100644
              break true;
          }
          if start.elapsed() >= link_wait {
-@@ -324,6 +348,23 @@ pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
+@@ -328,6 +352,23 @@ pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
      Regs { bus, f }.link()
  }
  
@@ -95,7 +98,7 @@ index e1a48e1..a749cc8 100644
  /// adapter takes over from another one.
  pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94a..19ac992 100644
+index 12be94a..4e54cad 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -134,7 +134,14 @@ impl UsbNet {
@@ -114,23 +117,37 @@ index 12be94a..19ac992 100644
                      *link = now;
                  }
              }
-@@ -392,6 +399,9 @@ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
+@@ -392,6 +399,20 @@ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// switches it off and on (see [`Bus::cycle_port`]): `network` or
  /// `keyboard` for the port of the device in use, or `<hub address> <port>`.
  const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
 +/// `100` or `1000` here makes the LAN7800 in use advertise speeds up to
 +/// that and negotiate again, to measure the power of each (#126).
 +const LINK_REQUEST: &str = "/tmp/dwc2d-link";
++/// [`LINK_REQUEST`] is looked for on every so many rescans: a path lookup
++/// that fails is a round trip through the namespace manager and RedoxFS,
++/// a few wakeups each time (#126).
++const LINK_CHECK_EVERY: u32 = 5;
++
++/// Whether this rescan looks for [`LINK_REQUEST`].
++fn link_check_due() -> bool {
++    use std::sync::atomic::{AtomicU32, Ordering};
++    static RESCANS: AtomicU32 = AtomicU32::new(0);
++    RESCANS.fetch_add(1, Ordering::Relaxed) % LINK_CHECK_EVERY == 0
++}
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -578,6 +588,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -578,6 +599,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
 +                // An empty file is one the shell has created but not yet
 +                // written: leave it for the next rescan.
-+                let link_request = std::fs::read_to_string(LINK_REQUEST).ok().filter(|r| !r.trim().is_empty());
++                let link_request = link_check_due()
++                    .then(|| std::fs::read_to_string(LINK_REQUEST).ok())
++                    .flatten()
++                    .filter(|r| !r.trim().is_empty());
 +                if let Some(request) = link_request {
 +                    let _ = std::fs::remove_file(LINK_REQUEST);
 +                    let request = request.trim();
