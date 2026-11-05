@@ -8394,3 +8394,31 @@ network was lost** (#92 picture). No panic.
 - The jsonl is at homenodellm `~/pitest-tools/t237b/chaos-237b.jsonl`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 00:06:00:
   banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #238 #207 fix for the chaos-test freeze (PR #209) (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-352-gc582b16d+x6c52` (`chaos-test` + `tlb-switch-shootdown`, experiments
+`chaos kernel-switch-shootdown kernel-tlb-debug`, md5 `5bca177b…`). Real Pi 3B+ over netboot,
+no HDMI connected. Reset at 01:27:37 UTC, `devshd: listening` after 20 s.
+
+**Result: fail. The Pi froze again in step 2, with the same seed as #237. No
+`TLB shootdown stalled` line came.**
+
+- **(1) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(2)** `chaos --rounds 40 --seed 152374357964539 --quiet --kind
+  memory,procs,threads,fds,schemes,fill,killio` over devsh started at 01:28:58 and **never
+  finished**.
+  - The serial log has 8 `kernel::context::memory:DEBUG -- Lacks grant` lines after the login
+    prompt (silent from about 01:30), then nothing. That is the same as #237.
+  - **No `TLB shootdown stalled` line and no `CPU #N: in set …` lines**, although the
+    `kernel-tlb-debug` experiment is in the image (`experiments: chaos
+    kernel-switch-shootdown kernel-tlb-debug` in the banner). Its 5 s repeat never appeared.
+  - At 01:47, devsh gave `No route to host`. The serial console did not echo `root` + Enter.
+  - No panic, no `oom`.
+- **(3) threads loop and (4) chaos-host stressor: not run.**
+- Either the fix in #209 does not cover what freezes the Pi, or this is a second cause.
+  The stall detector didn't report anything, so either the freeze is not in a TLB shootdown
+  wait, or the detector itself can't run once it happens (for example, if every CPU is stuck
+  with interrupts off).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 01:47:48:
+  banner after 32 s, devsh answers, and `/srv/tftp/redox` matches the backup.
