@@ -27,10 +27,16 @@
 
 - Bluetooth, [#54](https://github.com/redox-rpi/redox-rpi/issues/54)
   (outlook for v0.9.0), see below.
-- `cputop` ([#58](https://github.com/redox-rpi/redox-rpi/issues/58), branch
-  `cputop`): CPU time per core and per thread over an interval, to find
-  what keeps a core busy. It found the idle Pi for the ondemand governor
-  (#23, Pi tests #82 and #93).
+- `cputop` ([#58](https://github.com/redox-rpi/redox-rpi/issues/58)): CPU
+  time per core and per thread over an interval, to find what keeps a core
+  busy. It found the idle Pi for the ondemand governor (#23, Pi tests #82
+  and #93). PR [#210](https://github.com/redox-rpi/redox-rpi/pull/210)
+  (branch `cputop-58`) adds kernel patch `cputop` 0001 (`sys:cputime`:
+  exact CPU time and wakeups per thread), a `WAKE/s` column, `-w`, and
+  interrupts per second. Pi test #239, 5 min idle on stable: cpu1 2 %
+  busy, the rest about 0 %. `dwc2d` 2.5 % and 76 wakeups/s; `netstack`
+  27/s; `rpi-firmwared` 0.3 %, 9/s. Interrupts 108/s: timer 100, line 50
+  7–8.
 - Power-saving mode ([#126](https://github.com/redox-rpi/redox-rpi/issues/126),
   v0.5.0), branch `power-save`, experiment `power-save`: `rpi-firmwared`
   `display` (HDMI power off/on, blank) and `power_domains`. Pi test 147:
@@ -46,9 +52,16 @@
   Pi test #228: **100 Mbit/s saves about 0.35 W at idle**, 3.23 W against
   2.89 W). Step 2 (same branch): `/etc/eth-speed` sets the speed at boot,
   and `rpi-firmwared` `clock_states` (experiment `clock-states`) shows
-  which firmware clocks run; QEMU passes, Pi test #231 queued. Then EEE on
-  the LAN7800, `dwc2d` idle wakeups (#139), and gating clocks that run
-  for nothing.
+  which firmware clocks run (Pi tests #231, #232, #234; PR
+  [#203](https://github.com/redox-rpi/redox-rpi/pull/203)). `dwc2d` idle
+  wakeups: [#211](https://github.com/redox-rpi/redox-rpi/issues/211), USB
+  session, experiment `dwc2d-idle`, draft PR
+  [#212](https://github.com/redox-rpi/redox-rpi/pull/212). What wakes it:
+  the 1 s hotplug rescan, the 10 ms keyboard poll, netstack's reads on each
+  tick, and LAN7800 interrupts (SOF is already masked). The change rescans
+  every 3 s, reads the link every 5 s, and counts wakeups by source in
+  `/tmp/dwc2d-wakeups`; Pi test #242 compares before and after with
+  `cputop`. Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 ## Bluetooth
 
