@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 19:00:20 +0100
+Subject: [PATCH] rpi-firmwared: clock_states, which clocks run
+
+/scheme/rpi-firmware/clock_states lists each clock the firmware has
+with on or off, the measured rate (GET_CLOCK_MEASURED, 0x00030047) and
+the state word (GET_CLOCK_STATE, 0x00030001). A clock is on when the
+firmware measures a rate: on the Pi the state word was 0 for the running
+ARM, core and SDRAM clocks. The firmware measures no SDRAM rate, so
+sdram reads unknown. To find clocks of unused blocks that could be
+gated (#126).
+---
+ drivers/rpi-firmwared/src/main.rs | 26 +++++++++++++++++++++++++-
+ drivers/rpi-firmwared/src/mbox.rs |  3 +++
+ 2 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 5875830..fd81c76 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -12,6 +12,12 @@
+ //!   (undervoltage, frequency capping, temperature limit), as a hex number
+ //! - `/scheme/rpi-firmware/clocks`: one line per clock: name, current and
+ //!   maximum rate in Hz
++//! - `/scheme/rpi-firmware/clock_states`: one line per clock the firmware
++//!   has: name, `on` or `off`, the measured rate in Hz and the firmware's
++//!   state word (#126). A clock is on when the firmware measures a rate;
++//!   the state word only says whether a clock was asked for (Pi test 231:
++//!   0 for the running ARM clock). The firmware measures no SDRAM rate
++//!   (Pi test 232), so `sdram` reads `unknown`
+ //! - `/scheme/rpi-firmware/board`: one `key value` line per board property
+ //! - `/scheme/rpi-firmware/arm_clock`: the ARM clock in Hz; writing a rate
+ //!   in Hz, `max` or `min` sets it and stops the governor (mode `fixed`)
+@@ -56,7 +62,7 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clock_states", "clocks", "governor", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+ const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
+ 
+@@ -121,6 +127,24 @@ impl FirmwareScheme {
+                     writeln!(text, "{name} {rate} {max}").unwrap();
+                 }
+             }
++            "clock_states" => {
++                for &(id, name) in CLOCKS {
++                    let Ok(state) = mbox.value_of(TAG_GET_CLOCK_STATE, id) else {
++                        continue;
++                    };
++                    // Bit 1: the firmware has no such clock.
++                    if state & 2 != 0 {
++                        continue;
++                    }
++                    let measured = mbox.value_of(TAG_GET_CLOCK_MEASURED, id).unwrap_or(0);
++                    let on = match measured {
++                        0 if id == CLOCK_SDRAM => "unknown",
++                        0 => "off",
++                        _ => "on",
++                    };
++                    writeln!(text, "{name} {on} {measured} {state:#x}").unwrap();
++                }
++            }
+             "board" => board(mbox, &mut text),
+             _ => return Err(Error::new(ENOENT)),
+         }
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e..790f7a6 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -37,11 +37,13 @@ pub const TAG_BOARD_REVISION: u32 = 0x0001_0002;
+ pub const TAG_BOARD_SERIAL: u32 = 0x0001_0004;
+ pub const TAG_ARM_MEMORY: u32 = 0x0001_0005;
+ pub const TAG_VC_MEMORY: u32 = 0x0001_0006;
++pub const TAG_GET_CLOCK_STATE: u32 = 0x0003_0001;
+ pub const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
+ pub const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
+ pub const TAG_GET_TEMPERATURE: u32 = 0x0003_0006;
+ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;
+ pub const TAG_GET_THROTTLED: u32 = 0x0003_0046;
++pub const TAG_GET_CLOCK_MEASURED: u32 = 0x0003_0047;
+ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+@@ -49,6 +51,7 @@ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
++pub const CLOCK_SDRAM: u32 = 8;
+ 
+ /// Clocks the firmware knows, by id.
+ pub const CLOCKS: &[(u32, &str)] = &[
