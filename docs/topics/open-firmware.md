@@ -208,7 +208,14 @@ step 3. The gaps for us:
   (`redox-rpi/make-sdcard-lk.sh`): FAT with `bootcode.bin`, ext4 with
   `/boot`. The ext4 is made without the newest e2fsprogs features, which
   LK's driver doesn't know. Our 64-bit test program runs in QEMU.
-  **Pi test #251** is queued (card swap).
+  - **Pi test #251 (2026-11-05):** lk-overlay's stage 1 starts on the 3B+
+    and prints one line (`platform_early_init: b`, 1 ms after the start),
+    then nothing more. The next step in the code writes to the USB
+    controller (`USB_DCTL`). That write most likely hangs the bus because
+    the USB power domain is still off after the boot ROM; rpi-open-firmware
+    turns that domain on first. Patch `redox-rpi/lk-patches/0001` skips the
+    write and adds markers.
+  - **Pi test #253** is the rerun with that patch (card swap).
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
