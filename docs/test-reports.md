@@ -9165,3 +9165,47 @@ request (or its wakeup) lost between the kernel and RedoxFS. No exception or pan
 - After each hang, a power cycle and the mirror set up again. Stable
   `v0.4.0-dev-201-gb714bca+x9f76` restored at the end with a power cycle: devsh answers,
   and `/srv/tftp/redox` matches the backup.
+
+## #252 #197 RedoxFS hang with `redoxfs-truncate`: did RedoxFS answer every request? (2026-11-05, Pi test agent)
+
+Image `t197-hbC.img` (`v0.4.0-dev-375-g949f068d+xf366`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag`, md5 `c4e81a49…`), mirror
+`pkg-mirror-t197`. Real Pi 3B+ over netboot, no HDMI connected. 16:34–17:31 UTC.
+
+**Result: 1 hang in 10 rounds (round 7, in the install). RedoxFS had answered every request
+it got, and after the hang no new request reached it.**
+- At and after the hang, `redoxfs-diag /scheme/file` shows `in378541 out378541`,
+  unchanged for more than 7 min.
+- `busy0`, and every `skip-cancel`/`recvfd`/`msync`/`munmap`/`mmap` count is 0.
+- `pkg` stayed blocked in its call. So the request `pkg` waits for was lost before it
+  reached RedoxFS (on the kernel or scheme-queue side), not dropped or left unanswered by
+  RedoxFS.
+- No exception or panic.
+
+- **Free space after each remove (KB):** 124636, 124852, 124800, 124740, 124680, 124616,
+  – (hang), 124628, 124844, 124792. Flat; the fix works.
+- **Hang, round 7** (install from 17:04:46):
+  - Last progress line `Extracting vim [ 54%] [00:02:09] … 1251/2316`.
+  - `redoxfs-diag /scheme/file` before and at the hang (one line every 30 s):
+    `t1861 in369123 out369123`, `t1891 in373540 out373540`, `t1921 in377814 out377814`,
+    **`t1951 in378541 out378541`**, then the same values at t1981 … t2401 (15 lines).
+    `close78634 sendfd0 skip-cancel0 recvfd0 msync0 munmap0 mmap0 busy0 max-busy74`.
+  - `/scheme/data` unchanged at `in9 out9`.
+  - During installs, `in` and `out` sometimes differ by 1 (a request in progress, for
+    example `t690 in134387 out134386`). At the hang they are equal.
+  - `cat /scheme/sys/context` after the 2-minute wait:
+    - initfs `redoxfs` pid 20: one context `UR` on #1 with 4:21 user and 1:38 system CPU,
+      102 MB, and one `US`.
+    - `pkg` pid 152: two contexts `UB`, one with 2:20 CPU.
+    - `/usr/bin/redoxfs` pid 33 `UB`/`US`.
+  - The `UR` RedoxFS context with growing CPU, while the request counters stand still,
+    suggests a RedoxFS thread spinning outside request handling, or the kernel showing it
+    runnable.
+  - Heartbeats `[hb N 37–39 …]` kept coming on all four CPUs (`p0`). No `[hbctx …]` dump
+    came in this window, because the timed dump didn't fall into it and no
+    runnable-on-idle was detected.
+- After the hang: power cycle, mirror set up again, rounds 8–10 ok.
+- Logs on homenodellm: `~/pitest-tools/t252/serial-all.log` (whole run),
+  `hang-C-7-install-{serial.log,context.txt}`, and the per-round files.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: devsh answers, and
+  `/srv/tftp/redox` matches the backup.
