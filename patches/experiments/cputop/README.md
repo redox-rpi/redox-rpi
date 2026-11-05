@@ -112,3 +112,24 @@ irq   100/s  (3: 100)
   counted as CPU time.
 - In QEMU the only interrupt is the 100 Hz timer (line 3).
 - `dwc2d` is the busiest thread, with 58 wakeups a second (its USB polling).
+
+## On the Pi (test-plan row 239)
+
+Stable (timesync, rtl8152) plus `cputop`, `v0.4.0-dev-394-g26cfa3f+xe828`,
+after 5 minutes idle, 60 s rounds. Pass: `sys:cputime` answers, `WAKE/s`
+has numbers, no panic, `pi-test.py` 0/300. Full output in
+`docs/test-reports.md` (#239).
+
+- Cores: cpu1 2 % busy (1681 ms in 60 s), the other three about 0 %.
+- By CPU: `dwc2d` 2.5 % (76–78 wakeups/s, on cpu1), `rpi-firmwared`
+  0.3 % (9/s), `netstack` 0.1 % (27–29/s), `redoxfs` 0.1 %, `ptyd`
+  0.0 % (10/s).
+- By wakeups: `dwc2d` 76/s, cpu1's idle thread 62/s, `netstack` 27/s,
+  cpu3's idle thread 10/s, `rpi-firmwared` and `ptyd` 9/s each.
+- Interrupts: 108/s. Line 3 (the timer) is 100/s, line 50 is 7–8/s, and
+  every other line is 0.
+
+So at idle, `dwc2d` is the one thread that keeps a core busy: it makes up
+almost all of cpu1's 2 % and wakes 76 times a second, which is its USB
+polling. That is the next target for #126. `netstack` is far behind in
+CPU time, but it still wakes 27 times a second.
