@@ -1,0 +1,97 @@
+From a304a73e14ef80a446545e028c39c28e907b6c9a Mon Sep 17 00:00:00 2001
+From: dwc2d <dwc2d@localhost>
+Date: Thu, 5 Nov 2026 02:28:23 +0000
+Subject: [PATCH] dwc2d: count the event loop wakeups by source in
+ /tmp/dwc2d-wakeups (#126)
+
+---
+ drivers/usb/dwc2d/src/main.rs    |  5 ++++
+ drivers/usb/dwc2d/src/wakeups.rs | 45 ++++++++++++++++++++++++++++++++
+ 2 files changed, 50 insertions(+)
+ create mode 100644 drivers/usb/dwc2d/src/wakeups.rs
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 12be94ad..e5466e6a 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
+ use fdt::Fdt;
+ 
+ mod dwc2;
++mod wakeups;
+ mod ecm;
+ mod enumerate;
+ mod hid;
+@@ -548,7 +549,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .expect("dwc2d: failed to subscribe to the scheme");
+ 
+     scheme.tick().expect("dwc2d: network scheme failed");
++    let mut wake = wakeups::Wakeups::new();
+     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++        let source = event.user_data;
++        let woke = Instant::now();
+         match event.user_data {
+             Source::Irq => {
+                 let file = irq_file.as_mut().unwrap();
+@@ -637,6 +641,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
++        wake.count(source as usize, woke.elapsed());
+     }
+     unreachable!()
+ }
+diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
+new file mode 100644
+index 00000000..29423c54
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/wakeups.rs
+@@ -0,0 +1,45 @@
++//! Wakeups of dwc2d's event loop by source, with the time spent on each,
++//! in `/tmp/dwc2d-wakeups` every 10 s: what keeps the driver busy when the
++//! Pi is idle (#126).
++
++use std::time::{Duration, Instant};
++
++const FILE: &str = "/tmp/dwc2d-wakeups";
++const NAMES: [&str; 4] = ["irq", "scheme", "time", "hotplug"];
++const EVERY: Duration = Duration::from_secs(10);
++
++pub struct Wakeups {
++    start: Instant,
++    written: Instant,
++    count: [u64; 4],
++    busy: [Duration; 4],
++}
++
++impl Wakeups {
++    pub fn new() -> Self {
++        let now = Instant::now();
++        Self { start: now, written: now, count: [0; 4], busy: [Duration::ZERO; 4] }
++    }
++
++    /// One wakeup by `source` (the event source's index) that took `busy`.
++    pub fn count(&mut self, source: usize, busy: Duration) {
++        if let Some(n) = self.count.get_mut(source) {
++            *n += 1;
++            self.busy[source] += busy;
++        }
++        if self.written.elapsed() >= EVERY {
++            self.written = Instant::now();
++            let secs = self.start.elapsed().as_secs_f64();
++            let mut text = format!("seconds {secs:.0}\n");
++            for (i, name) in NAMES.iter().enumerate() {
++                text += &format!(
++                    "{name} {} {:.1}/s busy {} ms\n",
++                    self.count[i],
++                    self.count[i] as f64 / secs,
++                    self.busy[i].as_millis()
++                );
++            }
++            let _ = std::fs::write(FILE, text);
++        }
++    }
++}
+-- 
+2.53.0
+
