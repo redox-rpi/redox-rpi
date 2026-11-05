@@ -1,4 +1,4 @@
-From af9d7eea5c4c817410f3faf6527ed2aadaff5675 Mon Sep 17 00:00:00 2001
+From f1035629cde39c830d7f103f998fe5acb615c8a2 Mon Sep 17 00:00:00 2001
 From: dwc2d <dwc2d@localhost>
 Date: Thu, 5 Nov 2026 02:51:02 +0000
 Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
@@ -19,20 +19,14 @@ Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
  create mode 100644 drivers/usb/dwc2d/src/wakeups.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..f6197611 100644
+index 12be94ad..9eee9ac4 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
- use fdt::Fdt;
- 
+@@ -18,2 +18,3 @@ use fdt::Fdt;
  mod dwc2;
 +mod wakeups;
  mod ecm;
- mod enumerate;
- mod hid;
-@@ -386,6 +387,15 @@ impl Timer {
-     }
- }
+@@ -388,2 +389,11 @@ impl Timer {
  
 +/// The test request in [`CYCLE_REQUEST`] is looked for on every so many
 +/// rescans: a path lookup that fails is a round trip through the namespace
@@ -44,11 +38,7 @@ index 12be94ad..f6197611 100644
 +const LINK_INTERVAL: Duration = Duration::from_secs(5);
 +
  /// How often to look for devices plugged in or removed.
- const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
- /// A test without a person writes a port to this file; the next rescan
-@@ -548,7 +558,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-         .expect("dwc2d: failed to subscribe to the scheme");
- 
+@@ -550,3 +560,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      scheme.tick().expect("dwc2d: network scheme failed");
 +    let mut wake = wakeups::Wakeups::new();
 +    let mut last_links = Instant::now();
@@ -57,15 +47,10 @@ index 12be94ad..f6197611 100644
 +        let source = event.user_data;
 +        let woke = Instant::now();
          match event.user_data {
-             Source::Irq => {
-                 let file = irq_file.as_mut().unwrap();
-@@ -578,8 +593,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-             }
-             Source::Hotplug => {
-                 hotplug.fired();
-+                let t = Instant::now();
+@@ -581,3 +596,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  let mut cycled = Vec::new();
 -                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
++                let t = Instant::now();
 +                rescans = rescans.wrapping_add(1);
 +                let request = if rescans % CYCLE_CHECK_EVERY == 0 {
 +                    std::fs::read_to_string(CYCLE_REQUEST).ok()
@@ -74,22 +59,14 @@ index 12be94ad..f6197611 100644
 +                };
 +                if let Some(request) = request {
                      let _ = std::fs::remove_file(CYCLE_REQUEST);
-                     let net = scheme.adapter_mut();
-                     let request = request.trim();
-@@ -608,7 +630,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                         None => println!("dwc2d: cycle: no port for {request:?}"),
-                     }
+@@ -610,3 +632,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
 +                wake.part(0, t.elapsed());
 +                let t = Instant::now();
                  let mut changes = bus.scan();
 +                wake.part(1, t.elapsed());
                  changes.removed.extend(cycled);
-                 let net = scheme.adapter_mut();
-                 for &address in &changes.removed {
-@@ -631,12 +656,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                         _ => {}
-                     }
+@@ -633,5 +658,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
 -                net.refresh_links(&mut bus);
 +                // New adapters bring their link with them; the others are
@@ -105,12 +82,10 @@ index 12be94ad..f6197611 100644
                  scheme.tick().expect("dwc2d: network scheme failed");
 +                wake.part(3, t.elapsed());
                  hotplug.arm(HOTPLUG_INTERVAL);
-             }
+@@ -639,2 +673,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          }
 +        wake.count(source as usize, woke.elapsed());
      }
-     unreachable!()
- }
 diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
 new file mode 100644
 index 00000000..2841d11d
