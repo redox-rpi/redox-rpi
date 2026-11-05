@@ -8422,3 +8422,90 @@ no HDMI connected. Reset at 01:27:37 UTC, `devshd: listening` after 20 s.
   with interrupts off).
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 01:47:48:
   banner after 32 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #239 #58 cputop at idle: who keeps the Pi busy (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-394-g26cfa3f+xe828` (branch `cputop-58`, experiments
+`timesync rtl8152 cputop`, md5 `9a17615f…`). Real Pi 3B+ over netboot, no HDMI connected.
+Reset at 01:49:36 UTC, `devshd: listening` after 20 s.
+
+**Result: pass.** `sys:cputime` answers, `WAKE/s` has numbers, and there was no panic.
+At idle the Pi is 98 % idle on cpu1 and close to 100 % on the others. **dwc2d is the main
+waker**, with 2.5 % CPU and about 77 wakeups/s, all on cpu1.
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- 5 minutes idle (01:50:51–01:55:51), then the two cputop rounds over devsh.
+- **Top 5 by CPU %:**
+  1. dwc2d 2.5 % (78/s)
+  2. rpi-firmwared 0.3 % (9/s)
+  3. netstack 0.1 % (29/s)
+  4. redoxfs (initfs) 0.1 % (1/s)
+  5. ptyd 0.0 % (10/s)
+- **Top 5 by wakeups/s:**
+  1. dwc2d 76
+  2. [kmain] cpu1 62
+  3. netstack 27
+  4. [kmain] cpu3 10
+  5. rpi-firmwared 9 (ptyd 9 as well)
+- **Busy per core:** cpu0 0 %, cpu1 2 % (1681 ms in 60 s, 300 switches/s), cpu2 0 %,
+  cpu3 0 % (211 ms, 188 switches/s). cpu0 has 107 switches/s and cpu2 169.
+- **Interrupts per second:** 108/s in all; line 3 (the timer) 100/s, line 50 8/s (7/s in
+  the second round). `/scheme/sys/irq` lists only lines 3 and 50 as non-zero (48599 and 4258,
+  then 49743 and 4393 about 16 s later); every other line up to 223 is 0.
+
+`cputop -l 15 60`:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (0 ms busy, 60001 ms idle, 107 switches/s)
+cpu1  busy   2 %  (1681 ms busy, 58320 ms idle, 300 switches/s)
+cpu2  busy   0 %  (4 ms busy, 60000 ms idle, 169 switches/s)
+cpu3  busy   0 %  (211 ms busy, 59795 ms idle, 188 switches/s)
+irq   108/s  (3: 100, 50: 8)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      78    0:00:10.7 UB    #1   /scheme/initfs/bin/dwc2d
+8    0.3       9    0:00:01.3 US    #3   /scheme/initfs/bin/rpi-firmwared
+25    0.1      29    0:00:00.6 UB    #1   /usr/bin/netstack
+20    0.1       1    0:00:32.3 UB    #1   /scheme/initfs/bin/redoxfs
+21    0.0      10    0:00:00.2 UB    #1   /usr/bin/ptyd
+366    0.0       0    0:00:00.0 UR+   #2   /usr/bin/cputop
+0    0.0       1    0:00:00.3 UB    #2   initnsmgr
+35    0.0       1    0:00:00.0 UB    #1   /usr/bin/devshd
+8    0.0       0    0:00:00.0 US    #3   /scheme/initfs/bin/rpi-firmwared
+0    0.0      62    0:00:00.0 RR+   #1   [kmain]
+0    0.0      10    0:00:00.0 RR+   #3   [kmain]
+0    0.0       0    0:00:00.0 RR    #2   [kmain]
+27    0.0       0    0:00:00.5 UB    #2   /usr/bin/getty
+0    0.0       0    0:00:00.4 UB    #2   procmgr
+2    0.0       0    0:00:00.3 UB    #1   /scheme/initfs/bin/logd
+```
+
+`cputop -w -l 15 60`:
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (4 ms busy, 60008 ms idle, 107 switches/s)
+cpu1  busy   2 %  (1680 ms busy, 58329 ms idle, 297 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60012 ms idle, 168 switches/s)
+cpu3  busy   0 %  (208 ms busy, 59805 ms idle, 187 switches/s)
+irq   107/s  (3: 100, 50: 7)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.5      76    0:00:12.3 UB    #1   /scheme/initfs/bin/dwc2d
+0    0.0      62    0:00:00.0 RR+   #1   [kmain]
+25    0.1      27    0:00:00.7 UB    #1   /usr/bin/netstack
+0    0.0      10    0:00:00.0 RR+   #3   [kmain]
+8    0.3       9    0:00:01.5 US    #3   /scheme/initfs/bin/rpi-firmwared
+21    0.0       9    0:00:00.2 UB    #1   /usr/bin/ptyd
+0    0.0       1    0:00:00.3 UB    #0   initnsmgr
+20    0.1       1    0:00:32.4 UB    #1   /scheme/initfs/bin/redoxfs
+35    0.0       1    0:00:00.0 UB    #1   /usr/bin/devshd
+8    0.0       0    0:00:00.0 US    #3   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 RR    #0   [kmain]
+0    0.0       0    0:00:00.4 UB    #1   procmgr
+371    0.0       0    0:00:00.0 UR+   #0   /usr/bin/cputop
+3    0.0       0    0:00:00.0 UB    #0   /scheme/initfs/bin/randd
+17    0.0       0    0:00:00.3 UB    #1   /scheme/initfs/bin/bcm2835-sdhos
+```
+
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 18 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
