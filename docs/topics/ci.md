@@ -20,6 +20,11 @@
 - The "Topic pages" job warns when a pull request or a push to main
   changes a topic's files without touching its page here.
   `config/topics.map` maps paths to topics. It is a warning only.
+- Every Monday the "Upstream drift" job applies every patch, experiments
+  included, on the pinned and on the newest upstream commits
+  (`scripts/check-upstream-drift.py`) and updates the issue "Upstream drift
+  report": per patch applies, 3-way, already upstream or conflicts, with the
+  upstream commits behind each conflict. It never fails.
 
 ## In progress
 

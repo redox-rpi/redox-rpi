@@ -1,0 +1,111 @@
+From: Claude <noreply@anthropic.com>
+Subject: [PATCH] ptyd: send SIGHUP when the master side of a PTY closes
+
+When an SSH session ends, sshd closes the PTY master. The shell on the
+slave side was never told; it read EOF, wrote to a dead terminal and
+panicked. Like Unix, send SIGHUP (and SIGCONT) to every process group
+that was in front on this terminal, and let tcgetattr on the hung-up
+terminal fail with EIO.
+---
+diff --git a/ptyd/src/controlterm.rs b/ptyd/src/controlterm.rs
+index c0e79088..099de5d5 100644
+--- a/ptyd/src/controlterm.rs
++++ b/ptyd/src/controlterm.rs
+@@ -28,6 +28,12 @@ impl PtyControlTerm {
+     }
+ }
+ 
++impl Drop for PtyControlTerm {
++    fn drop(&mut self) {
++        self.pty.borrow().hangup();
++    }
++}
++
+ impl Resource for PtyControlTerm {
+     fn pty(&self) -> Weak<RefCell<Pty>> {
+         Rc::downgrade(&self.pty)
+diff --git a/ptyd/src/pgrp.rs b/ptyd/src/pgrp.rs
+index d0a9a06c..c722b2b5 100644
+--- a/ptyd/src/pgrp.rs
++++ b/ptyd/src/pgrp.rs
+@@ -67,7 +67,7 @@ impl Resource for PtyPgrp {
+                     .and_then(|b| <[u8; 4]>::try_from(b).ok())
+                     .ok_or(Error::new(EBADF))?,
+             );
+-            pty.pgrp = new_pgrp as usize;
++            pty.note_pgrp(new_pgrp as usize);
+ 
+             Ok(4)
+         } else {
+diff --git a/ptyd/src/pty.rs b/ptyd/src/pty.rs
+index 638419dd..3b03f7a6 100644
+--- a/ptyd/src/pty.rs
++++ b/ptyd/src/pty.rs
+@@ -19,6 +19,9 @@ pub struct Pty {
+     pub timeout_count: u64,
+     pub timeout_character: Option<u64>,
+     pub pgrp_handle: Option<libredox::Fd>,
++    /// Every process group that was foreground on this terminal, so that a
++    /// hangup also reaches the shell while one of its jobs is in front.
++    pub seen_pgrps: Vec<usize>,
+ }
+ 
+ impl Pty {
+@@ -36,6 +39,7 @@ impl Pty {
+             timeout_count: 0,
+             timeout_character: None,
+             pgrp_handle: None,
++            seen_pgrps: Vec::new(),
+         }
+     }
+ 
+@@ -342,6 +346,25 @@ impl Pty {
+         }
+     }
+ 
++    /// The master side went away (for example an SSH connection dropped):
++    /// send SIGHUP and SIGCONT to the processes on this terminal, like Unix.
++    /// Without it the shell keeps going, gets EOF and EPIPE and panics.
++    pub fn hangup(&self) {
++        eprintln!("ptyd: pty {} hangup, SIGHUP to groups {:?}", self.id, self.seen_pgrps);
++        for &pgrp in &self.seen_pgrps {
++            for sig in [libredox::flag::SIGHUP, libredox::flag::SIGCONT] {
++                let _ = libredox::call::kill(-(pgrp as isize) as usize, sig as _);
++            }
++        }
++    }
++
++    pub fn note_pgrp(&mut self, pgrp: usize) {
++        self.pgrp = pgrp;
++        if pgrp != 0 && !self.seen_pgrps.contains(&pgrp) {
++            self.seen_pgrps.push(pgrp);
++        }
++    }
++
+     fn kill(fd: &libredox::Fd, target: ProcKillTarget, sig: usize) -> Result<()> {
+         Ok(fd
+             .call_wo(
+diff --git a/ptyd/src/termios.rs b/ptyd/src/termios.rs
+index 5630d22e..25cfddf2 100644
+--- a/ptyd/src/termios.rs
++++ b/ptyd/src/termios.rs
+@@ -1,7 +1,7 @@
+ use std::cell::RefCell;
+ use std::rc::Weak;
+ 
+-use syscall::error::{Error, Result, EBADF, EINVAL, EPIPE};
++use syscall::error::{Error, Result, EBADF, EINVAL, EIO, EPIPE};
+ use syscall::flag::{EventFlags, F_GETFL, F_SETFL, O_ACCMODE};
+ 
+ use crate::pty::Pty;
+@@ -48,7 +48,9 @@ impl Resource for PtyTermios {
+             }
+             Ok(i)
+         } else {
+-            Ok(0)
++            // Hung up: tcgetattr fails like on Linux, so programs see that
++            // the terminal is gone.
++            Err(Error::new(EIO))
+         }
+     }
+ 

@@ -7,6 +7,22 @@
 - No image of its own is needed: the same image runs on both boards
   ([#8](https://github.com/redox-rpi/redox-rpi/issues/8), closed). For network boot,
   `scripts/netboot.sh --board zero2w` uses a smaller image for the 512 MB RAM.
+- **Desktop (user report, 2026-11-02):** the Pi 3B+ screen-visit SD image
+  of #202 (`v0.4.0-dev-60-ga206e99`, experiments `rpi-fb`, `rpi-fb-dma-on`,
+  `orbital`, no mouse) boots on the Zero 2 W with Orbital on the screen and
+  "runs well". No network, as expected: the Ethernet HAT was on, but no
+  cable was plugged in. No serial log from that boot. See the
+  [graphics topic](graphics.md) and [#33](https://github.com/redox-rpi/redox-rpi/issues/33).
+
+- **Network boot, current image (#206, 2026-11-03):** `v0.4.0-dev-135-g2416130`
+  (`build-image.sh --zero2w`, `timesync` and `rtl8152`, no graphics: the user
+  finds the desktop too slow on the Zero) boots over the PoE HAT. devsh
+  answers on 192.168.178.194, pi-test passes except the SD card check, and
+  191 of 333 MB are free after boot (46 processes). The old netboot card had
+  no data partition. A new card from
+  `scripts/make-sdcard.sh --dir redox-zero2w --boot-size 32 --data-size 24`
+  (56 MiB, fits a 64 MB card) has one: `/scheme/data` mounts with 23 MB free,
+  and pi-test passes in full. See the [test report](../test-reports.md).
 
 ## Next
 

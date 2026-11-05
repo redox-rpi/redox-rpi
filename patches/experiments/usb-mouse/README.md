@@ -33,4 +33,13 @@ because `0035` is USB serial (PR #70).
 - QEMU 2026-10-31 on main, `v0.3.0-dev-820-g77ba1ac+x0c8f`:
   `scripts/test-usb-mouse.sh` 18/18, `scripts/test-keyboard.sh` pass,
   `scripts/test-hotplug.sh` 15/15.
-- Pi: test #56, needs a person with a USB mouse (USB visit).
+- QEMU 2026-11-02 on main with dwc2d `0034` (0059 refreshed for
+  `boot_probe`, from the graphics branch `graphics-visit-mouse`),
+  `v0.3.0-dev-1035-g39056bf+x0c8f`: mouse test 18/18, keyboard test pass,
+  hotplug 15/15.
+- Pi test 203 (covers row 56), 2026-11-02, screen visit with Graphics'
+  image `graphics-visit-mouse` (this `0059` as in 47859bc): **pass**.
+  Serial: `dwc2d: mouse at address 3: relative, 3 button(s), wheel`
+  (093a:2510, low speed behind the hub), keyboard at address 5, no panic.
+  At the screen the mouse worked well and opened a terminal in Orbital;
+  moving windows is slow, which is Orbital's drawing, not the mouse.

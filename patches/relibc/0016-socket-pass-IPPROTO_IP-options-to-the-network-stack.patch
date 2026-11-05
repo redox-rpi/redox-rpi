@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 10:48:05 +0100
+Subject: [PATCH] socket: pass IPPROTO_IP options to the network stack
+
+setsockopt with level IPPROTO_IP, for example IP_ADD_MEMBERSHIP, was
+skipped. Pass it to the socket's scheme like SOL_SOCKET options, with the
+level as third metadata word so the option numbers do not mix.
+---
+ src/platform/redox/socket.rs | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index 78ead85b..b3d0834b 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -23,7 +23,7 @@ use crate::{
+             EPIPE, EPROTONOSUPPORT,
+         },
+         fcntl,
+-        netinet_in::{in_addr, in_port_t, sockaddr_in},
++        netinet_in::{IPPROTO_IP, in_addr, in_port_t, sockaddr_in},
+         signal::SIGPIPE,
+         sys_select::timeval,
+         sys_socket::{
+@@ -1009,6 +1009,22 @@ impl PalSocket for Sys {
+                 }
+             }
+         }
++        // IP options such as IP_ADD_MEMBERSHIP go to the network stack, with
++        // the level as third metadata word so they do not mix with SO_*.
++        if level == IPPROTO_IP as c_int {
++            let metadata = [
++                SocketCall::SetSockOpt as u64,
++                option_name as u64,
++                IPPROTO_IP as u64,
++            ];
++            redox_rt::sys::sys_call_wo(
++                socket as usize,
++                option_value,
++                CallFlags::empty(),
++                &metadata,
++            )?;
++            return Ok(());
++        }
+ 
+         todo_skip!(
+             0,
+-- 
+2.54.0 (Apple Git-157)
+

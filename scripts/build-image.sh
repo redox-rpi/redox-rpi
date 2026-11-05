@@ -17,8 +17,9 @@
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
-#                 patches, its config.toml (packages, files) if it has one,
-#                 and its recipes/<path>/recipe.toml, which replace the
+#                 patches (recipes/<category>/<recipe>/*.patch for recipes
+#                 outside core), its config.toml (packages, files) if it has
+#                 one, and its recipes/<path>/recipe.toml, which replace the
 #                 upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
@@ -125,7 +126,10 @@ drift_report="$(mktemp)"
 trap 'rm -f "$drift_report"' EXIT
 
 # Compare a source checkout with its commit plus patches. Lock files and the
-# .cargo directory are left out: cargo and the kernel recipe write them.
+# .cargo directory are left out: cargo and the kernel recipe write them. So
+# are the *.orig and *.rej files patch(1) leaves when the cookbook applies a
+# patch with an offset or fuzz (kernel 0012 after 0008): they made every
+# second build fail.
 check_drift() {
     local label="$1" src="$2"
     shift 2
@@ -144,7 +148,8 @@ check_drift() {
         git -C "$src" read-tree HEAD
         git -C "$src" add -A .
         actual="$(git -C "$src" write-tree)"
-        git -C "$src" diff "$expected" "$actual" -- . ':!Cargo.lock' ':!.cargo'
+        git -C "$src" diff "$expected" "$actual" -- . ':!Cargo.lock' ':!.cargo' \
+            ':(glob,exclude)**/*.orig' ':(glob,exclude)**/*.rej'
     )"
     if [ -n "$diff" ]; then
         echo "$label: source differs from its commit plus patches" >&2
@@ -224,45 +229,105 @@ make install BUILD="\${COOKBOOK_BUILD}" DESTDIR="\${COOKBOOK_STAGE}"
 """
 EOF
 
-# Other recipes: pin them and add our patches to their [source] section.
-# pkgutils only when an experiment patches it (pkg-hold); otherwise the
-# image takes the upstream binary.
-for name in bootloader base relibc redoxfs pkgutils; do
+# Other core recipes we pin: each one with a line in config/upstream.lock
+# (also without patches: an unpinned recipe builds the newest upstream
+# commit, #145), and each one with patches in patches/<recipe>/ or in
+# patches/experiments/<name>/<recipe>/ of a selected experiment, which must
+# then have a lock line. A new one needs no change here. The first three
+# keep their old order (it decides the order in the manifest). pkgutils
+# only when an experiment patches it (pkg-hold); otherwise the image takes
+# the upstream binary.
+recipes=(bootloader base relibc)
+while read -r name; do
+    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
+    [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
+    recipes+=("$name")
+done < <(
+    awk '!/^#/ && NF == 2 { print $1 }' "$LOCK"
+    for dir in "$ROOT"/patches/*/; do basename "$dir"; done
+    for exp in "${experiments[@]}"; do
+        for dir in "$ROOT/patches/experiments/$exp"/*/; do [ -d "$dir" ] && basename "$dir"; done
+    done | sort -u
+)
+
+# Pin them and add our patches to their [source] section.
+for name in "${recipes[@]}"; do
     git -C "$REDOX" checkout -q -- "recipes/core/$name"
-    if [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ]; then
-        continue
-    fi
     prepare_recipe "$name"
     sed -i "/^git = /a rev = \"$(pin "$name")\"\npatches = [ $recipe_patches]" \
         "$REDOX/recipes/core/$name/recipe.toml"
 done
 
-# Our own packages, built from this repository.
-for tool in cputop devshd i2c reboot sigregs spi timerd timesync; do
-    # sigregs is linked statically (the cargo template links dynamically):
-    # dynamically linked, it fails at start on a real Pi before it can test
-    # the signal entry (docs/tasks.md, T12). It must link the libc.a of our
-    # relibc recipe, not the toolchain's. Cargo does not see a new libc.a,
-    # so its fingerprint goes first: otherwise a build with other relibc
-    # patches keeps the old sigregs.
-    build='template = "cargo"'
-    if [ "$tool" = sigregs ]; then
-        build='template = "custom"
-dependencies = ["relibc"]
-script = """
-export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
-rm -rf "${COOKBOOK_BUILD}"/target/*/release/.fingerprint/sigregs-*
-COOKBOOK_CARGO_PATH=. cookbook_cargo
-"""'
+# Other recipes patched by an experiment: patches/experiments/<name>/recipes/
+# <category>/<recipe>/*.patch go into that recipe's [source] patches, after
+# its own. Recipes patched by the previous run are reset first, so an
+# experiment left out leaves no patch behind.
+extra_list="$REDOX/.redox-rpi-recipes"
+if [ -f "$extra_list" ]; then
+    while read -r rel; do
+        git -C "$REDOX" checkout -q -- "recipes/$rel"
+        rm -f "$REDOX/recipes/$rel"/exp-*.patch
+    done < "$extra_list"
+fi
+: > "$extra_list"
+recipe_dirs() {
+    local exp
+    for exp in "${experiments[@]}"; do
+        [ -d "$ROOT/patches/experiments/$exp/recipes" ] || continue
+        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n')
+    done | sed 's|^\./||' | sort -u
+}
+extra_patch_files() {
+    local exp patch
+    for exp in "${experiments[@]}"; do
+        for patch in "$ROOT/patches/experiments/$exp/recipes/$1"/*.patch; do
+            [ -e "$patch" ] && echo "$patch"
+        done
+    done
+    return 0
+}
+while read -r rel; do
+    [ -n "$rel" ] || continue
+    recipe="$REDOX/recipes/$rel"
+    [ -f "$recipe/recipe.toml" ] || { echo "no recipe recipes/$rel" >&2; exit 1; }
+    echo "$rel" >> "$extra_list"
+    mapfile -t files < <(extra_patch_files "$rel")
+    stamp="$recipe/.redox-rpi-patches"
+    sum="$(for patch in "${files[@]}"; do recipe_patch_name "$patch"; cat "$patch"; done | sha256sum | cut -d' ' -f1)"
+    if [ "$(cat "$stamp" 2>/dev/null)" != "$sum" ]; then
+        rm -rf "$recipe/source" "$recipe/target"
+        echo "$sum" > "$stamp"
     fi
-    mkdir -p "$REDOX/recipes/other/$tool"
-    cat > "$REDOX/recipes/other/$tool/recipe.toml" <<EOF
-[source]
-path = "$ROOT/tools/$tool"
+    names=""
+    for patch in "${files[@]}"; do
+        cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
+        names="$names\"$(recipe_patch_name "$patch")\", "
+    done
+    if grep -q '^patches = \[' "$recipe/recipe.toml"; then
+        # Append to a one-line list, or before the "]" of a multi-line one.
+        awk -v add="$names" '
+            open && /^]/ { print "    " add; open = 0 }
+            /^patches = \[/ { if (/]/) sub(/]/, add "]"); else open = 1 }
+            { print }' "$recipe/recipe.toml" > "$recipe/recipe.toml.new"
+        mv "$recipe/recipe.toml.new" "$recipe/recipe.toml"
+    else
+        sed -i "0,/^\[source\]/s//[source]\npatches = [ $names]/" "$recipe/recipe.toml"
+    fi
+done < <(recipe_dirs)
 
-[build]
-$build
-EOF
+# Our own packages, built from this repository: every tools/<name>/ with a
+# recipe.toml, which holds the [build] part of its recipe. Host tools
+# (redoxfs-file) have none.
+for file in "$ROOT"/tools/*/recipe.toml; do
+    tool="$(basename "$(dirname "$file")")"
+    mkdir -p "$REDOX/recipes/other/$tool"
+    {
+        echo "[source]"
+        echo "path = \"$ROOT/tools/$tool\""
+        echo
+        cat "$file"
+    } > "$REDOX/recipes/other/$tool/recipe.toml"
 done
 
 # Upstream recipes replaced by an experiment: every such recipe goes back to
@@ -349,8 +414,13 @@ manifest_head="$(mktemp)"
     awk '!/^#/ && NF == 2 { printf "%s = \"%s\"\n", $1, $2 }' "$LOCK"
     echo
     echo "[patches]"
-    for name in fdt kernel bootloader base relibc; do
+    for name in fdt kernel "${recipes[@]}"; do
         patch_files "$name" | while read -r patch; do
+            echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
+        done
+    done
+    recipe_dirs | while read -r rel; do
+        extra_patch_files "$rel" | while read -r patch; do
             echo "\"${patch#"$ROOT/patches/"}\" = \"$(sha256sum < "$patch" | cut -c1-16)\""
         done
     done
