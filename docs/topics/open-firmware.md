@@ -215,7 +215,24 @@ step 3. The gaps for us:
     the USB power domain is still off after the boot ROM; rpi-open-firmware
     turns that domain on first. Patch `redox-rpi/lk-patches/0001` skips the
     write and adds markers.
-  - **Pi test #253** is the rerun with that patch (card swap).
+  - **Pi test #253 (2026-11-05, 32 GB SDHC card): the VPU starts the ARM
+    in 64-bit mode.** With the USB write skipped, stage 1 gets through
+    everything: markers `b1`, `b2` and `c`, PLLs, 1 GB SDRAM at 398 MHz
+    (memory test passed), the SD card in 4-bit mode at 25 MHz, and stage 2
+    from ext4. Stage 2 starts LK on the VPU, sets up composite video and
+    the USB PHY, then `detected a bcm2837`, `enabling aarch64`, ARM clock
+    and bridge up, and then waits for mailbox requests. On the ARM, LK
+    starts in 64-bit mode on several cores (`welcome to lk/MP`) and reads
+    the devicetree that stage 2 put at `0x1000000`. Its loader then fails
+    with `mount failure: -2` (`ERR_NOT_FOUND`): upstream's `rpi3-test` is
+    built without an SD card driver (`CONFIG_SD_BOOT := 0`), so the
+    partition doesn't exist on the ARM side. Two lines in stage 2 print
+    impossible clock values (`PLLC_PER at 9088281640219705594MHz`), most
+    likely 64-bit numbers in the VPU's `printf`; the clocks themselves work.
+  - Next build: `rpi3-test` with `CONFIG_SD_BOOT=1`. Its SD driver is C++,
+    so `build-toolchain.sh` now also builds an `aarch64-none-elf` GCC with
+    C++ (the host's aarch64 compiler has only C, and installing more needs
+    root).
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
