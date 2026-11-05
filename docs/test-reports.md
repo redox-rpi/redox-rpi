@@ -8863,3 +8863,34 @@ PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
 - No panic in the serial log.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #245 #126 A/B for PR #215: idle wakeups, noise or the image? (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected, A and B back to back with nothing changed in
+between.
+- **A:** `v0.4.0-dev-436-gd5d8e81+x23c2` (before #215, md5 `317b7cbc…`), reset at 08:07:27.
+- **B:** `v0.4.0-dev-437-gb0f6b8e+x23c2` (with #215, md5 `d3d2de48…`), reset at 08:17:00.
+- Both had `devshd: listening` after about 20 s, pi-test passed with the manifest (0 of 300
+  starts failed), and there was no panic.
+
+**Result: the higher wakeups of #244 come from the base, not from #215.** A (without #215)
+already has dwc2d at 113–116/s and netstack at 62–65/s. B has slightly fewer: dwc2d
+106–109/s, netstack 57–60/s, line 50 18–19/s against 20–21/s. dwc2d's CPU is 2.6 % in B
+against 2.6–2.7 % in A. #239's 76/s was on an older base
+(`v0.4.0-dev-394-g26cfa3f`, `timesync rtl8152 cputop`).
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | initnsmgr /s | redoxfs /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|---|---|
+| A1 | 113 (2.6) | 62 (0.3) | 2 | 2 (0.1) | 72 | 120 (20) |
+| A2 | 116 (2.7) | 65 (0.3) | 2 | 2 (0.1) | 76 | 121 (21) |
+| A3 | 113 (2.7) | 62 (0.3) | 2 | 2 (0.1) | 75 | 120 (20) |
+| B1 | 107 (2.6) | 57 (0.3) | 1 | 1 (0.1) | 66 | 118 (18) |
+| B2 | 109 (2.6) | 60 (0.3) | 1 | 1 (0.1) | 70 | 119 (19) |
+| B3 | 106 (2.6) | 57 (0.3) | 1 | 1 (0.1) | 70 | 118 (18) |
+
+- **Busy core:** A cpu2 3 % (2063–2123 ms in 60 s), B cpu1 2–3 % (1790–1827 ms). The other
+  cores are 0 %, apart from about 210 ms on cpu2 in B.
+- The full `cputop -w -n 3 -l 10 60` output for both is on homenodellm in
+  `~/pitest-tools/t245/cputop-{before,after}.txt`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
