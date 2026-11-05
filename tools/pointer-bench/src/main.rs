@@ -2,7 +2,11 @@
 //! mouse would, so the cost of pointer moves can be measured without a
 //! person (with cputop running at the same time).
 //!
-//! pointer-bench [seconds] [--hz N] [--center X Y] [--radius R] [--drag X Y]
+//! pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y]
+//!
+//! Positions are screen pixels; Orbital takes absolute mouse events as
+//! 0..65535 over the screen (as ps2d sends them), so they are scaled by
+//! the screen size (default 1920x1080, the firmware mode on our NanoKVM).
 //!
 //! With --drag, it first moves to (X, Y), presses the left button there
 //! (on a window title bar, that window is dragged), circles with the
@@ -20,6 +24,7 @@ fn main() {
     let mut hz = 60.0f64;
     let (mut cx, mut cy, mut radius) = (960.0f64, 540.0f64, 300.0f64);
     let mut drag: Option<(i32, i32)> = None;
+    let (mut sw, mut sh) = (1920.0f64, 1080.0f64);
     let args: Vec<String> = env::args().skip(1).collect();
     let num = |i: usize| -> f64 {
         args.get(i).and_then(|a| a.parse().ok()).unwrap_or_else(|| {
@@ -32,16 +37,20 @@ fn main() {
         match args[i].as_str() {
             "--hz" => { hz = num(i + 1); i += 1; }
             "--radius" => { radius = num(i + 1); i += 1; }
+            "--screen" => { sw = num(i + 1); sh = num(i + 2); i += 2; }
             "--center" => { cx = num(i + 1); cy = num(i + 2); i += 2; }
             "--drag" => { drag = Some((num(i + 1) as i32, num(i + 2) as i32)); i += 2; }
             other => seconds = other.parse().unwrap_or_else(|_| {
-                eprintln!("usage: pointer-bench [seconds] [--hz N] [--center X Y] [--radius R] [--drag X Y]");
+                eprintln!("usage: pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y]");
                 std::process::exit(2)
             }),
         }
         i += 1;
     }
 
+    let to_event = |x: f64, y: f64| {
+        MouseEvent { x: (x * 65536.0 / sw) as i32, y: (y * 65536.0 / sh) as i32 }.to_event()
+    };
     let mut input = ProducerHandle::new().expect("pointer-bench: no inputd producer");
     let mut send = |event: orbclient::Event| {
         if let Err(err) = input.write_event(event) {
@@ -53,7 +62,7 @@ fn main() {
     // by as much as the pointer does.
     let (ox, oy) = match drag {
         Some((x, y)) => {
-            send(MouseEvent { x, y }.to_event());
+            send(to_event(f64::from(x), f64::from(y)));
             thread::sleep(pause);
             send(ButtonEvent { left: true, middle: false, right: false }.to_event());
             thread::sleep(pause);
@@ -69,7 +78,7 @@ fn main() {
         let angle = moves as f64 * std::f64::consts::TAU / (hz * 2.0);
         let x = cx + radius * angle.cos() + ox;
         let y = cy + radius * angle.sin() + oy;
-        send(MouseEvent { x: x as i32, y: y as i32 }.to_event());
+        send(to_event(x, y));
         moves += 1;
         let next = step * moves as u32;
         if let Some(wait) = next.checked_sub(start.elapsed()) {
