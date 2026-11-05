@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 5 Nov 2026 11:00:43 +0100
+Subject: [PATCH] dwc2d: LAN7800 multicast hash filter
+
+lan78xx::set_multicast programs the chip's 512-bit multicast hash table
+(through the DP_SEL data port, like Linux lan78xx_set_multicast) and
+switches RFE_CTL from "all multicast" to the hash filter. With the groups
+the network stack joined, the LAN's other multicast (mDNS for others,
+SSDP, all IPv6) no longer wakes dwc2d and netstack (#126, #216).
+None keeps accepting all multicast; an empty list accepts none.
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 93 ++++++++++++++++++++++++++++++++
+ 1 file changed, 93 insertions(+)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index aedc682..db2e064 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -30,6 +30,11 @@ const ID_REV: u16 = 0x000;
+ const INT_STS: u16 = 0x00C;
+ const HW_CFG: u16 = 0x010;
+ const PMT_CTL: u16 = 0x014;
++/// Data port to the chip's internal tables (here the multicast hash table).
++const DP_SEL: u16 = 0x024;
++const DP_CMD: u16 = 0x028;
++const DP_ADDR: u16 = 0x02C;
++const DP_DATA: u16 = 0x030;
+ const USB_CFG0: u16 = 0x080;
+ const BURST_CAP: u16 = 0x090;
+ const BULK_IN_DLY: u16 = 0x094;
+@@ -59,9 +64,18 @@ const PMT_CTL_PHY_RST: u32 = 1 << 4;
+ const USB_CFG_BCE: u32 = 1 << 5;
+ const USB_CFG_BIR: u32 = 1 << 6;
+ const RFE_CTL_DA_PERFECT: u32 = 1 << 1;
++const RFE_CTL_MCAST_HASH: u32 = 1 << 3;
+ const RFE_CTL_MCAST_EN: u32 = 1 << 9;
+ const RFE_CTL_BCAST_EN: u32 = 1 << 10;
+ const FCT_CTL_EN: u32 = 1 << 31;
++const DP_SEL_RSEL_MASK: u32 = 0xF;
++/// The VLAN and destination-address hash RAM.
++const DP_SEL_RSEL_VLAN_DA: u32 = 1;
++const DP_SEL_DPRDY: u32 = 1 << 31;
++const DP_CMD_WRITE: u32 = 1;
++/// The multicast hash table (512 bits) follows the 128 VLAN words.
++const VHF_HASH_OFFSET: u32 = 128;
++const VHF_HASH_WORDS: usize = 16;
+ const MAC_CR_AUTO_SPEED: u32 = 1 << 11;
+ const MAC_CR_AUTO_DUPLEX: u32 = 1 << 12;
+ const MAC_RX_EN: u32 = 1 << 0;
+@@ -188,6 +202,31 @@ impl Regs<'_> {
+         Ok(())
+     }
+ 
++    fn wait_set(&mut self, reg: u16, bits: u32, what: &'static str) -> Result<(), Error> {
++        let start = Instant::now();
++        while self.read(reg)? & bits == 0 {
++            if start.elapsed() > Duration::from_secs(1) {
++                return Err(Error::Timeout(what));
++            }
++            sleep(Duration::from_millis(1));
++        }
++        Ok(())
++    }
++
++    /// Write `words` to the hash RAM, starting at word `addr`.
++    fn dataport_write(&mut self, addr: u32, words: &[u32]) -> Result<(), Error> {
++        self.wait_set(DP_SEL, DP_SEL_DPRDY, "data port")?;
++        let sel = self.read(DP_SEL)? & !DP_SEL_RSEL_MASK;
++        self.write(DP_SEL, sel | DP_SEL_RSEL_VLAN_DA)?;
++        for (i, &word) in (0u32..).zip(words) {
++            self.write(DP_ADDR, addr + i)?;
++            self.write(DP_DATA, word)?;
++            self.write(DP_CMD, DP_CMD_WRITE)?;
++            self.wait_set(DP_SEL, DP_SEL_DPRDY, "data port write")?;
++        }
++        Ok(())
++    }
++
+     fn mii_read(&mut self, reg: u32) -> Result<u16, Error> {
+         self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII busy")?;
+         self.write(MII_ACC, (PHY_ADDR << 11) | (reg << 6) | MII_ACC_BUSY)?;
+@@ -340,6 +379,45 @@ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), E
+     r.write(MAF_HI0, address_high | MAF_HI_VALID)
+ }
+ 
++/// The bit of `mac` in the multicast hash table: the top 9 bits of the
++/// Ethernet CRC (Linux `ether_crc`: data bits least significant first,
++/// no final inversion).
++fn multicast_hash(mac: &[u8; 6]) -> usize {
++    let mut crc = u32::MAX;
++    for &byte in mac {
++        for i in 0..8 {
++            let bit = u32::from(byte >> i) & 1;
++            let msb = crc >> 31;
++            crc <<= 1;
++            if msb ^ bit != 0 {
++                crc ^= 0x04C1_1DB7;
++            }
++        }
++    }
++    (crc >> 23) as usize & 0x1FF
++}
++
++/// Receive only the multicast groups in `groups` (and the own address and
++/// broadcast), or all multicast with `None`. Accepting all multicast wakes
++/// the driver and the network stack for every mDNS, SSDP and IPv6 frame
++/// on the LAN (#126, #216).
++pub fn set_multicast(bus: &mut Bus, f: &Lan78xxFunction, groups: Option<&[[u8; 6]]>) -> Result<(), Error> {
++    let mut r = Regs { bus, f };
++    let mut table = [0u32; VHF_HASH_WORDS];
++    for mac in groups.unwrap_or(&[]) {
++        let bit = multicast_hash(mac);
++        table[bit / 32] |= 1 << (bit % 32);
++    }
++    r.dataport_write(VHF_HASH_OFFSET, &table)?;
++    let rfe = r.read(RFE_CTL)? & !(RFE_CTL_MCAST_EN | RFE_CTL_MCAST_HASH);
++    let rfe = match groups {
++        None => rfe | RFE_CTL_MCAST_EN,
++        Some([]) => rfe,
++        Some(_) => rfe | RFE_CTL_MCAST_HASH,
++    };
++    r.write(RFE_CTL, rfe)
++}
++
+ pub struct Lan78xx {
+     hc: Dwc2,
+     f: Lan78xxFunction,
+@@ -476,3 +554,18 @@ impl NetworkAdapter for Lan78xx {
+         Ok(len)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::multicast_hash;
++
++    /// Reference values from Linux's formula, computed with zlib:
++    /// `bitrev32(crc32(mac) ^ 0xffffffff) >> 23`.
++    #[test]
++    fn hash() {
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]), 255);
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb]), 126);
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa]), 348);
++        assert_eq!(multicast_hash(&[0x33, 0x33, 0x00, 0x00, 0x00, 0x01]), 499);
++    }
++}
