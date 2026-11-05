@@ -131,7 +131,12 @@ timer `redox-stable.timer`, [config/redox-stable.timer](../config/redox-stable.t
    marked so.
 2. It builds `origin/main` in `~/redox-rpi-stable` with the options in
    [config/stable-image.conf](../config/stable-image.conf), stages it,
-   resets the Pi and runs `scripts/pi-test.py`.
+   resets the Pi and runs `scripts/pi-test.py`. If that passes, it runs 15
+   rounds of the chaos stressor (`scripts/chaos-host.py --faults stressor`,
+   seed = the date) for at most 10 minutes and checks that devsh still
+   answers. The chaos result goes into the report and does not decide the
+   stable image; a Pi that froze needs a power cycle through the Pi test
+   agent.
 3. Pass: the image becomes the stable image. The script backs it up, updates
    the block above, appends the report to [test-reports.md](test-reports.md)
    and pushes both to `main`.
