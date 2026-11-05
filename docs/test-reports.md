@@ -8809,3 +8809,57 @@ keyboard polls 25984 reports 0 timeouts 619 start busy 1867 ms
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 07:29:18
   (no network for the devsh reset): banner after 30 s, devsh answers, and `/srv/tftp/redox`
   matches the backup.
+
+## #244 #126 eth-speed request every 5 s (PR #215) (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-437-gb0f6b8e+x23c2` (`eth-link-check` + `cputop-58`, experiments
+`eth-speed cputop`, md5 `d3d2de48…`; there is no manifest file next to it, so pi-test ran
+without `--manifest`). Real Pi 3B+ over netboot, no HDMI connected. Reset at 07:56:06 UTC,
+`devshd: listening` after 20 s.
+
+**Result: pass on what the row asks.** pi-test passes, and both speed changes come within
+the 5 s check plus negotiation, with no panic. **But idle wakeups are higher than in
+row 239, not lower:** dwc2d 110/s (239: 76), netstack 60/s (27–29), IRQ line 50 19/s (7–8).
+dwc2d's CPU stays at 2.6 %.
+
+- **pi-test:** pass (version, manifest present in the image, ps, ps-tty, sdcard,
+  0 of 300 starts failed).
+- **`cputop -w -l 10 60`** after 5 min idle:
+
+```text
+cputop: 60.0 s, 44 threads
+cpu0  busy   0 %  (21 ms busy, 59991 ms idle, 137 switches/s)
+cpu1  busy   0 %  (201 ms busy, 59815 ms idle, 189 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60017 ms idle, 170 switches/s)
+cpu3  busy   2 %  (1793 ms busy, 58225 ms idle, 315 switches/s)
+irq   119/s  (3: 100, 50: 19)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.6     110    0:00:11.2 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0      66    0:00:00.0 RR+   #3   [kmain]
+25    0.3      60    0:00:01.3 UB    #3   /usr/bin/netstack
+0    0.0      10    0:00:00.0 RR+   #1   [kmain]
+8    0.3       9    0:00:01.3 US    #1   /scheme/initfs/bin/rpi-firmwared
+0    0.0       9    0:00:00.0 RR    #0   [kmain]
+21    0.0       9    0:00:00.2 UB    #0   /usr/bin/ptyd
+0    0.0       1    0:00:00.3 UB    #0   initnsmgr
+20    0.1       1    0:00:32.4 UB    #3   /scheme/initfs/bin/redoxfs
+8    0.0       0    0:00:00.0 US    #1   /scheme/initfs/bin/rpi-firmwared
+```
+
+- **Compared with #239:**
+  - dwc2d 110/s (76), 2.6 % (2.5 %).
+  - initnsmgr 1/s (1), redoxfs 1/s (1).
+  - netstack 60/s (27–29), [kmain] on dwc2d's core 66/s (62).
+  - irq 119/s: line 3 100, line 50 19 (239: 107–108 with line 50 7–8).
+  - The extra line-50 interrupts and netstack wakeups suggest more Ethernet traffic in this
+    minute, or more link polling, not the file check. This is one round only.
+- **Speed changes on the serial console.** The times are from Enter, and the log was polled
+  every 2 s, so they are accurate to about 2 s:
+  - `echo 100 > /tmp/dwc2d-link`: `advertising up to 100 Mbit/s, negotiating again` after
+    about 4 s, `link down`, then `link up on the LAN7800 at address 6, 100 Mbit/s` after
+    about 8 s.
+  - `echo 1000 > /tmp/dwc2d-link`: `advertising up to 1000 Mbit/s` after about 2 s, `link
+    down`, then `link up … 1000 Mbit/s` after about 6 s. devsh answered again.
+- No panic in the serial log.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
