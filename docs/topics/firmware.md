@@ -60,8 +60,12 @@
   the 1 s hotplug rescan, the 10 ms keyboard poll, netstack's reads on each
   tick, and LAN7800 interrupts (SOF is already masked). The change rescans
   every 3 s, reads the link every 5 s, and counts wakeups by source in
-  `/tmp/dwc2d-wakeups`; Pi test #242 compares before and after with
-  `cputop`. Then EEE on the LAN7800 and gating clocks that run for nothing.
+  `/tmp/dwc2d-wakeups`. Pi test #242: no change (2.5 % and about 76
+  wakeups/s before and after). The cost is the 10 ms keyboard poll: 50/s,
+  about 130 µs each, 2.2 % of a core. The test Pi's low-speed keyboard
+  sits behind a hub, so each poll is a split transaction that `dwc2d`
+  spins on. Next: poll without blocking and wait for the channel interrupt
+  instead. Without a keyboard, `dwc2d` should be well under 0.5 %. Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 ## Bluetooth
 
