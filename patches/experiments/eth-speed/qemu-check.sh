@@ -14,7 +14,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$image" --usb-net --timeout 600 \
-    --run "echo 100 > /tmp/dwc2d-link; sleep 3; echo fast > /tmp/dwc2d-link; sleep 3" \
+    --run "echo 100 > /tmp/dwc2d-link; sleep 6; echo fast > /tmp/dwc2d-link; sleep 6" \
     --run "echo ETH-AFTER; ls /tmp; ps" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"

@@ -83,6 +83,7 @@ patches/experiments/chaos/*             stability
 
 # Scripts and tools
 scripts/check-patches.sh                ci
+scripts/check-upstream-drift.py         ci
 scripts/check-topics.py                 ci
 scripts/pr-order.py                     ci
 scripts/pi-test.py                      ci
