@@ -22,27 +22,42 @@ license.
 - **A number in `base/`, `kernel/`, `relibc/` and the other default
   directories is given only at the merge to `main`**, by whoever merges:
   the next free number in that directory, in the order the patches must
-  apply. The merger moves the files (`git mv`), updates the table below and
-  checks that the default build still boots (QEMU, then the nightly run).
+  apply. The merger moves the files (`git mv`), notes in the experiment's
+  README that it is now default patches, and checks that the default build
+  still boots (QEMU, then the nightly run).
 - A branch that already moved its patches to a default directory keeps
   them there; the merger renumbers them if the numbers are taken.
 
 Experiments are applied after the default patches, in the order of the
 `--experiment` options; their files get an `exp-<name>-` prefix in the
-recipe, so equal numbers do not collide. The base patch numbers say what
-each one expects to come before it:
+recipe, so equal numbers do not collide.
 
-| Number | Where | What |
-|---|---|---|
-| `0001`–`0016`, `0018`, `0020`–`0028`, `0030`–`0034`, `0037`, `0040`, `0045`–`0048`, `0056` | `base/` | default patches; `0018` is `rpi-firmwared`, `0020` RTL8152/RTL8153 Ethernet in `dwc2d` (was experiment `rtl8152`), `0021` the ARM clock and throttle watch of `rpi-firmwared`, `0022` `dwc2d` waits for its interrupt (was experiment `dwc2-interrupts`, with kernel `0004`–`0006`), `0023` `dwc2d` picks the network adapter with a link, `0024` getty keeps input the PTY does not take yet (was experiment `serial-rx`, with kernel `0007`; #28, #32), `0025`–`0028` the sdhost driver `bcm2835-sdhostd`, started at boot instead of `bcm2835-sdhcid` (were experiments `sdhost-driver` and `sdhost-boot`, #6), `0030` no PCI and audio services on the Pi (was experiment `pi-clean-boot`; touches only init, `hwd` and unit files, so it applies with any experiment), `0031` `dwc2d` finds USB devices plugged in or removed after boot, `0032` `dhcpd` tries again until the server answers, `0033` the hub port cycle command for hotplug tests (`0031`–`0033` were experiment `usb-hotplug`; #17), `0034` a shorter `dwc2d` boot: hubs take what is connected and the link wait overlaps with rescans (was experiment `dwc2d-boottime`; #47), `0037` `dwc2d` asks again for a USB reply shorter than the fields it reads, instead of panicking (was experiment `dwc2d-short-reply`; test 98, test 105), `0040` the `rpi-firmwared` governor, the ARM clock follows the load (was experiment `cpu-ondemand`, with kernel `0040`; #23, Pi test #93), `0045` GPIO driver `bcm2835-gpiod`, `0046` `rpi-firmwared` `power_led` (after `0040`, same lines), `0047` I2C driver `bcm2835-i2cd`, `0048` SPI driver `bcm2835-spid` (were experiments `gpio`, `i2c`, `spi`; #38, #39, #42, Pi test #99), `0056` netstack lists its `netcfg` directories, so `ls /scheme/netcfg/ifaces` works (#105) |
-| `0001`–`0008`, `0040` | `kernel/` | default patches; `0008` frees a thread that ends itself when its syscall returns (was experiment `ctx-leak-fix`, #31), `0040` CPU times in `sys:stat` without rounding (with base `0040`, #23) |
-| `0029` | `experiments/sdhost-stats/base/` | transfer statistics at boot |
+**What each patch does** is in its commit message (the patch file's
+header). To list the numbers in use and what they do:
 
-Experiments apply after all default patches. Combinations that build:
-`sdhost-stats`, `timesync`, `ldso-diagnostics`.
-`rtl8152`, `dwc2-interrupts`, `serial-rx`, `pi-clean-boot`, `sdhost-driver`,
-`sdhost-boot`, `ctx-leak-fix`, `usb-hotplug`, `dwc2d-boottime`, `dwc2d-short-reply`, `cpu-ondemand`, `gpio`, `i2c` and `spi` are default patches now; the names are still accepted
-and do nothing.
+```sh
+grep -H -m1 '^Subject:' patches/base/*.patch
+```
+
+The notes up to 2026-10-31, including which experiment each default patch
+came from, are in [history.md](history.md).
+
+**Merged experiments:** an experiment directory with only a README is one
+that became default patches; its README says which. `--experiment` still
+accepts the name and does nothing.
+
+**Lists that nobody edits:** to keep pull requests from conflicting with
+each other, no shared list names patches or programs:
+
+- `scripts/build-image.sh` pins every core recipe that has a line in
+  `config/upstream.lock`, and patches those with a directory here
+  (`patches/<recipe>/`) or in a selected experiment. A patched recipe needs
+  a lock line. A core recipe without one builds the newest upstream commit
+  each time (#145), so every recipe built from source belongs in the lock.
+- It builds every program in `tools/<name>/` that has a `recipe.toml` (the
+  `[build]` part of its recipe; it adds the `[source]` part). Whether the
+  image contains the program is decided by the image config or the
+  experiment's `config.toml`.
 
 Reported upstream (drop the patch once the pinned commit has the fix):
 

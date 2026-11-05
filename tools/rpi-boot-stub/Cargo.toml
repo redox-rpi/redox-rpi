@@ -1,0 +1,16 @@
+[package]
+name = "rpi-boot-stub"
+description = "kernel8.img for the Pi firmware: starts the unchanged Redox kernel without U-Boot and the Redox bootloader"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+fdt = "0.1.5"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"
