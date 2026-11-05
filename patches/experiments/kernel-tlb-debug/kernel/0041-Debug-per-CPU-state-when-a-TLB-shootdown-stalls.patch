@@ -1,12 +1,27 @@
 From: chaos session <noreply@anthropic.com>
-Subject: [PATCH] Debug: per-CPU state when a TLB shootdown stalls (issue #207)
+Subject: [PATCH] Debug: per-CPU state when a TLB shootdown stalls, where a fault lacks a grant (issue #207)
 
 ---
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index 74ef9e74..b0a01616 100644
+index 74ef9e74..52939cbd 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
-@@ -3052,6 +3052,27 @@ impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
+@@ -2589,7 +2589,13 @@ fn correct_inner<'l>(
+     let mut flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
+ 
+     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
+-        debug!("Lacks grant");
++        // Debug (issue #207): where, and from which CPU.
++        debug!(
++            "Lacks grant: page {:#x}, {:?}, CPU {}",
++            faulting_page.start_address().data(),
++            access,
++            crate::cpu_id()
++        );
+         return Err(PfError::Segv);
+     };
+ 
+@@ -3052,6 +3058,27 @@ impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
                      self.state.ackword.load(Ordering::SeqCst),
                      affected_cpu_count
                  );

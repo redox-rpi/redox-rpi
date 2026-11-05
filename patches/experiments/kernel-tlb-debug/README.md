@@ -20,6 +20,10 @@ prints again every 5 s:
   took the IPI but acknowledged on another address space (it switched in
   between).
 
+It also adds the page, the kind of access and the CPU to the
+`Lacks grant` debug line: the Pi printed eight of them right before it
+froze in tests 237 and 238.
+
 ```bash
 scripts/build-image.sh --experiment chaos --experiment kernel-tlb-debug
 ```
