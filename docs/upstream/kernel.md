@@ -110,5 +110,8 @@ Our [#207](https://github.com/redox-rpi/redox-rpi/issues/207). Checked against t
   `write_arc` loops on `try_write` and calls `maybe_handle_tlb_shootdown()`
   while it waits. About 15 lines.
 - **Tested:** QEMU raspi3b. Without the fix, the `threads` loop froze in its
-  first iteration; with it, 200 iterations (600 rounds) passed. The Pi test
-  is queued.
+  first iteration; with it, 200 iterations (600 rounds) passed. Real Pi
+  3B+: it helps, but the Pi still froze, more rarely, in tests 238 and 240
+  (once in 7 runs) without a stall line, so there may be a second, rarer
+  cause (our #207 stays open). Test 241, with extra lock-wait watches, ran
+  1360 rounds without a freeze.
