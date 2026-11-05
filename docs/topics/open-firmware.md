@@ -35,15 +35,41 @@ created yet, waiting for the maintainer's OK), so this repository stays MIT.
 
 ## In progress
 
-- Pi test #224 (card swap by the maintainer, planned 2026-11-05): a
-  34 MiB card image with the open `bootcode.bin`, a devicetree, and a
-  32-bit test program as `zImage`. The program prints the CPU mode and IDs.
-  The first goal is any line on the serial console. Then we look at how far
-  the boot gets: SDRAM, ARM start, SD card, hand-off to `zImage`.
+- **Pi test #224 (2026-11-05, real Pi 3B+): the open firmware starts.**
+  Card swap by the maintainer. The Pi test agent read the serial log; the
+  log is on homenodellm in `~/pitest-tools/t224/serial-openfw.log`.
+  - Works: the VPU starts and prints on the serial console (`Booting
+    Raspberry Pi....`). The SDRAM is set up (`Elpida 1GB LPDDR2`, memory test
+    passed from `0xC0000000` to `0xFFF00000`). The USB power domain and PHY
+    come up. The ARM clock is set, and ARM core 0 starts the 32-bit
+    chainloader in Supervisor mode. `SDRAM_SIZE=0` in the log is right: 0
+    means 1 GB in this code.
+  - The SD card is found: a 64 MB standard-capacity card (`SD064`, CSD 1.0,
+    not SDHC). After the switch to the data clock ("25 MHz"), one read
+    gave a FIFO error (word 113, status `0x21`).
+  - Then the chainloader stopped with `Fatal Exception: Undefined
+    instruction` while reading the MBR. `cmdline.txt`, `rpi.dtb` and the test
+    payload were never reached. In the exception dump, `sp` and `lr` are the
+    unused user-mode registers, not real values.
+  - **Cause of the crash: our compiler, not the Pi.** Two C++ functions in
+    the chainloader end without `return`. Upstream built them with an old
+    GCC, where that happened to work. GCC 13 puts a trap instruction (`udf`)
+    there, and `read_block<Mbr>` hit it at `0xbfdc`. A second bug hid the SD
+    error: the read function declared its error variable twice, so it
+    always reported success.
+- **Fixed in `redox-rpi/rpi-open-firmware` (2026-11-05):** both `return`s
+  added, read errors reported. On an error the SD driver now halves the data
+  clock and reads again (up to 4 times), and logs the new divider. One boot
+  then shows whether the clock was too fast. Why the clock might be too
+  fast: the driver assumes a 250 MHz core clock, while `romstage.c`
+  programs PLLC differently, so the real SD clock is not known. New card
+  image for Pi test #225 (`bootcode.bin` sha256 `9d02c747…`). The build is
+  repeatable but not bit-identical, because the firmware prints its build
+  time.
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
-Read from the code, not yet tested on our Pi:
+Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our Pi:
 
 - **Boot ROM order.** The ROM first looks for `bootcode.bin` on the SD card.
   Only when there is none does it try USB or network boot (on the 3B+ that
@@ -69,9 +95,10 @@ Read from the code, not yet tested on our Pi:
   (MaxLinear MxL7704) supplies the voltages; the open firmware never talks
   to it, so the voltages stay at their defaults. The thermal and
   undervoltage monitoring that the closed firmware does is missing.
-- **SD card.** The chainloader drives the sdhost controller on GPIO 48–53
-  and only handles SDHC/SDXC cards in SD mode. Any common card from 4 GB up
-  works; very old cards of 2 GB or less may not.
+- **SD card.** The chainloader drives the sdhost controller on GPIO 48–53.
+  #224 used a 64 MB standard-capacity card: the card was found, but a read
+  at the data clock failed (see above). A common SDHC card (4–32 GB) is the
+  other case to try.
 - **LAN7515 (USB hub and Ethernet).** The firmware turns on the USB power
   domain and the PHY, but nothing on the ARM side drives USB yet. With the
   closed firmware, the MAC address comes from OTP, either through the
