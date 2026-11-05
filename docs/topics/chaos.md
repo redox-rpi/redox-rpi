@@ -28,6 +28,13 @@ Nothing on `main` yet.
 
 ## Findings
 
+- [#207](https://github.com/redox-rpi/redox-rpi/issues/207): the `threads`
+  round froze the whole Pi (test 237) and QEMU. Cause: a context switch
+  waited for a context lock without handling TLB shootdowns while another
+  CPU waited for its acknowledgement. Fix in PR #209
+  (experiment `kernel-switch-shootdown`).
+- Pi test 237, host fault round 20: after an 85 s netem delay, the network
+  did not come back (#92 picture). The network session follows it up.
 - [#205](https://github.com/redox-rpi/redox-rpi/issues/205): signals sent
   with `kill()` never reach a process that loops on pipe read/write (every
   `signals` round, QEMU).
