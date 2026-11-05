@@ -1,0 +1,438 @@
+From 8173cc6b9011ffdaf3c788e280644c6447aa2bd3 Mon Sep 17 00:00:00 2001
+From: dwc2d <dwc2d@localhost>
+Date: Thu, 5 Nov 2026 06:05:51 +0000
+Subject: [PATCH] dwc2d: poll the keyboard on the channel interrupt instead
+ of spinning
+
+Each poll of a low-speed keyboard behind a hub waited for its start and
+complete split, about 130 us of spinning 50 times a second on the Pi
+(row 242, #211). The channel halt now raises the controller interrupt,
+which sends the complete split or takes the report. A timer check stops
+a poll after 50 ms in case an interrupt is lost.
+---
+ drivers/usb/dwc2d/src/dwc2.rs    |  85 ++++++++++++-------
+ drivers/usb/dwc2d/src/hid.rs     | 137 +++++++++++++++++++++++++++----
+ drivers/usb/dwc2d/src/main.rs    |  19 ++++-
+ drivers/usb/dwc2d/src/wakeups.rs |  13 ++-
+ 4 files changed, 210 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index dfc5d19a..c0c02378 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -135,11 +135,12 @@ impl Dwc2 {
+         Ok(())
+     }
+ 
+-    /// Raise the controller's interrupt when channel `ch` halts. Only that
+-    /// channel: all other transfers wait for their channel by polling.
++    /// Raise the controller's interrupt when channel `ch` halts, in
++    /// addition to the channels enabled before: the receive channel and the
++    /// keyboard's. All other transfers wait for their channel by polling.
+     pub fn enable_rx_interrupt(&self, ch: usize) {
+         self.write(hcintmsk(ch), HCINT_CH_HLTD);
+-        self.write(HAINTMSK, 1 << ch);
++        self.write(HAINTMSK, self.read(HAINTMSK) | 1 << ch);
+         self.write(GINTMSK, GINTSTS_HCHINT);
+         self.write(GAHBCFG, self.read(GAHBCFG) | GAHBCFG_GLBL_INTR_EN);
+     }
+@@ -268,6 +269,56 @@ impl Dwc2 {
+     /// halts. Returns the HCINT bits. Interrupt endpoints go out in the next
+     /// (micro)frame.
+     fn packet(&self, ch: usize, phase: &Phase, hcsplt_value: u32, timeout: Duration) -> Result<u32, Error> {
++        self.start_packet(ch, phase, hcsplt_value);
++
++        let start = Instant::now();
++        loop {
++            if let Some(status) = self.halted(ch) {
++                return Ok(status);
++            }
++            if start.elapsed() > timeout {
++                let value = self.read(hcchar(ch));
++                self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                return Err(Error::Timeout("channel halt"));
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// The HCINT bits of a channel once it has halted, cleared; `None`
++    /// while it is busy.
++    pub fn halted(&self, ch: usize) -> Option<u32> {
++        let status = self.read(hcint(ch));
++        if status & HCINT_CH_HLTD == 0 {
++            return None;
++        }
++        self.write(hcint(ch), u32::MAX);
++        Some(status)
++    }
++
++    /// HCSPLT for a split transaction through the transaction translator
++    /// of hub `tt.0`, port `tt.1`; a complete split with `complete`.
++    pub fn split_value(tt: (u8, u8), complete: bool) -> u32 {
++        let value = HCSPLT_SPLTENA | HCSPLT_XACTPOS_ALL | (u32::from(tt.0) << HCSPLT_HUBADDR_SHIFT) | u32::from(tt.1);
++        if complete {
++            value | HCSPLT_COMPSPLT
++        } else {
++            value
++        }
++    }
++
++    /// Wait until a periodic start split may go out: not in the last
++    /// microframes, which leave the hub too little of the frame for the
++    /// transaction.
++    pub fn wait_split_window(&self) {
++        while self.read(HFNUM) & 7 >= 5 {
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Program a single packet like [`Dwc2::packet`] and enable the
++    /// channel without waiting for it; see [`Dwc2::halted`].
++    pub fn start_packet(&self, ch: usize, phase: &Phase, hcsplt_value: u32) {
+         self.write(hcint(ch), u32::MAX);
+         self.write(hcsplt(ch), hcsplt_value);
+         self.write(
+@@ -282,26 +333,11 @@ impl Dwc2 {
+             value |= HCCHAR_ODDFRM;
+         }
+         self.write(hcchar(ch), value);
+-
+-        let start = Instant::now();
+-        loop {
+-            let status = self.read(hcint(ch));
+-            if status & HCINT_CH_HLTD != 0 {
+-                self.write(hcint(ch), u32::MAX);
+-                return Ok(status);
+-            }
+-            if start.elapsed() > timeout {
+-                let value = self.read(hcchar(ch));
+-                self.write(hcchar(ch), value | HCCHAR_CHDIS);
+-                return Err(Error::Timeout("channel halt"));
+-            }
+-            std::hint::spin_loop();
+-        }
+     }
+ 
+     /// Bytes moved by the last transfer on a channel and the data PID for
+     /// the next one.
+-    fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
++    pub fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
+         let hctsiz_value = self.read(hctsiz(ch));
+         let remaining = (hctsiz_value & 0x7FFFF) as usize;
+         (len.saturating_sub(remaining), (hctsiz_value >> HCTSIZ_PID_SHIFT) & 0x3)
+@@ -320,10 +356,7 @@ impl Dwc2 {
+         timeout: Duration,
+     ) -> Result<Option<(usize, u32)>, Error> {
+         let periodic = phase.ep_type == EPTYPE_INTERRUPT;
+-        let split = HCSPLT_SPLTENA
+-            | HCSPLT_XACTPOS_ALL
+-            | (u32::from(tt.0) << HCSPLT_HUBADDR_SHIFT)
+-            | u32::from(tt.1);
++        let split = Self::split_value(tt, false);
+         let start = Instant::now();
+         let check_time = |what| {
+             if start.elapsed() > timeout {
+@@ -335,11 +368,7 @@ impl Dwc2 {
+         'start_split: loop {
+             check_time("start split")?;
+             if periodic {
+-                // Leave the hub the rest of the frame for the transaction:
+-                // no start split in the last microframes.
+-                while self.read(HFNUM) & 7 >= 5 {
+-                    std::hint::spin_loop();
+-                }
++                self.wait_split_window();
+             }
+             let status = self.packet(ch, phase, split, timeout)?;
+             if status & HCINT_STALL != 0 {
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 7e55d02a..1b840641 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -25,8 +25,11 @@ const PROTOCOL_BOOT: u16 = 0;
+ 
+ /// The host channel for keyboard reports; 0 does control transfers, the
+ /// network adapters use 1 and 2.
+-const CHANNEL: usize = 3;
++pub const CHANNEL: usize = 3;
+ const POLL_INTERVAL: Duration = Duration::from_millis(10);
++/// A poll whose channel has not halted by then (a lost interrupt) is
++/// stopped, and the next one starts.
++const POLL_TIMEOUT: Duration = Duration::from_millis(50);
+ /// Auto-repeat of a held key, as keyboards in the boot protocol leave it to
+ /// the host.
+ const REPEAT_DELAY: Duration = Duration::from_millis(500);
+@@ -104,6 +107,29 @@ pub fn init(bus: &mut Bus, f: &KeyboardFunction) -> Result<(), Error> {
+     Ok(())
+ }
+ 
++/// Where the running poll is, when the channel's halt raises the
++/// controller's interrupt.
++#[derive(Clone, Copy, PartialEq)]
++enum Stage {
++    Idle,
++    /// The IN packet, or the start split to the keyboard's hub, is out.
++    Start,
++    /// The complete split that fetches the hub's result is out.
++    Complete,
++}
++
++/// Counts for `/tmp/dwc2d-wakeups`.
++#[derive(Clone, Copy, Default)]
++pub struct Stats {
++    pub polls: u64,
++    pub reports: u64,
++    /// Polls stopped after [`POLL_TIMEOUT`].
++    pub timeouts: u64,
++    /// Time spent starting polls, including the wait for the start split
++    /// window.
++    pub start_busy: Duration,
++}
++
+ pub struct Keyboard {
+     hc: Dwc2,
+     f: KeyboardFunction,
+@@ -115,6 +141,12 @@ pub struct Keyboard {
+     next_poll: Instant,
+     /// The key that repeats while held and when it repeats next.
+     repeat: Option<(u8, Instant)>,
++    /// Whether the channel's halt raises the controller's interrupt; if
++    /// not, each poll waits for its channel.
++    use_irq: bool,
++    stage: Stage,
++    started: Instant,
++    pub stats: Stats,
+ }
+ 
+ impl Keyboard {
+@@ -131,6 +163,10 @@ impl Keyboard {
+             input,
+             next_poll: Instant::now(),
+             repeat: None,
++            use_irq: false,
++            stage: Stage::Idle,
++            started: Instant::now(),
++            stats: Stats::default(),
+         })
+     }
+ 
+@@ -138,6 +174,12 @@ impl Keyboard {
+         self.f.address
+     }
+ 
++    /// Wait for the poll's channel on the controller's interrupt (see
++    /// [`Keyboard::interrupt`]) instead of spinning on it.
++    pub fn use_interrupt(&mut self, on: bool) {
++        self.use_irq = on;
++    }
++
+     /// Fetch a report when the poll interval has passed and send the key
+     /// changes. Errors are dropped: the next poll tries again.
+     /// Poll the keyboard and repeat a held key when due. Returns the time
+@@ -159,12 +201,80 @@ impl Keyboard {
+                 self.repeat = Some((key, now + REPEAT_INTERVAL));
+             }
+         }
+-        if now < self.next_poll {
++        if self.stage != Stage::Idle {
++            // The interrupt may have been lost: look at the channel, and
++            // stop a poll that takes far too long.
++            self.interrupt();
++            if self.stage != Stage::Idle && now.duration_since(self.started) > POLL_TIMEOUT {
++                self.hc.halt(CHANNEL);
++                self.stage = Stage::Idle;
++                self.stats.timeouts += 1;
++            }
++        }
++        if now < self.next_poll || self.stage != Stage::Idle {
+             return;
+         }
+         self.next_poll = now + POLL_INTERVAL;
++        self.stats.polls += 1;
++
++        if self.use_irq {
++            // Only start the transfer; its channel's halt raises the
++            // interrupt, see [`Keyboard::interrupt`].
++            let phase = self.phase();
++            match self.f.tt {
++                Some(tt) => {
++                    self.hc.wait_split_window();
++                    self.hc.start_packet(CHANNEL, &phase, Dwc2::split_value(tt, false));
++                }
++                None => self.hc.start_packet(CHANNEL, &phase, 0),
++            }
++            self.stage = Stage::Start;
++            self.started = now;
++            self.stats.start_busy += now.elapsed();
++            return;
++        }
++
++        let phase = self.phase();
++        match self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
++            Ok(Some((len, next_pid))) => self.received(len, next_pid),
++            Ok(None) | Err(_) => {}
++        }
++    }
+ 
+-        let phase = Phase {
++    /// The channel of a running poll may have halted: take its result, or
++    /// send the complete split once the hub has the start split. Called on
++    /// the controller's interrupt and from the timer.
++    pub fn interrupt(&mut self) {
++        if self.stage == Stage::Idle {
++            return;
++        }
++        let Some(status) = self.hc.halted(CHANNEL) else {
++            return;
++        };
++        if let Some(tt) = self.f.tt {
++            let complete = match self.stage {
++                // The hub took the start split.
++                Stage::Start => status & HCINT_ACK != 0,
++                // The hub has no result yet.
++                _ => status & HCINT_NYET != 0,
++            };
++            if complete {
++                self.hc.start_packet(CHANNEL, &self.phase(), Dwc2::split_value(tt, true));
++                self.stage = Stage::Complete;
++                return;
++            }
++        }
++        // Otherwise the poll is over: data, or a NAK (no key change),
++        // stall or error, which the next poll tries again.
++        self.stage = Stage::Idle;
++        if status & HCINT_XFER_COMPL != 0 {
++            let (len, next_pid) = self.hc.moved(CHANNEL, self.phase().len);
++            self.received(len, next_pid);
++        }
++    }
++
++    fn phase(&self) -> Phase {
++        Phase {
+             dev_addr: self.f.address,
+             endpoint: self.f.endpoint,
+             dir_in: true,
+@@ -174,17 +284,16 @@ impl Keyboard {
+             pid: self.pid,
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(8),
+-        };
+-        match self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
+-            Ok(Some((len, next_pid))) => {
+-                self.pid = next_pid;
+-                if len >= 3 {
+-                    let mut report = [0; 8];
+-                    report[..len].copy_from_slice(&self.buf[..len]);
+-                    self.update(report);
+-                }
+-            }
+-            Ok(None) | Err(_) => {}
++        }
++    }
++
++    fn received(&mut self, len: usize, next_pid: u32) {
++        self.pid = next_pid;
++        if len >= 3 {
++            self.stats.reports += 1;
++            let mut report = [0; 8];
++            report[..len].copy_from_slice(&self.buf[..len]);
++            self.update(report);
+         }
+     }
+ 
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index f6197611..c31c96bf 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -533,11 +533,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 .subscribe(file.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ)
+                 .expect("dwc2d: failed to subscribe to the IRQ");
+             hc.enable_rx_interrupt(RX_CHANNEL);
++            hc.enable_rx_interrupt(hid::CHANNEL);
+             println!("dwc2d: interrupt {path}");
+         }
+         _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
+     }
+ 
++    if let Some(k) = keyboard.as_mut() {
++        k.use_interrupt(irq_file.is_some());
++    }
++
+     // The keyboard's polls and, without an interrupt, the receive polls.
+     let mut timer = Timer::new().expect("dwc2d: failed to open /scheme/time");
+     events
+@@ -570,7 +575,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let mut irq = [0; 8];
+                 if file.read(&mut irq).unwrap_or(0) == irq.len() {
+                     // tick() takes the received frame and clears the
+-                    // channel's interrupt; only then unmask the line.
++                    // channel's interrupt, the keyboard its own; only then
++                    // unmask the line.
++                    match keyboard.as_mut() {
++                        Some(k) => k.interrupt(),
++                        // A poll of a keyboard just removed.
++                        None => {
++                            let _ = hc.halted(hid::CHANNEL);
++                        }
++                    }
+                     scheme.tick().expect("dwc2d: network scheme failed");
+                     let _ = file.write(&irq);
+                 }
+@@ -651,6 +664,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
+                         Some(Found::Keyboard(f)) if keyboard.is_none() => {
+                             keyboard = Keyboard::new(hc.clone(), f);
++                            if let Some(k) = keyboard.as_mut() {
++                                k.use_interrupt(irq_file.is_some());
++                            }
+                             timer.arm(Duration::ZERO);
+                         }
+                         _ => {}
+@@ -671,6 +687,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
++        wake.keyboard = keyboard.as_ref().map(|k| k.stats);
+         wake.count(source as usize, woke.elapsed());
+     }
+     unreachable!()
+diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
+index 2841d11d..0dc130af 100644
+--- a/drivers/usb/dwc2d/src/wakeups.rs
++++ b/drivers/usb/dwc2d/src/wakeups.rs
+@@ -16,12 +16,14 @@ pub struct Wakeups {
+     count: [u64; 4],
+     busy: [Duration; 4],
+     parts: [Duration; 4],
++    /// The keyboard's counts, if there is one.
++    pub keyboard: Option<crate::hid::Stats>,
+ }
+ 
+ impl Wakeups {
+     pub fn new() -> Self {
+         let now = Instant::now();
+-        Self { start: now, written: now, count: [0; 4], busy: [Duration::ZERO; 4], parts: [Duration::ZERO; 4] }
++        Self { start: now, written: now, count: [0; 4], busy: [Duration::ZERO; 4], parts: [Duration::ZERO; 4], keyboard: None }
+     }
+ 
+     /// Time spent in part `part` of a hotplug rescan (see [`PARTS`]).
+@@ -52,6 +54,15 @@ impl Wakeups {
+             for (i, name) in PARTS.iter().enumerate() {
+                 text += &format!("hotplug {name} busy {} ms\n", self.parts[i].as_millis());
+             }
++            if let Some(k) = self.keyboard {
++                text += &format!(
++                    "keyboard polls {} reports {} timeouts {} start busy {} ms\n",
++                    k.polls,
++                    k.reports,
++                    k.timeouts,
++                    k.start_busy.as_millis()
++                );
++            }
+             let _ = std::fs::write(FILE, text);
+         }
+     }
+-- 
+2.53.0
+
