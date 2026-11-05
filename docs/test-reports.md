@@ -9072,3 +9072,38 @@ works: in the rounds that finished, the free space after each remove stayed at
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 14:08:10:
   banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
 - The context dumps are on homenodellm in `~/pitest-tools/t248/diag-{1,4,6}.txt`.
+
+## #249 open-source VPU firmware, rerun with the fixed bootcode.bin (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-openfw-3bp-20261105.img.xz` (sha256 checked). The fixes: a missing
+`return` in `read_block<Mbr>`, SD read errors are now reported, and the SD driver retries at
+half the clock. Real Pi 3B+, no HDMI connected. The user wrote and swapped the cards, and
+the Pi test agent switched the plug for the second card and the return.
+
+**Result: pass on both cards. The open firmware reaches the 32-bit test payload on the
+Pi 3B+**: VPU → SDRAM → ARM → SD → MBR → FAT → `cmdline.txt`/`rpi.dtb`/`zImage` → `Jumping
+to the Linux kernel...` → payload. No panic.
+
+- **64 MB card** (the user switched on at about 14:33 UTC; log from serial.log, 174 lines):
+  - `SD064 59MB SD Card`, 25 MHz. **Sector 0 failed once**
+    (`transfer error on FIFO word 113: 0x21`, `status: 0x20`), then
+    `read of sector 0 failed, retrying with SH_CDIV 0x12 (was 0x8)` worked.
+  - MBR, `Boot partition mounted!`, `cmdline.txt` 32 bytes
+    (`console=ttyAMA0,115200 earlycon`), `rpi.dtb` 35252 bytes (valid FDT at 0xF000000),
+    `zImage` 444 bytes at 0x2000000, `Jumping to the Linux kernel...`.
+  - Then `redox-rpi: test payload reached (32-bit ARM, loaded as zImage)`,
+    `CPSR = 0x600001D3`, **`MIDR = 0x410FD034`**, `MPIDR = 0x80000000`,
+    `r2 (FDT) = 0x0F000000`, **`done, waiting (wfe)`**.
+  - The agent switched off at 14:34:50.
+- **SDHC card** (plug on at 14:37:28, 60 s, 152 lines):
+  - `Copyright 2016-2017 rpi-open-firmware authors`. `Detected SD card: Product N/A,
+    CSD Ver 2.0, Capacity 62412800, Size 60949`, `N/A 1803MB SDHC Card`. Capacity 62412800
+    blocks is about 32 GB, so the 1803 MB looks like an overflow in the size print.
+  - **No read error and no retry** at 25 MHz. MBR, boot partition, the same three files,
+    `Jumping to the Linux kernel...`, the same payload lines.
+  - **Last line `redox-rpi: done, waiting (wfe)`**. Off at 14:38:39.
+- **Network-boot card back:** plug on at 14:39:54. Stable `v0.4.0-dev-201-gb714bca+x9f76`
+  booted to `redox login:` after 29 s, and devsh answers. **pi-test pass** (version,
+  manifest, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- Logs on homenodellm: `~/pitest-tools/t249/serial-openfw-1433.log` (64 MB card) and
+  `serial-2.log` (SDHC). The open-firmware session has the details.
