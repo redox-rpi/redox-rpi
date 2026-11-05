@@ -9259,3 +9259,49 @@ loader fails with `mount failure: -2` on `sdhostp1`.** No panic.
 - **Network-boot card back** (plug on at 19:47:53): stable `v0.4.0-dev-201-gb714bca+x9f76`
   booted to `redox login:` after 28 s, and devsh answers. **pi-test pass** (version,
   manifest, ps, ps-tty, sdcard, 0 of 300 starts failed).
+
+## #220a #188 vc4d stage 1, automated check with HDMI attached (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-78-g8bed0132+x9736` (branch `graphics-vc4d`, experiments `vc4d orbital`).
+Real Pi 3B+ over netboot, **HDMI attached at power-on (NanoKVM)**, power cycle at
+20:20:25 UTC.
+
+The first try at 20:12 booted stable by mistake: the Graphics clone has no U-Boot build, so
+`netboot.sh` stopped (`mkimage missing`) and the old stable files stayed in place. The
+rerun used a staging folder with the Graphics scripts, config and bootloader, plus
+`mkimage` from `~/redox-rpi-cpu/build`.
+
+**Result: the check says FAILED, 9 passed and 2 failed.** Both failures are the list
+read-back: the list the HVS holds does not read back as written. Everything else passes:
+list start, frame count, active word, cursor at (16,16) and (960,540), and no HVS errors.
+The 2–120 s watch is all `PASS frames advance, errors []`. Serial login works, pi-test
+passes with the manifest (0 of 300 starts failed), and there was no panic.
+
+- **(1)** `vc4d: HVS at 0x3f400000, id 0x64647276, enabled`,
+  `dispctrl 0x9a0c0fff dispstat 0x00000000`. Channel lines before vc4d touched anything:
+  - `channel 0: ctrl 0x00000000 bkgnd 0x00000000 list 0 active 0 stat 0x119cb000 (mode 0, frame 11)`
+  - `channel 1: ctrl 0x80780438 bkgnd 0x01000000 list 1636 active 1636 stat 0xa00311b8 (mode 2, frame 49)`
+  - `channel 1: 1920x1080, list [4e005807, ff016000, 040b0780, 43d80720, 03d70000, fe914000, fefeaf80, 00001c80, 00008300, 40f33261, 40f36260, 00017d36, 00000ff4, 00000ff4, 80000000]`
+  - `channel 2: ctrl 0x00000000 bkgnd 0x00000000 list 0 active 0 stat 0x10000000 (mode 0, frame 0)`
+  - `taking over channel 1 at 1920x1080`. The stable boot an hour earlier with the same
+    NanoKVM had a 1824x984 framebuffer.
+- **(2)** Check:
+  - `PASS channel 1 list start is 2176`.
+  - **`FAIL list at 2176 reads back as written: [47006017, ff000000, 44380780, 018e0000, c5000000, c52ea400, 00001e00, 47006017, ff010010, 00400040, 003f0000, c57ec000, c57eff00, 00000100, 80000000]`**.
+  - `PASS frame count advances (2 frames)`, `PASS active word 2176 is in the list`,
+    `PASS cursor at (16, 16)`.
+  - Then for list 2240: `PASS list start`, **`FAIL list at 2240 reads back as written: [47006017, ff000000, 44380780, 00580000, c5000000, c50a5000, 00001e00, 47006017, ff21c3c0, 00400040, 00000000, c57ec000, c57ec000, 00000100, 80000000]`**.
+  - `PASS frame count`, `PASS active word`, `PASS cursor at (960, 540)`,
+    `PASS no HVS errors on channel 1: []`.
+  - `back on the firmware list 1636; 9 passed, 2 failed`, **`vc4d: check: FAILED`**.
+- **(3)** `vc4d: no primary plane, firmware list again` (twice). Then:
+  - `list 1 at 2048`: one plane, 1920x1080, pitch 7680.
+  - `list 2 at 2112`: one plane.
+  - `list 3 at 2048`: plane 1920x1080 plus a cursor plane 64x64 with alpha.
+- **(4)** After 2, 5, 10, 30, 60 and 120 s: `PASS frames advance, errors []`, list 2048,
+  active 2048.
+- **(5)** Login on serial works (`echo serial-ok`), and there is no panic.
+- The full `vc4d:` part (homenodellm `~/pitest-tools/t220a/vc4d.txt`) went to the Graphics
+  session.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
+  devsh answers, and `/srv/tftp/redox` matches the backup.
