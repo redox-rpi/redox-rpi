@@ -8987,3 +8987,40 @@ line 50 18–20/s. With it (B), the numbers are 80–82/s, 29–32/s and 8/s (#2
 - Full output on homenodellm: `~/pitest-tools/t247a/cputop-A.txt`, `t247/cputop-B.txt`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #224 open-source VPU firmware: does the open bootcode.bin start on our Pi 3B+? (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-openfw-3bp-20261104.img.xz` (sha256 `bd3537a5…`, `bootcode.bin`
+`f22e42e8…`, BUILDATE Nov 4 2026 14:45:31). Real Pi 3B+. The user swapped the cards, and the
+Pi test agent switched the plug. No HDMI connected.
+
+**Result: the VPU, SDRAM and ARM bring-up work on the 3B+. The SD card is found, but
+reading it fails, and the chainloader then crashes with `Undefined instruction` and
+`panic()`.** The payload was not reached.
+
+- (1) The plug was switched off at 11:34:02 UTC. (2) The user put in the open-firmware card.
+- (3) Plug on at 11:34:43, 60 s of serial (150 lines, on homenodellm at
+  `~/pitest-tools/t224/serial-openfw.raw`/`.log`), plug off at 11:35:43. In order:
+  - `Booting Raspberry Pi....`, `Copyright 2016-2017 rpi-open-firmware authors`: the VPU is
+    alive and the UART is up.
+  - `[SDRAM:sdram_init]: SDRAM Type: Elpida 1GB LPDDR2 (BC=0x58)`, self test at
+    0xC0000000–0xFFF00000 ok, **`SDRAM initialization completed successfully!`**.
+  - Image, USB and UsbPhy power domains started. ARM code copied (57412 bytes), `ARM ID:
+    0x364D5241`, `ARM clock succesfully initialized!`, async bridge `PM_PROC is now:
+    0x107F`, `ARM, continuing boot from here ...`.
+  - `[BRINGUP:main]: Firmware data: SDRAM_SIZE=0, VPU_CPUID=0x4000140`,
+    `Security extensions are supported!`, **`Execution mode: Supervisor`**.
+  - eMMC: `ERROR: sdhost status: 0x40`, 20× `waiting for SD`, then **`SD card has arrived!`**,
+    `SD064 59MB SD Card`, switched to 25 MHz.
+  - **`[EMMC:read_block]: ERROR: transfer error on FIFO word 113: 0x21`**, then
+    `eMMC driver sucessfully started!` and `[MBRDISK:read_mbr]: Reading master boot record ...`.
+  - **`Fatal Exception: Undefined instruction`** (pc `0x0000bfe0`, lr `0x00010009`,
+    sp `0x40804801`, cpsr `0x600001d3`).
+  - **Last line: `panic(): "Fatal CPU exception!"@trap.cc:47`**.
+  - No `cmdline.txt`/`rpi.dtb`/`zImage` read, no `Jumping to the Linux kernel`, no test
+    payload (`MIDR` etc.).
+- (4) Off. (5) The user put the network-boot card back in. The plug was already off.
+- (6) Plug on at 11:36:25. The stable `v0.4.0-dev-201-gb714bca+x9f76` booted to
+  `redox login:` after 28 s, and devsh answers. **pi-test pass** (version, manifest, ps,
+  ps-tty, sdcard, 0 of 300 starts failed).
+- The full log went to the open-firmware session for `docs/topics/open-firmware.md`.
