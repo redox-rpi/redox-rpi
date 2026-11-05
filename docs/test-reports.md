@@ -9222,3 +9222,40 @@ in the card, plug on at 19:34:11, 90 s of serial, off at 19:35:42.
 the 90 s. No garbage, so no baud change. The Open firmware session traced it to a USB
 register write and fixed it in #253. The ARM was not reached. Stable was checked after #253
 (same card swap session).
+
+## #253 open firmware step 2 rerun: lk-overlay with the USB write skipped (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-lkoverlay-3bp-20261105b.img.xz` (sha256 checked) on the same SDHC
+card, written by the user. Real Pi 3B+, no HDMI connected. Plug on at 19:42:40 UTC, 90 s of
+serial (9097 bytes, 248 lines, `~/pitest-tools/t253/serial-lk.raw` on homenodellm), off at
+19:44:10.
+
+**Result: the VPU starts the ARM in AArch64, and lk/MP runs on the ARM. Then the ARM-side
+loader fails with `mount failure: -2` on `sdhostp1`.** No panic.
+
+- **Stage 1 (VPU):**
+  - Markers `b`, `b1 (USB_DCTL skipped)`, `b2 intc_init`, `c`. `PM_RSTS 0x1000` (power-on
+    reset). PLLC, PLLA and PLLH up.
+  - `SDRAM Type: Elpida 1GB LPDDR2`, `398.4 MHz DDR clock`, self test successful.
+  - EMMC: `This is an SDHC card!`, 4-bit mode, `30475MB SDHC Card` (the size is now right),
+    25 MHz.
+  - Image and USB PHY up, `stage1 entry`, `trying to boot from sdhostp1`,
+    `flushing uart tx and chainloading...`.
+- **Stage 2 (VPU lk):**
+  - `welcome to lk`, HVS and VEC init (NTSC), usbphy.
+  - `[ARM:choose_arm_payload]: detected a bcm2837, picking payload … size 0x127a8`,
+    **`enabling aarch64`**, payload and fdt (317 bytes at 0x1000000) placed.
+  - `ARM clock succesfully initialized!`, `bridge init done, PM_PROC is now: 0x107F!`,
+    `starting app properties`.
+  - Two values look like print overflows: `PLLC_PER at 9088281640219705594MHz` and
+    `pllc: 2251800063685248`.
+- **ARM:**
+  - `[ARM:PLATFORM:platform_early_init]: c` at 3.65 s, **`welcome to lk/MP`**,
+    `hdr: 0xffff0000000122c0` (64-bit kernel addresses), `DTB should be at 0x1000000`.
+  - DTB nodes framebuffer (620 x 420 @ 0x6000000), timestamps and otp.
+  - `platform_init`, `UART break detected`, `starting app loader`,
+    `trying to boot from sdhostp1`, **`mount failure: -2`**.
+  - Last line `temp changed 412.000000 -> 34.862000`.
+- **Network-boot card back** (plug on at 19:47:53): stable `v0.4.0-dev-201-gb714bca+x9f76`
+  booted to `redox login:` after 28 s, and devsh answers. **pi-test pass** (version,
+  manifest, ps, ps-tty, sdcard, 0 of 300 starts failed).
