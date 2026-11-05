@@ -57,6 +57,14 @@ cycle() {
     # devsh runs over the network; with the network port cycled the session
     # may drop right after the write, which is fine.
     devsh "echo $what > /tmp/dwc2d-cycle" > /dev/null
+    # dwc2d may look for the request only every few seconds (experiment
+    # dwc2d-idle: every 3 s); wait until it has switched the port off, so
+    # devshd is not asked before the cycle has started.
+    local _
+    for _ in $(seq 20); do
+        log_since "$start" | grep -aqE "dwc2d: cycle: hub [0-9]+ port [0-9]+ power off" && break
+        sleep 0.5
+    done
     if [ "$what" = network ]; then
         check "$what: devshd answers again" wait_devsh 45
         echo "      back after $((SECONDS - t0)) s"

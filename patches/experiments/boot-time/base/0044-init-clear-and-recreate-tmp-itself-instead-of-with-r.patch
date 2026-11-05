@@ -1,0 +1,71 @@
+From bcde249e4139f9fcd68a2662f1eb582886f7efab Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 13:54:24 +0000
+Subject: [PATCH] init: clear and recreate /tmp itself instead of with rm and
+ mkdir
+
+The 00_tmp script started rm and mkdir, each the 10 MB coreutils program,
+on every boot: about 6 s in QEMU, which reads its SD card slowly. init now
+does the same with std::fs right after it switches to the root file system;
+the 00_tmp unit stays empty because 00_base.target requires it (#47).
+---
+ init.d/00_tmp    |  7 +++----
+ init/src/main.rs | 17 +++++++++++++++++
+ 2 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/init.d/00_tmp b/init.d/00_tmp
+index f3e7a33f..e0725906 100644
+--- a/init.d/00_tmp
++++ b/init.d/00_tmp
+@@ -1,4 +1,3 @@
+-# FIXME change this to a service unit
+-# clear and recreate tmpdir with 0o1777 permission
+-rm -rf /tmp
+-mkdir -m a=rwxt /tmp
++# /tmp is cleared and created again with mode 1777 by init itself (see
++# recreate_tmp in init/src/main.rs), without starting rm and mkdir. The unit
++# stays because 00_base.target requires it.
+diff --git a/init/src/main.rs b/init/src/main.rs
+index c2aff750..9081e560 100644
+--- a/init/src/main.rs
++++ b/init/src/main.rs
+@@ -1,5 +1,6 @@
+ use std::collections::BTreeMap;
+ use std::ffi::OsString;
++use std::os::unix::fs::PermissionsExt;
+ use std::path::Path;
+ use std::{env, fs, io};
+ 
+@@ -13,6 +14,19 @@ mod script;
+ mod service;
+ mod unit;
+ 
++/// Clear /tmp and create it again with mode 1777. Done here instead of with
++/// rm and mkdir in a script: each of them is the 10 MB coreutils program,
++/// which takes seconds to load from a slow disk on every boot.
++fn recreate_tmp() -> io::Result<()> {
++    match fs::remove_dir_all("/tmp") {
++        Ok(()) => {}
++        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
++        Err(err) => return Err(err),
++    }
++    fs::create_dir("/tmp")?;
++    fs::set_permissions("/tmp", fs::Permissions::from_mode(0o1777))
++}
++
+ fn switch_stdio(stdio: &str) -> io::Result<()> {
+     let stdin = libredox::Fd::open(stdio, O_RDONLY, 0)?;
+     let stdout = libredox::Fd::open(stdio, O_WRONLY, 0)?;
+@@ -157,6 +171,9 @@ fn main() {
+         Path::new("/etc"),
+         Path::new("/"),
+     );
++    if let Err(err) = recreate_tmp() {
++        eprintln!("init: failed to recreate /tmp: {err}");
++    }
+     {
+         // FIXME introduce multi-user.target unit and replace the config dir iteration
+         // scheduler.schedule_start_and_report_errors(&mut unit_store, UnitId("multi-user.target".to_owned()));
+-- 
+2.53.0
+

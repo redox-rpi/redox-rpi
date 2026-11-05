@@ -8,6 +8,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Topic | Page | Issues |
 |---|---|---|
 | Start crashes, kernel and signal bugs | [stability.md](stability.md) | [topic:stability](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Astability) |
+| Chaos test (fault injection, part of stability) | [chaos.md](chaos.md) | [topic:stability](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Astability) |
 | relibc on aarch64 | [relibc.md](relibc.md) | [topic:relibc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Arelibc) |
 | SD card | [sdcard.md](sdcard.md) | [topic:sdcard](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Asdcard) |
 | USB | [usb.md](usb.md) | [topic:usb](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Ausb) |
@@ -20,6 +21,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | GPIO, I2C and other Pi peripherals | [gpio.md](gpio.md) | [topic:gpio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agpio) |
 | Graphics (effort analysis) | [graphics.md](graphics.md) | [topic:graphics](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agraphics) |
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
+| Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 
 Each page has the same sections: **State** (on `main` and tested on a real
 Pi), **In progress** (branch, experiment, Pi test number), **Next**

@@ -64,8 +64,33 @@
   wakeups/s before and after). The cost is the 10 ms keyboard poll: 50/s,
   about 130 µs each, 2.2 % of a core. The test Pi's low-speed keyboard
   sits behind a hub, so each poll is a split transaction that `dwc2d`
-  spins on. Next: poll without blocking and wait for the channel interrupt
-  instead. Without a keyboard, `dwc2d` should be well under 0.5 %. Then EEE on the LAN7800 and gating clocks that run for nothing.
+  spins on. Pi test #243 tried a keyboard poll that waits on the
+  controller interrupt, and it failed. `dwc2d` CPU went down to 1.2 %, but
+  its wakeups went up to 240–480/s, interrupts on line 50 to 170–410/s and
+  idle-thread wakeups to 460/s. 619 of 25984 polls never finished, and
+  `dwc2d` hung in the hotplug test. The reason: a split transaction needs
+  answers from user space within microframes, about 7 interrupts per poll.
+  The change was dropped; PR #212 keeps only the slower rescan and the
+  counters. So with the low-speed keyboard plugged in, idle stays at about
+  2.2 % of a core; without a keyboard it is much less. Idle wakeups rose
+  after row 239 (`dwc2d` 76/s to about 113/s, `netstack` 28/s to about
+  63/s). Pi test #246 compared three images: before #203 and #194, after
+  #203 with `eth-speed`, and after #194. `eth-speed` adds about 3 `dwc2d`
+  wakeups/s. #194 adds about 28 each for `dwc2d` and `netstack`, and 10
+  USB interrupts/s, while CPU barely changes. The cause is base `0084`:
+  the LAN7800 now accepts *all* multicast (`RFE_CTL_MCAST_EN`), because
+  netstack doesn't tell the driver its groups. So every mDNS, SSDP and
+  IPv6 frame on the LAN wakes both. That's traffic, not a busy loop. A
+  hash filter with only the joined groups cuts it ([#216](https://github.com/redox-rpi/redox-rpi/issues/216)):
+  Network's PR [#218](https://github.com/redox-rpi/redox-rpi/pull/218)
+  (base `0085`: netstack tells the driver its groups) and the LAN7800
+  hash filter in PR [#219](https://github.com/redox-rpi/redox-rpi/pull/219)
+  (experiment `lan78xx-mcast-hash`, stacked on #218). Pi test #247, A/B:
+  `dwc2d` 108 to 81 wakeups/s, `netstack` 60 to 30, USB interrupts 19 to
+  8, back to the level from before #194. Before it can be the default,
+  the `ipv6` experiment has to add its groups (Network). PR
+  [#215](https://github.com/redox-rpi/redox-rpi/pull/215) saves about 6
+  `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 ## Bluetooth
 

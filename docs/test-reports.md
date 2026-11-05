@@ -8728,3 +8728,484 @@ and #240 did not show up.
   (see the coordinator's note). From now on, paused rows get "paused".
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored after each block with a devsh reset, last
   at 07:04: devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #243 #211 dwc2d idle with the keyboard poll on the interrupt (2026-11-05, Pi test agent)
+
+Image `v0.3.0-dev-1409-gb6b5aef+xceb2` (`t-idle-cputop` b6b5aef, experiments
+`timesync cputop dwc2d-idle`, md5 `3d28f053…`). Real Pi 3B+ over netboot, no HDMI connected.
+The person part was not done (nobody at the Pi). Reset at 07:05:23,
+`devshd: listening` after 20 s.
+
+**Result: fail.**
+- After the second network-port cycle, the LAN7800 was never found again: the network was
+  lost and the Pi needed a power cycle.
+- dwc2d's CPU is lower (1.2 % against 2.5 % in #242). But its wakeups went up to 237–479/s,
+  IRQ line 50 to 168–408/s, and the keyboard poll has 619 timeouts (not near 0).
+
+- **pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **cputop after 5 min idle** (`-n 3 60`, three rounds):
+  - dwc2d 1.2 % / 237, 261, 258 wakeups/s; netstack 29–31/s.
+  - irq 268, 292, 287/s (line 50: 168, 192, 187; line 3: 100).
+  - cpu1 1 % (886–940 ms), others 0 % (cpu3 about 220 ms).
+  - Switches per second went up to 768–848 on cpu1 (#242: about 290).
+- **`cputop -w -l 15 60`:**
+  - dwc2d 1.7 % / 479 wakeups/s, [kmain] cpu3 460/s, netstack 31/s.
+  - irq 508/s (line 50: 408).
+  - cpu3 2 % busy (1498 ms), 1495 switches/s.
+
+```text
+cputop: 60.0 s, 45 threads
+cpu0  busy   0 %  (11 ms busy, 59994 ms idle, 521 switches/s)
+cpu1  busy   0 %  (3 ms busy, 60005 ms idle, 563 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60003 ms idle, 563 switches/s)
+cpu3  busy   2 %  (1498 ms busy, 58507 ms idle, 1495 switches/s)
+irq   508/s  (50: 408, 3: 100)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    1.7     479    0:00:08.2 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0     460    0:00:00.0 RR    #3   [kmain]
+25    0.2      31    0:00:00.8 UB    #3   /usr/bin/netstack
+8    0.3      10    0:00:01.7 US    #3   /scheme/initfs/bin/rpi-firmwared
+21    0.0       9    0:00:00.1 UB    #3   /usr/bin/ptyd
+0    0.0       6    0:00:00.0 RR+   #0   [kmain]
+36    0.0       2    0:00:00.0 UB    #0   /usr/bin/devshd
+20    0.1       2    0:00:01.2 UB    #3   /scheme/initfs/bin/redoxfs
+10    0.0       1    0:00:00.0 UB    #3   /scheme/initfs/bin/lived
+0    0.0       0    0:00:00.1 UB    #3   initnsmgr
+8    0.0       0    0:00:00.0 US    #0   /scheme/initfs/bin/rpi-firmwared
+0    0.0       0    0:00:00.0 UB    #3   procmgr
+50    0.0       0    0:00:00.0 UR+   #3   /usr/bin/cputop
+0    0.0       0    0:00:00.0 RR+   #1   [kmain]
+3    0.0       0    0:00:00.0 UB    #1   /scheme/initfs/bin/randd
+```
+
+- **`/tmp/dwc2d-wakeups`** after the cputop rounds (540 s since boot):
+
+```text
+seconds 540
+irq 182748 338.2/s busy 2198 ms
+scheme 11970 22.2/s busy 161 ms
+time 28027 51.9/s busy 2180 ms
+hotplug 534 1.0/s busy 1025 ms
+hotplug cycle-request busy 149 ms
+hotplug scan busy 804 ms
+hotplug links busy 56 ms
+hotplug select-tick busy 6 ms
+keyboard polls 25984 reports 0 timeouts 619 start busy 1867 ms
+```
+
+  - **keyboard polls 25984, reports 0, timeouts 619** (2.4 %). The irq source is now
+    338/s (#242: 7.5/s).
+  - The second `cat` after the hotplug test got no answer (no network).
+- **Hotplug** (`KEYBOARD=1 pi-hotplug-test.sh 192.168.178.148 2`, from `~/redox-rpi-usb`):
+  - **Cycle 1 passes:** port off, removed, LAN7800 found again, network on the adapter,
+    devshd back after 8 s.
+  - **Cycle 2 fails:** `cycle: hub 2 port 1 power off`, `disconnected after 101 ms`,
+    `device at address 6 removed`, `cycle: hub 2 port 1 power on`. **Then nothing more in
+    the serial log**: no `device connected`, no `LAN7800 at address`, and no other dwc2d
+    line.
+  - devshd did not come back (the script gave up after 258 s). The keyboard cycle could
+    not be requested (3× FAIL).
+  - This is not the early-check issue of #242: the device really did not come back.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 07:29:18
+  (no network for the devsh reset): banner after 30 s, devsh answers, and `/srv/tftp/redox`
+  matches the backup.
+
+## #244 #126 eth-speed request every 5 s (PR #215) (2026-11-05, Pi test agent)
+
+Image `v0.4.0-dev-437-gb0f6b8e+x23c2` (`eth-link-check` + `cputop-58`, experiments
+`eth-speed cputop`, md5 `d3d2de48…`; there is no manifest file next to it, so pi-test ran
+without `--manifest`). Real Pi 3B+ over netboot, no HDMI connected. Reset at 07:56:06 UTC,
+`devshd: listening` after 20 s.
+
+**Result: pass on what the row asks.** pi-test passes, and both speed changes come within
+the 5 s check plus negotiation, with no panic. **But idle wakeups are higher than in
+row 239, not lower:** dwc2d 110/s (239: 76), netstack 60/s (27–29), IRQ line 50 19/s (7–8).
+dwc2d's CPU stays at 2.6 %.
+
+- **pi-test:** pass (version, manifest present in the image, ps, ps-tty, sdcard,
+  0 of 300 starts failed).
+- **`cputop -w -l 10 60`** after 5 min idle:
+
+```text
+cputop: 60.0 s, 44 threads
+cpu0  busy   0 %  (21 ms busy, 59991 ms idle, 137 switches/s)
+cpu1  busy   0 %  (201 ms busy, 59815 ms idle, 189 switches/s)
+cpu2  busy   0 %  (0 ms busy, 60017 ms idle, 170 switches/s)
+cpu3  busy   2 %  (1793 ms busy, 58225 ms idle, 315 switches/s)
+irq   119/s  (3: 100, 50: 19)
+PID   CPU%  WAKE/s        TOTAL STAT  CPU  NAME
+16    2.6     110    0:00:11.2 UB    #3   /scheme/initfs/bin/dwc2d
+0    0.0      66    0:00:00.0 RR+   #3   [kmain]
+25    0.3      60    0:00:01.3 UB    #3   /usr/bin/netstack
+0    0.0      10    0:00:00.0 RR+   #1   [kmain]
+8    0.3       9    0:00:01.3 US    #1   /scheme/initfs/bin/rpi-firmwared
+0    0.0       9    0:00:00.0 RR    #0   [kmain]
+21    0.0       9    0:00:00.2 UB    #0   /usr/bin/ptyd
+0    0.0       1    0:00:00.3 UB    #0   initnsmgr
+20    0.1       1    0:00:32.4 UB    #3   /scheme/initfs/bin/redoxfs
+8    0.0       0    0:00:00.0 US    #1   /scheme/initfs/bin/rpi-firmwared
+```
+
+- **Compared with #239:**
+  - dwc2d 110/s (76), 2.6 % (2.5 %).
+  - initnsmgr 1/s (1), redoxfs 1/s (1).
+  - netstack 60/s (27–29), [kmain] on dwc2d's core 66/s (62).
+  - irq 119/s: line 3 100, line 50 19 (239: 107–108 with line 50 7–8).
+  - The extra line-50 interrupts and netstack wakeups suggest more Ethernet traffic in this
+    minute, or more link polling, not the file check. This is one round only.
+- **Speed changes on the serial console.** The times are from Enter, and the log was polled
+  every 2 s, so they are accurate to about 2 s:
+  - `echo 100 > /tmp/dwc2d-link`: `advertising up to 100 Mbit/s, negotiating again` after
+    about 4 s, `link down`, then `link up on the LAN7800 at address 6, 100 Mbit/s` after
+    about 8 s.
+  - `echo 1000 > /tmp/dwc2d-link`: `advertising up to 1000 Mbit/s` after about 2 s, `link
+    down`, then `link up … 1000 Mbit/s` after about 6 s. devsh answered again.
+- No panic in the serial log.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #245 #126 A/B for PR #215: idle wakeups, noise or the image? (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected, A and B back to back with nothing changed in
+between.
+- **A:** `v0.4.0-dev-436-gd5d8e81+x23c2` (before #215, md5 `317b7cbc…`), reset at 08:07:27.
+- **B:** `v0.4.0-dev-437-gb0f6b8e+x23c2` (with #215, md5 `d3d2de48…`), reset at 08:17:00.
+- Both had `devshd: listening` after about 20 s, pi-test passed with the manifest (0 of 300
+  starts failed), and there was no panic.
+
+**Result: the higher wakeups of #244 come from the base, not from #215.** A (without #215)
+already has dwc2d at 113–116/s and netstack at 62–65/s. B has slightly fewer: dwc2d
+106–109/s, netstack 57–60/s, line 50 18–19/s against 20–21/s. dwc2d's CPU is 2.6 % in B
+against 2.6–2.7 % in A. #239's 76/s was on an older base
+(`v0.4.0-dev-394-g26cfa3f`, `timesync rtl8152 cputop`).
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | initnsmgr /s | redoxfs /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|---|---|
+| A1 | 113 (2.6) | 62 (0.3) | 2 | 2 (0.1) | 72 | 120 (20) |
+| A2 | 116 (2.7) | 65 (0.3) | 2 | 2 (0.1) | 76 | 121 (21) |
+| A3 | 113 (2.7) | 62 (0.3) | 2 | 2 (0.1) | 75 | 120 (20) |
+| B1 | 107 (2.6) | 57 (0.3) | 1 | 1 (0.1) | 66 | 118 (18) |
+| B2 | 109 (2.6) | 60 (0.3) | 1 | 1 (0.1) | 70 | 119 (19) |
+| B3 | 106 (2.6) | 57 (0.3) | 1 | 1 (0.1) | 70 | 118 (18) |
+
+- **Busy core:** A cpu2 3 % (2063–2123 ms in 60 s), B cpu1 2–3 % (1790–1827 ms). The other
+  cores are 0 %, apart from about 210 ms on cpu2 in B.
+- The full `cputop -w -n 3 -l 10 60` output for both is on homenodellm in
+  `~/pitest-tools/t245/cputop-{before,after}.txt`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #246 #126 which merge raised the idle wakeups? (2026-11-05, Pi test agent)
+
+Three images (experiments `timesync rtl8152 cputop`, with PR #210's `cputop`), one after the
+other on the real Pi 3B+ over netboot, no HDMI connected.
+- **1** `v0.4.0-dev-418-g182177f+xe828`: before #203 and #194.
+- **2** `v0.4.0-dev-427-gf00b4e7+x949e`: after #203, plus `eth-speed`.
+- **3** `v0.4.0-dev-432-g8245e09+x949e`: after #194, plus `eth-speed`.
+
+**Result: #194 (multicast on by default) raised the idle wakeups.** From 2 to 3, dwc2d
+went from 82–84 to 108–112/s, netstack from 29–31 to 57–61/s, and IRQ line 50 from 8 to
+18–19/s. #203 with `eth-speed` (1 to 2) adds only about 3 dwc2d wakeups/s. All three
+booted, pi-test passed with the manifest (0 of 300 starts failed), and there was no panic.
+
+- **First try (08:39–09:24):** image 1 booted to `redox login:` but **had no network**.
+  - dwc2d was fine (LAN7800, link up, network address), but there was **no
+    `devshd: listening`**, and timesync set the clock `from the build time`.
+  - devsh did not answer for 8 min, so nothing could run. Images 2 and 3 were never booted
+    (the reset goes over devsh).
+  - This is the same picture as the first try of #242 this morning, with a different image.
+  - Stable came back with a power cycle.
+- **Second try (09:25–09:54):** with a fallback (power cycle once if there is no devshd
+  in 3 min). It was not needed: all three images got the network on the first boot
+  (`devshd: listening` after 20 s).
+  - So the no-network boot is intermittent. Two of about 10 test-image boots today had it
+    (#242 try 1, #246 try 1).
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | initnsmgr /s | redoxfs /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|---|---|
+| 1-1 | 79 (2.5) | 30 (0.1) | 1 | 1 (0.1) | 59 | 108 (8) |
+| 1-2 | 80 (2.5) | 31 (0.2) | 1 | 1 (0.1) | 63 | 108 (8) |
+| 1-3 | 80 (2.5) | 31 (0.2) | 1 | 1 (0.1) | 63 | 108 (8) |
+| 2-1 | 82 (2.6) | 29 (0.1) | 2 | 2 (0.1) | 58 | 108 (8) |
+| 2-2 | 82 (2.5) | 30 (0.2) | 2 | 2 (0.1) | 59 | 108 (8) |
+| 2-3 | 84 (2.6) | 31 (0.2) | 2 | 2 (0.1) | 60 | 108 (8) |
+| 3-1 | 109 (2.6) | 58 (0.3) | 2 | 2 (0.1) | 70 | 118 (18) |
+| 3-2 | 108 (2.6) | 57 (0.3) | 2 | 2 (0.1) | 74 | 118 (18) |
+| 3-3 | 112 (2.6) | 61 (0.3) | 2 | 2 (0.1) | 75 | 119 (19) |
+
+- **Busy core:**
+  - Image 1: cpu2 2 % (1653–1687 ms in 60 s).
+  - Image 2: cpu0 2 % (1706–1758 ms).
+  - Image 3: cpu2 3 % (2069–2105 ms).
+  - The other cores are about 0 % (about 210 ms on one core in 1 and 2).
+- With #194, about 10 more LAN7800 interrupts per second arrive. Each one wakes dwc2d and
+  netstack, which looks like multicast traffic on the LAN now being received (#194 opens the
+  LAN7800's multicast filter).
+- The full output is on homenodellm in `~/pitest-tools/t246b/cputop-{1,2,3}.txt`, and the
+  no-network boot log in `~/pitest-tools/t246/serial-1.log`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #247 #216 / #126 LAN7800 multicast hash filter, A/B (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected. Both images are from one tree (experiments
+`timesync rtl8152 cputop`, with PR #210's `cputop`):
+- **A:** `v0.4.0-dev-455-ge763514+xe828`, without the filter.
+- **B:** `v0.4.0-dev-455-ge763514+x4753`, with `lan78xx-mcast-hash`.
+
+**Result: pass. The filter brings the idle wakeups back to the level from before #194.**
+B logs **`dwc2d: LAN7800 multicast filter: 1 groups`** (no timeout or error line), and its
+network works. Without the filter (A), dwc2d has 106–110 wakeups/s, netstack 57–62/s and
+line 50 18–20/s. With it (B), the numbers are 80–82/s, 29–32/s and 8/s (#246 before #194:
+80/s, 30/s, 8/s). No panic.
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|
+| A1 | 106 (2.6) | 57 (0.3) | 65 | 118 (18) |
+| A2 | 109 (2.7) | 60 (0.3) | 70 | 119 (19) |
+| A3 | 110 (2.6) | 62 (0.3) | 71 | 120 (20) |
+| B1 | 80 (2.5) | 29 (0.1) | 58 | 108 (8) |
+| B2 | 81 (2.6) | 30 (0.2) | 59 | 108 (8) |
+| B3 | 82 (2.5) | 32 (0.2) | 60 | 108 (8) |
+
+- **Busy core:** A cpu1 2–3 % (1790–1862 ms in 60 s), B cpu0 2 % (1654–1696 ms). The other
+  cores are about 0 % (about 200 ms on one core in both).
+- **pi-test:** pass on both with the manifest (0 of 300 starts failed).
+- **Ping:**
+  - From the Pi, `ping -c 3 192.168.178.120` gave 3/3 on A and B.
+  - From homenodellm (no `ping` binary there, so a raw ICMP echo via `sudo -n python3`), the
+    Pi did not answer on A, on B, **or on stable dev-201** (tried before the test). So the
+    Pi doesn't answer echo requests at all; this is not caused by the filter. The router
+    answers the same probe.
+- **A's first boot (10:24) had a network problem.** `devshd: listening`, and timesync got
+  the time from pool.ntp.org at 10:24:42. But from the first devsh connect on (about
+  10:24:47) homenodellm got `No route to host` (no ARP answer) for a minute, so nothing ran
+  on A.
+  - B was then started with a power cycle and was fine, and A's rerun at 10:42 was fine too.
+  - That is the third intermittent boot-network failure today, after #242 try 1 and #246
+    try 1. Those two had no `devshd: listening` at all.
+- Full output on homenodellm: `~/pitest-tools/t247a/cputop-A.txt`, `t247/cputop-B.txt`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #224 open-source VPU firmware: does the open bootcode.bin start on our Pi 3B+? (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-openfw-3bp-20261104.img.xz` (sha256 `bd3537a5…`, `bootcode.bin`
+`f22e42e8…`, BUILDATE Nov 4 2026 14:45:31). Real Pi 3B+. The user swapped the cards, and the
+Pi test agent switched the plug. No HDMI connected.
+
+**Result: the VPU, SDRAM and ARM bring-up work on the 3B+. The SD card is found, but
+reading it fails, and the chainloader then crashes with `Undefined instruction` and
+`panic()`.** The payload was not reached.
+
+- (1) The plug was switched off at 11:34:02 UTC. (2) The user put in the open-firmware card.
+- (3) Plug on at 11:34:43, 60 s of serial (150 lines, on homenodellm at
+  `~/pitest-tools/t224/serial-openfw.raw`/`.log`), plug off at 11:35:43. In order:
+  - `Booting Raspberry Pi....`, `Copyright 2016-2017 rpi-open-firmware authors`: the VPU is
+    alive and the UART is up.
+  - `[SDRAM:sdram_init]: SDRAM Type: Elpida 1GB LPDDR2 (BC=0x58)`, self test at
+    0xC0000000–0xFFF00000 ok, **`SDRAM initialization completed successfully!`**.
+  - Image, USB and UsbPhy power domains started. ARM code copied (57412 bytes), `ARM ID:
+    0x364D5241`, `ARM clock succesfully initialized!`, async bridge `PM_PROC is now:
+    0x107F`, `ARM, continuing boot from here ...`.
+  - `[BRINGUP:main]: Firmware data: SDRAM_SIZE=0, VPU_CPUID=0x4000140`,
+    `Security extensions are supported!`, **`Execution mode: Supervisor`**.
+  - eMMC: `ERROR: sdhost status: 0x40`, 20× `waiting for SD`, then **`SD card has arrived!`**,
+    `SD064 59MB SD Card`, switched to 25 MHz.
+  - **`[EMMC:read_block]: ERROR: transfer error on FIFO word 113: 0x21`**, then
+    `eMMC driver sucessfully started!` and `[MBRDISK:read_mbr]: Reading master boot record ...`.
+  - **`Fatal Exception: Undefined instruction`** (pc `0x0000bfe0`, lr `0x00010009`,
+    sp `0x40804801`, cpsr `0x600001d3`).
+  - **Last line: `panic(): "Fatal CPU exception!"@trap.cc:47`**.
+  - No `cmdline.txt`/`rpi.dtb`/`zImage` read, no `Jumping to the Linux kernel`, no test
+    payload (`MIDR` etc.).
+- (4) Off. (5) The user put the network-boot card back in. The plug was already off.
+- (6) Plug on at 11:36:25. The stable `v0.4.0-dev-201-gb714bca+x9f76` booted to
+  `redox login:` after 28 s, and devsh answers. **pi-test pass** (version, manifest, ps,
+  ps-tty, sdcard, 0 of 300 starts failed).
+- The full log went to the open-firmware session for `docs/topics/open-firmware.md`.
+
+## #248 #197 RedoxFS fix `redoxfs-truncate` (PR #208): pkg install/remove rounds (2026-11-05, Pi test agent)
+
+Image `t197-fix.img` (`boot-pkg-space` 6b650106, `v0.4.0-dev-373-g6b650106+x0247`,
+experiments `timesync redoxfs-truncate`, md5 `191c2462…`), with the mirror
+`/srv/tftp/pkg-mirror-t197`. Real Pi 3B+ over netboot, no HDMI connected. Reset at
+11:39:11 UTC, devsh after 20 s.
+
+**Result: fail. RedoxFS hangs during `pkg install vim`, 4 times.** The space fix itself
+works: in the rounds that finished, the free space after each remove stayed at
+124.6–124.8 MB, within 0.2 MB. Only 5 of 12 rounds finished.
+
+- **(1) pi-test** `--starts 300`: pass (0 of 300 starts failed). `date`: Thu Nov 5 2026.
+- **(2)** `50_redox` moved away, `40_mirror` set. **(3)** `df /`: 136764 KB free.
+- **(4) Rounds**, free KB after install / after remove; a "hang" stopped at 25 min:
+
+| Round | Boot | after install | after remove |
+|---|---|---|---|
+| 1 | 1 | **hang** (11:40–12:05) | – |
+| 1 | 2 | **hang** (12:10–12:35) | – |
+| 1 | 3 | 89308 | **124620** |
+| 2 | 3 | 89244 | **124836** |
+| 3 | 3 | 89172 | **124784** |
+| 4 | 3 | **hang** (12:55–13:20) | – |
+| 4 | 4 | 89304 | **124620** |
+| 5 | 4 | 89240 | **124836** |
+| 6 | 4 | **hang** (13:34–13:59), then stopped (more than 3 restarts) | – |
+
+  - Every finished install and remove ended with `Commit complete.` (rc=0). The remove
+    figures don't drop the way they did without the fix (QEMU 111.8, 98.4, …): rounds 1–3
+    on one boot give 124620, 124836, 124784.
+- **The hangs:** the last one (round 6) stopped at `Extracting vim [ 21%] … 493/2316` and
+  never moved on. Each time, devsh stopped answering, but the serial shell still worked.
+  `cat /scheme/sys/context` showed:
+  - **`/scheme/initfs/bin/redoxfs` (pid 20, the network-boot root) in state `UR`**, with
+    1:32 to 2:15 min of CPU and growing (99 MB in round 4).
+  - `pkg` blocked (`UB`), with 1–3.5 min of CPU.
+  - netstack blocked with little CPU (normal idle), dwc2d sleeping. No panic, no exception.
+  - So the root filesystem was busy without end while `pkg` wrote vim's files. It was not
+    a network loss (the mirror is local, and no `No route` came before the hang).
+  - Each time I power-cycled, set the mirror up again and repeated the round.
+  - This looks like the QEMU hang the row mentions (3 h in a `pkg remove`), but here it is
+    in the install, and much more often: 4 times in 9 install attempts.
+- **(5)** not run cleanly: after the last hang devsh did not answer, so `rm -r
+  /tmp/pkg_download` and `df` failed.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a Shelly power cycle at 14:08:10:
+  banner after 30 s, devsh answers, and `/srv/tftp/redox` matches the backup.
+- The context dumps are on homenodellm in `~/pitest-tools/t248/diag-{1,4,6}.txt`.
+
+## #249 open-source VPU firmware, rerun with the fixed bootcode.bin (2026-11-05, Pi test agent)
+
+Card image `redox-rpi-openfw-3bp-20261105.img.xz` (sha256 checked). The fixes: a missing
+`return` in `read_block<Mbr>`, SD read errors are now reported, and the SD driver retries at
+half the clock. Real Pi 3B+, no HDMI connected. The user wrote and swapped the cards, and
+the Pi test agent switched the plug for the second card and the return.
+
+**Result: pass on both cards. The open firmware reaches the 32-bit test payload on the
+Pi 3B+**: VPU → SDRAM → ARM → SD → MBR → FAT → `cmdline.txt`/`rpi.dtb`/`zImage` → `Jumping
+to the Linux kernel...` → payload. No panic.
+
+- **64 MB card** (the user switched on at about 14:33 UTC; log from serial.log, 174 lines):
+  - `SD064 59MB SD Card`, 25 MHz. **Sector 0 failed once**
+    (`transfer error on FIFO word 113: 0x21`, `status: 0x20`), then
+    `read of sector 0 failed, retrying with SH_CDIV 0x12 (was 0x8)` worked.
+  - MBR, `Boot partition mounted!`, `cmdline.txt` 32 bytes
+    (`console=ttyAMA0,115200 earlycon`), `rpi.dtb` 35252 bytes (valid FDT at 0xF000000),
+    `zImage` 444 bytes at 0x2000000, `Jumping to the Linux kernel...`.
+  - Then `redox-rpi: test payload reached (32-bit ARM, loaded as zImage)`,
+    `CPSR = 0x600001D3`, **`MIDR = 0x410FD034`**, `MPIDR = 0x80000000`,
+    `r2 (FDT) = 0x0F000000`, **`done, waiting (wfe)`**.
+  - The agent switched off at 14:34:50.
+- **SDHC card** (plug on at 14:37:28, 60 s, 152 lines):
+  - `Copyright 2016-2017 rpi-open-firmware authors`. `Detected SD card: Product N/A,
+    CSD Ver 2.0, Capacity 62412800, Size 60949`, `N/A 1803MB SDHC Card`. Capacity 62412800
+    blocks is about 32 GB, so the 1803 MB looks like an overflow in the size print.
+  - **No read error and no retry** at 25 MHz. MBR, boot partition, the same three files,
+    `Jumping to the Linux kernel...`, the same payload lines.
+  - **Last line `redox-rpi: done, waiting (wfe)`**. Off at 14:38:39.
+- **Network-boot card back:** plug on at 14:39:54. Stable `v0.4.0-dev-201-gb714bca+x9f76`
+  booted to `redox login:` after 29 s, and devsh answers. **pi-test pass** (version,
+  manifest, ps, ps-tty, sdcard, 0 of 300 starts failed).
+- Logs on homenodellm: `~/pitest-tools/t249/serial-openfw-1433.log` (64 MB card) and
+  `serial-2.log` (SDHC). The open-firmware session has the details.
+
+## #250 #197 / #157 the hang of #248: with the RedoxFS fix only, and is it the scheduler? (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected. Both images have `pi-heartbeat`:
+- **A:** `t197-hbA.img`, `v0.4.0-dev-374-g81dc5797+xf45c`, without `redoxfs-truncate`,
+  md5 `7401e17e…`.
+- **B:** `t197-hbB.img`, `v0.4.0-dev-374-g81dc5797+x212a`, with it, md5 `5ad79d99…`.
+- Run order A, B, A, B with 3 rounds each (14:50–16:05 UTC). Mirror `pkg-mirror-t197`.
+- A hang was declared when an install or remove did not finish within 8 min (a normal one
+  takes about 2.5 min).
+
+**Result: hangs only with the RedoxFS fix (B: 2 in 6 rounds, A: 0 in 6). It is not the
+#157 scheduler picture.** In both hangs no runnable context was waiting on an idle CPU:
+every run queue was empty, and the dump came from the 60 s timer, not from the
+runnable-on-idle check. The root's `redoxfs` (pid 20) was **blocked in
+`UserInner::read`**, waiting for new requests. At the same time `pkg`, `ion`, `devshd` and
+`login` were all **blocked in `UserInner::call`**, waiting for an answer. That looks like a
+request (or its wakeup) lost between the kernel and RedoxFS. No exception or panic.
+
+**Free space after each remove (KB):**
+- A: 111612, 98532, 85188 | 111612, 98528, 85184. It drops about 13.3 MB per round, as
+  expected without the fix.
+- B: 124588, –, 124580 | 124580, 124796, –. Flat (the fix works); "–" is a hang.
+
+| Part | Round 1 | Round 2 | Round 3 |
+|---|---|---|---|
+| A1 | ok | ok | ok |
+| B1 | ok | **hang** in install | ok (after power cycle) |
+| A2 | ok | ok | ok |
+| B2 | ok | ok | **hang** in install |
+
+- **Hang B1-2** (install from 15:11:08):
+  - Last progress line `Extracting vim [ 38%] … 871/2316`.
+  - `cat /scheme/sys/context`: initfs `redoxfs` pid 20 `UR` on #3, 52.8 s user CPU,
+    99.1 MB. `pkg` pid 72, two threads `UB` (one with 1:44 CPU). `/usr/bin/redoxfs`
+    (pid 32, `/scheme/data`) `UB`.
+  - Heartbeat dump `[hbctx begin beat 14 timed]`:
+    - `hbcpu 0 w1092 q0`, `hbcpu 1 w0 q0`, `hbcpu 2 w456 q0`, `hbcpu 3 w970 q0`.
+    - `hbq` n0 on all four CPUs.
+    - All four `[kmain] R+c` (idle).
+    - `redoxfs` pid 20 `B sys cpu3 UserInner::read (v2)`.
+    - `pkg` pid 72 `B sys cpu3 UserInner::call` and `B sys cpu1 futex`.
+    - `ion` 73 `B UserInner::call`, `devshd` 35 (4 threads) `B UserInner::call`, `login`
+      33/37/69 `B UserInner::call`, `netstack` `B UserInner::call`.
+- **Hang B2-3** (install from 15:53:46):
+  - Last progress line `Extracting vim [ 52%] … 1193/2316`.
+  - Context: `redoxfs` pid 20 `UR` on #2, 1:36 CPU. `pkg` pid 88 `UB` (2:14 CPU).
+  - Dump `[hbctx begin beat 20 timed]`: all `q0`, `hbq` n0, `[kmain] R+c` on all CPUs.
+    `redoxfs` pid 20 `B sys cpu2 UserInner::read (v2)`. `ion` 86/89, `devshd`, `login`
+    85, `netstack` `B UserInner::call`.
+- **Note:** `context` (taken first) shows pid 20 as `UR`, but the heartbeat dump 1–2 min
+  later shows it `B` in `UserInner::read`. So RedoxFS was busy at first, then went back to
+  waiting while the callers kept waiting.
+- Logs on homenodellm: `~/pitest-tools/t250/hang-{B1-2,B2-3}-install-{context.txt,serial.log}`,
+  and per round `t250/{A,B}{1,2}-k-{install,remove}.txt`.
+- After each hang, a power cycle and the mirror set up again. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored at the end with a power cycle: devsh answers,
+  and `/srv/tftp/redox` matches the backup.
+
+## #252 #197 RedoxFS hang with `redoxfs-truncate`: did RedoxFS answer every request? (2026-11-05, Pi test agent)
+
+Image `t197-hbC.img` (`v0.4.0-dev-375-g949f068d+xf366`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag`, md5 `c4e81a49…`), mirror
+`pkg-mirror-t197`. Real Pi 3B+ over netboot, no HDMI connected. 16:34–17:31 UTC.
+
+**Result: 1 hang in 10 rounds (round 7, in the install). RedoxFS had answered every request
+it got, and after the hang no new request reached it.**
+- At and after the hang, `redoxfs-diag /scheme/file` shows `in378541 out378541`,
+  unchanged for more than 7 min.
+- `busy0`, and every `skip-cancel`/`recvfd`/`msync`/`munmap`/`mmap` count is 0.
+- `pkg` stayed blocked in its call. So the request `pkg` waits for was lost before it
+  reached RedoxFS (on the kernel or scheme-queue side), not dropped or left unanswered by
+  RedoxFS.
+- No exception or panic.
+
+- **Free space after each remove (KB):** 124636, 124852, 124800, 124740, 124680, 124616,
+  – (hang), 124628, 124844, 124792. Flat; the fix works.
+- **Hang, round 7** (install from 17:04:46):
+  - Last progress line `Extracting vim [ 54%] [00:02:09] … 1251/2316`.
+  - `redoxfs-diag /scheme/file` before and at the hang (one line every 30 s):
+    `t1861 in369123 out369123`, `t1891 in373540 out373540`, `t1921 in377814 out377814`,
+    **`t1951 in378541 out378541`**, then the same values at t1981 … t2401 (15 lines).
+    `close78634 sendfd0 skip-cancel0 recvfd0 msync0 munmap0 mmap0 busy0 max-busy74`.
+  - `/scheme/data` unchanged at `in9 out9`.
+  - During installs, `in` and `out` sometimes differ by 1 (a request in progress, for
+    example `t690 in134387 out134386`). At the hang they are equal.
+  - `cat /scheme/sys/context` after the 2-minute wait:
+    - initfs `redoxfs` pid 20: one context `UR` on #1 with 4:21 user and 1:38 system CPU,
+      102 MB, and one `US`.
+    - `pkg` pid 152: two contexts `UB`, one with 2:20 CPU.
+    - `/usr/bin/redoxfs` pid 33 `UB`/`US`.
+  - The `UR` RedoxFS context with growing CPU, while the request counters stand still,
+    suggests a RedoxFS thread spinning outside request handling, or the kernel showing it
+    runnable.
+  - Heartbeats `[hb N 37–39 …]` kept coming on all four CPUs (`p0`). No `[hbctx …]` dump
+    came in this window, because the timed dump didn't fall into it and no
+    runnable-on-idle was detected.
+- After the hang: power cycle, mirror set up again, rounds 8–10 ok.
+- Logs on homenodellm: `~/pitest-tools/t252/serial-all.log` (whole run),
+  `hang-C-7-install-{serial.log,context.txt}`, and the per-round files.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: devsh answers, and
+  `/srv/tftp/redox` matches the backup.
