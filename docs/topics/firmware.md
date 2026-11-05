@@ -72,7 +72,19 @@
   answers from user space within microframes, about 7 interrupts per poll.
   The change was dropped; PR #212 keeps only the slower rescan and the
   counters. So with the low-speed keyboard plugged in, idle stays at about
-  2.2 % of a core; without a keyboard it is much less. Then EEE on the LAN7800 and gating clocks that run for nothing.
+  2.2 % of a core; without a keyboard it is much less. Idle wakeups rose
+  after row 239 (`dwc2d` 76/s to about 113/s, `netstack` 28/s to about
+  63/s). Pi test #246 compared three images: before #203 and #194, after
+  #203 with `eth-speed`, and after #194. `eth-speed` adds about 3 `dwc2d`
+  wakeups/s. #194 adds about 28 each for `dwc2d` and `netstack`, and 10
+  USB interrupts/s, while CPU barely changes. The cause is base `0084`:
+  the LAN7800 now accepts *all* multicast (`RFE_CTL_MCAST_EN`), because
+  netstack doesn't tell the driver its groups. So every mDNS, SSDP and
+  IPv6 frame on the LAN wakes both. That's traffic, not a busy loop. A
+  hash filter with only the needed groups (mDNS v4/v6, IPv6 all-nodes, the
+  own solicited-node address) would cut most of it (asked Network). PR
+  [#215](https://github.com/redox-rpi/redox-rpi/pull/215) saves about 6
+  `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 ## Bluetooth
 
