@@ -39,7 +39,7 @@ jobs:
         name: List relibc experiments
         run: |
           # An experiment that applies on top of others lists them in its
-          # file "needs"; they come first, e.g. "multicast ipv6".
+          # file "needs"; they come first.
           list=$(for d in patches/experiments/*/relibc; do
                    e=$(dirname "$d")
                    echo "$(cat "$e/needs" 2>/dev/null | tr '\n' ' ')$(basename "$e")"

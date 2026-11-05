@@ -1,0 +1,29 @@
+# Ethernet speed at boot (#126): /etc/eth-speed with 100 or 1000 goes to
+# dwc2d, which renegotiates the LAN7800 link (base 0090). 100 Mbit/s saved
+# about 0.35 W at idle in Pi test 228. Without the file the link stays at
+# the fastest speed both ends support.
+
+[[files]]
+path = "/usr/lib/init.d/16_eth-speed.service"
+data = """
+[unit]
+description = "Ethernet speed from /etc/eth-speed"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "ion"
+args = ["/usr/lib/eth-speed.ion"]
+type = "oneshot"
+"""
+
+[[files]]
+path = "/usr/lib/eth-speed.ion"
+data = """
+# dwc2d checks the value and logs what it does with it.
+if test -f /etc/eth-speed
+    cp /etc/eth-speed /tmp/dwc2d-link
+else
+    # No file: keep the link as negotiated; init counts status 1 as failed.
+    true
+end
+"""
