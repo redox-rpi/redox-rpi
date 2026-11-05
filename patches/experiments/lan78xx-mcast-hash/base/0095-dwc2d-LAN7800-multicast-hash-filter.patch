@@ -10,11 +10,11 @@ the network stack joined, the LAN's other multicast (mDNS for others,
 SSDP, all IPv6) no longer wakes dwc2d and netstack (#126, #216).
 None keeps accepting all multicast; an empty list accepts none.
 ---
- drivers/usb/dwc2d/src/lan78xx.rs | 93 ++++++++++++++++++++++++++++++++
- 1 file changed, 93 insertions(+)
+ drivers/usb/dwc2d/src/lan78xx.rs | 96 ++++++++++++++++++++++++++++++++
+ 1 file changed, 96 insertions(+)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index aedc682..db2e064 100644
+index aedc682..f2e0703 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
 @@ -30,6 +30,11 @@ const ID_REV: u16 = 0x000;
@@ -80,7 +80,7 @@ index aedc682..db2e064 100644
      fn mii_read(&mut self, reg: u32) -> Result<u16, Error> {
          self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII busy")?;
          self.write(MII_ACC, (PHY_ADDR << 11) | (reg << 6) | MII_ACC_BUSY)?;
-@@ -340,6 +379,45 @@ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), E
+@@ -340,6 +379,48 @@ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), E
      r.write(MAF_HI0, address_high | MAF_HI_VALID)
  }
  
@@ -113,8 +113,11 @@ index aedc682..db2e064 100644
 +        let bit = multicast_hash(mac);
 +        table[bit / 32] |= 1 << (bit % 32);
 +    }
-+    r.dataport_write(VHF_HASH_OFFSET, &table)?;
++    // The table is written with the hash filter off and switched on
++    // afterwards, as Linux does.
 +    let rfe = r.read(RFE_CTL)? & !(RFE_CTL_MCAST_EN | RFE_CTL_MCAST_HASH);
++    r.write(RFE_CTL, rfe)?;
++    r.dataport_write(VHF_HASH_OFFSET, &table)?;
 +    let rfe = match groups {
 +        None => rfe | RFE_CTL_MCAST_EN,
 +        Some([]) => rfe,
@@ -126,7 +129,7 @@ index aedc682..db2e064 100644
  pub struct Lan78xx {
      hc: Dwc2,
      f: Lan78xxFunction,
-@@ -476,3 +554,18 @@ impl NetworkAdapter for Lan78xx {
+@@ -476,3 +557,18 @@ impl NetworkAdapter for Lan78xx {
          Ok(len)
      }
  }

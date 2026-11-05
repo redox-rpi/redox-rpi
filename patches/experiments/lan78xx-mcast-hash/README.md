@@ -9,7 +9,7 @@ In Pi test #246 that added about 28 wakeups a second to both `dwc2d` and
 `netstack`, plus 10 USB interrupts a second, for mDNS, SSDP and IPv6
 frames that the IPv4-only stack then drops.
 
-## Patch `0001`: hash filter in `lan78xx.rs`
+## Patch `0095`: hash filter in `lan78xx.rs`
 
 `lan78xx::set_multicast(bus, f, groups)`:
 
@@ -30,7 +30,7 @@ like the whole LAN.
 - **Wiring:** the Network session adds a `multicast` file and a
   `NetworkAdapter::set_multicast` method to `driver-network` (branch
   `mcast-filter`), and netstack writes 01:00:5e:00:00:01 plus each joined
-  group. This patch then implements that method for the LAN7800.
+  group. Patch `0095` then implements that method for the LAN7800.
 - QEMU has no LAN7800, so the check is on the Pi: with `cputop -w` the
   `dwc2d` and `netstack` wakeups should drop to about the level from
   before #194 (Pi test #246: 80/s and 30/s), and mDNS still works.
