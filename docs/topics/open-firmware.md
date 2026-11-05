@@ -4,8 +4,10 @@ Can the Pi 3B+ start without Broadcom's closed firmware (`bootcode.bin`,
 `start_cd.elf`)? This experiment tries Kristina Brooks's
 [rpi-open-firmware](https://github.com/christinaa/rpi-open-firmware), an
 open `bootcode.bin` for the VideoCore IV processor (VPU). It lives in its
-own repository, `redox-rpi/rpi-open-firmware` (GPLv2+, like upstream; not
-created yet, waiting for the maintainer's OK), so this repository stays MIT.
+own repository, [redox-rpi/rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware)
+(GPLv2+, like upstream; our work is on its default branch `redox-rpi`), so
+this repository stays MIT. Issue:
+[#221](https://github.com/redox-rpi/redox-rpi/issues/221).
 
 ## State
 
@@ -63,7 +65,7 @@ created yet, waiting for the maintainer's OK), so this repository stays MIT.
   then shows whether the clock was too fast. Why the clock might be too
   fast: the driver assumes a 250 MHz core clock, while `romstage.c`
   programs PLLC differently, so the real SD clock is not known. New card
-  image for Pi test #225 (`bootcode.bin` sha256 `9d02c747…`). The build is
+  image for Pi test #249 (`bootcode.bin` sha256 `9d02c747…`). The build is
   repeatable but not bit-identical, because the firmware prints its build
   time.
 
