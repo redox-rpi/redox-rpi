@@ -1,7 +1,7 @@
 From a304a73e14ef80a446545e028c39c28e907b6c9a Mon Sep 17 00:00:00 2001
 From: dwc2d <dwc2d@localhost>
 Date: Thu, 5 Nov 2026 02:28:23 +0000
-Subject: [PATCH] dwc2d: count the event loop wakeups by source in
+Subject: [PATCH 1/2] dwc2d: count the event loop wakeups by source in
  /tmp/dwc2d-wakeups (#126)
 
 ---
