@@ -68,6 +68,24 @@ this repository stays MIT. Issue:
   image for Pi test #249 (`bootcode.bin` sha256 `9d02c747…`). The build is
   repeatable but not bit-identical, because the firmware prints its build
   time.
+- **Pi test #249 (2026-11-05, same 64 MB card): the whole chain works up to
+  the kernel hand-off.**
+  - Reading sector 0 failed at the first data clock (`SH_CDIV 0x8`, which
+    the driver takes for 25 MHz) and worked at half that speed (`0x12`). So
+    the clock was too fast for this card.
+  - The chainloader then read the MBR, `cmdline.txt`, `rpi.dtb` (to
+    `0xF000000`) and `zImage` (to `0x2000000`), and printed `Jumping to the
+    Linux kernel...`.
+  - The test payload printed:
+    - `CPSR 0x600001D3`: 32-bit Supervisor mode, interrupts masked.
+    - `MIDR 0x410FD034`: Cortex-A53 r0p4.
+    - `MPIDR 0x80000000`: core 0.
+    - FDT pointer `0x0F000000`.
+  - So on the 3B+, a fully open boot path reaches a kernel entry point:
+    ROM, open `bootcode.bin`, SDRAM, ARM start, SD card, FAT, devicetree.
+    Only in 32-bit mode for now.
+  - Still open: the same image on an SDHC card (4–32 GB), to see whether
+    the slower clock is needed there too.
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
