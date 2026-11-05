@@ -62,6 +62,8 @@ home network can use it.
   right where named. The one-line summary had a wrong cause in 7 of 17
   ("failed to mount, leading to a crash in /tmp/r117"). **Use the facts and
   line numbers, not the reasons.**
-- OpenCode for small agent tasks on homenodellm: provider `vllm/gpt-oss-20b`
-  in `~/.config/opencode/opencode.json` (written). The install itself
-  (`~/.opencode/bin/opencode`, official script) waits for the user's OK.
+- OpenCode 1.19.5 for small agent tasks on homenodellm:
+  `~/.opencode/bin/opencode` (official script, not on PATH), provider
+  `vllm/gpt-oss-20b` in `~/.config/opencode/opencode.json`, autoupdate and
+  sharing off. `opencode run "…"` in a folder works with tool calls (glob,
+  read): a list-and-read task took 6 s.
