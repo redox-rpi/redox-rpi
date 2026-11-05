@@ -8945,3 +8945,45 @@ booted, pi-test passed with the manifest (0 of 300 starts failed), and there was
   no-network boot log in `~/pitest-tools/t246/serial-1.log`.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 21 s,
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #247 #216 / #126 LAN7800 multicast hash filter, A/B (2026-11-05, Pi test agent)
+
+Real Pi 3B+ over netboot, no HDMI connected. Both images are from one tree (experiments
+`timesync rtl8152 cputop`, with PR #210's `cputop`):
+- **A:** `v0.4.0-dev-455-ge763514+xe828`, without the filter.
+- **B:** `v0.4.0-dev-455-ge763514+x4753`, with `lan78xx-mcast-hash`.
+
+**Result: pass. The filter brings the idle wakeups back to the level from before #194.**
+B logs **`dwc2d: LAN7800 multicast filter: 1 groups`** (no timeout or error line), and its
+network works. Without the filter (A), dwc2d has 106–110 wakeups/s, netstack 57–62/s and
+line 50 18–20/s. With it (B), the numbers are 80–82/s, 29–32/s and 8/s (#246 before #194:
+80/s, 30/s, 8/s). No panic.
+
+| Round | dwc2d /s (CPU %) | netstack /s (CPU %) | [kmain] dwc2d's core /s | irq total (line 50) |
+|---|---|---|---|---|
+| A1 | 106 (2.6) | 57 (0.3) | 65 | 118 (18) |
+| A2 | 109 (2.7) | 60 (0.3) | 70 | 119 (19) |
+| A3 | 110 (2.6) | 62 (0.3) | 71 | 120 (20) |
+| B1 | 80 (2.5) | 29 (0.1) | 58 | 108 (8) |
+| B2 | 81 (2.6) | 30 (0.2) | 59 | 108 (8) |
+| B3 | 82 (2.5) | 32 (0.2) | 60 | 108 (8) |
+
+- **Busy core:** A cpu1 2–3 % (1790–1862 ms in 60 s), B cpu0 2 % (1654–1696 ms). The other
+  cores are about 0 % (about 200 ms on one core in both).
+- **pi-test:** pass on both with the manifest (0 of 300 starts failed).
+- **Ping:**
+  - From the Pi, `ping -c 3 192.168.178.120` gave 3/3 on A and B.
+  - From homenodellm (no `ping` binary there, so a raw ICMP echo via `sudo -n python3`), the
+    Pi did not answer on A, on B, **or on stable dev-201** (tried before the test). So the
+    Pi doesn't answer echo requests at all; this is not caused by the filter. The router
+    answers the same probe.
+- **A's first boot (10:24) had a network problem.** `devshd: listening`, and timesync got
+  the time from pool.ntp.org at 10:24:42. But from the first devsh connect on (about
+  10:24:47) homenodellm got `No route to host` (no ARP answer) for a minute, so nothing ran
+  on A.
+  - B was then started with a power cycle and was fine, and A's rerun at 10:42 was fine too.
+  - That is the third intermittent boot-network failure today, after #242 try 1 and #246
+    try 1. Those two had no `devshd: listening` at all.
+- Full output on homenodellm: `~/pitest-tools/t247a/cputop-A.txt`, `t247/cputop-B.txt`.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a devsh reset: banner after 20 s,
+  devsh answers, and `/srv/tftp/redox` matches the backup.
