@@ -9654,3 +9654,59 @@ and `rc=0`. Serial: `rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffe
   `~/pitest-tools/t259b/shot.png`.
 
 Stable image (now `v0.4.0-dev-565-gc70f394e+x9f76`) staged again, booted, devsh answers.
+
+## #260 PR #226 opt-a53: kernel, relibc and base built for speed and the Cortex-A53, A/B (2026-11-06, Pi test agent)
+
+Images:
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-565-gc70f394e+x9f76` | stable |
+| B | `v0.4.0-dev-567-gd91a247f+x9b71` | `opt-a53` |
+
+Both are on homenodellm in `~/redox-rpi-opt/keep/{A,B}/harddrive.img`. Real Pi 3B+ over
+netboot, HDMI attached. Benchmark: `patches/experiments/opt-a53/bench.py --rounds 3`, from
+branch `exp-opt-a53`.
+
+**Result: pass. B is faster in CPU- and network-bound work and the same on the SD card.**
+pi-test passed on all 4 boots of the final pass (0 of 300 starts failed).
+
+**Final pass** (bench.py 9cb724b1, order B, A, B, A, 20:47–21:18 UTC, 6 rounds per image,
+median and range in seconds):
+
+| Workload | A (stable) | B (opt-a53) | B against A |
+|---|---|---|---|
+| spawn, 500 × `ls /usr` | 77.60 (77.55–77.78) | 75.37 (75.18–75.74) | **2.9 % faster** |
+| net-rx, 32 MiB to the Pi | 3.02 (2.74–3.14) | 2.59 (2.46–2.79) | **14 % faster** |
+| net-tx, 32 MiB from the Pi | 4.89 (4.82–4.93) | 4.38 (4.33–4.44) | **10.5 % faster** |
+| sd-write, 50 MiB | 6.70 (5.85–7.89) | 6.73 (5.77–8.35) | same (card-bound, noisy) |
+| sd-read, 50 MiB | 0.56 (0.56–0.57) | 0.55 (0.54–0.56) | about the same |
+
+- **net-tx:** no retries were needed in this pass.
+- **Clocks:** the same before and after on every boot (arm 1400 MHz, core 250, sdram 400).
+  So there was no throttling.
+
+**Boot to `redox login:`**, from 12 boots over 4 passes (boot-timeline.py):
+
+| Image | Times (s) |
+|---|---|
+| A | 30.51, 30.36, 35.17, 30.36, 35.39, 39.88, 35.24, 30.31 |
+| B | 29.97, 30.12, 30.16, 39.83, 30.01, 30.06, 34.99, 30.60 |
+
+Both images take about 30 s, with the same 35–40 s outliers. No difference.
+
+**Earlier passes**, each a run of 4 boots in the order A, B, A, B:
+- **Pass 1** (17:08): bench.py stopped at net-rx. Redox `nc -l 5135` is refused; it needs
+  `nc -l 0.0.0.0:5135` (fixed in faf707e3).
+- **Pass 2** (17:40): bench.py stopped at net-tx. Redox `nc` does not close the connection
+  at the end of its input (fixed in f4f63618).
+- **Pass 3** (18:57): net-tx did not connect in 3 of 4 tries (retries added in 9cb724b1).
+- **Boot 4 (B) of pass 3:** pi-test hung in the 300 starts after the sdcard PASS (timed out
+  at 600 s), and then devsh gave "No route to host". There was no serial line and no panic.
+  It did not happen again in pass 4 (B twice, 600 starts). It may be the old intermittent
+  network loss or the #197 futex hang; neither image has the futex fix.
+- **Spawn and net-rx numbers from passes 1–3** agree with pass 4: A 77.75–77.95 s, B
+  75.42–75.64 s.
+
+Stable image staged again, booted, devsh answers. Raw data on homenodellm:
+`~/pitest-tools/t260{,b,c,d}/opt-a53.jsonl`.
