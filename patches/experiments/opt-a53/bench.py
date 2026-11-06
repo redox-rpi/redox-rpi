@@ -57,7 +57,7 @@ def net_rx(shell, host):
     result = {}
 
     def listen():
-        result["out"] = shell.run(f"nc -l {PORT} | wc -c", 600)
+        result["out"] = shell.run(f"nc -l 0.0.0.0:{PORT} | wc -c", 600)
 
     th = threading.Thread(target=listen)
     th.start()
