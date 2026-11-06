@@ -9573,3 +9573,84 @@ The row's `2>&1` is not valid in ion, so step 1 ran as `socdump &> /tmp/sd.txt`.
 
 - Stable image staged again, booted, devsh answers. The raw output went to the open-firmware
   session (homenodellm `~/pitest-tools/t261/`).
+
+## #259 #188 pointer moves and a window drag on the logged-in desktop: vc4d, rpi-fbd, vesad (2026-11-06, Pi test agent)
+
+Images on branch `graphics-vc4d` 9f2c802d:
+
+| Boot | Display driver | Build |
+|---|---|---|
+| 1 | vc4d | `v0.4.0-dev-602-g9f2c802d+x8ba8` |
+| 2 | rpi-fb | `+x7cb3` |
+| 3 | vesad | `+x6042` |
+
+Each image has `usb-mouse pointer-bench cputop orbital`. Real Pi 3B+ over netboot, HDMI to
+the NanoKVM at power-on. Two passes:
+- **Part A**, 16:49–17:07 UTC: steps 1–3, the rpi-fb test and vc4shot.
+- **Part B**, 17:23–17:40 UTC: steps 1, 2, 4 and 5 again. In part A the background
+  `… > /tmp/pb.txt 2>&1 &` was an ion syntax error, so pointer-bench never started. Part B
+  uses `&>`.
+
+**Result: done, with gaps.**
+- **Login:** works on all three boots in both passes. `--type '\n'` prints `typed 1 keys`,
+  `--super t` prints `Super+t`, and then orblogin is gone and cosmic-term runs.
+- **vc4d check:** `PASSED` 11/11, in both passes.
+- **Drag:** orbital takes about 90 % of one core on rpi-fb (90.9 %) and vesad (89.4 %).
+- **Moving:** cheap on vc4d and vesad, about 1.5–1.7 % for orbital.
+- **Two of the six load measurements failed:** cputop returned at once (`0.0 s`), as in
+  #256: vc4d drag and rpi-fb moving.
+- **pointer-bench totals:** `/tmp/pb.txt` and `/tmp/pd.txt` were still empty when read. The
+  row reads them 60 s after the start of a 70 s run, and pointer-bench prints only at the
+  end.
+- **No exception or panic.**
+
+**Idle, logged in** (part A, `cputop -n 1 -l 12 10`): about 5 % of one core on all three
+boots, almost all of it dwc2d (5.0–5.1 %, 110–117 wakeups/s).
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| orbital | 0.3 % | 0.2 % | 0.2 % |
+| display daemon | 0.0 % | 0.1 % | 0.1 % |
+
+cosmic-term is not in the top 12.
+
+**Moving** (part B, pointer-bench 70, `cputop -l 12 20`):
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| busiest core | 8 % | cputop 0.0 s | 5 % |
+| orbital | 1.7 % (364/s) | (4.7 %, 1389/s in a 0.0 s sample) | 1.5 % (360/s) |
+| cosmic-term | 0.8 % (240/s) | – | 0.8 % (240/s) |
+| display daemon | vc4d 0.3 % (63/s) | – | vesad 0.4 % (61/s) |
+| inputd | 0.4 % (180/s) | – | 0.3 % (180/s) |
+| orblogin | gone | gone | gone |
+
+The failed rpi-fb sample showed netstack 12037/s, devshd 12963/s and dwc2d 9954/s, in a few
+ms.
+
+**Window drag** (part B, `--drag 960 540 --super-drag`, `cputop -l 12 20`):
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| busiest core | cputop 0.0 s | cpu2 45 %, cpu3 20 % | cpu1 95 % |
+| orbital | – | **90.9 %** (266/s) | **89.4 %** (116/s) |
+| display daemon | – | rpi-fbd 7.6 % | vesad 10.2 % |
+| inputd | – | 0.8 % | 0.6 % |
+| cosmic-term | – | 0.4 % | – |
+
+**rpi-fb test** (part A): `pointer-bench 5; echo rc=$?` printed `300 moves in 5.0 s (60.0/s)`
+and `rc=0`. Serial: `rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`,
+`blits with the CPU`.
+
+**vc4shot** works now:
+- **Part A:** 2 planes, the 1920x1080 primary and the 64x64 cursor with alpha.
+  `vc4shot: wrote /tmp/shot.ppm (6220817 bytes)`, serial `vc4d: shot: wrote /tmp/vc4shot.ppm
+  (1920x1080, 2 planes)`. The picture shows the desktop, the terminal window, the bottom
+  taskbar and the clock 00:05, with **no side bars and no top bar**. So the #220 bars come
+  from the HDMI/KVM side.
+- **Part B, during a drag:** the terminal has moved left, partly off screen. The cursor plane
+  is reported at (523, 272).
+- Both pictures are on homenodellm in `~/pitest-tools/t259/shot.png` and
+  `~/pitest-tools/t259b/shot.png`.
+
+Stable image (now `v0.4.0-dev-565-gc70f394e+x9f76`) staged again, booted, devsh answers.
