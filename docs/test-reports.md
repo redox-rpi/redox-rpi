@@ -9431,3 +9431,62 @@ the planes.
 - Full outputs are on homenodellm in `~/pitest-tools/t256/` and `t256b/` (rpi-fb repeat).
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #257 #197 RedoxFS hang with `call-diag`: which scheme does pkg's blocked call wait on? (2026-11-06, Pi test agent)
+
+Image `t197-hbE.img` (`v0.4.0-dev-376-g842d0fa4+x6c8e`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag call-diag`, md5 `cd052b0a…`), mirror
+`pkg-mirror-t197`. Real Pi 3B+ over netboot, HDMI attached. 08:41–09:37 UTC.
+
+**Result: 3 hangs in 6 rounds, so the run stopped after round 6. `pkg`'s blocked call does
+not wait on RedoxFS.**
+- Hang E-1: `call 39/21/6/3`, handler pid 21 = **`ptyd`**, opcode 6.
+- Hang E-6: `call 43/25/5/3`, handler pid 25 = **`netstack`**, opcode 5.
+- In both, the handler sits idle: `ptyd` in `EventQueue::read`, and `netstack` in its own
+  call `36/16/5/0` to pid 16 = `dwc2d`, which sleeps in `nanosleep`.
+- RedoxFS again answered every request (`in = out`, `busy0`, every skip count 0).
+- So the waiting request is lost on the way to a scheme that is not RedoxFS, or its wakeup
+  is lost.
+- The "spinning" initfs `redoxfs` (pid 20) is `UR` at **pc `0x47ad24` with no block
+  reason and `call 0/0/0/0`**. That is the same PC at which the data `redoxfs` (pid 32)
+  waits in `UserInner::read`, so it is the return point of the read syscall. Its CPU grows
+  only slowly (E-1: 9.62 → 9.95 s user over 40 s). It looks like a context that is marked
+  runnable but sits at the syscall return.
+- No exception or panic.
+
+- **Free space after each remove (KB):** E-2 124476, E-3 124692, E-4 124640. Flat. E-1,
+  E-5 and E-6 hung.
+- **E-1** (install from 08:42): stuck at `Extracting vim … 482/2316`. The 3 context dumps
+  (20 s apart) are the same apart from slowly growing CPU:
+  - `20 UR #1 /scheme/initfs/bin/redoxfs call 0/0/0/0 pc 0x47ad24` (9.62 / 9.79 / 9.95 s
+    user), and its second context `US … nanosleep`.
+  - `32 UB /usr/bin/redoxfs call 0/0/0/0 pc 0x47ad24 UserInner::read (v2)`.
+  - **`56 UB #0 /usr/bin/pkg call 39/21/6/3 pc 0x4f6870 UserInner::call`** (1:12 user),
+    and `56 UB #2 pkg … futex`.
+  - `54`/`57 UB /usr/bin/ion call 18/0/28/7` and `/8 … UserInner::call` (devsh shells
+    waiting on scheme 18, handled in the kernel's pid 0).
+  - **`21 UB /usr/bin/ptyd call 0/0/0/0 pc 0x4269c0 EventQueue::read`**.
+  - `25 UB /usr/bin/netstack call 36/16/5/0 pc 0x464a18 UserInner::call`,
+    `16 US /scheme/initfs/bin/dwc2d … nanosleep`.
+  - `redoxfs-diag /scheme/file t540 … t570 in13037 out13037 … busy0` (unchanged).
+- **E-5** (install from 09:10): the last progress line was `Extracting terminfo [100%]
+  108/108`, then nothing. In all 3 dumps **`pkg` no longer appears**. Only the devsh
+  `ion` (102) waits in `call 18/0/28/10`, then `/11`.
+  - Initfs `redoxfs` pid 20 `UR` at pc `0x47ad24` (2:08.90 → 2:09.24 user, 102 MB).
+  - `redoxfs-diag /scheme/file t1500 … t1530 in178023 out178023 busy0`.
+  - So this time `pkg` seems to have ended (or died), and the shell around it never
+    returned.
+- **E-6** (install from 09:22): no `Extracting` line, so it hung during the download from
+  the mirror.
+  - **`56 UB #3 /usr/bin/pkg call 43/25/5/3 pc 0x4f395c UserInner::call`**, waiting on
+    `netstack`.
+  - `netstack` itself in `call 36/16/5/0` to `dwc2d`, and dwc2d in `nanosleep`.
+  - Initfs `redoxfs` `UR` at pc `0x47ad24` (3.47 → 3.63 s).
+  - `redoxfs-diag /scheme/file t660 … t750 in4019 out4019 busy0`.
+  - Heartbeat dump: `[hbctx 20 … redoxfs B sys cpu3 UserInner::read (v2)]`, `[hbctx 56
+    /usr/bin/pkg B sys cpu3 UserInner::call]`. No runnable-on-idle dump.
+- The 3 context dumps of each hang (whole) and the serial log are on homenodellm in
+  `~/pitest-tools/t257/hang-E-{1,5,6}-install-{context1,2,3.txt,serial.log}`.
+- After each hang, a power cycle and the mirror set up again. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle: devsh answers, and
+  `/srv/tftp/redox` matches the backup.
