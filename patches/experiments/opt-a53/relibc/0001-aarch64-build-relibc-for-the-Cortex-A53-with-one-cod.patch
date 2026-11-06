@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 6 Nov 2026 16:31:45 +0000
+Subject: [PATCH] aarch64: build relibc for the Cortex-A53 with one codegen
+ unit (redox-rpi opt-a53)
+
+---
+ Cargo.toml | 1 +
+ Makefile   | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index c13f179b..dd79d757 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -149,6 +149,7 @@ trace_tls = []
+ panic = "abort"
+ 
+ [profile.release]
++codegen-units = 1
+ panic = "abort"
+ 
+ [patch.crates-io]
+diff --git a/Makefile b/Makefile
+index dfdb3082..6ef61c0a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -27,7 +27,7 @@ export CFLAGS=-I$(TARGET_HEADERS)
+ # The aarch64 signal entry returns with `br x18`, so compiled code must
+ # never keep a value in x18 (redox-rpi #1).
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-export RUSTFLAGS+=-Zfixed-x18
++export RUSTFLAGS+=-Zfixed-x18 -Ctarget-cpu=cortex-a53
+ CFLAGS+=-ffixed-x18
+ endif
+ 
