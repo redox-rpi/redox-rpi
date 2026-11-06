@@ -2,7 +2,7 @@
 # only builds a pinned commit of it. No vc4d source in redox-rpi.
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "849f7e045b305811312aef4ca072a7ad8a85f3c5"
+rev = "14069ed21a0ff53c3cdba797924074b36980ee7c"
 
 [build]
 template = "cargo"
