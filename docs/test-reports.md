@@ -9318,3 +9318,64 @@ Built 2026-11-06T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over ne
 | ps-tty | pass | 46 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## #220 #188 vc4d stage 1: screen check through the NanoKVM (2026-11-06, Pi test agent and the user)
+
+Image `netboot-pb-vc4d-v0.4.0-dev-598-g6763d5b7+xf33c` (the newest Graphics build, merged
+vc4d; experiments `cputop orbital pointer-bench vc4d`), staged as for #220a. Real Pi 3B+
+over netboot, **HDMI to the NanoKVM at power-on**, power cycle at 07:28:06 UTC, login 30 s
+later. The user looked at the screen through the NanoKVM.
+
+**Result: pass for the picture.** vc4d shows Orbital's desktop and taskbar at 1920x1080, the
+pointer is visible, and the keyboard works. The mouse did not work only because this image
+has no `--experiment usb-mouse`, so the pointer and drag points (5) and (6) were not
+checked.
+- Seen on screen: **black bars at the sides**, probably the KVM capture or the HDMI timing,
+  for Graphics to check.
+- Seen on screen: **a dark bar at the top**, probably Orbital's own content (Graphics is
+  writing `vc4shot` to check).
+
+- **Serial:**
+  - `vc4d: HVS at 0x3f400000, id 0x64647276, enabled`, channel lines as in #220a (channel
+    1 `ctrl 0x80780438`, firmware list 1636, 1920x1080).
+  - `taking over channel 1 at 1920x1080`.
+  - **`vc4d: check: back on the firmware list 1636; 11 passed, 0 failed`, `vc4d: check:
+    PASSED`.** The list read-back now passes with "4 context words filled in by the HVS"
+    (#220a: 9 of 11).
+  - `no primary plane, firmware list again` (twice), `list 1 at 2048` (fbcond), `list 2 at
+    2112`, `list 3 at 2048` (Orbital's 1920x1080 plane plus the 64x64 cursor plane with
+    alpha).
+  - Watch at 2, 5, 10, 30 and 60 s: `PASS frames advance, errors []`. No panic.
+- The user's words when done: "ok kann man eh nicht abmelden, kannst wieder übernehmen"
+  (logging out isn't possible anyway).
+- The vc4d log (homenodellm `~/pitest-tools/t220/vc4d.txt`) went to the Graphics session.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle at 07:37:58 (HDMI
+  attached): devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #255 PR #223 USB mouse as a default patch (2026-11-06, Pi test agent)
+
+Image `mousepi-v0.4.0-dev-570-ge437e901+x12cb` (branch `usb-mouse-default` e437e901, only
+`--experiment timesync`, md5 `3190d2c9…`). Real Pi 3B+ over netboot with the usual USB
+mouse (093a:2510) and keyboard, HDMI to the NanoKVM. Reset at 07:45:41 UTC,
+`devshd: listening` after 20 s.
+
+**Result: pass.** The default image drives the mouse, it comes back after a port power
+cycle, and devsh keeps answering. No panic.
+
+- **(1)** Boot: `dwc2d: keyboard at address 4` and **`dwc2d: mouse at address 5: relative,
+  3 button(s), wheel`**.
+- **(2) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(3)** `echo mouse > /tmp/dwc2d-cycle` over devsh at 07:46:54, then in the serial log:
+  - `cycle: hub 1 port 3 power off`, `disconnected after 101 ms`,
+    `hub 1 port 3: device at address 5 removed`, `cycle: hub 1 port 3 power on`,
+    `mouse removed`.
+  - `device connected`, `address 5: 093a:2510, USB 1.10, Low speed`, interface class 3/1/2,
+    endpoint 0x81 interrupt max packet 4.
+  - `request [21, 0a, …] to address 5 … failed: Stall`. This is SET_IDLE, which many mice
+    refuse; it did no harm.
+  - Then **`dwc2d: mouse at address 5: relative, 3 button(s), wheel`** again.
+  - devsh answered 15 s later.
+- **(4)** `/tmp/dwc2d-input-log` touched for 5 s and removed. Nobody moved the mouse, so
+  there were no move lines (optional).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached): devsh
+  answers, and `/srv/tftp/redox` matches the backup.
