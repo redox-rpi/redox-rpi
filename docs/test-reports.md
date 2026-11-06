@@ -9305,3 +9305,352 @@ passes with the manifest (0 of 300 starts failed), and there was no panic.
   session.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## 2026-11-06: `v0.4.0-dev-565-gc70f394e+x9f76`
+
+Built 2026-11-06T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-565-gc70f394e+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-565-gc70f394e+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## #220 #188 vc4d stage 1: screen check through the NanoKVM (2026-11-06, Pi test agent and the user)
+
+Image `netboot-pb-vc4d-v0.4.0-dev-598-g6763d5b7+xf33c` (the newest Graphics build, merged
+vc4d; experiments `cputop orbital pointer-bench vc4d`), staged as for #220a. Real Pi 3B+
+over netboot, **HDMI to the NanoKVM at power-on**, power cycle at 07:28:06 UTC, login 30 s
+later. The user looked at the screen through the NanoKVM.
+
+**Result: pass for the picture.** vc4d shows Orbital's desktop and taskbar at 1920x1080, the
+pointer is visible, and the keyboard works. The mouse did not work only because this image
+has no `--experiment usb-mouse`, so the pointer and drag points (5) and (6) were not
+checked.
+- Seen on screen: **black bars at the sides**, probably the KVM capture or the HDMI timing,
+  for Graphics to check.
+- Seen on screen: **a dark bar at the top**, probably Orbital's own content (Graphics is
+  writing `vc4shot` to check).
+
+- **Serial:**
+  - `vc4d: HVS at 0x3f400000, id 0x64647276, enabled`, channel lines as in #220a (channel
+    1 `ctrl 0x80780438`, firmware list 1636, 1920x1080).
+  - `taking over channel 1 at 1920x1080`.
+  - **`vc4d: check: back on the firmware list 1636; 11 passed, 0 failed`, `vc4d: check:
+    PASSED`.** The list read-back now passes with "4 context words filled in by the HVS"
+    (#220a: 9 of 11).
+  - `no primary plane, firmware list again` (twice), `list 1 at 2048` (fbcond), `list 2 at
+    2112`, `list 3 at 2048` (Orbital's 1920x1080 plane plus the 64x64 cursor plane with
+    alpha).
+  - Watch at 2, 5, 10, 30 and 60 s: `PASS frames advance, errors []`. No panic.
+- The user's words when done: "ok kann man eh nicht abmelden, kannst wieder übernehmen"
+  (logging out isn't possible anyway).
+- The vc4d log (homenodellm `~/pitest-tools/t220/vc4d.txt`) went to the Graphics session.
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle at 07:37:58 (HDMI
+  attached): devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #255 PR #223 USB mouse as a default patch (2026-11-06, Pi test agent)
+
+Image `mousepi-v0.4.0-dev-570-ge437e901+x12cb` (branch `usb-mouse-default` e437e901, only
+`--experiment timesync`, md5 `3190d2c9…`). Real Pi 3B+ over netboot with the usual USB
+mouse (093a:2510) and keyboard, HDMI to the NanoKVM. Reset at 07:45:41 UTC,
+`devshd: listening` after 20 s.
+
+**Result: pass.** The default image drives the mouse, it comes back after a port power
+cycle, and devsh keeps answering. No panic.
+
+- **(1)** Boot: `dwc2d: keyboard at address 4` and **`dwc2d: mouse at address 5: relative,
+  3 button(s), wheel`**.
+- **(2) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(3)** `echo mouse > /tmp/dwc2d-cycle` over devsh at 07:46:54, then in the serial log:
+  - `cycle: hub 1 port 3 power off`, `disconnected after 101 ms`,
+    `hub 1 port 3: device at address 5 removed`, `cycle: hub 1 port 3 power on`,
+    `mouse removed`.
+  - `device connected`, `address 5: 093a:2510, USB 1.10, Low speed`, interface class 3/1/2,
+    endpoint 0x81 interrupt max packet 4.
+  - `request [21, 0a, …] to address 5 … failed: Stall`. This is SET_IDLE, which many mice
+    refuse; it did no harm.
+  - Then **`dwc2d: mouse at address 5: relative, 3 button(s), wheel`** again.
+  - devsh answered 15 s later.
+- **(4)** `/tmp/dwc2d-input-log` touched for 5 s and removed. Nobody moved the mouse, so
+  there were no move lines (optional).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached): devsh
+  answers, and `/srv/tftp/redox` matches the backup.
+
+## #256 #188 what pointer moves cost: vc4d against rpi-fbd and vesad (2026-11-06, Pi test agent)
+
+Three network boots on the real Pi 3B+, **HDMI to the NanoKVM at power-on** (power cycle
+each). Staged as for #220a (staging folder with the Graphics scripts and bootloader, plus
+`mkimage` from `~/redox-rpi-cpu/build`). Each boot: Orbital's login window up (75 s after
+devsh), `cputop -n 1 -l 12 20` at idle, then `pointer-bench 70 > /tmp/pb.txt &` and right
+after it `cputop -n 1 -l 12 20`, then after 60 s `cat /tmp/pb.txt`.
+- **vc4d:** `v0.4.0-dev-600-g1d7116cf+x8ba8`.
+- **rpi-fb:** `v0.4.0-dev-599-g0db53051+x7cb3`.
+- **vesad:** `v0.4.0-dev-599-g0db53051+x6042`.
+
+**Result: moving the pointer keeps one core about 92–100 % busy with vc4d and with vesad.
+Most of it is `orblogin` (54 %) and `orbital` (29–46 %); the display daemon itself costs
+little** (vc4d 0.5 %, vesad 16 %). On the rpi-fb image the measurement failed twice:
+`cputop` returned at once (0.0 s) as soon as `pointer-bench` ran, and `pointer-bench` wrote
+nothing. vc4d's check PASSED. The vc4shot screenshot is black, because vc4shot may not map
+the planes.
+
+| Boot | phase | busiest core | orblogin | orbital | display daemon | inputd | dwc2d | pointer-bench result |
+|---|---|---|---|---|---|---|---|---|
+| vc4d | idle | cpu2 5 % | – | – | – | – | 4.9 % (101/s) | |
+| vc4d | moving | **cpu1 92 %**, cpu0 13 % | **53.5 %** (117/s) | **45.8 %** (274/s) | vc4d 0.5 % (85/s) | 0.6 % (173/s) | 5.2 % | `4200 moves in 70.0 s (60.0/s)` |
+| rpi-fb | idle | cpu2 5 % | – | – | rpi-fbd 0.0 % | – | 5.0 % | |
+| rpi-fb | moving | **measurement failed** (`cputop: 0.0 s`) | (543 % in a 25 ms sample) | | | | | **empty `/tmp/pb.txt`** |
+| vesad | idle | cpu0 5 % | – | – | – | – | 4.9 % | |
+| vesad | moving | **cpu2 100 %** | **54.5 %** (151/s) | **28.8 %** (289/s) | vesad **16.2 %** (53/s) | 0.2 % (146/s) | 5.2 % | `4200 moves in 70.0 s (60.0/s)` |
+
+- **vc4d boot:** `vc4d: check: PASSED`. `vc4shot /tmp/shot.ppm`:
+  - `channel 1 1920x1080, list at 2048, 2 planes`.
+  - plane 0 1920x1080 format 7, and plane 1 64x64 with alpha at **x 1259, y 524**
+    (the pointer).
+  - Both `cannot map 0x6800000` / `0x7624000: Error Operation not permitted`. It still
+    `wrote /tmp/shot.ppm (1920x1080)`, 6220817 bytes, copied to homenodellm by base64 over
+    devsh (`~/pitest-tools/t256/shot.ppm`). **All pixel bytes are 0**, so it can't show the
+    dark bar yet.
+- **rpi-fb boot** (twice, 08:20 and 08:29):
+  - rpi-fbd found `EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`, and
+    `blits with the CPU`.
+  - The idle cputop measures normally (20.0 s), and `sleep 5` takes 5 s (second boot).
+  - But the cputop started right after `pointer-bench … &` returns in 0.4 s with
+    `cputop: 0.0 s, 60 threads`. In the first boot it showed orblogin at 543 % in a 25 ms
+    window; in the second, all zeros.
+  - `/tmp/pb.txt` stays empty 60 s later.
+  - So with rpi-fbd, something goes wrong as soon as pointer-bench drives the pointer: a
+    timer or clock problem for other programs, or pointer-bench dies. Graphics should
+    check. The clock was at 1970 (no timesync in these images).
+- **Interrupts:** 115–121/s (timer 100, line 50 15–21) in every phase except the broken
+  rpi-fb sample.
+- Full outputs are on homenodellm in `~/pitest-tools/t256/` and `t256b/` (rpi-fb repeat).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
+  devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #257 #197 RedoxFS hang with `call-diag`: which scheme does pkg's blocked call wait on? (2026-11-06, Pi test agent)
+
+Image `t197-hbE.img` (`v0.4.0-dev-376-g842d0fa4+x6c8e`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag call-diag`, md5 `cd052b0a…`), mirror
+`pkg-mirror-t197`. Real Pi 3B+ over netboot, HDMI attached. 08:41–09:37 UTC.
+
+**Result: 3 hangs in 6 rounds, so the run stopped after round 6. `pkg`'s blocked call does
+not wait on RedoxFS.**
+- Hang E-1: `call 39/21/6/3`, handler pid 21 = **`ptyd`**, opcode 6.
+- Hang E-6: `call 43/25/5/3`, handler pid 25 = **`netstack`**, opcode 5.
+- In both, the handler sits idle: `ptyd` in `EventQueue::read`, and `netstack` in its own
+  call `36/16/5/0` to pid 16 = `dwc2d`, which sleeps in `nanosleep`.
+- RedoxFS again answered every request (`in = out`, `busy0`, every skip count 0).
+- So the waiting request is lost on the way to a scheme that is not RedoxFS, or its wakeup
+  is lost.
+- The "spinning" initfs `redoxfs` (pid 20) is `UR` at **pc `0x47ad24` with no block
+  reason and `call 0/0/0/0`**. That is the same PC at which the data `redoxfs` (pid 32)
+  waits in `UserInner::read`, so it is the return point of the read syscall. Its CPU grows
+  only slowly (E-1: 9.62 → 9.95 s user over 40 s). It looks like a context that is marked
+  runnable but sits at the syscall return.
+- No exception or panic.
+
+- **Free space after each remove (KB):** E-2 124476, E-3 124692, E-4 124640. Flat. E-1,
+  E-5 and E-6 hung.
+- **E-1** (install from 08:42): stuck at `Extracting vim … 482/2316`. The 3 context dumps
+  (20 s apart) are the same apart from slowly growing CPU:
+  - `20 UR #1 /scheme/initfs/bin/redoxfs call 0/0/0/0 pc 0x47ad24` (9.62 / 9.79 / 9.95 s
+    user), and its second context `US … nanosleep`.
+  - `32 UB /usr/bin/redoxfs call 0/0/0/0 pc 0x47ad24 UserInner::read (v2)`.
+  - **`56 UB #0 /usr/bin/pkg call 39/21/6/3 pc 0x4f6870 UserInner::call`** (1:12 user),
+    and `56 UB #2 pkg … futex`.
+  - `54`/`57 UB /usr/bin/ion call 18/0/28/7` and `/8 … UserInner::call` (devsh shells
+    waiting on scheme 18, handled in the kernel's pid 0).
+  - **`21 UB /usr/bin/ptyd call 0/0/0/0 pc 0x4269c0 EventQueue::read`**.
+  - `25 UB /usr/bin/netstack call 36/16/5/0 pc 0x464a18 UserInner::call`,
+    `16 US /scheme/initfs/bin/dwc2d … nanosleep`.
+  - `redoxfs-diag /scheme/file t540 … t570 in13037 out13037 … busy0` (unchanged).
+- **E-5** (install from 09:10): the last progress line was `Extracting terminfo [100%]
+  108/108`, then nothing. In all 3 dumps **`pkg` no longer appears**. Only the devsh
+  `ion` (102) waits in `call 18/0/28/10`, then `/11`.
+  - Initfs `redoxfs` pid 20 `UR` at pc `0x47ad24` (2:08.90 → 2:09.24 user, 102 MB).
+  - `redoxfs-diag /scheme/file t1500 … t1530 in178023 out178023 busy0`.
+  - So this time `pkg` seems to have ended (or died), and the shell around it never
+    returned.
+- **E-6** (install from 09:22): no `Extracting` line, so it hung during the download from
+  the mirror.
+  - **`56 UB #3 /usr/bin/pkg call 43/25/5/3 pc 0x4f395c UserInner::call`**, waiting on
+    `netstack`.
+  - `netstack` itself in `call 36/16/5/0` to `dwc2d`, and dwc2d in `nanosleep`.
+  - Initfs `redoxfs` `UR` at pc `0x47ad24` (3.47 → 3.63 s).
+  - `redoxfs-diag /scheme/file t660 … t750 in4019 out4019 busy0`.
+  - Heartbeat dump: `[hbctx 20 … redoxfs B sys cpu3 UserInner::read (v2)]`, `[hbctx 56
+    /usr/bin/pkg B sys cpu3 UserInner::call]`. No runnable-on-idle dump.
+- The 3 context dumps of each hang (whole) and the serial log are on homenodellm in
+  `~/pitest-tools/t257/hang-E-{1,5,6}-install-{context1,2,3.txt,serial.log}`.
+- After each hang, a power cycle and the mirror set up again. Stable
+  `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle: devsh answers, and
+  `/srv/tftp/redox` matches the backup.
+
+## #258 #197 pkg hang with the kernel futex fix `futex-wake-race` (2026-11-06, Pi test agent)
+
+Image `t197-hbF.img` (`v0.4.0-dev-377-g8ab74b8b+x1409`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag call-diag futex-wake-race`, md5
+`961e24b6…`, checked), mirror `pkg-mirror-t197`. Real Pi 3B+ over netboot, HDMI attached.
+15:54–16:48 UTC.
+
+**Result: pass. 10 of 10 rounds with no hang** (257 on the same base without the futex fix:
+3 hangs in 6 rounds; 252: 1 in 10; 250 B: 2 in 6; 248: 4 in 9 installs).
+- Every `pkg install --yes vim` and `pkg remove --yes vim` ended with rc=0. Each round
+  (install plus remove) took about 5 min 15 s, very even (16:00:48, 16:06:02, … 16:47:59).
+- **Free space after each remove (KB):** 124468, 124688, 124632, 124572, 124512, 124720,
+  124668, 124608, 124548, 124484. Flat (124.5–124.7 MB), the space fix still works.
+- Free after each install: 89016–89292 KB.
+- No exception or panic on serial. No hang, so no context dumps were needed.
+- Stable image staged again, booted to `v0.4.0-dev-201-gb714bca`, devsh answers,
+  `/srv/tftp/redox` matches the backup.
+
+- `date` showed 2026 (15:55:35 UTC). `redoxfs-diag` lines stayed `in = out`, `busy0`.
+
+So the hang is gone with the backport of the upstream `FUTEX_WAIT` lost-wakeup fix
+(57ccc8f1, 58050594). One run of 10 clean rounds is not proof, but before the fix the same
+test hung in about 1 of 3 installs.
+
+## #261 #224 `socdump`: the real 3B+'s clock, PLL and GPIO registers against the firmware (2026-11-06, Pi test agent)
+
+Image `netboot-socdump-v0.4.0-dev-587-g9bf64d7.img` (`v0.4.0-dev-587-g9bf64d7`, branch
+`socdump` 9bf64d7). Real Pi 3B+ over netboot, HDMI attached. 17:21–17:23 UTC.
+The row's `2>&1` is not valid in ion, so step 1 ran as `socdump &> /tmp/sd.txt`.
+
+**Result: pass. All 4 calls answered in under 0.4 s, no hang or panic, rc=0 for step 1.**
+- **PLLs** (crystal 19.2 MHz, `CM_LOCK 0x00001f1f`, all locked):
+
+  | PLL | MHz | Taps |
+  |---|---|---|
+  | plla | 2400 | core /4 = 600 |
+  | pllb | 2800 | **`pllb_arm` /2 = 1400.000** |
+  | pllc | 2400 | core0 /2 = 1200, per /2 = 1200 |
+  | plld | 2000 | core /4 = 500, per /4 = 500 |
+  | pllh | 1485 | pix /1/10 = 148.5 |
+
+- **Clocks that are on:**
+
+  | Clock | Source | MHz |
+  |---|---|---|
+  | v3d | plla_core /2 | 300 |
+  | emmc | pllc_per /6 | 200 |
+  | uart | plld_per /10.4167 | 48.000 |
+  | gp1 | | 24 |
+  | hsm | | 163.683 |
+  | timer | | 1.000 |
+  | tsens | | 1.920 |
+  | otp | | 4.800 |
+
+- **Clocks that read as off:** `vpu`, `h264`, `isp` and `sdram` read as not enabled, at
+  0 MHz (ctl `0x245`/`0x244`/`0x244`/`0x4006`).
+- **GPIO:** 14/15 `alt0` (UART), 2/3 and 7–11 `alt0`, 40–43 and 48–53 `alt0`.
+- **`socdump check`** (rc=1): emmc, uart and arm `ok`; these are **`DIFFERENT`**:
+
+  | Clock | Firmware MHz | socdump MHz |
+  |---|---|---|
+  | core/vpu | 250 | 0 |
+  | v3d | 250 | 300 |
+  | h264 | 250 | 0 |
+  | isp | 250 | 0 |
+  | sdram | 400 | 0 |
+
+- **`/scheme/rpi-firmware/clocks`** (rate, max):
+
+  | Clock | Rate (Hz) | Max (Hz) |
+  |---|---|---|
+  | emmc | 200000000 | 200000000 |
+  | uart | 48000000 | 1000000000 |
+  | arm | 1400000000 | 1400000000 |
+  | core | 250000000 | 400000000 |
+  | v3d | 250000000 | 300000000 |
+  | h264 | 250000000 | 300000000 |
+  | isp | 250000000 | 300000000 |
+  | sdram | 400000000 | 450000000 |
+
+- Stable image staged again, booted, devsh answers. The raw output went to the open-firmware
+  session (homenodellm `~/pitest-tools/t261/`).
+
+## #259 #188 pointer moves and a window drag on the logged-in desktop: vc4d, rpi-fbd, vesad (2026-11-06, Pi test agent)
+
+Images on branch `graphics-vc4d` 9f2c802d:
+
+| Boot | Display driver | Build |
+|---|---|---|
+| 1 | vc4d | `v0.4.0-dev-602-g9f2c802d+x8ba8` |
+| 2 | rpi-fb | `+x7cb3` |
+| 3 | vesad | `+x6042` |
+
+Each image has `usb-mouse pointer-bench cputop orbital`. Real Pi 3B+ over netboot, HDMI to
+the NanoKVM at power-on. Two passes:
+- **Part A**, 16:49–17:07 UTC: steps 1–3, the rpi-fb test and vc4shot.
+- **Part B**, 17:23–17:40 UTC: steps 1, 2, 4 and 5 again. In part A the background
+  `… > /tmp/pb.txt 2>&1 &` was an ion syntax error, so pointer-bench never started. Part B
+  uses `&>`.
+
+**Result: done, with gaps.**
+- **Login:** works on all three boots in both passes. `--type '\n'` prints `typed 1 keys`,
+  `--super t` prints `Super+t`, and then orblogin is gone and cosmic-term runs.
+- **vc4d check:** `PASSED` 11/11, in both passes.
+- **Drag:** orbital takes about 90 % of one core on rpi-fb (90.9 %) and vesad (89.4 %).
+- **Moving:** cheap on vc4d and vesad, about 1.5–1.7 % for orbital.
+- **Two of the six load measurements failed:** cputop returned at once (`0.0 s`), as in
+  #256: vc4d drag and rpi-fb moving.
+- **pointer-bench totals:** `/tmp/pb.txt` and `/tmp/pd.txt` were still empty when read. The
+  row reads them 60 s after the start of a 70 s run, and pointer-bench prints only at the
+  end.
+- **No exception or panic.**
+
+**Idle, logged in** (part A, `cputop -n 1 -l 12 10`): about 5 % of one core on all three
+boots, almost all of it dwc2d (5.0–5.1 %, 110–117 wakeups/s).
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| orbital | 0.3 % | 0.2 % | 0.2 % |
+| display daemon | 0.0 % | 0.1 % | 0.1 % |
+
+cosmic-term is not in the top 12.
+
+**Moving** (part B, pointer-bench 70, `cputop -l 12 20`):
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| busiest core | 8 % | cputop 0.0 s | 5 % |
+| orbital | 1.7 % (364/s) | (4.7 %, 1389/s in a 0.0 s sample) | 1.5 % (360/s) |
+| cosmic-term | 0.8 % (240/s) | – | 0.8 % (240/s) |
+| display daemon | vc4d 0.3 % (63/s) | – | vesad 0.4 % (61/s) |
+| inputd | 0.4 % (180/s) | – | 0.3 % (180/s) |
+| orblogin | gone | gone | gone |
+
+The failed rpi-fb sample showed netstack 12037/s, devshd 12963/s and dwc2d 9954/s, in a few
+ms.
+
+**Window drag** (part B, `--drag 960 540 --super-drag`, `cputop -l 12 20`):
+
+| | vc4d | rpi-fb | vesad |
+|---|---|---|---|
+| busiest core | cputop 0.0 s | cpu2 45 %, cpu3 20 % | cpu1 95 % |
+| orbital | – | **90.9 %** (266/s) | **89.4 %** (116/s) |
+| display daemon | – | rpi-fbd 7.6 % | vesad 10.2 % |
+| inputd | – | 0.8 % | 0.6 % |
+| cosmic-term | – | 0.4 % | – |
+
+**rpi-fb test** (part A): `pointer-bench 5; echo rc=$?` printed `300 moves in 5.0 s (60.0/s)`
+and `rc=0`. Serial: `rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`,
+`blits with the CPU`.
+
+**vc4shot** works now:
+- **Part A:** 2 planes, the 1920x1080 primary and the 64x64 cursor with alpha.
+  `vc4shot: wrote /tmp/shot.ppm (6220817 bytes)`, serial `vc4d: shot: wrote /tmp/vc4shot.ppm
+  (1920x1080, 2 planes)`. The picture shows the desktop, the terminal window, the bottom
+  taskbar and the clock 00:05, with **no side bars and no top bar**. So the #220 bars come
+  from the HDMI/KVM side.
+- **Part B, during a drag:** the terminal has moved left, partly off screen. The cursor plane
+  is reported at (523, 272).
+- Both pictures are on homenodellm in `~/pitest-tools/t259/shot.png` and
+  `~/pitest-tools/t259b/shot.png`.
+
+Stable image (now `v0.4.0-dev-565-gc70f394e+x9f76`) staged again, booted, devsh answers.
