@@ -49,3 +49,10 @@ because `0035` is USB serial (PR #70).
   (093a:2510, low speed behind the hub), keyboard at address 5, no panic.
   At the screen the mouse worked well and opened a terminal in Orbital;
   moving windows is slow, which is Orbital's drawing, not the mouse.
+- Default patch (PR #223): QEMU 2026-11-06, image without experiments
+  (`v0.4.0-dev-569-g738203dc`): mouse test 18/18, keyboard test pass,
+  hotplug 15/15. Pi row 255, 2026-11-06, image with only `timesync`
+  (`v0.4.0-dev-570-ge437e901+x12cb`): **pass**. `mouse at address 5:
+  relative, 3 button(s), wheel` at boot, pi-test passes, the mouse's
+  port switched off and on and the mouse found again (its SET_IDLE
+  stalls, which is optional and harmless).
