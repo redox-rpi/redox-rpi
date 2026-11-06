@@ -118,13 +118,13 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
    (`ARM_C0_AARCH64`) but never sets it. The chainloader is 32-bit and
    switches to non-secure mode early, so it cannot switch to 64-bit later.
    We need a 64-bit start stub that sets up the exception levels and the
-   timer frequency, and that parks cores 1–3 in a spin table at `0xd8`
+   timer frequency, and that parks cores 1–3 in a spin table (release addresses `0xe0`, `0xe8`, `0xf0`)
    like Raspberry Pi's `armstub8`. That stub could be Rust; the VPU part
    cannot be, because there is no Rust or LLVM backend for VideoCore IV.
    Base: [`armstubs/armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S)
    in raspberrypi/tools (BSD licence). It is the stub the closed firmware
    runs before Redox today: timer (`CNTFRQ` 19.2 MHz, 54 MHz on the Pi 4),
-   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked at `0xd8`
+   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked in the spin table (`0xe0`, `0xe8`, `0xf0`)
    (what our spin-table kernel patch expects), and the GIC set-up on the
    Pi 4. Use it as it is or port it to Rust. The alternative is TF-A's
    BL31, which gives PSCI (see "Other Pi models").
