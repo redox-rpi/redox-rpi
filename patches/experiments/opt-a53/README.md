@@ -58,4 +58,31 @@ the image.
 
 ## Results
 
+### Build and sizes, 2026-11-06
+
+B is `v0.4.0-dev-567-gd91a247f+x9b71` (3 minutes on homenodellm, from the
+stable build's cache). The cargo fingerprints of base show
+`-Ctarget-cpu=cortex-a53`. Both images are on homenodellm in
+`~/redox-rpi-opt/keep/A/` and `keep/B/`.
+
+Every part got smaller, although `opt-level 3` allows larger code: LTO
+drops what no program uses.
+
+| File | A (bytes) | B (bytes) | Change |
+|---|---|---|---|
+| kernel | 1457400 | 1442344 | −1 % |
+| initfs (loaded whole by the bootloader) | 25707192 | 20492984 | −20 % |
+| `libc.so` | 4357552 | 4002088 | −8 % |
+| `netstack` | 1342248 | 1036896 | −23 % |
+| `dwc2d` | 750816 | 657168 | −12 % |
+
+### QEMU, 2026-11-06
+
+Function only, no timing. A and B the same: both boot to `redox login:`;
+`scripts/pi-test.py` passes version, manifest, ps, ps-tty and 50 of 50
+starts; `sdcard` fails on both because QEMU mounts no data partition for
+the network-boot image (`/scheme/disk.mmc/0p1: I/O error`).
+
+### Pi
+
 Not measured yet.
