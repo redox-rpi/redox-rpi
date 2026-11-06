@@ -9514,3 +9514,62 @@ Image `t197-hbF.img` (`v0.4.0-dev-377-g8ab74b8b+x1409`, experiments
 So the hang is gone with the backport of the upstream `FUTEX_WAIT` lost-wakeup fix
 (57ccc8f1, 58050594). One run of 10 clean rounds is not proof, but before the fix the same
 test hung in about 1 of 3 installs.
+
+## #261 #224 `socdump`: the real 3B+'s clock, PLL and GPIO registers against the firmware (2026-11-06, Pi test agent)
+
+Image `netboot-socdump-v0.4.0-dev-587-g9bf64d7.img` (`v0.4.0-dev-587-g9bf64d7`, branch
+`socdump` 9bf64d7). Real Pi 3B+ over netboot, HDMI attached. 17:21–17:23 UTC.
+The row's `2>&1` is not valid in ion, so step 1 ran as `socdump &> /tmp/sd.txt`.
+
+**Result: pass. All 4 calls answered in under 0.4 s, no hang or panic, rc=0 for step 1.**
+- **PLLs** (crystal 19.2 MHz, `CM_LOCK 0x00001f1f`, all locked):
+
+  | PLL | MHz | Taps |
+  |---|---|---|
+  | plla | 2400 | core /4 = 600 |
+  | pllb | 2800 | **`pllb_arm` /2 = 1400.000** |
+  | pllc | 2400 | core0 /2 = 1200, per /2 = 1200 |
+  | plld | 2000 | core /4 = 500, per /4 = 500 |
+  | pllh | 1485 | pix /1/10 = 148.5 |
+
+- **Clocks that are on:**
+
+  | Clock | Source | MHz |
+  |---|---|---|
+  | v3d | plla_core /2 | 300 |
+  | emmc | pllc_per /6 | 200 |
+  | uart | plld_per /10.4167 | 48.000 |
+  | gp1 | | 24 |
+  | hsm | | 163.683 |
+  | timer | | 1.000 |
+  | tsens | | 1.920 |
+  | otp | | 4.800 |
+
+- **Clocks that read as off:** `vpu`, `h264`, `isp` and `sdram` read as not enabled, at
+  0 MHz (ctl `0x245`/`0x244`/`0x244`/`0x4006`).
+- **GPIO:** 14/15 `alt0` (UART), 2/3 and 7–11 `alt0`, 40–43 and 48–53 `alt0`.
+- **`socdump check`** (rc=1): emmc, uart and arm `ok`; these are **`DIFFERENT`**:
+
+  | Clock | Firmware MHz | socdump MHz |
+  |---|---|---|
+  | core/vpu | 250 | 0 |
+  | v3d | 250 | 300 |
+  | h264 | 250 | 0 |
+  | isp | 250 | 0 |
+  | sdram | 400 | 0 |
+
+- **`/scheme/rpi-firmware/clocks`** (rate, max):
+
+  | Clock | Rate (Hz) | Max (Hz) |
+  |---|---|---|
+  | emmc | 200000000 | 200000000 |
+  | uart | 48000000 | 1000000000 |
+  | arm | 1400000000 | 1400000000 |
+  | core | 250000000 | 400000000 |
+  | v3d | 250000000 | 300000000 |
+  | h264 | 250000000 | 300000000 |
+  | isp | 250000000 | 300000000 |
+  | sdram | 400000000 | 450000000 |
+
+- Stable image staged again, booted, devsh answers. The raw output went to the open-firmware
+  session (homenodellm `~/pitest-tools/t261/`).
