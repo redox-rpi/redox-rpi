@@ -92,6 +92,16 @@
   [#215](https://github.com/redox-rpi/redox-rpi/pull/215) saves about 6
   `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
 
+- `socdump` ([#224](https://github.com/redox-rpi/redox-rpi/issues/224),
+  branch `socdump`, [tools/socdump](../../tools/socdump/README.md)): a
+  read-only tool that decodes the PLLs, clock manager clocks and GPIO pins
+  (BCM2837 table; chip, address and crystal come from the devicetree) and
+  compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`). Pi test #261 queued.
+  QEMU (2026-11-06): all three parts decode, and the pin functions match
+  our drivers. QEMU's mailbox gives fixed fake rates, so `check` only means
+  something on the Pi. Next: display registers (pixel valves, HVS, HDMI),
+  then reference dumps for HDMI.
+
 ## Bluetooth
 
 The Bluetooth half of the Pi 3B+ Wi-Fi/Bluetooth chip (CYW43455,
