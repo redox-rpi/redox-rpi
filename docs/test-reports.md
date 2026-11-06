@@ -9305,3 +9305,16 @@ passes with the manifest (0 of 300 starts failed), and there was no panic.
   session.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
   devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## 2026-11-06: `v0.4.0-dev-565-gc70f394e+x9f76`
+
+Built 2026-11-06T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-565-gc70f394e+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-565-gc70f394e+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
