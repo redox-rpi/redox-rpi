@@ -1,4 +1,10 @@
-# USB mice and tablets (experiment `usb-mouse`)
+# USB mice and tablets (was experiment `usb-mouse`)
+
+**Default since PR #<this PR>:** base `0059` (moved to `patches/base/`) is
+in every image: every image with Orbital needs the mouse, and Pi row 220
+had none because its image was built without the experiment.
+`--experiment usb-mouse` is still accepted and does nothing, so older
+commands keep working. This page stays as the patch's documentation.
 
 Issue [#48](https://github.com/redox-rpi/redox-rpi/issues/48). Applies on
 main, where hotplug is part of the default patches (`0031`–`0033`):
