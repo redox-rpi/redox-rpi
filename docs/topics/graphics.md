@@ -448,6 +448,59 @@ the screen.
   `vc4d` taking buffers from Redox memory like Linux's KMS driver
   (`start_cd.elf` with `gpu_mem=16` has no room for 3D).
 
+  **Stage (a) started 2026-11-04:** draft
+  [redox-rpi/vc4d#1](https://github.com/redox-rpi/vc4d/pull/1) keeps the
+  firmware's HDMI mode and takes over its HVS channel with vc4d's own
+  display list: the client's dumb buffer is scanned out directly, and a
+  64x64 cursor plane is Orbital's pointer. Branch `graphics-vc4d`,
+  experiment `vc4d` (a recipe that pins a vc4d commit, instead of
+  `rpi-fb`). QEMU has no HVS: it checks the start, the fallback and, with
+  `VC4D_FAKE`, the handover and the lists, not the picture. `rpi-fbd`
+  (#113) stays the fallback.
+
+  **On the Pi, 2026-11-05 (row 220a, HDMI on the NanoKVM, no person):**
+  the firmware leaves HVS channel 1 running at 1920x1080 with one scaled
+  plane. vc4d's check without a screen (colour bars, a cursor plane
+  moved once, read back from the HVS) passed: the channel takes vc4d's
+  lists, the active word moves into them, frames go on, the cursor's
+  position word is the new one, and no underrun or other error bits are
+  set. Over two minutes with fbcond and then Orbital on vc4d's lists,
+  frames kept going and no errors appeared. The only failures were in the
+  read-back check, and they were the check's own fault: the HVS fills in
+  the context words of each plane while it scans it out (fixed in vc4d
+  `0f87698`). Without HDMI at power-on the firmware may not enable a
+  channel (not tested). Still open: the picture itself (colours, pointer
+  tip), Pi test #220 with a screen check by the user.
+
+  **Screen check, 2026-11-06 (row 220, the user on the NanoKVM):** the
+  Orbital desktop and taskbar show through vc4d at 1920x1080, the pointer
+  is visible and the keyboard works (that image had no USB mouse driver).
+  Black bars at the left and right and a dark bar at the top are still
+  to be explained. vc4d's plane is exactly the channel's width, so the
+  side bars are more likely the NanoKVM's capture or the HDMI timing.
+
+  **Pointer moves, 2026-11-06 (row 256, no person):** `pointer-bench`
+  (experiment `pointer-bench`) moves Orbital's pointer at 60 moves/s
+  through inputd while `cputop` measures, with Orbital's login window
+  open:
+
+  | Display | orblogin | orbital | display daemon | busiest core |
+  |---|---|---|---|---|
+  | vesad (software cursor) | 54.5 % | 28.8 % | vesad 16.2 % | 100 % |
+  | vc4d (cursor plane) | 53.5 % | 45.8 % | vc4d 0.5 % | 92 % |
+
+  The cursor plane takes the display daemon's share from 16 % to 0.5 %.
+  But in both cases one core is full: orblogin redraws its window on
+  every pointer move (upstream behaviour), and orblogin, Orbital and the
+  display daemon all run on the same core. So the Orbital numbers are
+  shares of a full core, not the cost of a move. The next measurement
+  is on the desktop after login (no orblogin), and dragging a window.
+  The rpi-fbd boot failed twice: right after `pointer-bench` started,
+  `cputop` returned at once and `pointer-bench` wrote nothing (being
+  looked at). `vc4shot` could not map the buffers (Redox allows no
+  physical mapping of RAM); since vc4d `5ec9079` vc4d writes the
+  picture itself on request.
+
 ## License rule for `vc4d`
 
 Upstream Redox takes no AI-written code, so `vc4d` may be GPL; the user

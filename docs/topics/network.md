@@ -10,6 +10,11 @@
 
 ## Next
 
+- [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
+  answer ping (test 164): netstack left out smoltcp's feature
+  `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
+  PR [#178](https://github.com/redox-rpi/redox-rpi/pull/178)); QEMU 10 of
+  10 answered, **Pi test 196 passed** (20 of 20).
 - [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):
   OpenSSH from source; key and password login and an interactive shell
   work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
@@ -66,6 +71,10 @@
   [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
+  Step 2, PR [#194](https://github.com/redox-rpi/redox-rpi/pull/194) on
+  top of #82: multicast (base `0083`, relibc `0016`) and the LAN7800
+  multicast filter (base `0084`) as default patches; QEMU passes, **Pi
+  test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the

@@ -51,6 +51,11 @@
 
 ## In progress
 
+- [#196](https://github.com/redox-rpi/redox-rpi/issues/196) chaos test (branch `chaos-test`): fault injection on
+  the Pi (`tools/chaos`, in C) and from the build host
+  (`scripts/chaos-host.py`), see [chaos.md](chaos.md). First finding:
+  [#205](https://github.com/redox-rpi/redox-rpi/issues/205), signals that never arrive.
+
 - [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
   `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
   uutils `dd` does not retry short writes, so `dd bs=1M … | cmd` passed on

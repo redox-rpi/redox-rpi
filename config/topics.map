@@ -79,9 +79,11 @@ patches/experiments/kernel-*            stability
 patches/experiments/t1-*                stability
 patches/experiments/serial-rx/*         stability
 patches/experiments/pty-sigint*         stability
+patches/experiments/chaos/*             stability
 
 # Scripts and tools
 scripts/check-patches.sh                ci
+scripts/check-upstream-drift.py         ci
 scripts/check-topics.py                 ci
 scripts/pr-order.py                     ci
 scripts/pi-test.py                      ci
@@ -96,12 +98,15 @@ scripts/build-uboot.sh                  boot
 scripts/build-kernel.sh                 boot,ci
 scripts/rpi-firmware.sh                 boot
 scripts/sd-stress.py                    sdcard
+scripts/chaos-host.py                   stability
 scripts/redoxfs-write-amp.py            sdcard
 scripts/test-keyboard.sh                usb
 scripts/*usb*                           usb
 scripts/*hotplug*                       usb
 tools/devshd/*                          ci
+tools/log-triage/*                      ci
 tools/sigregs/*                         relibc,stability
+tools/chaos/*                           stability
 tools/timerd/*                          time
 tools/timesync/*                        time
 tools/redoxfs-file/*                    sdcard
