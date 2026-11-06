@@ -83,6 +83,30 @@ Function only, no timing. A and B the same: both boot to `redox login:`;
 starts; `sdcard` fails on both because QEMU mounts no data partition for
 the network-boot image (`/scheme/disk.mmc/0p1: I/O error`).
 
-### Pi
+### Pi, row 260, 2026-11-06
 
-Not measured yet.
+Pass 4, boots in the order B, A, B, A, 3 rounds each: medians of 6 rounds
+per image. Raw data on homenodellm in `~/pitest-tools/t260d/opt-a53.jsonl`
+(earlier, incomplete passes in `t260`, `t260b`, `t260c`).
+
+| Workload | A (s) | B (s) | B against A |
+|---|---|---|---|
+| spawn, 500 `ls` | 77.60 | 75.37 | 2.9 % faster |
+| net-rx, 32 MiB | 3.02 | 2.59 | 14 % faster |
+| net-tx, 32 MiB | 4.89 | 4.38 | 10.5 % faster |
+| sd-write, 50 MiB | 6.70 | 6.73 | the same |
+| sd-read, 50 MiB | 0.56 | 0.55 | the same |
+| boot to `redox login:` | about 30 | about 30 | the same (35–40 s outliers on both) |
+
+`scripts/pi-test.py` passed on all boots of pass 4. In pass 3, one boot of
+B lost the network during the start loop (no panic, nothing on serial); it
+did not come back in pass 4, where B ran 600 more starts. Neither image
+has the futex fix of #197.
+
+The network gains come from `netstack` and `dwc2d`, which today are built
+with `opt-level s`. The SD card does not change: its time goes to the card
+and the driver waiting for it, not to the CPU.
+
+The bench script found two things about Redox's `nc`: `nc -l` needs a full
+address (`0.0.0.0:5135`), and `nc` does not close the connection at the
+end of its input.
