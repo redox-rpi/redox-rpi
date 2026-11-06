@@ -9490,3 +9490,27 @@ not wait on RedoxFS.**
 - After each hang, a power cycle and the mirror set up again. Stable
   `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle: devsh answers, and
   `/srv/tftp/redox` matches the backup.
+
+## #258 #197 pkg hang with the kernel futex fix `futex-wake-race` (2026-11-06, Pi test agent)
+
+Image `t197-hbF.img` (`v0.4.0-dev-377-g8ab74b8b+x1409`, experiments
+`timesync redoxfs-truncate pi-heartbeat redoxfs-diag call-diag futex-wake-race`, md5
+`961e24b6…`, checked), mirror `pkg-mirror-t197`. Real Pi 3B+ over netboot, HDMI attached.
+15:54–16:48 UTC.
+
+**Result: pass. 10 of 10 rounds with no hang** (257 on the same base without the futex fix:
+3 hangs in 6 rounds; 252: 1 in 10; 250 B: 2 in 6; 248: 4 in 9 installs).
+- Every `pkg install --yes vim` and `pkg remove --yes vim` ended with rc=0. Each round
+  (install plus remove) took about 5 min 15 s, very even (16:00:48, 16:06:02, … 16:47:59).
+- **Free space after each remove (KB):** 124468, 124688, 124632, 124572, 124512, 124720,
+  124668, 124608, 124548, 124484. Flat (124.5–124.7 MB), the space fix still works.
+- Free after each install: 89016–89292 KB.
+- No exception or panic on serial. No hang, so no context dumps were needed.
+- Stable image staged again, booted to `v0.4.0-dev-201-gb714bca`, devsh answers,
+  `/srv/tftp/redox` matches the backup.
+
+- `date` showed 2026 (15:55:35 UTC). `redoxfs-diag` lines stayed `in = out`, `busy0`.
+
+So the hang is gone with the backport of the upstream `FUTEX_WAIT` lost-wakeup fix
+(57ccc8f1, 58050594). One run of 10 clean rounds is not proof, but before the fix the same
+test hung in about 1 of 3 installs.
