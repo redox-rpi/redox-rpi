@@ -72,7 +72,11 @@ def net_rx(shell, host):
 
 
 def net_tx(shell, local_ip):
-    """This host listens and counts; the Pi sends /tmp/tx."""
+    """This host listens and counts; the Pi sends /tmp/tx. Redox's nc does
+    not close the connection at the end of its input, so this host stops at
+    NET_BYTES and closes it; nc then sees the end of the connection. If nc
+    still does not return, it would keep the session: so the session is
+    always closed afterwards and a new one opened."""
     srv = socket.create_server(("", PORT))
     srv.settimeout(60)
     got = {"bytes": 0}
@@ -81,7 +85,7 @@ def net_tx(shell, local_ip):
         conn, _ = srv.accept()
         conn.settimeout(60)
         got["t0"] = time.monotonic()
-        while True:
+        while got["bytes"] < NET_BYTES:
             chunk = conn.recv(1 << 16)
             if not chunk:
                 break
@@ -91,8 +95,16 @@ def net_tx(shell, local_ip):
 
     th = threading.Thread(target=accept)
     th.start()
-    shell.run(f"nc {local_ip}:{PORT} < /tmp/tx", 600)
+    try:
+        shell.run_once(f"nc {local_ip}:{PORT} < /tmp/tx", 30)
+    except (RuntimeError, OSError):
+        pass
     th.join()
+    try:
+        shell.sock.close()
+    except OSError:
+        pass
+    shell.login()
     srv.close()
     return got["t1"] - got["t0"], [str(got["bytes"])]
 
