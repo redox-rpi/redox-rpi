@@ -36,6 +36,8 @@ spec.loader.exec_module(pitest)
 
 NET_BYTES = 32 * 1024 * 1024
 PORT = 5135
+TX_TRIES = 3
+TX_CONNECT_WAIT = 20
 
 
 def local_ip_for(host):
@@ -76,37 +78,48 @@ def net_tx(shell, local_ip):
     not close the connection at the end of its input, so this host stops at
     NET_BYTES and closes it; nc then sees the end of the connection. If nc
     still does not return, it would keep the session: so the session is
-    always closed afterwards and a new one opened."""
+    always closed afterwards and a new one opened. On the Pi, nc sometimes
+    never connects (row 260): then up to TX_TRIES attempts, each in a new
+    session."""
     srv = socket.create_server(("", PORT))
-    srv.settimeout(60)
-    got = {"bytes": 0}
-
-    def accept():
-        conn, _ = srv.accept()
-        conn.settimeout(60)
-        got["t0"] = time.monotonic()
-        while got["bytes"] < NET_BYTES:
-            chunk = conn.recv(1 << 16)
-            if not chunk:
-                break
-            got["bytes"] += len(chunk)
-        got["t1"] = time.monotonic()
-        conn.close()
-
-    th = threading.Thread(target=accept)
-    th.start()
+    srv.settimeout(TX_CONNECT_WAIT)
     try:
-        shell.run_once(f"nc {local_ip}:{PORT} < /tmp/tx", 30)
-    except (RuntimeError, OSError):
-        pass
-    th.join()
-    try:
-        shell.sock.close()
-    except OSError:
-        pass
-    shell.login()
-    srv.close()
-    return got["t1"] - got["t0"], [str(got["bytes"])]
+        for attempt in range(1, TX_TRIES + 1):
+            got = {"bytes": 0}
+
+            def accept():
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    return
+                conn.settimeout(60)
+                got["t0"] = time.monotonic()
+                while got["bytes"] < NET_BYTES:
+                    chunk = conn.recv(1 << 16)
+                    if not chunk:
+                        break
+                    got["bytes"] += len(chunk)
+                got["t1"] = time.monotonic()
+                conn.close()
+
+            th = threading.Thread(target=accept)
+            th.start()
+            try:
+                shell.run_once(f"nc {local_ip}:{PORT} < /tmp/tx", TX_CONNECT_WAIT + 10)
+            except (RuntimeError, OSError):
+                pass
+            th.join()
+            try:
+                shell.sock.close()
+            except OSError:
+                pass
+            shell.login()
+            if "t1" in got:
+                return got["t1"] - got["t0"], [str(got["bytes"]), f"attempt {attempt}"]
+            print(f"net-tx: nc did not connect, attempt {attempt} of {TX_TRIES}", flush=True)
+    finally:
+        srv.close()
+    return float("nan"), [f"no connection in {TX_TRIES} attempts"]
 
 
 def main():
@@ -154,7 +167,9 @@ def main():
     print("clocks after: ", " | ".join(clocks_after))
     print("| Workload | Median (s) | Runs (s) |\n|---|---|---|")
     for name, secs in results.items():
-        print(f"| {name} | {statistics.median(secs):.2f} | {', '.join(f'{s:.2f}' for s in secs)} |")
+        ok = [s for s in secs if s == s]  # leave out failed runs (NaN)
+        median = f"{statistics.median(ok):.2f}" if ok else "–"
+        print(f"| {name} | {median} | {', '.join(f'{s:.2f}' for s in secs)} |")
 
 
 if __name__ == "__main__":
