@@ -58,8 +58,7 @@ The full output is in [`reference/`](reference/) (decoded `.txt`, raw
 - **v3d:** the register says 300 MHz (the firmware's maximum), while the
   firmware reports 250 MHz. Still open: is the mailbox value stale, or
   does v3d switch to 250 MHz some other way?
-- **GPIO:** 2/3, 7–11, 14/15, 40–43 (audio PWM), 48–53 `alt0`; 29 and 47 outputs
-  (the activity LED and the expander line).
+- **GPIO:** 2/3, 7–11, 14/15, 40–43, 48–53 `alt0`; 29 and 47 outputs.
 
 ## Other Pi models
 
