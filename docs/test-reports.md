@@ -9351,3 +9351,31 @@ checked.
 - The vc4d log (homenodellm `~/pitest-tools/t220/vc4d.txt`) went to the Graphics session.
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle at 07:37:58 (HDMI
   attached): devsh answers, and `/srv/tftp/redox` matches the backup.
+
+## #255 PR #223 USB mouse as a default patch (2026-11-06, Pi test agent)
+
+Image `mousepi-v0.4.0-dev-570-ge437e901+x12cb` (branch `usb-mouse-default` e437e901, only
+`--experiment timesync`, md5 `3190d2c9…`). Real Pi 3B+ over netboot with the usual USB
+mouse (093a:2510) and keyboard, HDMI to the NanoKVM. Reset at 07:45:41 UTC,
+`devshd: listening` after 20 s.
+
+**Result: pass.** The default image drives the mouse, it comes back after a port power
+cycle, and devsh keeps answering. No panic.
+
+- **(1)** Boot: `dwc2d: keyboard at address 4` and **`dwc2d: mouse at address 5: relative,
+  3 button(s), wheel`**.
+- **(2) pi-test:** pass (manifest matches, 0 of 300 starts failed).
+- **(3)** `echo mouse > /tmp/dwc2d-cycle` over devsh at 07:46:54, then in the serial log:
+  - `cycle: hub 1 port 3 power off`, `disconnected after 101 ms`,
+    `hub 1 port 3: device at address 5 removed`, `cycle: hub 1 port 3 power on`,
+    `mouse removed`.
+  - `device connected`, `address 5: 093a:2510, USB 1.10, Low speed`, interface class 3/1/2,
+    endpoint 0x81 interrupt max packet 4.
+  - `request [21, 0a, …] to address 5 … failed: Stall`. This is SET_IDLE, which many mice
+    refuse; it did no harm.
+  - Then **`dwc2d: mouse at address 5: relative, 3 button(s), wheel`** again.
+  - devsh answered 15 s later.
+- **(4)** `/tmp/dwc2d-input-log` touched for 5 s and removed. Nobody moved the mouse, so
+  there were no move lines (optional).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached): devsh
+  answers, and `/srv/tftp/redox` matches the backup.
