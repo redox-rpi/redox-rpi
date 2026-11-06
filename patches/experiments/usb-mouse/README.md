@@ -1,6 +1,6 @@
 # USB mice and tablets (was experiment `usb-mouse`)
 
-**Default since PR #<this PR>:** base `0059` (moved to `patches/base/`) is
+**Default since PR #223:** base `0059` (moved to `patches/base/`) is
 in every image: every image with Orbital needs the mouse, and Pi row 220
 had none because its image was built without the experiment.
 `--experiment usb-mouse` is still accepted and does nothing, so older

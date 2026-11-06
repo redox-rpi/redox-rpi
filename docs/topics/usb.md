@@ -41,7 +41,7 @@
 
 - [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
   tablet, branch [`t48-mouse`](https://github.com/redox-rpi/redox-rpi/tree/t48-mouse)
-  (on main, PR #149), base `0059`, a default patch since PR #<this PR>
+  (on main, PR #149), base `0059`, a default patch since PR #223
   (was experiment `usb-mouse`). Events go
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
