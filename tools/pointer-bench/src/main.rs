@@ -2,12 +2,20 @@
 //! mouse would, so the cost of pointer moves can be measured without a
 //! person (with cputop running at the same time).
 //!
-//! pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y]
+//! pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R]
+//!               [--drag X Y] [--super-drag] [--type TEXT] [--super KEY]
+//!
+//! --type types TEXT first (lowercase letters, digits, space; `\\n` is
+//! Enter, `\\t` is Tab), as a keyboard would: to log in at orblogin.
+//! --super KEY presses Super+KEY (Super+t opens a terminal). With --type
+//! or --super, the default time is 0 s (no moves).
 //!
 //! Positions are screen pixels; Orbital takes absolute mouse events as
 //! 0..65535 over the screen (as ps2d sends them), so they are scaled by
 //! the screen size (default 1920x1080, the firmware mode on our NanoKVM).
 //!
+//! With --super-drag, Super is held during the drag, which moves the
+//! window under the pointer from anywhere inside it (Orbital).
 //! With --drag, it first moves to (X, Y), presses the left button there
 //! (on a window title bar, that window is dragged), circles with the
 //! button held, and lets go at the end.
@@ -17,10 +25,24 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use inputd::ProducerHandle;
-use orbclient::{ButtonEvent, MouseEvent};
+use orbclient::{ButtonEvent, KeyEvent, MouseEvent};
+
+/// PC set 1 scancodes (what inputd expects) for the characters --type knows.
+fn scancode(c: char) -> Option<u8> {
+    const ROWS: [(&str, u8); 4] = [("1234567890", 0x02), ("qwertyuiop", 0x10), ("asdfghjkl", 0x1e), ("zxcvbnm", 0x2c)];
+    match c {
+        '\n' => Some(orbclient::K_ENTER),
+        '\t' => Some(orbclient::K_TAB),
+        ' ' => Some(orbclient::K_SPACE),
+        _ => ROWS.iter().find_map(|(row, first)| row.find(c).map(|i| first + i as u8)),
+    }
+}
 
 fn main() {
-    let mut seconds = 20.0f64;
+    let mut seconds: Option<f64> = None;
+    let mut text: Option<String> = None;
+    let mut super_key: Option<char> = None;
+    let mut super_drag = false;
     let mut hz = 60.0f64;
     let (mut cx, mut cy, mut radius) = (960.0f64, 540.0f64, 300.0f64);
     let mut drag: Option<(i32, i32)> = None;
@@ -39,11 +61,14 @@ fn main() {
             "--radius" => { radius = num(i + 1); i += 1; }
             "--screen" => { sw = num(i + 1); sh = num(i + 2); i += 2; }
             "--center" => { cx = num(i + 1); cy = num(i + 2); i += 2; }
+            "--type" => { text = Some(args.get(i + 1).cloned().unwrap_or_default().replace("\\n", "\n").replace("\\t", "\t")); i += 1; }
+            "--super" => { super_key = args.get(i + 1).and_then(|a| a.chars().next()); i += 1; }
+            "--super-drag" => super_drag = true,
             "--drag" => { drag = Some((num(i + 1) as i32, num(i + 2) as i32)); i += 2; }
-            other => seconds = other.parse().unwrap_or_else(|_| {
-                eprintln!("usage: pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y]");
+            other => seconds = Some(other.parse().unwrap_or_else(|_| {
+                eprintln!("usage: pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y] [--super-drag] [--type TEXT] [--super KEY]");
                 std::process::exit(2)
-            }),
+            })),
         }
         i += 1;
     }
@@ -58,12 +83,42 @@ fn main() {
         }
     };
     let pause = Duration::from_millis(100);
+    let key = |scancode: u8, pressed: bool| KeyEvent { character: '\0', scancode, pressed }.to_event();
+    let seconds = seconds.unwrap_or(if text.is_some() || super_key.is_some() { 0.0 } else { 20.0 });
+    if let Some(text) = &text {
+        for c in text.chars() {
+            let Some(code) = scancode(c) else {
+                eprintln!("pointer-bench: cannot type {c:?}");
+                continue;
+            };
+            send(key(code, true));
+            thread::sleep(Duration::from_millis(30));
+            send(key(code, false));
+            thread::sleep(Duration::from_millis(70));
+        }
+        println!("pointer-bench: typed {} keys", text.chars().count());
+    }
+    if let Some(c) = super_key {
+        let code = scancode(c).unwrap_or_else(|| { eprintln!("pointer-bench: no key {c:?}"); std::process::exit(2) });
+        send(key(orbclient::K_SUPER, true));
+        thread::sleep(pause);
+        send(key(code, true));
+        thread::sleep(Duration::from_millis(30));
+        send(key(code, false));
+        thread::sleep(pause);
+        send(key(orbclient::K_SUPER, false));
+        println!("pointer-bench: Super+{c}");
+    }
     // Where the circle starts, relative to the drag point: the window moves
     // by as much as the pointer does.
     let (ox, oy) = match drag {
         Some((x, y)) => {
             send(to_event(f64::from(x), f64::from(y)));
             thread::sleep(pause);
+            if super_drag {
+                send(key(orbclient::K_SUPER, true));
+                thread::sleep(pause);
+            }
             send(ButtonEvent { left: true, middle: false, right: false }.to_event());
             thread::sleep(pause);
             (f64::from(x) - (cx + radius), f64::from(y) - cy)
@@ -87,6 +142,13 @@ fn main() {
     }
     if drag.is_some() {
         send(ButtonEvent { left: false, middle: false, right: false }.to_event());
+        if super_drag {
+            thread::sleep(pause);
+            send(key(orbclient::K_SUPER, false));
+        }
+    }
+    if seconds <= 0.0 {
+        return;
     }
     let took = start.elapsed().as_secs_f64();
     println!("pointer-bench: {moves} moves in {took:.1} s ({:.1}/s){}", moves as f64 / took,
