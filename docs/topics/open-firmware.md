@@ -121,6 +121,13 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
    timer frequency, and that parks cores 1–3 in a spin table at `0xd8`
    like Raspberry Pi's `armstub8`. That stub could be Rust; the VPU part
    cannot be, because there is no Rust or LLVM backend for VideoCore IV.
+   Base: [`armstubs/armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S)
+   in raspberrypi/tools (BSD licence). It is the stub the closed firmware
+   runs before Redox today: timer (`CNTFRQ` 19.2 MHz, 54 MHz on the Pi 4),
+   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked at `0xd8`
+   (what our spin-table kernel patch expects), and the GIC set-up on the
+   Pi 4. Use it as it is or port it to Rust. The alternative is TF-A's
+   BL31, which gives PSCI (see "Other Pi models").
 2. **Load `kernel8.img` or U-Boot** instead of `zImage`: U-Boot first,
    because Redox already boots through it.
 3. **Replace the mailbox.** `rpi-firmwared`, `rpi-fbd`, the CPU clock
