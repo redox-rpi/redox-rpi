@@ -9379,3 +9379,55 @@ cycle, and devsh keeps answering. No panic.
   there were no move lines (optional).
 - Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached): devsh
   answers, and `/srv/tftp/redox` matches the backup.
+
+## #256 #188 what pointer moves cost: vc4d against rpi-fbd and vesad (2026-11-06, Pi test agent)
+
+Three network boots on the real Pi 3B+, **HDMI to the NanoKVM at power-on** (power cycle
+each). Staged as for #220a (staging folder with the Graphics scripts and bootloader, plus
+`mkimage` from `~/redox-rpi-cpu/build`). Each boot: Orbital's login window up (75 s after
+devsh), `cputop -n 1 -l 12 20` at idle, then `pointer-bench 70 > /tmp/pb.txt &` and right
+after it `cputop -n 1 -l 12 20`, then after 60 s `cat /tmp/pb.txt`.
+- **vc4d:** `v0.4.0-dev-600-g1d7116cf+x8ba8`.
+- **rpi-fb:** `v0.4.0-dev-599-g0db53051+x7cb3`.
+- **vesad:** `v0.4.0-dev-599-g0db53051+x6042`.
+
+**Result: moving the pointer keeps one core about 92–100 % busy with vc4d and with vesad.
+Most of it is `orblogin` (54 %) and `orbital` (29–46 %); the display daemon itself costs
+little** (vc4d 0.5 %, vesad 16 %). On the rpi-fb image the measurement failed twice:
+`cputop` returned at once (0.0 s) as soon as `pointer-bench` ran, and `pointer-bench` wrote
+nothing. vc4d's check PASSED. The vc4shot screenshot is black, because vc4shot may not map
+the planes.
+
+| Boot | phase | busiest core | orblogin | orbital | display daemon | inputd | dwc2d | pointer-bench result |
+|---|---|---|---|---|---|---|---|---|
+| vc4d | idle | cpu2 5 % | – | – | – | – | 4.9 % (101/s) | |
+| vc4d | moving | **cpu1 92 %**, cpu0 13 % | **53.5 %** (117/s) | **45.8 %** (274/s) | vc4d 0.5 % (85/s) | 0.6 % (173/s) | 5.2 % | `4200 moves in 70.0 s (60.0/s)` |
+| rpi-fb | idle | cpu2 5 % | – | – | rpi-fbd 0.0 % | – | 5.0 % | |
+| rpi-fb | moving | **measurement failed** (`cputop: 0.0 s`) | (543 % in a 25 ms sample) | | | | | **empty `/tmp/pb.txt`** |
+| vesad | idle | cpu0 5 % | – | – | – | – | 4.9 % | |
+| vesad | moving | **cpu2 100 %** | **54.5 %** (151/s) | **28.8 %** (289/s) | vesad **16.2 %** (53/s) | 0.2 % (146/s) | 5.2 % | `4200 moves in 70.0 s (60.0/s)` |
+
+- **vc4d boot:** `vc4d: check: PASSED`. `vc4shot /tmp/shot.ppm`:
+  - `channel 1 1920x1080, list at 2048, 2 planes`.
+  - plane 0 1920x1080 format 7, and plane 1 64x64 with alpha at **x 1259, y 524**
+    (the pointer).
+  - Both `cannot map 0x6800000` / `0x7624000: Error Operation not permitted`. It still
+    `wrote /tmp/shot.ppm (1920x1080)`, 6220817 bytes, copied to homenodellm by base64 over
+    devsh (`~/pitest-tools/t256/shot.ppm`). **All pixel bytes are 0**, so it can't show the
+    dark bar yet.
+- **rpi-fb boot** (twice, 08:20 and 08:29):
+  - rpi-fbd found `EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`, and
+    `blits with the CPU`.
+  - The idle cputop measures normally (20.0 s), and `sleep 5` takes 5 s (second boot).
+  - But the cputop started right after `pointer-bench … &` returns in 0.4 s with
+    `cputop: 0.0 s, 60 threads`. In the first boot it showed orblogin at 543 % in a 25 ms
+    window; in the second, all zeros.
+  - `/tmp/pb.txt` stays empty 60 s later.
+  - So with rpi-fbd, something goes wrong as soon as pointer-bench drives the pointer: a
+    timer or clock problem for other programs, or pointer-bench dies. Graphics should
+    check. The clock was at 1970 (no timesync in these images).
+- **Interrupts:** 115–121/s (timer 100, line 50 15–21) in every phase except the broken
+  rpi-fb sample.
+- Full outputs are on homenodellm in `~/pitest-tools/t256/` and `t256b/` (rpi-fb repeat).
+- Stable `v0.4.0-dev-201-gb714bca+x9f76` restored with a power cycle (HDMI attached):
+  devsh answers, and `/srv/tftp/redox` matches the backup.
