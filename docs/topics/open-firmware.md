@@ -71,7 +71,7 @@ this repository stays MIT. Issue:
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
-Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our Pi:
+Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points on our Pi:
 
 - **Boot ROM order.** The ROM first looks for `bootcode.bin` on the SD card.
   Only when there is none does it try USB or network boot (on the 3B+ that
@@ -228,5 +228,5 @@ build here keeps the chip-specific parts in their own tables:
 
 ## Later
 
-- Tell the community what we found, once #224 has run (the maintainer
+- Tell the community what we found, once Pi test #224 has run (the maintainer
   posts; sessions write notes only).
