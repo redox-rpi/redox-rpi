@@ -244,7 +244,9 @@ fn print_clocks(board: &Board, cm: &Window) {
         let source = clock.parents.name(c.src);
         let divider = chip::clock_div(clock, div);
         let parent = if clock.parents == Parents::Dsi { None } else { rates.get(source).copied() };
+        let firmware = board.chip.firmware_clocks.contains(&clock.name);
         let rate = match (c.enabled, parent, divider) {
+            _ if firmware => None,
             (false, _, _) => Some(0.0),
             (true, Some(p), Some(d)) if d > 0.0 => Some(p / d),
             (true, Some(p), None) => Some(p),
@@ -258,8 +260,11 @@ fn print_clocks(board: &Board, cm: &Window) {
             format!("{}{}", if c.enabled { "y" } else { "-" }, if c.busy { "b" } else { "" }),
             c.mash,
             divider.map_or("-".into(), |d| format!("{d:.4}")),
-            rate.map_or("?".into(), mhz),
+            rate.map_or(if firmware { "fw".into() } else { "?".into() }, mhz),
         );
+    }
+    if !board.chip.firmware_clocks.is_empty() {
+        println!("fw: the firmware drives this clock; its registers keep their reset values");
     }
     println!();
 }
@@ -330,6 +335,10 @@ fn check(board: &Board, cm: &Window) -> Result<bool, String> {
             println!("{name:<7} {:<9} {:>12} {:>12}  not decoded", "-", mhz(rate), "-");
             continue;
         };
+        if board.chip.firmware_clocks.contains(&ours) {
+            println!("{name:<7} {ours:<9} {:>12} {:>12}  set by the firmware, not readable here", mhz(rate), "fw");
+            continue;
+        }
         let measured = rate_by_name(board, cm, ours);
         let result = match measured {
             Some(m) if (m - rate).abs() <= rate * 0.01 => "ok".to_string(),

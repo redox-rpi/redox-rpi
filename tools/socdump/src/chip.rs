@@ -28,6 +28,10 @@ pub struct Chip {
     pub pll_prediv: bool,
     pub plls: &'static [Pll],
     pub clocks: &'static [Clock],
+    /// Clocks whose CM registers keep their reset values on a running Pi
+    /// although the clock runs: the firmware drives them some other way
+    /// (BCM2837: Pi test #261). Shown as `fw`, not as 0 MHz.
+    pub firmware_clocks: &'static [&'static str],
     pub gpio_pins: u32,
 }
 
@@ -175,6 +179,7 @@ pub const CHIPS: &[Chip] = &[Chip {
     pll_prediv: true,
     plls: BCM2837_PLLS,
     clocks: BCM2837_CLOCKS,
+    firmware_clocks: &["vpu", "h264", "isp", "sdram"],
     gpio_pins: 54,
 }];
 

@@ -38,6 +38,29 @@ SD card image (`config/raspi3bp-sdcard.toml`).
 | Crystal | `/clocks/clk-osc` `clock-frequency` (19.2 MHz on the 3B+), else the chip's default |
 | Register layout | `src/chip.rs`, one table per chip; offsets from the BCM2835 peripherals manual and Linux `clk-bcm2835.c` |
 
+## On the real Pi 3B+ (Pi test #261, 2026-11-06)
+
+Closed firmware, network image `v0.4.0-dev-587-g9bf64d7`, NanoKVM on HDMI.
+The full output is in [`reference/`](reference/) (decoded `.txt`, raw
+`.regs` for `diff`, the firmware's own rates in `.mailbox`).
+
+- **Matches the firmware exactly:** ARM 1400 MHz (`pllb` 2800 / 2), EMMC
+  200 MHz (`pllc_per` 1200 / 6), UART 48 MHz (`plld_per` 500 / 10.4167).
+- **PLLs:** A 2400, B 2800, C 2400, D 2000, H 1485 MHz, all locked.
+- **HDMI is visible already:** `pllh_pix` = 1485 / 10 = **148.5 MHz**, the
+  1080p60 pixel clock; `hsm` (HDMI state machine) 163.68 MHz from
+  `plld_per`. That's the start of step 2 of #224.
+- **Firmware-driven clocks:** `vpu`, `h264`, `isp` and `sdram` keep their
+  reset values in the clock manager (`0x245`/`0x244`/`0x4006`, divider 3,
+  the same as in QEMU) while the firmware reports 250, 250, 250 and 400 MHz.
+  The firmware drives them some other way, so `socdump` shows them as `fw`
+  and `check` skips them.
+- **v3d:** the register says 300 MHz (the firmware's maximum), while the
+  firmware reports 250 MHz. Still open: is the mailbox value stale, or
+  does v3d switch to 250 MHz some other way?
+- **GPIO:** 2/3, 7–11, 14/15, 40–43 (audio PWM), 48–53 `alt0`; 29 and 47 outputs
+  (the activity LED and the expander line).
+
 ## Other Pi models
 
 The tables in `src/chip.rs` are per SoC, and addresses are bus addresses

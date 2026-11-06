@@ -97,10 +97,11 @@
   read-only tool that decodes the PLLs, clock manager clocks and GPIO pins
   (BCM2837 table; chip, address and crystal come from the devicetree) and
   compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`). Pi test #261 queued.
-  QEMU (2026-11-06): all three parts decode, and the pin functions match
-  our drivers. QEMU's mailbox gives fixed fake rates, so `check` only means
-  something on the Pi. Next: display registers (pixel valves, HVS, HDMI),
-  then reference dumps for HDMI.
+  Real Pi (test #261): ARM, EMMC and UART match the firmware exactly; the
+  HDMI pixel clock reads 148.5 MHz (1080p60), the first reference value for
+  HDMI. `vpu`, `h264`, `isp` and `sdram` are driven by the firmware outside
+  the clock manager (`fw`). Reference dump in `tools/socdump/reference/`.
+  Next: display registers (pixel valves, HVS, HDMI), step 2 of #224.
 
 ## Bluetooth
 
