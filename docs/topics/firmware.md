@@ -133,14 +133,6 @@ Not yet: a Bluetooth stack (L2CAP, pairing, GATT), Zero 2 W (BCM43436),
 higher baud rates. The mini UART's baud rate follows the core clock, so
 throttling garbles it.
 
-## Next
-
-- `socdump` ([#224](https://github.com/redox-rpi/redox-rpi/issues/224)):
-  a read-only tool that dumps the clock, PLL and display registers and
-  decodes them. It provides reference values for HDMI and the open
-  firmware, and the per-chip tables leave room for the Pi 4/5. The plan
-  is in [open-firmware.md](open-firmware.md#register-dumps-socdump-planned-issue-224).
-
 ## Later
 
 - Throttle watch: fewer lines for the soft temperature limit (59 in 30
