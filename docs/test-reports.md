@@ -10209,3 +10209,18 @@ bcm2835-pwmaudiod: tone 1000 Hz, mono range=5669 div=4 seconds=4.02 words=88200 
 - No panic. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t281/`.
 
 So a stereo fix is range 2834 (c: 44107 frames/s), or another way to give each channel its own word per period.
+
+## #282 #247 tcc: a C file run as a script (`#!/usr/bin/tcc -run`) (2026-11-07, Pi test agent)
+
+Network image `netboot-tcc-v0.4.0-dev-716-gc6d4de06+xd12c.img` (branch `tcc` c6d4de06, experiments
+`tcc timesync`). Real Pi 3B+, power cycle 17:07:54 UTC, devsh after 29 s. 17:07–17:09 UTC.
+
+**Result: pass.**
+- (1) `echo hello | timeit ./hallo.c a b`: `argv[0]=./hallo.c`, `argv[1]=a`, `argv[2]=b`,
+  `Hallo, stdin 6 bytes`, `[timeit] 128.5 ms, status 42: ./hallo.c`, `rc=42`.
+- (2) warm: the same lines, `[timeit] 127.4 ms, status 42`, `rc=42`.
+- (3) `/tmp/t282/hallo.c x < /dev/null`: `argv[0]=/tmp/t282/hallo.c`, `argv[1]=x`, `Hallo, stdin 0 bytes`,
+  `rc=42`.
+- No panic or `UNHANDLED EXCEPTION` on serial.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t282/`.
