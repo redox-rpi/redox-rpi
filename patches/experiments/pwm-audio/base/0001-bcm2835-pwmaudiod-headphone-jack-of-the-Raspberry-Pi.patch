@@ -1,4 +1,4 @@
-From 7269be6f3751b0d86db509fd365b49161cc637b3 Mon Sep 17 00:00:00 2001
+From 6c78b3ce56b353326da81c5104541953c5008073 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH 1/2] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3
@@ -25,12 +25,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Makefile                                    |   2 +-
  drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
  drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 ++++++++
- drivers/audio/bcm2835-pwmaudiod/src/main.rs | 550 ++++++++++++++++++++
- drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 268 ++++++++++
- drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 ++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 578 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 289 ++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 +++++
  init.initfs.d/40_drivers.target             |   1 +
  init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
- 9 files changed, 1224 insertions(+), 1 deletion(-)
+ 9 files changed, 1273 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
@@ -326,10 +326,10 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..2f04abd5
+index 00000000..4826be88
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -0,0 +1,550 @@
+@@ -0,0 +1,578 @@
 +//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
 +//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
 +//! signal; a filter on the board turns them into sound.
@@ -339,9 +339,9 @@ index 00000000..2f04abd5
 +//!   When the ring is full the write waits, or fails with `EWOULDBLOCK` on
 +//!   a non-blocking handle.
 +//! - `/scheme/audiohw/stats`: clock, range, ring and error counters.
-+//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>]` plays a sine with
-+//!   the CPU filling the FIFO, without DMA (stage A1, a test); the result is
-+//!   in `stats`.
++//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>] [mono] [range=<n>]
++//!   [div=<n>]` plays a sine with the CPU filling the FIFO, without DMA
++//!   (stage A1, a test); the result is in `stats`.
 +//!
 +//! The DMA controller (channel 2) plays a ring of 8 slots of 512 frames
 +//! into the PWM FIFO; a timer every 10 ms looks which slot plays, fills
@@ -511,35 +511,56 @@ index 00000000..2f04abd5
 +        Ok(chunk.len())
 +    }
 +
++    /// `<seconds> [<hz>] [mono] [range=<n>] [div=<n>]`: the options run
++    /// channel 1 alone, another range or another clock divisor for this tone
++    /// only, to find out how the PWM takes words from the FIFO.
 +    fn tone(&mut self, request: &[u8]) -> Result<()> {
 +        let text = std::str::from_utf8(request).map_err(|_| Error::new(EINVAL))?;
-+        let mut words = text.split_whitespace().map(str::parse::<f64>);
-+        let seconds = match words.next() {
++        let mut words = text.split_whitespace();
++        let seconds = match words.next().map(str::parse::<f64>) {
 +            Some(Ok(s)) if s > 0.0 && s <= MAX_TONE_SECONDS => s,
 +            _ => return Err(Error::new(EINVAL)),
 +        };
-+        let hz = match words.next() {
-+            None => 1000.0,
-+            Some(Ok(hz)) if hz > 0.0 && hz < f64::from(SAMPLE_RATE) / 2.0 => hz,
-+            _ => return Err(Error::new(EINVAL)),
-+        };
++        let (mut hz, mut stereo, mut range, mut divisor) = (1000.0, true, self.range, CLOCK_DIVISOR);
++        for word in words {
++            let number = |prefix: &str| word.strip_prefix(prefix).and_then(|n| n.parse::<u32>().ok());
++            if word == "mono" {
++                stereo = false;
++            } else if let Some(n) = number("range=").filter(|n| (16..=1 << 16).contains(n)) {
++                range = n;
++            } else if let Some(n) = number("div=").filter(|n| (1..=4095).contains(n)) {
++                divisor = n;
++            } else {
++                match word.parse::<f64>() {
++                    Ok(f) if f > 0.0 && f < f64::from(SAMPLE_RATE) / 2.0 => hz = f,
++                    _ => return Err(Error::new(EINVAL)),
++                }
++            }
++        }
 +        let Output::Pwm { pwm, dma, .. } = &self.out else {
 +            return Err(Error::new(ENODEV));
 +        };
 +        // Hold the ring where it is and let the CPU have the FIFO.
 +        dma.set_active(false);
-+        pwm.set_dma(false);
-+        let report = pwm::cpu_tone(pwm, seconds, hz, TONE_AMPLITUDE);
-+        pwm.set_dma(true);
++        if divisor != CLOCK_DIVISOR {
++            pwm.set_clock(divisor).map_err(|err| {
++                eprintln!("bcm2835-pwmaudiod: {err}");
++                Error::new(EINVAL)
++            })?;
++        }
++        pwm.set_range(range);
++        pwm.set_channels(stereo, false);
++        let mut report = pwm::cpu_tone(pwm, seconds, hz, TONE_AMPLITUDE, stereo, range);
++        report.divisor = divisor;
++        if divisor != CLOCK_DIVISOR {
++            if let Err(err) = pwm.set_clock(CLOCK_DIVISOR) {
++                eprintln!("bcm2835-pwmaudiod: {err}");
++            }
++        }
++        pwm.set_range(self.range);
++        pwm.set_channels(true, true);
 +        dma.set_active(true);
-+        println!(
-+            "bcm2835-pwmaudiod: tone {hz} Hz, {:.2} s, {} words, {:.0} frames/s, FIFO empty {} times, STA 0x{:03x}",
-+            report.seconds,
-+            report.words,
-+            report.rate(),
-+            report.empty,
-+            report.sta_errors
-+        );
++        println!("bcm2835-pwmaudiod: tone {hz} Hz, {}", tone_line(&report));
 +        self.tone = Some(report);
 +        Ok(())
 +    }
@@ -578,18 +599,25 @@ index 00000000..2f04abd5
 +        }
 +        let _ = writeln!(text, "pwm_errors {} bits=0x{:03x}", self.sta_errors, self.sta_bits);
 +        if let Some(t) = &self.tone {
-+            let _ = writeln!(
-+                text,
-+                "tone seconds={:.2} words={} rate_hz={:.0} fifo_empty={} sta=0x{:03x}",
-+                t.seconds,
-+                t.words,
-+                t.rate(),
-+                t.empty,
-+                t.sta_errors
-+            );
++            let _ = writeln!(text, "tone {}", tone_line(t));
 +        }
 +        text
 +    }
++}
++
++fn tone_line(t: &ToneReport) -> String {
++    format!(
++        "{} range={} div={} seconds={:.2} words={} words_per_s={:.0} rate_hz={:.0} fifo_empty={} sta=0x{:03x}",
++        if t.stereo { "stereo" } else { "mono" },
++        t.range,
++        t.divisor,
++        t.seconds,
++        t.words,
++        t.words_per_second(),
++        t.rate(),
++        t.empty,
++        t.sta_errors
++    )
 +}
 +
 +/// The start of the ring: a ramp from 0 V to the middle, then silence.
@@ -882,10 +910,10 @@ index 00000000..2f04abd5
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
 new file mode 100644
-index 00000000..f3dc2646
+index 00000000..d3848128
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,289 @@
 +//! The PWM block (BCM2835 ARM Peripherals, chapter 9) and its clock from the
 +//! clock manager.
 +//!
@@ -960,11 +988,6 @@ index 00000000..f3dc2646
 +        }
 +    }
 +
-+    /// The middle of the range: silence.
-+    pub fn silence(&self) -> u32 {
-+        self.range / 2
-+    }
-+
 +    /// Whether the block answers: the range registers keep what is written.
 +    /// QEMU does not emulate PWM and reads zero.
 +    pub fn present(&self) -> bool {
@@ -982,10 +1005,22 @@ index 00000000..f3dc2646
 +        self.write(CTL, 0);
 +        self.write(DMAC, 0);
 +        spin(Duration::from_micros(10));
-+        self.start_clock()?;
-+        self.write(RNG1, self.range);
-+        self.write(RNG2, self.range);
++        self.set_clock(PLLD_HZ / self.clock_hz)?;
++        self.set_range(self.range);
 +        self.write(STA, STA_ERRORS);
++        self.set_channels(true, dma);
++        Ok(())
++    }
++
++    /// Set the range of both channels.
++    pub fn set_range(&self, range: u32) {
++        self.write(RNG1, range);
++        self.write(RNG2, range);
++    }
++
++    /// Clear the FIFO and run both channels, or channel 1 alone, from it.
++    pub fn set_channels(&self, stereo: bool, dma: bool) {
++        self.write(DMAC, 0);
 +        self.write(CTL, CLRF1);
 +        spin(Duration::from_micros(10));
 +        if dma {
@@ -993,17 +1028,12 @@ index 00000000..f3dc2646
 +        }
 +        // Repeat the last word when the FIFO runs empty, so a gap holds the
 +        // level instead of dropping to 0 V.
-+        self.write(CTL, PWEN1 | USEF1 | RPTL1 | PWEN2 | USEF2 | RPTL2);
-+        Ok(())
++        let one = PWEN1 | USEF1 | RPTL1;
++        self.write(CTL, if stereo { one | PWEN2 | USEF2 | RPTL2 } else { one });
 +    }
 +
-+    /// Turn the DMA requests on or off without stopping the channels.
-+    pub fn set_dma(&self, on: bool) {
-+        self.write(DMAC, if on { DMAC_ENAB | DMAC_THRESHOLDS } else { 0 });
-+    }
-+
-+    fn start_clock(&self) -> Result<(), String> {
-+        let divisor = PLLD_HZ / self.clock_hz;
++    /// Run the PWM clock at PLLD / `divisor`.
++    pub fn set_clock(&self, divisor: u32) -> Result<(), String> {
 +        // Stop the clock and wait until it has stopped; kill it if it hangs.
 +        self.write_cm(CM_PWMCTL, CM_PASSWD | (self.read_cm(CM_PWMCTL) & 0xf));
 +        if !self.wait_cm(false) {
@@ -1084,6 +1114,11 @@ index 00000000..f3dc2646
 +/// What a tone played by the CPU did.
 +#[derive(Default, Clone)]
 +pub struct ToneReport {
++    /// What was asked: both channels or channel 1 alone, the range and the
++    /// clock divisor.
++    pub stereo: bool,
++    pub range: u32,
++    pub divisor: u32,
 +    pub seconds: f64,
 +    pub words: u64,
 +    /// Times the CPU found the FIFO empty: it was too slow, the output held
@@ -1093,10 +1128,19 @@ index 00000000..f3dc2646
 +}
 +
 +impl ToneReport {
++    /// FIFO words per second the PWM took.
++    pub fn words_per_second(&self) -> f64 {
++        if self.seconds > 0.0 {
++            self.words as f64 / self.seconds
++        } else {
++            0.0
++        }
++    }
++
 +    /// Frames per second the PWM took from the FIFO.
 +    pub fn rate(&self) -> f64 {
 +        if self.seconds > 0.0 {
-+            self.words as f64 / 2.0 / self.seconds
++            self.words_per_second() / if self.stereo { 2.0 } else { 1.0 }
 +        } else {
 +            0.0
 +        }
@@ -1104,13 +1148,14 @@ index 00000000..f3dc2646
 +}
 +
 +/// Play a sine with the CPU writing every word into the FIFO (stage A1, no
-+/// DMA). Busy for the whole time. Starts and ends at the middle of the
-+/// range; the caller has the channels running.
-+pub fn cpu_tone(pwm: &Pwm, seconds: f64, hz: f64, amplitude: f64) -> ToneReport {
-+    let mid = f64::from(pwm.silence());
++/// DMA). Busy for the whole time. Starts and ends at the middle of
++/// `range`; the caller has set up the channels (`stereo`: both, else
++/// channel 1 alone) and the range.
++pub fn cpu_tone(pwm: &Pwm, seconds: f64, hz: f64, amplitude: f64, stereo: bool, range: u32) -> ToneReport {
++    let mid = f64::from(range / 2);
 +    let peak = mid * amplitude.clamp(0.0, 1.0);
 +    let total = (seconds * f64::from(SAMPLE_RATE)) as u64;
-+    let mut report = ToneReport::default();
++    let mut report = ToneReport { stereo, range, ..Default::default() };
 +    pwm.take_errors();
 +    // Let the FIFO fill up before counting empty moments.
 +    let mut frame = 0u64;
@@ -1133,7 +1178,11 @@ index 00000000..f3dc2646
 +                // Fade in and out over 10 ms against clicks.
 +                let fade = (t / 0.01).min((seconds - t) / 0.01).clamp(0.0, 1.0);
 +                let value = (mid + peak * fade * (2.0 * std::f64::consts::PI * hz * t).sin()) as u32;
-+                second_word = Some(value);
++                if stereo {
++                    second_word = Some(value);
++                } else {
++                    frame += 1;
++                }
 +                value
 +            }
 +        };

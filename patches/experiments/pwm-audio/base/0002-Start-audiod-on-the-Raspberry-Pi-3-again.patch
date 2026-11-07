@@ -1,4 +1,4 @@
-From 45591fef1ecd06066f893a1ac32571c2ee19e295 Mon Sep 17 00:00:00 2001
+From fc78c903da8d95e912777146ae7ca2d38dca7979 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH 2/2] Start audiod on the Raspberry Pi 3 again
