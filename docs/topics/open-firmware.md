@@ -137,6 +137,13 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
    sets these up itself (devicetree values, a fixed clock, no framebuffer).
 4. **USB and Ethernet** for network boot (LAN7515 behind dwc2), and HDMI
    much later (see [graphics.md](graphics.md), `vc4d`).
+5. **3D (graphics.md step 3) needs more from the boot code than the
+   framebuffer does:** the V3D power domain switched on, the V3D clock set,
+   and much more memory set aside for the GPU. Today that means the full
+   `start.elf` with `gpu_mem` well above 16: the cut-down `start_cd.elf`
+   we run has no 3D. With the open firmware, the VPU part or a driver on
+   the ARM side would do these steps itself (Linux has a `bcm2835` power
+   driver for this case).
 
 ## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
 
