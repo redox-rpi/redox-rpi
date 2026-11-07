@@ -38,6 +38,9 @@ socdump = "source"
 # start with today's prebuilt aarch64 packages, in QEMU too; see
 # docs/status.md.
 diffutils = {}
+# `tone` writes test sound for /scheme/audio (tools/tone; base patch
+# 0086, sound from the headphone jack, beta).
+tone = "source"
 
 # CPU clock at boot (#23): rpi-firmwared starts in the initfs, before /etc
 # is there, with the ondemand governor. If /etc/rpi-firmware/governor
