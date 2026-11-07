@@ -9802,3 +9802,25 @@ Runner `run264.sh` with 40 cycles and an ARP check only. 07:36–08:37 UTC.
   reformat the data partition on the network-boot card.
 
 Outputs (serial per boot, `stuck-serial.log` with the panics) in `~/pitest-tools/t266/`.
+
+## #254 open firmware step 2 rerun: lk-overlay with an ARM-side SD driver (2026-11-07, Pi test agent)
+
+Card `redox-rpi-lkoverlay-3bp-20261105c.img.xz` on the spare card (user swap). 90 s of serial,
+08:47–08:48 UTC. No HDMI connected.
+
+**Result: the ARM loader now mounts the card, but reading the files fails.**
+- VPU stage as in #253: PLLs up, `SDRAM Type: Elpida 1GB LPDDR2`, self test ok, the VPU's eMMC
+  driver at 27 MHz reads the card (30475 MB SDHC), stage 1 chainloads, `enabling aarch64`,
+  `welcome to lk/MP` with the DTB at 0x1000000.
+- On the ARM: `[EMMC:...]` lines, `SD card has arrived`, `card now in 4bit mode`, then
+  `vpu clock is 0, cdiv 0`, `Card initialization complete: N/A 30475MB SDHC Card`, MBR dump
+  (p0 type 0xc at 0x800, p1 type 0x83 at 0x10800).
+- `trying to boot from sdhostp1` **without** `mount failure`, then `dtb: rpi3.dtb, kernel:
+  Image-aarch64`. A 576-byte file was read fine.
+- Reading the 35252-byte raw dtb: 136 lines `transfer error on FIFO word N: 0x21` (N = 112, 368,
+  496, 624, 880) with `Transfer error, status: 0x20`. Last line (4.065 s):
+  `[EMMC:sdhost_read_block_wrap]: read of sector 73520, count 8 failed`, then silence to 90 s.
+- No magic, no `passing control off to linux`, no payload line, no panic or exception.
+- Probable cause: `vpu clock is 0, cdiv 0`, so the ARM side runs the SD clock with divider 0.
+- Raw log sent to the open-firmware session (`~/pitest-tools/t254/serial-raw.log`). The stable
+  network-boot check follows when the Pi boots again (see #266).
