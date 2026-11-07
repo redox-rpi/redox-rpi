@@ -1,8 +1,8 @@
-From 4badcac013fffdacf7185213e0e775a6a23e697c Mon Sep 17 00:00:00 2001
+From 5375a7e9208542087e0f15da1d799122453a5871 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
-Subject: [PATCH 1/2] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3
- as audiohw
+Subject: [PATCH] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3 as
+ audiohw
 
 Two PWM channels (GPIO 40 and 41, ALT0) with their clock from PLLD/2
 (250 MHz) play the jack. The FIFO gives one word per period to the two

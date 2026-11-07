@@ -1,27 +1,24 @@
-From 2313cde4e3e486bac0a434d0dfbfe316123c312f Mon Sep 17 00:00:00 2001
+From 4f2067a92958b5e95a1cce46d0f24556a0d3a969 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 28 Oct 2026 08:38:20 +0000
-Subject: [PATCH] Leave out pcid, pcid-spawner, audiod and rtcd on the
- Raspberry Pi 3
+Subject: [PATCH] Leave out pcid, pcid-spawner and rtcd on the Raspberry Pi 3
 
 The Raspberry Pi 3 has no PCI bus, so pcid panics (Pci::CfgAccess::read is
-not implemented on aarch64) and both pcid-spawners fail with ENODEV. There
-is no sound driver for it yet, so audiod stops with No such device. rtcd
+not implemented on aarch64) and both pcid-spawners fail with ENODEV. rtcd
 does nothing outside x86.
 
-Add condition_board_not to init units, use it for the pcid-spawner and
-audiod units, do not spawn pcid from hwd on raspi3bp, and run rtcd on x86
-only, like ps2d.
+Add condition_board_not to init units, use it for the pcid-spawner units,
+do not spawn pcid from hwd on raspi3bp, and run rtcd on x86 only, like
+ps2d. (audiod stays: bcm2835-pwmaudiod offers audiohw on the Pi.)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/hwd/src/main.rs                      |  7 +++++--
  init.d/00_pcid-spawner.service               |  2 ++
- init.d/20_audiod.service                     |  2 ++
  init.initfs.d/00_rtcd.service                |  2 ++
  init.initfs.d/40_pcid-spawner-initfs.service |  2 ++
  init/src/unit.rs                             | 11 +++++++++++
- 6 files changed, 24 insertions(+), 2 deletions(-)
+ 5 files changed, 22 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/hwd/src/main.rs b/drivers/hwd/src/main.rs
 index 79360e34..0654fd01 100644
@@ -53,19 +50,6 @@ index 8ba6fc6c..ad7a78e5 100644
  
  [service]
  cmd = "pcid-spawner"
-diff --git a/init.d/20_audiod.service b/init.d/20_audiod.service
-index 572d1c9d..92f0615b 100644
---- a/init.d/20_audiod.service
-+++ b/init.d/20_audiod.service
-@@ -3,6 +3,8 @@ description = "Audio multiplexer"
- requires_weak = [
-     "00_base.target",
- ]
-+# No sound driver for the Raspberry Pi 3 yet
-+condition_board_not = ["raspi3bp"]
- 
- [service]
- cmd = "audiod"
 diff --git a/init.initfs.d/00_rtcd.service b/init.initfs.d/00_rtcd.service
 index ffe8ea2e..4b1199d3 100644
 --- a/init.initfs.d/00_rtcd.service

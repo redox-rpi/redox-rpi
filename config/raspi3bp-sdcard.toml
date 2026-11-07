@@ -31,6 +31,9 @@ reboot = "source"
 # tools/spi; base patches 0047 and 0048).
 i2c = "source"
 spi = "source"
+# `tone` writes test sound for /scheme/audio (tools/tone; base patch
+# 0086, sound from the headphone jack, beta).
+tone = "source"
 # Programs beyond the minimal system, prebuilt by Redox. Most of them
 # (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
 # start with today's prebuilt aarch64 packages, in QEMU too; see

@@ -1,5 +1,11 @@
 # Experiment: pwm-audio
 
+**Default since PR #251 (v0.4.0, beta):** base patch `0086` (was `0001`
+here), the `audiod` part (was `0002`) is in base `0030`, kernel `0050`
+is a default kernel patch, and `tone` is in every image. The name
+`pwm-audio` is still accepted and does nothing; `qemu-check.sh` stays
+here and now checks the default image.
+
 Sound from the headphone jack of the Pi 3B+, issue
 [#250](https://github.com/redox-rpi/redox-rpi/issues/250). Plan and
 background: [docs/topics/audio.md](../../../docs/topics/audio.md).
@@ -76,10 +82,3 @@ through `/scheme/audio`, and the stats; not the sound.
   it spent mixing silence all the time. `pi-test.py` standard checks pass.
 - Listening test: row 280 (a person with headphones), waiting.
 
-## Merging
-
-At the merge, base `0001` (driver) gets the next free base number, base
-`0002` goes into base `0030` (drop its `audiod` lines), and kernel `0050`
-becomes a default kernel patch unless `rpi-fb` brought it first. The tool
-`tone` then goes into `config/raspi3bp-sdcard.toml`. For v0.4.0 the sound
-is a beta (maintainer, 2026-11-07).

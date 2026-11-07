@@ -9,28 +9,19 @@ are enough; A3 and polish may follow in a later release.
 
 ## State
 
-- **No sound on `main` yet.** Our base patch `0030` leaves `audiod` out
-  on `raspi3bp` (`condition_board_not = ["raspi3bp"]` in
-  `init.d/20_audiod.service`), so the boot shows no audio errors (#18).
-- **In progress:** the PWM driver `bcm2835-pwmaudiod`, stages A1 and A2
-  ([#250](https://github.com/redox-rpi/redox-rpi/issues/250), experiment
-  [`pwm-audio`](https://github.com/redox-rpi/redox-rpi/tree/pwm-audio/patches/experiments/pwm-audio),
-  draft PR #251). It passes the QEMU check (driver up, `audiod` on top,
-  `EINVAL`/`EWOULDBLOCK` contract, `cat file > /scheme/audio`); QEMU has
-  no PWM clock, so there it plays to the clock instead of the jack. Pi
-  test #279 found it playing at half speed; #281 showed why (the channels
-  take turns on the FIFO), and the range is now 2834. **#283 passed:**
-  44 111 frames/s measured, no DMA faults or PWM errors, the CPU tone and
-  `tone > /scheme/audio` take their real time, about 1 % of a core for the
-  driver and 3 % for `audiod` while playing. The listening test #280
-  needs a person with headphones.
-- **Release plan:** v0.4.0, beta. Once #279 and #280 pass, PR #251 moves
-  the patches to the default directories, so the driver and `audiod` run
-  in every image, and the v0.4.0 release notes list sound from the jack
-  as **beta** (known limits: about 11 usable bits, one fixed format, no
-  stop after silence yet, left/right as found in #280). If #279 shows
-  problems that could hurt the boot, it ships as the experiment
-  `pwm-audio` instead, also marked beta.
+- **Sound from the headphone jack, beta** (v0.4.0,
+  [#250](https://github.com/redox-rpi/redox-rpi/issues/250), PR #251):
+  `bcm2835-pwmaudiod` (base patch `0086`) offers `audiohw`, and `audiod`
+  runs on the Pi again (base `0030` no longer leaves it out). `tone -s 3 >
+  /scheme/audio` plays a test tone. **Beta:** about 11 usable bits, one
+  fixed format (44.1 kHz s16 stereo), the PWM never stops after silence
+  yet, and nobody has listened yet (test #280).
+- **Tested:** Pi test #283 passed (44 111 frames/s, no DMA faults or PWM
+  errors, real-time playback through `audiod`, about 1 % of a core for
+  the driver and 3 % for `audiod`). #279 had found half speed; #281
+  showed the two channels take turns on the FIFO, so the range is 2834.
+  QEMU has no PWM clock: there the driver plays to a timer
+  ([`qemu-check.sh`](../../patches/experiments/pwm-audio/qemu-check.sh)).
 - **The hardware is there.** The 3.5 mm jack is fed by the SoC's PWM
   block; HDMI can carry sound; the GPIO header has an I2S port for DAC
   boards.
