@@ -52,10 +52,11 @@ made executable with `chmod +x`, runs directly (`./hallo.c a b`), from Ion
 and through `execvp` (`timeit`). It gets its arguments (`argv[0]` is the
 path it was started with) and stdin, and its exit code is the program's.
 Options after `-run` in the shebang reach tcc (`-run -DANSWER=42` works),
-but quotes in them are removed: `-DX="text"` defines `X` as `text`, not as
-a string. No wrapper is needed. QEMU (`v0.4.0-dev-716-gc6d4de06+xd12c`):
-pass, 244 ms per start; example `/usr/share/tcc-tests/hallo.c`. Pi: test
-#282.
+but quotes in them are removed: `-DX="text"` defines `X` as `text`, not as a
+string. No wrapper is needed. Real Pi 3B+ ([test
+#282](../test-reports.md#282-247-tcc-a-c-file-run-as-a-script-usrbintcc--run-2026-11-07-pi-test-agent),
+`v0.4.0-dev-716-gc6d4de06+xd12c`): pass, 128 ms per start (warm 127 ms);
+QEMU 244 ms. Example: `/usr/share/tcc-tests/hallo.c`.
 
 **x18:** tcc never allocates x18 (`arm64-gen.c` keeps it out of `RC_INT`),
 so its code is safe with relibc's signal entry, which clobbers x18
