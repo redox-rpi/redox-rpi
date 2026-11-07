@@ -10,6 +10,17 @@
 
 ## Next
 
+- [#92](https://github.com/redox-rpi/redox-rpi/issues/92) and
+  [#217](https://github.com/redox-rpi/redox-rpi/issues/217): netstack
+  stops (#92: once in 60 chaos rounds, Pi tests 237 and 263; #217: no
+  network after 3 of about 14 boots, 0 of 21 since, Pi test 264). Neither
+  is caught yet, so experiment `netstack-watch` is **on in every test
+  image** (`config/test-experiments.conf`, branch `netstack-watch-default`):
+  stable, nightly and Pi test rows; never releases or the pkg repository.
+  It names a call the main loop is stuck in, says when no timer event has
+  come for 10 s (the case Pi test 213 could not show), and writes a
+  heartbeat every 10 min. Benchmark rows build with
+  `--no-test-experiments`.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
   `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
