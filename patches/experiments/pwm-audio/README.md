@@ -6,7 +6,9 @@ background: [docs/topics/audio.md](../../../docs/topics/audio.md).
 
 - **Base `0001`, `bcm2835-pwmaudiod`** (new driver in the initfs, after
   `bcm2835-gpiod`): PWM0/PWM1 on GPIO 40/41 (ALT0), clock PLLD/2 =
-  250 MHz from the clock manager, range 5669 (44 098 Hz, about 12.5 bits).
+  250 MHz from the clock manager, range 2834 (44 107 Hz, about 11.5 bits:
+  the FIFO gives one word per period to the two channels in turn, test
+  #281, so a stereo frame takes two periods).
   DMA channel 2 (only if `brcm,dma-channel-mask` has it) plays a ring of
   8 × 512 frames into the PWM FIFO (DREQ 5); a 10 ms timer follows
   `CONBLK_AD`, fills played slots with silence and lets waiting writes
