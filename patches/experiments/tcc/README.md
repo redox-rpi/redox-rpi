@@ -1,7 +1,7 @@
 # Experiment: tcc, TinyCC as a native C compiler
 
-For ISSUE, topic [tcc](../../../docs/topics/tcc.md). Builds TinyCC from the
-`mob` branch (arm64 backend, 70adbb12, 2026-11-07) for aarch64 Redox and
+For [#247](https://github.com/redox-rpi/redox-rpi/issues/247), topic
+[tcc](../../../docs/topics/tcc.md). Builds TinyCC from the `mob` branch (arm64 backend, 70adbb12, 2026-11-07) for aarch64 Redox and
 puts it into the image with what it needs to compile on the Pi:
 
 - `recipes/wip/dev/lang/tcc/recipe.toml` replaces upstream's stub recipe
@@ -63,4 +63,7 @@ float, linked into tcc from the toolchain, which is not built with
 
 ## Results
 
-RESULTS
+QEMU, `v0.4.0-dev-689-gb453b397+xd12c`: dynamic Hello World, `tcc -run`,
+the benchmark and self-hosting (tcc compiles `tcc.c` into a working
+`tcc2`) pass; `-static` fails on relibc's TLS descriptor relocations.
+Numbers in the [topic page](../../../docs/topics/tcc.md). Pi: test #278.
