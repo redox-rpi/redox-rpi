@@ -11,3 +11,5 @@ start small ion wrappers in `/usr/libexec/app-log/`. Each writes to
 
 In Pi test #204 the editor closed by itself with nothing on serial. The
 Pi test agent keeps the serial log; `/tmp` is gone after a power cycle.
+
+Only root may write /scheme/debug. For any other user (`$USER` is not `root`, e.g. `user` at the Orbital login) the wrappers start the app without the log; before that fix the apps did not start at all for `user` (ion: failed to redirect stdout to file /scheme/debug, Pi test #275).

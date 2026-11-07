@@ -2,7 +2,9 @@
 # start line, their stderr (with RUST_BACKTRACE=1) and their exit status to
 # /scheme/debug, which goes to the serial console. So an app that exits by
 # itself leaves a trace in the serial log the Pi test agent keeps (/tmp is
-# gone after a power cycle). Build together with orbital-apps.
+# gone after a power cycle). Only for root: other users may not write
+# /scheme/debug, so for them the apps start without the log (Pi test #275,
+# login as user). Build together with orbital-apps.
 
 [[files]]
 path = "/usr/libexec/app-log/cosmic-edit"
@@ -11,6 +13,16 @@ data = """
 #!/usr/bin/ion
 # @args[1..] is an error in ion when there are no arguments.
 export RUST_BACKTRACE=1
+# Only root may write /scheme/debug, and ion does not start a command whose
+# redirection fails: for other users the app starts without the log.
+if test "$USER" != root
+    if test $len(@args) -gt 1
+        /usr/bin/cosmic-edit @args[1..]
+    else
+        /usr/bin/cosmic-edit
+    end
+    exit $?
+end
 let rc = 0
 if test $len(@args) -gt 1
     echo "app-log: start cosmic-edit @args[1..]" >> /scheme/debug
@@ -31,6 +43,16 @@ data = """
 #!/usr/bin/ion
 # @args[1..] is an error in ion when there are no arguments.
 export RUST_BACKTRACE=1
+# Only root may write /scheme/debug, and ion does not start a command whose
+# redirection fails: for other users the app starts without the log.
+if test "$USER" != root
+    if test $len(@args) -gt 1
+        /usr/bin/cosmic-files @args[1..]
+    else
+        /usr/bin/cosmic-files
+    end
+    exit $?
+end
 let rc = 0
 if test $len(@args) -gt 1
     echo "app-log: start cosmic-files @args[1..]" >> /scheme/debug
