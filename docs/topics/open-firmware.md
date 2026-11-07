@@ -201,10 +201,18 @@ and UART sequences come from rpi-open-firmware).
   it falls back to the network and U-Boot starts, but U-Boot sees only
   `DRAM: 240 MiB` (normally about 948), that is 256 MB minus the 16 MB
   `gpu_mem`. Its downloads then fail (`trying to overwrite reserved
-  memory`). So Broadcom's code detects the memory size wrongly when our
-  SDRAM set-up has already run. Until that's fixed (for example by putting
-  the SDRAM controller back into its reset state before `chain`), the
-  monitor card can't replace the network-boot card.
+  memory`). **Cause** (internal disassembly, behaviour only): Broadcom's
+  SDRAM routine sets the size to 256 MB first. Then, if SD_CS bit 0
+  (RESTRT) reads 1, it skips its whole set-up. Our set-up ends by setting
+  that bit, and the Boot ROM leaves SD_CS at `0x794200`, with the bit
+  clear. **Fix**
+  ([rpi-open-firmware#3](https://github.com/redox-rpi/rpi-open-firmware/pull/3)):
+  after its copy, the chain trampoline puts the controller in standby,
+  turns the SDRAM clock off and writes SD_CS = 0, then jumps. The reply is
+  now `ok chain …, SDRAM reset`. Pi test #271 reruns parts E and D. The
+  new monitor comes over serial from the #269 card (`rbc-load.sh …
+  chainmon`), so no card swap is needed. Until #271 passes, the monitor
+  card can't replace the network-boot card.
 - **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
   the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
   boot and what 3D needs (see step 5 above).
