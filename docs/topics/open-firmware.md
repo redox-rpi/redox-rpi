@@ -68,6 +68,27 @@ this repository stays MIT. Issue:
   image for Pi test #249 (`bootcode.bin` sha256 `9d02c747…`). The build is
   repeatable but not bit-identical, because the firmware prints its build
   time.
+- **Pi test #249 (2026-11-05, same 64 MB card): the whole chain works up to
+  the kernel hand-off.**
+  - Reading sector 0 failed at the first data clock (`SH_CDIV 0x8`, which
+    the driver takes for 25 MHz) and worked at half that speed (`0x12`). So
+    the clock was too fast for this card.
+  - The chainloader then read the MBR, `cmdline.txt`, `rpi.dtb` (to
+    `0xF000000`) and `zImage` (to `0x2000000`), and printed `Jumping to the
+    Linux kernel...`.
+  - The test payload printed:
+    - `CPSR 0x600001D3`: 32-bit Supervisor mode, interrupts masked.
+    - `MIDR 0x410FD034`: Cortex-A53 r0p4.
+    - `MPIDR 0x80000000`: core 0.
+    - FDT pointer `0x0F000000`.
+  - So on the 3B+, a fully open boot path reaches a kernel entry point:
+    ROM, open `bootcode.bin`, SDRAM, ARM start, SD card, FAT, devicetree.
+    Only in 32-bit mode for now.
+  - A 32 GB SDHC card, same visit: sector 0 read at the full data clock
+    with no retry, and the same chain ran to the test payload. So only the
+    old 64 MB card needs the slower clock. The card size in the log was
+    wrong (`1803MB`, a 32-bit overflow). That's fixed in the fork, but the
+    fix hasn't been seen on the Pi yet; it only changes the log line.
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
@@ -98,9 +119,8 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
   to it, so the voltages stay at their defaults. The thermal and
   undervoltage monitoring that the closed firmware does is missing.
 - **SD card.** The chainloader drives the sdhost controller on GPIO 48–53.
-  #224 used a 64 MB standard-capacity card: the card was found, but a read
-  at the data clock failed (see above). A common SDHC card (4–32 GB) is the
-  other case to try.
+  Tested: the old 64 MB card needs half the data clock (the driver now
+  does this by itself), and a 32 GB SDHC card works at full speed (#249).
 - **LAN7515 (USB hub and Ethernet).** The firmware turns on the USB power
   domain and the PHY, but nothing on the ARM side drives USB yet. With the
   closed firmware, the MAC address comes from OTP, either through the
@@ -118,13 +138,13 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
    (`ARM_C0_AARCH64`) but never sets it. The chainloader is 32-bit and
    switches to non-secure mode early, so it cannot switch to 64-bit later.
    We need a 64-bit start stub that sets up the exception levels and the
-   timer frequency, and that parks cores 1–3 in a spin table (release addresses `0xe0`, `0xe8`, `0xf0`)
+   timer frequency, and that parks cores 1–3 in a spin table at `0xd8`
    like Raspberry Pi's `armstub8`. That stub could be Rust; the VPU part
    cannot be, because there is no Rust or LLVM backend for VideoCore IV.
    Base: [`armstubs/armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S)
    in raspberrypi/tools (BSD licence). It is the stub the closed firmware
    runs before Redox today: timer (`CNTFRQ` 19.2 MHz, 54 MHz on the Pi 4),
-   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked in the spin table (`0xe0`, `0xe8`, `0xf0`)
+   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked at `0xd8`
    (what our spin-table kernel patch expects), and the GIC set-up on the
    Pi 4. Use it as it is or port it to Rust. The alternative is TF-A's
    BL31, which gives PSCI (see "Other Pi models").
@@ -157,8 +177,13 @@ warnings allowed. Ours is flat C for the VPU, one file per hardware block,
 branch `bootcode`, directory `bootcode/` (GPLv2+, because the SDRAM, clock
 and UART sequences come from rpi-open-firmware).
 
-- **M1 (built 2026-11-07, Pi test #265 queued):** VPU clock, UART, SDRAM
-  and a memory test of 32 regions over the whole 1 GB. 5.5 KB.
+- **M1 (2026-11-07, Pi test #265 passed):** VPU clock, UART, SDRAM and a
+  memory test of 32 regions over the whole 1 GB, in 5.5 KB. On the Pi:
+  Elpida 1 GB LPDDR2, DDR PLL locked at 398.4 MHz, self test passed in
+  28 ms, SDRAM ready 52 ms after our code starts, then a heartbeat every
+  10 s for 60 s with no panic. The system timer already reads 2.68 s when
+  our code starts, so the Boot ROM takes that long before it runs
+  `bootcode.bin`. Why is still open.
 - **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
   the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
   boot and what 3D needs (see step 5 above).
@@ -181,7 +206,7 @@ H.264 up to about 720p on a Pi 3) or our own driver for the codec block
 from scratch, a project of its own. This is one reason to keep Broadcom's
 `start.elf` as an option next to our firmware.
 
-## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
+## librerpi/lk-overlay compared (code read and built 2026-11-05)
 
 [librerpi/lk-overlay](https://github.com/librerpi/lk-overlay) (GPLv2+, last
 commit 2026-06-20, 252 commits) is the newer rewrite by the same community.
@@ -222,10 +247,62 @@ step 3. The gaps for us:
 - **U-Boot:** not in the chain yet. It would be loaded as
   `Image-aarch64`, but U-Boot asks the mailbox for the board revision and
   the memory size, and only the memory size is answered today.
-- **Build:** officially with Nix, which homenodellm doesn't have. The
-  stage-2 build embeds the ARM programs for Pi 1, 2 and 3, so all three
-  must be built first. Trying it with our own toolchains is the next step;
-  it waits for the maintainer's OK to build that code.
+- **Build (2026-11-05):** officially with Nix, which homenodellm doesn't
+  have. It also builds without Nix, with our VC4/ARM toolchains and the
+  host's aarch64 GCC: `redox-rpi/build-lk-overlay.sh` in our fork, with
+  lk-overlay pinned at `50c95c1`, takes about a minute. Three local changes
+  are needed:
+  - The libgcc path was a fixed `/nix/store` path; it now comes from the
+    compiler.
+  - The Pi 2 ARM program needs C++ headers we don't build, so it gets a
+    placeholder. A BCM2837 never starts it.
+  - An include directory so stage 2 finds the embedded ARM programs.
+
+  Result: stage 1 is 50 KB, stage 2 is 0.9 MB, the 64-bit ARM stage is
+  76 KB. Their VC4 GCC is 6.2.1-based too. Card image in their layout
+  (`redox-rpi/make-sdcard-lk.sh`): FAT with `bootcode.bin`, ext4 with
+  `/boot`. The ext4 is made without the newest e2fsprogs features, which
+  LK's driver doesn't know. Our 64-bit test program runs in QEMU.
+  - **Pi test #251 (2026-11-05):** lk-overlay's stage 1 starts on the 3B+
+    and prints one line (`platform_early_init: b`, 1 ms after the start),
+    then nothing more. The next step in the code writes to the USB
+    controller (`USB_DCTL`). That write most likely hangs the bus because
+    the USB power domain is still off after the boot ROM; rpi-open-firmware
+    turns that domain on first. Patch `redox-rpi/lk-patches/0001` skips the
+    write and adds markers.
+  - **Pi test #253 (2026-11-05, 32 GB SDHC card): the VPU starts the ARM
+    in 64-bit mode.** With the USB write skipped, stage 1 gets through
+    everything: markers `b1`, `b2` and `c`, PLLs, 1 GB SDRAM at 398 MHz
+    (memory test passed), the SD card in 4-bit mode at 25 MHz, and stage 2
+    from ext4. Stage 2 starts LK on the VPU, sets up composite video and
+    the USB PHY, then `detected a bcm2837`, `enabling aarch64`, ARM clock
+    and bridge up, and then waits for mailbox requests. On the ARM, LK
+    starts in 64-bit mode on several cores (`welcome to lk/MP`) and reads
+    the devicetree that stage 2 put at `0x1000000`. Its loader then fails
+    with `mount failure: -2` (`ERR_NOT_FOUND`): upstream's `rpi3-test` is
+    built without an SD card driver (`CONFIG_SD_BOOT := 0`), so the
+    partition doesn't exist on the ARM side. Two lines in stage 2 print
+    impossible clock values (`PLLC_PER at 9088281640219705594MHz`), most
+    likely 64-bit numbers in the VPU's `printf`; the clocks themselves work.
+  - For #254, `rpi3-test` is built with `CONFIG_SD_BOOT=1`. Its SD driver
+    is C++, so `build-toolchain.sh` now also builds an `aarch64-none-elf`
+    GCC with C++ (the host's aarch64 compiler has only C, and installing
+    more needs root).
+  - **Pi test #254 (2026-11-07): the ARM side finds the card, but larger
+    reads fail.** The VPU part runs as in #253. On the ARM, LK's SD driver
+    finds the 32 GB card in 4-bit mode, reads the partition table, mounts
+    the ext4 partition (no `mount failure`) and reads a 576-byte file. Then
+    reading the 35 KB devicetree fails: 136 `transfer error on FIFO word N`
+    lines, `Transfer error, status: 0x20`, and the read of sector 73520
+    gives up after 4 s. The log shows `vpu clock is 0, cdiv 0`. Cause:
+    only the VPU code in `platform.c` sets `vpu_clock`. On the ARM it stays
+    0, so the driver writes `SH_CDIV = 0` and never switches to the data
+    clock: the card runs at core/2, about 125 MHz, instead of 25 MHz.
+    Commands survive that, multi-block data doesn't. Patch
+    `redox-rpi/lk-patches/0002` uses the 250 MHz that stage 2 leaves
+    ([rpi-open-firmware#1](https://github.com/redox-rpi/rpi-open-firmware/pull/1)).
+    QEMU can't check it, because its raspi3b machine puts the card on the
+    EMMC controller, not SDHOST. Rerun: Pi test #268.
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
