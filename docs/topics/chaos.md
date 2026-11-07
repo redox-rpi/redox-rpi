@@ -47,13 +47,13 @@ Nothing on `main` yet.
 
 ## Next
 
-- A short chaos stressor run in the nightly test, with a time limit, as
-  its own pull request.
+- A short chaos stressor run in the nightly test, with a time limit: in
+  progress on branch `nightly-chaos` (15 rounds, at most 10 minutes, after
+  pi-test, does not decide the stable image).
 - Power cuts in the middle of a `fill` or `killio` round, through the Pi
   test agent (Shelly plug), as their own test-plan row.
 
 ## Later
 
-- Run a short chaos set in the nightly test.
 - More fault kinds: `mmap`/`munmap` storms, time jumps, a scheme
   daemon killed and started again (with `test-scheme-reregister.sh`).

@@ -9,7 +9,8 @@
   [test-reports.md](../test-reports.md).
 - Every night at 03:30 UTC the build host builds `main`, tests it on the Pi
   with `scripts/pi-test.py` and makes it the stable network-boot image if it
-  passes; a failure goes to the issue "Nightly: main fails on the Pi"
+  passes, followed by a short chaos stressor set with a time limit
+  ([chaos.md](chaos.md)); a failure goes to the issue "Nightly: main fails on the Pi"
   ([test-plan.md](../test-plan.md#nightly-update)). The Pi may reboot at
   night.
 - `scripts/pi-test.py --serial-log --crash-log` records the crash output of

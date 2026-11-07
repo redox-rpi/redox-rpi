@@ -22,7 +22,10 @@
 #   2. Exit if a test in docs/test-plan.md is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py.
+#      serial console and run scripts/pi-test.py. If it passes and the image
+#      has experiment chaos, run a short chaos stressor set (at most
+#      CHAOS_TIMEOUT seconds) and check that devsh still answers; the result
+#      goes into the report but does not decide the stable image.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
 #      /srv/tftp/stable at it, update "Stable image" in docs/test-plan.md,
 #      append the report to docs/test-reports.md, commit and push to main.
@@ -187,6 +190,42 @@ if reset_pi; then
     fi
 else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
+fi
+
+# Chaos: a short stressor set from experiment chaos (tools/chaos, #196) after
+# pi-test passed. `timeout` caps it, so a freeze (#207) cannot use up the
+# night, and devsh is checked again afterwards. Leaves out `signals` (#205)
+# and `fill` (no data partition on the network-boot image).
+CHAOS_TIMEOUT=600
+CHAOS_ROUNDS=15
+CHAOS_KINDS=memory,procs,threads,fds,schemes,killio
+if [ "$passed" = 1 ] && grep -q '^--experiment chaos' config/stable-image.conf; then
+    chaos_seed="$(date -u +%Y%m%d)"
+    chaos_cmd="scripts/chaos-host.py $PI --faults stressor --rounds 1 --stressor-rounds $CHAOS_ROUNDS --stressor-kinds $CHAOS_KINDS --seed $chaos_seed"
+    log "running the chaos stressor for at most $CHAOS_TIMEOUT s: $chaos_cmd"
+    chaos_rc=0
+    # shellcheck disable=SC2086
+    timeout "$CHAOS_TIMEOUT" python3 $chaos_cmd --serial-log "$SERIAL_LOG" --recover 120 2>&1 |
+        tee "$output.chaos" || chaos_rc=$?
+    if timeout 60 python3 scripts/devsh.py "$PI" 2323 'echo chaos alive' 2>/dev/null | tr -d '\r' | grep -qx 'chaos alive'; then
+        chaos_alive=1
+    else
+        chaos_alive=0
+    fi
+    case "$chaos_rc" in
+        0) chaos_line="PASS chaos: $CHAOS_ROUNDS stressor rounds" ;;
+        124) chaos_line="FAIL chaos: no result within $CHAOS_TIMEOUT s" ;;
+        *)
+            # The round's reasons, or chaos-host's last line if it stopped before.
+            chaos_why="$(sed -n 's/.*round 1 FAIL //p' "$output.chaos" | tail -1)"
+            [ -n "$chaos_why" ] || chaos_why="$(tail -n 1 "$output.chaos" | sed 's/^chaos-host: //')"
+            chaos_line="FAIL chaos: $(cut -c1-200 <<< "$chaos_why")" ;;
+    esac
+    [ "$chaos_alive" = 1 ] ||
+        chaos_line="FAIL chaos: ${chaos_line#*: }; devsh does not answer afterwards (power cycle through the Pi test agent)"
+    rm -f "$output.chaos"
+    echo "$chaos_line" | tee -a "$output"
+    printf '\n%s (seed %s, scripts/update-stable.sh). Repeat: `%s`\n' "$chaos_line" "$chaos_seed" "$chaos_cmd" >> "$report"
 fi
 
 # The token never appears on a command line, in a URL or in .git/config:
