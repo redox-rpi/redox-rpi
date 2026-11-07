@@ -128,6 +128,7 @@ from GPL-licensed drivers (Linux) is not.
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43455 (Pi 3B+) and CYW43436 (Zero 2 W) over SDIO, firmware blob, WPA2; planned for v0.6.0 in [#26](https://github.com/redox-rpi/redox-rpi/issues/26) | large |
 | **Bluetooth** | Same chips, over the PL011 UART that is the serial console today; no Bluetooth stack in Redox yet | large |
+| **WebAssembly (WASI)** | Run `.wasm` programs on Redox: the same binary runs on Redox, Linux and the Mac, with no compiler on the Pi, each in its own sandbox. First [wasmi](https://github.com/wasmi-labs/wasmi), an interpreter in pure Rust that needs almost nothing from the OS. Later [Wasmtime](https://wasmtime.dev/) with [Cranelift](https://cranelift.dev/) (a code generator in Rust, much smaller than LLVM, with aarch64) for near-native speed; it needs executable memory and trap handling from Redox. An outlook: local apps as WASM modules with an HTML/CSS front end ([Blitz](https://github.com/DioxusLabs/blitz)) and our own host functions for the page, no JavaScript. Web apps from the internet still need a JS engine, because browsers reach the page from WASM only through JavaScript | medium (wasmi), large (Wasmtime, apps) |
 
 ## Later / optional
 
