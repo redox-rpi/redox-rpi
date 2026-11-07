@@ -7,8 +7,9 @@
 //! ```toml
 //! [timer]
 //! description = "Nightly backup"
-//! schedule = "30 3 * * *"   # cron format, in UTC
+//! schedule = "30 3 * * *"   # cron format, in local time
 //! persistent = true         # run once at start if a run was missed
+//! utc = false               # true: the schedule is in UTC
 //!
 //! [service]
 //! cmd = "backup"
@@ -21,7 +22,14 @@
 //! data partition if mounted, so a missed run can be caught up after a
 //! restart. The directories are read again every 30 seconds.
 //!
-//! Usage: `timerd` (daemon, started by init) or `timerd -l` (list timers).
+//! Schedules are in the system's local time (`/etc/localtime`, through
+//! relibc), UTC if no zone is set. When the clocks go back, a time in the
+//! repeated hour runs once.
+//!
+//! Usage: `timerd` (daemon, started by init), `timerd -l` (list timers) or
+//! `timerd -t <seconds since 1970>...` (show times in local time, as the
+//! schedules see them; to check the time zone, for example around the
+//! summer time switch).
 
 mod cron;
 
@@ -61,6 +69,8 @@ struct TimerSection {
     schedule: String,
     #[serde(default)]
     persistent: bool,
+    #[serde(default)]
+    utc: bool,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -83,6 +93,43 @@ struct Timer {
     file: TimerFile,
     schedule: Schedule,
     running: Arc<AtomicBool>,
+    /// Local minute of the last scheduled run, so that a time in the hour
+    /// repeated when the clocks go back runs once.
+    last_due: Option<i64>,
+}
+
+impl Timer {
+    fn next_after(&self, unix: u64) -> Option<u64> {
+        if self.file.timer.utc {
+            self.schedule.next_after(unix, &|_| 0)
+        } else {
+            self.schedule.next_after(unix, &local_offset)
+        }
+    }
+}
+
+fn local_tm(unix: u64) -> libc::tm {
+    let t = unix as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&t, &mut tm) };
+    tm
+}
+
+/// Seconds local time is ahead of UTC at `unix`.
+fn local_offset(unix: u64) -> i64 {
+    local_tm(unix).tm_gmtoff as i64
+}
+
+/// "YYYY-MM-DD HH:MM:SS CET" in local time.
+fn format_local(unix: u64) -> String {
+    let tm = local_tm(unix);
+    let zone = if tm.tm_zone.is_null() {
+        String::new()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(tm.tm_zone) }.to_string_lossy().into_owned()
+    };
+    let local = (unix as i64 + tm.tm_gmtoff as i64) as u64;
+    format!("{} {zone}", format_utc(local))
 }
 
 fn now() -> u64 {
@@ -164,15 +211,15 @@ fn wait_for_clock() {
     while !Path::new(SYNCED).exists() {
         if begin.elapsed() >= CLOCK_WAIT {
             println!(
-                "timerd: no time from timesync after {} s, going on with {} UTC",
+                "timerd: no time from timesync after {} s, going on with {}",
                 CLOCK_WAIT.as_secs(),
-                format_utc(now())
+                format_local(now())
             );
             return;
         }
         sleep(Duration::from_secs(1));
     }
-    println!("timerd: clock set by timesync, {} UTC", format_utc(now()));
+    println!("timerd: clock set by timesync, {}", format_local(now()));
 }
 
 fn list() {
@@ -180,8 +227,10 @@ fn list() {
     for (name, text) in read_timer_files() {
         match parse_timer(&text) {
             Ok((file, schedule)) => {
-                let next = schedule.next_after(now).map_or("never".into(), format_utc);
-                let last = last_run(&name).map_or("never".into(), format_utc);
+                let timer = Timer { file, schedule, running: Default::default(), last_due: None };
+                let next = timer.next_after(now).map_or("never".into(), format_local);
+                let last = last_run(&name).map_or("never".into(), format_local);
+                let file = timer.file;
                 println!("{name}: {} \"{}\", next {next}, last {last}", file.timer.description, file.timer.schedule);
                 println!("    {} {}", file.service.cmd, file.service.args.join(" "));
             }
@@ -190,12 +239,38 @@ fn list() {
     }
 }
 
+/// `timerd -t`: each time in UTC and in local time, with the UTC offset.
+fn show_times(args: impl Iterator<Item = String>) {
+    let mut any = false;
+    for arg in args {
+        let Ok(unix) = arg.trim_start_matches('@').parse::<u64>() else {
+            eprintln!("timerd: not seconds since 1970: {arg}");
+            process::exit(2);
+        };
+        let offset = local_offset(unix);
+        let sign = if offset < 0 { '-' } else { '+' };
+        println!(
+            "{} UTC = {} ({sign}{:02}:{:02})",
+            format_utc(unix),
+            format_local(unix),
+            offset.abs() / 3600,
+            offset.abs() % 3600 / 60
+        );
+        any = true;
+    }
+    if !any {
+        eprintln!("usage: timerd -t seconds...");
+        process::exit(2);
+    }
+}
+
 fn main() {
     match std::env::args().nth(1).as_deref() {
         None => {}
         Some("-l") => return list(),
+        Some("-t") => return show_times(std::env::args().skip(2)),
         Some(_) => {
-            eprintln!("usage: timerd [-l]");
+            eprintln!("usage: timerd [-l | -t seconds...]");
             process::exit(2);
         }
     }
@@ -238,12 +313,16 @@ fn main() {
         }
 
         let mut wake = now + RESCAN.as_secs();
-        for (name, entry) in &entries {
-            let Some(timer) = &entry.timer else { continue };
-            if timer.schedule.next_after(checked).is_some_and(|due| due <= now) {
-                start(name, timer, "scheduled");
+        for (name, entry) in &mut entries {
+            let Some(timer) = &mut entry.timer else { continue };
+            if let Some(due) = timer.next_after(checked).filter(|due| *due <= now) {
+                let local_due = (due as i64 + local_offset(due)) / 60;
+                if timer.file.timer.utc || timer.last_due != Some(local_due) {
+                    timer.last_due = Some(local_due);
+                    start(name, timer, "scheduled");
+                }
             }
-            if let Some(next) = timer.schedule.next_after(now) {
+            if let Some(next) = timer.next_after(now) {
                 wake = wake.min(next);
             }
         }
@@ -254,13 +333,13 @@ fn main() {
 
 /// A new or changed timer: report it and catch up a missed run.
 fn load(name: &str, file: TimerFile, schedule: Schedule, now: u64) -> Timer {
-    let next = schedule.next_after(now).map_or("never".into(), format_utc);
-    println!("timerd: {name}: \"{}\", next run {next} UTC", file.timer.schedule);
-    let timer = Timer { file, schedule, running: Arc::new(AtomicBool::new(false)) };
+    let timer = Timer { file, schedule, running: Arc::new(AtomicBool::new(false)), last_due: None };
+    let next = timer.next_after(now).map_or("never".into(), format_local);
+    println!("timerd: {name}: \"{}\", next run {next}", timer.file.timer.schedule);
     match last_run(name) {
         Some(last) if timer.file.timer.persistent => {
-            if timer.schedule.next_after(last).is_some_and(|due| due <= now) {
-                start(name, &timer, &format!("missed since {} UTC", format_utc(last)));
+            if timer.next_after(last).is_some_and(|due| due <= now) {
+                start(name, &timer, &format!("missed since {}", format_local(last)));
             }
         }
         Some(_) => {}
