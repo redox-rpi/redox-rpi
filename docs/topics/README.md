@@ -22,7 +22,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | GPIO, I2C and other Pi peripherals | [gpio.md](gpio.md) | [topic:gpio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agpio) |
 | Graphics (effort analysis) | [graphics.md](graphics.md) | [topic:graphics](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agraphics) |
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
-| Audio (plan) | [audio.md](audio.md) | – |
+| Audio (plan) | [audio.md](audio.md) | [#250](https://github.com/redox-rpi/redox-rpi/issues/250), [topic:audio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aaudio) |
 | DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 
