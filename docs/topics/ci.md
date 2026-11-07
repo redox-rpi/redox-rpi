@@ -129,7 +129,10 @@ The rules it keeps:
   (`scripts/sdcard-index.py`, safe to run by hand): per image file
   `family`, `version` and `date`, plus our own `board`, `commit`,
   `build_id`, `experiments`, `owner` and `rows` (the queued test-plan rows
-  that name the family or file). Older images get their fields from the
+  that name the family or file). The user unit `redox-sdcard-index.path`
+  ([config/redox-sdcard-index.path](../../config/redox-sdcard-index.path))
+  rewrites it whenever the directory changes, so a file copied in by hand
+  is not hidden: SwiftFlash reads only `index.json` when there is one. Older images get their fields from the
   file name and manifest; `redox-rpi-zero2w-fastnet-db5ea27` has version
   `db5ea27`.
 - **`-latest` links** (`--latest`, used by the visit images) are for

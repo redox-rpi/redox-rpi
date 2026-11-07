@@ -13,8 +13,11 @@ Only real files count: the -latest symlinks are for people, not for
 SwiftFlash, which finds the newest build by itself. Sources of the fields,
 first match wins: <file>.meta.json (written by scripts/publish-sdcard.sh),
 the image's manifest (<stem>.manifest.toml or <file>.manifest.toml), the
-file name, the file's modification time. Written atomically; run by
-scripts/publish-sdcard.sh after each image, safe to run by hand.
+file name, the file's modification time. Written atomically and only when it changes; run
+by scripts/publish-sdcard.sh after each image and by the systemd user unit
+redox-sdcard-index.path whenever the directory changes (so an image copied in
+by hand is not hidden from SwiftFlash, which reads only index.json when there
+is one); safe to run by hand.
 """
 
 import datetime
@@ -122,11 +125,20 @@ def main():
             entry["rows"] = found
         images.append(entry)
 
-    tmp = os.path.join(top, "index.json.tmp")
+    text = json.dumps({"images": images}, indent=2, ensure_ascii=False) + "\n"
+    path = os.path.join(top, "index.json")
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                # No write: redox-sdcard-index.path would start this again.
+                print("index.json: %d images, unchanged" % len(images))
+                return
+    except OSError:
+        pass
+    tmp = os.path.join(top, ".index.json.tmp")
     with open(tmp, "w") as f:
-        json.dump({"images": images}, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp, os.path.join(top, "index.json"))
+        f.write(text)
+    os.replace(tmp, path)
     print("index.json: %d images" % len(images))
 
 
