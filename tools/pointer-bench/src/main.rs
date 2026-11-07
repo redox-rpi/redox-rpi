@@ -8,7 +8,8 @@
 //! --type types TEXT first (lowercase letters, digits, space; `\\n` is
 //! Enter, `\\t` is Tab), as a keyboard would: to log in at orblogin.
 //! --super KEY presses Super+KEY (Super+t opens a terminal). With --type
-//! or --super, the default time is 0 s (no moves).
+//! or --super, the default time is 0 s (no moves). --keys MODS+KEY presses
+//! a combination, e.g. ctrl+shift+s (modifiers super, ctrl, shift, alt).
 //!
 //! Positions are screen pixels; Orbital takes absolute mouse events as
 //! 0..65535 over the screen (as ps2d sends them), so they are scaled by
@@ -41,7 +42,7 @@ fn scancode(c: char) -> Option<u8> {
 fn main() {
     let mut seconds: Option<f64> = None;
     let mut text: Option<String> = None;
-    let mut super_key: Option<char> = None;
+    let mut combo: Option<String> = None;
     let mut super_drag = false;
     let mut hz = 60.0f64;
     let (mut cx, mut cy, mut radius) = (960.0f64, 540.0f64, 300.0f64);
@@ -62,11 +63,12 @@ fn main() {
             "--screen" => { sw = num(i + 1); sh = num(i + 2); i += 2; }
             "--center" => { cx = num(i + 1); cy = num(i + 2); i += 2; }
             "--type" => { text = Some(args.get(i + 1).cloned().unwrap_or_default().replace("\\n", "\n").replace("\\t", "\t")); i += 1; }
-            "--super" => { super_key = args.get(i + 1).and_then(|a| a.chars().next()); i += 1; }
+            "--super" => { combo = args.get(i + 1).map(|a| format!("super+{a}")); i += 1; }
+            "--keys" => { combo = args.get(i + 1).cloned(); i += 1; }
             "--super-drag" => super_drag = true,
             "--drag" => { drag = Some((num(i + 1) as i32, num(i + 2) as i32)); i += 2; }
             other => seconds = Some(other.parse().unwrap_or_else(|_| {
-                eprintln!("usage: pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y] [--super-drag] [--type TEXT] [--super KEY]");
+                eprintln!("usage: pointer-bench [seconds] [--hz N] [--screen W H] [--center X Y] [--radius R] [--drag X Y] [--super-drag] [--type TEXT] [--super KEY] [--keys MODS+KEY]");
                 std::process::exit(2)
             })),
         }
@@ -84,7 +86,7 @@ fn main() {
     };
     let pause = Duration::from_millis(100);
     let key = |scancode: u8, pressed: bool| KeyEvent { character: '\0', scancode, pressed }.to_event();
-    let seconds = seconds.unwrap_or(if text.is_some() || super_key.is_some() { 0.0 } else { 20.0 });
+    let seconds = seconds.unwrap_or(if text.is_some() || combo.is_some() { 0.0 } else { 20.0 });
     if let Some(text) = &text {
         for c in text.chars() {
             let Some(code) = scancode(c) else {
@@ -98,16 +100,31 @@ fn main() {
         }
         println!("pointer-bench: typed {} keys", text.chars().count());
     }
-    if let Some(c) = super_key {
-        let code = scancode(c).unwrap_or_else(|| { eprintln!("pointer-bench: no key {c:?}"); std::process::exit(2) });
-        send(key(orbclient::K_SUPER, true));
-        thread::sleep(pause);
+    if let Some(spec) = &combo {
+        // MODS+KEY, e.g. super+t or ctrl+shift+s: modifiers down, key, up.
+        let mut parts: Vec<&str> = spec.split('+').collect();
+        let last = parts.pop().unwrap_or_default();
+        let code = last.chars().next().filter(|_| last.chars().count() == 1).and_then(scancode)
+            .unwrap_or_else(|| { eprintln!("pointer-bench: no key {last:?}"); std::process::exit(2) });
+        let mods: Vec<u8> = parts.iter().map(|m| match *m {
+            "super" => orbclient::K_SUPER,
+            "ctrl" => orbclient::K_CTRL,
+            "shift" => orbclient::K_LEFT_SHIFT,
+            "alt" => orbclient::K_ALT,
+            _ => { eprintln!("pointer-bench: no modifier {m:?}"); std::process::exit(2) }
+        }).collect();
+        for &m in &mods {
+            send(key(m, true));
+            thread::sleep(pause);
+        }
         send(key(code, true));
         thread::sleep(Duration::from_millis(30));
         send(key(code, false));
         thread::sleep(pause);
-        send(key(orbclient::K_SUPER, false));
-        println!("pointer-bench: Super+{c}");
+        for &m in mods.iter().rev() {
+            send(key(m, false));
+        }
+        println!("pointer-bench: {spec}");
     }
     // Where the circle starts, relative to the drag point: the window moves
     // by as much as the pointer does.
