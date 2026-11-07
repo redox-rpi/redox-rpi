@@ -15,13 +15,15 @@ scripts/build-image.sh --experiment sigregs-test
 On the target:
 
 ```text
-sigregs                 # both modes, 1000 signals each
+sigregs                 # all three modes, 1000 signals each
 sigregs thread -n 5000  # one mode, more signals
 sigregs --x18           # also check x18 (needs experiment sigreturn-svc)
 ```
 
 - `process`: a child process sends `SIGUSR1` with `kill()`.
 - `thread`: another thread sends it with `pthread_kill()`.
+- `sender`: `si_pid` of one `SIGUSR2` from `pthread_kill()` and one from a
+  child process must be our pid and the child's pid.
 
 They take different paths through the signal entry. Each mode prints
 `PASS` or `FAIL` with the register that changed, or how many signals
