@@ -1,4 +1,4 @@
-From c7c9187823a8ade835a6928ceefb50b6c6ff636c Mon Sep 17 00:00:00 2001
+From 7269be6f3751b0d86db509fd365b49161cc637b3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH 1/2] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3
@@ -326,7 +326,7 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..99cd2277
+index 00000000..2f04abd5
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 @@ -0,0 +1,550 @@
@@ -556,7 +556,7 @@ index 00000000..99cd2277
 +                let _ = writeln!(text, "dma_channel {}", dma::CHANNEL);
 +            }
 +            Output::Clock { .. } => {
-+                let _ = writeln!(text, "mode clock (no PWM block)");
++                let _ = writeln!(text, "mode clock (no PWM)");
 +            }
 +        }
 +        let _ = writeln!(text, "clock_hz {}", self.clock_hz);

@@ -17,7 +17,9 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::mem::ManuallyDrop;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::FromRawFd;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: tone [sweep] [-f hz] [-s seconds] [-a amplitude] [-c both|left|right] [-o file] | check";
@@ -128,7 +130,10 @@ fn main() -> ExitCode {
         parse(&args).and_then(|o| {
             let result = match &o.output {
                 Some(path) => File::create(path).and_then(|mut f| generate(&o, &mut f)),
-                None => generate(&o, &mut io::stdout().lock()),
+                // Not io::stdout(): it is line buffered and would split the
+                // samples at every 0x0a byte, and audiod takes whole frames
+                // only.
+                None => generate(&o, &mut *ManuallyDrop::new(unsafe { File::from_raw_fd(1) })),
             };
             result.map_err(|err| format!("write: {err}"))
         })

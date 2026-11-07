@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 H=/scheme/audiohw
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$image" --timeout 800 \
-    --run "ls /scheme | grep -E '^audio'" \
+    --run "ls /scheme | grep audio" \
     --run "cat $H/stats" \
     --run "tone check" \
     --run "tone -s 2 > /scheme/audio; echo TONE \$?" \
