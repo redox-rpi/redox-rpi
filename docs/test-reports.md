@@ -10140,3 +10140,36 @@ self-built `tcc2`); bench results the same as gcc's; no `UNHANDLED EXCEPTION` or
 - `free` afterwards: 159820 of 739896 KB used.
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t278/`.
+
+## #279 #250 PWM audio driver, stages A1 and A2 (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-704-gfa8f2ef9+x6d83.img` (branch `pwm-audio`, md5 `0fcec28e39f8…`).
+Real Pi 3B+, power cycle 16:54:20 UTC, devsh after 45 s. Nothing connected to the audio jack. 16:54–16:59 UTC.
+
+**Result: fail. Everything runs, but the PWM plays at half the rate: 22050 instead of 44100 frames/s.**
+- (1) Boot: `bcm2835-pwmaudiod: PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 5669 (44099 Hz), DMA
+  channel 2 at 0x3f007000, 8 x 512 frames` (44099, the row says 44098). No `playing to the clock`. The
+  only audiod line is `uring communication is not supported …`. No panic, no `UNHANDLED EXCEPTION`.
+- (2) `/scheme/audio` and `/scheme/audiohw` are there; `/scheme/gpio/pins`: `40 alt0 1`, `41 alt0 1`.
+- (3) stats at 37.7 s and 68.5 s: `mode pwm-dma`, **`measured_rate_hz 22050` and `22051`** (pass range
+  43900–44300). `played_slots` 1625 → 2952 (+1327 in 30.8 s; about 2580 expected). `dma_faults 0`,
+  `underruns 1` (no change), `queued 6`, `pwm_errors 2093 → 4981 bits=0x030` (STA bits 4 and 5, GAPO1 and
+  GAPO2: gap on both channels, about 94 per second).
+- (4) `echo 3 > /scheme/audiohw/tone` returned after 6.3 s (not 3 s): `tone seconds=6.07 words=264600
+  rate_hz=21798 fifo_empty=66 sta=0x030`. 264600 words is 3 s of stereo at 44100, so the CPU tone also
+  ran at half speed. 10 s later: `played_slots` 3026 → 3491 (rising), `dma_faults 0`.
+- (5) `tone check`: `short write: EINVAL (good)`, `full chunks accepted before EWOULDBLOCK: 0 (good)`.
+- (6) `time tone -s 5 > /scheme/audio`: `real 9.869 s`, rc 0 (twice the 5 s). `tone sweep -s 5` rc 0,
+  about 10 s. `chunks` 3240 → 4252, `underruns 1`, `queued 7`.
+- (7) CPU around `tone -s 30 > /scheme/audio` (took 60 s, rc 0), ps ACTTIME/SCHTIME:
+  `bcm2835-pwmaudiod` 6.33/6.26 s → 6.60/6.48 s (+0.27/+0.22 s, about 0.8 % of a core). It had used
+  6.3 s in its first 2.5 min (most of that before the test, probably during boot or the CPU tone).
+  `audiod` two threads: 0.12/0.11 → 0.35/0.27 s and 0.31/0.47 → 0.63/0.92 s (+0.84 s total).
+  stats after: `measured_rate_hz 21296`, `played_slots 7395`, `dma_faults 0`, `pwm_errors 6069`.
+- (8) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
+
+So the DMA ring and the driver work without faults, but the PWM takes words at half the expected
+speed (about 44100 words/s for stereo, so 22050 frames/s), with GAPO on both channels. Either the PWM
+clock is 125 MHz and not 250 MHz, or each channel takes its word once per range period only on
+alternate periods. That is for the audio session. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
+devsh answers. Outputs in `~/pitest-tools/t279/`.
