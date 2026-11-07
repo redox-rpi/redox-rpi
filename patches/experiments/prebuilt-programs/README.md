@@ -35,3 +35,77 @@ them through the image's `libc.so`.
   Without `serial-rx` the long test command line made getty panic
   (`failed to write master PTY: WouldBlock`, #28).
 - Not tested on the Pi yet.
+
+## Which repository packages run unchanged (2026-10-31)
+
+Issue [#40](https://github.com/redox-rpi/redox-rpi/issues/40), branch
+`t40-prebuilt`. Instead of building programs into the image, install them
+with `pkg` from Redox' aarch64 package repository and check which ones
+run unchanged on our image. Result: **[allowlist.txt](allowlist.txt)**,
+31 packages that ran in QEMU, with the space each one needs.
+
+Why they can run at all: every program is linked against `/lib/ld.so.1`
+and the image's `libc.so`, so it uses our relibc, not upstream's. The
+repository's relibc is ad0c479, ours is c303135 (46 commits apart). No
+package depends on the `relibc` or `base` packages, so `pkg install` does
+not replace them.
+
+**Static check** ([abi-check.py](abi-check.py)): for each of the 82
+non-graphical packages (the other 31 are Orbital and COSMIC programs,
+fonts, icons, LLVM and Rust), every library a program needs and every
+symbol it imports, compared with the image's `/usr/lib` and the package's
+own dependencies. 71 packages resolve completely, 9 hold no programs
+(data, scripts). The only real gap: `libmpfr` needs 12 decimal-float
+helpers (`__bid_*`) our `libgcc_s` does not have; nothing we tested uses
+it. Upstream's newer relibc adds `dl_iterate_phdr`; no package imports it.
+
+**Runtime check in QEMU**, build `v0.3.0-dev-772-g8dc59fc+x0e02` (main,
+experiments `timesync` and `sigreturn-svc`), `pkg install --yes` over the
+network, then [pkg-check.sh](pkg-check.sh) (one `T40 PASS|FAIL` line per
+program):
+
+- 28 small programs in one install (bash, dash, nano, kibi, smith, rg,
+  gawk, sed, find, diff, patch, file, sqlite3, curl, wget, tmux, xz, zstd,
+  bzip2, lz4, make, rsync, btm, pls, miniserve, nasm, patchelf, rldd):
+  26 pass. `xz` fails because the package has no `xz` program (only
+  `liblzma` and the `xzgrep`-style scripts). `rsync -a` of one local file
+  spins at 100 % CPU until killed (not looked into further).
+- git and vim (with bash and curl), python312 (with bash and curl) and
+  rustpython: each on a fresh image, all pass (`git init` and commit,
+  `vim --version`, `python3.12` with `json` and `re`, `rustpython -c`).
+
+**Space is the limit.** The network-boot image is 256 MiB with about
+130 MB free, and pkg keeps its downloads in `/tmp` on the same disk. All
+32 packages at once need 237 MB: pkg stops with "No space left on device"
+and rolls back cleanly ("Transaction aborted", nothing left half
+installed). After the 28 small ones 62 MB is left, too little for vim,
+git or python. python312 alone with bash and curl takes 122 MB and leaves
+12 MB. A larger image or the SD data partition (`pkg-persist`, PR #106)
+removes the limit.
+
+pkg is also slow under QEMU: the 28 small packages took about 25 minutes,
+almost all of it pkg's own CPU time unpacking and checking.
+
+What else to keep in mind:
+
+- `pkg install` replaces our older `diffutils` and `kibi` with upstream's;
+  both still pass. A `pkg upgrade` would also replace system packages
+  (kernel, relibc, redoxfs, pkgutils): the hold list in experiment
+  `pkg-hold` (PR #66) is what stops that.
+- `sqlite3 :memory:` prints two lines `Unknown special reference: memory:`
+  from init's namespace manager; the query still works.
+- **Pi test #163 passed** (2026-10-31, real Pi 3B+, network boot): the 26
+  small programs, git, python312 and sqlite3 install with `pkg` and print
+  `T40 PASS`; standard checks pass, no exception. The Pi is much faster
+  than QEMU: the 26-package install took 3 minutes, git 43 s, python312
+  with bash and curl 8 min 48 s. Free space on `/` at the end: 16.1 MB
+  after the 26 plus git, 11.7 MB after python312 (on a fresh boot).
+  Free space on `/` is what limits how much can be installed.
+
+To repeat the static check on homenodellm: download the packages (`.pkgar`
+and `.toml` from the repository URL above) into `pkgs/`, extract each with
+`build/tools/bin/pkgar -p pub.toml -a pkgs/<name>.pkgar extract x/<name>`
+(`pub.toml` is the repository's public key,
+`https://static.redox-os.org/pkg/id_ed25519.pub.toml`), copy the image's
+`/usr/lib` to `img/lib`, then `abi-check.py <dir>` (needs
+`aarch64-linux-gnu-readelf`).
