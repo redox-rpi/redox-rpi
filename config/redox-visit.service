@@ -1,0 +1,16 @@
+# Nightly visit images (scripts/build-visit-images.sh, docs/topics/ci.md),
+# started by scripts/update-stable.sh after the stable image. No timer.
+# Install on the build host as a systemd user unit:
+#   cp config/redox-visit.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+[Unit]
+Description=Build the redox-rpi visit images after the stable image
+
+[Service]
+Type=oneshot
+# A unit of its own, so the build survives the end of redox-stable.service.
+# The script stops its builds at the deadline in config/visit-images.conf.
+# For systemd, $$ is a literal $.
+ExecStart=/bin/bash -lc 'source ~/.cargo/env 2>/dev/null; mkdir -p ~/redox-rpi/logs/visit; exec ~/redox-rpi-stable/scripts/build-visit-images.sh >> ~/redox-rpi/logs/visit/$$(date -u +%%Y-%%m-%%d).log 2>&1'
+TimeoutStartSec=5h
+Nice=10
