@@ -15,6 +15,9 @@
 # Local boot (--local <harddrive.img>, built by scripts/build-image.sh --sdcard):
 # partition 1 additionally holds the Redox bootloader as EFI/BOOT/BOOTAA64.EFI,
 # which U-Boot starts; partition 2 is the Redox root filesystem from the image.
+# boot.scr is the boot menu (boot-local.scr from scripts/netboot.sh, #243):
+# this card by default, network boot when chosen. Without it U-Boot picks the
+# target by itself and may boot from the network.
 #
 # Direct boot (--direct <harddrive.img>, experimental, issue #15): partition 1
 # holds the firmware, kernel8.img (tools/rpi-boot-stub with the kernel built
@@ -103,6 +106,8 @@ elif [ -n "$image" ]; then
     read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$image")
     data_mib=$(((root_sectors + 2047) / 2048))
     [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-redox.img"
+    bootscr="$tftp/$dir/boot-local.scr"
+    [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 else
     [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 fi
@@ -174,6 +179,7 @@ elif [ -n "$image" ]; then
     mcopy -s -i "$image@@$((efi_start * 512))" ::EFI "$efi"
     mcopy -s -i "$fat" "$efi" ::EFI
     rm -rf "$efi"
+    mcopy -i "$fat" "$bootscr" ::boot.scr
 else
     mcopy -i "$fat" "$uboot" ::u-boot.bin
     mcopy -i "$fat" "$bootscr" ::boot.scr

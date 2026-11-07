@@ -10,6 +10,12 @@
 
 ## In progress
 
+- [#243](https://github.com/redox-rpi/redox-rpi/issues/243) U-Boot boot menu (this SD card, network
+  `redox/`, network `stable/`), branch `boot-menu`: the default boots after
+  3 s, so the Pi agent needs no key. QEMU: menu, defaults, entries chosen by
+  keys, and an older U-Boot booting the default all pass; network boot itself
+  cannot run in QEMU (no USB network driver for QEMU's card in our U-Boot).
+
 - [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time. After the bootloader: [PR #85](https://github.com/redox-rpi/redox-rpi/pull/85)
   (`boot-time`: bootloader wait 1 s, parallel init; login 21 s after reset
   instead of 33.7 s) and the USB session's PR #69 (`dwc2d-boottime`).

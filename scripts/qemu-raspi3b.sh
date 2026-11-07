@@ -23,7 +23,9 @@
 #                     user networking: guest 10.0.2.15, host 10.0.2.2;
 #                     host port 12323 forwards to devshd in the guest,
 #                     12222 to sshd (DEVSH_PORT=<port> and SSH_PORT=<port>
-#                     pick other ones, for parallel runs)
+#                     pick other ones, for parallel runs); QEMU_TFTP=<dir>
+#                     serves that directory over TFTP at 10.0.2.2, for network
+#                     boot (scripts/netboot.sh --server 10.0.2.2 --tftp-only)
 #   --usb-net-socket <group:port>
 #                     the same card, but its Ethernet frames travel as UDP
 #                     datagrams to this host multicast group (QEMU's socket
@@ -219,7 +221,7 @@ if [ -n "$usb_net_socket" ]; then
 elif [ "$usb_net" = yes ]; then
     # Host port 12323 (or DEVSH_PORT) reaches devshd (port 2323) in the guest,
     # 12222 (or SSH_PORT) sshd (port 22).
-    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${SSH_PORT:-12222}-:22" -device usb-net,netdev=usbnet)
+    qemu+=(-netdev "user,id=usbnet,hostfwd=tcp::${DEVSH_PORT:-12323}-:2323,hostfwd=tcp::${SSH_PORT:-12222}-:22${QEMU_TFTP:+,tftp=$QEMU_TFTP}" -device usb-net,netdev=usbnet)
 fi
 
 if [ "$test" = no ]; then
