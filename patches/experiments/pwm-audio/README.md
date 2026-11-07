@@ -40,6 +40,22 @@ background: [docs/topics/audio.md](../../../docs/topics/audio.md).
 
 Patch numbers here are placeholders; the merge gives the real ones.
 
+## QEMU
+
+[`qemu-check.sh`](qemu-check.sh): QEMU's `raspi3b` keeps the PWM
+registers but has no PWM clock (`CM_PWMCTL` never shows BUSY), so the
+driver says `PWM clock does not start ... (QEMU?), playing to the clock`
+and counts slots as played by the timer. Its DMA model would also run the
+endless ring at once, so the ring is never started there. The check covers
+the start-up, `audiod` on top, the `audiohw` contract, `tone` and `cat`
+through `/scheme/audio`, and the stats; not the sound.
+
 ## Results
 
-None yet.
+- 2026-11-07, QEMU, `v0.4.0-dev-704-gfa8f2ef9+x6d83`: 15 of 15 checks
+  pass. Short write `EINVAL`, full ring `EWOULDBLOCK` (audiod keeps it
+  full), 44 082–44 091 frames/s measured, 1 underrun (the end of the
+  first sound), `tone > /scheme/audio` and `cat file > /scheme/audio`
+  exit 0.
+- Pi: test-plan row 279 (driver, CPU tone rate, DMA ring, CPU time) and
+  row 280 (listening, a person) queued.
