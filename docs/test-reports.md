@@ -10333,3 +10333,35 @@ A reset over the serial console brought it back. This is like #92/#217 (rare net
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t285/` (try 1 in
 `try1/`, the extra boot in `extra/`).
+
+## #287 #33 optional desktop started from the console (v0.4.0-rc2 candidate) (2026-11-07, Pi test agent)
+
+Branch `desktop-console` 5697fc1d. A: `netboot-desk-v0.4.0-dev-756-g5697fc1d+xce4c-dirty.0fae5a5cea1a.img`;
+B: `netboot-desk-pb-v0.4.0-dev-756-g5697fc1d+x0f22-dirty.f717e04d32c7.img`. Real Pi 3B+, HDMI to the NanoKVM
+(`rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`). 23:02–23:17 UTC, 3 boots of B.
+
+**Result: A passes; B is open: the login through `pointer-bench` keys never finishes, and no screenshot
+was possible.**
+- **A1:** boots to the text console, `redox login:` on serial, no Orbital in `ps` (`grep -c orbital` 0).
+  `experiments: cosmic-apps-source desktop orbital orbital-apps rpi-fb rtl8152 timesync`.
+- **A2:** `pi-test.py`: pass (version, manifest match, ps 57, ps-tty, sdcard, starts 0 of 300).
+- **A3:** `desktop; echo rc=$?` returns in 1.8 s: `desktop: starting Orbital, its log goes to /tmp/desktop.log`,
+  `desktop: Super+F2 goes back to the console, Super+F3 to the desktop`, `rc=0`. `/usr/bin/orbital` runs
+  (and `/usr/bin/orblogin`). `/tmp/desktop.log` stayed empty (polled for 60 s). `free`: 146500 KB used
+  before, 226732 KB after (+80 MB).
+- **Screenshot:** not possible. The image has no `vc4shot` (it is for `vc4d`, and this build uses `rpi-fbd`),
+  and the NanoKVM was not used. So the time from `desktop` to the login screen is not measured; `orblogin`
+  ran within 30 s.
+- **B:** Orbital does not run at boot (`ps` before `desktop`: no orbital). `desktop` rc 0, Orbital PID 61 and
+  `orblogin` PID 65. Then `pointer-bench --type 'user\n'` and `--type 'password\n'` (as the row says): both
+  `typed … keys`, but 30 s later `orblogin` is still there and no session started (no launcher or other user
+  processes). Same with an empty password (`user\n`, then `\n`, as the README says). `pointer-bench --keys
+  super+f2` runs, and the second `desktop` prints only the switch line, rc 0. `ps` after all of it: exactly one
+  `/usr/bin/orbital`. Whether the screen switched cannot be seen without a screenshot.
+- No panic and no `UNHANDLED EXCEPTION` on serial; `/tmp/desktop.log` empty in all runs.
+
+So the start from the console works and does not start a second Orbital. The login with injected keys does
+not get through `orblogin`: either the keys from `pointer-bench` do not reach Orbital on VT 3, or the login
+window needs something else. A person (part C) or a screenshot path for `rpi-fbd` would tell. Stable
+`v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t287/` (`b2/`, `b3/`
+the B reruns with full `ps`).
