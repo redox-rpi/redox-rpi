@@ -275,7 +275,9 @@ recipe_dirs() {
     local exp
     for exp in "${experiments[@]}"; do
         [ -d "$ROOT/patches/experiments/$exp/recipes" ] || continue
-        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n')
+        # A folder with its own recipe.toml is a whole new recipe (below).
+        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n' |
+            sort -u | while read -r dir; do [ -f "$dir/recipe.toml" ] || echo "$dir"; done)
     done | sed 's|^\./||' | sort -u
 }
 extra_patch_files() {

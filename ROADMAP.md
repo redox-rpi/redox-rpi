@@ -104,7 +104,7 @@ that answers questions about Redox and runs a few safe tools
 | [Boot](docs/topics/boot.md) | U-Boot, SD card or network; clean boot in progress |
 | [Zero 2 W](docs/topics/zero2w.md) | Boots the Pi 3B+ image; slow network boot |
 | [CI and tests](docs/topics/ci.md) | QEMU boot in CI; Pi tests through a shared queue |
-| [Assistant](docs/topics/assistant.md) | Rust runtime (candle) and llama.cpp answer in QEMU; Pi speed test #51 waits for a card swap |
+| [Assistant](docs/topics/assistant.md) | Rust runtime (candle) answers on the Pi (#112, 1 token/s); saved prompt state |
 
 ## Wish list: help wanted
 
