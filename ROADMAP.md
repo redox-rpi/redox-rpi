@@ -79,9 +79,9 @@ when a topic needs more time.
 | v0.3.0 | Stable | sdhost as the default ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) with the kernel memory fix ([#31](https://github.com/redox-rpi/redox-rpi/issues/31)), clean boot by default ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), serial input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)) |
 | v0.4.0 | Boot and storage | USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream) |
 | v0.5.0 | Devices | `poweroff` and reboot ([#7](https://github.com/redox-rpi/redox-rpi/issues/7)), USB sticks with `redox-fatfs2` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)), `pkg install` for Pi packages, keyboard layouts |
-| v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first) |
-| v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info |
-| v0.8.0 | Smart home | What homenode and Matter need: mDNS, TLS, GPIO, I2C and SPI, the DS3231 clock |
+| v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first), first steps of [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md): key store `keys:` and encrypted connections `secure:`, Redox to Redox in QEMU |
+| v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info, registering a phone app with a QR code and logging in with keys (`accounts:`, [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md)) |
+| v0.8.0 | Smart home | What homenode and Matter need: mDNS, TLS, GPIO, I2C and SPI, the DS3231 clock, the HomeNode Matter fabric (`rs-matter`, its own project) running on the Pi, its keys optionally in `keys:` ([RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md)) |
 | v0.9.0 | Towards 1.0 | CI on every push ([#9](https://github.com/redox-rpi/redox-rpi/issues/9), [#13](https://github.com/redox-rpi/redox-rpi/issues/13)), rebase on current Redox, documentation, Bluetooth as an outlook |
 
 Without a release target: graphics, from a firmware framebuffer to the
@@ -133,6 +133,7 @@ from GPL-licensed drivers (Linux) is not.
 
 - **Wi-Fi**: milestone v0.6.0, [#26](https://github.com/redox-rpi/redox-rpi/issues/26)
 - USB gadget mode (Ethernet over the Zero 2 W's USB cable, no HAT needed)
+- One user on several machines (`sync:`) and personal data shared only after consent (`profile:`, `consent:`), [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md), [#180](https://github.com/redox-rpi/redox-rpi/issues/180)
 
 ---
 
