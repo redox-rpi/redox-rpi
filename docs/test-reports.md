@@ -9747,3 +9747,28 @@ branch. Real Pi 3B+ over netboot. 06:31–07:20 UTC.
 So the #92 hang did not show up in 40 rounds with the watches in the image. It is rare
 (1 in 20 rounds in #237), so this does not prove it is gone; the watches stayed quiet.
 Outputs in `~/pitest-tools/t263/` on homenodellm.
+
+## #264 #217 boot race: 10 warm resets out of stable, with watches (2026-11-07, Pi test agent)
+
+Image `bnr-v0.4.0-dev-443-g6e17ce46+x814f.img` (branch `boot-net-race` 6e17ce46, experiments
+`dwc2d-netstats usb-hub-drop dwc2d-restart dwc2d-watch netstack-watch`, md5 `da1ef6dd…`).
+Stable `v0.4.0-dev-604-g8c4c513f`. Real Pi 3B+ over netboot. 07:21–07:34 UTC.
+
+**Result: pass, 10 of 10 boots with devsh and ping. The bad boot did not happen.**
+- Each cycle: stable booted (devsh answers), this image staged, `echo reset > /scheme/sys/kstop`
+  over devsh, then wait for devsh in this image, then stable staged and reset again.
+- In this image devsh answered 30–37 s after the reset, every time. `ping -c 3 192.168.178.1`
+  on the Pi: 3 of 3 received in all 10 boots.
+- From homenodellm, `ip neigh show` had the Pi `REACHABLE` (b8:27:eb:08:e0:aa) after every
+  boot, so it answered ARP. The plain `ping` from homenodellm did not run: there is no `ping`
+  command on this host (only the runner's mistake; devsh over TCP worked in all 10).
+- Serial of every boot: the `redox-rpi v0.4.0-dev-443-g6e17ce46+x814f` banner, `devshd: starting`
+  then `devshd: listening`; no `devshd: no answer from the network stack` line, no `dwc2d-watch:`
+  line, no USB device removed, no panic. No `netstack-watch:` line either: the boots were reset
+  after about 60 s, before its first 60 s report.
+- All 11 stable boots in between came up with network on the first try.
+- Stable image staged again and booted (`v0.4.0-dev-604-g8c4c513f`), devsh answers,
+  `/srv/tftp/redox` matches `/srv/tftp/stable`.
+
+So 0 of 10 this time (earlier 3 of about 14), so 10 boots were not enough to catch it.
+                Outputs (serial per boot) in `~/pitest-tools/t264/`.
