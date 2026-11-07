@@ -36,9 +36,10 @@ Build it after the experiments it configures:
 
 ## Size
 
-The desktop makes the image larger: the SD card image of the desktop
-visit images was about 48 MB as `.img.xz`, against about 10 MB without
-the desktop. Measured for the release build in the Results below.
+The SD card image stays 1054 MiB (the partition size is fixed), but it
+compresses less well: v0.4.0-rc1 is 20.9 MiB as `.img.xz`, the same
+build with the desktop experiments 48.6 MiB (+28 MiB, about 2.3 times).
+Most of it is the COSMIC editor and files apps and their icons and fonts.
 
 ## Beta limits (for the release notes)
 
@@ -55,3 +56,9 @@ the desktop. Measured for the release build in the Results below.
 - Orbital cannot be stopped from the console; reboot to free its memory.
 
 ## Results
+
+- 2026-11-08, v0.4.0-dev-756-g5697fc1d+xce4c-dirty (QEMU, `--allow-dirty`
+  for the known base 0083 fuzz, PR #254): boots to the text console;
+  `desktop` starts Orbital on VT 3, login works; Super+F2 goes back to the
+  console, `desktop` again switches to the same Orbital (one process in
+  `ps`). SD image 48.6 MiB as `.img.xz` (rc1: 20.9 MiB). Pi test: row 287.
