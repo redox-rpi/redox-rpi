@@ -12,24 +12,40 @@ Nothing on `main` yet.
 
 ## In progress
 
-Experiment [`tcc`](../../patches/experiments/tcc/README.md) on branch `tcc`:
+Experiment [`tcc`](../../patches/experiments/tcc/README.md) on branch `tcc`
+(draft PR [#249](https://github.com/redox-rpi/redox-rpi/pull/249)):
 tinycc `mob` (arm64 backend) with four small patches, cross-compiled for
-aarch64 Redox, plus test programs (`tools/tcc-bench`). Pi test
-[#278](../test-plan.md) is queued.
+aarch64 Redox, plus test programs (`tools/tcc-bench`).
 
-**QEMU** (raspi3b, `v0.4.0-dev-689-gb453b397+xd12c`, 2026-11-07):
+**Real Pi 3B+**
+([test #278](../test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent),
+`v0.4.0-dev-689-gb453b397+xd12c`, 2026-11-07): pass, no panic.
 
 | Check | Result |
 |---|---|
-| Hello World, dynamic (`tcc -o hello hello.c`) | pass: compile 230-290 ms, run 100 ms |
-| Hello World, static (`tcc -static`) | **fails**: relibc's `libc.a` uses TLS descriptor relocations (`R_AARCH64_TLSDESC_*`, 562-569), which tcc's linker does not know; about 4800 errors, 80-95 s |
-| `tcc -run hello.c` | pass: 520-580 ms (instruction cache maintenance from user space works) |
-| Benchmark (fib, sieve, mandelbrot) compiled by tcc | pass: compile 0.20 s (4616 lines with headers, 22,851 lines/s), same results as gcc |
-| Self-hosting: tcc compiles `tcc.c` (77,143 lines with headers) | pass: 5.5 s (14,092 lines/s), 411 KB of code; the new `tcc2` compiles Hello World, which runs |
+| Hello World, dynamic (`tcc -o hello hello.c`) | compile 100 ms, run 30 ms |
+| `tcc -run hello.c` | 130 ms |
+| Hello World, static (`tcc -static`) | **fails** after 47 s: relibc's `libc.a` uses TLS descriptor relocations (`R_AARCH64_TLSDESC_*`, 562-569), which tcc's linker does not know |
+| Benchmark compiled by tcc (4616 lines with headers) | compile 162 ms (0.084 s in the compiler, 54,952 lines/s) |
+| Self-hosting: tcc compiles `tcc.c` (77,143 lines with headers) | 0.70 s in the compiler (109,733 lines/s), 823 ms wall, warm 831 ms; the new `tcc2` builds Hello World in 101 ms |
+| `free` after the tests | 160 of 740 MB used |
 
-QEMU emulates the CPU, so its run times say little about the Pi. In QEMU the
-benchmark's tcc code took 504 ms and gcc -O2's 471 ms; fib(32) alone was
-89 against 41 ms. Pi numbers come from #278.
+Speed of the compiled code, the same benchmark (two runs each, the same
+results):
+
+| Part | tcc | gcc -O2 (cross) | tcc / gcc |
+|---|---|---|---|
+| fib(32), calls | 120 ms | 36 ms | 3.3× |
+| sieve 5 × 2M, memory loops | 1245 ms | 950 ms | 1.3× |
+| mandelbrot 200, floating point | 115-118 ms | 35 ms | 3.3× |
+| total | 1514-1520 ms | 1054-1059 ms | 1.4× |
+
+tcc is a quick edit-compile-run compiler on the Pi (a 77k-line program in
+under a second); its code is 1.3-3.3 times slower than gcc -O2's.
+
+QEMU (same image) passed the same checks first; its times (Hello World
+compile 230 ms, `tcc.c` 5.5 s) are CPU emulation and say little about the
+Pi.
 
 **x18:** tcc never allocates x18 (`arm64-gen.c` keeps it out of `RC_INT`),
 so its code is safe with relibc's signal entry, which clobbers x18
@@ -48,7 +64,6 @@ gcc-built program.
 
 ## Next
 
-- Pi test #278: compile and run times on the real Pi.
 - Static linking: TLSDESC support in tcc's arm64 linker, or a relibc
   `libc.a` built with traditional TLS (`-mtls-dialect=trad`).
 - Ion has no `time`; `timeit` (in `tools/tcc-bench`) fills the gap for now.

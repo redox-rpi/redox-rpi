@@ -67,4 +67,7 @@ float, linked into tcc from the toolchain, which is not built with
 QEMU, `v0.4.0-dev-689-gb453b397+xd12c`: dynamic Hello World, `tcc -run`,
 the benchmark and self-hosting (tcc compiles `tcc.c` into a working
 `tcc2`) pass; `-static` fails on relibc's TLS descriptor relocations.
-Numbers in the [topic page](../../../docs/topics/tcc.md). Pi: test #278.
+Real Pi 3B+ ([test #278](../../../docs/test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent)):
+the same checks pass; Hello World compiles in 100 ms, `tcc.c` (77k lines) in
+0.7 s; tcc's code is 1.3-3.3 times slower than gcc -O2's. Numbers in the
+[topic page](../../../docs/topics/tcc.md).
