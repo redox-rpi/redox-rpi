@@ -1,0 +1,28 @@
+--- a/bootstrap/src/procmgr.rs
++++ b/bootstrap/src/procmgr.rs
+@@ -2764,8 +2764,23 @@
+         let any_thread = proc.threads.first().ok_or(Error::new(EINVAL))?;
+         let sigcontrol_fd = any_thread.borrow().fd.dup(b"sighandler")?;
+         let [_, pctl_off] = Self::real_tctl_pctl_intra_page_offsets(&sigcontrol_fd)?;
+-        proc.sig_pctl
+-            .replace(Page::map(&sigcontrol_fd, PAGE_SIZE, pctl_off)?);
++        let new_pctl: Page<SigProcControl> = Page::map(&sigcontrol_fd, PAGE_SIZE, pctl_off)?;
++        // Signals stay pending across exec. Until the new program's libc
++        // syncs its control struct here, signals sent to the process (a
++        // Ctrl-C while ld.so loads it) are marked in the old one.
++        if let Some(old_pctl) = proc.sig_pctl.replace(new_pctl) {
++            let pending = old_pctl.pending.load(Ordering::Acquire);
++            if pending != 0 {
++                let new_pctl = proc.sig_pctl.as_ref().expect("just set");
++                for idx in 0..32 {
++                    if pending & (1 << idx) != 0 {
++                        new_pctl.sender_infos[idx]
++                            .store(old_pctl.sender_infos[idx].load(Ordering::Relaxed), Ordering::Relaxed);
++                    }
++                }
++                new_pctl.pending.fetch_or(pending, Ordering::Release);
++            }
++        }
+         Ok(())
+     }
+     fn on_sigdeq(&mut self, pid: ProcessId, payload: &mut [u8]) -> Result<()> {
