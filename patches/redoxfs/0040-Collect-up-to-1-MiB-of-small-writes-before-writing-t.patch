@@ -1,0 +1,56 @@
+From c06d830f70152fc48dcf41e17a94d72893ed718e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 16:58:18 +0000
+Subject: [PATCH] Collect up to 1 MiB of small writes before writing them
+ (redox-rpi #155)
+
+With one transaction per 128 KiB record, the node, tree, allocator log
+and header writes come once per record: on a Pi SD card, 4 MiB written
+in 4 KiB calls became 275 requests of 37 blocks on average, and the
+small ones cost as much card time as the records. Collect 8 records
+before writing, as a program writing 1 MiB at once would.
+---
+ src/mount/redox/scheme.rs | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index d6ddeb2..7efed08 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -85,6 +85,10 @@ impl<D: Disk> Handle<D> {
+     }
+ }
+ 
++/// How much of a run of small writes is collected before it is written:
++/// 8 records, 1 MiB.
++const FLUSH_SIZE: u64 = 8 * RECORD_SIZE;
++
+ /// Consecutive small writes to one handle, not yet written.
+ ///
+ /// Every write is its own transaction, and a transaction rewrites the whole
+@@ -92,6 +96,11 @@ impl<D: Disk> Handle<D> {
+ /// path to it, the allocator log and the header. Writing a file in 4 KiB
+ /// calls this way sends about 28 times the data to the disk. Collecting the
+ /// calls and writing whole records brings that close to 1.
++///
++/// The run is written once `FLUSH_SIZE` has come together, so the node, tree,
++/// allocator log and header are written once per `FLUSH_SIZE`, as for a
++/// program that writes that much in one call. Per record, those small writes
++/// cost the SD card as much time as the record itself (redox-rpi #155).
+ struct PendingWrite {
+     id: usize,
+     /// Where the next write of the run must start to join it.
+@@ -1048,8 +1057,8 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+                 }
+                 pending.data.extend_from_slice(buf);
+                 pending.offset += buf.len() as u64;
+-                // Write when a record is complete or enough has come together.
+-                if pending.offset % RECORD_SIZE == 0 || pending.data.len() as u64 >= RECORD_SIZE {
++                // Write when FLUSH_SIZE is complete or has come together.
++                if pending.offset % FLUSH_SIZE == 0 || pending.data.len() as u64 >= FLUSH_SIZE {
+                     self.flush_pending();
+                     self.take_pending_error(id)?;
+                 }
+-- 
+2.53.0
+
