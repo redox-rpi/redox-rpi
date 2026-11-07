@@ -51,8 +51,8 @@ anyone's own computer:
 
 | File | Content |
 |---|---|
-| `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local` |
-| `redox-rpi-v<version>-rc<N>.img.manifest.toml` | its manifest |
+| `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local`, published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
+| `redox-rpi-v<version>-rc<N>.img.xz.sha256`, `.manifest.toml` | its checksum and manifest, written by `publish-sdcard.sh` |
 | `SHA256SUMS` | one line per file in the directory |
 
 The image is offered at

@@ -91,6 +91,60 @@ tests are built every night.
 - Install once on the build host:
   `cp config/redox-visit.service ~/.config/systemd/user/ && systemctl --user daemon-reload`.
 
+## Image server
+
+SD card images for people are at http://homenodellm:8080/sdcard/
+(`/srv/tftp/sdcard/`, served by `redox-http.service`, `python3 -m
+http.server` on `/srv/tftp`), laid out for SwiftFlash
+([build-server.md](https://github.com/zehrer/SwiftFlashCLI/blob/main/docs/build-server.md),
+[#237](https://github.com/redox-rpi/redox-rpi/issues/237)). A tester:
+
+```bash
+swiftflash source add redox http://homenodellm:8080/sdcard/
+sudo swiftflash redox:redox-rpi-openfw-3bp
+```
+
+**How to publish:** every SD image goes in with
+`scripts/publish-sdcard.sh <card.img or card.img.xz> --family <family>
+[--manifest build/manifests/<image>.toml] [--owner <topic>]`, never by
+copying into the directory. It takes a card from `scripts/make-sdcard.sh` or
+any finished card image (firmware-only cards too), and prints the URL, the
+sha256 and the SwiftFlash command for the test row.
+
+The rules it keeps:
+
+- **Names** `<family>-<version>.img.xz`. The family is the image variant
+  (`redox-rpi-<topic>-<variant>`, lower case, no version in it) and the
+  version starts with `v<major>.<minor>` (the build ID from `--manifest`
+  or `--version`) or a date `YYYYMMDD`. Without a manifest or `--version`
+  it takes today's date, then `b`, `c`, … for more builds that day.
+- **Never overwrite:** a name that is published already is refused; a new
+  build gets a new name. Deleting old builds is fine.
+- **Checksum** `<image>.sha256` in `sha256sum` format, of the `.xz`.
+- **`/.uuid`** on the card's FAT partition: `schemaVersion` 1 and only the
+  image block (`id` = family, `version` = the version in the file name,
+  `build`, `commit`), never a device or flash UUID. Cards without a FAT
+  first partition need `--no-uuid`.
+- **`index.json`**, rewritten atomically after each image
+  (`scripts/sdcard-index.py`, safe to run by hand): per image file
+  `family`, `version` and `date`, plus our own `board`, `commit`,
+  `build_id`, `experiments`, `owner` and `rows` (the queued test-plan rows
+  that name the family or file). The user unit `redox-sdcard-index.path`
+  ([config/redox-sdcard-index.path](../../config/redox-sdcard-index.path))
+  rewrites it whenever the directory changes, so a file copied in by hand
+  is not hidden: SwiftFlash reads only `index.json` when there is one. Older images get their fields from the
+  file name and manifest; `redox-rpi-zero2w-fastnet-db5ea27` has version
+  `db5ea27`.
+- **`-latest` links** (`--latest`, used by the visit images) are for
+  people. `index.json` leaves them out, as SwiftFlash finds the newest build
+  itself; `http.server` gives a link the size and Last-Modified of its
+  target, so a new target is a new download.
+- **ETag:** `http.server` sends none; SwiftFlash then uses Last-Modified
+  plus size. `scripts/http-etag-server.py` is the same server with an ETag
+  (`"<mtime>-<size>"`), tested on a spare port, not in use: switching
+  `redox-http.service` to it (it also serves U-Boot's HTTP boot) is the
+  maintainer's call.
+
 ## Log triage
 
 homenodellm runs vLLM with `gpt-oss-20b` (unit `vllm.service`, config

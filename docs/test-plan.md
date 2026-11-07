@@ -172,9 +172,15 @@ cp -p /srv/tftp/visit/desktop/latest/redox/* /srv/tftp/redox/
 ```
 
 Write the build ID from `/srv/tftp/visit/desktop/latest/BUILD_ID` into the
-report. An image with `--sdcard` in the config is also in
-`/srv/tftp/sdcard/` as `redox-rpi-visit-desktop-latest.img.xz`
-(<http://homenodellm:8080/sdcard/>), with its `.sha256`.
+report. An image with `--sdcard` in the config is also on the image server
+as family `redox-rpi-visit-<name>`; the tester flashes the newest build with
+`sudo swiftflash redox:redox-rpi-visit-<name>`.
+
+**SD images in a row:** publish them with `scripts/publish-sdcard.sh`
+([ci.md](topics/ci.md#image-server)) and write the SwiftFlash command it
+prints into the row, for example "For the person: `sudo swiftflash
+redox:redox-rpi-openfw-3bp`" (the newest build of that family), and the
+file name when the test needs exactly that build.
 
 ## Queue
 

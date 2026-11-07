@@ -25,8 +25,10 @@
 #     as scripts/netboot.sh writes them (copy them to /srv/tftp/redox/ to
 #     stage the image), BUILD_ID and visit.txt; the link
 #     /srv/tftp/visit/<name>/latest points to the newest
-#   - with --sdcard: /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz
-#     with .sha256 and .manifest.toml, and redox-rpi-visit-<name>-latest.*
+#   - with --sdcard: the card from scripts/make-sdcard.sh --local, published
+#     by scripts/publish-sdcard.sh as family redox-rpi-visit-<name>:
+#     /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz with .sha256,
+#     .manifest.toml and redox-rpi-visit-<name>-latest.* links
 #   - the last KEEP builds stay, older ones are removed
 # Results per image in /srv/tftp/visit/status.txt, and for a tester at the
 # Pi in /srv/tftp/visit/index.html and README.txt
@@ -194,23 +196,25 @@ build_one() {
             ln -sfn "$build_id" "$OUT/$name/latest"
             log "$name: $dir"
         else
-            local base="$SDCARD/redox-rpi-visit-$name-$build_id"
-            xz -T4 -c upstream/redox/build/aarch64/sdcard/harddrive.img > "$base.img.xz.partial" &&
-                mv "$base.img.xz.partial" "$base.img.xz" ||
-                { result[$name]="failed $build_id ${commit:0:9} ${ref:-stable} xz"; return 1; }
-            (cd "$SDCARD" && sha256sum "$(basename "$base").img.xz" > "$(basename "$base").img.xz.sha256")
-            cp "$manifest" "$base.manifest.toml"
-            for ext in img.xz img.xz.sha256 manifest.toml; do
-                ln -sfn "$(basename "$base").$ext" "$SDCARD/redox-rpi-visit-$name-latest.$ext"
-            done
-            log "$name: $base.img.xz"
+            # A whole card (make-sdcard.sh --local), published by the one
+            # script for the image server (docs/topics/ci.md, "Image server").
+            scripts/make-sdcard.sh --local upstream/redox/build/aarch64/sdcard/harddrive.img \
+                --family "redox-rpi-visit-$name" --out build/visit-sdcard.img > /dev/null &&
+                "$ROOT/scripts/publish-sdcard.sh" build/visit-sdcard.img --family "redox-rpi-visit-$name" \
+                    --manifest "$manifest" --owner "$owner" --visit "$name" --latest ||
+                { result[$name]="failed $build_id ${commit:0:9} ${ref:-stable} sdcard-publish"; return 1; }
+            rm -f build/visit-sdcard.img build/visit-sdcard.img.xz
+            log "$name: $SDCARD/redox-rpi-visit-$name-$build_id.img.xz"
         fi
     done
     result[$name]="built $(cat "$latest/BUILD_ID") ${commit:0:9} ${ref:-stable} $(date -u '+%Y-%m-%dT%H:%M')Z"
     prune "$OUT/$name/v*"
-    for ext in img.xz img.xz.sha256 manifest.toml; do
-        prune "$SDCARD/redox-rpi-visit-$name-v*.$ext"
-    done
+    if [ -n "$sdcard" ]; then
+        for ext in img.xz img.xz.sha256 img.xz.manifest.toml img.xz.meta.json; do
+            prune "$SDCARD/redox-rpi-visit-$name-v*.$ext"
+        done
+        python3 "$ROOT/scripts/sdcard-index.py" "$SDCARD" "$OUT/.test-plan.md" > /dev/null
+    fi
     return 0
 }
 

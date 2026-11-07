@@ -274,12 +274,16 @@ sudo loginctl enable-linger "$USER"   # keep it running without a login
 ### SD card images for download
 
 SD card images to test, such as release candidates, go to
-`/srv/tftp/sdcard/` on the build server, not to anyone's own computer.
-The same HTTP server offers them at
+`/srv/tftp/sdcard/` on the build server, not to anyone's own computer,
+always through `scripts/publish-sdcard.sh`
+([ci.md](topics/ci.md#image-server)): it names the file, writes the
+checksum, the card's `/.uuid` and `index.json`, and never overwrites. The
+same HTTP server offers them at
 `http://homenodellm:8080/sdcard/<name>.img.xz`, so SwiftFlash
-(`SwiftFlashCLI`) or `curl` flashes them straight from there. Put the
-manifest (`<name>.img.manifest.toml`) and a `SHA256SUMS` next to each image.
-Name release candidates `redox-rpi-v<version>-rc<N>.img.xz`.
+(`swiftflash source add redox http://homenodellm:8080/sdcard/`, then
+`sudo swiftflash redox:<family>`) or `curl` flashes them straight from
+there. Release candidates are family `redox-rpi`, version
+`v<version>-rc<N>`.
 
 ## Limits
 
