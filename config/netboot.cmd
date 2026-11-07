@@ -4,7 +4,7 @@
 # unpacks it in RAM,
 # exposes it as a block device with blkmap and starts the live bootloader from
 # TFTP, which copies the image into memory for the kernel. Compiled into
-# netboot.scr by scripts/netboot.sh.
+# netboot.scr by scripts/netboot.sh, after the boot menu (config/bootmenu.cmd).
 #
 # Variables (defaults set by scripts/netboot.sh, override in the environment):
 #   redox_server   TFTP server (IP address)
