@@ -21,9 +21,10 @@
 # Per image:
 #   - commit: the commit of the stable image, or origin/<branch> for ref=
 #   - skipped if the newest build has the same commit and options
-#   - network-boot files (as scripts/netboot.sh writes them for redox/) in
-#     /srv/tftp/visit/<name>/<build ID>/, with the link
-#     /srv/tftp/visit/<name>/latest and its BUILD_ID and visit.txt
+#   - /srv/tftp/visit/<name>/<build ID>/: redox/ with the network-boot files
+#     as scripts/netboot.sh writes them (copy them to /srv/tftp/redox/ to
+#     stage the image), BUILD_ID and visit.txt; the link
+#     /srv/tftp/visit/<name>/latest points to the newest
 #   - with --sdcard: /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz
 #     with .sha256 and .manifest.toml, and redox-rpi-visit-<name>-latest.*
 #   - the last KEEP builds stay, older ones are removed
@@ -166,7 +167,7 @@ build_one() {
             dir="$OUT/$name/$build_id"
             rm -rf "$dir"
             mkdir -p "$dir"
-            cp -p "$work/redox"/* "$dir/"
+            cp -rp "$work/redox" "$dir/"
             echo "$build_id" > "$dir/BUILD_ID"
             {
                 echo "name = $name"

@@ -12,6 +12,9 @@
   passes; a failure goes to the issue "Nightly: main fails on the Pi"
   ([test-plan.md](../test-plan.md#nightly-update)). The Pi may reboot at
   night.
+- After it, the images in `config/visit-images.conf` for tests with a
+  person at the Pi are built on the build host, never on the Pi
+  ([below](#nightly-visit-images)).
 - `scripts/pi-test.py --serial-log --crash-log` records the crash output of
   every failed start (#10). `scripts/qemu-raspi3b.sh --data` gives QEMU a
   data partition, so all standard checks also run in QEMU.
@@ -42,6 +45,43 @@
 
 - [#9](https://github.com/redox-rpi/redox-rpi/issues/9) CI with the pinned revisions; [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on
   Redox.
+
+## Nightly visit images
+
+[#235](https://github.com/redox-rpi/redox-rpi/issues/235). A test with a
+person at the Pi should never wait for a build, so the images for such
+tests are built every night.
+
+- `update-stable.sh` starts the systemd user unit `redox-visit.service`
+  ([config/redox-visit.service](../../config/redox-visit.service)) when the
+  stable image passed or nothing changed since it; not when it failed or a
+  test was on the Pi. The unit runs
+  [`scripts/build-visit-images.sh`](../../scripts/build-visit-images.sh)
+  from `~/redox-rpi-stable`, a unit of its own so the nightly ends as before.
+- It builds in its own clone `~/redox-rpi-visit`: the stable image's commit,
+  or the newest `origin/<branch>` for an image with `ref=`. It never touches
+  the Pi, the serial console, `/srv/tftp/redox` or the stable image, and
+  makes no release and no package repository.
+- An image whose newest build has the same commit and options is not built
+  again. Builds still running at the deadline in the config (07:00 UTC)
+  are stopped.
+- Results: `/srv/tftp/visit/<name>/<build ID>/` (`redox/` with the
+  network-boot files of `scripts/netboot.sh` and `manifest.toml`, to copy to
+  `/srv/tftp/redox/`; `BUILD_ID`; `visit.txt` with ref, commit and
+  options), the link
+  `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
+  `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
+  `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
+- `/srv/tftp/visit/status.txt` has one line per image: built, unchanged,
+  failed or deadline, with build ID, commit and ref. Log:
+  `~/redox-rpi/logs/visit/<date>.log`. A failure does not touch the nightly.
+- **Adding an image:** a line in the config with name, owner topic and the
+  `scripts/build-image.sh` options, `ref=<branch>` while its experiments
+  are not on main (drop it at the merge), `clean=<path>` for a recipe
+  under `upstream/redox/` to remove first. How a test row uses it:
+  [test-plan.md](../test-plan.md#nightly-visit-images).
+- Install once on the build host:
+  `cp config/redox-visit.service ~/.config/systemd/user/ && systemctl --user daemon-reload`.
 
 ## Log triage
 

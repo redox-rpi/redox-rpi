@@ -155,6 +155,25 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 `v0.1.0-alpha-28-gb5c59b2+ldso-diagnostics+sdhost-driver` (until
 2026-10-28, still with the T12 start failures).
 
+### Nightly visit images
+
+Images for tests with a person at the Pi are built every night after the
+stable image ([ci.md](topics/ci.md#nightly-visit-images)), one per line in
+[config/visit-images.conf](../config/visit-images.conf). A row that needs
+one names it by its name, for example "image: nightly visit `desktop`",
+instead of a build ID. Before the test, check that the image is new
+enough, then stage it like the stable image:
+
+```bash
+cat /srv/tftp/visit/status.txt /srv/tftp/visit/desktop/latest/visit.txt
+cp -p /srv/tftp/visit/desktop/latest/redox/* /srv/tftp/redox/
+```
+
+Write the build ID from `/srv/tftp/visit/desktop/latest/BUILD_ID` into the
+report. An image with `--sdcard` in the config is also in
+`/srv/tftp/sdcard/` as `redox-rpi-visit-desktop-latest.img.xz`
+(<http://homenodellm:8080/sdcard/>), with its `.sha256`.
+
 ## Queue
 
 | # | Test | Owner | Image | Needs | Status |
