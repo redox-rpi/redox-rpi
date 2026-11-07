@@ -16,7 +16,7 @@ FDI="${COOKBOOK_BUILD}/freedesktop-icons"
 rm -rf "${FDI}"
 git clone -q https://github.com/pop-os/freedesktop-icons.git "${FDI}"
 git -C "${FDI}" checkout -q ab4c57b8e416c6af9297cb04d101889896fd9a92
-git -C "${FDI}" apply "${COOKBOOK_ROOT}/../../patches/experiments/cosmic-apps-source/freedesktop-icons/0001-keep-index-theme-in-memory-remember-missing-icons.patch"
+git -C "${FDI}" apply "${COOKBOOK_ROOT}/../../patches/experiments/cosmic-apps-source/freedesktop-icons-0001-keep-index-theme-in-memory-remember-missing-icons.patch"
 FDI_PATCH="patch.\\\"https://github.com/pop-os/freedesktop-icons\\\".cosmic-freedesktop-icons.path=\\\"${FDI}\\\""
 export ZSTD_SYS_USE_PKG_CONFIG=1
 cookbook_cargo --no-default-features --config "${FDI_PATCH}"

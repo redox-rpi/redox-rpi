@@ -3,7 +3,7 @@
 Test only ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)), with
 `orbital-apps`. Builds `cosmic-edit` and `cosmic-files` from source, at the
 commits of upstream's binary packages (`rev` in the two recipes), with
-[`freedesktop-icons/0001-keep-index-theme-in-memory-remember-missing-icons.patch`](freedesktop-icons/0001-keep-index-theme-in-memory-remember-missing-icons.patch)
+[`freedesktop-icons-0001-keep-index-theme-in-memory-remember-missing-icons.patch`](freedesktop-icons-0001-keep-index-theme-in-memory-remember-missing-icons.patch)
 applied to `pop-os/freedesktop-icons` (`ab4c57b`, the version both apps
 lock). The recipe clones that crate, applies the patch and hands it to cargo
 as a `[patch]` in `--config`, so the app sources stay as pinned.
