@@ -321,6 +321,10 @@ done < <(recipe_dirs)
 # (redoxfs-file) have none.
 for file in "$ROOT"/tools/*/recipe.toml; do
     tool="$(basename "$(dirname "$file")")"
+    # The cookbook copies a path source into source/ without removing files
+    # that are gone from tools/, so a file from another branch's build can
+    # break this one. Start from a fresh copy; target/ stays for speed.
+    rm -rf "$REDOX/recipes/other/$tool/source"
     mkdir -p "$REDOX/recipes/other/$tool"
     {
         echo "[source]"
