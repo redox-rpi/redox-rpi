@@ -9771,4 +9771,4 @@ Stable `v0.4.0-dev-604-g8c4c513f`. Real Pi 3B+ over netboot. 07:21–07:34 UTC.
   `/srv/tftp/redox` matches `/srv/tftp/stable`.
 
 So 0 of 10 this time (earlier 3 of about 14), so 10 boots were not enough to catch it.
-                Outputs (serial per boot) in `~/pitest-tools/t264/`.
+Outputs (serial per boot) in `~/pitest-tools/t264/`.
