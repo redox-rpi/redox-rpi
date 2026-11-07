@@ -3,8 +3,9 @@
 Sound on the Pi 3B+: what Redox already has, how the Pi makes sound, and
 a plan that starts with the headphone jack through PWM. Written
 2026-11-07 before any work started. The PWM driver is
-[#250](https://github.com/redox-rpi/redox-rpi/issues/250); no release
-target yet.
+[#250](https://github.com/redox-rpi/redox-rpi/issues/250), planned for
+**v0.4.0 as a beta** (maintainer, 2026-11-07): A1 and A2 tested on the Pi
+are enough; A3 and polish may follow in a later release.
 
 ## State
 
@@ -19,6 +20,13 @@ target yet.
   no PWM clock, so there it plays to the clock instead of the jack. Pi
   test #279 (driver, CPU tone, DMA ring, no listening) is queued; the
   listening test #280 needs a person with headphones.
+- **Release plan:** v0.4.0, beta. Once #279 and #280 pass, PR #251 moves
+  the patches to the default directories, so the driver and `audiod` run
+  in every image, and the v0.4.0 release notes list sound from the jack
+  as **beta** (known limits: about 11 usable bits, one fixed format, no
+  stop after silence yet, left/right as found in #280). If #279 shows
+  problems that could hurt the boot, it ships as the experiment
+  `pwm-audio` instead, also marked beta.
 - **The hardware is there.** The 3.5 mm jack is fed by the SoC's PWM
   block; HDMI can carry sound; the GPIO header has an I2S port for DAC
   boards.
