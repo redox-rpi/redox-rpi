@@ -71,7 +71,7 @@ this repository stays MIT. Issue:
 
 ## Pi 3B+ (BCM2837B0) compared with the 3B: risks
 
-Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our Pi:
+Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points on our Pi:
 
 - **Boot ROM order.** The ROM first looks for `bootcode.bin` on the SD card.
   Only when there is none does it try USB or network boot (on the 3B+ that
@@ -118,9 +118,16 @@ Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our P
    (`ARM_C0_AARCH64`) but never sets it. The chainloader is 32-bit and
    switches to non-secure mode early, so it cannot switch to 64-bit later.
    We need a 64-bit start stub that sets up the exception levels and the
-   timer frequency, and that parks cores 1–3 in a spin table at `0xd8`
+   timer frequency, and that parks cores 1–3 in a spin table (release addresses `0xe0`, `0xe8`, `0xf0`)
    like Raspberry Pi's `armstub8`. That stub could be Rust; the VPU part
    cannot be, because there is no Rust or LLVM backend for VideoCore IV.
+   Base: [`armstubs/armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S)
+   in raspberrypi/tools (BSD licence). It is the stub the closed firmware
+   runs before Redox today: timer (`CNTFRQ` 19.2 MHz, 54 MHz on the Pi 4),
+   L2 latency, FP/SIMD, SMP bit, EL3 to EL2, cores 1–3 parked in the spin table (`0xe0`, `0xe8`, `0xf0`)
+   (what our spin-table kernel patch expects), and the GIC set-up on the
+   Pi 4. Use it as it is or port it to Rust. The alternative is TF-A's
+   BL31, which gives PSCI (see "Other Pi models").
 2. **Load `kernel8.img` or U-Boot** instead of `zImage`: U-Boot first,
    because Redox already boots through it.
 3. **Replace the mailbox.** `rpi-firmwared`, `rpi-fbd`, the CPU clock
@@ -130,6 +137,49 @@ Read from the code; #224 confirmed the boot ROM, SDRAM and clock points on our P
    sets these up itself (devicetree values, a fixed clock, no framebuffer).
 4. **USB and Ethernet** for network boot (LAN7515 behind dwc2), and HDMI
    much later (see [graphics.md](graphics.md), `vc4d`).
+5. **3D (graphics.md step 3) needs more from the boot code than the
+   framebuffer does:** the V3D power domain switched on, the V3D clock set,
+   and much more memory set aside for the GPU. Today that means the full
+   `start.elf` with `gpu_mem` well above 16: the cut-down `start_cd.elf`
+   we run has no 3D. With the open firmware, the VPU part or a driver on
+   the ARM side would do these steps itself (Linux has a `bcm2835` power
+   driver for this case).
+
+## Our own firmware ([issue #230](https://github.com/redox-rpi/redox-rpi/issues/230))
+
+The maintainer decided on 2026-11-07 to replace **all** closed pieces
+(`bootcode.bin`, `start*.elf`/`fixup*.dat`, `armstub8`) with our own code
+rather than adopt rpi-open-firmware or lk-overlay as they are. Both start
+on the 3B+, but rpi-open-firmware is old C++ with bugs we had to fix, and
+lk-overlay runs a whole RTOS (LK) in stage 1, has dead code and builds with
+warnings allowed. Ours is flat C for the VPU, one file per hardware block,
+`-Werror`, and each file names its source. Code: redox-rpi/rpi-open-firmware,
+branch `bootcode`, directory `bootcode/` (GPLv2+, because the SDRAM, clock
+and UART sequences come from rpi-open-firmware).
+
+- **M1 (built 2026-11-07, Pi test #265 queued):** VPU clock, UART, SDRAM
+  and a memory test of 32 regions over the whole 1 GB. 5.5 KB.
+- **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
+  the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
+  boot and what 3D needs (see step 5 above).
+- **Disassembly of the closed `bootcode.bin`** (internal, behaviour only,
+  not published; the README in `bootcode/` lists each finding with its
+  source file): it uses SDHOST, not EMMC, for the card; about a third of
+  its register references are USB (USB and network boot); it reads
+  `config.txt` for `gpu_mem`, `total_mem`, `start_file` and more; it hands
+  off to `start.elf` through a small routine copied into SDRAM after a
+  cache flush.
+
+**Video codecs:** the hardware decoders (H.264, MPEG-2/VC-1 with a licence
+key) are driven by code inside `start.elf`/`start_x.elf`, reached from
+the ARM through VCHIQ/MMAL. Taking that code out and reusing it is not an
+option: the Broadcom licence allows the files only unmodified, and the code
+depends on the rest of the closed firmware (ThreadX, its memory manager,
+VCHIQ). The block's registers are not documented. Without the closed
+firmware the choices are software decoding on the ARM (FFmpeg with NEON,
+H.264 up to about 720p on a Pi 3) or our own driver for the codec block
+from scratch, a project of its own. This is one reason to keep Broadcom's
+`start.elf` as an option next to our firmware.
 
 ## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
 
@@ -181,7 +231,64 @@ So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
 U-Boot on the ARM side would bring up the LAN7800 rather than the VPU.
 
+## Register dumps: `socdump` (planned, [issue #224](https://github.com/redox-rpi/redox-rpi/issues/224))
+
+A read-only Redox tool, similar to the Linux tools `pll-inspector` and
+`pv_dumper` in [librerpi/rpi-tools](https://github.com/librerpi/rpi-tools)
+(GPL-2.0, from the lk-overlay authors; we port the idea, not the code).
+
+- **Why:** the closed firmware leaves its clock, PLL and HDMI settings in
+  the registers. A dump under the closed firmware gives reference values
+  for the open firmware and for HDMI (`vc4d`, [graphics.md](graphics.md)),
+  so the HDMI PHY and PLLH don't have to be guessed. A second dump under
+  the open firmware shows what differs.
+- **Where:** a new crate `tools/socdump`, not part of `rpi-firmwared`. That
+  driver runs all the time and only does the mailbox; `socdump` is run by
+  hand, maps the register pages with `physmap`, and only reads.
+- **Steps:**
+  1. Clock manager, PLLs A–D and H, GPIO pin functions on the BCM2837.
+     Check the results against `/scheme/rpi-firmware/clocks`.
+  2. Pixel valves, HVS, HDMI. It only reads a block whose clock is on.
+  3. Reference dumps at 1080p and 720p on the 3B+ (a Pi test row).
+  4. `socdump diff`.
+- The rest of the other tools: `edid` (making EDIDs) helps with HDMI mode
+  tests. The EEPROM and signing tools are for the Pi 4/5 boot EEPROM.
+  `webusbboot` needs a USB device port, which the 3B+ doesn't have.
+  [librerpi/vpu-x265](https://github.com/librerpi/vpu-x265) (a 2020 VPU
+  vector-unit experiment, no license) doesn't matter for booting.
+
+## Other Pi models (later)
+
+The goal is Redox on the Pi 4, Pi 5 and newer models too, so anything we
+build here keeps the chip-specific parts in their own tables:
+
+| | 3B+ / 3B / Zero 2 W | Pi 4 | Pi 5 |
+|---|---|---|---|
+| SoC | BCM2837(B0) | BCM2711 | BCM2712 + RP1 (I/O over PCIe) |
+| Peripherals (ARM address) | `0x3F000000` | `0xFE000000` (low peripheral mode) | from the devicetree |
+| Crystal | 19.2 MHz | 54 MHz | 54 MHz |
+| First boot code | `bootcode.bin` on the SD card | SPI EEPROM | SPI EEPROM |
+| Open firmware | rpi-open-firmware, lk-overlay (tested here) | lk-overlay has some Pi 4 work (not checked) | none known |
+| Starting cores, interrupts | spin-table, BCM2836 local mailboxes (our kernel patches) | GIC-400 (GICv2); PSCI only with TF-A as `armstub8.bin` | GIC-400; PSCI from the BL31 that the firmware already contains |
+
+- `socdump`: the register addresses come from the devicetree and the
+  tables are per chip, so the Pi 4 and Pi 5 are new tables, not a rewrite.
+- [raspberrypi/arm-trusted-firmware](https://github.com/raspberrypi/arm-trusted-firmware)
+  (TF-A, ports for the Pi 3, 4 and 5) runs at EL3 before the OS and gives
+  **PSCI**: start and stop cores, reset, power off. Upstream Redox starts
+  cores only through PSCI and routes interrupts only through a GICv2, which
+  is why the 3B+ needs our spin-table and IPI kernel patches
+  ([status.md](../status.md)). On the 3B+ TF-A would add little (PSCI
+  power-off and core hotplug; there's still no GIC). On the Pi 4 and 5 it
+  matters a lot: with PSCI and the GIC-400, upstream Redox's own path fits,
+  so these boards may need fewer Pi-specific patches than the 3B+. TF-A's
+  BL31 could also take the "cores 1–3" step of the open firmware (Next
+  step 1) instead of our own stub.
+- Open firmware on the Pi 4/5 means replacing the EEPROM boot stage, not
+  a file on the card. That's a separate experiment, done only with a way
+  to restore the EEPROM.
+
 ## Later
 
-- Tell the community what we found, once #224 has run (the maintainer
+- Tell the community what we found, once Pi test #224 has run (the maintainer
   posts; sessions write notes only).

@@ -9654,3 +9654,245 @@ and `rc=0`. Serial: `rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffe
   `~/pitest-tools/t259b/shot.png`.
 
 Stable image (now `v0.4.0-dev-565-gc70f394e+x9f76`) staged again, booted, devsh answers.
+
+## #260 PR #226 opt-a53: kernel, relibc and base built for speed and the Cortex-A53, A/B (2026-11-06, Pi test agent)
+
+Images:
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-565-gc70f394e+x9f76` | stable |
+| B | `v0.4.0-dev-567-gd91a247f+x9b71` | `opt-a53` |
+
+Both are on homenodellm in `~/redox-rpi-opt/keep/{A,B}/harddrive.img`. Real Pi 3B+ over
+netboot, HDMI attached. Benchmark: `patches/experiments/opt-a53/bench.py --rounds 3`, from
+branch `exp-opt-a53`.
+
+**Result: pass. B is faster in CPU- and network-bound work and the same on the SD card.**
+pi-test passed on all 4 boots of the final pass (0 of 300 starts failed).
+
+**Final pass** (bench.py 9cb724b1, order B, A, B, A, 20:47–21:18 UTC, 6 rounds per image,
+median and range in seconds):
+
+| Workload | A (stable) | B (opt-a53) | B against A |
+|---|---|---|---|
+| spawn, 500 × `ls /usr` | 77.60 (77.55–77.78) | 75.37 (75.18–75.74) | **2.9 % faster** |
+| net-rx, 32 MiB to the Pi | 3.02 (2.74–3.14) | 2.59 (2.46–2.79) | **14 % faster** |
+| net-tx, 32 MiB from the Pi | 4.89 (4.82–4.93) | 4.38 (4.33–4.44) | **10.5 % faster** |
+| sd-write, 50 MiB | 6.70 (5.85–7.89) | 6.73 (5.77–8.35) | same (card-bound, noisy) |
+| sd-read, 50 MiB | 0.56 (0.56–0.57) | 0.55 (0.54–0.56) | about the same |
+
+- **net-tx:** no retries were needed in this pass.
+- **Clocks:** the same before and after on every boot (arm 1400 MHz, core 250, sdram 400).
+  So there was no throttling.
+
+**Boot to `redox login:`**, from 12 boots over 4 passes (boot-timeline.py):
+
+| Image | Times (s) |
+|---|---|
+| A | 30.51, 30.36, 35.17, 30.36, 35.39, 39.88, 35.24, 30.31 |
+| B | 29.97, 30.12, 30.16, 39.83, 30.01, 30.06, 34.99, 30.60 |
+
+Both images take about 30 s, with the same 35–40 s outliers. No difference.
+
+**Earlier passes**, each a run of 4 boots in the order A, B, A, B:
+- **Pass 1** (17:08): bench.py stopped at net-rx. Redox `nc -l 5135` is refused; it needs
+  `nc -l 0.0.0.0:5135` (fixed in faf707e3).
+- **Pass 2** (17:40): bench.py stopped at net-tx. Redox `nc` does not close the connection
+  at the end of its input (fixed in f4f63618).
+- **Pass 3** (18:57): net-tx did not connect in 3 of 4 tries (retries added in 9cb724b1).
+- **Boot 4 (B) of pass 3:** pi-test hung in the 300 starts after the sdcard PASS (timed out
+  at 600 s), and then devsh gave "No route to host". There was no serial line and no panic.
+  It did not happen again in pass 4 (B twice, 600 starts). It may be the old intermittent
+  network loss or the #197 futex hang; neither image has the futex fix.
+- **Spawn and net-rx numbers from passes 1–3** agree with pass 4: A 77.75–77.95 s, B
+  75.42–75.64 s.
+
+Stable image staged again, booted, devsh answers. Raw data on homenodellm:
+`~/pitest-tools/t260{,b,c,d}/opt-a53.jsonl`.
+
+## 2026-11-07: `v0.4.0-dev-604-g8c4c513f+x9f76`
+
+Built 2026-11-07T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-604-g8c4c513f+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-604-g8c4c513f+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## #263 #92 repeat of #237 part B (host faults) with lock watches (2026-11-07, Pi test agent)
+
+Image `t92cw-v0.4.0-dev-361-g4273f649+x9040.img` (branch `t92-chaos-watch` 4273f649,
+experiments `chaos netstack-watch`, md5 `51bf810c…`). `chaos-host.py` from the same
+branch. Real Pi 3B+ over netboot. 06:31–07:20 UTC.
+
+**Result: pass. 40 of 40 host-fault rounds, the network never got lost.**
+- Boot: `devshd: listening` 20 s after the reset. `pi-test.py` pass (ps, ps-tty, sdcard,
+  starts 0 of 300 failed).
+- **Seed 237** (the #237 run): the same fault order as in #237, round 20 again `netem-delay`
+  with the same round seed 3107139973. All 20 rounds ok, devsh back after 1–6 s. In #237
+  that round 20 lost the network for good.
+- **Seed 238:** 20 of 20 ok, devsh back after 1–6 s. Faults: netem-blackout ×4, server ×5,
+  pkg ×4, netem-delay ×2, netem-loss ×2, netem-reorder ×2, dwc2d ×1.
+- `netstack-watch:` printed `alive …, idle for 0 s` every 60 s to the end (2942 s,
+  285192 events, 177569 frames in). No `dwc2d-watch:` line (it only prints when a call
+  is stuck). No panic, no crash dump lines.
+- tc on enp12s0 back to `fq_codel` afterwards (checked).
+- The stable image (`v0.4.0-dev-604-g8c4c513f`) was booted again as the first step of #264.
+
+So the #92 hang did not show up in 40 rounds with the watches in the image. It is rare
+(1 in 20 rounds in #237), so this does not prove it is gone; the watches stayed quiet.
+Outputs in `~/pitest-tools/t263/` on homenodellm.
+
+## #264 #217 boot race: 10 warm resets out of stable, with watches (2026-11-07, Pi test agent)
+
+Image `bnr-v0.4.0-dev-443-g6e17ce46+x814f.img` (branch `boot-net-race` 6e17ce46, experiments
+`dwc2d-netstats usb-hub-drop dwc2d-restart dwc2d-watch netstack-watch`, md5 `da1ef6dd…`).
+Stable `v0.4.0-dev-604-g8c4c513f`. Real Pi 3B+ over netboot. 07:21–07:34 UTC.
+
+**Result: pass, 10 of 10 boots with devsh and ping. The bad boot did not happen.**
+- Each cycle: stable booted (devsh answers), this image staged, `echo reset > /scheme/sys/kstop`
+  over devsh, then wait for devsh in this image, then stable staged and reset again.
+- In this image devsh answered 30–37 s after the reset, every time. `ping -c 3 192.168.178.1`
+  on the Pi: 3 of 3 received in all 10 boots.
+- From homenodellm, `ip neigh show` had the Pi `REACHABLE` (b8:27:eb:08:e0:aa) after every
+  boot, so it answered ARP. The plain `ping` from homenodellm did not run: there is no `ping`
+  command on this host (only the runner's mistake; devsh over TCP worked in all 10).
+- Serial of every boot: the `redox-rpi v0.4.0-dev-443-g6e17ce46+x814f` banner, `devshd: starting`
+  then `devshd: listening`; no `devshd: no answer from the network stack` line, no `dwc2d-watch:`
+  line, no USB device removed, no panic. No `netstack-watch:` line either: the boots were reset
+  after about 60 s, before its first 60 s report.
+- All 11 stable boots in between came up with network on the first try.
+- Stable image staged again and booted (`v0.4.0-dev-604-g8c4c513f`), devsh answers,
+  `/srv/tftp/redox` matches `/srv/tftp/stable`.
+
+So 0 of 10 this time (earlier 3 of about 14), so 10 boots were not enough to catch it.
+Outputs (serial per boot) in `~/pitest-tools/t264/`.
+
+## #266 #217 boot race: 40 warm resets out of stable (2026-11-07, Pi test agent)
+
+Image `bnr-v0.4.0-dev-443-g6e17ce46+x814f.img` (as #264). Stable `v0.4.0-dev-604-g8c4c513f`.
+Runner `run264.sh` with 40 cycles and an ARP check only. 07:36–08:37 UTC.
+
+**Result: the #217 bug was not caught in 39 boots, but then the Pi stopped booting at all.**
+- Boots 1–39 of this image: devsh after 30–37 s, `ping -c 3 192.168.178.1` 3 of 3, the Pi
+  `REACHABLE` in ARP from homenodellm. Every boot `devshd: starting` then `listening`; no
+  `no answer from the network stack`, no `dwc2d-watch:` line, no panic. The 39 stable boots
+  in between all had network on the first try.
+- **After boot 39**, the reset back into stable (08:23) never reached the kernel. Every boot
+  since then, 4 in a row including 3 power cycles, stops in the Redox bootloader:
+  `Looking for RedoxFS:` … `SETUP PANIC: panicked at src/os/uefi/disk.rs:31:9: internal error:
+  entered unreachable code`. U-Boot, TFTP and the HTTP image load (44177622 bytes, the stable
+  file, checked) are fine.
+- Cause: `disk.rs:31` is `DiskOrFileEfi::write_at` (`unreachable!()`). The bootloader opens every
+  RedoxFS it finds, and our patch `bootloader/0002` (only boot a RedoxFS with a kernel) checks
+  each one with `fs.tx(...)`, which ends in `tx.commit()`. The SD card's data partition
+  (`/scheme/data`, which it scans before the network image) must now be in a state where that
+  commit writes, so the bootloader panics before it reaches the network image. Before, it
+  printed `RedoxFS on …HD(0x2,MBR,…) has no kernel, skipping`. What changed the data
+  partition is not known; it happened between boot 39 of this image and the next stable boot.
+- **The Pi does not boot now** (any image, it panics in a loop). Stable is staged in
+  `/srv/tftp/redox` (matches `/srv/tftp/stable`).
+- Fix without a person: a bootloader where `has_kernel` does not commit (or `write_at` returns an
+  error instead of panicking), staged as the stable image. Otherwise a person has to repair or
+  reformat the data partition on the network-boot card.
+
+Outputs (serial per boot, `stuck-serial.log` with the panics) in `~/pitest-tools/t266/`.
+
+## #254 open firmware step 2 rerun: lk-overlay with an ARM-side SD driver (2026-11-07, Pi test agent)
+
+Card `redox-rpi-lkoverlay-3bp-20261105c.img.xz` on the spare card (user swap). 90 s of serial,
+08:47–08:48 UTC. No HDMI connected.
+
+**Result: the ARM loader now mounts the card, but reading the files fails.**
+- VPU stage as in #253: PLLs up, `SDRAM Type: Elpida 1GB LPDDR2`, self test ok, the VPU's eMMC
+  driver at 27 MHz reads the card (30475 MB SDHC), stage 1 chainloads, `enabling aarch64`,
+  `welcome to lk/MP` with the DTB at 0x1000000.
+- On the ARM: `[EMMC:...]` lines, `SD card has arrived`, `card now in 4bit mode`, then
+  `vpu clock is 0, cdiv 0`, `Card initialization complete: N/A 30475MB SDHC Card`, MBR dump
+  (p0 type 0xc at 0x800, p1 type 0x83 at 0x10800).
+- `trying to boot from sdhostp1` **without** `mount failure`, then `dtb: rpi3.dtb, kernel:
+  Image-aarch64`. A 576-byte file was read fine.
+- Reading the 35252-byte raw dtb: 136 lines `transfer error on FIFO word N: 0x21` (N = 112, 368,
+  496, 624, 880) with `Transfer error, status: 0x20`. Last line (4.065 s):
+  `[EMMC:sdhost_read_block_wrap]: read of sector 73520, count 8 failed`, then silence to 90 s.
+- No magic, no `passing control off to linux`, no payload line, no panic or exception.
+- Probable cause: `vpu clock is 0, cdiv 0`, so the ARM side runs the SD clock with divider 0.
+- Raw log sent to the open-firmware session (`~/pitest-tools/t254/serial-raw.log`). The stable
+  network-boot check follows when the Pi boots again (see #266).
+
+## #265 #230 our own bootcode.bin, milestone M1 (2026-11-07, Pi test agent)
+
+Card `redox-rpi-bootcode-m1-3bp-20261107.img.xz` on the spare card (user swap, same visit as
+#254). 90 s of serial, 08:52–08:54 UTC. No HDMI connected.
+
+**Result: pass.** All expected lines, in order:
+`redox-rpi bootcode m1-20261107 (M1)`, `VPU cpuid 0x4000140`, `from the Boot ROM: CM_VPUCTL 0x241
+CM_VPUDIV 0x1000 PLLC_CTRL 0x10000 PLLC_FRAC 0x0 SD_CS 0x794200 timer 2679049 us`,
+`[sdram] controller up, SD_CS 0x218E42`, `[sdram] Elpida 1 GB LPDDR2 (MR5 0x3, MR8 0x58)`,
+`[sdram] DDR PLL locked, 398400 kHz`, `[sdram] self test passed, 1024 MB, 32 regions, 28088 us`,
+`SDRAM ready after 52436 us`, `M1 done: stage 1 runs, SDRAM works. Nothing to load yet.`, then
+`alive 10 s` to `alive 60 s`. Last line `alive 60 s`, nothing after it up to 90 s. No PANIC or
+EXCEPTION. Raw log `~/pitest-tools/t265/serial-bootcode-m1.log`, sent to the open-firmware
+session. The stable network-boot check follows when the Pi boots again (see #266).
+
+## #268 open firmware step 2: lk-overlay with the ARM SD clock fixed (2026-11-07, Pi test agent)
+
+Card `redox-rpi-lkoverlay-3bp-20261107.img.xz` on the spare card (user swap). 90 s of serial,
+08:58–08:59 UTC. No HDMI connected.
+
+**Result: the SD reads work now; the loader stops at the DTB with `fdt_open_into() == -3`.**
+- VPU stage and `welcome to lk/MP` as #254.
+- ARM side: `vpu clock is 250, cdiv 10`, `card now in 4bit mode`, `changing clock to 25MHz for
+  data mode`, 30475 MB SDHC.
+- `trying to boot from sdhostp1`, `dtb: rpi3.dtb, kernel: Image-aarch64`, read 576 bytes, then
+  `read 35252 bytes` of the raw dtb. **0 transfer errors** in the whole log (#254: 136).
+- Then `loaded DTB file to 0xffff000003100000`, `failed to open initrd: -1`,
+  `ERROR: fdt_open_into() == -3` (libfdt: no space). After that only three `temp changed` lines;
+  last line `temp changed 27.868011 -> 30.020020`, then silence to 90 s.
+- No magic, no `passing control off to linux`, no payload, no panic or exception.
+- Raw log `~/pitest-tools/t268/serial-raw.log`, sent to the open-firmware session. The stable
+  network-boot check follows when the Pi boots again (see #266).
+
+## #269 #230 serial monitor in our own bootcode.bin (test build) (2026-11-07, Pi test agent)
+
+Card `redox-rpi-bootcode-monitor-3bp-20261107b.img.xz` on the spare card (user swap, checksum
+checked by the user). Everything else over serial (`~/rbc-build/payloads/rbc-load.sh`, which only
+writes to `/dev/ttyUSB0` and reads the serial log) and the Shelly. 09:29–09:38 UTC. No HDMI.
+
+**Result: A, B, C, D pass; E reaches U-Boot over the network but stops there.** No PANIC or
+EXCEPTION in any part. No load retries were needed (every load matched its crc32 at once). The first
+start of B failed only because the updated `rbc-load.sh` was not executable (rc 126, nothing sent);
+it was then run with `bash`.
+- **A, no input:** `redox-rpi bootcode mon-20261107b (M1, monitor, test build)`, Elpida 1 GB,
+  `[sdram] self test passed, 1024 MB, 32 regions`, `rbc> monitor: press Enter within 5 s`,
+  `rbc> no input, normal boot`, `M1 done`, `alive 10 s`, `alive 20 s` (30 s window).
+- **B, commands:** `loaded 8 bytes … crc32 89E09EC4`; `r 7e003004` → `ok 7E003004 0039203D`;
+  `w`/`r c1100000` → `ok C1100000 12345678`; `s … f0000000` → `F2345678`; `c … f` → `F2345670`;
+  `d c1000000 8` → `C1000000: 10 42 40 B0 00 10 5A 00`, `ok`; `crc` → `ok crc32 89E09EC4`;
+  `g c1000000 5 7` → `ok ret 0000100C`; `foo` → `err unknown command or wrong argument count: foo`;
+  `boot` → `ok boot`, `M1 done`, `alive 10 s`. All as expected.
+- **C, lk stage 2 over serial:** 296048 bytes loaded in about 52 s, `crc32 1EEB420E` matched.
+  `g c4000c72`: `PLLC target 500 MHz`, `welcome to lk`, `enabling aarch64`, `welcome to lk/MP`,
+  `vpu clock is 250, cdiv 10`, 25 MHz, `dtb: rpi3.dtb, kernel: Image-aarch64`, dtb read 35252
+  bytes, **no `fdt_open_into` error**, `magic: 0x644d5241`, `core 0 passing control off to
+  linux!!!`, `redox-rpi: 64-bit test payload reached (loaded as Image-aarch64)`, `EL = 1`,
+  `MIDR = 0x410FD034`, `MPIDR = 0x80000000`, `x0 FDT = 0x3000000`, `done, waiting (wfe)`.
+  Last line `temp changed 25.716003 -> 27.868011`.
+- **D, chain lk stage 1:** 49956 bytes, `crc32 4ACB9CA3`, `ok chain 49956 bytes, start
+  0x80000200`. lk's stage 1 started and ran its SDRAM set-up a second time without trouble
+  (Elpida 1GB, self test successful), loaded stage 2 from the card, and reached the payload the same
+  way as C. Last line `redox-rpi: done, waiting (wfe)`.
+- **E, chain Broadcom bootcode:** 52624 bytes, `crc32 53C9B136`, `ok chain`. Broadcom's bootcode fell
+  back to the network and U-Boot came up (`U-Boot 2026.10 (Oct 27 2026)` from /srv/tftp), but with
+  **`DRAM: 240 MiB`** (normally about 948 MiB). DHCP and the `redox/netboot.scr` download worked, then
+  `wget error: trying to overwrite reserved memory`, `HTTP client error 4`, the TFTP fallback for
+  `harddrive.img.gz` at 0x20000000 failed the same way, and it stopped at `U-Boot>`. So the monitor
+  card cannot stay in the Pi yet.
+- Logs `~/pitest-tools/t269/part-A.log` to `part-E.log`, sent to the open-firmware session. The Pi
+  is off. The network-boot card goes back next, and the stable check follows when the bootloader fix
+  for #266 arrives.

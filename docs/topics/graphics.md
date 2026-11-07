@@ -496,10 +496,40 @@ the screen.
   shares of a full core, not the cost of a move. The next measurement
   is on the desktop after login (no orblogin), and dragging a window.
   The rpi-fbd boot failed twice: right after `pointer-bench` started,
-  `cputop` returned at once and `pointer-bench` wrote nothing (being
-  looked at). `vc4shot` could not map the buffers (Redox allows no
+  `cputop` returned at once and `pointer-bench` wrote nothing (explained
+  by row 259, below). `vc4shot` could not map the buffers (Redox allows no
   physical mapping of RAM); since vc4d `5ec9079` vc4d writes the
   picture itself on request.
+
+  **Desktop and window drag, 2026-11-06 (row 259, no person):** logged
+  in as `user` (pointer-bench types Enter), a terminal open (Super+t),
+  then 60 pointer moves/s, then a drag of the terminal window with Super
+  held. Share of one core:
+
+  | | vc4d | rpi-fbd | vesad |
+  |---|---|---|---|
+  | idle, orbital | 0.3 % | 0.2 % | 0.2 % |
+  | moving, orbital | 1.7 % | (failed sample) | 1.5 % |
+  | moving, display daemon | vc4d 0.3 % | – | vesad 0.4 % |
+  | drag, orbital | (failed sample) | 90.9 % | 89.4 % |
+  | drag, display daemon | – | rpi-fbd 7.6 % | vesad 10.2 % |
+
+  So pointer moves on the desktop are cheap with every driver. The 92–100 %
+  core of row 256 was orblogin alone: Orbital passes every move to the
+  window under the pointer, and orblogin repaints its whole window
+  (with its full-screen background) for each one. With a hardware cursor
+  Orbital itself only moves the cursor plane (vc4d builds one display
+  list per move). A window drag is the expensive case: Orbital redraws
+  the window and what it uncovers in software, about 90 % of a core.
+  The cursor plane does not help there; a plane per window (step 2)
+  would. Two samples (vc4d drag, rpi-fbd moving) failed as in row 256:
+  `cputop` printed `0.0 s`, because `sleep` came back early right after
+  `pointer-bench` started in the background. It is not a display driver
+  failure: rpi-fbd ran `pointer-bench 5` cleanly (`300 moves in 5.0 s`).
+  cputop now sleeps until the round time has passed (branch
+  `cputop-full-sleep`). `vc4shot` worked on the Pi (both planes, cursor
+  with alpha) and shows no side bars and no top bar, so the bars seen in
+  row 220 come from the HDMI or NanoKVM side, not from vc4d's planes.
 
 ## License rule for `vc4d`
 
