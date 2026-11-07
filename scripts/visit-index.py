@@ -123,7 +123,8 @@ def main():
                         "note": note, "rows": rows(plan, name)})
 
     # README.txt
-    lines = ["Nightly visit images: test images for a person at the Pi", ""]
+    lines = ["Nightly visit images: test images for a person at the Pi", "",
+             "SD images with SwiftFlash, once: swiftflash source add redox %s/sdcard/" % HTTP, ""]
     lines += header + [""]
     for e in entries:
         lines.append("== %s (%s) ==" % (e["name"], state(e)))
@@ -137,6 +138,7 @@ def main():
         if e["sd"]:
             lines.append("SD card:       %s/sdcard/%s" % (HTTP, e["sd"]["file"]))
             lines.append("sha256:        %s" % e["sd"]["sha256"])
+            lines.append("SwiftFlash:    sudo swiftflash redox:redox-rpi-visit-%s" % e["name"])
         else:
             lines.append("SD card:       none (%s)" % (e["note"] or ("not built yet" if e["has_sd"] else "not in the config")))
         lines.append("owner topic:   %s" % e["owner"])
@@ -158,7 +160,9 @@ def main():
          "td{vertical-align:top;padding:.2em .5em}</style>",
          "<h1>Nightly visit images</h1>",
          "<p>Test images for a person at the Pi, built every night after the stable image "
-         "(docs/topics/ci.md, &ldquo;Nightly visit images&rdquo;).</p>"]
+         "(docs/topics/ci.md, &ldquo;Nightly visit images&rdquo;).</p>",
+         "<p>SD images with SwiftFlash: once <code>swiftflash source add redox %s/sdcard/</code>, "
+         "then the command under each image.</p>" % HTTP]
     h += ["<p><small>%s</small></p>" % html.escape(x) for x in header]
     for e in entries:
         cls, word = ("ok" if e["ok"] else "bad"), state(e)
@@ -175,6 +179,7 @@ def main():
             url = "%s/sdcard/%s" % (HTTP, e["sd"]["file"])
             h.append('<p>SD card: <a href="%s">%s</a><br>sha256 <code>%s</code></p>' % (
                 html.escape(url), html.escape(e["sd"]["file"]), html.escape(e["sd"]["sha256"])))
+            h.append("<p>Flash it with SwiftFlash (the newest build):</p><pre>sudo swiftflash redox:redox-rpi-visit-%s</pre>" % html.escape(e["name"]))
         else:
             h.append("<p>SD card: none (%s)</p>" % html.escape(e["note"] or ("not built yet" if e["has_sd"] else "not in the config")))
         if e["rows"]:
