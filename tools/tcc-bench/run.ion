@@ -9,7 +9,12 @@ tcc -v
 echo "== hello (dynamic)"
 timeit tcc -o hello $T/hello.c && timeit ./hello
 echo "== hello (static)"
-timeit tcc -static -o hello-static $T/hello.c && timeit ./hello-static
+# relibc's libc.a gives one error per relocation tcc does not know: keep
+# them in a file, show the first lines and the count.
+timeit tcc -static -o hello-static $T/hello.c ^> /tmp/tcc-static.err && timeit ./hello-static
+tail -1 /tmp/tcc-static.err
+head -4 /tmp/tcc-static.err
+wc -l /tmp/tcc-static.err
 echo "== tcc -run"
 timeit tcc -run $T/hello.c
 echo "== bench, compiled by tcc"
