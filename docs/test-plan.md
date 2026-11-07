@@ -22,6 +22,10 @@ tests on it.
    `scripts/with-build-lock.sh <command>`; it takes the same lock, and a
    `build-image.sh` inside it does not lock again. Never wrap a command in
    `flock` on that file yourself: `build-image.sh` would wait for it forever.
+   Every build without `--release` also gets the **test experiments** in
+   `config/test-experiments.conf` (now `netstack-watch`, for #92 and
+   #217), and the manifest lists them. Benchmark and A/B rows, where the
+   watch thread would count, build with `--no-test-experiments`.
 4. **Test:** stage the image, reboot the Pi, run the steps. Automated checks
    go through [`scripts/pi-test.py`](../scripts/pi-test.py).
 5. **Give the Pi back:** put the stable image back on the TFTP server

@@ -70,3 +70,14 @@ By hand: `--experiment netstack-watch`; for the Pi with `dwc2d-netstats`,
 - Found on the way: `kill -CONT` on the stopped `dwc2d` crashed it
   (`UNHANDLED EXCEPTION … dwc2d`), and netstack stayed in that read even
   after `dwc2d` was gone.
+- Pi tests 263 (40 chaos rounds) and 264 (10 warm resets), 60 s
+  heartbeat: every heartbeat said `idle for 0 s`, no other line; neither
+  bug came back.
+- QEMU `raspi3b`, timer alarm and 10 min heartbeat, as a default test
+  experiment (`v0.4.0-dev-625-g5a33b666+x2d42`, stable options
+  `timesync rtl8152`): 11 min with ping at the start and end gave one
+  heartbeat (`alive at 600 s, idle for 0 s, 1274 events`, about 2 per
+  second: the 500 ms timer) and no alarm. `kill -STOP` on `dwc2d` and a
+  ping: `stuck in read from the network device` after 5 and 35 s, and no
+  timer alarm while that is reported. The alarm itself could not be
+  triggered in QEMU: the timer comes from the kernel.
