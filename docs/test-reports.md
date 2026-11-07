@@ -10093,3 +10093,22 @@ So nothing on the HVS side matches the bands the user saw at #275. Either the fa
 HVS (pixel valve or HDMI), or what the user saw was the half-redrawn frames during moves.
 A look at the monitor during a drag would tell. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
 devsh answers. Outputs (serial, shots, cputop) in `~/pitest-tools/t276/` on homenodellm.
+
+## #277 #243 boot menu: network boot with the new netboot.scr (PR #244) (2026-11-07, Pi test agent)
+
+Image `~/t18-work/image-blw/harddrive.img` (md5 `bfb95c43…`, the stable `v0.4.0-dev-643-g58df647b+x9f76`,
+`bootloader-live.efi` md5 `a9ec1934…`), staged with `~/t18-work/menu-stage/scripts/netboot.sh`
+(branch `boot-menu`, new `netboot.scr` 5146 bytes, md5 `9528ce56…`). 3 power cycles, 16:09–16:13 UTC.
+The serial adapter was plugged in, so serial was logged too.
+
+**Result: pass. 3 of 3 boots, devsh after 31, 29 and 32 s (stable: about 29 s).**
+- Each boot on serial: `Filename 'redox/netboot.scr'`, then `Unknown command 'bootmenu' - try
+  'help'` (this U-Boot has no `bootmenu` yet, as expected), `redox-rpi: boot net redox/`,
+  `network boot from 192.168.178.120`, `image loaded over HTTP`. No panic.
+- `BUILD_ID` after each boot: `v0.4.0-dev-643-g58df647b+x9f76`.
+- `pi-test.py`: pass (version, manifest, ps 51, ps-tty, sdcard on `/scheme/data`, starts 0 of 300).
+- The stable files (old `netboot.scr` too) went back into `/srv/tftp/redox` (`stable/` not touched),
+  and the stable image booted, devsh answers.
+
+The menu on HDMI with the new `u-boot.bin` is still to test with a person. Outputs in
+`~/pitest-tools/t277/` on homenodellm.
