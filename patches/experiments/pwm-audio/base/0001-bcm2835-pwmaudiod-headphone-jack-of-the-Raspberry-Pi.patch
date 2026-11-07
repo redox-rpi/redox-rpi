@@ -1,11 +1,13 @@
-From 6c78b3ce56b353326da81c5104541953c5008073 Mon Sep 17 00:00:00 2001
+From 4badcac013fffdacf7185213e0e775a6a23e697c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH 1/2] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3
  as audiohw
 
 Two PWM channels (GPIO 40 and 41, ALT0) with their clock from PLLD/2
-(250 MHz, range 5669 at 44.1 kHz) play the jack. The DMA controller
+(250 MHz) play the jack. The FIFO gives one word per period to the two
+channels in turn (measured on the Pi), so the range is 2834: 44 107 Hz,
+about 11.5 bits. The DMA controller
 (channel 2, if the devicetree mask leaves it free) feeds the PWM FIFO from
 a ring of 8 slots of 512 frames; a 10 ms timer follows the ring, fills
 played slots with silence and lets waiting writes in. Writes of exactly
@@ -25,12 +27,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Makefile                                    |   2 +-
  drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
  drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 ++++++++
- drivers/audio/bcm2835-pwmaudiod/src/main.rs | 578 ++++++++++++++++++++
- drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 289 ++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 585 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 298 ++++++++++
  drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 +++++
  init.initfs.d/40_drivers.target             |   1 +
  init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
- 9 files changed, 1273 insertions(+), 1 deletion(-)
+ 9 files changed, 1289 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
@@ -326,10 +328,10 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..4826be88
+index 00000000..ef3ed47e
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,585 @@
 +//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
 +//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
 +//! signal; a filter on the board turns them into sound.
@@ -371,15 +373,15 @@ index 00000000..4826be88
 +mod ring;
 +
 +use dma::{DmaRing, SLOTS, SLOT_WORDS};
-+use pwm::{Pwm, ToneReport, SAMPLE_RATE};
++use pwm::{Pwm, ToneReport, SAMPLE_RATE, STA_GAPS};
 +use ring::{to_pwm, Ring, CHUNK_BYTES, SLOT_FRAMES};
 +
 +/// Bus addresses on the BCM283x, if the devicetree has none.
 +const PWM_BUS_ADDR: usize = 0x7e20_c000;
 +const CPRMAN_BUS_ADDR: usize = 0x7e10_1000;
 +const PAGE_SIZE: usize = 4096;
-+/// PLLD divided by 2: 250 MHz, a range of 5669 at 44.1 kHz (about 12.5
-+/// bits).
++/// PLLD divided by 2: 250 MHz, a range of 2834 at 44.1 kHz stereo (about
++/// 11.5 bits).
 +const CLOCK_DIVISOR: u32 = 2;
 +/// The pins of the jack, function ALT0 (PWM0 and PWM1).
 +const PINS: [u32; 2] = [40, 41];
@@ -435,6 +437,8 @@ index 00000000..4826be88
 +    last_fault: Option<(u32, u32)>,
 +    sta_errors: u64,
 +    sta_bits: u32,
++    /// Polls that found gap bits set.
++    sta_gaps: u64,
 +    tone: Option<ToneReport>,
 +    handles: HandleMap<Handle>,
 +}
@@ -452,6 +456,7 @@ index 00000000..4826be88
 +            last_fault: None,
 +            sta_errors: 0,
 +            sta_bits: 0,
++            sta_gaps: 0,
 +            tone: None,
 +            handles: HandleMap::new(),
 +        }
@@ -469,9 +474,12 @@ index 00000000..4826be88
 +            Output::Pwm { pwm, dma, .. } => (pwm.take_errors(), dma.fault()),
 +            Output::Clock { .. } => return,
 +        };
-+        if bits != 0 {
++        if bits & STA_GAPS != 0 {
++            self.sta_gaps += 1;
++        }
++        if bits & !STA_GAPS != 0 {
 +            self.sta_errors += 1;
-+            self.sta_bits |= bits;
++            self.sta_bits |= bits & !STA_GAPS;
 +        }
 +        if let Some((cs, debug)) = fault {
 +            self.dma_faults += 1;
@@ -582,7 +590,7 @@ index 00000000..4826be88
 +        }
 +        let _ = writeln!(text, "clock_hz {}", self.clock_hz);
 +        let _ = writeln!(text, "range {}", self.range);
-+        let _ = writeln!(text, "sample_rate {}", self.clock_hz / self.range);
++        let _ = writeln!(text, "sample_rate {}", self.clock_hz / self.range / 2);
 +        let _ = writeln!(text, "slots {SLOTS}x{SLOT_FRAMES}");
 +        let _ = writeln!(text, "uptime_s {uptime:.1}");
 +        let _ = writeln!(text, "played_slots {played}");
@@ -598,6 +606,7 @@ index 00000000..4826be88
 +            let _ = writeln!(text, "last_fault cs=0x{cs:08x} debug=0x{debug:08x}");
 +        }
 +        let _ = writeln!(text, "pwm_errors {} bits=0x{:03x}", self.sta_errors, self.sta_bits);
++        let _ = writeln!(text, "pwm_gap_polls {}", self.sta_gaps);
 +        if let Some(t) = &self.tone {
 +            let _ = writeln!(text, "tone {}", tone_line(t));
 +        }
@@ -809,7 +818,7 @@ index 00000000..4826be88
 +    println!(
 +        "bcm2835-pwmaudiod: PWM at 0x{pwm_phys:08x}, clock {} MHz (PLLD/{CLOCK_DIVISOR}), range {range} ({} Hz), DMA channel {} at 0x{dma_phys:08x}, {SLOTS} x {SLOT_FRAMES} frames",
 +        clock_hz / 1_000_000,
-+        clock_hz / range,
++        clock_hz / range / 2,
 +        dma::CHANNEL,
 +    );
 +    (out, range, clock_hz)
@@ -910,16 +919,21 @@ index 00000000..4826be88
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
 new file mode 100644
-index 00000000..d3848128
+index 00000000..6a66762c
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,298 @@
 +//! The PWM block (BCM2835 ARM Peripherals, chapter 9) and its clock from the
 +//! clock manager.
 +//!
 +//! Both channels run in the PWM algorithm mode (not mark-space) with the
 +//! same range and read one FIFO in turn: the first word goes to channel 1
 +//! (PWM0, GPIO 40), the next to channel 2 (PWM1, GPIO 41).
++//!
++//! The FIFO gives one word per range period, to the two channels in turn
++//! (measured on the Pi 3B+, test-plan #281): a channel gets a new value
++//! every second period. So a stereo frame takes two periods, and the range
++//! is clock / (2 × sample rate).
 +
 +use std::time::{Duration, Instant};
 +
@@ -946,6 +960,10 @@ index 00000000..d3848128
 +/// Write error, read error, gaps on channels 1 to 4, bus error; each bit is
 +/// cleared by writing 1.
 +pub const STA_ERRORS: u32 = 0x1fc;
++/// The gap bits. With both channels on the FIFO they are set all the time
++/// (#279, #281), also when the FIFO never ran empty, so they are counted
++/// apart from the errors.
++pub const STA_GAPS: u32 = 0xf0;
 +
 +// DMAC
 +const DMAC_ENAB: u32 = 1 << 31;
@@ -983,7 +1001,7 @@ index 00000000..d3848128
 +        Pwm {
 +            regs,
 +            cm,
-+            range: (clock_hz + SAMPLE_RATE / 2) / SAMPLE_RATE,
++            range: (clock_hz + SAMPLE_RATE) / (2 * SAMPLE_RATE),
 +            clock_hz,
 +        }
 +    }
