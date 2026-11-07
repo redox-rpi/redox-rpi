@@ -23,6 +23,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Graphics (effort analysis) | [graphics.md](graphics.md) | [topic:graphics](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agraphics) |
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
 | Native C compiler (TinyCC) | [tcc.md](tcc.md) | [topic:tcc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Atcc) |
+| Audio (plan) | [audio.md](audio.md) | – |
 | DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 

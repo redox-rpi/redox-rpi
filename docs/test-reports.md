@@ -10034,3 +10034,81 @@ with the t18 tree (`bootloader-live.efi` md5 `a9ec1934…`, checked), power cycl
   0.9, 0.9, 0.9 s; this image 0.9, 0.9, 0.9 s. devsh reports to 0.1 s, so 10 starts of ion are too
   few to show the saving (about 2.4 MB less to read per start); a loop of 100 or more would be needed.
 - No panic on serial. Stable 643 staged again and booted (devsh at 13:46:14).
+
+## #275 #33 desktop with apps, person at the screen (2026-11-07, Pi test agent)
+
+Network image `netboot-204b-v0.4.0-dev-702-ge7bafd21+x35fd.img` (branch `graphics-vc4d`, experiments
+`app-log cosmic-apps-source orbital orbital-apps timesync usb-mouse vc4d`), staged with the graphics
+`netboot.sh`, power cycle 13:53:32 UTC. The desktop SD card was in the Pi (so no `/scheme/data`).
+The user at the HDMI monitor, logged in as root (the 702 image starts no app for `user`).
+
+**Result: fail. The editor's Save dialog never appeared, and the monitor showed noise bands.**
+- Boot: login 13:54:16, `vc4d: check: … PASS` at 2, 5, 10, 30 and 120 s, no panic.
+- `app-log: start cosmic-files`, `start cosmic-edit` (13:57), `cosmic-edit exited with 0`, then
+  `start cosmic-edit` again (14:02). After the `cosmic_files::localize` line at 14:02:14 (the Save
+  dialog starting) nothing more came. The user saw no dialog.
+- Check at 14:04 over devsh: all apps idle (ps deltas), running as uid 0. `free` 339884 of
+  739796 KB used, `df /` 79 %. `vc4shot` was clean (`t275/shot.png`), so the bands the user saw on
+  the monitor are after the HVS (pixel valve or HDMI), not in the picture vc4d draws. That is
+  row #276.
+- Log noise: 5× `ion: … failed to redirect stdout to file '/scheme/debug': Operation not permitted`,
+  `procmgr … failed to send SIGCHLD to parent PID 37: Operation not permitted`, one `funmap passed
+  length 0xc800 instead of 0xd000` warning.
+- **After the visit the Pi hung.** The netboot card was put back and the 702 image booted again
+  (about 14:08). It stopped after `init: switchroot to /usr /etc` (14:09:15): no data partition
+  mount line, no login, no devsh. The Shelly showed power on, 3.2 W. Power cycle at 15:49 with
+  stable 643 staged: devsh after 20 s, `/scheme/data` mounts. One hang, not repeated.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` staged and booted, devsh answers. Outputs in
+`~/pitest-tools/t275/` on homenodellm.
+
+## #276 #188 #33 vc4d scanout while the desktop draws (2026-11-07, Pi test agent)
+
+Network image `netboot-vdiag-v0.4.0-dev-707-gc1432a37+xb3fe.img` (branch `graphics-vc4d` c1432a37,
+vc4d `scanout-diag`; experiments `app-log cosmic-apps-source cputop orbital orbital-apps
+pointer-bench timesync usb-mouse vc4d vc4d-diag`). HDMI connected as at #275, serial on.
+15:51–16:08 UTC. No person, so no look at the monitor; the NanoKVM was not used.
+
+**Result: the HVS side looks clean. No underrun, no foreign display list, buffers contiguous.**
+- Boot 1: login and vc4d checks fine, network link up, but no `devshd: listening` line and no
+  devsh for 3 min (looks like the #217 boot race). Power cycle; boot 2: devsh after 40 s.
+- `vc4d: buffer …: contiguous` for every buffer, no `NOT CONTIGUOUS`. `vc4d: check:` PASS at
+  2, 5, 10, 30, 60 and 120 s.
+- `vc4d: scanout:` minute lines at 180–482 s: `errors in 0 of 60 reads` every time, through
+  typing (MARK-TYPE), both drags (MARK-DRAG1/2) and the idle minutes. No `EUFLOW`, no
+  `channel reads the list at …, not ours`.
+- `60 list findings in the last minute` all the time, idle too: always word 3 of the active list
+  (`list word 2051` or `2115`, written `0xc0c0c0c0`, read back a changing `0x0…0000`). That is the
+  plane's dummy position word, which the HVS uses as its own scratch word (Linux writes a dummy
+  there too). So it is very likely a false finding of the diagnostic, not a display list fault.
+- Typing 200 letters (`pointer-bench --type`): cosmic-edit 82 %, orbital 19 %, cpu0 69 % busy.
+  Dragging the title bar (`pointer-bench 30 --drag 1000 156`, 1800 moves in 30 s, twice): the
+  window moved. `free`: 305–315 MB used of 740 MB.
+- vc4shots: `3-shot.png` (editor up), `5-shot.png` (typing) clean. `4-drag.png` (during the drag)
+  shows the window half redrawn: the top at the new place, the old lower body still over the
+  taskbar. That is in the frame vc4d scans out (Orbital's damage during the drag), not HDMI noise.
+- No panic. app-log: `start cosmic-edit`.
+
+So nothing on the HVS side matches the bands the user saw at #275. Either the fault is after the
+HVS (pixel valve or HDMI), or what the user saw was the half-redrawn frames during moves.
+A look at the monitor during a drag would tell. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
+devsh answers. Outputs (serial, shots, cputop) in `~/pitest-tools/t276/` on homenodellm.
+
+## #277 #243 boot menu: network boot with the new netboot.scr (PR #244) (2026-11-07, Pi test agent)
+
+Image `~/t18-work/image-blw/harddrive.img` (md5 `bfb95c43…`, the stable `v0.4.0-dev-643-g58df647b+x9f76`,
+`bootloader-live.efi` md5 `a9ec1934…`), staged with `~/t18-work/menu-stage/scripts/netboot.sh`
+(branch `boot-menu`, new `netboot.scr` 5146 bytes, md5 `9528ce56…`). 3 power cycles, 16:09–16:13 UTC.
+The serial adapter was plugged in, so serial was logged too.
+
+**Result: pass. 3 of 3 boots, devsh after 31, 29 and 32 s (stable: about 29 s).**
+- Each boot on serial: `Filename 'redox/netboot.scr'`, then `Unknown command 'bootmenu' - try
+  'help'` (this U-Boot has no `bootmenu` yet, as expected), `redox-rpi: boot net redox/`,
+  `network boot from 192.168.178.120`, `image loaded over HTTP`. No panic.
+- `BUILD_ID` after each boot: `v0.4.0-dev-643-g58df647b+x9f76`.
+- `pi-test.py`: pass (version, manifest, ps 51, ps-tty, sdcard on `/scheme/data`, starts 0 of 300).
+- The stable files (old `netboot.scr` too) went back into `/srv/tftp/redox` (`stable/` not touched),
+  and the stable image booted, devsh answers.
+
+The menu on HDMI with the new `u-boot.bin` is still to test with a person. Outputs in
+`~/pitest-tools/t277/` on homenodellm.

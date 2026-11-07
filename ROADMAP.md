@@ -121,13 +121,14 @@ from GPL-licensed drivers (Linux) is not.
 | **Setting the time** | `timesync` sets the clock over NTP at boot (v0.2.0). Missing: `clock_settime` / `settimeofday` in relibc, and an I2C clock module (DS3231) for boots without a network ([time.md](docs/topics/time.md)) | small |
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
 | **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
-| **Audio** | A sound driver for the Pi: HDMI audio (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM), plus `audiod`, Redox' sound daemon, working on aarch64 on top of it. Until then `audiod` stays out of the image (T18) | medium to large |
+| **Audio** | A sound driver for the Pi on top of Redox' `audiod`: first the 3B+ headphone jack through PWM and the DMA controller, then I2S DAC boards, later HDMI audio through `vc4d`. No closed firmware needed. Plan in [audio.md](docs/topics/audio.md) | medium |
 | **More firmware services** | `rpi-firmwared` only reads model, memory, clocks, temperature and throttling. Linux also uses the firmware for: power domains (USB, SD on and off, tag `0x28001`; helps `poweroff` and a clean USB reset), the GPIO expander (power LED on the 3B+), the DMA channel mask (`0x60001`, once drivers use DMA) and the display (EDID, resolution, framebuffer; U-Boot sets it up today). See [rpi-firmware.md](docs/rpi-firmware.md) | small each |
-| **VCHIQ** | The second VideoCore channel: sound over HDMI and the jack, camera, video decoding. Needed for Audio | large |
+| **VCHIQ** | The second VideoCore channel to the closed firmware: camera and video decoding (sound no longer needs it, see [audio.md](docs/topics/audio.md)) | large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI), [#25](https://github.com/redox-rpi/redox-rpi/issues/25) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43455 (Pi 3B+) and CYW43436 (Zero 2 W) over SDIO, firmware blob, WPA2; planned for v0.6.0 in [#26](https://github.com/redox-rpi/redox-rpi/issues/26) | large |
 | **Bluetooth** | Same chips, over the PL011 UART that is the serial console today; no Bluetooth stack in Redox yet | large |
+| **WebAssembly (WASI)** | Run `.wasm` programs on Redox: the same binary runs on Redox, Linux and the Mac, with no compiler on the Pi, each in its own sandbox. First [wasmi](https://github.com/wasmi-labs/wasmi), an interpreter in pure Rust that needs almost nothing from the OS. Later [Wasmtime](https://wasmtime.dev/) with [Cranelift](https://cranelift.dev/) (a code generator in Rust, much smaller than LLVM, with aarch64) for near-native speed; it needs executable memory and trap handling from Redox. An outlook: local apps as WASM modules with an HTML/CSS front end ([Blitz](https://github.com/DioxusLabs/blitz)) and our own host functions for the page, no JavaScript. Web apps from the internet still need a JS engine, because browsers reach the page from WASM only through JavaScript | medium (wasmi), large (Wasmtime, apps) |
 
 ## Later / optional
 
