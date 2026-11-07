@@ -55,5 +55,5 @@ cc -DC2STR conftest.c -o c2str.exe
 # Sources for the self-hosting test: tcc compiles tcc.c (ONE_SOURCE) with
 # this config.h and tccdefs_.h.
 mkdir -p "${COOKBOOK_STAGE}/usr/src/tinycc"
-cp -r *.c *.h include lib "${COOKBOOK_STAGE}/usr/src/tinycc/"
+cp -r *.c *.h *.def include lib "${COOKBOOK_STAGE}/usr/src/tinycc/"
 """
