@@ -9896,3 +9896,23 @@ it was then run with `bash`.
 - Logs `~/pitest-tools/t269/part-A.log` to `part-E.log`, sent to the open-firmware session. The Pi
   is off. The network-boot card goes back next, and the stable check follows when the bootloader fix
   for #266 arrives.
+
+## #270 #232 bootloader fix for the SD data partition panic (PR #234) (2026-11-07, Pi test agent)
+
+Image `~/t18-work/image-blw/harddrive.img` (`v0.4.0-dev-643-g58df647b+x9f76`, branch
+`bootloader-write-error`, timesync + rtl8152, md5 `bfb95c43…`), staged with the t18 tree;
+`/srv/tftp/redox/bootloader-live.efi` md5 `a9ec1934…` (checked). Network-boot card back in the Pi,
+the same card whose data partition made the old bootloader panic in #266. 09:48–09:51 UTC.
+
+**Result: pass. The Pi boots again.**
+- **Boot 1** (power on): `Looking for RedoxFS:`, `DiskEfi::write_at 0xA09 not implemented`,
+  `WARN - BlockIo error: I/O error`, then `RedoxFS f1b8bded…: 222 MiB` (the network image) and
+  `redox login:` 30 s after power on. No `SETUP PANIC`. devsh answers, `/scheme/data` mounted
+  (timesync.last, the Qwen model and older files all there).
+- **Boots 2 and 3** (power cycles): the data partition shows `RedoxFS on … has no kernel,
+  skipping`, then the network image, login after 30–31 s, no panic, `/scheme/data` mounted.
+- `pi-test.py`: version, manifest, ps (51), ps-tty, sdcard, starts 0 of 300 failed, all PASS.
+- `gpu_mem` unchanged: `/scheme/rpi-firmware/board` shows `vc_memory 0x3e600000 16777216`
+  (16 MiB), `arm_memory 1046478848`.
+- This image stays staged as stable until PR #234 is merged and the nightly builds with it
+  (copy in `~/pitest-tools/tftp-stable-643`; `/srv/tftp/stable` still has 604 with the old bootloader).
