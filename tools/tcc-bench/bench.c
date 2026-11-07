@@ -58,8 +58,8 @@ int main(void)
     char *flags = malloc(n);
 
     t0 = now_ms();
-    int f = fib(27);
-    printf("fib(27)    = %d  %8.1f ms\n", f, now_ms() - t0);
+    int f = fib(32);
+    printf("fib(32)    = %d  %8.1f ms\n", f, now_ms() - t0);
 
     t0 = now_ms();
     int p = 0;

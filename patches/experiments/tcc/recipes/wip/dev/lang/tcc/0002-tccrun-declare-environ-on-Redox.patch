@@ -1,7 +1,7 @@
-From ff654d853e7e5673d3935f30790733c021efd18d Mon Sep 17 00:00:00 2001
+From c95c5b36dd901b78853f70a4077bfd48ae289a48 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 15:55:54 +0000
-Subject: [PATCH 2/3] tccrun: declare environ on Redox
+Subject: [PATCH 2/4] tccrun: declare environ on Redox
 
 relibc declares environ in no header (glibc does in unistd.h with
 _GNU_SOURCE), so declare it as on the BSDs.

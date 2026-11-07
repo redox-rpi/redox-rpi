@@ -1,7 +1,7 @@
-From 6b86505ff962c8a8c348e4df5501e698753dec24 Mon Sep 17 00:00:00 2001
+From 2c28312af9bf5b2b93601c1a1dc8d88ca1789fbf Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 15:56:37 +0000
-Subject: [PATCH 3/3] armflush: __clear_cache for arm64 when gcc builds
+Subject: [PATCH 3/4] armflush: __clear_cache for arm64 when gcc builds
  libtcc1.a
 
 __arm64_clear_cache is a tcc builtin. With make arm64-libtcc1-usegcc=yes

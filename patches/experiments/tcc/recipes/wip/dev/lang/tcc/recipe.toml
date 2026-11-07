@@ -8,6 +8,7 @@ patches = [
     "exp-tcc-0001-Redox-target-define-__redox__-instead-of-__linux__.patch",
     "exp-tcc-0002-tccrun-declare-environ-on-Redox.patch",
     "exp-tcc-0003-armflush-__clear_cache-for-arm64-when-gcc-builds-lib.patch",
+    "exp-tcc-0004-Redox-gcc-s-integer-type-macros-for-relibc-s-stdint..patch",
 ]
 
 [build]
