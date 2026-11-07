@@ -80,5 +80,10 @@ through `/scheme/audio`, and the stats; not the sound.
   during 30 s of sound: `bcm2835-pwmaudiod` about 0.35 s (about 1 % of a
   core), `audiod` about 0.8 s over its two threads (about 3 %), part of
   it spent mixing silence all the time. `pi-test.py` standard checks pass.
-- Listening test: row 280 (a person with headphones), waiting.
+- 2026-11-07, Pi #284, default build `v0.4.0-dev-730-gaa76c1f9`: **pass**
+  (44 111–44 125 frames/s, no faults, `pi-test.py` passes).
+- 2026-11-07, Pi #280, listening with headphones, same build: **pass.**
+  All tones, left only in the left ear, the sweep and volume 100 fine;
+  faint hiss at idle, a little crackle (cheap headphones?); the boot click
+  was not checked. 44 minutes without a DMA fault or PWM error.
 

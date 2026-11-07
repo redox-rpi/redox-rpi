@@ -15,7 +15,13 @@ are enough; A3 and polish may follow in a later release.
   runs on the Pi again (base `0030` no longer leaves it out). `tone -s 3 >
   /scheme/audio` plays a test tone. **Beta:** about 11 usable bits, one
   fixed format (44.1 kHz s16 stereo), the PWM never stops after silence
-  yet, and nobody has listened yet (test #280).
+  yet, a faint hiss when quiet, and the boot click is not checked yet.
+- **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
+  in the left ear only (so left and right are right), the sweep and
+  volume 100 all played; a faint hiss at idle and a little crackle (cheap
+  headphones, maybe). A WAV file of the user's (s16le, 44.1 kHz, stereo)
+  played through `cat > /scheme/audio`. After 44 minutes: 44 008
+  frames/s, no DMA faults or PWM errors.
 - **Tested:** Pi test #283 passed (44 111 frames/s, no DMA faults or PWM
   errors, real-time playback through `audiod`, about 1 % of a core for
   the driver and 3 % for `audiod`). #279 had found half speed; #281
