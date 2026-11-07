@@ -27,3 +27,23 @@ remembers a missing icon for 10 minutes instead of 5 seconds.
 pop-os/freedesktop-icons: "Icon lookups re-read index.theme and retry
 missing icons every 5 s", with the numbers above and the patch. It is not
 Redox specific; Linux hides the cost with the page cache.
+
+## Results
+
+QEMU (2026-11-07, rpi-fb): `index.theme` read once per theme; typing 100
+keys cost cosmic-edit 7.3 % (61 % without the patch); the Save dialog was up
+within 9 s; saving and Ctrl+Q worked.
+
+Pi test #274 (2026-11-07, vc4d, 1920x1080), against #272 without the patch:
+
+| | #272 | #274 |
+|---|---|---|
+| `Cosmic/index.theme` / `hicolor/index.theme` reads | 114 / 42 | 1 / 1 |
+| typing, redoxfs | 24 % | 4.5 % |
+| typing, cosmic-edit | 38 % (815 wakeups/s) | 56.7 % (134/s) |
+| after Ctrl+Shift+S, redoxfs | 79 % | 34 % |
+| Save dialog shown | after 20-55 s | within 28 s (first picture) |
+
+Saving (`savetest`, 100 bytes) and Ctrl+Q (`exited with 0`) worked. The
+redoxfs load is gone. Typing still costs the editor about half a core at
+10 keys/s on the Pi: CPU work in the app itself (the QEMU window was smaller).
