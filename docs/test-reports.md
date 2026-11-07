@@ -9824,3 +9824,18 @@ Card `redox-rpi-lkoverlay-3bp-20261105c.img.xz` on the spare card (user swap). 9
 - Probable cause: `vpu clock is 0, cdiv 0`, so the ARM side runs the SD clock with divider 0.
 - Raw log sent to the open-firmware session (`~/pitest-tools/t254/serial-raw.log`). The stable
   network-boot check follows when the Pi boots again (see #266).
+
+## #265 #230 our own bootcode.bin, milestone M1 (2026-11-07, Pi test agent)
+
+Card `redox-rpi-bootcode-m1-3bp-20261107.img.xz` on the spare card (user swap, same visit as
+#254). 90 s of serial, 08:52–08:54 UTC. No HDMI connected.
+
+**Result: pass.** All expected lines, in order:
+`redox-rpi bootcode m1-20261107 (M1)`, `VPU cpuid 0x4000140`, `from the Boot ROM: CM_VPUCTL 0x241
+CM_VPUDIV 0x1000 PLLC_CTRL 0x10000 PLLC_FRAC 0x0 SD_CS 0x794200 timer 2679049 us`,
+`[sdram] controller up, SD_CS 0x218E42`, `[sdram] Elpida 1 GB LPDDR2 (MR5 0x3, MR8 0x58)`,
+`[sdram] DDR PLL locked, 398400 kHz`, `[sdram] self test passed, 1024 MB, 32 regions, 28088 us`,
+`SDRAM ready after 52436 us`, `M1 done: stage 1 runs, SDRAM works. Nothing to load yet.`, then
+`alive 10 s` to `alive 60 s`. Last line `alive 60 s`, nothing after it up to 90 s. No PANIC or
+EXCEPTION. Raw log `~/pitest-tools/t265/serial-bootcode-m1.log`, sent to the open-firmware
+session. The stable network-boot check follows when the Pi boots again (see #266).
