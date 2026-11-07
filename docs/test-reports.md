@@ -9945,3 +9945,7 @@ attached, USB keyboard and mouse. The staged bootloader has patch 0003. 10:31–
   from the HDMI/NanoKVM side.
 - Serial after login: only the launcher's `failed to wait for background (43): No child processes`
   and cosmic-files' thumbnail-directory note (expected on first run). No panic.
+- **User, addendum:** on a second start the editor came up faster; clicking File reacts unreliably;
+  File → Save as… never showed a file dialog; then the editor window vanished. At 10:49 `ps` has no
+  cosmic-edit any more (orbital, launcher and cosmic-files still run) and serial shows no line for its
+  end (no panic, no crash message).
