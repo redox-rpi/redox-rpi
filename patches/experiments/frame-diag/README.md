@@ -6,7 +6,7 @@ this). softbuffer (`pop-os/softbuffer`, tag `cosmic-4.0`, `c2b2c19`), which
 puts the pixels into the Orbital window, prints every 2 s while frames are
 drawn:
 
-    frame-diag: <w>x<h>: <n> frames (<full> full, <copied> copied) in 2.0 s: map <ms> ms, draw <ms> ms, present <ms> ms
+    frame-diag: <w>x<h>: <n> frames (<full> full, <copied> copied) in 2.0 s: map <ms> ms, draw <ms> ms, present <ms> ms, damage <pct> % of the window
 
 - **map**: `buffer_mut`, asking Orbital for the window size and mapping
   the window buffer, each frame;
