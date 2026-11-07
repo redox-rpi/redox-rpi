@@ -184,6 +184,18 @@ and UART sequences come from rpi-open-firmware).
   10 s for 60 s with no panic. The system timer already reads 2.68 s when
   our code starts, so the Boot ROM takes that long before it runs
   `bootcode.bin`. Why is still open.
+- **Serial monitor (test builds only, `make MONITOR=1`; Pi test #269
+  queued):** after the SDRAM test it waits 5 s for Enter, otherwise it
+  goes on with the normal boot. Commands: read, write, set and clear bits,
+  dump, load code over the UART as hex with a CRC-32 check, call VPU code,
+  `chain` another `bootcode.bin` image (lk-overlay's stage 1 or
+  Broadcom's) through a trampoline at `0x80019000`, and `boot`. Each reply
+  starts with `ok` or `err`, so the Pi test agent can script it with
+  `bootcode/rbc-load.sh`, which only writes to the serial port and reads
+  the one reader's log. After one card visit, new VPU stages come over
+  serial. Never in a release: anyone on the serial pins gets full control.
+  If chaining Broadcom's `bootcode.bin` from the monitor network-boots
+  Redox (part E of #269), the monitor card can stay in the Pi.
 - **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
   the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
   boot and what 3D needs (see step 5 above).
@@ -302,7 +314,16 @@ step 3. The gaps for us:
     `redox-rpi/lk-patches/0002` uses the 250 MHz that stage 2 leaves
     ([rpi-open-firmware#1](https://github.com/redox-rpi/rpi-open-firmware/pull/1)).
     QEMU can't check it, because its raspi3b machine puts the card on the
-    EMMC controller, not SDHOST. Rerun: Pi test #268.
+    EMMC controller, not SDHOST.
+  - **Pi test #268 (2026-11-07): SD reads fixed, the loader stops at the
+    devicetree.** `vpu clock is 250, cdiv 10`, 25 MHz, and the 35 KB
+    devicetree was read with no transfer errors (#254: 136). Then
+    `ERROR: fdt_open_into() == -3` (`FDT_ERR_NOSPACE`): the loader opens
+    the devicetree into a 16 KB buffer, and the Raspberry Pi devicetree for
+    the 3B+ is 35 KB. Patch `0003` gives it 128 KB of the 1 MB mapping. The
+    next test (#269) loads that stage 2 over our serial monitor (see
+    below), so lk-overlay iterations need no card swap any more: stage 2
+    is one block at `0xc4000000` (296 KB, about 60 s over serial).
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
