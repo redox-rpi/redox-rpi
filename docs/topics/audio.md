@@ -2,7 +2,9 @@
 
 Sound on the Pi 3B+: what Redox already has, how the Pi makes sound, and
 a plan that starts with the headphone jack through PWM. Written
-2026-11-07 before any work started. No issue and no release target yet.
+2026-11-07 before any work started. The PWM driver is
+[#250](https://github.com/redox-rpi/redox-rpi/issues/250); no release
+target yet.
 
 ## State
 

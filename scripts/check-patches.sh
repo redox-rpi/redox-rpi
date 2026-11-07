@@ -34,6 +34,7 @@ repos="kernel     https://gitlab.redox-os.org/redox-os/kernel.git
 relibc     https://gitlab.redox-os.org/redox-os/relibc.git
 base       https://gitlab.redox-os.org/redox-os/base.git
 bootloader https://gitlab.redox-os.org/redox-os/bootloader.git
+redoxfs    https://gitlab.redox-os.org/redox-os/redoxfs.git
 fdt        https://github.com/repnop/fdt.git"
 
 # Experiments that apply only after another one (see their READMEs).

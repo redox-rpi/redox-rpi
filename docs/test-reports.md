@@ -10112,3 +10112,31 @@ The serial adapter was plugged in, so serial was logged too.
 
 The menu on HDMI with the new `u-boot.bin` is still to test with a person. Outputs in
 `~/pitest-tools/t277/` on homenodellm.
+
+## #278 #247 TinyCC compiles and runs C on the Pi (2026-11-07, Pi test agent)
+
+Network image `netboot-tcc-v0.4.0-dev-689-gb453b397+xd12c.img` (branch `tcc` b453b397, experiments
+`tcc timesync`). Real Pi 3B+, power cycle 16:31:25 UTC, devsh after 29 s. 16:31–16:33 UTC.
+
+**Result: pass.** `Hello from tcc on Redox` three times (`./hello`, `tcc -run`, `./hello2` from the
+self-built `tcc2`); bench results the same as gcc's; no `UNHANDLED EXCEPTION` or panic on serial.
+- `tcc version 0.9.28rc 2026-11-07 HEAD@70adbb12* (AArch64 Linux)`.
+- hello (dynamic): `[timeit] 100.0 ms` tcc, `29.9 ms` ./hello.
+- hello (static): expected failure, `46718.3 ms, status 1`, `Unknown relocation type for got: 562`
+  (also 563, 564, 569).
+- `tcc -run`: `130.0 ms`.
+- bench compiled by tcc: `# 4616 lines, 0.084 s, 54952 lines/s`, compile `162.3 ms`.
+
+| bench | tcc run 1 | tcc run 2 | gcc -O2 run 1 | gcc -O2 run 2 |
+|---|---|---|---|---|
+| fib(32) = 2178309 | 120.1 ms | 120.3 ms | 36.1 ms | 36.1 ms |
+| sieve 5x2M = 148933 | 1245.4 ms | 1245.7 ms | 951.1 ms | 948.2 ms |
+| mandel 200 = 9800 | 115.3 ms | 118.3 ms | 35.3 ms | 35.3 ms |
+| total (timeit) | 1514.2 ms | 1519.7 ms | 1059.1 ms | 1054.3 ms |
+
+- Self-hosting, tcc compiles tcc.c (77143 lines): run 1 `0.703 s, 109733 lines/s`, `[timeit] 822.8 ms`;
+  warm run `0.716 s, 107741 lines/s`, `831.1 ms`. `./tcc2` builds hello2 in `101.2 ms`.
+- Whole run.ion took about 50 s; most of it is the static link (47 s; QEMU 80–95 s).
+- `free` afterwards: 159820 of 739896 KB used.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t278/`.
