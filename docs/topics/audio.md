@@ -19,8 +19,11 @@ are enough; A3 and polish may follow in a later release.
   `EINVAL`/`EWOULDBLOCK` contract, `cat file > /scheme/audio`); QEMU has
   no PWM clock, so there it plays to the clock instead of the jack. Pi
   test #279 found it playing at half speed; #281 showed why (the channels
-  take turns on the FIFO), and the range is now 2834. A rerun of #279
-  comes next; the listening test #280 needs a person with headphones.
+  take turns on the FIFO), and the range is now 2834. **#283 passed:**
+  44 111 frames/s measured, no DMA faults or PWM errors, the CPU tone and
+  `tone > /scheme/audio` take their real time, about 1 % of a core for the
+  driver and 3 % for `audiod` while playing. The listening test #280
+  needs a person with headphones.
 - **Release plan:** v0.4.0, beta. Once #279 and #280 pass, PR #251 moves
   the patches to the default directories, so the driver and `audiod` run
   in every image, and the v0.4.0 release notes list sound from the jack
