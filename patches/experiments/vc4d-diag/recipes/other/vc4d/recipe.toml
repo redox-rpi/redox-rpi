@@ -3,7 +3,7 @@
 # Experiment vc4d-diag: branch scanout-diag of redox-rpi/vc4d.
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "9f931e205396468fdca02b48d9dbe9287be10578"
+rev = "49e72eb26ff08c1febc935ef505805c2a725f880"
 
 [build]
 template = "cargo"

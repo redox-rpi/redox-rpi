@@ -2,7 +2,7 @@
 
 Test only ([#188](https://github.com/redox-rpi/redox-rpi/issues/188),
 [#33](https://github.com/redox-rpi/redox-rpi/issues/33)), after `vc4d`:
-builds vc4d from branch `scanout-diag` (redox-rpi/vc4d `9f931e2`).
+builds vc4d from branch `scanout-diag` (redox-rpi/vc4d `49e72eb`).
 
 Pi test #275 showed noise bands over the lower half of the HDMI picture
 while the editor was in use, on the NanoKVM and on a monitor, while
@@ -23,3 +23,12 @@ serial:
 
 On aarch64, Redox maps uncached and write-combining memory alike (Normal
 non-cacheable), so a write-combining buffer is not a separate test.
+
+## Pi test #276 (vc4d 9f931e2)
+
+Typing 200 keys, two 30 s window drags, 2 min idle: errors in 0 of 60
+reads every minute, all buffers contiguous, the channel always on our
+list. The HVS reported no underrun and nothing else changed the list. The
+only list findings were the context word (word 3), which the HVS writes
+itself while it scans out; since `49e72eb` those words are skipped. No
+screen was watched in that run, so whether the bands showed is not known.
