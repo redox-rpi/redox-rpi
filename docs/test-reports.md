@@ -10112,3 +10112,143 @@ The serial adapter was plugged in, so serial was logged too.
 
 The menu on HDMI with the new `u-boot.bin` is still to test with a person. Outputs in
 `~/pitest-tools/t277/` on homenodellm.
+
+## #278 #247 TinyCC compiles and runs C on the Pi (2026-11-07, Pi test agent)
+
+Network image `netboot-tcc-v0.4.0-dev-689-gb453b397+xd12c.img` (branch `tcc` b453b397, experiments
+`tcc timesync`). Real Pi 3B+, power cycle 16:31:25 UTC, devsh after 29 s. 16:31–16:33 UTC.
+
+**Result: pass.** `Hello from tcc on Redox` three times (`./hello`, `tcc -run`, `./hello2` from the
+self-built `tcc2`); bench results the same as gcc's; no `UNHANDLED EXCEPTION` or panic on serial.
+- `tcc version 0.9.28rc 2026-11-07 HEAD@70adbb12* (AArch64 Linux)`.
+- hello (dynamic): `[timeit] 100.0 ms` tcc, `29.9 ms` ./hello.
+- hello (static): expected failure, `46718.3 ms, status 1`, `Unknown relocation type for got: 562`
+  (also 563, 564, 569).
+- `tcc -run`: `130.0 ms`.
+- bench compiled by tcc: `# 4616 lines, 0.084 s, 54952 lines/s`, compile `162.3 ms`.
+
+| bench | tcc run 1 | tcc run 2 | gcc -O2 run 1 | gcc -O2 run 2 |
+|---|---|---|---|---|
+| fib(32) = 2178309 | 120.1 ms | 120.3 ms | 36.1 ms | 36.1 ms |
+| sieve 5x2M = 148933 | 1245.4 ms | 1245.7 ms | 951.1 ms | 948.2 ms |
+| mandel 200 = 9800 | 115.3 ms | 118.3 ms | 35.3 ms | 35.3 ms |
+| total (timeit) | 1514.2 ms | 1519.7 ms | 1059.1 ms | 1054.3 ms |
+
+- Self-hosting, tcc compiles tcc.c (77143 lines): run 1 `0.703 s, 109733 lines/s`, `[timeit] 822.8 ms`;
+  warm run `0.716 s, 107741 lines/s`, `831.1 ms`. `./tcc2` builds hello2 in `101.2 ms`.
+- Whole run.ion took about 50 s; most of it is the static link (47 s; QEMU 80–95 s).
+- `free` afterwards: 159820 of 739896 KB used.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t278/`.
+
+## #279 #250 PWM audio driver, stages A1 and A2 (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-704-gfa8f2ef9+x6d83.img` (branch `pwm-audio`, md5 `0fcec28e39f8…`).
+Real Pi 3B+, power cycle 16:54:20 UTC, devsh after 45 s. Nothing connected to the audio jack. 16:54–16:59 UTC.
+
+**Result: fail. Everything runs, but the PWM plays at half the rate: 22050 instead of 44100 frames/s.**
+- (1) Boot: `bcm2835-pwmaudiod: PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 5669 (44099 Hz), DMA
+  channel 2 at 0x3f007000, 8 x 512 frames` (44099, the row says 44098). No `playing to the clock`. The
+  only audiod line is `uring communication is not supported …`. No panic, no `UNHANDLED EXCEPTION`.
+- (2) `/scheme/audio` and `/scheme/audiohw` are there; `/scheme/gpio/pins`: `40 alt0 1`, `41 alt0 1`.
+- (3) stats at 37.7 s and 68.5 s: `mode pwm-dma`, **`measured_rate_hz 22050` and `22051`** (pass range
+  43900–44300). `played_slots` 1625 → 2952 (+1327 in 30.8 s; about 2580 expected). `dma_faults 0`,
+  `underruns 1` (no change), `queued 6`, `pwm_errors 2093 → 4981 bits=0x030` (STA bits 4 and 5, GAPO1 and
+  GAPO2: gap on both channels, about 94 per second).
+- (4) `echo 3 > /scheme/audiohw/tone` returned after 6.3 s (not 3 s): `tone seconds=6.07 words=264600
+  rate_hz=21798 fifo_empty=66 sta=0x030`. 264600 words is 3 s of stereo at 44100, so the CPU tone also
+  ran at half speed. 10 s later: `played_slots` 3026 → 3491 (rising), `dma_faults 0`.
+- (5) `tone check`: `short write: EINVAL (good)`, `full chunks accepted before EWOULDBLOCK: 0 (good)`.
+- (6) `time tone -s 5 > /scheme/audio`: `real 9.869 s`, rc 0 (twice the 5 s). `tone sweep -s 5` rc 0,
+  about 10 s. `chunks` 3240 → 4252, `underruns 1`, `queued 7`.
+- (7) CPU around `tone -s 30 > /scheme/audio` (took 60 s, rc 0), ps ACTTIME/SCHTIME:
+  `bcm2835-pwmaudiod` 6.33/6.26 s → 6.60/6.48 s (+0.27/+0.22 s, about 0.8 % of a core). It had used
+  6.3 s in its first 2.5 min (most of that before the test, probably during boot or the CPU tone).
+  `audiod` two threads: 0.12/0.11 → 0.35/0.27 s and 0.31/0.47 → 0.63/0.92 s (+0.84 s total).
+  stats after: `measured_rate_hz 21296`, `played_slots 7395`, `dma_faults 0`, `pwm_errors 6069`.
+- (8) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
+
+So the DMA ring and the driver work without faults, but the PWM takes words at half the expected
+speed (about 44100 words/s for stereo, so 22050 frames/s), with GAPO on both channels. Either the PWM
+clock is 125 MHz and not 250 MHz, or each channel takes its word once per range period only on
+alternate periods. That is for the audio session. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
+devsh answers. Outputs in `~/pitest-tools/t279/`.
+
+## #281 #250 why the PWM plays at half rate: diagnosis (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-706-g54a81fc1+x6d83.img` (branch `pwm-audio` 54a81fc1, md5
+`a1b04fde1193…`). Real Pi 3B+, power cycle 17:04:46 UTC, devsh after 30 s. 17:04–17:07 UTC.
+
+**Result: the channels take turns on one FIFO word per period. The 250 MHz clock is right.**
+Words per second follow only range and divisor, not mono or stereo, so stereo gets half the frames:
+
+| case | words/s | frames/s | expected (take turns) | expected (half clock) |
+|---|---|---|---|---|
+| (a) `2` stereo | 44099 | 22050 | 44100 words/s | |
+| (b) `2 mono` | 43515 | 43515 | 44100 | 22050 |
+| (c) `2 range=2834` | 88215 | 44107 | 88200 | |
+| (d) `2 mono range=2834` | 84715 | 84715 | 88200 | 44100 |
+| (e) `2 div=4` | 22050 | 11025 | 22050 | |
+| (f) `2 mono div=4` | 21918 | 21918 | 22050 | |
+
+The six lines (from serial; over devsh `grep '^tone' /scheme/audiohw/stats` printed nothing, the
+final `cat` showed the same last line):
+```
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=5669 div=2 seconds=4.00 words=176400 words_per_s=44099 rate_hz=22050 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=5669 div=2 seconds=2.03 words=88200 words_per_s=43515 rate_hz=43515 fifo_empty=24 sta=0x000
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=2834 div=2 seconds=2.00 words=176400 words_per_s=88215 rate_hz=44107 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=2834 div=2 seconds=1.04 words=88200 words_per_s=84715 rate_hz=84715 fifo_empty=32 sta=0x000
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=5669 div=4 seconds=8.00 words=176400 words_per_s=22050 rate_hz=11025 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=5669 div=4 seconds=4.02 words=88200 words_per_s=21918 rate_hz=21918 fifo_empty=65 sta=0x000
+```
+- Stereo runs end with `sta=0x030` (GAPO1/GAPO2) and `fifo_empty=0`; mono runs `sta=0x000` with
+  `fifo_empty` 24–65.
+- Afterwards `cat /scheme/audiohw/stats`: `played_slots` 1271 → 1522 in 5.8 s (rising), `dma_faults 0`,
+  `underruns 1`, `measured_rate_hz` 12859/13807 (still recovering from the tones), `pwm_errors` 1570 → 1724
+  `bits=0x030`.
+- No panic. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t281/`.
+
+So a stereo fix is range 2834 (c: 44107 frames/s), or another way to give each channel its own word per period.
+
+## #282 #247 tcc: a C file run as a script (`#!/usr/bin/tcc -run`) (2026-11-07, Pi test agent)
+
+Network image `netboot-tcc-v0.4.0-dev-716-gc6d4de06+xd12c.img` (branch `tcc` c6d4de06, experiments
+`tcc timesync`). Real Pi 3B+, power cycle 17:07:54 UTC, devsh after 29 s. 17:07–17:09 UTC.
+
+**Result: pass.**
+- (1) `echo hello | timeit ./hallo.c a b`: `argv[0]=./hallo.c`, `argv[1]=a`, `argv[2]=b`,
+  `Hallo, stdin 6 bytes`, `[timeit] 128.5 ms, status 42: ./hallo.c`, `rc=42`.
+- (2) warm: the same lines, `[timeit] 127.4 ms, status 42`, `rc=42`.
+- (3) `/tmp/t282/hallo.c x < /dev/null`: `argv[0]=/tmp/t282/hallo.c`, `argv[1]=x`, `Hallo, stdin 0 bytes`,
+  `rc=42`.
+- No panic or `UNHANDLED EXCEPTION` on serial.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t282/`.
+
+## #283 #250 PWM audio rerun with the half-rate fix (range 2834) (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-707-g7c92bc80+x6d83.img` (branch `pwm-audio` 7c92bc80, md5 `2dbdd7ba6e4e…`).
+Real Pi 3B+, power cycle 17:11:39 UTC, devsh after 30 s. Nothing connected to the jack. 17:11–17:15 UTC.
+
+**Result: pass. The PWM now runs at 44.1 kHz; times match the audio length.**
+- (1) Boot: `bcm2835-pwmaudiod: PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 2834 (44107 Hz), DMA channel
+  2 at 0x3f007000, 8 x 512 frames`. No `playing to the clock`; the only audiod line is `uring communication is
+  not supported …`. No panic, no `UNHANDLED EXCEPTION`.
+- (2) `/scheme/audio` and `/scheme/audiohw` there; `40 alt0 1`, `41 alt0 1`.
+- (3) stats at 22.1 s and 52.9 s: `mode pwm-dma`, `measured_rate_hz 44111` both times, `played_slots`
+  1900 → 4556 (+2656 in 30.8 s), `dma_faults 0`, `pwm_errors 0 bits=0x000`, `underruns 1` (no change),
+  `queued 7/6`, `pwm_gap_polls` 1414 → 2759 (about 44 per second).
+- (4) `echo 3 > /scheme/audiohw/tone` returned after 3.2 s: `tone stereo range=2834 div=2 seconds=3.00
+  words=264600 words_per_s=88107 rate_hz=44053 fifo_empty=5 sta=0x030`. 10 s later `played_slots` 4697 →
+  5629, `dma_faults 0`. (`measured_rate_hz` 41811–42952 in the minutes after the tone: the average
+  includes the tone's pause of the ring.)
+- (5) `tone check`: `short write: EINVAL (good)`, `full chunks accepted before EWOULDBLOCK: 0 (good)`.
+- (6) `time tone -s 5 > /scheme/audio`: `real 4.956 s`, rc 0. `tone sweep -s 5`: 5.2 s, rc 0. `chunks`
+  5115 → 6290, `underruns 1`.
+- (7) `tone -s 30 > /scheme/audio`: 30.2 s, rc 0. ps ACTTIME/SCHTIME before → after: `bcm2835-pwmaudiod`
+  3.39/0.29 → 3.61/0.42 s (+0.35 s in about 32 s, about 1 % of a core); `audiod` two threads 0.10/0.09 →
+  0.30/0.19 and 0.37/0.64 → 0.68/1.12 s (+1.09 s total, about 3 %). After: `played_slots 9594`,
+  `dma_faults 0`, `pwm_errors 0`, `pwm_gap_polls 4373`.
+- (8) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t283/`.
