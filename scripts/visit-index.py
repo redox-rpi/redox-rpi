@@ -90,6 +90,14 @@ def plain(text):
     return text.replace("**", "").replace("`", "")
 
 
+def state(e):
+    if e["ok"]:
+        return "OK"
+    if e["build_id"]:
+        return "last build %s, the older image below still works" % e["result"]
+    return "FAILED: " + e["result"]
+
+
 def main():
     out, conf, plan_file = sys.argv[1:4]
     sdcard = sys.argv[4] if len(sys.argv) > 4 else "/srv/tftp/sdcard"
@@ -118,7 +126,7 @@ def main():
     lines = ["Nightly visit images: test images for a person at the Pi", ""]
     lines += header + [""]
     for e in entries:
-        lines.append("== %s (%s) ==" % (e["name"], "OK" if e["ok"] else "FAILED: " + e["result"]))
+        lines.append("== %s (%s) ==" % (e["name"], state(e)))
         if e["build_id"]:
             lines.append("newest image:  %s, built %s" % (e["build_id"], e["info"].get("built", "?")))
             lines.append("from:          %s, commit %s" % (e["info"].get("ref", "?"), e["info"].get("commit", "?")[:9]))
@@ -153,7 +161,7 @@ def main():
          "(docs/topics/ci.md, &ldquo;Nightly visit images&rdquo;).</p>"]
     h += ["<p><small>%s</small></p>" % html.escape(x) for x in header]
     for e in entries:
-        cls, word = ("ok", "OK") if e["ok"] else ("bad", "FAILED: " + e["result"])
+        cls, word = ("ok" if e["ok"] else "bad"), state(e)
         h.append('<section><h2>%s <span class="%s">%s</span></h2>' % (html.escape(e["name"]), cls, html.escape(word)))
         if e["build_id"]:
             h.append("<p>Newest image <code>%s</code>, built %s from %s, commit <code>%s</code>.<br>Options: <code>%s</code></p>" % (
