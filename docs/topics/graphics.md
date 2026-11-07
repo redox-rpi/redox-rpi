@@ -66,9 +66,9 @@ on the CPU into a dumb buffer.
 ## Step plan at a glance
 
 From the firmware's framebuffer to the GPU, each step on top of the one
-before. "Before" is the estimate written before any code, "Now" what
-QEMU showed by 2026-10-30 (details in the step sections, In progress and
-Effort below).
+before. "Before" is the estimate written before any code, "Now" the
+state on 2026-11-07 (details in the step sections, In progress, Effort
+and Later below).
 
 | Step | What | Before | Now | Left, new estimate |
 |---|---|---|---|---|
@@ -76,12 +76,13 @@ Effort below).
 | 1b | Double buffering by page flip: two screens in one buffer, the mailbox's virtual offset (tag `0x00048009`) shows the finished one; EDID polling, blanking | part of 1a | works in QEMU (`graphics-fb2`, patch `0026`); waiting for the vertical blank after a flip on `graphics-vsync` (patch `0036`, tag `0x0004800e`, falls back where the firmware lacks it, as in QEMU) | Pi tests #43 and #97. Missing: two screens at 1920x1080/1200 (need `gpu_mem` 32 or more, two 8–9 MiB screens); 1–3 days with Pi tests |
 | 2a | DMA blits: the copy to the screen by the DMA controller | 2–4 weeks | prototype in QEMU (`graphics-fb3`) | Pi test #44 decides if it pays; cached dumb buffers need cache maintenance from user space (kernel, DMA plan #21); a few days |
 | – | Desktop: Orbital on `rpi-fbd`, keyboard, terminal, mouse | not planned | works in QEMU (`graphics-gui`, `graphics-gui-mouse`) | Pi test #54 and the mouse test; faster terminal is upstream work |
-| 2b | Own display driver (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware | 2–3 months | not started | unchanged; no template in Redox, debugging on the Pi with someone at the screen (the NanoKVM helps) |
-| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | not started | unchanged; needs render nodes and buffer sharing in upstream Redox first |
+| 2b | Own display driver [`vc4d`](https://github.com/redox-rpi/vc4d) (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)) | 2–3 months | HVS part runs on the Pi (vc4d stage 1, draft [vc4d#1](https://github.com/redox-rpi/vc4d/pull/1), branch `graphics-vc4d`, experiment `vc4d`; Pi tests 220a, 256, 259, 276): primary plane scanned out directly, 64x64 hardware cursor, the firmware's mode | pixel valves, HDMI, EDID, modes, vertical blank; windows as planes need Orbital changes; noise bands on HDMI seen at #275, cause open (see Later) |
+| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | no code (vc4d stage 2) | unchanged; needs render nodes and buffer sharing in upstream Redox first |
 
 Steps 1 and 2a went fast because Redox had a template for every part and
-the firmware does the HDMI work; 2b and 3 have neither, so their
-estimates stand.
+the firmware does the HDMI work. The HVS part of 2b went fast too, because
+it keeps the firmware's mode; the rest of 2b and step 3 have no template,
+so their estimates stand.
 
 ## Step 1: a firmware framebuffer driver
 
@@ -431,9 +432,9 @@ the screen.
 - DMA blits beyond the prototype once #21's common DMA code and cache
   maintenance exist.
 - **`vc4d`, a VideoCore IV display and 3D driver ported from Linux `vc4`
-  ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)).** A plan,
-  no code, no milestone yet. It replaces steps 2b and 3 above, in three
-  stages:
+  ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)).** Stage
+  (a) has code and runs on the Pi (below); (b) and (c) have no code. No
+  milestone yet. It replaces steps 2b and 3 above, in three stages:
   - (a) display only: `vc4d` programs the HVS and replaces `rpi-fbd`;
     pointer and windows as hardware planes, so moving them copies
     nothing. The first and smallest stage, and most of the gain for a 2D
@@ -530,6 +531,19 @@ the screen.
   `cputop-full-sleep`). `vc4shot` worked on the Pi (both planes, cursor
   with alpha) and shows no side bars and no top bar, so the bars seen in
   row 220 come from the HDMI or NanoKVM side, not from vc4d's planes.
+
+  **Noise bands, 2026-11-07 (rows 275 and 276):** at the desktop visit
+  (#275) the lower half of the HDMI picture showed bands of noise, with
+  the desktop faintly showing through, on the NanoKVM and on a monitor.
+  A normal boot and the firmware framebuffer (no vc4d) do not show them,
+  so they come with vc4d, while vc4shot of the same buffer was clean. So
+  the black bars of row 220 may also not be the NanoKVM's. Row 276
+  (experiment `vc4d-diag`: HVS errors every second, buffer contiguity,
+  display list checks) found the HVS side clean while typing and
+  dragging: no underrun, all buffers contiguous, the channel always on
+  vc4d's list. Nobody watched the screen in that run, so it is open
+  whether the bands showed; the next step is the same run with someone
+  at the screen.
 
 ## License rule for `vc4d`
 
