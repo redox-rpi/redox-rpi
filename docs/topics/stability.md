@@ -51,6 +51,20 @@
 
 ## In progress
 
+- [#207](https://github.com/redox-rpi/redox-rpi/issues/207) (branch `tlb-switch-shootdown`): the chaos test's `threads`
+  round froze the whole Pi (test 237) and QEMU. The context switch waited
+  for a context lock with interrupts masked and without handling TLB
+  shootdowns (`RwLock::write_arc`), while the CPU holding the lock waited
+  for its shootdown acknowledgement. Experiment `kernel-switch-shootdown`
+  (kernel `0042`) handles shootdowns in that wait. QEMU: 600 `threads`
+  rounds pass; without it the first one freezes. On the Pi it froze
+  again, more rarely, in tests 238 and 240 (once in 7 runs). Test 241 ran
+  1360 rounds without a freeze, so #207 stays open for that.
+  Experiment `kernel-tlb-debug` (debug only, list it after
+  `kernel-switch-shootdown`) prints each CPU's shootdown state and lock
+  waits longer than 3 s.
+  Upstream note in [docs/upstream/kernel.md](../upstream/kernel.md).
+
 - [#196](https://github.com/redox-rpi/redox-rpi/issues/196) chaos test (branch `chaos-test`): fault injection on
   the Pi (`tools/chaos`, in C) and from the build host
   (`scripts/chaos-host.py`), see [chaos.md](chaos.md). First finding:
