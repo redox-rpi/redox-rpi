@@ -10290,3 +10290,46 @@ Results from the user, through the coordinator.
   No panic on serial.
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Serial and stats in `~/pitest-tools/t280/`.
+
+## #285 v0.4.0-rc1 automated, checklist tests 1–5, 11, 13, 14, 16, 18, 20 (2026-11-07, Pi test agent)
+
+Network image `~/redox-rpi-rel/keep/v0.4.0-rc1-netboot.img` (`v0.4.0-dev-738-g4804fe63+x12cb`, `--release
+v0.4.0-rc1 --experiment timesync`). Real Pi 3B+, power cycle 22:15:46 UTC, devsh after 30 s. Main run
+22:15–22:30, extra boot 22:30–22:37 for the download and two re-checks. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass, with one known weak spot: serial input 19 of 20 (#28).**
+- **(1–5) pi-test** `--starts 1000 --manifest …rc1-netboot.manifest.toml`: `PASS version: v0.4.0-rc1
+  (v0.4.0-dev-738-g4804fe63+x12cb)`, manifest match, ps 61, ps-tty, sdcard, **starts 0 of 1000 failed**.
+  Banner `redox-rpi v0.4.0-rc1 (v0.4.0-dev-738-g4804fe63+x12cb)` on every boot.
+- **Boot log** (7 boots): `rpi-firmwared: ARM clock 600 -> 1400 MHz` each time, `throttled 0x00000000`, no
+  throttle warning, no `pcid` or `rtcd` line, `audiod` only the `uring … not supported` note,
+  `timesync: clock set … from pool.ntp.org` each boot. `date -u` on the Pi 22:16:37, host 22:16:39.
+- **(13) Governor:** `mode ondemand`. During the 1000 starts every 5 s sample was `1400000000` (22 of 22).
+  Idle (extra boot): over 20 s, `time_min_ms` +18.2 s and `time_max_ms` +2.6 s, so mostly 600 MHz. Reading
+  `arm_clock` over devsh always shows 1400 MHz, because the devsh call itself is load.
+- **Reboots:** `reboot` 5 times over devsh, `redox login:` and devsh back each time, about 20 s.
+- **(11) Serial input:** `serial-input-test.sh 20` logged in as root on the console: **19 of 20** (S15 lost
+  characters); again on the extra boot: 19 of 20 (S19). Known (#28): v0.3.0-rc3 had 2 lost in one run and 0 in
+  the next. While the test runs, the console's `getty` (PID 28) takes about 72 s of CPU (0.56 s before the
+  test, 72.75 s after it).
+- **(14) GPIO/I2C/SPI:** `ls /scheme/gpio` 0–53 and `pins`; `nowire-check.py`: **21 of 21** (I2C detect
+  finishes, missing address errors, SPI MISO pull reads ff/00, the 4096-byte transfer finishes).
+- **(16) Audio:** `measured_rate_hz 43930`, `dma_faults 0`, `pwm_errors 0`, `underruns 1`; `tone check` both
+  `(good)`; `time tone -s 3 > /scheme/audio`: `real 2.959 s`, rc 0; `audiod` still running.
+- **(18) RedoxFS:** `dd … bs=4096 count=256`: `real 0.19 s` (26 MB/s). `sd-stress.py --big-mib 32 --small 100
+  --cycles 1`: **pass**, 0 missing and 0 changed after writing and after the restart.
+- **(20) Pipe and download:** `dd if=/dev/zero bs=65536 count=256 | cat > /scheme/data/p`: 16777216 bytes.
+  The image has no `netget`, curl or wget, so the 100 MiB download used `nc` with an HTTP GET (extra boot):
+  `printf 'GET /t285-100m.bin HTTP/1.0\r\n\r\n' | nc 192.168.178.120:8080 > /scheme/data/dl.bin`. Size by
+  time: 22.3 MB after 4 s, 44.8 after 9 s, 68.7 after 14 s, 88.0 after 18 s, complete after 23 s
+  (about 4.5 MB/s, no stall). SHA-256 of the 100 MiB payload matches the file on homenodellm. (Redox `nc`
+  needs `host:port` and does not exit at EOF.)
+- No panic, no `UNHANDLED EXCEPTION` on serial.
+
+**Also seen (not rc1):** the first try staged nothing (my clone has no U-Boot `mkimage`), so the stable image
+`v0.4.0-dev-643-g58df647b+x9f76` ran pi-test. About a minute into its 1000 starts (21:41:40) the network
+went silent: no ARP answer, devsh gone, while netstack, dwc2d and devshd all kept running; nothing on serial.
+A reset over the serial console brought it back. This is like #92/#217 (rare network loss).
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t285/` (try 1 in
+`try1/`, the extra boot in `extra/`).
