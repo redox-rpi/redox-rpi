@@ -29,18 +29,30 @@ if test "$USER" != root
     echo "desktop: run it as root (sudo desktop)"
     exit 1
 end
-if not test -e /scheme/orbital
+# Whether Orbital runs, from ps (test -e cannot stat its scheme, and ion
+# gives a pipeline the status of its first command, so no pipe here).
+fn orbital_runs
+    ps > /tmp/desktop.ps
+    grep /usr/bin/orbital /tmp/desktop.ps > /dev/null
+end
+if not orbital_runs
     echo "desktop: starting Orbital, its log goes to /tmp/desktop.log"
     export VT=3
-    orbital orblogin launcher &> /tmp/desktop.log &
+    # &! runs it in the background, disowned: else ion waits for it before
+    # this script ends.
+    orbital orblogin launcher &> /tmp/desktop.log &!
+    # Wait up to 30 s for it (ion has no `while not`).
     let tries = 0
-    while not test -e /scheme/orbital
-        if test $tries -ge 30
-            echo "desktop: Orbital did not start, see /tmp/desktop.log"
-            exit 1
+    while test $tries -lt 30
+        if orbital_runs
+            break
         end
         sleep 1
         let tries += 1
+    end
+    if not orbital_runs
+        echo "desktop: Orbital did not start, see /tmp/desktop.log"
+        exit 1
     end
 end
 inputd -A 3
