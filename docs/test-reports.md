@@ -9723,3 +9723,27 @@ Built 2026-11-07T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over ne
 | ps-tty | pass | 46 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## #263 #92 repeat of #237 part B (host faults) with lock watches (2026-11-07, Pi test agent)
+
+Image `t92cw-v0.4.0-dev-361-g4273f649+x9040.img` (branch `t92-chaos-watch` 4273f649,
+experiments `chaos netstack-watch`, md5 `51bf810c…`). `chaos-host.py` from the same
+branch. Real Pi 3B+ over netboot. 06:31–07:20 UTC.
+
+**Result: pass. 40 of 40 host-fault rounds, the network never got lost.**
+- Boot: `devshd: listening` 20 s after the reset. `pi-test.py` pass (ps, ps-tty, sdcard,
+  starts 0 of 300 failed).
+- **Seed 237** (the #237 run): the same fault order as in #237, round 20 again `netem-delay`
+  with the same round seed 3107139973. All 20 rounds ok, devsh back after 1–6 s. In #237
+  that round 20 lost the network for good.
+- **Seed 238:** 20 of 20 ok, devsh back after 1–6 s. Faults: netem-blackout ×4, server ×5,
+  pkg ×4, netem-delay ×2, netem-loss ×2, netem-reorder ×2, dwc2d ×1.
+- `netstack-watch:` printed `alive …, idle for 0 s` every 60 s to the end (2942 s,
+  285192 events, 177569 frames in). No `dwc2d-watch:` line (it only prints when a call
+  is stuck). No panic, no crash dump lines.
+- tc on enp12s0 back to `fq_codel` afterwards (checked).
+- The stable image (`v0.4.0-dev-604-g8c4c513f`) was booted again as the first step of #264.
+
+So the #92 hang did not show up in 40 rounds with the watches in the image. It is rare
+(1 in 20 rounds in #237), so this does not prove it is gone; the watches stayed quiet.
+Outputs in `~/pitest-tools/t263/` on homenodellm.
