@@ -9916,3 +9916,32 @@ the same card whose data partition made the old bootloader panic in #266. 09:48�
   (16 MiB), `arm_memory 1046478848`.
 - This image stays staged as stable until PR #234 is merged and the nightly builds with it
   (copy in `~/pitest-tools/tftp-stable-643`; `/srv/tftp/stable` still has 604 with the old bootloader).
+
+## #204 #33 desktop with apps, user at the screen (2026-11-07, Pi test agent + user)
+
+Image `netboot-204-vc4d-v0.4.0-dev-695-g0a7a91b9+x77c4.img` (md5 `b08e9e05…`, experiments
+`orbital orbital-apps timesync usb-mouse vc4d`), network boot by power cycle with HDMI (NanoKVM)
+attached, USB keyboard and mouse. The staged bootloader has patch 0003. 10:31–10:46 UTC.
+
+**Result: login and Files work; the Text Editor starts but is very slow, and Save opens no dialog.**
+- Serial: `vc4d: check: PASSED` (11 passed, 0 failed, list read-back now passes too), watch to
+  120 s PASS, `experiments: orbital orbital-apps timesync usb-mouse vc4d`, login after 32 s. No panic.
+- **User:** login with Enter works. The launcher shows Terminal, COSMIC Files, COSMIC Text Editor and
+  Viewer. COSMIC Files opens and draws. The editor needs about 40 s to show its window; its menus are
+  very slow (File opened once); choosing Save did nothing (no dialog). Edge bars still visible on the
+  NanoKVM.
+- **Agent, editor start (10:35):** cosmic-edit (pid 45) had used about 12 s of CPU for its font set-up
+  (`cosmic_text … failed to get system locale, falling back to en-US`), then its main thread sat
+  blocked (UB) with no CPU growth over 3 samples, before the window appeared.
+- **Agent, editor open (10:43–10:44, ps deltas over two 11 s windows):** cosmic-edit 8.6–8.8 s CPU,
+  the root filesystem daemon (initfs `redoxfs`, pid 20) 4.9–10.9 s, dwc2d 1.1–1.2 s, orbital
+  0.5 s, the rest about 0. So the editor and RedoxFS together keep about 1.5–2 cores busy: the
+  editor seems to read from the filesystem constantly. (`cputop` is not in this image.)
+- With both apps open: `free` 343520 KB of 739924 KB used (396404 KB free); `df /` 180224 of
+  227328 KB used (79 %).
+- vc4shot at 10:44 (`~/pitest-tools/t204/shot.png`): the editor full screen with `hallo Redox`
+  typed and the `Save changes before closing?` dialog; taskbar with four launchers and the clock;
+  colours and pointer right; **no edge bars in vc4d's own picture** (as in #259), so the bars come
+  from the HDMI/NanoKVM side.
+- Serial after login: only the launcher's `failed to wait for background (43): No child processes`
+  and cosmic-files' thumbnail-directory note (expected on first run). No panic.
