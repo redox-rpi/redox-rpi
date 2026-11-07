@@ -9857,3 +9857,42 @@ Card `redox-rpi-lkoverlay-3bp-20261107.img.xz` on the spare card (user swap). 90
 - No magic, no `passing control off to linux`, no payload, no panic or exception.
 - Raw log `~/pitest-tools/t268/serial-raw.log`, sent to the open-firmware session. The stable
   network-boot check follows when the Pi boots again (see #266).
+
+## #269 #230 serial monitor in our own bootcode.bin (test build) (2026-11-07, Pi test agent)
+
+Card `redox-rpi-bootcode-monitor-3bp-20261107b.img.xz` on the spare card (user swap, checksum
+checked by the user). Everything else over serial (`~/rbc-build/payloads/rbc-load.sh`, which only
+writes to `/dev/ttyUSB0` and reads the serial log) and the Shelly. 09:29–09:38 UTC. No HDMI.
+
+**Result: A, B, C, D pass; E reaches U-Boot over the network but stops there.** No PANIC or
+EXCEPTION in any part. No load retries were needed (every load matched its crc32 at once). The first
+start of B failed only because the updated `rbc-load.sh` was not executable (rc 126, nothing sent);
+it was then run with `bash`.
+- **A, no input:** `redox-rpi bootcode mon-20261107b (M1, monitor, test build)`, Elpida 1 GB,
+  `[sdram] self test passed, 1024 MB, 32 regions`, `rbc> monitor: press Enter within 5 s`,
+  `rbc> no input, normal boot`, `M1 done`, `alive 10 s`, `alive 20 s` (30 s window).
+- **B, commands:** `loaded 8 bytes … crc32 89E09EC4`; `r 7e003004` → `ok 7E003004 0039203D`;
+  `w`/`r c1100000` → `ok C1100000 12345678`; `s … f0000000` → `F2345678`; `c … f` → `F2345670`;
+  `d c1000000 8` → `C1000000: 10 42 40 B0 00 10 5A 00`, `ok`; `crc` → `ok crc32 89E09EC4`;
+  `g c1000000 5 7` → `ok ret 0000100C`; `foo` → `err unknown command or wrong argument count: foo`;
+  `boot` → `ok boot`, `M1 done`, `alive 10 s`. All as expected.
+- **C, lk stage 2 over serial:** 296048 bytes loaded in about 52 s, `crc32 1EEB420E` matched.
+  `g c4000c72`: `PLLC target 500 MHz`, `welcome to lk`, `enabling aarch64`, `welcome to lk/MP`,
+  `vpu clock is 250, cdiv 10`, 25 MHz, `dtb: rpi3.dtb, kernel: Image-aarch64`, dtb read 35252
+  bytes, **no `fdt_open_into` error**, `magic: 0x644d5241`, `core 0 passing control off to
+  linux!!!`, `redox-rpi: 64-bit test payload reached (loaded as Image-aarch64)`, `EL = 1`,
+  `MIDR = 0x410FD034`, `MPIDR = 0x80000000`, `x0 FDT = 0x3000000`, `done, waiting (wfe)`.
+  Last line `temp changed 25.716003 -> 27.868011`.
+- **D, chain lk stage 1:** 49956 bytes, `crc32 4ACB9CA3`, `ok chain 49956 bytes, start
+  0x80000200`. lk's stage 1 started and ran its SDRAM set-up a second time without trouble
+  (Elpida 1GB, self test successful), loaded stage 2 from the card, and reached the payload the same
+  way as C. Last line `redox-rpi: done, waiting (wfe)`.
+- **E, chain Broadcom bootcode:** 52624 bytes, `crc32 53C9B136`, `ok chain`. Broadcom's bootcode fell
+  back to the network and U-Boot came up (`U-Boot 2026.10 (Oct 27 2026)` from /srv/tftp), but with
+  **`DRAM: 240 MiB`** (normally about 948 MiB). DHCP and the `redox/netboot.scr` download worked, then
+  `wget error: trying to overwrite reserved memory`, `HTTP client error 4`, the TFTP fallback for
+  `harddrive.img.gz` at 0x20000000 failed the same way, and it stopped at `U-Boot>`. So the monitor
+  card cannot stay in the Pi yet.
+- Logs `~/pitest-tools/t269/part-A.log` to `part-E.log`, sent to the open-firmware session. The Pi
+  is off. The network-boot card goes back next, and the stable check follows when the bootloader fix
+  for #266 arrives.
