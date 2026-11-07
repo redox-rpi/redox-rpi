@@ -31,6 +31,8 @@ reboot = "source"
 # tools/spi; base patches 0047 and 0048).
 i2c = "source"
 spi = "source"
+# `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
+socdump = "source"
 # Programs beyond the minimal system, prebuilt by Redox. Most of them
 # (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
 # start with today's prebuilt aarch64 packages, in QEMU too; see
