@@ -10034,3 +10034,30 @@ with the t18 tree (`bootloader-live.efi` md5 `a9ec1934…`, checked), power cycl
   0.9, 0.9, 0.9 s; this image 0.9, 0.9, 0.9 s. devsh reports to 0.1 s, so 10 starts of ion are too
   few to show the saving (about 2.4 MB less to read per start); a loop of 100 or more would be needed.
 - No panic on serial. Stable 643 staged again and booted (devsh at 13:46:14).
+
+## #275 #33 desktop with apps, person at the screen (2026-11-07, Pi test agent)
+
+Network image `netboot-204b-v0.4.0-dev-702-ge7bafd21+x35fd.img` (branch `graphics-vc4d`, experiments
+`app-log cosmic-apps-source orbital orbital-apps timesync usb-mouse vc4d`), staged with the graphics
+`netboot.sh`, power cycle 13:53:32 UTC. The desktop SD card was in the Pi (so no `/scheme/data`).
+The user at the HDMI monitor, logged in as root (the 702 image starts no app for `user`).
+
+**Result: fail. The editor's Save dialog never appeared, and the monitor showed noise bands.**
+- Boot: login 13:54:16, `vc4d: check: … PASS` at 2, 5, 10, 30 and 120 s, no panic.
+- `app-log: start cosmic-files`, `start cosmic-edit` (13:57), `cosmic-edit exited with 0`, then
+  `start cosmic-edit` again (14:02). After the `cosmic_files::localize` line at 14:02:14 (the Save
+  dialog starting) nothing more came. The user saw no dialog.
+- Check at 14:04 over devsh: all apps idle (ps deltas), running as uid 0. `free` 339884 of
+  739796 KB used, `df /` 79 %. `vc4shot` was clean (`t275/shot.png`), so the bands the user saw on
+  the monitor are after the HVS (pixel valve or HDMI), not in the picture vc4d draws. That is
+  row #276.
+- Log noise: 5× `ion: … failed to redirect stdout to file '/scheme/debug': Operation not permitted`,
+  `procmgr … failed to send SIGCHLD to parent PID 37: Operation not permitted`, one `funmap passed
+  length 0xc800 instead of 0xd000` warning.
+- **After the visit the Pi hung.** The netboot card was put back and the 702 image booted again
+  (about 14:08). It stopped after `init: switchroot to /usr /etc` (14:09:15): no data partition
+  mount line, no login, no devsh. The Shelly showed power on, 3.2 W. Power cycle at 15:49 with
+  stable 643 staged: devsh after 20 s, `/scheme/data` mounts. One hang, not repeated.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` staged and booted, devsh answers. Outputs in
+`~/pitest-tools/t275/` on homenodellm.
