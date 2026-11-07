@@ -9772,3 +9772,33 @@ Stable `v0.4.0-dev-604-g8c4c513f`. Real Pi 3B+ over netboot. 07:21–07:34 UTC.
 
 So 0 of 10 this time (earlier 3 of about 14), so 10 boots were not enough to catch it.
 Outputs (serial per boot) in `~/pitest-tools/t264/`.
+
+## #266 #217 boot race: 40 warm resets out of stable (2026-11-07, Pi test agent)
+
+Image `bnr-v0.4.0-dev-443-g6e17ce46+x814f.img` (as #264). Stable `v0.4.0-dev-604-g8c4c513f`.
+Runner `run264.sh` with 40 cycles and an ARP check only. 07:36–08:37 UTC.
+
+**Result: the #217 bug was not caught in 39 boots, but then the Pi stopped booting at all.**
+- Boots 1–39 of this image: devsh after 30–37 s, `ping -c 3 192.168.178.1` 3 of 3, the Pi
+  `REACHABLE` in ARP from homenodellm. Every boot `devshd: starting` then `listening`; no
+  `no answer from the network stack`, no `dwc2d-watch:` line, no panic. The 39 stable boots
+  in between all had network on the first try.
+- **After boot 39**, the reset back into stable (08:23) never reached the kernel. Every boot
+  since then, 4 in a row including 3 power cycles, stops in the Redox bootloader:
+  `Looking for RedoxFS:` … `SETUP PANIC: panicked at src/os/uefi/disk.rs:31:9: internal error:
+  entered unreachable code`. U-Boot, TFTP and the HTTP image load (44177622 bytes, the stable
+  file, checked) are fine.
+- Cause: `disk.rs:31` is `DiskOrFileEfi::write_at` (`unreachable!()`). The bootloader opens every
+  RedoxFS it finds, and our patch `bootloader/0002` (only boot a RedoxFS with a kernel) checks
+  each one with `fs.tx(...)`, which ends in `tx.commit()`. The SD card's data partition
+  (`/scheme/data`, which it scans before the network image) must now be in a state where that
+  commit writes, so the bootloader panics before it reaches the network image. Before, it
+  printed `RedoxFS on …HD(0x2,MBR,…) has no kernel, skipping`. What changed the data
+  partition is not known; it happened between boot 39 of this image and the next stable boot.
+- **The Pi does not boot now** (any image, it panics in a loop). Stable is staged in
+  `/srv/tftp/redox` (matches `/srv/tftp/stable`).
+- Fix without a person: a bootloader where `has_kernel` does not commit (or `write_at` returns an
+  error instead of panicking), staged as the stable image. Otherwise a person has to repair or
+  reformat the data partition on the network-boot card.
+
+Outputs (serial per boot, `stuck-serial.log` with the panics) in `~/pitest-tools/t266/`.
