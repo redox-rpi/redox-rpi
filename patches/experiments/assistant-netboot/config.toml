@@ -1,0 +1,6 @@
+# A smaller network-boot image for the assistant (#43). The image is loaded
+# into the Pi's RAM: with the usual 256 MiB, Redox had 745 MB in all and
+# 607 MB free, too little for the model (about 600 MiB with a short
+# conversation). The assistant experiment needs about 90 MiB on disk.
+[general]
+filesystem_size = 128
