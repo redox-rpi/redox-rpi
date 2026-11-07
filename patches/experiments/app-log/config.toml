@@ -9,9 +9,18 @@ path = "/usr/libexec/app-log/cosmic-edit"
 mode = 0o755
 data = """
 #!/usr/bin/ion
-echo "app-log: start cosmic-edit @args[1..]" >> /scheme/debug
-env RUST_BACKTRACE=1 /usr/bin/cosmic-edit @args[1..] ^>> /scheme/debug
-echo "app-log: cosmic-edit exited with $?" >> /scheme/debug
+# @args[1..] is an error in ion when there are no arguments.
+let rc = 0
+if test $len(@args) -gt 1
+    echo "app-log: start cosmic-edit @args[1..]" >> /scheme/debug
+    env RUST_BACKTRACE=1 /usr/bin/cosmic-edit @args[1..] ^>> /scheme/debug
+    let rc = $?
+else
+    echo "app-log: start cosmic-edit" >> /scheme/debug
+    env RUST_BACKTRACE=1 /usr/bin/cosmic-edit ^>> /scheme/debug
+    let rc = $?
+end
+echo "app-log: cosmic-edit exited with $rc" >> /scheme/debug
 """
 
 [[files]]
@@ -19,9 +28,18 @@ path = "/usr/libexec/app-log/cosmic-files"
 mode = 0o755
 data = """
 #!/usr/bin/ion
-echo "app-log: start cosmic-files @args[1..]" >> /scheme/debug
-env RUST_BACKTRACE=1 /usr/bin/cosmic-files @args[1..] ^>> /scheme/debug
-echo "app-log: cosmic-files exited with $?" >> /scheme/debug
+# @args[1..] is an error in ion when there are no arguments.
+let rc = 0
+if test $len(@args) -gt 1
+    echo "app-log: start cosmic-files @args[1..]" >> /scheme/debug
+    env RUST_BACKTRACE=1 /usr/bin/cosmic-files @args[1..] ^>> /scheme/debug
+    let rc = $?
+else
+    echo "app-log: start cosmic-files" >> /scheme/debug
+    env RUST_BACKTRACE=1 /usr/bin/cosmic-files ^>> /scheme/debug
+    let rc = $?
+end
+echo "app-log: cosmic-files exited with $rc" >> /scheme/debug
 """
 
 # The launcher entries, as in the packages, with binary= on the wrappers.
