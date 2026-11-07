@@ -167,4 +167,4 @@ python3 "$ROOT/scripts/sdcard-index.py" "$DIR" "$plan"
 
 echo "published: http://homenodellm:8080/sdcard/$name"
 echo "sha256:    $(cut -d' ' -f1 "$DIR/$name.sha256")"
-echo "flash:     sudo swiftflash redox:${family#redox-rpi-}"
+echo "flash:     sudo swiftflash redox:$family"
