@@ -72,13 +72,21 @@ tests are built every night.
   `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
   `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
   `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
+- **For a tester:** http://homenodellm:8080/visit/ (`index.html` and
+  `README.txt`, from `scripts/visit-index.py` after each image): per image
+  OK or FAILED, build ID, date, the command to stage it, the SD image with
+  its sha256 or why there is none, and the queued rows of
+  [test-plan.md](../test-plan.md) whose Image column names
+  "nightly visit `<name>`", with what they check.
 - `/srv/tftp/visit/status.txt` has one line per image: built, unchanged,
   failed or deadline, with build ID, commit and ref. Log:
   `~/redox-rpi/logs/visit/<date>.log`. A failure does not touch the nightly.
 - **Adding an image:** a line in the config with name, owner topic and the
-  `scripts/build-image.sh` options, `ref=<branch>` while its experiments
-  are not on main (drop it at the merge), `clean=<path>` for a recipe
-  under `upstream/redox/` to remove first. How a test row uses it:
+  `scripts/build-image.sh` options, `ref=<branch>` (a branch of this
+  repository) while its experiments are not on main (drop it at the
+  merge), `clean=recipes/<path>` for a recipe under `upstream/redox/` to
+  remove first, and `--sdcard` where the image boots from the card; if it
+  can't, a comment at the end of the line says why (shown on the page). How a test row uses it:
   [test-plan.md](../test-plan.md#nightly-visit-images).
 - Install once on the build host:
   `cp config/redox-visit.service ~/.config/systemd/user/ && systemctl --user daemon-reload`.

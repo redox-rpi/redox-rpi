@@ -28,8 +28,10 @@
 #   - with --sdcard: /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz
 #     with .sha256 and .manifest.toml, and redox-rpi-visit-<name>-latest.*
 #   - the last KEEP builds stay, older ones are removed
-# Results per image in /srv/tftp/visit/status.txt; a failed image does not
-# stop the others.
+# Results per image in /srv/tftp/visit/status.txt, and for a tester at the
+# Pi in /srv/tftp/visit/index.html and README.txt
+# (http://homenodellm:8080/visit/, scripts/visit-index.py). A failed image
+# does not stop the others.
 #
 # No release, no package repository, no GitHub API: the clone only fetches.
 
@@ -83,6 +85,10 @@ write_status() {
         echo "# <name> <result> <build ID> <commit> <ref> <date of the build>"
         for n in "${names[@]}"; do echo "$n ${result[$n]}"; done
     } > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
+    # The page for a tester: index.html and README.txt next to status.txt.
+    git -C "$CLONE" show origin/main:docs/test-plan.md > "$OUT/.test-plan.md" 2>/dev/null
+    python3 "$ROOT/scripts/visit-index.py" "$OUT" "$CONF" "$OUT/.test-plan.md" "$SDCARD" ||
+        log "visit-index.py failed"
 }
 started="$(date +%s)"
 
@@ -113,6 +119,11 @@ build_one() {
     local name="$1" owner="$2" ref="$3" clean="$4" sdcard="$5"; shift 5
     local options=("$@") commit key latest left build_id manifest dir work
     if [ -n "$ref" ]; then
+        # Only branches of redox-rpi/redox-rpi: the clone's only remote.
+        if ! git check-ref-format --branch "$ref" > /dev/null 2>&1 ||
+            [ "$(git remote get-url origin)" != "$URL" ]; then
+            log "$name: ref=$ref is not a branch of $URL"; result[$name]="failed - - $ref config"; return 1
+        fi
         commit="$(git rev-parse -q --verify "origin/$ref^{commit}")" ||
             { log "$name: no branch origin/$ref"; result[$name]="failed - - $ref no-branch"; return 1; }
     else
@@ -129,7 +140,9 @@ build_one() {
 
     git checkout -q --detach "$commit" || { result[$name]="failed - ${commit:0:9} ${ref:-stable} checkout"; return 1; }
     if [ -n "$clean" ]; then
-        case "$clean" in /*|*..*) log "$name: bad clean= path $clean"; result[$name]="failed - ${commit:0:9} ${ref:-stable} config"; return 1 ;; esac
+        # Only recipes, nothing else under upstream/redox/.
+        case "$clean" in recipes/?*) ;; *) clean=/ ;; esac
+        case "$clean" in /*|*..*|*//*) log "$name: clean= must be a path under upstream/redox/recipes/"; result[$name]="failed - ${commit:0:9} ${ref:-stable} config"; return 1 ;; esac
         rm -rf "upstream/redox/$clean"
     fi
     if [ ! -x build/u-boot/obj/tools/mkimage ]; then
@@ -204,6 +217,7 @@ build_one() {
 failed=0
 while read -r name owner rest; do
     case "$name" in ''|'#'*|deadline) continue ;; esac
+    rest="${rest%%#*}"
     [ -n "$only" ] && [ "$name" != "$only" ] && continue
     ref="" clean="" sdcard=""
     options=()

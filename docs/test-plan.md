@@ -160,9 +160,11 @@ Older stable images stay in `/srv/tftp/backup-<build ID>/`, for example
 Images for tests with a person at the Pi are built every night after the
 stable image ([ci.md](topics/ci.md#nightly-visit-images)), one per line in
 [config/visit-images.conf](../config/visit-images.conf). A row that needs
-one names it by its name, for example "image: nightly visit `desktop`",
-instead of a build ID. Before the test, check that the image is new
-enough, then stage it like the stable image:
+one writes "nightly visit `desktop`" (the image's name) in its Image
+column instead of a build ID; http://homenodellm:8080/visit/ then lists the
+row with the image, so a tester at the Pi sees what to check. Before the
+test, check that the image is OK and new enough, then stage it like the
+stable image:
 
 ```bash
 cat /srv/tftp/visit/status.txt /srv/tftp/visit/desktop/latest/visit.txt
