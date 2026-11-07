@@ -145,6 +145,42 @@ Read from the code; Pi test #224 confirmed the boot ROM, SDRAM and clock points 
    the ARM side would do these steps itself (Linux has a `bcm2835` power
    driver for this case).
 
+## Our own firmware ([issue #230](https://github.com/redox-rpi/redox-rpi/issues/230))
+
+The maintainer decided on 2026-11-07 to replace **all** closed pieces
+(`bootcode.bin`, `start*.elf`/`fixup*.dat`, `armstub8`) with our own code
+rather than adopt rpi-open-firmware or lk-overlay as they are. Both start
+on the 3B+, but rpi-open-firmware is old C++ with bugs we had to fix, and
+lk-overlay runs a whole RTOS (LK) in stage 1, has dead code and builds with
+warnings allowed. Ours is flat C for the VPU, one file per hardware block,
+`-Werror`, and each file names its source. Code: redox-rpi/rpi-open-firmware,
+branch `bootcode`, directory `bootcode/` (GPLv2+, because the SDRAM, clock
+and UART sequences come from rpi-open-firmware).
+
+- **M1 (built 2026-11-07, Pi test #265 queued):** VPU clock, UART, SDRAM
+  and a memory test of 32 regions over the whole 1 GB. 5.5 KB.
+- **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
+  the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
+  boot and what 3D needs (see step 5 above).
+- **Disassembly of the closed `bootcode.bin`** (internal, behaviour only,
+  not published; the README in `bootcode/` lists each finding with its
+  source file): it uses SDHOST, not EMMC, for the card; about a third of
+  its register references are USB (USB and network boot); it reads
+  `config.txt` for `gpu_mem`, `total_mem`, `start_file` and more; it hands
+  off to `start.elf` through a small routine copied into SDRAM after a
+  cache flush.
+
+**Video codecs:** the hardware decoders (H.264, MPEG-2/VC-1 with a licence
+key) are driven by code inside `start.elf`/`start_x.elf`, reached from
+the ARM through VCHIQ/MMAL. Taking that code out and reusing it is not an
+option: the Broadcom licence allows the files only unmodified, and the code
+depends on the rest of the closed firmware (ThreadX, its memory manager,
+VCHIQ). The block's registers are not documented. Without the closed
+firmware the choices are software decoding on the ARM (FFmpeg with NEON,
+H.264 up to about 720p on a Pi 3) or our own driver for the codec block
+from scratch, a project of its own. This is one reason to keep Broadcom's
+`start.elf` as an option next to our firmware.
+
 ## librerpi/lk-overlay compared (code read 2026-11-05, not built yet)
 
 [librerpi/lk-overlay](https://github.com/librerpi/lk-overlay) (GPLv2+, last
