@@ -1,0 +1,37 @@
+From: Stephan Zehrer <stephan@zehrer.net>
+Subject: [PATCH] usb: eth: r8152: receive into a 16 KiB buffer
+
+The RTL8152 and RTL8153 pack Ethernet frames that arrive close together
+into one bulk IN transfer (RX aggregation, which the driver enables). The
+driver reads that transfer into a 2048-byte buffer, so as soon as two
+full-size frames arrive back to back the device sends more than the host
+asked for. The host controller reports a babble error and both frames are
+lost:
+
+  Rx: failed to receive: -5
+
+On a Raspberry Pi Zero 2 W with an RTL8152 HAT (DWC2 host) an image
+download over HTTP fails after a few KiB, and TFTP with the default
+1468-byte blocks after a few dozen KiB. Only TFTP with 512-byte blocks
+gets through, at a few KB/s.
+
+Raise RTL8152_AGG_BUF_SZ to 16 KiB. The receive buffer, the bulk IN
+transfer length and the RX early size of the RTL8153 all derive from it,
+so the device's aggregation limit and the buffer stay in step.
+
+---
+ drivers/usb/eth/r8152.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/usb/eth/r8152.h b/drivers/usb/eth/r8152.h
+--- a/drivers/usb/eth/r8152.h
++++ b/drivers/usb/eth/r8152.h
+@@ -500,7 +500,7 @@
+ #define BYTE_EN_END_MASK	0xf0
+ 
+ #define RTL8152_ETH_FRAME_LEN	1514
+-#define RTL8152_AGG_BUF_SZ	2048
++#define RTL8152_AGG_BUF_SZ	16384
+ 
+ #define RTL8152_RMS		(RTL8152_ETH_FRAME_LEN + CRC_SIZE)
+ #define RTL8153_RMS		(RTL8152_ETH_FRAME_LEN + CRC_SIZE)
