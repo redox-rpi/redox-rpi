@@ -9710,3 +9710,16 @@ Both images take about 30 s, with the same 35–40 s outliers. No difference.
 
 Stable image staged again, booted, devsh answers. Raw data on homenodellm:
 `~/pitest-tools/t260{,b,c,d}/opt-a53.jsonl`.
+
+## 2026-11-07: `v0.4.0-dev-604-g8c4c513f+x9f76`
+
+Built 2026-11-07T03:30:26Z, `libc.so` `e1f1d71b8c10c33f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-604-g8c4c513f+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-604-g8c4c513f+x9f76.toml |
+| ps | pass | 46 processes (piped) |
+| ps-tty | pass | 46 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
