@@ -18,8 +18,9 @@ are enough; A3 and polish may follow in a later release.
   draft PR #251). It passes the QEMU check (driver up, `audiod` on top,
   `EINVAL`/`EWOULDBLOCK` contract, `cat file > /scheme/audio`); QEMU has
   no PWM clock, so there it plays to the clock instead of the jack. Pi
-  test #279 (driver, CPU tone, DMA ring, no listening) is queued; the
-  listening test #280 needs a person with headphones.
+  test #279 found it playing at half speed; #281 showed why (the channels
+  take turns on the FIFO), and the range is now 2834. A rerun of #279
+  comes next; the listening test #280 needs a person with headphones.
 - **Release plan:** v0.4.0, beta. Once #279 and #280 pass, PR #251 moves
   the patches to the default directories, so the driver and `audiod` run
   in every image, and the v0.4.0 release notes list sound from the jack
@@ -107,10 +108,14 @@ samples in RAM ─▶ DMA controller ─▶ PWM FIFO ─▶ PWM0 / PWM1 ─▶ G
   the Pi 3) as its source. The clock manager is not in the datasheet's
   PWM chapter; its registers are documented by the community and in the
   devicetree bindings.
-- **Resolution:** the range is clock ÷ sample rate. At 250 MHz (PLLD
-  divided by 2) and 44.1 kHz that is about 5 670 steps, about 12.5 bits.
-  The analogue part adds noise, so expect about 11 usable bits: fine for
-  system sounds and speech, average for music. Oversampling with noise
+- **Resolution:** with both channels on the FIFO, the FIFO gives one word
+  per range period, to the two channels in turn (measured on the Pi, test
+  #281). So a stereo frame takes two periods and the range is clock ÷
+  (2 × sample rate): at 250 MHz (PLLD divided by 2) and 44.1 kHz that is
+  2834 steps, about 11.5 bits (the first try with 5669 played at half
+  speed, #279). A 500 MHz clock (PLLD undivided) would give 5669 steps
+  again; untested. The analogue part adds noise anyway, so expect about
+  11 usable bits: fine for system sounds and speech, average for music. Oversampling with noise
   shaping can improve it later, at a higher CPU cost.
 - **The DMA controller** feeds the FIFO: a ring of control blocks that
   points back to its start, paced by the PWM's DMA request (`PERMAP` 5).
