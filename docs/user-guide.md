@@ -138,6 +138,51 @@ dns example.com                           # look up a name
 
 `curl` and `wget` are not in the image.
 
+## USB devices
+
+USB on the Pi is run by one driver, `dwc2d`. It looks at every port once
+a second, so devices can be plugged in and out at any time, also through a
+USB hub. These work today:
+
+| Device | What happens |
+|---|---|
+| USB keyboard | types on the screen console, US layout; plug it in at any time |
+| Built-in Ethernet (LAN7800 on the 3B+) | the network at boot |
+| USB Ethernet adapter with an RTL8152 or RTL8153 (e.g. Zero 2 W Ethernet HATs, the Anker 565 hub) | used as soon as it has a link; the network moves to it and keeps its address |
+| USB hubs | devices behind them work like the others |
+
+When several network adapters are plugged in, the network uses an RTL815x
+with a cable first, then the built-in LAN7800, then an RTL815x without a
+cable. The network keeps the same MAC address and DHCP lease when it
+moves.
+
+To see what `dwc2d` found, look at its lines on the screen or the serial
+console at boot and whenever something is plugged in or out:
+
+```
+dwc2d: hub 1 port 2: device connected
+dwc2d:   address 3: 0525:a4a2, USB 2.00, class 0x02, Full speed
+dwc2d: keyboard at address 2
+dwc2d: network on the adapter at address 3
+```
+
+The network adapter in use also shows in `ls /scheme`, as
+`network.usb_lan78xx`, `network.usb_rtl8152` or, in QEMU,
+`network.usb_ecm`.
+
+**Not in the image yet**, each in a pull request with a test on the Pi
+still to do: USB sticks and card readers
+([#25](https://github.com/redox-rpi/redox-rpi/issues/25),
+[#52](https://github.com/redox-rpi/redox-rpi/issues/52)), USB serial
+adapters for Zigbee or Thread sticks and Arduinos
+([#50](https://github.com/redox-rpi/redox-rpi/issues/50)), mice
+([#48](https://github.com/redox-rpi/redox-rpi/issues/48)), and `lsusb`
+([#35](https://github.com/redox-rpi/redox-rpi/issues/35)). Other USB
+devices (sound, cameras, Wi-Fi sticks, printers) are not supported.
+
+This section was checked on today's main in QEMU and against the Pi
+tests (2026-11-01).
+
 ## Time and time zones
 
 The Pi has no battery-backed clock. At boot `timesync` sets the clock to
