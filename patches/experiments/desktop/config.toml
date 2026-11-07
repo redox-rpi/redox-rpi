@@ -1,0 +1,48 @@
+# Experiment desktop: Orbital with the COSMIC text editor and file manager
+# in the image, but not started at boot. The text console comes up as
+# without it; the command `desktop` (as root) starts Orbital on VT 3 and
+# switches to it. Super+F2 goes back to the console, Super+F3 to the
+# desktop again. Build after rpi-fb, orbital, orbital-apps and
+# cosmic-apps-source.
+
+# Experiment orbital starts Orbital at boot and stays on its VT: undo both.
+[[files]]
+path = "/usr/lib/init.d/20_orbital"
+data = """
+"""
+
+[[files]]
+path = "/usr/lib/init.d/30_console_switch"
+data = """
+inputd -A 2
+"""
+
+[[files]]
+path = "/usr/bin/desktop"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# Starts the desktop (Orbital) from the text console, or switches to it
+# when it already runs. Super+F2: back to the console, Super+F3: the
+# desktop again. Orbital keeps running until the next reboot.
+if test "$USER" != root
+    echo "desktop: run it as root (sudo desktop)"
+    exit 1
+end
+if not test -e /scheme/orbital
+    echo "desktop: starting Orbital, its log goes to /tmp/desktop.log"
+    export VT=3
+    orbital orblogin launcher &> /tmp/desktop.log &
+    let tries = 0
+    while not test -e /scheme/orbital
+        if test $tries -ge 30
+            echo "desktop: Orbital did not start, see /tmp/desktop.log"
+            exit 1
+        end
+        sleep 1
+        let tries += 1
+    end
+end
+inputd -A 3
+echo "desktop: Super+F2 goes back to the console, Super+F3 to the desktop"
+"""

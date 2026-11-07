@@ -110,10 +110,52 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     serial console. With both read, the moves arrive as sent; the USB
     session's own runs never showed it.
 
+- **On the Pi** (#202, #203, 2026-11-02, 1920x1200 monitor, DMA on):
+  Orbital's desktop appears, in the right colours. With the USB mouse
+  (#203, experiment `usb-mouse`) the pointer works and Super-T opens a
+  terminal. The user found moving windows a bit slow and asked for no
+  background picture and no transparent terminal.
+
+- **Light desktop** (branch `graphics-visit-mouse`, `34f6240`, image
+  `v0.4.0-dev-68-g34f6240+x227e`, same experiments as #203):
+  - **Background:** `background_color` in `/usr/share/ui/orbital.toml`
+    (0x2E3440, dark grey-blue). Orbital fills every spot with no window in
+    it with this colour. The launcher still starts `background`, but
+    `/usr/bin/background` is now a `#!/usr/bin/true` stub that exits at
+    once. That drops a full-screen window, which Orbital redrew under every
+    change, and the decoded picture (`background` held 84 MB, see above).
+    Both files are written after the packages (`postinstall`). Checked
+    in QEMU: `/usr/bin/background` exits with 0, the colour line is in
+    `orbital.toml`, and Orbital still loads its cursor from that file.
+  - **Terminal:** `orbterm` has no setting for this: its alpha 224 and
+    `WindowFlag::Transparent` are hard-coded. So it is built from source
+    (`recipes/gui/orbterm/recipe.toml`, pinned to `5cc7a2d`), and the
+    source script sets alpha to 255 and removes the flag. Orbital then
+    copies the terminal instead of blending it over what is behind.
+  - **QEMU measurement** (`build/dragbench.sh` on homenodellm, at the
+    Pi's 1824x984): `orbterm` started from the serial shell over the
+    login screen, which has its own full-screen picture, then 40 window
+    moves with Super-arrow. `ps` shows Orbital's CPU time before and
+    after. The Orbital login itself did not get through in QEMU (Enter,
+    Tab and Enter tried), so the plain background could not be measured
+    there.
+
+    | image | Orbital ACTTIME | SCHTIME | screen updates |
+    |---|---|---|---|
+    | `v0.4.0-dev-67` (transparent terminal) | +0.97 s | +2.37 s | 2.0 MB each, 14 per 5 s |
+    | `v0.4.0-dev-68` (opaque terminal) | +0.79 s | +2.19 s | 2.0 MB each, 14 per 5 s |
+
+    Orbital's own work per move went down by about a fifth. The copy to
+    the screen stays the same size, since a move changes the same area.
+    A plain background saves one more full-area copy per move on the
+    desktop. The rest of the cost is Orbital composing each move: the old
+    and the new window area, about 2 MB per frame at this window size.
+    How much faster it feels on the Pi has to be seen there.
+
 ## What is missing
 
-- **Mouse on the Pi:** in QEMU it works (see above); the Pi test with a
-  mouse is in the USB topic's queue, and the NanoKVM's USB can act as one.
+- **Light desktop on the Pi:** the image above is built; a screen visit
+  when the user asks for it.
 - **Pi numbers:** frame rate, the CPU against DMA trade with shadow
   buffers, the time from login to desktop, memory at 1920x1200. The Pi
   test in [docs/test-plan.md](../../../docs/test-plan.md) collects them.

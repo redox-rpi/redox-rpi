@@ -44,8 +44,8 @@ index 00c38a18..a522c22d 100644
 +++ b/Makefile
 @@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
  ifeq ($(TARGET),aarch64-unknown-redox)
--	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
-+	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid rpi-fbd
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod rpi-fbd
  endif
  diff --git a/drivers/graphics/rpi-fbd/Cargo.toml b/drivers/graphics/rpi-fbd/Cargo.toml
 new file mode 100644
