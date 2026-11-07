@@ -9,7 +9,8 @@
 //! Enter, `\\t` is Tab), as a keyboard would: to log in at orblogin.
 //! --super KEY presses Super+KEY (Super+t opens a terminal). With --type
 //! or --super, the default time is 0 s (no moves). --keys MODS+KEY presses
-//! a combination, e.g. ctrl+shift+s (modifiers super, ctrl, shift, alt).
+//! a combination, e.g. ctrl+shift+s (modifiers super, ctrl, shift, alt), or
+//! a named key alone: esc, enter, tab.
 //!
 //! Positions are screen pixels; Orbital takes absolute mouse events as
 //! 0..65535 over the screen (as ps2d sends them), so they are scaled by
@@ -104,7 +105,13 @@ fn main() {
         // MODS+KEY, e.g. super+t or ctrl+shift+s: modifiers down, key, up.
         let mut parts: Vec<&str> = spec.split('+').collect();
         let last = parts.pop().unwrap_or_default();
-        let code = last.chars().next().filter(|_| last.chars().count() == 1).and_then(scancode)
+        let named = match last {
+            "esc" => Some(orbclient::K_ESC),
+            "enter" => Some(orbclient::K_ENTER),
+            "tab" => Some(orbclient::K_TAB),
+            _ => None,
+        };
+        let code = named.or_else(|| last.chars().next().filter(|_| last.chars().count() == 1).and_then(scancode))
             .unwrap_or_else(|| { eprintln!("pointer-bench: no key {last:?}"); std::process::exit(2) });
         let mods: Vec<u8> = parts.iter().map(|m| match *m {
             "super" => orbclient::K_SUPER,
