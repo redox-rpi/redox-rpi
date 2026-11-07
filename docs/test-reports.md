@@ -10061,3 +10061,35 @@ The user at the HDMI monitor, logged in as root (the 702 image starts no app for
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` staged and booted, devsh answers. Outputs in
 `~/pitest-tools/t275/` on homenodellm.
+
+## #276 #188 #33 vc4d scanout while the desktop draws (2026-11-07, Pi test agent)
+
+Network image `netboot-vdiag-v0.4.0-dev-707-gc1432a37+xb3fe.img` (branch `graphics-vc4d` c1432a37,
+vc4d `scanout-diag`; experiments `app-log cosmic-apps-source cputop orbital orbital-apps
+pointer-bench timesync usb-mouse vc4d vc4d-diag`). HDMI connected as at #275, serial on.
+15:51–16:08 UTC. No person, so no look at the monitor; the NanoKVM was not used.
+
+**Result: the HVS side looks clean. No underrun, no foreign display list, buffers contiguous.**
+- Boot 1: login and vc4d checks fine, network link up, but no `devshd: listening` line and no
+  devsh for 3 min (looks like the #217 boot race). Power cycle; boot 2: devsh after 40 s.
+- `vc4d: buffer …: contiguous` for every buffer, no `NOT CONTIGUOUS`. `vc4d: check:` PASS at
+  2, 5, 10, 30, 60 and 120 s.
+- `vc4d: scanout:` minute lines at 180–482 s: `errors in 0 of 60 reads` every time, through
+  typing (MARK-TYPE), both drags (MARK-DRAG1/2) and the idle minutes. No `EUFLOW`, no
+  `channel reads the list at …, not ours`.
+- `60 list findings in the last minute` all the time, idle too: always word 3 of the active list
+  (`list word 2051` or `2115`, written `0xc0c0c0c0`, read back a changing `0x0…0000`). That is the
+  plane's dummy position word, which the HVS uses as its own scratch word (Linux writes a dummy
+  there too). So it is very likely a false finding of the diagnostic, not a display list fault.
+- Typing 200 letters (`pointer-bench --type`): cosmic-edit 82 %, orbital 19 %, cpu0 69 % busy.
+  Dragging the title bar (`pointer-bench 30 --drag 1000 156`, 1800 moves in 30 s, twice): the
+  window moved. `free`: 305–315 MB used of 740 MB.
+- vc4shots: `3-shot.png` (editor up), `5-shot.png` (typing) clean. `4-drag.png` (during the drag)
+  shows the window half redrawn: the top at the new place, the old lower body still over the
+  taskbar. That is in the frame vc4d scans out (Orbital's damage during the drag), not HDMI noise.
+- No panic. app-log: `start cosmic-edit`.
+
+So nothing on the HVS side matches the bands the user saw at #275. Either the fault is after the
+HVS (pixel valve or HDMI), or what the user saw was the half-redrawn frames during moves.
+A look at the monitor during a drag would tell. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
+devsh answers. Outputs (serial, shots, cputop) in `~/pitest-tools/t276/` on homenodellm.
