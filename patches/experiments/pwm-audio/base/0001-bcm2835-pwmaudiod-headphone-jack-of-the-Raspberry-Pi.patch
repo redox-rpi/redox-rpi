@@ -1,4 +1,4 @@
-From 357c20f6d6e8005c3d96434f1ad852284f0ea9e3 Mon Sep 17 00:00:00 2001
+From c7c9187823a8ade835a6928ceefb50b6c6ff636c Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH 1/2] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3
@@ -24,13 +24,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.toml                                  |   1 +
  Makefile                                    |   2 +-
  drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
- drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 +++++++++
- drivers/audio/bcm2835-pwmaudiod/src/main.rs | 545 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 ++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 550 ++++++++++++++++++++
  drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 268 ++++++++++
  drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 ++++++
  init.initfs.d/40_drivers.target             |   1 +
  init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
- 9 files changed, 1219 insertions(+), 1 deletion(-)
+ 9 files changed, 1224 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
@@ -326,10 +326,10 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..5ffc78d9
+index 00000000..99cd2277
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,550 @@
 +//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
 +//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
 +//! signal; a filter on the board turns them into sound.
@@ -744,13 +744,16 @@ index 00000000..5ffc78d9
 +    let pwm = Pwm::new(map(pwm_phys), map(cm_phys), CLOCK_DIVISOR);
 +    let (range, clock_hz) = (pwm.range, pwm.clock_hz);
 +
-+    if !pwm.present() {
-+        println!("bcm2835-pwmaudiod: no PWM block at 0x{pwm_phys:08x} (QEMU?), playing to the clock");
++    let clock_only = |why: String| {
++        println!("bcm2835-pwmaudiod: {why}, playing to the clock");
 +        let out = Output::Clock {
 +            start: Instant::now(),
 +            buf: vec![[0; SLOT_WORDS]; SLOTS],
 +        };
-+        return (out, range, clock_hz);
++        (out, range, clock_hz)
++    };
++    if !pwm.present() {
++        return clock_only(format!("no PWM block at 0x{pwm_phys:08x} (QEMU?)"));
 +    }
 +
 +    let fifo_bus = (pwm_bus + Pwm::FIFO_OFFSET) as u32;
@@ -758,14 +761,16 @@ index 00000000..5ffc78d9
 +        eprintln!("bcm2835-pwmaudiod: {err}");
 +        process::exit(1);
 +    });
++    // QEMU keeps the PWM registers but has no PWM clock. Its DMA model
++    // would also run the endless ring at once, so the ring is not started.
++    if let Err(err) = pwm.start(true) {
++        pwm.stop();
++        return clock_only(format!("{err} (QEMU?)"));
++    }
 +    let dma_phys = dma.phys;
 +    let mut out = Output::Pwm { pwm, dma, phys: pwm_phys };
 +    fill_ramp(&mut out, range / 2);
-+    let Output::Pwm { pwm, dma, .. } = &out else { unreachable!() };
-+    if let Err(err) = pwm.start(true) {
-+        eprintln!("bcm2835-pwmaudiod: {err}");
-+        process::exit(1);
-+    }
++    let Output::Pwm { dma, .. } = &out else { unreachable!() };
 +    dma::barrier();
 +    dma.start();
 +    for pin in PINS {
