@@ -10269,3 +10269,24 @@ experiments, md5 `ee2b1fa16e83…`). Real Pi 3B+, power cycle 17:24:44 UTC, devs
 - (4) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t284/`.
+
+## #280 #250 listening test of the headphone jack, with a person (2026-11-07, Pi test agent)
+
+Network image `default-pwm-audio-v0.4.0-dev-730-gaa76c1f9.img` (same as #284, default patches). Power on
+20:28:22 UTC, login and devsh at 20:28:52. The user with headphones in the 3.5 mm jack typed the steps.
+Results from the user, through the coordinator.
+
+**Result: pass.** Steps (a)–(e) all ran fine as described (CPU tone, tone through audiod, 440 Hz in the
+**left** ear, sweep, volume 100).
+- Hiss: very faint hiss while nothing plays.
+- Crackle: a little, which the user puts down to the cheap headphones.
+- Boot click: not checked (headphones were plugged in after the boot).
+- Extra: the user played their own WAV (ffmpeg to s16le, 44.1 kHz, stereo, sent with `nc` from homenodellm
+  to `/tmp`, then `cat … > /scheme/audio`). It played, somewhat overdriven, maybe from the file itself.
+- Side notes: the image has no curl or wget; Redox `nc` writes `Remote host: …` (34 bytes) to stdout and does
+  not exit at EOF; Mac → Pi `nc` was blocked (probably the macOS firewall).
+- Driver at the end (44 min uptime): `measured_rate_hz 44008`, `played_slots 228323`, `dma_faults 0`,
+  `pwm_errors 0`, `underruns 1` (the one from the boot). The CPU tone line: `rate_hz=44107 fifo_empty=0`.
+  No panic on serial.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Serial and stats in `~/pitest-tools/t280/`.
