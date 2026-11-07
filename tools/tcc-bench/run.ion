@@ -17,6 +17,11 @@ head -4 /tmp/tcc-static.err
 wc -l /tmp/tcc-static.err
 echo "== tcc -run"
 timeit tcc -run $T/hello.c
+echo "== shebang: ./hallo.c run as a script (#!/usr/bin/tcc -run)"
+cp $T/hallo.c hallo.c
+chmod +x hallo.c
+echo hello | timeit ./hallo.c a b
+echo "rc=$?"
 echo "== bench, compiled by tcc"
 timeit tcc -bench -o bench $T/bench.c && timeit ./bench
 echo "== bench, compiled by gcc -O2 (cross)"
