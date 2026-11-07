@@ -9949,3 +9949,42 @@ attached, USB keyboard and mouse. The staged bootloader has patch 0003. 10:31–
   File → Save as… never showed a file dialog; then the editor window vanished. At 10:49 `ps` has no
   cosmic-edit any more (orbital, launcher and cosmic-files still run) and serial shows no line for its
   end (no panic, no crash message).
+
+## #272 #33 COSMIC Text Editor without a person, with app-log and redoxfs-reads (2026-11-07, Pi test agent)
+
+Image `netboot-edit-vc4d-v0.4.0-dev-698-g51017bba+xd62c.img` (experiments `timesync orbital usb-mouse
+orbital-apps vc4d cputop pointer-bench app-log redoxfs-reads`), network boot by power cycle, HDMI
+(NanoKVM) attached. **No serial console:** the USB serial adapter disappeared from homenodellm at
+10:39 (during #204), so instead the kernel log `/scheme/sys/log` (it holds the `/scheme/debug` lines)
+was copied over devsh every 5 s and merged by overlap (no gaps). Note: each copy is a devsh login plus
+`cat`, so the `login`, `ion`, `cat`, `ld.so.1` and `libgcc_s.so.1` reads in the log are mostly the copier's.
+First try at 11:51: the image never answered devsh or ARP (cause unknown without serial; U-Boot's DHCP
+was seen); the second boot at 12:02 came up in 41 s. Steps 12:04–12:09 UTC.
+
+**Result: the editor works but is slow; Save as opens its dialog only after 20–55 s; Ctrl+Q did not quit.**
+- 12:04:11 login with Enter (pointer-bench). 12:04:17 `MARK-START`, `app-log: start cosmic-edit`.
+  The binary is read twice in full (`usr/bin/cosmic-edit read 27040671`, then `27094856`), then
+  `cosmic_text … falling back to en-US`, `fontdb … Fallback to loading from known font dir paths`,
+  the five Fira fonts mapped (each 2–5 times), icon themes read.
+- **cputop, first start** (20 s each): A: redoxfs 26.5 % (411 wakeups/s), fbbootlogd 8 %, dwc2d 4.9 %,
+  cosmic-edit 4.4 % (743/s), orbital 0.9 %. B and C: everything idle (redoxfs 2.8 %, dwc2d 5 %,
+  fbbootlogd 3.7 %); cosmic-edit not in the list.
+- **Typing** (12:06:53, 100 keys at 10/s, `typed 100 keys`; cputop 15 s): cosmic-edit 38.1 % (815/s),
+  redoxfs 23.7 % (384/s), orbital 8.5 %, dwc2d 5.5 %. All 100 characters arrived (picture 1).
+- **Save as** (12:07:47 Ctrl+Shift+S; cputop 20 s): **redoxfs 78.6 % (1239/s), cosmic-edit 55.3 %
+  (4153/s)**, fbbootlogd 13.1 %, cpu1 93 % busy. Picture 1 at 12:08:10 (about 20 s later): the editor
+  with the typed line, **no dialog yet**. Picture 2 at 12:08:43 (after Ctrl+Q at 12:08:21): the **Save
+  file dialog is open** (Home = /root, `Empty folder (has hidden items)`, details pane `Size:
+  Calculating…`). So the dialog took between 20 and 55 s to appear, and Ctrl+Q went to the dialog:
+  cosmic-edit still ran at 12:08:49 (main thread UR, 1 min 9 s system time).
+- **redoxfs-reads from MARK-START to the end (797 log lines), leaving out the copier's reads:**
+  `usr/share/icons/Cosmic/index.theme` (mapped 8192) 114 times: 15 at start, 6 typing, 51 after Save,
+  42 after Quit; `usr/share/icons/hicolor/index.theme` (mapped 57344) 42 times; `usr/lib/libonig.so.5`
+  (read 649136) 38 times (19 at start; may partly be the copier's ion); fonts 2–5 times each; every
+  program binary is read twice in full when it starts (for example `usr/bin/true` about 10.8 MB twice,
+  `usr/bin/base64` 10.8 MB twice). No `redoxfs-reads` line explains the 79 % redoxfs CPU during the
+  dialog by itself: the index.theme files are mapped, not read, so the load is probably many small
+  reads or directory lookups below the 4 KiB threshold.
+- `app-log`: only `start cosmic-edit`; no `exited` line (it was still running). No panic in the log.
+- Stable 643 staged again and booted (devsh at 12:10:38).
+- Files: `~/pitest-tools/t272/` (cputop outputs, `log-from-mark-start.txt`, `save.png`, `quit.png`).
