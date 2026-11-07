@@ -30,3 +30,21 @@ that take damage (Orbital, Wayland through softbuffer) redraw the whole
 window each frame. Passing the grouped damage to
 `Buffer::present_with_damage` and skipping the present for empty damage
 fixes it.
+
+## Result in QEMU (v0.4.0-dev-704-gb8e8053b+xd3ed, rpi-fb, 640x432 window)
+
+Typing 10 keys/s, per 2 s: about 36 frames, draw ~1100-1400 ms, present
+~430 ms, **damage 102-103 % of the window**: iced itself marks the whole
+window as changed on every key, so passing the damage on changes nothing
+for typing (same draw and present times as without the patch). Why the
+damage is the whole window, in cosmic-edit `src/text_box.rs`:
+
+- all editor text is one `fill_raw` primitive whose bounds are the whole
+  editor view; iced cannot see which line changed;
+- the line numbers are a new `image::Handle` the size of the editor view,
+  made again on every edit (`editor.redraw()`), so the image counts as
+  changed too.
+
+The patch stays useful where only part of a window changes (menus, other
+iced apps), but the typing cost needs a change in cosmic-edit's text box
+(or per-line damage for raw text in iced).
