@@ -1,0 +1,120 @@
+From a283350d998d816ed70b6d1550046e4fbab38013 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 13:19:47 +0000
+Subject: [PATCH] orbital: frame-diag, time to map, draw and present per 2 s
+ (test only)
+
+---
+ src/orbital.rs | 64 +++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 63 insertions(+), 1 deletion(-)
+
+diff --git a/src/orbital.rs b/src/orbital.rs
+index 50428ab..ea32861 100644
+--- a/src/orbital.rs
++++ b/src/orbital.rs
+@@ -1,3 +1,56 @@
++use std::sync::Mutex;
++use std::time::{Duration, Instant};
++
++/// redox-rpi frame-diag (test only): per 2 s, frames, how many were drawn
++/// in full (age 0), and the time spent mapping the window, drawing (from
++/// buffer_mut to present) and presenting, printed to stderr.
++struct FrameDiag {
++    since: Option<Instant>,
++    frames: u32,
++    full: u32,
++    copied: u32,
++    map: Duration,
++    draw: Duration,
++    present: Duration,
++}
++
++static FRAME_DIAG: Mutex<FrameDiag> = Mutex::new(FrameDiag {
++    since: None,
++    frames: 0,
++    full: 0,
++    copied: 0,
++    map: Duration::ZERO,
++    draw: Duration::ZERO,
++    present: Duration::ZERO,
++});
++
++fn frame_diag(map: Duration, draw: Duration, present: Duration, full: bool, copied: bool, size: (u32, u32)) {
++    let mut d = FRAME_DIAG.lock().unwrap();
++    let now = Instant::now();
++    let since = *d.since.get_or_insert(now);
++    d.frames += 1;
++    d.full += u32::from(full);
++    d.copied += u32::from(copied);
++    d.map += map;
++    d.draw += draw;
++    d.present += present;
++    if now.duration_since(since) >= Duration::from_secs(2) {
++        eprintln!(
++            "frame-diag: {}x{}: {} frames ({} full, {} copied) in {:.1} s: map {} ms, draw {} ms, present {} ms",
++            size.0,
++            size.1,
++            d.frames,
++            d.full,
++            d.copied,
++            now.duration_since(since).as_secs_f64(),
++            d.map.as_millis(),
++            d.draw.as_millis(),
++            d.present.as_millis(),
++        );
++        *d = FrameDiag { since: Some(now), frames: 0, full: 0, copied: 0, map: Duration::ZERO, draw: Duration::ZERO, present: Duration::ZERO };
++    }
++}
++
+ use crate::error::InitError;
+ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, OrbitalWindowHandle, RawWindowHandle};
+ use std::{cmp, marker::PhantomData, num::NonZeroU32, slice, str};
+@@ -123,6 +176,7 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> OrbitalImpl<D, W> {
+     }
+ 
+     pub fn buffer_mut(&mut self) -> Result<BufferImpl<'_, D, W>, SoftBufferError> {
++        let started = Instant::now();
+         let (window_width, window_height) = self.window_size();
+         let pixels = if self.width as usize == window_width && self.height as usize == window_height
+         {
+@@ -133,7 +187,8 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> OrbitalImpl<D, W> {
+         } else {
+             Pixels::Buffer(vec![0; self.width as usize * self.height as usize])
+         };
+-        Ok(BufferImpl { imp: self, pixels })
++        let mapped = Instant::now();
++        Ok(BufferImpl { imp: self, pixels, map: mapped - started, mapped })
+     }
+ 
+     fn set_buffer(&self, buffer: &[u32], width_u32: u32, height_u32: u32) {
+@@ -179,6 +234,8 @@ enum Pixels {
+ pub struct BufferImpl<'a, D, W> {
+     imp: &'a mut OrbitalImpl<D, W>,
+     pixels: Pixels,
++    map: Duration,
++    mapped: Instant,
+ }
+ 
+ impl<'a, D: HasDisplayHandle, W: HasWindowHandle> BufferImpl<'a, D, W> {
+@@ -210,6 +267,10 @@ impl<'a, D: HasDisplayHandle, W: HasWindowHandle> BufferImpl<'a, D, W> {
+     }
+ 
+     pub fn present_with_damage(self, damage: &[Rect]) -> Result<(), SoftBufferError> {
++        let presenting = Instant::now();
++        let full = self.age() == 0;
++        let copied = matches!(self.pixels, Pixels::Buffer(_));
++        let (map, mapped) = (self.map, self.mapped);
+         match self.pixels {
+             Pixels::Mapping(mapping) => {
+                 drop(mapping);
+@@ -234,6 +295,7 @@ impl<'a, D: HasDisplayHandle, W: HasWindowHandle> BufferImpl<'a, D, W> {
+                 .expect("failed to sync orbital window");
+         }
+ 
++        frame_diag(map, presenting - mapped, presenting.elapsed(), full, copied, (self.imp.width, self.imp.height));
+         Ok(())
+     }
+ }
+-- 
+2.53.0
+
