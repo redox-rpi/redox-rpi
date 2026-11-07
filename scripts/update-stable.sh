@@ -28,6 +28,8 @@
 #      append the report to docs/test-reports.md, commit and push to main.
 #   6. Fail: stage the previous stable image again, reset the Pi, and open or
 #      update the issue "Nightly: main fails on the Pi".
+#   After 1 (nothing new) or 5: start redox-visit.service, the images in
+#   config/visit-images.conf (scripts/build-visit-images.sh).
 #
 # GitHub access: a token with write access to contents and issues of
 # redox-rpi/redox-rpi in ~/.config/redox-rpi/github-token (mode 600).
@@ -73,6 +75,21 @@ done
 
 log() { echo "$(date -u +%H:%M:%S) $*"; }
 
+# Start the visit images (scripts/build-visit-images.sh) in their own unit,
+# which outlives this one; they build only on top of a stable image that
+# passed. Never fails this script.
+start_visit_images() {
+    [ "$push" = 1 ] || { log "--no-push: not starting the visit images"; return 0; }
+    if systemctl --user cat redox-visit.service > /dev/null 2>&1; then
+        systemctl --user start --no-block redox-visit.service &&
+            log "started redox-visit.service (status in $TFTP/visit/status.txt)" ||
+            log "could not start redox-visit.service"
+    else
+        log "redox-visit.service not installed, no visit images"
+    fi
+    return 0
+}
+
 cd "$ROOT"
 git fetch -q --tags --prune origin
 git checkout -q --detach "$ref"
@@ -89,6 +106,7 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
     git cat-file -e "$stable_commit" 2>/dev/null &&
     git diff --quiet "$stable_commit" HEAD -- patches config scripts tools; then
     log "no change to patches/, config/, scripts/ or tools/ since the stable image, nothing to do"
+    start_visit_images
     exit 0
 fi
 
@@ -244,6 +262,7 @@ scripts/pi-test.py on the real Pi: $summary."
         log "--no-push: commit $(git rev-parse --short HEAD) not pushed"
         git show --stat HEAD | cat
     fi
+    start_visit_images
     exit 0
 fi
 
