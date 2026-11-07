@@ -1,0 +1,92 @@
+From 4fe2aa8cbacfe73fbad8a51ba2e55d4e8db189cb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 11:15:33 +0000
+Subject: [PATCH] redoxfs: log bytes read and mapped per open file (experiment
+ redoxfs-reads)
+
+---
+ src/mount/redox/scheme.rs | 35 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index 5117390..3b8bf6d 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -1,4 +1,5 @@
+ use std::collections::BTreeMap;
++use std::sync::Mutex;
+ use std::marker::PhantomData;
+ use std::mem;
+ use std::str;
+@@ -879,6 +880,21 @@ pub fn resolve_path<'a, 'b, D: Disk>(
+     Ok(dir.redox_path().join_checked(path).canonical())
+ }
+ 
++/// Experiment redoxfs-reads: per handle, the path, bytes read, bytes mapped
++/// and the number of maps; printed on close when it read or mapped at least
++/// one block, to see which files a program reads over and over.
++static READS: Mutex<BTreeMap<usize, (String, u64, u64, u32)>> = Mutex::new(BTreeMap::new());
++
++fn reads_add(id: usize, read: u64, mapped: u64) {
++    if let Some(entry) = READS.lock().unwrap().get_mut(&id) {
++        entry.1 += read;
++        entry.2 += mapped;
++        if mapped > 0 {
++            entry.3 += 1;
++        }
++    }
++}
++
+ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+     fn scheme_root(&mut self) -> Result<usize> {
+         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+@@ -900,7 +916,12 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+             Some(res) if path.is_relative() => resolve_path(res, path)?,
+             _ => path.canonical(),
+         };
+-        self.open_internal(TreePtr::root(), path_to_open.to_relative(), flags, ctx)
++        let name = path_to_open.as_ref().to_string();
++        let res = self.open_internal(TreePtr::root(), path_to_open.to_relative(), flags, ctx);
++        if let Ok(OpenResult::ThisScheme { number, .. }) = &res {
++            READS.lock().unwrap().insert(*number, (name, 0, 0, 0));
++        }
++        res
+     }
+ 
+     fn unlinkat(&mut self, dirfd: usize, path: &str, flags: usize, ctx: &CallerCtx) -> Result<()> {
+@@ -927,7 +948,11 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+     ) -> Result<usize> {
+         // println!("Read {}, {:X} {}", id, buf.as_ptr() as usize, buf.len());
+         let file = Handle::get_resource_mut(self.handles.get_mut(&id))?;
+-        self.fs.tx(|tx| file.read(&mut self.fmap, buf, offset, tx))
++        let res = self.fs.tx(|tx| file.read(&mut self.fmap, buf, offset, tx));
++        if let Ok(count) = res {
++            reads_add(id, count as u64, 0);
++        }
++        res
+     }
+ 
+     fn write(
+@@ -1124,6 +1149,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+         let file = Handle::get_resource_mut(self.handles.get_mut(&id))?;
+         let fmaps = &mut self.fmap;
+ 
++        reads_add(id, 0, size as u64);
+         self.fs.tx(|tx| file.fmap(fmaps, flags, size, offset, tx))
+     }
+     fn munmap(
+@@ -1142,6 +1168,11 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+ 
+     fn on_close(&mut self, id: usize) {
+         // println!("Close {}", id);
++        if let Some((name, read, mapped, maps)) = READS.lock().unwrap().remove(&id) {
++            if read + mapped >= BLOCK_SIZE {
++                println!("redoxfs-reads: {name} read {read} mapped {mapped} in {maps} maps");
++            }
++        }
+         let Some(file) = self.handles.remove(&id) else {
+             return;
+         };
+-- 
+2.53.0
+

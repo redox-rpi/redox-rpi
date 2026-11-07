@@ -1,0 +1,61 @@
+# Experiment app-log (#33): desktop apps started from the launcher write a
+# start line, their stderr (with RUST_BACKTRACE=1) and their exit status to
+# /scheme/debug, which goes to the serial console. So an app that exits by
+# itself leaves a trace in the serial log the Pi test agent keeps (/tmp is
+# gone after a power cycle). Build together with orbital-apps.
+
+[[files]]
+path = "/usr/libexec/app-log/cosmic-edit"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+echo "app-log: start cosmic-edit @args[1..]" >> /scheme/debug
+env RUST_BACKTRACE=1 /usr/bin/cosmic-edit @args[1..] ^>> /scheme/debug
+echo "app-log: cosmic-edit exited with $?" >> /scheme/debug
+"""
+
+[[files]]
+path = "/usr/libexec/app-log/cosmic-files"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+echo "app-log: start cosmic-files @args[1..]" >> /scheme/debug
+env RUST_BACKTRACE=1 /usr/bin/cosmic-files @args[1..] ^>> /scheme/debug
+echo "app-log: cosmic-files exited with $?" >> /scheme/debug
+"""
+
+# The launcher entries, as in the packages, with binary= on the wrappers.
+# Written after the packages (postinstall) to replace theirs.
+[[files]]
+path = "/usr/share/ui/apps/30_cosmic-edit"
+postinstall = true
+data = """
+name=COSMIC Text Editor
+binary=/usr/libexec/app-log/cosmic-edit
+icon=/usr/share/icons/apps/accessories-text-editor.png
+accept=*.c
+accept=*.conf
+accept=*.h
+accept=*.ion
+accept=*.json
+accept=*.log
+accept=*.md
+accept=*.py
+accept=*.rs
+accept=*.sh
+accept=*.toml
+accept=*.txt
+author=Jeremy Soller
+description=COSMIC Text Editor
+"""
+
+[[files]]
+path = "/usr/share/ui/apps/20_cosmic-files"
+postinstall = true
+data = """
+name=COSMIC File Manager
+binary=/usr/libexec/app-log/cosmic-files
+icon=/usr/share/icons/apps/system-file-manager.png
+author=Jeremy Soller
+description=COSMIC File Manager
+"""
