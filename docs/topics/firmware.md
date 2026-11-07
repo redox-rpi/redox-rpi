@@ -22,6 +22,11 @@
   `/usr/lib/rpi-firmware/governor.ion` (`config/raspi3bp-sdcard.toml`,
   Pi test #161). Without the file the clock follows the load.
 - `reboot` through the watchdog (kernel patch `0002`).
+- `hwinfo` ([#35](https://github.com/redox-rpi/redox-rpi/issues/35),
+  package `hwinfo`, with `lsusb`): build and experiments, model, revision,
+  serial, memory, firmware, CPUs, clocks and governor, temperature,
+  throttling in words, number of USB devices. Pi test #32 (as experiment)
+  and #125 passed. The governor line needs PR #76.
 
 ## In progress
 

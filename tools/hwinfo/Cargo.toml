@@ -1,0 +1,6 @@
+[package]
+name = "hwinfo"
+description = "Hardware information for redox-rpi: board, CPU, clocks, temperature (hwinfo) and USB devices (lsusb)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

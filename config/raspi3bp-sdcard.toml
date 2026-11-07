@@ -27,6 +27,8 @@ bootloader = "source"
 relibc = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
+# `lsusb` and `hwinfo` (tools/hwinfo).
+hwinfo = "source"
 # `i2c` and `spi` commands for the I2C and SPI drivers (tools/i2c,
 # tools/spi; base patches 0047 and 0048).
 i2c = "source"
