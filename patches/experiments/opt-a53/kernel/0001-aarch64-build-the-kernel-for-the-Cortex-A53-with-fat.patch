@@ -22,10 +22,9 @@ index 46a72b41..9970c8a7 100644
 +codegen-units = 1
  debug = "full"
 diff --git a/targets/aarch64-unknown-kernel.json b/targets/aarch64-unknown-kernel.json
-index f5a77749..beeb57b3 100644
 --- a/targets/aarch64-unknown-kernel.json
 +++ b/targets/aarch64-unknown-kernel.json
-@@ -1,6 +1,7 @@
+@@ -1,13 +1,14 @@
  {
      "abi": "softfloat",
      "arch": "aarch64",
@@ -33,3 +32,11 @@ index f5a77749..beeb57b3 100644
      "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32",
      "disable-redzone": true,
      "dynamic-linking": false,
+     "env": "",
+     "exe-suffix": "",
+     "executables": true,
+-    "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
++    "features": "+strict-align,-neon,-fp-armv8,-aes,-sha2,+tpidr-el1",
+     "frame-pointer": "always",
+     "has-rpath": false,
+     "linker": "rust-lld",

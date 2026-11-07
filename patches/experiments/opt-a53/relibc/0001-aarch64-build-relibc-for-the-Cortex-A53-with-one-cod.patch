@@ -30,7 +30,7 @@ index dfdb3082..6ef61c0a 100644
  # never keep a value in x18 (redox-rpi #1).
  ifeq ($(TARGET),aarch64-unknown-redox)
 -export RUSTFLAGS+=-Zfixed-x18
-+export RUSTFLAGS+=-Zfixed-x18 -Ctarget-cpu=cortex-a53
++export RUSTFLAGS+=-Zfixed-x18 -Ctarget-cpu=cortex-a53 -Ctarget-feature=-aes,-sha2
  CFLAGS+=-ffixed-x18
  endif
  

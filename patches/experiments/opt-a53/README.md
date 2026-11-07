@@ -19,8 +19,15 @@ is a static library combined with C objects, a riskier change for a first
 step.
 
 `target-cpu=cortex-a53` lets LLVM order instructions for the A53, an
-in-order core. The A53 of the BCM2837 has no ARMv8 crypto extension, so
-the setting adds no new instructions, only the scheduling.
+in-order core. It also turns on the `aes` and `sha2` target features (see
+`rustc --print cfg -C target-cpu=cortex-a53`), but the A53 of the BCM2837
+has no ARMv8 crypto extension: code that checks `target_feature = "aes"`
+at compile time would use instructions the Pi does not have. So every
+`target-cpu=cortex-a53` comes with `-C target-feature=-aes,-sha2`, and the
+kernel target spec gets `-aes,-sha2` in its features. `crc` stays on: the
+BCM2837 has the CRC32 instructions. (Image B of row 260 was built before
+this fix; nothing in it used the AES or SHA2 instructions, it passed all
+tests.)
 
 ## Patches
 
