@@ -10365,3 +10365,20 @@ not get through `orblogin`: either the keys from `pointer-bench` do not reach Or
 window needs something else. A person (part C) or a screenshot path for `rpi-fbd` would tell. Stable
 `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t287/` (`b2/`, `b3/`
 the B reruns with full `ps`).
+
+## #288 #33 #287 part B again, with the right login keys (2026-11-07, Pi test agent)
+
+Image `netboot-desk-pb-v0.4.0-dev-756-g5697fc1d+x0f22-dirty.f717e04d32c7.img` (as #287 B). Real Pi 3B+, fresh
+boot (reset from stable) 23:20 UTC, then over devsh. NanoKVM not used.
+
+**Result: pass.**
+- Before `desktop`: no orbital in `ps`; `free` 146624 KB used.
+- `desktop; echo rc=$?`: `rc=0` in 0.6 s. 5 s later `pointer-bench --type '\n'` (`typed 1 keys`).
+- 10–20 s later `ps`: `/usr/bin/orbital` (PID 63), `/usr/bin/orblogin` (68, still there), and
+  **`/usr/bin/launcher` as uid 1000** (PID 75): the empty-password login went through. `free` 186332 KB used.
+  (The row's `grep -e … -e …` gives `Invalid parameters '-e'` on Redox grep, so this is read from the full `ps`.)
+- `pointer-bench --keys super+f2`, then `desktop; echo rc=$?`: `rc=0`; `ps` after it: exactly one
+  `/usr/bin/orbital`, launcher still running. Whether the screen switched is not visible without a screenshot.
+- `/tmp/desktop.log` empty. No panic, no `UNHANDLED EXCEPTION` on serial.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t288/`.
