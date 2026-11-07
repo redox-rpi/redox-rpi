@@ -1,8 +1,9 @@
 # Experiment: tcc, TinyCC as a native C compiler
 
 For [#247](https://github.com/redox-rpi/redox-rpi/issues/247), topic
-[tcc](../../../docs/topics/tcc.md). Builds TinyCC from the `mob` branch (arm64 backend, 70adbb12, 2026-11-07) for aarch64 Redox and
-puts it into the image with what it needs to compile on the Pi:
+[tcc](../../../docs/topics/tcc.md). Builds TinyCC from the `mob` branch
+(arm64 backend, 70adbb12, 2026-11-07) for aarch64 Redox and puts it into
+the image with what it needs to compile on the Pi:
 
 - `recipes/wip/dev/lang/tcc/recipe.toml` replaces upstream's stub recipe
   (tcc 0.9.27 tarball, no cross flags). tcc is cross-compiled with the
