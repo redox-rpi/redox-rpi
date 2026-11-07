@@ -194,8 +194,17 @@ and UART sequences come from rpi-open-firmware).
   `bootcode/rbc-load.sh`, which only writes to the serial port and reads
   the one reader's log. After one card visit, new VPU stages come over
   serial. Never in a release: anyone on the serial pins gets full control.
-  If chaining Broadcom's `bootcode.bin` from the monitor network-boots
-  Redox (part E of #269), the monitor card can stay in the Pi.
+  **Pi test #269 passed** for every command: read, write, set and clear
+  bits, dump, load with a matching CRC-32, `g` (returned `0000100C`),
+  `err` for an unknown command, `boot`, and loads of 8 bytes to 296 KB with
+  no retry. Chaining Broadcom's `bootcode.bin` from the monitor works too:
+  it falls back to the network and U-Boot starts, but U-Boot sees only
+  `DRAM: 240 MiB` (normally about 948), that is 256 MB minus the 16 MB
+  `gpu_mem`. Its downloads then fail (`trying to overwrite reserved
+  memory`). So Broadcom's code detects the memory size wrongly when our
+  SDRAM set-up has already run. Until that's fixed (for example by putting
+  the SDRAM controller back into its reset state before `chain`), the
+  monitor card can't replace the network-boot card.
 - **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
   the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
   boot and what 3D needs (see step 5 above).
@@ -324,6 +333,16 @@ step 3. The gaps for us:
     next test (#269) loads that stage 2 over our serial monitor (see
     below), so lk-overlay iterations need no card swap any more: stage 2
     is one block at `0xc4000000` (296 KB, about 60 s over serial).
+  - **Pi test #269 (2026-11-07): lk-overlay reaches our 64-bit payload.**
+    Stage 2 with patch `0003`, loaded over our serial monitor (296 KB in
+    52 s, CRC-32 matched) and started with `g c4000c72`, ran through
+    `welcome to lk/MP`, the SD card at 25 MHz, the devicetree with no
+    `fdt_open_into` error, `passing control off to linux`, and our test
+    payload: EL1, `MIDR 0x410FD034`, `MPIDR 0x80000000`, devicetree at
+    `0x3000000`. The same came from chaining lk-overlay's stage 1 from the
+    monitor: its SDRAM set-up ran a second time without trouble, then
+    stage 2 came from the card. So lk-overlay can boot a 64-bit kernel on
+    the 3B+ with three small patches (`0001` to `0003`).
 
 So lk-overlay is the better base for 64-bit and the mailbox. We would add
 board/revision/MAC tags for U-Boot and `rpi-firmwared`. For network boot,
