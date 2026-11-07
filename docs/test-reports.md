@@ -10173,3 +10173,39 @@ speed (about 44100 words/s for stereo, so 22050 frames/s), with GAPO on both cha
 clock is 125 MHz and not 250 MHz, or each channel takes its word once per range period only on
 alternate periods. That is for the audio session. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored,
 devsh answers. Outputs in `~/pitest-tools/t279/`.
+
+## #281 #250 why the PWM plays at half rate: diagnosis (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-706-g54a81fc1+x6d83.img` (branch `pwm-audio` 54a81fc1, md5
+`a1b04fde1193…`). Real Pi 3B+, power cycle 17:04:46 UTC, devsh after 30 s. 17:04–17:07 UTC.
+
+**Result: the channels take turns on one FIFO word per period. The 250 MHz clock is right.**
+Words per second follow only range and divisor, not mono or stereo, so stereo gets half the frames:
+
+| case | words/s | frames/s | expected (take turns) | expected (half clock) |
+|---|---|---|---|---|
+| (a) `2` stereo | 44099 | 22050 | 44100 words/s | |
+| (b) `2 mono` | 43515 | 43515 | 44100 | 22050 |
+| (c) `2 range=2834` | 88215 | 44107 | 88200 | |
+| (d) `2 mono range=2834` | 84715 | 84715 | 88200 | 44100 |
+| (e) `2 div=4` | 22050 | 11025 | 22050 | |
+| (f) `2 mono div=4` | 21918 | 21918 | 22050 | |
+
+The six lines (from serial; over devsh `grep '^tone' /scheme/audiohw/stats` printed nothing, the
+final `cat` showed the same last line):
+```
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=5669 div=2 seconds=4.00 words=176400 words_per_s=44099 rate_hz=22050 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=5669 div=2 seconds=2.03 words=88200 words_per_s=43515 rate_hz=43515 fifo_empty=24 sta=0x000
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=2834 div=2 seconds=2.00 words=176400 words_per_s=88215 rate_hz=44107 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=2834 div=2 seconds=1.04 words=88200 words_per_s=84715 rate_hz=84715 fifo_empty=32 sta=0x000
+bcm2835-pwmaudiod: tone 1000 Hz, stereo range=5669 div=4 seconds=8.00 words=176400 words_per_s=22050 rate_hz=11025 fifo_empty=0 sta=0x030
+bcm2835-pwmaudiod: tone 1000 Hz, mono range=5669 div=4 seconds=4.02 words=88200 words_per_s=21918 rate_hz=21918 fifo_empty=65 sta=0x000
+```
+- Stereo runs end with `sta=0x030` (GAPO1/GAPO2) and `fifo_empty=0`; mono runs `sta=0x000` with
+  `fifo_empty` 24–65.
+- Afterwards `cat /scheme/audiohw/stats`: `played_slots` 1271 → 1522 in 5.8 s (rising), `dma_faults 0`,
+  `underruns 1`, `measured_rate_hz` 12859/13807 (still recovering from the tones), `pwm_errors` 1570 → 1724
+  `bits=0x030`.
+- No panic. Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t281/`.
+
+So a stereo fix is range 2834 (c: 44107 frames/s), or another way to give each channel its own word per period.
