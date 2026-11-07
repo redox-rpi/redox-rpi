@@ -59,5 +59,27 @@ through `/scheme/audio`, and the stats; not the sound.
   full), 44 082–44 091 frames/s measured, 1 underrun (the end of the
   first sound), `tone > /scheme/audio` and `cat file > /scheme/audio`
   exit 0.
-- Pi: test-plan row 279 (driver, CPU tone rate, DMA ring, CPU time) and
-  row 280 (listening, a person) queued.
+- 2026-11-07, Pi #279, `v0.4.0-dev-704-gfa8f2ef9+x6d83` (range 5669):
+  **fail, half rate.** Everything ran without faults, but 22 050 frames/s
+  (DMA ring and CPU tone alike).
+- 2026-11-07, Pi #281, diagnosis with the tone options: the clock is right
+  (250 MHz); the FIFO gives one word per period to the two channels in
+  turn (stereo 44 099 words/s at range 5669, mono 43 515; range 2834
+  doubles both, `div=4` halves both). So range = clock / (2 × rate).
+- 2026-11-07, Pi #283, `v0.4.0-dev-707-g7c92bc80+x6d83` (range 2834):
+  **pass.** Boot line right; `measured_rate_hz` 44 111 at 22 s and 53 s,
+  `dma_faults 0`, `pwm_errors 0` (gap bits about 44 polls/s, expected in
+  stereo); CPU tone 3.00 s, 44 053 frames/s; `tone check` good;
+  `tone -s 5` 4.96 s, `tone -s 30` 30.2 s through `audiod`. CPU time
+  during 30 s of sound: `bcm2835-pwmaudiod` about 0.35 s (about 1 % of a
+  core), `audiod` about 0.8 s over its two threads (about 3 %), part of
+  it spent mixing silence all the time. `pi-test.py` standard checks pass.
+- Listening test: row 280 (a person with headphones), waiting.
+
+## Merging
+
+At the merge, base `0001` (driver) gets the next free base number, base
+`0002` goes into base `0030` (drop its `audiod` lines), and kernel `0050`
+becomes a default kernel patch unless `rpi-fb` brought it first. The tool
+`tone` then goes into `config/raspi3bp-sdcard.toml`. For v0.4.0 the sound
+is a beta (maintainer, 2026-11-07).
