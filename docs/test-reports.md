@@ -10252,3 +10252,20 @@ Real Pi 3B+, power cycle 17:11:39 UTC, devsh after 30 s. Nothing connected to th
 - (8) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t283/`.
+
+## #284 #250 PWM audio as default patches, short check (2026-11-07, Pi test agent)
+
+Network image `default-pwm-audio-v0.4.0-dev-730-gaa76c1f9.img` (PR #251 at aa76c1f9, default patches, no
+experiments, md5 `ee2b1fa16e83…`). Real Pi 3B+, power cycle 17:24:44 UTC, devsh after 29 s. 17:24–17:27 UTC.
+
+**Result: pass.**
+- (1) Boot: `bcm2835-pwmaudiod: PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 2834 (44107 Hz), DMA channel
+  2 at 0x3f007000, 8 x 512 frames`; the only audiod line is `uring communication is not supported …`. No panic.
+- (2) stats at 20.4 s and 51.2 s: `mode pwm-dma`, `measured_rate_hz 44125` / `44111`, `played_slots` 1758 → 4411,
+  `dma_faults 0`, `pwm_errors 0 bits=0x000`, `underruns 1`, `pwm_gap_polls` 1298 → 2729.
+- (3) `time tone -s 5 > /scheme/audio`: `real 4.955 s`, rc 0. `tone check`: `short write: EINVAL (good)`,
+  `full chunks accepted before EWOULDBLOCK: 0 (good)`. Stats after: `measured_rate_hz 44110`, `dma_faults 0`,
+  `pwm_errors 0`.
+- (4) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t284/`.
