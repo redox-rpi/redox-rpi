@@ -9839,3 +9839,21 @@ CM_VPUDIV 0x1000 PLLC_CTRL 0x10000 PLLC_FRAC 0x0 SD_CS 0x794200 timer 2679049 us
 `alive 10 s` to `alive 60 s`. Last line `alive 60 s`, nothing after it up to 90 s. No PANIC or
 EXCEPTION. Raw log `~/pitest-tools/t265/serial-bootcode-m1.log`, sent to the open-firmware
 session. The stable network-boot check follows when the Pi boots again (see #266).
+
+## #268 open firmware step 2: lk-overlay with the ARM SD clock fixed (2026-11-07, Pi test agent)
+
+Card `redox-rpi-lkoverlay-3bp-20261107.img.xz` on the spare card (user swap). 90 s of serial,
+08:58–08:59 UTC. No HDMI connected.
+
+**Result: the SD reads work now; the loader stops at the DTB with `fdt_open_into() == -3`.**
+- VPU stage and `welcome to lk/MP` as #254.
+- ARM side: `vpu clock is 250, cdiv 10`, `card now in 4bit mode`, `changing clock to 25MHz for
+  data mode`, 30475 MB SDHC.
+- `trying to boot from sdhostp1`, `dtb: rpi3.dtb, kernel: Image-aarch64`, read 576 bytes, then
+  `read 35252 bytes` of the raw dtb. **0 transfer errors** in the whole log (#254: 136).
+- Then `loaded DTB file to 0xffff000003100000`, `failed to open initrd: -1`,
+  `ERROR: fdt_open_into() == -3` (libfdt: no space). After that only three `temp changed` lines;
+  last line `temp changed 27.868011 -> 30.020020`, then silence to 90 s.
+- No magic, no `passing control off to linux`, no payload, no panic or exception.
+- Raw log `~/pitest-tools/t268/serial-raw.log`, sent to the open-firmware session. The stable
+  network-boot check follows when the Pi boots again (see #266).
