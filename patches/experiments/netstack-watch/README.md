@@ -16,17 +16,36 @@ netstack-watch: main loop stuck in write to the network device for 5 s
 netstack-watch: main loop back after 12 s
 ```
 
-Every 60 s it also writes a heartbeat:
+netstack re-arms its timer at least every 500 ms, and each timer event also
+polls the device, so the main loop never waits long. When no timer event has
+come for 10 s and the loop is not stuck in a call, the thread writes that,
+again every 10 min, and once more when timer events come back:
 
 ```
-netstack-watch: alive at 120 s, idle for 0 s, 3456 events (2900 network), 3100 frames in
+netstack-watch: no timer event for 10 s, idle for 10 s, 3456 events (2900 network), 3100 frames in
+netstack-watch: timer events again after 42 s
 ```
 
-If the heartbeats stop, the watchdog thread itself isn't running. If they go
-on with `idle` while the counts stay the same, the main loop is waiting for
-events that never come. This is a diagnostic, not a fix.
+That is a main loop waiting for events that never come: the case Pi test 213
+could not show (see below). Every 10 min it also writes a heartbeat:
 
-Build: `--experiment netstack-watch`; for the Pi with `dwc2d-netstats`,
+```
+netstack-watch: alive at 600 s, idle for 0 s, 3456 events (2900 network), 3100 frames in
+```
+
+If the heartbeats stop, the watchdog thread itself isn't running. This is a
+diagnostic, not a fix.
+
+**On by default in test images** (`config/test-experiments.conf`): every
+`scripts/build-image.sh` build gets it, so stable, nightly and Pi test-row
+images have it until #92 and #217 are caught. Releases (`--release`) never
+do: the `test-only` file here makes `--release` refuse it, and
+`scripts/publish-pkg-repo.sh` refuses to publish from a build that has it.
+`--no-test-experiments` leaves it out, for benchmark and A/B rows. It does
+not go with `ipv6` (`conflicts`), which rewrites the same receive loop; with
+`ipv6` the build leaves it out and says so.
+
+By hand: `--experiment netstack-watch`; for the Pi with `dwc2d-netstats`,
 `usb-hub-drop`, `dwc2d-restart` (is `dwc2d` still running?) and `timesync`
 (HTTPS needs the right date).
 
@@ -44,7 +63,10 @@ Build: `--experiment netstack-watch`; for the Pi with `dwc2d-netstats`,
   `dwc2d` kept receiving (rx 1464 → 1775 in 49 s) while netstack sent 3
   frames; no USB error, `dwc2d-step` idle. So the main loop wasn't stuck in
   a device call: either it waited for events (idle, not reported then) or
-  the watchdog thread didn't run either. The heartbeat tells which.
+  the watchdog thread didn't run either. The heartbeat tells which, and
+  the timer alarm (2026-11-07) reports the first case on its own: the
+  first version only reported a call that took over 5 s, never a loop
+  that waits.
 - Found on the way: `kill -CONT` on the stopped `dwc2d` crashed it
   (`UNHANDLED EXCEPTION … dwc2d`), and netstack stayed in that read even
   after `dwc2d` was gone.
