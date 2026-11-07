@@ -86,8 +86,9 @@ if [ -n "$direct" ]; then
     [ -z "$image" ] || { echo "--local and --direct do not go together" >&2; exit 1; }
     fw="$ROOT/build/fw-direct"
     "$ROOT/scripts/fw-direct-boot.sh" --image "$direct" --out "$fw"
-    # Room for the initramfs and the firmware files.
-    min_mib=$((($(wc -c < "$fw/initramfs") >> 20) + 32))
+    # Room for two slots of kernel8.img and initramfs (tools/rpi-update
+    # writes the new system into the free one) and the firmware files.
+    min_mib=$((2 * (($(wc -c < "$fw/initramfs") + $(wc -c < "$fw/kernel8.img")) >> 20) + 40))
     [ "$BOOT_MIB" -ge "$min_mib" ] || BOOT_MIB=$min_mib
     [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-direct.img"
 elif [ ! -f "$uboot" ]; then
