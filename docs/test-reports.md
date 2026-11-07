@@ -10224,3 +10224,31 @@ Network image `netboot-tcc-v0.4.0-dev-716-gc6d4de06+xd12c.img` (branch `tcc` c6d
 - No panic or `UNHANDLED EXCEPTION` on serial.
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t282/`.
+
+## #283 #250 PWM audio rerun with the half-rate fix (range 2834) (2026-11-07, Pi test agent)
+
+Network image `pwm-audio-v0.4.0-dev-707-g7c92bc80+x6d83.img` (branch `pwm-audio` 7c92bc80, md5 `2dbdd7ba6e4e…`).
+Real Pi 3B+, power cycle 17:11:39 UTC, devsh after 30 s. Nothing connected to the jack. 17:11–17:15 UTC.
+
+**Result: pass. The PWM now runs at 44.1 kHz; times match the audio length.**
+- (1) Boot: `bcm2835-pwmaudiod: PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 2834 (44107 Hz), DMA channel
+  2 at 0x3f007000, 8 x 512 frames`. No `playing to the clock`; the only audiod line is `uring communication is
+  not supported …`. No panic, no `UNHANDLED EXCEPTION`.
+- (2) `/scheme/audio` and `/scheme/audiohw` there; `40 alt0 1`, `41 alt0 1`.
+- (3) stats at 22.1 s and 52.9 s: `mode pwm-dma`, `measured_rate_hz 44111` both times, `played_slots`
+  1900 → 4556 (+2656 in 30.8 s), `dma_faults 0`, `pwm_errors 0 bits=0x000`, `underruns 1` (no change),
+  `queued 7/6`, `pwm_gap_polls` 1414 → 2759 (about 44 per second).
+- (4) `echo 3 > /scheme/audiohw/tone` returned after 3.2 s: `tone stereo range=2834 div=2 seconds=3.00
+  words=264600 words_per_s=88107 rate_hz=44053 fifo_empty=5 sta=0x030`. 10 s later `played_slots` 4697 →
+  5629, `dma_faults 0`. (`measured_rate_hz` 41811–42952 in the minutes after the tone: the average
+  includes the tone's pause of the ring.)
+- (5) `tone check`: `short write: EINVAL (good)`, `full chunks accepted before EWOULDBLOCK: 0 (good)`.
+- (6) `time tone -s 5 > /scheme/audio`: `real 4.956 s`, rc 0. `tone sweep -s 5`: 5.2 s, rc 0. `chunks`
+  5115 → 6290, `underruns 1`.
+- (7) `tone -s 30 > /scheme/audio`: 30.2 s, rc 0. ps ACTTIME/SCHTIME before → after: `bcm2835-pwmaudiod`
+  3.39/0.29 → 3.61/0.42 s (+0.35 s in about 32 s, about 1 % of a core); `audiod` two threads 0.10/0.09 →
+  0.30/0.19 and 0.37/0.64 → 0.68/1.12 s (+1.09 s total, about 3 %). After: `played_slots 9594`,
+  `dma_faults 0`, `pwm_errors 0`, `pwm_gap_polls 4373`.
+- (8) `pi-test.py`: pass (version, manifest match, ps 53, ps-tty, sdcard, starts 0 of 300).
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t283/`.
