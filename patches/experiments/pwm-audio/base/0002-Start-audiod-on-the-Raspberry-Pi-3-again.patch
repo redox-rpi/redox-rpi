@@ -1,0 +1,30 @@
+From 475eca9e78fffc6b4bc7a2b02c8c5380e275a37f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 16:36:14 +0000
+Subject: [PATCH 2/2] Start audiod on the Raspberry Pi 3 again
+
+bcm2835-pwmaudiod offers audiohw there now.
+
+Refs redox-rpi/redox-rpi#250
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ init.d/20_audiod.service | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/init.d/20_audiod.service b/init.d/20_audiod.service
+index 92f0615b..572d1c9d 100644
+--- a/init.d/20_audiod.service
++++ b/init.d/20_audiod.service
+@@ -3,8 +3,6 @@ description = "Audio multiplexer"
+ requires_weak = [
+     "00_base.target",
+ ]
+-# No sound driver for the Raspberry Pi 3 yet
+-condition_board_not = ["raspi3bp"]
+ 
+ [service]
+ cmd = "audiod"
+-- 
+2.53.0
+
