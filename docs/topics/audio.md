@@ -8,10 +8,17 @@ target yet.
 
 ## State
 
-- **No sound on the Pi.** There is no audio driver for the Pi, and our
-  base patch `0030` leaves `audiod` out on `raspi3bp`
-  (`condition_board_not = ["raspi3bp"]` in `init.d/20_audiod.service`), so
-  the boot shows no audio errors (#18).
+- **No sound on `main` yet.** Our base patch `0030` leaves `audiod` out
+  on `raspi3bp` (`condition_board_not = ["raspi3bp"]` in
+  `init.d/20_audiod.service`), so the boot shows no audio errors (#18).
+- **In progress:** the PWM driver `bcm2835-pwmaudiod`, stages A1 and A2
+  ([#250](https://github.com/redox-rpi/redox-rpi/issues/250), experiment
+  [`pwm-audio`](https://github.com/redox-rpi/redox-rpi/tree/pwm-audio/patches/experiments/pwm-audio),
+  draft PR #251). It passes the QEMU check (driver up, `audiod` on top,
+  `EINVAL`/`EWOULDBLOCK` contract, `cat file > /scheme/audio`); QEMU has
+  no PWM clock, so there it plays to the clock instead of the jack. Pi
+  test #279 (driver, CPU tone, DMA ring, no listening) is queued; the
+  listening test #280 needs a person with headphones.
 - **The hardware is there.** The 3.5 mm jack is fed by the SoC's PWM
   block; HDMI can carry sound; the GPIO header has an I2S port for DAC
   boards.
@@ -183,6 +190,32 @@ devicetree (`/soc/pwm@7e20c000`), offering `audiohw`.
    the CPU time while playing.
 4. **A4, later.** Oversampling with noise shaping; other sample rates;
    the `audio_shm` ring; then I2S on top of the same DMA module.
+
+How A1 and A2 came out (experiment `pwm-audio`, #250):
+
+- **One driver for both stages.** A1 is the file `/scheme/audiohw/tone`
+  (`echo 3 > /scheme/audiohw/tone`): the driver holds the DMA ring and
+  writes a 1 kHz sine into the FIFO with the CPU, and reports how many
+  frames per second the PWM took. That measures the clock and the range
+  without anyone listening.
+- **A2:** 8 slots of 512 frames (about 93 ms), one control block per slot,
+  the last pointing back to the first. No interrupt: a 10 ms timer reads
+  `CONBLK_AD`, fills each played slot with silence and retries writes
+  waiting for room. So two parts of A3 are already in: an underrun plays
+  silence, and the ring starts with a 46 ms ramp from 0 V to the middle.
+  `/scheme/audiohw/stats` has the measured rate, underruns and error
+  counters.
+- **Kernel patch `0050`** (cache clean over new DMA memory, from `rpi-fb`)
+  is in the experiment too; the DMA plan wants it with the first DMA
+  driver on `main`.
+- **QEMU** keeps the PWM registers but has no PWM clock, and its DMA model
+  would run an endless ring at once. The driver detects the missing clock
+  and plays the ring to the timer instead, which is enough to test
+  `audiod` and the scheme.
+- **Tool `tone`** writes test sound (sine, sweep, one channel) for
+  `/scheme/audio`. Rust's `stdout` is line buffered and splits binary data
+  at `0x0a` bytes; `audiod` takes whole frames only, so the tool writes
+  to file descriptor 1 directly.
 
 Rules: hardware documentation (the BCM2835 ARM Peripherals datasheet and
 its errata, the devicetree bindings) is fine to use. Code from GPL drivers
