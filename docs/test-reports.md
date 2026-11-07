@@ -10018,3 +10018,19 @@ writes the file and Ctrl+Q exits with 0.**
   `cosmic-edit` read twice in full at start, `libonig.so.5` 45 times (probably the copier's ion logins).
 - No panic. Stable 643 staged again and booted.
 - Files: `~/pitest-tools/t274/` (cputop outputs, `log-from-mark-start.txt`, `4-shot.png`, `4-shot2.png`, `6-shot.png`).
+
+## #273 #240 ld.so reads a program once (relibc patch 0017, PR #241) (2026-11-07, Pi test agent)
+
+Image `~/t18-work/image-dbl/harddrive.img` (`v0.4.0-dev-674-gc350bf7c+x9f76`, stable-style), staged
+with the t18 tree (`bootloader-live.efi` md5 `a9ec1934…`, checked), power cycle. Serial was back
+(adapter replugged at 13:39), so the serial log was kept too. 13:42–13:46 UTC.
+
+**Result: pass; the timing shows no difference at this resolution.**
+- devsh answered 29 s after power on. `pi-test.py`: version, manifest, ps (46), ps-tty, sdcard,
+  starts 0 of 300 failed, all PASS.
+- `env`, `ls /usr/bin`, `uname -a` (`Redox redox 0.5.12 … aarch64 Redox`) work.
+  `echo y | pkg install nano` completed (`Commit complete.`), `nano --version`: `GNU nano, version 9.2`.
+- Timing, `ion -c "for i in 1..=10; ion -c true; end"` over devsh, 3 runs each: stable 643
+  0.9, 0.9, 0.9 s; this image 0.9, 0.9, 0.9 s. devsh reports to 0.1 s, so 10 starts of ion are too
+  few to show the saving (about 2.4 MB less to read per start); a loop of 100 or more would be needed.
+- No panic on serial. Stable 643 staged again and booted (devsh at 13:46:14).
