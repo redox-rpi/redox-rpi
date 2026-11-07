@@ -32,6 +32,7 @@
 #                          [--boot-size <MiB>] [--data-size <MiB>]
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
+#   all three also take [--family <name>]
 #
 #   --dir <name>       the directory of scripts/netboot.sh --dir whose boot.scr
 #                      goes on the card (default redox; redox-zero2w for the
@@ -52,7 +53,9 @@
 # Partition 1 gets a `.uuid` file naming the image for SwiftFlash
 # (github.com/zehrer/SwiftFlashCLI, docs/uuid-file.md): only the image block,
 # never a device or flash UUID. VERSION in the environment sets its version
-# (default: git describe).
+# (default: git describe), --family its id (default sdcard-netboot,
+# sdcard-redox or sdcard-direct). scripts/publish-sdcard.sh rewrites it with
+# the published family and version.
 
 set -euo pipefail
 
@@ -67,6 +70,7 @@ out="$ROOT/build/sdcard-netboot.img"
 data_mib=960
 image=
 direct=
+family=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -76,6 +80,7 @@ while [ $# -gt 0 ]; do
         --data-size) data_mib="$2"; shift 2 ;;
         --local) image="$2"; shift 2 ;;
         --direct) direct="$2"; shift 2 ;;
+        --family) family="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -150,6 +155,7 @@ else
 fi
 if [ -n "$direct" ]; then image_id=sdcard-direct
 elif [ -n "$image" ]; then image_id=sdcard-redox; else image_id=sdcard-netboot; fi
+[ -z "$family" ] || image_id="$family"
 cat > "$out.uuid" <<EOF
 {
   "schemaVersion": 1,
