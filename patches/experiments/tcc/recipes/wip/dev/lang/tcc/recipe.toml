@@ -14,6 +14,10 @@ patches = [
 template = "custom"
 script = """
 DYNAMIC_INIT
+# The image build's make variables (ARCH=aarch64, ...) reach this make
+# through MAKEFLAGS and would override tinycc's ARCH=arm64: no arm64 sources,
+# an empty libtcc.a.
+unset MAKEFLAGS MFLAGS
 rsync -a --delete "${COOKBOOK_SOURCE}/" ./
 
 # c2str.exe turns include/tccdefs.h into tccdefs_.h while tcc builds; it runs
