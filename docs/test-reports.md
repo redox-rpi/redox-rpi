@@ -10395,3 +10395,45 @@ Built 2026-11-08T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over ne
 | ps-tty | pass | 51 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## #289 PR #226 opt-a53 split: opt-level 3 with LTO against target-cpu=cortex-a53 (2026-11-08, Pi test agent)
+
+Follow-up to #260 (the user: "Erst Effekte trennen"). Real Pi 3B+, network boot, 8 boots in
+the order A, B2, C, D2, D2, C, B2, A (05:39–06:39 UTC). On each boot: boot-timeline.py,
+`scripts/pi-test.py` and `patches/experiments/opt-a53/bench.py --rounds 3`, run read-only
+from `~/redox-rpi-opt` at d6fb1cf8 with `PYTHONDONTWRITEBYTECODE=1`.
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-565-gc70f394e+x9f76` | stable, as in #260 |
+| B2 | `v0.4.0-dev-575-gd6fb1cf8+x9b71` | all: opt-level 3, fat LTO, 1 codegen unit, target-cpu cortex-a53 (`-aes,-sha2`) |
+| C | `v0.4.0-dev-574-gf58b489f+xb439` | opt-speed: opt-level 3, fat LTO, 1 codegen unit |
+| D2 | `v0.4.0-dev-575-gd6fb1cf8+xf367` | cpu-a53: target-cpu cortex-a53 (`-aes,-sha2`) only |
+
+**Result: pass. The network gain comes from opt-level 3 with LTO (C); target-cpu alone (D2) gives nothing.**
+All 8 boots reached `redox login:`. pi-test passed all 6 checks on every boot (0 of 300 starts
+failed). No panic. Clocks were the same before and after every bench (arm 1400 MHz, core 250,
+sdram 400), so there was no throttling.
+
+Median of 6 rounds per image (2 boots × 3 rounds), with the range, in seconds; boot time is 2 boots:
+
+| Workload | A (stable) | B2 (all) | C (opt-speed) | D2 (cpu-a53) | B2 vs A | C vs A | D2 vs A |
+|---|---|---|---|---|---|---|---|
+| spawn, 500 × `ls /usr` | 77.68 (77.42–77.92) | 75.47 (75.17–75.94) | 77.09 (76.98–77.24) | 79.58 (79.38–79.80) | **−2.8 %** | −0.8 % | **+2.4 % (slower)** |
+| net-rx, 32 MiB to the Pi | 3.07 (2.75–3.13) | 2.69 (2.52–2.87) | 2.84 (2.79–3.08) | 3.04 (2.75–3.37) | **−12.3 %** | **−7.4 %** | −0.7 % |
+| net-tx, 32 MiB from the Pi | 4.91 (4.68–4.96) | 4.37 (4.30–4.44) | 4.35 (4.32–4.45) | 5.00 (4.92–5.01) | **−11.2 %** | **−11.4 %** | +1.7 % |
+| sd-write, 50 MiB | 6.76 (6.32–8.43) | 6.71 (5.74–8.95) | 6.49 (5.75–6.97) | 6.83 (5.78–7.34) | same | same | same (card-bound, noisy) |
+| sd-read, 50 MiB | 0.55 (0.55–0.55) | 0.54 (0.53–0.54) | 0.55 (0.54–0.55) | 0.55 (0.55–0.55) | −2 % | same | same |
+| boot to `redox login:` | 35.14, 30.26 | 30.12, 30.61 | 30.25, 35.15 | 30.67, 30.35 | | | no difference (the known 35 s outliers) |
+
+- **net-tx:** C alone gives all of B2's gain. **net-rx:** C gives about 60 % of it; the rest
+  shows only when both are on.
+- **spawn:** target-cpu alone makes it 2.4 % slower, opt-speed alone 0.8 % faster, and both
+  together 2.8 % faster. So the two interact; target-cpu without LTO does not pay.
+- **net-tx retries:** bench.py's "nc did not connect" retry was needed 13 times over all boots
+  (on A, B2 and C; never on D2). Every round finished. One retry left a harmless
+  `TimeoutError` traceback from the accept thread (boot 1, A).
+- Raw data: homenodellm `~/pitest-tools/t289/` (`opt-a53-split.jsonl`, bench, pi-test, boot
+  and serial logs per boot).
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
