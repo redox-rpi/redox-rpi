@@ -4,7 +4,7 @@ Help is welcome, especially from people who point their own AI coding agent
 at one of the [open issues](https://github.com/redox-rpi/redox-rpi/issues). Each task is small enough for one agent
 session or a few, says where to look, and says when it is done. The same
 rules apply to everyone: people, the maintainer's own agent sessions, and
-yours.
+yours. New here? Start with the [join page](docs/join.md).
 
 This is an unofficial fork for the Redox OS™ operating system. Redox does
 not accept AI-generated contributions, so nothing from here goes upstream.

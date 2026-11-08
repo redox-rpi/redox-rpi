@@ -15,21 +15,27 @@ images. Milestones are the GitHub milestones `v0.x.0`; the roadmap is in
 
 ## Roles
 
-The project is run by one person, the **maintainer**, and a team of Claude
-agent sessions. Each agent owns one area and keeps its knowledge in its own
-memory, so the team stays stable; new agents are added only for expertise
-nobody has yet.
+The project lives in the GitHub organisation
+[redox-rpi](https://github.com/redox-rpi) and is open to everyone: people
+and AI agents are welcome to join, take a topic or a single issue, and grow
+into an owner role. How to start is on the [join page](../join.md).
+
+Today the team is one **maintainer** and a set of Claude agent sessions.
+Each agent owns one area and keeps its knowledge in its own memory, so the
+team stays stable; new agents are added only for expertise nobody has yet.
+Every role below can also be held, or shared, by a contributor who joins.
 
 | Role | Who | Owns |
 |---|---|---|
-| Maintainer | the user | goals and priorities, merging code PRs, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
+| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
 | Project lead | coordinator session | this plan, the coarse work packages and who owns them, overall status (`STATUS.md`), merge readiness (`merge-next`), docs-only merges, reporting to the maintainer |
 | Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard. Quality does not test |
 | Verification and validation (V&V) | Pi test agent, extended | test standards, test plan and reports, automated and special tests on QEMU and the real Pi, the regression set, preparing person tests |
-| Requirements | new agent (proposed) | the requirements, their IDs and their trace to issues, code and tests |
+| Requirements | Requirements session | the requirements, their IDs and their trace to issues, code and tests |
 | Architect | Architect session | architecture, coding standards and coding rules, RFC drafts, cross-topic technical decisions |
 | Release and CI | Release & CI session | builds, CI, release candidates and releases, the image server |
 | Topic owners | one session per topic | their topic: design, code, bug fixes, topic page (see the table below) |
+| Contributors | anyone, people or their agents | issues they take, following [CONTRIBUTING.md](../../CONTRIBUTING.md); a contributor can become a topic owner |
 
 ### Topic owners
 
@@ -46,6 +52,7 @@ nobody has yet.
 | assistant | Log triage (local language model) |
 | quality | Quality |
 | open firmware (`topic:boot`, own repository) | Open firmware |
+| boards (Pi 4, Pi 5, test lab), dma | no owner yet (project lead) |
 
 A topic without an active owner falls back to the project lead, who hands
 it on.
@@ -61,6 +68,10 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 | Document | Path | Owner | Status |
 |---|---|---|---|
 | Project management plan | `docs/process/pmp.md` | project lead | this draft |
+| Product breakdown structure (PBS) | [`docs/process/pbs.md`](pbs.md) | project lead, Architect | draft |
+| Work breakdown structure (WBS) | [`docs/process/wbs.md`](wbs.md) | project lead | draft |
+| Risks and opportunities | issues labelled [`risk`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Arisk) and [`opportunity`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Aopportunity) | project lead | live |
+| Join page | [`docs/join.md`](../join.md) | project lead | draft |
 | Quality management plan | `docs/process/qmp.md` | Quality | to write |
 | Requirements | `docs/requirements/` | Requirements | to write |
 | Architecture | `docs/architecture.md` | Architect | exists |
@@ -129,21 +140,27 @@ dashboard shows the gaps.
   `docs/rfcs/`, decided by the maintainer.
 - Changes to this plan go through a pull request reviewed by the maintainer.
 
-## Risks
+## Risks and opportunities
 
-| Risk | Effect | Handling |
-|---|---|---|
-| The project no longer fits one context window | agents miss the status, decisions get lost | `STATUS.md`, split test docs, topic status blocks (RFC 0002) |
-| One test Pi for all agents | queue waits, conflicts | V&V owns the Pi queue; one serial reader; later a test lab (topic boards) |
-| Drift from upstream Redox | patches stop applying | `upstream.lock`, drift check, small patches |
-| Flaky failures (#28, #92/#217) | releases with known gaps | Quality tracks them as KPIs; owners root-cause them |
-| Expiring credentials (nightly token 2026-11-27) | nightly stops | the project lead reminds the maintainer a week before |
+Risks and opportunities are GitHub issues, not a table in this plan, so
+they stay current and anyone can raise one:
+
+- Label `risk` or `opportunity`, issue type Task, a `topic:` label when it
+  belongs to a topic.
+- The issue says what could happen, how likely it is and how much it would
+  hurt (or help), what we do about it, and who owns it.
+- The project lead reviews all open risks and opportunities **every week**
+  and at every release candidate: updates likelihood and handling, closes
+  what no longer applies, and turns handling steps into normal issues.
+- Quality shows the open risks on the KPI dashboard.
 
 ## Next steps
 
-1. Quality writes the QMP and the first KPI dashboard.
-2. The Pi test agent takes the V&V role and writes the test standards.
-3. The Architect writes the coding standards and rules.
-4. The maintainer decides on a Requirements agent; it then writes the first
-   requirements for v0.4.
-5. RFC 0002 (project structure) decided and migrated in small PRs.
+1. The maintainer reviews the PBS and the WBS; the project lead then opens
+   one parent issue per work package and owners attach their issues as
+   sub-issues.
+2. Quality writes the QMP and the first KPI dashboard.
+3. The Pi test agent takes the V&V role and writes the test standards.
+4. The Architect writes the coding standards and rules.
+5. The Requirements agent writes the first requirements for v0.4.
+6. RFC 0002 (project structure) decided and migrated in small PRs.
