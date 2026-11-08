@@ -73,3 +73,10 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   with one Enter starts `launcher` as `user`, Super+F2 and `desktop` again
   keep one Orbital. Memory used went up by 40 to 80 MB. Not checked on
   screen (no screenshot tool for `rpi-fbd` yet).
+- 2026-11-08, v0.4.0-dev-783-g0f83d540+xce4c (QEMU, clean build: main
+  merged, no `--allow-dirty`), the warning: answer `n` starts nothing;
+  `echo y | desktop` and `desktop < /dev/null` refuse (no terminal);
+  `yes` starts Orbital; `desktop` again switches without asking, one
+  Orbital; `desktop --yes < /dev/null` starts it; `desktop --bogus`
+  prints the usage (rc 2). Ion's builtin `test -t` calls a pipe a
+  terminal, so the script uses uutils' `/usr/bin/test`.
