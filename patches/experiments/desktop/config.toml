@@ -17,6 +17,15 @@ data = """
 inputd -A 2
 """
 
+# Shown by login after every login on the console (userutils prints
+# /etc/motd); the image without this experiment has no motd.
+[[files]]
+path = "/etc/motd"
+data = """
+Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`.
+
+"""
+
 [[files]]
 path = "/usr/bin/desktop"
 mode = 0o755

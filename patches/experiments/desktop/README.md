@@ -20,6 +20,8 @@ scripts (the Pi tests run it over devsh, which has no terminal). Keys:
 - **Super+F3**: to the desktop again (or run `desktop` again).
 
 Orbital runs until the next reboot; its log goes to `/tmp/desktop.log`.
+After each login on the console `/etc/motd` points to it: "Type `desktop` to
+start the graphical desktop (beta)".
 
 Build it after the experiments it configures:
 
