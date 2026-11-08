@@ -19,8 +19,8 @@
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
-#                 one, and its recipes/<path>/recipe.toml, which replace the
-#                 upstream recipes/<path>/recipe.toml
+#                 one, and its recipes/<path>/recipe.toml (at any depth),
+#                 which replace the upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md)
@@ -35,6 +35,8 @@
 #         and its manifest in build/manifests/
 
 set -euo pipefail
+# recipes/**/recipe.toml: experiment recipes at any depth (wip/dev/lang/tcc).
+shopt -s globstar
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="$ROOT/upstream"
@@ -340,13 +342,13 @@ done
 # upstreams first, then the selected experiments versions are put in and
 # their old build is cleaned, so they build from scratch: a static program
 # would otherwise keep the relibc it was first linked with.
-for file in "$ROOT"/patches/experiments/*/recipes/*/*/recipe.toml; do
+for file in "$ROOT"/patches/experiments/*/recipes/**/recipe.toml; do
     [ -e "$file" ] || continue
     rel="${file#"$ROOT"/patches/experiments/*/recipes/}"
     git -C "$REDOX" checkout -q -- "recipes/$rel"
 done
 for exp in "${experiments[@]}"; do
-    for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+    for file in "$ROOT/patches/experiments/$exp"/recipes/**/recipe.toml; do
         [ -e "$file" ] || continue
         rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
         cp "$file" "$REDOX/recipes/$rel"
@@ -427,7 +429,7 @@ manifest_head="$(mktemp)"
     for exp in "${experiments[@]}"; do
         conf="$ROOT/patches/experiments/$exp/config.toml"
         [ -f "$conf" ] && echo "\"experiments/$exp/config.toml\" = \"$(sha256sum < "$conf" | cut -c1-16)\""
-        for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+        for file in "$ROOT/patches/experiments/$exp"/recipes/**/recipe.toml; do
             [ -e "$file" ] && echo "\"${file#"$ROOT/patches/"}\" = \"$(sha256sum < "$file" | cut -c1-16)\""
         done
     done
