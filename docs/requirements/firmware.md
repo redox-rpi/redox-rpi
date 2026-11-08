@@ -85,9 +85,14 @@ throttling state from the VideoCore firmware under `/scheme/rpi-firmware`.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | base `0018`, [rpi-firmware.md](../rpi-firmware.md) |
-| Verification | test, automated: used by test 2 (clock) in row 285; **gap** for model, memory and temperature |
+| Verification | test, automated: a new `pi-test.py` check, so the nightly runs it too (agreed with V&V 2026-11-08, not written yet); the clock is already read by test 2 in row 285 |
 
 Acceptance criteria:
 
-1. Reading the model gives "Raspberry Pi 3 Model B Plus" on the 3B+.
-2. The temperature is between 20 and 85 °C at idle.
+1. `/scheme/rpi-firmware/board` has a model line naming the Pi 3 Model B+
+   and a memory line (exact text confirmed by V&V on the Pi).
+2. `/scheme/rpi-firmware/temperature` is between 20 000 and 85 000
+   (millidegrees) at idle.
+3. `/scheme/rpi-firmware/throttled` reads as hex. Bits 0–3 (current
+   undervoltage and throttling) are 0 at idle; a set bit is a warning, not a
+   fail, because the cause is the power supply.

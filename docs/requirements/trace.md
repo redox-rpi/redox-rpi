@@ -27,8 +27,8 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
 | [REQ-NET-4](network.md#req-net-4-long-tcp-transfers) long TCP transfers | must | release | 2.4.2, 2.2.1 | #157, #88 | checklist 20, row 285 | verified (1); **gap** (2) |
 | [REQ-NET-5](network.md#req-net-5-ipv4-multicast) IPv4 multicast | should | release | 2.3.4, 2.4.2 | #27, PR #194 | row 218 | earlier; **gap** in checklist |
 | [REQ-TIME-1](time.md#req-time-1-clock-from-ntp) NTP | must | release | 2.4.4 | #22 | checklist 4, row 285 | verified (1); **gap** (2) |
-| [REQ-TIME-2](time.md#req-time-2-clock-without-network) clock without network | should | release | 2.4.4 | — | — | **gap** |
-| [REQ-TIME-3](time.md#req-time-3-set-the-clock-by-hand) set the clock | should | release | 2.4.1, 2.4.4 | #51, PR #98 | — | **gap** |
+| [REQ-TIME-2](time.md#req-time-2-clock-without-network) clock without network | should | release | 2.4.4 | — | QEMU offline, `--data` | planned |
+| [REQ-TIME-3](time.md#req-time-3-set-the-clock-by-hand) set the clock | should | release | 2.4.1, 2.4.4 | #51, PR #98 | Pi row (devsh); `user` step maybe visit | planned |
 | [REQ-SD-1](sdcard.md#req-sd-1-reliable-reads-and-writes) reliable reads and writes | must | release | 2.3.3, 2.4.3 | #6, #31 | checklist 6, 18, rows 285, 286 | verified (data partition); queued (root on card) |
 | [REQ-SD-2](sdcard.md#req-sd-2-small-writes) small writes | should | release | 2.4.3 | #16, #155, PR #73 | checklist 18, row 285 | verified (1); **gap** (2) |
 | [REQ-SD-3](sdcard.md#req-sd-3-rename-on-every-redoxfs) rename | should | release | 2.4.3 | #57 | row 83 | earlier; **gap** in checklist |
@@ -38,7 +38,7 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
 | [REQ-FW-1](firmware.md#req-fw-1-full-cpu-speed-without-throttling) 1400 MHz, no throttling | must | release | 2.3.8 | #20 | checklist 2, row 285 | verified |
 | [REQ-FW-2](firmware.md#req-fw-2-cpu-clock-follows-the-load) governor | should | release | 2.3.8, 2.6.1 | #23, PR #147 | checklist 13, row 285; row 161 | verified (1); earlier (2) |
 | [REQ-FW-3](firmware.md#req-fw-3-reboot) reboot | must | release | 2.2.1, 2.5.2 | #12, #7 | checklist 5, row 285 | verified |
-| [REQ-FW-4](firmware.md#req-fw-4-firmware-information) firmware information | should | release | 2.3.8 | base 0018 | — | **gap** |
+| [REQ-FW-4](firmware.md#req-fw-4-firmware-information) firmware information | should | release | 2.3.8 | base 0018 | new pi-test check (also nightly) | planned |
 | [REQ-AUDIO-1](audio.md#req-audio-1-sound-from-the-headphone-jack-beta) headphone jack | should | beta | 2.3.10, 2.4.5 | #250, PR #251 | checklist 16, row 285 | verified |
 | [REQ-AUDIO-2](audio.md#req-audio-2-audible-on-both-channels-beta) audible, left/right | should | beta | 2.3.10 | #250 | checklist 17, row 286; row 280 | queued (earlier: row 280) |
 | [REQ-GFX-1](graphics.md#req-gfx-1-optional-desktop-from-the-console-beta) optional desktop | should | beta (rc2) | 2.5.4, 2.3.6 | #33, PR #255 | checklist 22 (planned); rows 287, 288 | earlier (dirty build); **gap** (automated smoke, #261) |
@@ -48,11 +48,11 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
 | [REQ-STAB-2](stability.md#req-stab-2-pipes-keep-all-data) pipes | must | release | 2.2.1 | #158 | checklist 20, row 285 | verified |
 | [REQ-STAB-3](stability.md#req-stab-3-c-library-regressions) relibc tests | must | release | 2.4.1 | #13, #108 | checklist 15 (QEMU) | verified |
 | [REQ-BOARD-1](boards.md#req-board-1-pi-zero-2-w-with-the-same-image) Zero 2 W | should | release | 1.2 | #8 | checklist 9, 19, row 286 | queued (earlier: visit 193) |
-| [REQ-REL-1](release.md#req-rel-1-no-remote-shell-in-the-release-image) no devshd | must | release | 2.6.1, 3.3 | release-process | — | **gap** |
+| [REQ-REL-1](release.md#req-rel-1-no-remote-shell-in-the-release-image) no devshd | must | release | 2.6.1, 3.3 | release-process | Release & CI inspection; visit | planned |
 | [REQ-REL-2](release.md#req-rel-2-the-image-names-its-release-and-build) release name and build | must | release | 2.6.1, 4.1 | #237 | checklist 1, row 285 | verified |
 | [REQ-REL-3](release.md#req-rel-3-reproducible-release-build) reproducible build | must | release | 3.1 | #257 | checklist 1, row 285 | verified (1, 2); **gap** (3: CI green, #257) |
 | [REQ-REL-4](release.md#req-rel-4-published-and-checkable-download) download | must | release | 4.1, 3.4 | #237 | checklist 10 | verified |
-| [REQ-REL-5](release.md#req-rel-5-fits-a-2-gb-card) 2 GB card | should | release | 2.6.1, 4.1 | #24 | — | **gap** |
+| [REQ-REL-5](release.md#req-rel-5-fits-a-2-gb-card) 2 GB card | should | release | 2.6.1, 4.1 | #24 | Release & CI size check | planned |
 
 ## Summary
 
@@ -62,8 +62,10 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
   in part.
 - **Queued:** 9, all in the visit row 286.
 - **Fails:** 1 criterion: REQ-CON-2 fast serial input (#28, known issue).
-- **No test at all (gap):** 5 — REQ-TIME-2, REQ-TIME-3, REQ-FW-4,
-  REQ-REL-1, REQ-REL-5.
+- **No test at all:** none since 2026-11-08. The 5 that had none
+  (REQ-TIME-2, REQ-TIME-3, REQ-FW-4, REQ-REL-1, REQ-REL-5) have a method
+  agreed with V&V and are **planned**: QEMU, Pi row and pi-test check by
+  V&V; inspection and size check as Release & CI checklist items.
 - **Only an earlier row, no checklist test:** 7 — REQ-BOOT-5, REQ-USB-4,
   REQ-NET-5, REQ-SD-3, REQ-GFX-1, REQ-GFX-2, REQ-TCC-1 (the last three are
   rc2 or experiment).
@@ -75,10 +77,10 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
 
 ## Findings for the other roles
 
-- **V&V:** REQ-REL-1 is a must with no test; one line in the visit row 286
-  (`nc <pi> 2323` refused, no `devshd` in `ps`) closes it. REQ-TIME-2 and
-  REQ-TIME-3 fit the same visit (boot without cable). Rows should name the
-  REQ IDs they verify from the next row on.
+- **V&V:** write the agreed checks (REQ-TIME-2 QEMU, REQ-TIME-3 Pi row,
+  REQ-FW-4 pi-test check) and name REQ IDs in rows from the next row on.
+- **Release & CI:** two checklist items per candidate with their REQ IDs:
+  no `devshd` in the SD image (REQ-REL-1) and the image size (REQ-REL-5).
 - **V&V and Quality:** all automated rows run on the netboot image with
   `devshd`, never on the SD release image itself
   ([README](README.md#trace)).
@@ -91,4 +93,4 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
   what is left.
 - **Maintainer:** numbers marked "(proposed)" in the requirement files need
   a decision: boot time 30 s, NTP within 2 s, network on 100 of 100 boots,
-  audio rate ±2 %, desktop login within 30 s, image at most 1 900 MB.
+  audio rate ±2 %, desktop login within 30 s, image at most 1 800 000 000 bytes (agreed with V&V).

@@ -39,12 +39,14 @@ from a time before the build.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | `tools/timesync` |
-| Verification | test, automated: **gap** |
+| Verification | test, automated (QEMU `raspi3b` without network, SD image, `qemu-raspi3b.sh --data`): agreed with V&V 2026-11-08, not run yet; optional in the visit without a cable |
 
 Acceptance criteria:
 
-1. Booted without a cable, `date` is not earlier than the time saved at the
-   last shutdown or `reboot`, and not earlier than the build time.
+1. Booted without a network, `date` is not earlier than the build time in
+   `/etc/redox-rpi-release`.
+2. Booted, left running, then `reboot` without a network: `date` is not
+   earlier than the time saved before the reboot (`/scheme/data/timesync.last`).
 
 ### REQ-TIME-3 Set the clock by hand
 
@@ -61,9 +63,12 @@ The system shall let root set the clock (`clock_settime`, `settimeofday`,
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #51 (still open, waiting for upstream), PR #98, relibc `0011` |
-| Verification | test, automated: **gap** (no Pi row or checklist test) |
+| Verification | test, automated (Pi row through devsh): agreed with V&V 2026-11-08, not run yet; criterion 2 moves to the visit if a command cannot be run as `user` without a person |
 
 Acceptance criteria:
 
-1. `timesync -s <time>` as root sets the clock; `date` shows the new time.
+1. As root, `timesync -s @<now+3600>` sets the clock; `date` shows the new
+   time within 2 s.
 2. The same call as `user` fails with a permission error.
+3. Plain `timesync` afterwards brings the NTP time back (criterion 1 of
+   [REQ-TIME-1](#req-time-1-clock-from-ntp)).

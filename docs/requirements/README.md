@@ -118,6 +118,7 @@ States in the trace table:
 | earlier | passed on an earlier build (a dev build or an earlier release), not yet on this candidate |
 | queued | the test is in the queue for this candidate |
 | fails | the test ran and failed; a known issue names it |
+| planned | a method is agreed with V&V or Release & CI, but has not run yet |
 | gap | no test checks it |
 
 **What the automated rows verify.** `scripts/pi-test.py` logs in through

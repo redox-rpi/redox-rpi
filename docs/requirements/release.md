@@ -18,13 +18,15 @@ other unencrypted remote login.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | [release-process.md](../release-process.md#building), `config/raspi3bp-sdcard.toml` |
-| Verification | inspection and test: **gap** (no test checks it) |
+| Verification | inspection by Release & CI at the candidate (criterion 1, release checklist item) and test, person, in the visit (criterion 2); agreed with V&V 2026-11-08, not run yet. Automated rows cannot check it: they run on the netboot image with `devshd` |
 
 Acceptance criteria:
 
-1. The release image's file list has no `devshd` binary and no service that
-   starts it.
-2. On a booted release image, a TCP connection to port 2323 is refused.
+1. On the published SD image, `tools/redoxfs-file <img> get /usr/bin/devshd
+   <file>` fails with "not found", and none of the image's init service files
+   names `devshd`.
+2. On a booted release image, `nc -z -w 3 <pi> 2323` from the build host
+   fails, and `ps` on the console shows no `devshd`.
 
 ### REQ-REL-2 The image names its release and build
 
@@ -110,8 +112,9 @@ The release image shall fit a 2 GB microSD card.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | #24 (image that grows on first boot, open) |
-| Verification | analysis: **gap** (no check of the uncompressed size) |
+| Verification | analysis by Release & CI at the candidate, written into the release checklist next to the checksum; agreed with V&V 2026-11-08, not run yet |
 
 Acceptance criteria:
 
-1. The uncompressed image is at most 1 900 MB (proposed; 1054 MiB today).
+1. The uncompressed image is at most 1 800 000 000 bytes (some "2 GB" cards
+   hold only about 1.86 GB; 1054 MiB today).
