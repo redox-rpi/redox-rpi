@@ -8,6 +8,33 @@ requirement.
 Status: draft, 2026-11-08. The first set describes what v0.4.0 meets or
 claims (rc1, plus the optional desktop planned for rc2).
 
+**This is a collection, not the final format.** The maintainer proposed
+managing requirements as GitHub issues of type **Feature** (the org has
+Task, Bug and Feature). Where those issues live depends on the revised RFC
+0002 (repo split). Until then the files below collect the content so that
+each requirement moves into one Feature issue unchanged; see
+[As Feature issues](#as-feature-issues).
+
+## As Feature issues
+
+Each `### REQ-…` entry is written to become one issue:
+
+| Entry | Feature issue |
+|---|---|
+| ID and name | title `REQ-NET-1 DHCP on the onboard Ethernet` (the ID stays the stable reference in code, rows and release notes) |
+| Statement, rationale | first lines of the body |
+| Acceptance criteria | a checklist in the body (`- [ ] …`); V&V ticks a box with the row that passed it |
+| Priority, level, since | labels (`prio:must`, `level:beta`) or project fields, as RFC 0002 decides |
+| Status | open = in force, closed as "not planned" = retired; proposal = the issue is still in review |
+| Area | the repo the requirement concerns (after the split) plus the `topic:<name>` label |
+| Issues | the implementing Tasks and Bugs as sub-issues or "related" links |
+| Verified by | links to the Pi rows and reports, one comment per release with the state from [trace.md](trace.md) |
+
+The trace table then becomes a query or project view over these issues;
+until then [trace.md](trace.md) holds it. Moving them is one script run
+(`gh issue create` per entry), done once the maintainer has approved the
+content and RFC 0002 says which repo gets which area.
+
 ## Files
 
 | File | Area | Topic page |
@@ -105,7 +132,7 @@ The automated rows therefore test the netboot image built from the same
 commit and options plus `devshd`; only the visit tests the SD release image
 itself.
 
-## Changing requirements
+## Changing requirements (until the move to issues)
 
 - A new or changed requirement comes as a pull request against
   `docs/requirements/`. Requirements are decisions: the maintainer reviews
