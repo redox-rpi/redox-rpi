@@ -10518,3 +10518,35 @@ COSMIC. But everything else worked: network, keyboard after booting, mouse after
 
 **Result: pass for the Zero 2 W part (9, 19, keyboard and mouse hotplug; devsh port closed).** The editor save
 failure is the known desktop gap. The Pi 3B+ part of #286 is still open (Monday 11-09).
+
+## #286 part 2 and whole row: v0.4.0-rc2 on the Pi 3B+, from the SD card, by the maintainer (2026-11-08, recorded by the Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`redox-rpi-v0.4.0-rc2.img.xz`), SD card in the Pi 3B+
+with HDMI, USB keyboard and mouse, headphones, cable plugged in later. Person test (level 5),
+20:00–21:00 UTC. The maintainer's results came through the coordinator and are quoted as they
+said them. The serial log (`~/redox-rpi/logs/serial.log`, read only) confirms what it can show.
+Part 1 (Zero 2 W) is the entry above.
+[#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result of #286: pass.** Every checklist item of the visit passes on both boards. The known
+gaps (editor save, no MAC in `ifconfig`) and the usability notes do not block v0.4.0.
+
+| Checklist | Result | Detail |
+|---|---|---|
+| (6) boot menu, card boot | pass | "ja das bootmenü startet die karte : siehe serial." Serial: U-Boot autoboot boots `mmc 2`; the Redox bootloader shows "best resolution: 1920x1200 … Continuing with the selected mode in 5 seconds" and boots on with no key; RedoxFS 990 MiB; banner `redox-rpi v0.4.0-rc2 (v0.4.0-dev-809-g5723a434+x4aaf) (sdcard, 2026-11-08T18:56:24Z)`. In one boot a key stopped U-Boot, and `reboot` and `help` were typed there; the next boot went normally. The `panic` lines in that part of the log are U-Boot's help text |
+| (7) login on HDMI, time | pass | "date: OK"; timesync set the time from the saved time and then from `pool.ntp.org` |
+| (8) network after plugging the cable | pass | "net kommt nach dem anstecken". Serial: 3 × `dhcpd: eth0 … no offer` without the cable, then `dwc2d: link up on the LAN7800`, `DHCP: eth0 got 192.168.178.148/24`, `timesync: clock set to 2026-11-08 20:37:54 UTC from pool.ntp.org` |
+| (8) keyboard out and in | pass | "ja geht, seht auch im log dass er sie wieder gefunden hat, bei zweite mal auch auf anderen port". Serial: `hub 1 port 3: device at address 4 removed`, `keyboard removed`, `hub 1 port 3: device connected`, `keyboard at address 5`; again removed, then `hub 1 port 2: device connected`, `keyboard at address 5`. The keyboard (04d9:0006) is behind a small USB hub (05e3:0610) |
+| (21) mouse | pass | `dwc2d: mouse at address 3: relative, 3 button(s), wheel` (address 6 in an earlier boot); no panic in any rc2 boot |
+| (17) audio | pass | "ton geht, beim ausschalten gibt es einen kleinen knacks, und beim neustart den gleich wie beim ausschlaten. aber nichts schlimmes." A small click at power-off and the same at reboot; nothing was said about a click at boot or about the left-only tone separately |
+| (22) desktop | pass, with notes | The desktop worked, and so did Super+F2 back to the console. "it takes about 7 sec to start the editor" (the beta warning says about 40 s). Usability: "die Anleitung das man mit 'super+F2' auf die console zurück schalten kann man erst lesen wenn man auf die console zurück schaltet und das weiß. das sollte auch in dem text stehen. braucht auch keine ja/nein frage sein, nur ein info. in der sollte auch stehen das save in editor nicht geht." → Graphics, v0.4.1. Saving in the editor fails, as on the Zero 2 W (known, #33) |
+| `ifconfig` | known gap | "same probelm as in the zero: no mac in ifconfig": no MAC shown, on the 3B+ and the Zero 2 W (Network, v0.4.1) |
+| (23) REQ-REL-1, no devshd | pass | photo of `ps` on HDMI ("ich sehe es nicht"): the list ends with `/usr/bin/ps`, no `devshd`. From the build host at 20:50:51 UTC: `nc -z -w 3 192.168.178.148 2323` fails (rc 1); .148 is the Pi (`b8:27:eb:08:e0:aa`), and the last serial banner is rc2 `sdcard` |
+
+**Summary of #286 (both parts):**
+- **Zero 2 W (9, 19):** DHCP 192.168.178.118 on the RTL8153 hub, ping, NTP, keyboard and mouse hotplug, devsh port closed.
+- **Pi 3B+ (6, 7, 8, 17, 21, 22, 23):** all pass.
+- **For v0.4.1:** editor save (#33), MAC in `ifconfig` (Network), desktop info text and editor start time in the warning (Graphics).
+
+The netboot card goes back in when the maintainer is done. Then the Pi test agent checks that
+stable `v0.4.0-dev-748-g36bd5f6a+x9f76` boots.
