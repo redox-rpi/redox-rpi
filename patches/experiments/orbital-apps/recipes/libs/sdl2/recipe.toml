@@ -118,6 +118,8 @@ patch -p1 <<'PATCH'
  
  #ifdef __cplusplus
 PATCH
+# Link OSMesa only with OpenGL.
+sed -i "s/list(APPEND EXTRA_LIBS orbital OSMesa)/list(APPEND EXTRA_LIBS orbital)\n      if(SDL_OPENGL)\n        list(APPEND EXTRA_LIBS OSMesa)\n      endif()/" cmake/sdlchecks.cmake
 fi
 '''
 
