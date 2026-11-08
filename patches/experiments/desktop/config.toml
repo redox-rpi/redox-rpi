@@ -25,6 +25,17 @@ data = """
 # Starts the desktop (Orbital) from the text console, or switches to it
 # when it already runs. Super+F2: back to the console, Super+F3: the
 # desktop again. Orbital keeps running until the next reboot.
+#   desktop          ask before the first start in a boot
+#   desktop --yes    start without asking (tests, scripts)
+let yes = 0
+for arg in @args[1..]
+    if test $arg = --yes || test $arg = -y
+        let yes = 1
+    else
+        echo "usage: desktop [--yes]"
+        exit 2
+    end
+end
 if test "$USER" != root
     echo "desktop: run it as root (sudo desktop)"
     exit 1
@@ -36,6 +47,25 @@ fn orbital_runs
     grep /usr/bin/orbital /tmp/desktop.ps > /dev/null
 end
 if not orbital_runs
+    if test $yes = 0
+        echo "The desktop (Orbital) is a beta:"
+        echo "- it is slow: the editor takes about 40 s to start, typing and"
+        echo "  dragging windows cost much of a core"
+        echo "- once started, Orbital cannot be stopped; its memory (about"
+        echo "  40 to 80 MB) comes back only with a reboot"
+        echo "- Super+F2 goes back to this console, Super+F3 to the desktop"
+        echo "- no browser, one screen resolution, no HDMI hotplug"
+        if not test -t 0
+            echo "desktop: no terminal to ask on, not starting (desktop --yes starts it)"
+            exit 1
+        end
+        echo -n "Start the desktop? [y/N] "
+        read answer
+        if test "$answer" != y && test "$answer" != yes && test "$answer" != Y
+            echo "desktop: not started"
+            exit 1
+        end
+    end
     echo "desktop: starting Orbital, its log goes to /tmp/desktop.log"
     export VT=3
     # &! runs it in the background, disowned: else ion waits for it before
