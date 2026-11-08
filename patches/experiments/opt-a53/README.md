@@ -117,3 +117,43 @@ and the driver waiting for it, not to the CPU.
 The bench script found two things about Redox's `nc`: `nc -l` needs a full
 address (`0.0.0.0:5135`), and `nc` does not close the connection at the
 end of its input.
+
+### Pi, row 289, 2026-11-08: which part gives the gain
+
+Effects measured separately. B2 is B rebuilt with `-aes,-sha2`. C is
+experiment [opt-speed](../opt-speed/): opt-level 3, fat LTO and 1 codegen
+unit, without target-cpu. D2 is experiment [cpu-a53](../cpu-a53/):
+target-cpu cortex-a53 only. 8 boots in the order A, B2, C, D2, D2, C, B2,
+A; medians of 6 rounds per image. Report in `docs/test-reports.md` on main
+(44c0f9c2), and a [comment on PR 226](https://github.com/redox-rpi/redox-rpi/pull/226#issuecomment-6718340638).
+
+| Image | Build ID |
+|---|---|
+| A | `v0.4.0-dev-565-gc70f394e+x9f76` |
+| B2 | `v0.4.0-dev-575-gd6fb1cf8+x9b71` |
+| C | `v0.4.0-dev-574-gf58b489f+xb439` |
+| D2 | `v0.4.0-dev-575-gd6fb1cf8+xf367` |
+
+| Workload | A (s) | B2: everything | C: opt-level 3 + LTO | D2: target-cpu only |
+|---|---|---|---|---|
+| spawn, 500 `ls` | 77.68 | 75.47 (−2.8 %) | 77.09 (−0.8 %) | 79.58 (+2.4 %, slower) |
+| net-rx, 32 MiB | 3.07 | 2.69 (−12.3 %) | 2.84 (−7.4 %) | 3.04 (−0.7 %) |
+| net-tx, 32 MiB | 4.91 | 4.37 (−11.2 %) | 4.35 (−11.4 %) | 5.00 (+1.7 %) |
+| sd-write, sd-read | 6.76, 0.55 | the same | the same | the same |
+| boot to `redox login:` | about 30 | the same | the same | the same |
+
+All 8 boots passed `scripts/pi-test.py`.
+
+What it means:
+
+- **opt-level 3 with LTO is the main effect.** Alone, it gives all of
+  the net-tx gain and about 60 % of the net-rx gain.
+- **target-cpu alone gives nothing**, and program starts get a little
+  slower.
+- **target-cpu only helps together with LTO.** B2 beats C at spawn
+  (−2.8 % against −0.8 %) and at net-rx (−12.3 % against −7.4 %). With
+  LTO, LLVM can schedule the whole program for the in-order A53. Without
+  it, the scheduling stops at crate boundaries.
+- So B2, the full opt-a53 with `-aes,-sha2`, is the best candidate for
+  the default build. C is the smaller step if a CPU-specific build is not
+  wanted, for example for an image shared with the Pi 4 later.
