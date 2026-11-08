@@ -91,6 +91,10 @@ The gaps of the coverage audit, as requirements. V&V (and Release & CI
 for CI and the nightly) decide how to test them; Quality checks that they
 are met.
 
+Taken on 2026-11-08 (V&V review on PR #262): R2 and R5 into the V&V
+regression set (#265), R3 into the special tests (#266); R1, R4 and R10
+to Release & CI through the lead; R8 is owner work.
+
 | # | Requirement | Gap it closes | Issue |
 |---|---|---|---|
 | R1 | A red `QEMU boot test` on main is reported within an hour; a PR is merged only on CI that includes the previous merges in its patch directories; a candidate comes from a green commit | main red 10 h, 43 stale-CI merges | [#257](https://github.com/redox-rpi/redox-rpi/issues/257) |

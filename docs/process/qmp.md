@@ -144,30 +144,39 @@ standards ([test-standards.md](test-standards.md#test-levels), V&V):
 **U** for checks that come from upstream Redox (their CI, the relibc test
 suite). V&V owns the standards and runs the tests; Quality keeps this
 matrix complete and measurable and audits it against the
-[coverage KPIs](#kpis). Draft of 2026-11-08 for V&V to confirm
-([#267](https://github.com/redox-rpi/redox-rpi/issues/267)).
+[coverage KPIs](#kpis). Agreed with V&V on 2026-11-08
+([#267](https://github.com/redox-rpi/redox-rpi/issues/267), review on
+[PR #262](https://github.com/redox-rpi/redox-rpi/pull/262#issuecomment-6719908584));
+the test standards link here.
 
-● exists today, ○ wanted (a gap; requirement on V&V), – not useful at that level.
+● exists today (at level 4 "rows" means by hand in Pi rows, not in the
+nightly), ○ a gap with who takes it, – not useful at that level. Gap
+owners: **RS** V&V regression set ([#265](https://github.com/redox-rpi/redox-rpi/issues/265)),
+**ST** V&V special tests ([#266](https://github.com/redox-rpi/redox-rpi/issues/266)),
+**RC** Release & CI through the lead, **OW** the topic owner (host unit
+tests), **acc** accepted gap.
 
 | Area | 1 Host | 2 QEMU | 3 CI | 4 Pi auto | 5 Person | U |
 |---|---|---|---|---|---|---|
-| Patches apply, drift, reproducible build | – | – | ● check-patches, drift weekly; ○ CI current at merge (#257) | – | – | – |
-| Kernel: boot, SMP, scheduler, memory | – | ● | ● kernel only, upstream userspace; ○ our full image (#260) | ● nightly starts | – | ● |
-| Kernel: signals, pipes, start crashes | ○ sigregs-like unit checks | ● qemu-run start loop | ● sigregs on Linux | ● 300/1000 starts | – | – |
-| relibc | ○ | ● relibc-tests by hand | ○ relibc suite in CI (#13) | ● release 15 | – | ● suite |
-| Boot chain: firmware, U-Boot, bootloader, netboot | – | ● QEMU boot | ● | ● every row boots | ● SD boot, boot menu (6) | – |
-| SD card, RedoxFS | ○ redoxfs-file | ● `--data` | – | ● one file nightly, sd-stress release | ● root on the card (6) | ● redoxfs |
-| USB: dwc2d, keyboard, mouse, storage, hotplug | – | ● usb-net in QEMU | – | ○ hub/storage without a person | ● 7, 8, 21 | – |
-| Network: LAN7800, RTL8153, netstack, dhcpd, devshd | – | ● usb-net | ● QEMU usb-net boot | ● implied by devsh; ○ soak, TCP transfer (#258, #259) | ● Zero 2 W hub (9) | – |
-| Time: timesync, timerd, time zones | ● timerd, timesync tests | ● | – | ○ NTP check nightly (#258) | – | – |
-| Firmware interface: clock, governor, reboot, poweroff | ● socdump tests | ● cpu-ondemand qemu-check | – | ● release 2, 5, 13; ○ nightly (#258) | – | – |
-| GPIO, I2C, SPI | ○ protocol logic | – | – | ● no-wire check (release 14) | ● wired rows | – |
-| Graphics: rpi-fbd, vc4d, desktop | ○ vc4d logic (tests do not build on a host) | ● fb in QEMU | – | ● serial rows (rpi-fbd); ○ desktop smoke (#261) | ● screen visits, 22 | – |
-| Audio: PWM driver, audiod, tone | ○ ring and stats logic | ● qemu-check.sh by hand | ○ | ● release 16; ○ nightly rate (#258) | ● listening (17) | – |
+| Patches apply, drift, reproducible build | – | – | ● check-patches, drift weekly; ○ CI current at merge (#257, RC) | – | – | – |
+| Kernel: boot, SMP, scheduler, memory | – | ● | ● kernel only, upstream userspace; ○ our full image (#260, RC) | ● nightly starts | – | ● |
+| Kernel: signals, pipes, start crashes | ○ sigregs-like unit checks (OW) | ● qemu-run start loop | ● sigregs on Linux | ● 300/1000 starts | – | – |
+| relibc | ○ (OW) | ● relibc-tests by hand | ○ relibc suite in CI (#13, RC) | ● release 15 | – | ● suite |
+| Boot chain: firmware, U-Boot, bootloader, netboot | – | ● QEMU boot | ● | ● every row boots; boot time from boot-timeline.py in benchmark rows | ● SD boot, boot menu (6) | – |
+| SD card, RedoxFS | ○ redoxfs-file (OW) | ● `--data` | – | ● one file nightly, sd-stress release | ● root on the card (6) | ● redoxfs |
+| USB: dwc2d, keyboard, mouse, storage, hotplug | – | ● usb-net in QEMU | – | ○ hub and storage without a person (acc: needs plugging) | ● 7, 8, 21 | – |
+| Network: LAN7800, RTL8153, netstack, dhcpd, devshd | – | ● usb-net | ● QEMU usb-net boot | ● rows: TCP transfer (bench.py, rows 260, 289), boots without devshd in reboot loops (276, 285); ○ TCP in the nightly (#258, RS); ○ soak and boot count nightly (#259, ST) | ● Zero 2 W hub (9) | – |
+| Time: timesync, timerd, time zones | ● timerd, timesync tests | ● | – | ○ NTP check nightly (#258, RS) | – | – |
+| Firmware interface: clock, governor, reboot, poweroff | ● socdump tests | ● cpu-ondemand qemu-check | – | ● release 2, 5, 13; ○ nightly (#258, RS) | – | – |
+| GPIO, I2C, SPI | ○ protocol logic (OW) | – | – | ● no-wire check (release 14) | ● wired rows | – |
+| Graphics: rpi-fbd, vc4d, desktop | ○ vc4d logic, tests do not build on a host (#271, OW) | ● fb in QEMU | – | ● serial rows (rpi-fbd), desktop without a person (row 288), vc4shot (276); ○ scripted desktop smoke and console regression (#261, RS) | ● screen visits, 22 | – |
+| Audio: PWM driver, audiod, tone | ○ ring and stats logic (OW) | ● qemu-check.sh by hand | ○ (RC) | ● real rate from tone stats (rows 281, 283, 284), release 16; ○ nightly rate (#258, RS) | ● listening (17) | – |
 | Serial console, getty | – | ● | – | ● serial-input-test (11) | – | – |
-| Tools: assistant, socdump, cputop, welcome | ● 6 of 20 crates | ● | ○ cargo test | – | – | – |
-| Host scripts: pi-test, publish, KPI | ○ parsers | – | ● topics check | ● used every night | – | – |
-| Zero 2 W | – | – | – | ○ (no second board) | ● 9 | – |
+| Tools: assistant, socdump, cputop, welcome | ● 6 of 20 crates; more is OW | ● | ○ cargo test (#273, RC) | – | – | – |
+| Host scripts: pi-test, publish, KPI | ○ parsers (OW) | – | ● topics check | ● used every night | – | – |
+| Zero 2 W | – | – | – | ● once (row 206); ○ no second board on the network (acc) | ● 9 | – |
+| TCC (native C compiler) | – | ○ (OW) | – | ● rows 278, 282 | – | – |
+| Robustness: chaos, start and reboot loops, soak | – | ● start loop | – | ● chaos by hand (#196), 1000 starts and reboot loops for releases; ○ soak (#266, ST) | – | – |
 | Release image: download, checksum, notes | – | ● rc in QEMU | – | ● release 1–5 | ● visit | – |
 
 Rules for the matrix:
@@ -185,7 +194,7 @@ Three kinds, each a KPI:
 
 | Kind | What counts | Today (2026-11-08) | Target |
 |---|---|---|---|
-| Feature / requirement coverage | each release feature has an automated check (level 2–4) or a named person test (5) | v0.4.0: 8 of 12 image features (67 %); none for multicast (#27), TCP close (#88), bootloader skip (#232), socdump (#224) | 100 % of release features from rc2 on; per requirement once `REQ-…` exist |
+| Feature / requirement coverage | each release feature has an automated check (level 2–4) or a named person test (5) | v0.4.0: 8 of 12 image features (67 %); none for multicast (#27), TCP close (#88), bootloader skip (#232), socdump (#224); V&V writes checklist steps for the first three, socdump is a person test (open firmware card) | 100 % of release features from rc2 on; per requirement once `REQ-…` exist |
 | Code coverage | lines of host-testable code run by host tests (`cargo llvm-cov`; our crates in `tools/`, the logic parts of vc4d and drivers, Python parsers) | not measured; 6 of 20 tool crates have tests (30 tests); vc4d's 6 tests do not build on a host | step 1 (v0.5): measured in CI report-only, every crate with pure logic has tests; step 2: 50 % of host-testable lines, 70 % for new code in a PR |
 | Pi row coverage per topic | done rows per topic in 30 days, and topics with code in the image but no nightly check | see [kpis.md](kpis.md) | every topic in the image has a nightly or release check |
 
