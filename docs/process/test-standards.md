@@ -35,6 +35,21 @@ Rules:
   unless the row says why QEMU cannot run it.
 - Each row and report names its level.
 
+## Verification methods
+
+Each requirement (`REQ-…`) names how it is verified:
+
+- **Test:** a check runs and gives pass or fail, at one of the levels above.
+- **Inspection:** someone looks at the built artefact, for example whether
+  the release image contains `devshd`.
+- **Analysis:** a number is worked out from the build, for example whether
+  the image size fits a 2 GB card.
+- **Demonstration:** a person shows it working at the Pi (level 5).
+
+An inspection or analysis item in a release checklist
+([release-process.md](../release-process.md)) counts as verification when
+it names the `REQ-…` ID and records the measured value.
+
 ## Queue rows
 
 A row in [test-plan.md](../test-plan.md#queue) contains the following.
