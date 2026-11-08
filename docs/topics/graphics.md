@@ -448,6 +448,16 @@ the screen.
   `vc4d` taking buffers from Redox memory like Linux's KMS driver
   (`start_cd.elf` with `gpu_mem=16` has no room for 3D).
 
+  **Stage (a) started 2026-11-04:** draft
+  [redox-rpi/vc4d#1](https://github.com/redox-rpi/vc4d/pull/1) keeps the
+  firmware's HDMI mode and takes over its HVS channel with vc4d's own
+  display list: the client's dumb buffer is scanned out directly, and a
+  64x64 cursor plane is Orbital's pointer. Branch `graphics-vc4d`,
+  experiment `vc4d` (a recipe that pins a vc4d commit, instead of
+  `rpi-fb`). QEMU has no HVS: it checks the start, the fallback and, with
+  `VC4D_FAKE`, the handover and the lists, not the picture. Pi test #220
+  (queued). `rpi-fbd` (#113) stays the fallback.
+
 ## License rule for `vc4d`
 
 Upstream Redox takes no AI-written code, so `vc4d` may be GPL; the user

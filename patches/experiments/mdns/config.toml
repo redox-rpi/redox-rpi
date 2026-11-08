@@ -1,0 +1,23 @@
+[packages]
+mdnsd = "source"
+
+[[files]]
+path = "/etc/hostname"
+data = "redox-rpi"
+
+# Answer as redox-rpi.local and announce devsh and SSH. Needs the
+# multicast experiment (IP_ADD_MEMBERSHIP).
+[[files]]
+path = "/usr/lib/init.d/91_mdnsd.service"
+data = """
+[unit]
+description = "Multicast DNS responder (redox-rpi.local)"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "mdnsd"
+# Each service only while its program is on the image (devshd on
+# development images, sshd with the sshd experiment).
+args = ["_devsh._tcp:2323:/usr/bin/devshd", "_ssh._tcp:22:/usr/bin/sshd"]
+type = "oneshot_async"
+"""
