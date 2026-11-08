@@ -8,10 +8,10 @@ Status: draft, 2026-11-08.
 
 ## Goal
 
-Redox OS on the Raspberry Pi 3B+ (and later Zero 2 W, Pi 4/5), with
-reproducible builds, tested on a real Pi, released as versioned SD card
-images. Milestones are the GitHub milestones `v0.x.0`; the roadmap is in
-[status.md](../status.md).
+Redox OS on (almost) every Raspberry Pi from the Zero 2 W upwards, with
+reproducible builds, tested on a real Pi, released every week as versioned
+SD card images. The roadmap is in [ROADMAP.md](../../ROADMAP.md); its
+themes are goals that take several sprints.
 
 ## Roles
 
@@ -118,10 +118,43 @@ Requirement (`REQ-…`) → issue → branch and PR (references the issue) → c
 issue) → release notes. Quality checks that the chain is complete; the KPI
 dashboard shows the gaps.
 
+## Sprints and weekly releases
+
+We work agile, without following Scrum strictly. The rhythm is one sprint
+per week and one release per sprint:
+
+- **What is ready goes in.** A change that is merged and Pi-tested by the
+  cut-off is in the week's release. Everything else moves to the next
+  sprint. A release never waits for a feature.
+- **One week:** Monday to Sunday.
+
+| When | What | Who |
+|---|---|---|
+| Monday | Sprint planning: the project lead proposes the sprint goal and the issues from the topic owners; the maintainer confirms or changes it | project lead, maintainer |
+| Monday to Thursday | Work, Pi tests, pull requests; `merge-next` kept current | owners, V&V, project lead |
+| Thursday evening | Cut-off: what the maintainer has merged by then is in | maintainer |
+| Friday | Release candidate built from `main`, candidate checks, Pi tests and the regression set | Release and CI, V&V |
+| Weekend | The maintainer approves the tag on the exact commit (person test if one is due); release notes and known issues | maintainer, Release and CI |
+| Sunday or Monday | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
+
+- Each sprint is a GitHub milestone named after its release. Open issues
+  of a closed sprint move to the next milestone, not to "later" by
+  default.
+- A failed candidate is fixed or the change that broke it is taken out;
+  if neither works by Sunday, that week has no release and the next one
+  carries the changes.
+- Person tests at the Pi are bundled into one visit per sprint where
+  possible.
+- **Version numbers (proposal):** each weekly release counts up the patch
+  number (`v0.4.1`, `v0.4.2`, …); the minor number goes up when a roadmap
+  theme is complete. Release and CI writes the final rule into
+  [release-process.md](../release-process.md).
+
 ## Workflow
 
 1. The maintainer sets a goal or priority. The project lead turns it into a
-   coarse work package and gives it to the owning agent.
+   coarse work package, gives it to the owning agent and plans it into a
+   sprint.
 2. The owner splits it into issues, works on a branch, and tests in QEMU.
 3. V&V runs the Pi test for the exact build and files the report.
 4. The owner opens a pull request (draft until the Pi test passes) with the
@@ -130,8 +163,8 @@ dashboard shows the gaps.
    Quality may audit the PR against the process.
 6. The maintainer merges code PRs; the project lead may merge docs-only
    PRs. RFCs (`docs/rfcs/`) are always the maintainer's.
-7. Release and CI builds release candidates; V&V tests them; the maintainer
-   approves the tag.
+7. Release and CI builds the weekly release candidate; V&V tests it; the
+   maintainer approves the tag.
 
 ## Communication
 
