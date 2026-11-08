@@ -7,8 +7,14 @@ as without it. As root:
 
     desktop
 
-starts Orbital on VT 3 and switches to it: the login window (user `user`,
-empty password: press Enter), then the desktop with the launcher. Keys:
+first prints a warning: the desktop is a beta, with its main limits (see
+Beta limits below), and asks `Start the desktop? [y/N]`. Only `y` or
+`yes` starts it; any other answer, or no terminal on stdin (a script, a
+pipe), leaves it off. Then it starts Orbital on VT 3 and switches to it:
+the login window (user `user`, empty password: press Enter), then the
+desktop with the launcher. When Orbital already runs, `desktop` switches
+to it without asking. `desktop --yes` skips the question, for tests and
+scripts (the Pi tests run it over devsh, which has no terminal). Keys:
 
 - **Super+F2**: back to the text console (Orbital keeps running);
 - **Super+F3**: to the desktop again (or run `desktop` again).
@@ -62,3 +68,8 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   `desktop` starts Orbital on VT 3, login works; Super+F2 goes back to the
   console, `desktop` again switches to the same Orbital (one process in
   `ps`). SD image 48.6 MiB as `.img.xz` (rc1: 20.9 MiB). Pi test: row 287.
+- 2026-11-08, Pi rows 287 A and 288 (same build): boots to the console,
+  `pi-test.py` passes, `desktop` starts Orbital (rc 0, empty log), login
+  with one Enter starts `launcher` as `user`, Super+F2 and `desktop` again
+  keep one Orbital. Memory used went up by 40 to 80 MB. Not checked on
+  screen (no screenshot tool for `rpi-fbd` yet).

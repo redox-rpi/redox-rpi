@@ -28,8 +28,12 @@ data = """
 #   desktop          ask before the first start in a boot
 #   desktop --yes    start without asking (tests, scripts)
 let yes = 0
-for arg in @args[1..]
-    if test $arg = --yes || test $arg = -y
+# @args[1..] fails when there are no arguments, so skip the script's name.
+let skip = 1
+for arg in @args
+    if test $skip = 1
+        let skip = 0
+    else if test $arg = --yes || test $arg = -y
         let yes = 1
     else
         echo "usage: desktop [--yes]"
