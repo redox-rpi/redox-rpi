@@ -11,11 +11,13 @@ program on the Pi itself.
 |---|---|
 | Rationale | A compiler on the device lets users write programs without a cross toolchain. |
 | Priority | may |
+| Kind | functional |
 | Level | experiment (not in the release image) |
+| PBS | 2.5.3 |
 | Status | proposed |
 | Since | — (draft PR #249) |
-| Issues | #247, PR #249 (draft) |
-| Verified by | row 278 (dev build) |
+| Implemented by | #247, PR #249 (draft) |
+| Verification | test, automated: row 278 (dev build) |
 
 Acceptance criteria:
 

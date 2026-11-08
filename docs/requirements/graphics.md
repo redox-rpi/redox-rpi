@@ -15,11 +15,13 @@ desktop.
 |---|---|
 | Rationale | The maintainer wants a desktop in the release, but not as the default (decision for rc2). |
 | Priority | should |
+| Kind | functional |
 | Level | beta (one resolution, Orbital runs until reboot, window dragging costs a core) |
+| PBS | 2.5.4, 2.3.6 |
 | Status | proposed |
 | Since | v0.4.0-rc2 (planned) |
-| Issues | #33, PR #255 (draft), PR #113 |
-| Verified by | rows 287 and 288 (`--allow-dirty` build, not valid for a release); checklist v0.4.0 test 22 (planned for the rc2 visit); **gap** for an automated smoke test (#261) |
+| Implemented by | #33, PR #255 (draft), PR #113 |
+| Verification | test, person: rows 287 and 288 (`--allow-dirty` build, not valid for a release); checklist v0.4.0 test 22 (planned for the rc2 visit); **gap** for an automated smoke test (#261) |
 
 Acceptance criteria:
 
@@ -40,11 +42,13 @@ file manager.
 |---|---|
 | Rationale | A desktop without apps is not usable. |
 | Priority | may |
+| Kind | functional |
 | Level | beta (editor about 40 s to start, save dialog up to 30 s) |
+| PBS | 2.5.4 |
 | Status | proposed |
 | Since | v0.4.0-rc2 (planned) |
-| Issues | #33, PR #255 |
-| Verified by | rows 274 and 275 (dev builds); checklist v0.4.0 test 22 (planned) |
+| Implemented by | #33, PR #255 |
+| Verification | test, person: rows 274 and 275 (dev builds); checklist v0.4.0 test 22 (planned) |
 
 Acceptance criteria:
 

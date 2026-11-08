@@ -11,11 +11,13 @@ Dynamically linked programs shall start every time.
 |---|---|
 | Rationale | Random start failures made v0.1.0 unusable. |
 | Priority | must |
+| Kind | quality |
 | Level | release |
+| PBS | 2.2.1, 2.4.1 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #1, #5, #12, #127, relibc `0004`, `0007`, kernel `0003` |
-| Verified by | checklist v0.4.0 test 1, row 285 (0 of 1000) |
+| Implemented by | #1, #5, #12, #127, relibc `0004`, `0007`, kernel `0003` |
+| Verification | test, automated: checklist v0.4.0 test 1, row 285 (0 of 1000) |
 
 Acceptance criteria:
 
@@ -30,11 +32,13 @@ A write into a pipe shall deliver all its bytes.
 |---|---|
 | Rationale | Shell pipelines lost data. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.2.1 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #158, PR #160, kernel `0010` |
-| Verified by | checklist v0.4.0 test 20, row 285 |
+| Implemented by | #158, PR #160, kernel `0010` |
+| Verification | test, automated: checklist v0.4.0 test 20, row 285 |
 
 Acceptance criteria:
 
@@ -50,11 +54,13 @@ no failure beyond the known list.
 |---|---|
 | Rationale | relibc carries most of our fixes; its tests catch regressions before the Pi does. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.4.1 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #13, #108 (known failure `pthread/exit`) |
-| Verified by | checklist v0.4.0 test 15 (QEMU, build agent): pass |
+| Implemented by | #13, #108 (known failure `pthread/exit`) |
+| Verification | test, QEMU: checklist v0.4.0 test 15 (QEMU, build agent): pass |
 
 Acceptance criteria:
 

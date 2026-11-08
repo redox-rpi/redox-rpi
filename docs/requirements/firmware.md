@@ -11,11 +11,13 @@ the Pi 3B+) and log undervoltage or overheating.
 |---|---|
 | Rationale | At the firmware's 600 MHz the Pi is half as fast. |
 | Priority | must |
+| Kind | quality |
 | Level | release |
+| PBS | 2.3.8 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #20, base `0021` |
-| Verified by | checklist v0.4.0 test 2, row 285 |
+| Implemented by | #20, base `0021` |
+| Verification | test, automated: checklist v0.4.0 test 2, row 285 |
 
 Acceptance criteria:
 
@@ -32,11 +34,13 @@ shall set another mode at boot.
 |---|---|
 | Rationale | Lower clock at idle saves power and heat without slowing work. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.8, 2.6.1 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #23 (open, milestone v0.4.0), PR #147, base `0040`, kernel `0040` |
-| Verified by | checklist v0.4.0 test 13, row 285 (criterion 1); row 161 (criterion 2, dev build) |
+| Implemented by | #23 (open, milestone v0.4.0), PR #147, base `0040`, kernel `0040` |
+| Verification | test, automated: checklist v0.4.0 test 13, row 285 (criterion 1); row 161 (criterion 2, dev build) |
 
 Acceptance criteria:
 
@@ -54,11 +58,13 @@ Acceptance criteria:
 |---|---|
 | Rationale | The Pi has no power button; updates and tests need a restart. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.2.1, 2.5.2 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | kernel `0002` (watchdog), #12; #7 (power off, open) |
-| Verified by | checklist v0.4.0 test 5, row 285 |
+| Implemented by | kernel `0002` (watchdog), #12; #7 (power off, open) |
+| Verification | test, automated: checklist v0.4.0 test 5, row 285 |
 
 Acceptance criteria:
 
@@ -73,11 +79,13 @@ throttling state from the VideoCore firmware under `/scheme/rpi-firmware`.
 |---|---|
 | Rationale | Users and tests need to know the board and its health. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.8 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | base `0018`, [rpi-firmware.md](../rpi-firmware.md) |
-| Verified by | used by test 2 (clock) in row 285; **gap** for model, memory and temperature |
+| Implemented by | base `0018`, [rpi-firmware.md](../rpi-firmware.md) |
+| Verification | test, automated: used by test 2 (clock) in row 285; **gap** for model, memory and temperature |
 
 Acceptance criteria:
 

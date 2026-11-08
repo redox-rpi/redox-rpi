@@ -10,11 +10,13 @@ The system shall set its clock from NTP at boot when the network is up.
 |---|---|
 | Rationale | The Pi has no battery-backed clock; file times, TLS and logs need the right time. |
 | Priority | must |
+| Kind | functional |
 | Level | release (`timesync` is a release option since v0.2.0) |
+| PBS | 2.4.4 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #22 (retry when the network comes late) |
-| Verified by | checklist v0.4.0 test 4, row 285 |
+| Implemented by | #22 (retry when the network comes late) |
+| Verification | test, automated: checklist v0.4.0 test 4, row 285 |
 
 Acceptance criteria:
 
@@ -31,11 +33,13 @@ from a time before the build.
 |---|---|
 | Rationale | A clock in 1970 breaks file times and certificates. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.4.4 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | `tools/timesync` |
-| Verified by | **gap** |
+| Implemented by | `tools/timesync` |
+| Verification | test, automated: **gap** |
 
 Acceptance criteria:
 
@@ -51,11 +55,13 @@ The system shall let root set the clock (`clock_settime`, `settimeofday`,
 |---|---|
 | Rationale | Without NTP the user must be able to set the time. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.4.1, 2.4.4 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #51 (still open, waiting for upstream), PR #98, relibc `0011` |
-| Verified by | **gap** (no Pi row or checklist test) |
+| Implemented by | #51 (still open, waiting for upstream), PR #98, relibc `0011` |
+| Verification | test, automated: **gap** (no Pi row or checklist test) |
 
 Acceptance criteria:
 

@@ -14,11 +14,13 @@ value and pull per pin.
 |---|---|
 | Rationale | GPIO is why many people use a Pi (sensors, LEDs, buttons). |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.9 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #38, base `bcm2835-gpiod` |
-| Verified by | checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with wiring |
+| Implemented by | #38, base `bcm2835-gpiod` |
+| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with wiring |
 
 Acceptance criteria:
 
@@ -36,11 +38,13 @@ The system shall offer I2C bus 1 (pins 3 and 5) as `/scheme/i2c` with the
 |---|---|
 | Rationale | Most Pi sensors and displays use I2C. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.9 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #39 |
-| Verified by | checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with a device |
+| Implemented by | #39 |
+| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with a device |
 
 Acceptance criteria:
 
@@ -57,11 +61,13 @@ with the `spi` tool.
 |---|---|
 | Rationale | Displays, ADCs and radio modules use SPI. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.9 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #42 |
-| Verified by | checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no loopback test |
+| Implemented by | #42 |
+| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no loopback test |
 
 Acceptance criteria:
 

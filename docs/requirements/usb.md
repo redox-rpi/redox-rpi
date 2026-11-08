@@ -11,11 +11,13 @@ port of the Pi 3B+ (behind its onboard hubs) and on the Zero 2 W.
 |---|---|
 | Rationale | Without a keyboard there is no local use of the Pi. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.2 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | `dwc2d` (base patches), #29 (interrupts) |
-| Verified by | checklist v0.4.0 tests 7 and 9, row 286 (queued); QEMU `scripts/test-keyboard.sh` |
+| Implemented by | `dwc2d` (base patches), #29 (interrupts) |
+| Verification | test, person: checklist v0.4.0 tests 7 and 9, row 286 (queued); QEMU `scripts/test-keyboard.sh` |
 
 Acceptance criteria:
 
@@ -32,11 +34,13 @@ and keep working when one is unplugged and plugged in again.
 |---|---|
 | Rationale | Users plug and unplug devices; a reboot for each is not acceptable. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.2 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #17 (closed), base `0031`–`0033` |
-| Verified by | checklist v0.4.0 test 8, row 286 (queued); rows 35 and 67 (`scripts/pi-hotplug-test.sh`) |
+| Implemented by | #17 (closed), base `0031`–`0033` |
+| Verification | test, person: checklist v0.4.0 test 8, row 286 (queued); rows 35 and 67 (`scripts/pi-hotplug-test.sh`) |
 
 Acceptance criteria:
 
@@ -53,11 +57,13 @@ The system shall report a USB mouse or tablet as input events.
 |---|---|
 | Rationale | The optional desktop ([REQ-GFX-1](graphics.md#req-gfx-1-optional-desktop-from-the-console-beta)) needs a pointer. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.2 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #48 (still open, milestone v0.5.0, although PR #223 is in rc1), PR #223, base `0059` |
-| Verified by | checklist v0.4.0 test 21, row 286 (queued); QEMU `scripts/test-usb-mouse.sh` |
+| Implemented by | #48 (still open, milestone v0.5.0, although PR #223 is in rc1), PR #223, base `0059` |
+| Verification | test, person: checklist v0.4.0 test 21, row 286 (queued); QEMU `scripts/test-usb-mouse.sh` |
 
 Acceptance criteria:
 
@@ -76,11 +82,13 @@ the bus.
 |---|---|
 | Rationale | A busy core costs power and heat and slows everything else. |
 | Priority | should |
+| Kind | quality |
 | Level | release |
+| PBS | 2.3.2 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #29 (closed), #214 (open), #104 (open) |
-| Verified by | row 5 (dev build, v0.3.0); **gap** in the v0.4.0 checklist |
+| Implemented by | #29 (closed), #214 (open), #104 (open) |
+| Verification | test, automated: row 5 (dev build, v0.3.0); **gap** in the v0.4.0 checklist |
 
 Acceptance criteria:
 

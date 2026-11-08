@@ -2,7 +2,7 @@
 
 What redox-rpi must do, one requirement per entry, each with an ID, a test
 that verifies it and the issues that implement it. Owner: the Requirements
-agent ([PMP](../process/pmp.md)). The maintainer decides on every
+agent; the rules are in the [RMP](../process/rmp.md). The maintainer decides on every
 requirement.
 
 Status: draft, 2026-11-08. The first set describes what v0.4.0 meets or
@@ -13,7 +13,8 @@ managing requirements as GitHub issues of type **Feature** (the org has
 Task, Bug and Feature). Where those issues live depends on the revised RFC
 0002 (repo split). Until then the files below collect the content so that
 each requirement moves into one Feature issue unchanged; see
-[As Feature issues](#as-feature-issues).
+[As Feature issues](#as-feature-issues) and
+[RMP, Storage](../process/rmp.md#storage).
 
 ## As Feature issues
 
@@ -21,14 +22,14 @@ Each `### REQ-…` entry is written to become one issue:
 
 | Entry | Feature issue |
 |---|---|
-| ID and name | title `REQ-NET-1 DHCP on the onboard Ethernet` (the ID stays the stable reference in code, rows and release notes) |
+| ID and name | title `REQ-NET-1 DHCP on the onboard Ethernet` (the ID stays the stable reference in rows, issues and release notes; code comments name the issue) |
 | Statement, rationale | first lines of the body |
 | Acceptance criteria | a checklist in the body (`- [ ] …`); V&V ticks a box with the row that passed it |
-| Priority, level, since | labels (`prio:must`, `level:beta`) or project fields, as RFC 0002 decides |
+| Priority, kind, level, PBS, since | labels (`prio:must`, `level:beta`) or project fields, as RFC 0002 decides |
 | Status | open = in force, closed as "not planned" = retired; proposal = the issue is still in review |
 | Area | the repo the requirement concerns (after the split) plus the `topic:<name>` label |
-| Issues | the implementing Tasks and Bugs as sub-issues or "related" links |
-| Verified by | links to the Pi rows and reports, one comment per release with the state from [trace.md](trace.md) |
+| Implemented by | the implementing Tasks and Bugs as sub-issues or "related" links |
+| Verification | links to the Pi rows and reports, one comment per release with the state from [trace.md](trace.md) |
 
 The trace table then becomes a query or project view over these issues;
 until then [trace.md](trace.md) holds it. Moving them is one script run
@@ -73,11 +74,13 @@ Ethernet (LAN7800) at boot.
 |---|---|
 | Rationale | Remote use, NTP and network boot need the network. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.4, 2.4.2 |
 | Status | proposed |
 | Since | v0.1.0 |
-| Issues | #… |
-| Verified by | checklist v0.4.0 test 1, row 285 |
+| Implemented by | #… |
+| Verification | test, automated: checklist v0.4.0 test 1, row 285 |
 
 Acceptance criteria:
 
@@ -86,18 +89,10 @@ Acceptance criteria:
 2. …
 ```
 
-| Field | Meaning |
-|---|---|
-| ID | `REQ-<AREA>-<n>`. Numbers count up per area and are never reused, also when a requirement is retired. |
-| Statement | One sentence, "The system shall …", what and not how. |
-| Rationale | Why it is needed, in one or two sentences. |
-| Priority | `must` (a release fails without it), `should` (a failure is a known issue in the release notes), `may` (nice to have). |
-| Level | `release` (in the release image), `beta` (in the release image, limits in the notes), `experiment` (on `main` but only with `--experiment`), `test image` (netboot and test images only). |
-| Status | `proposed` (in a PR), `approved` (merged by the maintainer), `retired` (kept with a line why). |
-| Since | the first release that met it. |
-| Issues | the issues and PRs that implement it. |
-| Verified by | the checklist test (`checklist v0.4.0 test 6`) and the Pi row or report (`row 285`) that shows it, or **gap** when no test exists. |
-| Acceptance criteria | numbered, each one a check V&V can run and pass or fail, with the numbers that decide it. |
+The fields, the writing rules, the areas with their PBS and WBS parts,
+review, changes and verification methods are defined in the
+[requirements management plan](../process/rmp.md) (RMP). This page only
+lists the files and the conventions of this first set.
 
 "Row N" is the number of a test in [test-plan.md](../test-plan.md); its
 report is the heading `#N` in [test-reports.md](../test-reports.md).
@@ -132,18 +127,7 @@ The automated rows therefore test the netboot image built from the same
 commit and options plus `devshd`; only the visit tests the SD release image
 itself.
 
-## Changing requirements (until the move to issues)
+## Changing requirements
 
-- A new or changed requirement comes as a pull request against
-  `docs/requirements/`. Requirements are decisions: the maintainer reviews
-  and merges them, the project lead does not merge them as docs-only PRs.
-- Topic owners, V&V or Quality who find a requirement unclear, wrong or
-  missing ask the Requirements agent through the project lead, or open an
-  issue with the label `topic:requirements`.
-- A requirement is retired, not deleted: its status becomes `retired` with
-  the reason and the date.
-- Numbers in acceptance criteria (times, rates, tolerances) are part of the
-  decision. A proposed number is marked "(proposed)" until the maintainer
-  confirms it.
-- When a release adds a feature, its requirement is written before the
-  candidate is built, so the checklist can name it.
+By pull request, approved and merged by the maintainer, with an impact
+note: see [RMP, Changes](../process/rmp.md#changes).

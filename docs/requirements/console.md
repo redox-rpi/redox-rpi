@@ -12,11 +12,13 @@ USB keyboard.
 |---|---|
 | Rationale | A Pi with a screen and a keyboard is the normal way to use the SD card image. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.6, 2.4.6 |
 | Status | proposed |
 | Since | v0.1.0-alpha (screen), v0.2.0 (keyboard) |
-| Issues | — (framebuffer inherited from UEFI; keyboard: [REQ-USB-1](usb.md#req-usb-1-usb-keyboard)) |
-| Verified by | checklist v0.4.0 test 7, row 286 (queued); v0.3.0: visit 193 |
+| Implemented by | — (framebuffer inherited from UEFI; keyboard: [REQ-USB-1](usb.md#req-usb-1-usb-keyboard)) |
+| Verification | test, person: checklist v0.4.0 test 7, row 286 (queued); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -35,11 +37,13 @@ The system shall offer a login on the PL011 serial port (GPIO 14/15,
 |---|---|
 | Rationale | The serial console is the debug and test access when the network is down. |
 | Priority | must (login), should (fast input) |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.1, 2.4.6 |
 | Status | proposed |
 | Since | v0.1.0-alpha (login), v0.3.0 (fast input) |
-| Issues | #28 (open), #32, base `0024`, kernel `0007` |
-| Verified by | checklist v0.4.0 test 11, row 285: **fails** (19 of 20, #28 known issue) |
+| Implemented by | #28 (open), #32, base `0024`, kernel `0007` |
+| Verification | test, automated: checklist v0.4.0 test 11, row 285: **fails** (19 of 20, #28 known issue) |
 
 Acceptance criteria:
 

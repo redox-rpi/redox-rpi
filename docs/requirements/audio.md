@@ -11,11 +11,13 @@ The system shall play 16-bit stereo sound at 44.1 kHz written to
 |---|---|
 | Rationale | Sound is a basic feature of a computer; the jack needs no extra hardware. |
 | Priority | should |
+| Kind | functional |
 | Level | beta (about 11 bits, PWM keeps running after silence, faint hiss) |
+| PBS | 2.3.10, 2.4.5 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #250 (open, milestone v0.4.0), PR #251, base `0086`, `0030`, kernel `0050` |
-| Verified by | checklist v0.4.0 test 16, row 285 |
+| Implemented by | #250 (open, milestone v0.4.0), PR #251, base `0086`, `0030`, kernel `0050` |
+| Verification | test, automated: checklist v0.4.0 test 16, row 285 |
 
 Acceptance criteria:
 
@@ -34,11 +36,13 @@ right sides.
 |---|---|
 | Rationale | A rate check alone passes with a silent or swapped output. |
 | Priority | should |
+| Kind | functional |
 | Level | beta |
+| PBS | 2.3.10 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #250 |
-| Verified by | checklist v0.4.0 test 17, row 280 (dev build, person), row 286 (queued) |
+| Implemented by | #250 |
+| Verification | test, person: checklist v0.4.0 test 17, row 280 (dev build, person), row 286 (queued) |
 
 Acceptance criteria:
 

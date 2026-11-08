@@ -15,11 +15,13 @@ USB keyboard, network through a USB Ethernet adapter, and NTP.
 |---|---|
 | Rationale | One image for both boards; the Zero 2 W is the small, cheap target. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 1.2 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #8 (closed) |
-| Verified by | checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
+| Implemented by | #8 (closed) |
+| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
 
 Acceptance criteria:
 

@@ -12,11 +12,13 @@ other unencrypted remote login.
 |---|---|
 | Rationale | `devshd` gives a root login over plain TCP; a downloaded image must not open it. |
 | Priority | must |
+| Kind | constraint |
 | Level | release |
+| PBS | 2.6.1, 3.3 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | [release-process.md](../release-process.md#building), `config/raspi3bp-sdcard.toml` |
-| Verified by | **gap** (no test checks it) |
+| Implemented by | [release-process.md](../release-process.md#building), `config/raspi3bp-sdcard.toml` |
+| Verification | inspection and test: **gap** (no test checks it) |
 
 Acceptance criteria:
 
@@ -33,11 +35,13 @@ prompt and keep them in `/etc/redox-rpi-release` and `/.uuid`.
 |---|---|
 | Rationale | A user report or a test must name the exact build. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.6.1, 4.1 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #237 (`/.uuid` for SwiftFlash) |
-| Verified by | checklist v0.4.0 test 1 (pi-test `version`), row 285 (banner on 7 boots); `/.uuid` checked at the rc1 build |
+| Implemented by | #237 (`/.uuid` for SwiftFlash) |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `version`), row 285 (banner on 7 boots); `/.uuid` checked at the rc1 build |
 
 Acceptance criteria:
 
@@ -54,11 +58,13 @@ A release or candidate shall be built from a clean commit, without
 |---|---|
 | Rationale | Results only count for a build anyone can rebuild ([PMP](../process/pmp.md)). |
 | Priority | must |
+| Kind | constraint |
 | Level | release |
+| PBS | 3.1 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | `config/upstream.lock`, drift check, #257 (rc1 built from a red commit) |
-| Verified by | checklist v0.4.0 test 1 (pi-test `manifest`), row 285 |
+| Implemented by | `config/upstream.lock`, drift check, #257 (rc1 built from a red commit) |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `manifest`), row 285 |
 
 Acceptance criteria:
 
@@ -76,11 +82,13 @@ a checksum and a manifest.
 |---|---|
 | Rationale | Users must be able to check what they write to their card. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 4.1, 3.4 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #237 |
-| Verified by | checklist v0.4.0 test 10 (build agent): pass |
+| Implemented by | #237 |
+| Verification | test (build agent): checklist v0.4.0 test 10 (build agent): pass |
 
 Acceptance criteria:
 
@@ -96,11 +104,13 @@ The release image shall fit a 2 GB microSD card.
 |---|---|
 | Rationale | The release notes promise it; small cards are common. |
 | Priority | should |
+| Kind | constraint |
 | Level | release |
+| PBS | 2.6.1, 4.1 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #24 (image that grows on first boot, open) |
-| Verified by | **gap** (no check of the uncompressed size) |
+| Implemented by | #24 (image that grows on first boot, open) |
+| Verification | analysis: **gap** (no check of the uncompressed size) |
 
 Acceptance criteria:
 

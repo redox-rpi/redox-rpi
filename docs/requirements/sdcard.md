@@ -11,11 +11,13 @@ also across restarts.
 |---|---|
 | Rationale | Users keep their files on the card. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.3, 2.4.3 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #6, #31, base `0025`–`0028`, kernel `0008` |
-| Verified by | checklist v0.4.0 tests 6 and 18, row 285 (data partition on the netboot card), row 286 (root on the card, queued) |
+| Implemented by | #6, #31, base `0025`–`0028`, kernel `0008` |
+| Verification | test, automated: checklist v0.4.0 tests 6 and 18, row 285 (data partition on the netboot card), row 286 (root on the card, queued) |
 
 Acceptance criteria:
 
@@ -32,11 +34,13 @@ Small writes shall be about as fast as large ones, and reach the card soon.
 |---|---|
 | Rationale | Programs write in small blocks; 28 times the data per write wore the card and was slow. |
 | Priority | should |
+| Kind | quality |
 | Level | release |
+| PBS | 2.4.3 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #16 (closed), #155 (open), PR #73, redoxfs `0037`–`0040` |
-| Verified by | checklist v0.4.0 test 18, row 285 (criterion 1); **gap** for criterion 2 |
+| Implemented by | #16 (closed), #155 (open), PR #73, redoxfs `0037`–`0040` |
+| Verification | test, automated: checklist v0.4.0 test 18, row 285 (criterion 1); **gap** for criterion 2 |
 
 Acceptance criteria:
 
@@ -52,11 +56,13 @@ Acceptance criteria:
 |---|---|
 | Rationale | Programs save files by writing a copy and renaming it. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.4.3 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #57 (still open, upstream), redoxfs `0036` |
-| Verified by | row 83 (dev build); **gap** in the v0.4.0 checklist |
+| Implemented by | #57 (still open, upstream), redoxfs `0036` |
+| Verification | test, automated: row 83 (dev build); **gap** in the v0.4.0 checklist |
 
 Acceptance criteria:
 

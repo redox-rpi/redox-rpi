@@ -11,11 +11,13 @@ Ethernet (LAN7800) at every boot and accept TCP connections.
 |---|---|
 | Rationale | NTP, remote use and all automated tests need the network. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.4, 2.4.2 |
 | Status | proposed |
 | Since | v0.1.0-alpha |
-| Issues | LAN7800 in `dwc2d`; #217 and #92 (open: sometimes no network) |
-| Verified by | checklist v0.4.0 test 1 (pi-test logs in over the network), row 285; **gap**: no count of boots without network (#259) |
+| Implemented by | LAN7800 in `dwc2d`; #217 and #92 (open: sometimes no network) |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test logs in over the network), row 285; **gap**: no count of boots without network (#259) |
 
 Acceptance criteria:
 
@@ -35,11 +37,13 @@ Ethernet adapter, on the Pi 3B+ and on the Zero 2 W.
 |---|---|
 | Rationale | The Zero 2 W has no Ethernet of its own. |
 | Priority | must (Zero 2 W), should (Pi 3B+) |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.4 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | base `0020` |
-| Verified by | checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
+| Implemented by | base `0020` |
+| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -55,11 +59,13 @@ DHCP lease on each.
 |---|---|
 | Rationale | A Pi with onboard Ethernet and a USB adapter must not lose one of them. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.4.2 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #53 (still open, milestone v0.6.0, although PR #81 is in rc1), PR #81 |
-| Verified by | checklist v0.4.0 test 19, row 286 (queued) |
+| Implemented by | #53 (still open, milestone v0.6.0, although PR #81 is in rc1), PR #81 |
+| Verification | test, person: checklist v0.4.0 test 19, row 286 (queued) |
 
 Acceptance criteria:
 
@@ -74,11 +80,13 @@ The system shall receive a long TCP transfer without stalling.
 |---|---|
 | Rationale | Package downloads and image updates are long transfers. |
 | Priority | must |
+| Kind | quality |
 | Level | release |
+| PBS | 2.4.2, 2.2.1 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #157, #88, #119 (open), #140 (open), #141 (open) |
-| Verified by | checklist v0.4.0 test 20, row 285 |
+| Implemented by | #157, #88, #119 (open), #140 (open), #141 (open) |
+| Verification | test, automated: checklist v0.4.0 test 20, row 285 |
 
 Acceptance criteria:
 
@@ -96,11 +104,13 @@ LAN7800.
 |---|---|
 | Rationale | mDNS and smart-home protocols use multicast. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.3.4, 2.4.2 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #27, PR #194, base `0083`, `0084`; side effect #216 (open) |
-| Verified by | row 218 (mDNS experiment on a dev build); **gap** in the v0.4.0 checklist |
+| Implemented by | #27, PR #194, base `0083`, `0084`; side effect #216 (open) |
+| Verification | test, automated: row 218 (mDNS experiment on a dev build); **gap** in the v0.4.0 checklist |
 
 Acceptance criteria:
 

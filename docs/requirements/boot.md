@@ -11,11 +11,13 @@ root filesystem on the card and without a network.
 |---|---|
 | Rationale | The SD card image is what users download; most of them have no network boot server. |
 | Priority | must |
+| Kind | functional |
 | Level | release |
+| PBS | 2.1.3, 2.1.4, 2.3.3 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Issues | #6 (sdhost driver), #243 (U-Boot boot menu on the card) |
-| Verified by | checklist v0.4.0 test 6, row 286 (queued); v0.3.0: visit 193 |
+| Implemented by | #6 (sdhost driver), #243 (U-Boot boot menu on the card) |
+| Verification | test, person: checklist v0.4.0 test 6, row 286 (queued); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -37,11 +39,13 @@ prompt.
 |---|---|
 | Rationale | The test Pi and the nightly run use network boot, so every test runs without a card swap. |
 | Priority | must |
+| Kind | functional |
 | Level | test image |
+| PBS | 2.1.3, 3.4 |
 | Status | proposed |
 | Since | v0.1.0-alpha |
-| Issues | #243 (boot menu), [netboot.md](../netboot.md) |
-| Verified by | checklist v0.4.0 test 1, row 285 |
+| Implemented by | #243 (boot menu), [netboot.md](../netboot.md) |
+| Verification | test, automated: checklist v0.4.0 test 1, row 285 |
 
 Acceptance criteria:
 
@@ -59,11 +63,13 @@ to the Pi.
 |---|---|
 | Rationale | False errors hide real ones and confuse users and log triage. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.6.1 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | T18 (unsupported services, PR #77) |
-| Verified by | checklist v0.4.0 test 3, row 285 |
+| Implemented by | T18 (unsupported services, PR #77) |
+| Verification | test, automated: checklist v0.4.0 test 3, row 285 |
 
 Acceptance criteria:
 
@@ -79,11 +85,13 @@ The system shall reach the login prompt soon after power-on or `reboot`.
 |---|---|
 | Rationale | A user waits for it on every start; the nightly and the tests reboot many times. |
 | Priority | should |
+| Kind | quality |
 | Level | release |
+| PBS | 2.1, 2.2.1, 2.3.2 |
 | Status | proposed |
 | Since | v0.3.0 |
-| Issues | #47 (open, milestone v0.4.0) |
-| Verified by | checklist v0.4.0 test 5 (reboot time noted), row 285 (about 20 s each); row 215 (20.4–20.9 s) |
+| Implemented by | #47 (open, milestone v0.4.0) |
+| Verification | test, automated: checklist v0.4.0 test 5 (reboot time noted), row 285 (about 20 s each); row 215 (20.4–20.9 s) |
 
 Acceptance criteria:
 
@@ -101,11 +109,13 @@ or needs a write, instead of stopping.
 |---|---|
 | Rationale | A card pulled during a write must not make the Pi unbootable. |
 | Priority | should |
+| Kind | functional |
 | Level | release |
+| PBS | 2.1.4 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Issues | #232, PR #234 |
-| Verified by | row 270 (dev build); no checklist test (**gap** for the candidate) |
+| Implemented by | #232, PR #234 |
+| Verification | test, automated: row 270 (dev build); no checklist test (**gap** for the candidate) |
 
 Acceptance criteria:
 
