@@ -83,11 +83,20 @@ query($owner: String!, $name: String!, $cursor: String) {
            orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        number title state createdAt updatedAt closedAt
+        number title state createdAt updatedAt closedAt url
+        issueType { name }
+        assignees(first: 5) { nodes { login } }
         labels(first: 20) { nodes { name } }
         timelineItems(itemTypes: [REOPENED_EVENT], last: 5) { nodes { ... on ReopenedEvent { createdAt } } }
       }
     }
+  }
+}"""
+
+REPOS_Q = """
+query($owner: String!) {
+  organization(login: $owner) {
+    repositories(first: 100) { nodes { name isArchived hasIssuesEnabled } }
   }
 }"""
 
@@ -118,18 +127,40 @@ def collect(args):
     since = now - datetime.timedelta(days=args.days)
     k = {"generated": now.isoformat(timespec="minutes"), "days": args.days, "rev": args.rev}
 
-    # Issues
-    issues = graphql_all(ISSUES_Q, args.repo, "issues")
-    for i in issues:
-        i["labels"] = [label["name"] for label in i["labels"]["nodes"]]
+    # Issues of every repository of the organisation (RFC 0002 moves
+    # issues to the repository they concern). Numbers in the main repository
+    # stay plain (#N), others are "<repo>#N".
+    org = args.repo.split("/")[0]
+    repos = gh_json("api", "graphql", "-f", f"query={REPOS_Q}", "-F", f"owner={org}")
+    repos = sorted(r["name"] for r in repos["data"]["organization"]["repositories"]["nodes"]
+                   if r["hasIssuesEnabled"] and not r["isArchived"])
+    main_name = args.repo.split("/")[1]
+    all_issues = []
+    for name in repos:
+        for i in graphql_all(ISSUES_Q, f"{org}/{name}", "issues"):
+            i["repo"] = name
+            i["ref"] = f"#{i['number']}" if name == main_name else f"{name}#{i['number']}"
+            i["labels"] = [label["name"] for label in i["labels"]["nodes"]]
+            i["type"] = (i["issueType"] or {}).get("name") or "none"
+            i["assignees"] = [a["login"] for a in i["assignees"]["nodes"]]
+            all_issues.append(i)
+    issues = [i for i in all_issues if i["repo"] == main_name]
+    k["repos"] = repos
+    open_all = [i for i in all_issues if i["state"] == "OPEN"]
+    by_type = {}
+    for i in open_all:
+        by_type.setdefault(i["repo"], {}).setdefault(i["type"], 0)
+        by_type[i["repo"]][i["type"]] += 1
+    k["open_by_repo_type"] = by_type
+    k["no_type"] = [i["ref"] for i in open_all if i["type"] == "none"]
     open_issues = [i for i in issues if i["state"] == "OPEN"]
-    bugs = [i for i in open_issues if "bug" in i["labels"]]
+    bugs = [i for i in open_all if i["type"] == "Bug" or "bug" in i["labels"]]
     sev = {}
     for b in bugs:
         s = next((label.split(":", 1)[1] for label in b["labels"] if label.startswith("severity:")),
                  "unclassified")
-        sev.setdefault(s, []).append(b["number"])
-    k["open_bugs"] = {s: sorted(n) for s, n in sorted(sev.items())}
+        sev.setdefault(s, []).append(b["ref"])
+    k["open_bugs"] = {s: n for s, n in sorted(sev.items())}
     k["unlabelled"] = sorted(i["number"] for i in open_issues
                              if not any(label.startswith("topic:") for label in i["labels"]))
     k["stale_in_progress"] = sorted(
@@ -315,9 +346,17 @@ def render(k, repo):
 
     bugs = k["open_bugs"]
     s1 = bugs.get("S1", [])
-    row("Open bugs (label `bug`)",
+    types = sorted({t for v in k["open_by_repo_type"].values() for t in v})
+    row("Open issues by repo and type",
+        "; ".join(f"{r}: " + ", ".join(f"{t} {n}" for t, n in sorted(v.items()))
+                  for r, v in sorted(k["open_by_repo_type"].items())),
+        True, f"types in use: {', '.join(types)}; repos read: {', '.join(k['repos'])}")
+    row("Open issues without a type", len(k["no_type"]), not k["no_type"],
+        "Task/Bug/Feature not set yet" if len(k["no_type"]) > 12 else ", ".join(k["no_type"]))
+    row("Open bugs (type Bug or label `bug`)",
         ", ".join(f"{s}: {len(n)}" for s, n in bugs.items()) or "0", not s1,
-        "no `severity:` labels yet" if set(bugs) <= {"unclassified"} else "")
+        ("no `severity:` labels yet; " if set(bugs) <= {"unclassified"} else "")
+        + ", ".join(r for n in bugs.values() for r in n))
     row("Unlabelled open issues", len(k["unlabelled"]), not k["unlabelled"], links(repo, k["unlabelled"]))
     row("Stale `in-progress` (14 days)", len(k["stale_in_progress"]), not k["stale_in_progress"],
         links(repo, k["stale_in_progress"]))
