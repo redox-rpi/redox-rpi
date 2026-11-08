@@ -1,25 +1,27 @@
 # Quality
 
-What gets tested and how well: test coverage, a fast regression set,
-recurring and flaky bugs, release checklists. Running the tests stays with
-the Pi test agent and Release & CI; root-causing a bug stays with its topic
-owner. Owner: the Quality agent (since 2026-11-08).
+Process checks, bug analysis, KPIs and the dashboard, as set out in the
+quality management plan [qmp.md](../process/qmp.md). Quality does not
+write or run tests: that is V&V (the Pi test agent) and Release & CI.
+It audits what is tested and states the gaps as requirements on V&V.
+Root-causing a bug stays with its topic owner. Owner: the Quality agent
+(since 2026-11-08). KPIs: [kpis.md](../process/kpis.md), from
+`scripts/quality-kpis.py`.
 
 ## Status (2026-11-08)
 
-- **Main was red 10 hours** (2026-11-07 21:19 to 11-08 07:05): #81 was
-  merged on a CI run from before #194 (11-04); together base `0083` needed
-  fuzz. rc1 was built from the first red commit; nobody was told.
-- **Per-PR CI boots our kernel with upstream's userspace**: base and
-  relibc patches first run in the nightly or a Pi row.
-- **The nightly checks 6 things**; audio, NTP, reboot and network over
-  time only in the release checklist. Half-rate audio (row 279) would
-  have passed it. **Network loss (#92, #217)** recurs, nothing counts it.
+- **Merges are not tested together:** 43 of 85 PRs in 30 days were
+  merged on a CI run older than an earlier merge in the same patch
+  directory. One of them, #81, left main red for 10 h, and rc1 was built
+  from that commit ([#257](https://github.com/redox-rpi/redox-rpi/issues/257)).
+- **Bugs closed, still seen:** #28, #108. **No topic label:** 8 open issues, #92 among them.
+- **Network loss #92/#217:** 12 and 5 done rows name them; no check counts them.
+- Nightly 89 % (8 of 9; the fail was the power plug), Pi rows 56 % pass.
 - Issues: [topic:quality](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aquality).
 
-## Coverage
+## Coverage audit
 
-Where each feature is checked. **CI**: GitHub Actions on every PR and push
+Where each feature is checked today (audit, 2026-11-08). **CI**: GitHub Actions on every PR and push
 to main. **Nightly**: `scripts/update-stable.sh` builds main and runs
 `scripts/pi-test.py` on the Pi. **Release**: the tests in
 [v0.4.0-checklist.md](https://github.com/redox-rpi/redox-rpi/blob/release-v0.4.0/docs/releases/v0.4.0-checklist.md#tests)
@@ -61,10 +63,12 @@ the Pi. "–" means nothing.
 
 ## Known issues
 
-Recurring or flaky bugs, with where they were last seen. The topic owner
-finds the cause; this list tracks the pattern and asks for a test.
+Recurring or flaky bugs: classification, pattern, root-cause status and
+owner, as in [qmp.md](../process/qmp.md#bug-analysis). The topic owner
+finds the cause; Quality tracks the pattern and the recurrence. Sighting
+counts: [kpis.md](../process/kpis.md#sightings-of-tracked-bugs).
 
-| Issue | Status | Last seen | Pattern | Test |
+| Issue | Status | Last seen | Pattern | Check (V&V) |
 |---|---|---|---|---|
 | [#92](https://github.com/redox-rpi/redox-rpi/issues/92) network lost minutes after boot | open, **no topic label** | row 285 try 1, stable 643, 2026-11-07 | rows 211, 213, 226, 229, 237 B, 285; netstack, dwc2d, devshd alive, no ARP answer, nothing on serial; `netstack-watch` rows 263, 267 did not catch it | none: [#259](https://github.com/redox-rpi/redox-rpi/issues/259) |
 | [#217](https://github.com/redox-rpi/redox-rpi/issues/217) login without network, devshd never listens | open, network | row 276, 2026-11-07 (no devsh for 3 min, then a power cycle) | rare boot race; 0 in 39 warm resets (row 266) | none |
@@ -81,49 +85,30 @@ finds the cause; this list tracks the pattern and asks for a test.
 | Half-rate PWM audio (row 279, #250) | fixed in PR #251 (row 283: 44 111 Hz) | 2026-11-07 | rate halved, DMA and tone check looked fine | release 16 only |
 | Patch fuzz breaks the drift check (base `0083` after `0041`) | fixed in PR #254 | rc1 build, 2026-11-07 | #81 merged on CI from before #194 landed; main red 10 h | CI on main, unwatched |
 
-## Fast regression set
+## Requirements on V&V
 
-Proposal: small checks that run without a person, cheapest first. Each
-names the bug class it would have caught. Owners build and run them (CI:
-Release & CI; Pi: Pi test agent); Quality writes the check list and reviews
-the results.
+The gaps of the coverage audit, as requirements. V&V (and Release & CI
+for CI and the nightly) decide how to test them; Quality checks that they
+are met.
 
-1. **Every PR, GitHub (minutes, exists):** `check-patches.sh`, QEMU kernel
-   boot, topic pages.
-2. **Main stays green:** a red `QEMU boot test` on main opens or updates an
-   issue, as the nightly does; a PR whose CI ran before main last changed
-   is rebased or rerun before it is merged (#81 merged on a 3-day-old
-   run); a release candidate is built only from a green commit. Would have
-   caught: the 0083 fuzz. ([#257](https://github.com/redox-rpi/redox-rpi/issues/257))
-3. **Every PR that changes `patches/`, build host QEMU (~10 min):** the
-   full image with `scripts/qemu-raspi3b.sh --data`, then `pi-test.py`
-   (100 starts), `patches/experiments/pwm-audio/qemu-check.sh`, and the
-   boot log with no panic, no `UNHANDLED EXCEPTION`, no `pcid`/`rtcd`
-   line. Would have caught: base and relibc breakage before the nightly.
-   ([#260](https://github.com/redox-rpi/redox-rpi/issues/260))
-4. **Nightly on the Pi, a few minutes more in `pi-test.py`**
-   ([#258](https://github.com/redox-rpi/redox-rpi/issues/258), soak [#259](https://github.com/redox-rpi/redox-rpi/issues/259)):
-   - audio: `measured_rate_hz` in `/scheme/audiohw/stats` within 2 % of
-     44 100, `tone -s 3 > /scheme/audio` takes 2.7–3.3 s (row 279);
-   - clock set by NTP (year ≥ 2026), ARM clock reaches 1400 MHz;
-   - 10 MiB from the build host over TCP with the right checksum;
-   - one `reboot`, back to devsh within 60 s, time to devsh logged (#47
-     trend, #217 count);
-   - network soak: 15 minutes idle with a ping every 10 s and a devsh
-     login every minute; each loss counted with the time (#92).
-5. **Release candidate:** the checklist, which should then add only what
-   needs a person or a long run.
+| # | Requirement | Gap it closes | Issue |
+|---|---|---|---|
+| R1 | A red `QEMU boot test` on main is reported within an hour; a PR is merged only on CI that includes the previous merges in its patch directories; a candidate comes from a green commit | main red 10 h, 43 stale-CI merges | [#257](https://github.com/redox-rpi/redox-rpi/issues/257) |
+| R2 | Every nightly checks audio rate (half rate fails), NTP time, CPU clock, a TCP transfer with checksum and one reboot | half-rate audio (row 279) passed `pi-test.py` | [#258](https://github.com/redox-rpi/redox-rpi/issues/258) |
+| R3 | Network loss (#92) and boots without network (#217) are counted with a rate, not found by chance | 17 sightings, all by chance | [#259](https://github.com/redox-rpi/redox-rpi/issues/259) |
+| R4 | A PR that changes default patches boots our full image (not upstream's userspace) before merge | base and relibc first run on the Pi | [#260](https://github.com/redox-rpi/redox-rpi/issues/260) |
+| R5 | rc2: the desktop has a test without a person; console users see no regression against rc1; audio has a tolerance; known issues are in the notes | rc2 checklist | [#261](https://github.com/redox-rpi/redox-rpi/issues/261) |
+| R6 | The release checklist records a result per test, so completion can be measured | KPI "checklist completion" | – |
 
 ## Next
 
-- [#257](https://github.com/redox-rpi/redox-rpi/issues/257) main red unnoticed: alert, stale-PR check, green commit for a candidate.
-- [#258](https://github.com/redox-rpi/redox-rpi/issues/258) nightly `pi-test.py`: audio rate, NTP, CPU clock, TCP, reboot.
-- [#259](https://github.com/redox-rpi/redox-rpi/issues/259) network loss #92/#217: nightly soak and boot count.
-- [#260](https://github.com/redox-rpi/redox-rpi/issues/260) per-PR full-image QEMU check on the build host.
-- [#261](https://github.com/redox-rpi/redox-rpi/issues/261) v0.4.0 rc2 checklist: desktop smoke test, console regression,
-  audio tolerance, known issues in the notes.
+- Weekly KPI report to the lead; where `quality-kpis.py` runs and
+  publishes (nightly or the image server): with Release & CI.
+- Severity labels `severity:S1`–`S3` (proposal in the QMP, lead decides);
+  topic labels for the 8 unlabelled issues (owners).
+- #28 and #108: reopen or list as known in the v0.4.0 notes (Release & CI).
+- `docs/known-issues.md` still describes v0.2.0 (Release & CI).
 
 ## Later
 
-- Known issues counted from the nightly and Pi rows automatically (log
-  triage, `--crash-log`), so the "last seen" column fills itself.
+- Test coverage per requirement, once the PMP has requirements.
