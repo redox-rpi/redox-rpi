@@ -35,6 +35,7 @@ TRACKED = {
     205: "kill() never reaches a pipe loop",
     207: "chaos test froze the Pi",
 }
+PR_RULE_SINCE = datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
 NIGHTLY_ISSUE = "Nightly: main fails on the Pi"
 CODE_PATHS = ("patches/", "tools/", "config/")
 PATCH_PATHS = ("patches/", "config/")
@@ -214,6 +215,15 @@ def collect(args):
         fails += sum(1 for t, body in posts if ts(t) >= since and body.startswith("Build `"))
     k["nightly"] = {"pass": len(passes), "fail": fails}
 
+    # Commits straight on main that change patches/ (P5): first-parent
+    # commits that are neither a merge nor a squashed PR ("… (#N)").
+    # Counted from PR_RULE_SINCE, when merging only by PR started.
+    start = max(since, PR_RULE_SINCE)
+    direct = sh("git", "log", args.rev, "--first-parent", "--no-merges", f"--since={start.isoformat()}",
+                "--format=%h %s", "--", "patches/*.patch")
+    k["direct_patch_commits"] = [line.split()[0] for line in direct.splitlines()
+                                 if not re.search(r"\(#\d+\)$", line)]
+
     # Pi rows from test-plan.md "Done"
     plan = sh("git", "show", f"{args.rev}:docs/test-plan.md")
     done = plan.split("\n## Done", 1)[1] if "\n## Done" in plan else ""
@@ -299,6 +309,8 @@ def render(k, repo):
     row("Stale-CI merges (P3)", len(k["stale_ci_merges"]), not k["stale_ci_merges"],
         "last commit older than an earlier merge in the same patch directory: "
         + links(repo, k["stale_ci_merges"], "pull", most=8))
+    row("Patch commits on main outside a PR (P5)", len(k["direct_patch_commits"]),
+        not k["direct_patch_commits"], ", ".join(k["direct_patch_commits"][:10]))
     longest = max((s["hours"] for s in k["main_red_streaks"]), default=0)
     row("Main red hours", f"{k['main_red_hours']} h in {len(k['main_red_streaks'])} streaks",
         longest < 8, "; ".join(f"from {s['from']} {s['hours']} h" + (" (still red)" if s.get("still_red") else "")
