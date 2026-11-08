@@ -20,11 +20,47 @@ does not build uncommitted work or edit feature branches.
 
 ## Numbering
 
-Candidates are named `v<version>-rc<N>`, for example `v0.3.0-rc2`. `N`
+From v0.4.0 on there is one release per weekly sprint
+([PMP](process/pmp.md#sprints-and-weekly-releases)). The version says which
+week it is and whether a roadmap theme was completed:
+
+- **Each weekly release raises the patch number:** v0.4.0, v0.4.1, v0.4.2,
+  … It may carry features and fixes alike; until 1.0 the patch number does
+  not promise "fixes only".
+- **The minor number goes up when a roadmap theme is complete**
+  ([ROADMAP.md](../ROADMAP.md)), and the patch starts at 0 again: v0.4.3 →
+  v0.5.0. The project lead proposes it at sprint planning, the maintainer
+  decides, at the latest at the cut-off; the week's milestone is renamed
+  then. The theme is named in the release notes.
+- **A week without a release** (failed candidate, nothing merged) does not
+  use up a number: the next week takes it.
+- **A fix between two weekly releases** that cannot wait gets the next
+  patch number; the weekly release that follows takes the one after.
+- **Milestones** are named after the release (`v0.4.1`). The project lead
+  creates next week's milestone at planning; open issues of a closed
+  milestone move to the next one.
+
+Candidates are named `v<version>-rc<N>`, for example `v0.4.1-rc2`. `N`
 only counts up: a rebuild with any change, even one experiment more or
 less, gets the next number, and a number is never reused, also when its
-candidate failed. The release itself has no suffix (see
+candidate failed. A candidate built before the Friday is allowed; the
+Friday candidate from `main` is the one that is tested for the release.
+The release itself has no suffix (see
 [versioning.md](versioning.md#release-names)).
+
+## Weekly schedule
+
+| When | Release and CI does |
+|---|---|
+| Monday | Opens the checklist `docs/releases/v<version>-checklist.md` from the previous one and the release issue |
+| Monday to Thursday | Builds early candidates when asked, keeps the checklist's "in the image" table current with what is merged |
+| Thursday evening | Cut-off: only what the maintainer has merged by then is in |
+| Friday | Builds the candidate from `main` ([Building](#building)), runs the [candidate checks](#candidate-checks), queues the Pi rows and the regression set, drafts the release notes |
+| Weekend | The person test, if one is due, on the Friday candidate; the tag and the GitHub release after the maintainer's OK on the exact commit ([Release](#release)) |
+
+A release never waits for a feature. If the Friday candidate fails and
+neither a fix nor taking the change out works by Sunday, the week has no
+release.
 
 ## Building
 
@@ -142,8 +178,8 @@ the build agent's session.
 5. Update the README and `ROADMAP.md` where they name the current release.
    **Close the milestone** `v<version>`; issues still open in it move to
    the next milestone or lose theirs.
-6. **Development tag:** right after a release `vX.Y.0` is tagged, tag the
-   next commit on `main` as `vX.(Y+1).0-dev` (annotated) and push it, so
-   development builds show `vX.(Y+1).0-dev-N-g…`
+6. **Development tag:** right after a release `vX.Y.Z` is tagged, tag the
+   next commit on `main` as `vX.Y.(Z+1)-dev` (annotated) and push it, so
+   development builds show `vX.Y.(Z+1)-dev-N-g…`
    ([versioning.md](versioning.md#development-tags)). Tell the other
    sessions to `git fetch --tags`.
