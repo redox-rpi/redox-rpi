@@ -17,3 +17,14 @@ sdl2 = "source"
 # Icons the COSMIC apps look up.
 cosmic-icons = {}
 hicolor-icon-theme = {}
+
+# Sopwith on the launcher bar: its own .desktop entry has categories, so
+# the launcher would list it only in the start menu (Games).
+[[files]]
+path = "/usr/share/ui/apps/70_sopwith"
+data = """
+name=Sopwith
+binary=/usr/bin/sopwith
+icon=/usr/share/icons/hicolor/128x128/apps/sopwith.png
+description=Biplane game: arrows fly, space fires, b drops a bomb
+"""
