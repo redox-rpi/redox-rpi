@@ -62,6 +62,46 @@ SwiftFlash or `curl` flashes it straight from there
 candidates are staged with `scripts/netboot.sh` only by the test that holds
 the Pi.
 
+## Candidate checks
+
+The build agent runs these on every candidate's published SD image and
+writes the results into the release checklist next to the checksum. They
+come from the requirements REQ-REL-1 and REQ-REL-5 (`docs/requirements/release.md`,
+draft [PR #270](https://github.com/redox-rpi/redox-rpi/pull/270); method
+agreed with V&V on 2026-11-08).
+
+- **REQ-REL-1, no remote shell.** The automated Pi rows run the netboot
+  image, which has `devshd`, so only these checks look at the SD image
+  itself:
+  1. Inspection by the build agent: `redoxfs-file` reads only GPT images,
+     so check that the card's partition 2 is a byte copy of partition 3
+     of the build's `harddrive.img` (whose hash the manifest lists), then
+     `redoxfs-file harddrive.img get /usr/bin/devshd <file>` must fail with
+     "No such file or directory", and the string `devshd` must not occur
+     anywhere in the card's partition 2, so no init service file names
+     it. A control file such as `/usr/bin/ion` must be found.
+  2. In the visit, on the booted SD image: `nc -z -w 3 <pi> 2323` from the
+     build host fails, and `ps` on the console shows no `devshd`.
+- **REQ-REL-5, fits a 2 GB card:** the uncompressed image
+  (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
+
+```bash
+# on homenodellm, in ~/redox-rpi-rel after the candidate build
+img=/srv/tftp/sdcard/redox-rpi-v<version>-rc<N>.img.xz
+hd=upstream/redox/build/aarch64/sdcard/harddrive.img
+tool=tools/redoxfs-file/target/release/redoxfs-file
+d=$(mktemp -d); xz -dc "$img" > $d/card.img
+stat -c %s $d/card.img                                  # REQ-REL-5: <= 1800000000
+read cs cn < <(partx -g -o START,SECTORS -n 2 $d/card.img)
+read hs hn < <(partx -g -o START,SECTORS -n 3 $hd)
+cmp <(dd if=$d/card.img bs=512 skip=$cs count=$hn status=none) \
+    <(dd if=$hd bs=512 skip=$hs count=$hn status=none)  # same root filesystem
+$tool $hd get /usr/bin/devshd $d/x                      # REQ-REL-1: must fail
+$tool $hd get /usr/bin/ion $d/ion                       # control: must work
+dd if=$d/card.img bs=512 skip=$cs count=$cn status=none | grep -c -a devshd   # must print 0
+rm -rf $d
+```
+
 ## Pi test
 
 1. The build agent adds the candidate to the queue in
