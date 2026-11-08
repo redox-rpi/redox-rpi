@@ -91,6 +91,9 @@ feature only after its test on a real Pi (see [Branches](#branches)).
   drivers; datasheets, documentation and reading for understanding are fine.
 - Keep patches small and close to upstream, so the fork can follow new Redox
   releases.
+- Follow the [coding standards](docs/process/coding-standards.md): style per
+  language, `unsafe` with a SAFETY comment, every fix or workaround names
+  its issue in the code, patch and commit format.
 - No `--allow-dirty` builds in results you report: they cannot be
   reproduced.
 - Never commit credentials. `devshd` (remote shell without encryption) is
