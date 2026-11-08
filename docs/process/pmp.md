@@ -145,9 +145,10 @@ per week and one release per sprint:
   carries the changes.
 - Person tests at the Pi are bundled into one visit per sprint where
   possible.
-- **Version numbers:** each weekly release counts up the patch number
-  (`v0.4.1`, `v0.4.2`, …); the minor number goes up when a roadmap theme is
-  complete. The full rule and Release and CI's week are in
+- **Version numbers:** a weekly release with at least one new feature (a
+  closed issue of type Feature) raises the minor number (`v0.5.0`), one
+  with only fixes raises the patch number (`v0.4.1`); after v0.9 comes
+  v0.10, and 1.0 is a separate decision. The full rule and Release and CI's week are in
   [release-process.md](../release-process.md#numbering).
 
 ## Workflow

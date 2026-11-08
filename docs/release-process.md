@@ -21,17 +21,19 @@ does not build uncommitted work or edit feature branches.
 ## Numbering
 
 From v0.4.0 on there is one release per weekly sprint
-([PMP](process/pmp.md#sprints-and-weekly-releases)). The version says which
-week it is and whether a roadmap theme was completed:
+([PMP](process/pmp.md#sprints-and-weekly-releases)). The version says
+whether the week brought something new (the maintainer, 2026-11-08):
 
-- **Each weekly release raises the patch number:** v0.4.0, v0.4.1, v0.4.2,
-  … It may carry features and fixes alike; until 1.0 the patch number does
-  not promise "fixes only".
-- **The minor number goes up when a roadmap theme is complete**
-  ([ROADMAP.md](../ROADMAP.md)), and the patch starts at 0 again: v0.4.3 →
-  v0.5.0. The project lead proposes it at sprint planning, the maintainer
-  decides, at the latest at the cut-off; the week's milestone is renamed
-  then. The theme is named in the release notes.
+- **A release with at least one new feature raises the minor number:**
+  v0.4.1 → v0.5.0. A feature is a closed issue of type Feature in the
+  release's milestone.
+- **A release with only fixes raises the patch number:** v0.4.0 → v0.4.1.
+- **After v0.9 comes v0.10**, not v1.0. Version 1.0 is a separate decision
+  with its own criteria (an RFC by Requirements).
+- **Who decides:** the project lead proposes the number at sprint planning,
+  the maintainer confirms it. If a feature lands or drops out by the
+  cut-off, the number is fixed at the cut-off, and the week's milestone is
+  renamed then (for example `v0.4.1` → `v0.5.0`).
 - **A week without a release** (failed candidate, nothing merged) does not
   use up a number: the next week takes it.
 - **A fix between two weekly releases** that cannot wait gets the next

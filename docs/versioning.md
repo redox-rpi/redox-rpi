@@ -50,10 +50,10 @@ scripts/build-image.sh [--sdcard] --experiment ldso-diagnostics \
 ## Release names
 
 - Releases are named `v0.x.y`, without `-alpha` or another suffix. From
-  v0.4.0 on there is one release a week: each raises `y` (v0.4.0 → v0.4.1),
-  and `x` goes up when a roadmap theme is complete (v0.4.3 → v0.5.0). The
-  full rule is in [release-process.md](release-process.md#numbering).
-  Until v0.3.0, new features raised `x` and fixes only raised `y`.
+  v0.4.0 on there is one release a week: one with at least one new feature
+  raises `x` (v0.4.1 → v0.5.0), one with only fixes raises `y`
+  (v0.4.0 → v0.4.1). After v0.9 comes v0.10; 1.0 is a separate decision.
+  The full rule is in [release-process.md](release-process.md#numbering).
 - Test candidates get `-rcN` (v0.2.0-rc2). The suffix appears only on test
   images, never on a release or its tag.
 - How mature the release is, is said once in the release notes and in the
@@ -95,8 +95,9 @@ nothing changes. Only the build agent passes it
 Right after a release `vX.Y.Z` is tagged, the next commit on `main` gets the
 annotated tag `vX.Y.(Z+1)-dev`, for example `v0.4.1-dev` after v0.4.0
 (until v0.3.0 it was `vX.(Y+1).0-dev`, for example `v0.3.0-dev` after
-v0.2.0). If the next release then raises the minor number instead, its
-candidates still show the right name through `--release`. The
+v0.2.0). The `-dev` tag assumes a fix release; if the next release brings
+a feature and raises the minor number instead, its candidates still show
+the right name through `--release`. The
 build ID of a development build then names the release it works towards:
 `v0.3.0-dev-12-g1a2b3c4` instead of `v0.2.0-12-g1a2b3c4`.
 
