@@ -10437,3 +10437,33 @@ Median of 6 rounds per image (2 boots × 3 rounds), with the range, in seconds; 
   and serial logs per boot).
 
 Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #290 #33 / PR #255 optional desktop, clean build with the beta warning and the login hint (2026-11-08, Pi test agent)
+
+Real Pi 3B+, network boot, serial console and devsh, no person, 14:51–15:03 UTC.
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-785-gf0a43752+xce4c` | branch `desktop-console` f0a43752, clean build: the exact build for PR #255 |
+| B | `v0.4.0-dev-784-gd41026d9+x0f22-dirty.82ef20819842` | the same branch plus `pointer-bench`, exploratory (dirty build) |
+
+**Result: fail on A5 only. Everything else passes.** Over devsh, `desktop` without `--yes`
+asks the question and waits instead of refusing. It never started Orbital. This happened in 3
+of 3 tries on 2 boots, so it is not flaky. A1–A4, A6, A7 and all of B pass. No panic.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 boot | pass | text console; 0 × `/usr/bin/orbital` in `ps`; 147 MB used |
+| A2 serial root login | pass | after the login: "Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`." |
+| A3 pi-test | pass | 6 of 6, manifest match, 0 of 300 starts failed |
+| A4 serial `desktop`, answer `n` | pass | beta warning, `Start the desktop? [y/N]`, `n` → `desktop: not started`, 0 orbital. The question line showed `answer=…` on the console as the key was typed (cosmetic) |
+| A5 devsh `desktop; echo rc=$?` | **fail** | It printed the warning and `Start the desktop? [y/N]`, then waited. It never printed "no terminal to ask on". devsh got nothing more for 30 s (first try) and 120 s (2 reruns on a fresh boot), and the session was dropped. Then 2 × `answer=`, no `rc=`, 0 orbital. With `desktop < /dev/null` it prints `desktop: no terminal to ask on, not starting (desktop --yes starts it)`, rc=1. So the terminal check counts devsh's input as a terminal |
+| A6 devsh `desktop --yes` | pass | rc=0; one `/usr/bin/orbital` and one `/usr/bin/orblogin`; `/tmp/desktop.log` empty; used 179 → 220 MB |
+| A7 serial `desktop` again | pass | no question, only `desktop: Super+F2 goes back to the console, Super+F3 to the desktop`, rc=0; still one orbital |
+| B login | pass | `desktop --yes` rc 0, `pointer-bench --type '\n'`, 15 s later `/usr/bin/launcher` runs as uid 1000 |
+| B switches | pass | `pointer-bench --keys super+f2`, then `desktop` rc 0 with no question; exactly one orbital; `/tmp/desktop.log`: `failed to load icon None`; 186 MB used |
+
+- NanoKVM screenshots were not taken (optional).
+- Raw data: homenodellm `~/pitest-tools/t290/` (rerun in `t290/rerun/`).
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
