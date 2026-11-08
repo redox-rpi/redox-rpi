@@ -28,7 +28,7 @@ State on 2026-11-08: row 285 passed; row 286 (the visit) is queued.
 | [REQ-NET-5](network.md#req-net-5-ipv4-multicast) IPv4 multicast | should | release | 2.3.4, 2.4.2 | #27, PR #194 | row 218 | earlier; **gap** in checklist |
 | [REQ-TIME-1](time.md#req-time-1-clock-from-ntp) NTP | must | release | 2.4.4 | #22 | checklist 4, row 285 | verified (1); **gap** (2) |
 | [REQ-TIME-2](time.md#req-time-2-clock-without-network) clock without network | should | release | 2.4.4 | — | QEMU offline, `--data` | planned |
-| [REQ-TIME-3](time.md#req-time-3-set-the-clock-by-hand) set the clock | should | release | 2.4.1, 2.4.4 | #51, PR #98 | Pi row (devsh); `user` step maybe visit | planned |
+| [REQ-TIME-3](time.md#req-time-3-set-the-clock-by-hand) set the clock | should | release | 2.4.1, 2.4.4 | #51, PR #98 | Pi row (devsh, `su user`); dry run on stable 748 passed | planned |
 | [REQ-SD-1](sdcard.md#req-sd-1-reliable-reads-and-writes) reliable reads and writes | must | release | 2.3.3, 2.4.3 | #6, #31 | checklist 6, 18, rows 285, 286 | verified (data partition); queued (root on card) |
 | [REQ-SD-2](sdcard.md#req-sd-2-small-writes) small writes | should | release | 2.4.3 | #16, #155, PR #73 | checklist 18, row 285 | verified (1); **gap** (2) |
 | [REQ-SD-3](sdcard.md#req-sd-3-rename-on-every-redoxfs) rename | should | release | 2.4.3 | #57 | row 83 | earlier; **gap** in checklist |

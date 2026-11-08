@@ -63,12 +63,14 @@ The system shall let root set the clock (`clock_settime`, `settimeofday`,
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #51 (still open, waiting for upstream), PR #98, relibc `0011` |
-| Verification | test, automated (Pi row through devsh): agreed with V&V 2026-11-08, not run yet; criterion 2 moves to the visit if a command cannot be run as `user` without a person |
+| Verification | test, automated (Pi row through devsh, `user` step piped into `su user`): agreed with V&V 2026-11-08; dry run on stable 748 passed all three criteria, not yet a row on a candidate |
 
 Acceptance criteria:
 
-1. As root, `timesync -s @<now+3600>` sets the clock; `date` shows the new
-   time within 2 s.
-2. The same call as `user` fails with a permission error.
+1. As root, `timesync -s '@<now+3600>'` (single quotes: ion reads a bare
+   `@…` as an array) sets the clock; `date` shows the new time within 2 s.
+2. As `user` (`echo 'timesync -s "YYYY-MM-DD HH:MM:SS"; echo rc=$?' | su
+   user`) it fails with "Operation not permitted", exit status 1, and the
+   clock is unchanged.
 3. Plain `timesync` afterwards brings the NTP time back (criterion 1 of
    [REQ-TIME-1](#req-time-1-clock-from-ntp)).
