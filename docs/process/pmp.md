@@ -29,7 +29,26 @@ nobody has yet.
 | Requirements | new agent (proposed) | the requirements, their IDs and their trace to issues, code and tests |
 | Architect | Architect session | architecture, coding standards and coding rules, RFC drafts, cross-topic technical decisions |
 | Release and CI | Release & CI session | builds, CI, release candidates and releases, the image server |
-| Topic owners | one session per topic | their topic: design, code, bug fixes, topic page. Today: Graphics (framebuffer driver, vc4d), Boot and console, Network, Audio, Open firmware, TCC, Log triage |
+| Topic owners | one session per topic | their topic: design, code, bug fixes, topic page (see the table below) |
+
+### Topic owners
+
+| Topics (`topic:` label) | Owner session |
+|---|---|
+| graphics | Graphics (framebuffer driver `rpi-fbd`, display driver `vc4d`) |
+| boot, sdcard, usb, firmware | Boot and console |
+| network, time, gpio, smarthome | Network |
+| stability (incl. chaos test) | Chaos test |
+| relibc, ci | Release and CI |
+| zero2w, verification | V&V |
+| audio | Audio |
+| tcc | TCC |
+| assistant | Log triage (local language model) |
+| quality | Quality |
+| open firmware (`topic:boot`, own repository) | Open firmware |
+
+A topic without an active owner falls back to the project lead, who hands
+it on.
 
 A topic owner breaks its coarse package into smaller work packages itself
 (GitHub issues with the `topic:<name>` label), because it knows the area
