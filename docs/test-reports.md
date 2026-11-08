@@ -10467,3 +10467,32 @@ of 3 tries on 2 boots, so it is not flaky. A1–A4, A6, A7 and all of B pass. No
 - Raw data: homenodellm `~/pitest-tools/t290/` (rerun in `t290/rerun/`).
 
 Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #292 v0.4.0-rc2 automated, checklist tests 1–5, 11, 13, 14, 16, 18, 20 and 22 A (2026-11-08, Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`v0.4.0-rc2`, netboot image
+`~/redox-rpi-rel/keep/v0.4.0-rc2-netboot.img`). Real Pi 3B+, network boot, serial console,
+no person, 19:31–19:58 UTC. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass.** Every automated checklist step passes. Serial input is 19 of 20, inside the
+row's limit (#28). No panic, no throttling, and no boot without network.
+
+| Test | Result | Detail |
+|---|---|---|
+| (1) boot, banner | pass | first boot after a power cycle; `redox-rpi v0.4.0-rc2` banner on all 7 boots; experiments `cosmic-apps-source desktop orbital orbital-apps rpi-fb timesync` |
+| (2) pi-test | pass | 6 of 6; version `v0.4.0-rc2`; manifest: build ID and `libc.so` hash match `v0.4.0-rc2-netboot.manifest.toml`; **0 of 1000 starts failed** |
+| (3) boot log | pass | `rpi-firmwared: ARM clock 600 -> 1400 MHz` on every boot; no throttle warning; throttled `0x00000000`; no `pcid` or `rtcd` line; `bcm2835-pwmaudiod: … range 2834 (44107 Hz)`; `audiod` only prints its known "uring … falling back to standard IO" note, no error |
+| (4) time | pass | `timesync: clock set … from pool.ntp.org` on every boot, and `from the saved time` before it after each reboot |
+| (5) governor | pass | `mode ondemand`, min 600 MHz, max 1400 MHz, 10 switches. Over devsh `arm_clock` always reads 1400 MHz (23 samples), because the devsh call itself is load, as in rc1 |
+| (13) reboot | pass | `reboot` over devsh 5 times; each back at `redox login:` and devsh within 23 s |
+| (11) serial input | pass (19 of 20) | `serial-input-test.sh 20`: 19 of 20 lines complete, S07 lost characters (#28; the limit is 19) |
+| (14) GPIO, I2C, SPI without wiring | pass | `ls /scheme/gpio`; `nowire-check.py` 21 of 21 |
+| (16) audio | pass | stats `mode pwm-dma`, `sample_rate 44107`, `measured_rate_hz 43972`, `dma_faults 0`, `pwm_errors 0`, 1 underrun since boot; `tone check` both good; `tone -s 3 > /scheme/audio` took 2.96 s, rc 0 |
+| (18) RedoxFS | pass | `dd bs=4096 count=256` in 0.19 s (26 MB/s); `sd-stress.py --big-mib 32 --small 100 --cycles 1`: 0 missing, 0 changed, also after the restart |
+| (20) pipe and download | pass | 16 MiB pipe complete (16777216 bytes). 100 MiB over HTTP with `nc` (still no `netget`, curl or wget in the image) in about 22–28 s (about 4 MB/s), no stall; the SHA-256 of the payload matches the file on homenodellm |
+| (22 A) desktop | pass | after the serial root login: "Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`."; `desktop --yes` rc 0; 15 s later `ps` shows `/usr/bin/orbital`, `/usr/bin/orblogin` and `rpi-fbd`; `/tmp/desktop.log` empty; used 304 → 360 MB; no panic in the serial log |
+
+- NanoKVM screenshot: not taken (optional).
+- Raw data: homenodellm `~/pitest-tools/t292/`. The test file was deleted afterwards.
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
