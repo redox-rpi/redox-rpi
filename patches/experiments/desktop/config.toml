@@ -89,14 +89,15 @@ data = """
 Redox desktop (beta)
 
   Super+F2   back to the text console
-  Super+F3   back to the desktop (or type desktop on the console)
+  Super+F3   back to the desktop
+             (or type desktop on the console)
   Super+T    a terminal
 
 Known limits:
-- It is slow: everything draws in software, dragging a window costs
-  much of a core.
-- Once started, the desktop cannot be stopped; its memory (40 to 80 MB)
-  comes back only with a reboot.
+- Slow: everything draws in software; dragging a
+  window costs much of a core.
+- Once started, the desktop cannot be stopped; its
+  memory (40 to 80 MB) comes back only with a reboot.
 - No browser, one screen resolution, no HDMI hotplug.
 
 """
@@ -117,6 +118,8 @@ path = "/usr/bin/desktop-welcome"
 mode = 0o755
 data = """
 #!/usr/bin/ion
+# clear: orbterm leaves a relibc log line at the top.
+clear
 cat /usr/share/desktop/info.txt
 echo "Press Enter to close this window."
 # head reads the line without echoing a variable name, as ion's read does.
