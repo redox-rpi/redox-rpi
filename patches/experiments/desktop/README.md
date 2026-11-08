@@ -55,8 +55,9 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
 
 ## Beta limits (for the release notes)
 
-- No text editor since v0.4.1: COSMIC Text Editor took about 40 s to
-  start, half a core or more while typing (it redraws its whole window
+- No text editor since v0.4.1: COSMIC Text Editor took 40 s to start
+  on early builds (about 7 s on v0.4.0-rc2), half a core or more while
+  typing (it redraws its whole window
   per key), and its save dialog did not open (#275, and the person test
   of 2026-11-08). SDL Sopwith takes its place.
 - COSMIC Files is slow to open (up to 30 s).

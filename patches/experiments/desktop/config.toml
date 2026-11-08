@@ -62,8 +62,8 @@ end
 if not orbital_runs
     if test $yes = 0
         echo "The desktop (Orbital) is a beta:"
-        echo "- it is slow: the editor takes about 40 s to start, typing and"
-        echo "  dragging windows cost much of a core"
+        echo "- it is slow: everything draws in software, dragging a window"
+        echo "  costs much of a core"
         echo "- once started, Orbital cannot be stopped; its memory (about"
         echo "  40 to 80 MB) comes back only with a reboot"
         echo "- Super+F2 goes back to this console, Super+F3 to the desktop"
