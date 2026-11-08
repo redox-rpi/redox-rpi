@@ -99,9 +99,17 @@ are met.
 | R4 | A PR that changes default patches boots our full image (not upstream's userspace) before merge | base and relibc first run on the Pi | [#260](https://github.com/redox-rpi/redox-rpi/issues/260) |
 | R5 | rc2: the desktop has a test without a person; console users see no regression against rc1; audio has a tolerance; known issues are in the notes | rc2 checklist | [#261](https://github.com/redox-rpi/redox-rpi/issues/261) |
 | R6 | The release checklist records a result per test, so completion can be measured | KPI "checklist completion" | – |
+| R7 | Every release feature has an automated check or a named person test (v0.4.0: 4 of 12 have none) | feature coverage 67 % | [#261](https://github.com/redox-rpi/redox-rpi/issues/261) |
+| R8 | vc4d's logic builds and tests on a host | 6 tests never run | [#271](https://github.com/redox-rpi/redox-rpi/issues/271) |
+| R9 | Our drivers and kernel/relibc patches get clippy for the Redox target, report-only | 198 `unsafe`, no analysis | [#272](https://github.com/redox-rpi/redox-rpi/issues/272) |
+| R10 | A CI job "Code quality": pyflakes and `cargo test` gating, the rest report-only | baseline only by hand | [#273](https://github.com/redox-rpi/redox-rpi/issues/273) |
 
 ## Next
 
+- Test strategy matrix ([qmp.md](../process/qmp.md#test-strategy)) with
+  V&V (#267); coverage kinds and targets
+  ([qmp.md](../process/qmp.md#coverage)); code quality baseline
+  ([code-quality-baseline.md](../process/code-quality-baseline.md)).
 - Weekly KPI report to the lead; where `quality-kpis.py` runs and
   publishes (nightly or the image server): with Release & CI.
 - Severity labels `severity:S1`–`S3` (proposal in the QMP, lead decides);

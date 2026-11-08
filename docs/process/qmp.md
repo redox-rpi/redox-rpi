@@ -128,6 +128,84 @@ over the last 30 days unless named otherwise; the page is
 | Release checklist completion | checklist tests with a result / all tests, per candidate | release checklist | 100 % before a release; **not measurable yet**: the checklist has no result column |
 | Test coverage per requirement | requirements (`REQ-<area>-<n>`) with a passing test / all requirements | `docs/requirements/`, once they exist (PMP) | to be defined |
 | Trace completeness (P11) | requirements with issue, PR and test / all requirements | `docs/requirements/`, GitHub | to be defined |
+| Feature coverage | release features (the checklist's "In the image since" table) with an automated check or a named person test / all release features | release checklist; by hand until the checklist maps feature → test | 100 % for release features |
+| Pi rows per topic | done test-plan rows that name an issue of the topic | `docs/test-plan.md`, issue labels | every topic with code in the image has rows in the window |
+| Host tests | our Rust crates (`tools/`, vc4d) with host unit tests / all such crates | the repository | see [Coverage](#coverage) |
+| Code coverage | lines covered by host tests in host-testable crates (`cargo llvm-cov`) | build host, once measured | see [Coverage](#coverage) |
+| Static analysis findings | warnings per check of [Code quality](#code-quality), against the baseline | [code-quality-baseline.md](code-quality-baseline.md), later CI | not above the baseline; see targets there |
+
+## Test strategy
+
+Which area is tested at which level. The levels are those of the test
+standards ([test-standards.md](test-standards.md#test-levels), V&V):
+1 host unit test, 2 QEMU, 3 CI, 4 real Pi automated, 5 person test; plus
+**U** for checks that come from upstream Redox (their CI, the relibc test
+suite). V&V owns the standards and runs the tests; Quality keeps this
+matrix complete and measurable and audits it against the
+[coverage KPIs](#kpis). Draft of 2026-11-08 for V&V to confirm
+([#267](https://github.com/redox-rpi/redox-rpi/issues/267)).
+
+● exists today, ○ wanted (a gap; requirement on V&V), – not useful at that level.
+
+| Area | 1 Host | 2 QEMU | 3 CI | 4 Pi auto | 5 Person | U |
+|---|---|---|---|---|---|---|
+| Patches apply, drift, reproducible build | – | – | ● check-patches, drift weekly; ○ CI current at merge (#257) | – | – | – |
+| Kernel: boot, SMP, scheduler, memory | – | ● | ● kernel only, upstream userspace; ○ our full image (#260) | ● nightly starts | – | ● |
+| Kernel: signals, pipes, start crashes | ○ sigregs-like unit checks | ● qemu-run start loop | ● sigregs on Linux | ● 300/1000 starts | – | – |
+| relibc | ○ | ● relibc-tests by hand | ○ relibc suite in CI (#13) | ● release 15 | – | ● suite |
+| Boot chain: firmware, U-Boot, bootloader, netboot | – | ● QEMU boot | ● | ● every row boots | ● SD boot, boot menu (6) | – |
+| SD card, RedoxFS | ○ redoxfs-file | ● `--data` | – | ● one file nightly, sd-stress release | ● root on the card (6) | ● redoxfs |
+| USB: dwc2d, keyboard, mouse, storage, hotplug | – | ● usb-net in QEMU | – | ○ hub/storage without a person | ● 7, 8, 21 | – |
+| Network: LAN7800, RTL8153, netstack, dhcpd, devshd | – | ● usb-net | ● QEMU usb-net boot | ● implied by devsh; ○ soak, TCP transfer (#258, #259) | ● Zero 2 W hub (9) | – |
+| Time: timesync, timerd, time zones | ● timerd, timesync tests | ● | – | ○ NTP check nightly (#258) | – | – |
+| Firmware interface: clock, governor, reboot, poweroff | ● socdump tests | ● cpu-ondemand qemu-check | – | ● release 2, 5, 13; ○ nightly (#258) | – | – |
+| GPIO, I2C, SPI | ○ protocol logic | – | – | ● no-wire check (release 14) | ● wired rows | – |
+| Graphics: rpi-fbd, vc4d, desktop | ○ vc4d logic (tests do not build on a host) | ● fb in QEMU | – | ● serial rows (rpi-fbd); ○ desktop smoke (#261) | ● screen visits, 22 | – |
+| Audio: PWM driver, audiod, tone | ○ ring and stats logic | ● qemu-check.sh by hand | ○ | ● release 16; ○ nightly rate (#258) | ● listening (17) | – |
+| Serial console, getty | – | ● | – | ● serial-input-test (11) | – | – |
+| Tools: assistant, socdump, cputop, welcome | ● 6 of 20 crates | ● | ○ cargo test | – | – | – |
+| Host scripts: pi-test, publish, KPI | ○ parsers | – | ● topics check | ● used every night | – | – |
+| Zero 2 W | – | – | – | ○ (no second board) | ● 9 | – |
+| Release image: download, checksum, notes | – | ● rc in QEMU | – | ● release 1–5 | ● visit | – |
+
+Rules for the matrix:
+
+- A release feature without a ● at level 4 or 5 is a gap of feature
+  coverage and blocks the release unless the lead accepts it.
+- Every ○ is either a requirement on V&V (with an issue) or accepted as a
+  gap here, with the reason.
+- When requirement IDs exist, each row gets its `REQ-…` IDs, and the KPI
+  "Test coverage per requirement" replaces the area view.
+
+## Coverage
+
+Three kinds, each a KPI:
+
+| Kind | What counts | Today (2026-11-08) | Target |
+|---|---|---|---|
+| Feature / requirement coverage | each release feature has an automated check (level 2–4) or a named person test (5) | v0.4.0: 8 of 12 image features (67 %); none for multicast (#27), TCP close (#88), bootloader skip (#232), socdump (#224) | 100 % of release features from rc2 on; per requirement once `REQ-…` exist |
+| Code coverage | lines of host-testable code run by host tests (`cargo llvm-cov`; our crates in `tools/`, the logic parts of vc4d and drivers, Python parsers) | not measured; 6 of 20 tool crates have tests (30 tests); vc4d's 6 tests do not build on a host | step 1 (v0.5): measured in CI report-only, every crate with pure logic has tests; step 2: 50 % of host-testable lines, 70 % for new code in a PR |
+| Pi row coverage per topic | done rows per topic in 30 days, and topics with code in the image but no nightly check | see [kpis.md](kpis.md) | every topic in the image has a nightly or release check |
+
+Code coverage is only measured where host tests are possible. Drivers and
+kernel code are covered by levels 2–5, not by line coverage.
+
+## Code quality
+
+Static analysis of our own code, report-only first. Baseline and details:
+[code-quality-baseline.md](code-quality-baseline.md).
+
+| Check | Scope | Baseline (2026-11-08) | Target | CI proposal |
+|---|---|---|---|---|
+| clippy (default lints) | `tools/*` crates | 12 warnings in 6 crates; 2 crates do not build on a host | 0 warnings | report-only now, gating once 0 |
+| clippy | drivers and patches (base, kernel, relibc), vc4d | not run: needs the Redox target | measured | report-only on the build host after the nightly |
+| `unsafe` without a `SAFETY:` comment | `tools/*` | 51 blocks in 11 crates | 0 in new code | report-only (`clippy::undocumented_unsafe_blocks`) |
+| `unsafe` count | our Rust (tools, patches' added lines, vc4d) | 198 lines in patches and tools, 17 in vc4d | tracked, not rising without a reason | KPI page |
+| shellcheck | 36 shell scripts | 1 error, 8 warnings, 23 notes, all checked: no real bug | 0 errors and warnings (with justified `disable` comments) | report-only, then gating |
+| pyflakes / ruff (E, F, W, B) | 22 Python files | pyflakes 0; ruff 60, style only | pyflakes 0 (gating) | pyflakes gating now |
+| cppcheck | 5 C files (tcc-bench, chaos) | 1 warning (unchecked malloc) | 0 | report-only |
+| cargo-audit | 20 `Cargo.lock` (121 packages) | 0 advisories | 0 | weekly, with the drift job |
+| TODO/FIXME without an issue | all our code and added patch lines | 2 (experiments `ipv6`, `sshd`) | 0 | KPI page |
 
 ## Review cadence
 

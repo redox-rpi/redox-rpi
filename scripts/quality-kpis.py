@@ -249,6 +249,32 @@ def collect(args):
     flaky_rows = {r["test"] for r in rows for n in TRACKED if re.search(rf"#{n}\b|issues/{n}\b", r["text"])}
     k["flaky_rows"] = len(flaky_rows)
     k["dirty_rows"] = [row_id(r) for r in rows if "-dirty" in r["build"]]
+    # Pi rows per topic: the topic labels of the issues a row names.
+    topic_of = {i["number"]: [label[6:] for label in i["labels"] if label.startswith("topic:")] for i in issues}
+    all_topics = sorted({t for ts_ in topic_of.values() for t in ts_})
+    per_topic = {t: 0 for t in all_topics}
+    for r in rows:
+        found = set()
+        # Row and issue numbers share the "#N" form; the row's own number
+        # is left out, other row numbers in the text can still count.
+        text = r["text"].replace(row_id(r), "", 1)
+        for n in re.findall(r"#(\d+)|issues/(\d+)", text):
+            found.update(topic_of.get(int(n[0] or n[1]), []))
+        for t in found:
+            per_topic[t] = per_topic.get(t, 0) + 1
+    k["pi_rows_per_topic"] = per_topic
+
+    # Host tests: our Rust crates under tools/ with at least one #[test]
+    crates = [d for d in sh("git", "ls-tree", "--name-only", f"{args.rev}:tools").split()
+              if f"tools/{d}/Cargo.toml" in sh("git", "ls-tree", "-r", "--name-only", args.rev, f"tools/{d}")]
+    tested = {}
+    for d in crates:
+        n = 0
+        for f in sh("git", "ls-tree", "-r", "--name-only", args.rev, f"tools/{d}").split():
+            if f.endswith(".rs"):
+                n += sh("git", "show", f"{args.rev}:{f}").count("#[test]")
+        tested[d] = n
+    k["host_tests"] = tested
 
     # Patches whose header names an issue
     total = named = 0
@@ -327,6 +353,14 @@ def render(k, repo):
     pw = k["patches_with_issue"]
     row("Patches with an issue (P8)", f"{pct(pw['named'], pw['total'])} ({pw['named']} of {pw['total']})", True)
     row("Dirty results (P9)", len(k["dirty_rows"]), True, ", ".join(k["dirty_rows"][:10]))
+    ht = k["host_tests"]
+    with_tests = [d for d, n in ht.items() if n]
+    row("Host tests (Rust crates in tools/)",
+        f"{len(with_tests)} of {len(ht)} crates, {sum(ht.values())} tests", True,
+        ", ".join(f"{d} {ht[d]}" for d in with_tests) + "; line coverage not measured yet")
+    pt = k["pi_rows_per_topic"]
+    row("Pi rows per topic", ", ".join(f"{t} {n}" for t, n in sorted(pt.items(), key=lambda x: -x[1]) if n),
+        True, "rows naming an issue of the topic (heuristic); no rows: " + (", ".join(t for t, n in sorted(pt.items()) if not n) or "none"))
     row("Release checklist completion", "not measurable yet", True, "the checklist has no result column")
     row("Test coverage per requirement", "–", True, "no requirements yet")
 
