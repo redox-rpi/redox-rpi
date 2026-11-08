@@ -131,6 +131,10 @@ it is shown to happen on stable too.
   in the result, and the PR still needs a clean pass before it is ready.
 - **Rebuild before the final run.** When a fix lands on the branch, the
   owner rebuilds clean and queues the final run with the new build ID.
+- **CONTRIBUTING.** The rule in [CONTRIBUTING.md](../../CONTRIBUTING.md),
+  "no `--allow-dirty` builds in results you report", means acceptance
+  results: the pass that a PR, `merge-next` or a release relies on. An
+  exploratory report on a dirty build does not break that rule.
 - **Releases.** Release candidates follow
   [release-process.md](../release-process.md).
 
