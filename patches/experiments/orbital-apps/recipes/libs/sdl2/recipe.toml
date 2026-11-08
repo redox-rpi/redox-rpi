@@ -1,0 +1,21 @@
+# Upstream sdl2 without OpenGL: Mesa (with llvm21, 150+ MB) does not fit
+# the 256 MiB image. Software rendering into the Orbital window is enough
+# for Sopwith.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/sdl2.git"
+branch = "redox-2.0.33"
+shallow_clone = true
+
+[build]
+template = "cmake"
+dependencies = [
+    "liborbital",
+    "zlib",
+]
+cmakeflags = [
+    "-DSDL_VIDEO=1",
+    "-DSDL_ORBITAL=1",
+    "-DREDOX=1",
+    "-DSDL_OPENGL=OFF",
+    "-DSDL_OPENGLES=OFF",
+]
