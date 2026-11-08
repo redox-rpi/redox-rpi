@@ -10496,3 +10496,24 @@ row's limit (#28). No panic, no throttling, and no boot without network.
 - Raw data: homenodellm `~/pitest-tools/t292/`. The test file was deleted afterwards.
 
 Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #286 part 1: v0.4.0-rc2 on the Zero 2 W, from the SD card, by the maintainer (2026-11-08, recorded by the Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`redox-rpi-v0.4.0-rc2.img.xz`), SD card in the Zero 2 W,
+person test (level 5). The maintainer reported this through the coordinator; their own words:
+
+> "hab gerade das RC2 auf dem zero getestet, sieht gut aus. Text kann man im text editor unter
+> cosmic nicht speicher. Aber sonst ging alles, netz, kb nach booten, mouse nach booten."
+
+English: "just tested RC2 on the Zero, looks good. You can't save text in the text editor under
+COSMIC. But everything else worked: network, keyboard after booting, mouse after booting."
+
+| Checklist | Result | Detail |
+|---|---|---|
+| (9, 19) Zero 2 W network | pass (by report) | "netz" worked. DHCP, NTP and the `ifconfig` address were not reported one by one |
+| keyboard plugged in after boot | pass (by report) | "kb nach booten" |
+| mouse plugged in after boot | pass (by report) | "mouse nach booten" |
+| (22) desktop, COSMIC Text Editor save | fail, known | saving text in the editor does not work; already known. v0.4.1 replaces the editor with the game ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
+
+**Result: pass for the Zero 2 W part (9, 19, keyboard and mouse hotplug).** The editor save
+failure is the known desktop gap. The Pi 3B+ part of #286 is still open (Monday 11-09).
