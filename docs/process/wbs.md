@@ -20,7 +20,7 @@ How it is used:
 |---|---|---|---|---|
 | 1.1 | Project management: PMP, WBS, work packages, status, risks and opportunities, reporting | project lead | — | [pmp.md](pmp.md), `STATUS.md`, `risk`/`opportunity` issues |
 | 1.2 | Quality management: QMP, process audits, bug analysis, KPIs and dashboard, code quality baseline | Quality | — | `qmp.md`, KPI dashboard |
-| 1.3 | Requirements: IDs, acceptance criteria, trace to issues and tests | Requirements | all | `docs/requirements/` |
+| 1.3 | Requirements: requirements management plan, IDs, acceptance criteria, trace to issues and tests | Requirements | all | `rmp.md`, `docs/requirements/` |
 | 1.4 | Architecture, coding standards and rules, RFC drafts | Architect | all | [architecture.md](../architecture.md), `coding-standards.md`, RFCs |
 | 1.5 | Project structure (RFC 0002): split repositories, issues per repository | Architect, project lead | — | [RFC 0002](../rfcs/), migration PRs |
 | 1.6 | Community: org profile, join page, Discussions, contributor onboarding | project lead, Architect | 5.4 | profile, [join.md](../join.md) |

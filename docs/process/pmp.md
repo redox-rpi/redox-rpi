@@ -73,6 +73,7 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 | Risks and opportunities | issues labelled [`risk`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Arisk) and [`opportunity`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Aopportunity) | project lead | live |
 | Join page | [`docs/join.md`](../join.md) | project lead | draft |
 | Quality management plan | `docs/process/qmp.md` | Quality | to write |
+| Requirements management plan (part of this plan) | `docs/process/rmp.md` | Requirements | to write |
 | Requirements | `docs/requirements/` | Requirements | to write |
 | Architecture | `docs/architecture.md` | Architect | exists |
 | Coding standards and rules | `docs/process/coding-standards.md` | Architect | to write |
@@ -99,6 +100,16 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 - **Requirements:** one ID per requirement (`REQ-<area>-<n>`), a short
   statement, acceptance criteria, the issue(s) that implement it and the
   test that verifies it.
+
+## Requirements management
+
+How requirements are found, written, reviewed, changed and traced is the
+**requirements management plan** (`docs/process/rmp.md`), a part of this
+plan written and kept by the Requirements agent. It covers at least: where
+requirements come from (maintainer goals, roadmap, issues, users), the
+format and IDs (`REQ-<area>-<n>`, see below), who reviews and approves
+them, how a change to a requirement is handled, and how the trace to the
+[PBS](pbs.md), issues and tests is kept and checked.
 
 ## Traceability
 
@@ -162,5 +173,6 @@ they stay current and anyone can raise one:
 2. Quality writes the QMP and the first KPI dashboard.
 3. The Pi test agent takes the V&V role and writes the test standards.
 4. The Architect writes the coding standards and rules.
-5. The Requirements agent writes the first requirements for v0.4.
+5. The Requirements agent writes the requirements management plan, then
+   the first requirements for v0.4.
 6. RFC 0002 (project structure) decided and migrated in small PRs.
