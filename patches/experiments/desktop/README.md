@@ -14,7 +14,7 @@ pipe), leaves it off. Then it starts Orbital on VT 3 and switches to it:
 the login window (user `user`, empty password: press Enter), then the
 desktop with the launcher. When Orbital already runs, `desktop` switches
 to it without asking. `desktop --yes` skips the question, for tests and
-scripts (the Pi tests run it over devsh, which has no terminal). Keys:
+scripts (devsh gives the shell a pty, so over devsh `desktop` asks too). Keys:
 
 - **Super+F2**: back to the text console (Orbital keeps running);
 - **Super+F3**: to the desktop again (or run `desktop` again).
@@ -82,3 +82,12 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   Orbital; `desktop --yes < /dev/null` starts it; `desktop --bogus`
   prints the usage (rc 2). Ion's builtin `test -t` calls a pipe a
   terminal, so the script uses uutils' `/usr/bin/test`.
+- 2026-11-08, Pi row 290, clean build v0.4.0-dev-785-gf0a43752+xce4c: no
+  Orbital at boot; the login hint after the serial root login; pi-test 6/6
+  with manifest match; on the serial console the warning, `n` starts
+  nothing; `desktop < /dev/null` refuses (rc 1); `desktop --yes` starts
+  one Orbital (rc 0, used memory 179 to 220 MB); `desktop` again switches
+  without asking; pointer-bench login starts `launcher` as `user`,
+  Super+F2 and back keep one Orbital; no panic. Over devsh `desktop`
+  asked and waited (devsh gives a pty), and Orbital never started without
+  `y` or `--yes` (3 of 3).
