@@ -1,7 +1,7 @@
 # Experiment: desktop, an optional desktop started from the console
 
 For the release image (v0.4.0-rc2, [#33](https://github.com/redox-rpi/redox-rpi/issues/33)):
-Redox's desktop, Orbital, with the COSMIC text editor and file manager is
+Redox's desktop, Orbital, with COSMIC Files and the game SDL Sopwith is
 in the image but does not start at boot. The Pi boots to the text console
 as without it. As root:
 
@@ -34,7 +34,11 @@ Build it after the experiments it configures:
 - `orbital`: Orbital, orbterm, the light desktop; this experiment turns
   off its start at boot (`20_orbital`) and puts the switch to the console
   (`30_console_switch`) back;
-- `orbital-apps`: COSMIC Text Editor and COSMIC Files with their icons;
+- `orbital-apps`: COSMIC Files with its icons, and SDL Sopwith (a
+  biplane game, keyboard: arrows, space fires, b bombs; GPL-2.0, an
+  upstream recipe) in place of COSMIC Text Editor (since v0.4.1);
+  Sopwith needs SDL2, which this experiment builds without OpenGL, see
+  its `recipes/libs/sdl2/recipe.toml`;
 - `cosmic-apps-source`: both apps built from source with the icon lookup
   fix (Pi test #274: the editor no longer keeps redoxfs busy, the save
   dialog appears);
@@ -51,12 +55,13 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
 
 ## Beta limits (for the release notes)
 
-- The text editor is slow to start (about 40 s for the first window on
-  the Pi 3B+) and costs about half a core or more while typing: it
-  redraws its whole window for every key (iced/libcosmic damage covers
-  the whole window, see experiment `present-damage` on `graphics-vc4d`).
-- The save dialog of the editor (it is COSMIC Files) appears after up to
-  30 s, and in one visit (#275) not at all.
+- No text editor since v0.4.1: COSMIC Text Editor took about 40 s to
+  start, half a core or more while typing (it redraws its whole window
+  per key), and its save dialog did not open (#275, and the person test
+  of 2026-11-08). SDL Sopwith takes its place.
+- COSMIC Files is slow to open (up to 30 s).
+- Sopwith draws in software (SDL2 without OpenGL); its window is about
+  half the screen, Alt+Enter switches to full screen.
 - Dragging a window costs about 90 % of a core: Orbital redraws in
   software.
 - No browser and no cosmic-term (orbterm is the terminal, Super+T).
@@ -82,3 +87,7 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   Orbital; `desktop --yes < /dev/null` starts it; `desktop --bogus`
   prints the usage (rc 2). Ion's builtin `test -t` calls a pipe a
   terminal, so the script uses uutils' `/usr/bin/test`.
+- 2026-11-08, desktop-game v0.4.0-dev-791-ga790a9d0+xce4c (QEMU): SDL2
+  without OpenGL, Mesa and llvm21 left out, the netboot image fits in
+  256 MiB again; `sopwith` opens its title screen in an Orbital window
+  (320x200 at QEMU's 640x480).
