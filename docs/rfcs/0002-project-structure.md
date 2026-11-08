@@ -1,29 +1,48 @@
-# RFC 0002: Project structure that fits a session's context
+# RFC 0002: Project structure: clean up, split the repositories, fit a session's context
 
 | | |
 |---|---|
-| Status | Draft |
+| Status | Draft (second version, 2026-11-08) |
 | Created | 2026-11-08 |
 | Issue | – |
-| Releases | none; documentation and scripts only |
+| Releases | none; repositories, documentation, scripts and GitHub setup |
 
 ## Summary
 
-No session can see the whole project any more. On 2026-11-07 the
-architecture session did not know the full state of the project. The
-cause is not the amount of code. It is that the files a session has to
-read to learn the state are too large. The two test documents alone are
-bigger than one context window.
+The project has outgrown its single repository and its single issue list.
+No session can see the whole state of the project any more. On 2026-11-07
+the architecture session did not know it. The maintainer's direction:
 
-This RFC proposes four changes:
+> "Es wird zu groß alles in eine / wenigen repositories zu halten."
 
-1. A short, partly generated **STATUS.md** as the single entry point.
-2. A **test plan** that holds only the open queue, in short rows.
-3. **One file per Pi test** for its steps and its report.
-4. A **status block** at the top of each topic page.
+> "… sollten wir die Struktur aufräumen und auch Issues und Bugs in dem
+> jeweiligen Repository managen. Darum prio 1 ist aufräumen, Prio 2 ist es
+> etwas professioneller aufzusetzen."
 
-The code stays in one repository. Splitting it up would cost more than it
-saves; the reasons are under [Repositories](#repositories).
+This RFC proposes, in this order:
+
+1. **Clean up** what is stale today: branches, pull requests, experiments,
+   issues, worktrees, and topics that have no owner.
+2. **Fit a session's context:**
+   - a short STATUS.md as the single entry point,
+   - a test queue with short rows,
+   - one file per Pi test,
+   - a status block at the top of each topic page.
+3. **Split the repositories.** Our own drivers, tools, the assistant, the
+   host tools and the test records each get a repository of their own, with
+   their own issues. `redox-rpi` keeps the build, the patches against
+   upstream, the image configuration and the release. A lock file pins
+   each repository by commit, so one command still builds a reproducible
+   image.
+4. **Set GitHub up properly:**
+   - every bug and task lives in the repository of its code,
+   - the issue types Bug, Feature and Task,
+   - features as issues in `redox-rpi`, with sub-issues in the component
+     repositories,
+   - one GitHub Project across the organization,
+   - one set of labels for every repository.
+
+Steps 1 to 3 are the maintainer's priority 1, step 4 is priority 2.
 
 ## Motivation
 
@@ -31,289 +50,450 @@ saves; the reasons are under [Repositories](#repositories).
 
 Measured on main on 2026-11-08, at about 4 bytes per token:
 
-| File | Size | Tokens | Who reads it |
-|---|---|---|---|
-| `docs/test-reports.md` | 610 KB | ~150k | every Pi test writes to it; it is read when a result is needed |
-| `docs/test-plan.md` | 190 KB | ~47k | every session that queues, takes or checks a test; the coordinator every 10 minutes |
-| ... of that, rules and the stable image | 10 KB | 2.5k | |
-| ... of that, the queue (about 38 rows) | 76 KB | 19k | |
-| ... of that, done rows (about 260) | 105 KB | 26k | |
-| `docs/status.md` | 15 KB | 4k | nobody; last update 2026-10-24 |
-| `docs/topics/graphics.md`, `assistant.md` | 35 KB, 32 KB | 9k, 8k | the topic's sessions |
-| all 20 topic pages | ~210 KB | ~52k | |
-| `ROADMAP.md` | 14 KB | 3.5k | coordinator, architecture |
+| File | Size | Tokens |
+|---|---|---|
+| `docs/test-reports.md` | 610 KB | ~150k |
+| `docs/test-plan.md` | 190 KB | ~47k |
+| ... of that, the open queue (38 rows) | 76 KB | 19k |
+| ... of that, done rows (about 260) | 105 KB | 26k |
+| `docs/status.md`, last updated 2026-10-24 | 15 KB | 4k |
+| all topic pages | ~210 KB | ~52k |
 
-To answer "where do we stand?", a session would have to read the queue,
-the newest done rows, the open PRs, the topic pages and the stable image
-block. No single file has that answer.
+The two test documents alone are bigger than one context window. Even the
+open queue is 76 KB, because each row carries its full steps.
 
-The open queue is the surprise. Its 38 rows are 76 KB, because each row
-holds its full steps; row 271 alone is about 3 KB. Moving the done rows
-out is not enough.
+### One repository for everything
 
-### Other effects of the same files
+- **Our own drivers live as patches.** Eight drivers that we wrote
+  ourselves are whole new crates inside upstream `base`:
+  - `dwc2d`
+  - `rpi-firmwared`
+  - `bcm2835-sdhostd`
+  - `bcm2835-gpiod`
+  - `bcm2835-i2cd`
+  - `bcm2835-spid`
+  - `bcm2835-pwmaudiod`
+  - `testnetd`
 
-- **Merge conflicts.** 363 of the 589 commits on main since 2026-11-01
-  touch `docs/test-plan.md`. Nearly every Pi test changes it three times:
-  queue, on the Pi, done. `scripts/pr-order.py` already lists it as a file
-  that "every PR touches".
-- **Stale status.** `docs/status.md` was meant to be the status page. Nobody
-  kept it current, because the real state lived elsewhere: queue, PRs,
-  issues. A status page written by hand will go stale again unless the
-  parts that change daily come from a script.
+  The patches that create and change them make up most of the 720 KB in
+  `patches/base/`. `dwc2d` alone is spread over about 24 patch files. A
+  change to a driver is a diff of a diff. Clippy, tests and code review
+  only see the driver once all patches are applied. The driver's history is
+  in patch file names, not in git.
+- **One issue list for everything.** There are 82 open issues across 18
+  `topic:` labels, and none of them has an issue type. A bug in `dwc2d`,
+  a feature wish and a CI task sit in the same list. The maintainer wants
+  features managed as issues; one flat list does not carry that.
+- **History.** 363 of the 589 commits on main since 2026-11-01 touch
+  `docs/test-plan.md`. The code history drowns in test rows, and the test
+  plan is the file most PRs conflict on.
 
-### What is not the problem
+### Stale state
 
-- **Code size.** `tools/` holds 24 programs with 800 KB in total. 21 of
-  them are built into the image from `tools/*/recipe.toml`. Sessions read
-  a tool only when they work on it.
-- **Patches.** There are 147 patch files and 187 files under
-  `patches/experiments`. Sessions look up the one they need, through
-  `patches/README.md` and `config/upstream.lock`.
+| What | Count on 2026-11-08 |
+|---|---|
+| Branches on `redox-rpi` | 251 |
+| ... with an open PR | 58 |
+| ... whose PR was merged, branch never deleted | 84 |
+| ... whose PR was closed without merge | 4 |
+| ... that never had a PR | 105 |
+| Open PRs | 57, of them 31 opened before 2026-11-01 |
+| "Delete head branches on merge" setting | off |
+| Experiment directories in `patches/experiments/` | 69 |
+| Open issues without a `topic:` label | 8 |
+| Open issues with an issue type | 0 of 82 |
+| Topics with an owner session (PMP, PR #263) | 7 of about 20 |
 
 ## Goals
 
+- Each repository has one purpose, its own issues and its own CI.
+- One command builds an image, and the build ID says exactly which commit
+  of every repository went in.
 - A new session learns the state of the whole project from one file of at
-  most 8 KB (about 2k tokens).
-- A session that works on one topic reads that file, the topic's status
-  block and its own test files: under 20k tokens before it starts working.
-- Writing a Pi test result no longer edits a file that every other PR
-  edits too.
-- Every script and CI job keeps working after each migration step.
+  most 8 KB.
+- A session that works on one component reads that component's
+  repository, its issues and STATUS.md. It needs nothing else.
+- Every script and CI job keeps working after each step.
 
 ## Non-goals
 
-- No change to how images are built, versioned or tested.
-- No move to a different tracker (GitHub Projects, a wiki). See
-  [Alternatives](#alternatives-considered).
-- No rewrite of old reports. They are archived as they are.
+- No change to how upstream Redox components are patched. Changes to code
+  that upstream owns stay patch files in `redox-rpi`.
+- No new build system. The Redox cookbook builds every repository as a
+  recipe, as it builds `tools/` today.
+- No rewrite of old reports or old history. They are archived as they are.
 
 ## Design
 
-### 1. STATUS.md: the entry point
+### 1. Cleanup first
 
-`STATUS.md` sits in the repository root, next to `README.md` and
-`ROADMAP.md`, and replaces `docs/status.md`. It has two parts, separated by
-markers:
+Cleanup changes no structure. It removes what nobody uses, so the split
+moves only what is alive.
 
-**Generated part** (`scripts/status.py`, run by the coordinator and by the
-nightly). Every fact in this part already lives somewhere a script can
-read, so nobody has to keep it current:
+| Item | What to do |
+|---|---|
+| 84 branches with a merged PR | delete; GitHub can restore a deleted branch from its PR |
+| 4 branches with a closed PR, 105 without a PR | the owner keeps it, or it becomes a tag `archive/<branch>` and the branch is deleted. Branches that docs link to, such as `tree/t1-sigreturn/…` in old test rows, always get the tag |
+| "Delete head branches on merge" | turn on, so merged branches disappear by themselves. This is a repository setting: maintainer's OK |
+| 57 open PRs | each owner: rebase and mark ready, or close with a one-line reason. PRs older than 14 days without activity are closed, and the branch is kept as a tag |
+| 69 experiment directories | Experiments that became default patches, and experiments that failed, are deleted. They get one line each in an index table in `patches/experiments/README.md`: name, result, last commit. Only live experiments stay |
+| Worktrees and clones | Mac: `~/Developement/redox-wt/`, weekly cleanup as today. homenodellm: the sessions' own clones and their `keep/` images, deleted once the owner confirms |
+| Issues | Close duplicates and issues that a merged PR already fixed. The 8 issues without a topic get one. Retire `docs/tasks.md`, the old T-number map |
+| Stale docs | `docs/status.md` (last updated 2026-10-24) gives way to STATUS.md (section 2) |
+| Topics without an owner | Group them under fewer owners, see below |
 
-- Release: newest tag, and commits on main since that tag.
-- Stable image: the build ID, from the stable-image block.
-- Pi: the test marked **on the Pi**, and the next three queue rows (number,
-  title and owner only).
-- Open PRs, from `gh pr list`: number, title, labels (`merge-next`, draft),
-  and the CI state.
-- Open issues per milestone: counts only, with a link.
-- Linked sessions are left out: they live in the app, not in git.
+**Topic owners.** The PMP names owners for Graphics, Boot and console,
+Network, Audio, Open firmware, TCC and Log triage. Proposed for the rest:
 
-**Hand-written part**, kept by the coordinator:
+| Topics | Owner |
+|---|---|
+| stability, chaos, relibc | a "Core" owner (new topic session) |
+| sdcard, dma, firmware interface, gpio, usb | the drivers repository's owner (new) |
+| ci | Release and CI |
+| zero2w, boards | a "Boards" owner, when that work resumes |
+| assistant, smarthome | parked on the wish list, no owner until work resumes |
 
-- One line per topic: state in a few words, the next step, and a link to
-  its page.
-- At most five "decisions waiting for the maintainer".
+### 2. Fit a session's context
 
-A CI warning fires when STATUS.md grows over 8 KB, the same way
-`check-topics.py` warns about topic pages. Every session brief starts with
-"read STATUS.md". `CONTRIBUTING.md` and the Pi agent's and coordinator's
-instructions say the same.
+These parts are the same as in the first version of this RFC. Where the
+files live changes with the split (section 3).
 
-The findings in today's `docs/status.md` move to the topic pages they
-belong to, or to `docs/roadmap-history.md` when they are history.
+**STATUS.md**, in the root of `redox-rpi`, is the single entry point. It
+holds at most 8 KB, and CI warns above that. It has two parts:
 
-### 2. The test plan holds only the open queue
+- **Generated** by `scripts/status.py`, run by the coordinator and by the
+  nightly:
+  - the newest release, and commits since it,
+  - the stable image,
+  - the test on the Pi and the next three in the queue,
+  - open PRs across the organization, with their labels and CI state,
+  - the GitHub Project's counts per release and per status.
+- **Hand-written** by the project lead:
+  - one line per topic: state, next step, link,
+  - at most five decisions that wait for the maintainer.
 
-`docs/test-plan.md` keeps:
+Every session brief starts with "read STATUS.md".
 
-- the rules,
-- the stable-image block, which `update-stable.sh` writes,
-- the queue.
+**The test queue holds only open rows, one short line each**, with the
+same columns as today. The steps live in **one file per test,
+`tests/NNNN.md`**:
 
-A queue row becomes one short line, at most about 300 characters:
+- at the top, the steps, the images and the pass criteria,
+- below them, the report, which `pi-test.py --report` appends and the agent
+  completes.
+
+Done rows go to `done/YYYY-MM.md`. The old `test-reports.md` is frozen and
+split by month into `reports/YYYY-MM.md`.
+
+**Status blocks.** Each topic page and each repository README starts with
+at most 10 lines:
+
+- State
+- Next
+- Open issues
+- Tests
+- Owner
+- the date
+
+The history goes below them.
+
+### 3. Repository split
+
+#### Which repositories
+
+| Repository | Holds | License | Issues there |
+|---|---|---|---|
+| **`redox-rpi`** (exists) | build scripts, `config/upstream.lock`, the new `config/repos.lock`, patches against upstream code, image configs, experiments, release, product docs (README, user guide, architecture, ROADMAP, STATUS, process docs, RFCs, topic pages) | MIT | **Features** (product level), release planning, build and CI bugs, bugs whose component is not yet known |
+| **`drivers`** (new) | our own Pi drivers as one Cargo workspace: `rpi-firmwared`, `bcm2835-sdhostd`, `bcm2835-gpiod`, `bcm2835-i2cd`, `bcm2835-spid`, `bcm2835-pwmaudiod`, `dwc2d`, `testnetd` | MIT | bugs and tasks for these drivers |
+| **`vc4d`** (exists) | display and 3D driver | GPL-2.0-only, so it must stay apart from MIT code | its bugs and tasks |
+| **`tools`** (new) | the programs we build into the image: `cputop`, `devshd`, `welcome`, `timesync`, `timerd`, `zoneinfo`, `pkg-persist`, `reboot`, `tone`, `i2c`, `spi`, `mcast`, `net6`, `redox-fatfs2`, `socdump`, and the test programs `chaos`, `sigregs`, `polltest`, `icachetest`, `tcc-bench` | MIT | their bugs and tasks |
+| **`assistant`** (new) | the local language model assistant | MIT | its bugs, tasks and features |
+| **`log-triage`** (new) | host tool on homenodellm, not in any image | MIT | its bugs and tasks |
+| **`rpi-open-firmware`** (exists) | open VPU firmware, and `tools/rpi-boot-stub` moves here: both replace parts of the closed boot chain | as today | its bugs and tasks |
+| **`relibc`** (exists) | relibc with our patches as branches | MIT | relibc bugs (moved from `topic:relibc`) |
+| **`pi-tests`** (new) | the test queue, `tests/NNNN.md`, `done/`, `reports/`, nightly reports | MIT | requests for tests and test-lab problems |
+| **`.github`** (exists) | org profile, issue forms for Bug, Feature and Task (GitHub uses them for every repository without its own), the shared label list | | none |
+
+**Why one `drivers` repository and not one per driver.** The drivers share
+helpers (`common`, physmap, the firmware mailbox) and one CI. Each would
+otherwise need its own lock line, its own labels and its own workflows.
+Eight small repositories also make it harder to find things, not easier.
+A driver that gets a life of its own, such as `dwc2d` if USB grows, can
+move out later with `git filter-repo`.
+
+**Why the test records leave `redox-rpi`.** They change many times a day,
+are written mostly by the Pi agent, and need no code review. In their own
+repository:
+
+- the code history of `redox-rpi` is readable again,
+- PRs stop conflicting on `test-plan.md`,
+- the Pi agent can commit its rows without a PR there, if the maintainer
+  agrees. "Take the Pi" stays an atomic commit to that repository's main.
+
+**What stays in `redox-rpi`, and why.** The build, the two lock files, the
+patches against upstream code, the image configs and the experiments define
+together what one image is. They change together, and one PR must be able
+to change them together. Small changes to upstream crates, such as a
+two-line fix in `netstack` or an init entry that starts one of our
+drivers, stay patches. Only whole crates that we wrote leave. Host
+scripts that the build uses (`build-image.sh`, `qemu-raspi3b.sh`,
+`pi-test.py`, `redoxfs-file`) stay, so that a clone of `redox-rpi` can
+still build and test.
+
+#### How the image build pins the other repositories
+
+The new file `config/repos.lock` uses the same format as `upstream.lock`:
 
 ```
-| 289 | PR #226 opt-a53 split (A, B2, C, D2) | Architecture | [steps](tests/0289.md) | network, serial | waiting |
+# repository                                 commit
+drivers  https://github.com/redox-rpi/drivers  3f2a…
+tools    https://github.com/redox-rpi/tools    91c0…
+assistant https://github.com/redox-rpi/assistant 5d7e…
+vc4d     https://github.com/redox-rpi/vc4d     0b44…
 ```
 
-The columns stay the same as today (`# | Test | Owner | Image | Needs |
-Status`), so `pr-order.py`, `update-stable.sh` and `visit-index.py` keep
-parsing them. The Image cell links to the test file. A row that a nightly
-visit image belongs to keeps the text ``nightly visit `name` `` in its Test
-cell, which is what `visit-index.py` and `sdcard-index.py` look for.
+- `scripts/build-image.sh` writes one recipe per crate of each repository,
+  with `git = <url>` and `rev = <commit>`. Today it writes recipes with a
+  path source for `tools/`. Each crate keeps its `recipe.toml` in its own
+  directory, as in `tools/` today.
+- The drivers depend on upstream `base` crates (`common`, `daemon`,
+  `scheme-utils`) as git dependencies at the `base` commit from
+  `upstream.lock`. In the image build, `build-image.sh` adds a `[patch]`
+  section that points them at the patched `base` source of the same build.
+  It already does this for `fdt`. So the drivers build against exactly the
+  `base` the image has, and on their own (`cargo check` in their CI)
+  against upstream `base`.
+- **Build ID and manifest.** `repos.lock` is a file in `redox-rpi`. A new
+  commit of a component reaches the image only by a commit that changes
+  the lock, and that commit changes the build ID. The manifest records
+  every repository's commit, as it records the upstream commits today.
+- **One command:** `scripts/build-image.sh` as today.
+- **Working on a component:** `scripts/build-image.sh --local
+  drivers=../drivers` builds from a local checkout. The build ID then gets
+  a `+local` mark, and like `--allow-dirty` such builds are not reported as
+  results.
+- **Bumping the lock:** a PR in the component repository is merged first;
+  then a one-line PR in `redox-rpi` changes `repos.lock` and runs the
+  image tests. `scripts/bump-repo.sh <name>` writes that PR. A Pi test row
+  names the lock PR, so the tested image is what gets merged.
 
-Done rows move to **`docs/test-done/YYYY-MM.md`**, one file per month,
-with the same columns as today's Done table. The newest done rows are
-found through the generated part of STATUS.md.
+#### Moving a driver out of the patches
 
-The coordination text (about 20 lines on what the coordinator does) moves
-to `docs/testing.md`. That page already explains how testing works.
+For each driver:
 
-### 3. One file per Pi test
+1. Apply our `base` patches to a clone of `base` at the pinned commit.
+2. Run `git filter-repo --subdirectory-filter drivers/<path>`. The
+   driver's commits, with their authors and messages, become the history in
+   the new repository.
+3. In `redox-rpi`, replace the driver's patches with one lock line and,
+   where needed, a small patch that starts the driver from init.
+4. Build the image with and without the move. The two images must have
+   identical driver binaries, apart from paths in debug info. Then run QEMU
+   and one Pi row.
 
-Each new queue row gets **`docs/tests/NNNN.md`**:
+Order, from the least to the most entangled: `bcm2835-pwmaudiod`,
+`bcm2835-spid`, `bcm2835-i2cd`, `bcm2835-gpiod`, `testnetd`,
+`rpi-firmwared`, `bcm2835-sdhostd`, and `dwc2d` last.
 
-- top: the steps, the images with their build IDs, and the pass criteria.
-  This is today's long queue row.
-- bottom: the report. `pi-test.py --report docs/tests/NNNN.md` appends it,
-  and the agent adds the tables.
+### 4. Issues, types, labels and the Project
 
-Once the test is done, the file stays. Topic pages and PRs link to it
-directly.
+#### Where an issue lives
 
-The row number is still the key. The number rule (highest number in the
-file plus one) also counts `docs/tests/` and `docs/test-done/`, so a
-number is never used twice.
+- **Bugs and tasks** live in the repository of the code they concern. A
+  bug whose component is not known yet is opened in `redox-rpi` and moved
+  during triage.
+- **Features** live in `redox-rpi`, because a feature is something the
+  product does, and it often spans repositories. Example: "sound from the
+  headphone jack" needs the driver in `drivers`, the init entry in
+  `redox-rpi` and a Pi test in `pi-tests`. The work is done in **sub-issues**
+  (GitHub's parent and child issues, which work across repositories of one
+  organization), each in the repository of its code.
 
-The benefits:
+#### Issue types
 
-- The agent reads one file for one test.
-- Two tests no longer touch the same lines.
-- A result can be found from its PR without searching 610 KB.
+These are the organization's three existing types:
 
-`docs/test-reports.md` is frozen as it is and moves to
-`docs/test-reports/2026-10.md` and `2026-11.md`, split at the month line.
-Results that are not Pi tests also get their own file: QEMU runs,
-benchmarks, the nightly report from `update-stable.sh`. The nightly
-writes `docs/tests/nightly/YYYY-MM-DD.md`. An old link to
-`test-reports.md` lands on a short index page at that path, with one line
-per month.
+| Type | Use | Must contain |
+|---|---|---|
+| **Feature** | a capability the product should have | what the user can do, acceptance criteria, the requirement ID if there is one, the release |
+| **Task** | one piece of work in one repository, ideally one PR | what is done, where, how to check it |
+| **Bug** | something does not work as it should | steps, expected and actual result, build ID, log excerpt |
 
-### 4. Status blocks on topic pages
+Requirements can become Feature issues, with their ID and acceptance
+criteria in the issue. The Requirements agent defines the format. This RFC
+only fixes where they live (`redox-rpi`) and that tasks hang below them as
+sub-issues. The GitHub labels `bug` and `enhancement` are replaced by the
+types and removed.
 
-Each `docs/topics/*.md` page starts with a block of at most 10 lines:
+#### Labels
 
-```
-## Status (2026-11-08)
-- State: stage 1 HVS on the Pi (PR #188); V3D not started.
-- Next: ...
-- Open: #188, #200 · Tests: [0287](../tests/0287.md)
-- Owner: graphics session
-```
+One list for every repository, kept in `.github/labels.yml` and applied by
+`scripts/sync-labels.sh`:
 
-Below it comes the rest, as today: plan, design, history. A session that
-only needs the state reads the first 15 lines. The coordinator copies the
-"State" line into STATUS.md. `check-topics.py` warns when a page has no
-status block, or when its date is older than the newest change to the
-topic's files.
+- `needs:pi`, `needs:qemu`, `needs:zero2w`, `needs:nothing`
+- `in-progress`, `merge-next`
+- `upstream`, `waiting-upstream`
+- `good first issue`, `help wanted`, `duplicate`, `wontfix`
+- `topic:<name>`, only in `redox-rpi` and `pi-tests`; elsewhere the
+  repository is the topic
+
+#### Moving the existing issues
+
+1. Sync the labels into every target repository first.
+2. Record each issue's labels.
+3. Move the issue with `gh issue transfer <n> redox-rpi/<repo>`, then set
+   the labels again. GitHub keeps comments and assignees, but not every
+   label and milestone.
+4. Set the issue type at the same time. All 82 open issues are touched
+   once anyway.
+5. Old links keep working: GitHub redirects a moved issue's old URL. A new
+   reference across repositories is written `redox-rpi/drivers#12`. The
+   coding standards (draft PR #269) adopt this rule.
+
+The first mapping comes from the labels:
+
+| Labels | Target |
+|---|---|
+| `topic:usb`, `topic:sdcard`, `topic:gpio`, `topic:audio`, and the driver part of `topic:firmware` | `drivers` |
+| `topic:relibc` | `relibc` |
+| `topic:assistant` | `assistant` |
+| `topic:graphics`, display driver part | `vc4d` |
+| `topic:verification`, and test-lab issues | `pi-tests` |
+| `topic:network` | stays, mostly netstack patches against upstream; `dwc2d` and LAN7800 driver bugs go to `drivers` |
+| `topic:ci`, `topic:boot`, `topic:stability`, `topic:time`, `topic:quality`, `topic:zero2w`, `topic:smarthome`, `topic:tcc` | stay in `redox-rpi` |
+
+Each owner checks its own issues before they move.
+
+#### Tracking work across repositories
+
+- **One GitHub Project for the organization**, "redox-rpi", which adds new
+  issues and PRs from every repository by itself. Its fields:
+  - Status: Todo, In progress, In review, Pi test, Done
+  - Release
+  - Type
+  - Topic
+  - Owner: the agent session or person
+
+  This gives one board for the whole project, and `scripts/status.py`
+  reads its counts.
+- **Milestones stay in `redox-rpi` only**, on Feature issues. They drive
+  the release notes. Tasks and bugs in component repositories carry the
+  release in the Project's Release field. That way, milestones are not
+  copied into every repository.
+- The `zehrer-xyz` token has no `project` scope today (`read:org, repo,
+  workflow`). The maintainer adds the scope with
+  `gh auth refresh -h github.com -s project`, as the `zehrer-xyz` user.
+  Sessions do not change token scopes.
 
 ### How scripts and CI keep working
 
-| Script / job | What it reads today | After |
+| Script / job | Today | After |
 |---|---|---|
-| `pr-order.py` | Queue and Done in `test-plan.md` | Queue there, Done from `docs/test-done/*.md`; `COMMON` gets the new paths |
-| `update-stable.sh` | "on the Pi" in the queue, the stable-image block; appends to `test-reports.md` | the same; appends to `docs/tests/nightly/<date>.md` |
-| `visit-index.py`, `sdcard-index.py`, `build-visit-images.sh`, `publish-sdcard.sh` | queue rows naming ``nightly visit `x` `` | unchanged: the text stays in the short row |
-| `pi-test.py`, `sd-stress.py` | `--report docs/test-reports.md` in their help text | help text and examples name `docs/tests/NNNN.md` |
-| `check-topics.py` (`topics.yml`) | `config/topics.map` | also: status block present and fresh; STATUS.md under 8 KB |
-| `build-image.sh`, `with-build-lock.sh` | comments only | comments only |
+| `build-image.sh` | `tools/*/recipe.toml` as path recipes | `repos.lock` as git recipes; `--local` for a checkout |
+| `pr-order.py` | queue and done rows in `origin/main:docs/test-plan.md` | the same rows from a clone of `pi-tests` (`PITESTS=~/pi-tests`); open PRs across the org |
+| `update-stable.sh` | "on the Pi" in the queue, the stable-image block, appends to `test-reports.md` | queue from `pi-tests`; the stable-image block moves to `pi-tests/stable.md`; the nightly report goes to `pi-tests/reports/nightly/<date>.md` |
+| `visit-index.py`, `sdcard-index.py`, `build-visit-images.sh`, `publish-sdcard.sh` | queued rows naming ``nightly visit `x` `` | the same text in the short rows, read from `pi-tests` |
+| `pi-test.py`, `sd-stress.py` | `--report docs/test-reports.md` in their help | `--report <pi-tests>/tests/NNNN.md` |
+| `check-topics.py`, `topics.yml` | `config/topics.map` | rules for moved paths removed; status blocks checked; STATUS.md under 8 KB |
+| `check-patches.sh`, `qemu-boot.yml` | patches and our kernel | unchanged; component repositories get their own `cargo check`, clippy and tests |
 
-## Repositories
-
-### What stays in `redox-rpi` and why
-
-The patches, `config/upstream.lock`, `config/`, `scripts/`, the image
-tools in `tools/` and the docs stay together. A build ID (git describe
-plus the experiments hash) names exactly one state of all of them, and
-the manifest records it. If an image tool lived in its own repository:
-
-- `upstream.lock` would need a line for it,
-- a change would need two PRs, one in each repository,
-- a test on the Pi would need both PRs merged in the right order.
-
-That is the work `vc4d` already costs. It is worth it there, because vc4d
-is a driver with its own life. It is not worth it for a 20 KB test
-program.
-
-Splitting the repository would also not save context: sessions do not
-read `tools/` unless they work on a tool.
-
-### What has, or may get, its own repository
-
-| Part | Repository | Why |
-|---|---|---|
-| vc4d | `redox-rpi/vc4d` (exists) | driver with its own releases |
-| open firmware | `redox-rpi/rpi-open-firmware` (exists) | different toolchain (VC4) |
-| relibc changes | `redox-rpi/relibc` (exists) | for upstream PRs |
-| `tools/rpi-boot-stub` | candidate: into `rpi-open-firmware` | host-built boot code; belongs with the firmware |
-| `tools/log-triage` | candidate: own repository | host tool on homenodellm, not in any image |
-| `tools/assistant` | later, if it becomes its own product | today it is an experiment in the image |
-
-The rule for later: a part gets its own repository when it has its own
-release cycle, its own toolchain, or users outside this project. Being
-large is not enough.
+During the move, both paths work: scripts read `pi-tests` when
+`PITESTS` is set, and `docs/test-plan.md` otherwise, until the last
+step.
 
 ## Migration
 
-Each step is one small PR, and the scripts work after each one. The steps
-that touch `test-plan.md` are done when no row is **on the Pi**, after the
-Pi agent and the coordinator have been told, so open branches can rebase
-quickly.
+Each step is a small PR or a short series of PRs. Scripts work after each
+one. Steps that touch the test plan run when no row is **on the Pi**, after
+the Pi agent and the coordinator have been told.
 
-1. **This RFC.** The maintainer accepts, changes or rejects it.
-2. **STATUS.md and `scripts/status.py`.** Remove `docs/status.md` and move
-   its findings. Add the 8 KB check. Every brief and agent instruction
-   names STATUS.md.
-3. **Archive the test reports.** Split `test-reports.md` by month into
-   `docs/test-reports/` and leave an index page at the old path. Change
-   the help text of `pi-test.py` and `sd-stress.py`, and where
-   `update-stable.sh` writes.
-4. **Move done rows.** Create `docs/test-done/YYYY-MM.md`. Change
-   `pr-order.py`, and the number rule in the rules section.
-5. **Test files.** Create `docs/tests/`, a template, and a rule that new
-   rows get a file. Move the steps of the open queue rows into files in
-   the same PR, one file per row, and shorten the rows. Add a CI warning
-   for rows over 400 characters.
-6. **Topic status blocks.** One PR per topic owner, or one PR for all.
-   Then add the freshness warning to `check-topics.py`.
-7. **Tools.** Move `rpi-boot-stub` and `log-triage` only if the
-   maintainer wants that. This step is independent of the others.
+**Phase 1: cleanup (priority 1)**
 
-Steps 2 and 3 can go in parallel. Steps 4 and 5 change the same file, so
-they go one after the other.
+1. This RFC. The maintainer accepts, changes or rejects it.
+2. Branches: delete the 84 merged ones; tag and delete the rest the owners
+   release; turn on "delete head branches on merge" (maintainer).
+3. PRs: owners triage the 57 open PRs.
+4. Experiments: index table; delete merged and failed directories.
+5. Issues: duplicates, already-fixed, missing topics; retire `docs/tasks.md`.
+6. Topic owners as in section 1, written into the PMP.
+
+**Phase 2: context (priority 1)**
+
+7. STATUS.md and `scripts/status.py`; `docs/status.md` removed, its
+   findings moved to the topic pages.
+8. Create `pi-tests`: move the queue, the stable-image block, done rows by
+   month and the frozen reports there. Make the scripts read it
+   (`PITESTS`). The steps of the open rows go into `tests/NNNN.md`.
+9. Status blocks on the topic pages.
+
+**Phase 3: repository split (priority 1)**
+
+10. `repos.lock`, `--local` and the git recipes in `build-image.sh`, first
+    tested with one tool.
+11. `tools` repository: move the image tools, with their history through
+    `git filter-repo`; move their issues.
+12. `log-triage`, `assistant`, and `rpi-boot-stub` into `rpi-open-firmware`,
+    each with its issues.
+13. `drivers` repository: one driver per PR, in the order from section 3,
+    each checked for identical binaries, in QEMU and in one Pi row; move
+    the driver's issues with it.
+14. Move the remaining issues by the label mapping; set the types.
+
+**Phase 4: GitHub setup (priority 2)**
+
+15. Labels synced to all repositories; `bug` and `enhancement` removed.
+16. Issue forms for Bug, Feature and Task in `.github`.
+17. The org Project, once the maintainer has added the token scope;
+    `status.py` reads it.
+18. Features: the Requirements agent writes the first Feature issues for
+    v0.5.0, with their tasks as sub-issues.
+
+Phases 1 and 2 can run side by side. Phase 3 needs step 10 first. The
+drivers move one at a time, because each move changes `patches/base/`.
 
 ### Who finds what afterwards
 
-- **A new session:** STATUS.md, then the topic page's status block, then
-  the files its brief names.
-- **Pi agent:** the queue in `test-plan.md` for the order, then
-  `docs/tests/NNNN.md` for the steps. It writes the report into that same
-  file and the done row into `docs/test-done/<month>.md`.
-- **Coordinator:** runs `scripts/status.py`, updates the topic lines in
-  STATUS.md, and watches the queue as today, but it now reads a 10–15 KB
-  file instead of 190 KB.
-- **Architecture:** STATUS.md and ROADMAP.md for the overview, then the
-  topic pages.
+- **A new session:** STATUS.md, then the README and issues of the
+  repository its brief names.
+- **Pi agent:** the queue in `pi-tests`, then `tests/NNNN.md`. It writes
+  the report into the same file and commits there.
+- **Coordinator and project lead:** STATUS.md and the org Project. They
+  keep the hand-written part of STATUS.md and the topic owners current.
+- **Component owners:** their repository and its issues, plus the Feature
+  issues in `redox-rpi` that their tasks hang below.
+- **Architect:** STATUS.md, ROADMAP.md, `docs/architecture.md` and the
+  RFCs.
 
 ## Alternatives considered
 
-- **Queue as GitHub issues or a Project board.** Every row would be
-  searchable, and nothing would conflict. But "take the Pi" is a commit
-  on main today, which makes it atomic, and every script reads the queue
-  offline from git. A board would need the GitHub API and a token on
-  homenodellm for every check. Revisit if the conflicts remain after
-  step 5.
-- **Only archive done rows, as first proposed.** That removes 105 KB of
-  190 KB, but leaves the 76 KB queue. Short rows with test files are what
-  makes the plan small.
-- **Per-topic test-report files.** Many tests belong to more than one
-  topic, for example network and usb, and some to none, for example a
-  release check. A file per test has no such ambiguity, and topic pages
-  link to the files they need.
-- **A separate docs repository.** Docs and code would no longer change in
-  the same PR, and `check-topics.py` relies on that.
-- **Splitting into many repositories.** See [Repositories](#repositories):
-  it does not solve the context problem and adds cross-repository PRs.
+- **Everything stays in one repository, only the docs are split** (the
+  first version of this RFC). It fixes the context size but not the issue
+  list, the driver-as-patches problem, or the history. The maintainer
+  asked for more.
+- **One repository per driver and per tool.** About 30 repositories, each
+  with a lock line, labels and CI. Splitting by purpose (drivers, tools,
+  assistant, tests) gives each owner one place without that overhead.
+- **Our drivers as a fork of `base`.** It would keep them in the same
+  workspace as upstream, but every upstream update would become a merge of
+  the whole of `base`. Patches against upstream plus our own crates outside
+  it stay smaller.
+- **Test queue as a GitHub Project board instead of `pi-tests`.** "Take
+  the Pi" would no longer be an atomic commit, and every script would need
+  the GitHub API and a token on homenodellm. The Project tracks work, and
+  `pi-tests` holds the queue and the records.
+- **Milestones in every repository.** GitHub milestones are per
+  repository, so they would have to be kept in sync by hand. A Release
+  field in one Project does that once.
 
 ## Open questions
 
-- Should STATUS.md include the sessions from the app (name, state)? Only
-  the coordinator can see them, so the coordinator would have to write
-  that part by hand.
-- Should old open queue rows get test files now (step 5), or only when
-  they are next touched?
-- Should `docs/test-done/` stay in this repository? It grows by about
-  100 rows a month, but nobody reads it whole.
-- Is 8 KB the right limit for STATUS.md, or should it be smaller, for
-  example 4 KB, so it is cheap to read on every coordinator tick?
+- May the Pi agent commit to `pi-tests` main without a PR, as it commits
+  test rows today?
+- Should `dwc2d`, with the USB stack and the LAN7800 path, get its own
+  repository right away instead of joining `drivers`?
+- Should `relibc` become the place where our relibc patches are made, with
+  `patches/relibc/` exported from it, or stay a mirror?
+- Should the topic pages of moved components (usb, sdcard, gpio, audio)
+  move into the `drivers` repository, with only their status block left in
+  `redox-rpi`?
+- Is 8 KB the right limit for STATUS.md?
