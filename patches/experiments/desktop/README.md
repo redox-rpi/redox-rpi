@@ -7,14 +7,15 @@ as without it. As root:
 
     desktop
 
-first prints a warning: the desktop is a beta, with its main limits (see
-Beta limits below), and asks `Start the desktop? [y/N]`. Only `y` or
-`yes` starts it; any other answer, or no terminal on stdin (a script, a
-pipe), leaves it off. Then it starts Orbital on VT 3 and switches to it:
-the login window (user `user`, empty password: press Enter), then the
-desktop with the launcher. When Orbital already runs, `desktop` switches
-to it without asking. `desktop --yes` skips the question, for tests and
-scripts (the Pi tests run it over devsh, which has no terminal). Keys:
+prints what the desktop is, how to get back and its main limits
+(`/usr/share/desktop/info.txt`, see Beta limits below) and starts
+Orbital on VT 3: the login window (user `user`, empty password: press
+Enter), then the desktop with the launcher. After the login the same text
+opens in a window (`desktop-session` runs `desktop-welcome` in orbterm,
+then the launcher), since the console cannot be seen from the desktop;
+Enter in it, or its close button, closes it. When Orbital already runs,
+`desktop` just switches to it. Until v0.4.1 it asked `[y/N]` first;
+`--yes` is still accepted and changes nothing. Keys:
 
 - **Super+F2**: back to the text console (Orbital keeps running);
 - **Super+F3**: to the desktop again (or run `desktop` again).
