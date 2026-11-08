@@ -77,11 +77,11 @@ when a topic needs more time.
 | Release | Theme | Contents |
 |---|---|---|
 | v0.3.0 | Stable | sdhost as the default ([#6](https://github.com/redox-rpi/redox-rpi/issues/6)) with the kernel memory fix ([#31](https://github.com/redox-rpi/redox-rpi/issues/31)), clean boot by default ([#18](https://github.com/redox-rpi/redox-rpi/issues/18)), serial input ([#28](https://github.com/redox-rpi/redox-rpi/issues/28)) |
-| v0.4.0 | Boot and storage | USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream) |
+| v0.4.0 | Boot and storage | USB hotplug ([#17](https://github.com/redox-rpi/redox-rpi/issues/17)), boot straight from the firmware ([#15](https://github.com/redox-rpi/redox-rpi/issues/15)), an image that grows to the card with a welcome app ([#24](https://github.com/redox-rpi/redox-rpi/issues/24)), `timerd` ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)), clock follows the load ([#23](https://github.com/redox-rpi/redox-rpi/issues/23)), instruction cache ([#3](https://github.com/redox-rpi/redox-rpi/issues/3)), DMA plan ([#21](https://github.com/redox-rpi/redox-rpi/issues/21)), RedoxFS small writes ([#16](https://github.com/redox-rpi/redox-rpi/issues/16), upstream), sound from the headphone jack as a beta ([#250](https://github.com/redox-rpi/redox-rpi/issues/250)) |
 | v0.5.0 | Devices | `poweroff` and reboot ([#7](https://github.com/redox-rpi/redox-rpi/issues/7)), USB sticks with `redox-fatfs2` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)), `pkg install` for Pi packages, keyboard layouts |
-| v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first) |
-| v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info |
-| v0.8.0 | Smart home | What homenode and Matter need: mDNS, TLS, GPIO, I2C and SPI, the DS3231 clock |
+| v0.6.0 | Network | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27), multicast first), first steps of [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md): key store `keys:` and encrypted connections `secure:`, Redox to Redox in QEMU |
+| v0.7.0 | Remote access | SSH instead of `devshd`, prebuilt programs (bash, nano; the dynamic loader), `lsusb` and hardware info, registering a phone app with a QR code and logging in with keys (`accounts:`, [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md)) |
+| v0.8.0 | Smart home | What homenode and Matter need: mDNS, TLS, GPIO, I2C and SPI, the DS3231 clock, the HomeNode Matter fabric (`rs-matter`, its own project) running on the Pi, its keys optionally in `keys:` ([RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md)) |
 | v0.9.0 | Towards 1.0 | CI on every push ([#9](https://github.com/redox-rpi/redox-rpi/issues/9), [#13](https://github.com/redox-rpi/redox-rpi/issues/13)), rebase on current Redox, documentation, Bluetooth as an outlook |
 
 Without a release target: graphics, from a firmware framebuffer to the
@@ -104,7 +104,7 @@ that answers questions about Redox and runs a few safe tools
 | [Boot](docs/topics/boot.md) | U-Boot, SD card or network; clean boot in progress |
 | [Zero 2 W](docs/topics/zero2w.md) | Boots the Pi 3B+ image; slow network boot |
 | [CI and tests](docs/topics/ci.md) | QEMU boot in CI; Pi tests through a shared queue |
-| [Assistant](docs/topics/assistant.md) | Rust runtime (candle) and llama.cpp answer in QEMU; Pi speed test #51 waits for a card swap |
+| [Assistant](docs/topics/assistant.md) | Rust runtime (candle) answers on the Pi (#112, 1 token/s); saved prompt state |
 
 ## Wish list: help wanted
 
@@ -121,18 +121,20 @@ from GPL-licensed drivers (Linux) is not.
 | **Setting the time** | `timesync` sets the clock over NTP at boot (v0.2.0). Missing: `clock_settime` / `settimeofday` in relibc, and an I2C clock module (DS3231) for boots without a network ([time.md](docs/topics/time.md)) | small |
 | **SSH** | `devshd` is unencrypted and LAN only. A working SSH server for Redox on aarch64 | large |
 | **`lsusb` and hardware info** | Show USB devices and board details; model, memory and temperature come from [`/scheme/rpi-firmware`](docs/rpi-firmware.md) | small |
-| **Audio** | A sound driver for the Pi: HDMI audio (through the firmware, VCHIQ) and the Pi 3B+ headphone jack (PWM), plus `audiod`, Redox' sound daemon, working on aarch64 on top of it. Until then `audiod` stays out of the image (T18) | medium to large |
+| **Audio** | A sound driver for the Pi on top of Redox' `audiod`: first the 3B+ headphone jack through PWM and the DMA controller, then I2S DAC boards, later HDMI audio through `vc4d`. No closed firmware needed. Plan in [audio.md](docs/topics/audio.md) | medium |
 | **More firmware services** | `rpi-firmwared` only reads model, memory, clocks, temperature and throttling. Linux also uses the firmware for: power domains (USB, SD on and off, tag `0x28001`; helps `poweroff` and a clean USB reset), the GPIO expander (power LED on the 3B+), the DMA channel mask (`0x60001`, once drivers use DMA) and the display (EDID, resolution, framebuffer; U-Boot sets it up today). See [rpi-firmware.md](docs/rpi-firmware.md) | small each |
-| **VCHIQ** | The second VideoCore channel: sound over HDMI and the jack, camera, video decoding. Needed for Audio | large |
+| **VCHIQ** | The second VideoCore channel to the closed firmware: camera and video decoding (sound no longer needs it, see [audio.md](docs/topics/audio.md)) | large |
 | **Mass storage** | USB sticks through `dwc2d` (bulk-only transport, SCSI), [#25](https://github.com/redox-rpi/redox-rpi/issues/25) | medium |
 | **CI** | Build the image and boot it in QEMU `raspi3b` on every push (`scripts/test-keyboard.sh` is a start) | medium |
 | **Wi-Fi** | CYW43455 (Pi 3B+) and CYW43436 (Zero 2 W) over SDIO, firmware blob, WPA2; planned for v0.6.0 in [#26](https://github.com/redox-rpi/redox-rpi/issues/26) | large |
 | **Bluetooth** | Same chips, over the PL011 UART that is the serial console today; no Bluetooth stack in Redox yet | large |
+| **WebAssembly (WASI)** | Run `.wasm` programs on Redox: the same binary runs on Redox, Linux and the Mac, with no compiler on the Pi, each in its own sandbox. First [wasmi](https://github.com/wasmi-labs/wasmi), an interpreter in pure Rust that needs almost nothing from the OS. Later [Wasmtime](https://wasmtime.dev/) with [Cranelift](https://cranelift.dev/) (a code generator in Rust, much smaller than LLVM, with aarch64) for near-native speed; it needs executable memory and trap handling from Redox. An outlook: local apps as WASM modules with an HTML/CSS front end ([Blitz](https://github.com/DioxusLabs/blitz)) and our own host functions for the page, no JavaScript. Web apps from the internet still need a JS engine, because browsers reach the page from WASM only through JavaScript | medium (wasmi), large (Wasmtime, apps) |
 
 ## Later / optional
 
 - **Wi-Fi**: milestone v0.6.0, [#26](https://github.com/redox-rpi/redox-rpi/issues/26)
 - USB gadget mode (Ethernet over the Zero 2 W's USB cable, no HAT needed)
+- One user on several machines (`sync:`) and personal data shared only after consent (`profile:`, `consent:`), [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md), [#180](https://github.com/redox-rpi/redox-rpi/issues/180)
 
 ---
 

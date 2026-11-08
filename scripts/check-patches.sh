@@ -34,6 +34,7 @@ repos="kernel     https://gitlab.redox-os.org/redox-os/kernel.git
 relibc     https://gitlab.redox-os.org/redox-os/relibc.git
 base       https://gitlab.redox-os.org/redox-os/base.git
 bootloader https://gitlab.redox-os.org/redox-os/bootloader.git
+redoxfs    https://gitlab.redox-os.org/redox-os/redoxfs.git
 fdt        https://github.com/repnop/fdt.git
 netutils   https://gitlab.redox-os.org/redox-os/netutils.git"
 
@@ -43,6 +44,10 @@ needs() {
         sdhost-boot) echo sdhost-driver ;;
         sdhost-stats) echo sdhost-driver sdhost-boot ;;
         dwc2-interrupts) echo rtl8152 ;;
+        usb-hub-drop) echo dwc2d-netstats ;;
+        dwc2d-restart) echo dwc2d-netstats usb-hub-drop ;;
+        # Or the experiment's own file "needs" (the relibc CI reads it too).
+        *) cat "$ROOT/patches/experiments/$1/needs" 2>/dev/null || true ;;
     esac
 }
 

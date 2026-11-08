@@ -1,0 +1,47 @@
+From fc4b1d1dca317615d08688f71cf40e731de2feb9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 31 Oct 2026 06:27:38 +0000
+Subject: [PATCH] rpi-fbd: DMA test blit into a buffer it clears itself, count
+ rows with the pattern
+
+---
+ drivers/graphics/rpi-fbd/src/dma.rs | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/graphics/rpi-fbd/src/dma.rs b/drivers/graphics/rpi-fbd/src/dma.rs
+index dab0c318..8e343532 100644
+--- a/drivers/graphics/rpi-fbd/src/dma.rs
++++ b/drivers/graphics/rpi-fbd/src/dma.rs
+@@ -199,8 +199,18 @@ impl BlitDma {
+                 .map(|dma| dma.assume_init())
+                 .map_err(|err| format!("failed to allocate the test buffers: {err}"))
+         };
+-        let (mut src, dst) = (alloc()?, alloc()?);
+-        src.fill(0x5a5a_5a5a);
++        const PATTERN: u32 = 0x5a5a_5a5a;
++        let (mut src, mut dst) = (alloc()?, alloc()?);
++        // "Zeroed" DMA memory is not always zero on the Pi: the kernel may
++        // clear it through a cached mapping that never reached RAM, and this
++        // mapping is uncached. Clear it here and report what was there.
++        let dirty = dst.iter().filter(|&&word| word != 0).count();
++        if dirty != 0 {
++            println!("rpi-fbd: DMA test buffer had {dirty} of {} words not zero", dst.len());
++        }
++        dst.fill(0);
++        src.fill(PATTERN);
++        barrier();
+         self.run(Blit {
+             src: src.physical(),
+             dst: dst.physical(),
+@@ -210,7 +220,7 @@ impl BlitDma {
+             rows: 2,
+         })
+         .map_err(|err| format!("test blit: {err}"))?;
+-        let rows = dst.chunks(ROW / 4).filter(|row| row[0] != 0).count();
++        let rows = dst.chunks(ROW / 4).filter(|row| row.iter().all(|&word| word == PATTERN)).count();
+         match rows {
+             2 => self.extra_rows = 0,
+             3 => self.extra_rows = 1,
+-- 
+2.53.0
+

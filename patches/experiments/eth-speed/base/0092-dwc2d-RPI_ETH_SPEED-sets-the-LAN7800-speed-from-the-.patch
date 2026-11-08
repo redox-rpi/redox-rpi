@@ -1,0 +1,92 @@
+From 059dbf8ec1b809b61883e7abed0b2b887391ed9b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 19:46:41 +0100
+Subject: [PATCH] dwc2d: RPI_ETH_SPEED sets the LAN7800 speed from the first
+ negotiation
+
+RPI_ETH_SPEED=100 (or 1000) in the kernel environment or on the
+firmware's command line (cmdline.txt, /chosen bootargs) makes the first
+negotiation advertise up to that, so the link does not come up at
+gigabit first (Pi test 231). /tmp/dwc2d-link still changes it later
+(#126).
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 43 ++++++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs    |  1 +
+ 2 files changed, 44 insertions(+)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index baeee81f..34c6dd37 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -307,6 +307,12 @@ pub fn init(
+         sleep(Duration::from_millis(10));
+     }
+     r.mii_write(MII_ANAR, ANAR_ALL)?;
++    if let Some(mbit) = boot_speed() {
++        let ctrl = r.mii_read(MII_CTRL1000)?;
++        let ctrl = if mbit >= 1000 { ctrl | CTRL1000_ADV } else { ctrl & !CTRL1000_ADV };
++        r.mii_write(MII_CTRL1000, ctrl)?;
++        println!("dwc2d: LAN78xx advertising up to {mbit} Mbit/s (RPI_ETH_SPEED)");
++    }
+     let bmcr = r.mii_read(MII_BMCR)?;
+     r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)?;
+ 
+@@ -347,6 +353,43 @@ pub fn init(
+     Ok((mac, link))
+ }
+ 
++/// `RPI_ETH_SPEED=100` (or `1000`): the speed to advertise from the first
++/// negotiation on, before /etc is there (#126). Taken from the kernel
++/// environment, or from the firmware's command line (cmdline.txt) in the
++/// devicetree's `/chosen bootargs`. Read once; dwc2d calls it at start so
++/// the log shows it even without a LAN7800.
++pub fn boot_speed() -> Option<u32> {
++    static SPEED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
++    *SPEED.get_or_init(read_boot_speed)
++}
++
++fn read_boot_speed() -> Option<u32> {
++    let env = std::fs::read_to_string("/scheme/sys/env").unwrap_or_default();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let bootargs = fdt::Fdt::new(&dtb)
++        .ok()
++        .and_then(|fdt| fdt.find_node("/chosen")?.property("bootargs")?.as_str().map(str::to_owned))
++        .unwrap_or_default();
++    let (value, from) = env
++        .lines()
++        .find_map(|line| line.strip_prefix("RPI_ETH_SPEED=").map(|v| (v, "environment")))
++        .or_else(|| {
++            bootargs
++                .split_whitespace()
++                .find_map(|word| word.strip_prefix("RPI_ETH_SPEED=").map(|v| (v, "command line")))
++        })?;
++    match value.trim().parse() {
++        Ok(mbit @ (100 | 1000)) => {
++            println!("dwc2d: RPI_ETH_SPEED={mbit} from the {from}");
++            Some(mbit)
++        }
++        _ => {
++            println!("dwc2d: RPI_ETH_SPEED={value} needs 100 or 1000");
++            None
++        }
++    }
++}
++
+ /// Whether the PHY has a link.
+ pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
+     Regs { bus, f }.link()
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 01dfbc39..f7dcb07b 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -468,6 +468,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let boot_start = Instant::now();
+     let mut hc = Dwc2::new(base);
+     println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());
++    lan78xx::boot_speed();
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-- 
+2.53.0
+

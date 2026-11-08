@@ -1,0 +1,15 @@
+# Experiment orbital-apps (#33): a few desktop apps from upstream's
+# config/desktop.toml on top of experiment orbital, as binary packages.
+# Each brings its own launcher entry (/usr/share/ui/apps/*). cosmic-term is
+# left out: experiment orbital keeps orbterm as the terminal.
+
+[packages]
+# No browser yet: netsurf-fb 3.11 (upstream package) stops at start with a
+# relibc panic in pthread_getspecific (tls.rs:42, "RefCell already
+# borrowed"), see README.md.
+# Text editor and file manager (libcosmic).
+cosmic-edit = {}
+cosmic-files = {}
+# Icons the COSMIC apps look up.
+cosmic-icons = {}
+hicolor-icon-theme = {}

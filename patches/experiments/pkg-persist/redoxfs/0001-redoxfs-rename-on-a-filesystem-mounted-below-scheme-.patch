@@ -1,0 +1,38 @@
+From 3a21dbaa90f409702c387cb71e04cbfa4d061df5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 22:03:33 +0000
+Subject: [PATCH] redoxfs: rename on a filesystem mounted below /scheme/<name>
+
+---
+ src/mount/redox/scheme.rs | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
+index 5117390..64956eb 100644
+--- a/src/mount/redox/scheme.rs
++++ b/src/mount/redox/scheme.rs
+@@ -747,6 +747,21 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+     ) -> Result<usize> {
+         // println!("Frename {}, {}  {} from {}, {}", old_path, new_path, flags, uid, gid);
+ 
++        // The kernel passes the new path as the caller wrote it. For a
++        // filesystem mounted as e.g. `data` that is /scheme/data/..., which
++        // has to be walked from this filesystem's root without the prefix
++        // (the root filesystem's paths have none, so it was not affected).
++        fn own_path<'p>(prefix: &str, path: &'p str) -> &'p str {
++            match path.strip_prefix(prefix) {
++                Some("") => "/",
++                Some(rest) if rest.starts_with('/') => rest,
++                _ => path,
++            }
++        }
++        let prefix = format!("/scheme/{}", self.scheme_name);
++        let old_path = own_path(&prefix, old_path);
++        let new_path = own_path(&prefix, new_path);
++
+         let old_path = RedoxReference::new(old_path)
+             .ok_or(Error::new(EINVAL))?
+             .canonical();
+-- 
+2.53.0
+

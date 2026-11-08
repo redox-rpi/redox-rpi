@@ -1,0 +1,169 @@
+From be39239827f8c60427619a9accb1f7e667a9113c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 17:59:09 +0100
+Subject: [PATCH] dwc2d: switch the LAN7800 between 100 Mbit/s and gigabit at
+ run time
+
+`100` or `1000` in /tmp/dwc2d-link makes the LAN7800 in use advertise
+speeds up to that (CTRL1000) and negotiate again. The link-up lines name
+the negotiated speed. For measuring the idle power of each (#126).
+
+The file is looked for on every fifth rescan (every 5 s), since a path
+lookup that fails costs a few wakeups each time.
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 43 +++++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs    | 42 ++++++++++++++++++++++++++++++-
+ 2 files changed, 83 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index aedc6822..baeee81f 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -80,6 +80,9 @@ const PHY_ADDR: u32 = 1;
+ const MII_BMCR: u32 = 0;
+ const MII_BMSR: u32 = 1;
+ const MII_ANAR: u32 = 4;
++const MII_ANLPAR: u32 = 5;
++const MII_CTRL1000: u32 = 9;
++const MII_STAT1000: u32 = 10;
+ /// Vendor register: one 4-bit mode per LED.
+ const PHY_LED_MODE: u32 = 29;
+ const BMCR_AUTOEN: u16 = 1 << 12;
+@@ -88,6 +91,11 @@ const BMCR_RESET: u16 = 1 << 15;
+ const BMSR_LINK: u16 = 1 << 2;
+ /// 10/100 half and full duplex, CSMA, symmetric and asymmetric pause.
+ const ANAR_ALL: u16 = 0x0DE1;
++/// 1000BASE-T half and full duplex in CTRL1000; STAT1000 has the link
++/// partner's at the same bits shifted up by 2.
++const CTRL1000_ADV: u16 = 0x0300;
++const ANAR_100: u16 = 0x0180;
++const ANAR_10: u16 = 0x0060;
+ 
+ // Frame headers
+ const RX_HEADER_LEN: usize = 10;
+@@ -162,6 +170,21 @@ impl Regs<'_> {
+         Ok(self.mii_read(MII_BMSR)? & BMSR_LINK != 0)
+     }
+ 
++    /// The negotiated speed in Mbit/s, 0 when there is none.
++    fn speed(&mut self) -> Result<u32, Error> {
++        if self.mii_read(MII_CTRL1000)? & (self.mii_read(MII_STAT1000)? >> 2) & CTRL1000_ADV != 0 {
++            return Ok(1000);
++        }
++        let common = self.mii_read(MII_ANAR)? & self.mii_read(MII_ANLPAR)?;
++        Ok(if common & ANAR_100 != 0 {
++            100
++        } else if common & ANAR_10 != 0 {
++            10
++        } else {
++            0
++        })
++    }
++
+     fn read(&mut self, reg: u16) -> Result<u32, Error> {
+         let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
+         Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
+@@ -309,7 +332,8 @@ pub fn init(
+     let start = Instant::now();
+     let link = loop {
+         if r.link()? {
+-            println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
++            let ms = start.elapsed().as_millis();
++            println!("dwc2d: LAN78xx link up after {ms} ms, {} Mbit/s", r.speed()?);
+             break true;
+         }
+         if start.elapsed() >= link_wait {
+@@ -328,6 +352,23 @@ pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
+     Regs { bus, f }.link()
+ }
+ 
++/// The negotiated speed in Mbit/s, 0 when there is none.
++pub fn speed(bus: &mut Bus, f: &Lan78xxFunction) -> Result<u32, Error> {
++    Regs { bus, f }.speed()
++}
++
++/// Advertise speeds up to `mbit` (100 or 1000) and negotiate again. A
++/// gigabit link draws more power than a 100 Mbit/s one (#126). The link
++/// goes down for a few seconds.
++pub fn set_max_speed(bus: &mut Bus, f: &Lan78xxFunction, mbit: u32) -> Result<(), Error> {
++    let mut r = Regs { bus, f };
++    let ctrl = r.mii_read(MII_CTRL1000)?;
++    let ctrl = if mbit >= 1000 { ctrl | CTRL1000_ADV } else { ctrl & !CTRL1000_ADV };
++    r.mii_write(MII_CTRL1000, ctrl)?;
++    let bmcr = r.mii_read(MII_BMCR)?;
++    r.mii_write(MII_BMCR, bmcr | BMCR_AUTOEN | BMCR_STARTNEG)
++}
++
+ /// Receive frames for `mac`: the address the network stack uses, when the
+ /// adapter takes over from another one.
+ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index a9b077e2..01dfbc39 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -136,7 +136,14 @@ impl UsbNet {
+             if let Ok(now) = now {
+                 if now != *link {
+                     let state = if now { "up" } else { "down" };
+-                    println!("dwc2d: link {state} on the {name} at address {address}");
++                    let speed = match adapter {
++                        Adapter::Lan78xx(a) if now => lan78xx::speed(bus, a.function()).ok(),
++                        _ => None,
++                    };
++                    match speed {
++                        Some(mbit) => println!("dwc2d: link {state} on the {name} at address {address}, {mbit} Mbit/s"),
++                        None => println!("dwc2d: link {state} on the {name} at address {address}"),
++                    }
+                     *link = now;
+                 }
+             }
+@@ -407,6 +414,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ /// While this file exists, mouse events are printed too (tests without a
+ /// person); looked at with every rescan.
+ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
++/// `100` or `1000` here makes the LAN7800 in use advertise speeds up to
++/// that and negotiate again, to measure the power of each (#126).
++const LINK_REQUEST: &str = "/tmp/dwc2d-link";
++/// [`LINK_REQUEST`] is looked for on every so many rescans: a path lookup
++/// that fails is a round trip through the namespace manager and RedoxFS,
++/// a few wakeups each time (#126).
++const LINK_CHECK_EVERY: u32 = 5;
++
++/// Whether this rescan looks for [`LINK_REQUEST`].
++fn link_check_due() -> bool {
++    use std::sync::atomic::{AtomicU32, Ordering};
++    static RESCANS: AtomicU32 = AtomicU32::new(0);
++    RESCANS.fetch_add(1, Ordering::Relaxed) % LINK_CHECK_EVERY == 0
++}
+ /// How long a network adapter found at boot may wait for its link, so DHCP
+ /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
+ /// can take longer than 5 s. Adapters plugged in later do not wait: their
+@@ -610,6 +631,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
+             Source::Hotplug => {
+                 hotplug.fired();
++                // An empty file is one the shell has created but not yet
++                // written: leave it for the next rescan.
++                let link_request = link_check_due()
++                    .then(|| std::fs::read_to_string(LINK_REQUEST).ok())
++                    .flatten()
++                    .filter(|r| !r.trim().is_empty());
++                if let Some(request) = link_request {
++                    let _ = std::fs::remove_file(LINK_REQUEST);
++                    let request = request.trim();
++                    match (request.parse::<u32>(), scheme.adapter_mut().active_adapter()) {
++                        (Ok(mbit @ (100 | 1000)), Some(Adapter::Lan78xx(a))) => {
++                            println!("dwc2d: link: advertising up to {mbit} Mbit/s, negotiating again");
++                            if let Err(err) = lan78xx::set_max_speed(&mut bus, a.function(), mbit) {
++                                println!("dwc2d: link: {err:?}");
++                            }
++                        }
++                        _ => println!("dwc2d: link: {request:?} needs 100 or 1000 and a LAN7800 in use"),
++                    }
++                }
+                 let mut cycled = Vec::new();
+                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
+                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+-- 
+2.53.0
+

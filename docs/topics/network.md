@@ -17,6 +17,32 @@
   from `netcfg` (PR
   [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
   and on the Pi (**test 194 passed**).
+- [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
+  answer ping (test 164): netstack left out smoltcp's feature
+  `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
+  PR [#178](https://github.com/redox-rpi/redox-rpi/pull/178)); QEMU 10 of
+  10 answered, **Pi test 196 passed** (20 of 20).
+- [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):
+  OpenSSH from source; key and password login and an interactive shell
+  work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
+  with a repeated fd, `ld.so` and login shells), `procmgr` (SIGCHLD of a
+  child that dropped its privileges) and OpenSSH (no `chroot`, PTY
+  without owner). Pi test #59 failed: no host keys, because rename does
+  not work on `/scheme/data`; the keys are now made in `/etc/ssh` and
+  copied there. Rerun #81 passed on the Pi (2026-10-30): login in
+  1.3 s, the keys stay the same after a reset. Since then: the listening
+  `sshd` no longer uses a whole CPU (netstack reported a listening socket
+  always readable), and the shell exits cleanly when the session ends
+  (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
+  instead of panicking). Pi rerun #101 passed (2026-10-30): 2.9 s of
+  `sshd` CPU after 22 sessions, 10 dropped sessions without an Ion
+  exception or leftovers. Pull request #78. Branch `sshd-keys` (on top
+  of it): netstack keeps spare listening sockets, so `ssh-keyscan` with
+  several types gets every key (connections that came in together were
+  reset), and sshd also reads `authorized_keys` from the data partition,
+  so keys survive a reset of the network-boot image. Pi test #120 passed.
+  Ctrl-C while a program starts:
+  [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
@@ -39,7 +65,9 @@
   next interface or is removed. QEMU passes with two testnetds; **Pi test
   140 passed**. Not done: link state (a pulled cable shows only when the lease
   ends); a restarted driver cannot take its old scheme name again
-  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117): the namespace
+  manager keeps the name; fixed by experiment `scheme-reregister`, PR
+  [#128](https://github.com/redox-rpi/redox-rpi/pull/128), Pi test 146).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
@@ -50,6 +78,10 @@
   [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
+  Step 2, PR [#194](https://github.com/redox-rpi/redox-rpi/pull/194) on
+  top of #82: multicast (base `0083`, relibc `0016`) and the LAN7800
+  multicast filter (base `0084`) as default patches; QEMU passes, **Pi
+  test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
