@@ -10382,3 +10382,16 @@ boot (reset from stable) 23:20 UTC, then over devsh. NanoKVM not used.
 - `/tmp/desktop.log` empty. No panic, no `UNHANDLED EXCEPTION` on serial.
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t288/`.
+
+## 2026-11-08: `v0.4.0-dev-748-g36bd5f6a+x9f76`
+
+Built 2026-11-08T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-748-g36bd5f6a+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-748-g36bd5f6a+x9f76.toml |
+| ps | pass | 51 processes (piped) |
+| ps-tty | pass | 51 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
