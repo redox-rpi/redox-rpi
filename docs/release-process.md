@@ -43,8 +43,8 @@ week it is and whether a roadmap theme was completed:
 Candidates are named `v<version>-rc<N>`, for example `v0.4.1-rc2`. `N`
 only counts up: a rebuild with any change, even one experiment more or
 less, gets the next number, and a number is never reused, also when its
-candidate failed. A candidate built before the Friday is allowed; the
-Friday candidate from `main` is the one that is tested for the release.
+candidate failed. A candidate built before the Saturday is allowed; the
+Saturday candidate from `main` is the one that is tested for the release.
 The release itself has no suffix (see
 [versioning.md](versioning.md#release-names)).
 
@@ -52,15 +52,15 @@ The release itself has no suffix (see
 
 | When | Release and CI does |
 |---|---|
-| Monday | Opens the checklist `docs/releases/v<version>-checklist.md` from the previous one and the release issue |
-| Monday to Thursday | Builds early candidates when asked, keeps the checklist's "in the image" table current with what is merged |
-| Thursday evening | Cut-off: only what the maintainer has merged by then is in |
-| Friday | Builds the candidate from `main` ([Building](#building)), runs the [candidate checks](#candidate-checks), queues the Pi rows and the regression set, drafts the release notes |
-| Weekend | The person test, if one is due, on the Friday candidate; the tag and the GitHub release after the maintainer's OK on the exact commit ([Release](#release)) |
+| Monday, after the release | Opens the checklist `docs/releases/v<version>-checklist.md` from the previous one and the release issue |
+| Monday to Friday | Builds early candidates when asked, keeps the checklist's "in the image" table current with what is merged |
+| Friday evening | Cut-off: only what the maintainer has merged by then is in |
+| Saturday | Builds the candidate from `main` ([Building](#building)), runs the [candidate checks](#candidate-checks), queues the Pi rows and the regression set, drafts the release notes |
+| Sunday evening | The person test, if one is due, on the Saturday candidate; the tag and the GitHub release after the maintainer's OK on the exact commit ([Release](#release)). Monday evening is the fallback |
 
-A release never waits for a feature. If the Friday candidate fails and
-neither a fix nor taking the change out works by Sunday, the week has no
-release.
+A release never waits for a feature. If the Saturday candidate fails and
+neither a fix nor taking the change out works by the Monday evening
+fallback, the week has no release.
 
 ## Building
 

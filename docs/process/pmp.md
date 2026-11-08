@@ -130,18 +130,18 @@ per week and one release per sprint:
 
 | When | What | Who |
 |---|---|---|
-| Monday | Sprint planning: the project lead proposes the sprint goal and the issues from the topic owners; the maintainer confirms or changes it | project lead, maintainer |
-| Monday to Thursday | Work, Pi tests, pull requests; `merge-next` kept current | owners, V&V, project lead |
-| Thursday evening | Cut-off: what the maintainer has merged by then is in | maintainer |
-| Friday | Release candidate built from `main`, candidate checks, Pi tests and the regression set | Release and CI, V&V |
-| Weekend | The maintainer approves the tag on the exact commit (person test if one is due); release notes and known issues | maintainer, Release and CI |
-| Sunday or Monday | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
+| Monday, after the release | Sprint planning: the project lead proposes the sprint goal and the issues from the topic owners; the maintainer confirms or changes it | project lead, maintainer |
+| Monday to Friday | Work, Pi tests, pull requests; `merge-next` kept current | owners, V&V, project lead |
+| Friday evening | Cut-off: what the maintainer has merged by then is in | maintainer |
+| Saturday | Release candidate built from `main`, candidate checks, Pi tests and the regression set | Release and CI, V&V |
+| Sunday evening | Person test if one is due; the maintainer approves the tag on the exact commit; release notes and known issues. **Monday evening** is the fallback | maintainer, Release and CI |
+| After the release | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
 
 - Each sprint is a GitHub milestone named after its release. Open issues
   of a closed sprint move to the next milestone, not to "later" by
   default.
 - A failed candidate is fixed or the change that broke it is taken out;
-  if neither works by Sunday, that week has no release and the next one
+  if neither works by the Monday evening fallback, that week has no release and the next one
   carries the changes.
 - Person tests at the Pi are bundled into one visit per sprint where
   possible.
