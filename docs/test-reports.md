@@ -10510,10 +10510,11 @@ COSMIC. But everything else worked: network, keyboard after booting, mouse after
 
 | Checklist | Result | Detail |
 |---|---|---|
-| (9, 19) Zero 2 W network | pass (by report) | "netz" worked. DHCP, NTP and the `ifconfig` address were not reported one by one |
+| (9, 19) Zero 2 W network | pass | "netz" worked. Asked again, the maintainer said: "ja läuft noch IP ist 192.168.178.118. Ich konnte vom pi einen ping an den server geben." (yes, still running, the IP is 192.168.178.118, and a ping from the Pi to the server worked). So DHCP gave it an address. At 20:10 UTC the build host saw 192.168.178.118 with MAC `00:e0:4c:36:14:8e` (Realtek, the RTL8153 hub adapter). NTP and the time were not reported |
+| (23) REQ-REL-1, no devshd | pass (Zero 2 W) | from the build host at 20:10 UTC: `nc -z -w 3 192.168.178.118 2323` fails (rc 1). The `ps` check on the console was not done |
 | keyboard plugged in after boot | pass (by report) | "kb nach booten" |
 | mouse plugged in after boot | pass (by report) | "mouse nach booten" |
 | (22) desktop, COSMIC Text Editor save | fail, known | saving text in the editor does not work; already known. v0.4.1 replaces the editor with the game ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
 
-**Result: pass for the Zero 2 W part (9, 19, keyboard and mouse hotplug).** The editor save
+**Result: pass for the Zero 2 W part (9, 19, keyboard and mouse hotplug; devsh port closed).** The editor save
 failure is the known desktop gap. The Pi 3B+ part of #286 is still open (Monday 11-09).
