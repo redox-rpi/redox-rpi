@@ -10290,3 +10290,150 @@ Results from the user, through the coordinator.
   No panic on serial.
 
 Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Serial and stats in `~/pitest-tools/t280/`.
+
+## #285 v0.4.0-rc1 automated, checklist tests 1–5, 11, 13, 14, 16, 18, 20 (2026-11-07, Pi test agent)
+
+Network image `~/redox-rpi-rel/keep/v0.4.0-rc1-netboot.img` (`v0.4.0-dev-738-g4804fe63+x12cb`, `--release
+v0.4.0-rc1 --experiment timesync`). Real Pi 3B+, power cycle 22:15:46 UTC, devsh after 30 s. Main run
+22:15–22:30, extra boot 22:30–22:37 for the download and two re-checks. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass, with one known weak spot: serial input 19 of 20 (#28).**
+- **(1–5) pi-test** `--starts 1000 --manifest …rc1-netboot.manifest.toml`: `PASS version: v0.4.0-rc1
+  (v0.4.0-dev-738-g4804fe63+x12cb)`, manifest match, ps 61, ps-tty, sdcard, **starts 0 of 1000 failed**.
+  Banner `redox-rpi v0.4.0-rc1 (v0.4.0-dev-738-g4804fe63+x12cb)` on every boot.
+- **Boot log** (7 boots): `rpi-firmwared: ARM clock 600 -> 1400 MHz` each time, `throttled 0x00000000`, no
+  throttle warning, no `pcid` or `rtcd` line, `audiod` only the `uring … not supported` note,
+  `timesync: clock set … from pool.ntp.org` each boot. `date -u` on the Pi 22:16:37, host 22:16:39.
+- **(13) Governor:** `mode ondemand`. During the 1000 starts every 5 s sample was `1400000000` (22 of 22).
+  Idle (extra boot): over 20 s, `time_min_ms` +18.2 s and `time_max_ms` +2.6 s, so mostly 600 MHz. Reading
+  `arm_clock` over devsh always shows 1400 MHz, because the devsh call itself is load.
+- **Reboots:** `reboot` 5 times over devsh, `redox login:` and devsh back each time, about 20 s.
+- **(11) Serial input:** `serial-input-test.sh 20` logged in as root on the console: **19 of 20** (S15 lost
+  characters); again on the extra boot: 19 of 20 (S19). Known (#28): v0.3.0-rc3 had 2 lost in one run and 0 in
+  the next. While the test runs, the console's `getty` (PID 28) takes about 72 s of CPU (0.56 s before the
+  test, 72.75 s after it).
+- **(14) GPIO/I2C/SPI:** `ls /scheme/gpio` 0–53 and `pins`; `nowire-check.py`: **21 of 21** (I2C detect
+  finishes, missing address errors, SPI MISO pull reads ff/00, the 4096-byte transfer finishes).
+- **(16) Audio:** `measured_rate_hz 43930`, `dma_faults 0`, `pwm_errors 0`, `underruns 1`; `tone check` both
+  `(good)`; `time tone -s 3 > /scheme/audio`: `real 2.959 s`, rc 0; `audiod` still running.
+- **(18) RedoxFS:** `dd … bs=4096 count=256`: `real 0.19 s` (26 MB/s). `sd-stress.py --big-mib 32 --small 100
+  --cycles 1`: **pass**, 0 missing and 0 changed after writing and after the restart.
+- **(20) Pipe and download:** `dd if=/dev/zero bs=65536 count=256 | cat > /scheme/data/p`: 16777216 bytes.
+  The image has no `netget`, curl or wget, so the 100 MiB download used `nc` with an HTTP GET (extra boot):
+  `printf 'GET /t285-100m.bin HTTP/1.0\r\n\r\n' | nc 192.168.178.120:8080 > /scheme/data/dl.bin`. Size by
+  time: 22.3 MB after 4 s, 44.8 after 9 s, 68.7 after 14 s, 88.0 after 18 s, complete after 23 s
+  (about 4.5 MB/s, no stall). SHA-256 of the 100 MiB payload matches the file on homenodellm. (Redox `nc`
+  needs `host:port` and does not exit at EOF.)
+- No panic, no `UNHANDLED EXCEPTION` on serial.
+
+**Also seen (not rc1):** the first try staged nothing (my clone has no U-Boot `mkimage`), so the stable image
+`v0.4.0-dev-643-g58df647b+x9f76` ran pi-test. About a minute into its 1000 starts (21:41:40) the network
+went silent: no ARP answer, devsh gone, while netstack, dwc2d and devshd all kept running; nothing on serial.
+A reset over the serial console brought it back. This is like #92/#217 (rare network loss).
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t285/` (try 1 in
+`try1/`, the extra boot in `extra/`).
+
+## #287 #33 optional desktop started from the console (v0.4.0-rc2 candidate) (2026-11-07, Pi test agent)
+
+Branch `desktop-console` 5697fc1d. A: `netboot-desk-v0.4.0-dev-756-g5697fc1d+xce4c-dirty.0fae5a5cea1a.img`;
+B: `netboot-desk-pb-v0.4.0-dev-756-g5697fc1d+x0f22-dirty.f717e04d32c7.img`. Real Pi 3B+, HDMI to the NanoKVM
+(`rpi-fbd: EDID 256 bytes, monitor NanoKVM`, `boot framebuffer 1824x984`). 23:02–23:17 UTC, 3 boots of B.
+
+**Result: A passes; B is open: the login through `pointer-bench` keys never finishes, and no screenshot
+was possible.**
+- **A1:** boots to the text console, `redox login:` on serial, no Orbital in `ps` (`grep -c orbital` 0).
+  `experiments: cosmic-apps-source desktop orbital orbital-apps rpi-fb rtl8152 timesync`.
+- **A2:** `pi-test.py`: pass (version, manifest match, ps 57, ps-tty, sdcard, starts 0 of 300).
+- **A3:** `desktop; echo rc=$?` returns in 1.8 s: `desktop: starting Orbital, its log goes to /tmp/desktop.log`,
+  `desktop: Super+F2 goes back to the console, Super+F3 to the desktop`, `rc=0`. `/usr/bin/orbital` runs
+  (and `/usr/bin/orblogin`). `/tmp/desktop.log` stayed empty (polled for 60 s). `free`: 146500 KB used
+  before, 226732 KB after (+80 MB).
+- **Screenshot:** not possible. The image has no `vc4shot` (it is for `vc4d`, and this build uses `rpi-fbd`),
+  and the NanoKVM was not used. So the time from `desktop` to the login screen is not measured; `orblogin`
+  ran within 30 s.
+- **B:** Orbital does not run at boot (`ps` before `desktop`: no orbital). `desktop` rc 0, Orbital PID 61 and
+  `orblogin` PID 65. Then `pointer-bench --type 'user\n'` and `--type 'password\n'` (as the row says): both
+  `typed … keys`, but 30 s later `orblogin` is still there and no session started (no launcher or other user
+  processes). Same with an empty password (`user\n`, then `\n`, as the README says). `pointer-bench --keys
+  super+f2` runs, and the second `desktop` prints only the switch line, rc 0. `ps` after all of it: exactly one
+  `/usr/bin/orbital`. Whether the screen switched cannot be seen without a screenshot.
+- No panic and no `UNHANDLED EXCEPTION` on serial; `/tmp/desktop.log` empty in all runs.
+
+So the start from the console works and does not start a second Orbital. The login with injected keys does
+not get through `orblogin`: either the keys from `pointer-bench` do not reach Orbital on VT 3, or the login
+window needs something else. A person (part C) or a screenshot path for `rpi-fbd` would tell. Stable
+`v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t287/` (`b2/`, `b3/`
+the B reruns with full `ps`).
+
+## #288 #33 #287 part B again, with the right login keys (2026-11-07, Pi test agent)
+
+Image `netboot-desk-pb-v0.4.0-dev-756-g5697fc1d+x0f22-dirty.f717e04d32c7.img` (as #287 B). Real Pi 3B+, fresh
+boot (reset from stable) 23:20 UTC, then over devsh. NanoKVM not used.
+
+**Result: pass.**
+- Before `desktop`: no orbital in `ps`; `free` 146624 KB used.
+- `desktop; echo rc=$?`: `rc=0` in 0.6 s. 5 s later `pointer-bench --type '\n'` (`typed 1 keys`).
+- 10–20 s later `ps`: `/usr/bin/orbital` (PID 63), `/usr/bin/orblogin` (68, still there), and
+  **`/usr/bin/launcher` as uid 1000** (PID 75): the empty-password login went through. `free` 186332 KB used.
+  (The row's `grep -e … -e …` gives `Invalid parameters '-e'` on Redox grep, so this is read from the full `ps`.)
+- `pointer-bench --keys super+f2`, then `desktop; echo rc=$?`: `rc=0`; `ps` after it: exactly one
+  `/usr/bin/orbital`, launcher still running. Whether the screen switched is not visible without a screenshot.
+- `/tmp/desktop.log` empty. No panic, no `UNHANDLED EXCEPTION` on serial.
+
+Stable `v0.4.0-dev-643-g58df647b+x9f76` restored, devsh answers. Outputs in `~/pitest-tools/t288/`.
+
+## 2026-11-08: `v0.4.0-dev-748-g36bd5f6a+x9f76`
+
+Built 2026-11-08T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-748-g36bd5f6a+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-748-g36bd5f6a+x9f76.toml |
+| ps | pass | 51 processes (piped) |
+| ps-tty | pass | 51 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## #289 PR #226 opt-a53 split: opt-level 3 with LTO against target-cpu=cortex-a53 (2026-11-08, Pi test agent)
+
+Follow-up to #260 (the user: "Erst Effekte trennen"). Real Pi 3B+, network boot, 8 boots in
+the order A, B2, C, D2, D2, C, B2, A (05:39–06:39 UTC). On each boot: boot-timeline.py,
+`scripts/pi-test.py` and `patches/experiments/opt-a53/bench.py --rounds 3`, run read-only
+from `~/redox-rpi-opt` at d6fb1cf8 with `PYTHONDONTWRITEBYTECODE=1`.
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-565-gc70f394e+x9f76` | stable, as in #260 |
+| B2 | `v0.4.0-dev-575-gd6fb1cf8+x9b71` | all: opt-level 3, fat LTO, 1 codegen unit, target-cpu cortex-a53 (`-aes,-sha2`) |
+| C | `v0.4.0-dev-574-gf58b489f+xb439` | opt-speed: opt-level 3, fat LTO, 1 codegen unit |
+| D2 | `v0.4.0-dev-575-gd6fb1cf8+xf367` | cpu-a53: target-cpu cortex-a53 (`-aes,-sha2`) only |
+
+**Result: pass. The network gain comes from opt-level 3 with LTO (C); target-cpu alone (D2) gives nothing.**
+All 8 boots reached `redox login:`. pi-test passed all 6 checks on every boot (0 of 300 starts
+failed). No panic. Clocks were the same before and after every bench (arm 1400 MHz, core 250,
+sdram 400), so there was no throttling.
+
+Median of 6 rounds per image (2 boots × 3 rounds), with the range, in seconds; boot time is 2 boots:
+
+| Workload | A (stable) | B2 (all) | C (opt-speed) | D2 (cpu-a53) | B2 vs A | C vs A | D2 vs A |
+|---|---|---|---|---|---|---|---|
+| spawn, 500 × `ls /usr` | 77.68 (77.42–77.92) | 75.47 (75.17–75.94) | 77.09 (76.98–77.24) | 79.58 (79.38–79.80) | **−2.8 %** | −0.8 % | **+2.4 % (slower)** |
+| net-rx, 32 MiB to the Pi | 3.07 (2.75–3.13) | 2.69 (2.52–2.87) | 2.84 (2.79–3.08) | 3.04 (2.75–3.37) | **−12.3 %** | **−7.4 %** | −0.7 % |
+| net-tx, 32 MiB from the Pi | 4.91 (4.68–4.96) | 4.37 (4.30–4.44) | 4.35 (4.32–4.45) | 5.00 (4.92–5.01) | **−11.2 %** | **−11.4 %** | +1.7 % |
+| sd-write, 50 MiB | 6.76 (6.32–8.43) | 6.71 (5.74–8.95) | 6.49 (5.75–6.97) | 6.83 (5.78–7.34) | same | same | same (card-bound, noisy) |
+| sd-read, 50 MiB | 0.55 (0.55–0.55) | 0.54 (0.53–0.54) | 0.55 (0.54–0.55) | 0.55 (0.55–0.55) | −2 % | same | same |
+| boot to `redox login:` | 35.14, 30.26 | 30.12, 30.61 | 30.25, 35.15 | 30.67, 30.35 | | | no difference (the known 35 s outliers) |
+
+- **net-tx:** C alone gives all of B2's gain. **net-rx:** C gives about 60 % of it; the rest
+  shows only when both are on.
+- **spawn:** target-cpu alone makes it 2.4 % slower, opt-speed alone 0.8 % faster, and both
+  together 2.8 % faster. So the two interact; target-cpu without LTO does not pay.
+- **net-tx retries:** bench.py's "nc did not connect" retry was needed 13 times over all boots
+  (on A, B2 and C; never on D2). Every round finished. One retry left a harmless
+  `TimeoutError` traceback from the accept thread (boot 1, A).
+- Raw data: homenodellm `~/pitest-tools/t289/` (`opt-a53-split.jsonl`, bench, pi-test, boot
+  and serial logs per boot).
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.

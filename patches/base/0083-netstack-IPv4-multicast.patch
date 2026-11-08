@@ -20,7 +20,7 @@ closes.
  5 files changed, 87 insertions(+), 7 deletions(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
-index 520f7d9..f965d19 100644
+index 520f7d96..f965d191 100644
 --- a/netstack/Cargo.toml
 +++ b/netstack/Cargo.toml
 @@ -27,7 +27,7 @@ default-features = false
@@ -33,7 +33,7 @@ index 520f7d9..f965d19 100644
      "iface-max-addr-count-8",
      "log"
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 5f32a47..b778a21 100644
+index 5f32a479..b778a219 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -312,6 +312,20 @@ impl LinkDevice for EthernetLink {
@@ -71,10 +71,10 @@ index 5f32a47..b778a21 100644
                  && repr.dst_addr != hardware_address
              {
 diff --git a/netstack/src/router/mod.rs b/netstack/src/router/mod.rs
-index 3cfd0a2..e3d19e9 100644
+index 141094ba..abd7f5c2 100644
 --- a/netstack/src/router/mod.rs
 +++ b/netstack/src/router/mod.rs
-@@ -88,9 +88,10 @@ impl Router {
+@@ -101,9 +101,10 @@ impl Router {
                          continue;
                      };
  
@@ -88,10 +88,10 @@ index 3cfd0a2..e3d19e9 100644
  
                      let mut devices = self.devices.borrow_mut();
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index f344e28..9921e53 100644
+index 80f1fd5b..fcd5d415 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
-@@ -34,6 +34,10 @@ fn gateway_cidr() -> IpCidr {
+@@ -35,6 +35,10 @@ fn gateway_cidr() -> IpCidr {
      IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0)
  }
  
@@ -102,7 +102,7 @@ index f344e28..9921e53 100644
  fn parse_route(value: &str, route_table: &RouteTable) -> SyscallResult<Rule> {
      let mut parts = value.split_whitespace();
      let cidr_str = parts.next().ok_or(SyscallError::new(syscall::EINVAL))?;
-@@ -233,6 +237,7 @@ fn mk_root_node(
+@@ -250,6 +254,7 @@ fn mk_iface_node(
                                          let old_network = IpCidr::Ipv4(old_v4_cidr.network());
  
                                          route_table.remove_rule(old_network);
@@ -110,7 +110,7 @@ index f344e28..9921e53 100644
                                          route_table.change_src(old_addr.address(), cidr.address());
                                          iface.borrow_mut().update_ip_addrs(|addrs| addrs.retain(|addr| *addr != old_addr))
                                      }
-@@ -248,7 +253,10 @@ fn mk_root_node(
+@@ -265,7 +270,10 @@ fn mk_iface_node(
  
                                      let IpCidr::Ipv4(v4_cidr) = cidr;
                                      let network_cidr = IpCidr::Ipv4(v4_cidr.network());
@@ -120,10 +120,10 @@ index f344e28..9921e53 100644
 +                                    // without a default route.
 +                                    route_table.insert_rule(Rule::new(ipv4_multicast(), None, dev.name().clone(), cidr.address()))
                                  }
-                                 notifier.borrow_mut().schedule_notify("ifaces/eth0/addr/list");
+                                 notifier.borrow_mut().schedule_notify(&format!("ifaces/{name}/addr/list"));
                                  notifier.borrow_mut().schedule_notify("route/list");
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 2251f6f..254bce8 100644
+index d2ef7afe..8bf1d7d7 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
 @@ -13,6 +13,7 @@ use redox_scheme::scheme::{register_scheme_inner, Op, SchemeSync};
@@ -221,6 +221,3 @@ index 2251f6f..254bce8 100644
              SocketCall::SetSockOpt => {
                  // currently not used
                  // self.handle_setsockopt(id, metadata[1] as i32, &payload)
--- 
-2.54.0 (Apple Git-157)
-
