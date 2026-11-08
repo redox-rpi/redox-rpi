@@ -59,7 +59,8 @@ if not orbital_runs
         echo "  40 to 80 MB) comes back only with a reboot"
         echo "- Super+F2 goes back to this console, Super+F3 to the desktop"
         echo "- no browser, one screen resolution, no HDMI hotplug"
-        if not test -t 0
+        # ion's own test -t says yes for a pipe too; uutils' test does not.
+        if not /usr/bin/test -t 0
             echo "desktop: no terminal to ask on, not starting (desktop --yes starts it)"
             exit 1
         end
