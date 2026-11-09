@@ -10563,3 +10563,26 @@ Built 2026-11-09T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over ne
 | ps-tty | pass | 51 lines straight to the terminal, rc=0 |
 | sdcard | pass | write, read back, delete on /scheme/data |
 | starts | pass | 0 of 300 failed |
+
+## v0.4.0 release: one boot on the Pi (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf`, `RELEASE="v0.4.0"` (netboot image
+`~/redox-rpi-rel/keep/v0.4.0-netboot.img`, manifest `v0.4.0-netboot.manifest.toml`; same commit,
+options and build ID as the SD card image `redox-rpi-v0.4.0-pi3bplus.img.xz` and as rc2, #292).
+Level 4: real Pi 3B+, network boot, serial console, no person, 06:45–06:48 UTC. Release process
+step "one boot on the Pi", before the tag. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass.** The release image boots and shows the v0.4.0 banner, login works, no panic, and
+the pi-test standard checks pass.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot | pass | first boot after a power cycle; devsh answered 35 s later |
+| banner | pass | `redox-rpi v0.4.0 (v0.4.0-dev-809-g5723a434+x4aaf) (netboot, 2026-11-08T21:01:23Z)`, not `-rc2`; `/etc/redox-rpi-release`: `RELEASE="v0.4.0"`, `COMMIT="5723a434"`, experiments `cosmic-apps-source desktop orbital orbital-apps rpi-fb timesync` |
+| login | pass | `redox login:` on serial; root login on the serial console, `cat /etc/redox-rpi-release` answered |
+| no panic | pass | no `panic`, exception or `UNKILLABLE` in the serial log of the boot |
+| pi-test | pass | 6 of 6: version, manifest (build ID and `libc.so` hash match), ps (57), ps-tty, sdcard, 0 of 300 starts failed |
+| other | observe | motd has the `desktop` line; `throttled` 0x0; free 131 of 736 MB used; df 182 of 227 MB used (80 %) |
+
+Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76` (promoted by the nightly
+at 03:35) staged and answered on devsh. Data: homenodellm `~/pitest-tools/trel040/`.
