@@ -72,6 +72,10 @@ fallback, the week has no release.
   runs `scripts/build-image.sh --release v<version>-rc<N>` with the
   requested options. No `--allow-dirty`: a candidate must be reproducible
   from its manifest.
+- `--release` leaves out the test experiments of
+  `config/test-experiments.conf` (diagnostics such as `netstack-watch`)
+  and refuses any experiment with a `test-only` file, so a candidate never
+  has them; its manifest shows the experiments it has.
 - `--release` puts the candidate's name above the login prompt, in
   `/etc/redox-rpi-release` and in the manifest
   ([versioning.md](versioning.md#release-name-in-the-image)), so a booted

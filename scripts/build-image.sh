@@ -8,7 +8,8 @@
 #
 # Usage:
 #   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
-#                          [--release <name>] [--allow-dirty]
+#                          [--release <name>] [--no-test-experiments]
+#                          [--allow-dirty]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
@@ -23,7 +24,13 @@
 #                 which replace the upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
-#                 and as release in the manifest (docs/release-process.md)
+#                 and as release in the manifest (docs/release-process.md);
+#                 leaves out the test experiments and refuses an experiment
+#                 marked test-only
+#   --no-test-experiments
+#                 leave out the experiments in config/test-experiments.conf,
+#                 which every other build gets (diagnostics such as
+#                 netstack-watch); for benchmark rows and A/B comparisons
 #   --allow-dirty build even with uncommitted changes to patches/, config/,
 #                 scripts/ or tools/, or with recipe sources that differ from
 #                 their pinned commit plus patches; the differences are saved
@@ -51,6 +58,7 @@ CONFIG="$ROOT/config/raspi3bp.toml"
 experiments=()
 allow_dirty=0
 release=""
+test_experiments=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --sdcard)
@@ -69,11 +77,58 @@ while [ $# -gt 0 ]; do
             [[ "${2:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]] || { echo "--release needs a name like v0.3.0 or v0.3.0-rc2" >&2; exit 1; }
             release="$2"
             shift 2 ;;
+        --no-test-experiments) test_experiments=0; shift ;;
         --allow-dirty) allow_dirty=1; shift ;;
         -*) echo "unknown argument: $1" >&2; exit 1 ;;
         *) break ;;
     esac
 done
+
+has_experiment() {
+    local exp
+    for exp in "${experiments[@]}"; do [ "$exp" = "$1" ] && return 0; done
+    return 1
+}
+
+# An experiment's conflicts file names experiments its patches do not apply
+# on top of.
+conflict_of() {
+    local c
+    [ -f "$ROOT/patches/experiments/$1/conflicts" ] || return 1
+    for c in $(cat "$ROOT/patches/experiments/$1/conflicts"); do
+        has_experiment "$c" && { echo "$c"; return 0; }
+    done
+    return 1
+}
+
+# Test experiments: diagnostics every image gets, after the chosen
+# experiments, except releases and --no-test-experiments. One that conflicts
+# with a chosen experiment is left out.
+if [ -z "$release" ] && [ "$test_experiments" = 1 ]; then
+    while read -r exp _; do
+        case "$exp" in ''|'#'*) continue ;; esac
+        [ -d "$ROOT/patches/experiments/$exp" ] || { echo "config/test-experiments.conf: no patches/experiments/$exp" >&2; exit 1; }
+        has_experiment "$exp" && continue
+        if c="$(conflict_of "$exp")"; then
+            echo "test experiment $exp left out: it conflicts with $c" >&2
+            continue
+        fi
+        experiments+=("$exp")
+    done < "$ROOT/config/test-experiments.conf"
+fi
+for exp in "${experiments[@]}"; do
+    if c="$(conflict_of "$exp")"; then
+        echo "experiments $exp and $c do not go together" >&2
+        exit 1
+    fi
+    # A test-only experiment (its directory has a test-only file) never goes
+    # into a release.
+    if [ -n "$release" ] && [ -f "$ROOT/patches/experiments/$exp/test-only" ]; then
+        echo "--release with test-only experiment $exp" >&2
+        exit 1
+    fi
+done
+
 image_name=netboot
 [ "$CONFIG_NAME" = minimal ] || image_name="$CONFIG_NAME"
 
