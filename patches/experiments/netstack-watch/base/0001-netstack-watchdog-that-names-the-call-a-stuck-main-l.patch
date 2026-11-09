@@ -1,6 +1,6 @@
-From f1c60f8f53b17cbeb6e09deead906310cb11fe6b Mon Sep 17 00:00:00 2001
+From 61aaf207f89f9bfb41c3e4b7185a1c6d3ffa1b1b Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
-Date: Sat, 7 Nov 2026 08:16:04 +0000
+Date: Mon, 9 Nov 2026 07:28:03 +0000
 Subject: [PATCH] netstack: watchdog that names the call a stuck main loop is
  in
 
@@ -62,7 +62,7 @@ index b778a219..c7573e5e 100644
              let Ok(repr) = EthernetRepr::parse(&packet) else {
                  debug!("Dropped incomming frame on {} (Malformed)", self.name);
 diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 084c3d3d..42b9334a 100644
+index e7f02c0f..60583d33 100644
 --- a/netstack/src/main.rs
 +++ b/netstack/src/main.rs
 @@ -18,6 +18,7 @@ mod logger;
@@ -71,11 +71,11 @@ index 084c3d3d..42b9334a 100644
  mod scheme;
 +mod watch;
  
- fn get_network_adapter() -> Result<String> {
-     use std::fs;
-@@ -158,6 +159,12 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
-     )
-     .context("smolnetd: failed to initialize smolnetd")?;
+ /// How often netstack looks for adapters that came up after it started.
+ const ADAPTER_SCAN: std::time::Duration = std::time::Duration::from_secs(2);
+@@ -128,6 +129,12 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     // and with parallel init dhcpd may start right after this (test 69).
+     daemon.ready();
  
 +    // Opened before the null namespace: the watchdog writes there (#92).
 +    match std::fs::OpenOptions::new().write(true).open("/scheme/debug") {
@@ -85,10 +85,10 @@ index 084c3d3d..42b9334a 100644
 +
      libredox::call::setrens(0, 0).context("smolnetd: failed to enter null namespace")?;
  
-     let all = {
-@@ -169,7 +176,20 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+     // Later adapters are looked for on a thread of their own. Listing
+@@ -152,7 +159,20 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
          .into_iter()
-         .chain(event_queue.map(|r| r.map(|e| e.user_data)))
+         .chain(event_queue.iter().map(|r| r.map(|e| e.user_data)))
      {
 -        match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
 +        use watch::Stage;
@@ -106,9 +106,9 @@ index 084c3d3d..42b9334a 100644
 +        watch::set(stage);
 +        match source {
              EventSource::Network => smolnetd.on_network_scheme_event(),
-             EventSource::Time => smolnetd.on_time_event(),
-             EventSource::IpScheme => smolnetd.on_ip_scheme_event(),
-@@ -179,6 +199,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+             EventSource::Time => {
+                 while let Ok(adapter) = new_adapters.try_recv() {
+@@ -175,6 +195,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
              EventSource::NetcfgScheme => smolnetd.on_netcfg_scheme_event(),
          }
          .map_err(|e| error!("Received packet error: {:?}", e));
