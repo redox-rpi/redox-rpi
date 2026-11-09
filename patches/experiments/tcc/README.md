@@ -73,7 +73,7 @@ the benchmark and self-hosting (tcc compiles `tcc.c` into a working
 In the release image from v0.4.1 as a beta
 ([#293](https://github.com/redox-rpi/redox-rpi/issues/293)); sizes in the
 topic page.
-Real Pi 3B+ ([test #278](../../../docs/test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent)):
+Real Pi 3B+ ([test #278](https://github.com/redox-rpi/pi-tests/blob/main/reports/278.md)):
 the same checks pass; Hello World compiles in 100 ms, `tcc.c` (77k lines) in
 0.7 s; tcc's code is 1.3-3.3 times slower than gcc -O2's. Numbers in the
 [topic page](../../../docs/topics/tcc.md).

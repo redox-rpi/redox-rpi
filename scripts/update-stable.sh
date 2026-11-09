@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Nightly stable image: build origin/main as the network-boot image, test it
 # on the real Pi and make it the stable image if it passes
-# (docs/test-plan.md, "Stable image").
+# (lab.md in redox-rpi/pi-tests, "Stable image").
 #
 # Runs on the build host from its own clone (default ~/redox-rpi-stable),
 # started by the systemd user timer redox-stable.timer, or by hand:
@@ -10,7 +10,7 @@
 #
 #   --force     build and test even if nothing that goes into the image
 #               changed since the current stable image
-#   --taken <N> for a run by hand: test N in docs/test-plan.md is this run
+#   --taken <N> for a run by hand: row N of the test queue is this run
 #               and marked "on the Pi"; any other test on the Pi still stops
 #               the script
 #   --no-push   do not commit, push or open an issue; print what would be done
@@ -19,22 +19,25 @@
 # Steps:
 #   1. Exit if patches/, config/, scripts/ and tools/ on origin/main are the
 #      same as in the commit of the current stable image.
-#   2. Exit if a test in docs/test-plan.md is marked "on the Pi".
+#   2. Exit if a row in the test queue (queue.md on main of
+#      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
 #      serial console and run scripts/pi-test.py.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
-#      /srv/tftp/stable at it, update "Stable image" in docs/test-plan.md,
-#      append the report to docs/test-reports.md, publish its packages to
-#      the pkg repository /srv/tftp/pkg (scripts/publish-pkg-repo.sh), commit
-#      and push to main.
+#      /srv/tftp/stable at it, publish its packages to the pkg repository
+#      /srv/tftp/pkg (scripts/publish-pkg-repo.sh), and in redox-rpi/pi-tests
+#      update "Stable image" in lab.md, write the report to
+#      reports/stable-<date>.md, commit and push to its main.
 #   6. Fail: stage the previous stable image again, reset the Pi, and open or
 #      update the issue "Nightly: main fails on the Pi".
 #   After 1 (nothing new) or 5: start redox-visit.service, the images in
 #   config/visit-images.conf (scripts/build-visit-images.sh).
 #
-# GitHub access: a token with write access to contents and issues of
-# redox-rpi/redox-rpi in ~/.config/redox-rpi/github-token (mode 600).
+# GitHub access: a token in ~/.config/redox-rpi/github-token (mode 600) with
+# write access to issues of redox-rpi/redox-rpi and to contents of
+# redox-rpi/pi-tests. The pi-tests clone is $PI_TESTS_CLONE (default
+# ~/pi-tests-stable); the script clones it if it is missing.
 
 set -euo pipefail
 
@@ -48,6 +51,8 @@ if [ -z "${UPDATE_STABLE_ROOT:-}" ]; then
 fi
 trap 'rm -f "$0"' EXIT
 REPO=redox-rpi/redox-rpi
+TESTS_REPO=redox-rpi/pi-tests
+TESTS="${PI_TESTS_CLONE:-$HOME/pi-tests-stable}"
 TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
 SERVER=192.168.178.120
@@ -112,17 +117,19 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
     exit 0
 fi
 
-# 2. Is the Pi free? The queue is the test plan on main, whatever --ref is.
-queue="$(git show origin/main:docs/test-plan.md)"
+# 2. Is the Pi free? The queue is queue.md on main of pi-tests, whatever --ref is.
+[ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS"
+queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh)" ||
+    { log "cannot read the test queue from $TESTS_REPO, not touching the Pi"; exit 1; }
 on_pi="$(grep '^| .*\*\*on the Pi\*\*' <<< "$queue" || true)"
 [ -n "$taken" ] && on_pi="$(grep -v "^| $taken |" <<< "$on_pi" || true)"
 if [ -n "$on_pi" ]; then
-    log "a test is on the Pi (docs/test-plan.md on main), not touching it"
+    log "a test is on the Pi (queue.md in $TESTS_REPO), not touching it"
     echo "$on_pi" | cut -c1-200
     exit 0
 fi
 if [ -n "$taken" ] && ! grep -q "^| $taken |.*\*\*on the Pi\*\*" <<< "$queue"; then
-    log "test $taken is not marked on the Pi in docs/test-plan.md on main; take the Pi first"
+    log "test $taken is not marked on the Pi in queue.md of $TESTS_REPO; take the Pi first"
     exit 1
 fi
 
@@ -211,8 +218,9 @@ fi
 
 # The token never appears on a command line, in a URL or in .git/config:
 # the credential helper and curl read it from the file.
+# git_push <dir>: push HEAD of the clone in <dir> to its main.
 git_push() {
-    git -c credential.helper= \
+    git -C "$1" -c credential.helper= \
         -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
         push -q origin HEAD:main
 }
@@ -236,38 +244,45 @@ if [ "$passed" = 1 ]; then
         log "publishing the pkg repository failed, see $backup/pkg-publish.log"
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
-    # The docs change goes on top of the newest main.
-    git fetch -q origin
-    git checkout -q --detach origin/main
-    python3 - "$build_id" "$(date -u +%Y-%m-%d)" "${starts:-see report}" <<'EOF'
+    # The report goes to pi-tests, on top of its newest main.
+    date="$(date -u +%Y-%m-%d)"
+    git -C "$TESTS" fetch -q origin
+    git -C "$TESTS" checkout -q --detach origin/main
+    python3 - "$build_id" "$date" "${starts:-see report}" "$TESTS/lab.md" <<'EOF'
 import re, sys
-build_id, date, starts = sys.argv[1:]
-path = "docs/test-plan.md"
+build_id, date, starts, path = sys.argv[1:]
 text = open(path).read()
 block = (f"<!-- stable-image: written by scripts/update-stable.sh -->\n"
          f"Staged on the TFTP server whenever no test runs: `{build_id}`, tested\n"
-         f"{date} with `scripts/pi-test.py` ([report](test-reports.md), starts:\n"
+         f"{date} with `scripts/pi-test.py` ([report](reports/stable-{date}.md), starts:\n"
          f"{starts}). A copy is in `/srv/tftp/backup-{build_id}/`, and\n"
          f"`/srv/tftp/stable` points to it.\n"
          f"<!-- /stable-image -->")
 new, n = re.subn(r"<!-- stable-image.*?<!-- /stable-image -->", lambda m: block, text, flags=re.S)
 if n != 1:
-    sys.exit("no stable-image block in docs/test-plan.md")
+    sys.exit(f"no stable-image block in {path}")
 open(path, "w").write(new)
 EOF
-    cat "$report" >> docs/test-reports.md
-    git add docs/test-plan.md docs/test-reports.md
-    git -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
+    # A second run on the same day adds to that day's file.
+    out="$TESTS/reports/stable-$date.md"
+    { [ -s "$out" ] && echo; sed '1s/^## /# /' "$report"; } >> "$out"
+    git -C "$TESTS" add lab.md "reports/stable-$date.md"
+    git -C "$TESTS" -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
         commit -q -m "Nightly: $build_id is the stable image
 
-scripts/update-stable.sh built $ref ${head:0:7} and ran
+scripts/update-stable.sh built redox-rpi $ref ${head:0:7} and ran
 scripts/pi-test.py on the real Pi: $summary."
     if [ "$push" = 1 ]; then
-        git_push || { git fetch -q origin && git rebase -q origin/main && git_push; }
-        log "pushed $(git rev-parse --short HEAD) to main"
+        if git_push "$TESTS" ||
+            { git -C "$TESTS" fetch -q origin && git -C "$TESTS" rebase -q origin/main && git_push "$TESTS"; }; then
+            log "pushed $(git -C "$TESTS" rev-parse --short HEAD) to $TESTS_REPO main"
+        else
+            # The image is the stable image all the same; only the record is late.
+            log "could not push the report to $TESTS_REPO (token access?); commit kept in $TESTS"
+        fi
     else
-        log "--no-push: commit $(git rev-parse --short HEAD) not pushed"
-        git show --stat HEAD | cat
+        log "--no-push: commit $(git -C "$TESTS" rev-parse --short HEAD) in $TESTS not pushed"
+        git -C "$TESTS" show --stat HEAD | cat
     fi
     start_visit_images
     exit 0

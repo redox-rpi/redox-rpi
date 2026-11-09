@@ -132,7 +132,7 @@ done
 image_name=netboot
 [ "$CONFIG_NAME" = minimal ] || image_name="$CONFIG_NAME"
 
-# One build at a time: builds share upstream/ and build/ (docs/test-plan.md).
+# One build at a time: builds share upstream/ and build/ (docs/testing.md).
 # Under scripts/with-build-lock.sh the caller already holds the lock.
 if [ -z "${REDOX_RPI_BUILD_LOCK:-}" ]; then
     mkdir -p "$ROOT/build"

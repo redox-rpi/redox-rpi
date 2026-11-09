@@ -6,4 +6,4 @@ Description=Rewrite the redox-rpi SD image index.json
 Type=oneshot
 # sdcard-index.py writes only when the index changes, so its own write
 # does not start it again for ever.
-ExecStart=/bin/bash -c 'git -C %h/redox-rpi-stable show origin/main:docs/test-plan.md > /tmp/redox-sdcard-plan.md 2>/dev/null; exec python3 %h/redox-rpi-stable/scripts/sdcard-index.py /srv/tftp/sdcard /tmp/redox-sdcard-plan.md'
+ExecStart=/bin/bash -c '%h/redox-rpi-stable/scripts/pi-tests-queue.sh > /tmp/redox-sdcard-plan.md 2>/dev/null; exec python3 %h/redox-rpi-stable/scripts/sdcard-index.py /srv/tftp/sdcard /tmp/redox-sdcard-plan.md'

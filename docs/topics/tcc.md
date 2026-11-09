@@ -30,7 +30,7 @@ SD card and netboot images and the Zero 2 W image. All three still fit
 QEMU, 2026-11-09: on the netboot and Zero 2 W images `tcc -run`, a dynamic
 build and the script `hallo.c` work, the desktop's motd is still there.
 Real Pi 3B+ ([test
-#293](../test-reports.md#293-tinycc-in-the-v041-release-image-2026-11-09-pi-test-agent),
+#293](https://github.com/redox-rpi/pi-tests/blob/main/reports/293.md),
 release-options netboot image `v0.4.0-dev-819-gab8fedb5+xc80e`): pass.
 `tcc -run hello.c` 120 ms, `tcc -o hello` 99 ms, the script `hallo.c`
 rc 42, the whole tcc check to its end (static Hello World fails as known),
@@ -51,7 +51,7 @@ Line for the release notes:
 ## Pi results
 
 **Real Pi 3B+**
-([test #278](../test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent),
+([test #278](https://github.com/redox-rpi/pi-tests/blob/main/reports/278.md),
 `v0.4.0-dev-689-gb453b397+xd12c`, 2026-11-07): pass, no panic.
 
 | Check | Result |
@@ -87,7 +87,7 @@ path it was started with) and stdin, and its exit code is the program's.
 Options after `-run` in the shebang reach tcc (`-run -DANSWER=42` works),
 but quotes in them are removed: `-DX="text"` defines `X` as `text`, not as a
 string. No wrapper is needed. Real Pi 3B+ ([test
-#282](../test-reports.md#282-247-tcc-a-c-file-run-as-a-script-usrbintcc--run-2026-11-07-pi-test-agent),
+#282](https://github.com/redox-rpi/pi-tests/blob/main/reports/282.md),
 `v0.4.0-dev-716-gc6d4de06+xd12c`): pass, 128 ms per start (warm 127 ms);
 QEMU 244 ms. Example: `/usr/share/tcc-tests/hallo.c`.
 

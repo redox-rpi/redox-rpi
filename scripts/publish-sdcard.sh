@@ -161,8 +161,7 @@ if [ "$latest" = 1 ]; then
 fi
 
 plan="$work/test-plan.md"
-git -C "$ROOT" show origin/main:docs/test-plan.md > "$plan" 2>/dev/null ||
-    cp "$ROOT/docs/test-plan.md" "$plan" 2>/dev/null || : > "$plan"
+"$ROOT/scripts/pi-tests-queue.sh" > "$plan" 2>/dev/null || : > "$plan"
 python3 "$ROOT/scripts/sdcard-index.py" "$DIR" "$plan"
 
 echo "published: http://homenodellm:8080/sdcard/$name"
