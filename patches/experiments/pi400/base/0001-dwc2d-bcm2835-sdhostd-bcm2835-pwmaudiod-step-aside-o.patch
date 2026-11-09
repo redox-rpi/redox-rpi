@@ -1,20 +1,41 @@
-From d8acd1e4c594a96fde7d42450237c90531389405 Mon Sep 17 00:00:00 2001
+From a8b0b53bcc4f92efd4bc3d846ed46313456bdf9a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 9 Nov 2026 15:57:54 +0000
-Subject: [PATCH] dwc2d, bcm2835-sdhostd: step aside on the BCM2711
+Subject: [PATCH] dwc2d, bcm2835-sdhostd, bcm2835-pwmaudiod: step aside on the
+ BCM2711
 
 On the Pi 4 and Pi 400 the card slot is wired to EMMC2 (an SDHCI
-controller), not to sdhost, and the DWC2 controller is only the USB-C
-power port. sdhostd waited forever for a card that is not there, and
-dwc2d crashed while parsing the devicetree. Both now report ready and
-exit when the root compatible names brcm,bcm2711.
+controller), not to sdhost; the DWC2 controller is only the USB-C power
+port; and the Pi 400 has no headphone jack. sdhostd waited forever for a
+card that is not there, dwc2d crashed while parsing the devicetree, and
+pwmaudiod wrote to PWM registers QEMU raspi4b does not model (an
+external abort, see kernel 0002). All three now exit when the root
+compatible names brcm,bcm2711.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 6 ++++++
  drivers/storage/bcm2835-sdhostd/src/main.rs | 9 +++++++++
  drivers/usb/dwc2d/src/main.rs               | 7 +++++++
- 2 files changed, 16 insertions(+)
+ 3 files changed, 22 insertions(+)
 
+diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
+index ef3ed47e..3ddf2905 100644
+--- a/drivers/audio/bcm2835-pwmaudiod/src/main.rs
++++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
+@@ -539,6 +539,12 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+         eprintln!("bcm2835-pwmaudiod: no devicetree");
+         process::exit(1);
+     };
++    // The Pi 400 has no headphone jack, and the Pi 4 audio pins differ from
++    // the Pi 3; stay away from the BCM2711 PWM and clock registers for now.
++    if fdt.root().compatible().all().any(|c| c == "brcm,bcm2711") {
++        eprintln!("bcm2835-pwmaudiod: BCM2711, no PWM audio support yet; not starting");
++        process::exit(0);
++    }
+     let (out, range, clock_hz) = open_output(&fdt);
+     let mut driver = Driver::new(out, range, clock_hz);
+ 
 diff --git a/drivers/storage/bcm2835-sdhostd/src/main.rs b/drivers/storage/bcm2835-sdhostd/src/main.rs
 index 7725b894..eee71a2c 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/main.rs
