@@ -10712,3 +10712,24 @@ driver starts, and pi-test passes.
 
 Unexpected events: none (one `procmgr … Cancellation for unknown id` warning; the same warning came on stable 819 and on 799 today).
 Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data: homenodellm `~/pitest-tools/t295/`.
+
+## 2026-11-09 — #296 desktop-game SD image on the Pi Zero 2 W, person test (maintainer)
+
+**Verdict: pass.** The maintainer booted the desktop-game SD image on a
+Raspberry Pi Zero 2 W and played Sopwith on the desktop. Their own words:
+"Ich hab den build gerade auf den Pi Zero (2W) getestet). das spiel läuft gut
+auf dem Teil." ("I just tested the build on the Pi Zero (2W). The game runs
+well on it.")
+
+- Board: Raspberry Pi Zero 2 W, boot from the SD card.
+- Image: `/srv/tftp/sdcard/redox-rpi-desktop-game-v0.4.1-dev-59-g9a97f141+x6ab3.img.xz`
+  (SHA-256 `bcfcbc8b2ce6063b…`), main `9a97f141` with [PR #298](https://github.com/redox-rpi/redox-rpi/pull/298).
+- Build ID: `v0.4.1-dev-59-g9a97f141+x6ab3` (from the image's manifest; not
+  read from the running board).
+- Manifest: `redox-rpi-desktop-game-v0.4.1-dev-59-g9a97f141+x6ab3.img.xz.manifest.toml`,
+  SHA-256 `42c2819a8f587734`. Config `config/raspi3bp-sdcard.toml`, not dirty.
+  Experiments: timesync, rpi-fb, orbital, orbital-apps, cosmic-apps-source,
+  desktop, netstack-watch.
+- Owner of the image: graphics. Result passed on by the coordinator.
+- Not checked: serial console, build ID on the board, screen size, how long
+  the game ran. The Pi 3B+ run of the same commit is row #297.
