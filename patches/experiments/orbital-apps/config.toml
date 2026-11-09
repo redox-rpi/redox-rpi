@@ -7,9 +7,24 @@
 # No browser yet: netsurf-fb 3.11 (upstream package) stops at start with a
 # relibc panic in pthread_getspecific (tls.rs:42, "RefCell already
 # borrowed"), see README.md.
-# Text editor and file manager (libcosmic).
-cosmic-edit = {}
+# File manager (libcosmic). No text editor: COSMIC Text Editor took 40 s
+# to start and its save dialog did not open (Pi tests 275, 287).
 cosmic-files = {}
+# A small game instead: SDL Sopwith (GPL-2.0, a biplane, keyboard),
+# built from source with SDL2 (no aarch64 binaries upstream).
+sopwith = "source"
+sdl2 = "source"
 # Icons the COSMIC apps look up.
 cosmic-icons = {}
 hicolor-icon-theme = {}
+
+# Sopwith on the launcher bar: its own .desktop entry has categories, so
+# the launcher would list it only in the start menu (Games).
+[[files]]
+path = "/usr/share/ui/apps/70_sopwith"
+data = """
+name=Sopwith
+binary=/usr/bin/sopwith
+icon=/usr/share/icons/hicolor/128x128/apps/sopwith.png
+description=Biplane game: arrows fly, space fires, b drops a bomb
+"""
