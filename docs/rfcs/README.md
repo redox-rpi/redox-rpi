@@ -8,4 +8,4 @@ it could land. An RFC starts as **Draft**; the maintainer marks it
 | RFC | Title | Status |
 |---|---|---|
 | [0001](0001-identity-and-secure-channels.md) | Identity and secure channels as small schemes | Draft |
-| [0002](0002-project-structure.md) | Project structure: clean up, split the repositories, fit a session's context | Draft |
+| [0002](0002-project-structure.md) | Project structure: clean up, split the repositories, fit a session's context | Accepted |

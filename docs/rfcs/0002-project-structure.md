@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| Status | Draft (second version, 2026-11-08) |
+| Status | Accepted (2026-11-09, the maintainer's decisions on the open questions are in [Decisions](#decisions)) |
 | Created | 2026-11-08 |
-| Issue | – |
+| Issue | [PR #256](https://github.com/redox-rpi/redox-rpi/pull/256) (decisions recorded in its comments) |
 | Releases | none; repositories, documentation, scripts and GitHub setup |
 
 ## Summary
@@ -159,7 +159,8 @@ These parts are the same as in the first version of this RFC. Where the
 files live changes with the split (section 3).
 
 **STATUS.md**, in the root of `redox-rpi`, is the single entry point. It
-holds at most 8 KB, and CI warns above that. It has two parts:
+holds at most 8 KB, and a CI check fails above that (decision 5). It has
+two parts:
 
 - **Generated** by `scripts/status.py`, run by the coordinator and by the
   nightly:
@@ -197,6 +198,11 @@ at most 10 lines:
 
 The history goes below them.
 
+**Topic pages stay in `redox-rpi`** as the one entry point (decision 4),
+also for components that move to their own repository. Each repository
+has its own README for its API and build details, and the topic page links
+to it.
+
 ### 3. Repository split
 
 #### Which repositories
@@ -204,22 +210,32 @@ The history goes below them.
 | Repository | Holds | License | Issues there |
 |---|---|---|---|
 | **`redox-rpi`** (exists) | build scripts, `config/upstream.lock`, the new `config/repos.lock`, patches against upstream code, image configs, experiments, release, product docs (README, user guide, architecture, ROADMAP, STATUS, process docs, RFCs, topic pages) | MIT | **Features** (product level), release planning, build and CI bugs, bugs whose component is not yet known |
-| **`drivers`** (new) | our own Pi drivers as one Cargo workspace: `rpi-firmwared`, `bcm2835-sdhostd`, `bcm2835-gpiod`, `bcm2835-i2cd`, `bcm2835-spid`, `bcm2835-pwmaudiod`, `dwc2d`, `testnetd` | MIT | bugs and tasks for these drivers |
+| **`drivers`** (new) | our own Pi drivers as one Cargo workspace: `rpi-firmwared`, `bcm2835-sdhostd`, `bcm2835-gpiod`, `bcm2835-i2cd`, `bcm2835-spid`, `bcm2835-pwmaudiod`, `rpi-fbd`, `dwc2d`, `testnetd`, later the Pi 4 drivers (GENET, EMMC2) | MIT | bugs and tasks for these drivers |
 | **`vc4d`** (exists) | display and 3D driver | GPL-2.0-only, so it must stay apart from MIT code | its bugs and tasks |
 | **`tools`** (new) | the programs we build into the image: `cputop`, `devshd`, `welcome`, `timesync`, `timerd`, `zoneinfo`, `pkg-persist`, `reboot`, `tone`, `i2c`, `spi`, `mcast`, `net6`, `redox-fatfs2`, `socdump`, and the test programs `chaos`, `sigregs`, `polltest`, `icachetest`, `tcc-bench` | MIT | their bugs and tasks |
 | **`assistant`** (new) | the local language model assistant | MIT | its bugs, tasks and features |
 | **`log-triage`** (new) | host tool on homenodellm, not in any image | MIT | its bugs and tasks |
 | **`rpi-open-firmware`** (exists) | open VPU firmware, and `tools/rpi-boot-stub` moves here: both replace parts of the closed boot chain | as today | its bugs and tasks |
-| **`relibc`** (exists) | relibc with our patches as branches | MIT | relibc bugs (moved from `topic:relibc`) |
-| **`pi-tests`** (new) | the test queue, `tests/NNNN.md`, `done/`, `reports/`, nightly reports | MIT | requests for tests and test-lab problems |
+| **`relibc`** (exists) | relibc with our changes as commits on a branch; `upstream.lock` pins the commit, and `patches/relibc/` goes away (decision 3, after phase 3) | MIT | relibc bugs (moved from `topic:relibc`, among them #4, #14, #94, #109) |
+| **`pi-tests`** (new) | the test queue, one report file per row (`tests/NNNN.md`), `done/`, `reports/`, nightly reports, small raw data, the test lab, a tag per release (decision 1, details below) | MIT | requests for tests and test-lab problems |
 | **`.github`** (exists) | org profile, issue forms for Bug, Feature and Task (GitHub uses them for every repository without its own), the shared label list | | none |
 
 **Why one `drivers` repository and not one per driver.** The drivers share
 helpers (`common`, physmap, the firmware mailbox) and one CI. Each would
 otherwise need its own lock line, its own labels and its own workflows.
 Eight small repositories also make it harder to find things, not easier.
-A driver that gets a life of its own, such as `dwc2d` if USB grows, can
-move out later with `git filter-repo`.
+`dwc2d` joins `drivers` too (decision 2). A driver moves to a repository of
+its own only once it is stable, with `git filter-repo`.
+
+**License rule** (decision 2). `drivers`, like Redox, is MIT. A driver that
+needs a different license gets its own repository, as `vc4d` (GPL-2.0-only)
+did, so that MIT and GPL code never share a crate or a workspace.
+
+**Upstream rule** (decision 3). Our changes to upstream code, in `relibc`
+and in the patches, that also concern upstream stay small, clean single
+commits, each with an issue and a test. Then they can go upstream as they
+are if Redox's contribution policy changes, and they are easy to drop when
+upstream fixes the same thing.
 
 **Why the test records leave `redox-rpi`.** They change many times a day,
 are written mostly by the Pi agent, and need no code review. In their own
@@ -227,8 +243,23 @@ repository:
 
 - the code history of `redox-rpi` is readable again,
 - PRs stop conflicting on `test-plan.md`,
-- the Pi agent can commit its rows without a PR there, if the maintainer
-  agrees. "Take the Pi" stays an atomic commit to that repository's main.
+- V&V and the Pi agent push to its main directly, without PRs (decision
+  1). "Take the Pi" stays an atomic commit to that repository's main.
+
+**What goes where** (decision 1):
+
+- **In `pi-tests`:** the queue (the rows of today's `test-plan.md`), one
+  report file per row, small raw data (measurements, serial log excerpts,
+  KPI data), the test lab (boards, Shelly, NanoKVM, which image is
+  stable), and a tag per release.
+- **Stays in `redox-rpi`:** test code that must match the build
+  (`pi-test.py`, the QEMU scripts, `tools/`), the test standards, the
+  requirements, the release checklist, and `devshd`.
+- **Never in a repository:** images and binaries (image server, GitHub
+  releases), raw logs over about 1 MB (archive on homenodellm, linked from
+  the report), and secrets.
+- Every result names the build ID and the manifest hash, and a release
+  points to its `pi-tests` commit.
 
 **What stays in `redox-rpi`, and why.** The build, the two lock files, the
 patches against upstream code, the image configs and the experiments define
@@ -409,7 +440,7 @@ the Pi agent and the coordinator have been told.
 
 **Phase 1: cleanup (priority 1)**
 
-1. This RFC. The maintainer accepts, changes or rejects it.
+1. This RFC: accepted 2026-11-09.
 2. Branches: delete the 84 merged ones; tag and delete the rest the owners
    release; turn on "delete head branches on merge" (maintainer).
 3. PRs: owners triage the 57 open PRs.
@@ -438,14 +469,17 @@ the Pi agent and the coordinator have been told.
     each checked for identical binaries, in QEMU and in one Pi row; move
     the driver's issues with it.
 14. Move the remaining issues by the label mapping; set the types.
+15. `relibc`: our relibc changes become commits on a branch in
+    `redox-rpi/relibc`, `upstream.lock` pins it, `patches/relibc/` is
+    removed; #4, #14, #94 and #109 move there.
 
 **Phase 4: GitHub setup (priority 2)**
 
-15. Labels synced to all repositories; `bug` and `enhancement` removed.
-16. Issue forms for Bug, Feature and Task in `.github`.
-17. The org Project, once the maintainer has added the token scope;
+16. Labels synced to all repositories; `bug` and `enhancement` removed.
+17. Issue forms for Bug, Feature and Task in `.github`.
+18. The org Project, once the maintainer has added the token scope;
     `status.py` reads it.
-18. Features: the Requirements agent writes the first Feature issues for
+19. Features: the Requirements agent writes the first Feature issues for
     v0.5.0, with their tasks as sub-issues.
 
 Phases 1 and 2 can run side by side. Phase 3 needs step 10 first. The
@@ -485,15 +519,22 @@ drivers move one at a time, because each move changes `patches/base/`.
   repository, so they would have to be kept in sync by hand. A Release
   field in one Project does that once.
 
-## Open questions
+## Decisions
 
-- May the Pi agent commit to `pi-tests` main without a PR, as it commits
-  test rows today?
-- Should `dwc2d`, with the USB stack and the LAN7800 path, get its own
-  repository right away instead of joining `drivers`?
-- Should `relibc` become the place where our relibc patches are made, with
-  `patches/relibc/` exported from it, or stay a mirror?
-- Should the topic pages of moved components (usb, sdcard, gpio, audio)
-  move into the `drivers` repository, with only their status block left in
-  `redox-rpi`?
-- Is 8 KB the right limit for STATUS.md?
+The maintainer decided the open questions of the second version on
+2026-11-09 (recorded in the comments of PR #256):
+
+1. **`pi-tests`** becomes its own repository, and V&V pushes to its main
+   directly, without PRs. What goes in it and what stays out: section 3,
+   "What goes where".
+2. **`dwc2d`** joins the shared `drivers` repository; it moves to its own
+   repository only once it is stable. License rule: `drivers` is MIT, and a
+   driver with a different license gets its own repository, as `vc4d` did.
+3. **`relibc`** changes live only in `redox-rpi/relibc`, as commits on a
+   branch pinned by `upstream.lock`; `patches/relibc/` goes away after
+   phase 3 (migration step 15). Upstream rule: fixes that also concern
+   upstream stay small, clean single commits with an issue and a test.
+4. **Topic pages** stay in `redox-rpi` as the one entry point; each
+   repository has a README for API and build details, linked from the topic
+   page.
+5. **STATUS.md** is limited to 8 KB, and CI checks the limit.
