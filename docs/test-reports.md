@@ -10437,3 +10437,257 @@ Median of 6 rounds per image (2 boots × 3 rounds), with the range, in seconds; 
   and serial logs per boot).
 
 Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #290 #33 / PR #255 optional desktop, clean build with the beta warning and the login hint (2026-11-08, Pi test agent)
+
+Real Pi 3B+, network boot, serial console and devsh, no person, 14:51–15:03 UTC.
+
+| | Build | What it is |
+|---|---|---|
+| A | `v0.4.0-dev-785-gf0a43752+xce4c` | branch `desktop-console` f0a43752, clean build: the exact build for PR #255 |
+| B | `v0.4.0-dev-784-gd41026d9+x0f22-dirty.82ef20819842` | the same branch plus `pointer-bench`, exploratory (dirty build) |
+
+**Result: fail on A5 only. Everything else passes.** Over devsh, `desktop` without `--yes`
+asks the question and waits instead of refusing. It never started Orbital. This happened in 3
+of 3 tries on 2 boots, so it is not flaky. A1–A4, A6, A7 and all of B pass. No panic.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 boot | pass | text console; 0 × `/usr/bin/orbital` in `ps`; 147 MB used |
+| A2 serial root login | pass | after the login: "Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`." |
+| A3 pi-test | pass | 6 of 6, manifest match, 0 of 300 starts failed |
+| A4 serial `desktop`, answer `n` | pass | beta warning, `Start the desktop? [y/N]`, `n` → `desktop: not started`, 0 orbital. The question line showed `answer=…` on the console as the key was typed (cosmetic) |
+| A5 devsh `desktop; echo rc=$?` | **fail** | It printed the warning and `Start the desktop? [y/N]`, then waited. It never printed "no terminal to ask on". devsh got nothing more for 30 s (first try) and 120 s (2 reruns on a fresh boot), and the session was dropped. Then 2 × `answer=`, no `rc=`, 0 orbital. With `desktop < /dev/null` it prints `desktop: no terminal to ask on, not starting (desktop --yes starts it)`, rc=1. So the terminal check counts devsh's input as a terminal |
+| A6 devsh `desktop --yes` | pass | rc=0; one `/usr/bin/orbital` and one `/usr/bin/orblogin`; `/tmp/desktop.log` empty; used 179 → 220 MB |
+| A7 serial `desktop` again | pass | no question, only `desktop: Super+F2 goes back to the console, Super+F3 to the desktop`, rc=0; still one orbital |
+| B login | pass | `desktop --yes` rc 0, `pointer-bench --type '\n'`, 15 s later `/usr/bin/launcher` runs as uid 1000 |
+| B switches | pass | `pointer-bench --keys super+f2`, then `desktop` rc 0 with no question; exactly one orbital; `/tmp/desktop.log`: `failed to load icon None`; 186 MB used |
+
+- NanoKVM screenshots were not taken (optional).
+- Raw data: homenodellm `~/pitest-tools/t290/` (rerun in `t290/rerun/`).
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #292 v0.4.0-rc2 automated, checklist tests 1–5, 11, 13, 14, 16, 18, 20 and 22 A (2026-11-08, Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`v0.4.0-rc2`, netboot image
+`~/redox-rpi-rel/keep/v0.4.0-rc2-netboot.img`). Real Pi 3B+, network boot, serial console,
+no person, 19:31–19:58 UTC. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass.** Every automated checklist step passes. Serial input is 19 of 20, inside the
+row's limit (#28). No panic, no throttling, and no boot without network.
+
+| Test | Result | Detail |
+|---|---|---|
+| (1) boot, banner | pass | first boot after a power cycle; `redox-rpi v0.4.0-rc2` banner on all 7 boots; experiments `cosmic-apps-source desktop orbital orbital-apps rpi-fb timesync` |
+| (2) pi-test | pass | 6 of 6; version `v0.4.0-rc2`; manifest: build ID and `libc.so` hash match `v0.4.0-rc2-netboot.manifest.toml`; **0 of 1000 starts failed** |
+| (3) boot log | pass | `rpi-firmwared: ARM clock 600 -> 1400 MHz` on every boot; no throttle warning; throttled `0x00000000`; no `pcid` or `rtcd` line; `bcm2835-pwmaudiod: … range 2834 (44107 Hz)`; `audiod` only prints its known "uring … falling back to standard IO" note, no error |
+| (4) time | pass | `timesync: clock set … from pool.ntp.org` on every boot, and `from the saved time` before it after each reboot |
+| (5) governor | pass | `mode ondemand`, min 600 MHz, max 1400 MHz, 10 switches. Over devsh `arm_clock` always reads 1400 MHz (23 samples), because the devsh call itself is load, as in rc1 |
+| (13) reboot | pass | `reboot` over devsh 5 times; each back at `redox login:` and devsh within 23 s |
+| (11) serial input | pass (19 of 20) | `serial-input-test.sh 20`: 19 of 20 lines complete, S07 lost characters (#28; the limit is 19) |
+| (14) GPIO, I2C, SPI without wiring | pass | `ls /scheme/gpio`; `nowire-check.py` 21 of 21 |
+| (16) audio | pass | stats `mode pwm-dma`, `sample_rate 44107`, `measured_rate_hz 43972`, `dma_faults 0`, `pwm_errors 0`, 1 underrun since boot; `tone check` both good; `tone -s 3 > /scheme/audio` took 2.96 s, rc 0 |
+| (18) RedoxFS | pass | `dd bs=4096 count=256` in 0.19 s (26 MB/s); `sd-stress.py --big-mib 32 --small 100 --cycles 1`: 0 missing, 0 changed, also after the restart |
+| (20) pipe and download | pass | 16 MiB pipe complete (16777216 bytes). 100 MiB over HTTP with `nc` (still no `netget`, curl or wget in the image) in about 22–28 s (about 4 MB/s), no stall; the SHA-256 of the payload matches the file on homenodellm |
+| (22 A) desktop | pass | after the serial root login: "Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`."; `desktop --yes` rc 0; 15 s later `ps` shows `/usr/bin/orbital`, `/usr/bin/orblogin` and `rpi-fbd`; `/tmp/desktop.log` empty; used 304 → 360 MB; no panic in the serial log |
+
+- NanoKVM screenshot: not taken (optional).
+- Raw data: homenodellm `~/pitest-tools/t292/`. The test file was deleted afterwards.
+
+Stable `v0.4.0-dev-748-g36bd5f6a+x9f76` restored and checked over devsh.
+
+## #286 part 1: v0.4.0-rc2 on the Zero 2 W, from the SD card, by the maintainer (2026-11-08, recorded by the Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`redox-rpi-v0.4.0-rc2.img.xz`), SD card in the Zero 2 W,
+person test (level 5). The maintainer reported this through the coordinator; their own words:
+
+> "hab gerade das RC2 auf dem zero getestet, sieht gut aus. Text kann man im text editor unter
+> cosmic nicht speicher. Aber sonst ging alles, netz, kb nach booten, mouse nach booten."
+
+English: "just tested RC2 on the Zero, looks good. You can't save text in the text editor under
+COSMIC. But everything else worked: network, keyboard after booting, mouse after booting."
+
+| Checklist | Result | Detail |
+|---|---|---|
+| (9, 19) Zero 2 W network | pass | "netz" worked. Asked again, the maintainer said: "ja läuft noch IP ist 192.168.178.118. Ich konnte vom pi einen ping an den server geben." (yes, still running, the IP is 192.168.178.118, and a ping from the Pi to the server worked). So DHCP gave it an address. At 20:10 UTC the build host saw 192.168.178.118 with MAC `00:e0:4c:36:14:8e` (Realtek, the RTL8153 hub adapter). Asked about the time: "uhrzeit stimmt, hab mit date abgefragt und auch gesehen das im log die timesync lief." (the time is right, checked with `date`, and timesync ran in the log). So NTP works too |
+| (23) REQ-REL-1, no devshd | pass (Zero 2 W) | from the build host at 20:10 UTC: `nc -z -w 3 192.168.178.118 2323` fails (rc 1). The `ps` check on the console was not done |
+| keyboard plugged in after boot | pass (by report) | "kb nach booten" |
+| mouse plugged in after boot | pass (by report) | "mouse nach booten" |
+| (22) desktop, COSMIC Text Editor save | fail, known | saving text in the editor does not work; already known. v0.4.1 replaces the editor with the game ([#33](https://github.com/redox-rpi/redox-rpi/issues/33)) |
+
+**Result: pass for the Zero 2 W part (9, 19, keyboard and mouse hotplug; devsh port closed).** The editor save
+failure is the known desktop gap. The Pi 3B+ part of #286 is still open (Monday 11-09).
+
+## #286 part 2 and whole row: v0.4.0-rc2 on the Pi 3B+, from the SD card, by the maintainer (2026-11-08, recorded by the Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf` (`redox-rpi-v0.4.0-rc2.img.xz`), SD card in the Pi 3B+
+with HDMI, USB keyboard and mouse, headphones, cable plugged in later. Person test (level 5),
+20:00–21:00 UTC. The maintainer's results came through the coordinator and are quoted as they
+said them. The serial log (`~/redox-rpi/logs/serial.log`, read only) confirms what it can show.
+Part 1 (Zero 2 W) is the entry above.
+[#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result of #286: pass.** Every checklist item of the visit passes on both boards. The known
+gaps (editor save, no MAC in `ifconfig`) and the usability notes do not block v0.4.0.
+
+| Checklist | Result | Detail |
+|---|---|---|
+| (6) boot menu, card boot | pass | "ja das bootmenü startet die karte : siehe serial." Serial: U-Boot autoboot boots `mmc 2`; the Redox bootloader shows "best resolution: 1920x1200 … Continuing with the selected mode in 5 seconds" and boots on with no key; RedoxFS 990 MiB; banner `redox-rpi v0.4.0-rc2 (v0.4.0-dev-809-g5723a434+x4aaf) (sdcard, 2026-11-08T18:56:24Z)`. In one boot a key stopped U-Boot, and `reboot` and `help` were typed there; the next boot went normally. The `panic` lines in that part of the log are U-Boot's help text |
+| (7) login on HDMI, time | pass | "date: OK"; timesync set the time from the saved time and then from `pool.ntp.org` |
+| (8) network after plugging the cable | pass | "net kommt nach dem anstecken". Serial: 3 × `dhcpd: eth0 … no offer` without the cable, then `dwc2d: link up on the LAN7800`, `DHCP: eth0 got 192.168.178.148/24`, `timesync: clock set to 2026-11-08 20:37:54 UTC from pool.ntp.org` |
+| (8) keyboard out and in | pass | "ja geht, seht auch im log dass er sie wieder gefunden hat, bei zweite mal auch auf anderen port". Serial: `hub 1 port 3: device at address 4 removed`, `keyboard removed`, `hub 1 port 3: device connected`, `keyboard at address 5`; again removed, then `hub 1 port 2: device connected`, `keyboard at address 5`. The keyboard (04d9:0006) is behind a small USB hub (05e3:0610) |
+| (21) mouse | pass | `dwc2d: mouse at address 3: relative, 3 button(s), wheel` (address 6 in an earlier boot); no panic in any rc2 boot |
+| (17) audio | pass | "ton geht, beim ausschalten gibt es einen kleinen knacks, und beim neustart den gleich wie beim ausschlaten. aber nichts schlimmes." A small click at power-off and the same at reboot; nothing was said about a click at boot or about the left-only tone separately |
+| (22) desktop | pass, with notes | The desktop worked, and so did Super+F2 back to the console. "it takes about 7 sec to start the editor" (the beta warning says about 40 s). Usability: "die Anleitung das man mit 'super+F2' auf die console zurück schalten kann man erst lesen wenn man auf die console zurück schaltet und das weiß. das sollte auch in dem text stehen. braucht auch keine ja/nein frage sein, nur ein info. in der sollte auch stehen das save in editor nicht geht." → Graphics, v0.4.1. Saving in the editor fails, as on the Zero 2 W (known, #33) |
+| `ifconfig` | known gap | "same probelm as in the zero: no mac in ifconfig": no MAC shown, on the 3B+ and the Zero 2 W (Network, v0.4.1) |
+| (23) REQ-REL-1, no devshd | pass | photo of `ps` on HDMI ("ich sehe es nicht"): the list ends with `/usr/bin/ps`, no `devshd`. From the build host at 20:50:51 UTC: `nc -z -w 3 192.168.178.148 2323` fails (rc 1); .148 is the Pi (`b8:27:eb:08:e0:aa`), and the last serial banner is rc2 `sdcard` |
+
+**Summary of #286 (both parts):**
+- **Zero 2 W (9, 19):** DHCP 192.168.178.118 on the RTL8153 hub, ping, NTP, keyboard and mouse hotplug, devsh port closed.
+- **Pi 3B+ (6, 7, 8, 17, 21, 22, 23):** all pass.
+- **For v0.4.1:** editor save (#33), MAC in `ifconfig` (Network), desktop info text and editor start time in the warning (Graphics).
+
+The netboot card goes back in when the maintainer is done. Then the Pi test agent checks that
+stable `v0.4.0-dev-748-g36bd5f6a+x9f76` boots.
+
+## 2026-11-09: `v0.4.0-dev-819-gde8aa6e5+x9f76`
+
+Built 2026-11-09T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-819-gde8aa6e5+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-819-gde8aa6e5+x9f76.toml |
+| ps | pass | 51 processes (piped) |
+| ps-tty | pass | 51 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
+
+## v0.4.0 release: one boot on the Pi (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-809-g5723a434+x4aaf`, `RELEASE="v0.4.0"` (netboot image
+`~/redox-rpi-rel/keep/v0.4.0-netboot.img`, manifest `v0.4.0-netboot.manifest.toml`; same commit,
+options and build ID as the SD card image `redox-rpi-v0.4.0-pi3bplus.img.xz` and as rc2, #292).
+Level 4: real Pi 3B+, network boot, serial console, no person, 06:45–06:48 UTC. Release process
+step "one boot on the Pi", before the tag. [#253](https://github.com/redox-rpi/redox-rpi/issues/253)
+
+**Result: pass.** The release image boots and shows the v0.4.0 banner, login works, no panic, and
+the pi-test standard checks pass.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot | pass | first boot after a power cycle; devsh answered 35 s later |
+| banner | pass | `redox-rpi v0.4.0 (v0.4.0-dev-809-g5723a434+x4aaf) (netboot, 2026-11-08T21:01:23Z)`, not `-rc2`; `/etc/redox-rpi-release`: `RELEASE="v0.4.0"`, `COMMIT="5723a434"`, experiments `cosmic-apps-source desktop orbital orbital-apps rpi-fb timesync` |
+| login | pass | `redox login:` on serial; root login on the serial console, `cat /etc/redox-rpi-release` answered |
+| no panic | pass | no `panic`, exception or `UNKILLABLE` in the serial log of the boot |
+| pi-test | pass | 6 of 6: version, manifest (build ID and `libc.so` hash match), ps (57), ps-tty, sdcard, 0 of 300 starts failed |
+| other | observe | motd has the `desktop` line; `throttled` 0x0; free 131 of 736 MB used; df 182 of 227 MB used (80 %) |
+
+Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76` (promoted by the nightly
+at 03:35) staged and answered on devsh. Data: homenodellm `~/pitest-tools/trel040/`.
+
+## #293 TinyCC in the v0.4.1 release image (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-819-gab8fedb5+xc80e` (branch `tcc-release`, release options plus
+`--experiment tcc`; netboot image `~/redox-rpi-tcc/keep/rel-netboot-v0.4.0-dev-819-gab8fedb5+xc80e.img`,
+manifest next to it), read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person,
+06:49–06:52 UTC. [#293](https://github.com/redox-rpi/redox-rpi/issues/293)
+
+**Result: pass.** Every step meets its criteria. The static Hello World fails, as the row expects
+(reloc 562). No panic.
+
+| Step | Result | Detail |
+|---|---|---|
+| (1) `tcc -v` | pass | `tcc version 0.9.28rc 2026-11-07 HEAD@70adbb12* (AArch64 Linux)` |
+| (2) `tcc -run hello.c` | pass | `Hello from tcc on Redox (/usr/share/tcc-tests/hello.c)`, rc 0; `timeit` 120.3 ms (#278: 130 ms) |
+| (3) compile and run | pass | `tcc -o hello` 98.9 ms (#278: 100 ms); `./hello` prints `(./hello)`, rc 0 |
+| (4) script `./hallo.c a b` | pass | argv 0–2, `Hallo, stdin 6 bytes`, rc 42 (twice) |
+| (5) `run.ion` | pass | to `TCC-TEST done` in about 45 s; static hello fails as known (40.1 s, reloc 562–569); shebang 119 ms, rc 42; bench by tcc 1.40 s, by gcc -O2 0.98 s (same results); tcc compiles tcc.c (77k lines) in 0.78 s, `tcc2` builds hello2 |
+| (6) still the release image | pass | motd has the `desktop` line; `EXPERIMENTS="cosmic-apps-source desktop orbital orbital-apps rpi-fb tcc timesync"`; df `/ 227328 184932 42396 81%` (QEMU: 185 of 227 MB); free 131 of 736 MB used after boot, 163 MB after the tcc run; throttled 0x0 |
+| (7) pi-test | pass | 6 of 6: version, manifest (build ID and `libc.so` hash match), ps, ps-tty, sdcard, 0 of 300 starts failed |
+
+Compared with the v0.4.0 release image (same day, one boot): the root filesystem uses 2.6 MB more
+(184932 against 182312 KB), 81 % against 80 %.
+
+Unexpected events: none. Restore: row 291 ran next; the stable image was put back after it.
+Data: homenodellm `~/pitest-tools/t293/`.
+
+## #291 desktop for v0.4.1: Sopwith, `desktop` without the question, info window (2026-11-09, Pi test agent)
+
+A: build `v0.4.0-dev-796-g20ce9139+xce4c` (branch `desktop-game` 20ce9139, clean), B:
+`v0.4.0-dev-796-g20ce9139+x0f22-dirty.82ef20819842` (same plus `pointer-bench`, exploratory, dirty
+build), both read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person, no
+HDMI screen attached (the firmware gave the no-screen mode 656x416; `rpi-fbd: 656x416 stride 656`),
+06:52–07:02 UTC. [#33](https://github.com/redox-rpi/redox-rpi/issues/33)
+
+**Result: fail.** Sopwith crashes right after it opens its window: an unhandled write fault in
+`/usr/bin/sopwith` at address `0x854000`, the same on 3 of 3 fresh boots. Everything else passes.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 `desktop` | pass | prints `Redox desktop (beta)`, `Super+F2   back to the text console`, the limits, and starts at once, rc 0, no question; one `/usr/bin/orbital` |
+| A2 `sopwith` | **fail** | `sop.log`: `Initializing orbital window at 8,8 with size 640x400 with flags 9` (screen 656x416, not the 1920x1080 the row assumed); then serial: `FATAL: Not an SVC induced synchronous exception`, `ESR_EL1 0x92000047` (data abort, write), `FAR_EL1 0x854000`, `ELR_EL1 0x6ED980`, `X1 0xA00` (2560 = 640 × 4 bytes, one row of the window), `X2 0xFF000000` (a black pixel), `UNHANDLED EXCEPTION … /usr/bin/sopwith` |
+| A3 CPU | fail | sopwith stays in `ps` with CPU time 00:00:00.00 in both samples (it is stopped after the fault); temperature 48.3 °C; free 180 of 736 MB used |
+| A4 app lists | pass | `sopwith.desktop`, `70_sopwith`; no `com.system76.CosmicEdit.desktop` |
+| A5 pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| B login, info window | pass | `desktop` as in A1; `pointer-bench --type '\n'` typed 1 key; 20 s later `ps` shows `/usr/bin/launcher`, `/usr/bin/orbterm` and `/usr/bin/desktop-welcome` as uid 1000; free 198 of 736 MB used. No screenshot (no screen attached) |
+
+Rerun (rerun rule): A2 on two more fresh boots of image A: the same fault at `FAR 0x854000`,
+`ELR 0x6ED980` both times, 3 of 3 in all. A guess for graphics: the window at 8,8 with 640x400 plus
+its title bar does not fit the 656x416 screen, Orbital gives a smaller window, and SDL's Orbital
+driver keeps writing 640x400 pixels. In QEMU (640x480 screen) Sopwith chose 320x200 and passed.
+
+Unexpected events: none besides the crash. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered.
+Data: homenodellm `~/pitest-tools/t291/` (rerun in `t291/rerun/`).
+
+## #267 `netstack-watch` as a default test experiment (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-625-g5a33b666+x2d42` (branch `netstack-watch-default` 5a33b666, `timesync rtl8152`
+plus `netstack-watch` from `config/test-experiments.conf`; image
+`~/redox-rpi-zrtl/keep/nwd-v0.4.0-dev-625-g5a33b666+x2d42.img`), read from the Pi. Level 4: real
+Pi 3B+, network boot, serial console, no person, 07:04–07:26 UTC.
+[#92](https://github.com/redox-rpi/redox-rpi/issues/92), [#217](https://github.com/redox-rpi/redox-rpi/issues/217)
+
+**Result: pass.** 5 of 5 warm resets came up with network, pi-test and the chaos round pass, the
+Pi still answers after 12 minutes idle, and the watch gave no false alarm: one heartbeat, no
+`no timer event` and no `stuck` line.
+
+| Step | Result | Detail |
+|---|---|---|
+| (1) 5 warm resets (stable `v0.4.0-dev-819-gde8aa6e5` in between) | pass | devsh after 31, 36, 31, 32, 31 s; ping from the Pi 3 of 3 each time; `experiments: netstack-watch rtl8152 timesync` on every boot; ARP from homenodellm in `t267/boot*-host.txt` |
+| (2) pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| (3) chaos `netem-delay`, seed 237 | pass | delay for 84 s; 2 of 10 devsh commands answered during the fault (the others timed out, expected under delay); `round 1 ok (94 s, devsh back after 1 s)`, 0 failed; no netem left in `tc qdisc` afterwards |
+| (4) idle 12 min, then ping | pass | `ping -c 3 192.168.178.1` 3 of 3, 0.8–1.8 ms; free 133 of 740 MB used |
+
+`netstack-watch:` lines: boots 1–4 (about 1 minute each) none. Boot 5 (07:10:28 to 07:25:51, 15
+minutes): one line, `netstack-watch: alive at 600 s, idle for 0 s, 15729 events (12570 network),
+12942 frames in` (about 07:20:30). That is about 26 events a second (QEMU: about 2), during pi-test
+and the chaos round. The line ends after `frames in` on the serial console; maybe a count or word is
+missing in the format string. No `no timer event`, no `stuck`, no panic.
+
+Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data:
+homenodellm `~/pitest-tools/t267/`.
+
+## #294 #291 again with the SDL2 fix: Sopwith at 656x416 (2026-11-09, Pi test agent)
+
+A: build `v0.4.0-dev-799-g754b864c+xce4c` (branch `desktop-game` 754b864c, clean), B:
+`v0.4.0-dev-799-g754b864c+x0f22-dirty.82ef20819842` (same plus `pointer-bench`, exploratory, dirty
+build), both read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person, no
+HDMI screen (`rpi-fbd: 656x416 stride 656`, the size that crashed in #291), 07:26–07:32 UTC.
+[#33](https://github.com/redox-rpi/redox-rpi/issues/33)
+
+**Result: pass.** Sopwith keeps running in A and B. No `UNHANDLED EXCEPTION` and no panic in either
+boot (the #291 crash at `FAR 0x854000` is gone), and the checks pass.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 `desktop` | pass | info text `Redox desktop (beta)`, starts without a question, rc 0 |
+| A2 `sopwith` | pass | `Initializing orbital window at 8,8 with size 640x400 with flags 9`; `/usr/bin/sopwith` in `ps` (3 threads), CPU time growing; 0 exceptions in the serial log |
+| A3 CPU | pass | ACTTIME of its threads 4.83 s → 7.29 s in about 10 s: about 2.4 s a 10 s, a quarter of one core (6 % of the Pi); free 182 of 736 MB used |
+| A4 pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| B login | pass | after `pointer-bench --type '\n'`: `/usr/bin/launcher`, `/usr/bin/orbterm`, `/usr/bin/desktop-welcome` as uid 1000 |
+| B Sopwith | pass | same window line; CPU time 4.86 s → 7.31 s in 10 s (same quarter of a core); free 210 of 736 MB used; 0 exceptions |
+
+No screenshot (no screen attached). Unexpected events: none. Restore: stable
+`v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data: homenodellm `~/pitest-tools/t294/`.
