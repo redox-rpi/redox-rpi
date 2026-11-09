@@ -29,7 +29,13 @@ SD card and netboot images and the Zero 2 W image. All three still fit
 
 QEMU, 2026-11-09: on the netboot and Zero 2 W images `tcc -run`, a dynamic
 build and the script `hallo.c` work, the desktop's motd is still there.
-Pi row 293 runs the release-options netboot image.
+Real Pi 3B+ ([test
+#293](../test-reports.md#293-tinycc-in-the-v041-release-image-2026-11-09-pi-test-agent),
+release-options netboot image `v0.4.0-dev-819-gab8fedb5+xc80e`): pass.
+`tcc -run hello.c` 120 ms, `tcc -o hello` 99 ms, the script `hallo.c`
+rc 42, the whole tcc check to its end (static Hello World fails as known),
+motd and `EXPERIMENTS` as in the release, `pi-test.py` 6 of 6, 0 of 300
+starts failed, no panic.
 
 Line for the release notes:
 
