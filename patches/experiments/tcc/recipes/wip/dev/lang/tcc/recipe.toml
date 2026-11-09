@@ -5,10 +5,10 @@ git = "https://repo.or.cz/tinycc.git"
 # mob branch, 2026-11-07: arm64 backend with the newest fixes.
 rev = "70adbb129760b77e3bdfec447c1f986def763f2c"
 patches = [
-    "exp-tcc-0001-Redox-target-define-__redox__-instead-of-__linux__.patch",
-    "exp-tcc-0002-tccrun-declare-environ-on-Redox.patch",
-    "exp-tcc-0003-armflush-__clear_cache-for-arm64-when-gcc-builds-lib.patch",
-    "exp-tcc-0004-Redox-gcc-s-integer-type-macros-for-relibc-s-stdint..patch",
+    "0001-Redox-target-define-__redox__-instead-of-__linux__.patch",
+    "0002-tccrun-declare-environ-on-Redox.patch",
+    "0003-armflush-__clear_cache-for-arm64-when-gcc-builds-lib.patch",
+    "0004-Redox-gcc-s-integer-type-macros-for-relibc-s-stdint..patch",
 ]
 
 [build]
