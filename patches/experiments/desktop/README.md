@@ -93,3 +93,10 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   without OpenGL, Mesa and llvm21 left out, the netboot image fits in
   256 MiB again; `sopwith` opens its title screen in an Orbital window
   (320x200 at QEMU's 640x480).
+- 2026-11-09, Pi rows 291 and 294 (desktop-game): #291 on 796-g20ce9139
+  found a Sopwith crash (data abort) at 656x416 without a screen: Orbital
+  shrinks a resizable window that does not fit, and SDL wrote its full
+  640x400 frame into it. #294 on 799-g754b864c, SDL drawing into its own
+  buffer: `desktop` starts without a question, the info window opens
+  after the login, Sopwith keeps running (a quarter of a core on the
+  title screen), no exception, pi-test 6/6.
