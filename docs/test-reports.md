@@ -10691,3 +10691,24 @@ boot (the #291 crash at `FAR 0x854000` is gone), and the checks pass.
 
 No screenshot (no screen attached). Unexpected events: none. Restore: stable
 `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data: homenodellm `~/pitest-tools/t294/`.
+
+## #295 kernel 0051: an external abort is not a page fault, 3B+ regression (2026-11-09, Pi test agent)
+
+Build `v0.4.1-dev-48-g95b3f510+x42c6` (branch `kernel-external-abort`, image
+`~/redox-rpi-pi400/keep/v0.4.1-dev-48-g95b3f510+x42c6/harddrive.img`, manifest next to it), read
+from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person, 17:00–17:03 UTC.
+[#311](https://github.com/redox-rpi/redox-rpi/issues/311), [PR #312](https://github.com/redox-rpi/redox-rpi/pull/312)
+
+**Result: pass.** The 3B+ boots as before with the changed abort handling: no exception, the audio
+driver starts, and pi-test passes.
+
+| Check | Result | Detail |
+|---|---|---|
+| boot to `redox login:` | pass | first boot after a power cycle, devsh 30 s later; banner `redox-rpi v0.4.1-dev-48-g95b3f510+x42c6`; `CPU activation complete: 4 CPUs online` |
+| no `UNHANDLED EXCEPTION` | pass | none in the boot log, no panic, no FAR/ESR dump |
+| `bcm2835-pwmaudiod` | pass | `PWM at 0x3f20c000, clock 250 MHz (PLLD/2), range 2834 (44107 Hz), DMA channel 2`; `/scheme/audiohw/stats`: `mode pwm-dma`, measured 44133 Hz, `dma_faults 0`, `pwm_errors 0`, 1 underrun at start |
+| pi-test | pass | 6 of 6: version, manifest (build ID and `libc.so` hash match), ps, ps-tty, sdcard, 0 of 300 starts failed |
+| other | observe | `throttled` 0x0; free 123 of 738 MB used; experiments `netstack-watch` |
+
+Unexpected events: none (one `procmgr … Cancellation for unknown id` warning; the same warning came on stable 819 and on 799 today).
+Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data: homenodellm `~/pitest-tools/t295/`.
