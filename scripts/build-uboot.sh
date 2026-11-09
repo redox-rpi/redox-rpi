@@ -64,5 +64,5 @@ make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
 
 cp "$OUT/obj/u-boot.bin" "$OUT/u-boot.bin"
 # Mainline devicetrees, used to boot this U-Boot in QEMU without Pi firmware.
-find "$OUT/obj" -name 'bcm2837-rpi-*.dtb' -exec cp {} "$OUT/dtb/" \;
+find "$OUT/obj" \( -name 'bcm2837-rpi-*.dtb' -o -name 'bcm2711-rpi-*.dtb' \) -exec cp {} "$OUT/dtb/" \;
 echo "u-boot: $OUT/u-boot.bin ($UBOOT_TAG)"
