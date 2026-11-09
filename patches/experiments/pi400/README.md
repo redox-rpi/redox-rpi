@@ -1,0 +1,17 @@
+# Experiment pi400: first test version on the Pi 400 (BCM2711)
+
+Work package #299, plan in [docs/topics/pi400.md](../../../docs/topics/pi400.md).
+Draft until it has run on a real Pi 400.
+
+- `kernel/0001`: the GIC-400 of the BCM2711 names itself as its interrupt
+  parent in the devicetree; without the fix no interrupt controller is
+  initialized (no serial interrupt, one CPU only).
+- `base/0001`: `dwc2d` and `bcm2835-sdhostd` exit on the BCM2711, where the
+  card is on EMMC2 and USB is behind PCIe.
+
+The root filesystem runs from RAM (`bootloader-live.efi`), as with network
+boot, because there is no EMMC2 driver yet (step f, #307).
+
+## QEMU
+
+`raspi4b` in QEMU 10.2 (homenodellm): no PCIe, no GENET.
