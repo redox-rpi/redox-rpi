@@ -10612,3 +10612,31 @@ Compared with the v0.4.0 release image (same day, one boot): the root filesystem
 
 Unexpected events: none. Restore: row 291 ran next; the stable image was put back after it.
 Data: homenodellm `~/pitest-tools/t293/`.
+
+## #291 desktop for v0.4.1: Sopwith, `desktop` without the question, info window (2026-11-09, Pi test agent)
+
+A: build `v0.4.0-dev-796-g20ce9139+xce4c` (branch `desktop-game` 20ce9139, clean), B:
+`v0.4.0-dev-796-g20ce9139+x0f22-dirty.82ef20819842` (same plus `pointer-bench`, exploratory, dirty
+build), both read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person, no
+HDMI screen attached (the firmware gave the no-screen mode 656x416; `rpi-fbd: 656x416 stride 656`),
+06:52–07:02 UTC. [#33](https://github.com/redox-rpi/redox-rpi/issues/33)
+
+**Result: fail.** Sopwith crashes right after it opens its window: an unhandled write fault in
+`/usr/bin/sopwith` at address `0x854000`, the same on 3 of 3 fresh boots. Everything else passes.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 `desktop` | pass | prints `Redox desktop (beta)`, `Super+F2   back to the text console`, the limits, and starts at once, rc 0, no question; one `/usr/bin/orbital` |
+| A2 `sopwith` | **fail** | `sop.log`: `Initializing orbital window at 8,8 with size 640x400 with flags 9` (screen 656x416, not the 1920x1080 the row assumed); then serial: `FATAL: Not an SVC induced synchronous exception`, `ESR_EL1 0x92000047` (data abort, write), `FAR_EL1 0x854000`, `ELR_EL1 0x6ED980`, `X1 0xA00` (2560 = 640 × 4 bytes, one row of the window), `X2 0xFF000000` (a black pixel), `UNHANDLED EXCEPTION … /usr/bin/sopwith` |
+| A3 CPU | fail | sopwith stays in `ps` with CPU time 00:00:00.00 in both samples (it is stopped after the fault); temperature 48.3 °C; free 180 of 736 MB used |
+| A4 app lists | pass | `sopwith.desktop`, `70_sopwith`; no `com.system76.CosmicEdit.desktop` |
+| A5 pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| B login, info window | pass | `desktop` as in A1; `pointer-bench --type '\n'` typed 1 key; 20 s later `ps` shows `/usr/bin/launcher`, `/usr/bin/orbterm` and `/usr/bin/desktop-welcome` as uid 1000; free 198 of 736 MB used. No screenshot (no screen attached) |
+
+Rerun (rerun rule): A2 on two more fresh boots of image A: the same fault at `FAR 0x854000`,
+`ELR 0x6ED980` both times, 3 of 3 in all. A guess for graphics: the window at 8,8 with 640x400 plus
+its title bar does not fit the 656x416 screen, Orbital gives a smaller window, and SDL's Orbital
+driver keeps writing 640x400 pixels. In QEMU (640x480 screen) Sopwith chose 320x200 and passed.
+
+Unexpected events: none besides the crash. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered.
+Data: homenodellm `~/pitest-tools/t291/` (rerun in `t291/rerun/`).
