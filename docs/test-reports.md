@@ -10586,3 +10586,29 @@ the pi-test standard checks pass.
 
 Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76` (promoted by the nightly
 at 03:35) staged and answered on devsh. Data: homenodellm `~/pitest-tools/trel040/`.
+
+## #293 TinyCC in the v0.4.1 release image (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-819-gab8fedb5+xc80e` (branch `tcc-release`, release options plus
+`--experiment tcc`; netboot image `~/redox-rpi-tcc/keep/rel-netboot-v0.4.0-dev-819-gab8fedb5+xc80e.img`,
+manifest next to it), read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person,
+06:49–06:52 UTC. [#293](https://github.com/redox-rpi/redox-rpi/issues/293)
+
+**Result: pass.** Every step meets its criteria. The static Hello World fails, as the row expects
+(reloc 562). No panic.
+
+| Step | Result | Detail |
+|---|---|---|
+| (1) `tcc -v` | pass | `tcc version 0.9.28rc 2026-11-07 HEAD@70adbb12* (AArch64 Linux)` |
+| (2) `tcc -run hello.c` | pass | `Hello from tcc on Redox (/usr/share/tcc-tests/hello.c)`, rc 0; `timeit` 120.3 ms (#278: 130 ms) |
+| (3) compile and run | pass | `tcc -o hello` 98.9 ms (#278: 100 ms); `./hello` prints `(./hello)`, rc 0 |
+| (4) script `./hallo.c a b` | pass | argv 0–2, `Hallo, stdin 6 bytes`, rc 42 (twice) |
+| (5) `run.ion` | pass | to `TCC-TEST done` in about 45 s; static hello fails as known (40.1 s, reloc 562–569); shebang 119 ms, rc 42; bench by tcc 1.40 s, by gcc -O2 0.98 s (same results); tcc compiles tcc.c (77k lines) in 0.78 s, `tcc2` builds hello2 |
+| (6) still the release image | pass | motd has the `desktop` line; `EXPERIMENTS="cosmic-apps-source desktop orbital orbital-apps rpi-fb tcc timesync"`; df `/ 227328 184932 42396 81%` (QEMU: 185 of 227 MB); free 131 of 736 MB used after boot, 163 MB after the tcc run; throttled 0x0 |
+| (7) pi-test | pass | 6 of 6: version, manifest (build ID and `libc.so` hash match), ps, ps-tty, sdcard, 0 of 300 starts failed |
+
+Compared with the v0.4.0 release image (same day, one boot): the root filesystem uses 2.6 MB more
+(184932 against 182312 KB), 81 % against 80 %.
+
+Unexpected events: none. Restore: row 291 ran next; the stable image was put back after it.
+Data: homenodellm `~/pitest-tools/t293/`.
