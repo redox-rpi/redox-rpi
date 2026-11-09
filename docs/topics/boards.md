@@ -30,6 +30,44 @@ mean a fork.
 The Pi 400 (BCM2711, same as the Pi 4) has its own plan for a first test
 version: [pi400.md](pi400.md), work package [#299](https://github.com/redox-rpi/redox-rpi/issues/299).
 
+## Why the Pi Zero W (and Pi 1) does not run Redox
+
+The Pi Zero W looks like a small Zero 2 W but has an older chip. Draft
+assessment, 2026-11-09; no work is planned.
+
+| | Pi Zero W | Pi Zero 2 W (supported) |
+|---|---|---|
+| SoC | BCM2835 (as in the Pi 1) | BCM2710A1 (Pi 3 family) |
+| CPU | 1× ARM1176JZF-S, 1 GHz, **ARMv6, 32-bit only** | 4× Cortex-A53, AArch64 |
+| RAM | 512 MB | 512 MB |
+| Interrupts, timer | BCM2835 interrupt controller, system timer, no ARM generic timer | Pi 3 local interrupt controller, ARM generic timer |
+| Peripherals at | 0x20000000 | 0x3f000000 |
+
+Redox runs on x86_64, i586, AArch64 and RISC-V 64. It has no 32-bit ARM
+port, and the ARM1176 cannot run AArch64 code. Our whole port builds on
+AArch64. Booting the Zero W would need a new architecture, almost all of
+it in upstream code rather than in our Pi layer:
+
+1. **Kernel:** an `arm` (ARMv6) architecture: short-descriptor page tables
+   (VMSAv6), exception vectors, context switch, syscall ABI, the BCM2835
+   interrupt controller and system timer, no SMP.
+2. **Toolchain and relibc:** an `arm-unknown-redox` Rust target (ARMv6,
+   VFPv2 hard float) with build-std; relibc for 32-bit ARM (syscalls,
+   startup, setjmp, TLS). Code that assumes 64-bit pointers will break in
+   relibc and in many packages.
+3. **Boot:** U-Boot has `rpi_0_w_defconfig` with EFI, but the Redox
+   bootloader would need a 32-bit ARM UEFI build, or the firmware would load
+   the kernel directly.
+4. **Userspace:** every recipe built and fixed for the new target.
+5. **Drivers:** the small part. `bcm2835-sdhostd`, `dwc2d`,
+   `bcm2835-pwmaudiod` and GPIO already know the BCM2835 blocks; only the
+   addresses change, and they come from the device tree. WLAN (CYW43438
+   over SDIO) needs a driver the Pi 3 and Zero 2 W also lack.
+
+That is months of work for a single-core board with 512 MB, with nearly
+all the effort outside our Pi-specific code. For a small board, use the
+Zero 2 W.
+
 ## Test lab without card swaps
 
 1. **Network boot by default.** The Pi 4 and Pi 5 boot over the network
