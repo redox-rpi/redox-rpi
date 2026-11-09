@@ -10640,3 +10640,31 @@ driver keeps writing 640x400 pixels. In QEMU (640x480 screen) Sopwith chose 320x
 
 Unexpected events: none besides the crash. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered.
 Data: homenodellm `~/pitest-tools/t291/` (rerun in `t291/rerun/`).
+
+## #267 `netstack-watch` as a default test experiment (2026-11-09, Pi test agent)
+
+Build `v0.4.0-dev-625-g5a33b666+x2d42` (branch `netstack-watch-default` 5a33b666, `timesync rtl8152`
+plus `netstack-watch` from `config/test-experiments.conf`; image
+`~/redox-rpi-zrtl/keep/nwd-v0.4.0-dev-625-g5a33b666+x2d42.img`), read from the Pi. Level 4: real
+Pi 3B+, network boot, serial console, no person, 07:04–07:26 UTC.
+[#92](https://github.com/redox-rpi/redox-rpi/issues/92), [#217](https://github.com/redox-rpi/redox-rpi/issues/217)
+
+**Result: pass.** 5 of 5 warm resets came up with network, pi-test and the chaos round pass, the
+Pi still answers after 12 minutes idle, and the watch gave no false alarm: one heartbeat, no
+`no timer event` and no `stuck` line.
+
+| Step | Result | Detail |
+|---|---|---|
+| (1) 5 warm resets (stable `v0.4.0-dev-819-gde8aa6e5` in between) | pass | devsh after 31, 36, 31, 32, 31 s; ping from the Pi 3 of 3 each time; `experiments: netstack-watch rtl8152 timesync` on every boot; ARP from homenodellm in `t267/boot*-host.txt` |
+| (2) pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| (3) chaos `netem-delay`, seed 237 | pass | delay for 84 s; 2 of 10 devsh commands answered during the fault (the others timed out, expected under delay); `round 1 ok (94 s, devsh back after 1 s)`, 0 failed; no netem left in `tc qdisc` afterwards |
+| (4) idle 12 min, then ping | pass | `ping -c 3 192.168.178.1` 3 of 3, 0.8–1.8 ms; free 133 of 740 MB used |
+
+`netstack-watch:` lines: boots 1–4 (about 1 minute each) none. Boot 5 (07:10:28 to 07:25:51, 15
+minutes): one line, `netstack-watch: alive at 600 s, idle for 0 s, 15729 events (12570 network),
+12942 frames in` (about 07:20:30). That is about 26 events a second (QEMU: about 2), during pi-test
+and the chaos round. The line ends after `frames in` on the serial console; maybe a count or word is
+missing in the format string. No `no timer event`, no `stuck`, no panic.
+
+Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data:
+homenodellm `~/pitest-tools/t267/`.
