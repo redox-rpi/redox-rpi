@@ -27,6 +27,9 @@ Drivers for board peripherals mostly do not: they need new drivers or ports.
 Keep board-specific code apart from shared code so a second board does not
 mean a fork.
 
+The Pi 400 (BCM2711, same as the Pi 4) has its own plan for a first test
+version: [pi400.md](pi400.md), work package [#299](https://github.com/redox-rpi/redox-rpi/issues/299).
+
 ## Test lab without card swaps
 
 1. **Network boot by default.** The Pi 4 and Pi 5 boot over the network
