@@ -10733,3 +10733,30 @@ well on it.")
 - Owner of the image: graphics. Result passed on by the coordinator.
 - Not checked: serial console, build ID on the board, screen size, how long
   the game ran. The Pi 3B+ run of the same commit is row #297.
+
+## 2026-11-09 — #297 desktop-game build of main 9a97f141 on the Pi 3B+ (network boot)
+
+**Verdict: pass.** The same commit and experiments as the SD image that
+passed on the Zero 2 W in #296 also run on the Pi 3B+: the desktop starts,
+Sopwith keeps running, no exception or panic, pi-test 6/6.
+
+- Image: network image built from main `9a97f141` (with [PR #298](https://github.com/redox-rpi/redox-rpi/pull/298)), clean,
+  `~/redox-rpi-game3bp/keep/netboot-game-v0.4.1-dev-59-g9a97f141+x6ab3.img`.
+- Build ID read from the Pi: `v0.4.1-dev-59-g9a97f141+x6ab3` (the same ID as
+  the SD image in #296; only the image type differs).
+- Manifest: `netboot-game-v0.4.1-dev-59-g9a97f141+x6ab3.toml`, SHA-256
+  `77baf5fdef294beb`. Experiments: cosmic-apps-source desktop netstack-watch
+  orbital orbital-apps rpi-fb timesync.
+- No HDMI screen attached (the firmware picks 656x416).
+
+| Step | Result |
+|---|---|
+| Boot (power cycle) | devsh after 37 s, first boot |
+| `desktop` | rc=0, Orbital running |
+| `sopwith &` | SDL orbital window 640x400, redox audio driver; running after 20 s, 30 s and 40 s (CPU time 3.6 s → 5.5 s in 10 s) |
+| Serial console | 0 UNHANDLED EXCEPTION, 0 panic |
+| `pi-test.py --manifest` | 6/6: version, manifest (build ID and libc.so hash), ps, ps-tty, sdcard, 0 of 300 starts failed |
+| Memory | 132 MB used after boot, 183 MB with desktop and Sopwith (of 735 MB); 47 °C |
+
+Stable `v0.4.0-dev-819-gde8aa6e5+x9f76` restored and checked at 21:00 UTC.
+Raw output: `~/pitest-tools/t297/`.
