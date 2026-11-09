@@ -213,9 +213,25 @@ and UART sequences come from rpi-open-firmware).
   new monitor comes over serial from the #269 card (`rbc-load.sh …
   chainmon`), so no card swap is needed. Until #271 passes, the monitor
   card can't replace the network-boot card.
-- **Next:** M2 loads our 64-bit ARM stub, U-Boot and the devicetree from
-  the FAT partition; M3 a mailbox service on the VPU; M4 HDMI; M5 network
-  boot and what 3D needs (see step 5 above).
+- **M2 step 1, our own 64-bit ARM start stub (`armstub8`)**
+  ([rpi-open-firmware#4](https://github.com/redox-rpi/rpi-open-firmware/pull/4)):
+  256 bytes of new code. It sets up EL3 (timer frequency, ARM local
+  timer, SMP coherency, SCR_EL3), then drops all four cores to EL2. Core 0
+  starts the kernel with x0 = devicetree, and cores 1–3 wait on the spin
+  table. The stub uses the same patch fields as Broadcom's, so Broadcom's
+  `start.elf` (`armstub=`) and our loader can both start it. **In QEMU**
+  (all cores start at 0 in EL3): four EL3-to-EL2 drops, then our U-Boot
+  and the stable Redox image up to `4 CPUs online` and `devshd:
+  listening`. Found on the way: with the plain devicetree, U-Boot says
+  `DRAM: 0 Bytes`. A firmware has to fill in the memory node and apply
+  the `config.txt` overlays (or load a devicetree with them already
+  merged), so our VPU loader must do that too. The first Pi test is Pi
+  test #313: a card visit with `armstub=` in `config.txt`, together with
+  #262.
+- **Next:** M2 step 2, the VPU loader: read the FAT partition over
+  SDHOST, load the stub, U-Boot and the devicetree, fix up the
+  devicetree, start the ARM. Then M3, a mailbox service on the VPU; M4,
+  HDMI; M5, network boot and what 3D needs (see step 5 above).
 - **Disassembly of the closed `bootcode.bin`** (internal, behaviour only,
   not published; the README in `bootcode/` lists each finding with its
   source file): it uses SDHOST, not EMMC, for the card; about a third of
