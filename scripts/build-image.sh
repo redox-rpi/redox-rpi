@@ -355,6 +355,11 @@ for exp in "${experiments[@]}"; do
         rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
         mkdir -p "$(dirname "$REDOX/recipes/$rel")"
         cp "$file" "$REDOX/recipes/$rel"
+        # Its patches go with it under their own names: a whole recipe lists
+        # them in its own [source] (recipe_dirs above leaves its folder out).
+        for patch in "$(dirname "$file")"/*.patch; do
+            [ -e "$patch" ] && cp "$patch" "$(dirname "$REDOX/recipes/$rel")/"
+        done
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
         fi
