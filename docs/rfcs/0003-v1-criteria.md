@@ -4,6 +4,7 @@
 |---|---|
 | Status | Draft |
 | Created | 2026-11-08 |
+| Updated | 2026-11-09: Raspberry Pi 400 (maintainer, customers) |
 | Author | Requirements agent, for the maintainer |
 | Releases | v0.5.0 … v0.9.0, v0.10.0 …, until all criteria are met |
 
@@ -41,9 +42,13 @@ gives each work package a target.
    build, and a written support promise.
 
 1.0 is about a dependable base, not about features. Wi-Fi, the desktop,
-audio, Bluetooth, smart home and Pi 4/5 support are not 1.0 criteria
-unless the maintainer adds them (see open questions); they can come before
-or after 1.0 as features with their own requirements.
+audio, Bluetooth, smart home and support for the other Pi 4 and Pi 5
+boards are not 1.0 criteria unless the maintainer adds them (see open
+questions); they can come before or after 1.0 as features with their own
+requirements. The one exception is the **Raspberry Pi 400**: the
+maintainer added it on 2026-11-09 because customers want to use it
+([REQ-BOARD-4](#req-board-4-raspberry-pi-400)). It brings the Pi 4 basics
+into 1.0.
 
 ## Rules
 
@@ -64,6 +69,7 @@ or after 1.0 as features with their own requirements.
 |---|---|---|---|---|---|
 | [REQ-BOARD-2](#req-board-2-supported-boards-for-10) | Pi 3B+ and Zero 2 W fully supported | must | v0.9 | 1.1, 1.2 | 3B+ tested; Zero 2 W by hand only |
 | [REQ-BOARD-3](#req-board-3-other-bcm2837-boards) | Pi 3B and 3A+ boot and work | should | v0.9 | 1.3 | untested |
+| [REQ-BOARD-4](#req-board-4-raspberry-pi-400) | Raspberry Pi 400 (German keyboard) | must | Pi 400, set when the hardware arrives | 1.4 | no Pi 4 support at all; board ordered |
 | [REQ-STAB-4](#req-stab-4-no-open-crash-bugs) | no open crash bugs | must | v0.9 | 2.2, 2.3, 2.4 | #207, #92, #217, #151, #205, #4, #129 open |
 | [REQ-STAB-5](#req-stab-5-long-run) | 7 days running without a fault | must | v0.9 | 2 | longest run not measured (#259) |
 | [REQ-STAB-6](#req-stab-6-chaos-test) | survives the chaos test | must | v0.9 | 2.2.1, 2.4 | experiment `chaos`; froze the Pi once (#207) |
@@ -84,7 +90,7 @@ or after 1.0 as features with their own requirements.
 | [REQ-REL-7](#req-rel-7-nightly-green-before-the-release) | nightly green for 14 nights | must | v0.9 | 3.2, 3.3 | nightly runs; no streak count |
 | [REQ-REL-8](#req-rel-8-support-promise) | written support and compatibility promise | must | v0.9 | 4.2 | none |
 | [REQ-REL-9](#req-rel-9-close-to-upstream) | close to upstream Redox | should | v0.9 | 3.1 | pin and drift check exist |
-| [REQ-CON-3](#req-con-3-keyboard-layouts) | keyboard layouts (German first) | should | v0.5 | 2.3.2 | US only (#36) |
+| [REQ-CON-3](#req-con-3-keyboard-layouts) | German keyboard layout (Pi 400 DE) | must | v0.5, Pi 400 | 2.3.2 | US only (#36) |
 
 ## Criteria
 
@@ -97,9 +103,10 @@ Raspberry Pi Zero 2 W, except where a board lacks the hardware.
 
 - Kind: constraint. Priority: must. PBS 1.1, 1.2. Theme: v0.9.
 - Rationale: these are the boards we test on and the vision starts at the
-  Zero 2 W (maintainer, 2026-11-08). The Pi 4 and 5 need new drivers for
-  most peripherals (GIC, GENET, PCIe, RP1, see [boards](../topics/boards.md))
-  and come after 1.0.
+  Zero 2 W (maintainer, 2026-11-08). The Pi 400 is added by
+  [REQ-BOARD-4](#req-board-4-raspberry-pi-400); the other Pi 4 boards and the
+  Pi 5 need the same or more new drivers (GIC, GENET, PCIe, RP1, see
+  [boards](../topics/boards.md)) and come after 1.0.
 - Acceptance criteria:
   1. The 1.0 test set runs on both boards on the 1.0 candidate.
   2. On the Zero 2 W, network means a USB Ethernet adapter (RTL8152/8153)
@@ -120,6 +127,58 @@ Raspberry Pi 3 Model B and 3 Model A+.
   2. Pi 3B: Ethernet gets an address by DHCP (needs a LAN9514 driver).
 - Verification: test, person, once per minor release, or automated once
   the boards are in the lab.
+
+#### REQ-BOARD-4 Raspberry Pi 400
+
+The 1.0 release shall run on the Raspberry Pi 400 with the German keyboard
+(Pi 400 DE): boot from the SD card, console on HDMI, its built-in keyboard,
+Ethernet and USB.
+
+- Kind: functional. Priority: must. PBS 1.4. Theme: its own (Pi 400).
+- Source: maintainer, 2026-11-09, for customers who want to use the Pi 400
+  ("ich hab Kunden die den verwenden wollen"). The maintainer has ordered
+  one. **Its priority against the other work is set when the hardware
+  arrives** (maintainer: "sobald der da ist müssen wir über Prioritäten
+  reden").
+- Rationale: the Pi 400 is a Pi 4 (BCM2711) in a keyboard. Almost nothing
+  of the Pi 3 platform carries over below the kernel's CPU code: it needs
+  the Pi 4 basics, which then also serve the Pi 4 and CM4 later.
+- What it takes (PBS 1.4, new parts in PBS 2.1–2.3):
+  - **Boot chain:** firmware from the board's EEPROM, `start4.elf`, the
+    Pi 4 devicetree (`bcm2711-rpi-400.dtb`), a U-Boot or direct boot for the
+    BCM2711.
+  - **Interrupts:** GIC-400 (upstream Redox has a GICv2 driver; the
+    BCM2836 local controller of the Pi 3 is gone).
+  - **SD card:** the `emmc2` controller (an SDHCI behind its own clock and
+    DMA limits).
+  - **USB:** the VL805 xHCI controller behind PCIe: a PCIe host driver for
+    the BCM2711, then Redox' existing `xhcid`. The built-in keyboard is a
+    USB keyboard on this bus.
+  - **Ethernet:** GENET (BCM54213PE PHY), a new driver.
+  - **Display:** HDMI through the firmware framebuffer as a start (as
+    `rpi-fbd` on the Pi 3); no `vc4d` port for 1.0.
+  - **Firmware interface:** the mailbox as on the Pi 3 (`rpi-firmwared`
+    with the BCM2711 base address), CPU clock up to 1800 MHz.
+- Acceptance criteria:
+  1. The 1.0 SD card image (or a Pi 400 image of the same release, open
+     question 9) boots a Pi 400 to `redox login:` on HDMI with no other
+     keyboard plugged in.
+  2. The built-in keyboard types on the console and at the login with the
+     German layout ([REQ-CON-3](#req-con-3-keyboard-layouts)), including
+     umlauts, `ß`, AltGr characters (`@`, `€`, `{`, `|`) and the function
+     keys used to switch terminals.
+  3. Ethernet gets an address by DHCP within 60 s; NTP sets the clock.
+  4. A USB mouse and a USB stick on the Pi 400's USB ports are detected
+     (the stick only where USB storage is a 1.0 criterion).
+  5. The SD card reads and writes without loss (the `sd-stress.py` short
+     run with 2 restarts).
+  6. All 1.0 requirements that do not need missing hardware hold on the
+     Pi 400 as on the Pi 3B+ ([REQ-BOARD-2](#req-board-2-supported-boards-for-10)).
+  7. If the desktop is in the 1.0 image (open question 3), the keyboard
+     types the German layout there too.
+- Verification: test, person first (the maintainer's board); test,
+  automated once a Pi 400 is in the test lab (network boot from its
+  EEPROM, WBS 4.3).
 
 ### Stability
 
@@ -426,12 +485,17 @@ The 1.0 release shall be based on a recent upstream Redox.
 
 #### REQ-CON-3 Keyboard layouts
 
-The console shall support keyboard layouts other than US, German first.
+The console, the login and (if in the image) the desktop shall support
+keyboard layouts other than US, German first.
 
-- Kind: functional. Priority: should. PBS 2.3.2. Theme: v0.5.
+- Kind: functional. Priority: must (was should; the Pi 400 DE has a
+  German keyboard built in, [REQ-BOARD-4](#req-board-4-raspberry-pi-400)).
+  PBS 2.3.2. Theme: v0.5, Pi 400. Issue #36.
 - Acceptance criteria:
   1. A setting chooses the layout; with `de`, umlauts, `ß` and the AltGr
      characters type correctly on the console and survive a reboot.
+  2. The layout applies at the login prompt, before anyone is logged in.
+  3. If the desktop is in the image, Orbital uses the same layout.
 - Verification: test, person (or automated with QEMU's keyboard).
 
 ## Roadmap mapping
@@ -442,6 +506,7 @@ The console shall support keyboard layouts other than US, German first.
 | v0.6 Network | (Wi-Fi only if open question 2 makes it a criterion) |
 | v0.7 Remote access | REQ-NET-6, REQ-SEC-1, REQ-SEC-2, REQ-PKG-2 |
 | v0.8 Smart home | none (features, not 1.0 criteria) |
+| Pi 400 (priority set when the board arrives) | REQ-BOARD-4, REQ-CON-3 (German layout on its keyboard) |
 | v0.9 Towards 1.0 | REQ-BOARD-2, REQ-BOARD-3, REQ-STAB-4, -5, -6, -8, REQ-SEC-3 (images), REQ-SEC-4, REQ-PKG-3, REQ-DOC-1, -2, REQ-REL-6 to -9 |
 | v0.10 … | whatever is still open |
 
@@ -463,12 +528,14 @@ The console shall support keyboard layouts other than US, German first.
   home): see open questions 2 and 3.
 - How updates work technically (A/B partitions, package-based, or image
   based): a separate RFC by the Architect, once REQ-PKG-3 is accepted.
-- Pi 4 and Pi 5 support: after 1.0, with their own requirements.
+- Pi 4 (other than the Pi 400), CM4 and Pi 5 support: after 1.0, with
+  their own requirements. Much of the Pi 400 work carries over to them.
 
 ## Open questions for the maintainer
 
-1. **Boards:** Pi 3B+ and Zero 2 W must, Pi 3B and 3A+ should, Pi 4/5 after
-   1.0. Agreed?
+1. **Boards:** Pi 3B+, Zero 2 W and Pi 400 must, Pi 3B and 3A+ should,
+   other Pi 4 boards and Pi 5 after 1.0. Agreed? Should the Pi 4 Model B
+   come with the Pi 400, as it needs almost the same work?
 2. **Wi-Fi:** the Zero 2 W without a HAT has no network without Wi-Fi.
    Is Wi-Fi a 1.0 must, a should, or after 1.0?
 3. **Desktop and audio:** today beta. Stay beta in 1.0 (not criteria), or
@@ -482,3 +549,7 @@ The console shall support keyboard layouts other than US, German first.
 7. **Support:** with weekly releases, is "the newest 1.x is supported" the
    promise, or should there be longer-lived 1.x lines?
 8. **Crash label:** a new label `crash` for REQ-STAB-4, or an issue field?
+9. **Pi 400 image:** one image for all boards (firmware picks the right
+   devicetree and kernel), or a separate Pi 400 image per release?
+10. **Pi 400 priority:** set together when the board arrives; until then
+    the Pi 400 criteria have no milestone.
