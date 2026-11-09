@@ -124,7 +124,7 @@ patch -p1 <<'PATCH'
 +    device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;
 +#endif
  
- 
+ 	device->free = ORBITAL_DeleteDevice;
  
 --- a/src/video/orbital/SDL_orbitalvideo.h
 +++ b/src/video/orbital/SDL_orbitalvideo.h
