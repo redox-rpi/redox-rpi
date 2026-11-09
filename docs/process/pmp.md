@@ -137,6 +137,13 @@ per week and one release per sprint:
 | Sunday evening | Person test if one is due; the maintainer approves the tag on the exact commit; release notes and known issues. **Monday evening** is the fallback | maintainer, Release and CI |
 | After the release | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
 
+- **The maintainer's OK ends the sprint.** When the maintainer approves the
+  release on the exact commit, the release is done and the next sprint
+  starts at once: Release and CI tags the next development version (for
+  example `v0.4.1-dev`) on `main` right away, so the nightly and every
+  other build already carry the new version. Publishing on GitHub, the
+  boot of the release image on the Pi and the profile update follow
+  afterwards and hold nothing up.
 - Each sprint is a GitHub milestone named after its release. Open issues
   of a closed sprint move to the next milestone, not to "later" by
   default.
