@@ -58,7 +58,7 @@ The release itself has no suffix (see
 | Monday to Friday | Builds early candidates when asked, keeps the checklist's "in the image" table current with what is merged |
 | Friday evening | Cut-off: only what the maintainer has merged by then is in |
 | Saturday | Builds the candidate from `main` ([Building](#building)), runs the [candidate checks](#candidate-checks), queues the Pi rows and the regression set, drafts the release notes |
-| Sunday evening | The person test, if one is due, on the Saturday candidate; the tag and the GitHub release after the maintainer's OK on the exact commit ([Release](#release)). Monday evening is the fallback |
+| Sunday evening | The person test, if one is due, on the Saturday candidate. The maintainer's OK on the exact commit closes the release and the sprint: the tag `v<version>` and the next development tag at once; the GitHub release follows ([Release](#release)). Monday evening is the fallback |
 
 A release never waits for a feature. If the Saturday candidate fails and
 neither a fix nor taking the change out works by the Monday evening
@@ -154,34 +154,43 @@ rm -rf $d
 
 ## Release
 
-A candidate that passed its Pi test becomes the release. The release image
-is built again from the candidate's commit with the same options, only with
-`--release v<version>` instead of `--release v<version>-rc<N>`, so it gets
-the same build ID. Before it is published, it boots in QEMU and once on
-the Pi, and its manifest must list the same patches and package hashes as
-the candidate's. Each step below happens only after the user approves it in
-the build agent's session.
+A candidate that passed its Pi test becomes the release. **The maintainer's
+OK on the exact commit closes the release and the sprint** (the maintainer,
+2026-11-09). From that moment the next version counts: the tags come first,
+everything else follows and holds nothing up. The OK is given in the build
+agent's session.
 
-1. **Release notes** in `docs/releases/v<version>.md`, like
-   [v0.2.0](releases/v0.2.0.md): status line, what is new, what works, known
-   issues, install steps, and "Built from" with the build ID and
-   experiments. "What is new" may link the closed issues of the release's
-   [milestone](https://github.com/redox-rpi/redox-rpi/milestones) (v0.3.0 is
-   milestone 1).
-2. **Merge** the `release-v<version>` branch into `main`. Only maintainers
-   merge ([CONTRIBUTING.md](../CONTRIBUTING.md#merging)): the build agent
-   does it as the maintainer account, after the user's approval.
-3. **Tag** `v<version>` on the merge commit and push the tag.
-4. **GitHub pre-release** `v<version>` (while the status is experimental)
-   with the notes as its text and three files:
-   `redox-rpi-v<version>-pi3bplus.img.xz`,
-   `redox-rpi-v<version>-pi3bplus.img.manifest.toml` and `SHA256SUMS`
-   (from the release build).
-5. Update the README and `ROADMAP.md` where they name the current release.
-   **Close the milestone** `v<version>`; issues still open in it move to
-   the next milestone or lose theirs.
-6. **Development tag:** right after a release `vX.Y.Z` is tagged, tag the
-   next commit on `main` as `vX.Y.(Z+1)-dev` (annotated) and push it, so
-   development builds show `vX.Y.(Z+1)-dev-N-g…`
+**At the OK, right away:**
+
+1. **Tag** `v<version>` (annotated) on the approved commit and push it.
+2. **Development tag:** tag the newest commit on `main` as
+   `vX.Y.(Z+1)-dev` (annotated) and push it, so the nightly and every other
+   build from then on show `vX.Y.(Z+1)-dev-N-g…`
    ([versioning.md](versioning.md#development-tags)). Tell the other
    sessions to `git fetch --tags`.
+
+**Afterwards, in this order, without holding up the next sprint:**
+
+3. **Release image:** built again from the approved commit with the same
+   options, only with `--release v<version>` instead of
+   `--release v<version>-rc<N>`, so it gets the same build ID. Its manifest
+   must list the same patches and package hashes as the candidate's; a
+   difference is named in the release notes. It boots in QEMU and the
+   [candidate checks](#candidate-checks) run on it.
+4. **Release notes** in `docs/releases/v<version>.md`, like
+   [v0.4.0](releases/v0.4.0.md): status line, what is new, known issues,
+   install steps, and "Built from" with the build ID, experiments and
+   checksum. "What is new" may link the closed issues of the release's
+   [milestone](https://github.com/redox-rpi/redox-rpi/milestones).
+5. **GitHub release** `v<version>` with the notes as its text and three
+   files from the release build: `redox-rpi-v<version>-pi3bplus.img.xz`,
+   `redox-rpi-v<version>-pi3bplus.img.manifest.toml` and `SHA256SUMS`.
+6. **One boot on the Pi** of the release image (the netboot image of the
+   same build), queued for the Pi test agent. If it fails, the release
+   notes and the GitHub release get a warning, and the fix goes into the
+   next release.
+7. **Close the milestone** `v<version>`; issues still open in it move to
+   the next milestone. The release issue is closed with the release link.
+8. The `release-v<version>` branch (checklist, candidate notes, release
+   notes) reaches `main` by a docs pull request. The README, `ROADMAP.md`
+   and the profile README name the new release.
