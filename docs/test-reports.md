@@ -10550,3 +10550,16 @@ gaps (editor save, no MAC in `ifconfig`) and the usability notes do not block v0
 
 The netboot card goes back in when the maintainer is done. Then the Pi test agent checks that
 stable `v0.4.0-dev-748-g36bd5f6a+x9f76` boots.
+
+## 2026-11-09: `v0.4.0-dev-819-gde8aa6e5+x9f76`
+
+Built 2026-11-09T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over netboot. Experiments: `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.4.0-dev-819-gde8aa6e5+x9f76 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.4.0-dev-819-gde8aa6e5+x9f76.toml |
+| ps | pass | 51 processes (piped) |
+| ps-tty | pass | 51 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
