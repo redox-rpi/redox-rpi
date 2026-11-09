@@ -49,7 +49,7 @@ How it is used:
 | WP | Work | Owner | PBS | Topic page |
 |---|---|---|---|---|
 | 3.1 | Pi Zero 2 W and the other BCM2837 boards (3B, 3A+) | V&V | 1.2, 1.3 | [zero2w](../topics/zero2w.md) |
-| 3.2 | Pi 4 family (BCM2711) | project lead (no owner yet) | 1.4 | [boards](../topics/boards.md) |
+| 3.2 | Pi 4 family (BCM2711), [#299](https://github.com/redox-rpi/redox-rpi/issues/299) | Architect (for now) | 1.4 | [pi400](../topics/pi400.md) |
 | 3.3 | Pi 5 family (BCM2712, RP1) | project lead (no owner yet) | 1.5 | [boards](../topics/boards.md) |
 
 ## 4 Verification and validation
