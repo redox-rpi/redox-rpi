@@ -8,14 +8,47 @@ compiler to try. Issue:
 
 ## State
 
-Nothing on `main` yet.
+Experiment [`tcc`](../../patches/experiments/tcc/README.md) on `main`
+(PR [#249](https://github.com/redox-rpi/redox-rpi/pull/249)): tinycc `mob`
+(arm64 backend) with four small patches, cross-compiled for aarch64 Redox,
+plus test programs (`tools/tcc-bench`).
 
-## In progress
+**In the release image from v0.4.1, as a beta**
+([#293](https://github.com/redox-rpi/redox-rpi/issues/293), the
+maintainer's decision): the release options get `--experiment tcc` for the
+SD card and netboot images and the Zero 2 W image. All three still fit
+(build `v0.4.0-dev-819-gab8fedb5`, against v0.4.0-rc2; the tcc package is
+3.8 MB, 2.6 MB of it the sources in `/usr/src/tinycc` for self-hosting):
 
-Experiment [`tcc`](../../patches/experiments/tcc/README.md) on branch `tcc`
-(draft PR [#249](https://github.com/redox-rpi/redox-rpi/pull/249)):
-tinycc `mob` (arm64 backend) with four small patches, cross-compiled for
-aarch64 Redox, plus test programs (`tools/tcc-bench`).
+| Image | rc2 | with tcc | RedoxFS partition |
+|---|---|---|---|
+| SD card, installed | 203 MB | 207 MB | 1 GB |
+| SD card `.img.xz` (`xz -6`) | 48.8 MB | 49.7 MB | |
+| Netboot (release options) | 206 MB | 210 MB | 232 MB |
+| Zero 2 W netboot (`timesync tcc`) | 113 MB | 116 MB | 124 MB |
+
+QEMU, 2026-11-09: on the netboot and Zero 2 W images `tcc -run`, a dynamic
+build and the script `hallo.c` work, the desktop's motd is still there.
+Real Pi 3B+ ([test
+#293](../test-reports.md#293-tinycc-in-the-v041-release-image-2026-11-09-pi-test-agent),
+release-options netboot image `v0.4.0-dev-819-gab8fedb5+xc80e`): pass.
+`tcc -run hello.c` 120 ms, `tcc -o hello` 99 ms, the script `hallo.c`
+rc 42, the whole tcc check to its end (static Hello World fails as known),
+motd and `EXPERIMENTS` as in the release, `pi-test.py` 6 of 6, 0 of 300
+starts failed, no panic.
+
+Line for the release notes:
+
+> **A C compiler on the Pi (beta).** TinyCC (`tcc`) compiles C on the Pi
+> itself: `tcc -o hello hello.c` builds a program in about 0.1 s,
+> `tcc -run hello.c` runs a file without writing a binary, and a C file
+> that starts with `#!/usr/bin/tcc -run` runs as a script. Examples in
+> `/usr/share/tcc-tests/`. Known limits: programs are linked dynamically
+> only (`-static` fails: relibc's `libc.a` uses TLS descriptor relocations
+> that tcc's linker does not know); tcc's code runs 1.3 to 3.3 times slower
+> than gcc -O2's; quotes in shebang options are removed. (#293)
+
+## Pi results
 
 **Real Pi 3B+**
 ([test #278](../test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent),
