@@ -1,0 +1,16 @@
+# Rewrite /srv/tftp/sdcard/index.json whenever a file is added to or removed
+# from the directory (scripts/sdcard-index.py, docs/topics/ci.md "Image
+# server"), so SwiftFlash also sees images that were not published with
+# scripts/publish-sdcard.sh. Install on the build host:
+#   cp config/redox-sdcard-index.path config/redox-sdcard-index.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now redox-sdcard-index.path
+[Unit]
+Description=Watch the redox-rpi SD image directory for index.json
+
+[Path]
+PathChanged=/srv/tftp/sdcard
+TriggerLimitIntervalSec=60
+TriggerLimitBurst=30
+
+[Install]
+WantedBy=default.target

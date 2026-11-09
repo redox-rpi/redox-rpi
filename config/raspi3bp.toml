@@ -18,6 +18,8 @@ efi_partition_size = 32
 redoxfs = {}
 # Development shell over TCP port 2323 (tools/devshd), until SSH works.
 devshd = "source"
+# `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
+socdump = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.

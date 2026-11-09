@@ -1,0 +1,38 @@
+From 4f831c1d220eb6835690ef056004632f7213f609 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 12:47:28 +0000
+Subject: [PATCH 28/29] rpi-fbd: remember only the frame's own damage for the
+ other buffer
+
+The union of this and the last frame's damage was stored, so it grew
+with every frame until each frame copied the whole screen.
+---
+ drivers/graphics/rpi-fbd/src/scheme.rs | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 1180ee3c..952e2681 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -397,6 +397,9 @@ impl GraphicsAdapter for RpiAdapter {
+         match &new_plane_state.fb {
+             Some(buffer) => {
+                 let back = self.screen.back();
++                // This frame's own changes, which the other buffer misses
++                // next time.
++                let own = damage;
+                 // The back buffer missed the last frame's changes too.
+                 let damage = match (damage, self.screen.last_damage) {
+                     (Some(now), Some(last)) if self.screen.mode.buffers == 2 => Some(union(now, last)),
+@@ -416,7 +419,7 @@ impl GraphicsAdapter for RpiAdapter {
+                     if self.firmware.set_offset(back * self.screen.mode.height) {
+                         self.screen.front = back;
+                     }
+-                    self.screen.last_damage = damage.or(Some(Damage {
++                    self.screen.last_damage = own.or(Some(Damage {
+                         x: 0,
+                         y: 0,
+                         width: self.screen.mode.width,
+-- 
+2.53.0
+
