@@ -16,6 +16,9 @@
 #                           [--timeout <seconds>]
 #
 #   --image <file>   default: the network-boot image of scripts/build-image.sh
+#   --card <file>    boot this SD card image as it is, e.g. one from
+#                    scripts/make-sdcard.sh --local <img> --live --board pi4
+#                    (U-Boot runs its boot.scr, the boot menu, the bootloader)
 #   --test           no user input; exit 0 once every --expect pattern (default
 #                    "redox login:") appeared on the serial console, 1 on a
 #                    kernel panic or timeout. Log: images/qemu-raspi4b.log
@@ -33,12 +36,14 @@ REDOX="$ROOT/upstream/redox"
 IMAGES="$ROOT/images"
 image="$REDOX/build/aarch64/minimal/harddrive.img"
 test=no
+card=
 expects=()
 run=()
 timeout=300
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
+        --card) card="$2"; shift 2 ;;
         --test) test=yes; shift ;;
         --expect) expects+=("$2"); shift 2 ;;
         --run) run+=("$2"); test=yes; shift 2 ;;
@@ -61,9 +66,13 @@ cd "$IMAGES"
 cp "$dtb" qemu-4b.dtb
 fdtput -t s qemu-4b.dtb /chosen stdout-path "serial0:115200n8"
 
-cp "$image" run4.img
-efi_start=$(sfdisk -d run4.img | awk -F'[=,]' '/name="EFI"/ {gsub(/ /,"",$2); print $2}')
-mcopy -o -i "run4.img@@$((efi_start * 512))" "$live" ::/EFI/BOOT/BOOTAA64.EFI
+if [ -n "$card" ]; then
+    cp "$card" run4.img
+else
+    cp "$image" run4.img
+    efi_start=$(sfdisk -d run4.img | awk -F'[=,]' '/name="EFI"/ {gsub(/ /,"",$2); print $2}')
+    mcopy -o -i "run4.img@@$((efi_start * 512))" "$live" ::/EFI/BOOT/BOOTAA64.EFI
+fi
 # QEMU's SD card must be a power of two in size.
 size=$(wc -c < run4.img); sd=1
 while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
