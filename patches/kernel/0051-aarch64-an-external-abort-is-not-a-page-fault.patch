@@ -1,0 +1,45 @@
+From 1258a59291225b65ba2f4d6eb5e384152bc96d7e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 9 Nov 2026 16:23:34 +0000
+Subject: [PATCH] aarch64: an external abort is not a page fault
+
+A user write to a device register that raises a synchronous external
+abort (ESR DFSC 0x10) went to the page fault handler, which found the
+page mapped, "corrected" the page tables and returned; the same write
+faulted again, forever, and the system hung with no message. Seen in
+QEMU raspi4b, where bcm2835-pwmaudiod writes to a PWM block QEMU does
+not model. Only translation, access flag and permission faults go to the
+page fault handler now; anything else is an unhandled exception, which
+kills the process with a register dump.
+
+Fix for redox-rpi#311.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/interrupt/exception.rs | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
+index 75c10726..fc9d61c5 100644
+--- a/src/arch/aarch64/interrupt/exception.rs
++++ b/src/arch/aarch64/interrupt/exception.rs
+@@ -46,6 +46,16 @@ unsafe fn instr_data_abort_inner(
+         let fsc = iss & 0x3F;
+         //dbg!(fsc);
+ 
++        // Fix for redox-rpi#311: only translation, access flag and
++        // permission faults (FSC 0x04 to 0x0F) can be fixed by mapping a
++        // page. An external abort (0x10, e.g. a write to a device that is
++        // not there) or a parity error would come back on every retry:
++        // report it as unhandled instead, so a user process gets killed
++        // rather than looping forever.
++        if !(0b000100..=0b001111).contains(&fsc) {
++            return false;
++        }
++
+         let was_translation_fault = fsc >= 0b000100 && fsc <= 0b000111;
+         //let was_permission_fault = fsc >= 0b001101 && fsc <= 0b001111;
+         let write_not_read_if_data = iss & (1 << 6) != 0;
+-- 
+2.53.0
+
