@@ -19,6 +19,9 @@
 #   --test           no user input; exit 0 once every --expect pattern (default
 #                    "redox login:") appeared on the serial console, 1 on a
 #                    kernel panic or timeout. Log: images/qemu-raspi4b.log
+#   --run <command>  after the login prompt, log in as root on the serial
+#                    console and run this shell command (repeatable, implies
+#                    --test); the output lands in the log
 #   --timeout <s>    give up after this many seconds (default 300)
 #
 # Interactive: the serial console is on stdin/stdout; exit with Ctrl-A X.
@@ -31,12 +34,14 @@ IMAGES="$ROOT/images"
 image="$REDOX/build/aarch64/minimal/harddrive.img"
 test=no
 expects=()
+run=()
 timeout=300
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
         --test) test=yes; shift ;;
         --expect) expects+=("$2"); shift 2 ;;
+        --run) run+=("$2"); test=yes; shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -74,20 +79,36 @@ if [ "$test" = no ]; then
 fi
 
 log="$IMAGES/qemu-raspi4b.log"
-: > "$log"
-"${qemu[@]}" -serial "file:$log" -serial null < /dev/null &
+fifo="$IMAGES/qemu-raspi4b.in"
+rm -f "$log" "$fifo"
+mkfifo "$fifo"
+"${qemu[@]}" -serial stdio -serial null < "$fifo" > "$log" 2>&1 &
 pid=$!
-trap 'kill $pid 2>/dev/null || true' EXIT
-deadline=$((SECONDS + timeout))
-while [ $SECONDS -lt $deadline ]; do
-    if grep -aqE "KERNEL PANIC|panicked at .*kernel" "$log"; then
-        echo "kernel panic, see $log" >&2; exit 1
-    fi
-    ok=yes
-    for re in "${expects[@]}"; do grep -aqE "$re" "$log" || { ok=no; break; }; done
-    if [ "$ok" = yes ]; then echo "pass: ${expects[*]} (log $log)"; exit 0; fi
-    kill -0 $pid 2>/dev/null || { echo "QEMU exited, see $log" >&2; exit 1; }
-    sleep 2
-done
-echo "timeout after ${timeout}s, see $log" >&2
-exit 1
+exec 3> "$fifo"
+trap 'kill $pid 2>/dev/null || true; rm -f "$fifo"' EXIT
+start=$SECONDS
+wait_for() {
+    while ! grep -aqE "$1" "$log"; do
+        if grep -aqE "KERNEL PANIC|panicked at .*kernel" "$log"; then
+            echo "kernel panic, see $log" >&2; exit 1
+        fi
+        kill -0 $pid 2>/dev/null || { echo "QEMU exited, see $log" >&2; exit 1; }
+        [ $((SECONDS - start)) -lt "$timeout" ] || { echo "timeout waiting for $1, see $log" >&2; exit 1; }
+        sleep 1
+    done
+}
+for re in "${expects[@]}"; do wait_for "$re"; done
+echo "pass after $((SECONDS - start))s: ${expects[*]} (log $log)"
+[ ${#run[@]} -gt 0 ] || exit 0
+sleep 2
+printf 'root\r' >&3
+wait_for "assword"
+# login switches off the echo after the prompt; keys sent before are lost.
+sleep 2
+printf 'password\r' >&3
+wait_for "root:"
+line=""
+for cmd in "${run[@]}"; do line="$line$cmd; "; done
+printf '%secho RUN-DONE-$((40 + 2))\r' "$line" >&3
+wait_for "RUN-DONE-42"
+echo "run: done after $((SECONDS - start))s, output in $log"
