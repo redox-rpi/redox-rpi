@@ -37,6 +37,9 @@ float, linked into tcc from the toolchain, which is not built with
 
 ## Patches to tinycc
 
+The recipe lists them under their own names; `build-image.sh` copies a
+whole experiment recipe's patches next to it.
+
 - `0001` the Redox tcc (built with `-DTARGETOS_Redox=1`) defines
   `__redox__`, not `__linux__`. relibc's headers choose Redox values on
   `__redox__` (open flags, `suseconds_t`) and Linux values on `__linux__`.
@@ -67,6 +70,9 @@ float, linked into tcc from the toolchain, which is not built with
 QEMU, `v0.4.0-dev-689-gb453b397+xd12c`: dynamic Hello World, `tcc -run`,
 the benchmark and self-hosting (tcc compiles `tcc.c` into a working
 `tcc2`) pass; `-static` fails on relibc's TLS descriptor relocations.
+In the release image from v0.4.1 as a beta
+([#293](https://github.com/redox-rpi/redox-rpi/issues/293)); sizes in the
+topic page.
 Real Pi 3B+ ([test #278](../../../docs/test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent)):
 the same checks pass; Hello World compiles in 100 ms, `tcc.c` (77k lines) in
 0.7 s; tcc's code is 1.3-3.3 times slower than gcc -O2's. Numbers in the
