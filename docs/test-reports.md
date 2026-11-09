@@ -10668,3 +10668,26 @@ missing in the format string. No `no timer event`, no `stuck`, no panic.
 
 Unexpected events: none. Restore: stable `v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data:
 homenodellm `~/pitest-tools/t267/`.
+
+## #294 #291 again with the SDL2 fix: Sopwith at 656x416 (2026-11-09, Pi test agent)
+
+A: build `v0.4.0-dev-799-g754b864c+xce4c` (branch `desktop-game` 754b864c, clean), B:
+`v0.4.0-dev-799-g754b864c+x0f22-dirty.82ef20819842` (same plus `pointer-bench`, exploratory, dirty
+build), both read from the Pi. Level 4: real Pi 3B+, network boot, serial console, no person, no
+HDMI screen (`rpi-fbd: 656x416 stride 656`, the size that crashed in #291), 07:26–07:32 UTC.
+[#33](https://github.com/redox-rpi/redox-rpi/issues/33)
+
+**Result: pass.** Sopwith keeps running in A and B. No `UNHANDLED EXCEPTION` and no panic in either
+boot (the #291 crash at `FAR 0x854000` is gone), and the checks pass.
+
+| Step | Result | Detail |
+|---|---|---|
+| A1 `desktop` | pass | info text `Redox desktop (beta)`, starts without a question, rc 0 |
+| A2 `sopwith` | pass | `Initializing orbital window at 8,8 with size 640x400 with flags 9`; `/usr/bin/sopwith` in `ps` (3 threads), CPU time growing; 0 exceptions in the serial log |
+| A3 CPU | pass | ACTTIME of its threads 4.83 s → 7.29 s in about 10 s: about 2.4 s a 10 s, a quarter of one core (6 % of the Pi); free 182 of 736 MB used |
+| A4 pi-test | pass | 6 of 6, 0 of 300 starts failed |
+| B login | pass | after `pointer-bench --type '\n'`: `/usr/bin/launcher`, `/usr/bin/orbterm`, `/usr/bin/desktop-welcome` as uid 1000 |
+| B Sopwith | pass | same window line; CPU time 4.86 s → 7.31 s in 10 s (same quarter of a core); free 210 of 736 MB used; 0 exceptions |
+
+No screenshot (no screen attached). Unexpected events: none. Restore: stable
+`v0.4.0-dev-819-gde8aa6e5+x9f76`, answered. Data: homenodellm `~/pitest-tools/t294/`.
