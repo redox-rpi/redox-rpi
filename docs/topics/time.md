@@ -21,7 +21,15 @@ User docs, with examples: [docs/time.md](../time.md).
 - [#51](https://github.com/redox-rpi/redox-rpi/issues/51) `clock_settime`
   / `settimeofday` in relibc (patch `0011`) and `timesync -s` to set the
   clock by hand. Branch `clock-settime` (based on `timerd`); Pi test #66
-  passed; draft pull request #98, after #59 (v0.9.0).
+  passed; merged with #98. Upstream relibc does not have it yet (#51 stays
+  open, `waiting-upstream`), so `timesync -s` needs our patch.
+- [#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zones:
+  `/etc/localtime` and zone files (package `zoneinfo`, Europe/Berlin and
+  UTC), relibc patch `0012` (`tm_zone` is CET/CEST), `timerd` in local
+  time and `timerd -t`. Branch `timezone`, experiment
+  `timezone` ([README](../../patches/experiments/timezone/README.md)).
+  **Pi test 95 passed** (CET/CEST at both 2026 switches, no freeze in 20
+  minutes); pull request #102 (v0.5.0).
 
 ## Next
 
@@ -65,7 +73,12 @@ args = ["-c", "df >> /scheme/data/df.log"]
 
 Things to know:
 
-- **UTC:** schedules are in UTC; Redox has no time zones yet.
+- **Local time:** schedules are in the system's local time if a zone is
+  set (`/etc/localtime`, experiment `timezone`,
+  [#46](https://github.com/redox-rpi/redox-rpi/issues/46)), else UTC.
+  `utc = true` in `[timer]` keeps a timer in UTC. When the clocks go
+  forward, times in the skipped hour do not run; when they go back, a time
+  in the repeated hour runs once.
 - **One run at a time:** a run is skipped while the previous one of the
   same timer still runs.
 - **Clock:** the first run waits for `timesync` (at most five minutes),

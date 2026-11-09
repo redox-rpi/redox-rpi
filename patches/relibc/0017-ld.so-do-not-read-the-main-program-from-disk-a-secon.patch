@@ -1,0 +1,145 @@
+From 0355801ec4d77a9bfd1faed664d65d9593549f04 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 7 Nov 2026 12:22:18 +0000
+Subject: [PATCH] ld.so: do not read the main program from disk a second time
+
+exec has already loaded every PT_LOAD segment of the main program, and
+ld.so skips copying them (skip_load_segment_copy). It still read the
+whole file to parse its headers, so every dynamically linked program was
+read twice when it started (27 MB twice for the COSMIC Text Editor on a
+Raspberry Pi). For the main program, copy the PT_LOAD file ranges from
+memory and read only the rest of the file from disk.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ld_so/linker.rs | 93 +++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 90 insertions(+), 3 deletions(-)
+
+diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
+index 77c96072..d0d77241 100644
+--- a/src/ld_so/linker.rs
++++ b/src/ld_so/linker.rs
+@@ -121,6 +121,89 @@ impl MmapFile {
+         Ok(this)
+     }
+ 
++    /// The main program, which exec has already loaded with load bias
++    /// `base`: copy its PT_LOAD file ranges from memory and read only the
++    /// rest of the file (headers, section and symbol tables) from disk,
++    /// instead of reading the whole program a second time.
++    fn open_loaded(path: CStr, oflag: c_int, base: usize) -> core::result::Result<Self, Errno> {
++        use object::read::elf::{FileHeader as _, ProgramHeader as _};
++
++        let fd = Sys::open(path, oflag, 0 /* mode */)?;
++        let mut stat = crate::header::sys_stat::stat::default();
++        Sys::fstat(fd, Out::from_mut(&mut stat))?;
++        let size = usize::try_from(stat.st_size).expect("st_size should be a positive value");
++
++        let anonymous = Self::anonymous(size.max(1))?;
++        let ptr = anonymous.ptr;
++        super::dso::populate(ptr.cast::<u8>(), size);
++        core::mem::forget(anonymous);
++        let this = Self { fd, ptr, size };
++
++        // File ranges (offset, size) that are in memory, and where.
++        let mut loaded = Vec::new();
++        let header_size = size_of::<super::dso::FileHeader>().min(size);
++        this.read_range(0, header_size)?;
++        if let Ok(header) = super::dso::FileHeader::parse(&this.data()[..header_size]) {
++            let endian = object::NativeEndian;
++            let ph_offset = usize::try_from(header.e_phoff(endian)).unwrap_or(usize::MAX);
++            let ph_size = usize::from(header.e_phnum(endian))
++                .saturating_mul(size_of::<super::dso::ProgramHeader>());
++            if ph_offset.saturating_add(ph_size) <= size {
++                this.read_range(ph_offset, ph_offset + ph_size)?;
++                if let Ok(phdrs) = header.program_headers(endian, this.data()) {
++                    for ph in phdrs {
++                        if ph.p_type(endian) != elf::PT_LOAD {
++                            continue;
++                        }
++                        let (offset, filesz) = ph.file_range(endian);
++                        let (Ok(offset), Ok(filesz), Ok(vaddr)) = (
++                            usize::try_from(offset),
++                            usize::try_from(filesz),
++                            usize::try_from(ph.p_vaddr(endian)),
++                        ) else {
++                            continue;
++                        };
++                        if filesz > 0 && offset.saturating_add(filesz) <= size {
++                            loaded.push((offset, filesz, base.wrapping_add(vaddr)));
++                        }
++                    }
++                }
++            }
++        }
++
++        loaded.sort_unstable();
++        let mut done = 0;
++        for &(offset, filesz, addr) in &loaded {
++            unsafe {
++                ptr::copy_nonoverlapping(
++                    addr as *const u8,
++                    ptr.cast::<u8>().add(offset),
++                    filesz,
++                );
++            }
++            if offset > done {
++                this.read_range(done, offset)?;
++            }
++            done = done.max(offset + filesz);
++        }
++        this.read_range(done, size)?;
++        Ok(this)
++    }
++
++    /// Read bytes `start..end` of the file into the buffer.
++    fn read_range(&self, start: usize, end: usize) -> core::result::Result<(), Errno> {
++        let buf = self.as_mut_slice();
++        let mut done = start;
++        while done < end {
++            let offset = done.try_into().map_err(|_| Errno(crate::header::errno::EOVERFLOW))?;
++            match Sys::pread(self.fd, &mut buf[done..end], offset)? {
++                0 => break,
++                n => done += n,
++            }
++        }
++        Ok(())
++    }
++
+     fn anonymous(size: usize) -> core::result::Result<Self, Errno> {
+         let ptr = unsafe {
+             Sys::mmap(
+@@ -876,7 +959,7 @@ impl Linker {
+         }
+ 
+         let path = self.search_object(name, parent_runpath)?;
+-        let file = self.read_file(&path)?;
++        let file = self.read_file(&path, base_addr)?;
+         let data = file.data();
+         let (obj, tcb_master, elf) = DSO::new(
+             &path,
+@@ -999,7 +1082,7 @@ impl Linker {
+         Err(DlError::NotFound)
+     }
+ 
+-    fn read_file(&self, path: &str) -> Result<MmapFile> {
++    fn read_file(&self, path: &str, base_addr: Option<usize>) -> Result<MmapFile> {
+         let debug = self.config.debug_flags.contains(DebugFlags::SEARCH);
+ 
+         let path_c = CString::new(path).map_err(|err| {
+@@ -1012,7 +1095,11 @@ impl Linker {
+ 
+         let file = {
+             let flags = fcntl::O_RDONLY | fcntl::O_CLOEXEC;
+-            MmapFile::open(CStr::borrow(&path_c), flags).map_err(|err| {
++            match base_addr {
++                Some(base) => MmapFile::open_loaded(CStr::borrow(&path_c), flags, base),
++                None => MmapFile::open(CStr::borrow(&path_c), flags),
++            }
++            .map_err(|err| {
+                 if debug {
+                     eprintln!("[ld.so]: failed to open '{}': {}", path, err)
+                 }
+-- 
+2.53.0
+

@@ -92,6 +92,17 @@
   [#215](https://github.com/redox-rpi/redox-rpi/pull/215) saves about 6
   `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
 
+- `socdump` ([#224](https://github.com/redox-rpi/redox-rpi/issues/224),
+  branch `socdump`, [tools/socdump](../../tools/socdump/README.md)): a
+  read-only tool that decodes the PLLs, clock manager clocks and GPIO pins
+  (BCM2837 table; chip, address and crystal come from the devicetree) and
+  compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`). Pi test #261 queued.
+  Real Pi (test #261): ARM, EMMC and UART match the firmware exactly; the
+  HDMI pixel clock reads 148.5 MHz (1080p60), the first reference value for
+  HDMI. `vpu`, `h264`, `isp` and `sdram` are driven by the firmware outside
+  the clock manager (`fw`). Reference dump in `tools/socdump/reference/`.
+  Next: display registers (pixel valves, HVS, HDMI), step 2 of #224.
+
 ## Bluetooth
 
 The Bluetooth half of the Pi 3B+ Wi-Fi/Bluetooth chip (CYW43455,
@@ -139,7 +150,8 @@ throttling garbles it.
   minutes under load); show the measured ARM clock (tag `0x30047`) next to
   the requested one.
 - [#21](https://github.com/redox-rpi/redox-rpi/issues/21) a common DMA plan for the Pi, including the BCM2835 DMA
-  controller and the firmware's channel mask (milestone v0.4.0).
+  controller and the firmware's channel mask (milestone v0.4.0). Draft:
+  [topics/dma.md](dma.md) on branch `dma-plan`.
 - [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).
 - Power domains, GPIO expander, DMA channel mask, display, VCHIQ
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).

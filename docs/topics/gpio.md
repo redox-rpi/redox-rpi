@@ -35,4 +35,4 @@
   number.
 - SPI1 and SPI2 (the auxiliary SPI), SPI with DMA.
 - GPIO edge events (interrupts), PWM (also for the 3B+ headphone
-  jack), 1-Wire.
+  jack, see [audio.md](audio.md)), 1-Wire.

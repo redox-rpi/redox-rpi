@@ -17,10 +17,14 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Firmware interface | [firmware.md](firmware.md) | [topic:firmware](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Afirmware) |
 | Boot | [boot.md](boot.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 | Pi Zero 2 W | [zero2w.md](zero2w.md) | [topic:zero2w](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Azero2w) |
+| More boards (Pi 4, Pi 5) and the test lab | [boards.md](boards.md) | [topic:boards](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboards) |
 | CI and tests | [ci.md](ci.md) | [topic:ci](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aci) |
 | GPIO, I2C and other Pi peripherals | [gpio.md](gpio.md) | [topic:gpio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agpio) |
 | Graphics (effort analysis) | [graphics.md](graphics.md) | [topic:graphics](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Agraphics) |
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
+| Native C compiler (TinyCC) | [tcc.md](tcc.md) | [topic:tcc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Atcc) |
+| Audio (plan) | [audio.md](audio.md) | [#250](https://github.com/redox-rpi/redox-rpi/issues/250), [topic:audio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aaudio) |
+| DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 
 Each page has the same sections: **State** (on `main` and tested on a real

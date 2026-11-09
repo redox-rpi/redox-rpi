@@ -1,0 +1,7 @@
+# Experiment cosmic-apps-source (#33): COSMIC Text Editor and COSMIC Files
+# built from source instead of upstream's binary packages, with a patched
+# freedesktop-icons (see README.md). Build together with orbital-apps.
+
+[packages]
+cosmic-edit = "source"
+cosmic-files = "source"

@@ -41,7 +41,8 @@
 
 - [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
   tablet, branch [`t48-mouse`](https://github.com/redox-rpi/redox-rpi/tree/t48-mouse)
-  (on main, PR #149), experiment `usb-mouse` (base `0059`). Events go
+  (on main, PR #149), base `0059`, a default patch since PR #223
+  (was experiment `usb-mouse`). Events go
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
   same visit as #50.
@@ -110,36 +111,75 @@
 
 [#95](https://github.com/redox-rpi/redox-rpi/issues/95): the Zero 2 W as a
 network adapter on the computer its USB cable is plugged into, without a
-HAT. No code yet.
+HAT. Analysis only, no code yet (updated 2026-11-04).
 
 - **What `dwc2d` needs:** device mode next to today's host mode, chosen
   by the device tree (`dr_mode=peripheral` in a `[pi02]` section); the
-  device core (FIFOs, device interrupts, endpoint registers); the endpoint
-  0 state machine with the standard requests; a CDC-ECM function (Linux,
-  macOS) registered as `network.usb-gadget`, CDC-NCM later for Windows.
-  The port is host or device, not both. The Pi 3B+ can't do device mode
-  (its DWC2 sits behind the LAN7515 hub).
-- **Next to `dwc2d` or instead of it:** one controller, so one driver
-  owns it. `dwc2d` starts from initfs (`40_dwc2d.service`), finds the
-  controller in the device tree by `compatible` and maps its registers;
+  device core (FIFO sizes `GRXFSIZ`/`GNPTXFSIZ`/`DIEPTXFn`, `DCFG`/`DCTL`
+  for address and soft connect, the device interrupts, the endpoint
+  registers `DIEPCTLn`/`DOEPCTLn`/`DIEPTSIZn`/`DOEPTSIZn`/`DIEPDMAn`/
+  `DOEPDMAn`, buffer DMA as in host mode); the endpoint 0 state machine
+  with the standard requests; a network function with two bulk endpoints
+  and one interrupt endpoint. The port is host or device, not both. The
+  Pi 3B+ can't do device mode (its DWC2 sits behind the LAN7515 hub).
+- **One driver owns the controller:** `dwc2d` starts from initfs, and
   Redox's init can't pick a service by a device-tree value, so a separate
-  gadget daemon would start next to `dwc2d` and both would take the same
-  registers. Better: the same binary reads `dr_mode` from the controller's
-  node at start and runs either today's host code or a new device part
-  (`device.rs` for the core and endpoint 0, `ecm_gadget.rs` for the
-  function), sharing `regs.rs`, the register mapping and the network
-  scheme code. The host code stays as it is; nothing changes on the Pi
-  3B+ or on a Zero 2 W without the overlay. Switching at run time (OTG ID
-  pin, host and device on one port) is not needed and left out.
-- **Testing:** QEMU's DWC2 model is host only, so: a host model in Rust
-  that plays a host's enumeration against the code, then a Zero 2 W cabled
-  to homenodellm (powered by it, `cdc_ether` on the Linux side, tests over
-  SSH), booted from SD or, if it works, by rpiboot over the same cable. A
-  second USB serial adapter for the Zero's console; one person visit to
-  set it up and try a Mac or PC.
-- **Size:** about 1700 lines for ECM (half of today's `dwc2d`), about 4–5
-  sessions; NCM about 400 lines more. Medium; the risk is the test bench,
-  not the code.
+  gadget daemon would grab the same registers. The same binary reads
+  `dr_mode` at start and runs either today's host code or a new device
+  part (`device.rs`: core and endpoint 0; `gadget_net.rs`: the function),
+  sharing `regs.rs`, the register mapping and the network scheme code.
+  Nothing changes on the Pi 3B+ or on a Zero 2 W without the overlay.
+- **Which class:**
+
+  | Class | Linux | macOS | Windows |
+  |---|---|---|---|
+  | CDC-ECM | built in (`cdc_ether`) | built in | no driver from Microsoft |
+  | CDC-NCM | built in (`cdc_ncm`) | built in | built in on 11; on 10 since 1903 (`UsbNcm`), bound without an `.inf` only with Microsoft OS descriptors (`WINNCM`) |
+  | RNDIS | built in (its removal has been proposed) | no | built in, but an old Microsoft-only protocol |
+
+  So **NCM is the target**: one class for all three. ECM goes first
+  because it is simpler (one Ethernet frame per bulk transfer, no NTB
+  framing) and enough for the Linux test bench; NCM adds the NTB16
+  framing and the Microsoft OS 2.0 descriptors. RNDIS is left out.
+- **Into netstack:** the device part is one more adapter in `dwc2d`'s
+  `UsbNet` (`Adapter::Gadget`), registered as `network.usb_gadget` like
+  `network.usb_ecm`; netstack already opens every `network.*` scheme, so it
+  needs no change. `read_packet`/`write_packet` take frames from the bulk
+  OUT endpoint and queue them on bulk IN; the interrupt endpoint reports
+  link up when the host selects the data interface. Addresses: the computer
+  usually wants a DHCP server on the gadget, and Redox has only the client.
+  The gadget gets a fixed address (`192.168.7.1/24`, as on BeagleBone) and
+  a small DHCP server that gives the computer `192.168.7.2`; `dhcpd` must
+  not run as a client on that adapter. mDNS (`redox-rpi.local`, PR #93)
+  then finds it by name. For the first test, fixed addresses on both sides.
+- **Testing:** QEMU can't: its DWC2 model (`hw/usb/hcd-dwc2.c`) is host
+  only and no QEMU machine has a DWC2 device side. What can be tested on
+  the build host: a fake device register file in Rust that plays a host's
+  enumeration (reset, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, bulk
+  packets) against endpoint 0 and the function (`cargo test`), plus unit
+  tests of the descriptors and of NCM's NTB encoding and decoding. The QEMU
+  tests keep checking that host mode is unchanged. The real test: a Zero 2
+  W cabled to homenodellm (powered by it; `cdc_ether`/`cdc_ncm` on the
+  Linux side, tests over SSH without a person), booted from SD or by
+  rpiboot over the same cable; a second USB serial adapter for its console;
+  one person visit to set it up and try a Mac and a Windows PC.
+
+| Step | What | Size |
+|---|---|---|
+| 1 | Mode selection from the device tree, `dwc2d` split into host and device start | ~100 lines |
+| 2 | Device core: FIFOs, interrupts, endpoints, soft connect | ~600 lines |
+| 3 | Endpoint 0, standard requests, descriptors | ~300 lines |
+| 4 | Host model with `cargo test` for steps 2–3 | ~300 lines |
+| 5 | CDC-ECM function, `network.usb_gadget`, fixed address | ~400 lines |
+| 6 | Zero 2 W bench at homenodellm, first Linux test | setup, 1 person visit |
+| 7 | Small DHCP server for the computer's side | ~250 lines |
+| 8 | CDC-NCM: NTB16 framing, Microsoft OS 2.0 descriptors, tests | ~450 lines |
+| 9 | Mac and Windows check | 1 person visit |
+
+About 2400 lines in all (today's `dwc2d` is about 4600), roughly 5–6
+sessions: 2 for steps 1–4, 1 for step 5, 1 for steps 7–8, and 1–2 for the
+bench and fixes found on the Zero. **Medium**; the risk is the test bench,
+not the code.
 
 ## Later
 

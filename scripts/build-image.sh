@@ -20,8 +20,8 @@
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
-#                 one, and its recipes/<path>/recipe.toml, which replace the
-#                 upstream recipes/<path>/recipe.toml
+#                 one, and its recipes/<path>/recipe.toml (at any depth),
+#                 which replace the upstream recipes/<path>/recipe.toml
 #   --release     name of a release or release candidate (v0.3.0-rc2): shown
 #                 above the login prompt, as RELEASE in /etc/redox-rpi-release
 #                 and as release in the manifest (docs/release-process.md);
@@ -42,6 +42,8 @@
 #         and its manifest in build/manifests/
 
 set -euo pipefail
+# recipes/**/recipe.toml: experiment recipes at any depth (wip/dev/lang/tcc).
+shopt -s globstar
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="$ROOT/upstream"
@@ -330,7 +332,9 @@ recipe_dirs() {
     local exp
     for exp in "${experiments[@]}"; do
         [ -d "$ROOT/patches/experiments/$exp/recipes" ] || continue
-        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n')
+        # A folder with its own recipe.toml is a whole new recipe (below).
+        (cd "$ROOT/patches/experiments/$exp/recipes" && find . -name '*.patch' -printf '%h\n' |
+            sort -u | while read -r dir; do [ -f "$dir/recipe.toml" ] || echo "$dir"; done)
     done | sed 's|^\./||' | sort -u
 }
 extra_patch_files() {
@@ -376,6 +380,10 @@ done < <(recipe_dirs)
 # (redoxfs-file) have none.
 for file in "$ROOT"/tools/*/recipe.toml; do
     tool="$(basename "$(dirname "$file")")"
+    # The cookbook copies a path source into source/ without removing files
+    # that are gone from tools/, so a file from another branch's build can
+    # break this one. Start from a fresh copy; target/ stays for speed.
+    rm -rf "$REDOX/recipes/other/$tool/source"
     mkdir -p "$REDOX/recipes/other/$tool"
     {
         echo "[source]"
@@ -389,16 +397,24 @@ done
 # upstreams first, then the selected experiments versions are put in and
 # their old build is cleaned, so they build from scratch: a static program
 # would otherwise keep the relibc it was first linked with.
-for file in "$ROOT"/patches/experiments/*/recipes/*/*/recipe.toml; do
+for file in "$ROOT"/patches/experiments/*/recipes/**/recipe.toml; do
     [ -e "$file" ] || continue
     rel="${file#"$ROOT"/patches/experiments/*/recipes/}"
+    # A whole new recipe (assistant's llama-cpp) has no upstream version.
+    git -C "$REDOX" ls-files --error-unmatch -- "recipes/$rel" > /dev/null 2>&1 || continue
     git -C "$REDOX" checkout -q -- "recipes/$rel"
 done
 for exp in "${experiments[@]}"; do
-    for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+    for file in "$ROOT/patches/experiments/$exp"/recipes/**/recipe.toml; do
         [ -e "$file" ] || continue
         rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
+        mkdir -p "$(dirname "$REDOX/recipes/$rel")"
         cp "$file" "$REDOX/recipes/$rel"
+        # Its patches go with it under their own names: a whole recipe lists
+        # them in its own [source] (recipe_dirs above leaves its folder out).
+        for patch in "$(dirname "$file")"/*.patch; do
+            [ -e "$patch" ] && cp "$patch" "$(dirname "$REDOX/recipes/$rel")/"
+        done
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
         fi
@@ -476,7 +492,7 @@ manifest_head="$(mktemp)"
     for exp in "${experiments[@]}"; do
         conf="$ROOT/patches/experiments/$exp/config.toml"
         [ -f "$conf" ] && echo "\"experiments/$exp/config.toml\" = \"$(sha256sum < "$conf" | cut -c1-16)\""
-        for file in "$ROOT/patches/experiments/$exp"/recipes/*/*/recipe.toml; do
+        for file in "$ROOT/patches/experiments/$exp"/recipes/**/recipe.toml; do
             [ -e "$file" ] && echo "\"${file#"$ROOT/patches/"}\" = \"$(sha256sum < "$file" | cut -c1-16)\""
         done
     done

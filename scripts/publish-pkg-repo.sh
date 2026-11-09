@@ -17,7 +17,8 @@
 #   build/tools/bin/pkgar-keys gen --plaintext \
 #       --skey ~/.config/redox-rpi/pkg-key/id_ed25519.toml \
 #       --pkey ~/.config/redox-rpi/pkg-key/id_ed25519.pub.toml
-# and never leaves the build host. The pkgar tool comes from
+# and never leaves the build host. The pkgar tool is installed on the first
+# run (also in the nightly clone) with
 #   cargo install --locked --root build/tools pkgar --version 0.2.4 --features cli
 #
 # Usage:
@@ -47,8 +48,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ ${#packages[@]} -gt 0 ] || packages=(base base-initfs bootloader kernel relibc pkgutils
-    redox-fatfs2 reboot timesync)
-[ -x "$pkgar" ] || { echo "$pkgar missing, see the header of this script" >&2; exit 1; }
+    redoxfs pkg-persist redox-fatfs2 reboot timesync)
+[ -x "$pkgar" ] || cargo install -q --locked --root "$ROOT/build/tools" pkgar --version 0.2.4 --features cli
 [ -f "$key_dir/id_ed25519.toml" ] || { echo "no key in $key_dir, see the header of this script" >&2; exit 1; }
 build_pkey="$REDOX/build/id_ed25519.pub.toml"
 [ -f "$build_pkey" ] || { echo "$build_pkey missing, run scripts/build-image.sh" >&2; exit 1; }
