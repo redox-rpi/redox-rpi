@@ -12,7 +12,7 @@
 #
 # Usage:
 #   scripts/build-uboot.sh [rpi|qemu]    (default: rpi)
-#   scripts/build-uboot.sh rpi-net <server-ip>
+#   scripts/build-uboot.sh rpi-net <server-ip> [<dir>]
 #
 # Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/,
 # or build/u-boot-qemu/u-boot.bin for qemu.
@@ -20,7 +20,10 @@
 # rpi-net builds build/u-boot-net/u-boot.bin for a Pi without SD card, which
 # the Pi firmware loads over TFTP (scripts/netboot-firmware.sh). There is no
 # boot.scr then, so its boot command fetches redox/netboot.scr from
-# <server-ip> itself.
+# <server-ip> itself. <dir> is the netboot directory (default redox); with
+# another one the result goes to build/u-boot-net-<dir>/, e.g. pi400 for
+# the Pi 400, whose EEPROM loads it over TFTP (scripts/netboot-firmware.sh
+# --board pi4, #299).
 
 set -euo pipefail
 
@@ -31,8 +34,10 @@ SRC="$ROOT/upstream/u-boot"
 case "${1:-rpi}" in
     rpi) DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot" ;;
     rpi-net)
+        server="${2:?rpi-net needs the server address}"
+        net_dir="${3:-redox}"
         DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot-net"
-        server="${2:?rpi-net needs the server address}" ;;
+        [ "$net_dir" = redox ] || OUT="$ROOT/build/u-boot-net-$net_dir" ;;
     qemu) DEFCONFIG=qemu_arm64_defconfig; OUT="$ROOT/build/u-boot-qemu" ;;
     *) echo "unknown target: $1" >&2; exit 1 ;;
 esac
@@ -52,7 +57,7 @@ if [ -n "${server:-}" ]; then
     # The same steps as boot.scr from scripts/netboot.sh.
     cat > "$OUT/net.config" <<EOF
 CONFIG_USE_BOOTCOMMAND=y
-CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; tftpboot \${scriptaddr} redox/netboot.scr && source \${scriptaddr}"
+CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; tftpboot \${scriptaddr} $net_dir/netboot.scr && source \${scriptaddr}"
 EOF
     fragments+=("$OUT/net.config")
 fi
