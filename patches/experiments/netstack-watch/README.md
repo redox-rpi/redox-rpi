@@ -81,3 +81,13 @@ By hand: `--experiment netstack-watch`; for the Pi with `dwc2d-netstats`,
   ping: `stuck in read from the network device` after 5 and 35 s, and no
   timer alarm while that is reported. The alarm itself could not be
   triggered in QEMU: the timer comes from the kernel.
+- **Pi test 267 passed** (`v0.4.0-dev-625-g5a33b666+x2d42`, as a default
+  test experiment): 5 of 5 warm resets with network, `pi-test.py` 6/6, one
+  chaos round (`netem-delay`), ping after 12 minutes idle. One heartbeat,
+  `alive at 600 s, idle for 0 s, 15729 events (12570 network), 12942 frames
+  in`: about 26 events a second on the LAN (QEMU: 2). No `no timer event`,
+  no `stuck`, no panic.
+- After main's multi-adapter netstack (`0041`) the patch applied only with
+  fuzz; regenerated on it (`v0.4.1-dev-21-g9e943e2e+x2d42`): QEMU 2 of 2
+  boots with ping, and a stopped `dwc2d` gives `stuck in read` after 5
+  and 36 s.
