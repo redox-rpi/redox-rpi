@@ -221,6 +221,9 @@ A later failure of a met requirement is a **Bug** that names the ID
 trace shows `fails`. Whether a requirement is **verified** for a given
 build is kept in the per-release trace.
 
+The Bug's severity follows the [QMP severity rule](qmp.md#bug-analysis);
+a failed `must` requirement is at least S2.
+
 ## Review and approval
 
 | Who | Checks |
