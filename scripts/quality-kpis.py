@@ -35,6 +35,9 @@ TRACKED = {
     205: "kill() never reaches a pipe loop",
     207: "chaos test froze the Pi",
 }
+# KPIs in the nightly report's short block (--summary), by stable key.
+SUMMARY = ["open_bugs", "no_type", "no_topic", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
+           "pi_pass_rate", "flaky_rate", "req_coverage", "dirty_results", "clippy_redox"]
 PR_RULE_SINCE = datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
 NIGHTLY_ISSUE = "Nightly: main fails on the Pi"
 CODE_PATHS = ("patches/", "tools/", "config/")
@@ -396,96 +399,107 @@ def pct(a, b):
 
 def render(k, repo):
     ok, warn = "ok", "**check**"
-    rows = []
+    rows, table = [], []
 
-    def row(name, value, good, note=""):
+    def row(key, name, value, good, note=""):
+        """key is the stable name for the nightly report (SUMMARY, --json):
+        never rename one; add a new key instead."""
         rows.append(f"| {name} | {value} | {ok if good else warn} | {note} |")
+        table.append({"key": key, "name": name, "value": str(value), "ok": bool(good), "details": note})
 
     bugs = k["open_bugs"]
     s1 = k.get("s1_older_7d", [])
     types = sorted({t for v in k["open_by_repo_type"].values() for t in v})
-    row("Open issues by repo and type",
+    row("open_by_repo_type", "Open issues by repo and type",
         "; ".join(f"{r}: " + ", ".join(f"{t} {n}" for t, n in sorted(v.items()))
                   for r, v in sorted(k["open_by_repo_type"].items())),
         True, f"types in use: {', '.join(types)}; repos read: {', '.join(k['repos'])}")
-    row("Open issues without a type", len(k["no_type"]), not k["no_type"],
+    row("no_type", "Open issues without a type", len(k["no_type"]), not k["no_type"],
         "Task/Bug/Feature not set yet" if len(k["no_type"]) > 12 else ", ".join(k["no_type"]))
-    row("Open bugs (type Bug or label `bug`)",
+    row("open_bugs", "Open bugs (type Bug or label `bug`)",
         ", ".join(f"{s}: {len(n)}" for s, n in bugs.items()) or "0", not s1,
         ("no `severity:` labels yet; " if set(bugs) <= {"unclassified"} else "")
         + "; ".join(f"{sv}: {', '.join(n)}" for sv, n in bugs.items())
         + (f"; **S1 older than 7 days:** {', '.join(s1)}" if s1 else ""))
-    row("Unlabelled open issues", len(k["unlabelled"]), not k["unlabelled"], links(repo, k["unlabelled"]))
-    row("Stale `in-progress` (14 days)", len(k["stale_in_progress"]), not k["stale_in_progress"],
+    row("no_topic", "Unlabelled open issues", len(k["unlabelled"]), not k["unlabelled"], links(repo, k["unlabelled"]))
+    row("stale_in_progress", "Stale `in-progress` (14 days)", len(k["stale_in_progress"]), not k["stale_in_progress"],
         links(repo, k["stale_in_progress"]))
-    row("Reopened issues", len(k["reopened"]), True, links(repo, k["reopened"]))
-    row("Tracked bugs closed on GitHub", len(k["closed_but_tracked"]), not k["closed_but_tracked"],
+    row("reopened", "Reopened issues", len(k["reopened"]), True, links(repo, k["reopened"]))
+    row("closed_but_tracked", "Tracked bugs closed on GitHub", len(k["closed_but_tracked"]), not k["closed_but_tracked"],
         links(repo, k["closed_but_tracked"]) + " (still seen: see quality.md)" if k["closed_but_tracked"] else "")
     lt = k.get("lead_time_h", {})
-    row("PR lead time (median / p90)",
+    row("pr_lead_time", "PR lead time (median / p90)",
         f"{lt.get('median', '–')} h / {lt.get('p90', '–')} h over {k['prs_merged']} PRs",
         lt.get("median", 0) < 72)
-    row("PRs without an issue (P1)", len(k["prs_without_issue"]), not k["prs_without_issue"],
+    row("prs_without_issue", "PRs without an issue (P1)", len(k["prs_without_issue"]), not k["prs_without_issue"],
         links(repo, k["prs_without_issue"], "pull"))
-    row("Code PRs without a Pi test named (P2)", len(k["code_prs_without_pi_test"]),
+    row("code_prs_without_pi_test", "Code PRs without a Pi test named (P2)", len(k["code_prs_without_pi_test"]),
         not k["code_prs_without_pi_test"], links(repo, k["code_prs_without_pi_test"], "pull"))
-    row("Stale-CI merges (P3)", len(k["stale_ci_merges"]), not k["stale_ci_merges"],
+    row("stale_ci_merges", "Stale-CI merges (P3)", len(k["stale_ci_merges"]), not k["stale_ci_merges"],
         "last commit older than an earlier merge in the same patch directory: "
         + links(repo, k["stale_ci_merges"], "pull", most=8))
-    row("Patch commits on main outside a PR (P5)", len(k["direct_patch_commits"]),
+    row("direct_patch_commits", "Patch commits on main outside a PR (P5)", len(k["direct_patch_commits"]),
         not k["direct_patch_commits"], ", ".join(k["direct_patch_commits"][:10]))
     longest = max((s["hours"] for s in k["main_red_streaks"]), default=0)
-    row("Main red hours", f"{k['main_red_hours']} h in {len(k['main_red_streaks'])} streaks",
+    row("main_red_hours", "Main red hours", f"{k['main_red_hours']} h in {len(k['main_red_streaks'])} streaks",
         longest < 8, "; ".join(f"from {s['from']} {s['hours']} h" + (" (still red)" if s.get("still_red") else "")
                                for s in k["main_red_streaks"][-5:]))
     n = k["nightly"]
-    row("Nightly pass rate", f"{pct(n['pass'], n['pass'] + n['fail'])} ({n['pass']} pass, {n['fail']} fail)",
+    row("nightly_pass_rate", "Nightly pass rate", f"{pct(n['pass'], n['pass'] + n['fail'])} ({n['pass']} pass, {n['fail']} fail)",
         n["fail"] == 0)
     p = k["pi_rows"]
     allrows = sum(p.values())
-    row("Pi pass rate", f"{pct(p['pass'], allrows)} ({p['pass']} pass, {p['fail']} fail, {p['other']} other)",
+    row("pi_pass_rate", "Pi pass rate", f"{pct(p['pass'], allrows)} ({p['pass']} pass, {p['fail']} fail, {p['other']} other)",
         True, "\"other\": partly, finding, diagnosis")
-    row("Flaky rate", f"{pct(k['flaky_rows'], allrows)} ({k['flaky_rows']} of {allrows} rows)", True,
+    row("flaky_rate", "Flaky rate", f"{pct(k['flaky_rows'], allrows)} ({k['flaky_rows']} of {allrows} rows)", True,
         "rows that name a tracked bug")
     pw = k["patches_with_issue"]
-    row("Patches with an issue (P8)", f"{pct(pw['named'], pw['total'])} ({pw['named']} of {pw['total']})", True)
-    row("Dirty results (P9)", len(k["dirty_rows"]), True, ", ".join(k["dirty_rows"][:10]))
+    row("patches_with_issue", "Patches with an issue (P8)", f"{pct(pw['named'], pw['total'])} ({pw['named']} of {pw['total']})", True)
+    row("dirty_results", "Dirty results (P9)", len(k["dirty_rows"]), True, ", ".join(k["dirty_rows"][:10]))
     ht = k["host_tests"]
     with_tests = [d for d, n in ht.items() if n]
-    row("Host tests (Rust crates in tools/)",
+    row("host_tests", "Host tests (Rust crates in tools/)",
         f"{len(with_tests)} of {len(ht)} crates, {sum(ht.values())} tests", True,
         ", ".join(f"{d} {ht[d]}" for d in with_tests) + "; line coverage not measured yet")
     pt = k["pi_rows_per_topic"]
-    row("Pi rows per topic", ", ".join(f"{t} {n}" for t, n in sorted(pt.items(), key=lambda x: -x[1]) if n),
+    row("pi_rows_per_topic", "Pi rows per topic", ", ".join(f"{t} {n}" for t, n in sorted(pt.items(), key=lambda x: -x[1]) if n),
         True, "rows naming an issue of the topic (heuristic); no rows: " + (", ".join(t for t, n in sorted(pt.items()) if not n) or "none"))
-    row("Release checklist completion", "not measurable yet", True, "the checklist has no result column")
+    row("checklist_completion", "Release checklist completion", "not measurable yet", True, "the checklist has no result column")
     rq = k.get("requirements")
     if rq:
         tested = rq["total"] - len(set(rq["gap"]) | set(rq["no_test"]))
-        row("Test coverage per requirement",
+        row("req_coverage", "Test coverage per requirement",
             f"{pct(tested, rq['total'])} ({tested} of {rq['total']}; "
             + ", ".join(f"{p_} {n}" for p_, n in rq["by_priority"].items()) + ")",
             not rq["gap_must"], f"fully tested; from `{k['req_rev']}`; a **gap** in some criterion: "
             f"{', '.join(rq['gap']) or 'none'}; no test named: {', '.join(rq['no_test']) or 'none'}"
             + (f"; `must` with a gap: {', '.join(rq['gap_must'])}" if rq["gap_must"] else ""))
-        row("Requirements failing or verified only by a person / a dirty build",
+        row("req_failing", "Requirements failing or verified only by a person / a dirty build",
             f"{len(rq['failing'])} / {len(rq['person_only'])} / {len(rq['dirty_only'])}", not rq["failing"],
             "failing: " + (", ".join(rq["failing"]) or "none") + "; dirty only: " + (", ".join(rq["dirty_only"]) or "none"))
-        row("Trace: requirements without an implementing issue (P11)", len(rq["no_issue"]), not rq["no_issue"],
+        row("req_no_issue", "Trace: requirements without an implementing issue (P11)", len(rq["no_issue"]), not rq["no_issue"],
             ", ".join(rq["no_issue"]))
-        row("Pi rows naming a requirement", f"{len(rq['rows_naming'])} IDs", not rq["unknown_in_rows"],
+        row("req_rows", "Pi rows naming a requirement", f"{len(rq['rows_naming'])} IDs", not rq["unknown_in_rows"],
             "unknown IDs in rows: " + (", ".join(rq["unknown_in_rows"]) or "none"))
     else:
-        row("Test coverage per requirement", "–", True, f"no docs/requirements at `{k['req_rev']}`")
+        row("req_coverage", "Test coverage per requirement", "–", True, f"no docs/requirements at `{k['req_rev']}`")
+    cl = k.get("clippy_redox")
+    if cl is not None:
+        warn_n = sum(c.get("warnings", 0) for c in cl.values())
+        unsafe_n = sum(c.get("undocumented_unsafe", 0) for c in cl.values())
+        worst = sorted(cl.items(), key=lambda x: -x[1].get("warnings", 0))[:5]
+        row("clippy_redox", "clippy on our Redox code (drivers, kernel, relibc)",
+            f"{warn_n} warnings, {unsafe_n} undocumented unsafe in {len(cl)} crates", True,
+            "most: " + ", ".join(f"{c} {v.get('warnings', 0)}" for c, v in worst))
 
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]
-    return "\n".join([
+    return table, "\n".join([
         "# Quality KPIs",
         "",
         f"Generated by `scripts/quality-kpis.py` on {k['generated']} from `{k['rev']}`,",
         f"last {k['days']} days. Definitions and targets:",
-        "[qmp.md](qmp.md#kpis). Do not edit by hand.",
+        f"[qmp.md](https://github.com/{repo}/blob/main/docs/process/qmp.md#kpis). Do not edit by hand.",
         "",
         "| KPI | Value | Status | Details |",
         "|---|---|---|---|",
@@ -510,15 +524,31 @@ def main():
     ap.add_argument("--req-rev", help="revision to read docs/requirements from (default: --rev)")
     ap.add_argument("--tests-repo", default="redox-rpi/pi-tests", help="repository with queue.md")
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "process", "kpis.md"))
-    ap.add_argument("--json")
+    ap.add_argument("--json", help="also write the raw values and the KPI table (key, name, value, ok, details)")
+    ap.add_argument("--summary", action="store_true",
+                    help="print a short Markdown block (at most 12 lines) for the nightly report")
+    ap.add_argument("--clippy", help="JSON from the nightly's clippy run: {crate: {warnings, undocumented_unsafe}}")
     args = ap.parse_args()
     k = collect(args)
+    if args.clippy:
+        try:
+            with open(args.clippy) as f:
+                k["clippy_redox"] = {c: (v if isinstance(v, dict) else {"warnings": v}) for c, v in json.load(f).items()}
+        except (OSError, ValueError) as e:
+            print(f"--clippy {args.clippy}: {e}", file=sys.stderr)
+    table, page = render(k, args.repo)
     with open(args.out, "w") as f:
-        f.write(render(k, args.repo))
+        f.write(page)
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(k, f, indent=1)
-    print(f"wrote {args.out}")
+            json.dump({**k, "kpis": table}, f, indent=1)
+    if args.summary:
+        by_key = {t["key"]: t for t in table}
+        lines = [f"- {'' if by_key[key]['ok'] else '**check** '}{by_key[key]['name']}: {by_key[key]['value']}"
+                 for key in SUMMARY if key in by_key]
+        print("\n".join(lines[:11] + [f"- Full page: `{os.path.basename(args.out)}`"]))
+    else:
+        print(f"wrote {args.out}")
 
 
 if __name__ == "__main__":
