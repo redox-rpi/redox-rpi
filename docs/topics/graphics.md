@@ -320,49 +320,46 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
-- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
-  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
-  main, the base patches renumbered to `0060`–`0067` (main now uses
-  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
-  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
-  2–3 and #130 pass.
-- **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
-  judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
-  `drawbench` and the vsync line, without a screen. If it passes, a draft
-  PR from `graphics-vsync` brings experiment `rpi-fb` (patches `0024`–
-  `0029`, `0036`) and experiment `orbital` (a config file) to main, still
-  as experiments, not default; the report goes into the PR. Making
-  `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
-  #54 with #108), which checks what the screen shows.
-  Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
-  `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
-  free. The cause is the kernel: its page allocator hands out at most 4
-  MiB of physically contiguous memory (11 orders), however much is free,
-  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
-  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
-  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. On the Pi (#130)
-  the DMA test blit at start failed (`test blit of 2 rows moved 4`, while
-  #116 got 3 with the same code), so the DMA path was not reached; the
-  allocator change itself ran without trouble. Likely cause: "zeroed" DMA
-  memory that is not zero, because the kernel clears it through a cached
-  mapping and the driver reads it uncached. Patch `0068` clears the test
-  buffer itself and logs what was there; Pi test #138
-  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
-  `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
-  file in `/srv/tftp/`.
-- Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
-- Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
-  boot (is `monitor connected` logged?), and double buffering at 1280x720.
-- Pi test #44 (`graphics-fb3`), same visit: the DMA row count and the
-  benchmark, CPU against DMA. If DMA wins, cached dumb buffers with cache
-  maintenance (DMA plan step 2, a kernel change) are the next gain.
-- Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
-  login to desktop time, frame rate with `drawbench`, terminal speed,
-  memory. With the NanoKVM most screen checks need no person.
-- For a usable desktop: the USB mouse works in QEMU (`usb-mouse` on
-  `usb-hotplug`, #48, keyboard and mouse at the same time); next is the
-  Pi test with a mouse (the NanoKVM's USB can be one) and then `usb-mouse`
-  and the graphics branches on main once their Pi tests pass.
+Updated 2026-11-10. Done since the last version of this list: draft PR
+[#113](https://github.com/redox-rpi/redox-rpi/pull/113) merged on
+2026-11-08 (experiments `rpi-fb` and `orbital` on main, kernel `0049`);
+the optional desktop in v0.4.0 runs on `rpi-fbd`
+([#255](https://github.com/redox-rpi/redox-rpi/pull/255)), with a game in
+v0.4.1 ([#298](https://github.com/redox-rpi/redox-rpi/pull/298)). The
+#116, #130 and #138 named here before are Pi test rows of that PR, not
+issues; row #138 (the DMA test blit) is still in the queue but blocks
+nothing now. Graphics work goes on apart from the weekly releases
+(maintainer, 2026-11-10).
+
+In this order:
+
+1. **Direct boot (v0.5.0, [#324](https://github.com/redox-rpi/redox-rpi/issues/324)) first, if it needs graphics:**
+   the desktop on the boot stub's framebuffer, without U-Boot. Anything
+   that blocks it comes before the steps below until the Friday cut-off.
+2. **Noise bands on HDMI with vc4d (Pi test #275).** vc4shot of the same
+   buffer is clean and the buffers are contiguous (#276). Found on
+   2026-11-10: the firmware still takes the HVS interrupts and clears the
+   latched status bits, so vc4d's underrun check (EUFLOW) could be blind.
+   Branch `vc4d-fifo-diag` (vc4d `underrun-diag`) reads the channel's live
+   FIFO state every second and logs the composite output buffer (COB)
+   split; `/tmp/vc4d.cob` gives the channel a larger part of the COB at
+   runtime. Pi row in [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests)
+   (serial; a screen check only if the FIFO is clean).
+3. **vc4d stage 2b ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)):**
+   pixel valves, HDMI, EDID and modes without the firmware, the vertical
+   blank and real hotplug. QEMU's raspi3b has no HVS, pixel valve or HDMI
+   model, so only the logic runs there (fake registers); each part needs a
+   Pi row. Screen checks are collected for one visit with the user.
+4. **vc4d host tests in CI ([#271](https://github.com/redox-rpi/redox-rpi/issues/271)):**
+   the pure logic (display lists, register fields, mode and timing math)
+   in a crate without Redox dependencies, so `cargo test` and clippy run
+   on homenodellm and in CI. Done before larger stage 2b changes, so they
+   are checked.
+5. **vc4d stage 1 into vc4d's main** ([vc4d#1](https://github.com/redox-rpi/vc4d/pull/1)),
+   then experiment `vc4d` on redox-rpi main (only a recipe pinned to a
+   vc4d commit, RFC 0002), still not the default display driver.
+6. **Windows as planes** (step 2 of the stage plan): needs changes in
+   Orbital; the window drag costs about 90 % of a core today (#259).
 
 ## Effort: estimate and what it took
 
