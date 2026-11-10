@@ -5,7 +5,7 @@ Usage:
     scripts/pi-test.py <host> [--port 2323] [--manifest <file>] [--starts 300]
                        [--serial-log <file>] [--serial-lines 15]
                        [--crash-log <file.jsonl>]
-                       [--report docs/test-reports.md] [--note <text>]
+                       [--report <file>] [--note <text>]
 
 Checks, in this order:
   version   /etc/redox-rpi-release is readable and names a build ID (and the

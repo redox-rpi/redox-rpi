@@ -94,7 +94,7 @@ socket answers `EAGAIN` (11), not `EWOULDBLOCK` (41, a separate number on
 Redox), and `/scheme/event` gives a queue only for an open with `O_CREAT`.
 
 Pi test 70 (2026-10-30, `v0.3.0-dev-172-g80279b9+x8cc4`, all three
-patches, [report](../../../docs/test-reports.md#2026-10-30-v030-dev-172-g80279b9x8cc4)):
+patches, [report](https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-172-g80279b9x8cc4)):
 **pass**. 1 MiB on `/scheme/data` with `conv=fsync`, copied file to file at
 `bs=4k` 0.49 s (stable 12.7 s), `bs=1000` 0.82 s, `bs=512` 1.22 s (stable
 94 s). All copies and 300 appends intact, also after `echo reset >

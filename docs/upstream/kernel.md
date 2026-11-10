@@ -109,7 +109,7 @@ secondary CPU (`src/arch/aarch64/device/cpu/boot.rs`).
   (sync on `mprotect` to executable and at the exec address space switch)
   and `0002` (executable `fmap`, and page faults that copy a frame or take
   one from a scheme). Both apply to upstream master `1a1295b` as they are.
-- **Tested:** Pi 3B+ test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)): without the patches
+- **Tested:** Pi 3B+ test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)): without the patches
   3146 and 3244 of 10000 `new-page` rounds and 5310 and 5349 `same-page`
   rounds ran stale code; with them 0 in every test on both boots, 0 of 1000
   failed starts, and no measurable cost (the `ls` loop 116.8 s with against

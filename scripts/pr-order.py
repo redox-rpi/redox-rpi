@@ -5,12 +5,14 @@ Usage:
     scripts/pr-order.py [--repo redox-rpi/redox-rpi] [--no-fetch] [--json]
 
 For every open pull request it shows what the coordinator checks before a
-merge (docs/test-plan.md, "Merging through pull requests"):
+merge (docs/test-plan.md, "Merging through pull requests"; the queue itself
+is in redox-rpi/pi-tests):
 
   base      the branch it merges into; stacked pull requests come after
             the one they build on
   CI        green, failed, running or none
-  Pi test   the newest docs/test-plan.md row that names the branch or the
+  Pi test   the newest row of the test queue (queue.md in redox-rpi/pi-tests,
+            read by scripts/pi-tests-queue.sh) that names the branch or the
             pull request, and whether it passed
   patches   numbered patches it adds (patches/<area>/NNNN-*.patch), with
             numbers already on main or added by another pull request marked
@@ -25,18 +27,20 @@ first one that conflicts. Pull requests with a patch number clash merge
 fine in git but need their patches renumbered first.
 
 Only reads: it fetches the pull request heads to refs/remotes/origin/pr/N,
-nothing else. Needs gh (logged in) and git 2.38 or newer.
+nothing else, and reads the test queue from redox-rpi/pi-tests. Needs gh
+(logged in) and git 2.38 or newer.
 """
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 
 PATCH = re.compile(r"^patches/(base|kernel|relibc|bootloader|fdt)/(\d{4})-.*\.patch$")
 # Files most pull requests touch; a shared one is no reason to merge in order.
-COMMON = {"docs/test-plan.md", "docs/test-reports.md", "patches/README.md"}
+COMMON = {"docs/test-plan.md", "docs/test-reports.md", "patches/README.md"}  # the first two: pointer pages
 # A result that starts with a bold "fail"/"no"/"not" failed, even if it also
 # says "standard checks pass"; "0 of 100 starts failed" is still a pass.
 FAILED = re.compile(r"\*\*(fail|no\b|not\b|found\b)", re.I)
@@ -81,7 +85,7 @@ def ci_state(checks):
 
 
 def test_rows(text):
-    """Rows of the queue and the done list in docs/test-plan.md, newest first.
+    """Rows of the queue and the done list in queue.md (pi-tests), newest first.
 
     Queue rows are "| # | Test | Owner | Image | Needs | Status |", done rows
     "| Date | Test | Build ID | Result |" with the number at the start of
@@ -140,7 +144,8 @@ def main():
         git("fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*",
             "+refs/pull/*/head:refs/remotes/origin/pr/*")
 
-    rows = test_rows(git("show", "origin/main:docs/test-plan.md"))
+    rows = test_rows(run(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "pi-tests-queue.sh")).stdout)
     on_main = set()
     for path in git("ls-tree", "-r", "--name-only", "origin/main", "patches").splitlines():
         m = PATCH.match(path)
