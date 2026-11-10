@@ -1,0 +1,78 @@
+From 914ff895e53a60b2b82ded9a0ebb0abeab8e0f17 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 12:14:53 +0000
+Subject: [PATCH] Keep index.theme in memory and remember missing icons for 10
+ minutes
+
+Every icon lookup that missed the cache read (mapped) the theme's
+index.theme again and then probed each directory listed there. An icon
+that was not found was looked up again after 5 seconds. On Redox each
+file access is a call to the file system daemon: the COSMIC file
+dialog kept redoxfs at 79 % of a core on a Raspberry Pi 3 and took
+20-55 s to show (redox-rpi Pi test #272).
+---
+ src/lib.rs       |  4 +++-
+ src/theme/mod.rs | 20 +++++++++++++++-----
+ 2 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 127c236..6cbf60e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -267,7 +267,9 @@ impl<'a> LookupBuilder<'a> {
+         if self.cache {
+             match self.cache_lookup(self.theme) {
+                 CacheEntry::Found(icon) => return Some(icon),
+-                CacheEntry::NotFound(last_check) if last_check.elapsed().as_secs() < 5 => {
++                // An icon that was not found is looked up again after 10 minutes, not
++                // 5 seconds: each lookup probes every directory of the theme.
++                CacheEntry::NotFound(last_check) if last_check.elapsed().as_secs() < 600 => {
+                     return None;
+                 }
+                 _ => (),
+diff --git a/src/theme/mod.rs b/src/theme/mod.rs
+index 5ae0e2d..5221da4 100644
+--- a/src/theme/mod.rs
++++ b/src/theme/mod.rs
+@@ -1,13 +1,12 @@
+ use crate::theme::directories::DirectoryType;
+ use crate::theme::paths::ThemePath;
+-use memmap2::Mmap;
+ pub(crate) use paths::BASE_PATHS;
+ use std::cmp::Ordering;
+ use std::collections::BTreeMap;
+ use std::ops::ControlFlow;
+ use std::os::unix::ffi::OsStrExt;
+ use std::path::{Path, PathBuf};
+-use std::sync::LazyLock;
++use std::sync::{Arc, LazyLock, Mutex};
+ 
+ mod directories;
+ mod parse;
+@@ -15,9 +14,20 @@ mod paths;
+ 
+ pub static THEMES: LazyLock<BTreeMap<Vec<u8>, Vec<Theme>>> = LazyLock::new(get_all_themes);
+ 
+-#[inline]
+-pub fn read_ini_theme(path: &Path) -> std::io::Result<Mmap> {
+-    std::fs::File::open(path).and_then(|file| unsafe { Mmap::map(&file) })
++/// Contents of the index.theme files read so far, by path.
++static INDEXES: LazyLock<Mutex<BTreeMap<PathBuf, Arc<[u8]>>>> = LazyLock::new(Default::default);
++
++/// The contents of an index.theme, read once and then kept in memory: every
++/// icon lookup that misses the cache needs it, and reading (or mapping) the
++/// file each time is slow where file access is a call to a file system
++/// daemon, as on Redox.
++pub fn read_ini_theme(path: &Path) -> std::io::Result<Arc<[u8]>> {
++    if let Some(data) = INDEXES.lock().unwrap().get(path) {
++        return Ok(data.clone());
++    }
++    let data: Arc<[u8]> = std::fs::read(path)?.into();
++    INDEXES.lock().unwrap().insert(path.to_path_buf(), data.clone());
++    Ok(data)
+ }
+ 
+ #[derive(Debug)]
+-- 
+2.53.0
+

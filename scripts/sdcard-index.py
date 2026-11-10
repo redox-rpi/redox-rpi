@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Write index.json for the SD card images on the image server.
 
-    scripts/sdcard-index.py <sdcard dir> [<test-plan.md>]
+    scripts/sdcard-index.py <sdcard dir> [<queue.md>]
 
 SwiftFlash (github.com/zehrer/SwiftFlashCLI, docs/build-server.md) reads it
 instead of guessing from file names: per published image file, family,
 version and build date. Our own fields, which SwiftFlash ignores: board,
 commit, build_id, experiments, owner, and "rows", the queued tests in
-docs/test-plan.md that name the image.
+queue.md (redox-rpi/pi-tests, scripts/pi-tests-queue.sh) that name the image.
 
 Only real files count: the -latest symlinks are for people, not for
 SwiftFlash, which finds the newest build by itself. Sources of the fields,

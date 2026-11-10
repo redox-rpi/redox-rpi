@@ -1,24 +1,62 @@
-# Native C compiler (TinyCC)
+# Native C compilers (TinyCC, later QBE)
 
 The first compiler that runs on Redox on the Pi itself: TinyCC (`tcc`),
 about 390 KB, compiles and links in one step, `tcc -run` runs a C file
 without writing a binary. Chosen in the Architect session as the first
-compiler to try. Issue:
-[#247](https://github.com/redox-rpi/redox-rpi/issues/247).
+compiler to try (issue
+[#247](https://github.com/redox-rpi/redox-rpi/issues/247), done). A second,
+optimising small compiler, cproc + QBE, is discussed below under
+[Other compilers](#other-compilers-cproc--qbe); nothing is started there.
 
 ## State
 
-Nothing on `main` yet.
+Experiment [`tcc`](../../patches/experiments/tcc/README.md) on `main`
+(PR [#249](https://github.com/redox-rpi/redox-rpi/pull/249)): tinycc `mob`
+(arm64 backend) with four small patches, cross-compiled for aarch64 Redox,
+plus test programs (`tools/tcc-bench`).
 
-## In progress
+**In the release image from v0.5.0, as a beta**
+([#293](https://github.com/redox-rpi/redox-rpi/issues/293), done; the
+maintainer's decision; PR [#297](https://github.com/redox-rpi/redox-rpi/pull/297)
+merged for v0.5.0, which was called v0.4.1 until 2026-11-09): the release options get `--experiment tcc` for the
+SD card and netboot images and the Zero 2 W image. v0.4.0 did not have it.
+All three still fit
+(build `v0.4.0-dev-819-gab8fedb5`, against v0.4.0-rc2; the tcc package is
+3.8 MB, 2.6 MB of it the sources in `/usr/src/tinycc` for self-hosting):
 
-Experiment [`tcc`](../../patches/experiments/tcc/README.md) on branch `tcc`
-(draft PR [#249](https://github.com/redox-rpi/redox-rpi/pull/249)):
-tinycc `mob` (arm64 backend) with four small patches, cross-compiled for
-aarch64 Redox, plus test programs (`tools/tcc-bench`).
+| Image | rc2 | with tcc | RedoxFS partition |
+|---|---|---|---|
+| SD card, installed | 203 MB | 207 MB | 1 GB |
+| SD card `.img.xz` (`xz -6`) | 48.8 MB | 49.7 MB | |
+| Netboot (release options) | 206 MB | 210 MB | 232 MB |
+| Zero 2 W netboot (`timesync tcc`) | 113 MB | 116 MB | 124 MB |
+
+QEMU, 2026-11-09: on the netboot and Zero 2 W images `tcc -run`, a dynamic
+build and the script `hallo.c` work, the desktop's motd is still there.
+Real Pi 3B+ ([test
+#293](https://github.com/redox-rpi/pi-tests/blob/main/reports/293.md)
+(the test name still says v0.4.1),
+release-options netboot image `v0.4.0-dev-819-gab8fedb5+xc80e`): pass.
+`tcc -run hello.c` 120 ms, `tcc -o hello` 99 ms, the script `hallo.c`
+rc 42, the whole tcc check to its end (static Hello World fails as known),
+motd and `EXPERIMENTS` as in the release, `pi-test.py` 6 of 6, 0 of 300
+starts failed, no panic.
+
+Line for the release notes:
+
+> **A C compiler on the Pi (beta).** TinyCC (`tcc`) compiles C on the Pi
+> itself: `tcc -o hello hello.c` builds a program in about 0.1 s,
+> `tcc -run hello.c` runs a file without writing a binary, and a C file
+> that starts with `#!/usr/bin/tcc -run` runs as a script. Examples in
+> `/usr/share/tcc-tests/`. Known limits: programs are linked dynamically
+> only (`-static` fails: relibc's `libc.a` uses TLS descriptor relocations
+> that tcc's linker does not know); tcc's code runs 1.3 to 3.3 times slower
+> than gcc -O2's; quotes in shebang options are removed. (#293)
+
+## Pi results
 
 **Real Pi 3B+**
-([test #278](../test-reports.md#278-247-tinycc-compiles-and-runs-c-on-the-pi-2026-11-07-pi-test-agent),
+([test #278](https://github.com/redox-rpi/pi-tests/blob/main/reports/278.md),
 `v0.4.0-dev-689-gb453b397+xd12c`, 2026-11-07): pass, no panic.
 
 | Check | Result |
@@ -54,7 +92,7 @@ path it was started with) and stdin, and its exit code is the program's.
 Options after `-run` in the shebang reach tcc (`-run -DANSWER=42` works),
 but quotes in them are removed: `-DX="text"` defines `X` as `text`, not as a
 string. No wrapper is needed. Real Pi 3B+ ([test
-#282](../test-reports.md#282-247-tcc-a-c-file-run-as-a-script-usrbintcc--run-2026-11-07-pi-test-agent),
+#282](https://github.com/redox-rpi/pi-tests/blob/main/reports/282.md),
 `v0.4.0-dev-716-gc6d4de06+xd12c`): pass, 128 ms per start (warm 127 ms);
 QEMU 244 ms. Example: `/usr/share/tcc-tests/hallo.c`.
 
@@ -79,9 +117,49 @@ gcc-built program.
   `libc.a` built with traditional TLS (`-mtls-dialect=trad`).
 - Ion has no `time`; `timeit` (in `tools/tcc-bench`) fills the gap for now.
 
+## Other compilers: cproc + QBE
+
+Draft, from the Architect discussions with the maintainer (2026-11-04 and
+2026-11-07). Nothing is started and no issue waits for it.
+
+[QBE](https://c9x.me/compile/) ([git](https://c9x.me/git/qbe.git/)) is a
+small compiler backend, about 10,000 lines, with an arm64 backend (also
+amd64 and riscv64; no 32-bit ARM). For C it is used with the front end
+[cproc](https://sr.ht/~mcf/cproc/) (C11). Its goal is about 70 % of the
+speed of a big optimising compiler with about 10 % of the code.
+
+| | TinyCC | cproc + QBE | gcc / clang |
+|---|---|---|---|
+| Size | ~390 KB, one program | ~20,000 lines, several programs | 100 MB and more |
+| Assembler and linker | built in, writes ELF | none: needs `as` and `ld` (binutils) | binutils / lld |
+| Optimisation | almost none, compiles line by line, keeps much on the stack | SSA, register allocation, simple folding | full: inlining, loops, NEON vectorising, Cortex-A53 scheduling |
+| Code speed (rough) | 1.3-3.3× slower than gcc -O2 (measured on the Pi, above) | about 70 % of gcc -O2 (project's claim, not measured here) | reference |
+| On the Pi today | yes, beta in the image | no | no (upstream has a `dev/gcc13` recipe, not tried for aarch64) |
+
+What it would take on Redox aarch64:
+
+- Build `qbe` and `cproc` for `aarch64-unknown-redox`. Upstream Redox has a
+  WIP recipe for QBE without a build script.
+- An assembler and linker on the Pi: binutils for Redox aarch64 (upstream
+  has a package, not checked for aarch64), or a smaller assembler/linker.
+- The same relibc gaps as tcc (`stdint.h` from gcc, `environ`, TLS
+  descriptors in `libc.a`), see above.
+
+Where QBE fits:
+
+- **On the Pi:** a step up from tcc for programs where tcc's code is too
+  slow but gcc or clang are too big. It does not use NEON or A53
+  scheduling either; code that has to be fast is still built with
+  rustc/LLVM on the build host.
+- **For the open firmware:** a VideoCore IV backend for QBE, with vasm as
+  the assembler, could one day replace the old VC4 GCC toolchain. See
+  [open-firmware.md, VPU compiler](open-firmware.md). TCC does not suit
+  that, because it would need its own VC4 assembler and linker.
+
 ## Later
 
-- A second compiler that optimises (gcc or clang for Redox aarch64), for
-  programs where tcc's code is too slow.
+- A second compiler that optimises, for programs where tcc's code is too
+  slow: cproc + QBE first (small, above), gcc or clang only if that is not
+  enough.
 - tcc in Redox' package repository (upstream's `wip/dev/lang/tcc` recipe is
   a stub). Upstream posts are the user's; sessions draft the text.

@@ -95,8 +95,30 @@ disabled, so the SD card is on the Arasan controller (like `dtoverlay=mmc`).
 
 [`scripts/pi-test.py`](../scripts/pi-test.py) runs the standard checks on a
 netbooted Pi through devshd (version and manifest, `ps`, SD card, repeated
-program starts) and appends the results to
-[test-reports.md](test-reports.md).
+program starts); with `--report <file>` it appends the results to that file.
+
+The queue for the test Pi and all reports are in the repository
+[redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests):
+[queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md),
+[reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports) and
+[lab.md](https://github.com/redox-rpi/pi-tests/blob/main/lab.md) (the
+hardware, the serial console, the stable image and the nightly run).
+`scripts/pi-tests-queue.sh` prints the queue for scripts.
+[process/test-standards.md](process/test-standards.md) says what a row and a
+report contain.
+
+### Building on the build host
+
+`scripts/build-image.sh` waits for any other build in the same clone to
+finish (lock file `build/.build-image.lock`). Run other jobs that use the
+build output, such as a QEMU test, under `scripts/with-build-lock.sh
+<command>`; it takes the same lock, and a `build-image.sh` inside it does
+not lock again. Never wrap a command in `flock` on that file yourself:
+`build-image.sh` would wait for it forever. Every build without `--release`
+also gets the **test experiments** in `config/test-experiments.conf` (now
+`netstack-watch`, for #92 and #217), and the manifest lists them. Benchmark
+and A/B rows, where the watch thread would count, build with
+`--no-test-experiments`.
 
 ## Known problems
 

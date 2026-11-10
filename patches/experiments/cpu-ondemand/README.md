@@ -113,4 +113,4 @@ opens `/scheme/sys` before that and opens `stat` inside it for each sample
   0 failed; `cputop` at idle: cores 0–2 %, `dwc2d` 2.3 %. As expected,
   `target` still reads `max` (the read is load); the time counters show
   the real picture. See
-  [the report](../../../docs/test-reports.md#2026-10-30-v030-dev-354-gc656808x6039).
+  [the report](https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-354-gc656808x6039).
