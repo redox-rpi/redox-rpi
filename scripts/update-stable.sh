@@ -68,6 +68,7 @@ ISSUE_TITLE="Nightly: main fails on the Pi"
 RESET_TIMEOUT=120
 BOOT_TIMEOUT=1500
 
+args=("$@")
 force=0
 push=1
 ref=origin/main
@@ -102,6 +103,15 @@ start_visit_images() {
 cd "$ROOT"
 git fetch -q --tags --prune origin
 git checkout -q --detach "$ref"
+# The service copies this script from the clone before the fetch, so it may
+# be yesterday's version: run the one just checked out instead, once.
+if [ -z "${UPDATE_STABLE_REEXEC:-}" ] && ! cmp -s "$0" "$ROOT/scripts/update-stable.sh"; then
+    log "scripts/update-stable.sh changed in $ref, running the new version"
+    copy="$(mktemp)"
+    cp "$ROOT/scripts/update-stable.sh" "$copy"
+    rm -f "$0"
+    UPDATE_STABLE_REEXEC=1 exec bash "$copy" "${args[@]}"
+fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags) ($head)"
 
