@@ -54,10 +54,16 @@ fi
 mkdir -p "$OUT/obj" "$OUT/dtb"
 fragments=("$ROOT/config/u-boot.config")
 if [ -n "${server:-}" ]; then
-    # The same steps as boot.scr from scripts/netboot.sh.
+    # The same steps as boot.scr from scripts/netboot.sh. netboot.scr comes
+    # over HTTP first: with the lwIP stack (CONFIG_NET_LWIP) TFTP of files
+    # larger than one block often times out on the Pi 4 GENET, and lwIP's
+    # TFTP ignores tftpwindowsize. HTTP runs over TCP, which retransmits.
+    # TFTP stays as the fallback, tried twice.
+    ub_addr="\${scriptaddr}"
+    ub_http="http://$server:${NETBOOT_HTTP_PORT:-8080}/$net_dir/netboot.scr"
     cat > "$OUT/net.config" <<EOF
 CONFIG_USE_BOOTCOMMAND=y
-CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; tftpboot \${scriptaddr} $net_dir/netboot.scr && source \${scriptaddr}"
+CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; if wget $ub_addr $ub_http; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; fi"
 EOF
     fragments+=("$OUT/net.config")
 fi
