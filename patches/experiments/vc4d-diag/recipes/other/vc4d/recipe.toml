@@ -3,7 +3,7 @@
 # Experiment vc4d-diag: branch underrun-diag of redox-rpi/vc4d.
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "cc7c8982f0a7769744d64918cec146ae9fb8107f"
+rev = "90983c38a54b763b00006a2c4049a2734fc51bab"
 
 [build]
 template = "cargo"
