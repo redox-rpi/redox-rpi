@@ -49,15 +49,15 @@ How it is used:
 | WP | Work | Owner | PBS | Topic page |
 |---|---|---|---|---|
 | 3.1 | Pi Zero 2 W and the other BCM2837 boards (3B, 3A+) | V&V | 1.2, 1.3 | [zero2w](../topics/zero2w.md) |
-| 3.2 | Pi 4 family (BCM2711) | project lead (no owner yet) | 1.4 | [boards](../topics/boards.md) |
+| 3.2 | Pi 4 family (BCM2711), [#299](https://github.com/redox-rpi/redox-rpi/issues/299) | Architect (for now) | 1.4 | [pi400](../topics/pi400.md) |
 | 3.3 | Pi 5 family (BCM2712, RP1) | project lead (no owner yet) | 1.5 | [boards](../topics/boards.md) |
 
 ## 4 Verification and validation
 
 | WP | Work | Owner | PBS | Delivers |
 |---|---|---|---|---|
-| 4.1 | Test standards, test plan, regression set | V&V | — | `test-standards.md`, [test-plan.md](../test-plan.md) |
-| 4.2 | Automated Pi tests and the Pi queue, special tests, person tests prepared | V&V | 3.3 | Pi rows, [test-reports.md](../test-reports.md) |
+| 4.1 | Test standards, test plan, regression set | V&V | — | `test-standards.md`, [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) |
+| 4.2 | Automated Pi tests and the Pi queue, special tests, person tests prepared | V&V | 3.3 | Pi rows, [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports) |
 | 4.3 | Test lab: more boards, no card swaps | V&V | 3.3 | [boards](../topics/boards.md) |
 | 4.4 | Log triage of test and nightly logs | Log triage | 3.2, 3.3 | triage notes in issues |
 

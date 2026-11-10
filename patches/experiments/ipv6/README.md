@@ -132,4 +132,4 @@ global address as source, `ping -6` from homenodellm answers, UDP to the
 global and the unique local address works, and `net6 tcp` reaches a
 Cloudflare server over IPv6 (internet over IPv6). Same addresses and
 routes after 10 minutes.
-[Report](../../../docs/test-reports.md#2026-10-30-v030-dev-217-g2d2f24cxf552)
+[Report](https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-217-g2d2f24cxf552)

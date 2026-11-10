@@ -87,8 +87,8 @@
   the channel errors; a disabled or unpowered port is brought back, a
   failed device gets three more tries; counters in `/tmp/dwc2d-usbstats`,
   the hotplug step in `/tmp/dwc2d-step`. **Pi: 0 hub drops in 4 downloads**
-  (tests [172](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-857-g7ed9070xa901-dwc2d-hub-drop-fix-the-171-download-again),
-  [174](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-3111-01-hub-drop-fix-v030-dev-857-g7ed9070xa901-new-against-v030-dev-838-g64fa695x8116-old-alternating)),
+  (tests [172](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-31-v030-dev-857-g7ed9070xa901-dwc2d-hub-drop-fix-the-171-download-again),
+  [174](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-3111-01-hub-drop-fix-v030-dev-857-g7ed9070xa901-new-against-v030-dev-838-g64fa695x8116-old-alternating)),
   against 8, 12 and 4 on the old image (171, 174); no undervoltage. Why
   the drops stop without `sleep` is not known. The download stalls that
   remain are a lost wakeup in the scheduler (#181, relibc topic), not

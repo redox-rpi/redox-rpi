@@ -14,7 +14,7 @@ Report problems with this fork here, not to the Redox OS project.
 
 New features and experiments are developed on a branch (`<topic>`, for
 example `dwc2-interrupts`). They go to `main` only after a detailed test on
-a real Pi, with the results in [docs/test-reports.md](docs/test-reports.md)
+a real Pi, with the results in [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports)
 or the experiment's README. QEMU results alone are not enough. Fixes to
 documentation and scripts may go to `main` directly.
 
@@ -104,11 +104,11 @@ feature only after its test on a real Pi (see [Branches](#branches)).
 | Kernel boot in QEMU | macOS or Linux, QEMU | `scripts/qemu-raspi3b.sh --test --kernel <kernel>` | [testing.md](docs/testing.md#automated-boot-test) |
 | Own image in QEMU, commands in the guest | Linux build host | `scripts/qemu-raspi3b.sh --image <harddrive.img> --run '<command>'` | [testing.md](docs/testing.md) |
 | Program start loop in QEMU (start crashes) | Linux build host | `scripts/qemu-run.sh 'for i in 1..=40; ls /; pwd; end'` | [debugging-random-crashes.md](docs/debugging-random-crashes.md) |
-| Real Pi 3B+ | Pi netbooted from your build host | `scripts/pi-test.py <pi-address> --manifest build/manifests/netboot-latest.toml --report docs/test-reports.md` | [netboot.md](docs/netboot.md), [test-reports.md](docs/test-reports.md) |
+| Real Pi 3B+ | Pi netbooted from your build host | `scripts/pi-test.py <pi-address> --manifest build/manifests/netboot-latest.toml --report report.md` | [netboot.md](docs/netboot.md), [pi-tests](https://github.com/redox-rpi/pi-tests/tree/main/reports) |
 | CI | nothing, runs on every push | GitHub Actions `qemu-boot.yml` | [Actions](https://github.com/redox-rpi/redox-rpi/actions) |
 
 Without a Pi, QEMU is enough for most tasks: it emulates the Pi 3 closely
 enough to boot our images, but not the Ethernet chip, the USB keyboard path
 or the exact timing of the real Cortex-A53. Results from a real Pi are
-welcome for every change; add them to
-[docs/test-reports.md](docs/test-reports.md) in the pull request.
+welcome for every change; paste them into the pull request (V&V files them
+in [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests)).

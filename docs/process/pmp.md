@@ -78,7 +78,7 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 | Architecture | `docs/architecture.md` | Architect | exists |
 | Coding standards and rules | `docs/process/coding-standards.md` | Architect | to write |
 | Test standards | `docs/process/test-standards.md` | V&V | to write |
-| Test plan and reports | `docs/test-plan.md`, `docs/test-reports.md` | V&V | exist; to split (RFC 0002) |
+| Test plan and reports | [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests) (`queue.md`, `reports/`, `lab.md`, `releases/`); `docs/test-plan.md` and `docs/test-reports.md` point there | V&V | moved (RFC 0002 phase 2) |
 | Release process and checklists | `docs/release-process.md`, `docs/releases/` | Release and CI | exist |
 | Topic pages | `docs/topics/` | topic owners | exist |
 | Contribution rules | `CONTRIBUTING.md` | project lead | exists; links the documents above |

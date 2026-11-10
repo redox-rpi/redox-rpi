@@ -110,7 +110,7 @@ QEMU, 2026-10-31, `v0.3.0-dev-801-gea8b5c2` with `icachetest`, without
   which test 127 measured on the Pi. In QEMU, `ic ialluis` also throws
   away QEMU's translated code, which a Cortex-A53 does not pay.
 
-Real Pi 3B+, 2026-10-31, test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)), the same two
+Real Pi 3B+, 2026-10-31, test 162 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-31-v030-dev-801-gea8b5c2-without-x8a5e-and-with-icache-sync-x9080-instruction-cache-stress-test)), the same two
 builds, A, B, A, B on fresh boots:
 
 | `icachetest 10000` | without, boot 1 | with, boot 1 | without, boot 2 | with, boot 2 |

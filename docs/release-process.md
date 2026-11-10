@@ -34,6 +34,12 @@ whether the week brought something new (the maintainer, 2026-11-08):
   the maintainer confirms it. If a feature lands or drops out by the
   cut-off, the number is fixed at the cut-off, and the week's milestone is
   renamed then (for example `v0.4.1` → `v0.5.0`).
+- **Example:** after v0.4.0 the week's milestone started as `v0.4.1`. On
+  2026-11-09 the maintainer chose v0.5.0, because the week brings
+  features (the game on the desktop, TinyCC, the startup sound); the
+  milestone was renamed to `v0.5.0` and the dev tag `v0.5.0-dev` set on
+  `main`. The tag `v0.4.1-dev` stays, so builds named `v0.4.1-dev-…`
+  remain traceable.
 - **A week without a release** (failed candidate, nothing merged) does not
   use up a number: the next week takes it.
 - **A fix between two weekly releases** that cannot wait gets the next
@@ -147,12 +153,13 @@ rm -rf $d
 ## Pi test
 
 1. The build agent adds the candidate to the queue in
-   [test-plan.md](test-plan.md): name and build ID, the experiments, the
+   [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md): name and build ID, the experiments, the
    download link, the test from the request, and who runs it.
-2. The test follows the rules of the test plan: it takes the Pi only when
+2. The test follows the rules of the queue: it takes the Pi only when
    it is first in the queue, and gives it back afterwards.
-3. The results go to [test-reports.md](test-reports.md) with the build ID,
-   and the test moves to "Done" with its result.
+3. The results go to [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports) with the build ID,
+   and the test moves to "Done" with its result. The evidence of the
+   release is collected in `releases/<version>.md` there.
 4. A failed candidate stays in "Done" with what failed. The fix comes as a
    new request and a new `rc<N+1>`.
 
