@@ -119,7 +119,7 @@ over the last 30 days unless named otherwise; the page is
 | Open issues by repository and type | open issues per redox-rpi repository and GitHub issue type (Task, Bug, Feature) | GitHub issues of all organisation repositories | tracked |
 | Issues without a type | open issues with no issue type | GitHub issues, all repositories | 0 once the types are rolled out (RFC 0002) |
 | Open bugs by severity | open issues of type Bug or labelled `bug`, in all repositories, by `severity:` label; "unclassified" when none | GitHub issues, all repositories | S1: 0 older than 7 days |
-| Unlabelled issues | open issues without a `topic:` label | GitHub issues | 0 |
+| Unlabelled issues | open issues without a `topic:` label, except those labelled `risk` or `opportunity` (project-level, in the risk register) | GitHub issues | 0 |
 | Stale in-progress | open `in-progress` issues with no update in 14 days | GitHub issues | 0 |
 | Reopened bugs | issues reopened in the window | GitHub timeline | tracked, no target |
 | PR lead time | median and 90th percentile of opened → merged, merged PRs | GitHub PRs | median under 3 days |

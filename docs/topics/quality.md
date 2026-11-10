@@ -78,7 +78,7 @@ name each bug (sightings and repro attempts): [kpis.md](../process/kpis.md#rows-
 | [#79](https://github.com/redox-rpi/redox-rpi/issues/79) netstack finds no adapter at boot | open, usb/boot | – | `/scheme` listing loses names | none |
 | [#129](https://github.com/redox-rpi/redox-rpi/issues/129) devshd stops accepting after a long run | open Bug, network | – | after memory-heavy runs | none |
 | [#119](https://github.com/redox-rpi/redox-rpi/issues/119), [#140](https://github.com/redox-rpi/redox-rpi/issues/140), [#141](https://github.com/redox-rpi/redox-rpi/issues/141) long TCP download slows, ENOTCONN | open, network | – | long downloads | release 20 (100 MiB) |
-| [#151](https://github.com/redox-rpi/redox-rpi/issues/151) Pi hangs, long SD write during a download | open, usb | row 141 | not in QEMU | none |
+| [#151](https://github.com/redox-rpi/redox-rpi/issues/151) Pi hangs, long SD write during a download | open Bug **S1**, usb; owner Network (lead, 2026-11-10: topic:usb has no owner) | row 141 | not in QEMU; S1 for more than 7 days; may share the netstack/dwc2d stall of #92 (rows 316, 319, 321) | none |
 | [#205](https://github.com/redox-rpi/redox-rpi/issues/205) `kill()` never reaches a loop on a pipe | open, stability | row 237 | | none |
 | [#207](https://github.com/redox-rpi/redox-rpi/issues/207) chaos test froze the Pi ("Lacks grant") | open, stability | row 237 | | chaos rows |
 | [#55](https://github.com/redox-rpi/redox-rpi/issues/55), [#86](https://github.com/redox-rpi/redox-rpi/issues/86) Ctrl-C lost or late | open, stability | – | | none |

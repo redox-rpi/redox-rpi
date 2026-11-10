@@ -167,8 +167,11 @@ def collect(args):
     k["open_bugs"] = {s: n for s, n in sorted(sev.items())}
     k["s1_older_7d"] = [b["ref"] for b in bugs if "severity:S1" in b["labels"]
                         and now - ts(b["createdAt"]) > datetime.timedelta(days=7)]
+    # Risks and opportunities are project-level, kept in the risk register
+    # without a topic (lead, 2026-11-10).
     k["unlabelled"] = sorted(i["number"] for i in open_issues
-                             if not any(label.startswith("topic:") for label in i["labels"]))
+                             if not any(label.startswith("topic:") for label in i["labels"])
+                             and not {"risk", "opportunity"} & set(i["labels"]))
     k["stale_in_progress"] = sorted(
         i["number"] for i in open_issues
         if "in-progress" in i["labels"] and now - ts(i["updatedAt"]) > datetime.timedelta(days=14))
