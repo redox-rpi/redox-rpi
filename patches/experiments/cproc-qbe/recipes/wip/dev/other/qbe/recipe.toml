@@ -1,7 +1,8 @@
 # QBE, the compiler backend behind cproc, running on Redox (aarch64).
 # Replaces upstream's wip recipe (1.1 tarball, no build script).
 [source]
-git = "https://c9x.me/git/qbe.git"
+# git://: c9x.me's dumb HTTP clone fails (missing pack index).
+git = "git://c9x.me/qbe.git"
 # master, 2026-11-09: arm64 fixes after 1.2.
 rev = "180d2eb4157b706dc480bce50ff6d03a65ec334b"
 patches = [
