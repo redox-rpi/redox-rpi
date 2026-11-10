@@ -26,7 +26,9 @@
 #      serial console and run scripts/pi-test.py.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
 #      /srv/tftp/stable at it, publish its packages to the pkg repository
-#      /srv/tftp/pkg (scripts/publish-pkg-repo.sh), and in redox-rpi/pi-tests
+#      /srv/tftp/pkg (scripts/publish-pkg-repo.sh; a build with a test-only
+#      experiment is built again with --no-test-experiments for the
+#      packages), and in redox-rpi/pi-tests
 #      update "Stable image" in lab.md, write the report to
 #      reports/stable-<date>.md, commit and push to its main.
 #   6. Fail: stage the previous stable image again, reset the Pi, and open or
@@ -66,6 +68,7 @@ ISSUE_TITLE="Nightly: main fails on the Pi"
 RESET_TIMEOUT=120
 BOOT_TIMEOUT=1500
 
+args=("$@")
 force=0
 push=1
 ref=origin/main
@@ -100,6 +103,15 @@ start_visit_images() {
 cd "$ROOT"
 git fetch -q --tags --prune origin
 git checkout -q --detach "$ref"
+# The service copies this script from the clone before the fetch, so it may
+# be yesterday's version: run the one just checked out instead, once.
+if [ -z "${UPDATE_STABLE_REEXEC:-}" ] && ! cmp -s "$0" "$ROOT/scripts/update-stable.sh"; then
+    log "scripts/update-stable.sh changed in $ref, running the new version"
+    copy="$(mktemp)"
+    cp "$ROOT/scripts/update-stable.sh" "$copy"
+    rm -f "$0"
+    UPDATE_STABLE_REEXEC=1 exec bash "$copy" "${args[@]}"
+fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags) ($head)"
 
@@ -230,6 +242,33 @@ github() {
         -H "Accept: application/vnd.github+json" "$@"
 }
 
+# Our pkg repository follows the stable image (#44). Never devshd, and the
+# signing key stays in ~/.config/redox-rpi/pkg-key. Every non-release build
+# has the test experiments (config/test-experiments.conf), and
+# scripts/publish-pkg-repo.sh refuses packages from a build with a test-only
+# one (netstack-watch). Then the same commit and options are built again with
+# --no-test-experiments, only for the packages: the stable image on TFTP stays
+# the tested one. Never fails this script.
+publish_pkg_repo() {
+    local plog="$backup/pkg-publish.log" exp test_only=""
+    for exp in $(sed -n 's/^experiments = \[\(.*\)\]/\1/p' "$manifest" | tr -d '",'); do
+        [ -f "patches/experiments/$exp/test-only" ] && test_only="$test_only $exp"
+    done
+    : > "$plog"
+    if [ -n "$test_only" ]; then
+        log "test-only experiment(s)$test_only in $build_id: building the packages again with --no-test-experiments"
+        if ! scripts/build-image.sh "${options[@]}" --no-test-experiments >> "$plog" 2>&1; then
+            log "the package build without test experiments failed, pkg repository not published, see $plog"
+            return 0
+        fi
+        log "packages from $(sed -n 's/^build_id = "\(.*\)"$/\1/p' "$(readlink -f build/manifests/netboot-latest.toml)")"
+    fi
+    scripts/publish-pkg-repo.sh >> "$plog" 2>&1 &&
+        log "published the pkg repository: $(tail -n 1 "$plog")" ||
+        log "publishing the pkg repository failed, see $plog"
+    return 0
+}
+
 # 5. Pass: make it the stable image.
 if [ "$passed" = 1 ]; then
     backup="$TFTP/backup-$build_id"
@@ -237,11 +276,7 @@ if [ "$passed" = 1 ]; then
     cp -p "$TFTP/redox"/* "$backup/"
     ln -sfn "$(basename "$backup")" "$STABLE_LINK"
     log "$build_id is the stable image, backup in $backup"
-    # Our pkg repository follows the stable image (#44). Never devshd, and
-    # the signing key stays in ~/.config/redox-rpi/pkg-key.
-    scripts/publish-pkg-repo.sh > "$backup/pkg-publish.log" 2>&1 &&
-        log "published the pkg repository: $(tail -n 1 "$backup/pkg-publish.log")" ||
-        log "publishing the pkg repository failed, see $backup/pkg-publish.log"
+    publish_pkg_repo
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
     # The report goes to pi-tests, on top of its newest main.
