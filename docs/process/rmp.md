@@ -5,9 +5,9 @@ Part of the [project management plan](pmp.md#requirements-management);
 work package 1.3 of the [WBS](wbs.md). Owned by the Requirements agent;
 changed by pull request, approved by the maintainer.
 
-Status: draft, 2026-11-08. Open points are listed at the end; the main one
-is where requirements are stored (files or GitHub Feature issues), which
-waits for the revised RFC 0002.
+Status: draft, 2026-11-08; updated 2026-11-10 for RFC 0002 (accepted):
+requirements are Feature issues in `redox-rpi`. Open points are listed at
+the end.
 
 ## Purpose
 
@@ -133,32 +133,93 @@ A requirement is:
 
 ## Storage
 
-The content above is fixed by this plan; where it is stored is not yet.
+Since [RFC 0002](../rfcs/0002-project-structure.md#4-issues-types-labels-and-the-project)
+(accepted 2026-11-09) **each requirement is one GitHub issue of type
+Feature in `redox-rpi`**. The Feature issue is the record; tasks and bugs
+that implement it hang below it as sub-issues, in the repository of their
+code.
 
-- **Today:** one Markdown file per area under `docs/requirements/`, one
-  level-3 heading per requirement, plus `trace.md`.
-- **Planned (proposal of the maintainer):** one GitHub issue of type
-  **Feature** per requirement, in the repository of the part it concerns
-  (after RFC 0002). Title = ID and name; body = statement, rationale and
-  the acceptance criteria as a checklist; priority and level as labels or
-  project fields; implementing Tasks and Bugs as sub-issues; verification
-  links in the body. The files then shrink to an index and the trace becomes
-  a project view.
+### Issue format
 
-The move is one script run per area, made once RFC 0002 says which
-repository holds which area. Until then the files are the record.
+- **Type:** Feature. **Repository:** `redox-rpi`.
+- **Title:** `REQ-<AREA>-<n> <name>`, for example
+  `REQ-NET-1 DHCP on the onboard Ethernet`.
+- **Labels:** the `topic:<name>` of the area (the shared label list of RFC
+  0002; no extra labels for priority or level).
+- **Milestone:** the release in which the requirement must first hold.
+- **Project fields:** Release, Type, Topic, Owner, as for every issue.
+- **Body**, in this order:
+
+```markdown
+**Statement:** The system shall …
+
+| Field | Value |
+|---|---|
+| Status | proposed / approved / retired |
+| Kind | functional / quality / constraint |
+| Priority | must / should / may |
+| Level | release / beta / experiment / test image |
+| PBS | 2.3.4, 2.4.2 |
+| Source | maintainer decision 2026-11-08 / issue / release |
+| Since | v0.1.0 |
+| Verification | test, automated: checklist test 1, pi-tests row 285 |
+
+**Rationale:** …
+
+### Acceptance criteria
+
+- [ ] 1. … (pi-tests row N on <build ID>)
+- [ ] 2. …
+
+### Trace
+
+Implemented by: the sub-issues and PRs. Verified by: pi-tests rows and
+reports.
+```
+
+V&V ticks an acceptance box with the row and build ID that passed it, for
+the current release candidate; the boxes are cleared when the next
+candidate is tested (the per-release trace keeps the old results).
+
+### Existing Feature issues
+
+Where a Feature issue for the same capability already exists (for example
+#250 PWM audio, #45 SSH, #36 keyboard layouts), the requirement goes into
+that issue: its title gets the ID and its body the requirement block above
+the existing text. One requirement per Feature issue; a Feature issue that
+covers several capabilities keeps one requirement, and the others become
+new Feature issues linked to it.
+
+### What stays in files
+
+- `docs/requirements/README.md`: the list of areas with a search link for
+  each (`is:issue type:Feature "REQ-NET-" in:title`).
+- `docs/requirements/trace-<release>.md`: the trace of each release,
+  written when its candidate is tested; this is the release's baseline.
+- Until the move, the first set lives in files (draft PR #270). The move
+  creates or updates the issues with `scripts/req-issues.py` and then
+  deletes the area files.
 
 ## Lifecycle
 
 | Status | Meaning | Who sets it |
 |---|---|---|
-| proposed | written, in a pull request (or an open Feature issue without the approval label) | Requirements agent |
-| approved | merged by the maintainer (or approved on the issue) | maintainer |
-| retired | no longer wanted; kept with the reason and date | maintainer, on a proposal |
+| proposed | Feature issue with `Status: proposed`, no milestone | Requirements agent |
+| approved | the maintainer approves in a comment ("approved"); the Requirements agent then sets `Status: approved` and the milestone | maintainer |
+| retired | issue closed as "not planned", `Status: retired` with the reason and date | maintainer, on a proposal |
 
-Whether a requirement is **implemented** and **verified** is not a status
-of the requirement: it depends on the build and is kept in the trace for
-each release.
+The **issue state** says whether the requirement is met:
+
+| Issue state | Meaning |
+|---|---|
+| open | approved (or proposed), not yet verified in a release |
+| closed as completed | verified in the release of its milestone; the requirement stays in force |
+| closed as not planned | retired |
+
+A later failure of a met requirement is a **Bug** that names the ID
+(`breaks REQ-NET-1`); the Feature issue stays closed, and the release
+trace shows `fails`. Whether a requirement is **verified** for a given
+build is kept in the per-release trace.
 
 ## Review and approval
 
@@ -169,7 +230,7 @@ each release.
 | V&V | each criterion is testable, and names the test or says **gap** |
 | Quality | format and trace complete (may audit, does not block) |
 | Project lead | priority fits the milestone plan |
-| Maintainer | approves: requirements are decisions, so the maintainer merges them; they are never merged as docs-only changes |
+| Maintainer | approves: requirements are decisions, so only the maintainer approves them (a comment on the Feature issue; for the first set, merging #270); the project lead never approves them for the maintainer |
 
 The Requirements agent asks topic owners through the project lead. A
 topic owner who finds a requirement wrong or missing tells the
@@ -179,16 +240,17 @@ Requirements agent the same way, or opens an issue for it.
 
 1. Anyone may propose a change: an issue, or a note to the Requirements
    agent through the project lead.
-2. The Requirements agent writes the change as a pull request (later: an
-   edit of the Feature issue) with the reason and an **impact note**:
-   which issues, tests, checklists and release notes it touches.
-3. Reviewers as above; the maintainer approves.
+2. The Requirements agent edits the Feature issue (GitHub keeps the edit
+   history) and adds a comment with the reason and an **impact note**:
+   which issues, tests, checklists and release notes it touches. The
+   status goes back to `proposed` until approved.
+3. Reviewers comment on the issue; the maintainer approves in a comment.
 4. After approval the Requirements agent updates the trace and tells the
    owners named in the impact note (through the project lead).
 
 **Baseline.** When a release candidate is built, the approved requirements
 of that release are its baseline: the release checklist lists their IDs and
-the trace is copied into the checklist. A change after that goes into the
+the trace is written to `docs/requirements/trace-<release>.md`. A change after that goes into the
 next release unless the maintainer decides otherwise for this one.
 
 **Retiring.** A requirement is retired, not deleted, so old rows, issues
@@ -235,7 +297,7 @@ agent updates it when a candidate is tested and before the release.
 
 1. Every requirement names a PBS ID and a source.
 2. Every `must` and `should` of the release has a test or says **gap**.
-3. Every Feature issue in a milestone links to a requirement.
+3. Every Feature issue in a milestone is a requirement (has a `REQ-` ID) or says why not (for example an idea or an effort analysis).
 4. Every requirement of the release has an implementing issue, or says it
    was there before the project (upstream Redox).
 5. No test row names an ID that does not exist.
@@ -261,10 +323,10 @@ agent updates it when a candidate is tested and before the release.
 
 ## Open points
 
-1. **Storage:** files or Feature issues, and which repository per area:
-   waits for the revised RFC 0002.
-2. **Labels or fields** for priority and level (`prio:must`,
-   `level:beta`), and an approval label: with the move to issues.
-3. **Check script** for the trace checks: after the storage is decided.
-4. The first set for v0.4.0 is draft PR #270; it follows this plan once
-   the plan is approved.
+1. **Approval of the first set:** the maintainer approves the v0.4.0 set
+   in draft PR #270; then `scripts/req-issues.py` creates or updates the
+   Feature issues and the area files go away.
+2. **Check script** for the trace checks (reads the Feature issues and the
+   pi-tests reports): after the move.
+3. **Areas `PKG`, `SEC`, `DOC`** from RFC 0003: added to the area table
+   when RFC 0003 is accepted.
