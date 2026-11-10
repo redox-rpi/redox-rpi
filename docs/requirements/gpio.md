@@ -2,8 +2,8 @@
 
 Topic: [gpio](../topics/gpio.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
-All three issues are still open with milestone v0.8.0, although the drivers
-start in every image since base patches `0045`–`0048`.
+The drivers start in every image since base patches `0045`–`0048`; their
+issues #38, #39 and #42 are closed.
 
 ### REQ-GPIO-1 GPIO pins
 

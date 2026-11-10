@@ -62,7 +62,7 @@ The system shall report a USB mouse or tablet as input events.
 | PBS | 2.3.2 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Implemented by | #48 (still open, milestone v0.5.0, although PR #223 is in rc1), PR #223, base `0059` |
+| Implemented by | #48 (closed), PR #223, base `0059` |
 | Verification | test, person: checklist v0.4.0 test 21, row 286 (rc2 visit, pass); QEMU `scripts/test-usb-mouse.sh` |
 
 Acceptance criteria:

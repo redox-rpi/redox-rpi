@@ -62,7 +62,7 @@ The system shall let root set the clock (`clock_settime`, `settimeofday`,
 | PBS | 2.4.1, 2.4.4 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Implemented by | #51 (still open, waiting for upstream), PR #98, relibc `0011` |
+| Implemented by | #51 (open: the upstream part), PR #98, relibc `0011` |
 | Verification | test, automated (Pi row through devsh, `user` step piped into `su user`): agreed with V&V 2026-11-08; dry run on stable 748 passed all three criteria, not yet a row on a candidate |
 
 Acceptance criteria:

@@ -64,7 +64,7 @@ DHCP lease on each.
 | PBS | 2.4.2 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Implemented by | #53 (still open, milestone v0.6.0, although PR #81 is in rc1), PR #81 |
+| Implemented by | PR #81 (from #53, which now covers only adapters that appear after boot) |
 | Verification | test, person: checklist v0.4.0 test 19, row 286 (rc2 visit, pass) |
 
 Acceptance criteria:

@@ -39,7 +39,7 @@ shall set another mode at boot.
 | PBS | 2.3.8, 2.6.1 |
 | Status | proposed |
 | Since | v0.4.0 |
-| Implemented by | #23 (open, milestone v0.4.0), PR #147, base `0040`, kernel `0040` |
+| Implemented by | #23 (closed), PR #147, base `0040`, kernel `0040` |
 | Verification | test, automated: checklist v0.4.0 test 13, rows 292 (v0.4.0 build) and 285 (rc1) (criterion 1); row 161 (criterion 2, dev build) |
 
 Acceptance criteria:
