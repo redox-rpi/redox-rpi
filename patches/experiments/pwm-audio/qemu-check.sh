@@ -20,6 +20,7 @@ H=/scheme/audiohw
     --run "cat /tmp/l.raw > /scheme/audio; echo CAT \$?" \
     --run "echo 1 > $H/tone" \
     --run "tone chime -o /tmp/c.raw; ls -l /tmp/c.raw" \
+    --run "poweroff --version" \
     --run "echo 1 > $H/stop; echo STOP \$?" \
     --run "tone -s 1 > /scheme/audio; echo AFTER \$?" \
     --run "cat $H/stats" > /dev/null 2>&1
@@ -50,6 +51,7 @@ check "rate about 44.1 kHz" "^measured_rate_hz 4[34][0-9]{3}$"
 check "no DMA faults" "^dma_faults 0$"
 check "startup sound played" "startup-sound: played"
 check "chime file 317520 bytes" "317520 .*/tmp/c.raw"
+check "poweroff in the image" "^poweroff 0\.2\.0$"
 check "stop accepted" "^STOP 0$"
 check "driver stopped" "bcm2835-pwmaudiod: stopped"
 check "stats: stopped" "^stopped$"
