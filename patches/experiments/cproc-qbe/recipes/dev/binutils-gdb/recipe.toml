@@ -23,6 +23,9 @@ export CFLAGS="${CFLAGS} -O2 -ffixed-x18"
     --enable-default-hash-style=gnu --enable-deterministic-archives
 "${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" all-gas all-ld
 "${COOKBOOK_MAKE}" install-gas install-ld DESTDIR="${COOKBOOK_STAGE}"
-# The same programs once more in the tool directory, and the man pages.
-rm -rf "${COOKBOOK_STAGE}/usr/${GNU_TARGET}" "${COOKBOOK_STAGE}/usr/share"
+# Only the two programs: not the tool directory (the same programs once
+# more), ld.bfd (a copy of ld), man pages, or libbfd's headers and archives.
+rm -rf "${COOKBOOK_STAGE}/usr/${GNU_TARGET}" "${COOKBOOK_STAGE}/usr/share" \
+    "${COOKBOOK_STAGE}/usr/include" "${COOKBOOK_STAGE}/usr/lib" \
+    "${COOKBOOK_STAGE}/usr/bin/ld.bfd"
 """

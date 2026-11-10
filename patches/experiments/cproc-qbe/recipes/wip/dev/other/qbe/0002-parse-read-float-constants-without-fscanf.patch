@@ -1,0 +1,77 @@
+From d95e80d7e96ea9e32ddf2f84e5b1fc930a125cb4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 15:35:38 +0000
+Subject: [PATCH] parse: read float constants without fscanf
+
+On a pipe, Redox' relibc loses the character scanf looks ahead at:
+"data" became "dta" when cproc piped its output into qbe, because
+fscanf("_%lf") consumed the a. Read the number by hand and convert
+it with strtod/strtof.
+---
+ parse.c | 39 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 37 insertions(+), 2 deletions(-)
+
+diff --git a/parse.c b/parse.c
+index 5d8d039..8a4ece2 100644
+--- a/parse.c
++++ b/parse.c
+@@ -208,6 +208,39 @@ lexinit()
+ 	done = 1;
+ }
+ 
++/* Reads "_<number>" after s or d into fltbuf; returns 0 and reads
++ * nothing more when no '_' follows. Not with fscanf: on a pipe, Redox's
++ * relibc loses the character scanf looks ahead at (the 'a' of "data", or
++ * the ',' after the number), since it cannot seek back. */
++static char fltbuf[64];
++
++static int
++getflt()
++{
++	int c, i, prev;
++
++	c = fgetc(inf);
++	if (c != '_') {
++		ungetc(c, inf);
++		return 0;
++	}
++	i = 0;
++	prev = 0;
++	for (;;) {
++		c = fgetc(inf);
++		if (!(isalnum(c) || c == '.'
++		|| ((c == '-' || c == '+') && (i == 0 || prev == 'e' || prev == 'E'))))
++			break;
++		if (i == sizeof fltbuf - 1)
++			err("number too long");
++		fltbuf[i++] = c;
++		prev = c;
++	}
++	ungetc(c, inf);
++	fltbuf[i] = 0;
++	return 1;
++}
++
+ static int64_t
+ getint()
+ {
+@@ -261,12 +294,14 @@ lex()
+ 	case '+':
+ 		return Tplus;
+ 	case 's':
+-		if (fscanf(inf, "_%f", &tokval.flts) != 1)
++		if (!getflt())
+ 			break;
++		tokval.flts = strtof(fltbuf, 0);
+ 		return Tflts;
+ 	case 'd':
+-		if (fscanf(inf, "_%lf", &tokval.fltd) != 1)
++		if (!getflt())
+ 			break;
++		tokval.fltd = strtod(fltbuf, 0);
+ 		return Tfltd;
+ 	case '%':
+ 		t = Ttmp;
+-- 
+2.53.0
+

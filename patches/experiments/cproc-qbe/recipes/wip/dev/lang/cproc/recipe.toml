@@ -6,6 +6,7 @@ git = "https://git.sr.ht/~mcf/cproc"
 rev = "d1c53ddf56571573a7025324c8dd5c6d547a4d1f"
 patches = [
     "0001-configure-Redox-target-relibc.patch",
+    "0002-decl-accept-a-lone-semicolon-in-a-struct.patch",
 ]
 
 [build]
