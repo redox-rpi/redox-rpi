@@ -215,7 +215,7 @@ Static analysis of our own code, report-only first. Baseline and details:
 | shellcheck | 36 shell scripts | 1 error, 8 warnings, 23 notes, all checked: no real bug | 0 errors and warnings (with justified `disable` comments) | report-only, then gating |
 | pyflakes / ruff (E, F, W, B) | 22 Python files | pyflakes 0; ruff 60, style only | pyflakes 0 (gating) | pyflakes gating now |
 | cppcheck | 5 C files (tcc-bench, chaos) | 1 warning (unchecked malloc) | 0 | report-only |
-| cargo-audit | 20 `Cargo.lock` (121 packages) | 0 advisories | 0 | weekly, with the drift job |
+| cargo-audit | 17 `Cargo.lock` (115 packages; mcast, net6, socdump have none) | 0 advisories | 0 | weekly, with the drift job |
 | TODO/FIXME without an issue | all our code and added patch lines | 2 (experiments `ipv6`, `sshd`) | 0 | KPI page |
 
 ## Review cadence

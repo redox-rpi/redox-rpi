@@ -101,7 +101,7 @@ rpi-boot-stub is Rust, not C.
 
 ## Dependencies: cargo-audit
 
-20 `Cargo.lock` files in `tools/` with 121 packages: 0 advisories,
+17 `Cargo.lock` files in `tools/` with 115 packages (mcast, net6 and socdump have none): 0 advisories,
 0 warnings (RustSec database of 2026-11-08, 1 422 advisories). Our tools
 depend on very little; the large dependency trees are upstream's
 (relibc, base, Orbital, COSMIC), outside this scope.
