@@ -1,4 +1,4 @@
-From d6d213e40ecc2e5c3dad5a8ca0d4660afbf526ce Mon Sep 17 00:00:00 2001
+From b30bf88040308411faec01e49743ef51e74de4c1 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3 as
@@ -27,12 +27,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Makefile                                    |   2 +-
  drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
  drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 +++++++
- drivers/audio/bcm2835-pwmaudiod/src/main.rs | 629 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 649 ++++++++++++++++++++
  drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 321 ++++++++++
  drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 +++++
  init.initfs.d/40_drivers.target             |   1 +
  init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
- 9 files changed, 1356 insertions(+), 1 deletion(-)
+ 9 files changed, 1376 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
@@ -328,10 +328,10 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..5143df9c
+index 00000000..ac023dfb
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -0,0 +1,629 @@
+@@ -0,0 +1,649 @@
 +//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
 +//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
 +//! signal; a filter on the board turns them into sound.
@@ -340,7 +340,8 @@ index 00000000..5143df9c
 +//!   frames, signed 16-bit little endian, stereo, 44.1 kHz (as `ac97d`).
 +//!   When the ring is full the write waits, or fails with `EWOULDBLOCK` on
 +//!   a non-blocking handle.
-+//! - `/scheme/audiohw/stats`: clock, range, ring and error counters.
++//! - `/scheme/audiohw/stats`: clock, range, ring and error counters, and
++//!   `loud_chunks` and `peak`, which tell sound from silence.
 +//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>] [mono] [range=<n>]
 +//!   [div=<n>]` plays a sine with the CPU filling the FIFO, without DMA
 +//!   (stage A1, a test); the result is in `stats`.
@@ -398,6 +399,9 @@ index 00000000..5143df9c
 +const TONE_AMPLITUDE: f64 = 0.25;
 +/// Frames of the ramp down to 0 V on `stop`: 50 ms.
 +const STOP_RAMP_FRAMES: u32 = SAMPLE_RATE / 20;
++/// A chunk counts as loud when a sample reaches 1/256 of full scale: tests
++/// tell sound from silence by it (#292, #335).
++const LOUD: u16 = 128;
 +
 +enum Output {
 +    Pwm { pwm: Pwm, dma: DmaRing, phys: usize },
@@ -439,6 +443,9 @@ index 00000000..5143df9c
 +    clock_hz: u32,
 +    started: Instant,
 +    chunks: u64,
++    /// Chunks with a sample at or above `LOUD`, and the largest sample.
++    loud_chunks: u64,
++    peak: u16,
 +    dma_faults: u64,
 +    last_fault: Option<(u32, u32)>,
 +    sta_errors: u64,
@@ -460,6 +467,8 @@ index 00000000..5143df9c
 +            clock_hz,
 +            started: Instant::now(),
 +            chunks: 0,
++            loud_chunks: 0,
++            peak: 0,
 +            dma_faults: 0,
 +            last_fault: None,
 +            sta_errors: 0,
@@ -516,6 +525,11 @@ index 00000000..5143df9c
 +        if chunk.len() != CHUNK_BYTES {
 +            return Err(Error::new(EINVAL));
 +        }
++        let peak = chunk
++            .chunks_exact(2)
++            .map(|s| i16::from_le_bytes([s[0], s[1]]).unsigned_abs())
++            .max()
++            .unwrap_or(0);
 +        if self.stopped {
 +            self.chunks += 1;
 +            return Ok(chunk.len());
@@ -532,6 +546,10 @@ index 00000000..5143df9c
 +            words[1] = to_pwm(left, range);
 +        }
 +        self.chunks += 1;
++        if peak >= LOUD {
++            self.loud_chunks += 1;
++        }
++        self.peak = self.peak.max(peak);
 +        Ok(chunk.len())
 +    }
 +
@@ -637,6 +655,8 @@ index 00000000..5143df9c
 +        let rate = if uptime > 0.0 { played as f64 * SLOT_FRAMES as f64 / uptime } else { 0.0 };
 +        let _ = writeln!(text, "measured_rate_hz {rate:.0}");
 +        let _ = writeln!(text, "chunks {}", self.chunks);
++        let _ = writeln!(text, "loud_chunks {}", self.loud_chunks);
++        let _ = writeln!(text, "peak {}", self.peak);
 +        let _ = writeln!(text, "sound_slots {}", self.ring.played_sound);
 +        let _ = writeln!(text, "underruns {}", self.ring.underruns);
 +        let _ = writeln!(text, "queued {}", self.ring.queued());

@@ -2,7 +2,8 @@
 # QEMU check for the pwm-audio experiment (#250). QEMU's raspi3b does not
 # emulate the PWM block, so bcm2835-pwmaudiod plays its ring to the clock:
 # this checks the start-up, audiod on top of it, the audiohw contract, the
-# stats file, the startup sound (#292) and the stop file, not the sound.
+# stats file, the startup sound (#292), the stop file and the volume
+# command (#336), not the sound.
 #
 # Usage: patches/experiments/pwm-audio/qemu-check.sh [image]
 
@@ -21,6 +22,7 @@ H=/scheme/audiohw
     --run "echo 1 > $H/tone" \
     --run "tone chime -o /tmp/c.raw; ls -l /tmp/c.raw" \
     --run "poweroff --version" \
+    --run "volume 70; volume -20; volume; cat /etc/audio-volume" \
     --run "echo 1 > $H/stop; echo STOP \$?" \
     --run "tone -s 1 > /scheme/audio; echo AFTER \$?" \
     --run "cat $H/stats" > /dev/null 2>&1
@@ -47,10 +49,12 @@ check "raw file 176400 bytes" "176400 .*/tmp/l.raw"
 check "cat through audiod" "^CAT 0$"
 check "CPU tone refused without PWM" "No such device"
 check "chunks arrive" "^chunks [1-9][0-9]+"
+check "loud chunks counted" "^loud_chunks [1-9]"
 check "rate about 44.1 kHz" "^measured_rate_hz 4[34][0-9]{3}$"
 check "no DMA faults" "^dma_faults 0$"
 check "startup sound played" "startup-sound: played"
 check "chime file 317520 bytes" "317520 .*/tmp/c.raw"
+check "volume set, changed and saved" "^50$"
 check "poweroff in the image" "^poweroff 0\.2\.0$"
 check "stop accepted" "^STOP 0$"
 check "driver stopped" "bcm2835-pwmaudiod: stopped"

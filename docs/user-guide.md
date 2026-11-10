@@ -239,8 +239,14 @@ echo off > /etc/startup-sound              # SD-card image
 echo off > /scheme/data/startup-sound      # network or direct boot
 ```
 
-`tone -s 2 > /scheme/audio` plays a test tone; `echo 50 >
-/scheme/audio/volume` sets the volume (0–100).
+```sh
+volume                                     # the volume, 0 to 100 (default 50)
+volume 70                                  # set it; also +10, -10, mute
+tone -s 2 > /scheme/audio                  # a test tone
+```
+
+`volume` keeps the volume across reboots (in `/etc/audio-volume`, or on
+network and direct boot in `/scheme/data/audio-volume`).
 
 ## Where the logs are
 

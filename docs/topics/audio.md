@@ -28,6 +28,15 @@ are enough; A3 and polish may follow in a later release.
   `/scheme/audiohw/stop`, which ramps the outputs down to 0 V over 50 ms,
   so neither the reset nor pulling the power afterwards clicks. After the
   prebuilt `shutdown`, or pulling the plug while running, it still clicks.
+- **`volume` command, in work**
+  ([#336](https://github.com/redox-rpi/redox-rpi/issues/336), same PR):
+  shows and sets the volume and keeps it across reboots; restored before
+  the startup sound. The driver's `stats` count `loud_chunks` and `peak`,
+  so tests tell sound from silence without listening.
+- **Sound in SDL games, in work**
+  ([#335](https://github.com/redox-rpi/redox-rpi/issues/335)): SDL2's
+  Redox audio driver writes to `/scheme/audio` and is already built in;
+  Sopwith opens it at start. Not yet checked.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
   in the left ear only (so left and right are right), the sweep and
   volume 100 all played; a faint hiss at idle and a little crackle (cheap

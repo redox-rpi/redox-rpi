@@ -41,6 +41,8 @@ diffutils = {}
 # `tone` writes test sound for /scheme/audio (tools/tone; base patch
 # 0086, sound from the headphone jack, beta).
 tone = "source"
+# `volume` shows, sets and keeps the volume (tools/volume, #336).
+volume = "source"
 
 # Startup sound (#292): `tone chime`, our own chord, plays once when audiod
 # is up, in the background (oneshot_async), so the boot does not wait for
@@ -48,6 +50,8 @@ tone = "source"
 # Network and direct boot run / from RAM, where /etc forgets: there a
 # startup-sound file on the data partition (/scheme/data) wins. Those images
 # have 60_data.service, so the script waits for the partition up to 5 s.
+# First it restores the volume saved by `volume` (#336), so the chime
+# follows it.
 [[files]]
 path = "/etc/startup-sound"
 data = """
@@ -68,6 +72,7 @@ if test -f /usr/lib/init.d/60_data.service
         let file = /scheme/data/startup-sound
     end
 end
+volume restore
 let state = on
 if test -f $file
     let state = $(cat $file)
@@ -85,7 +90,7 @@ end
 path = "/usr/lib/init.d/21_startup-sound.service"
 data = """
 [unit]
-description = "Startup sound (off: write off to /etc/startup-sound)"
+description = "Saved volume and startup sound (off: write off to /etc/startup-sound)"
 requires_weak = ["20_audiod.service"]
 
 [service]

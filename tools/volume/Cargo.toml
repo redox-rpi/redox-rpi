@@ -1,0 +1,8 @@
+[package]
+name = "volume"
+description = "Show, set and keep the volume of /scheme/audio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
