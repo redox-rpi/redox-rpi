@@ -2,7 +2,7 @@
 
 For [#327](https://github.com/redox-rpi/redox-rpi/issues/327), topic
 [tcc](../../../docs/topics/tcc.md#other-compilers-cproc--qbe). Work in
-progress; not in any release image.
+progress; not in any image (that needs the maintainer's decision).
 
 Build after `tcc`: `--experiment tcc --experiment cproc-qbe`.
 
@@ -57,4 +57,8 @@ QEMU, `v0.5.0-dev-25-gd3ca14bc` (2026-11-10): all of `cproc.ion` passes.
 | `cproc -static -o hello-static hello.c` | 78 s, a 4.2 MB static program that runs: GNU ld links relibc's TLS descriptor relocations |
 | benchmark total: cproc / tcc / gcc -O2 | 308 / 475 / 195 ms (QEMU, says little about the Pi) |
 
-Real Pi: row 317 in [pi-tests](https://github.com/redox-rpi/pi-tests/blob/main/queue.md).
+Real Pi 3B+ ([test 317](https://github.com/redox-rpi/pi-tests/blob/main/reports/317.md),
+`v0.5.0-dev-25-gd3ca14bc+x898d`): pass. Hello World compiles in 422 ms
+(static 16.8 s, runs); benchmark totals cproc 1052 ms, tcc 1381 ms,
+gcc -O2 938 ms. Numbers in the
+[topic page](../../../docs/topics/tcc.md#cproc--qbe-on-the-pi).
