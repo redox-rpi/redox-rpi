@@ -8,16 +8,17 @@ Root-causing a bug stays with its topic owner. Owner: the Quality agent
 (since 2026-11-08). KPIs: [kpis.md](../process/kpis.md), from
 `scripts/quality-kpis.py`.
 
-## Status (2026-11-08)
+## Status (2026-11-10)
 
-- **Merges are not tested together:** 43 of 85 PRs in 30 days were
-  merged on a CI run older than an earlier merge in the same patch
-  directory. One of them, #81, left main red for 10 h, and rc1 was built
-  from that commit ([#257](https://github.com/redox-rpi/redox-rpi/issues/257)).
-- **Bugs closed, still seen:** #28, #108. **No topic label:** 8 open issues, #92 among them.
-- **Network loss #92/#217:** 12 and 5 done rows name them; no check counts them.
-- Nightly 89 % (8 of 9; the fail was the power plug), Pi rows 56 % pass.
-- Issues: [topic:quality](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aquality).
+- **Merges not built together:** 44 PRs in 30 days were merged on CI
+  older than an earlier merge in the same patch directory; one left main
+  red for 10 h on 2026-11-07 ([#257](https://github.com/redox-rpi/redox-rpi/issues/257), open).
+- **#92 caught once more:** row 316 (2026-11-10) stalled the network
+  under `dd` load with vc4d, and `netstack-watch` logged "main loop stuck
+  in read"; rows 319 and 321 did not reproduce it.
+- Issue types are in use (99 of 109 open issues), #28 and #108 are
+  reopened, #92 and #129 have topics. 30 open bugs, no severity yet.
+- Nightly 91 % (10 of 11), Pi rows 58 % pass. KPIs: [kpis.md](../process/kpis.md).
 
 ## Coverage audit
 
@@ -65,17 +66,17 @@ the Pi. "–" means nothing.
 
 Recurring or flaky bugs: classification, pattern, root-cause status and
 owner, as in [qmp.md](../process/qmp.md#bug-analysis). The topic owner
-finds the cause; Quality tracks the pattern and the recurrence. Sighting
-counts: [kpis.md](../process/kpis.md#sightings-of-tracked-bugs).
+finds the cause; Quality tracks the pattern and the recurrence. Rows that
+name each bug (sightings and repro attempts): [kpis.md](../process/kpis.md#rows-that-name-a-tracked-bug).
 
 | Issue | Status | Last seen | Pattern | Check (V&V) |
 |---|---|---|---|---|
-| [#92](https://github.com/redox-rpi/redox-rpi/issues/92) network lost minutes after boot | open, **no topic label** | row 285 try 1, stable 643, 2026-11-07 | rows 211, 213, 226, 229, 237 B, 285; netstack, dwc2d, devshd alive, no ARP answer, nothing on serial; `netstack-watch` rows 263, 267 did not catch it | none: [#259](https://github.com/redox-rpi/redox-rpi/issues/259) |
-| [#217](https://github.com/redox-rpi/redox-rpi/issues/217) login without network, devshd never listens | open, network | row 276, 2026-11-07 (no devsh for 3 min, then a power cycle) | rare boot race; 0 in 39 warm resets (row 266) | none |
-| [#28](https://github.com/redox-rpi/redox-rpi/issues/28) serial console drops characters | **closed**, still seen | rc1 row 285: 19 of 20, twice | 18–20 of 20 in every release since v0.3.0 | release 11 |
-| [#108](https://github.com/redox-rpi/redox-rpi/issues/108) `pthread_exit` of the last thread ends with SIGKILL | **closed**, fix only in experiment `self-exit-status` | rc1 test 15 (`pthread/exit` NEW) | in every release image | release 15 |
+| [#92](https://github.com/redox-rpi/redox-rpi/issues/92) network lost minutes after boot | open Bug, network | row 316, 2026-11-10: under 4× `dd bs=16M` with vc4d, `netstack-watch: main loop stuck in read`; 319, 321 (same load, with and without vc4d) no stall | rows 211, 213, 226, 229, 237 B, 285, 316; netstack, dwc2d, devshd alive, no ARP answer; first time a watch caught the place (read loop) | none in the nightly: [#259](https://github.com/redox-rpi/redox-rpi/issues/259), V&V special tests #266 |
+| [#217](https://github.com/redox-rpi/redox-rpi/issues/217) login without network, devshd never listens | open Bug, network | row 276, 2026-11-07 (no devsh for 3 min, then a power cycle) | rare boot race; 0 in 39 warm resets (row 266); 1 in 1000 boots on stable 643 (V&V count, rows 276, 285) | V&V special tests #266 |
+| [#28](https://github.com/redox-rpi/redox-rpi/issues/28) serial console drops characters | **reopened** Bug, stability | rc2 row 292: 19 of 20 | 18–20 of 20 in every release since v0.3.0; within the limit V&V set (19 of 20) | release 11 |
+| [#108](https://github.com/redox-rpi/redox-rpi/issues/108) `pthread_exit` of the last thread ends with SIGKILL | **reopened** Bug, stability; fix only in experiment `self-exit-status` | rc1 test 15 (`pthread/exit` NEW) | in every release image | release 15 |
 | [#79](https://github.com/redox-rpi/redox-rpi/issues/79) netstack finds no adapter at boot | open, usb/boot | – | `/scheme` listing loses names | none |
-| [#129](https://github.com/redox-rpi/redox-rpi/issues/129) devshd stops accepting after a long run | open, **no topic label** | – | after memory-heavy runs | none |
+| [#129](https://github.com/redox-rpi/redox-rpi/issues/129) devshd stops accepting after a long run | open Bug, network | – | after memory-heavy runs | none |
 | [#119](https://github.com/redox-rpi/redox-rpi/issues/119), [#140](https://github.com/redox-rpi/redox-rpi/issues/140), [#141](https://github.com/redox-rpi/redox-rpi/issues/141) long TCP download slows, ENOTCONN | open, network | – | long downloads | release 20 (100 MiB) |
 | [#151](https://github.com/redox-rpi/redox-rpi/issues/151) Pi hangs, long SD write during a download | open, usb | row 141 | not in QEMU | none |
 | [#205](https://github.com/redox-rpi/redox-rpi/issues/205) `kill()` never reaches a loop on a pipe | open, stability | row 237 | | none |

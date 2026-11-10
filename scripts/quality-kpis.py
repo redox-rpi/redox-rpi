@@ -319,6 +319,49 @@ def collect(args):
         tested[d] = n
     k["host_tests"] = tested
 
+    # Requirements (docs/requirements/*.md, RMP): one "### REQ-<AREA>-<n>"
+    # entry each, with a field table. Until they become Feature issues
+    # (RFC 0002) they are read from --req-rev.
+    req_rev = args.req_rev or args.rev
+    k["req_rev"] = req_rev
+    names = sh("git", "ls-tree", "--name-only", f"{req_rev}:docs/requirements") \
+        if subprocess.run(["git", "cat-file", "-e", f"{req_rev}:docs/requirements"], cwd=ROOT,
+                         stderr=subprocess.DEVNULL).returncode == 0 else ""
+    reqs = []
+    for f in names.split():
+        if not f.endswith(".md") or f in ("README.md", "trace.md"):
+            continue
+        cur = None
+        for line in sh("git", "show", f"{req_rev}:docs/requirements/{f}").splitlines():
+            m = re.match(r"### (REQ-[A-Z]+-\d+)\s+(.*)", line)
+            if m:
+                cur = {"id": m.group(1), "name": m.group(2), "file": f}
+                reqs.append(cur)
+                continue
+            m = re.match(r"\| (Priority|Status|Level|Verification|Implemented by) \| (.*) \|$", line)
+            if cur and m:
+                cur[m.group(1).lower()] = m.group(2)
+    if reqs:
+        def prio(r):
+            return r.get("priority", "?").split()[0].strip("`")
+        ver = lambda r: r.get("verification", "")
+        known = {r["id"] for r in reqs}
+        named = set(re.findall(r"REQ-[A-Z]+-\d+", plan))
+        k["requirements"] = {
+            "total": len(reqs),
+            "by_priority": {p_: sum(1 for r in reqs if prio(r) == p_) for p_ in sorted({prio(r) for r in reqs})},
+            "gap": [r["id"] for r in reqs if "gap" in ver(r).lower()],
+            "gap_must": [r["id"] for r in reqs if "gap" in ver(r).lower() and prio(r) == "must"],
+            "no_test": [r["id"] for r in reqs if not re.search(r"\btest\b|\brow\b|checklist", ver(r))],
+            "failing": [r["id"] for r in reqs if re.search(r"\bfails?\b", ver(r))],
+            "person_only": [r["id"] for r in reqs if ver(r).startswith("test, person")],
+            "dirty_only": [r["id"] for r in reqs if "allow-dirty" in ver(r)],
+            "no_issue": [r["id"] for r in reqs
+                         if not re.search(r"#\d+|upstream|before the project", r.get("implemented by", ""), re.I)],
+            "rows_naming": sorted(named & known),
+            "unknown_in_rows": sorted(named - known),
+        }
+
     # Patches whose header names an issue
     total = named = 0
     for d in DEFAULT_PATCH_DIRS:
@@ -413,7 +456,24 @@ def render(k, repo):
     row("Pi rows per topic", ", ".join(f"{t} {n}" for t, n in sorted(pt.items(), key=lambda x: -x[1]) if n),
         True, "rows naming an issue of the topic (heuristic); no rows: " + (", ".join(t for t, n in sorted(pt.items()) if not n) or "none"))
     row("Release checklist completion", "not measurable yet", True, "the checklist has no result column")
-    row("Test coverage per requirement", "–", True, "no requirements yet")
+    rq = k.get("requirements")
+    if rq:
+        tested = rq["total"] - len(set(rq["gap"]) | set(rq["no_test"]))
+        row("Test coverage per requirement",
+            f"{pct(tested, rq['total'])} ({tested} of {rq['total']}; "
+            + ", ".join(f"{p_} {n}" for p_, n in rq["by_priority"].items()) + ")",
+            not rq["gap_must"], f"fully tested; from `{k['req_rev']}`; a **gap** in some criterion: "
+            f"{', '.join(rq['gap']) or 'none'}; no test named: {', '.join(rq['no_test']) or 'none'}"
+            + (f"; `must` with a gap: {', '.join(rq['gap_must'])}" if rq["gap_must"] else ""))
+        row("Requirements failing or verified only by a person / a dirty build",
+            f"{len(rq['failing'])} / {len(rq['person_only'])} / {len(rq['dirty_only'])}", not rq["failing"],
+            "failing: " + (", ".join(rq["failing"]) or "none") + "; dirty only: " + (", ".join(rq["dirty_only"]) or "none"))
+        row("Trace: requirements without an implementing issue (P11)", len(rq["no_issue"]), not rq["no_issue"],
+            ", ".join(rq["no_issue"]))
+        row("Pi rows naming a requirement", f"{len(rq['rows_naming'])} IDs", not rq["unknown_in_rows"],
+            "unknown IDs in rows: " + (", ".join(rq["unknown_in_rows"]) or "none"))
+    else:
+        row("Test coverage per requirement", "–", True, f"no docs/requirements at `{k['req_rev']}`")
 
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]
@@ -428,9 +488,9 @@ def render(k, repo):
         "|---|---|---|---|",
         *rows,
         "",
-        "## Sightings of tracked bugs",
+        "## Rows that name a tracked bug",
         "",
-        f"Done rows in [queue.md](https://github.com/{k['tests_repo']}/blob/main/queue.md#done) that name the issue.",
+        f"Done rows in [queue.md](https://github.com/{k['tests_repo']}/blob/main/queue.md#done) that name the issue: sightings and repro attempts alike.",
         "",
         "| Bug | Rows | Which |",
         "|---|---|---|",
@@ -444,6 +504,7 @@ def main():
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--repo", default="redox-rpi/redox-rpi")
     ap.add_argument("--rev", default="origin/main")
+    ap.add_argument("--req-rev", help="revision to read docs/requirements from (default: --rev)")
     ap.add_argument("--tests-repo", default="redox-rpi/pi-tests", help="repository with queue.md")
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "process", "kpis.md"))
     ap.add_argument("--json")

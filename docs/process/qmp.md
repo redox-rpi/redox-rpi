@@ -128,8 +128,8 @@ over the last 30 days unless named otherwise; the page is
 | Patches with an issue | default patches whose header names an issue (P8) | `patches/` | rising |
 | Dirty results | done rows with a `-dirty` build ID (P9) | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | 0 for merges and releases |
 | Release checklist completion | checklist tests with a result / all tests, per candidate | release checklist | 100 % before a release; **not measurable yet**: the checklist has no result column |
-| Test coverage per requirement | requirements (`REQ-<area>-<n>`) with a passing test / all requirements | `docs/requirements/`, once they exist (PMP) | to be defined |
-| Trace completeness (P11) | requirements with issue, PR and test / all requirements | `docs/requirements/`, GitHub | to be defined |
+| Test coverage per requirement | requirements whose Verification names a test with no **gap** / all requirements, by priority; `must` with a gap; failing; verified only by a person or a dirty build ([RMP](rmp.md#traceability) KPIs) | `docs/requirements/` (Feature issues after RFC 0002), `--req-rev` while in review | every `must` and `should` of the release has a test (RMP rule 2); 0 `must` with a gap |
+| Trace completeness (P11) | requirements with an implementing issue (or "upstream") / all; REQ IDs in queue rows that do not exist (RMP rule 5) | `docs/requirements/`, pi-tests `queue.md` | 100 %; 0 unknown IDs |
 | Feature coverage | release features (the checklist's "In the image since" table) with an automated check or a named person test / all release features | release checklist; by hand until the checklist maps feature → test | 100 % for release features |
 | Pi rows per topic | done queue rows that name an issue of the topic | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md), issue labels | every topic with code in the image has rows in the window |
 | Host tests | our Rust crates (`tools/`, vc4d) with host unit tests / all such crates | the repository | see [Coverage](#coverage) |
