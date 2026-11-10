@@ -23,7 +23,6 @@ test 168). delay() yields until the time has passed.
  drivers/usb/dwc2d/src/usbdiag.rs   | 135 +++++++++++++++++++++++++++++
  6 files changed, 316 insertions(+), 36 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/usbdiag.rs
-
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
 index dfc5d19a..959bba87 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
@@ -481,10 +480,10 @@ index 4c8ef8cc..d8c4e3f4 100644
      Ok((mac, link))
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 0e258f82..266c2271 100644
+index d3c75626..d87cd1b3 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -24,6 +24,7 @@ mod mouse;
+@@ -25,6 +25,7 @@ mod mouse;
  mod regs;
  mod rtl8152;
  mod stats;
@@ -492,7 +491,7 @@ index 0e258f82..266c2271 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -512,7 +513,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -513,7 +514,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              break;
          }
@@ -501,15 +500,15 @@ index 0e258f82..266c2271 100644
          let changes = bus.scan();
          boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
      }
-@@ -633,6 +634,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -635,6 +636,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
 +                usbdiag::step("scan");
                  let mut cycled = Vec::new();
-                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
-                     let _ = std::fs::remove_file(CYCLE_REQUEST);
-@@ -682,6 +684,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 if let Ok(request) = aside::cycle_request() {
+                     let net = scheme.adapter_mut();
+@@ -683,6 +685,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
                          continue;
                      };
@@ -517,7 +516,7 @@ index 0e258f82..266c2271 100644
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
                          Some(Found::Input(k, m)) => {
-@@ -702,6 +705,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -703,6 +706,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  net.refresh_links(&mut bus);
                  net.select(&mut bus);
                  scheme.tick().expect("dwc2d: network scheme failed");
@@ -526,7 +525,7 @@ index 0e258f82..266c2271 100644
                  hotplug.arm(HOTPLUG_INTERVAL);
              }
          }
-@@ -732,7 +737,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
+@@ -733,7 +738,7 @@ fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
              }
              Err(err) if attempt < ATTEMPTS => {
                  println!("dwc2d: enumeration attempt {attempt} failed: {err:?}, retrying");
@@ -742,4 +741,3 @@ index 00000000..a4c39792
 +}
 -- 
 2.53.0
-
