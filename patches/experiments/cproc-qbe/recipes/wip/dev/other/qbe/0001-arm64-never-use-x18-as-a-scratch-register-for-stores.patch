@@ -1,0 +1,30 @@
+From 0b18b6ac3535e866b38fec206302e6d52da5ddd7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 11:31:45 +0000
+Subject: [PATCH] arm64: never use x18 as a scratch register for stores
+
+Redox, like Apple, does not leave x18 to user code: relibc's aarch64
+signal entry returns through x18, so a signal between the address
+computation and the store would change the address.
+---
+ arm64/emit.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arm64/emit.c b/arm64/emit.c
+index 04c864c..cfa9af1 100644
+--- a/arm64/emit.c
++++ b/arm64/emit.c
+@@ -393,7 +393,9 @@ emitins(Ins *i, E *e)
+ 		if (isload(i->op))
+ 			fixarg(&i->arg[0], loadsz(i), IP1, e);
+ 		if (isstore(i->op)) {
+-			t = T.apple ? -1 : R18;
++			/* Never x18 as a scratch register: Redox (like Apple) does not
++			 * leave it to user code, relibc's signal entry clobbers it. */
++			t = -1;
+ 			if (fixarg(&i->arg[1], storesz(i), t, e)) {
+ 				if (req(i->arg[0], TMP(IP1))) {
+ 					t = i->op == Ostorel || i->op == Ostored;
+-- 
+2.53.0
+

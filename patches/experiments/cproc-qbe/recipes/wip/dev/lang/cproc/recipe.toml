@@ -1,0 +1,33 @@
+# cproc, a C11 compiler that uses QBE as its backend, running on Redox
+# (aarch64). The driver runs: tcc -E (preprocessor), cproc-qbe, qbe, as, ld.
+[source]
+git = "https://git.sr.ht/~mcf/cproc"
+# master, 2026-06-01.
+rev = "d1c53ddf56571573a7025324c8dd5c6d547a4d1f"
+patches = [
+    "0001-configure-Redox-target-relibc.patch",
+]
+
+[build]
+template = "custom"
+dependencies = ["qbe"]
+script = """
+DYNAMIC_INIT
+unset MAKEFLAGS MFLAGS
+rsync -a --delete "${COOKBOOK_SOURCE}/" ./
+# cproc's own preprocessor is not finished; tcc's is (in the image with
+# experiment tcc). -undef (tcc patch 0005) leaves out tcc's own macros and
+# builtins, -nostdinc tcc's headers: cproc takes relibc's stdarg.h and
+# defines the target macros itself (patch 0001).
+./configure \
+    --prefix=/usr \
+    --host=aarch64-unknown-redox \
+    --target=aarch64-unknown-redox \
+    --with-cpp="tcc -E -undef -nostdinc -isystem /usr/include" \
+    CC="${CC}" \
+    CFLAGS="-O2 -ffixed-x18 ${CFLAGS}" \
+    LDFLAGS="${LDFLAGS}"
+"${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" cproc cproc-qbe
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp cproc cproc-qbe "${COOKBOOK_STAGE}/usr/bin/"
+"""

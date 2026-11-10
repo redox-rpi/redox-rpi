@@ -1,0 +1,28 @@
+# GNU as and ld from Redox' binutils fork, running on Redox (aarch64), for
+# cproc. Replaces upstream's recipe, which builds all of binutils and gdb
+# (with gmp, mpfr and readline): only the assembler and the linker here.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/binutils-gdb"
+# Branch redox-2.43.1, 2026-11-10.
+rev = "6b9878dc383725297a3ce162f70337c97a457ceb"
+
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+unset MAKEFLAGS MFLAGS
+export CFLAGS="${CFLAGS} -O2 -ffixed-x18"
+"${COOKBOOK_SOURCE}/configure" \
+    --prefix=/usr \
+    --host="${GNU_TARGET}" \
+    --target="${GNU_TARGET}" \
+    --disable-gdb --disable-gdbserver --disable-sim --disable-gprof \
+    --disable-gprofng --disable-gold --disable-libdecnumber \
+    --disable-readline --disable-nls --disable-werror \
+    --disable-shared --enable-static --without-zstd \
+    --enable-default-hash-style=gnu --enable-deterministic-archives
+"${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" all-gas all-ld
+"${COOKBOOK_MAKE}" install-gas install-ld DESTDIR="${COOKBOOK_STAGE}"
+# The same programs once more in the tool directory, and the man pages.
+rm -rf "${COOKBOOK_STAGE}/usr/${GNU_TARGET}" "${COOKBOOK_STAGE}/usr/share"
+"""

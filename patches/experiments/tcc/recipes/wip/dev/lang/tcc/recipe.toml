@@ -9,6 +9,8 @@ patches = [
     "0002-tccrun-declare-environ-on-Redox.patch",
     "0003-armflush-__clear_cache-for-arm64-when-gcc-builds-lib.patch",
     "0004-Redox-gcc-s-integer-type-macros-for-relibc-s-stdint..patch",
+    # -undef, for cproc (experiment cproc-qbe), which preprocesses with tcc.
+    "0005-undef-predefine-only-the-standard-macros.patch",
 ]
 
 [build]
