@@ -88,7 +88,7 @@ write_status() {
         for n in "${names[@]}"; do echo "$n ${result[$n]}"; done
     } > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
     # The page for a tester: index.html and README.txt next to status.txt.
-    git -C "$CLONE" show origin/main:docs/test-plan.md > "$OUT/.test-plan.md" 2>/dev/null
+    "$ROOT/scripts/pi-tests-queue.sh" > "$OUT/.test-plan.md" 2>/dev/null || log "no queue from pi-tests"
     python3 "$ROOT/scripts/visit-index.py" "$OUT" "$CONF" "$OUT/.test-plan.md" "$SDCARD" ||
         log "visit-index.py failed"
 }

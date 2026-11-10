@@ -33,6 +33,6 @@ branch `qemu-data-part`), 2026-10-30:
   root filesystem all work; the moved file keeps its content.
 
 On the Pi, 2026-10-30, test 83 with `v0.3.0-dev-311-g9dcb81b+xd71d`
-([report](../../../docs/test-reports.md#2026-10-30-v030-dev-311-g9dcb81bxd71d)):
+([report](https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-311-g9dcb81bxd71d)):
 **pass**. Absolute and relative renames on `/scheme/data`, a move into a
 new directory, `mv` on `/tmp` and `rm -r` all work; 0 of 300 starts failed.

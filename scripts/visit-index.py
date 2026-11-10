@@ -3,12 +3,12 @@
 
 Called by scripts/build-visit-images.sh after each image:
 
-    scripts/visit-index.py <out dir> <config> <test-plan.md> [<sdcard dir>]
+    scripts/visit-index.py <out dir> <config> <queue.md> [<sdcard dir>]
 
 Writes <out dir>/index.html and <out dir>/README.txt (served as
 http://homenodellm:8080/visit/): per image the result, build ID, date, how
 to stage it for network boot, the SD image with its checksum or why there is
-none, and the queued rows of docs/test-plan.md that name the image
+none, and the queued rows of queue.md (redox-rpi/pi-tests) that name the image
 ("nightly visit `<name>`") with what they check.
 """
 
@@ -147,7 +147,7 @@ def main():
                 lines.append("test %s (%s, %s): %s" % (r["nr"], plain(r["owner"]), plain(r["status"]), plain(r["test"])))
                 lines.append("  needs: %s" % plain(r["needs"]))
         else:
-            lines.append("no queued test names \"nightly visit `%s`\" in docs/test-plan.md" % e["name"])
+            lines.append("no queued test names \"nightly visit `%s`\" in the test queue (pi-tests queue.md)" % e["name"])
         lines.append("")
 
     # index.html
@@ -189,7 +189,7 @@ def main():
                     html.escape(r["nr"]), md(r["test"]), md(r["owner"]), md(r["needs"]), md(r["status"])))
             h.append("</table>")
         else:
-            h.append("<p>No queued test in docs/test-plan.md names <code>nightly visit `%s`</code>.</p>" % html.escape(e["name"]))
+            h.append("<p>No queued test in the test queue (pi-tests queue.md) names <code>nightly visit `%s`</code>.</p>" % html.escape(e["name"]))
         h.append("<p><small>Owner topic: %s</small></p></section>" % html.escape(e["owner"]))
 
     for fname, text in (("README.txt", "\n".join(lines)), ("index.html", "\n".join(h) + "\n")):

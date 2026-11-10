@@ -56,8 +56,8 @@ How it is used:
 
 | WP | Work | Owner | PBS | Delivers |
 |---|---|---|---|---|
-| 4.1 | Test standards, test plan, regression set | V&V | — | `test-standards.md`, [test-plan.md](../test-plan.md) |
-| 4.2 | Automated Pi tests and the Pi queue, special tests, person tests prepared | V&V | 3.3 | Pi rows, [test-reports.md](../test-reports.md) |
+| 4.1 | Test standards, test plan, regression set | V&V | — | `test-standards.md`, [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) |
+| 4.2 | Automated Pi tests and the Pi queue, special tests, person tests prepared | V&V | 3.3 | Pi rows, [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports) |
 | 4.3 | Test lab: more boards, no card swaps | V&V | 3.3 | [boards](../topics/boards.md) |
 | 4.4 | Log triage of test and nightly logs | Log triage | 3.2, 3.3 | triage notes in issues |
 

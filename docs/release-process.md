@@ -153,12 +153,13 @@ rm -rf $d
 ## Pi test
 
 1. The build agent adds the candidate to the queue in
-   [test-plan.md](test-plan.md): name and build ID, the experiments, the
+   [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md): name and build ID, the experiments, the
    download link, the test from the request, and who runs it.
-2. The test follows the rules of the test plan: it takes the Pi only when
+2. The test follows the rules of the queue: it takes the Pi only when
    it is first in the queue, and gives it back afterwards.
-3. The results go to [test-reports.md](test-reports.md) with the build ID,
-   and the test moves to "Done" with its result.
+3. The results go to [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports) with the build ID,
+   and the test moves to "Done" with its result. The evidence of the
+   release is collected in `releases/<version>.md` there.
 4. A failed candidate stays in "Done" with what failed. The fix comes as a
    new request and a new `rc<N+1>`.
 
