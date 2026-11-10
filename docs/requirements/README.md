@@ -94,8 +94,13 @@ review, changes and verification methods are defined in the
 [requirements management plan](../process/rmp.md) (RMP). This page only
 lists the files and the conventions of this first set.
 
-"Row N" is the number of a test in [test-plan.md](../test-plan.md); its
-report is the heading `#N` in [test-reports.md](../test-reports.md).
+"Row N" is the number of a test row in the
+[pi-tests queue](https://github.com/redox-rpi/pi-tests/blob/main/queue.md);
+its report is `reports/N.md` in
+[redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests/tree/main/reports)
+(rows before v0.4.0 development, such as 5, 35, 67, 83 and 161, are in
+`reports/archive-before-v0.4.0-dev.md`). Release evidence is in pi-tests
+`releases/`.
 
 ## Trace
 
