@@ -1,0 +1,304 @@
+From 3e0242434d46a4628e3cad74a87a239d856115a2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 4 Nov 2026 14:46:25 +0000
+Subject: [PATCH] dwc2d: watchdog that names what a stuck main loop is doing
+
+For redox-rpi #92: netstack hangs waiting for a read from dwc2d while dwc2d uses almost no CPU. A thread writes to the serial console when the main loop has spent over 5 s on one thing, and a heartbeat with event counts every 60 s.
+---
+ drivers/usb/dwc2d/src/main.rs    |  14 ++-
+ drivers/usb/dwc2d/src/stats.rs   |   1 +
+ drivers/usb/dwc2d/src/usbdiag.rs |   2 +
+ drivers/usb/dwc2d/src/watch.rs   | 167 +++++++++++++++++++++++++++++++
+ 4 files changed, 183 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/usb/dwc2d/src/watch.rs
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 9de69c6c..61ef3227 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -24,6 +24,7 @@ mod regs;
+ mod rtl8152;
+ mod stats;
+ mod usbdiag;
++mod watch;
+ 
+ use driver_network::{NetworkAdapter, NetworkScheme};
+ use dwc2::Dwc2;
+@@ -425,6 +426,7 @@ fn main() {
+ 
+ fn daemon(daemon: daemon::Daemon) -> ! {
+     common::init();
++    watch::spawn();
+ 
+     let dtb = get_dtb();
+     let dt_mac = Fdt::new(&dtb).ok().and_then(|fdt| find_mac(&fdt));
+@@ -572,6 +574,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
+         match event.user_data {
+             Source::Irq => {
++                watch::event(watch::Stage::Irq);
+                 let file = irq_file.as_mut().unwrap();
+                 let mut irq = [0; 8];
+                 stats::IRQS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+@@ -583,16 +586,19 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+             }
+             Source::Scheme => {
++                watch::event(watch::Stage::Scheme);
+                 stats::TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                 scheme.tick().expect("dwc2d: network scheme failed")
+             }
+             Source::Stats => {
++                watch::event(watch::Stage::Stats);
+                 let t = stats_timer.as_mut().unwrap();
+                 t.fired();
+                 stats::write();
+                 t.arm(STATS_EVERY);
+             }
+             Source::Time => {
++                watch::event(watch::Stage::Timer);
+                 timer.fired();
+                 let mut next = None;
+                 if irq_file.is_none() {
+@@ -608,6 +614,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+             }
+             Source::Hotplug => {
++                watch::event(watch::Stage::Hotplug);
+                 hotplug.fired();
+                 usbdiag::step("scan");
+                 let mut cycled = Vec::new();
+@@ -645,7 +652,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         None => println!("dwc2d: cycle: no port for {request:?}"),
+                     }
+                 }
+-                let mut changes = if restart { Default::default() } else { bus.scan() };
++                let mut changes = if restart { Default::default() } else {
++                    let _scan = watch::Guard::new(watch::Stage::Scan);
++                    bus.scan()
++                };
+                 changes.removed.extend(cycled);
+                 // A stuck controller (every request times out) does not come
+                 // back by itself: restart it and find the devices again.
+@@ -691,6 +701,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         continue;
+                     };
+                     usbdiag::step(&format!("probe address {address}"));
++                    let _probe = watch::Guard::new(watch::Stage::Probe);
+                     match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
+                         Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
+                         Some(Found::Keyboard(f)) if keyboard.is_none() => {
+@@ -708,6 +719,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 hotplug.arm(HOTPLUG_INTERVAL);
+             }
+         }
++        watch::set(watch::Stage::Idle);
+     }
+     unreachable!()
+ }
+diff --git a/drivers/usb/dwc2d/src/stats.rs b/drivers/usb/dwc2d/src/stats.rs
+index 9508ff80..6a0a51cc 100644
+--- a/drivers/usb/dwc2d/src/stats.rs
++++ b/drivers/usb/dwc2d/src/stats.rs
+@@ -96,5 +96,6 @@ pub fn write() {
+             let _ = writeln!(s, "{name} {value}");
+         }
+     }
++    let _write = crate::watch::Guard::new(crate::watch::Stage::FileWrite);
+     let _ = std::fs::write("/tmp/dwc2d-netstats", s);
+ }
+diff --git a/drivers/usb/dwc2d/src/usbdiag.rs b/drivers/usb/dwc2d/src/usbdiag.rs
+index 7ad56d2c..37618454 100644
+--- a/drivers/usb/dwc2d/src/usbdiag.rs
++++ b/drivers/usb/dwc2d/src/usbdiag.rs
+@@ -103,6 +103,7 @@ pub fn summary() -> String {
+ /// Note the step the hotplug code is in. Errors are ignored: the file is
+ /// only for diagnosis.
+ pub fn step(what: &str) {
++    let _write = crate::watch::Guard::new(crate::watch::Stage::FileWrite);
+     let _ = std::fs::write("/tmp/dwc2d-step", format!("{} {what}\n", now_ms()));
+ }
+ 
+@@ -137,5 +138,6 @@ pub fn write(hprt0: u32, gintsts: u32) {
+     }
+     let _ = writeln!(s, "hprt0 {hprt0:#x}");
+     let _ = writeln!(s, "gintsts {gintsts:#x}");
++    let _write = crate::watch::Guard::new(crate::watch::Stage::FileWrite);
+     let _ = std::fs::write("/tmp/dwc2d-usbstats", s);
+ }
+diff --git a/drivers/usb/dwc2d/src/watch.rs b/drivers/usb/dwc2d/src/watch.rs
+new file mode 100644
+index 00000000..027e181a
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/watch.rs
+@@ -0,0 +1,167 @@
++//! Watchdog for the main loop (redox-rpi #92, experiment `dwc2d-watch`).
++//!
++//! netstack hangs while waiting for a read from dwc2d, and dwc2d then uses
++//! almost no CPU: it waits for something too. The main loop records what it
++//! is doing; a second thread writes to the serial console when that has
++//! taken longer than 5 s, and again every 30 s. Every 60 s it also writes a
++//! heartbeat with the event counts: "idle" with frozen scheme counts while
++//! netstack waits for a read means the request never woke dwc2d.
++
++use std::fs::File;
++use std::io::Write;
++use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
++use std::sync::OnceLock;
++use std::thread;
++use std::time::{Duration, Instant};
++
++#[derive(Clone, Copy, PartialEq, Eq)]
++#[repr(u8)]
++pub enum Stage {
++    Idle = 0,
++    Irq,
++    Scheme,
++    Timer,
++    Stats,
++    Hotplug,
++    Scan,
++    Probe,
++    FileWrite,
++}
++
++impl Stage {
++    fn from_u8(v: u8) -> Self {
++        match v {
++            1 => Stage::Irq,
++            2 => Stage::Scheme,
++            3 => Stage::Timer,
++            4 => Stage::Stats,
++            5 => Stage::Hotplug,
++            6 => Stage::Scan,
++            7 => Stage::Probe,
++            8 => Stage::FileWrite,
++            _ => Stage::Idle,
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Stage::Idle => "idle",
++            Stage::Irq => "interrupt",
++            Stage::Scheme => "scheme requests",
++            Stage::Timer => "timer",
++            Stage::Stats => "stats timer",
++            Stage::Hotplug => "hotplug",
++            Stage::Scan => "hotplug scan",
++            Stage::Probe => "probe",
++            Stage::FileWrite => "file write to /tmp",
++        }
++    }
++}
++
++static STAGE: AtomicU8 = AtomicU8::new(0);
++// Milliseconds since START when STAGE was last set.
++static SINCE: AtomicU64 = AtomicU64::new(0);
++static START: OnceLock<Instant> = OnceLock::new();
++// Events the main loop took, by source.
++static IRQS: AtomicU64 = AtomicU64::new(0);
++static SCHEME: AtomicU64 = AtomicU64::new(0);
++static OTHER: AtomicU64 = AtomicU64::new(0);
++
++fn now_ms() -> u64 {
++    START.get_or_init(Instant::now).elapsed().as_millis() as u64
++}
++
++/// Counts an event and records that the main loop now handles it.
++pub fn event(stage: Stage) {
++    match stage {
++        Stage::Irq => &IRQS,
++        Stage::Scheme => &SCHEME,
++        _ => &OTHER,
++    }
++    .fetch_add(1, Ordering::Relaxed);
++    set(stage);
++}
++
++/// Records that the main loop now does `stage`; returns what it did before.
++pub fn set(stage: Stage) -> Stage {
++    SINCE.store(now_ms(), Ordering::Relaxed);
++    Stage::from_u8(STAGE.swap(stage as u8, Ordering::Relaxed))
++}
++
++/// Sets `stage` until the guard is dropped, then goes back to the stage before.
++pub struct Guard(Stage);
++
++impl Guard {
++    pub fn new(stage: Stage) -> Self {
++        Guard(set(stage))
++    }
++}
++
++impl Drop for Guard {
++    fn drop(&mut self) {
++        set(self.0);
++    }
++}
++
++/// Starts the watchdog thread on the serial console.
++pub fn spawn() {
++    let mut debug = match std::fs::OpenOptions::new().write(true).open("/scheme/debug") {
++        Ok(debug) => debug,
++        Err(err) => {
++            eprintln!("dwc2d-watch: no /scheme/debug: {err}");
++            return;
++        }
++    };
++    now_ms();
++    thread::spawn(move || {
++        // Start of the stall that was last reported, and when.
++        let mut reported: Option<(u64, u64)> = None;
++        let mut heartbeat = 0u64;
++        loop {
++            thread::sleep(Duration::from_secs(1));
++            let stage = Stage::from_u8(STAGE.load(Ordering::Relaxed));
++            let since = SINCE.load(Ordering::Relaxed);
++            let now = now_ms();
++            if now.saturating_sub(heartbeat) >= 60_000 {
++                heartbeat = now;
++                let _ = writeln!(
++                    debug,
++                    "dwc2d-watch: alive at {} s, {} for {} s, events: {} interrupt, {} scheme, {} other",
++                    now / 1000,
++                    stage.name(),
++                    now.saturating_sub(since) / 1000,
++                    IRQS.load(Ordering::Relaxed),
++                    SCHEME.load(Ordering::Relaxed),
++                    OTHER.load(Ordering::Relaxed)
++                );
++            }
++            match reported {
++                Some((start, _)) if start != since || stage == Stage::Idle => {
++                    let _ = writeln!(
++                        debug,
++                        "dwc2d-watch: main loop back after {} s",
++                        now.saturating_sub(start) / 1000
++                    );
++                    reported = None;
++                }
++                _ => {}
++            }
++            if stage == Stage::Idle || now.saturating_sub(since) < 5000 {
++                continue;
++            }
++            let due = match reported {
++                None => true,
++                Some((_, last)) => now.saturating_sub(last) >= 30_000,
++            };
++            if due {
++                let _ = writeln!(
++                    debug,
++                    "dwc2d-watch: main loop stuck in {} for {} s",
++                    stage.name(),
++                    (now - since) / 1000
++                );
++                reported = Some((since, now));
++            }
++        }
++    });
++}
+-- 
+2.53.0
+
