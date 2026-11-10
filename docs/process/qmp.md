@@ -51,7 +51,7 @@ The rules themselves live where they are listed; this plan only checks them.
 | # | Rule | Source of the rule | How it is checked |
 |---|---|---|---|
 | P1 | A PR names its issue (`Fixes #N`, `refs #N`) | CONTRIBUTING, "Topics and issues" | KPI script: merged PRs without an issue reference |
-| P2 | A feature reaches `main` only after a Pi test | CONTRIBUTING, "Branches"; test-plan rule 6 | KPI script: merged PRs that change `patches/`, `tools/` or `config/` without a Pi test or row named in the PR |
+| P2 | A feature reaches `main` only after a Pi test | CONTRIBUTING, "Branches"; queue rule 6 in [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) | KPI script: merged PRs that change `patches/`, `tools/` or `config/` without a Pi test or row named in the PR |
 | P3 | CI is green and current at merge | this plan (goal 1) | KPI script: main's red hours; PRs merged on CI from before a patch change on main (#81 → [#257](https://github.com/redox-rpi/redox-rpi/issues/257)) |
 | P4 | A release candidate comes from a green commit and runs its whole checklist | release-process.md | per candidate, by hand: CI run of the commit, checklist results |
 | P5 | Branches reach `main` only by PR; the user merges code PRs | CONTRIBUTING, "Merging" | KPI script: commits on `main` that change `patches/` outside a PR merge |
@@ -59,7 +59,7 @@ The rules themselves live where they are listed; this plan only checks them.
 | P7 | The topic page changes with its topic | CONTRIBUTING; `scripts/check-topics.py` | the CI warning; weekly look at the warnings on main |
 | P8 | A bug fix or workaround names its issue in the code and in the patch header (`// Workaround for #92: …`, `fixes #92`) | PMP, "What the standards must cover"; coding standards | KPI script: default patches whose header names an issue; code comments once the coding standards are in |
 | P9 | No `--allow-dirty` results; results name the build ID | CONTRIBUTING, "Rules" | Pi rows on the dashboard; `-dirty` build IDs in done rows |
-| P10 | Test-plan rows: unique numbers, a report for each done row | test-plan.md, "Rules" | by hand at the weekly review |
+| P10 | Queue rows: unique numbers, a report (`reports/<row>.md`) for each done row | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md), "Rules" | by hand at the weekly review |
 | P11 | The trace requirement → issue → PR → code → Pi row → release notes is complete | PMP, "Traceability" | KPI script, once requirements exist |
 
 ## Bug analysis
@@ -122,16 +122,16 @@ over the last 30 days unless named otherwise; the page is
 | Code PRs without a Pi test | merged PRs changing `patches/`, `tools/`, `config/` with no Pi test or row named (P2) | GitHub PRs | 0 |
 | Stale-CI merges | merged PRs whose last commit (so their last CI run) is older than the merge of an earlier PR in the same patch directory (`patches/base`, `patches/kernel`, …) or `config/`: the two were never built together (P3) | GitHub PRs | 0 |
 | Main red hours | hours `main`'s `QEMU boot test` was red | GitHub Actions | under 8 h per red run of commits |
-| Nightly pass rate | nights that made a new stable image / nights that built (fail = a report from `update-stable.sh` on the issue "Nightly: main fails on the Pi") | git log of main, GitHub issue | 100 % |
-| Pi pass rate | done test-plan rows whose result starts with "pass" / all done rows | `docs/test-plan.md` "Done" | tracked; a fail needs an issue |
-| Flaky rate | done rows that name a tracked recurring bug / all done rows, and the sightings per bug | `docs/test-plan.md` "Done" | falling |
+| Nightly pass rate | nights that made a new stable image (its commit "Nightly: … is the stable image", in pi-tests since 2026-11-09) / nights that built (fail = a report from `update-stable.sh` on the issue "Nightly: main fails on the Pi") | git log of main and of redox-rpi/pi-tests, GitHub issue | 100 % |
+| Pi pass rate | done queue rows whose result starts with "pass" / all done rows | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | tracked; a fail needs an issue |
+| Flaky rate | done rows that name a tracked recurring bug / all done rows, and the sightings per bug | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | falling |
 | Patches with an issue | default patches whose header names an issue (P8) | `patches/` | rising |
-| Dirty results | done rows with a `-dirty` build ID (P9) | `docs/test-plan.md` | 0 for merges and releases |
+| Dirty results | done rows with a `-dirty` build ID (P9) | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | 0 for merges and releases |
 | Release checklist completion | checklist tests with a result / all tests, per candidate | release checklist | 100 % before a release; **not measurable yet**: the checklist has no result column |
 | Test coverage per requirement | requirements (`REQ-<area>-<n>`) with a passing test / all requirements | `docs/requirements/`, once they exist (PMP) | to be defined |
 | Trace completeness (P11) | requirements with issue, PR and test / all requirements | `docs/requirements/`, GitHub | to be defined |
 | Feature coverage | release features (the checklist's "In the image since" table) with an automated check or a named person test / all release features | release checklist; by hand until the checklist maps feature → test | 100 % for release features |
-| Pi rows per topic | done test-plan rows that name an issue of the topic | `docs/test-plan.md`, issue labels | every topic with code in the image has rows in the window |
+| Pi rows per topic | done queue rows that name an issue of the topic | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md), issue labels | every topic with code in the image has rows in the window |
 | Host tests | our Rust crates (`tools/`, vc4d) with host unit tests / all such crates | the repository | see [Coverage](#coverage) |
 | Code coverage | lines covered by host tests in host-testable crates (`cargo llvm-cov`) | build host, once measured | see [Coverage](#coverage) |
 | Static analysis findings | warnings per check of [Code quality](#code-quality), against the baseline | [code-quality-baseline.md](code-quality-baseline.md), later CI | not above the baseline; see targets there |

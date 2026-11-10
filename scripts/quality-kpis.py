@@ -8,7 +8,7 @@ Usage:
 
 Reads GitHub through the gh CLI (set GH_TOKEN, e.g.
 GH_TOKEN=$(gh auth token --user zehrer-xyz)) and the repository at --rev
-(docs/test-plan.md, patches/, git log). Changes nothing on GitHub or in
+(patches/, git log), and the Pi test queue in --tests-repo (queue.md). Changes nothing on GitHub or in
 the repository except the files it writes. Exits 1 only when a source
 cannot be read.
 """
@@ -125,7 +125,8 @@ def row_id(row):
 def collect(args):
     now = datetime.datetime.now(datetime.timezone.utc)
     since = now - datetime.timedelta(days=args.days)
-    k = {"generated": now.isoformat(timespec="minutes"), "days": args.days, "rev": args.rev}
+    k = {"generated": now.isoformat(timespec="minutes"), "days": args.days, "rev": args.rev,
+         "tests_repo": args.tests_repo}
 
     # Issues of every repository of the organisation (RFC 0002 moves
     # issues to the repository they concern). Numbers in the main repository
@@ -233,15 +234,24 @@ def collect(args):
     k["main_red_hours"] = round(red, 1)
     k["main_red_streaks"] = streaks
 
-    # Nightly: passes are commits on main, fails are comments on its issue
-    log = sh("git", "log", args.rev, f"--since={since.isoformat()}", "--format=%s")
-    passes = [s for s in log.splitlines() if re.match(r"Nightly: \S+ is the stable image", s)]
+    # Nightly: passes are its commits ("Nightly: <ID> is the stable image"),
+    # on main until 2026-11-09 and in the tests repository since; fails are
+    # its reports on the issue "Nightly: main fails on the Pi".
+    log = sh("git", "log", args.rev, f"--since={since.isoformat()}", "--format=%s").splitlines()
+    page = 1
+    while True:
+        commits = gh_json("api", f"repos/{args.tests_repo}/commits?since={since.isoformat()}&per_page=100&page={page}")
+        log += [c["commit"]["message"].split("\n")[0] for c in commits]
+        if len(commits) < 100:
+            break
+        page += 1
+    passes = {s for s in log if re.match(r"Nightly: \S+ is the stable image", s)}
     fails = 0
-    found = [i for i in issues if i["title"] == NIGHTLY_ISSUE]
+    found = [i for i in all_issues if i["title"] == NIGHTLY_ISSUE]
     for i in found:
         # update-stable.sh starts each failure report with "Build `<ID>`";
         # other comments are people's notes.
-        v = gh_json("issue", "view", str(i["number"]), "-R", args.repo, "--json", "body,comments,createdAt")
+        v = gh_json("issue", "view", str(i["number"]), "-R", f"{org}/{i['repo']}", "--json", "body,comments,createdAt")
         posts = [(v["createdAt"], v["body"])] + [(c["createdAt"], c["body"]) for c in v["comments"]]
         fails += sum(1 for t, body in posts if ts(t) >= since and body.startswith("Build `"))
     k["nightly"] = {"pass": len(passes), "fail": fails}
@@ -255,8 +265,10 @@ def collect(args):
     k["direct_patch_commits"] = [line.split()[0] for line in direct.splitlines()
                                  if not re.search(r"\(#\d+\)$", line)]
 
-    # Pi rows from test-plan.md "Done"
-    plan = sh("git", "show", f"{args.rev}:docs/test-plan.md")
+    # Pi rows from the "Done" table of the queue (redox-rpi/pi-tests since
+    # 2026-11-10; it holds the older rows too)
+    plan = sh("gh", "api", f"repos/{args.tests_repo}/contents/queue.md",
+              "-H", "Accept: application/vnd.github.raw+json")
     done = plan.split("\n## Done", 1)[1] if "\n## Done" in plan else ""
     rows = []
     for line in done.splitlines():
@@ -418,7 +430,7 @@ def render(k, repo):
         "",
         "## Sightings of tracked bugs",
         "",
-        "Done rows in [test-plan.md](../test-plan.md#done) that name the issue.",
+        f"Done rows in [queue.md](https://github.com/{k['tests_repo']}/blob/main/queue.md#done) that name the issue.",
         "",
         "| Bug | Rows | Which |",
         "|---|---|---|",
@@ -432,6 +444,7 @@ def main():
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--repo", default="redox-rpi/redox-rpi")
     ap.add_argument("--rev", default="origin/main")
+    ap.add_argument("--tests-repo", default="redox-rpi/pi-tests", help="repository with queue.md")
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "process", "kpis.md"))
     ap.add_argument("--json")
     args = ap.parse_args()
