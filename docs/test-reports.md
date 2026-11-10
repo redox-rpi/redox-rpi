@@ -10760,3 +10760,16 @@ Sopwith keeps running, no exception or panic, pi-test 6/6.
 
 Stable `v0.4.0-dev-819-gde8aa6e5+x9f76` restored and checked at 21:00 UTC.
 Raw output: `~/pitest-tools/t297/`.
+
+## 2026-11-10: `v0.5.0-dev-13-gd5592ab7+x2d42`
+
+Built 2026-11-10T03:30:26Z, `libc.so` `a0b375a7d2180b3f…`, real Pi 3B+ over netboot. Experiments: `netstack-watch`, `rtl8152`, `timesync`. Nightly stable image test (scripts/update-stable.sh).
+
+| Check | Result | Detail |
+|---|---|---|
+| version | pass | v0.5.0-dev-13-gd5592ab7+x2d42 |
+| manifest | pass | build ID and libc.so hash match netboot-v0.5.0-dev-13-gd5592ab7+x2d42.toml |
+| ps | pass | 52 processes (piped) |
+| ps-tty | pass | 52 lines straight to the terminal, rc=0 |
+| sdcard | pass | write, read back, delete on /scheme/data |
+| starts | pass | 0 of 300 failed |
