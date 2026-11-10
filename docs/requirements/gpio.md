@@ -1,6 +1,6 @@
 # GPIO, I2C, SPI (`GPIO`)
 
-Topic: [gpio](../topics/gpio.md). Trace: [trace.md](trace.md).
+Topic: [gpio](../topics/gpio.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 All three issues are still open with milestone v0.8.0, although the drivers
 start in every image since base patches `0045`–`0048`.
@@ -20,7 +20,7 @@ value and pull per pin.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #38, base `bcm2835-gpiod` |
-| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with wiring |
+| Verification | test, automated: checklist v0.4.0 test 14, rows 292 (v0.4.0 build) and 285 (rc1) (without wiring); **gap**: no test with wiring |
 
 Acceptance criteria:
 
@@ -44,7 +44,7 @@ The system shall offer I2C bus 1 (pins 3 and 5) as `/scheme/i2c` with the
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #39 |
-| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no test with a device |
+| Verification | test, automated: checklist v0.4.0 test 14, rows 292 (v0.4.0 build) and 285 (rc1) (without wiring); **gap**: no test with a device |
 
 Acceptance criteria:
 
@@ -67,7 +67,7 @@ with the `spi` tool.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #42 |
-| Verification | test, automated: checklist v0.4.0 test 14, row 285 (without wiring); **gap**: no loopback test |
+| Verification | test, automated: checklist v0.4.0 test 14, rows 292 (v0.4.0 build) and 285 (rc1) (without wiring); **gap**: no loopback test |
 
 Acceptance criteria:
 

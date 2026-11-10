@@ -1,6 +1,6 @@
 # Native C compiler (`TCC`)
 
-Topic: [tcc](../topics/tcc.md). Trace: [trace.md](trace.md).
+Topic: [tcc](../topics/tcc.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-TCC-1 Compile and run C on the Pi (experiment)
 

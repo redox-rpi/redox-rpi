@@ -1,6 +1,6 @@
 # Audio (`AUDIO`)
 
-Topic: [audio](../topics/audio.md). Trace: [trace.md](trace.md).
+Topic: [audio](../topics/audio.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-AUDIO-1 Sound from the headphone jack (beta)
 
@@ -17,7 +17,7 @@ The system shall play 16-bit stereo sound at 44.1 kHz written to
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #250 (open, milestone v0.4.0), PR #251, base `0086`, `0030`, kernel `0050` |
-| Verification | test, automated: checklist v0.4.0 test 16, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 16, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
@@ -42,7 +42,7 @@ right sides.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #250 |
-| Verification | test, person: checklist v0.4.0 test 17, row 280 (dev build, person), row 286 (queued) |
+| Verification | test, person: checklist v0.4.0 test 17, row 280 (dev build, person), row 286 (rc2 visit, pass) |
 
 Acceptance criteria:
 

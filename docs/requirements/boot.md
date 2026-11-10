@@ -1,6 +1,6 @@
 # Boot (`BOOT`)
 
-Topic: [boot](../topics/boot.md). Trace: [trace.md](trace.md).
+Topic: [boot](../topics/boot.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-BOOT-1 Boot from the SD card
 
@@ -17,7 +17,7 @@ root filesystem on the card and without a network.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | #6 (sdhost driver), #243 (U-Boot boot menu on the card) |
-| Verification | test, person: checklist v0.4.0 test 6, row 286 (queued); v0.3.0: visit 193 |
+| Verification | test, person: checklist v0.4.0 test 6, row 286 (rc2 visit, pass); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -45,7 +45,7 @@ prompt.
 | Status | proposed |
 | Since | v0.1.0-alpha |
 | Implemented by | #243 (boot menu), [netboot.md](../netboot.md) |
-| Verification | test, automated: checklist v0.4.0 test 1, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 1, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
@@ -69,7 +69,7 @@ to the Pi.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | T18 (unsupported services, PR #77) |
-| Verification | test, automated: checklist v0.4.0 test 3, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 3, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
@@ -91,7 +91,7 @@ The system shall reach the login prompt soon after power-on or `reboot`.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #47 (open, milestone v0.4.0) |
-| Verification | test, automated: checklist v0.4.0 test 5 (reboot time noted), row 285 (about 20 s each); row 215 (20.4–20.9 s) |
+| Verification | test, automated: checklist v0.4.0 test 5 (reboot time noted), rows 292 (v0.4.0 build) and 285 (rc1) (about 20 s each); row 215 (20.4–20.9 s) |
 
 Acceptance criteria:
 

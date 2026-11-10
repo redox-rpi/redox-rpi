@@ -1,6 +1,6 @@
 # Time (`TIME`)
 
-Topic: [time](../topics/time.md). Trace: [trace.md](trace.md).
+Topic: [time](../topics/time.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-TIME-1 Clock from NTP
 
@@ -16,7 +16,7 @@ The system shall set its clock from NTP at boot when the network is up.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | #22 (retry when the network comes late) |
-| Verification | test, automated: checklist v0.4.0 test 4, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 4, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 

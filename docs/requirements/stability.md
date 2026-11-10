@@ -1,7 +1,7 @@
 # Stability (`STAB`)
 
 Topics: [stability](../topics/stability.md), [relibc](../topics/relibc.md).
-Trace: [trace.md](trace.md).
+Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-STAB-1 Programs start every time
 
@@ -17,7 +17,7 @@ Dynamically linked programs shall start every time.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #1, #5, #12, #127, relibc `0004`, `0007`, kernel `0003` |
-| Verification | test, automated: checklist v0.4.0 test 1, row 285 (0 of 1000) |
+| Verification | test, automated: checklist v0.4.0 test 1, rows 292 (v0.4.0 build) and 285 (rc1) (0 of 1000) |
 
 Acceptance criteria:
 
@@ -38,7 +38,7 @@ A write into a pipe shall deliver all its bytes.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #158, PR #160, kernel `0010` |
-| Verification | test, automated: checklist v0.4.0 test 20, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 20, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 

@@ -1,7 +1,7 @@
 # Release image (`REL`)
 
 Topics: [ci](../topics/ci.md), [release-process.md](../release-process.md).
-Trace: [trace.md](trace.md).
+Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-REL-1 No remote shell in the release image
 
@@ -18,7 +18,7 @@ other unencrypted remote login.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | [release-process.md](../release-process.md#building), `config/raspi3bp-sdcard.toml` |
-| Verification | inspection by Release & CI at the candidate (criterion 1, release checklist item) and test, person, in the visit (criterion 2); agreed with V&V 2026-11-08, not run yet. Automated rows cannot check it: they run on the netboot image with `devshd` |
+| Verification | inspection by Release & CI at the candidate (criterion 1, release checklist item) and test, person, in the visit (criterion 2: checklist v0.4.0 test 23, row 286, pass on the Pi 3B+ and the Zero 2 W); criterion 1 agreed with V&V 2026-11-08, not run yet. Automated rows cannot check it: they run on the netboot image with `devshd` |
 
 Acceptance criteria:
 
@@ -43,7 +43,7 @@ prompt and keep them in `/etc/redox-rpi-release` and `/.uuid`.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #237 (`/.uuid` for SwiftFlash) |
-| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `version`), row 285 (banner on 7 boots); `/.uuid` checked at the rc1 build |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `version`), rows 292 (v0.4.0 build) and 285 (rc1) (banner on 7 boots); `/.uuid` checked at the rc1 build |
 
 Acceptance criteria:
 
@@ -66,7 +66,7 @@ A release or candidate shall be built from a clean commit, without
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | `config/upstream.lock`, drift check, #257 (rc1 built from a red commit) |
-| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `manifest`), row 285 |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test `manifest`), rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 

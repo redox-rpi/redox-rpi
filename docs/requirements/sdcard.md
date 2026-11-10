@@ -1,6 +1,6 @@
 # SD card (`SD`)
 
-Topic: [sdcard](../topics/sdcard.md). Trace: [trace.md](trace.md).
+Topic: [sdcard](../topics/sdcard.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-SD-1 Reliable reads and writes
 
@@ -17,7 +17,7 @@ also across restarts.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | #6, #31, base `0025`–`0028`, kernel `0008` |
-| Verification | test, automated: checklist v0.4.0 tests 6 and 18, row 285 (data partition on the netboot card), row 286 (root on the card, queued) |
+| Verification | test, automated: checklist v0.4.0 tests 6 and 18, rows 292 (v0.4.0 build) and 285 (rc1) (data partition on the netboot card), row 286 (root on the card, rc2 visit, pass) |
 
 Acceptance criteria:
 
@@ -40,7 +40,7 @@ Small writes shall be about as fast as large ones, and reach the card soon.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #16 (closed), #155 (open), PR #73, redoxfs `0037`–`0040` |
-| Verification | test, automated: checklist v0.4.0 test 18, row 285 (criterion 1); **gap** for criterion 2 |
+| Verification | test, automated: checklist v0.4.0 test 18, rows 292 (v0.4.0 build) and 285 (rc1) (criterion 1); **gap** for criterion 2 |
 
 Acceptance criteria:
 

@@ -1,6 +1,6 @@
 # Network (`NET`)
 
-Topic: [network](../topics/network.md). Trace: [trace.md](trace.md).
+Topic: [network](../topics/network.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-NET-1 DHCP on the onboard Ethernet
 
@@ -17,7 +17,7 @@ Ethernet (LAN7800) at every boot and accept TCP connections.
 | Status | proposed |
 | Since | v0.1.0-alpha |
 | Implemented by | LAN7800 in `dwc2d`; #217 and #92 (open: sometimes no network) |
-| Verification | test, automated: checklist v0.4.0 test 1 (pi-test logs in over the network), row 285; **gap**: no count of boots without network (#259) |
+| Verification | test, automated: checklist v0.4.0 test 1 (pi-test logs in over the network), rows 292 (v0.4.0 build) and 285 (rc1); **gap**: no count of boots without network (#259) |
 
 Acceptance criteria:
 
@@ -43,7 +43,7 @@ Ethernet adapter, on the Pi 3B+ and on the Zero 2 W.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | base `0020` |
-| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
+| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (rc2 visit, pass); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -65,7 +65,7 @@ DHCP lease on each.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #53 (still open, milestone v0.6.0, although PR #81 is in rc1), PR #81 |
-| Verification | test, person: checklist v0.4.0 test 19, row 286 (queued) |
+| Verification | test, person: checklist v0.4.0 test 19, row 286 (rc2 visit, pass) |
 
 Acceptance criteria:
 
@@ -86,7 +86,7 @@ The system shall receive a long TCP transfer without stalling.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #157, #88, #119 (open), #140 (open), #141 (open) |
-| Verification | test, automated: checklist v0.4.0 test 20, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 20, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 

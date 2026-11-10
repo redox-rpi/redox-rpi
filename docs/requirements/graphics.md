@@ -1,9 +1,8 @@
 # Graphics (`GFX`)
 
-Topic: [graphics](../topics/graphics.md). Trace: [trace.md](trace.md).
+Topic: [graphics](../topics/graphics.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
-Planned for v0.4.0-rc2 (draft PR #255). Until it is merged these
-requirements describe the plan, not the image.
+In the release image since v0.4.0 (PR #255, rc2).
 
 ### REQ-GFX-1 Optional desktop from the console (beta)
 
@@ -19,9 +18,9 @@ desktop.
 | Level | beta (one resolution, Orbital runs until reboot, window dragging costs a core) |
 | PBS | 2.5.4, 2.3.6 |
 | Status | proposed |
-| Since | v0.4.0-rc2 (planned) |
+| Since | v0.4.0 |
 | Implemented by | #33, PR #255 (draft), PR #113 |
-| Verification | test, person: rows 287 and 288 (`--allow-dirty` build, not valid for a release); checklist v0.4.0 test 22 (planned for the rc2 visit); **gap** for an automated smoke test (#261) |
+| Verification | test, person: checklist v0.4.0 test 22, row 286 (rc2 visit, pass) and row 292 (22 A, automated part); rows 287 and 288 were exploratory (`--allow-dirty`) |
 
 Acceptance criteria:
 
@@ -46,9 +45,9 @@ file manager.
 | Level | beta (editor about 40 s to start, save dialog up to 30 s) |
 | PBS | 2.5.4 |
 | Status | proposed |
-| Since | v0.4.0-rc2 (planned) |
+| Since | v0.4.0 |
 | Implemented by | #33, PR #255 |
-| Verification | test, person: rows 274 and 275 (dev builds); checklist v0.4.0 test 22 (planned) |
+| Verification | test, person: checklist v0.4.0 test 22, row 286 (rc2 visit): orbterm and Files pass, the editor cannot save (#33) |
 
 Acceptance criteria:
 

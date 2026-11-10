@@ -1,7 +1,7 @@
 # Boards (`BOARD`)
 
 Topics: [boards](../topics/boards.md), [zero2w](../topics/zero2w.md).
-Trace: [trace.md](trace.md).
+Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 The Pi 3 Model B+ is the reference board: every other requirement applies
 to it unless it says otherwise.
@@ -21,7 +21,7 @@ USB keyboard, network through a USB Ethernet adapter, and NTP.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | #8 (closed) |
-| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (queued); v0.3.0: visit 193 |
+| Verification | test, person: checklist v0.4.0 tests 9 and 19, row 286 (rc2 visit, pass); v0.3.0: visit 193 |
 
 Acceptance criteria:
 

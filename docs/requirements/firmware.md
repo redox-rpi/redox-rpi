@@ -1,6 +1,6 @@
 # Firmware interface and CPU clock (`FW`)
 
-Topic: [firmware](../topics/firmware.md). Trace: [trace.md](trace.md).
+Topic: [firmware](../topics/firmware.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-FW-1 Full CPU speed without throttling
 
@@ -17,7 +17,7 @@ the Pi 3B+) and log undervoltage or overheating.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #20, base `0021` |
-| Verification | test, automated: checklist v0.4.0 test 2, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 2, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
@@ -40,7 +40,7 @@ shall set another mode at boot.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #23 (open, milestone v0.4.0), PR #147, base `0040`, kernel `0040` |
-| Verification | test, automated: checklist v0.4.0 test 13, row 285 (criterion 1); row 161 (criterion 2, dev build) |
+| Verification | test, automated: checklist v0.4.0 test 13, rows 292 (v0.4.0 build) and 285 (rc1) (criterion 1); row 161 (criterion 2, dev build) |
 
 Acceptance criteria:
 
@@ -64,7 +64,7 @@ Acceptance criteria:
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | kernel `0002` (watchdog), #12; #7 (power off, open) |
-| Verification | test, automated: checklist v0.4.0 test 5, row 285 |
+| Verification | test, automated: checklist v0.4.0 test 5, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
@@ -85,7 +85,7 @@ throttling state from the VideoCore firmware under `/scheme/rpi-firmware`.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | base `0018`, [rpi-firmware.md](../rpi-firmware.md) |
-| Verification | test, automated: a new `pi-test.py` check, so the nightly runs it too (agreed with V&V 2026-11-08, values checked on stable 748, check not written yet); the clock is already read by test 2 in row 285 |
+| Verification | test, automated: a new `pi-test.py` check, so the nightly runs it too (agreed with V&V 2026-11-08, values checked on stable 748, check not written yet); the clock is already read by test 2 in rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 

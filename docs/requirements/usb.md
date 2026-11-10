@@ -1,6 +1,6 @@
 # USB (`USB`)
 
-Topic: [usb](../topics/usb.md). Trace: [trace.md](trace.md).
+Topic: [usb](../topics/usb.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-USB-1 USB keyboard
 
@@ -17,7 +17,7 @@ port of the Pi 3B+ (behind its onboard hubs) and on the Zero 2 W.
 | Status | proposed |
 | Since | v0.2.0 |
 | Implemented by | `dwc2d` (base patches), #29 (interrupts) |
-| Verification | test, person: checklist v0.4.0 tests 7 and 9, row 286 (queued); QEMU `scripts/test-keyboard.sh` |
+| Verification | test, person: checklist v0.4.0 tests 7 and 9, row 286 (rc2 visit, pass); QEMU `scripts/test-keyboard.sh` |
 
 Acceptance criteria:
 
@@ -40,7 +40,7 @@ and keep working when one is unplugged and plugged in again.
 | Status | proposed |
 | Since | v0.3.0 |
 | Implemented by | #17 (closed), base `0031`–`0033` |
-| Verification | test, person: checklist v0.4.0 test 8, row 286 (queued); rows 35 and 67 (`scripts/pi-hotplug-test.sh`) |
+| Verification | test, person: checklist v0.4.0 test 8, row 286 (rc2 visit, pass); rows 35 and 67 (`scripts/pi-hotplug-test.sh`) |
 
 Acceptance criteria:
 
@@ -63,7 +63,7 @@ The system shall report a USB mouse or tablet as input events.
 | Status | proposed |
 | Since | v0.4.0 |
 | Implemented by | #48 (still open, milestone v0.5.0, although PR #223 is in rc1), PR #223, base `0059` |
-| Verification | test, person: checklist v0.4.0 test 21, row 286 (queued); QEMU `scripts/test-usb-mouse.sh` |
+| Verification | test, person: checklist v0.4.0 test 21, row 286 (rc2 visit, pass); QEMU `scripts/test-usb-mouse.sh` |
 
 Acceptance criteria:
 

@@ -5,36 +5,39 @@ that verifies it and the issues that implement it. Owner: the Requirements
 agent; the rules are in the [RMP](../process/rmp.md). The maintainer decides on every
 requirement.
 
-Status: draft, 2026-11-08. The first set describes what v0.4.0 meets or
-claims (rc1, plus the optional desktop planned for rc2).
+Status: draft, 2026-11-10. The first set describes what v0.4.0 meets,
+verified in [trace-v0.4.0.md](trace-v0.4.0.md).
 
-**This is a collection, not the final format.** The maintainer proposed
-managing requirements as GitHub issues of type **Feature** (the org has
-Task, Bug and Feature). Where those issues live depends on the revised RFC
-0002 (repo split). Until then the files below collect the content so that
-each requirement moves into one Feature issue unchanged; see
-[As Feature issues](#as-feature-issues) and
-[RMP, Storage](../process/rmp.md#storage).
+**These files are the input for the move to Feature issues.** Since RFC
+0002 (accepted) each requirement is one Feature issue in `redox-rpi`; the
+issue format is in [RMP, Storage](../process/rmp.md#storage). When the
+maintainer approves this set (by merging the PR that brings it), the
+Requirements agent runs `scripts/req-issues.py`, which creates or updates
+one issue per `### REQ-…` entry. Then the area files are deleted, and this
+page keeps the list of areas, the search links and the per-release traces.
 
-## As Feature issues
-
-Each `### REQ-…` entry is written to become one issue:
+## Move to Feature issues
 
 | Entry | Feature issue |
 |---|---|
-| ID and name | title `REQ-NET-1 DHCP on the onboard Ethernet` (the ID stays the stable reference in rows, issues and release notes; code comments name the issue) |
-| Statement, rationale | first lines of the body |
-| Acceptance criteria | a checklist in the body (`- [ ] …`); V&V ticks a box with the row that passed it |
-| Priority, kind, level, PBS, since | labels (`prio:must`, `level:beta`) or project fields, as RFC 0002 decides |
-| Status | open = in force, closed as "not planned" = retired; proposal = the issue is still in review |
-| Area | the repo the requirement concerns (after the split) plus the `topic:<name>` label |
-| Implemented by | the implementing Tasks and Bugs as sub-issues or "related" links |
-| Verification | links to the Pi rows and reports, one comment per release with the state from [trace.md](trace.md) |
+| ID and name | title, e.g. `REQ-NET-1 DHCP on the onboard Ethernet` |
+| Statement, field table, rationale | body, in the RMP's order, with a `Source` row |
+| Acceptance criteria | a checklist; boxes ticked for the criteria verified on v0.4.0, with the row |
+| Area | the `topic:<name>` label of the area |
+| State | verified on v0.4.0 in all its criteria: **closed as completed**, milestone v0.4.0; otherwise **open**, milestone v0.4.0 kept for what was met and the open criteria named in a comment |
+| Implemented by | sub-issues where an issue still exists; closed issues and PRs as links |
 
-The trace table then becomes a query or project view over these issues;
-until then [trace.md](trace.md) holds it. Moving them is one script run
-(`gh issue create` per entry), done once the maintainer has approved the
-content and RFC 0002 says which repo gets which area.
+Requirements that go into an **existing Feature issue** instead of a new
+one (its title gets the ID, its body the requirement block on top):
+
+| Requirement | Existing Feature issue |
+|---|---|
+| REQ-AUDIO-1 | #250 PWM audio driver for the headphone jack |
+| REQ-TIME-3 | #51 relibc: clock_settime and settimeofday; timesync -s |
+
+The other 41 become new issues. #7 (power off) and #36 (keyboard layouts)
+belong to the v1.0 criteria of [RFC 0003](../rfcs/0003-v1-criteria.md)
+(REQ-FW-5, REQ-CON-3) and get their requirement when that RFC is decided.
 
 ## Files
 
@@ -54,7 +57,7 @@ content and RFC 0002 says which repo gets which area.
 | [stability.md](stability.md) | `STAB` program starts, kernel, relibc | [stability](../topics/stability.md), [relibc](../topics/relibc.md) |
 | [boards.md](boards.md) | `BOARD` supported boards | [boards](../topics/boards.md), [zero2w](../topics/zero2w.md) |
 | [release.md](release.md) | `REL` release image contents and publishing | [ci](../topics/ci.md), [release-process](../release-process.md) |
-| [trace.md](trace.md) | trace table: requirement → issue → test → state | |
+| [trace-v0.4.0.md](trace-v0.4.0.md) | trace table: requirement → issue → test → state | |
 
 Areas follow the topic pages. A new topic that changes what the system does
 gets its own area code and file.
@@ -112,7 +115,7 @@ issue → branch and PR → code → Pi row → release notes.
 - A Pi row or checklist test names the IDs it verifies (`verifies
   REQ-SD-1, REQ-SD-2`). V&V adds them; for the first set the trace table
   names the existing rows.
-- [trace.md](trace.md) lists every requirement with its issues, tests and
+- [trace-v0.4.0.md](trace-v0.4.0.md) lists every requirement with its issues, tests and
   state for the current release. Quality turns its gaps into KPIs.
 
 States in the trace table:

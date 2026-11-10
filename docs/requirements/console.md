@@ -1,7 +1,7 @@
 # Console (`CON`)
 
 Topics: [boot](../topics/boot.md) (boot and console),
-[stability](../topics/stability.md) (serial input). Trace: [trace.md](trace.md).
+[stability](../topics/stability.md) (serial input). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-CON-1 HDMI console with login
 
@@ -18,7 +18,7 @@ USB keyboard.
 | Status | proposed |
 | Since | v0.1.0-alpha (screen), v0.2.0 (keyboard) |
 | Implemented by | — (framebuffer inherited from UEFI; keyboard: [REQ-USB-1](usb.md#req-usb-1-usb-keyboard)) |
-| Verification | test, person: checklist v0.4.0 test 7, row 286 (queued); v0.3.0: visit 193 |
+| Verification | test, person: checklist v0.4.0 test 7, row 286 (rc2 visit, pass); v0.3.0: visit 193 |
 
 Acceptance criteria:
 
@@ -43,7 +43,7 @@ The system shall offer a login on the PL011 serial port (GPIO 14/15,
 | Status | proposed |
 | Since | v0.1.0-alpha (login), v0.3.0 (fast input) |
 | Implemented by | #28 (open), #32, base `0024`, kernel `0007` |
-| Verification | test, automated: checklist v0.4.0 test 11, row 285: **fails** (19 of 20, #28 known issue) |
+| Verification | test, automated: checklist v0.4.0 test 11, rows 292 (v0.4.0 build) and 285 (rc1): **fails** (19 of 20, #28 known issue) |
 
 Acceptance criteria:
 
