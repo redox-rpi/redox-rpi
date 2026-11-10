@@ -60,7 +60,7 @@ data = """
 let file = /etc/startup-sound
 if test -f /usr/lib/init.d/60_data.service
     let n = 0
-    while not test -d /scheme/data && test $n -lt 5
+    while test ! -d /scheme/data && test $n -lt 5
         sleep 1
         let n += 1
     end

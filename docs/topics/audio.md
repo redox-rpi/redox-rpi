@@ -16,6 +16,18 @@ are enough; A3 and polish may follow in a later release.
   /scheme/audio` plays a test tone. **Beta:** about 11 usable bits, one
   fixed format (44.1 kHz s16 stereo), the PWM never stops after silence
   yet, a faint hiss when quiet, and the boot click is not checked yet.
+- **Startup sound, in work** (v0.5.0,
+  [#292](https://github.com/redox-rpi/redox-rpi/issues/292)): `tone
+  chime`, our own generated chord (C, E, G, C, about 1.8 s), plays once
+  per boot after `audiod` starts, in the background
+  (`21_startup-sound.service`, oneshot_async). `off` in
+  `/etc/startup-sound` switches it off; on network and direct boot, where
+  `/` lives in RAM, `startup-sound` on the data partition
+  (`/scheme/data/startup-sound`) wins. `reboot` and the new `poweroff`
+  (tools/reboot; halts, then pull the power) first write
+  `/scheme/audiohw/stop`, which ramps the outputs down to 0 V over 50 ms,
+  so neither the reset nor pulling the power afterwards clicks. After the
+  prebuilt `shutdown`, or pulling the plug while running, it still clicks.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
   in the left ear only (so left and right are right), the sweep and
   volume 100 all played; a faint hiss at idle and a little crackle (cheap
