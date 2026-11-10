@@ -50,16 +50,17 @@ tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 "$tool" "$image" get usr/lib/boot/kernel "$out/kernel"
 "$tool" "$image" get usr/lib/boot/initfs "$out/initfs"
 
-# build-image.sh names a minimal image "netboot" in the login banner and the
-# release files. The live disk of this boot comes from the card: call it
-# "direct" there, in a copy of the image.
+# build-image.sh names a network-boot image "netboot" (or "zero2w" for the
+# Zero 2 W image) in the login banner and the release files. The live disk
+# of this boot comes from the card: call it "direct" there, in a copy of the
+# image. The build ID still tells the two apart.
 [ "$image" = "$out/harddrive.img" ] || cp "$image" "$out/harddrive.img"
 image="$out/harddrive.img"
 for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
     "$tool" "$image" get "$file" "$out/release-file"
-    sed -i -e 's/^\(redox-rpi .*\) (netboot, /\1 (direct, /' \
-        -e 's/^IMAGE="netboot"$/IMAGE="direct"/' \
-        -e 's/^image = "netboot"$/image = "direct"/' "$out/release-file"
+    sed -i -E -e 's/^(redox-rpi .*) \((netboot|zero2w), /\1 (direct, /' \
+        -e 's/^IMAGE="(netboot|zero2w)"$/IMAGE="direct"/' \
+        -e 's/^image = "(netboot|zero2w)"$/image = "direct"/' "$out/release-file"
     "$tool" "$image" put "$file" "$out/release-file"
 done
 rm "$out/release-file"
