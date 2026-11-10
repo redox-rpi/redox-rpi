@@ -16,8 +16,8 @@ Root-causing a bug stays with its topic owner. Owner: the Quality agent
 - **#92 caught once more:** row 316 (2026-11-10) stalled the network
   under `dd` load with vc4d, and `netstack-watch` logged "main loop stuck
   in read"; rows 319 and 321 did not reproduce it.
-- Issue types are in use (99 of 109 open issues), #28 and #108 are
-  reopened, #92 and #129 have topics. 30 open bugs, no severity yet.
+- Every open issue has a type; 31 open bugs with severity: S1 2 (#151
+  open over 7 days, #332 Pi 400), S2 19, S3 10. #28 and #108 reopened.
 - Nightly 91 % (10 of 11), Pi rows 58 % pass. KPIs: [kpis.md](../process/kpis.md).
 
 ## Coverage audit

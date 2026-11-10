@@ -162,6 +162,8 @@ def collect(args):
                  "unclassified")
         sev.setdefault(s, []).append(b["ref"])
     k["open_bugs"] = {s: n for s, n in sorted(sev.items())}
+    k["s1_older_7d"] = [b["ref"] for b in bugs if "severity:S1" in b["labels"]
+                        and now - ts(b["createdAt"]) > datetime.timedelta(days=7)]
     k["unlabelled"] = sorted(i["number"] for i in open_issues
                              if not any(label.startswith("topic:") for label in i["labels"]))
     k["stale_in_progress"] = sorted(
@@ -400,7 +402,7 @@ def render(k, repo):
         rows.append(f"| {name} | {value} | {ok if good else warn} | {note} |")
 
     bugs = k["open_bugs"]
-    s1 = bugs.get("S1", [])
+    s1 = k.get("s1_older_7d", [])
     types = sorted({t for v in k["open_by_repo_type"].values() for t in v})
     row("Open issues by repo and type",
         "; ".join(f"{r}: " + ", ".join(f"{t} {n}" for t, n in sorted(v.items()))
@@ -411,7 +413,8 @@ def render(k, repo):
     row("Open bugs (type Bug or label `bug`)",
         ", ".join(f"{s}: {len(n)}" for s, n in bugs.items()) or "0", not s1,
         ("no `severity:` labels yet; " if set(bugs) <= {"unclassified"} else "")
-        + ", ".join(r for n in bugs.values() for r in n))
+        + "; ".join(f"{sv}: {', '.join(n)}" for sv, n in bugs.items())
+        + (f"; **S1 older than 7 days:** {', '.join(s1)}" if s1 else ""))
     row("Unlabelled open issues", len(k["unlabelled"]), not k["unlabelled"], links(repo, k["unlabelled"]))
     row("Stale `in-progress` (14 days)", len(k["stale_in_progress"]), not k["stale_in_progress"],
         links(repo, k["stale_in_progress"]))

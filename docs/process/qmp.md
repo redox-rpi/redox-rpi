@@ -71,9 +71,14 @@ finds and fixes the cause.
 **Classification** (on the issue, and in the known-issues table of
 [quality.md](../topics/quality.md#known-issues)):
 
-- **Severity:** S1 the Pi crashes, hangs, loses data, or main or a release
-  is broken; S2 a feature fails, or a workaround is needed; S3 noise,
-  cosmetic, slow. Proposed labels `severity:S1`–`S3` (the lead decides).
+- **Severity** (labels, decided by the lead on 2026-11-10):
+  `severity:S1` blocks boot or a release, or loses data;
+  `severity:S2` a feature is broken, a workaround exists;
+  `severity:S3` minor or cosmetic (noise, slowness, a fix that waits
+  only for upstream). Every open issue of type Bug has exactly one.
+  Quality sets it at the weekly review for bugs that have none; the
+  topic owner may change it with a reason in a comment. A new S1 is
+  reported to the lead at once (see [Deviations](#deviations)).
 - **Kind:** crash/panic, hang, data loss, wrong result, performance,
   build or process.
 - **Recurrence:** one-off, recurring (seen in more than one row or
