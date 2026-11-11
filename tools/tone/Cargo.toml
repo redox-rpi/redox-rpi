@@ -1,7 +1,7 @@
 [package]
 name = "tone"
 description = "Write a test tone as raw audio (s16le, stereo, 44.1 kHz) and check /scheme/audiohw"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 
