@@ -1,4 +1,4 @@
-From b1aae011588ff08a1d1ae06094b0f6c7505277d4 Mon Sep 17 00:00:00 2001
+From bcb9c988b0064857fe64ae1c8c16beaee6374472 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Wed, 11 Nov 2026 15:27:44 +0000
 Subject: [PATCH] netdb: name server from netcfg, timeout and retries, local
@@ -20,9 +20,9 @@ that never answered blocked the caller for good (redox-rpi #290).
   "www.example.co.uk" was taken for 0.0.0.0.
 ---
  src/header/netdb/linux.rs  |  15 +++
- src/header/netdb/lookup.rs | 220 ++++++++++++++++++++-----------------
+ src/header/netdb/lookup.rs | 225 ++++++++++++++++++++-----------------
  src/header/netdb/redox.rs  |  21 +++-
- 3 files changed, 152 insertions(+), 104 deletions(-)
+ 3 files changed, 156 insertions(+), 105 deletions(-)
 
 diff --git a/src/header/netdb/linux.rs b/src/header/netdb/linux.rs
 index 26010511..1a4ad1d1 100644
@@ -48,10 +48,19 @@ index 26010511..1a4ad1d1 100644
 +    Err(Errno(errno::EIO).sync())
 +}
 diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
-index 361aa8aa..6e0f7699 100644
+index 361aa8aa..4dec28c3 100644
 --- a/src/header/netdb/lookup.rs
 +++ b/src/header/netdb/lookup.rs
-@@ -8,15 +8,16 @@ use crate::{
+@@ -1,4 +1,7 @@
+-use alloc::{string::ToString, vec::Vec};
++use alloc::{
++    string::{String, ToString},
++    vec::Vec,
++};
+ 
+ use crate::{
+     error::Errno,
+@@ -8,15 +11,16 @@ use crate::{
  
  use crate::header::{
      bits_arpainet::htons,
@@ -71,7 +80,7 @@ index 361aa8aa..6e0f7699 100644
  };
  
  pub type LookupHost = Vec<in_addr>;
-@@ -33,6 +34,69 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -33,6 +37,69 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
  
      let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
  
@@ -141,7 +150,7 @@ index 361aa8aa..6e0f7699 100644
      let mut timespec = timespec::default();
      Sys::clock_gettime(
          time::constants::CLOCK_REALTIME,
-@@ -44,13 +108,12 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -44,13 +111,12 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
          transaction_id: tid,
          flags: 0x0100,
          queries: vec![DnsQuery {
@@ -157,7 +166,7 @@ index 361aa8aa..6e0f7699 100644
      let packet_data = packet.compile();
  
      let mut dest = [0_u8; size_of::<sockaddr_in>()];
-@@ -62,110 +125,63 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -62,110 +128,63 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
      };
  
      let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
@@ -314,7 +323,7 @@ index 361aa8aa..6e0f7699 100644
  }
  
  fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
-@@ -202,11 +218,13 @@ fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
+@@ -202,11 +221,13 @@ fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
  }
  
  pub fn parse_ipv4_string(ip_string: &str) -> Option<u32> {
