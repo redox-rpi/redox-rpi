@@ -1,16 +1,18 @@
 # socdump
 
-Reads the Raspberry Pi's clock, PLL and GPIO registers and prints them
-decoded. It only reads; nothing writes a register. The idea comes from
+Reads the Raspberry Pi's clock, PLL, GPIO and display registers and
+prints them decoded. It only reads; nothing writes a register. The idea comes from
 `pll-inspector` and `pv_dumper` in
 [librerpi/rpi-tools](https://github.com/librerpi/rpi-tools), rewritten in
 Rust (no code taken). Plan and later steps:
 [#224](https://github.com/redox-rpi/redox-rpi/issues/224).
 
 ```text
-socdump [plls|clocks|gpio|all]   decoded (default all)
+socdump [plls|clocks|gpio|all]   decoded (default all, display included)
+socdump display                  HVS, pixel valves and HDMI, decoded
 socdump check                    compare the rates with /scheme/rpi-firmware/clocks
 socdump regs                     every register as "block address value name", for diff
+socdump diff A B                 the registers that differ between two regs dumps
 ```
 
 It needs root (it maps `/scheme/memory/physical@dev`). It is part of the
@@ -26,8 +28,20 @@ SD card image (`config/raspi3bp-sdcard.toml`).
   (`vpu`, `emmc`, `uart`, `pwm`, `gp0`-`gp2`, `dpi`, `hsm`, ...).
 - **GPIO**: the function of each pin (`in`, `out`, `alt0`-`alt5`) and its
   level.
+- **Display** (`socdump display`): the HVS channels (on/off, size, FIFO
+  state, COB range, display list start) and each plane of their display
+  lists (format, size, position, scaled or not, raw words); the three
+  pixel valves (on/off, timing, pixel clock, refresh rate); the HDMI core
+  and HD blocks (timing, sync polarity, scheduler, hotplug, PHY, video
+  control, frame count). HDMI is read only when the `hsm` clock and PLLH
+  run: reading a block without its clock can hang the bus. Registers whose
+  read changes something (the audio FIFO `MAI_DATA`, the CEC data
+  registers) are left out.
 - **check**: for each clock the firmware reports, our rate next to the
   firmware's, `ok` within 1 %.
+- **diff**: two `socdump regs` outputs side by side, only the registers
+  that differ or are in one of them only; exit status 0 when equal. For
+  closed against open firmware, or one mode against another.
 
 ## Where the values come from
 
@@ -37,6 +51,7 @@ SD card image (`config/raspi3bp-sdcard.toml`).
 | Peripheral address | the devicetree's `/soc` `ranges` (`0x7e000000` -> `0x3f000000` on the 3B+) |
 | Crystal | `/clocks/clk-osc` `clock-frequency` (19.2 MHz on the 3B+), else the chip's default |
 | Register layout | `src/chip.rs`, one table per chip; offsets from the BCM2835 peripherals manual and Linux `clk-bcm2835.c` |
+| Display registers | `src/display.rs`; offsets from Linux `vc4_regs.h` and `vc4_hdmi_regs.h` (BCM2835 table), decoding our own |
 
 ## On the real Pi 3B+ (Pi test #261, 2026-11-06)
 
@@ -78,4 +93,13 @@ compare with Linux's view.
 ## Tests
 
 `cargo test` on any host checks the decoding (PLL and divider maths,
-devicetree ranges).
+devicetree ranges, pixel valve and HDMI timing, display list walk). The
+Code quality CI job runs it.
+
+## Display reference dumps (#224 step 4)
+
+- 1920x1080, closed firmware, NanoKVM: Pi test row 337 (no person),
+  saved as `reference/pi3bp-firmware-1080p-display.txt` and `.regs`.
+- 1280x720: needs `hdmi_mode=4` (with `hdmi_group=1`) in the SD card's
+  `config.txt`, since the test Pi reads `config.txt` from the card, not
+  from TFTP. So it waits for a card visit.

@@ -39,4 +39,9 @@ own repository,
 
 - M2: load `armstub8`, U-Boot and the devicetree from the SD card.
 - M3 mailbox service, M4 HDMI, M5 network boot and 3D.
+- Reference values for M4: `socdump regs` under Broadcom's firmware holds
+  what it programs for HDMI (PLLH, pixel valve 2, HDMI core and PHY, HVS);
+  `socdump diff` shows what our firmware sets differently
+  ([tools/socdump](../../tools/socdump/README.md),
+  [#224](https://github.com/redox-rpi/redox-rpi/issues/224)).
 - Decision on a project of its own: [#333](https://github.com/redox-rpi/redox-rpi/issues/333).
