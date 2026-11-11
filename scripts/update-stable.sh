@@ -35,6 +35,10 @@
 #      update the issue "Nightly: main fails on the Pi".
 #   After 1 (nothing new) or 5: start redox-visit.service, the images in
 #   config/visit-images.conf (scripts/build-visit-images.sh).
+#   Every night (1, 5 and 6): scripts/quality-kpis.py at the checked-out
+#   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
+#   its --summary goes into the day's report too. Skipped while the script
+#   does not exist; never fails this script.
 #
 # GitHub access: a token in ~/.config/redox-rpi/github-token (mode 600) with
 # write access to issues of redox-rpi/redox-rpi and to contents of
@@ -115,6 +119,57 @@ fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags) ($head)"
 
+# Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
+# 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.
+kpis_dir=""
+run_kpis() {
+    [ -x scripts/quality-kpis.py ] || { log "no scripts/quality-kpis.py at $ref, no KPIs"; return 0; }
+    kpis_dir="$(mktemp -d)"
+    local clippy=()
+    [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
+        log "quality KPIs collected"
+    else
+        log "quality-kpis.py failed: $(tail -n 1 "$kpis_dir/log.txt")"
+        rm -rf "$kpis_dir"
+        kpis_dir=""
+    fi
+    return 0
+}
+
+# Copy the KPI page into the pi-tests clone (checked out on origin/main) and
+# stage it.
+stage_kpis() {
+    [ -n "$kpis_dir" ] || return 0
+    cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
+    git -C "$TESTS" add kpis.md kpis.json
+}
+
+# Nights without a report (nothing new, or a failed build): the KPI page on
+# its own commit. Never fails.
+push_kpis_only() {
+    [ -n "$kpis_dir" ] || return 0
+    [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
+    git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
+    stage_kpis
+    git -C "$TESTS" diff --cached --quiet && { log "KPIs unchanged"; return 0; }
+    git -C "$TESTS" -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
+        commit -q -m "Nightly: quality KPIs $(date -u +%Y-%m-%d)" || return 0
+    if [ "$push" = 0 ]; then
+        log "--no-push: KPI commit $(git -C "$TESTS" rev-parse --short HEAD) in $TESTS not pushed"
+    elif git_push "$TESTS" ||
+        { git -C "$TESTS" fetch -q origin && git -C "$TESTS" rebase -q origin/main && git_push "$TESTS"; }; then
+        log "pushed the quality KPIs to $TESTS_REPO main"
+    else
+        log "could not push the quality KPIs to $TESTS_REPO"
+    fi
+    return 0
+}
+
+run_kpis
+
 # 1. Anything new for the image?
 stable_commit=""
 [ -f "$STABLE_LINK/manifest.toml" ] &&
@@ -125,6 +180,7 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
     git cat-file -e "$stable_commit" 2>/dev/null &&
     git diff --quiet "$stable_commit" HEAD -- patches config scripts tools; then
     log "no change to patches/, config/, scripts/ or tools/ since the stable image, nothing to do"
+    push_kpis_only
     start_visit_images
     exit 0
 fi
@@ -301,6 +357,10 @@ EOF
     # A second run on the same day adds to that day's file.
     out="$TESTS/reports/stable-$date.md"
     { [ -s "$out" ] && echo; sed '1s/^## /# /' "$report"; } >> "$out"
+    if [ -n "$kpis_dir" ] && [ -s "$kpis_dir/summary.md" ]; then
+        { echo; echo "## Quality KPIs"; echo; cat "$kpis_dir/summary.md"; } >> "$out"
+    fi
+    stage_kpis
     git -C "$TESTS" add lab.md "reports/stable-$date.md"
     git -C "$TESTS" -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
         commit -q -m "Nightly: $build_id is the stable image
@@ -355,4 +415,5 @@ else
         python3 -c 'import json, sys; print(json.load(sys.stdin)["number"])')"
     log "opened issue #$number"
 fi
+push_kpis_only
 exit 1
