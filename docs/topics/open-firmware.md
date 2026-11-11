@@ -1,8 +1,11 @@
-# Open boot firmware
+# Open firmware
 
-Our own open boot firmware for the Pi 3B+, replacing Broadcom's
-`bootcode.bin`, `start*.elf` and `armstub8`
-([#230](https://github.com/redox-rpi/redox-rpi/issues/230)). It lives in its
+Replacing everything closed from Broadcom on the Pi, as far as possible
+([#230](https://github.com/redox-rpi/redox-rpi/issues/230)). That covers
+the boot firmware on the VPU (`bootcode.bin`, `start*.elf`), the ARM
+stub, what `start.elf` does at run time (mailbox, display), and the blobs
+of other chips such as Wi-Fi. Only the Boot ROM in the chip stays. We
+start with the Pi 3B+. It lives in its
 own repository,
 [redox-rpi/rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware)
 (GPLv2+), together with all of its documentation:
