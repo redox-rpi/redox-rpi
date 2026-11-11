@@ -16,9 +16,8 @@ Kinds:
 
 - **auto**: an automated Pi row on the netboot image with devshd (as today).
 - **auto, release image**: needs the image a user downloads, without devshd.
-  Today automated rows never run on it, so these need a new way in (serial
-  console script, or a netboot variant of the release image); see the
-  questions at the end.
+  Runs on a netboot variant of the release image, plus a card check of the
+  real SD image per release (V&V's answer 1 at the end).
 - **person**: needs the maintainer at the Pi.
 - **inspection**: no Pi; a check of issues, files or logs.
 
@@ -33,8 +32,8 @@ Numbers marked (proposed) follow RFC 0003 open question 5.
 | T-STAB-7 | REQ-STAB-7 | auto with plug | 3B+ | Shelly plug rules from the maintainer |
 | T-FW-5 | REQ-FW-5 | auto with plug | 3B+ | plug power reading; #7 |
 | T-NET-6 | REQ-NET-6 | auto | 3B+, Zero 2 W | `sshd` in the image; #45, #184, #190 |
-| T-SEC-1 | REQ-SEC-1 | auto, release image | 3B+ | first-boot password (no issue yet) |
-| T-SEC-2 | REQ-SEC-2 | auto, release image | 3B+ | nmap on the build host |
+| T-SEC-1 | REQ-SEC-1 | auto, release image | 3B+ | first-boot password (no issue yet); netboot variant of the release image |
+| T-SEC-2 | REQ-SEC-2 | auto, release image | 3B+ | nmap on the build host; netboot variant of the release image |
 | T-SEC-3 | REQ-SEC-3 | auto + inspection | 3B+ | signed repository and images (#44, #237) |
 | T-SEC-4 | REQ-SEC-4 | inspection | — | component version list per release |
 | T-PKG-1 | REQ-PKG-1 | auto | 3B+ | project package repository (#44, #197) |
@@ -248,12 +247,31 @@ upstream could take was offered or says why not.
 Pass: all characters correct, layout kept after reboot. Person on the 3B+
 and the Pi 400, or automated with QEMU's keyboard (sendkey) for steps 1–2.
 
-## Questions for V&V
+## V&V's answers (2026-11-11)
 
-1. T-SEC-1 and T-SEC-2 need the release image without devshd. Is a serial
-   console script enough, or should Release and CI build a netboot variant
-   of the release image for automated rows?
-2. T-STAB-5 takes the test Pi for 7 days per board. One soak per minor
-   release, or one before 1.0 only?
-3. T-STAB-7, T-FW-5 and T-PKG-3 switch the plug. Which plug rules apply to
-   an automated test (how many cuts per hour, who is told)?
+1. **Release image without devshd (T-SEC-1, T-SEC-2):** Release and CI
+   builds a **netboot variant of the release image** from the same commit
+   and config as the SD release image (same packages, no devshd, first-boot
+   setup in place). The rows run unattended on it: V&V drives the serial
+   console (typing only after `redox login:`), and nmap, ssh and the port
+   2323 check run from the build host. Once per release, a short card check
+   of the real SD image at a person visit compares it with the netboot
+   variant: package list, `ps` without devshd, port 2323 closed, the
+   first-boot password prompt. A serial script alone cannot boot the SD
+   image, because the test Pi netboots through the selector card.
+   This needs a Release and CI task (WP 5.2) for the netboot variant.
+2. **Soak schedule (T-STAB-5):** the maintainer decides. V&V proposes the
+   7-day soak before 1.0 only, plus 24 h per minor release. A week blocks
+   every other row, and the soak has to tolerate or skip the nightly slot
+   (03:15–04:15 UTC).
+3. **Plug (T-STAB-7, T-FW-5, T-PKG-3):** reading the plug's power is always
+   fine, so T-FW-5 can run. Power-cycling a hung Pi is allowed today.
+   Deliberate cuts during SD writes (T-STAB-7, T-PKG-3) can damage the test
+   card and need the maintainer's own rule. V&V proposes a dedicated test
+   card or data partition, a cap on cuts per run, never during a person's
+   visit, and the stable stage restored afterwards.
+
+**Tools in the image:** rows can only use tools that are really in the
+image. On 2026-11-11 `curl`, `wget`, `netget` and `cputop` were missing
+although the manifest lists them. This also touches REQ-PKG-2 criterion 2
+(an HTTP client in the image itself).
