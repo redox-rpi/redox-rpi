@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@redox-rpi>
+Date: Wed, 11 Nov 2026 08:00:00 +0000
+Subject: [PATCH] aarch64: broadcast the TLB flush before freeing frames
+
+Flusher::flush frees the queued frames once enough CPUs acknowledged
+the shootdown. A CPU that left the address space between the IPI and the
+used_by check can still acknowledge, so the count can be reached before
+every core that maps the address space flushed. On aarch64 the local
+flush is a broadcast tlbi vmalle1is that has completed on all cores after
+its dsb ish, so also do it when this CPU is not in the address space and
+other CPUs are (redox-rpi #332).
+---
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -3046,6 +3046,13 @@
+ 
+         if self.active_cpus.contains(current_cpu_id) {
+             rmm::PageFlushAll::<RmmA>::new().flush();
++        } else if cfg!(target_arch = "aarch64") && affected_cpu_count > 0 {
++            // On aarch64 the flush is a broadcast `tlbi vmalle1is` that has
++            // completed on every core once its `dsb ish` returns. Do it here as
++            // well, so the frames queued below are never freed while another
++            // core can still reach them through its TLB, even if an
++            // acknowledgement meant for another flush arrives first.
++            rmm::PageFlushAll::<RmmA>::new().flush();
+         }
+ 
+         #[cfg(target_arch = "aarch64")]
+-- 
+2.53.0
