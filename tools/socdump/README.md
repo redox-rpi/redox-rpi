@@ -51,7 +51,7 @@ SD card image (`config/raspi3bp-sdcard.toml`).
 | Peripheral address | the devicetree's `/soc` `ranges` (`0x7e000000` -> `0x3f000000` on the 3B+) |
 | Crystal | `/clocks/clk-osc` `clock-frequency` (19.2 MHz on the 3B+), else the chip's default |
 | Register layout | `src/chip.rs`, one table per chip; offsets from the BCM2835 peripherals manual and Linux `clk-bcm2835.c` |
-| Display registers | `src/display.rs`; offsets from Linux `vc4_regs.h` and `vc4_hdmi_regs.h` (BCM2835 table), decoding our own |
+| Display registers | `src/display.rs`; offsets from Linux `vc4_regs.h` and `vc4_hdmi_regs.h` (BCM2835 table), decoding our own; pixel valve and HVS plane fields checked against librerpi's `pixelvalve.md` and `hvs.md` (no text or code taken) |
 
 ## On the real Pi 3B+ (Pi test #261, 2026-11-06)
 
@@ -83,7 +83,11 @@ table, not a rewrite:
 
 - **BCM2837** (Pi 3B, 3B+, Zero 2 W): done.
 - **BCM2711** (Pi 4): crystal 54 MHz, no PLLH, no feedback prediv, extra
-  clock `emmc2`, peripherals at `0xfe000000`. Not done.
+  clock `emmc2`, peripherals at `0xfe000000`. Its HDMI registers sit at
+  other offsets (`HORZA` at 0xe4, `HOTPLUG` at 0x1a8; see `hdmi.md` in
+  [librerpi/rpi-open-firmware](https://github.com/librerpi/rpi-open-firmware/tree/master/docs)),
+  and it has more PHY registers, so `src/display.rs` needs a second table.
+  Not done.
 - **BCM2712** (Pi 5): different clock block; most I/O (GPIO) is on the RP1
   chip behind PCIe. Needs its own tables. Not done.
 
