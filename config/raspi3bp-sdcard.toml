@@ -49,7 +49,9 @@ volume = "source"
 # it. `off` in /etc/startup-sound switches it off; the image says `on`.
 # Network and direct boot run / from RAM, where /etc forgets: there a
 # startup-sound file on the data partition (/scheme/data) wins. Those images
-# have 60_data.service, so the script waits for the partition up to 5 s.
+# have 60_data.service; config/raspi3bp.toml makes the unit wait for it
+# (Pi test 314: the script's own wait of 5 s was too short), and the script
+# still waits up to 5 s if the partition is late.
 # First it restores the volume saved by `volume` (#336), so the chime
 # follows it.
 [[files]]
@@ -70,6 +72,9 @@ if test -f /usr/lib/init.d/60_data.service
     end
     if test -f /scheme/data/startup-sound
         let file = /scheme/data/startup-sound
+    end
+    if test ! -d /scheme/data
+        echo "startup-sound: no data partition, using /etc/startup-sound"
     end
 end
 volume restore
