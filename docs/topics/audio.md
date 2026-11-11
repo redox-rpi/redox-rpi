@@ -16,7 +16,7 @@ are enough; A3 and polish may follow in a later release.
   /scheme/audio` plays a test tone. **Beta:** about 11 usable bits, one
   fixed format (44.1 kHz s16 stereo), the PWM never stops after silence
   yet, a faint hiss when quiet, and the boot click is not checked yet.
-- **Startup sound, in work** (v0.5.0,
+- **Startup sound, volume and Sopwith sound, Pi-tested** (v0.5.0,
   [#292](https://github.com/redox-rpi/redox-rpi/issues/292)): `tone
   chime`, our own generated chord (C, E, G, C, about 1.8 s), plays once
   per boot after `audiod` starts, in the background
@@ -28,15 +28,22 @@ are enough; A3 and polish may follow in a later release.
   `/scheme/audiohw/stop`, which ramps the outputs down to 0 V over 50 ms,
   so neither the reset nor pulling the power afterwards clicks. After the
   prebuilt `shutdown`, or pulling the plug while running, it still clicks.
-- **`volume` command, in work**
+  Pi test 335 (release-options image `v0.5.0-dev-24-g3a763e93+xb2f0`)
+  passed: the chime plays once, `off` and the saved volume on the data
+  partition hold across a reboot, Sopwith's sound reaches the driver,
+  `stop` ramps to 0 V, boot 38–39 s with or without the chime. #314 had
+  failed before the fix: ion's `test` has no `!`, so the script never
+  waited for the data partition. Listening (row 315) at the next visit.
+- **`volume` command, Pi-tested (335)**
   ([#336](https://github.com/redox-rpi/redox-rpi/issues/336), same PR):
   shows and sets the volume and keeps it across reboots; restored before
   the startup sound. The driver's `stats` count `loud_chunks` and `peak`,
   so tests tell sound from silence without listening.
-- **Sound in SDL games, in work**
+- **Sound in SDL games, Pi-tested (335)**
   ([#335](https://github.com/redox-rpi/redox-rpi/issues/335)): SDL2's
   Redox audio driver writes to `/scheme/audio` and is already built in;
-  Sopwith opens it at start. Not yet checked.
+  Sopwith opens it at start, and its title tune reaches the driver
+  (`loud_chunks` 133 → 1553). No code needed. Nobody has listened yet.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
   in the left ear only (so left and right are right), the sweep and
   volume 100 all played; a faint hiss at idle and a little crackle (cheap
