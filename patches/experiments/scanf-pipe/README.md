@@ -47,6 +47,11 @@ each must print `expected.txt` (glibc's output).
 
 ## Results
 
+- **Real Pi 3B+, 2026-11-11**, pi-tests row 336
+  ([report](https://github.com/redox-rpi/pi-tests/blob/main/reports/336.md)),
+  same image `v0.5.0-dev-51-gc1eeb499+x98c1`: no panic in the boot log;
+  own-pipe, file and shell-pipe pass (2.0 s); `tcc -run` hello rc 0;
+  pi-test 6/6, 0 of 300 starts failed. **Pass.**
 - **QEMU raspi3b, 2026-11-11**, `v0.5.0-dev-51-gc1eeb499+x98c1`
   (`--experiment timesync --experiment tcc --experiment scanf-pipe`):
   own-pipe, file and shell-pipe pass; no `RELIBC PANIC` in the boot log.
