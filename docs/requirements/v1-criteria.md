@@ -64,13 +64,15 @@ once it exists:
 
 **Criteria with no implementing issue** (8): REQ-BOARD-3, REQ-STAB-7,
 REQ-SEC-1, REQ-SEC-2, REQ-PKG-3, REQ-DOC-1, REQ-DOC-2, REQ-REL-8. These
-need work packages (RFC 0003, Steps 3).
+need work packages (RFC 0003, Steps 3); proposals in
+[v1-work-packages.md](v1-work-packages.md).
 
 **Criteria with no test on a release candidate** (20 of 24). Partly
 covered: REQ-BOARD-2 (rows 292, 286), REQ-STAB-6 (row 237, dev build),
 REQ-STAB-8 (rows 264, 266, dev builds), REQ-REL-6 (trace inspection).
 V&V has to plan the long-run, chaos, power-loss, reboot, port-scan and
-update rows (RFC 0003, Steps 4).
+update rows (RFC 0003, Steps 4); drafts in
+[v1-test-drafts.md](v1-test-drafts.md).
 
 **Other**
 
