@@ -7,7 +7,8 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
+#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
+#                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
 #                          [--allow-dirty]
 #                          [make target]   (default: all)
@@ -17,6 +18,10 @@
 #                 image (config/raspi3bp.toml)
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
+#   --release-netboot
+#                 the network-boot variant of the SD card image
+#                 (config/raspi3bp-release-netboot.toml): its packages, no
+#                 devshd; for automated rows on a release (T-SEC-1, T-SEC-2)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
@@ -39,6 +44,8 @@
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
 #         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
+#         upstream/redox/build/aarch64/release-netboot/harddrive.img
+#         (--release-netboot),
 #         and its manifest in build/manifests/
 
 set -euo pipefail
@@ -68,6 +75,10 @@ while [ $# -gt 0 ]; do
         --zero2w)
             CONFIG_NAME=zero2w
             CONFIG="$ROOT/config/raspizero2w.toml"
+            shift ;;
+        --release-netboot)
+            CONFIG_NAME=release-netboot
+            CONFIG="$ROOT/config/raspi3bp-release-netboot.toml"
             shift ;;
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }

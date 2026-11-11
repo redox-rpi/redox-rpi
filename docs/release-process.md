@@ -89,6 +89,17 @@ fallback, the week has no release.
   v0.3.0-rc2.
 - The build waits for other builds on the host (`build/.build-image.lock`).
 - `devshd` stays out of candidate and release images.
+- Next to each candidate it builds the **network-boot variant** from the
+  same commit and options: `scripts/build-image.sh --release-netboot
+  --release v<version>-rc<N>` (`config/raspi3bp-release-netboot.toml`: the
+  SD image's packages and files, no `devshd`, a 256 MiB filesystem that
+  U-Boot can load). Automated rows that need the image a user gets
+  (T-SEC-1, T-SEC-2 in
+  [v1-test-drafts.md](requirements/v1-test-drafts.md)) run on it over the
+  serial console; the test that holds the Pi stages it with
+  `scripts/netboot.sh --image upstream/redox/build/aarch64/release-netboot/harddrive.img`.
+  Its manifest is `build/manifests/release-netboot-<build ID>.toml`. It is
+  not published as a download.
 - The build ID (`git describe` plus the experiment hash) is shown next to
   the candidate's name, so `v0.3.0-rc2` can be traced to an exact build.
 
