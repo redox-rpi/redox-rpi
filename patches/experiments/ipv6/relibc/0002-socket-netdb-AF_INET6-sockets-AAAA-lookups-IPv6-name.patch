@@ -16,18 +16,20 @@ with a 5 s timeout each, and closes its socket.
  src/platform/redox/socket.rs |  70 ++++++++-
  4 files changed, 288 insertions(+), 133 deletions(-)
 diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
-index 4dec28c3..636d2632 100644
+index 4dec28c3..cd5a54e5 100644
 --- a/src/header/netdb/lookup.rs
 +++ b/src/header/netdb/lookup.rs
-@@ -2,6 +2,7 @@ use alloc::{
-     string::{String, ToString},
-     vec::Vec,
- };
+@@ -1,7 +1,5 @@
+-use alloc::{
+-    string::{String, ToString},
+-    vec::Vec,
+-};
++use alloc::{string::ToString, vec::Vec};
 +use core::net::IpAddr;
  
  use crate::{
      error::Errno,
-@@ -11,10 +12,10 @@ use crate::{
+@@ -11,10 +9,10 @@ use crate::{
  
  use crate::header::{
      bits_arpainet::htons,
@@ -41,7 +43,7 @@ index 4dec28c3..636d2632 100644
      time::{self, timespec},
  };
  
-@@ -25,17 +26,41 @@ use super::{
+@@ -25,17 +23,41 @@ use super::{
  
  pub type LookupHost = Vec<in_addr>;
  
@@ -89,7 +91,7 @@ index 4dec28c3..636d2632 100644
  
      // A name without a dot is tried in the local domain first (DHCP option
      // 15, e.g. "homenodellm" as "homenodellm.fritz.box"), then as it is. A
-@@ -54,52 +79,72 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -54,52 +76,72 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
          }
          names.push(host.to_string());
      }
@@ -169,16 +171,16 @@ index 4dec28c3..636d2632 100644
 +            Err(err) => last_err = Some(err),
 +        }
 +    }
- 
--/// Sends one query to the name server and waits for the reply with the
--/// same transaction id, asking again after each timeout.
--fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
++
 +    match last_err {
 +        Some(err) if addrs.is_empty() => Err(err),
 +        _ => Ok(addrs),
 +    }
 +}
-+
+ 
+-/// Sends one query to the name server and waits for the reply with the
+-/// same transaction id, asking again after each timeout.
+-fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
 +/// The name servers: those in the platform's config (IPv4 or IPv6), then on
 +/// Redox the IPv6 servers that netstack learned from router advertisements.
 +fn dns_servers() -> Vec<IpAddr> {
@@ -199,7 +201,7 @@ index 4dec28c3..636d2632 100644
      let mut timespec = timespec::default();
      Sys::clock_gettime(
          time::constants::CLOCK_REALTIME,
-@@ -111,25 +156,63 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+@@ -111,25 +153,63 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
          transaction_id: tid,
          flags: 0x0100,
          queries: vec![DnsQuery {
@@ -273,7 +275,7 @@ index 4dec28c3..636d2632 100644
          let mut buf = vec![0u8; 65536];
          for timeout_ms in QUERY_TIMEOUTS_MS {
              let timeout = timeval {
-@@ -139,7 +222,7 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+@@ -139,7 +219,7 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
              // SAFETY: timeval is plain data (repr(C), impl Plain).
              let timeout = unsafe { plain::as_bytes(&timeout) };
              Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout)?;
@@ -282,7 +284,7 @@ index 4dec28c3..636d2632 100644
              // Replies to an earlier query (another id) are skipped; a
              // timeout or error ends this try.
              while let Ok((count, _)) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None) {
-@@ -157,9 +240,6 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+@@ -157,9 +237,6 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
  }
  
  pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
@@ -292,7 +294,7 @@ index 4dec28c3..636d2632 100644
      let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
      // Address intentionally backwards for reverse lookup
      let name = format!(
-@@ -167,12 +247,12 @@ pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
+@@ -167,12 +244,12 @@ pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
          addr[3], addr[2], addr[1], addr[0]
      );
  
