@@ -26,6 +26,7 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Native C compilers (TinyCC, QBE) | [tcc.md](tcc.md) | [topic:tcc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Atcc) |
 | Audio (plan) | [audio.md](audio.md) | [#250](https://github.com/redox-rpi/redox-rpi/issues/250), [topic:audio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aaudio) |
 | DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
+| Boot chain by release: Broadcom pieces, v0.4 to the end goal (draft) | [boot-chain.md](boot-chain.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 
 Each page has the same sections: **State** (on `main` and tested on a real
