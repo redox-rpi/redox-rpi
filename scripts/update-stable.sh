@@ -276,7 +276,7 @@ log "staged $build_id on $TFTP/redox"
 passed=0
 if reset_pi; then
     log "running scripts/pi-test.py"
-    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" \
+    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
         --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
         passed=1
     fi
