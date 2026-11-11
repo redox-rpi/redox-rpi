@@ -26,39 +26,26 @@ index 12be94ad..9eee9ac4 100644
  mod dwc2;
 +mod wakeups;
  mod ecm;
-@@ -388,2 +389,11 @@ impl Timer {
+@@ -388,2 +389,6 @@ impl Timer {
  
-+/// The test request in [`CYCLE_REQUEST`] is looked for on every so many
-+/// rescans: a path lookup that fails is a round trip through the namespace
-+/// manager and RedoxFS, a few wakeups each time (#126).
-+const CYCLE_CHECK_EVERY: u32 = 3;
-+
 +/// How often to ask the network adapters for their link: two PHY register
 +/// reads on the LAN7800, a few control transfers each (#126).
 +const LINK_INTERVAL: Duration = Duration::from_secs(5);
 +
  /// How often to look for devices plugged in or removed.
-@@ -550,3 +560,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -550,3 +560,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      scheme.tick().expect("dwc2d: network scheme failed");
 +    let mut wake = wakeups::Wakeups::new();
 +    let mut last_links = Instant::now();
-+    let mut rescans = 0u32;
      for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
 +        let source = event.user_data;
 +        let woke = Instant::now();
          match event.user_data {
-@@ -581,3 +596,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -581,3 +596,4 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  let mut cycled = Vec::new();
--                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
 +                let t = Instant::now();
-+                rescans = rescans.wrapping_add(1);
-+                let request = if rescans % CYCLE_CHECK_EVERY == 0 {
-+                    std::fs::read_to_string(CYCLE_REQUEST).ok()
-+                } else {
-+                    None
-+                };
-+                if let Some(request) = request {
-                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+                 if let Ok(request) = aside::cycle_request() {
+                     let net = scheme.adapter_mut();
 @@ -610,3 +632,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
 +                wake.part(0, t.elapsed());

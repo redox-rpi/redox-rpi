@@ -1,0 +1,171 @@
+From 433f729089abc37ffd2c3bb014dd0b4177ac5cee Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 10 Nov 2026 20:22:59 +0000
+Subject: [PATCH] dwc2d: send input events and read the test files off the main
+ loop
+
+The main loop also serves the network scheme, so anything it waits for,
+netstack waits for too (redox-rpi #92, #217: netstack stuck for minutes
+in a non-blocking read from dwc2d). Input events now go to inputd from a
+thread of their own, through a bounded queue that drops when inputd does
+not take them; inputd itself calls the display driver and waits for it.
+The cycle request and input log files in /tmp are looked at by another
+thread once a second.
+---
+ drivers/usb/dwc2d/src/aside.rs | 80 ++++++++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/hid.rs   |  6 +--
+ drivers/usb/dwc2d/src/main.rs  |  7 +--
+ drivers/usb/dwc2d/src/mouse.rs |  6 +--
+ 4 files changed, 90 insertions(+), 9 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/aside.rs
+
+diff --git a/drivers/usb/dwc2d/src/aside.rs b/drivers/usb/dwc2d/src/aside.rs
+new file mode 100644
+index 00000000..f964d45c
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/aside.rs
+@@ -0,0 +1,80 @@
++//! Calls to other daemons that the main loop does not wait for
++//! (redox-rpi #92, #217).
++//!
++//! The main loop also serves the network scheme. Whatever it waits for, the
++//! network stack waits for too: netstack opens the adapter non-blocking,
++//! yet it was seen waiting for minutes on a read from dwc2d ("main loop
++//! stuck in read from the network device"). So input events go to inputd
++//! from a thread of their own (inputd itself calls the display driver and
++//! waits for it), and the test files in /tmp are looked at by another
++//! thread; the main loop only takes what those threads left.
++
++use std::io;
++use std::path::Path;
++use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
++use std::sync::Mutex;
++use std::thread;
++use std::time::Duration;
++
++use inputd::ProducerHandle;
++
++/// Events held while inputd does not take them; more are dropped.
++const INPUT_QUEUE: usize = 256;
++static INPUT_DROPPED: AtomicU64 = AtomicU64::new(0);
++
++/// Hands input events to a thread that writes them to inputd.
++pub struct Input(SyncSender<orbclient::Event>);
++
++impl Input {
++    pub fn new() -> io::Result<Self> {
++        let mut producer = ProducerHandle::new()?;
++        let (sender, receiver) = sync_channel::<orbclient::Event>(INPUT_QUEUE);
++        thread::Builder::new().name("dwc2d-input".into()).spawn(move || {
++            for event in receiver {
++                let _ = producer.write_event(event);
++            }
++        })?;
++        Ok(Self(sender))
++    }
++
++    pub fn write_event(&mut self, event: orbclient::Event) -> io::Result<()> {
++        match self.0.try_send(event) {
++            Ok(()) => Ok(()),
++            Err(TrySendError::Full(_)) => {
++                let n = INPUT_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
++                if n.is_power_of_two() {
++                    println!("dwc2d: inputd does not take input events, {n} dropped so far");
++                }
++                Ok(())
++            }
++            Err(TrySendError::Disconnected(_)) => Err(io::Error::other("input thread gone")),
++        }
++    }
++}
++
++static CYCLE: Mutex<Option<String>> = Mutex::new(None);
++static INPUT_LOG_ON: AtomicBool = AtomicBool::new(false);
++
++/// Looks at the test files once a second: a port to switch off and on
++/// ([`crate::CYCLE_REQUEST`]) and whether to print input events
++/// ([`crate::INPUT_LOG`]).
++pub fn spawn_files() {
++    let _ = thread::Builder::new().name("dwc2d-files".into()).spawn(|| loop {
++        if let Ok(request) = std::fs::read_to_string(crate::CYCLE_REQUEST) {
++            let _ = std::fs::remove_file(crate::CYCLE_REQUEST);
++            *CYCLE.lock().unwrap() = Some(request);
++        }
++        INPUT_LOG_ON.store(Path::new(crate::INPUT_LOG).exists(), Ordering::Relaxed);
++        thread::sleep(Duration::from_secs(1));
++    });
++}
++
++/// The request written to the cycle file since the last call, if any.
++pub fn cycle_request() -> Result<String, ()> {
++    CYCLE.lock().unwrap().take().ok_or(())
++}
++
++pub fn input_log() -> bool {
++    INPUT_LOG_ON.load(Ordering::Relaxed)
++}
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 7e55d02a..66ce54b8 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -6,3 +6,3 @@ use std::time::{Duration, Instant};
+ use common::dma::Dma;
+-use inputd::ProducerHandle;
++use crate::aside::Input;
+ use orbclient::KeyEvent;
+@@ -113,3 +113,3 @@ pub struct Keyboard {
+     report: [u8; 8],
+-    input: ProducerHandle,
++    input: Input,
+     next_poll: Instant,
+@@ -121,3 +121,3 @@ impl Keyboard {
+     pub fn new(hc: Dwc2, f: KeyboardFunction) -> Option<Self> {
+-        let input = ProducerHandle::new()
++        let input = Input::new()
+             .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index a9b077e2..d8fe5348 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -17,2 +17,3 @@ use fdt::Fdt;
+ 
++mod aside;
+ mod dwc2;
+@@ -571,2 +572,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     hotplug.arm(HOTPLUG_INTERVAL);
++    aside::spawn_files();
+ 
+@@ -613,4 +615,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let mut cycled = Vec::new();
+-                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
+-                    let _ = std::fs::remove_file(CYCLE_REQUEST);
++                if let Ok(request) = aside::cycle_request() {
+                     let net = scheme.adapter_mut();
+@@ -676,3 +677,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 if let Some(m) = mouse.as_mut() {
+-                    m.log = std::path::Path::new(INPUT_LOG).exists();
++                    m.log = aside::input_log();
+                 }
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 1dc70c7f..4704ac59 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -11,3 +11,3 @@ use std::time::{Duration, Instant};
+ use common::dma::Dma;
+-use inputd::ProducerHandle;
++use crate::aside::Input;
+ use orbclient::{ButtonEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
+@@ -370,3 +370,3 @@ pub struct Mouse {
+     position: Option<(i32, i32)>,
+-    input: ProducerHandle,
++    input: Input,
+     next_poll: Instant,
+@@ -378,3 +378,3 @@ impl Mouse {
+     pub fn new(hc: Dwc2, f: MouseFunction) -> Option<Self> {
+-        let input = ProducerHandle::new()
++        let input = Input::new()
+             .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+-- 
+2.53.0
+

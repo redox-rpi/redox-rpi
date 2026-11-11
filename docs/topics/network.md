@@ -21,6 +21,17 @@
   come for 10 s (the case Pi test 213 could not show), and writes a
   heartbeat every 10 min. Benchmark rows build with
   `--no-test-experiments`.
+  **Cause found (2026-11-10), fix candidate base `0087`** (PR
+  [#344](https://github.com/redox-rpi/redox-rpi/pull/344)): dwc2d's main
+  loop also serves the network, and it wrote mouse and keyboard events to
+  inputd itself; inputd waits for the display driver on every VT event.
+  So a hung inputd stopped dwc2d and the network for good. In QEMU,
+  stopping inputd and pressing keys gives exactly Pi test 316's lines
+  (2 of 4 runs); with `0087` (input events from a thread of their own,
+  dropped when inputd doesn't take them; the `/tmp` test files read by
+  another thread) the network stays up (2 of 2), and Pi test 329 found
+  nothing broken. Why inputd hung in #316 (vc4d, no monitor on HDMI) is
+  still open.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
   `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
