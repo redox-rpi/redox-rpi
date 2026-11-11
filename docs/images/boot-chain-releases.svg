@@ -46,7 +46,7 @@ text{fill:#B4B2A9}.h{fill:#F1EFE8}
 <g class="open"><rect x="272" y="334" width="112" height="32" rx="4"/><text x="328.0" y="350.0" text-anchor="middle" dominant-baseline="central">kernel, in RAM</text></g>
 <g class="open"><rect x="394" y="334" width="112" height="32" rx="4"/><text x="450.0" y="350.0" text-anchor="middle" dominant-baseline="central">kernel</text></g>
 <g class="open"><rect x="516" y="334" width="112" height="32" rx="4"/><text x="572.0" y="350.0" text-anchor="middle" dominant-baseline="central">kernel</text></g>
-<g class="ours"><rect x="394" y="130" width="52" height="32" rx="4"/><text x="420.0" y="146.0" text-anchor="middle" dominant-baseline="central">selector</text></g>
-<g class="bc"><rect x="452" y="130" width="54" height="32" rx="4"/><text x="479.0" y="146.0" text-anchor="middle" dominant-baseline="central">bootcode</text></g>
+<g class="ours"><rect x="394" y="130" width="50" height="32" rx="4"/><text x="419.0" y="146.0" text-anchor="middle" dominant-baseline="central">selector</text></g>
+<g class="bc"><rect x="448" y="130" width="58" height="32" rx="4"/><text x="477.0" y="146.0" text-anchor="middle" dominant-baseline="central">bootcode</text></g>
 <g class="bc"><rect x="150" y="388" width="14" height="14" rx="3"/></g><text x="172" y="399">Broadcom, closed</text><g class="ours"><rect x="330" y="388" width="14" height="14" rx="3"/></g><text x="352" y="399">our code</text><g class="open"><rect x="450" y="388" width="14" height="14" rx="3"/></g><text x="472" y="399">open source</text>
 </svg>
