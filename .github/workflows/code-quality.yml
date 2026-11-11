@@ -105,6 +105,8 @@ jobs:
           echo "" >> "$sum"
           printf '```text\n%s\n%s\n%s\n```\n' "$sc" "$rf" "$cp" | head -c 60000 >> "$sum"
           echo "</details>" >> "$sum"
+          # The step summary needs a GitHub sign-in; the log does not.
+          cat "$sum"
           exit 0
 
   audit:
@@ -131,4 +133,5 @@ jobs:
               w="$(jq -r '[.warnings[]?[]?] | length' <<< "$out" 2>/dev/null || echo error)"
               echo "| \`$lock\` | $v | $w |" >> "$sum"
           done
+          cat "$sum"
           exit 0
