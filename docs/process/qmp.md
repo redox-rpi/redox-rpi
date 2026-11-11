@@ -186,8 +186,8 @@ the network loss of #92 and the boots without network of #217 get a
 rate, not sightings by chance. Quality defines what is counted; the
 nightly (Release & CI) and V&V rows record it; `quality-kpis.py` sums it.
 
-**Network loss:** during a soak, 3 pings in a row (10 s apart) without an
-answer, or 2 devsh logins in a row that fail. It lasts until a ping and a
+**Network loss:** during a soak, 3 pings in a row (10 s apart, ICMP or a
+TCP connection attempt) without an answer, or 2 devsh logins in a row that fail. It lasts until a ping and a
 devsh login both work again; that is one loss, however long. **Boot
 without network:** no devsh login within 120 s after `redox login:` on
 the serial console.
@@ -200,11 +200,15 @@ line, only appended. Every record has `date` (UTC, `YYYY-MM-DD`),
 - `boot`, one per boot (the nightly's reset, the reboot of #258, every
   boot of a row that waits for devsh): `devsh_s`, seconds from the login
   prompt to the first devsh login, `null` when none within 120 s;
-  optional `login_s`, seconds from the reset to the login prompt.
+  optional `login_s`, seconds from the reset to the login prompt (the
+  nightly counts from `redox-rpi: network boot` on the serial console).
 - `soak`, one per soak: `minutes`, `pings`, `pings_lost`, `logins`,
   `logins_failed` and `losses`, a list with one `{"at_s": …, "down_s": …}`
   per loss (seconds since the soak's start; `down_s` is `null` when the
-  network was not back by the end).
+  network was not back by the end); optional `ping`, `icmp` or `tcp`: how
+  the "ping" was probed. The stable image does not answer ICMP (#177), so
+  the nightly connects by TCP to a closed port, and a reset counts as an
+  answer.
 
 ```json
 {"date": "2026-11-12", "build": "v0.4.0-dev-700", "source": "nightly", "kind": "boot", "devsh_s": 21.5, "login_s": 48.0}
