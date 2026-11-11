@@ -88,6 +88,38 @@ finds and fixes the cause.
   experiment → fixed on `main` → in a release. "Closed" on GitHub is not
   the same as "fixed in the image" (#108).
 
+**Flaky results** ([#277](https://github.com/redox-rpi/redox-rpi/issues/277), risk "flaky failures stay in
+releases"). A result is flaky when the same check passes and fails on
+the same build ID.
+
+- **Detect, rerun rule:** every failed check of a Pi row, the nightly or
+  a candidate runs once more on the same image before the verdict.
+  Fail, fail: the verdict is **fail**. Fail, pass: the verdict starts with
+  **flaky**, names the check and the issue, and says "1 of 2". It is never
+  recorded as a pass, and the rerun never hides the first fail. A check
+  that already repeats (20 serial lines, 300 starts) gives its rate
+  instead ("19 of 20").
+- **Detect, history:** a tracked bug seen on a build where the same check
+  passed before is flaky too (the sightings in [kpis.md](kpis.md#rows-that-name-a-tracked-bug)).
+- **Track:** the bug issue gets the label `flaky` and, like every bug, a
+  severity. Its rate goes on the issue and in the known-issues table of
+  [quality.md](../topics/quality.md#known-issues), as "n of N on <build>".
+  The KPIs below count flaky rows, open flaky bugs and those missing
+  from the release notes.
+- **Release gate:** a candidate passes only when
+  1. every failed check was rerun; fail, fail blocks as before;
+  2. every flaky result names an open issue labelled `flaky` with a
+     severity; a new flaky result without one blocks until it has one;
+  3. no open flaky bug is `severity:S1`;
+  4. every open flaky bug is in the release notes' "Known issues" with
+     its rate;
+  5. where V&V set a limit for a known flaky check (#28: at least 19 of
+     20), the candidate is within it; outside it counts as a fail.
+
+  V&V takes 1 and 2 into its test standards (the rows); Release & CI
+  takes 1 to 5 into [release-process.md](../release-process.md). Quality
+  checks them with the KPIs and at the weekly review.
+
 **Root-cause patterns** that came back so far, to check first:
 
 | Pattern | Examples |
@@ -130,6 +162,9 @@ over the last 30 days unless named otherwise; the page is
 | Nightly pass rate | nights that made a new stable image (its commit "Nightly: … is the stable image", in pi-tests since 2026-11-09) / nights that built (fail = a report from `update-stable.sh` on the issue "Nightly: main fails on the Pi") | git log of main and of redox-rpi/pi-tests, GitHub issue | 100 % |
 | Pi pass rate | done queue rows whose result starts with "pass" / all done rows | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | tracked; a fail needs an issue |
 | Flaky rate | done rows that name a tracked recurring bug / all done rows, and the sightings per bug | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | falling |
+| Flaky results | done rows whose verdict starts with **flaky** (fail, then pass on the same image) | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | tracked; each names an issue labelled `flaky` |
+| Open flaky bugs | open issues labelled `flaky`, by severity | GitHub issues, all repositories | none S1, none without a severity |
+| Flaky bugs missing from the release notes | open `flaky` issues not named under "Known issues" of the newest release notes (`docs/releases/v*.md`, not candidates) | GitHub issues, `docs/releases/` at `--rev` | 0 at every release (gate 4) |
 | Patches with an issue | default patches whose header names an issue (P8) | `patches/` | rising |
 | Dirty results | done rows with a `-dirty` build ID (P9) | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | 0 for merges and releases |
 | Network losses in soak (#92) | losses (see [Network loss](#network-loss-92-217)) / soak hours, with the number of soaks and the 95 % upper bound when 0 | pi-tests `network.jsonl`, kind `soak` | a fix of #92 counts as confirmed when 0 losses in at least 20 soak hours |
