@@ -1,0 +1,369 @@
+From b1aae011588ff08a1d1ae06094b0f6c7505277d4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 11 Nov 2026 15:27:44 +0000
+Subject: [PATCH] netdb: name server from netcfg, timeout and retries, local
+ domain
+
+Name lookups read /etc/net/dns only, so the name server from DHCP was
+never used and local names like "fritz.box" did not resolve; a server
+that never answered blocked the caller for good (redox-rpi #290).
+
+- The name server comes from /scheme/netcfg/resolv/nameserver (DHCP,
+  else the default netstack took from /etc/net/dns); /etc/net/dns only
+  when netcfg gives none.
+- Each query waits 1, 2 and 3 s for its reply, asking again after each
+  timeout, and takes only the reply with its transaction id. The socket
+  is closed afterwards (it leaked before).
+- A name without a dot is tried in the local domain first
+  (/scheme/netcfg/resolv/domain, DHCP option 15), then as it is.
+- parse_ipv4_string accepts only numbers: a four-part name like
+  "www.example.co.uk" was taken for 0.0.0.0.
+---
+ src/header/netdb/linux.rs  |  15 +++
+ src/header/netdb/lookup.rs | 220 ++++++++++++++++++++-----------------
+ src/header/netdb/redox.rs  |  21 +++-
+ 3 files changed, 152 insertions(+), 104 deletions(-)
+
+diff --git a/src/header/netdb/linux.rs b/src/header/netdb/linux.rs
+index 26010511..1a4ad1d1 100644
+--- a/src/header/netdb/linux.rs
++++ b/src/header/netdb/linux.rs
+@@ -17,3 +17,18 @@ pub fn get_dns_server() -> Result<String, Errno> {
+ 
+     Err(Errno(errno::EIO).sync())
+ }
++
++pub fn get_search_domain() -> Result<String, Errno> {
++    let file = File::open(c"/etc/resolv.conf".into(), fcntl::O_RDONLY).map(BufReader::new)?;
++
++    for line in file.lines().map_while(Result::ok) {
++        if let Some(domain) = line
++            .strip_prefix("search ")
++            .or_else(|| line.strip_prefix("domain "))
++        {
++            return Ok(domain.split_whitespace().next().unwrap_or("").into());
++        }
++    }
++
++    Err(Errno(errno::EIO).sync())
++}
+diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
+index 361aa8aa..6e0f7699 100644
+--- a/src/header/netdb/lookup.rs
++++ b/src/header/netdb/lookup.rs
+@@ -8,15 +8,16 @@ use crate::{
+ 
+ use crate::header::{
+     bits_arpainet::htons,
+-    errno::EINVAL,
++    bits_timeval::timeval,
++    errno::{EINVAL, ETIMEDOUT},
+     netinet_in::{IPPROTO_UDP, in_addr, sockaddr_in},
+-    sys_socket::constants::{AF_INET, SOCK_DGRAM},
++    sys_socket::constants::{AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_RCVTIMEO},
+     time::{self, timespec},
+ };
+ 
+ use super::{
+     dns::{Dns, DnsQuery},
+-    sys::get_dns_server,
++    sys::{get_dns_server, get_search_domain},
+ };
+ 
+ pub type LookupHost = Vec<in_addr>;
+@@ -33,6 +34,69 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+ 
+     let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
+ 
++    // A name without a dot is tried in the local domain first (DHCP option
++    // 15, e.g. "homenodellm" as "homenodellm.fritz.box"), then as it is. A
++    // trailing dot means the name is complete.
++    let mut names = Vec::new();
++    if let Some(full) = host.strip_suffix('.') {
++        names.push(full.to_string());
++    } else {
++        if !host.contains('.') {
++            if let Ok(domain) = get_search_domain() {
++                let domain = domain.trim();
++                if !domain.is_empty() {
++                    names.push(format!("{host}.{domain}"));
++                }
++            }
++        }
++        names.push(host.to_string());
++    }
++
++    let mut error = None;
++    for name in names {
++        match query(dns_addr, name, 0x0001) {
++            Ok(response) => {
++                let addrs: Vec<_> = response
++                    .answers
++                    .into_iter()
++                    .filter_map(|answer| {
++                        if answer.a_type == 0x0001 && answer.a_class == 0x0001 && answer.data.len() == 4
++                        {
++                            Some(in_addr {
++                                s_addr: u32::from_ne_bytes([
++                                    answer.data[0],
++                                    answer.data[1],
++                                    answer.data[2],
++                                    answer.data[3],
++                                ]),
++                            })
++                        } else {
++                            None
++                        }
++                    })
++                    .collect();
++                if !addrs.is_empty() {
++                    return Ok(addrs);
++                }
++            }
++            Err(err) => error = Some(err),
++        }
++    }
++    match error {
++        Some(err) => Err(err),
++        None => Ok(Vec::new()),
++    }
++}
++
++/// How long to wait for the name server's reply, per try. Without a
++/// timeout a lost reply (or a server that never answers, like a public
++/// resolver asked for "fritz.box") blocked the caller for good
++/// (redox-rpi #290).
++const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
++
++/// Sends one query to the name server and waits for the reply with the
++/// same transaction id, asking again after each timeout.
++fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+     let mut timespec = timespec::default();
+     Sys::clock_gettime(
+         time::constants::CLOCK_REALTIME,
+@@ -44,13 +108,12 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+         transaction_id: tid,
+         flags: 0x0100,
+         queries: vec![DnsQuery {
+-            name: host.to_string(),
+-            q_type: 0x0001,
++            name,
++            q_type,
+             q_class: 0x0001,
+         }],
+         answers: vec![],
+     };
+-
+     let packet_data = packet.compile();
+ 
+     let mut dest = [0_u8; size_of::<sockaddr_in>()];
+@@ -62,110 +125,63 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+     };
+ 
+     let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
+-    let _ = Sys::connect(sock, &dest)?;
+-    Sys::sendto(sock, &packet_data, 0, None)?;
++    let result = (|| {
++        Sys::connect(sock, &dest)?;
++        let mut buf = vec![0u8; 65536];
++        for timeout_ms in QUERY_TIMEOUTS_MS {
++            let timeout = timeval {
++                tv_sec: (timeout_ms / 1000) as _,
++                tv_usec: ((timeout_ms % 1000) * 1000) as _,
++            };
++            // SAFETY: timeval is plain data (repr(C), impl Plain).
++            let timeout = unsafe { plain::as_bytes(&timeout) };
++            Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout)?;
++            Sys::sendto(sock, &packet_data, 0, None)?;
++            // Replies to an earlier query (another id) are skipped; a
++            // timeout or error ends this try.
++            while let Ok((count, _)) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None) {
++                if let Ok(response) = Dns::parse(&buf[..count]) {
++                    if response.transaction_id == tid {
++                        return Ok(response);
++                    }
++                }
++            }
++        }
++        Err(Errno(ETIMEDOUT))
++    })();
++    let _ = Sys::close(sock);
++    result
++}
+ 
+-    let mut buf = vec![0u8; 65536];
++pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
++    let dns_string = get_dns_server()?;
++    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
+ 
+-    let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
++    let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
++    // Address intentionally backwards for reverse lookup
++    let name = format!(
++        "{}.{}.{}.{}.in-addr.arpa",
++        addr[3], addr[2], addr[1], addr[0]
++    );
+ 
+-    let response = Dns::parse(&buf[..count]).map_err(|_| Errno(EINVAL))?;
+-    let addrs: Vec<_> = response
++    let response = query(dns_addr, name, 0x000C)?;
++    let names = response
+         .answers
+         .into_iter()
+         .filter_map(|answer| {
+-            if answer.a_type == 0x0001 && answer.a_class == 0x0001 && answer.data.len() == 4 {
+-                let addr = in_addr {
+-                    s_addr: u32::from_ne_bytes([
+-                        answer.data[0],
+-                        answer.data[1],
+-                        answer.data[2],
+-                        answer.data[3],
+-                    ]),
+-                };
+-                Some(addr)
++            if answer.a_type == 0x000C && answer.a_class == 0x0001 {
++                // answer.data is encoded kinda weird.
++                // Basically length-prefixed strings for each
++                // subsection of the domain.
++                // We need to parse this to insert periods where
++                // they belong (ie at the end of each string)
++                Some(parse_revdns_answer(&answer.data))
+             } else {
+                 None
+             }
+         })
+         .collect();
+-
+-    Ok(addrs)
+-}
+-
+-pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
+-    let dns_string = get_dns_server()?;
+-
+-    if let Some(dns_addr) = parse_ipv4_string(&dns_string) {
+-        let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
+-        // Address intentionally backwards for reverse lookup
+-        let name = format!(
+-            "{}.{}.{}.{}.in-addr.arpa",
+-            addr[3], addr[2], addr[1], addr[0]
+-        );
+-
+-        let mut timespec = timespec::default();
+-        if let Ok(()) = Sys::clock_gettime(
+-            time::constants::CLOCK_REALTIME,
+-            Out::from_mut(&mut timespec),
+-        ) {}; // TODO handle error
+-        let tid = (timespec.tv_nsec >> 16) as u16;
+-
+-        let packet = Dns {
+-            transaction_id: tid,
+-            flags: 0x0100,
+-            queries: vec![DnsQuery {
+-                name,
+-                q_type: 0x000C,
+-                q_class: 0x0001,
+-            }],
+-            answers: vec![],
+-        };
+-
+-        let packet_data = packet.compile();
+-
+-        let mut dest_addr = [0_u8; size_of::<sockaddr_in>()];
+-        *plain::from_mut_bytes(&mut dest_addr).unwrap() = sockaddr_in {
+-            sin_family: u16::try_from(AF_INET).expect("AF_INET is positive and below u16::MAX"),
+-            sin_port: htons(53),
+-            sin_addr: in_addr { s_addr: dns_addr },
+-            ..Default::default()
+-        };
+-
+-        let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
+-        let _ = Sys::connect(sock, &dest_addr)?;
+-
+-        let _bytes_sent = Sys::sendto(sock, &packet_data, 0, None)?;
+-
+-        let mut buf = [0u8; 65536];
+-
+-        let (count, _dstaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
+-
+-        match Dns::parse(&buf[..count]) {
+-            Ok(response) => {
+-                let names = response
+-                    .answers
+-                    .into_iter()
+-                    .filter_map(|answer| {
+-                        if answer.a_type == 0x000C && answer.a_class == 0x0001 {
+-                            // answer.data is encoded kinda weird.
+-                            // Basically length-prefixed strings for each
+-                            // subsection of the domain.
+-                            // We need to parse this to insert periods where
+-                            // they belong (ie at the end of each string)
+-                            Some(parse_revdns_answer(&answer.data))
+-                        } else {
+-                            None
+-                        }
+-                    })
+-                    .collect();
+-                Ok(names)
+-            }
+-            Err(_err) => Err(Errno(EINVAL)),
+-        }
+-    } else {
+-        Err(Errno(EINVAL))
+-    }
++    Ok(names)
+ }
+ 
+ fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
+@@ -202,11 +218,13 @@ fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
+ }
+ 
+ pub fn parse_ipv4_string(ip_string: &str) -> Option<u32> {
++    // Every part must be a number: "www.example.co.uk" has four parts too,
++    // and was taken for 0.0.0.0.
+     let dns_vec: Vec<u8> = ip_string
+         .trim()
+         .split('.')
+-        .map(|octet| octet.parse::<u8>().unwrap_or(0))
+-        .collect();
++        .map(|octet| octet.parse::<u8>().ok())
++        .collect::<Option<_>>()?;
+ 
+     if dns_vec.len() != 4 {
+         return None;
+diff --git a/src/header/netdb/redox.rs b/src/header/netdb/redox.rs
+index 314dffcd..8d424d19 100644
+--- a/src/header/netdb/redox.rs
++++ b/src/header/netdb/redox.rs
+@@ -6,11 +6,26 @@ use crate::{
+ };
+ use alloc::string::String;
+ 
+-pub fn get_dns_server() -> Result<String, Errno> {
++fn read_file(path: &core::ffi::CStr) -> Result<String, Errno> {
+     let mut string = String::new();
+-    let mut file = File::open(c"/etc/net/dns".into(), fcntl::O_RDONLY)?;
++    let mut file = File::open(path.into(), fcntl::O_RDONLY)?;
+     file.read_to_string(&mut string)
+         .map_err(|_| Errno(errno::EIO).sync())?;
+-
+     Ok(string)
+ }
++
++/// The name server netstack uses: from DHCP once there is a lease, else
++/// the image's default. /etc/net/dns only when netstack has none to give
++/// (redox-rpi #290: the DHCP name server was never used, so local names
++/// like "fritz.box" did not resolve).
++pub fn get_dns_server() -> Result<String, Errno> {
++    match read_file(c"/scheme/netcfg/resolv/nameserver") {
++        Ok(server) if !server.trim().is_empty() && server.trim() != "0.0.0.0" => Ok(server),
++        _ => read_file(c"/etc/net/dns"),
++    }
++}
++
++/// The local domain from DHCP (option 15), empty if none.
++pub fn get_search_domain() -> Result<String, Errno> {
++    read_file(c"/scheme/netcfg/resolv/domain")
++}
+-- 
+2.53.0
+
