@@ -106,8 +106,8 @@ to Release & CI through the lead; R8 is owner work.
 | R6 | The release checklist records a result per test, so completion can be measured | KPI "checklist completion" | – |
 | R7 | Every release feature has an automated check or a named person test (v0.4.0: 4 of 12 have none) | feature coverage 67 % | [#261](https://github.com/redox-rpi/redox-rpi/issues/261) |
 | R8 | vc4d's logic builds and tests on a host | 6 tests never run | [#271](https://github.com/redox-rpi/redox-rpi/issues/271) |
-| R9 | Our drivers and kernel/relibc patches get clippy for the Redox target, report-only | 198 `unsafe`, no analysis | [#272](https://github.com/redox-rpi/redox-rpi/issues/272) |
-| R10 | A CI job "Code quality": pyflakes and `cargo test` gating, the rest report-only | baseline only by hand | [#273](https://github.com/redox-rpi/redox-rpi/issues/273) |
+| R9 | Our drivers and kernel/relibc patches get clippy for the Redox target, report-only | 198 `unsafe`, no analysis | [#272](https://github.com/redox-rpi/redox-rpi/issues/272), drivers: PR #355 (122 warnings, 54 undocumented `unsafe`) |
+| R10 | A CI job "Code quality": pyflakes and `cargo test` gating, the rest report-only | baseline only by hand | [#273](https://github.com/redox-rpi/redox-rpi/issues/273), done (#342) |
 
 ## Next
 

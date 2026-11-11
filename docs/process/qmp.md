@@ -214,7 +214,7 @@ Static analysis of our own code, report-only first. Baseline and details:
 | Check | Scope | Baseline (2026-11-08) | Target | CI proposal |
 |---|---|---|---|---|
 | clippy (default lints) | `tools/*` crates | 12 warnings in 6 crates; 2 crates do not build on a host | 0 warnings | report-only now, gating once 0 |
-| clippy | drivers and patches (base, kernel, relibc), vc4d | not run: needs the Redox target | measured | report-only on the build host after the nightly |
+| clippy (Redox target) | our drivers in base (`scripts/clippy-redox.py`, #272) | 122 warnings, 54 undocumented `unsafe` in 8 crates (2026-11-11; sdhcid, upstream: 66); kernel, relibc patches and vc4d not yet | measured each night; no rise | report-only on the build host after the nightly |
 | `unsafe` without a `SAFETY:` comment | `tools/*` | 51 blocks in 11 crates | 0 in new code | report-only (`clippy::undocumented_unsafe_blocks`) |
 | `unsafe` count | our Rust (tools, patches' added lines, vc4d) | 198 lines in patches and tools, 17 in vc4d | tracked, not rising without a reason | KPI page |
 | shellcheck | 36 shell scripts | 1 error, 8 warnings, 23 notes, all checked: no real bug | 0 errors and warnings (with justified `disable` comments) | report-only, then gating |

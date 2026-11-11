@@ -493,7 +493,8 @@ def render(k, repo):
         worst = sorted(cl.items(), key=lambda x: -x[1].get("warnings", 0))[:5]
         row("clippy_redox", "clippy on our Redox code (drivers, kernel, relibc)",
             f"{warn_n} warnings, {unsafe_n} undocumented unsafe in {len(cl)} crates", True,
-            "most: " + ", ".join(f"{c} {v.get('warnings', 0)}" for c, v in worst))
+            "most: " + ", ".join(f"{c}{' (upstream)' if v.get('upstream') else ''} {v.get('warnings', 0)}"
+                                 for c, v in worst))
 
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]

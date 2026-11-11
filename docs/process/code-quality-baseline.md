@@ -13,7 +13,7 @@ code.
   shellcheck error and warning was checked by hand and is a false
   positive. Tool crates: 12 clippy warnings, all style. No advisories in
   any `Cargo.lock`.
-- **The risk is in code no analysis reaches.** The drivers we add as base
+- **The risk is in code no analysis reached** (drivers: since 2026-11-11 `scripts/clippy-redox.py`, see below). The drivers we add as base
   patches (dwc2d 5 076 added lines, pwmaudiod, sdhcid, sdhostd,
   rpi-firmwared, gpio/i2c/spi) and our kernel and relibc patches run
   clippy nowhere: they build only for the Redox target inside the
@@ -44,6 +44,26 @@ code.
 | the other 12 | 0 | |
 
 relibc: `relibc.yml` already runs clippy report-only on the mirror.
+
+## Rust: clippy for the Redox target (2026-11-11)
+
+`scripts/clippy-redox.py` (#272) on our drivers in base, `main` with
+`patches/base` applied, `cargo clippy --target aarch64-unknown-redox
+-Zbuild-std` with `clippy::undocumented_unsafe_blocks` (only type-checks,
+22 s on homenodellm). Each crate's own warnings only.
+
+| Crate | Warnings | of them undocumented `unsafe` |
+|---|---|---|
+| bcm2835-sdhcid (upstream driver, patched) | 66 | 14 |
+| bcm2835-pwmaudiod | 17 | 16 |
+| dwc2d | 16 | 3 |
+| bcm2835-sdhostd | 9 | 8 |
+| rpi-firmwared | 5 | 4 |
+| bcm2835-gpiod, -i2cd, -spid | 3 each | 3 each |
+| **total** | **122** | **54** |
+
+Not yet: kernel patches (needs its own target spec), relibc patches
+(`relibc.yml` runs clippy on the mirror) and vc4d.
 
 ## Rust: `unsafe`
 
