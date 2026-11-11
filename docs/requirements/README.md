@@ -58,6 +58,9 @@ belong to the v1.0 criteria of [RFC 0003](../rfcs/0003-v1-criteria.md)
 | [boards.md](boards.md) | `BOARD` supported boards | [boards](../topics/boards.md), [zero2w](../topics/zero2w.md) |
 | [release.md](release.md) | `REL` release image contents and publishing | [ci](../topics/ci.md), [release-process](../release-process.md) |
 | [trace-v0.4.0.md](trace-v0.4.0.md) | trace table: requirement → issue → test → state | |
+| [v1-criteria.md](v1-criteria.md) | RFC 0003 v1.0 criteria: Feature issues, trace, gaps (draft) | |
+| [v1-work-packages.md](v1-work-packages.md) | proposed work packages for the 8 criteria with no implementing issue (draft) | |
+| [v1-test-drafts.md](v1-test-drafts.md) | test-row drafts for V&V, 20 criteria with no candidate test (draft) | |
 
 Areas follow the topic pages. A new topic that changes what the system does
 gets its own area code and file.
