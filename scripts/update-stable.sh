@@ -35,7 +35,8 @@
 #      update the issue "Nightly: main fails on the Pi".
 #   After 1 (nothing new) or 5: start redox-visit.service, the images in
 #   config/visit-images.conf (scripts/build-visit-images.sh).
-#   Every night (1, 5 and 6): scripts/quality-kpis.py at the checked-out
+#   Every night (1, 5 and 6): scripts/clippy-redox.py (our base drivers,
+#   report-only) and scripts/quality-kpis.py at the checked-out
 #   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
 #   its --summary goes into the day's report too. Skipped while the script
 #   does not exist; never fails this script.
@@ -126,6 +127,18 @@ run_kpis() {
     [ -x scripts/quality-kpis.py ] || { log "no scripts/quality-kpis.py at $ref, no KPIs"; return 0; }
     kpis_dir="$(mktemp -d)"
     local clippy=()
+    # clippy on our base drivers (#272, scripts/clippy-redox.py): base at
+    # this commit's config/upstream.lock with patches/base, in its own work
+    # directory, so it matches HEAD whether or not tonight builds.
+    rm -f build/clippy-redox.json
+    if [ -x scripts/clippy-redox.py ]; then
+        if timeout 900 scripts/clippy-redox.py --work build/clippy-redox \
+            --json build/clippy-redox.json > "$kpis_dir/clippy.log" 2>&1; then
+            log "clippy-redox: $(tail -n 1 "$kpis_dir/clippy.log")"
+        else
+            log "clippy-redox failed: $(tail -n 1 "$kpis_dir/clippy.log")"
+        fi
+    fi
     [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
     if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
         --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
