@@ -42,6 +42,8 @@ firmware, for the day the Wi-Fi theme starts.
 
 ## Releases
 
+![Boot chain by release: which pieces start Redox in v0.4.0, v0.5.0, v0.5 dev and v0.6 dev](../images/boot-chain-releases.svg)
+
 ### v0.4.0 (released): firmware → U-Boot → Redox bootloader → kernel
 
 ```mermaid
@@ -144,6 +146,8 @@ gets on the 3B+, and chain it from the monitor the same way (#333).
 
 #230 states the goal: replace **all** of Broadcom's closed boot pieces;
 only the Boot ROM stays. In steps:
+
+![Steps towards no Broadcom code after the Boot ROM](../images/boot-chain-end-goal.svg)
 
 | Step | Replaces | Then open | Still Broadcom |
 |---|---|---|---|
