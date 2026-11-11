@@ -21,7 +21,10 @@ appends them to network.jsonl in redox-rpi/pi-tests.
       until a ping and a login both work again; at_s is its first failed
       ping or login, down_s lasts to the check that brought it back. Record: kind "soak", minutes,
       pings, pings_lost, logins, logins_failed, losses [{at_s, down_s}]
-      (down_s null when the network was not back by the end). Always exit 0.
+      (down_s null when the network was not back by the end), and ping:
+      "icmp", or "tcp" for an image that does not answer ICMP echo (#177):
+      then a "ping" is a TCP connection to the closed port 9, answered by a
+      reset. Always exit 0.
 
 The serial log has no timestamps (redox-serial.service is a plain cat of
 the port), so "boot" polls it every 0.5 s and takes the time it sees the
@@ -33,7 +36,7 @@ import datetime
 import json
 import re
 import socket
-import subprocess
+import struct
 import sys
 import time
 
@@ -83,9 +86,50 @@ def devsh_login(host, port, timeout=20):
         return False
 
 
-def ping(host):
-    return subprocess.run(["ping", "-c", "1", "-W", "2", host],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+def ping(host, timeout=2.0):
+    """One ICMP echo with an unprivileged ICMP socket (Linux, allowed by
+    net.ipv4.ping_group_range; the build host has no ping binary). True
+    when an echo reply came within `timeout` seconds."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP) as sock:
+            sock.settimeout(timeout)
+            seq = ping.seq = (getattr(ping, "seq", 0) + 1) & 0xFFFF
+            payload = b"redox-rpi network-record"
+            # Type 8 (echo), code 0; the kernel fills in the identifier.
+            header = struct.pack("!BBHHH", 8, 0, 0, 0, seq)
+            csum = checksum(header + payload)
+            sock.sendto(struct.pack("!BBHHH", 8, 0, csum, 0, seq) + payload, (host, 0))
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                sock.settimeout(max(0.01, deadline - time.monotonic()))
+                data = sock.recv(1024)
+                if len(data) >= 8 and data[0] == 0 and struct.unpack("!H", data[6:8])[0] == seq:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def tcp_ping(host, timeout=2.0, port=9):
+    """For images that do not answer ICMP echo (netstack without the
+    icmp-echo experiment, #177): a TCP connection to a closed port. A reset
+    (refused) or an accept means the Pi's network answered."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except ConnectionRefusedError:
+        return True
+    except OSError:
+        return False
+
+
+def checksum(data):
+    if len(data) % 2:
+        data += b"\0"
+    total = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    total = (total >> 16) + (total & 0xFFFF)
+    total += total >> 16
+    return ~total & 0xFFFF
 
 
 def write(out, record):
@@ -132,6 +176,11 @@ def soak(args):
     ping_ok_since = login_ok_since = True
     losses, down_at = [], None
     next_ping = next_login = t0
+    target = args.ping_host or args.pi
+    # ICMP if the image answers it, else a TCP connection to a closed port.
+    method = "icmp" if any(ping(target) for _ in range(3)) else "tcp"
+    probe = ping if method == "icmp" else tcp_ping
+    print(f"ping method: {method}", file=sys.stderr)
     while True:
         now = time.monotonic()
         if now >= end:
@@ -139,7 +188,7 @@ def soak(args):
         if now >= next_ping:
             next_ping += 10
             pings += 1
-            if ping(args.ping_host or args.pi):
+            if probe(target):
                 ping_run, ping_ok_since = 0, True
             else:
                 pings_lost += 1
@@ -174,7 +223,7 @@ def soak(args):
         losses.append({"at_s": round(down_at), "down_s": None})
     write(args.out, {"build": args.build, "kind": "soak", "minutes": args.minutes,
                      "pings": pings, "pings_lost": pings_lost, "logins": logins,
-                     "logins_failed": logins_failed, "losses": losses})
+                     "logins_failed": logins_failed, "losses": losses, "ping": method})
     return 0
 
 
