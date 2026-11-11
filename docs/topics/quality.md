@@ -100,7 +100,7 @@ to Release & CI through the lead; R8 is owner work.
 |---|---|---|---|
 | R1 | A red `QEMU boot test` on main is reported within an hour; a PR is merged only on CI that includes the previous merges in its patch directories; a candidate comes from a green commit | main red 10 h, 43 stale-CI merges | [#257](https://github.com/redox-rpi/redox-rpi/issues/257) |
 | R2 | Every nightly checks audio rate (half rate fails), NTP time, CPU clock, a TCP transfer with checksum and one reboot | half-rate audio (row 279) passed `pi-test.py` | [#258](https://github.com/redox-rpi/redox-rpi/issues/258) |
-| R3 | Network loss (#92) and boots without network (#217) are counted with a rate, not found by chance | 17 sightings, all by chance | [#259](https://github.com/redox-rpi/redox-rpi/issues/259) |
+| R3 | Network loss (#92) and boots without network (#217) are counted with a rate, not found by chance | 17 sightings, all by chance | [#259](https://github.com/redox-rpi/redox-rpi/issues/259); KPIs and record: [qmp.md](../process/qmp.md#network-loss-92-217) |
 | R4 | A PR that changes default patches boots our full image (not upstream's userspace) before merge | base and relibc first run on the Pi | [#260](https://github.com/redox-rpi/redox-rpi/issues/260) |
 | R5 | rc2: the desktop has a test without a person; console users see no regression against rc1; audio has a tolerance; known issues are in the notes | rc2 checklist | [#261](https://github.com/redox-rpi/redox-rpi/issues/261) |
 | R6 | The release checklist records a result per test, so completion can be measured | KPI "checklist completion" | – |
