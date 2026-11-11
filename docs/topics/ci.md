@@ -31,6 +31,12 @@
 
 ## In progress
 
+- [#272](https://github.com/redox-rpi/redox-rpi/issues/272) clippy for our Redox drivers,
+  report-only: `scripts/clippy-redox.py` (Quality, branch `clippy-redox`)
+  writes `clippy-redox.json` for `quality-kpis.py --clippy`; the nightly
+  hook is Release & CI's. Baseline 2026-11-11: 122 warnings, 54 unsafe
+  blocks without a `SAFETY:` comment.
+
 - [#10](https://github.com/redox-rpi/redox-rpi/issues/10) crash details in `pi-test.py`, branch `t10-start-loop`,
   [PR #74](https://github.com/redox-rpi/redox-rpi/pull/74): each failed start with its program, exit
   status and its own kernel crash dump (FAR, ELR, ESR, LR, SP, PID, stack
