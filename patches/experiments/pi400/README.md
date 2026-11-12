@@ -9,6 +9,8 @@ Ran on a real Pi 400 on 2026-11-10: network boot to the login prompt.
 - `base/0001`: `dwc2d`, `bcm2835-sdhostd` and `bcm2835-pwmaudiod` exit on
   the BCM2711, where the card is on EMMC2, USB is behind PCIe and the PWM
   audio block is not set up yet.
+- `base/0002`: `bcmgenetd`, the Ethernet port (GENET v5 with the BCM54213PE
+  PHY) as `network.genet` (step e, #306). Not tested on the Pi 400 yet.
 - The external-abort fix (#311) is on main as `patches/kernel/0051`.
 
 The root filesystem runs from RAM (`bootloader-live.efi`), as with network
