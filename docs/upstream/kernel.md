@@ -106,7 +106,8 @@ Our [#207](https://github.com/redox-rpi/redox-rpi/issues/207). Checked against t
 - **Reproduce:** our `chaos` tool (`tools/chaos`, C):
   `chaos --kind threads --round-seed 0x4e3014eeaaa65f76`, or a loop of
   `chaos --kind threads --rounds 3`, on 4 CPUs.
-- **Our fix:** kernel patch `0042` in experiment `kernel-switch-shootdown`.
+- **Our fix:** default kernel patch `0052` (was `0042` in experiment
+  `kernel-switch-shootdown`).
   `write_arc` loops on `try_write` and calls `maybe_handle_tlb_shootdown()`
   while it waits. About 15 lines.
 - **Tested:** QEMU raspi3b. Without the fix, the `threads` loop froze in its

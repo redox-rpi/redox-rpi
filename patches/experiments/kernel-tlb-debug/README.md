@@ -27,11 +27,10 @@ froze in tests 237 and 238.
 Kernel `0043` adds the same kind of watch to the seven lock waits in
 `src/sync/ordered.rs`: a wait that spins for more than 3 s prints
 `lock wait stalled on CPU N: lock 0x… (type)`, then again every 10 s. It
-applies on top of [`kernel-switch-shootdown`](../kernel-switch-shootdown/README.md),
-so list that experiment first. Pi test 240 froze once, in a `threads`
+applies on top of default kernel `0052` (the fix from PR #209). Pi test 240 froze once, in a `threads`
 round after heavy memory and SD card load, without any line from the
 shootdown watch.
 
 ```bash
-scripts/build-image.sh --experiment chaos --experiment kernel-switch-shootdown --experiment kernel-tlb-debug
+scripts/build-image.sh --experiment chaos --experiment kernel-tlb-debug
 ```
