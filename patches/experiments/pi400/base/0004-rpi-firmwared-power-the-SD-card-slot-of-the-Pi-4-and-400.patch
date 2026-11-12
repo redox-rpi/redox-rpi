@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 12 Nov 2026 20:45:00 +0000
+Subject: [PATCH] rpi-firmwared: power the SD card slot of the Pi 4 and 400
+
+The card slot of the Pi 4 and Pi 400 gets its power (vcc-sd) and its
+1.8/3.3 V signal level (vdd-sd-io) from pins 6 and 4 of the firmware's
+GPIO expander; in Linux they are regulators of EMMC2, and nothing in
+Redox switches them. At start, on these two boards, switch the slot off,
+select 3.3 V and switch it on again, as Linux does when it probes the
+card, before bcm2835-sdhcid starts (redox-rpi #307).
+---
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -483,6 +483,7 @@
+         Err(_) => println!("rpi-firmwared: mailbox at 0x{phys:08x} does not answer"),
+     }
+     arm_clock_max(&mut mbox.lock().unwrap());
++    sd_power_on(&mut mbox.lock().unwrap());
+     // The governor reads sys:stat; open the scheme before leaving the
+     // namespace.
+     match libredox::Fd::open("/scheme/sys", libredox::flag::O_DIRECTORY | libredox::flag::O_RDONLY, 0) {
+@@ -504,3 +505,38 @@
+         .process_requests_blocking(scheme)
+         .expect("rpi-firmwared: failed to process requests");
+ }
++
++/// The SD card slot of the Pi 4 and Pi 400 takes its power (vcc-sd, GPIO
++/// expander pin 6) and its 1.8/3.3 V signal level (vdd-sd-io, pin 4: 1 is
++/// 1.8 V) from the firmware's GPIO expander (firmware GPIO 128 + n, as in
++/// Linux's devicetree, where they are regulators of EMMC2). Nothing else in
++/// Redox switches them, and after a network boot nobody may have powered
++/// the slot. Switch it off, select 3.3 V and switch it on again, as Linux
++/// does when it probes the card, before bcm2835-sdhcid starts (it waits
++/// for this daemon; redox-rpi #307).
++fn sd_power_on(mbox: &mut Mailbox) {
++    const SD_VCC: u32 = 128 + 6;
++    const SD_IO_1V8: u32 = 128 + 4;
++    let Ok(answer) = mbox.property(TAG_BOARD_REVISION, &[], 1) else {
++        return;
++    };
++    let [revision] = answer[..] else {
++        return;
++    };
++    // New-style code (bit 23), type 0x11 (Pi 4 Model B) or 0x13 (Pi 400).
++    if revision & (1 << 23) == 0 || !matches!((revision >> 4) & 0xff, 0x11 | 0x13) {
++        return;
++    }
++    let mut cycle = || -> std::result::Result<(), String> {
++        mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 0])?;
++        mbox.set_property(TAG_SET_GPIO_STATE, &[SD_IO_1V8, 0])?;
++        thread::sleep(std::time::Duration::from_millis(50));
++        mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 1])?;
++        thread::sleep(std::time::Duration::from_millis(10));
++        Ok(())
++    };
++    match cycle() {
++        Ok(()) => println!("rpi-firmwared: SD card slot power cycled, on at 3.3 V"),
++        Err(err) => eprintln!("rpi-firmwared: SD card slot power not switched: {err}"),
++    }
++}
