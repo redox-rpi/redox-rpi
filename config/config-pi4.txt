@@ -22,3 +22,8 @@ total_mem=1024
 # No gpu_mem=16 as on the Pi 3: on the Pi 4 it makes the firmware look for
 # the cut-down start4cd.elf, which the card does not carry. The default GPU
 # memory (76 MB) leaves enough for Redox.
+
+# No overscan border on HDMI: without it the firmware shrinks the picture it
+# hands over (with a 1920x1080 EDID to 1824x984), and with it the console (#304,
+# as in config/config.txt, #347).
+disable_overscan=1

@@ -26,6 +26,10 @@
 #                    console and run this shell command (repeatable, implies
 #                    --test); the output lands in the log
 #   --timeout <s>    give up after this many seconds (default 300)
+#   --shot <file>    at the end (after the login and any --run), save the
+#                    screen (the framebuffer U-Boot handed over, #304) as a
+#                    PPM, or PNG when the name ends in .png and ffmpeg is
+#                    there; implies --test
 #
 # Interactive: the serial console is on stdin/stdout; exit with Ctrl-A X.
 
@@ -39,6 +43,7 @@ test=no
 card=
 expects=()
 run=()
+shot=
 timeout=300
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -48,6 +53,7 @@ while [ $# -gt 0 ]; do
         --expect) expects+=("$2"); shift 2 ;;
         --run) run+=("$2"); test=yes; shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
+        --shot) shot="$2"; test=yes; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -81,7 +87,14 @@ truncate -s "$sd" run4.img
 qemu=(qemu-system-aarch64 -M raspi4b -smp ${QEMU_SMP:-4} -m 2G
     -kernel "$uboot" -dtb qemu-4b.dtb
     -drive file=run4.img,if=sd,format=raw
-    -display none -monitor none)
+    -display none)
+monitor="$IMAGES/qemu-raspi4b.monitor"
+if [ -n "$shot" ]; then
+    rm -f "$monitor"
+    qemu+=(-monitor "unix:$monitor,server,nowait")
+else
+    qemu+=(-monitor none)
+fi
 
 if [ "$test" = no ]; then
     exec "${qemu[@]}" -serial mon:stdio -serial null
@@ -108,7 +121,21 @@ wait_for() {
 }
 for re in "${expects[@]}"; do wait_for "$re"; done
 echo "pass after $((SECONDS - start))s: ${expects[*]} (log $log)"
-[ ${#run[@]} -gt 0 ] || exit 0
+take_shot() {
+    [ -n "$shot" ] || return 0
+    sleep 3
+    local ppm="${shot%.png}.ppm"
+    case "$ppm" in /*) ;; *) ppm="$PWD/$ppm" ;; esac
+    python3 -c 'import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.5)
+s.sendall(("screendump " + sys.argv[2] + "\n").encode()); time.sleep(2)' "$monitor" "$ppm"
+    [ -s "$ppm" ] || { echo "no screendump" >&2; return 1; }
+    if [ "${shot%.png}" != "$shot" ] && command -v ffmpeg >/dev/null; then
+        ffmpeg -loglevel error -y -i "$ppm" "$shot" && rm -f "$ppm" && ppm="$shot"
+    fi
+    echo "screen: $ppm"
+}
+[ ${#run[@]} -gt 0 ] || { take_shot; exit 0; }
 sleep 2
 printf 'root\r' >&3
 wait_for "assword"
@@ -121,3 +148,4 @@ for cmd in "${run[@]}"; do line="$line$cmd; "; done
 printf '%secho RUN-DONE-$((40 + 2))\r' "$line" >&3
 wait_for "RUN-DONE-42"
 echo "run: done after $((SECONDS - start))s, output in $log"
+take_shot
