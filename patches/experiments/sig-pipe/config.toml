@@ -1,0 +1,76 @@
+# Experiment sig-pipe (#205): signals sent with kill() must reach a process
+# that loops on pipe read/write. The check needs tcc in the image
+# (experiment tcc): `ion /usr/share/sig-pipe/check.ion`.
+
+[[files]]
+path = "/usr/share/sig-pipe/sigrepro.c"
+data = '''
+/* #205: does kill() reach a process that loops in user code / getpid / pipe I/O? */
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+
+static volatile sig_atomic_t count;
+static void on_sig(int s) { (void)s; count++; }
+
+static long now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+
+static int receiver(const char *mode, int ms) {
+    struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = on_sig;
+    sigaction(SIGUSR1, &sa, NULL);
+    int p[2]; pipe(p);
+    pid_t me = getpid();
+    pid_t kid = fork();
+    if (kid == 0) {
+        long end = now_ms() + ms; unsigned long sent = 0;
+        while (now_ms() < end) { kill(me, SIGUSR1); sent++; }
+        printf("  sender sent %lu\n", sent); fflush(stdout); _exit(0);
+    }
+    long end = now_ms() + ms; unsigned long rounds = 0; volatile unsigned long x = 0;
+    while (now_ms() < end) {
+        if (!strcmp(mode, "user")) { for (int i = 0; i < 100000; i++) x++; }
+        else if (!strcmp(mode, "getpid")) { getpid(); }
+        else if (!strcmp(mode, "sleep")) { usleep(1000); }
+        else { unsigned long v = rounds, b = 0; write(p[1], &v, sizeof v); read(p[0], &b, sizeof b); }
+        rounds++;
+    }
+    waitpid(kid, NULL, 0);
+    printf("%s: %ld signals, %lu rounds\n", mode, (long)count, rounds); fflush(stdout);
+    return count ? 0 : 6;
+}
+
+int main(int argc, char **argv) {
+    int ms = 800;
+    if (argc > 2 && !strcmp(argv[1], "-r")) return receiver(argv[2], ms);
+    const char *modes[] = { "user", "getpid", "sleep", "pipe" };
+    for (int i = 0; i < 4; i++) {
+        printf("[direct] "); fflush(stdout);
+        pid_t c = fork();
+        if (c == 0) _exit(receiver(modes[i], ms));
+        int st; waitpid(c, &st, 0);
+        printf("[exec] "); fflush(stdout);
+        c = fork();
+        if (c == 0) { execl(argv[0], argv[0], "-r", modes[i], (char *)NULL); _exit(127); }
+        waitpid(c, &st, 0);
+    }
+    printf("SIGREPRO done\n");
+    return 0;
+}
+'''
+
+[[files]]
+path = "/usr/share/sig-pipe/check.ion"
+data = '''
+#!/usr/bin/ion
+# kill() storm against a receiver that loops in user code, getpid(),
+# usleep() and pipe read/write, once as a forked child and once exec'd.
+# Each line must show more than 0 signals. "SIGREPRO done" marks the end.
+mkdir -p /tmp/sig-pipe
+cd /tmp/sig-pipe
+tcc -o sigrepro /usr/share/sig-pipe/sigrepro.c
+./sigrepro
+'''
