@@ -1,0 +1,18 @@
+# Network-boot variant of the SD card release image (WP 5.2): the same
+# packages and files as config/raspi3bp-sdcard.toml, so the same release
+# options give the same system, but small enough for U-Boot to load over the
+# network (scripts/netboot.sh). No devshd and no data partition mount, unlike
+# config/raspi3bp.toml: automated Pi rows test the release image's security
+# on it (T-SEC-1, T-SEC-2 in docs/requirements/v1-test-drafts.md) and drive it
+# over the serial console only.
+#
+# Build with scripts/build-image.sh --release-netboot, with the same commit
+# and options as the release (docs/release-process.md).
+
+include = ["raspi3bp-sdcard.toml"]
+
+[general]
+# As config/raspi3bp.toml: U-Boot loads the whole image into RAM, to at
+# most 256 MiB.
+filesystem_size = 256
+efi_partition_size = 32
