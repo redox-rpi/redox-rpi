@@ -1,0 +1,61 @@
+# TinyCC: a C compiler that runs on Redox itself (aarch64). Replaces
+# upstream's wip recipe (tcc 0.9.27 tarball, no cross-compile flags).
+[source]
+git = "https://repo.or.cz/tinycc.git"
+# mob branch, 2026-11-07: arm64 backend with the newest fixes.
+rev = "70adbb129760b77e3bdfec447c1f986def763f2c"
+patches = [
+    "0001-Redox-target-define-__redox__-instead-of-__linux__.patch",
+    "0002-tccrun-declare-environ-on-Redox.patch",
+    "0003-armflush-__clear_cache-for-arm64-when-gcc-builds-lib.patch",
+    "0004-Redox-gcc-s-integer-type-macros-for-relibc-s-stdint..patch",
+    # -undef, for cproc (experiment cproc-qbe), which preprocesses with tcc.
+    "0005-undef-predefine-only-the-standard-macros.patch",
+]
+
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+# The image build's make variables (ARCH=aarch64, ...) reach this make
+# through MAKEFLAGS and would override tinycc's ARCH=arm64: no arm64 sources,
+# an empty libtcc.a.
+unset MAKEFLAGS MFLAGS
+rsync -a --delete "${COOKBOOK_SOURCE}/" ./
+
+# c2str.exe turns include/tccdefs.h into tccdefs_.h while tcc builds; it runs
+# on the build host, so it is built with the host compiler first.
+cc -DC2STR conftest.c -o c2str.exe
+
+# -ffixed-x18: relibc's aarch64 signal entry returns with `br x18`, so no
+# code may keep a value in x18 (redox-rpi #1). The Redox gcc does not reserve
+# it by default. The code tcc itself generates never uses x18 (arm64-gen.c
+# keeps x18 out of RC_INT).
+# -DTARGETOS_Redox=1: the compiled tcc defines __redox__, not __linux__
+# (patch 0001); relibc's headers pick Redox values on __redox__.
+./configure \
+    --prefix=/usr \
+    --cc="${CC}" \
+    --ar="${AR}" \
+    --cpu=arm64 \
+    --targetos=Linux \
+    --extra-cflags="${CFLAGS} -ffixed-x18 -DTARGETOS_Redox=1" \
+    --extra-ldflags="${LDFLAGS}" \
+    --sysincludepaths="{B}/include:/usr/include" \
+    --libpaths="{B}:/usr/lib" \
+    --crtprefix=/usr/lib \
+    --elfinterp=/lib/ld.so.1 \
+    --config-bcheck=no \
+    --config-backtrace=no
+
+"${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" tcc
+# libtcc1.a would be compiled by the new tcc, which cannot run on the build
+# host: build it with the cross gcc (and its -ffixed-x18).
+"${COOKBOOK_MAKE}" libtcc1.a arm64-libtcc1-usegcc=yes
+"${COOKBOOK_MAKE}" install DESTDIR="${COOKBOOK_STAGE}"
+
+# Sources for the self-hosting test: tcc compiles tcc.c (ONE_SOURCE) with
+# this config.h and tccdefs_.h.
+mkdir -p "${COOKBOOK_STAGE}/usr/src/tinycc"
+cp -r *.c *.h *.def include lib "${COOKBOOK_STAGE}/usr/src/tinycc/"
+"""

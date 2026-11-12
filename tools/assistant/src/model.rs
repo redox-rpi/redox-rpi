@@ -1,0 +1,524 @@
+//! The language model, run as a separate process: `rinfer <model> --serve`
+//! (see patches/experiments/assistant/recipes/rinfer). The model only writes
+//! text; tool calls in that text go through `tools::run` like typed ones.
+//!
+//! The conversation uses Qwen3's chat template: tools are described in the
+//! system message, the model answers a tool call with
+//! `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`, and the result
+//! goes back in a `<tool_response>` block.
+
+use std::io::{Read, Write};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+use crate::tools::{Kind, TOOLS};
+
+pub const DEFAULT_MODEL: &str = "/usr/share/assistant/models/Qwen3-0.6B-Q4_0.gguf";
+
+/// Most tokens in one reply.
+const MAX_REPLY: usize = 200;
+/// Most tool calls the model may make for one question.
+const MAX_ROUNDS: usize = 3;
+/// Room kept free in the conversation for the next question, its tool
+/// calls and replies. rinfer holds at most RINFER_MAX_CONTEXT tokens (1024 by
+/// default; running out of memory panics the Redox kernel); with less room
+/// left than this, the assistant starts over from the system prompt.
+const ROOM: usize = 300;
+/// Most bytes of earlier questions and answers kept when the assistant
+/// starts over (about 150 to 250 tokens, read again in 1 to 2 minutes on a
+/// Pi 3): the newest exchanges that fit.
+const KEEP: usize = 600;
+/// Longest tool result given back to the model, in bytes: a folder with many
+/// entries would otherwise fill the conversation. File names take about 2.5
+/// bytes per token, so this is up to about 250 tokens.
+const MAX_RESPONSE: usize = 600;
+
+const EOT: u8 = 0x04;
+
+pub struct Model {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+    /// The system message, and where the state after it is saved (the
+    /// files to try, in order) with its key.
+    system: String,
+    saved: (Vec<String>, String),
+    /// Tokens in the conversation, as rinfer last said, and right after the
+    /// system prompt.
+    used: usize,
+    base: usize,
+    /// Earlier questions and the answers shown, oldest first.
+    history: Vec<(String, String)>,
+}
+
+/// The conversation limit rinfer uses.
+fn max_context() -> usize {
+    std::env::var("RINFER_MAX_CONTEXT").ok().and_then(|v| v.parse().ok()).unwrap_or(1024)
+}
+
+impl Model {
+    /// Start rinfer and wait until the model is loaded. Its timings go to
+    /// the terminal only with ASSISTANT_DEBUG set.
+    pub fn start(path: &str) -> std::io::Result<Model> {
+        let stderr = if std::env::var_os("ASSISTANT_DEBUG").is_some() {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        };
+        let mut child = Command::new("rinfer")
+            .arg(path)
+            .arg("--serve")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(stderr)
+            .spawn()?;
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let system = format!("<|im_start|>system\n{}<|im_end|>\n", system_prompt());
+        let saved = (saved_prompt_files(path), prompt_key(path, &system));
+        let mut m = Model { child, stdin, stdout, system, saved, used: 0, base: 0, history: Vec::new() };
+        m.answer(|_| {})?;
+        m.begin()?;
+        Ok(m)
+    }
+
+    /// Start the conversation: the system prompt only. Reading it takes
+    /// minutes on a Pi 3; the model's state after it is saved once and
+    /// loaded on later starts.
+    fn begin(&mut self) -> std::io::Result<()> {
+        self.load_system()?;
+        self.base = self.used;
+        Ok(())
+    }
+
+    fn load_system(&mut self) -> std::io::Result<()> {
+        let system = self.system.clone();
+        let (files, key) = self.saved.clone();
+        for file in &files {
+            if self.request(&format!("load {file} {key}"))? == "ok" {
+                // Nothing to read: rinfer only says how many tokens the
+                // loaded conversation has.
+                self.feed("")?;
+                return Ok(());
+            }
+        }
+        self.request("reset")?;
+        self.feed(&system)?;
+        // The next place is tried if one is full (the network-boot root has
+        // no room for the 42 MB); if all fail, the same wait comes next time.
+        for file in &files {
+            if let Some(dir) = std::path::Path::new(file).parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if self.request(&format!("save {file} {key}"))? == "ok" {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Send a one-line request and return the answer.
+    fn request(&mut self, line: &str) -> std::io::Result<String> {
+        writeln!(self.stdin, "{line}")?;
+        self.stdin.flush()?;
+        self.answer(|_| {})
+    }
+
+    /// Read until EOT, passing the text on as it arrives.
+    fn answer(&mut self, mut on_text: impl FnMut(&str)) -> std::io::Result<String> {
+        let mut all = Vec::new();
+        let mut shown = 0;
+        let mut buf = [0u8; 256];
+        loop {
+            let n = self.stdout.read(&mut buf)?;
+            if n == 0 {
+                return Err(std::io::Error::other("the model stopped"));
+            }
+            let end = buf[..n].iter().position(|&b| b == EOT);
+            all.extend_from_slice(&buf[..end.unwrap_or(n)]);
+            // Pass on whole UTF-8 characters only.
+            let valid = match std::str::from_utf8(&all[shown..]) {
+                Ok(s) => s.len(),
+                Err(e) => e.valid_up_to(),
+            };
+            if valid > 0 {
+                on_text(std::str::from_utf8(&all[shown..shown + valid]).unwrap());
+                shown += valid;
+            }
+            if end.is_some() {
+                return Ok(String::from_utf8_lossy(&all).into_owned());
+            }
+        }
+    }
+
+    /// Add text to the conversation; false if rinfer refused it as too long.
+    fn feed(&mut self, text: &str) -> std::io::Result<bool> {
+        write!(self.stdin, "feed {}\n{text}", text.len())?;
+        self.stdin.flush()?;
+        let answer = self.answer(|_| {})?;
+        if answer == "full" {
+            return Ok(false);
+        }
+        if let Ok(n) = answer.parse() {
+            self.used = n;
+        }
+        Ok(true)
+    }
+
+    fn gen(&mut self, on_text: impl FnMut(&str)) -> std::io::Result<String> {
+        writeln!(self.stdin, "gen {MAX_REPLY}")?;
+        self.stdin.flush()?;
+        self.answer(on_text)
+    }
+
+    /// Answer one question. `print` shows the model's words; `call` runs a
+    /// tool call (with the user's confirmation if it changes something) and
+    /// returns what goes back to the model.
+    pub fn ask(
+        &mut self,
+        question: &str,
+        print: &mut dyn FnMut(&str),
+        call: &mut dyn FnMut(&str) -> String,
+    ) -> std::io::Result<()> {
+        // The previous reply ended with <|im_end|>; its newline follows here.
+        let first = format!(
+            "\n<|im_start|>user\n{question} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        );
+        if self.used > self.base && self.used + ROOM > max_context() {
+            self.start_over(print)?;
+        }
+        let mut turn = first.clone();
+        for _ in 0..MAX_ROUNDS {
+            if !self.feed(&turn)? {
+                // Too long even so: start over with the question alone.
+                self.start_over(print)?;
+                if !self.feed(&first)? {
+                    print("(The question is too long for the model.)\n");
+                    return Ok(());
+                }
+            }
+            let mut hide = Hider::default();
+            let reply = self.gen(|t| print(&hide.visible(t)))?;
+            print(&hide.rest());
+            let mut calls: Vec<String> = tool_calls(&reply).into_iter().map(String::from).collect();
+            if calls.is_empty() {
+                calls.extend(plain_call(&reply));
+            }
+            if calls.is_empty() {
+                self.history.push((question.to_string(), reply.trim().to_string()));
+                if self.history.len() > 16 {
+                    self.history.remove(0);
+                }
+                return Ok(());
+            }
+            let mut responses = String::new();
+            for c in calls {
+                responses.push_str(&format!("<tool_response>\n{}\n</tool_response>\n", shorten(&call(&c))));
+            }
+            turn = format!(
+                "\n<|im_start|>user\n{responses}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+            );
+        }
+        print("(Stopped after three tool calls.)\n");
+        Ok(())
+    }
+
+    /// Start the conversation again from the system prompt with only the
+    /// newest exchanges that fit in KEEP bytes, and say so.
+    fn start_over(&mut self, print: &mut dyn FnMut(&str)) -> std::io::Result<()> {
+        self.begin()?;
+        let (text, n) = kept_turns(&self.history, KEEP);
+        if n > 0 && self.feed(&text)? {
+            self.history.drain(..self.history.len() - n);
+            print(&format!(
+                "(The conversation got long; I keep only the last {} and forget the rest.)\n",
+                if n == 1 { "exchange".to_string() } else { format!("{n} exchanges") }
+            ));
+        } else {
+            self.history.clear();
+            print("(The conversation got too long; I start over and forget the earlier messages.)\n");
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Model {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The newest exchanges of `history` that fit in `budget` bytes, in the chat
+/// template (oldest first), and how many they are.
+fn kept_turns(history: &[(String, String)], budget: usize) -> (String, usize) {
+    let mut turns = Vec::new();
+    let mut size = 0;
+    for (q, a) in history.iter().rev() {
+        let t = format!(
+            "\n<|im_start|>user\n{q} /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n{a}<|im_end|>"
+        );
+        if size + t.len() > budget {
+            break;
+        }
+        size += t.len();
+        turns.push(t);
+    }
+    let n = turns.len();
+    turns.reverse();
+    (turns.concat(), n)
+}
+
+/// A tool result cut to MAX_RESPONSE bytes, at a line end where there is one.
+fn shorten(result: &str) -> String {
+    if result.len() <= MAX_RESPONSE {
+        return result.to_string();
+    }
+    let mut end = MAX_RESPONSE;
+    while !result.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = result[..end].rfind('\n').filter(|&n| n > end / 2).unwrap_or(end);
+    format!("{}\n(… cut, {} more bytes)", &result[..cut], result.len() - cut)
+}
+
+/// The text between `<tool_call>` and `</tool_call>`, for each call.
+fn tool_calls(reply: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = reply;
+    while let Some(start) = rest.find("<tool_call>") {
+        let after = &rest[start + "<tool_call>".len()..];
+        let Some(end) = after.find("</tool_call>") else {
+            out.push(after.trim());
+            break;
+        };
+        out.push(after[..end].trim());
+        rest = &after[end + "</tool_call>".len()..];
+    }
+    out
+}
+
+/// The small model sometimes writes a call without the tags: only the tool's
+/// name, or `name(key="value", ...)`. Returns it as a JSON tool call.
+fn plain_call(reply: &str) -> Option<String> {
+    let r = reply.trim();
+    let (name, args) = match r.split_once('(') {
+        Some((n, rest)) => (n, rest.strip_suffix(')')?),
+        None => (r, ""),
+    };
+    if !TOOLS.iter().any(|t| t.name == name) {
+        return None;
+    }
+    let mut json = Vec::new();
+    for arg in args.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+        let (k, v) = arg.split_once('=')?;
+        let v = v.trim().strip_prefix('"')?.strip_suffix('"')?;
+        json.push(format!("\"{}\": \"{}\"", escape(k.trim()), escape(v)));
+    }
+    Some(format!("{{\"name\": \"{name}\", \"arguments\": {{{}}}}}", json.join(", ")))
+}
+
+/// Holds back streamed text from `<tool_call>` on, so the user sees the
+/// model's words but not the raw call.
+#[derive(Default)]
+struct Hider {
+    held: String,
+    hiding: bool,
+}
+
+impl Hider {
+    fn visible(&mut self, text: &str) -> String {
+        if self.hiding {
+            return String::new();
+        }
+        self.held.push_str(text);
+        if let Some(i) = self.held.find("<tool_call>") {
+            self.hiding = true;
+            let out = self.held[..i].to_string();
+            self.held.clear();
+            return out;
+        }
+        // Keep back a tail that could be the start of "<tool_call>".
+        let keep = (1.."<tool_call>".len())
+            .rev()
+            .find(|&n| self.held.ends_with(&"<tool_call>"[..n]))
+            .unwrap_or(0);
+        let out = self.held[..self.held.len() - keep].to_string();
+        self.held.drain(..self.held.len() - keep);
+        out
+    }
+
+    fn rest(&mut self) -> String {
+        let mut out = std::mem::take(&mut self.held);
+        if !self.hiding && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if self.hiding {
+            out.clear();
+        }
+        out
+    }
+}
+
+/// The system message: who the assistant is for, and the tools in the form
+/// Qwen3 was trained on.
+/// Where the state after the system prompt is saved, in the order tried:
+/// ASSISTANT_CACHE (empty turns saving off), else next to the model file
+/// unless that is in /usr (on the Pi the model is on /scheme/data, which has
+/// room), then ~/.cache/assistant/prompt.kv. Paths with spaces are left out
+/// (rinfer's requests are split at spaces).
+fn saved_prompt_files(model: &str) -> Vec<String> {
+    let files = match std::env::var("ASSISTANT_CACHE") {
+        Ok(f) => vec![f],
+        Err(_) => {
+            let mut files = Vec::new();
+            if !model.starts_with("/usr/") {
+                files.push(format!("{model}.prompt.kv"));
+            }
+            if let Ok(home) = std::env::var("HOME") {
+                files.push(format!("{home}/.cache/assistant/prompt.kv"));
+            }
+            files
+        }
+    };
+    files.into_iter().filter(|f| !f.is_empty() && !f.contains(char::is_whitespace)).collect()
+}
+
+/// Marks a saved state as made by this model file and system prompt (FNV-1a
+/// over the model's path and size and the prompt).
+fn prompt_key(model: &str, system: &str) -> String {
+    let size = std::fs::metadata(model).map(|m| m.len()).unwrap_or(0);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in model.bytes().chain(size.to_le_bytes()).chain(system.bytes()) {
+        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+pub fn system_prompt() -> String {
+    let mut s = String::from(
+        "You are the assistant on a Raspberry Pi running Redox OS. The user knows macOS, Windows \
+         or a Linux shell. Answer in one to three short sentences, in plain words. \
+         Redox's shell is Ion; ls, cp, mv, rm, mkdir and cat work as on Linux. \
+         Use a tool when the user asks for the time or for their files.\n\n\
+         # Tools\n\nYou may call one or more functions to assist with the user query.\n\n\
+         You are provided with function signatures within <tools></tools> XML tags:\n<tools>\n",
+    );
+    for t in TOOLS {
+        let mut props = String::new();
+        let mut required = Vec::new();
+        for p in t.params {
+            if !props.is_empty() {
+                props.push_str(", ");
+            }
+            props.push_str(&format!(
+                "\"{}\": {{\"type\": \"string\", \"description\": \"{}\"}}",
+                p.name,
+                escape(p.description)
+            ));
+            if p.required {
+                required.push(format!("\"{}\"", p.name));
+            }
+        }
+        let note = match t.kind {
+            Kind::Look => "",
+            Kind::Change => " The user is asked before it runs.",
+        };
+        s.push_str(&format!(
+            "{{\"type\": \"function\", \"function\": {{\"name\": \"{}\", \"description\": \"{}{}\", \
+             \"parameters\": {{\"type\": \"object\", \"properties\": {{{props}}}, \"required\": [{}]}}}}}}\n",
+            t.name,
+            escape(t.description),
+            note,
+            required.join(", ")
+        ));
+    }
+    s.push_str(
+        "</tools>\n\nFor each function call, return a json object with function name and arguments \
+         within <tool_call></tool_call> XML tags:\n<tool_call>\n\
+         {\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>",
+    );
+    s
+}
+
+fn escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_tool_calls() {
+        let r = "Let me look.\n<tool_call>\n{\"name\": \"show_time\", \"arguments\": {}}\n</tool_call>";
+        assert_eq!(tool_calls(r), vec!["{\"name\": \"show_time\", \"arguments\": {}}"]);
+        assert!(tool_calls("Paris.").is_empty());
+    }
+
+    #[test]
+    fn plain_calls() {
+        assert_eq!(plain_call("list_files\n").unwrap(), "{\"name\": \"list_files\", \"arguments\": {}}");
+        assert_eq!(
+            plain_call("list_files(folder=\"Documents\")").unwrap(),
+            "{\"name\": \"list_files\", \"arguments\": {\"folder\": \"Documents\"}}"
+        );
+        assert!(plain_call("run_shell(cmd=\"rm\")").is_none());
+        assert!(plain_call("The time is 9.").is_none());
+    }
+
+    #[test]
+    fn hides_calls_while_streaming() {
+        let mut h = Hider::default();
+        let mut shown = String::new();
+        for piece in ["Sure", ". <to", "ol_c", "all>\n{\"name\"", "}</tool_call>"] {
+            shown.push_str(&h.visible(piece));
+        }
+        shown.push_str(&h.rest());
+        assert_eq!(shown, "Sure. ");
+        let mut h = Hider::default();
+        let s = h.visible("a < b") + &h.rest();
+        assert_eq!(s, "a < b\n");
+    }
+
+    #[test]
+    fn prompt_key_changes_with_the_prompt() {
+        let a = prompt_key("/nonexistent/model.gguf", "one");
+        assert_eq!(a.len(), 16);
+        assert_eq!(a, prompt_key("/nonexistent/model.gguf", "one"));
+        assert_ne!(a, prompt_key("/nonexistent/model.gguf", "two"));
+        assert_ne!(a, prompt_key("/nonexistent/other.gguf", "one"));
+    }
+
+    #[test]
+    fn system_prompt_is_valid_json_per_tool() {
+        let p = system_prompt();
+        let tools = &p[p.find("<tools>\n").unwrap() + 8..p.rfind("</tools>").unwrap()];
+        for line in tools.lines() {
+            crate::json::parse(line).unwrap();
+        }
+    }
+
+    #[test]
+    fn long_tool_results_are_cut() {
+        assert_eq!(shorten("short"), "short");
+        let long: String = (0..400).map(|i| format!("entry{i}\n")).collect();
+        let cut = shorten(&long);
+        assert!(cut.len() < MAX_RESPONSE + 40);
+        assert!(cut.ends_with("more bytes)"));
+        assert!(cut.contains("entry0\n"));
+        let wide = "ä".repeat(1000);
+        assert!(shorten(&wide).starts_with("ää"));
+    }
+
+    #[test]
+    fn newest_turns_that_fit_are_kept() {
+        let h: Vec<(String, String)> =
+            (0..5).map(|i| (format!("question {i}"), "x".repeat(100))).collect();
+        let (text, n) = kept_turns(&h, 400);
+        assert_eq!(n, 2);
+        assert!(text.find("question 3").unwrap() < text.find("question 4").unwrap());
+        assert!(!text.contains("question 2"));
+        assert!(text.ends_with("<|im_end|>"));
+        assert_eq!(kept_turns(&h, 10), (String::new(), 0));
+    }
+}

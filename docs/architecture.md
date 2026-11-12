@@ -26,6 +26,44 @@ entry address to their release address (`0xe0`, `0xe8`, `0xf0`).
 
 Source: [raspberrypi/firmware](https://github.com/raspberrypi/firmware).
 
+### What runs where
+
+The Pi has two kinds of processor: the **VideoCore VPU** (the "GPU" side,
+which starts first and owns the clocks and memory set-up) and the four
+**ARM Cortex-A53** cores, where Redox runs. Stage 1 is really four pieces:
+
+| # | Piece | Runs on | Where it comes from | What it does | Open replacement ([open-firmware.md](topics/open-firmware.md)) |
+|---|---|---|---|---|---|
+| 1a | Boot ROM | VPU | burnt into the SoC | reads the OTP, looks for `bootcode.bin` on the SD card, USB or the network (the 3B+ has network boot in ROM) | none, it stays |
+| 1b | `bootcode.bin` | VPU, in the 128 KB L2 cache | FAT partition or TFTP | starts SDRAM, loads `start*.elf` and `fixup*.dat` | rpi-open-firmware, lk-overlay stage 1 |
+| 1c | `start*.elf` + `fixup*.dat` | VPU, in SDRAM (an RTOS, ThreadX) | FAT partition or TFTP | reads `config.txt`, sets the PLLs and clocks (what `socdump` reads), splits memory (`gpu_mem`), sets up HDMI and the framebuffer, loads the devicetree, overlays and `u-boot.bin`, then releases the ARM. **Keeps running** as long as the Pi is on: mailbox service for `rpi-firmwared`, `rpi-fbd`, clocks, temperature, throttling | lk-overlay stage 2 (with a small mailbox service) |
+| 1d | armstub (`armstub8`) | ARM, EL3 | built into `start*.elf` | timer frequency, SMP bit, EL3 to EL2, parks cores 1–3 in the spin table (release addresses `0xe0`, `0xe8`, `0xf0`) | [`armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S) (BSD) or TF-A BL31 |
+| 2–6 | U-Boot, Redox bootloader, kernel, userspace | ARM | our image | below | unchanged |
+
+`start*.elf` comes in variants, picked by `config.txt`: `start.elf`
+(standard), `start_x.elf` (camera and more codecs, `start_x=1`),
+`start_cd.elf` (cut-down: no 3D, codecs or camera, used with `gpu_mem=16`,
+which is what we run), `start_db.elf` (debug output). Each has its
+matching `fixup*.dat`. The Pi 4 has `start4*.elf`; on the Pi 5 the
+firmware sits in the boot EEPROM instead.
+
+Two instruction sets take part: Broadcom's own **VideoCore IV** set on the
+VPU, and **AArch64** (ARMv8-A) on the Cortex-A53. Which compiler builds what:
+
+| # | Piece | Instruction set | Compiler |
+|---|---|---|---|
+| 1a | Boot ROM | VideoCore IV | Broadcom, in the chip |
+| 1b, 1c | `bootcode.bin`, `start*.elf` | VideoCore IV | Broadcom, closed; the compiler is not documented (reportedly Synopsys MetaWare). The open firmware uses VC4 GCC 6.2.1 ([itszor/vc4-toolchain](https://github.com/itszor/vc4-toolchain), target `vc4-elf`) |
+| 1d | `armstub8` | AArch64 | built into the firmware (our `config.txt` has no `armstub=` line); source [`armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S), GCC |
+| 2 | U-Boot | AArch64 | GCC `aarch64-linux-gnu-` ([`build-uboot.sh`](../scripts/build-uboot.sh)) |
+| 3 | Redox bootloader | AArch64 | rustc (LLVM), target `aarch64-unknown-uefi`: a UEFI program in PE format, linked by `rust-lld` |
+| 4 | kernel | AArch64 **without NEON and FP** (`-neon,-fp-armv8,+strict-align`), so a switch into the kernel needn't save the FP registers | rustc (LLVM), target `aarch64-unknown-kernel.json`, `rust-lld` |
+| 5–6 | relibc, drivers, programs | AArch64 with NEON and FP | rustc (LLVM), target `aarch64-unknown-redox`; C packages in the cookbook with Redox's `aarch64-unknown-redox-gcc` |
+
+There is no Rust or LLVM backend for VideoCore IV, so VPU code is C (or
+assembly) with GCC. The GPU's 3D shader units (QPUs) have a third
+instruction set of their own; they take no part in booting.
+
 ## 2. U-Boot
 
 [U-Boot](https://docs.u-boot.org) is a bootloader for embedded boards,

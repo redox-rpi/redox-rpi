@@ -1,0 +1,29 @@
+From 5ddfe7f7f9481cd1eed11a85c5138831919cc5b4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 15:36:07 +0000
+Subject: [PATCH] decl: accept a lone semicolon in a struct
+
+gcc, clang and tcc accept it; relibc's signal.h has one in struct
+ucontext on aarch64.
+---
+ decl.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/decl.c b/decl.c
+index a727820..84daf96 100644
+--- a/decl.c
++++ b/decl.c
+@@ -900,6 +900,10 @@ structdecl(struct scope *s, struct structbuilder *b)
+ 	if (staticassert(s))
+ 		return;
+ 	attr(NULL, 0);
++	/* a lone semicolon, accepted by gcc, clang and tcc: relibc's signal.h
++	 * has one in struct ucontext on aarch64 */
++	if (consume(TSEMICOLON))
++		return;
+ 	base = declspecs(s, NULL, NULL, &align);
+ 	if (!base.type)
+ 		error(&tok.loc, "no type in struct member declaration");
+-- 
+2.53.0
+

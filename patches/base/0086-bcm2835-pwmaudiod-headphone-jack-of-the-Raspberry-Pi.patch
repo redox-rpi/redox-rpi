@@ -1,0 +1,1491 @@
+From b30bf88040308411faec01e49743ef51e74de4c1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 16:36:14 +0000
+Subject: [PATCH] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3 as
+ audiohw
+
+Two PWM channels (GPIO 40 and 41, ALT0) with their clock from PLLD/2
+(250 MHz) play the jack. The FIFO gives one word per period to the two
+channels in turn (measured on the Pi), so the range is 2834: 44 107 Hz,
+about 11.5 bits. The DMA controller
+(channel 2, if the devicetree mask leaves it free) feeds the PWM FIFO from
+a ring of 8 slots of 512 frames; a 10 ms timer follows the ring, fills
+played slots with silence and lets waiting writes in. Writes of exactly
+2048 bytes as for ac97d, EWOULDBLOCK while the ring is full. The ring
+starts with a 46 ms ramp to the middle against the click.
+
+/scheme/audiohw/stats shows clock, range, measured rate and error
+counters; writing seconds to /scheme/audiohw/tone plays a 1 kHz sine with
+the CPU filling the FIFO (no DMA), as a test. Without a PWM block (QEMU)
+the ring is played by the clock, so audiod and the scheme still run.
+
+Refs redox-rpi/redox-rpi#250
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                                  |   1 +
+ Makefile                                    |   2 +-
+ drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
+ drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 +++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 649 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 321 ++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 +++++
+ init.initfs.d/40_drivers.target             |   1 +
+ init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
+ 9 files changed, 1376 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
+ create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
+ create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
+ create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
+ create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/ring.rs
+ create mode 100644 init.initfs.d/41_bcm2835-pwmaudiod.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 91aac71f..b1e3c330 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -55,6 +55,7 @@ members = [
+     "drivers/net/rtl8168d",
+     "drivers/net/virtio-netd",
+ 
++    "drivers/audio/bcm2835-pwmaudiod",
+     "drivers/bcm2835-gpiod",
+     "drivers/bcm2835-i2cd",
+     "drivers/bcm2835-spid",
+diff --git a/Makefile b/Makefile
+index 6e4d9cfc..29a06463 100644
+--- a/Makefile
++++ b/Makefile
+@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
+ 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
++	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod
+ endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+diff --git a/drivers/audio/bcm2835-pwmaudiod/Cargo.toml b/drivers/audio/bcm2835-pwmaudiod/Cargo.toml
+new file mode 100644
+index 00000000..f492b06e
+--- /dev/null
++++ b/drivers/audio/bcm2835-pwmaudiod/Cargo.toml
+@@ -0,0 +1,19 @@
++[package]
++name = "bcm2835-pwmaudiod"
++description = "Headphone jack of the Raspberry Pi 3 (BCM2837 PWM) as the audiohw scheme"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++scheme-utils = { path = "../../../scheme-utils" }
++
++libredox.workspace = true
++redox_event.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/audio/bcm2835-pwmaudiod/src/dma.rs b/drivers/audio/bcm2835-pwmaudiod/src/dma.rs
+new file mode 100644
+index 00000000..807f6340
+--- /dev/null
++++ b/drivers/audio/bcm2835-pwmaudiod/src/dma.rs
+@@ -0,0 +1,230 @@
++//! The BCM2835 DMA controller playing a ring of slots into the PWM FIFO
++//! (docs/topics/dma.md in redox-rpi, step 1: one fixed channel, uncached
++//! buffers, polling instead of the interrupt).
++//!
++//! Each slot has one control block, and the last block points back to the
++//! first, so the controller plays the ring forever. The PWM paces it
++//! through its DREQ line (5): a word moves only when the FIFO has room.
++//! `CONBLK_AD` says which block, and so which slot, is playing.
++
++use common::dma::Dma;
++use fdt::Fdt;
++
++use crate::ring::SLOT_FRAMES;
++
++/// Bus address of the controller on all BCM283x, if the devicetree has none.
++const DMA_BUS_ADDR: usize = 0x7e00_7000;
++/// The channel this driver owns (docs/topics/dma.md, channel table: 2 and 0
++/// are free for SPI or audio).
++pub const CHANNEL: usize = 2;
++const CHANNEL_SIZE: usize = 0x100;
++/// RAM as the controller sees it when the devicetree has no dma-ranges.
++const RAM_BUS_OFFSET: usize = 0xc000_0000;
++
++// Channel registers, as byte offsets.
++const CS: usize = 0x00;
++const CONBLK_AD: usize = 0x04;
++const DEBUG: usize = 0x20;
++/// Global register: one enable bit per channel.
++const ENABLE: usize = 0xff0;
++
++// CS
++const CS_ACTIVE: u32 = 1 << 0;
++const CS_END: u32 = 1 << 1;
++const CS_INT: u32 = 1 << 2;
++const CS_ERROR: u32 = 1 << 8;
++const CS_WAIT_FOR_OUTSTANDING_WRITES: u32 = 1 << 28;
++const CS_ABORT: u32 = 1 << 30;
++const CS_RESET: u32 = 1 << 31;
++/// AXI priority 8, panic priority 15.
++const CS_PRIORITY: u32 = 8 << 16 | 15 << 20;
++
++// TI, in the control block
++const TI_WAIT_RESP: u32 = 1 << 3;
++const TI_DEST_DREQ: u32 = 1 << 6;
++const TI_SRC_INC: u32 = 1 << 8;
++const TI_PERMAP_SHIFT: u32 = 16;
++/// The PWM's DREQ line.
++const DREQ_PWM: u32 = 5;
++
++// DEBUG; each bit is cleared by writing 1
++const DEBUG_ERRORS: u32 = 0x7;
++
++/// Slots in the ring: 8 × 512 frames, about 93 ms.
++pub const SLOTS: usize = 8;
++/// FIFO words per slot: one per channel and frame.
++pub const SLOT_WORDS: usize = SLOT_FRAMES * 2;
++
++/// One control block; the controller needs them aligned to 32 bytes.
++#[repr(C, align(32))]
++#[derive(Clone, Copy)]
++struct ControlBlock {
++    ti: u32,
++    source: u32,
++    dest: u32,
++    len: u32,
++    stride: u32,
++    next: u32,
++    _reserved: [u32; 2],
++}
++
++pub struct DmaRing {
++    /// The channel's registers.
++    regs: *mut u32,
++    /// The controller's register page, for ENABLE.
++    page: *mut u32,
++    /// Only read by the controller.
++    _cbs: Dma<[ControlBlock; SLOTS]>,
++    buf: Dma<[[u32; SLOT_WORDS]; SLOTS]>,
++    cbs_bus: u32,
++    pub phys: usize,
++}
++
++// The channel and the buffers belong to this driver alone.
++unsafe impl Send for DmaRing {}
++
++impl DmaRing {
++    /// Set up the channel and the ring, not started yet. `fifo_bus` is the
++    /// bus address of the PWM FIFO. Fails if the devicetree does not leave
++    /// the channel free.
++    pub fn new(fdt: &Fdt, fifo_bus: u32) -> Result<Self, String> {
++        let node = fdt.find_compatible(&["brcm,bcm2835-dma"]);
++        let mask = node
++            .and_then(|node| node.property("brcm,dma-channel-mask"))
++            .and_then(|prop| prop.as_usize())
++            .ok_or("no brcm,dma-channel-mask in the devicetree")?;
++        if mask & 1 << CHANNEL == 0 {
++            return Err(format!("DMA channel {CHANNEL} not free (mask 0x{mask:x})"));
++        }
++        let bus_addr = node
++            .and_then(|node| node.reg())
++            .and_then(|mut reg| reg.next())
++            .map(|reg| reg.starting_address as usize)
++            .unwrap_or(DMA_BUS_ADDR);
++        let phys = crate::soc_phys(fdt, bus_addr);
++        let page = unsafe {
++            common::physmap(phys, 0x1000, common::Prot::RW, common::MemoryType::DeviceMemory)
++                .map_err(|err| format!("failed to map the DMA controller: {err:?}"))? as *mut u32
++        };
++        let mut cbs = unsafe {
++            Dma::<[ControlBlock; SLOTS]>::zeroed()
++                .map_err(|err| format!("failed to allocate the control blocks: {err}"))?
++                .assume_init()
++        };
++        let buf = unsafe {
++            Dma::<[[u32; SLOT_WORDS]; SLOTS]>::zeroed()
++                .map_err(|err| format!("failed to allocate the ring: {err}"))?
++                .assume_init()
++        };
++        let offset = ram_bus_offset(fdt);
++        let bus = |phys: usize| (phys + offset) as u32;
++        let cbs_bus = bus(cbs.physical());
++        let buf_bus = bus(buf.physical());
++        for (i, cb) in cbs.iter_mut().enumerate() {
++            *cb = ControlBlock {
++                ti: DREQ_PWM << TI_PERMAP_SHIFT | TI_DEST_DREQ | TI_SRC_INC | TI_WAIT_RESP,
++                source: buf_bus + (i * SLOT_WORDS * 4) as u32,
++                dest: fifo_bus,
++                len: (SLOT_WORDS * 4) as u32,
++                stride: 0,
++                next: cbs_bus + (((i + 1) % SLOTS) * size_of::<ControlBlock>()) as u32,
++                _reserved: [0; 2],
++            };
++        }
++        let ring = DmaRing {
++            regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
++            page,
++            _cbs: cbs,
++            buf,
++            cbs_bus,
++            phys,
++        };
++        let enable = ring.page_reg(ENABLE);
++        ring.set_page_reg(ENABLE, enable | 1 << CHANNEL);
++        ring.reset();
++        Ok(ring)
++    }
++
++    pub fn slot_mut(&mut self, index: usize) -> &mut [u32; SLOT_WORDS] {
++        &mut self.buf[index]
++    }
++
++    /// Start the ring at slot 0.
++    pub fn start(&self) {
++        self.reset();
++        barrier();
++        self.set_reg(CONBLK_AD, self.cbs_bus);
++        self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
++    }
++
++    /// Hold or go on (CS.ACTIVE), without losing the place.
++    pub fn set_active(&self, active: bool) {
++        let cs = self.reg(CS) & !(CS_ACTIVE | CS_END | CS_INT);
++        self.set_reg(CS, if active { cs | CS_ACTIVE } else { cs });
++    }
++
++    /// The slot whose control block the controller holds, if any.
++    pub fn position(&self) -> Option<usize> {
++        let cb = self.reg(CONBLK_AD).wrapping_sub(self.cbs_bus) as usize;
++        let size = size_of::<ControlBlock>();
++        (cb % size == 0 && cb / size < SLOTS).then_some(cb / size)
++    }
++
++    /// CS and DEBUG if the channel stopped with an error or is not running.
++    pub fn fault(&self) -> Option<(u32, u32)> {
++        let cs = self.reg(CS);
++        (cs & CS_ERROR != 0 || cs & CS_ACTIVE == 0).then(|| (cs, self.reg(DEBUG)))
++    }
++
++    /// Stop whatever the channel does and clear its errors.
++    pub fn reset(&self) {
++        if self.reg(CS) & CS_ACTIVE != 0 {
++            self.set_reg(CS, CS_ABORT);
++            let start = std::time::Instant::now();
++            while self.reg(CS) & CS_ACTIVE != 0 && start.elapsed() < std::time::Duration::from_millis(10) {}
++        }
++        self.set_reg(CS, CS_RESET);
++        self.set_reg(DEBUG, DEBUG_ERRORS);
++    }
++
++    fn reg(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn set_reg(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    fn page_reg(&self, offset: usize) -> u32 {
++        unsafe { self.page.add(offset / 4).read_volatile() }
++    }
++
++    fn set_page_reg(&self, offset: usize, value: u32) {
++        unsafe { self.page.add(offset / 4).write_volatile(value) }
++    }
++}
++
++/// Bus address minus physical address of RAM, from the first entry of
++/// `/soc`'s dma-ranges (one cell each for bus address, physical address and
++/// size on the BCM283x).
++fn ram_bus_offset(fdt: &Fdt) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.property("dma-ranges"))
++        .filter(|prop| prop.value.len() >= 12)
++        .map(|prop| {
++            let cell = |i: usize| u32::from_be_bytes(prop.value[i * 4..i * 4 + 4].try_into().unwrap());
++            (cell(0) as usize).wrapping_sub(cell(1) as usize)
++        })
++        .unwrap_or(RAM_BUS_OFFSET)
++}
++
++/// Make the CPU's writes to the ring visible before the register write that
++/// starts the controller.
++pub fn barrier() {
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("dsb sy", options(nostack, preserves_flags));
++    }
++    #[cfg(not(target_arch = "aarch64"))]
++    std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
++}
+diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
+new file mode 100644
+index 00000000..ac023dfb
+--- /dev/null
++++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
+@@ -0,0 +1,649 @@
++//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
++//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
++//! signal; a filter on the board turns them into sound.
++//!
++//! - `/scheme/audiohw`: writes of exactly 2048 bytes, one chunk of 512
++//!   frames, signed 16-bit little endian, stereo, 44.1 kHz (as `ac97d`).
++//!   When the ring is full the write waits, or fails with `EWOULDBLOCK` on
++//!   a non-blocking handle.
++//! - `/scheme/audiohw/stats`: clock, range, ring and error counters, and
++//!   `loud_chunks` and `peak`, which tell sound from silence.
++//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>] [mono] [range=<n>]
++//!   [div=<n>]` plays a sine with the CPU filling the FIFO, without DMA
++//!   (stage A1, a test); the result is in `stats`.
++//! - `/scheme/audiohw/stop`: any write ramps both outputs down to 0 V over
++//!   50 ms and stops the PWM, so the reset that follows does not click
++//!   (`reboot` writes it). Later chunks are taken and dropped.
++//!
++//! The DMA controller (channel 2) plays a ring of 8 slots of 512 frames
++//! into the PWM FIFO; a timer every 10 ms looks which slot plays, fills
++//! played slots with silence and lets waiting writes in. Without a PWM
++//! block (QEMU) the ring is played by the clock instead, so `audiod` and
++//! the scheme still run.
++
++use std::fmt::Write as _;
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Write};
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::io::AsRawFd;
++use std::process;
++use std::time::{Duration, Instant};
++
++use event::{user_data, EventQueue};
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{FpathWriter, HandleMap, ReadinessBased};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENODEV, ENOENT, EROFS, EWOULDBLOCK};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE};
++
++mod dma;
++mod pwm;
++mod ring;
++
++use dma::{DmaRing, SLOTS, SLOT_WORDS};
++use pwm::{Pwm, ToneReport, SAMPLE_RATE, STA_GAPS};
++use ring::{to_pwm, Ring, CHUNK_BYTES, SLOT_FRAMES};
++
++/// Bus addresses on the BCM283x, if the devicetree has none.
++const PWM_BUS_ADDR: usize = 0x7e20_c000;
++const CPRMAN_BUS_ADDR: usize = 0x7e10_1000;
++const PAGE_SIZE: usize = 4096;
++/// PLLD divided by 2: 250 MHz, a range of 2834 at 44.1 kHz stereo (about
++/// 11.5 bits).
++const CLOCK_DIVISOR: u32 = 2;
++/// The pins of the jack, function ALT0 (PWM0 and PWM1).
++const PINS: [u32; 2] = [40, 41];
++/// Slots of the ramp from 0 V up to the middle at start, against the click:
++/// about 46 ms.
++const RAMP_SLOTS: usize = 4;
++const POLL: Duration = Duration::from_millis(10);
++/// The longest tone the `tone` file plays: the driver is busy meanwhile.
++const MAX_TONE_SECONDS: f64 = 10.0;
++/// The tone's amplitude, a quarter of full scale, to spare ears.
++const TONE_AMPLITUDE: f64 = 0.25;
++/// Frames of the ramp down to 0 V on `stop`: 50 ms.
++const STOP_RAMP_FRAMES: u32 = SAMPLE_RATE / 20;
++/// A chunk counts as loud when a sample reaches 1/256 of full scale: tests
++/// tell sound from silence by it (#292, #335).
++const LOUD: u16 = 128;
++
++enum Output {
++    Pwm { pwm: Pwm, dma: DmaRing, phys: usize },
++    /// No PWM block (QEMU): slots count as played by the clock.
++    Clock { start: Instant, buf: Vec<[u32; SLOT_WORDS]> },
++}
++
++impl Output {
++    fn slot_mut(&mut self, index: usize) -> &mut [u32; SLOT_WORDS] {
++        match self {
++            Output::Pwm { dma, .. } => dma.slot_mut(index),
++            Output::Clock { buf, .. } => &mut buf[index],
++        }
++    }
++
++    fn position(&self) -> Option<usize> {
++        match self {
++            Output::Pwm { dma, .. } => dma.position(),
++            Output::Clock { start, .. } => {
++                let frames = start.elapsed().as_nanos() * u128::from(SAMPLE_RATE) / 1_000_000_000;
++                Some((frames / SLOT_FRAMES as u128 % SLOTS as u128) as usize)
++            }
++        }
++    }
++}
++
++enum Handle {
++    Root,
++    Pcm,
++    Stats(Vec<u8>),
++    Tone,
++    Stop,
++}
++
++struct Driver {
++    out: Output,
++    ring: Ring,
++    range: u32,
++    clock_hz: u32,
++    started: Instant,
++    chunks: u64,
++    /// Chunks with a sample at or above `LOUD`, and the largest sample.
++    loud_chunks: u64,
++    peak: u16,
++    dma_faults: u64,
++    last_fault: Option<(u32, u32)>,
++    sta_errors: u64,
++    sta_bits: u32,
++    /// Polls that found gap bits set.
++    sta_gaps: u64,
++    tone: Option<ToneReport>,
++    /// After `stop`: the outputs rest at 0 V until the driver restarts.
++    stopped: bool,
++    handles: HandleMap<Handle>,
++}
++
++impl Driver {
++    fn new(out: Output, range: u32, clock_hz: u32) -> Self {
++        Driver {
++            out,
++            ring: Ring::new(SLOTS, RAMP_SLOTS),
++            range,
++            clock_hz,
++            started: Instant::now(),
++            chunks: 0,
++            loud_chunks: 0,
++            peak: 0,
++            dma_faults: 0,
++            last_fault: None,
++            sta_errors: 0,
++            sta_bits: 0,
++            sta_gaps: 0,
++            tone: None,
++            stopped: false,
++            handles: HandleMap::new(),
++        }
++    }
++
++    /// Follow the controller: silence the slots it has played, count errors,
++    /// restart the channel after a fault.
++    fn refresh(&mut self) {
++        if self.stopped {
++            return;
++        }
++        if let Some(index) = self.out.position() {
++            let silence = self.range / 2;
++            let out = &mut self.out;
++            self.ring.advance(index, |i| out.slot_mut(i).fill(silence));
++        }
++        let (bits, fault) = match &self.out {
++            Output::Pwm { pwm, dma, .. } => (pwm.take_errors(), dma.fault()),
++            Output::Clock { .. } => return,
++        };
++        if bits & STA_GAPS != 0 {
++            self.sta_gaps += 1;
++        }
++        if bits & !STA_GAPS != 0 {
++            self.sta_errors += 1;
++            self.sta_bits |= bits & !STA_GAPS;
++        }
++        if let Some((cs, debug)) = fault {
++            self.dma_faults += 1;
++            self.last_fault = Some((cs, debug));
++            if self.dma_faults <= 3 {
++                eprintln!("bcm2835-pwmaudiod: DMA stopped (CS 0x{cs:08x}, DEBUG 0x{debug:08x}), restarting");
++            }
++            // Start over at slot 0 with a fresh ring of silence.
++            let silence = self.range / 2;
++            for i in 0..SLOTS {
++                self.out.slot_mut(i).fill(silence);
++            }
++            self.ring = Ring::new(SLOTS, 1);
++            if let Output::Pwm { dma, .. } = &self.out {
++                dma::barrier();
++                dma.start();
++            }
++        }
++    }
++
++    fn play(&mut self, chunk: &[u8]) -> Result<usize> {
++        if chunk.len() != CHUNK_BYTES {
++            return Err(Error::new(EINVAL));
++        }
++        let peak = chunk
++            .chunks_exact(2)
++            .map(|s| i16::from_le_bytes([s[0], s[1]]).unsigned_abs())
++            .max()
++            .unwrap_or(0);
++        if self.stopped {
++            self.chunks += 1;
++            return Ok(chunk.len());
++        }
++        self.refresh();
++        let index = self.ring.reserve().ok_or(Error::new(EWOULDBLOCK))?;
++        let range = self.range;
++        let slot = self.out.slot_mut(index);
++        for (frame, words) in chunk.chunks_exact(4).zip(slot.chunks_exact_mut(2)) {
++            let left = i16::from_le_bytes([frame[0], frame[1]]);
++            let right = i16::from_le_bytes([frame[2], frame[3]]);
++            // Channel 1 (PWM0, GPIO 40) is the right side of the jack.
++            words[0] = to_pwm(right, range);
++            words[1] = to_pwm(left, range);
++        }
++        self.chunks += 1;
++        if peak >= LOUD {
++            self.loud_chunks += 1;
++        }
++        self.peak = self.peak.max(peak);
++        Ok(chunk.len())
++    }
++
++    /// `<seconds> [<hz>] [mono] [range=<n>] [div=<n>]`: the options run
++    /// channel 1 alone, another range or another clock divisor for this tone
++    /// only, to find out how the PWM takes words from the FIFO.
++    fn tone(&mut self, request: &[u8]) -> Result<()> {
++        let text = std::str::from_utf8(request).map_err(|_| Error::new(EINVAL))?;
++        let mut words = text.split_whitespace();
++        let seconds = match words.next().map(str::parse::<f64>) {
++            Some(Ok(s)) if s > 0.0 && s <= MAX_TONE_SECONDS => s,
++            _ => return Err(Error::new(EINVAL)),
++        };
++        let (mut hz, mut stereo, mut range, mut divisor) = (1000.0, true, self.range, CLOCK_DIVISOR);
++        for word in words {
++            let number = |prefix: &str| word.strip_prefix(prefix).and_then(|n| n.parse::<u32>().ok());
++            if word == "mono" {
++                stereo = false;
++            } else if let Some(n) = number("range=").filter(|n| (16..=1 << 16).contains(n)) {
++                range = n;
++            } else if let Some(n) = number("div=").filter(|n| (1..=4095).contains(n)) {
++                divisor = n;
++            } else {
++                match word.parse::<f64>() {
++                    Ok(f) if f > 0.0 && f < f64::from(SAMPLE_RATE) / 2.0 => hz = f,
++                    _ => return Err(Error::new(EINVAL)),
++                }
++            }
++        }
++        let Output::Pwm { pwm, dma, .. } = &self.out else {
++            return Err(Error::new(ENODEV));
++        };
++        if self.stopped {
++            return Err(Error::new(ENODEV));
++        }
++        // Hold the ring where it is and let the CPU have the FIFO.
++        dma.set_active(false);
++        if divisor != CLOCK_DIVISOR {
++            pwm.set_clock(divisor).map_err(|err| {
++                eprintln!("bcm2835-pwmaudiod: {err}");
++                Error::new(EINVAL)
++            })?;
++        }
++        pwm.set_range(range);
++        pwm.set_channels(stereo, false);
++        let mut report = pwm::cpu_tone(pwm, seconds, hz, TONE_AMPLITUDE, stereo, range);
++        report.divisor = divisor;
++        if divisor != CLOCK_DIVISOR {
++            if let Err(err) = pwm.set_clock(CLOCK_DIVISOR) {
++                eprintln!("bcm2835-pwmaudiod: {err}");
++            }
++        }
++        pwm.set_range(self.range);
++        pwm.set_channels(true, true);
++        dma.set_active(true);
++        println!("bcm2835-pwmaudiod: tone {hz} Hz, {}", tone_line(&report));
++        self.tone = Some(report);
++        Ok(())
++    }
++
++    /// Ramp the outputs from the middle down to 0 V and stop the PWM. The
++    /// channels stay on meanwhile (clearing the FIFO would turn them off for
++    /// a moment); the words left in the FIFO play first.
++    fn stop(&mut self) {
++        if self.stopped {
++            return;
++        }
++        self.stopped = true;
++        if let Output::Pwm { pwm, dma, .. } = &self.out {
++            pwm.stop_dma();
++            dma.reset();
++            pwm::cpu_ramp(pwm, self.range / 2, 0, STOP_RAMP_FRAMES);
++            pwm.stop();
++        }
++        println!("bcm2835-pwmaudiod: stopped, outputs at 0 V");
++    }
++
++    fn stats(&mut self) -> String {
++        self.refresh();
++        let mut text = String::new();
++        let uptime = self.started.elapsed().as_secs_f64();
++        let played = self.ring.current();
++        match &self.out {
++            Output::Pwm { phys, .. } => {
++                let _ = writeln!(text, "mode pwm-dma");
++                let _ = writeln!(text, "pwm 0x{phys:08x}");
++                let _ = writeln!(text, "dma_channel {}", dma::CHANNEL);
++            }
++            Output::Clock { .. } => {
++                let _ = writeln!(text, "mode clock (no PWM)");
++            }
++        }
++        if self.stopped {
++            let _ = writeln!(text, "stopped");
++        }
++        let _ = writeln!(text, "clock_hz {}", self.clock_hz);
++        let _ = writeln!(text, "range {}", self.range);
++        let _ = writeln!(text, "sample_rate {}", self.clock_hz / self.range / 2);
++        let _ = writeln!(text, "slots {SLOTS}x{SLOT_FRAMES}");
++        let _ = writeln!(text, "uptime_s {uptime:.1}");
++        let _ = writeln!(text, "played_slots {played}");
++        // How fast the PWM really takes frames, from the DMA's progress.
++        let rate = if uptime > 0.0 { played as f64 * SLOT_FRAMES as f64 / uptime } else { 0.0 };
++        let _ = writeln!(text, "measured_rate_hz {rate:.0}");
++        let _ = writeln!(text, "chunks {}", self.chunks);
++        let _ = writeln!(text, "loud_chunks {}", self.loud_chunks);
++        let _ = writeln!(text, "peak {}", self.peak);
++        let _ = writeln!(text, "sound_slots {}", self.ring.played_sound);
++        let _ = writeln!(text, "underruns {}", self.ring.underruns);
++        let _ = writeln!(text, "queued {}", self.ring.queued());
++        let _ = writeln!(text, "dma_faults {}", self.dma_faults);
++        if let Some((cs, debug)) = self.last_fault {
++            let _ = writeln!(text, "last_fault cs=0x{cs:08x} debug=0x{debug:08x}");
++        }
++        let _ = writeln!(text, "pwm_errors {} bits=0x{:03x}", self.sta_errors, self.sta_bits);
++        let _ = writeln!(text, "pwm_gap_polls {}", self.sta_gaps);
++        if let Some(t) = &self.tone {
++            let _ = writeln!(text, "tone {}", tone_line(t));
++        }
++        text
++    }
++}
++
++fn tone_line(t: &ToneReport) -> String {
++    format!(
++        "{} range={} div={} seconds={:.2} words={} words_per_s={:.0} rate_hz={:.0} fifo_empty={} sta=0x{:03x}",
++        if t.stereo { "stereo" } else { "mono" },
++        t.range,
++        t.divisor,
++        t.seconds,
++        t.words,
++        t.words_per_second(),
++        t.rate(),
++        t.empty,
++        t.sta_errors
++    )
++}
++
++/// The start of the ring: a ramp from 0 V to the middle, then silence.
++fn fill_ramp(out: &mut Output, silence: u32) {
++    let ramp = (RAMP_SLOTS * SLOT_FRAMES) as u64;
++    for i in 0..SLOTS {
++        let slot = out.slot_mut(i);
++        for (frame, words) in slot.chunks_exact_mut(2).enumerate() {
++            let n = (i * SLOT_FRAMES + frame) as u64;
++            let value = (u64::from(silence) * n.min(ramp) / ramp) as u32;
++            words.fill(value);
++        }
++    }
++}
++
++impl SchemeSync for Driver {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        _flags: usize,
++        _fcntl_flags: u32,
++        ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        // audiod asks for "audio_shm" on its handle; not offered, so it
++        // falls back to writes.
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        let handle = match path.trim_matches('/') {
++            "" if ctx.uid == 0 => Handle::Pcm,
++            "tone" if ctx.uid == 0 => Handle::Tone,
++            "stop" if ctx.uid == 0 => Handle::Stop,
++            "" | "tone" | "stop" => return Err(Error::new(EACCES)),
++            "stats" => Handle::Stats(self.stats().into_bytes()),
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let data = match self.handles.get(id)? {
++            Handle::Stats(data) => data,
++            Handle::Root => return Err(Error::new(EISDIR)),
++            _ => return Err(Error::new(EBADF)),
++        };
++        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++        let len = buf.len().min(data.len() - start);
++        buf[..len].copy_from_slice(&data[start..start + len]);
++        Ok(len)
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match self.handles.get(id)? {
++            Handle::Pcm => self.play(buf),
++            Handle::Tone => self.tone(buf).map(|()| buf.len()),
++            Handle::Stop => {
++                self.stop();
++                Ok(buf.len())
++            }
++            _ => Err(Error::new(EBADF)),
++        }
++    }
++
++    // Shells truncate a file before writing to it.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Pcm | Handle::Tone | Handle::Stop => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Stats(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Pcm | Handle::Tone | Handle::Stop => stat.st_mode = 0o200 | MODE_FILE,
++            Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::Stats(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "audiohw", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// The CPU physical address of a device at `bus_addr`, through `/soc`'s
++/// ranges.
++fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// Bus address of the first device with one of `compatible`, or `fallback`.
++fn bus_addr(fdt: &Fdt, compatible: &[&str], fallback: usize) -> usize {
++    fdt.find_compatible(compatible)
++        .and_then(|node| node.reg())
++        .and_then(|mut reg| reg.next())
++        .map(|reg| reg.starting_address as usize)
++        .unwrap_or(fallback)
++}
++
++fn map(phys: usize) -> *mut u32 {
++    unsafe {
++        common::physmap(phys, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-pwmaudiod: failed to map registers") as *mut u32
++    }
++}
++
++/// Set up the PWM, its clock, the DMA ring and the pins, or the clock
++/// stand-in when there is no PWM block.
++fn open_output(fdt: &Fdt) -> (Output, u32, u32) {
++    let pwm_bus = bus_addr(fdt, &["brcm,bcm2835-pwm"], PWM_BUS_ADDR);
++    let pwm_phys = soc_phys(fdt, pwm_bus);
++    let cm_phys = soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], CPRMAN_BUS_ADDR));
++    let pwm = Pwm::new(map(pwm_phys), map(cm_phys), CLOCK_DIVISOR);
++    let (range, clock_hz) = (pwm.range, pwm.clock_hz);
++
++    let clock_only = |why: String| {
++        println!("bcm2835-pwmaudiod: {why}, playing to the clock");
++        let out = Output::Clock {
++            start: Instant::now(),
++            buf: vec![[0; SLOT_WORDS]; SLOTS],
++        };
++        (out, range, clock_hz)
++    };
++    if !pwm.present() {
++        return clock_only(format!("no PWM block at 0x{pwm_phys:08x} (QEMU?)"));
++    }
++
++    let fifo_bus = (pwm_bus + Pwm::FIFO_OFFSET) as u32;
++    let dma = DmaRing::new(fdt, fifo_bus).unwrap_or_else(|err| {
++        eprintln!("bcm2835-pwmaudiod: {err}");
++        process::exit(1);
++    });
++    // QEMU keeps the PWM registers but has no PWM clock. Its DMA model
++    // would also run the endless ring at once, so the ring is not started.
++    if let Err(err) = pwm.start(true) {
++        pwm.stop();
++        return clock_only(format!("{err} (QEMU?)"));
++    }
++    let dma_phys = dma.phys;
++    let mut out = Output::Pwm { pwm, dma, phys: pwm_phys };
++    fill_ramp(&mut out, range / 2);
++    let Output::Pwm { dma, .. } = &out else { unreachable!() };
++    dma::barrier();
++    dma.start();
++    for pin in PINS {
++        if let Err(err) = std::fs::write(format!("/scheme/gpio/{pin}/mode"), "alt0") {
++            eprintln!("bcm2835-pwmaudiod: GPIO {pin} to alt0: {err}");
++        }
++    }
++    println!(
++        "bcm2835-pwmaudiod: PWM at 0x{pwm_phys:08x}, clock {} MHz (PLLD/{CLOCK_DIVISOR}), range {range} ({} Hz), DMA channel {} at 0x{dma_phys:08x}, {SLOTS} x {SLOT_FRAMES} frames",
++        clock_hz / 1_000_000,
++        clock_hz / range / 2,
++        dma::CHANNEL,
++    );
++    (out, range, clock_hz)
++}
++
++/// A one-shot timer on the monotonic clock, delivered as an event.
++struct Timer(File);
++
++impl Timer {
++    fn new() -> std::io::Result<Self> {
++        OpenOptions::new()
++            .read(true)
++            .write(true)
++            .custom_flags(syscall::O_NONBLOCK as i32)
++            .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))
++            .map(Self)
++    }
++
++    fn arm(&mut self, after: Duration) {
++        let mut time = syscall::TimeSpec::default();
++        if self.0.read(&mut time).is_err() {
++            return;
++        }
++        let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++        time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++        time.tv_nsec = (nsec % 1_000_000_000) as i32;
++        let _ = self.0.write(&time);
++    }
++
++    /// Consume the event.
++    fn fired(&mut self) {
++        let mut time = syscall::TimeSpec::default();
++        let _ = self.0.read(&mut time);
++    }
++}
++
++user_data! {
++    enum Source {
++        Scheme,
++        Time,
++    }
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-pwmaudiod: no devicetree");
++        process::exit(1);
++    };
++    let (out, range, clock_hz) = open_output(&fdt);
++    let mut driver = Driver::new(out, range, clock_hz);
++
++    let mut timer = Timer::new().expect("bcm2835-pwmaudiod: failed to open /scheme/time");
++    let socket = Socket::nonblock().expect("bcm2835-pwmaudiod: failed to create the audiohw scheme");
++    let mut readiness = ReadinessBased::new(Box::new(socket), 16);
++
++    let events = EventQueue::<Source>::new().expect("bcm2835-pwmaudiod: failed to create an event queue");
++    events
++        .subscribe(readiness.socket().inner().raw(), Source::Scheme, event::EventFlags::READ)
++        .expect("bcm2835-pwmaudiod: failed to subscribe to the scheme");
++    events
++        .subscribe(timer.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++        .expect("bcm2835-pwmaudiod: failed to subscribe to the timer");
++    timer.arm(POLL);
++
++    let _ = daemon.ready_sync_scheme(readiness.socket(), &mut driver);
++    libredox::call::setrens(0, 0).expect("bcm2835-pwmaudiod: failed to enter the null namespace");
++
++    for source in [Source::Scheme]
++        .into_iter()
++        .chain(events.map(|e| e.expect("bcm2835-pwmaudiod: failed to get an event").user_data))
++    {
++        match source {
++            Source::Scheme => {
++                readiness
++                    .read_and_process_requests(&mut driver)
++                    .expect("bcm2835-pwmaudiod: failed to read the scheme");
++            }
++            Source::Time => {
++                timer.fired();
++                timer.arm(POLL);
++                driver.refresh();
++                readiness
++                    .poll_all_requests(&mut driver)
++                    .expect("bcm2835-pwmaudiod: failed to poll requests");
++            }
++        }
++        readiness
++            .write_responses()
++            .expect("bcm2835-pwmaudiod: failed to write to the scheme");
++    }
++    process::exit(0);
++}
+diff --git a/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
+new file mode 100644
+index 00000000..49e98682
+--- /dev/null
++++ b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
+@@ -0,0 +1,321 @@
++//! The PWM block (BCM2835 ARM Peripherals, chapter 9) and its clock from the
++//! clock manager.
++//!
++//! Both channels run in the PWM algorithm mode (not mark-space) with the
++//! same range and read one FIFO in turn: the first word goes to channel 1
++//! (PWM0, GPIO 40), the next to channel 2 (PWM1, GPIO 41).
++//!
++//! The FIFO gives one word per range period, to the two channels in turn
++//! (measured on the Pi 3B+, test-plan #281): a channel gets a new value
++//! every second period. So a stereo frame takes two periods, and the range
++//! is clock / (2 × sample rate).
++
++use std::time::{Duration, Instant};
++
++// PWM registers, as byte offsets.
++const CTL: usize = 0x00;
++const STA: usize = 0x04;
++const DMAC: usize = 0x08;
++const RNG1: usize = 0x10;
++const FIF1: usize = 0x18;
++const RNG2: usize = 0x20;
++
++// CTL
++const PWEN1: u32 = 1 << 0;
++const RPTL1: u32 = 1 << 2;
++const USEF1: u32 = 1 << 5;
++const CLRF1: u32 = 1 << 6;
++const PWEN2: u32 = 1 << 8;
++const RPTL2: u32 = 1 << 10;
++const USEF2: u32 = 1 << 13;
++
++// STA
++const FULL1: u32 = 1 << 0;
++const EMPT1: u32 = 1 << 1;
++/// Write error, read error, gaps on channels 1 to 4, bus error; each bit is
++/// cleared by writing 1.
++pub const STA_ERRORS: u32 = 0x1fc;
++/// The gap bits. With both channels on the FIFO they are set all the time
++/// (#279, #281), also when the FIFO never ran empty, so they are counted
++/// apart from the errors.
++pub const STA_GAPS: u32 = 0xf0;
++
++// DMAC
++const DMAC_ENAB: u32 = 1 << 31;
++/// The datasheet's reset values for the PANIC and DREQ thresholds.
++const DMAC_THRESHOLDS: u32 = 7 << 8 | 7;
++
++// Clock manager, PWM clock
++const CM_PWMCTL: usize = 0xa0;
++const CM_PWMDIV: usize = 0xa4;
++const CM_PASSWD: u32 = 0x5a << 24;
++const CM_SRC_PLLD: u32 = 6;
++const CM_ENAB: u32 = 1 << 4;
++const CM_KILL: u32 = 1 << 5;
++const CM_BUSY: u32 = 1 << 7;
++
++/// PLLD on the Raspberry Pi 3, as the firmware sets it up.
++pub const PLLD_HZ: u32 = 500_000_000;
++pub const SAMPLE_RATE: u32 = 44_100;
++
++pub struct Pwm {
++    regs: *mut u32,
++    cm: *mut u32,
++    /// Clock ticks per sample; a sample value goes from 0 to `range`.
++    pub range: u32,
++    pub clock_hz: u32,
++}
++
++// The registers belong to this driver alone.
++unsafe impl Send for Pwm {}
++
++impl Pwm {
++    /// `regs` points at the PWM block, `cm` at the clock manager.
++    pub fn new(regs: *mut u32, cm: *mut u32, divisor: u32) -> Self {
++        let clock_hz = PLLD_HZ / divisor;
++        Pwm {
++            regs,
++            cm,
++            range: (clock_hz + SAMPLE_RATE) / (2 * SAMPLE_RATE),
++            clock_hz,
++        }
++    }
++
++    /// Whether the block answers: the range registers keep what is written.
++    /// QEMU does not emulate PWM and reads zero.
++    pub fn present(&self) -> bool {
++        self.write(RNG1, 0x1234);
++        let present = self.read(RNG1) == 0x1234;
++        self.write(RNG1, 0x20);
++        present
++    }
++
++    /// Stop the channels, start the clock from PLLD, set the range and turn
++    /// both channels on, reading the FIFO. With `dma`, the block asks the
++    /// DMA controller for data; without, the CPU fills the FIFO. The outputs
++    /// start at 0 V: the caller ramps up to the middle.
++    pub fn start(&self, dma: bool) -> Result<(), String> {
++        self.write(CTL, 0);
++        self.write(DMAC, 0);
++        spin(Duration::from_micros(10));
++        self.set_clock(PLLD_HZ / self.clock_hz)?;
++        self.set_range(self.range);
++        self.write(STA, STA_ERRORS);
++        self.set_channels(true, dma);
++        Ok(())
++    }
++
++    /// Set the range of both channels.
++    pub fn set_range(&self, range: u32) {
++        self.write(RNG1, range);
++        self.write(RNG2, range);
++    }
++
++    /// Clear the FIFO and run both channels, or channel 1 alone, from it.
++    pub fn set_channels(&self, stereo: bool, dma: bool) {
++        self.write(DMAC, 0);
++        self.write(CTL, CLRF1);
++        spin(Duration::from_micros(10));
++        if dma {
++            self.write(DMAC, DMAC_ENAB | DMAC_THRESHOLDS);
++        }
++        // Repeat the last word when the FIFO runs empty, so a gap holds the
++        // level instead of dropping to 0 V.
++        let one = PWEN1 | USEF1 | RPTL1;
++        self.write(CTL, if stereo { one | PWEN2 | USEF2 | RPTL2 } else { one });
++    }
++
++    /// Run the PWM clock at PLLD / `divisor`.
++    pub fn set_clock(&self, divisor: u32) -> Result<(), String> {
++        // Stop the clock and wait until it has stopped; kill it if it hangs.
++        self.write_cm(CM_PWMCTL, CM_PASSWD | (self.read_cm(CM_PWMCTL) & 0xf));
++        if !self.wait_cm(false) {
++            self.write_cm(CM_PWMCTL, CM_PASSWD | CM_KILL);
++            self.write_cm(CM_PWMCTL, CM_PASSWD);
++            if !self.wait_cm(false) {
++                return Err(format!("PWM clock does not stop (CM_PWMCTL 0x{:08x})", self.read_cm(CM_PWMCTL)));
++            }
++        }
++        // Integer divisor in bits 23:12, no fraction, no MASH.
++        self.write_cm(CM_PWMDIV, CM_PASSWD | divisor << 12);
++        self.write_cm(CM_PWMCTL, CM_PASSWD | CM_SRC_PLLD);
++        self.write_cm(CM_PWMCTL, CM_PASSWD | CM_SRC_PLLD | CM_ENAB);
++        if !self.wait_cm(true) {
++            return Err(format!("PWM clock does not start (CM_PWMCTL 0x{:08x})", self.read_cm(CM_PWMCTL)));
++        }
++        Ok(())
++    }
++
++    fn wait_cm(&self, busy: bool) -> bool {
++        let start = Instant::now();
++        while (self.read_cm(CM_PWMCTL) & CM_BUSY != 0) != busy {
++            if start.elapsed() > Duration::from_millis(10) {
++                return false;
++            }
++            std::hint::spin_loop();
++        }
++        true
++    }
++
++    /// Stop both channels; the outputs go to 0 V.
++    pub fn stop(&self) {
++        self.write(DMAC, 0);
++        self.write(CTL, 0);
++    }
++
++    /// Stop asking the DMA controller for data; the channels go on.
++    pub fn stop_dma(&self) {
++        self.write(DMAC, 0);
++    }
++
++    pub fn fifo_full(&self) -> bool {
++        self.read(STA) & FULL1 != 0
++    }
++
++    pub fn fifo_empty(&self) -> bool {
++        self.read(STA) & EMPT1 != 0
++    }
++
++    pub fn push(&self, word: u32) {
++        self.write(FIF1, word);
++    }
++
++    /// The error bits of STA since the last call, cleared.
++    pub fn take_errors(&self) -> u32 {
++        let errors = self.read(STA) & STA_ERRORS;
++        if errors != 0 {
++            self.write(STA, errors);
++        }
++        errors
++    }
++
++    /// Offset of the FIFO register in the block, for the DMA controller.
++    pub const FIFO_OFFSET: usize = FIF1;
++
++    fn read(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn write(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    fn read_cm(&self, offset: usize) -> u32 {
++        unsafe { self.cm.add(offset / 4).read_volatile() }
++    }
++
++    fn write_cm(&self, offset: usize, value: u32) {
++        unsafe { self.cm.add(offset / 4).write_volatile(value) }
++    }
++}
++
++/// What a tone played by the CPU did.
++#[derive(Default, Clone)]
++pub struct ToneReport {
++    /// What was asked: both channels or channel 1 alone, the range and the
++    /// clock divisor.
++    pub stereo: bool,
++    pub range: u32,
++    pub divisor: u32,
++    pub seconds: f64,
++    pub words: u64,
++    /// Times the CPU found the FIFO empty: it was too slow, the output held
++    /// the last value.
++    pub empty: u64,
++    pub sta_errors: u32,
++}
++
++impl ToneReport {
++    /// FIFO words per second the PWM took.
++    pub fn words_per_second(&self) -> f64 {
++        if self.seconds > 0.0 {
++            self.words as f64 / self.seconds
++        } else {
++            0.0
++        }
++    }
++
++    /// Frames per second the PWM took from the FIFO.
++    pub fn rate(&self) -> f64 {
++        if self.seconds > 0.0 {
++            self.words_per_second() / if self.stereo { 2.0 } else { 1.0 }
++        } else {
++            0.0
++        }
++    }
++}
++
++/// Play a sine with the CPU writing every word into the FIFO (stage A1, no
++/// DMA). Busy for the whole time. Starts and ends at the middle of
++/// `range`; the caller has set up the channels (`stereo`: both, else
++/// channel 1 alone) and the range.
++pub fn cpu_tone(pwm: &Pwm, seconds: f64, hz: f64, amplitude: f64, stereo: bool, range: u32) -> ToneReport {
++    let mid = f64::from(range / 2);
++    let peak = mid * amplitude.clamp(0.0, 1.0);
++    let total = (seconds * f64::from(SAMPLE_RATE)) as u64;
++    let mut report = ToneReport { stereo, range, ..Default::default() };
++    pwm.take_errors();
++    // Let the FIFO fill up before counting empty moments.
++    let mut frame = 0u64;
++    let mut second_word = None;
++    let start = Instant::now();
++    while frame < total {
++        if pwm.fifo_full() {
++            continue;
++        }
++        if frame > 16 && pwm.fifo_empty() {
++            report.empty += 1;
++        }
++        let word = match second_word.take() {
++            Some(word) => {
++                frame += 1;
++                word
++            }
++            None => {
++                let t = frame as f64 / f64::from(SAMPLE_RATE);
++                // Fade in and out over 10 ms against clicks.
++                let fade = (t / 0.01).min((seconds - t) / 0.01).clamp(0.0, 1.0);
++                let value = (mid + peak * fade * (2.0 * std::f64::consts::PI * hz * t).sin()) as u32;
++                if stereo {
++                    second_word = Some(value);
++                } else {
++                    frame += 1;
++                }
++                value
++            }
++        };
++        pwm.push(word);
++        report.words += 1;
++    }
++    // Wait until the FIFO has been played.
++    let drained = Instant::now();
++    while !pwm.fifo_empty() && drained.elapsed() < Duration::from_millis(5) {}
++    report.seconds = start.elapsed().as_secs_f64();
++    report.sta_errors = pwm.take_errors();
++    report
++}
++
++/// Move both outputs from `from` to `to` in a straight line over `frames`
++/// frames, with the CPU filling the FIFO, and wait until it has been played.
++/// The caller has set up both channels without DMA.
++pub fn cpu_ramp(pwm: &Pwm, from: u32, to: u32, frames: u32) {
++    let (from, to, frames) = (i64::from(from), i64::from(to), i64::from(frames.max(1)));
++    for n in 0..=frames {
++        let value = (from + (to - from) * n / frames) as u32;
++        for _ in 0..2 {
++            while pwm.fifo_full() {
++                std::hint::spin_loop();
++            }
++            pwm.push(value);
++        }
++    }
++    let drained = Instant::now();
++    while !pwm.fifo_empty() && drained.elapsed() < Duration::from_millis(5) {}
++}
++
++fn spin(time: Duration) {
++    let end = Instant::now() + time;
++    while Instant::now() < end {
++        std::hint::spin_loop();
++    }
++}
+diff --git a/drivers/audio/bcm2835-pwmaudiod/src/ring.rs b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
+new file mode 100644
+index 00000000..585c96c3
+--- /dev/null
++++ b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
+@@ -0,0 +1,145 @@
++//! Bookkeeping for the ring of slots the DMA controller plays in a loop:
++//! which slot it plays now, which slots hold new sound, which slot the next
++//! chunk goes into. No hardware here, so it is tested on the build host.
++//!
++//! Slots are counted without wrapping (`u64`); slot `n` lives at index
++//! `n % slots` of the ring. After a slot has been played, the driver fills
++//! it with silence, so when no new chunk arrives in time the ring plays
++//! silence instead of old sound.
++
++/// Frames per slot: one chunk from `audiod`.
++pub const SLOT_FRAMES: usize = 512;
++/// Bytes of one chunk: 512 frames, two channels, s16le.
++pub const CHUNK_BYTES: usize = SLOT_FRAMES * 2 * 2;
++
++pub struct Ring {
++    slots: u64,
++    /// The slot being played.
++    current: u64,
++    /// The next slot to fill. Slots below it and above `current` hold new
++    /// sound.
++    written: u64,
++    /// Played slots that held new sound.
++    pub played_sound: u64,
++    /// Times the ring ran out of new sound (the end of each sound counts too).
++    pub underruns: u64,
++}
++
++impl Ring {
++    /// The ring starts at slot 0; slots below `first_free` hold the start-up
++    /// ramp and must not be written over.
++    pub fn new(slots: usize, first_free: usize) -> Self {
++        assert!(slots >= 4 && first_free < slots);
++        Ring {
++            slots: slots as u64,
++            current: 0,
++            written: first_free as u64,
++            played_sound: 0,
++            underruns: 0,
++        }
++    }
++
++    /// The slot being played, counted without wrapping.
++    pub fn current(&self) -> u64 {
++        self.current
++    }
++
++    /// Slots after the one being played that hold new sound.
++    pub fn queued(&self) -> u64 {
++        self.written.saturating_sub(self.current + 1)
++    }
++
++    /// The controller now plays ring index `index`. Calls `played` with the
++    /// ring index of every slot finished since the last call, so the caller
++    /// can silence it. Must be called at least once per turn of the ring.
++    pub fn advance(&mut self, index: usize, mut played: impl FnMut(usize)) {
++        let index = index as u64 % self.slots;
++        let delta = (index + self.slots - self.current % self.slots) % self.slots;
++        for _ in 0..delta {
++            if self.current < self.written {
++                self.played_sound += 1;
++                if self.current + 1 == self.written {
++                    self.underruns += 1;
++                }
++            }
++            played((self.current % self.slots) as usize);
++            self.current += 1;
++        }
++    }
++
++    /// The ring index for the next chunk, or `None` while the ring is full.
++    pub fn reserve(&mut self) -> Option<usize> {
++        if self.written < self.current + 2 {
++            // Out of sound: start two slots ahead, since the controller may
++            // be about to finish the current one.
++            self.written = self.current + 2;
++        }
++        if self.written >= self.current + self.slots {
++            return None;
++        }
++        let index = (self.written % self.slots) as usize;
++        self.written += 1;
++        Some(index)
++    }
++}
++
++/// A signed 16-bit sample as a PWM value: 0 to `range`, silence at the
++/// middle.
++pub fn to_pwm(sample: i16, range: u32) -> u32 {
++    ((i32::from(sample) + 32768) as u32 * range) >> 16
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn pwm_values() {
++        assert_eq!(to_pwm(i16::MIN, 5669), 0);
++        assert_eq!(to_pwm(0, 5668), 2834);
++        assert!(to_pwm(i16::MAX, 5669) < 5669);
++        assert!(to_pwm(i16::MAX, 5669) >= 5668);
++    }
++
++    #[test]
++    fn fills_until_full_then_frees_slots() {
++        let mut ring = Ring::new(8, 2);
++        let got: Vec<_> = std::iter::from_fn(|| ring.reserve()).collect();
++        // Slot 0 plays; 2..=7 are free (0 and 1 hold the ramp, which counts
++        // as sound).
++        assert_eq!(got, vec![2, 3, 4, 5, 6, 7]);
++        assert_eq!(ring.queued(), 7);
++
++        let mut silenced = Vec::new();
++        ring.advance(3, |i| silenced.push(i));
++        assert_eq!(silenced, vec![0, 1, 2]);
++        assert_eq!(ring.played_sound, 3);
++        assert_eq!(ring.reserve(), Some(0));
++        assert_eq!(ring.reserve(), Some(1));
++        assert_eq!(ring.reserve(), Some(2));
++        assert_eq!(ring.reserve(), None);
++    }
++
++    #[test]
++    fn underrun_restarts_two_slots_ahead() {
++        let mut ring = Ring::new(8, 1);
++        assert_eq!(ring.reserve(), Some(2));
++        ring.advance(2, |_| {});
++        ring.advance(6, |_| {});
++        assert_eq!(ring.underruns, 1);
++        assert_eq!(ring.played_sound, 3);
++        assert_eq!(ring.queued(), 0);
++        // Slot 6 plays, 7 may be about to start: the next chunk goes to 0.
++        assert_eq!(ring.reserve(), Some(0));
++    }
++
++    #[test]
++    fn wraps_around() {
++        let mut ring = Ring::new(4, 1);
++        for turn in 0..10u64 {
++            assert!(ring.reserve().is_some());
++            ring.advance(((turn + 1) % 4) as usize, |_| {});
++        }
++        assert_eq!(ring.current(), 10);
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 2c05be86..7d5ae36a 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -7,6 +7,7 @@ requires_weak = [
+     "40_bcm2835-gpiod.service",
+     "41_bcm2835-i2cd.service",
+     "41_bcm2835-spid.service",
++    "41_bcm2835-pwmaudiod.service",
+     "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+diff --git a/init.initfs.d/41_bcm2835-pwmaudiod.service b/init.initfs.d/41_bcm2835-pwmaudiod.service
+new file mode 100644
+index 00000000..0fff6d57
+--- /dev/null
++++ b/init.initfs.d/41_bcm2835-pwmaudiod.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "Raspberry Pi headphone jack (PWM)"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["40_bcm2835-gpiod.service"]
++
++[service]
++cmd = "bcm2835-pwmaudiod"
++type = { scheme = "audiohw" }
+-- 
+2.53.0
+

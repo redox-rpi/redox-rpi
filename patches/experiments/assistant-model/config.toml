@@ -1,0 +1,7 @@
+# The Qwen3 0.6B model file (382 MB) and llama.cpp for comparison (26 MiB),
+# recipes in ../assistant/recipes, for the SD-card image only: use with
+# --experiment assistant. The network-boot image is loaded into RAM; there
+# the model goes to /scheme/data with `rinfer --download`.
+[packages]
+qwen3-model = "source"
+llama-cpp = "source"

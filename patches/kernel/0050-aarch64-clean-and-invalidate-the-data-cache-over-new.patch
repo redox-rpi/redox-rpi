@@ -1,0 +1,57 @@
+From 912849ce9fb20e6aa67a4f612c0ff892354e094e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 1 Nov 2026 16:35:56 +0000
+Subject: [PATCH] aarch64: clean and invalidate the data cache over new
+ phys-contiguous memory
+
+---
+ src/context/memory.rs | 29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 74ef9e74..61b2f24e 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -1356,6 +1356,15 @@ impl Grant {
+                 .allocate(FrameCount::new(span.count))
+                 .ok_or(Enomem)?,
+         );
++        // The allocator zeroed the frames through the kernel's cached
++        // mapping. Drivers map these uncached for DMA, so write the zeros
++        // back to RAM and drop the lines now: else the CPU and the device
++        // see stale data, and dirty lines written back later overwrite
++        // what was written uncached.
++        #[cfg(target_arch = "aarch64")]
++        unsafe {
++            clean_and_invalidate_dcache(base, span.count);
++        }
+ 
+         for (i, page) in span.pages().enumerate() {
+             let frame = base.next_by(i);
+@@ -3129,3 +3138,23 @@ impl TlbShootdownActions {
+         this
+     }
+ }
++
++/// Cleans and invalidates the data cache to the point of coherency for
++/// `count` frames from `base`, through the kernel's linear mapping.
++#[cfg(target_arch = "aarch64")]
++unsafe fn clean_and_invalidate_dcache(base: Frame, count: usize) {
++    use core::arch::asm;
++
++    let ctr: usize;
++    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack)) };
++    // CTR_EL0.DminLine: log2 of the smallest data cache line in words.
++    let line = 4 << ((ctr >> 16) & 0xf);
++    let start = RmmA::phys_to_virt(base.base()).data();
++    let end = start + count * PAGE_SIZE;
++    let mut addr = start & !(line - 1);
++    while addr < end {
++        unsafe { asm!("dc civac, {}", in(reg) addr, options(nostack)) };
++        addr += line;
++    }
++    unsafe { asm!("dsb sy", options(nostack)) };
++}
+-- 
+2.53.0
+

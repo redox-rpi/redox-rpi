@@ -16,7 +16,9 @@ scripts/build-image.sh --experiment eth-speed
   1000BASE-T (PHY register 9, CTRL1000) and negotiates again. The link is
   down for a few seconds; the network comes back on its own.
 - `echo 1000 > /tmp/dwc2d-link`: gigabit again.
-- dwc2d reads the file once a second (with its USB rescan) and deletes it.
+- dwc2d looks for the file on every fifth USB rescan (every 5 s) and
+  deletes it. A lookup that fails costs a few wakeups, so it does not
+  look every second.
   Anything else, or no LAN7800 in use, is refused with a log line.
 - The link-up lines name the speed: `dwc2d: link up on the LAN7800 at
   address N, 1000 Mbit/s`, at boot and after a change. (`dwc2d: LAN78xx

@@ -1,0 +1,26 @@
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -404,7 +404,10 @@
+     }
+ }
+ 
+-const ORDER_COUNT: u32 = 11;
++// 13 orders: blocks of up to 16 MiB. Physically contiguous buffers larger
++// than 4 MiB, like a Pi framebuffer client buffer at 1824x984 (7 MiB) for
++// DMA blits, need more than the 11 orders upstream has.
++const ORDER_COUNT: u32 = 13;
+ const MAX_ORDER: u32 = ORDER_COUNT - 1;
+ 
+ #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+@@ -970,8 +973,8 @@
+     let append_page = |page: Frame,
+                        info: &'static PageInfo,
+                        order,
+-                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
+-                       last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
++                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize],
++                       last_pages: &mut [Option<(Frame, &PageInfo)>; ORDER_COUNT as usize],
+                        allocator: &mut BumpAllocator<RmmA>| {
+         let this_page = (page, info);
+ 

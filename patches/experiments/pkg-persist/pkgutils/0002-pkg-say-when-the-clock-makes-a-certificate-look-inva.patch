@@ -1,0 +1,35 @@
+From 21059413220c08d8b3330085a778b0189020430f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 21:35:55 +0000
+Subject: [PATCH] pkg: say when the clock makes a certificate look invalid
+
+---
+ pkg-cli/src/main.rs | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
+index 9ca9dc3..25181b7 100644
+--- a/pkg-cli/src/main.rs
++++ b/pkg-cli/src/main.rs
+@@ -171,6 +171,18 @@ fn main() {
+             // TODO: ask to rerun as sudo
+             eprintln!("Hint: You may need root privileges. Try running with 'sudo'.");
+         }
++        let text = err.to_string().to_lowercase();
++        if text.contains("not valid yet") || text.contains("notvalidyet") || text.contains("expired") {
++            // Certificates are checked against the clock; on a board without
++            // a battery it starts at 1970 until something sets it.
++            let year = std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .map_or(1970, |d| 1970 + d.as_secs() / 31_556_952);
++            eprintln!(
++                "Hint: the clock is at {year}, so the server's certificate looks invalid. \
++                 Set the clock (e.g. wait for the time service after boot, then check `date`) and try again."
++            );
++        }
+         // TODO: this hanging the terminal
+         // process::exit(1);
+     }
+-- 
+2.53.0
+

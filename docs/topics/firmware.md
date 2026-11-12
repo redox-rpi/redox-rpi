@@ -81,10 +81,27 @@
   the LAN7800 now accepts *all* multicast (`RFE_CTL_MCAST_EN`), because
   netstack doesn't tell the driver its groups. So every mDNS, SSDP and
   IPv6 frame on the LAN wakes both. That's traffic, not a busy loop. A
-  hash filter with only the needed groups (mDNS v4/v6, IPv6 all-nodes, the
-  own solicited-node address) would cut most of it (asked Network). PR
+  hash filter with only the joined groups cuts it ([#216](https://github.com/redox-rpi/redox-rpi/issues/216)):
+  Network's PR [#218](https://github.com/redox-rpi/redox-rpi/pull/218)
+  (base `0085`: netstack tells the driver its groups) and the LAN7800
+  hash filter in PR [#219](https://github.com/redox-rpi/redox-rpi/pull/219)
+  (experiment `lan78xx-mcast-hash`, stacked on #218). Pi test #247, A/B:
+  `dwc2d` 108 to 81 wakeups/s, `netstack` 60 to 30, USB interrupts 19 to
+  8, back to the level from before #194. Before it can be the default,
+  the `ipv6` experiment has to add its groups (Network). PR
   [#215](https://github.com/redox-rpi/redox-rpi/pull/215) saves about 6
   `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
+
+- `socdump` ([#224](https://github.com/redox-rpi/redox-rpi/issues/224),
+  branch `socdump`, [tools/socdump](../../tools/socdump/README.md)): a
+  read-only tool that decodes the PLLs, clock manager clocks and GPIO pins
+  (BCM2837 table; chip, address and crystal come from the devicetree) and
+  compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`). Pi test #261 queued.
+  Real Pi (test #261): ARM, EMMC and UART match the firmware exactly; the
+  HDMI pixel clock reads 148.5 MHz (1080p60), the first reference value for
+  HDMI. `vpu`, `h264`, `isp` and `sdram` are driven by the firmware outside
+  the clock manager (`fw`). Reference dump in `tools/socdump/reference/`.
+  Next: display registers (pixel valves, HVS, HDMI), step 2 of #224.
 
 ## Bluetooth
 
@@ -133,7 +150,8 @@ throttling garbles it.
   minutes under load); show the measured ARM clock (tag `0x30047`) next to
   the requested one.
 - [#21](https://github.com/redox-rpi/redox-rpi/issues/21) a common DMA plan for the Pi, including the BCM2835 DMA
-  controller and the firmware's channel mask (milestone v0.4.0).
+  controller and the firmware's channel mask (milestone v0.4.0). Draft:
+  [topics/dma.md](dma.md) on branch `dma-plan`.
 - [#7](https://github.com/redox-rpi/redox-rpi/issues/7) power off, v0.5.0 or later (not needed for now).
 - Power domains, GPIO expander, DMA channel mask, display, VCHIQ
   ([wish list](../../ROADMAP.md#wish-list-help-wanted)).
