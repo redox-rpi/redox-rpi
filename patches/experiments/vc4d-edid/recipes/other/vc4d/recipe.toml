@@ -3,7 +3,7 @@
 # Experiment vc4d-edid: branch edid of redox-rpi/vc4d.
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "7054d9efc6cb391e5a4536a7bad0ba32b1c7ef80"
+rev = "80aa2fe058aa0bd1ef4dcd3b0ae26e46b85e764f"
 
 [build]
 template = "cargo"
