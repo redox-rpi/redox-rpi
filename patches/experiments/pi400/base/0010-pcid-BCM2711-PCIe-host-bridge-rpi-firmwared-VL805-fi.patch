@@ -1,4 +1,4 @@
-From ecee9e071354e59cf1d9fff2af1668a8d2e63110 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 16:45:20 +0000
 Subject: [PATCH] pcid: BCM2711 PCIe host bridge; rpi-firmwared: VL805 firmware
@@ -17,14 +17,14 @@ The register arithmetic and devicetree cell parsing are in
 brcmstb_layout.rs, with host tests (rustc --edition 2021 --test).
 ---
  drivers/hwd/src/main.rs                       |  15 +-
- drivers/pcid/src/cfg_access/brcmstb.rs        | 344 +++++++++++++++++
- drivers/pcid/src/cfg_access/brcmstb_dt.rs     |  89 +++++
- drivers/pcid/src/cfg_access/brcmstb_layout.rs | 362 ++++++++++++++++++
- drivers/pcid/src/cfg_access/mod.rs            |  34 ++
+ drivers/pcid/src/cfg_access/brcmstb.rs        | 382 +++++++++++++++++
+ drivers/pcid/src/cfg_access/brcmstb_dt.rs     |  89 ++++
+ drivers/pcid/src/cfg_access/brcmstb_layout.rs | 394 ++++++++++++++++++
+ drivers/pcid/src/cfg_access/mod.rs            |  45 ++
  drivers/pcid/src/main.rs                      |  11 +-
  drivers/rpi-firmwared/src/main.rs             |  19 +-
  drivers/rpi-firmwared/src/mbox.rs             |   2 +
- 8 files changed, 869 insertions(+), 7 deletions(-)
+ 8 files changed, 950 insertions(+), 7 deletions(-)
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_dt.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_layout.rs
@@ -64,10 +64,10 @@ index 0654fd01..ee707f05 100644
  }
 diff --git a/drivers/pcid/src/cfg_access/brcmstb.rs b/drivers/pcid/src/cfg_access/brcmstb.rs
 new file mode 100644
-index 00000000..7f100a67
+index 00000000..87736122
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb.rs
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,382 @@
 +//! The PCIe host bridge of the BCM2711 (Raspberry Pi 4, 400, CM4):
 +//! `brcm,bcm2711-pcie`. It has no ECAM: the root port's own configuration
 +//! space is at the start of the bridge's registers, and every function
@@ -87,6 +87,7 @@ index 00000000..7f100a67
 +//! `brcmstb_dt.rs`, both with host tests.
 +
 +use std::io;
++use std::sync::atomic::{AtomicBool, Ordering};
 +use std::thread;
 +use std::time::{Duration, Instant};
 +
@@ -108,6 +109,9 @@ index 00000000..7f100a67
 +    /// `None` while the devicetree disables the bridge (QEMU raspi4b):
 +    /// then the bus is empty.
 +    regs: Option<PhysBorrowed>,
++    /// Whether the bridge may be in reset: then only `RGR1_SW_INIT_1` is
++    /// touched (see `reset_safe`). True until pcid lets it go.
++    in_reset: AtomicBool,
 +    link: bool,
 +    /// The outbound window: CPU address, PCI address, size.
 +    window: Option<(u64, u64, u64)>,
@@ -139,8 +143,8 @@ index 00000000..7f100a67
 +        })
 +    }
 +
-+    fn empty() -> Self {
-+        Self { regs: None, link: false, window: None, interrupt_map: Vec::new(), interrupt_map_mask: [u32::MAX; 4] }
++    pub fn empty() -> Self {
++        Self { regs: None, in_reset: AtomicBool::new(true), link: false, window: None, interrupt_map: Vec::new(), interrupt_map_mask: [u32::MAX; 4] }
 +    }
 +
 +    fn start_from(found: DtBridge) -> io::Result<Self> {
@@ -162,10 +166,18 @@ index 00000000..7f100a67
 +            MemoryType::DeviceMemory,
 +        )
 +        .map_err(|err| io::Error::other(format!("cannot map the bridge at 0x{phys:x}: {err}")))?;
-+        let mut bridge = Self { regs: Some(regs), link: false, window: outbound, interrupt_map, interrupt_map_mask };
++        let mut bridge = Self {
++            regs: Some(regs),
++            in_reset: AtomicBool::new(true),
++            link: false,
++            window: outbound,
++            interrupt_map,
++            interrupt_map_mask,
++        };
++        // No register is read for this line: until the bridge is out of
++        // reset, all but RGR1_SW_INIT_1 fault (Pi row 360).
 +        log::info!(
-+            "pcid: BCM2711 PCIe at 0x{phys:x}, revision 0x{:x}, outbound {}, inbound {}",
-+            bridge.read32(MISC_REVISION),
++            "pcid: BCM2711 PCIe at 0x{phys:x}, outbound {}, inbound {}",
 +            outbound.map_or("none".into(), |(cpu, pci, size)| format!("CPU 0x{cpu:x} = PCI 0x{pci:x} ({} MB)", size >> 20)),
 +            inbound.map_or("none".into(), |r| format!("PCI 0x{:x} = CPU 0x{:x} ({} MB)", r.pci, r.parent, r.size >> 20)),
 +        );
@@ -173,7 +185,19 @@ index 00000000..7f100a67
 +        Ok(bridge)
 +    }
 +
++    /// Refuse an access the bridge would answer with an SError.
++    fn refused(&self, offset: usize) -> bool {
++        let refuse = self.in_reset.load(Ordering::Relaxed) && !reset_safe(offset);
++        if refuse {
++            log::error!("pcid: register 0x{offset:x} not touched: the bridge is in reset");
++        }
++        refuse
++    }
++
 +    fn read32(&self, offset: usize) -> u32 {
++        if self.refused(offset) {
++            return u32::MAX;
++        }
 +        match &self.regs {
 +            Some(regs) => unsafe { regs.as_ptr().cast::<u8>().add(offset).cast::<u32>().read_volatile() },
 +            None => u32::MAX,
@@ -181,8 +205,14 @@ index 00000000..7f100a67
 +    }
 +
 +    fn write32(&self, offset: usize, value: u32) {
++        if self.refused(offset) {
++            return;
++        }
 +        if let Some(regs) = &self.regs {
 +            unsafe { regs.as_ptr().cast::<u8>().add(offset).cast::<u32>().write_volatile(value) }
++            if offset == RGR1_SW_INIT_1 {
++                self.in_reset.store(value & SW_INIT_BRIDGE != 0, Ordering::Relaxed);
++            }
 +        }
 +    }
 +
@@ -193,7 +223,14 @@ index 00000000..7f100a67
 +    /// Reset, windows, link; then number the bus and set up the device.
 +    fn start(&mut self, inbound: Option<Range>) -> io::Result<()> {
 +        // Hold the bridge and the endpoint (PERST#) in reset, then let the
-+        // bridge go.
++        // bridge go, in the order of Linux brcm_pcie_setup. U-Boot hands
++        // over with the bridge in reset and the SerDes off; nothing else
++        // may be touched before this.
++        let init = self.read32(RGR1_SW_INIT_1);
++        log::info!(
++            "pcid: PCIe bridge reset 0x{init:x}{}",
++            if init & SW_INIT_BRIDGE != 0 { " (bridge in reset)" } else { "" }
++        );
 +        self.modify(RGR1_SW_INIT_1, 0, SW_INIT_BRIDGE | SW_INIT_PERST);
 +        thread::sleep(Duration::from_millis(1));
 +        self.modify(RGR1_SW_INIT_1, SW_INIT_BRIDGE, 0);
@@ -201,6 +238,7 @@ index 00000000..7f100a67
 +        // SerDes out of IDDQ (power down).
 +        self.modify(MISC_HARD_PCIE_HARD_DEBUG, HARD_DEBUG_SERDES_IDDQ, 0);
 +        thread::sleep(Duration::from_millis(1));
++        log::info!("pcid: PCIe bridge out of reset, revision 0x{:x}", self.read32(MISC_REVISION));
 +
 +        // The bridge may master the system bus; unsupported requests read
 +        // as all ones; 128-byte bursts (the BCM2711's limit, code 0).
@@ -350,7 +388,7 @@ index 00000000..7f100a67
 +        self.regs.as_ref()?;
 +        match bus {
 +            0 if device == 0 && function == 0 => Some(offset),
-+            DEVICE_BUS if self.link => {
++            DEVICE_BUS if self.link && device_present_possible(device) => {
 +                self.write32(EXT_CFG_INDEX, cfg_index(bus, device, function));
 +                // Read back, so the index is set before the data access.
 +                let _ = self.read32(EXT_CFG_INDEX);
@@ -509,10 +547,10 @@ index 00000000..6588be8b
 +}
 diff --git a/drivers/pcid/src/cfg_access/brcmstb_layout.rs b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
 new file mode 100644
-index 00000000..276a1567
+index 00000000..fed19f5d
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,394 @@
 +//! The arithmetic of the BCM2711 PCIe host bridge: register values, the
 +//! devicetree's `ranges`, `dma-ranges` and `interrupt-map` cells, BAR
 +//! sizes. No hardware here, so it is tested on the build host
@@ -758,9 +796,41 @@ index 00000000..276a1567
 +    out
 +}
 +
++/// Whether a register may be touched while the bridge is in reset
++/// (`SW_INIT_BRIDGE`). U-Boot leaves the BCM2711 bridge so when it starts
++/// the OS (`brcm_pcie_remove`); any other register then answers with an
++/// SError, which stops the whole system (Pi row 360). Linux, too, touches
++/// only `RGR1_SW_INIT_1` until the bridge is out of reset.
++pub fn reset_safe(offset: usize) -> bool {
++    offset == RGR1_SW_INIT_1
++}
++
++/// The functions behind the root port pcid may address. The root port is
++/// a PCIe downstream port with one link, so only device 0 exists on its
++/// secondary bus (Linux `only_one_child`); the others are not asked.
++pub fn device_present_possible(device: u8) -> bool {
++    device == 0
++}
++
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn only_sw_init_in_reset() {
++        assert!(reset_safe(RGR1_SW_INIT_1));
++        assert!(!reset_safe(MISC_REVISION));
++        assert!(!reset_safe(MISC_MISC_CTRL));
++        assert!(!reset_safe(MISC_HARD_PCIE_HARD_DEBUG));
++        assert!(!reset_safe(0));
++    }
++
++    #[test]
++    fn one_device_behind_the_port() {
++        assert!(device_present_possible(0));
++        assert!(!device_present_possible(1));
++        assert!(!device_present_possible(31));
++    }
 +
 +    fn be(words: &[u32]) -> Vec<u8> {
 +        words.iter().flat_map(|w| w.to_be_bytes()).collect()
@@ -876,7 +946,7 @@ index 00000000..276a1567
 +    }
 +}
 diff --git a/drivers/pcid/src/cfg_access/mod.rs b/drivers/pcid/src/cfg_access/mod.rs
-index 67875e8e..046b4fb1 100644
+index 67875e8e..355ada15 100644
 --- a/drivers/pcid/src/cfg_access/mod.rs
 +++ b/drivers/pcid/src/cfg_access/mod.rs
 @@ -5,8 +5,12 @@ use common::{MemoryType, PhysBorrowed, Prot};
@@ -901,7 +971,7 @@ index 67875e8e..046b4fb1 100644
  }
  struct Alloc {
      seg: u16,
-@@ -232,6 +238,20 @@ const BYTES_PER_BUS: usize = 1 << 20;
+@@ -232,6 +238,31 @@ const BYTES_PER_BUS: usize = 1 << 20;
  
  impl Pcie {
      pub fn new() -> Self {
@@ -916,13 +986,24 @@ index 67875e8e..046b4fb1 100644
 +                    brcm: Some(brcm),
 +                };
 +            }
-+            Some(Err(err)) => log::error!("pcid: BCM2711 PCIe: {err}"),
++            Some(Err(err)) => {
++                // No other configuration access on this board: an empty bus.
++                log::error!("pcid: BCM2711 PCIe: {err}; no PCI devices");
++                return Self {
++                    lock: Mutex::new(()),
++                    allocs: Vec::new(),
++                    interrupt_map: Vec::new(),
++                    interrupt_map_mask: [u32::MAX; 4],
++                    fallback: Pci::new(),
++                    brcm: Some(Brcmstb::empty()),
++                };
++            }
 +            None => {}
 +        }
          match Mcfg::with(Self::from_allocs) {
              Ok(pcie) => pcie,
              Err(acpi_error) => match locate_ecam_dtb(Self::from_allocs) {
-@@ -250,6 +270,7 @@ impl Pcie {
+@@ -250,6 +281,7 @@ impl Pcie {
                          fallback: Pci::new(),
                          interrupt_map: Vec::new(),
                          interrupt_map_mask: [u32::MAX, u32::MAX, u32::MAX, u32::MAX],
@@ -930,7 +1011,7 @@ index 67875e8e..046b4fb1 100644
                      }
                  }
              },
-@@ -298,9 +319,16 @@ impl Pcie {
+@@ -298,9 +330,16 @@ impl Pcie {
              interrupt_map,
              interrupt_map_mask,
              fallback: Pci::new(),
@@ -947,7 +1028,7 @@ index 67875e8e..046b4fb1 100644
      fn bus_addr(&self, seg: u16, bus: u8) -> Option<*mut u32> {
          let alloc = match self
              .allocs
-@@ -354,6 +382,9 @@ impl ConfigRegionAccess for Pcie {
+@@ -354,6 +393,9 @@ impl ConfigRegionAccess for Pcie {
      unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
          let _guard = self.lock.lock().unwrap();
  
@@ -957,7 +1038,7 @@ index 67875e8e..046b4fb1 100644
          match self.mmio_addr(address, offset) {
              Some(addr) => addr.read_volatile(),
              None => self.fallback.read(address, offset),
-@@ -363,6 +394,9 @@ impl ConfigRegionAccess for Pcie {
+@@ -363,6 +405,9 @@ impl ConfigRegionAccess for Pcie {
      unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
          let _guard = self.lock.lock().unwrap();
  
@@ -1058,6 +1139,3 @@ index 39ad30e7..4b7b2cd7 100644
  
  /// Clock id of the ARM cores.
  pub const CLOCK_ARM: u32 = 3;
--- 
-2.53.0
-
