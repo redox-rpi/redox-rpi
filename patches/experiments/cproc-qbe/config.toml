@@ -43,7 +43,7 @@ strip usetwice-stripped && ./usetwice-stripped
 echo "rc=$?"
 ls -l usetwice usetwice-stripped
 nm usetwice | grep twice
-nm usetwice-stripped ^>> /dev/stdout
+nm usetwice-stripped
 echo "== bench, compiled by cproc"
 timeit cproc -o bench $T/bench.c && timeit ./bench
 echo "== bench, compiled by tcc"
