@@ -10,6 +10,12 @@
 
 ## Next
 
+- [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
+  ignored the DHCP name server (fritz.box hung, bare names failed): fixed
+  in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
+  server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
+  3 s, and try names without a dot in the DHCP domain
+  (`resolv/domain`, option 15) first. QEMU passes; Pi row pending.
 - [#92](https://github.com/redox-rpi/redox-rpi/issues/92) and
   [#217](https://github.com/redox-rpi/redox-rpi/issues/217): netstack
   stops (#92: once in 60 chaos rounds, Pi tests 237 and 263; #217: no
@@ -32,6 +38,16 @@
   another thread) the network stays up (2 of 2), and Pi test 329 found
   nothing broken. Why inputd hung in #316 (vc4d, no monitor on HDMI) is
   still open.
+- [#184](https://github.com/redox-rpi/redox-rpi/issues/184) a TCP
+  connection Redox closes gets no FIN: netstack dropped the socket when
+  its last file closed, so the peer kept the connection open (sshd after
+  its login grace time). The fix from PR
+  [#185](https://github.com/redox-rpi/redox-rpi/pull/185) went into the
+  stacked branch `relibc-quiet`, which never reached main. Now default
+  base `0089` (branch `tcp-fin`): close the TCP way (rest of the send
+  buffer, then FIN), remove the socket once closed, reset after 60 s.
+  `scripts/tcp-fin-check.py` checks it from the host. QEMU 2026-11-11:
+  main sends no FIN (Redox nc out and `nc -l` in), `0089` sends it at once.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
   `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
