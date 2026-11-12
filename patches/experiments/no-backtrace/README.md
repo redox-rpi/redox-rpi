@@ -60,3 +60,11 @@ a user on the console does:
 | `ping -c 1 no.such.name` | `Error: failed to lookup address information: Non-recoverable error`, nothing after it |
 | `env RUST_BACKTRACE=1 ping -c 1 no.such.name` | the same error, then `Stack backtrace:` with frames 0–6 `<unknown>` |
 | `Stack backtrace` in the whole boot log | 0 |
+
+Pi 3B+, row [354](https://github.com/redox-rpi/pi-tests/blob/main/reports/354.md),
+2026-11-12: **pass**. `env | grep RUST` empty; `ping -c 1 no.such.name`
+prints only the error line; with `RUST_BACKTRACE=1` the backtrace (7
+`<unknown>` frames) comes back; no backtrace in the boot log; pi-test 6/6.
+Steps 1–3 matched on the row's image (dev-102); the counted run is on a
+local merge with PR #373 (`v0.5.0-dev-104-gd87d12d3+x6f6f`) because the
+#151 stall stopped pi-test on dev-102.
