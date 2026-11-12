@@ -201,7 +201,39 @@ regression gets a check at the cheapest level that can see it. Examples:
 
 The CI part goes to Release and CI. The Pi part becomes a short smoke run:
 `pi-test.py` plus a few area checks, under 10 minutes. Every Pi row starts
-with it. This section will list the set once it exists.
+with it.
+
+**The set** is `scripts/regression-set.py` from PR
+[#396](https://github.com/redox-rpi/redox-rpi/pull/396). It has 8 checks:
+
+- **basics:** `pi-test.py` with 50 starts.
+- **signals-stop:** #345.
+- **waitpid:** #386; this one needs tcc.
+- **sig-pipe:** #205.
+- **scanf-pipe:** #338.
+- **dns:** #358 and #374.
+- **tcp:** #364.
+- **serial:** looks for panic, RELIBC PANIC, UNHANDLED EXCEPTION, `main
+  loop stuck` and the pcid/rtcd lines.
+
+A check whose experiment is not in the image is skipped.
+
+- **In QEMU:** `scripts/regression-qemu.sh` boots the clone's last network
+  boot build (`--usb-net --data`) and runs the set. The report goes to
+  `build/regression/<time>/report.md`.
+- **On the Pi:** `regression-set.py <pi> --serial-log
+  ~/redox-rpi/logs/serial.log --dead-dns <unused address>`.
+
+**The rule:** a PR that changes `patches/`, `config/` or recipes runs
+`scripts/regression-qemu.sh` on its build (under 10 minutes) before its Pi
+row is queued.
+- The row names the result: `regression-qemu: 8 pass`, or the checks that
+  failed.
+- A failed check blocks the row until it is fixed, or until it is shown to
+  fail on stable too.
+- The checks and how to run them on the Pi are in `docs/testing.md`,
+  "Regression set before a Pi row".
+- A new regression gets a check there, at the cheapest level that sees it.
 
 ## Person tests
 
