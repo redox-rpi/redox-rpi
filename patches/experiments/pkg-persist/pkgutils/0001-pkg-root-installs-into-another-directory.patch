@@ -1,0 +1,37 @@
+From bb925eacf255d805317c3f8eb0e5b2f17872e3b9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 30 Oct 2026 21:29:21 +0000
+Subject: [PATCH] pkg: --root installs into another directory
+
+The library already takes an install path; only the command line fixed it to /. With --root, pkg installs into that directory and keeps its package list, etc/pkg.d and etc/pkg/hold there, e.g. on a data partition that survives a reset.
+---
+ pkg-cli/src/main.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
+index 007396a..9ca9dc3 100644
+--- a/pkg-cli/src/main.rs
++++ b/pkg-cli/src/main.rs
+@@ -28,6 +28,10 @@ struct Cli {
+     /// Do not try to preserve locally changed files
+     #[arg(long, global = true)]
+     nocheck: bool,
++    /// Install into this directory instead of /, with its own package list,
++    /// etc/pkg.d and etc/pkg/hold (e.g. a data partition that survives a reset)
++    #[arg(long, global = true, value_name = "DIR")]
++    root: Option<String>,
+ }
+ 
+ #[derive(Clone, Debug, Subcommand)]
+@@ -119,6 +123,8 @@ fn main() {
+     } else {
+         ("/tmp/pkg_install", "x86_64-unknown-redox")
+     };
++    let root = args.root.clone();
++    let install_path = root.as_deref().unwrap_or(install_path);
+     let color_support_stdout = is_tty(&io::stdout());
+     let color_support_stderr = is_tty(&io::stderr());
+     callback.set_interactive(color_support_stdout);
+-- 
+2.53.0
+

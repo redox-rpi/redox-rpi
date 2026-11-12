@@ -1,0 +1,52 @@
+# GNU as, ld, ar, ranlib, nm, objdump and strip from Redox' binutils fork,
+# running on Redox (aarch64), for cproc. Replaces upstream's recipe, which
+# builds all of binutils and gdb (with gmp, mpfr and readline): only the
+# assembler, the linker and the tools to make and look at objects and
+# archives here.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/binutils-gdb"
+# Branch redox-2.43.1, 2026-11-10.
+rev = "6b9878dc383725297a3ce162f70337c97a457ceb"
+
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+unset MAKEFLAGS MFLAGS
+export CFLAGS="${CFLAGS} -O2 -ffixed-x18"
+"${COOKBOOK_SOURCE}/configure" \
+    --prefix=/usr \
+    --host="${GNU_TARGET}" \
+    --target="${GNU_TARGET}" \
+    --disable-gdb --disable-gdbserver --disable-sim --disable-gprof \
+    --disable-gprofng --disable-gold --disable-libdecnumber \
+    --disable-readline --disable-nls --disable-werror \
+    --disable-shared --enable-static --without-zstd \
+    --enable-default-hash-style=gnu --enable-deterministic-archives
+"${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" all-gas all-ld all-binutils
+"${COOKBOOK_MAKE}" install-gas install-ld install-binutils DESTDIR="${COOKBOOK_STAGE}"
+# Only these programs: not the tool directory (the same programs once more),
+# ld.bfd (a copy of ld), the other binutils (addr2line, c++filt, elfedit,
+# objcopy, readelf, size, strings), man pages, or libbfd's headers and
+# archives.
+rm -rf "${COOKBOOK_STAGE}/usr/${GNU_TARGET}" "${COOKBOOK_STAGE}/usr/share" \
+    "${COOKBOOK_STAGE}/usr/include" "${COOKBOOK_STAGE}/usr/lib"
+for f in "${COOKBOOK_STAGE}"/usr/bin/*; do
+    case "$(basename "$f")" in
+        as|ld|ar|ranlib|nm|objdump|strip) ;;
+        *) rm -f "$f" ;;
+    esac
+done
+# ranlib is ar again (978 KB, linked with is-ranlib.o instead of
+# not-ranlib.o, so a link to ar does not work): a script that runs
+# `ar s` on each archive does the same.
+cat > "${COOKBOOK_STAGE}/usr/bin/ranlib" << 'EOS'
+#!/usr/bin/ion
+# ranlib: write the symbol index of each archive (ar s).
+for a in @args[1..]
+    ar s $a || exit 1
+end
+EOS
+chmod 755 "${COOKBOOK_STAGE}/usr/bin/ranlib"
+ls -l "${COOKBOOK_STAGE}/usr/bin"
+"""

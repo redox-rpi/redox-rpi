@@ -54,6 +54,11 @@
 
 ## In progress
 
+- [#196](https://github.com/redox-rpi/redox-rpi/issues/196) chaos test (branch `chaos-test`): fault injection on
+  the Pi (`tools/chaos`, in C) and from the build host
+  (`scripts/chaos-host.py`), see [chaos.md](chaos.md). First finding:
+  [#205](https://github.com/redox-rpi/redox-rpi/issues/205), signals that never arrive.
+
 - [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
   `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
   uutils `dd` does not retry short writes, so `dd bs=1M … | cmd` passed on
@@ -81,11 +86,13 @@
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
-  executable and at exec. QEMU: 0 of 700 starts fail; on one base built
-  with and without it (main merged, 2026-10-30) the loop is about 3 %
-  slower, within the host's noise. No known failure needs it: Pi test 28
-  had 0 of 1000 at 1400 MHz, the same as main without it (test 94: 0 of
-  3000). Pi test 127 measures the cost on the Pi with both builds.
+  executable and at exec (`0001`), and for executable file maps and page
+  faults that copy a frame (`0002`). **Pi test 162: the gap is real.**
+  Without it, the new stress test `icachetest` ran stale code in about a
+  third of the rounds on a fresh page and half on a reused one; with it,
+  0 on both boots, 0 of 1000 failed starts and no measurable cost. Pull
+  request #148; upstream note in `docs/upstream/kernel.md`. Found on the way: RedoxFS maps the old data of a freed disk block
+  (a file deleted or truncated, then a new one written), in QEMU too.
 
 ## Next
 

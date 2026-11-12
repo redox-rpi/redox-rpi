@@ -1,0 +1,791 @@
+From cd713e4f59ffde0bb06b014323e0c04711c348f6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 11:16:25 +0000
+Subject: [PATCH] rpi-fbd: blits with the DMA controller (prototype)
+
+---
+ drivers/graphics/rpi-fbd/Cargo.toml    |   1 +
+ drivers/graphics/rpi-fbd/src/dma.rs    | 347 +++++++++++++++++++++++++
+ drivers/graphics/rpi-fbd/src/main.rs   |  39 ++-
+ drivers/graphics/rpi-fbd/src/scheme.rs | 214 ++++++++++++++-
+ init.initfs.d/40_rpi-fbd.service       |   2 +
+ 5 files changed, 588 insertions(+), 15 deletions(-)
+ create mode 100644 drivers/graphics/rpi-fbd/src/dma.rs
+
+diff --git a/drivers/graphics/rpi-fbd/Cargo.toml b/drivers/graphics/rpi-fbd/Cargo.toml
+index a0bb8392..e1c8e5cd 100644
+--- a/drivers/graphics/rpi-fbd/Cargo.toml
++++ b/drivers/graphics/rpi-fbd/Cargo.toml
+@@ -13,6 +13,7 @@ daemon = { path = "../../../daemon" }
+ driver-graphics = { path = "../driver-graphics" }
+ drm-sys.workspace = true
+ libredox.workspace = true
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ 
+ [lints]
+ workspace = true
+diff --git a/drivers/graphics/rpi-fbd/src/dma.rs b/drivers/graphics/rpi-fbd/src/dma.rs
+new file mode 100644
+index 00000000..dab0c318
+--- /dev/null
++++ b/drivers/graphics/rpi-fbd/src/dma.rs
+@@ -0,0 +1,347 @@
++//! Blits from dumb buffers to the framebuffer with the BCM2835 DMA
++//! controller (redox-rpi docs/topics/graphics.md step 2, a prototype).
++//!
++//! Channel 5 is the framebuffer's in the channel table of
++//! docs/topics/dma.md. One control block in 2D mode moves a damaged
++//! rectangle: a number of rows of the same length, with a gap after each
++//! row in the source and in the destination. Memory to memory needs no DREQ;
++//! the driver polls for the end.
++//!
++//! The register helpers are a copy of bcm2835-sdhostd's dma.rs (#21). They
++//! belong in a common crate once both drivers work on the Pi.
++
++use std::fmt;
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
++use fdt::Fdt;
++
++/// Bus address of the controller on all BCM283x, if the devicetree has none.
++const DMA_BUS_ADDR: usize = 0x7e00_7000;
++/// The channel this driver owns (docs/topics/dma.md, channel table).
++const CHANNEL: usize = 5;
++const CHANNEL_SIZE: usize = 0x100;
++/// RAM as the controller sees it when the devicetree has no dma-ranges: the
++/// alias that bypasses the VideoCore L2 cache.
++const RAM_BUS_OFFSET: usize = 0xc000_0000;
++
++// Channel registers, as byte offsets.
++const CS: usize = 0x00;
++const CONBLK_AD: usize = 0x04;
++const TXFR_LEN: usize = 0x14;
++const DEBUG: usize = 0x20;
++/// Global register: one enable bit per channel, shared with other drivers.
++const ENABLE: usize = 0xff0;
++
++// CS
++const CS_ACTIVE: u32 = 1 << 0;
++const CS_END: u32 = 1 << 1;
++const CS_INT: u32 = 1 << 2;
++const CS_ERROR: u32 = 1 << 8;
++const CS_WAIT_FOR_OUTSTANDING_WRITES: u32 = 1 << 28;
++const CS_ABORT: u32 = 1 << 30;
++const CS_RESET: u32 = 1 << 31;
++/// AXI priority 8, panic priority 15, as Linux uses.
++const CS_PRIORITY: u32 = 8 << 16 | 15 << 20;
++
++// TI, in the control block
++const TI_TDMODE: u32 = 1 << 1;
++const TI_WAIT_RESP: u32 = 1 << 3;
++const TI_DEST_INC: u32 = 1 << 4;
++const TI_DEST_WIDTH: u32 = 1 << 5;
++const TI_SRC_INC: u32 = 1 << 8;
++const TI_SRC_WIDTH: u32 = 1 << 9;
++const TI_BURST_SHIFT: u32 = 12;
++/// Bursts of this many words on the 128-bit bus.
++const BURST: u32 = 4;
++
++// DEBUG; each bit is cleared by writing 1
++const DEBUG_ERRORS: u32 = 0x7;
++
++/// 2D mode: at most this many rows (14 bits) and bytes per row (16 bits).
++const MAX_ROWS: usize = 0x3fff;
++const MAX_ROW_BYTES: usize = 0xffff;
++/// A full screen at 1920x1200 takes a few milliseconds.
++const TIMEOUT: Duration = Duration::from_millis(500);
++
++/// One control block; the controller needs them aligned to 32 bytes.
++#[repr(C, align(32))]
++struct ControlBlock {
++    ti: u32,
++    source: u32,
++    dest: u32,
++    len: u32,
++    stride: u32,
++    next: u32,
++    _reserved: [u32; 2],
++}
++
++#[derive(Debug)]
++pub enum DmaError {
++    /// CS.ERROR with the DEBUG register.
++    Controller { cs: u32, debug: u32 },
++    Timeout { cs: u32, remaining: u32 },
++}
++
++impl fmt::Display for DmaError {
++    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
++        match self {
++            DmaError::Controller { cs, debug } => {
++                write!(f, "DMA error (CS 0x{cs:08x}, DEBUG 0x{debug:08x})")
++            }
++            DmaError::Timeout { cs, remaining } => {
++                write!(f, "DMA timeout (CS 0x{cs:08x}, TXFR_LEN 0x{remaining:08x})")
++            }
++        }
++    }
++}
++
++/// A rectangle of 32-bit pixels between two physically contiguous buffers.
++#[derive(Clone, Copy, Debug)]
++pub struct Blit {
++    /// Physical address of the first pixel in the source and destination.
++    pub src: usize,
++    pub dst: usize,
++    /// Bytes from one row to the next.
++    pub src_pitch: usize,
++    pub dst_pitch: usize,
++    /// Bytes per row, and rows.
++    pub width: usize,
++    pub rows: usize,
++}
++
++pub struct BlitDma {
++    /// The channel's registers.
++    regs: *mut u32,
++    /// The controller's register page, for ENABLE.
++    page: *mut u32,
++    cb: Dma<ControlBlock>,
++    /// Added to a physical RAM address to get its bus address.
++    ram_bus_offset: usize,
++    /// Rows the controller moves beyond YLENGTH in 2D mode (0 or 1), found
++    /// by `calibrate`.
++    extra_rows: usize,
++}
++
++// The channel and the control block belong to this driver alone.
++unsafe impl Send for BlitDma {}
++
++impl fmt::Debug for BlitDma {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("BlitDma")
++            .field("ram_bus_offset", &self.ram_bus_offset)
++            .field("extra_rows", &self.extra_rows)
++            .finish()
++    }
++}
++
++impl BlitDma {
++    /// Set up the channel. Fails if the devicetree does not leave it free.
++    pub fn new(fdt: &Fdt) -> Result<Self, String> {
++        let node = fdt.find_compatible(&["brcm,bcm2835-dma"]);
++        let mask = node
++            .and_then(|node| node.property("brcm,dma-channel-mask"))
++            .and_then(|prop| prop.as_usize())
++            .ok_or("no brcm,dma-channel-mask in the devicetree")?;
++        if mask & 1 << CHANNEL == 0 {
++            return Err(format!("channel {CHANNEL} not free (mask 0x{mask:x})"));
++        }
++        let bus_addr = node
++            .and_then(|node| node.reg())
++            .and_then(|mut reg| reg.next())
++            .map(|reg| reg.starting_address as usize)
++            .unwrap_or(DMA_BUS_ADDR);
++        let phys = soc_phys(fdt, bus_addr);
++
++        let page = unsafe {
++            common::physmap(phys, 0x1000, common::Prot::RW, common::MemoryType::DeviceMemory)
++                .map_err(|err| format!("failed to map the controller: {err:?}"))?
++                as *mut u32
++        };
++        let cb = Dma::new(ControlBlock {
++            ti: 0,
++            source: 0,
++            dest: 0,
++            len: 0,
++            stride: 0,
++            next: 0,
++            _reserved: [0; 2],
++        })
++        .map_err(|err| format!("failed to allocate the control block: {err}"))?;
++
++        let mut dma = BlitDma {
++            regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
++            page,
++            cb,
++            ram_bus_offset: ram_bus_offset(fdt),
++            extra_rows: 0,
++        };
++        // Read-modify-write that only sets this channel's bit: other drivers
++        // own the other bits.
++        let enable = dma.page_reg(ENABLE);
++        dma.set_page_reg(ENABLE, enable | 1 << CHANNEL);
++        dma.reset();
++        dma.calibrate()?;
++        println!(
++            "rpi-fbd: DMA channel {CHANNEL} at 0x{phys:08x}, 2D mode moves YLENGTH{} rows",
++            if dma.extra_rows == 0 { "" } else { "+1" }
++        );
++        Ok(dma)
++    }
++
++    /// Whether 2D mode moves YLENGTH or YLENGTH+1 rows: QEMU does the first,
++    /// and it is not clear what the real controller does. A blit of two
++    /// rows between two small buffers shows it.
++    fn calibrate(&mut self) -> Result<(), String> {
++        const ROW: usize = 64;
++        let alloc = || unsafe {
++            Dma::<[u32]>::zeroed_slice(4 * ROW / 4)
++                .map(|dma| dma.assume_init())
++                .map_err(|err| format!("failed to allocate the test buffers: {err}"))
++        };
++        let (mut src, dst) = (alloc()?, alloc()?);
++        src.fill(0x5a5a_5a5a);
++        self.run(Blit {
++            src: src.physical(),
++            dst: dst.physical(),
++            src_pitch: ROW,
++            dst_pitch: ROW,
++            width: ROW,
++            rows: 2,
++        })
++        .map_err(|err| format!("test blit: {err}"))?;
++        let rows = dst.chunks(ROW / 4).filter(|row| row[0] != 0).count();
++        match rows {
++            2 => self.extra_rows = 0,
++            3 => self.extra_rows = 1,
++            _ => return Err(format!("test blit of 2 rows moved {rows}")),
++        }
++        Ok(())
++    }
++
++    /// Copies the rectangle and waits for the end.
++    pub fn blit(&mut self, blit: Blit) -> Result<(), DmaError> {
++        assert!(blit.rows > 0);
++        self.run(Blit { rows: blit.rows - self.extra_rows, ..blit })
++    }
++
++    /// Runs one control block; `blit.rows` is the YLENGTH field.
++    fn run(&mut self, blit: Blit) -> Result<(), DmaError> {
++        assert!(blit.rows <= MAX_ROWS);
++        assert!(blit.width > 0 && blit.width <= MAX_ROW_BYTES && blit.width % 4 == 0);
++        // 128-bit accesses need both addresses and both pitches on 16 bytes.
++        let wide = [blit.src, blit.dst, blit.src_pitch, blit.dst_pitch, blit.width]
++            .iter()
++            .all(|n| n % 16 == 0);
++        let width_bits = if wide { TI_SRC_WIDTH | TI_DEST_WIDTH } else { 0 };
++        let src_gap = (blit.src_pitch - blit.width) as u16;
++        let dst_gap = (blit.dst_pitch - blit.width) as u16;
++        *self.cb = ControlBlock {
++            ti: TI_TDMODE | TI_SRC_INC | TI_DEST_INC | TI_WAIT_RESP | width_bits | BURST << TI_BURST_SHIFT,
++            source: self.bus(blit.src),
++            dest: self.bus(blit.dst),
++            len: (blit.rows as u32) << 16 | blit.width as u32,
++            stride: (dst_gap as u32) << 16 | src_gap as u32,
++            next: 0,
++            _reserved: [0; 2],
++        };
++        let cb_bus = self.bus(self.cb.physical());
++        // The control block and the buffers are uncached or write-combining,
++        // but the writes may still sit in a write buffer.
++        barrier();
++        self.set_reg(CONBLK_AD, cb_bus);
++        self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
++
++        let start = Instant::now();
++        loop {
++            let cs = self.reg(CS);
++            if cs & CS_ERROR != 0 {
++                let debug = self.reg(DEBUG);
++                self.reset();
++                return Err(DmaError::Controller { cs, debug });
++            }
++            if cs & CS_END != 0 {
++                self.set_reg(CS, CS_END | CS_INT);
++                barrier();
++                return Ok(());
++            }
++            if start.elapsed() > TIMEOUT {
++                let remaining = self.reg(TXFR_LEN);
++                self.reset();
++                return Err(DmaError::Timeout { cs, remaining });
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Stop whatever the channel does and clear its errors. Only this
++    /// channel: the global registers are shared.
++    fn reset(&self) {
++        if self.reg(CS) & CS_ACTIVE != 0 {
++            self.set_reg(CS, CS_ABORT);
++            let start = Instant::now();
++            while self.reg(CS) & CS_ACTIVE != 0 && start.elapsed() < Duration::from_millis(10) {}
++        }
++        self.set_reg(CS, CS_RESET);
++        self.set_reg(DEBUG, DEBUG_ERRORS);
++    }
++
++    fn bus(&self, phys: usize) -> u32 {
++        (phys + self.ram_bus_offset) as u32
++    }
++
++    fn reg(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn set_reg(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    fn page_reg(&self, offset: usize) -> u32 {
++        unsafe { self.page.add(offset / 4).read_volatile() }
++    }
++
++    fn set_page_reg(&self, offset: usize, value: u32) {
++        unsafe { self.page.add(offset / 4).write_volatile(value) }
++    }
++}
++
++/// The CPU physical address of a peripheral's bus address, through `/soc`'s
++/// ranges.
++fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| {
++                r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
++            })
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// Bus address minus physical address of RAM, from the first entry of
++/// `/soc`'s dma-ranges (one cell each for bus address, physical address and
++/// size on the BCM283x).
++fn ram_bus_offset(fdt: &Fdt) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.property("dma-ranges"))
++        .filter(|prop| prop.value.len() >= 12)
++        .map(|prop| {
++            let cell = |i: usize| u32::from_be_bytes(prop.value[i * 4..i * 4 + 4].try_into().unwrap());
++            (cell(0) as usize).wrapping_sub(cell(1) as usize)
++        })
++        .unwrap_or(RAM_BUS_OFFSET)
++}
++
++/// Make the CPU's writes visible before the register write that starts the
++/// controller, and the controller's writes before the CPU goes on.
++fn barrier() {
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("dsb sy", options(nostack, preserves_flags));
++    }
++    #[cfg(not(target_arch = "aarch64"))]
++    std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
++}
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index 60fd8c9d..0b67e6ae 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -16,6 +16,11 @@
+ //! went. `RPI_FB=WIDTHxHEIGHT` in the environment
+ //! makes that size the preferred mode, `RPI_FB=off` leaves the display to
+ //! `vesad`.
++//!
++//! Blits from the clients' dumb buffers to the screen go through the DMA
++//! controller when it has a free channel; `RPI_FB_DMA=off` copies with the
++//! CPU, `RPI_FB_BENCH=1` measures both at start and logs the blits every
++//! few seconds.
+ 
+ use std::env;
+ use std::fs::{File, OpenOptions};
+@@ -26,10 +31,13 @@ use std::time::Duration;
+ 
+ use driver_graphics::{GraphicsAdapter, GraphicsScheme};
+ use event::{user_data, EventQueue};
++use fdt::Fdt;
+ 
++use crate::dma::BlitDma;
+ use crate::firmware::{Firmware, Mode};
+ use crate::scheme::{new_mode, RpiAdapter, Screen};
+ 
++mod dma;
+ mod firmware;
+ mod scheme;
+ 
+@@ -74,6 +82,26 @@ fn boot_framebuffer() -> Option<Mode> {
+     })
+ }
+ 
++/// The DMA controller's framebuffer channel, unless `RPI_FB_DMA=off` or it
++/// is not free.
++fn blit_dma() -> Option<BlitDma> {
++    if env::var("RPI_FB_DMA").is_ok_and(|v| v == "off") {
++        println!("rpi-fbd: blits with the CPU (RPI_FB_DMA=off)");
++        return None;
++    }
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let result = Fdt::new(&dtb)
++        .map_err(|err| format!("no devicetree: {err}"))
++        .and_then(|fdt| BlitDma::new(&fdt));
++    match result {
++        Ok(dma) => Some(dma),
++        Err(err) => {
++            println!("rpi-fbd: blits with the CPU: {err}");
++            None
++        }
++    }
++}
++
+ /// Arms the timer `EDID_POLL` from now.
+ fn arm(time: &mut File) {
+     let mut now = syscall::TimeSpec::default();
+@@ -142,14 +170,20 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let screen = screen.expect("rpi-fbd: failed to map the framebuffer");
+ 
+-    let adapter = RpiAdapter {
++    let mut adapter = RpiAdapter {
+         firmware,
+         screen,
+         display_size,
+         requested,
+         edid,
+         blanked: false,
++        dma: blit_dma(),
++        stats: Default::default(),
+     };
++    let bench = env::var_os("RPI_FB_BENCH").is_some();
++    if bench {
++        adapter.bench();
++    }
+     let mut scheme = GraphicsScheme::new(adapter, "display.rpi".to_owned(), false);
+ 
+     user_data! {
+@@ -194,6 +228,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     .expect("rpi-fbd: failed to handle scheme events");
+             }
+             Source::Time => {
++                if bench {
++                    scheme.adapter_mut().report();
++                }
+                 if scheme.adapter_mut().poll_edid() {
+                     let (adapter, objects) = scheme.adapter_and_kms_objects_mut();
+                     let ids = objects.connector_ids().to_vec();
+diff --git a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+index 56fe8a1f..1180ee3c 100644
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs
+@@ -1,6 +1,9 @@
+ use std::alloc::{self, Layout};
+ use std::fmt;
+ use std::ptr::{self, NonNull};
++use std::time::{Duration, Instant};
++
++use common::dma::Dma;
+ 
+ use driver_graphics::kms::connector::{modeinfo_for_size, KmsConnectorDriver, KmsConnectorStatus};
+ use driver_graphics::kms::crtc::{KmsCrtc, KmsCrtcState};
+@@ -9,6 +12,7 @@ use driver_graphics::kms::plane::{KmsPlane, KmsPlaneState};
+ use driver_graphics::{Buffer, Damage, DumbBufferConfig, GraphicsAdapter};
+ use syscall::PAGE_SIZE;
+ 
++use crate::dma::{Blit, BlitDma};
+ use crate::firmware::{Firmware, Mode};
+ 
+ /// Sizes offered besides the monitor's own: the firmware scales any size to
+@@ -36,6 +40,41 @@ pub struct RpiAdapter {
+     pub edid: Option<Vec<u8>>,
+     /// Screen off through the firmware (a client set no mode).
+     pub blanked: bool,
++    /// Blits with the DMA controller; None copies with the CPU.
++    pub dma: Option<BlitDma>,
++    pub stats: Stats,
++}
++
++/// Blits since the last report.
++#[derive(Debug, Default)]
++pub struct Stats {
++    frames: u32,
++    dma_bytes: usize,
++    dma_time: Duration,
++    cpu_bytes: usize,
++    cpu_time: Duration,
++}
++
++impl Stats {
++    fn add(&mut self, dma: bool, bytes: usize, time: Duration) {
++        if dma {
++            self.dma_bytes += bytes;
++            self.dma_time += time;
++        } else {
++            self.cpu_bytes += bytes;
++            self.cpu_time += time;
++        }
++    }
++}
++
++/// "12.3 MB in 4.5 ms (2733 MB/s)"
++fn rate(bytes: usize, time: Duration) -> String {
++    let mb = bytes as f64 / 1e6;
++    format!(
++        "{mb:.1} MB in {:.1} ms ({:.0} MB/s)",
++        time.as_secs_f64() * 1e3,
++        mb / time.as_secs_f64().max(1e-9)
++    )
+ }
+ 
+ /// The framebuffer the firmware scans out, mapped into this process. With
+@@ -123,6 +162,73 @@ impl RpiAdapter {
+         self.edid = edid;
+         true
+     }
++
++    /// Prints the blits since the last call, if there were any.
++    pub fn report(&mut self) {
++        let stats = std::mem::take(&mut self.stats);
++        if stats.frames == 0 {
++            return;
++        }
++        let mut line = format!("rpi-fbd: {} frames", stats.frames);
++        if stats.dma_bytes > 0 {
++            line += &format!(", DMA {}", rate(stats.dma_bytes, stats.dma_time));
++        }
++        if stats.cpu_bytes > 0 {
++            line += &format!(", CPU {}", rate(stats.cpu_bytes, stats.cpu_time));
++        }
++        println!("{line}");
++    }
++
++    /// `RPI_FB_BENCH`: full-screen blits and drawing, CPU against DMA, in
++    /// normal (cached) and in DMA (uncached) memory.
++    pub fn bench(&mut self) {
++        const ROUNDS: u32 = 10;
++        let (width, height) = (self.screen.mode.width as usize, self.screen.mode.height as usize);
++        let bytes = width * height * 4 * ROUNDS as usize;
++        let mut buffers = vec![("cached", GraphicScreen::new(width, height, None))];
++        if self.dma.is_some() {
++            match GraphicScreen::new_dma(width, height) {
++                Some(buffer) => buffers.push(("uncached", buffer)),
++                None => println!("rpi-fbd: bench: no DMA memory for {width}x{height}"),
++            }
++        }
++        for (name, buffer) in &mut buffers {
++            // Drawing: fill the screen, then scroll it up by 16 rows as a
++            // console does, both in the dumb buffer.
++            let pixels = unsafe { &mut *buffer.ptr.as_ptr() };
++            let start = Instant::now();
++            for round in 0..ROUNDS {
++                pixels.fill(0x0010_2030 + round);
++            }
++            let fill = start.elapsed();
++            let start = Instant::now();
++            for _ in 0..ROUNDS {
++                pixels.copy_within(16 * width.., 0);
++            }
++            let scroll = start.elapsed();
++            println!(
++                "rpi-fbd: bench {name}: fill {}, scroll {}",
++                rate(bytes, fill),
++                rate(bytes - 16 * width * 4 * ROUNDS as usize, scroll)
++            );
++            for use_dma in [false, true] {
++                if use_dma && buffer.dma.is_none() {
++                    continue;
++                }
++                let mut dma = if use_dma { self.dma.as_mut() } else { None };
++                let start = Instant::now();
++                for _ in 0..ROUNDS {
++                    let _ = buffer.sync(&mut self.screen, 0, None, dma.as_deref_mut(), &mut Stats::default());
++                }
++                println!(
++                    "rpi-fbd: bench {name}: blit with {} {}",
++                    if use_dma { "DMA" } else { "CPU" },
++                    rate(bytes, start.elapsed())
++                );
++            }
++        }
++        self.screen.clear();
++    }
+ }
+ 
+ /// Two buffers, or one when the GPU memory (16 MiB with `gpu_mem=16`) has
+@@ -231,11 +337,17 @@ impl GraphicsAdapter for RpiAdapter {
+         Ok(())
+     }
+ 
++    /// In DMA memory when the controller blits, so it has a bus address;
++    /// in normal memory if there is none that large.
+     fn create_dumb_buffer(&mut self, width: u32, height: u32) -> (Self::Buffer, u32) {
+-        (
+-            GraphicScreen::new(width as usize, height as usize),
+-            width * 4,
+-        )
++        let (w, h) = (width as usize, height as usize);
++        let buffer = self
++            .dma
++            .is_some()
++            .then(|| GraphicScreen::new_dma(w, h))
++            .flatten()
++            .unwrap_or_else(|| GraphicScreen::new(w, h, None));
++        (buffer, width * 4)
+     }
+ 
+     fn map_dumb_buffer(&mut self, framebuffer: &Self::Buffer) -> *mut u8 {
+@@ -291,7 +403,15 @@ impl GraphicsAdapter for RpiAdapter {
+                     (Some(_), None) if self.screen.mode.buffers == 2 => None,
+                     (damage, _) => damage,
+                 };
+-                buffer.buffer.sync(&mut self.screen, back, damage);
++                let failed = buffer
++                    .buffer
++                    .sync(&mut self.screen, back, damage, self.dma.as_mut(), &mut self.stats)
++                    .is_err();
++                if failed {
++                    println!("rpi-fbd: blits with the CPU from now on");
++                    self.dma = None;
++                }
++                self.stats.frames += 1;
+                 if self.screen.mode.buffers == 2 {
+                     if self.firmware.set_offset(back * self.screen.mode.height) {
+                         self.screen.front = back;
+@@ -319,23 +439,52 @@ fn union(a: Damage, b: Damage) -> Damage {
+     Damage { x, y, width: x2 - x, height: y2 - y }
+ }
+ 
+-/// A dumb buffer in normal memory; `set_plane` copies it to the screen.
+-#[derive(Debug)]
++/// A dumb buffer in normal memory or in DMA memory; `set_plane` copies it
++/// to the screen.
+ pub struct GraphicScreen {
+     width: usize,
+     height: usize,
+     ptr: NonNull<[u32]>,
++    /// The memory behind `ptr` when it is DMA memory (uncached on aarch64,
++    /// physically contiguous).
++    dma: Option<Dma<[u32]>>,
++}
++
++impl fmt::Debug for GraphicScreen {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        f.debug_struct("GraphicScreen")
++            .field("width", &self.width)
++            .field("height", &self.height)
++            .field("dma", &self.dma.is_some())
++            .finish()
++    }
+ }
+ 
+ impl GraphicScreen {
+-    fn new(width: usize, height: usize) -> GraphicScreen {
++    /// In normal memory, or in `dma`.
++    fn new(width: usize, height: usize, dma: Option<Dma<[u32]>>) -> GraphicScreen {
+         let len = width * height;
++        if let Some(mut dma) = dma {
++            let ptr = NonNull::from(&mut *dma);
++            return GraphicScreen { width, height, ptr, dma: Some(dma) };
++        }
+         let layout = Self::layout(len);
+         let ptr = unsafe { alloc::alloc_zeroed(layout) };
+         let ptr = ptr::slice_from_raw_parts_mut(ptr.cast(), len);
+         let ptr = NonNull::new(ptr).unwrap_or_else(|| alloc::handle_alloc_error(layout));
+ 
+-        GraphicScreen { width, height, ptr }
++        GraphicScreen { width, height, ptr, dma: None }
++    }
++
++    /// In DMA memory; None if there is no contiguous block that large.
++    fn new_dma(width: usize, height: usize) -> Option<GraphicScreen> {
++        match Dma::<[u32]>::zeroed_slice(width * height) {
++            Ok(dma) => Some(Self::new(width, height, Some(unsafe { dma.assume_init() }))),
++            Err(err) => {
++                println!("rpi-fbd: dumb buffer {width}x{height} in normal memory: {err}");
++                None
++            }
++        }
+     }
+ 
+     fn layout(len: usize) -> Layout {
+@@ -346,8 +495,17 @@ impl GraphicScreen {
+     }
+ 
+     /// Copies the damaged rectangle, clipped to both sizes: a client may
+-    /// still draw at the old size right after a mode change.
+-    fn sync(&self, screen: &mut Screen, buffer: u32, damage: Option<Damage>) {
++    /// still draw at the old size right after a mode change. With the DMA
++    /// controller when given one and the buffer is DMA memory; an error of
++    /// the controller falls back to the CPU and is returned.
++    fn sync(
++        &self,
++        screen: &mut Screen,
++        buffer: u32,
++        damage: Option<Damage>,
++        dma: Option<&mut BlitDma>,
++        stats: &mut Stats,
++    ) -> Result<(), crate::dma::DmaError> {
+         let width = self.width.min(screen.mode.width as usize);
+         let height = self.height.min(screen.mode.height as usize);
+         let damage = damage
+@@ -360,22 +518,50 @@ impl GraphicScreen {
+             .clip(width as u32, height as u32);
+         let (x, y) = (damage.x as usize, damage.y as usize);
+         let (w, h) = (damage.width as usize, damage.height as usize);
++        if w == 0 || h == 0 {
++            return Ok(());
++        }
++        let stride = screen.mode.stride as usize;
++        let start = Instant::now();
++
++        let mut result = Ok(());
++        if let (Some(dma), Some(mem)) = (dma, &self.dma) {
++            let screen_phys = screen.mode.base + buffer as usize * stride * screen.mode.height as usize * 4;
++            result = dma.blit(Blit {
++                src: mem.physical() + (y * self.width + x) * 4,
++                dst: screen_phys + (y * stride + x) * 4,
++                src_pitch: self.width * 4,
++                dst_pitch: stride * 4,
++                width: w * 4,
++                rows: h,
++            });
++            match &result {
++                Ok(()) => {
++                    stats.add(true, w * h * 4, start.elapsed());
++                    return Ok(());
++                }
++                Err(err) => eprintln!("rpi-fbd: {err}"),
++            }
++        }
+ 
+         let src = self.ptr.as_ptr() as *const u32;
+         let dst = screen.pixels(buffer);
+-        let stride = screen.mode.stride as usize;
+         for row in y..y + h {
+             unsafe {
+                 ptr::copy_nonoverlapping(src.add(row * self.width + x), dst.add(row * stride + x), w);
+             }
+         }
++        stats.add(false, w * h * 4, start.elapsed());
++        result
+     }
+ }
+ 
+ impl Drop for GraphicScreen {
+     fn drop(&mut self) {
+-        let layout = Self::layout(self.ptr.len());
+-        unsafe { alloc::dealloc(self.ptr.as_ptr().cast(), layout) };
++        if self.dma.is_none() {
++            let layout = Self::layout(self.ptr.len());
++            unsafe { alloc::dealloc(self.ptr.as_ptr().cast(), layout) };
++        }
+     }
+ }
+ 
+diff --git a/init.initfs.d/40_rpi-fbd.service b/init.initfs.d/40_rpi-fbd.service
+index 17a50ed5..46b117af 100644
+--- a/init.initfs.d/40_rpi-fbd.service
++++ b/init.initfs.d/40_rpi-fbd.service
+@@ -15,5 +15,7 @@ inherit_envs = [
+     "FRAMEBUFFER_HEIGHT",
+     "FRAMEBUFFER_STRIDE",
+     "RPI_FB",
++    "RPI_FB_DMA",
++    "RPI_FB_BENCH",
+ ]
+ type = "notify"
+-- 
+2.53.0
+

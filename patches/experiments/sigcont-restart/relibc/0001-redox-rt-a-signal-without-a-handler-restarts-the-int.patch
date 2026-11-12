@@ -1,0 +1,77 @@
+From 7e8a0f66446f4626e6c4cdee0fee286ac04eb715 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 18:43:48 +0000
+Subject: [PATCH] redox-rt: a signal without a handler restarts the interrupted
+ call
+
+A blocking call that returns EINTR enters the signal trampoline and is
+restarted only if last_sig_was_restart is set. Two cases left it false
+although no handler without SA_RESTART ran, so the program got EINTR
+from a signal it never caught (redox-rpi #386):
+
+- SIGCONT with its default action: no handler runs, but shall_restart
+  came from the default action's flags, which have no SA_RESTART. A
+  read() on a pipe returned EINTR every time a SIGCONT came in.
+- No signal at all: when the entry finds nothing pending (the signal
+  was taken meanwhile, or the EINTR came without one), the trampoline
+  returns without touching last_sig_was_restart, which keeps the value
+  of the last signal before, e.g. false from a default SIGCONT. waitpid()
+  returned EINTR with no signal caught.
+
+Set last_sig_was_restart before entering the trampoline, so only a
+handler without SA_RESTART clears it, and treat default SIGCONT as
+restarting. timeit (fork, exec, waitpid) gave up on its child twice in
+one run on the Pi because of this.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ redox-rt/src/signal.rs | 9 +++++++--
+ redox-rt/src/sys.rs    | 4 ++++
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/redox-rt/src/signal.rs b/redox-rt/src/signal.rs
+index 5d3a415..301be3b 100644
+--- a/redox-rt/src/signal.rs
++++ b/redox-rt/src/signal.rs
+@@ -166,7 +166,7 @@ unsafe fn inner(stack: &mut SigStack) {
+         }
+         action
+     };
+-    let shall_restart = sigaction.flags.contains(SigactionFlags::RESTART);
++    let mut shall_restart = sigaction.flags.contains(SigactionFlags::RESTART);
+     let sig = (stack.sig_num & 0x3f) as u8;
+ 
+     let handler = match sigaction.kind {
+@@ -182,7 +182,12 @@ unsafe fn inner(stack: &mut SigStack) {
+         // _ if sigaction.flags.contains(SigactionFlags::IGNORED) => {
+         //     panic!("ctl2 {:#x?} signal {}", os.control, stack.sig_num)
+         // }
+-        SigactionKind::Default if usize::from(sig) == SIGCONT => SignalHandler { handler: None },
++        // Default SIGCONT only continues the process: no handler runs, so an
++        // interrupted call is restarted as if SA_RESTART were set (redox-rpi #386).
++        SigactionKind::Default if usize::from(sig) == SIGCONT => {
++            shall_restart = true;
++            SignalHandler { handler: None }
++        }
+         SigactionKind::Default => {
+             let _ = sys_call(
+                 current_proc_fd().as_raw_fd(),
+diff --git a/redox-rt/src/sys.rs b/redox-rt/src/sys.rs
+index 237c4a3..8503b00 100644
+--- a/redox-rt/src/sys.rs
++++ b/redox-rt/src/sys.rs
+@@ -37,7 +37,11 @@ fn wrapper<T>(restart: bool, erestart: bool, mut f: impl FnMut() -> Result<T>) -
+         if let Err(err) = res
+             && err == Error::new(code)
+         {
++            // A signal without a handler (default SIGCONT) or none at all (the
++            // entry finds nothing pending) leaves the call to be restarted;
++            // only a handler without SA_RESTART clears this (redox-rpi #386).
+             unsafe {
++                (*rt_sigarea.arch.get()).last_sig_was_restart = true;
+                 manually_enter_trampoline();
+             }
+             if restart && unsafe { (*rt_sigarea.arch.get()).last_sig_was_restart } {
+-- 
+2.53.0
+

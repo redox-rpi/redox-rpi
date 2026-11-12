@@ -34,6 +34,7 @@ the pieces fit together, how to build and test, and what we found on the way.
 | Page | What it explains |
 |---|---|
 | [AI challenge (draft)](ai-challenge.md) | Idea for a benchmark: AI agents porting an OS to the Pi |
+| [RFCs](rfcs/README.md) | Design proposals, for example [identity and secure channels](rfcs/0001-identity-and-secure-channels.md) |
 
 ## Glossary
 
