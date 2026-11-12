@@ -26,6 +26,9 @@ static int one(int restart, int storm) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sig; sa.sa_flags = restart ? SA_RESTART : 0;
     sigaction(SIGUSR1, &sa, NULL);
+    sigset_t blk, pend; sigprocmask(SIG_BLOCK, NULL, &blk); sigpending(&pend);
+    printf("    before: SIGUSR1 %s, %s\n", sigismember(&blk, SIGUSR1) ? "BLOCKED" : "unblocked",
+           sigismember(&pend, SIGUSR1) ? "PENDING" : "not pending");
     caught = 0; caught_at = -1; t0 = now_ms();
     pid_t me = getpid();
     pid_t c = fork();
