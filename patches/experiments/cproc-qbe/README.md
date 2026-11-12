@@ -23,9 +23,14 @@ The chain on the Pi, run by the `cproc` driver:
   cproc's own preprocessor is not finished, so the driver runs
   `tcc -E -undef -nostdinc -isystem /usr/include`; `-undef` is tcc patch
   `0005` in experiment `tcc`.
-- `recipes/dev/binutils-gdb`: only `as` and `ld` from Redox' binutils
-  2.43.1 fork (upstream's recipe builds all of binutils and gdb, with gmp,
-  mpfr and readline). Built as is, no patch.
+- `recipes/dev/binutils-gdb`: `as`, `ld`, `ar`, `nm`, `objdump` and
+  `strip` from Redox' binutils 2.43.1 fork (upstream's recipe builds all of
+  binutils and gdb, with gmp, mpfr and readline). Built as is, no patch.
+  `ranlib` is a 118-byte ion script that runs `ar s` on each archive: the
+  real one is `ar` again (978 KB), and a link to `ar` does not work
+  (binutils links `ranlib` with its own `is-ranlib.o`). Left out:
+  `addr2line`, `c++filt`, `elfedit`, `objcopy`, `readelf`, `size`,
+  `strings`.
 - `cproc.ion` in `/usr/share/tcc-tests/`: the checks and the benchmark
   against tcc and gcc -O2.
 
@@ -33,7 +38,9 @@ The chain on the Pi, run by the `cproc` driver:
 
 On top of tcc (3.8 MB, which provides the preprocessor): `as` 2.1 MB,
 `ld` 1.6 MB, `qbe` 212 KB, `cproc` and `cproc-qbe` 140 KB, together
-4.2 MB.
+4.2 MB. The archive and object tools (#327 step 2) add 5.5 MB: `objdump`
+2.5 MB, `strip` 1.1 MB, `ar` 0.98 MB, `nm` 0.97 MB. Each program is
+static and carries its own copy of libbfd.
 
 ## relibc findings
 
@@ -56,6 +63,13 @@ QEMU, `v0.5.0-dev-25-gd3ca14bc` (2026-11-10): all of `cproc.ion` passes.
 | `cproc -o hello hello.c`, dynamic | 1.6 s, runs |
 | `cproc -static -o hello-static hello.c` | 78 s, a 4.2 MB static program that runs: GNU ld links relibc's TLS descriptor relocations |
 | benchmark total: cproc / tcc / gcc -O2 | 308 / 475 / 195 ms (QEMU, says little about the Pi) |
+
+QEMU, `v0.5.0-dev-106-gcce8a22a+x88fd` (2026-11-12, with the archive
+and object tools): all of `cproc.ion` passes. `cproc -c` builds
+`twice.o`, `ar rc` + `ranlib` make `libtwice.a` with a symbol index (`nm -s`:
+`twice in twice.o`), `objdump -d` disassembles it, `cproc … -L. -ltwice`
+links against it and the program prints `twice(21) = 42`; `strip` takes
+it from 4304 to 2528 bytes, it still runs, and `nm` then says `no symbols`.
 
 Real Pi 3B+ ([test 317](https://github.com/redox-rpi/pi-tests/blob/main/reports/317.md),
 `v0.5.0-dev-25-gd3ca14bc+x898d`): pass. Hello World compiles in 422 ms
