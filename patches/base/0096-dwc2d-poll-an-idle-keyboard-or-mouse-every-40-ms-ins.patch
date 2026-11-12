@@ -1,20 +1,22 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 20:38:01 +0000
-Subject: [PATCH] dwc2d: poll an idle keyboard every 40 ms instead of 10 ms
+Subject: [PATCH] dwc2d: poll an idle keyboard or mouse every 40 ms instead of
+ 10 ms
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-A poll of a low-speed keyboard behind the hub spins about 130 µs on the
-split transactions, data or not (#214). While a key is held and for 3 s
-after the last change of the report, the keyboard is still polled every
+A poll of a low-speed device behind the hub spins about 130 µs on the
+split transactions, data or not (#214). While a key or button is held
+and for 3 s after the last change, the device is still polled every
 10 ms; otherwise every 40 ms. A keyboard that refuses SET_IDLE is logged.
 ---
  drivers/usb/dwc2d/src/hid.rs      | 22 ++++++++---
  drivers/usb/dwc2d/src/main.rs     |  1 +
+ drivers/usb/dwc2d/src/mouse.rs    | 12 +++++-
  drivers/usb/dwc2d/src/pollrate.rs | 65 +++++++++++++++++++++++++++++++
- 3 files changed, 82 insertions(+), 6 deletions(-)
+ 4 files changed, 93 insertions(+), 7 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/pollrate.rs
 
 diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
@@ -114,13 +116,57 @@ index 402a7a35..51204ce9 100644
  mod regs;
  mod rtl8152;
  
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 4704ac59..2a8dfc60 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -370,6 +370,8 @@ pub struct Mouse {
+     position: Option<(i32, i32)>,
+     input: Input,
+     next_poll: Instant,
++    /// When the last event was sent: polls are fast for a while after it.
++    active: Instant,
+     /// Print every event (tests without a person).
+     pub log: bool,
+ }
+@@ -388,6 +390,7 @@ impl Mouse {
+             position: None,
+             input,
+             next_poll: Instant::now(),
++            active: Instant::now(),
+             log: false,
+         })
+     }
+@@ -402,8 +405,14 @@ impl Mouse {
+     pub fn poll(&mut self) -> Duration {
+         let now = Instant::now();
+         if now >= self.next_poll {
+-            self.next_poll = now + POLL_INTERVAL;
+             self.poll_now();
++            // As for the keyboard (#214): every 10 ms while a button is
++            // held or for a while after the last event, else every 40 ms.
++            // A low-speed device behind the hub costs about 130 us a poll.
++            let now = Instant::now();
++            let held = self.buttons.iter().any(|&b| b);
++            let interval = crate::pollrate::interval(held, now.saturating_duration_since(self.active));
++            self.next_poll = now + interval.max(POLL_INTERVAL);
+         }
+         self.next_poll.saturating_duration_since(Instant::now())
+     }
+@@ -467,5 +476,6 @@ impl Mouse {
+             println!("dwc2d: mouse: {what}");
+         }
+         let _ = self.input.write_event(event);
++        self.active = Instant::now();
+     }
+ }
 diff --git a/drivers/usb/dwc2d/src/pollrate.rs b/drivers/usb/dwc2d/src/pollrate.rs
 new file mode 100644
-index 00000000..d30d2baa
+index 00000000..3e65f46a
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/pollrate.rs
 @@ -0,0 +1,65 @@
-+//! How often to poll a keyboard (#214). A poll of a low-speed keyboard
++//! How often to poll a keyboard or mouse (#214). A poll of a low-speed device
 +//! behind a hub costs about 130 µs of spinning on the split transactions,
 +//! whether it brings a report or not, so polling less while nobody types
 +//! is the main saving at idle.
