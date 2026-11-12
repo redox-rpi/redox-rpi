@@ -1,4 +1,4 @@
-From 6aaced82eff8b3d6d4efd4e12bb18ea132c61602 Mon Sep 17 00:00:00 2001
+From 24a7c3413ca241f29990f72e7235f4e49845f5b6 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 11:21:41 +0000
 Subject: [PATCH] bcmgenetd: Ethernet of the Raspberry Pi 4 and 400 (BCM2711
@@ -7,9 +7,15 @@ Subject: [PATCH] bcmgenetd: Ethernet of the Raspberry Pi 4 and 400 (BCM2711
 A network scheme driver for the GENET v5 controller with its BCM54213PE
 PHY: one receive and one transmit ring (the default queue 16), receive
 and transmit interrupts, MDIO for the link, a link check every second.
-The MAC address comes from the devicetree, else from the controller (left
-there by U-Boot), else from the serial number. The PHY keeps the setup
-the firmware or U-Boot gave it.
+
+U-Boot leaves GENET running after a network boot (rings set up, receive
+on). The driver turns receive off, stops both DMA engines and waits for
+them before the soft reset, so no frame lands in U-Boot's buffers later.
+
+The MAC address comes from the devicetree, else from the firmware
+mailbox (tag 0x00010003, now a "mac" line in rpi-firmwared's board
+file), else from the controller registers U-Boot left set, else from the
+serial number. The PHY keeps the setup the firmware or U-Boot gave it.
 
 The register layout follows FreeBSD if_genet.c (BSD-2-Clause); no GPL
 code was used. Register, ring, MDIO and devicetree logic is a library
@@ -21,13 +27,15 @@ redox-rpi #306.
  Makefile                           |   2 +-
  drivers/net/bcmgenetd/Cargo.toml   |  27 ++
  drivers/net/bcmgenetd/src/dt.rs    |  99 ++++++
- drivers/net/bcmgenetd/src/lib.rs   |  36 +++
- drivers/net/bcmgenetd/src/main.rs  | 382 ++++++++++++++++++++++
- drivers/net/bcmgenetd/src/regs.rs  | 170 ++++++++++
- drivers/net/bcmgenetd/src/ring.rs  | 499 +++++++++++++++++++++++++++++
- init.initfs.d/40_bcmgenetd.service |   8 +
+ drivers/net/bcmgenetd/src/lib.rs   |  36 ++
+ drivers/net/bcmgenetd/src/main.rs  | 397 +++++++++++++++++++++
+ drivers/net/bcmgenetd/src/regs.rs  | 174 ++++++++++
+ drivers/net/bcmgenetd/src/ring.rs  | 532 +++++++++++++++++++++++++++++
+ drivers/rpi-firmwared/src/main.rs  |   8 +
+ drivers/rpi-firmwared/src/mbox.rs  |   4 +-
+ init.initfs.d/40_bcmgenetd.service |   9 +
  init.initfs.d/40_drivers.target    |   1 +
- 10 files changed, 1224 insertions(+), 1 deletion(-)
+ 12 files changed, 1288 insertions(+), 2 deletions(-)
  create mode 100644 drivers/net/bcmgenetd/Cargo.toml
  create mode 100644 drivers/net/bcmgenetd/src/dt.rs
  create mode 100644 drivers/net/bcmgenetd/src/lib.rs
@@ -243,10 +251,10 @@ index 0000000..17722a0
 +}
 diff --git a/drivers/net/bcmgenetd/src/main.rs b/drivers/net/bcmgenetd/src/main.rs
 new file mode 100644
-index 0000000..9d882ac
+index 0000000..ed4f26d
 --- /dev/null
 +++ b/drivers/net/bcmgenetd/src/main.rs
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,397 @@
 +//! bcmgenetd: the Ethernet port of the Raspberry Pi 4 and 400 (BCM2711
 +//! GENET v5 with a BCM54213PE PHY) as the network scheme `network.genet`.
 +//!
@@ -453,6 +461,15 @@ index 0000000..9d882ac
 +        Some(Found { phys, size, irq, mac, mode, phy, dma_ranges, serial })
 +    }
 +
++    /// The board MAC the firmware gives (mailbox tag 0x00010003), from the
++    /// `mac` line of rpi-firmwared's board file.
++    fn mac_from_firmware() -> Option<[u8; 6]> {
++        let board = std::fs::read_to_string("/scheme/rpi-firmware/board").ok()?;
++        let text = board.lines().find_map(|l| l.strip_prefix("mac "))?;
++        let bytes: Vec<u8> = text.split(':').filter_map(|b| u8::from_str_radix(b, 16).ok()).collect();
++        dt::mac(&bytes)
++    }
++
 +    /// A locally administered address made from the board's serial number,
 +    /// the same on every boot, when neither the devicetree nor the
 +    /// controller has one.
@@ -535,10 +552,16 @@ index 0000000..9d882ac
 +            eprintln!("bcmgenetd: not GENET v5 (major {}), trying anyway", (rev >> 24) & 0xf);
 +        }
 +
-+        let (mac, source) = match (found.mac, genet.mac_from_regs()) {
-+            (Some(mac), _) => (mac, "devicetree"),
-+            (None, Some(mac)) => (mac, "controller"),
-+            (None, None) => (mac_from_serial(found.serial.as_deref()), "serial number"),
++        // The devicetree (firmware, U-Boot fixup), the firmware mailbox, the
++        // registers U-Boot left set, the serial number: the first that has one.
++        let (mac, source) = if let Some(mac) = found.mac {
++            (mac, "devicetree")
++        } else if let Some(mac) = mac_from_firmware() {
++            (mac, "firmware")
++        } else if let Some(mac) = genet.mac_from_regs() {
++            (mac, "controller")
++        } else {
++            (mac_from_serial(found.serial.as_deref()), "serial number")
 +        };
 +        println!(
 +            "bcmgenetd: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} from the {}",
@@ -631,10 +654,10 @@ index 0000000..9d882ac
 +}
 diff --git a/drivers/net/bcmgenetd/src/regs.rs b/drivers/net/bcmgenetd/src/regs.rs
 new file mode 100644
-index 0000000..e6b0cbb
+index 0000000..1f2d61b
 --- /dev/null
 +++ b/drivers/net/bcmgenetd/src/regs.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,174 @@
 +//! GENET v5 register offsets and bits (layout as in FreeBSD's
 +//! `if_genetreg.h`, BSD-2-Clause).
 +
@@ -737,6 +760,7 @@ index 0000000..e6b0cbb
 +pub const fn rx_read_ptr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x30 }
 +pub const RX_RING_CFG: usize = RX_BASE + 0x1040;
 +pub const RX_DMA_CTRL: usize = RX_BASE + 0x1044;
++pub const RX_DMA_STATUS: usize = RX_BASE + 0x1048;
 +pub const RX_SCB_BURST_SIZE: usize = RX_BASE + 0x104c;
 +
 +// Transmit ring registers
@@ -755,9 +779,12 @@ index 0000000..e6b0cbb
 +pub const fn tx_write_ptr_hi(q: usize) -> usize { ring(TX_BASE, q) + 0x30 }
 +pub const TX_RING_CFG: usize = TX_BASE + 0x1040;
 +pub const TX_DMA_CTRL: usize = TX_BASE + 0x1044;
++pub const TX_DMA_STATUS: usize = TX_BASE + 0x1048;
 +pub const TX_SCB_BURST_SIZE: usize = TX_BASE + 0x104c;
 +
 +pub const DMA_CTRL_EN: u32 = 1 << 0;
++/// In the DMA status register: the engine has stopped.
++pub const DMA_STATUS_DISABLED: u32 = 1 << 0;
 +pub const fn dma_ctrl_ring_en(q: usize) -> u32 {
 +    1 << (q + 1)
 +}
@@ -807,10 +834,10 @@ index 0000000..e6b0cbb
 +}
 diff --git a/drivers/net/bcmgenetd/src/ring.rs b/drivers/net/bcmgenetd/src/ring.rs
 new file mode 100644
-index 0000000..57995e2
+index 0000000..2a3e84c
 --- /dev/null
 +++ b/drivers/net/bcmgenetd/src/ring.rs
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,532 @@
 +//! Bring-up, the default receive and transmit rings, MDIO and the link, over
 +//! a [`Mmio`] register interface and two plain buffer areas.
 +//!
@@ -921,13 +948,29 @@ index 0000000..57995e2
 +        valid.then_some(mac)
 +    }
 +
-+    /// Stops and resets the MAC and the receive buffer, as at power-up.
-+    /// `delay` waits about 10 µs.
++    /// Stops what U-Boot left running (its rings, receive on) and resets
++    /// the MAC and the receive buffer, as at power-up. Until the DMA engines
++    /// have stopped, the controller may still write received frames into
++    /// U-Boot's buffers, so this waits for them. `delay` waits about 10 µs.
 +    pub fn reset(&mut self, mut delay: impl FnMut()) {
 +        self.mmio.write(INTRL2_CPU_SET_MASK, 0xffff_ffff);
 +        self.mmio.write(INTRL2_CPU_CLEAR, 0xffff_ffff);
-+        self.mmio.clear(RX_DMA_CTRL, DMA_CTRL_EN);
-+        self.mmio.clear(TX_DMA_CTRL, DMA_CTRL_EN);
++        // Receive off first, so no new frame starts; then both engines and
++        // every ring.
++        self.mmio.clear(UMAC_CMD, CMD_RXEN);
++        self.mmio.write(RX_DMA_CTRL, 0);
++        self.mmio.write(TX_DMA_CTRL, 0);
++        for _ in 0..1000 {
++            let stopped = self.mmio.read(RX_DMA_STATUS) & self.mmio.read(TX_DMA_STATUS) & DMA_STATUS_DISABLED;
++            if stopped != 0 {
++                break;
++            }
++            delay();
++        }
++        self.mmio.clear(UMAC_CMD, CMD_TXEN);
++        self.mmio.write(UMAC_TX_FLUSH, 1);
++        delay();
++        self.mmio.write(UMAC_TX_FLUSH, 0);
 +
 +        self.mmio.set(SYS_RBUF_FLUSH_CTRL, RBUF_FLUSH_RESET);
 +        delay();
@@ -1183,6 +1226,23 @@ index 0000000..57995e2
 +    }
 +
 +    #[test]
++    fn reset_stops_what_uboot_left_running() {
++        let mut g = genet();
++        g.mmio.write(UMAC_CMD, CMD_TXEN | CMD_RXEN);
++        g.mmio.write(RX_DMA_CTRL, DMA_CTRL_EN | dma_ctrl_ring_en(DEFAULT_Q));
++        g.mmio.write(TX_DMA_CTRL, DMA_CTRL_EN | dma_ctrl_ring_en(DEFAULT_Q));
++        let mut waits = 0;
++        g.reset(|| waits += 1);
++        assert_eq!(g.mmio.read(RX_DMA_CTRL), 0);
++        assert_eq!(g.mmio.read(TX_DMA_CTRL), 0);
++        assert_eq!(g.mmio.read(UMAC_CMD) & (CMD_TXEN | CMD_RXEN), 0);
++        // The fake never reports the engines stopped: reset gives up after
++        // about 10 ms instead of hanging.
++        assert!(waits >= 1000);
++        assert_eq!(g.mmio.read(RBUF_CTRL) & RBUF_ALIGN_2B, RBUF_ALIGN_2B);
++    }
++
++    #[test]
 +    fn rings_point_at_the_buffers() {
 +        let mut g = genet();
 +        g.init_rings();
@@ -1310,14 +1370,56 @@ index 0000000..57995e2
 +        assert_eq!(g.mmio.read(SYS_PORT_CTRL), PORT_MODE_EXT_GPHY);
 +    }
 +}
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 5875830..246b388 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -242,6 +242,14 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
+     if let Ok([low, high]) = mbox.property(TAG_BOARD_SERIAL, &[], 2).as_deref() {
+         writeln!(text, "serial {high:08x}{low:08x}").unwrap();
+     }
++    // The MAC address of the board's own Ethernet (on the BCM2711 for
++    // bcmgenetd), six bytes in order.
++    if let Ok([low, high]) = mbox.property(TAG_BOARD_MAC, &[], 2).as_deref() {
++        let b = [low.to_le_bytes(), high.to_le_bytes()].concat();
++        if b[..6] != [0; 6] {
++            writeln!(text, "mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", b[0], b[1], b[2], b[3], b[4], b[5]).unwrap();
++        }
++    }
+     if let Ok([model]) = mbox.property(TAG_BOARD_MODEL, &[], 1).as_deref() {
+         writeln!(text, "board_model {model}").unwrap();
+     }
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e..16c0593 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -34,6 +34,7 @@ const BUF_WORDS: usize = 64;
+ pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
+ pub const TAG_BOARD_MODEL: u32 = 0x0001_0001;
+ pub const TAG_BOARD_REVISION: u32 = 0x0001_0002;
++pub const TAG_BOARD_MAC: u32 = 0x0001_0003;
+ pub const TAG_BOARD_SERIAL: u32 = 0x0001_0004;
+ pub const TAG_ARM_MEMORY: u32 = 0x0001_0005;
+ pub const TAG_VC_MEMORY: u32 = 0x0001_0006;
+@@ -163,7 +164,8 @@ impl Mailbox {
+             }
+             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+         }
+-        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        // In bytes; the board MAC is 6, so round up to whole words.
++        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
+         Ok(buf[5..5 + len.min(value_words)].to_vec())
+     }
+ 
 diff --git a/init.initfs.d/40_bcmgenetd.service b/init.initfs.d/40_bcmgenetd.service
 new file mode 100644
-index 0000000..75df1f2
+index 0000000..9eba1af
 --- /dev/null
 +++ b/init.initfs.d/40_bcmgenetd.service
-@@ -0,0 +1,8 @@
+@@ -0,0 +1,9 @@
 +[unit]
 +description = "BCM2711 GENET Ethernet (Raspberry Pi 4 and 400)"
++requires_weak = ["40_rpi-firmwared.service"]
 +condition_architecture = ["aarch64"]
 +condition_board = ["raspi3bp"]
 +
