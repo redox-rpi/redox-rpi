@@ -63,3 +63,11 @@ QEMU, two runs each:
 | read, SIGUSR1 SA_RESTART | 0, then 1 of 5 EINTR | 0, 0 (1131, 1398 caught) |
 | read, SIGUSR1 no SA_RESTART | 5 of 5 EINTR | 5 of 5 EINTR (control holds) |
 | verdict | `SIGCONT-REPRO: FAIL` | `SIGCONT-REPRO: pass`, no panic |
+
+Pi 3B+, row [361](https://github.com/redox-rpi/pi-tests/blob/main/reports/361.md),
+2026-11-12, on the PR's own image `v0.5.0-dev-148-g595010cb+x0016`:
+**pass**. Both runs `SIGCONT-REPRO: pass`, 0 of 6 lines wrong: default
+SIGCONT and SIGUSR1 with SA_RESTART 0 of 5 EINTR for waitpid and read;
+the read control 5 of 5 EINTR (515 and 589 caught); waitpid without
+SA_RESTART 0 of 5, 0 caught (#387). Ten `timeit tcc` runs: no EINTR,
+100.0–102.8 ms. pi-test 6/6, no panic, no stall.
