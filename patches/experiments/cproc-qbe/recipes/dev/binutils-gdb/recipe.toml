@@ -37,5 +37,7 @@ for f in "${COOKBOOK_STAGE}"/usr/bin/*; do
         *) rm -f "$f" ;;
     esac
 done
+# ranlib is ar again (978 KB); ar acts as ranlib when called by that name.
+ln -sf ar "${COOKBOOK_STAGE}/usr/bin/ranlib"
 ls -l "${COOKBOOK_STAGE}/usr/bin"
 """
