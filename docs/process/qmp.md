@@ -169,6 +169,7 @@ over the last 30 days unless named otherwise; the page is
 | Dirty results | done rows with a `-dirty` build ID (P9) | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md) "Done" | 0 for merges and releases |
 | Network losses in soak (#92) | losses (see [Network loss](#network-loss-92-217)) / soak hours, with the number of soaks and the 95 % upper bound when 0 | pi-tests `network.jsonl`, kind `soak` | a fix of #92 counts as confirmed when 0 losses in at least 20 soak hours |
 | Boots without network (#217) | boots with no devsh login within 120 s after the login prompt / all recorded boots, with the 95 % upper bound when 0 | pi-tests `network.jsonl`, kind `boot` | 0; a fix counts as confirmed when the upper bound is below the old rate (1 in 1000 boots: about 3000 boots) |
+| Network gone 2 min after boot (#92) | boots with a devsh login but `network: false` / boots that have `network`, with the 95 % upper bound when 0; and the boots with `stuck` > 0 | pi-tests `network.jsonl`, kind `boot` | 0; tracked like losses in soak |
 | Seconds to devsh | median and 90th percentile of the seconds from the login prompt to the first devsh login, recorded boots (trend for #47) | pi-tests `network.jsonl`, kind `boot` | tracked, no target |
 | Release checklist completion | checklist tests with a result / all tests, per candidate | release checklist | 100 % before a release; **not measurable yet**: the checklist has no result column |
 | Test coverage per requirement | requirements whose Verification names a test with no **gap** / all requirements, by priority; `must` with a gap; failing; verified only by a person or a dirty build ([RMP](rmp.md#traceability) KPIs) | `docs/requirements/` (Feature issues after RFC 0002), `--req-rev` while in review | every `must` and `should` of the release has a test (RMP rule 2); 0 `must` with a gap |
@@ -201,7 +202,10 @@ line, only appended. Every record has `date` (UTC, `YYYY-MM-DD`),
   boot of a row that waits for devsh): `devsh_s`, seconds from the login
   prompt to the first devsh login, `null` when none within 120 s;
   optional `login_s`, seconds from the reset to the login prompt (the
-  nightly counts from `redox-rpi: network boot` on the serial console).
+  nightly counts from `redox-rpi: network boot` on the serial console);
+  optional `network`, whether devsh still answers 2 minutes after the
+  login prompt, and `stuck`, the number of `netstack-watch: main loop
+  stuck` lines in that boot's serial log (V&V's boot loops, row 348).
 - `soak`, one per soak: `minutes`, `pings`, `pings_lost`, `logins`,
   `logins_failed` and `losses`, a list with one `{"at_s": …, "down_s": …}`
   per loss (seconds since the soak's start; `down_s` is `null` when the

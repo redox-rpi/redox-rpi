@@ -114,6 +114,9 @@ def network(text, since):
     boots = [r for r in recs if r["kind"] == "boot"]
     soaks = [r for r in recs if r["kind"] == "soak"]
     secs = sorted(r["devsh_s"] for r in boots if isinstance(r.get("devsh_s"), (int, float)))
+    # V&V's boot loops also check devsh 2 minutes after the login prompt
+    # ("network") and count "main loop stuck" lines ("stuck"): #92 at boot.
+    checked = [r for r in boots if r.get("devsh_s") is not None and isinstance(r.get("network"), bool)]
 
     def who(r):
         return {"date": r["date"], "build": r.get("build", "?"), "source": r.get("source", "?")}
@@ -134,6 +137,9 @@ def network(text, since):
     return {
         "boots": len(boots),
         "boots_no_net": [who(r) for r in boots if r.get("devsh_s") is None],
+        "boots_checked_2min": len(checked),
+        "boots_lost_2min": [who(r) for r in checked if not r["network"]],
+        "boots_stuck": [who(r) for r in boots if (r.get("stuck") or 0) > 0],
         "devsh_s": {"median": round(statistics.median(secs), 1),
                     "p90": round(secs[min(len(secs) - 1, int(0.9 * len(secs)))], 1)} if secs else None,
         "soaks": len(soaks),
@@ -634,6 +640,15 @@ def render(k, repo):
         else:
             note = f"0: rate below 1 in {n / 3:.0f} boots (95 %)" if n else "no boot recorded yet"
         row("boot_no_net", "Boots without network (#217)", f"{len(nn)} of {n} ({pct(len(nn), n)})", n > 0 and not nn, note)
+        c, cl = net["boots_checked_2min"], net["boots_lost_2min"]
+        if cl:
+            note = "last: " + ", ".join(f"{b['date']} {b['build']} ({b['source']})" for b in cl[-3:])
+        else:
+            note = f"0: rate below 1 in {c / 3:.0f} boots (95 %)" if c else "no boot checked at +2 min yet"
+        st = net["boots_stuck"]
+        note += f"; `main loop stuck` in {len(st)} boot{'s' if len(st) > 1 else ''}" if st else ""
+        row("boot_net_lost", "Network gone 2 min after boot (#92)", f"{len(cl)} of {c} ({pct(len(cl), c)})",
+            c > 0 and not cl, note)
         d = net["devsh_s"]
         row("devsh_seconds", "Seconds from login prompt to devsh (#47)",
             f"median {d['median']} s, 90th {d['p90']} s" if d else "–", True,
