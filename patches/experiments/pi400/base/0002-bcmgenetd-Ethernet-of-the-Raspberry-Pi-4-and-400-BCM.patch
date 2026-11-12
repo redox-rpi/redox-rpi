@@ -603,7 +603,7 @@ index 0000000..b85577f
 +            println!("bcmgenetd: no link yet");
 +        }
 +
-+        let irq_file = found.irq.as_deref().and_then(|path| match OpenOptions::new().read(true).write(true).open(path) {
++        let irq_file = found.irq.as_deref().and_then(|path| match OpenOptions::new().read(true).write(true).create(true).open(path) {
 +            Ok(file) => Some(file),
 +            Err(err) => {
 +                eprintln!("bcmgenetd: {}: {}, polling only", path, err);
