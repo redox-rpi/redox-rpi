@@ -60,7 +60,10 @@ static int one(int restart, int storm) {
     return ok;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    /* wpsig R S: one case only (R: SA_RESTART 0/1, S: storm 0/1), as a
+     * fresh process; exit status 0 if right. */
+    if (argc == 3) return !one(argv[1][0] == '1', argv[2][0] == '1');
     int bad = 0;
     for (int restart = 0; restart < 2; restart++)
         for (int storm = 0; storm < 2; storm++)
@@ -82,5 +85,11 @@ data = '''
 mkdir -p /tmp/waitpid-signal
 cd /tmp/waitpid-signal
 tcc -o wpsig /usr/share/waitpid-signal/wpsig.c
+echo "== each case in a fresh process"
+./wpsig 1 0
+./wpsig 1 1
+./wpsig 0 0
+./wpsig 0 1
+echo "== all four in one process"
 ./wpsig
 '''
