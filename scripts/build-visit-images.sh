@@ -200,7 +200,6 @@ build_one() {
             } > "$dir/visit.txt"
             ln -sfn "$build_id" "$OUT/$name/latest"
             log "$name: $dir"
-            [ "$check" = desktop ] && desktop_check "$name" "$dir"
         else
             # A whole card (make-sdcard.sh --local), published by the one
             # script for the image server (docs/topics/ci.md, "Image server").
@@ -213,6 +212,9 @@ build_one() {
             log "$name: $SDCARD/redox-rpi-visit-$name-$build_id.img.xz"
         fi
     done
+    # After the SD card, so the check does not take the card's time before
+    # the deadline; minimal/harddrive.img is still the network-boot image.
+    [ "$check" = desktop ] && desktop_check "$name" "$dir"
     result[$name]="built $(cat "$latest/BUILD_ID") ${commit:0:9} ${ref:-stable} $(date -u '+%Y-%m-%dT%H:%M')Z"
     prune "$OUT/$name/v*"
     if [ -n "$sdcard" ]; then
@@ -227,23 +229,26 @@ build_one() {
 # Report-only desktop smoke test in QEMU (#261) on the image just built;
 # never fails the image. Runs in the clone, which has its own images/.
 desktop_check() {
-    local name="$1" dir="$2" left verdict
+    local name="$1" dir="$2" left verdict rc=0
     left="$(seconds_left)"
     [ "$left" -gt 300 ] || { log "$name: no time left for the desktop check"; echo "desktop-check = skipped (deadline)" >> "$dir/visit.txt"; return 0; }
     [ "$left" -gt 1500 ] && left=1500
     log "$name: desktop check in QEMU (report-only)"
     # The clone's own copy (at the image's commit), with its own images/.
     [ -x scripts/qemu-desktop-check.sh ] || { log "$name: no scripts/qemu-desktop-check.sh at this commit"; echo "desktop-check = no run (script missing)" >> "$dir/visit.txt"; return 0; }
+    mkdir -p "$dir/desktop-check"
     timeout --kill-after=60 "$left" scripts/qemu-desktop-check.sh \
-        --image upstream/redox/build/aarch64/minimal/harddrive.img --out "$dir/desktop-check" > /dev/null 2>&1
-    case $? in
-        0) verdict=pass ;;
-        1) verdict=FAIL ;;
-        *) verdict="no run" ;;
+        --image upstream/redox/build/aarch64/minimal/harddrive.img --out "$dir/desktop-check" \
+        > "$dir/desktop-check/run.log" 2>&1 || rc=$?
+    case $rc in
+        0) verdict="pass (desktop-check/report.md)" ;;
+        1) verdict="FAIL (desktop-check/report.md)" ;;
+        124|137) verdict="no run (timeout, see desktop-check/run.log)" ;;
+        *) verdict="no run (exit $rc, see desktop-check/run.log)" ;;
     esac
     rm -f "$dir/desktop-check/"*.ppm "$dir/desktop-check/monitor.sock"
-    echo "desktop-check = $verdict (desktop-check/report.md)" >> "$dir/visit.txt"
-    log "$name: desktop check $verdict, $dir/desktop-check/report.md"
+    echo "desktop-check = $verdict" >> "$dir/visit.txt"
+    log "$name: desktop check $verdict in $dir"
 }
 
 failed=0

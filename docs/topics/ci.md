@@ -80,7 +80,7 @@ tests are built every night.
   panic, `orbital` and the launcher still running a minute later, and a
   screenshot that shows the launcher bar (many colours, not the dark text
   console). Report-only: the image counts as built whatever it says. The
-  result is the `desktop-check =` line in `visit.txt`; `report.md`,
+  result is the `desktop-check =` line in `visit.txt`; `report.md`, `run.log`,
   `desktop.png` and `console.png` are in
   `/srv/tftp/visit/<name>/<build ID>/desktop-check/`. QEMU's framebuffer is
   the firmware mailbox model, so it checks Orbital, `rpi-fbd`, the launcher
