@@ -1,8 +1,8 @@
-From 38ef3dfa895de468d54f4e645feb22a5e68135ba Mon Sep 17 00:00:00 2001
-From: stephan-xyz <stephan@zehrer.xyz>
-Date: Thu, 5 Nov 2026 10:09:57 +0000
-Subject: [PATCH] netstack: tell the network driver which multicast groups are
- joined
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 16:41:32 +0000
+Subject: [PATCH] netstack: tell the network driver which multicast groups
+ are joined
 
 A new write-only file multicast in the network adapter scheme
 (driver-network) takes the multicast Ethernet addresses the stack wants,
@@ -11,21 +11,22 @@ six bytes each, the whole list each time (empty: no multicast), or
 or None; by default nothing changes, so a driver that does not filter
 keeps receiving what it received before.
 
-netstack opens the file if the adapter has it and writes all-hosts
-(01:00:5e:00:00:01) plus the MAC of each joined IPv4 group, at start and
+netstack opens the file of every adapter that has one (also adapters
+that appear later) and writes all-hosts (01:00:5e:00:00:01) plus the MAC
+of each joined IPv4 group, at start, when an adapter is added and
 whenever the joined groups change. A driver can then program its
 hardware filter instead of passing all multicast (#216).
 ---
  drivers/net/driver-network/src/lib.rs | 71 +++++++++++++++++++++++++++
+ netstack/src/adapters.rs              | 14 ++++--
  netstack/src/link/ethernet.rs         | 22 +++++++++
  netstack/src/link/mod.rs              |  5 +-
- netstack/src/main.rs                  |  6 ++-
- netstack/src/scheme/mod.rs            | 36 ++++++++++++++
+ netstack/src/scheme/mod.rs            | 35 +++++++++++++
  netstack/src/scheme/socket.rs         |  5 ++
- 6 files changed, 143 insertions(+), 2 deletions(-)
+ 6 files changed, 146 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
-index 0df36f5a..685b0358 100644
+index 0df36f5..685b035 100644
 --- a/drivers/net/driver-network/src/lib.rs
 +++ b/drivers/net/driver-network/src/lib.rs
 @@ -27,6 +27,15 @@ pub trait NetworkAdapter {
@@ -124,8 +125,68 @@ index 0df36f5a..685b0358 100644
 +        Ok(())
 +    }
 +}
+diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
+index 8499e04..5df6d11 100644
+--- a/netstack/src/adapters.rs
++++ b/netstack/src/adapters.rs
+@@ -8,7 +8,7 @@
+ 
+ use std::collections::BTreeSet;
+ 
+-use libredox::flag::{O_CLOEXEC, O_DIRECTORY, O_NONBLOCK, O_RDONLY, O_RDWR};
++use libredox::flag::{O_CLOEXEC, O_DIRECTORY, O_NONBLOCK, O_RDONLY, O_RDWR, O_WRONLY};
+ use libredox::Fd;
+ use smoltcp::wire::EthernetAddress;
+ use syscall::dirent::DirentIter;
+@@ -20,6 +20,8 @@ pub struct Adapter {
+     pub name: String,
+     pub file: Fd,
+     pub mac: EthernetAddress,
++    /// The driver's  file, if it filters multicast in hardware.
++    pub multicast: Option<Fd>,
+ }
+ 
+ pub struct Adapters {
+@@ -65,7 +67,7 @@ impl Adapters {
+         for scheme in new {
+             self.seen.insert(scheme.clone());
+             match self.open(&scheme) {
+-                Ok((file, mac)) => {
++                Ok((file, mac, multicast)) => {
+                     let name = if is_wlan(&scheme) {
+                         self.wlan += 1;
+                         format!("wlan{}", self.wlan - 1)
+@@ -74,7 +76,7 @@ impl Adapters {
+                         format!("eth{}", self.eth - 1)
+                     };
+                     info!("adapter {scheme} as {name}, MAC {mac}");
+-                    adapters.push(Adapter { scheme, name, file, mac });
++                    adapters.push(Adapter { scheme, name, file, mac, multicast });
+                 }
+                 Err(e) => warn!("cannot use adapter {scheme}: {e}"),
+             }
+@@ -117,7 +119,7 @@ impl Adapters {
+         names
+     }
+ 
+-    fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress), String> {
++    fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress, Option<Fd>), String> {
+         // As relibc's open(): the scheme root from the namespace, then the
+         // path inside the scheme.
+         let scheme_root = match &self.ns {
+@@ -137,7 +139,9 @@ impl Adapters {
+         if n != 6 {
+             return Err(format!("{scheme}/mac: {n} bytes"));
+         }
+-        Ok((file, EthernetAddress::from_bytes(&mac)))
++        // Drivers that filter multicast in hardware take the joined groups here.
++        let multicast = open("multicast", O_WRONLY).ok();
++        Ok((file, EthernetAddress::from_bytes(&mac), multicast))
+     }
+ }
+ 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index b778a219..d72322ce 100644
+index b778a21..d72322c 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -41,6 +41,7 @@ pub struct EthernetLink {
@@ -179,7 +240,7 @@ index b778a219..d72322ce 100644
          // We don't buffer any packets so we can't receive immediatly
          false
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index e36e331f..409b3750 100644
+index e36e331..409b375 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
 @@ -4,7 +4,7 @@ pub mod loopback;
@@ -201,80 +262,38 @@ index e36e331f..409b3750 100644
  }
  
  #[derive(Default)]
-diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 084c3d3d..6df258cc 100644
---- a/netstack/src/main.rs
-+++ b/netstack/src/main.rs
-@@ -4,7 +4,7 @@ use std::process;
- 
- use anyhow::{anyhow, bail, Context, Result};
- use event::{EventFlags, EventQueue};
--use libredox::flag::{O_NONBLOCK, O_RDWR};
-+use libredox::flag::{O_NONBLOCK, O_RDWR, O_WRONLY};
- use libredox::Fd;
- use redox_scheme::Socket;
- use smoltcp::wire::EthernetAddress;
-@@ -62,6 +62,9 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
-         .map(|mac_address| EthernetAddress::from_bytes(&mac_address))
-         .context("failed to get mac address from network adapter")?;
- 
-+    // Drivers that filter multicast in hardware take the joined groups here.
-+    let multicast_fd = Fd::open(&format!("/scheme/{adapter}/multicast"), O_WRONLY, 0).ok();
-+
-     trace!("opening ip scheme socket");
-     let ip_fd = Socket::nonblock()
-         .map_err(|e| anyhow!("failed to open create ip scheme socket: {:?}", e))?;
-@@ -149,6 +152,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
-     let mut smolnetd = Smolnetd::new(
-         network_fd,
-         hardware_addr,
-+        multicast_fd,
-         ip_fd,
-         udp_fd,
-         tcp_fd,
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index c7d7916e..15f8b3e4 100644
+index e5cd6d3..451e648 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -66,6 +66,10 @@ pub struct Smolnetd {
+@@ -68,6 +68,9 @@ pub struct Smolnetd {
      tcp_scheme: TcpScheme,
      icmp_scheme: IcmpScheme,
      netcfg_scheme: NetCfgScheme,
 +
-+    devices: Rc<RefCell<DeviceList>>,
 +    /// The groups last given to the link devices
 +    multicast: Option<Vec<Ipv4Address>>,
  }
  
  impl Smolnetd {
-@@ -77,6 +81,7 @@ impl Smolnetd {
-     pub fn new(
-         network_file: Fd,
-         hardware_addr: EthernetAddress,
-+        multicast_file: Option<Fd>,
-         ip_file: Socket,
-         udp_file: Socket,
-         tcp_file: Socket,
-@@ -123,6 +128,9 @@ impl Smolnetd {
-             File::from_raw_fd(network_file.into_raw() as RawFd)
-         });
-         eth0.set_mac_address(hardware_addr);
-+        if let Some(file) = multicast_file {
-+            eth0.set_multicast_file(unsafe { File::from_raw_fd(file.into_raw() as RawFd) });
-+        }
- 
-         devices.borrow_mut().push(loopback);
-         devices.borrow_mut().push(eth0);
-@@ -167,6 +175,8 @@ impl Smolnetd {
+@@ -166,6 +169,7 @@ impl Smolnetd {
                  Rc::clone(&route_table),
                  Rc::clone(&devices),
              )?,
-+            devices,
 +            multicast: None,
          })
      }
  
-@@ -259,6 +269,7 @@ impl Smolnetd {
+@@ -174,6 +178,8 @@ impl Smolnetd {
+         let name = adapter.name.clone();
+         self.devices.borrow_mut().push(ethernet_link(adapter));
+         self.netcfg_scheme.interface_added(&name);
++        // The new link gets the groups with the next poll.
++        self.multicast = None;
+     }
+ 
+     pub fn on_network_scheme_event(&mut self) -> Result<()> {
+@@ -265,6 +271,7 @@ impl Smolnetd {
              }
          };
  
@@ -282,7 +301,7 @@ index c7d7916e..15f8b3e4 100644
          self.notify_sockets()?;
  
          Ok(::std::cmp::min(
-@@ -267,6 +278,27 @@ impl Smolnetd {
+@@ -273,6 +280,27 @@ impl Smolnetd {
          ))
      }
  
@@ -310,7 +329,17 @@ index c7d7916e..15f8b3e4 100644
      fn notify_sockets(&mut self) -> Result<()> {
          self.ip_scheme.notify_sockets()?;
          self.udp_scheme.notify_sockets()?;
-@@ -468,6 +500,10 @@ where
+@@ -286,6 +314,9 @@ fn ethernet_link(adapter: Adapter) -> EthernetLink {
+         File::from_raw_fd(adapter.file.into_raw() as RawFd)
+     });
+     link.set_mac_address(adapter.mac);
++    if let Some(file) = adapter.multicast {
++        link.set_multicast_file(unsafe { File::from_raw_fd(file.into_raw() as RawFd) });
++    }
+     link
+ }
+ 
+@@ -482,6 +513,10 @@ where
          Ok(result)
      }
  
@@ -322,7 +351,7 @@ index c7d7916e..15f8b3e4 100644
          let cur_time = libredox::call::clock_gettime(flag::CLOCK_MONOTONIC)
              .map_err(|e| Error::from_syscall_error(e.into(), "Can't get time"))?;
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 8bf1d7d7..f337f7b9 100644
+index 8bf1d7d..f337f7b 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
 @@ -316,6 +316,11 @@ where

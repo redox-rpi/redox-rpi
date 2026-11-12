@@ -99,12 +99,19 @@
   test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
 - [#216](https://github.com/redox-rpi/redox-rpi/issues/216) idle wakeups
   since #194 (Pi test #246: dwc2d +28/s, netstack +28/s): `0084` passes
-  all multicast on the LAN. Branch `mcast-filter`, base `0085`: a
-  `multicast` file in the adapter scheme and
-  `NetworkAdapter::set_multicast`; netstack writes all-hosts plus each
-  joined group. The LAN7800 hash filter on top is Firmware's experiment
-  `lan78xx-mcast-hash`. The `ipv6` experiment will need its IPv6 groups
-  (33:33:…) in that list before the filter is on by default.
+  all multicast on the LAN. Branch `mcast-filter` (2026-11-12, redone on
+  the multi-adapter netstack):
+  - base `0085`: a `multicast` file in the adapter scheme and
+    `NetworkAdapter::set_multicast`; netstack writes all-hosts plus each
+    joined IPv4 group to every adapter that has the file, also adapters
+    that come later;
+  - base `0095`: the LAN7800 programs its multicast hash filter from that
+    list instead of passing all multicast (was Firmware's experiment
+    `lan78xx-mcast-hash`, PR #219; Pi test 247 passed: dwc2d 108 -> 81
+    wakeups/s, netstack 60 -> 30/s).
+  - The `ipv6` experiment (it does not apply to main right now) must add
+    its IPv6 groups (33:33:…) to the list, or write `all`, before it is
+    used with `0095`.
 - [#217](https://github.com/redox-rpi/redox-rpi/issues/217) 2 of about 10
   boots on 2026-11-05 reached login without network (devshd's bind
   blocked); QEMU boot loop next.
