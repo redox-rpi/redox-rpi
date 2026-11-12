@@ -71,3 +71,11 @@ too (SA_RESTART 3062 caught, without SA_RESTART 5 of 5 EINTR, before 0),
 Built with `--allow-dirty` for these runs only because of
 [#393](https://github.com/redox-rpi/redox-rpi/issues/393) (base `0089`
 does not `git apply` after `0085`). The Pi image `v0.5.0-dev-188-g3c13d3f2+xc1ab` is a clean build (fresh base checkout); `WPSIG: pass` twice on it in QEMU too.
+
+Pi 3B+, row [376](https://github.com/redox-rpi/pi-tests/blob/main/reports/376.md),
+2026-11-12, on the PR's own clean image `v0.5.0-dev-188-g3c13d3f2+xc1ab`:
+**pass**. `WPSIG: pass` twice; every case caught (storms 104–123), first
+at 305–310 ms, status 7, EINTR only without SA_RESTART, nothing left
+pending. #386 check: `SIGCONT-REPRO: pass`, `waitpid SIGUSR1` with
+SA_RESTART 681 caught, without 5 of 5 EINTR (693 caught). pi-test 6/6,
+no panic.
