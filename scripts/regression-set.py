@@ -27,14 +27,14 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
-  tcp           #364, #92: --tcp-mib MiB from this host with nc, same
-                SHA-256 (pi-test.py's check); --tcp-host is this host as the
-                guest sees it (QEMU user networking: 10.0.2.2)
   dns           #358, #374: a name server is set (from DHCP); an unknown
                 name gives "Name does not resolve" within 5 s; with
                 --dead-dns as name server a lookup gives "Try again" within
                 15 s; after the name server is set back, the unknown name
                 gives "Name does not resolve" again
+  tcp           #364, #92: --tcp-mib MiB from this host with nc, same
+                SHA-256 (pi-test.py's check); --tcp-host is this host as the
+                guest sees it (QEMU user networking: 10.0.2.2)
   serial        with --serial-log: no kernel panic, "panicked at",
                 "RELIBC PANIC", "UNHANDLED EXCEPTION" or "main loop stuck"
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
@@ -234,8 +234,10 @@ def main():
                                              lambda out: sum(l.strip().endswith(": pass") or l.strip() == "/ pass"
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
-            ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),
             ("dns", lambda: check_dns(sh, check, args)),
+            # Last: after nc, the next command in the same devsh session gave
+            # no output in both QEMU runs (2026-11-12), so nothing follows it.
+            ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),
         ]
         for name, step in steps:
             if want(name):

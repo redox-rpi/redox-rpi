@@ -132,8 +132,8 @@ failed: fix it before the row. The checks:
 | waitpid | #386 | `waitpid` while only default-action signals arrive returns the child, never EINTR (needs the experiment tcc) |
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
-| tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
 | dns | #358, #374 | name server from DHCP; unknown name: "Name does not resolve" within 5 s; dead name server: "Try again" within 15 s; works again after it is set back |
+| tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
 | serial | #92, #151, base 0030 | no panic, `RELIBC PANIC`, `UNHANDLED EXCEPTION` or `main loop stuck` in the console log; no pcid or rtcd |
 
 A check whose experiment is not in the image is skipped, not failed. On the
