@@ -77,8 +77,20 @@
   182 MB/s), since QEMU finishes a chunk at once; the real check is Pi test
   #135, like for like against #71's image, no person needed.
 
-- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) the Pi's
-  inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
+- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) **Download
+  stall, cause found (2026-11-11), fix base `0090`** (branch
+  `dwc2d-no-sleep`): a `nanosleep` in dwc2d that never returns. dwc2d's
+  1 s LAN7800 link check polls the MII with 1 ms sleeps. When one does not
+  come back, the main loop waits for good without CPU use, and netstack,
+  served by that loop, hangs in its read from the network device. Pi test
+  326: a 382 MB download into the SD card stalled 3 of 3 times on main,
+  2 of 3 on stable, 0 of 3 on row 319's image (it had `usb-hub-drop`). In
+  Pi test 342, main + `usb-hub-drop` completed 3 of 3, and in a stall on
+  main dwc2d's main thread was `US` with its CPU time frozen. `0090` takes
+  the `sleep`-to-`delay()` part of `usb-hub-drop` into base. The lost
+  wakeup itself (kernel timer or scheduler) is still open. QEMU does not
+  show it: its CDC Ethernet adapter has no link check.
+  Earlier: the Pi's inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
   during a download into the SD card, once with dwc2d stuck afterwards:
   branch [`usb-hub-drop`](https://github.com/redox-rpi/redox-rpi/tree/usb-hub-drop)
   (on main, PR #156), experiments `dwc2d-netstats` (`0052`) and
