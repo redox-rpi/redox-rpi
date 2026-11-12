@@ -101,7 +101,7 @@ anyone's own computer:
 |---|---|
 | `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local`, published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
 | `redox-rpi-v<version>-rc<N>.img.xz.sha256`, `.manifest.toml` | its checksum and manifest, written by `publish-sdcard.sh` |
-| `SHA256SUMS` | one line per file in the directory |
+| `index.json` | the list SwiftFlash reads, rewritten by `publish-sdcard.sh` (`scripts/sdcard-index.py`); there is no `SHA256SUMS` in `/srv/tftp/sdcard/`, each image has its own `.sha256` |
 
 The image is offered at
 `http://homenodellm:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
