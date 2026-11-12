@@ -1,0 +1,1063 @@
+From ecee9e071354e59cf1d9fff2af1668a8d2e63110 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 16:45:20 +0000
+Subject: [PATCH] pcid: BCM2711 PCIe host bridge; rpi-firmwared: VL805 firmware
+ load (#305)
+
+pcid brings up the Raspberry Pi 4 family's PCIe bridge (brcm,bcm2711-pcie):
+reset, SerDes, inbound window from dma-ranges, outbound window from ranges,
+link; config access through the root port's registers and the index/data
+window; one bus behind the root port with the device's memory BARs in the
+outbound window. BARs go to drivers as CPU addresses. For the VL805 it asks
+rpi-firmwared, through the new write-only file xhci_reset
+(NOTIFY_XHCI_RESET), to load the USB controller's firmware. Then pcid-spawner
+starts xhcid as on other machines.
+
+The register arithmetic and devicetree cell parsing are in
+brcmstb_layout.rs, with host tests (rustc --edition 2021 --test).
+---
+ drivers/hwd/src/main.rs                       |  15 +-
+ drivers/pcid/src/cfg_access/brcmstb.rs        | 344 +++++++++++++++++
+ drivers/pcid/src/cfg_access/brcmstb_dt.rs     |  89 +++++
+ drivers/pcid/src/cfg_access/brcmstb_layout.rs | 362 ++++++++++++++++++
+ drivers/pcid/src/cfg_access/mod.rs            |  34 ++
+ drivers/pcid/src/main.rs                      |  11 +-
+ drivers/rpi-firmwared/src/main.rs             |  19 +-
+ drivers/rpi-firmwared/src/mbox.rs             |   2 +
+ 8 files changed, 869 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/pcid/src/cfg_access/brcmstb.rs
+ create mode 100644 drivers/pcid/src/cfg_access/brcmstb_dt.rs
+ create mode 100644 drivers/pcid/src/cfg_access/brcmstb_layout.rs
+
+diff --git a/drivers/hwd/src/main.rs b/drivers/hwd/src/main.rs
+index 0654fd01..ee707f05 100644
+--- a/drivers/hwd/src/main.rs
++++ b/drivers/hwd/src/main.rs
+@@ -37,8 +37,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     //TODO: launch pcid based on backend information?
+     // Must launch after acpid but before probe calls /scheme/acpi/symbols
+-    // The Raspberry Pi 3 has no PCI bus
+-    if option_env!("BOARD") != Some("raspi3bp") {
++    // The Raspberry Pi 3 has no PCI bus. Our images are built with
++    // BOARD=raspi3bp for the whole Pi family, so look for the Pi 4's PCIe
++    // bridge in the devicetree too (a byte search: hwd's devicetree walk
++    // fails on some trees).
++    if option_env!("BOARD") != Some("raspi3bp") || has_bcm2711_pcie() {
+         #[allow(deprecated, reason = "we can't yet move this to init")]
+         daemon::Daemon::spawn(process::Command::new("pcid"));
+     }
+@@ -57,6 +60,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     }
+ }
+ 
++/// Whether the devicetree names the BCM2711's PCIe bridge (Raspberry Pi 4
++/// family). pcid checks whether it is enabled.
++fn has_bcm2711_pcie() -> bool {
++    const COMPATIBLE: &[u8] = b"brcm,bcm2711-pcie\0";
++    std::fs::read("/scheme/kernel.dtb")
++        .is_ok_and(|dtb| dtb.windows(COMPATIBLE.len()).any(|w| w == COMPATIBLE))
++}
++
+ fn main() {
+     daemon::Daemon::new(daemon);
+ }
+diff --git a/drivers/pcid/src/cfg_access/brcmstb.rs b/drivers/pcid/src/cfg_access/brcmstb.rs
+new file mode 100644
+index 00000000..7f100a67
+--- /dev/null
++++ b/drivers/pcid/src/cfg_access/brcmstb.rs
+@@ -0,0 +1,344 @@
++//! The PCIe host bridge of the BCM2711 (Raspberry Pi 4, 400, CM4):
++//! `brcm,bcm2711-pcie`. It has no ECAM: the root port's own configuration
++//! space is at the start of the bridge's registers, and every function
++//! behind it is reached through an index register (bus, device, function)
++//! and a 4 KB data window.
++//!
++//! pcid brings the bridge up itself, since nothing before Redox leaves it
++//! in a known state: reset, SerDes on, inbound window over RAM from
++//! `dma-ranges`, outbound window from `ranges`, then the link. It numbers
++//! the one bus behind the root port, gives the device its memory BARs in
++//! the outbound window, and on the Pi 4 family asks the firmware to load
++//! the VL805 USB controller's firmware (`/scheme/rpi-firmware/xhci_reset`,
++//! the `NOTIFY_XHCI_RESET` mailbox call). Then pcid scans as usual, and
++//! `xhcid` finds the VL805.
++//!
++//! The arithmetic is in `brcmstb_layout.rs`, the devicetree reading in
++//! `brcmstb_dt.rs`, both with host tests.
++
++use std::io;
++use std::thread;
++use std::time::{Duration, Instant};
++
++use common::{MemoryType, PhysBorrowed, Prot};
++use fdt::Fdt;
++use pci_types::PciAddress;
++
++use super::brcmstb_dt::{self, DtBridge};
++use super::brcmstb_layout::*;
++use super::InterruptMap;
++
++/// The bus behind the root port; the Pi 4 family has one device there.
++const DEVICE_BUS: u8 = 1;
++const VENDOR_VIA: u16 = 0x1106;
++const DEVICE_VL805: u16 = 0x3483;
++const XHCI_RESET: &str = "/scheme/rpi-firmware/xhci_reset";
++
++pub struct Brcmstb {
++    /// `None` while the devicetree disables the bridge (QEMU raspi4b):
++    /// then the bus is empty.
++    regs: Option<PhysBorrowed>,
++    link: bool,
++    /// The outbound window: CPU address, PCI address, size.
++    window: Option<(u64, u64, u64)>,
++    pub interrupt_map: Vec<InterruptMap>,
++    pub interrupt_map_mask: [u32; 4],
++}
++
++// The registers belong to pcid alone; `Pcie` serialises the accesses.
++unsafe impl Send for Brcmstb {}
++unsafe impl Sync for Brcmstb {}
++
++fn invalid(what: String) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, what)
++}
++
++impl Brcmstb {
++    /// The bridge from the devicetree, brought up; `None` if the board has
++    /// none.
++    pub fn probe() -> Option<io::Result<Self>> {
++        let dtb = std::fs::read("/scheme/kernel.dtb").ok()?;
++        let dt = Fdt::new(&dtb).ok()?;
++        Some(match brcmstb_dt::find(&dt)? {
++            Ok(Some(found)) => Self::start_from(found),
++            Ok(None) => {
++                log::info!("pcid: BCM2711 PCIe disabled in the devicetree, no PCI devices");
++                Ok(Self::empty())
++            }
++            Err(err) => Err(invalid(err)),
++        })
++    }
++
++    fn empty() -> Self {
++        Self { regs: None, link: false, window: None, interrupt_map: Vec::new(), interrupt_map_mask: [u32::MAX; 4] }
++    }
++
++    fn start_from(found: DtBridge) -> io::Result<Self> {
++        let DtBridge { phys, outbound, inbound, interrupt_map, interrupt_map_mask } = found;
++        let interrupt_map = interrupt_map
++            .into_iter()
++            .map(|e| InterruptMap {
++                addr: e.addr,
++                interrupt: e.pin,
++                parent_phandle: e.parent_phandle,
++                parent_interrupt: e.parent_interrupt,
++                parent_interrupt_cells: e.parent_interrupt_cells,
++            })
++            .collect();
++        let regs = PhysBorrowed::map(
++            usize::try_from(phys).map_err(|_| invalid(format!("bridge at 0x{phys:x}")))?,
++            BLOCK_SIZE,
++            Prot::RW,
++            MemoryType::DeviceMemory,
++        )
++        .map_err(|err| io::Error::other(format!("cannot map the bridge at 0x{phys:x}: {err}")))?;
++        let mut bridge = Self { regs: Some(regs), link: false, window: outbound, interrupt_map, interrupt_map_mask };
++        log::info!(
++            "pcid: BCM2711 PCIe at 0x{phys:x}, revision 0x{:x}, outbound {}, inbound {}",
++            bridge.read32(MISC_REVISION),
++            outbound.map_or("none".into(), |(cpu, pci, size)| format!("CPU 0x{cpu:x} = PCI 0x{pci:x} ({} MB)", size >> 20)),
++            inbound.map_or("none".into(), |r| format!("PCI 0x{:x} = CPU 0x{:x} ({} MB)", r.pci, r.parent, r.size >> 20)),
++        );
++        bridge.start(inbound)?;
++        Ok(bridge)
++    }
++
++    fn read32(&self, offset: usize) -> u32 {
++        match &self.regs {
++            Some(regs) => unsafe { regs.as_ptr().cast::<u8>().add(offset).cast::<u32>().read_volatile() },
++            None => u32::MAX,
++        }
++    }
++
++    fn write32(&self, offset: usize, value: u32) {
++        if let Some(regs) = &self.regs {
++            unsafe { regs.as_ptr().cast::<u8>().add(offset).cast::<u32>().write_volatile(value) }
++        }
++    }
++
++    fn modify(&self, offset: usize, clear: u32, set: u32) {
++        self.write32(offset, self.read32(offset) & !clear | set);
++    }
++
++    /// Reset, windows, link; then number the bus and set up the device.
++    fn start(&mut self, inbound: Option<Range>) -> io::Result<()> {
++        // Hold the bridge and the endpoint (PERST#) in reset, then let the
++        // bridge go.
++        self.modify(RGR1_SW_INIT_1, 0, SW_INIT_BRIDGE | SW_INIT_PERST);
++        thread::sleep(Duration::from_millis(1));
++        self.modify(RGR1_SW_INIT_1, SW_INIT_BRIDGE, 0);
++        thread::sleep(Duration::from_millis(1));
++        // SerDes out of IDDQ (power down).
++        self.modify(MISC_HARD_PCIE_HARD_DEBUG, HARD_DEBUG_SERDES_IDDQ, 0);
++        thread::sleep(Duration::from_millis(1));
++
++        // The bridge may master the system bus; unsupported requests read
++        // as all ones; 128-byte bursts (the BCM2711's limit, code 0).
++        self.modify(
++            MISC_MISC_CTRL,
++            MISC_CTRL_MAX_BURST_MASK,
++            MISC_CTRL_SCB_ACCESS_EN | MISC_CTRL_CFG_READ_UR_MODE,
++        );
++
++        // Inbound: devices reach RAM through RC_BAR2. Without dma-ranges,
++        // PCI 0 is CPU 0 for 4 GB, as on every Pi 4 devicetree we know.
++        let (pci, size) = inbound.map_or((0, 1 << 32), |r| (r.pci, r.size));
++        let code = inbound_size_code(size).ok_or_else(|| invalid(format!("inbound window of {size} bytes")))?;
++        if inbound.is_some_and(|r| r.pci != r.parent) {
++            log::warn!("pcid: dma-ranges with an offset; devices will get CPU addresses for DMA");
++        }
++        self.write32(MISC_RC_BAR2_CONFIG_LO, (pci as u32 & !0x1f) | code);
++        self.write32(MISC_RC_BAR2_CONFIG_HI, (pci >> 32) as u32);
++        self.modify(MISC_MISC_CTRL, MISC_CTRL_SCB0_SIZE_MASK, code << MISC_CTRL_SCB0_SIZE_SHIFT);
++        // No other inbound windows.
++        self.modify(MISC_RC_BAR1_CONFIG_LO, 0x1f, 0);
++        self.modify(MISC_RC_BAR3_CONFIG_LO, 0x1f, 0);
++        // The bridge's own interrupts (MSI, link events): masked, cleared.
++        self.write32(INTR2_CPU_MASK_SET, u32::MAX);
++        self.write32(INTR2_CPU_CLR, u32::MAX);
++        // Inbound data little endian.
++        self.modify(RC_CFG_VENDOR_SPECIFIC_REG1, VENDOR_REG1_ENDIAN_BAR2_MASK, 0);
++
++        // Let the endpoint go and wait for the link: 100 ms after PERST#
++        // (PCIe CEM), then up to another 100 ms.
++        self.modify(RGR1_SW_INIT_1, SW_INIT_PERST, 0);
++        thread::sleep(Duration::from_millis(100));
++        let start = Instant::now();
++        while !link_up(self.read32(MISC_PCIE_STATUS)) && start.elapsed() < Duration::from_millis(100) {
++            thread::sleep(Duration::from_millis(5));
++        }
++        let status = self.read32(MISC_PCIE_STATUS);
++        if status & STATUS_PORT_RC == 0 {
++            return Err(invalid(format!("the bridge is not in root complex mode (status 0x{status:x})")));
++        }
++        if !link_up(status) {
++            log::warn!("pcid: PCIe link down (status 0x{status:x}): no device behind the bridge");
++            return Ok(());
++        }
++        self.link = true;
++
++        // Outbound: CPU accesses in the window go to PCI memory.
++        if let Some((cpu, pci, size)) = self.window {
++            let (lo, hi, base_limit, base_hi, limit_hi) = outbound_window(cpu, pci, size);
++            self.write32(MISC_CPU_2_PCIE_MEM_WIN0_LO, lo);
++            self.write32(MISC_CPU_2_PCIE_MEM_WIN0_HI, hi);
++            self.write32(MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT, base_limit);
++            self.write32(MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI, base_hi);
++            self.write32(MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI, limit_hi);
++        }
++        // The root port reports itself as a PCI-to-PCI bridge, so the scan
++        // goes on to bus 1.
++        self.modify(RC_CFG_PRIV1_ID_VAL3, 0x00ff_ffff, CLASS_BRIDGE);
++        // clkreq# always asserted: no L1 substates.
++        self.modify(MISC_HARD_PCIE_HARD_DEBUG, 0, HARD_DEBUG_CLKREQ_DEBUG_ENABLE);
++        log::info!("pcid: PCIe link up (status 0x{status:x})");
++
++        self.setup_root_port();
++        let id = self.cfg_read(DEVICE_BUS, 0, 0, 0);
++        let (vendor, device) = (id as u16, (id >> 16) as u16);
++        if vendor == 0xffff {
++            log::warn!("pcid: link up but no device on bus {DEVICE_BUS}");
++            return Ok(());
++        }
++        if (vendor, device) == (VENDOR_VIA, DEVICE_VL805) {
++            notify_xhci_reset(cfg_index(DEVICE_BUS, 0, 0));
++        }
++        // After the firmware's reset of the VL805 its BARs are empty again:
++        // assign them now.
++        self.assign_bars(DEVICE_BUS, 0, 0);
++        Ok(())
++    }
++
++    /// Bus numbers, the memory window and bus mastering of the root port's
++    /// type 1 header.
++    fn setup_root_port(&self) {
++        // Primary 0, secondary and subordinate 1.
++        self.cfg_modify(0, 0, 0, 0x18, 0x00ff_ffff, u32::from(DEVICE_BUS) << 16 | u32::from(DEVICE_BUS) << 8);
++        if let Some((_, pci, size)) = self.window {
++            let limit = (pci + size - 1).min(0xffff_ffff) as u32;
++            self.cfg_write(0, 0, 0, 0x20, bridge_memory_window(pci as u32, limit));
++        }
++        // No prefetchable or I/O window (base above limit).
++        self.cfg_write(0, 0, 0, 0x24, 0x0000_fff0);
++        self.cfg_write(0, 0, 0, 0x28, 0);
++        self.cfg_write(0, 0, 0, 0x2c, 0);
++        self.cfg_modify(0, 0, 0, 0x1c, 0xffff, 0x00f0);
++        // Memory space and bus master.
++        self.cfg_modify(0, 0, 0, 0x04, 0, 0x6);
++    }
++
++    /// Give the memory BARs of a function addresses in the outbound window,
++    /// in order, each aligned to its size, and turn memory and bus
++    /// mastering on.
++    fn assign_bars(&self, bus: u8, device: u8, function: u8) {
++        let Some((_, window_pci, window_size)) = self.window else {
++            log::warn!("pcid: no outbound window in the devicetree, BARs left empty");
++            return;
++        };
++        // Memory decoding off while the BARs move.
++        self.cfg_modify(bus, device, function, 0x04, 0x7, 0);
++        let mut next = window_pci;
++        let mut bar = 0;
++        while bar < 6 {
++            let offset = 0x10 + bar * 4;
++            let old = self.cfg_read(bus, device, function, offset);
++            let is_64 = bar_is_64(old) && bar < 5;
++            self.cfg_write(bus, device, function, offset, u32::MAX);
++            let low = self.cfg_read(bus, device, function, offset);
++            let high = is_64.then(|| {
++                let old_high = self.cfg_read(bus, device, function, offset + 4);
++                self.cfg_write(bus, device, function, offset + 4, u32::MAX);
++                let high = self.cfg_read(bus, device, function, offset + 4);
++                self.cfg_write(bus, device, function, offset + 4, old_high);
++                high
++            });
++            let at = bar_size(low, high).map(|size| (next.next_multiple_of(size), size));
++            match at {
++                Some((at, size)) if at + size <= window_pci + window_size => {
++                    self.cfg_write(bus, device, function, offset, at as u32);
++                    if is_64 {
++                        self.cfg_write(bus, device, function, offset + 4, (at >> 32) as u32);
++                    }
++                    log::info!("pcid: {bus:02x}:{device:02x}.{function} BAR{bar} at PCI 0x{at:x} ({size} bytes)");
++                    next = at + size;
++                }
++                Some((_, size)) => {
++                    log::warn!("pcid: {bus:02x}:{device:02x}.{function} BAR{bar} of {size} bytes does not fit");
++                    self.cfg_write(bus, device, function, offset, old);
++                }
++                None => self.cfg_write(bus, device, function, offset, old),
++            }
++            bar += if is_64 { 2 } else { 1 };
++        }
++        self.cfg_modify(bus, device, function, 0x04, 0, 0x6);
++    }
++
++    /// The configuration space of a function: the root port (bus 0, device
++    /// 0) in the bridge's own registers, the others through the index.
++    fn cfg_addr(&self, bus: u8, device: u8, function: u8, offset: u16) -> Option<usize> {
++        let offset = usize::from(offset & 0xffc);
++        self.regs.as_ref()?;
++        match bus {
++            0 if device == 0 && function == 0 => Some(offset),
++            DEVICE_BUS if self.link => {
++                self.write32(EXT_CFG_INDEX, cfg_index(bus, device, function));
++                // Read back, so the index is set before the data access.
++                let _ = self.read32(EXT_CFG_INDEX);
++                Some(EXT_CFG_DATA + offset)
++            }
++            _ => None,
++        }
++    }
++
++    fn cfg_read(&self, bus: u8, device: u8, function: u8, offset: u16) -> u32 {
++        self.cfg_addr(bus, device, function, offset).map_or(u32::MAX, |at| self.read32(at))
++    }
++
++    fn cfg_write(&self, bus: u8, device: u8, function: u8, offset: u16, value: u32) {
++        if let Some(at) = self.cfg_addr(bus, device, function, offset) {
++            self.write32(at, value);
++        }
++    }
++
++    fn cfg_modify(&self, bus: u8, device: u8, function: u8, offset: u16, clear: u32, set: u32) {
++        let value = self.cfg_read(bus, device, function, offset);
++        self.cfg_write(bus, device, function, offset, value & !clear | set);
++    }
++
++    pub fn read(&self, address: PciAddress, offset: u16) -> u32 {
++        self.cfg_read(address.bus(), address.device(), address.function(), offset)
++    }
++
++    pub fn write(&self, address: PciAddress, offset: u16, value: u32) {
++        self.cfg_write(address.bus(), address.device(), address.function(), offset, value)
++    }
++
++    /// The CPU address of a PCI memory address in the outbound window.
++    pub fn cpu_address(&self, pci: u64) -> u64 {
++        match self.window {
++            Some((cpu, base, size)) if pci >= base && pci - base < size => cpu + (pci - base),
++            _ => pci,
++        }
++    }
++}
++
++/// Ask the firmware to load the VL805's firmware (Pi 4 family). It needs
++/// rpi-firmwared, which may start after pcid: wait up to 5 s for it.
++fn notify_xhci_reset(index: u32) {
++    let start = Instant::now();
++    loop {
++        match std::fs::write(XHCI_RESET, format!("0x{index:08x}")) {
++            Ok(()) => {
++                log::info!("pcid: firmware loaded the VL805 firmware");
++                // The VL805 needs a moment before its registers answer.
++                thread::sleep(Duration::from_millis(10));
++                return;
++            }
++            Err(err) if start.elapsed() > Duration::from_secs(5) => {
++                log::warn!("pcid: {XHCI_RESET}: {err}; the VL805 may have no firmware");
++                return;
++            }
++            Err(_) => thread::sleep(Duration::from_millis(100)),
++        }
++    }
++}
+diff --git a/drivers/pcid/src/cfg_access/brcmstb_dt.rs b/drivers/pcid/src/cfg_access/brcmstb_dt.rs
+new file mode 100644
+index 00000000..6588be8b
+--- /dev/null
++++ b/drivers/pcid/src/cfg_access/brcmstb_dt.rs
+@@ -0,0 +1,89 @@
++//! What pcid needs to know about the BCM2711's PCIe bridge from the
++//! devicetree: where its registers are, its outbound and inbound windows
++//! and its interrupt map. Uses only the `fdt` crate and
++//! `brcmstb_layout.rs`, so it is tested on the build host against the
++//! Raspberry Pi firmware's devicetrees.
++
++use fdt::Fdt;
++
++use super::brcmstb_layout::*;
++
++pub const COMPATIBLE: &[&str] = &["brcm,bcm2711-pcie"];
++
++#[derive(Debug)]
++pub struct DtBridge {
++    /// CPU address of the register block.
++    pub phys: u64,
++    /// Outbound window: CPU address, PCI address, size.
++    pub outbound: Option<(u64, u64, u64)>,
++    /// Inbound window (`dma-ranges`).
++    pub inbound: Option<Range>,
++    pub interrupt_map: Vec<IntMapEntry>,
++    pub interrupt_map_mask: [u32; 4],
++}
++
++/// The bridge of the devicetree: `None` without one, `Some(Ok(None))` if it
++/// is disabled, an error if it cannot be used.
++pub fn find(dt: &Fdt) -> Option<Result<Option<DtBridge>, String>> {
++    let node = dt.find_compatible(COMPATIBLE)?;
++    if let Some(status) = node.property("status").and_then(|p| p.as_str()) {
++        if status != "okay" && status != "ok" {
++            return Some(Ok(None));
++        }
++    }
++    // The bridge sits on /scb, whose `ranges` lead to CPU addresses.
++    let parent = ["/scb", "/soc"]
++        .into_iter()
++        .filter_map(|path| dt.find_node(path))
++        .find(|bus| bus.children().any(|child| child.name == node.name));
++    let root_cells = dt.find_node("/").map(|root| root.cell_sizes()).unwrap_or_default();
++    let (bus_cells, ranges) = match parent {
++        Some(bus) => {
++            let cells = bus.cell_sizes();
++            let ranges = bus
++                .property("ranges")
++                .map(|p| bus_ranges(p.value, cells.address_cells, root_cells.address_cells, cells.size_cells))
++                .unwrap_or_default();
++            (cells, ranges)
++        }
++        None => (root_cells, Vec::new()),
++    };
++    let Some((reg, _)) =
++        node.property("reg").and_then(|p| reg_first(p.value, bus_cells.address_cells, bus_cells.size_cells))
++    else {
++        return Some(Err(format!("{}: no reg", node.name)));
++    };
++
++    let own = node.cell_sizes();
++    let pci = |name: &str| {
++        node.property(name)
++            .map(|p| pci_ranges(p.value, bus_cells.address_cells, own.size_cells))
++            .unwrap_or_default()
++            .into_iter()
++            .find(|r| r.is_memory() && r.size > 0)
++    };
++    let interrupt_map = node
++        .property("interrupt-map")
++        .map(|p| {
++            interrupt_map(p.value, |phandle| {
++                let parent = dt.find_phandle(phandle)?;
++                // An interrupt controller without #address-cells has no
++                // unit address in the map.
++                let address_cells = parent.property("#address-cells").and_then(|p| p.as_usize()).unwrap_or(0);
++                Some((address_cells, parent.interrupt_cells()?))
++            })
++        })
++        .unwrap_or_default();
++    let interrupt_map_mask = node
++        .property("interrupt-map-mask")
++        .filter(|p| p.value.len() >= 16)
++        .map(|p| core::array::from_fn(|i| u32::from_be_bytes(p.value[i * 4..i * 4 + 4].try_into().unwrap())))
++        .unwrap_or([u32::MAX; 4]);
++    Some(Ok(Some(DtBridge {
++        phys: translate(&ranges, reg),
++        outbound: pci("ranges").map(|r| (translate(&ranges, r.parent), r.pci, r.size)),
++        inbound: pci("dma-ranges"),
++        interrupt_map,
++        interrupt_map_mask,
++    })))
++}
+diff --git a/drivers/pcid/src/cfg_access/brcmstb_layout.rs b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
+new file mode 100644
+index 00000000..276a1567
+--- /dev/null
++++ b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
+@@ -0,0 +1,362 @@
++//! The arithmetic of the BCM2711 PCIe host bridge: register values, the
++//! devicetree's `ranges`, `dma-ranges` and `interrupt-map` cells, BAR
++//! sizes. No hardware here, so it is tested on the build host
++//! (`rustc --edition 2021 --test brcmstb_layout.rs`).
++//!
++//! Register layout from the BCM2711 PCIe block as Linux and U-Boot drive
++//! it (`pcie-brcmstb`); the code here is our own.
++
++// Register offsets in the bridge's block.
++pub const RC_CFG_VENDOR_SPECIFIC_REG1: usize = 0x0188;
++pub const RC_CFG_PRIV1_ID_VAL3: usize = 0x043c;
++pub const MISC_MISC_CTRL: usize = 0x4008;
++pub const MISC_CPU_2_PCIE_MEM_WIN0_LO: usize = 0x400c;
++pub const MISC_CPU_2_PCIE_MEM_WIN0_HI: usize = 0x4010;
++pub const MISC_RC_BAR1_CONFIG_LO: usize = 0x402c;
++pub const MISC_RC_BAR2_CONFIG_LO: usize = 0x4034;
++pub const MISC_RC_BAR2_CONFIG_HI: usize = 0x4038;
++pub const MISC_RC_BAR3_CONFIG_LO: usize = 0x403c;
++pub const MISC_PCIE_STATUS: usize = 0x4068;
++pub const MISC_REVISION: usize = 0x406c;
++pub const MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT: usize = 0x4070;
++pub const MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI: usize = 0x4080;
++pub const MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI: usize = 0x4084;
++pub const MISC_HARD_PCIE_HARD_DEBUG: usize = 0x4204;
++pub const INTR2_CPU_CLR: usize = 0x4308;
++pub const INTR2_CPU_MASK_SET: usize = 0x4310;
++pub const EXT_CFG_DATA: usize = 0x8000;
++pub const EXT_CFG_INDEX: usize = 0x9000;
++pub const RGR1_SW_INIT_1: usize = 0x9210;
++/// Bytes of the block to map (the devicetree says 0x9310).
++pub const BLOCK_SIZE: usize = 0xa000;
++
++// MISC_CTRL
++pub const MISC_CTRL_SCB_ACCESS_EN: u32 = 1 << 12;
++pub const MISC_CTRL_CFG_READ_UR_MODE: u32 = 1 << 13;
++pub const MISC_CTRL_MAX_BURST_MASK: u32 = 3 << 20;
++pub const MISC_CTRL_SCB0_SIZE_SHIFT: u32 = 27;
++pub const MISC_CTRL_SCB0_SIZE_MASK: u32 = 0x1f << 27;
++// PCIE_STATUS
++pub const STATUS_PHYLINKUP: u32 = 1 << 4;
++pub const STATUS_DL_ACTIVE: u32 = 1 << 5;
++pub const STATUS_PORT_RC: u32 = 1 << 7;
++// HARD_DEBUG
++pub const HARD_DEBUG_CLKREQ_DEBUG_ENABLE: u32 = 1 << 1;
++pub const HARD_DEBUG_SERDES_IDDQ: u32 = 1 << 27;
++// RGR1_SW_INIT_1
++pub const SW_INIT_PERST: u32 = 1 << 0;
++pub const SW_INIT_BRIDGE: u32 = 1 << 1;
++// VENDOR_SPECIFIC_REG1: endian mode of BAR2 (inbound), 0 = little.
++pub const VENDOR_REG1_ENDIAN_BAR2_MASK: u32 = 3 << 2;
++/// Class code of a PCI-to-PCI bridge, which the root port has to report.
++pub const CLASS_BRIDGE: u32 = 0x06_04_00;
++
++/// Both link bits: the PHY is up and the data link layer is active.
++pub fn link_up(status: u32) -> bool {
++    status & (STATUS_PHYLINKUP | STATUS_DL_ACTIVE) == STATUS_PHYLINKUP | STATUS_DL_ACTIVE
++}
++
++/// The value for `EXT_CFG_INDEX` that opens the configuration space of a
++/// function behind the root port at `EXT_CFG_DATA`.
++pub fn cfg_index(bus: u8, device: u8, function: u8) -> u32 {
++    u32::from(bus) << 20 | u32::from(device & 0x1f) << 15 | u32::from(function & 7) << 12
++}
++
++/// The size field of an inbound window (RC_BAR2, SCB0 in MISC_CTRL) for
++/// `size` bytes, rounded up to a power of two; `None` outside 4 KB..32 GB.
++pub fn inbound_size_code(size: u64) -> Option<u32> {
++    if size == 0 {
++        return None;
++    }
++    let log2 = 64 - (size - 1).leading_zeros();
++    match log2 {
++        12..=15 => Some(log2 - 12 + 0x1c),
++        16..=35 => Some(log2 - 15),
++        _ => None,
++    }
++}
++
++/// The values of the four registers of outbound window 0, which makes CPU
++/// addresses `cpu..cpu + size` reach PCI addresses `pci..pci + size`:
++/// (WIN0_LO, WIN0_HI, BASE_LIMIT, BASE_HI, LIMIT_HI). The CPU side works in
++/// megabytes.
++pub fn outbound_window(cpu: u64, pci: u64, size: u64) -> (u32, u32, u32, u32, u32) {
++    let base_mb = cpu >> 20;
++    let limit_mb = (cpu + size - 1) >> 20;
++    let base_limit = ((limit_mb & 0xfff) as u32) << 20 | ((base_mb & 0xfff) as u32) << 4;
++    (pci as u32, (pci >> 32) as u32, base_limit, (base_mb >> 12) as u32 & 0xff, (limit_mb >> 12) as u32 & 0xff)
++}
++
++/// A memory window of the bridge's own type 1 header (offset 0x20): PCI
++/// addresses `base..=limit` in 1 MB steps, below 4 GB.
++pub fn bridge_memory_window(base: u32, limit: u32) -> u32 {
++    (limit & 0xfff0_0000) | (base >> 16) & 0xfff0
++}
++
++/// From what a BAR reads back after all ones were written: its size, or
++/// `None` if it is not there. `upper` is the upper half of a 64-bit BAR
++/// read back the same way.
++pub fn bar_size(readback: u32, upper: Option<u32>) -> Option<u64> {
++    if readback & 1 != 0 {
++        // I/O BARs: the bridge has no I/O window.
++        return None;
++    }
++    let mask = u64::from(readback & !0xf) | u64::from(upper.unwrap_or(0xffff_ffff)) << 32;
++    if readback & !0xf == 0 {
++        return None;
++    }
++    Some((!mask).wrapping_add(1))
++}
++
++/// Whether a BAR's low word says it is 64 bits wide.
++pub fn bar_is_64(low: u32) -> bool {
++    low & 1 == 0 && (low >> 1) & 3 == 2
++}
++
++/// Reads a number of `cells` big-endian 32-bit cells.
++fn cells(data: &[u8], at: &mut usize, cells: usize) -> Option<u64> {
++    let mut value = 0u64;
++    for _ in 0..cells {
++        let bytes = data.get(*at..*at + 4)?;
++        value = value << 32 | u64::from(u32::from_be_bytes(bytes.try_into().ok()?));
++        *at += 4;
++    }
++    Some(value)
++}
++
++/// One entry of a PCI node's `ranges` or `dma-ranges`: the PCI address
++/// flags (first cell), the PCI address, the parent's address and the size.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Range {
++    pub flags: u32,
++    pub pci: u64,
++    pub parent: u64,
++    pub size: u64,
++}
++
++impl Range {
++    /// A memory range (32 or 64 bit), not I/O or configuration space.
++    pub fn is_memory(&self) -> bool {
++        matches!((self.flags >> 24) & 3, 2 | 3)
++    }
++}
++
++/// The entries of a PCI node's `ranges` or `dma-ranges` property: three
++/// PCI address cells, `parent_cells` cells of the parent's address,
++/// `size_cells` cells of size.
++pub fn pci_ranges(data: &[u8], parent_cells: usize, size_cells: usize) -> Vec<Range> {
++    let mut out = Vec::new();
++    let mut at = 0;
++    while at < data.len() {
++        let (Some(flags), Some(pci), Some(parent), Some(size)) =
++            (cells(data, &mut at, 1), cells(data, &mut at, 2), cells(data, &mut at, parent_cells), cells(data, &mut at, size_cells))
++        else {
++            break;
++        };
++        out.push(Range { flags: flags as u32, pci, parent, size });
++    }
++    out
++}
++
++/// One entry of a plain bus node's `ranges`: child address, parent
++/// address, size.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct BusRange {
++    pub child: u64,
++    pub parent: u64,
++    pub size: u64,
++}
++
++pub fn bus_ranges(data: &[u8], child_cells: usize, parent_cells: usize, size_cells: usize) -> Vec<BusRange> {
++    let mut out = Vec::new();
++    let mut at = 0;
++    while at < data.len() {
++        let (Some(child), Some(parent), Some(size)) =
++            (cells(data, &mut at, child_cells), cells(data, &mut at, parent_cells), cells(data, &mut at, size_cells))
++        else {
++            break;
++        };
++        out.push(BusRange { child, parent, size });
++    }
++    out
++}
++
++/// The first (address, size) of a `reg` property.
++pub fn reg_first(data: &[u8], address_cells: usize, size_cells: usize) -> Option<(u64, u64)> {
++    let mut at = 0;
++    Some((cells(data, &mut at, address_cells)?, cells(data, &mut at, size_cells)?))
++}
++
++/// A child bus address translated through a bus's `ranges`; unchanged if
++/// no range holds it (an empty `ranges` maps one to one).
++pub fn translate(ranges: &[BusRange], address: u64) -> u64 {
++    ranges
++        .iter()
++        .find(|r| address >= r.child && address - r.child < r.size)
++        .map_or(address, |r| r.parent + (address - r.child))
++}
++
++/// One entry of `interrupt-map`, as pcid's `InterruptMap` wants it.
++#[derive(Clone, Debug, PartialEq)]
++pub struct IntMapEntry {
++    pub addr: [u32; 3],
++    pub pin: u32,
++    pub parent_phandle: u32,
++    pub parent_interrupt: [u32; 3],
++    pub parent_interrupt_cells: usize,
++}
++
++/// The entries of `interrupt-map` with three address cells and one
++/// interrupt cell on the PCI side. `parent` gives the `#address-cells` and
++/// `#interrupt-cells` of an interrupt parent by phandle.
++pub fn interrupt_map(data: &[u8], parent: impl Fn(u32) -> Option<(usize, usize)>) -> Vec<IntMapEntry> {
++    let mut out = Vec::new();
++    let mut at = 0;
++    while at < data.len() {
++        let mut word = || cells(data, &mut at, 1).map(|v| v as u32);
++        let (Some(a0), Some(a1), Some(a2), Some(pin), Some(phandle)) = (word(), word(), word(), word(), word()) else {
++            break;
++        };
++        let Some((address_cells, interrupt_cells)) = parent(phandle) else { break };
++        if interrupt_cells == 0 || interrupt_cells > 3 {
++            break;
++        }
++        // The parent's unit address: not needed.
++        if cells(data, &mut at, address_cells).is_none() && address_cells > 0 {
++            break;
++        }
++        let mut parent_interrupt = [0; 3];
++        for cell in parent_interrupt.iter_mut().take(interrupt_cells) {
++            match cells(data, &mut at, 1) {
++                Some(v) => *cell = v as u32,
++                None => return out,
++            }
++        }
++        out.push(IntMapEntry {
++            addr: [a0, a1, a2],
++            pin,
++            parent_phandle: phandle,
++            parent_interrupt,
++            parent_interrupt_cells: interrupt_cells,
++        });
++    }
++    out
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn be(words: &[u32]) -> Vec<u8> {
++        words.iter().flat_map(|w| w.to_be_bytes()).collect()
++    }
++
++    #[test]
++    fn config_index() {
++        assert_eq!(cfg_index(1, 0, 0), 0x0010_0000);
++        assert_eq!(cfg_index(2, 31, 7), 0x002f_f000);
++    }
++
++    #[test]
++    fn inbound_sizes() {
++        // Linux's encoding: 4 KB..32 KB at 0x1c.., 64 KB..32 GB at 1...
++        assert_eq!(inbound_size_code(4096), Some(0x1c));
++        assert_eq!(inbound_size_code(0x8000), Some(0x1f));
++        assert_eq!(inbound_size_code(0x1_0000), Some(1));
++        assert_eq!(inbound_size_code(1 << 30), Some(15));
++        // 3 GB rounds up to 4 GB.
++        assert_eq!(inbound_size_code(0xc000_0000), Some(17));
++        assert_eq!(inbound_size_code(1 << 32), Some(17));
++        assert_eq!(inbound_size_code(1 << 36), None);
++        assert_eq!(inbound_size_code(0), None);
++    }
++
++    #[test]
++    fn outbound() {
++        // Pi 4 devicetree: CPU 0x6_0000_0000 to PCI 0xf800_0000, 64 MB.
++        let (lo, hi, base_limit, base_hi, limit_hi) = outbound_window(0x6_0000_0000, 0xf800_0000, 0x400_0000);
++        assert_eq!((lo, hi), (0xf800_0000, 0));
++        // base 0x6000 MB, limit 0x603f MB: low 12 bits 0x000 and 0x03f.
++        assert_eq!(base_limit, 0x03f0_0000);
++        assert_eq!((base_hi, limit_hi), (6, 6));
++        // 1 GB at PCI 0xc000_0000 (newer firmware devicetrees).
++        let (lo, _, base_limit, base_hi, limit_hi) = outbound_window(0x6_0000_0000, 0xc000_0000, 0x4000_0000);
++        assert_eq!(lo, 0xc000_0000);
++        assert_eq!(base_limit, 0x3ff0_0000);
++        assert_eq!((base_hi, limit_hi), (6, 6));
++    }
++
++    #[test]
++    fn bridge_window() {
++        assert_eq!(bridge_memory_window(0xf800_0000, 0xfbff_ffff), 0xfbf0_f800);
++    }
++
++    #[test]
++    fn bars() {
++        // 4 KB 64-bit BAR (the VL805's xHCI registers).
++        assert!(bar_is_64(0xffff_f004));
++        assert_eq!(bar_size(0xffff_f004, Some(0xffff_ffff)), Some(0x1000));
++        // 1 MB 32-bit.
++        assert!(!bar_is_64(0xfff0_0000));
++        assert_eq!(bar_size(0xfff0_0000, None), Some(0x10_0000));
++        assert_eq!(bar_size(0, None), None);
++        assert_eq!(bar_size(0xffff_ff01, None), None);
++    }
++
++    #[test]
++    fn ranges() {
++        // ranges = <0x02000000 0x0 0xf8000000 0x6 0x00000000 0x0 0x04000000>
++        let data = be(&[0x0200_0000, 0, 0xf800_0000, 6, 0, 0, 0x0400_0000]);
++        let r = pci_ranges(&data, 2, 2);
++        assert_eq!(r, vec![Range { flags: 0x0200_0000, pci: 0xf800_0000, parent: 0x6_0000_0000, size: 0x400_0000 }]);
++        assert!(r[0].is_memory());
++        // dma-ranges = <0x02000000 0x0 0x0 0x0 0x0 0x0 0xc0000000>
++        let data = be(&[0x0200_0000, 0, 0, 0, 0, 0, 0xc000_0000]);
++        assert_eq!(pci_ranges(&data, 2, 2)[0].size, 0xc000_0000);
++        // Cut off: nothing.
++        assert!(pci_ranges(&data[..20], 2, 2).is_empty());
++    }
++
++    #[test]
++    fn scb_translation() {
++        // /scb ranges: <0x0 0x7c000000 0x0 0xfc000000 0x0 0x03800000>, ...
++        let data = be(&[0, 0x7c00_0000, 0, 0xfc00_0000, 0, 0x0380_0000, 6, 0, 6, 0, 0x40, 0]);
++        let r = bus_ranges(&data, 2, 2, 2);
++        assert_eq!(r.len(), 2);
++        assert_eq!(translate(&r, 0x7d50_0000), 0xfd50_0000);
++        assert_eq!(translate(&r, 0x6_0000_1000), 0x6_0000_1000);
++        assert_eq!(translate(&[], 0x1234), 0x1234);
++    }
++
++    #[test]
++    fn interrupts() {
++        // interrupt-map = <0 0 0 1 &gicv2 GIC_SPI 143 IRQ_TYPE_LEVEL_HIGH>,
++        // the GIC with #address-cells 0 and #interrupt-cells 3.
++        let data = be(&[0, 0, 0, 1, 0x10, 0, 143, 4]);
++        let map = interrupt_map(&data, |p| (p == 0x10).then_some((0, 3)));
++        assert_eq!(
++            map,
++            vec![IntMapEntry { addr: [0; 3], pin: 1, parent_phandle: 0x10, parent_interrupt: [0, 143, 4], parent_interrupt_cells: 3 }]
++        );
++        // Unknown parent: stop.
++        assert!(interrupt_map(&data, |_| None).is_empty());
++        // A parent with one address cell.
++        let data = be(&[0, 0, 0, 2, 0x11, 0, 0, 144, 4]);
++        let map = interrupt_map(&data, |_| Some((1, 3)));
++        assert_eq!(map[0].parent_interrupt, [0, 144, 4]);
++    }
++
++    #[test]
++    fn reg() {
++        // reg = <0x0 0x7d500000 0x9310> under /scb (2 address cells, 1 size cell).
++        assert_eq!(reg_first(&be(&[0, 0x7d50_0000, 0x9310]), 2, 1), Some((0x7d50_0000, 0x9310)));
++        assert_eq!(reg_first(&be(&[0, 0x7d50_0000]), 2, 1), None);
++    }
++
++    #[test]
++    fn link() {
++        assert!(link_up(0xb0));
++        assert!(!link_up(0x90));
++        assert!(!link_up(0xa0));
++    }
++}
+diff --git a/drivers/pcid/src/cfg_access/mod.rs b/drivers/pcid/src/cfg_access/mod.rs
+index 67875e8e..046b4fb1 100644
+--- a/drivers/pcid/src/cfg_access/mod.rs
++++ b/drivers/pcid/src/cfg_access/mod.rs
+@@ -5,8 +5,12 @@ use common::{MemoryType, PhysBorrowed, Prot};
+ use fdt::Fdt;
+ use pci_types::{ConfigRegionAccess, PciAddress};
+ 
++use self::brcmstb::Brcmstb;
+ use self::fallback::Pci;
+ 
++mod brcmstb;
++mod brcmstb_dt;
++mod brcmstb_layout;
+ mod fallback;
+ 
+ pub struct InterruptMap {
+@@ -217,6 +221,8 @@ pub struct Pcie {
+     pub interrupt_map: Vec<InterruptMap>,
+     pub interrupt_map_mask: [u32; 4],
+     fallback: Pci,
++    /// The BCM2711's bridge (Raspberry Pi 4 family), which has no ECAM.
++    brcm: Option<Brcmstb>,
+ }
+ struct Alloc {
+     seg: u16,
+@@ -232,6 +238,20 @@ const BYTES_PER_BUS: usize = 1 << 20;
+ 
+ impl Pcie {
+     pub fn new() -> Self {
++        match Brcmstb::probe() {
++            Some(Ok(mut brcm)) => {
++                return Self {
++                    lock: Mutex::new(()),
++                    allocs: Vec::new(),
++                    interrupt_map: std::mem::take(&mut brcm.interrupt_map),
++                    interrupt_map_mask: brcm.interrupt_map_mask,
++                    fallback: Pci::new(),
++                    brcm: Some(brcm),
++                };
++            }
++            Some(Err(err)) => log::error!("pcid: BCM2711 PCIe: {err}"),
++            None => {}
++        }
+         match Mcfg::with(Self::from_allocs) {
+             Ok(pcie) => pcie,
+             Err(acpi_error) => match locate_ecam_dtb(Self::from_allocs) {
+@@ -250,6 +270,7 @@ impl Pcie {
+                         fallback: Pci::new(),
+                         interrupt_map: Vec::new(),
+                         interrupt_map_mask: [u32::MAX, u32::MAX, u32::MAX, u32::MAX],
++                        brcm: None,
+                     }
+                 }
+             },
+@@ -298,9 +319,16 @@ impl Pcie {
+             interrupt_map,
+             interrupt_map_mask,
+             fallback: Pci::new(),
++            brcm: None,
+         })
+     }
+ 
++    /// The CPU address of a PCI memory address: they differ behind a bridge
++    /// whose outbound window moves addresses (BCM2711).
++    pub fn cpu_address(&self, pci: u64) -> u64 {
++        self.brcm.as_ref().map_or(pci, |brcm| brcm.cpu_address(pci))
++    }
++
+     fn bus_addr(&self, seg: u16, bus: u8) -> Option<*mut u32> {
+         let alloc = match self
+             .allocs
+@@ -354,6 +382,9 @@ impl ConfigRegionAccess for Pcie {
+     unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
+         let _guard = self.lock.lock().unwrap();
+ 
++        if let Some(brcm) = &self.brcm {
++            return brcm.read(address, offset);
++        }
+         match self.mmio_addr(address, offset) {
+             Some(addr) => addr.read_volatile(),
+             None => self.fallback.read(address, offset),
+@@ -363,6 +394,9 @@ impl ConfigRegionAccess for Pcie {
+     unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
+         let _guard = self.lock.lock().unwrap();
+ 
++        if let Some(brcm) = &self.brcm {
++            return brcm.write(address, offset, value);
++        }
+         match self.mmio_addr(address, offset) {
+             Some(addr) => addr.write_volatile(value),
+             None => self.fallback.write(address, offset, value),
+diff --git a/drivers/pcid/src/main.rs b/drivers/pcid/src/main.rs
+index 7a27cda8..e0200a9e 100644
+--- a/drivers/pcid/src/main.rs
++++ b/drivers/pcid/src/main.rs
+@@ -42,14 +42,17 @@ fn handle_parsed_header(
+         }
+         match endpoint_header.bar(i, pcie) {
+             Some(TyBar::Io { port }) => bars[i as usize] = PciBar::Port(port.try_into().unwrap()),
++            // Drivers map BARs at CPU addresses, which differ from the PCI
++            // addresses behind some bridges (BCM2711).
+             Some(TyBar::Memory32 {
+                 address,
+                 size,
+                 prefetchable: _,
+             }) => {
+-                bars[i as usize] = PciBar::Memory32 {
+-                    addr: address,
+-                    size,
++                let cpu = pcie.cpu_address(address.into());
++                bars[i as usize] = match u32::try_from(cpu) {
++                    Ok(addr) => PciBar::Memory32 { addr, size },
++                    Err(_) => PciBar::Memory64 { addr: cpu, size: size.into() },
+                 }
+             }
+             Some(TyBar::Memory64 {
+@@ -58,7 +61,7 @@ fn handle_parsed_header(
+                 prefetchable: _,
+             }) => {
+                 bars[i as usize] = PciBar::Memory64 {
+-                    addr: address,
++                    addr: pcie.cpu_address(address),
+                     size,
+                 };
+                 skip = true; // Each 64bit memory BAR occupies two slots
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 58758304..eeedf9af 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -23,6 +23,11 @@
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
++//! - `/scheme/rpi-firmware/xhci_reset` (write only): writing a PCI address
++//!   (`bus << 20 | device << 15 | function << 12`, hex with `0x` or
++//!   decimal) makes the firmware reset the VL805 USB controller there and
++//!   load its firmware (Pi 4 family, `NOTIFY_XHCI_RESET`). pcid does this
++//!   after bringing the PCIe link up.
+ //!
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -58,7 +63,7 @@ const PAGE_SIZE: usize = 4096;
+ 
+ const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led", "xhci_reset"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -163,6 +168,18 @@ impl FirmwareScheme {
+                 println!("rpi-firmwared: ARM clock {} MHz, governor off", rate / 1_000_000);
+                 Ok(())
+             }
++            "xhci_reset" => {
++                let address = match value.strip_prefix("0x") {
++                    Some(hex) => u32::from_str_radix(hex, 16),
++                    None => value.parse(),
++                }
++                .map_err(|_| Error::new(EINVAL))?;
++                // The answer repeats the address; only the message status
++                // counts.
++                mbox.set_property(TAG_NOTIFY_XHCI_RESET, &[address]).map_err(log)?;
++                println!("rpi-firmwared: VL805 at PCI 0x{address:08x} reset, firmware loaded");
++                Ok(())
++            }
+             _ => Err(Error::new(EROFS)),
+         }
+     }
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e7..4b7b2cd7 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -46,6 +46,8 @@ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
++/// Reset the VL805 USB controller behind PCIe and load its firmware (Pi 4).
++pub const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
+-- 
+2.53.0
+
