@@ -1,0 +1,53 @@
+From 48ff40da6e8d8f8e2d1ed7f58579c49d603f63f5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 10:09:37 +0000
+Subject: [PATCH] netdb: getaddrinfo gives EAI_NONAME for an unknown name,
+ EAI_AGAIN on a timeout
+
+When the name server answered with no address (NXDOMAIN, or no A
+record), lookup_host returned an empty list and getaddrinfo fell through
+to EAI_FAIL, "Non-recoverable error". Programs that check for EAI_NONAME
+to say "unknown host" or to try another name got the wrong answer
+(redox-rpi #374, Pi test 334). Now it is EAI_NONAME.
+
+A lookup that timed out (ETIMEDOUT, or EAGAIN) became EAI_SYSTEM; it is
+now EAI_AGAIN, a temporary failure. Other errors stay EAI_SYSTEM with
+errno set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/netdb/mod.rs | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/header/netdb/mod.rs b/src/header/netdb/mod.rs
+index b731551f..e7a3ecbb 100644
+--- a/src/header/netdb/mod.rs
++++ b/src/header/netdb/mod.rs
+@@ -167,6 +167,12 @@ enum AddrInfoErr {
+ }
+ impl From<Errno> for AddrInfoErr {
+     fn from(value: Errno) -> Self {
++        use crate::header::errno::{EAGAIN, ETIMEDOUT};
++        // A name server that did not answer in time is a temporary failure:
++        // the caller may try again later (redox-rpi #374).
++        if value.0 == ETIMEDOUT || value.0 == EAGAIN {
++            return Self::EAI_AGAIN;
++        }
+         value.sync();
+         Self::EAI_SYSTEM
+     }
+@@ -1006,7 +1012,10 @@ fn getaddrinfo_inner(
+         }
+     }
+ 
+-    first_info.ok_or(AddrInfoErr::EAI_FAIL)
++    // The name server answered, but with no address: the name does not
++    // exist. EAI_FAIL ("Non-recoverable error") told callers that looking
++    // it up was impossible (redox-rpi #374).
++    first_info.ok_or(AddrInfoErr::EAI_NONAME)
+ }
+ 
+ /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/freeaddrinfo.html>.
+-- 
+2.53.0
+
