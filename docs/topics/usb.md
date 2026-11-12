@@ -31,6 +31,17 @@
 
 ## In progress
 
+- [#214](https://github.com/redox-rpi/redox-rpi/issues/214) cheaper
+  keyboard poll at idle, branch `dwc2d-idle-poll`, base `0096`. A poll of
+  the test Pi's low-speed keyboard behind the hub spins about 130 µs,
+  data or not, at 50 polls/s (Pi row 242: 22 ms/s, 2.2 % of a core). Now
+  the keyboard is polled every 10 ms only while a key is held and for 3 s
+  after the last change, otherwise every 40 ms. A keyboard that refuses
+  SET_IDLE is logged. **QEMU** (idle, `dwc2d-idle` counters, +60 to
+  +180 s): timer wakeups 50.6/s → 19.5/s, their busy time 9.1 → 2.0 ms/s;
+  keyboard test passes. Pi: row 373 (no person, idle CPU); fast typing
+  needs a person.
+
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
   (on `usb-hotplug`), experiment `usb-storage` (base `0038` there).
