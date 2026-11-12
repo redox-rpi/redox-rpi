@@ -50,8 +50,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck cppcheck
+          # Report-only: a mirror outage must not cost the whole report;
+          # a missing tool shows as n/a.
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends shellcheck cppcheck ||
+              echo "::warning::apt-get failed; shellcheck/cppcheck may be missing"
           pip install --quiet ruff==0.6.9
           rustup component add clippy llvm-tools-preview
       - uses: taiki-e/install-action@v2
@@ -70,8 +73,12 @@ jobs:
           echo "| shellcheck warnings | $(grep -c ': warning:' <<< "$sc") |" >> "$sum"
           rf="$(ruff check --select E,F,W,B --ignore E501 --output-format concise $(git ls-files '*.py') 2>/dev/null)"
           echo "| ruff E/F/W/B (no E501) | $(grep -c ':[0-9]*:[0-9]*: ' <<< "$rf") |" >> "$sum"
+          if ! command -v cppcheck > /dev/null; then
+              echo "| cppcheck | n/a (not installed) |" >> "$sum"; cp=""
+          else
           cp="$(cppcheck --quiet --enable=warning,portability --template='{file}:{line}: {severity}: {message}' $(git ls-files '*.c') 2>&1)"
           echo "| cppcheck | $(grep -c ': ' <<< "$cp") |" >> "$sum"
+          fi
           total=0; unsafe=0; rows=""
           for toml in tools/*/Cargo.toml; do
               dir="$(dirname "$toml")"; crate="$(basename "$dir")"
@@ -105,6 +112,8 @@ jobs:
           echo "" >> "$sum"
           printf '```text\n%s\n%s\n%s\n```\n' "$sc" "$rf" "$cp" | head -c 60000 >> "$sum"
           echo "</details>" >> "$sum"
+          # The step summary needs a GitHub sign-in; the log does not.
+          cat "$sum"
           exit 0
 
   audit:
@@ -131,4 +140,5 @@ jobs:
               w="$(jq -r '[.warnings[]?[]?] | length' <<< "$out" 2>/dev/null || echo error)"
               echo "| \`$lock\` | $v | $w |" >> "$sum"
           done
+          cat "$sum"
           exit 0
