@@ -200,7 +200,7 @@ if [ "$result" = pass ]; then
             --starts "$starts" --manifest "$work/manifest.toml" --serial-log "$console" \
             --tcp-host 10.0.2.2 --tcp-mib 1 --dead-dns 10.0.2.99 \
             --report "$work/regression-set.md" > "$work/regression-set.out" 2>&1; then
-            ok "regression-set.py --starts $starts: $(grep -E '^(PASS|SKIP) ' "$work/regression-set.out" | awk '{print $1, $2}' | paste -sd ' ' -)"
+            ok "regression-set.py --starts $starts: $(grep -E '^(PASS|SKIP) ' "$work/regression-set.out" | awk '{sub(/:$/, "", $2); print $1, $2}' | paste -sd ' ' -)"
         else
             fail "regression-set.py: $(grep -E '^FAIL ' "$work/regression-set.out" | head -3 | cut -c1-120 | paste -sd ';' -)"
         fi
