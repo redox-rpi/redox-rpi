@@ -36,11 +36,13 @@
   the test Pi's low-speed keyboard behind the hub spins about 130 µs,
   data or not, at 50 polls/s (Pi row 242: 22 ms/s, 2.2 % of a core). Now
   the keyboard is polled every 10 ms only while a key is held and for 3 s
-  after the last change, otherwise every 40 ms. A keyboard that refuses
-  SET_IDLE is logged. **QEMU** (idle, `dwc2d-idle` counters, +60 to
+  after the last change, otherwise every 40 ms; the same for mice and
+  other HID pointers. A keyboard that refuses SET_IDLE is logged. **QEMU** (idle, `dwc2d-idle` counters, +60 to
   +180 s): timer wakeups 50.6/s → 19.5/s, their busy time 9.1 → 2.0 ms/s;
-  keyboard test passes. Pi: row 378 (no person, idle CPU); fast typing
-  needs a person.
+  keyboard test passes, mouse test 18/18. Pi row 378 was inconclusive:
+  no keyboard on the 3B+, only a low-speed gamepad (0079:0011) polled as
+  a pointer, so the pointer poll got the same change; rerun row 386. Fast
+  typing needs a person.
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
