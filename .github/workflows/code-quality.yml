@@ -33,6 +33,24 @@ jobs:
         run: |
           pip install --quiet pyflakes==3.2.0
           git ls-files -z '*.py' | xargs -0 python3 -m pyflakes
+      - name: workflow files parse
+        # GitHub cannot load a workflow file with a YAML error and only shows
+        # a failed run without a log on every push (ci-main-red.yml, #371).
+        run: |
+          pip install --quiet pyyaml==6.0.2
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.y*ml")):
+              try:
+                  data = yaml.safe_load(open(path))
+                  if not isinstance(data, dict) or "jobs" not in data:
+                      raise ValueError("no jobs")
+              except Exception as e:
+                  print(f"::error file={path}::{e}")
+                  bad += 1
+          sys.exit(1 if bad else 0)
+          PY
       - name: cargo test (tool crates with host tests)
         run: |
           for crate in assistant cputop socdump timerd timesync welcome; do
