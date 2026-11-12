@@ -1,4 +1,4 @@
-From 24a7c3413ca241f29990f72e7235f4e49845f5b6 Mon Sep 17 00:00:00 2001
+From 642a3217705c54357cdc8bdb450e597e22a22fce Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 11:21:41 +0000
 Subject: [PATCH] bcmgenetd: Ethernet of the Raspberry Pi 4 and 400 (BCM2711
@@ -28,14 +28,14 @@ redox-rpi #306.
  drivers/net/bcmgenetd/Cargo.toml   |  27 ++
  drivers/net/bcmgenetd/src/dt.rs    |  99 ++++++
  drivers/net/bcmgenetd/src/lib.rs   |  36 ++
- drivers/net/bcmgenetd/src/main.rs  | 397 +++++++++++++++++++++
+ drivers/net/bcmgenetd/src/main.rs  | 401 ++++++++++++++++++++++
  drivers/net/bcmgenetd/src/regs.rs  | 174 ++++++++++
  drivers/net/bcmgenetd/src/ring.rs  | 532 +++++++++++++++++++++++++++++
  drivers/rpi-firmwared/src/main.rs  |   8 +
  drivers/rpi-firmwared/src/mbox.rs  |   4 +-
  init.initfs.d/40_bcmgenetd.service |   9 +
  init.initfs.d/40_drivers.target    |   1 +
- 12 files changed, 1288 insertions(+), 2 deletions(-)
+ 12 files changed, 1292 insertions(+), 2 deletions(-)
  create mode 100644 drivers/net/bcmgenetd/Cargo.toml
  create mode 100644 drivers/net/bcmgenetd/src/dt.rs
  create mode 100644 drivers/net/bcmgenetd/src/lib.rs
@@ -251,10 +251,10 @@ index 0000000..17722a0
 +}
 diff --git a/drivers/net/bcmgenetd/src/main.rs b/drivers/net/bcmgenetd/src/main.rs
 new file mode 100644
-index 0000000..ed4f26d
+index 0000000..b85577f
 --- /dev/null
 +++ b/drivers/net/bcmgenetd/src/main.rs
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,401 @@
 +//! bcmgenetd: the Ethernet port of the Raspberry Pi 4 and 400 (BCM2711
 +//! GENET v5 with a BCM54213PE PHY) as the network scheme `network.genet`.
 +//!
@@ -523,7 +523,11 @@ index 0000000..ed4f26d
 +
 +        let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
 +        let Some(found) = Fdt::new(&dtb).ok().and_then(|fdt| find(&fdt)) else {
-+            // Not a Pi 4 or 400: nothing to do.
++            // Not a Pi 4 or 400, or the node is disabled (QEMU's raspi4b
++            // disables it): nothing to do.
++            if Fdt::new(&dtb).is_ok_and(|fdt| fdt.find_compatible(COMPATIBLE).is_some()) {
++                println!("bcmgenetd: GENET disabled in the devicetree; not starting");
++            }
 +            daemon.ready();
 +            process::exit(0);
 +        };
