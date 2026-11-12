@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Nightly stable image: build origin/main as the network-boot image, test it
 # on the real Pi and make it the stable image if it passes
-# (docs/test-plan.md, "Stable image").
+# (lab.md in redox-rpi/pi-tests, "Stable image").
 #
 # Runs on the build host from its own clone (default ~/redox-rpi-stable),
 # started by the systemd user timer redox-stable.timer, or by hand:
@@ -10,7 +10,7 @@
 #
 #   --force     build and test even if nothing that goes into the image
 #               changed since the current stable image
-#   --taken <N> for a run by hand: test N in docs/test-plan.md is this run
+#   --taken <N> for a run by hand: row N of the test queue is this run
 #               and marked "on the Pi"; any other test on the Pi still stops
 #               the script
 #   --no-push   do not commit, push or open an issue; print what would be done
@@ -19,22 +19,35 @@
 # Steps:
 #   1. Exit if patches/, config/, scripts/ and tools/ on origin/main are the
 #      same as in the commit of the current stable image.
-#   2. Exit if a test in docs/test-plan.md is marked "on the Pi".
+#   2. Exit if a row in the test queue (queue.md on main of
+#      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py.
+#      serial console and run scripts/pi-test.py. Network records (#259,
+#      scripts/network-record.py): the boot (seconds from the login prompt to
+#      the first devsh login), then a 15-minute soak after pi-test.py, pass
+#      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
+#      KPIs, on failed nights too.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
-#      /srv/tftp/stable at it, update "Stable image" in docs/test-plan.md,
-#      append the report to docs/test-reports.md, publish its packages to
-#      the pkg repository /srv/tftp/pkg (scripts/publish-pkg-repo.sh), commit
-#      and push to main.
+#      /srv/tftp/stable at it, publish its packages to the pkg repository
+#      /srv/tftp/pkg (scripts/publish-pkg-repo.sh; a build with a test-only
+#      experiment is built again with --no-test-experiments for the
+#      packages), and in redox-rpi/pi-tests
+#      update "Stable image" in lab.md, write the report to
+#      reports/stable-<date>.md, commit and push to its main.
 #   6. Fail: stage the previous stable image again, reset the Pi, and open or
 #      update the issue "Nightly: main fails on the Pi".
 #   After 1 (nothing new) or 5: start redox-visit.service, the images in
 #   config/visit-images.conf (scripts/build-visit-images.sh).
+#   Every night (1, 5 and 6): scripts/quality-kpis.py at the checked-out
+#   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
+#   its --summary goes into the day's report too. Skipped while the script
+#   does not exist; never fails this script.
 #
-# GitHub access: a token with write access to contents and issues of
-# redox-rpi/redox-rpi in ~/.config/redox-rpi/github-token (mode 600).
+# GitHub access: a token in ~/.config/redox-rpi/github-token (mode 600) with
+# write access to issues of redox-rpi/redox-rpi and to contents of
+# redox-rpi/pi-tests. The pi-tests clone is $PI_TESTS_CLONE (default
+# ~/pi-tests-stable); the script clones it if it is missing.
 
 set -euo pipefail
 
@@ -48,6 +61,8 @@ if [ -z "${UPDATE_STABLE_ROOT:-}" ]; then
 fi
 trap 'rm -f "$0"' EXIT
 REPO=redox-rpi/redox-rpi
+TESTS_REPO=redox-rpi/pi-tests
+TESTS="${PI_TESTS_CLONE:-$HOME/pi-tests-stable}"
 TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
 SERVER=192.168.178.120
@@ -60,7 +75,11 @@ ISSUE_TITLE="Nightly: main fails on the Pi"
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
 RESET_TIMEOUT=120
 BOOT_TIMEOUT=1500
+# Network soak after pi-test.py (#259): ping every 10 s, devsh login every
+# minute.
+SOAK_MINUTES=15
 
+args=("$@")
 force=0
 push=1
 ref=origin/main
@@ -95,8 +114,75 @@ start_visit_images() {
 cd "$ROOT"
 git fetch -q --tags --prune origin
 git checkout -q --detach "$ref"
+# The service copies this script from the clone before the fetch, so it may
+# be yesterday's version: run the one just checked out instead, once.
+if [ -z "${UPDATE_STABLE_REEXEC:-}" ] && ! cmp -s "$0" "$ROOT/scripts/update-stable.sh"; then
+    log "scripts/update-stable.sh changed in $ref, running the new version"
+    copy="$(mktemp)"
+    cp "$ROOT/scripts/update-stable.sh" "$copy"
+    rm -f "$0"
+    UPDATE_STABLE_REEXEC=1 exec bash "$copy" "${args[@]}"
+fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags) ($head)"
+
+# Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
+# 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.
+kpis_dir=""
+# Network records of this night (scripts/network-record.py, #259), appended
+# to network.jsonl in pi-tests with the KPIs.
+netrec=""
+run_kpis() {
+    [ -x scripts/quality-kpis.py ] || { log "no scripts/quality-kpis.py at $ref, no KPIs"; return 0; }
+    kpis_dir="$(mktemp -d)"
+    local clippy=()
+    [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
+        log "quality KPIs collected"
+    else
+        log "quality-kpis.py failed: $(tail -n 1 "$kpis_dir/log.txt")"
+        rm -rf "$kpis_dir"
+        kpis_dir=""
+    fi
+    return 0
+}
+
+# Copy the KPI page into the pi-tests clone (checked out on origin/main) and
+# stage it.
+stage_kpis() {
+    if [ -n "$netrec" ] && [ -s "$netrec" ]; then
+        cat "$netrec" >> "$TESTS/network.jsonl"
+        git -C "$TESTS" add network.jsonl
+    fi
+    [ -n "$kpis_dir" ] || return 0
+    cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
+    git -C "$TESTS" add kpis.md kpis.json
+}
+
+# Nights without a report (nothing new, or a failed build): the KPI page on
+# its own commit. Never fails.
+push_kpis_only() {
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || return 0
+    [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
+    git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
+    stage_kpis
+    git -C "$TESTS" diff --cached --quiet && { log "KPIs unchanged"; return 0; }
+    git -C "$TESTS" -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
+        commit -q -m "Nightly: quality KPIs $(date -u +%Y-%m-%d)" || return 0
+    if [ "$push" = 0 ]; then
+        log "--no-push: KPI commit $(git -C "$TESTS" rev-parse --short HEAD) in $TESTS not pushed"
+    elif git_push "$TESTS" ||
+        { git -C "$TESTS" fetch -q origin && git -C "$TESTS" rebase -q origin/main && git_push "$TESTS"; }; then
+        log "pushed the quality KPIs to $TESTS_REPO main"
+    else
+        log "could not push the quality KPIs to $TESTS_REPO"
+    fi
+    return 0
+}
+
+run_kpis
 
 # 1. Anything new for the image?
 stable_commit=""
@@ -108,21 +194,24 @@ if [ "$force" = 0 ] && [ -n "$stable_commit" ] &&
     git cat-file -e "$stable_commit" 2>/dev/null &&
     git diff --quiet "$stable_commit" HEAD -- patches config scripts tools; then
     log "no change to patches/, config/, scripts/ or tools/ since the stable image, nothing to do"
+    push_kpis_only
     start_visit_images
     exit 0
 fi
 
-# 2. Is the Pi free? The queue is the test plan on main, whatever --ref is.
-queue="$(git show origin/main:docs/test-plan.md)"
+# 2. Is the Pi free? The queue is queue.md on main of pi-tests, whatever --ref is.
+[ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS"
+queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh)" ||
+    { log "cannot read the test queue from $TESTS_REPO, not touching the Pi"; exit 1; }
 on_pi="$(grep '^| .*\*\*on the Pi\*\*' <<< "$queue" || true)"
 [ -n "$taken" ] && on_pi="$(grep -v "^| $taken |" <<< "$on_pi" || true)"
 if [ -n "$on_pi" ]; then
-    log "a test is on the Pi (docs/test-plan.md on main), not touching it"
+    log "a test is on the Pi (queue.md in $TESTS_REPO), not touching it"
     echo "$on_pi" | cut -c1-200
     exit 0
 fi
 if [ -n "$taken" ] && ! grep -q "^| $taken |.*\*\*on the Pi\*\*" <<< "$queue"; then
-    log "test $taken is not marked on the Pi in docs/test-plan.md on main; take the Pi first"
+    log "test $taken is not marked on the Pi in queue.md of $TESTS_REPO; take the Pi first"
     exit 1
 fi
 
@@ -154,8 +243,15 @@ reset_pi() {
         wait_serial "$start" 'redox-rpi: network boot' "$RESET_TIMEOUT" ||
             { log "the Pi did not reset"; return 1; }
     fi
-    wait_serial "$start" 'redox login:' "$BOOT_TIMEOUT" ||
-        { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    if [ "${1:-}" = record ]; then
+        # Waits for the login prompt, then for the first devsh login (#259).
+        python3 scripts/network-record.py boot --serial-log "$SERIAL_LOG" --start "$start" \
+            --timeout "$BOOT_TIMEOUT" --pi "$PI" --build "$build_id" --out "$netrec" ||
+            { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    else
+        wait_serial "$start" 'redox login:' "$BOOT_TIMEOUT" ||
+            { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    fi
     # devshd starts shortly before the prompt; give the network a moment.
     sleep 20
 }
@@ -176,7 +272,7 @@ wait_serial() {
     local start=$1 pattern=$2 timeout=$3 t=0
     while [ "$t" -lt "$timeout" ]; do
         tail -c +"$((start + 1))" "$SERIAL_LOG" | tr -d '\r' | grep -aq "$pattern" && return 0
-        sleep 5; t=$((t + 5))
+        sleep 1; t=$((t + 1))
     done
     return 1
 }
@@ -195,24 +291,30 @@ restore_stable() {
 # 4. Stage and test.
 report="$(mktemp)"
 output="$(mktemp)"
-trap 'rm -f "$report" "$output" "$0"' EXIT
+netrec="$(mktemp)"
+trap 'rm -f "$report" "$output" "$netrec" "$0"' EXIT
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
-if reset_pi; then
+if reset_pi record; then
     log "running scripts/pi-test.py"
-    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" \
+    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
         --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
         passed=1
     fi
+    # Soak on the tested build, pass or fail (#259, #92).
+    log "network soak, $SOAK_MINUTES min"
+    python3 scripts/network-record.py soak --minutes "$SOAK_MINUTES" --pi "$PI" \
+        --build "$build_id" --out "$netrec" || true
 else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
 fi
 
 # The token never appears on a command line, in a URL or in .git/config:
 # the credential helper and curl read it from the file.
+# git_push <dir>: push HEAD of the clone in <dir> to its main.
 git_push() {
-    git -c credential.helper= \
+    git -C "$1" -c credential.helper= \
         -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
         push -q origin HEAD:main
 }
@@ -222,6 +324,33 @@ github() {
         -H "Accept: application/vnd.github+json" "$@"
 }
 
+# Our pkg repository follows the stable image (#44). Never devshd, and the
+# signing key stays in ~/.config/redox-rpi/pkg-key. Every non-release build
+# has the test experiments (config/test-experiments.conf), and
+# scripts/publish-pkg-repo.sh refuses packages from a build with a test-only
+# one (netstack-watch). Then the same commit and options are built again with
+# --no-test-experiments, only for the packages: the stable image on TFTP stays
+# the tested one. Never fails this script.
+publish_pkg_repo() {
+    local plog="$backup/pkg-publish.log" exp test_only=""
+    for exp in $(sed -n 's/^experiments = \[\(.*\)\]/\1/p' "$manifest" | tr -d '",'); do
+        [ -f "patches/experiments/$exp/test-only" ] && test_only="$test_only $exp"
+    done
+    : > "$plog"
+    if [ -n "$test_only" ]; then
+        log "test-only experiment(s)$test_only in $build_id: building the packages again with --no-test-experiments"
+        if ! scripts/build-image.sh "${options[@]}" --no-test-experiments >> "$plog" 2>&1; then
+            log "the package build without test experiments failed, pkg repository not published, see $plog"
+            return 0
+        fi
+        log "packages from $(sed -n 's/^build_id = "\(.*\)"$/\1/p' "$(readlink -f build/manifests/netboot-latest.toml)")"
+    fi
+    scripts/publish-pkg-repo.sh >> "$plog" 2>&1 &&
+        log "published the pkg repository: $(tail -n 1 "$plog")" ||
+        log "publishing the pkg repository failed, see $plog"
+    return 0
+}
+
 # 5. Pass: make it the stable image.
 if [ "$passed" = 1 ]; then
     backup="$TFTP/backup-$build_id"
@@ -229,45 +358,52 @@ if [ "$passed" = 1 ]; then
     cp -p "$TFTP/redox"/* "$backup/"
     ln -sfn "$(basename "$backup")" "$STABLE_LINK"
     log "$build_id is the stable image, backup in $backup"
-    # Our pkg repository follows the stable image (#44). Never devshd, and
-    # the signing key stays in ~/.config/redox-rpi/pkg-key.
-    scripts/publish-pkg-repo.sh > "$backup/pkg-publish.log" 2>&1 &&
-        log "published the pkg repository: $(tail -n 1 "$backup/pkg-publish.log")" ||
-        log "publishing the pkg repository failed, see $backup/pkg-publish.log"
+    publish_pkg_repo
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
-    # The docs change goes on top of the newest main.
-    git fetch -q origin
-    git checkout -q --detach origin/main
-    python3 - "$build_id" "$(date -u +%Y-%m-%d)" "${starts:-see report}" <<'EOF'
+    # The report goes to pi-tests, on top of its newest main.
+    date="$(date -u +%Y-%m-%d)"
+    git -C "$TESTS" fetch -q origin
+    git -C "$TESTS" checkout -q --detach origin/main
+    python3 - "$build_id" "$date" "${starts:-see report}" "$TESTS/lab.md" <<'EOF'
 import re, sys
-build_id, date, starts = sys.argv[1:]
-path = "docs/test-plan.md"
+build_id, date, starts, path = sys.argv[1:]
 text = open(path).read()
 block = (f"<!-- stable-image: written by scripts/update-stable.sh -->\n"
          f"Staged on the TFTP server whenever no test runs: `{build_id}`, tested\n"
-         f"{date} with `scripts/pi-test.py` ([report](test-reports.md), starts:\n"
+         f"{date} with `scripts/pi-test.py` ([report](reports/stable-{date}.md), starts:\n"
          f"{starts}). A copy is in `/srv/tftp/backup-{build_id}/`, and\n"
          f"`/srv/tftp/stable` points to it.\n"
          f"<!-- /stable-image -->")
 new, n = re.subn(r"<!-- stable-image.*?<!-- /stable-image -->", lambda m: block, text, flags=re.S)
 if n != 1:
-    sys.exit("no stable-image block in docs/test-plan.md")
+    sys.exit(f"no stable-image block in {path}")
 open(path, "w").write(new)
 EOF
-    cat "$report" >> docs/test-reports.md
-    git add docs/test-plan.md docs/test-reports.md
-    git -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
+    # A second run on the same day adds to that day's file.
+    out="$TESTS/reports/stable-$date.md"
+    { [ -s "$out" ] && echo; sed '1s/^## /# /' "$report"; } >> "$out"
+    if [ -n "$kpis_dir" ] && [ -s "$kpis_dir/summary.md" ]; then
+        { echo; echo "## Quality KPIs"; echo; cat "$kpis_dir/summary.md"; } >> "$out"
+    fi
+    stage_kpis
+    git -C "$TESTS" add lab.md "reports/stable-$date.md"
+    git -C "$TESTS" -c user.name="redox-rpi nightly" -c user.email="zehrer-xyz@users.noreply.github.com" \
         commit -q -m "Nightly: $build_id is the stable image
 
-scripts/update-stable.sh built $ref ${head:0:7} and ran
+scripts/update-stable.sh built redox-rpi $ref ${head:0:7} and ran
 scripts/pi-test.py on the real Pi: $summary."
     if [ "$push" = 1 ]; then
-        git_push || { git fetch -q origin && git rebase -q origin/main && git_push; }
-        log "pushed $(git rev-parse --short HEAD) to main"
+        if git_push "$TESTS" ||
+            { git -C "$TESTS" fetch -q origin && git -C "$TESTS" rebase -q origin/main && git_push "$TESTS"; }; then
+            log "pushed $(git -C "$TESTS" rev-parse --short HEAD) to $TESTS_REPO main"
+        else
+            # The image is the stable image all the same; only the record is late.
+            log "could not push the report to $TESTS_REPO (token access?); commit kept in $TESTS"
+        fi
     else
-        log "--no-push: commit $(git rev-parse --short HEAD) not pushed"
-        git show --stat HEAD | cat
+        log "--no-push: commit $(git -C "$TESTS" rev-parse --short HEAD) in $TESTS not pushed"
+        git -C "$TESTS" show --stat HEAD | cat
     fi
     start_visit_images
     exit 0
@@ -305,4 +441,5 @@ else
         python3 -c 'import json, sys; print(json.load(sys.stdin)["number"])')"
     log "opened issue #$number"
 fi
+push_kpis_only
 exit 1

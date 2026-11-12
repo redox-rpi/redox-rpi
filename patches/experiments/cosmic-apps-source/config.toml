@@ -3,5 +3,4 @@
 # freedesktop-icons (see README.md). Build together with orbital-apps.
 
 [packages]
-cosmic-edit = "source"
 cosmic-files = "source"

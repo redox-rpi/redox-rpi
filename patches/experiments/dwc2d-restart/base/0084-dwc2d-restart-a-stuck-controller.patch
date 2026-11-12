@@ -270,13 +270,12 @@ index 266c2271..cac88fd5 100644
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
      events
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
-@@ -636,11 +643,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -636,10 +643,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  hotplug.fired();
                  usbdiag::step("scan");
                  let mut cycled = Vec::new();
 +                let mut restart = false;
-                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
-                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+                 if let Ok(request) = aside::cycle_request() {
                      let net = scheme.adapter_mut();
                      let request = request.trim();
 +                    restart = request == "restart";

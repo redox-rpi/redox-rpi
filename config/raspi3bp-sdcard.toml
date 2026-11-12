@@ -33,14 +33,84 @@ i2c = "source"
 spi = "source"
 # `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
 socdump = "source"
-# Programs beyond the minimal system, prebuilt by Redox. Most of them
-# (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
-# start with today's prebuilt aarch64 packages, in QEMU too; see
-# docs/status.md.
+# Programs beyond the minimal system, prebuilt by Redox. They load our
+# libc.so through /lib/ld.so.1; since the x18 fix (#137) they run (Pi test
+# 165: bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils, 450 of
+# 450 starts; #40).
 diffutils = {}
+# curl comes from config/raspi3bp-http-client.toml, which
+# scripts/build-image.sh adds to every image but the Zero 2 W's.
 # `tone` writes test sound for /scheme/audio (tools/tone; base patch
 # 0086, sound from the headphone jack, beta).
 tone = "source"
+# `volume` shows, sets and keeps the volume (tools/volume, #336).
+volume = "source"
+
+# Startup sound (#292): `tone chime`, our own chord, plays once when audiod
+# is up, in the background (oneshot_async), so the boot does not wait for
+# it. `off` in /etc/startup-sound switches it off; the image says `on`.
+# Network and direct boot run / from RAM, where /etc forgets: there a
+# startup-sound file on the data partition (/scheme/data) wins. Those images
+# have 60_data.service; config/raspi3bp.toml makes the unit wait for it
+# (Pi test 314: the script's own wait of 5 s was too short), and the script
+# still waits up to 5 s if the partition is late.
+# First it restores the volume saved by `volume` (#336), so the chime
+# follows it.
+[[files]]
+path = "/etc/startup-sound"
+data = """
+on
+"""
+
+[[files]]
+path = "/usr/lib/startup-sound.ion"
+data = """
+let file = /etc/startup-sound
+if test -f /usr/lib/init.d/60_data.service
+    # Ion's test has no `!`: wait with a counter instead.
+    let n = 0
+    while test $n -lt 5
+        if test -d /scheme/data
+            let n = 5
+        else
+            sleep 1
+            let n += 1
+        end
+    end
+    if test -d /scheme/data
+        if test -f /scheme/data/startup-sound
+            let file = /scheme/data/startup-sound
+        end
+    else
+        echo "startup-sound: no data partition, using /etc/startup-sound"
+    end
+end
+volume restore
+let state = on
+if test -f $file
+    let state = $(cat $file)
+end
+if test $state = off
+    echo "startup-sound: off ($file)"
+else if tone chime -a 0.5 > /scheme/audio
+    echo "startup-sound: played"
+else
+    echo "startup-sound: failed"
+end
+"""
+
+[[files]]
+path = "/usr/lib/init.d/21_startup-sound.service"
+data = """
+[unit]
+description = "Saved volume and startup sound (off: write off to /etc/startup-sound)"
+requires_weak = ["20_audiod.service"]
+
+[service]
+cmd = "ion"
+args = ["/usr/lib/startup-sound.ion"]
+type = "oneshot_async"
+"""
 
 # CPU clock at boot (#23): rpi-firmwared starts in the initfs, before /etc
 # is there, with the ondemand governor. If /etc/rpi-firmware/governor

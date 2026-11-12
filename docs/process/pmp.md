@@ -78,7 +78,7 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 | Architecture | `docs/architecture.md` | Architect | exists |
 | Coding standards and rules | `docs/process/coding-standards.md` | Architect | to write |
 | Test standards | `docs/process/test-standards.md` | V&V | to write |
-| Test plan and reports | `docs/test-plan.md`, `docs/test-reports.md` | V&V | exist; to split (RFC 0002) |
+| Test plan and reports | [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests) (`queue.md`, `reports/`, `lab.md`, `releases/`); `docs/test-plan.md` and `docs/test-reports.md` point there | V&V | moved (RFC 0002 phase 2) |
 | Release process and checklists | `docs/release-process.md`, `docs/releases/` | Release and CI | exist |
 | Topic pages | `docs/topics/` | topic owners | exist |
 | Contribution rules | `CONTRIBUTING.md` | project lead | exists; links the documents above |
@@ -137,6 +137,13 @@ per week and one release per sprint:
 | Sunday evening | Person test if one is due; the maintainer approves the tag on the exact commit; release notes and known issues. **Monday evening** is the fallback | maintainer, Release and CI |
 | After the release | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
 
+- **The maintainer's OK ends the sprint.** When the maintainer approves the
+  release on the exact commit, the release is done and the next sprint
+  starts at once: Release and CI tags the next development version (for
+  example `v0.4.1-dev`) on `main` right away, so the nightly and every
+  other build already carry the new version. Publishing on GitHub, the
+  boot of the release image on the Pi and the profile update follow
+  afterwards and hold nothing up.
 - Each sprint is a GitHub milestone named after its release. Open issues
   of a closed sprint move to the next milestone, not to "later" by
   default.

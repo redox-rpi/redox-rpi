@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Write index.json for the SD card images on the image server.
 
-    scripts/sdcard-index.py <sdcard dir> [<test-plan.md>]
+    scripts/sdcard-index.py <sdcard dir> [<queue.md>]
 
 SwiftFlash (github.com/zehrer/SwiftFlashCLI, docs/build-server.md) reads it
 instead of guessing from file names: per published image file, family,
 version and build date. Our own fields, which SwiftFlash ignores: board,
 commit, build_id, experiments, owner, and "rows", the queued tests in
-docs/test-plan.md that name the image.
+queue.md (redox-rpi/pi-tests, scripts/pi-tests-queue.sh) that name the image.
 
 Only real files count: the -latest symlinks are for people, not for
 SwiftFlash, which finds the newest build by itself. Sources of the fields,
@@ -52,6 +52,10 @@ def manifest_for(path):
 
 def board(name, manifest):
     text = (manifest.get("config", "") + " " + name).lower()
+    # The Pi 400 test images are built with the 3B+ config: the name and the
+    # experiment decide first.
+    if "pi400" in text or "pi400" in (manifest.get("experiments") or []):
+        return "pi400"
     if "zero2w" in text:
         return "zero2w"
     if "raspi3bp" in text or "3bp" in text or "pi3" in text:

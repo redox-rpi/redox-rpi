@@ -218,10 +218,35 @@ reboot                            # as root; restarts the Pi
 echo reset > /scheme/sys/kstop    # the same, if reboot itself fails
 ```
 
-There is no real power-off yet. `shutdown` stops the system but cannot
-cut the power (`PSCI SYSTEM_OFF failed`); wait until the screen or serial
-console shows `kstop`, then pull the power. A proper `poweroff` is
+```sh
+poweroff                          # as root; stops the system, then pull the power
+```
+
+There is no real power-off yet. `poweroff` (or `shutdown`) stops the
+system but cannot cut the power (`PSCI SYSTEM_OFF failed`); wait until the
+screen or serial console shows `kstop`, then pull the power. `poweroff`
+and `reboot` first turn the headphone jack down to 0 V, so there is no
+click; after `shutdown` pulling the power clicks. A proper `poweroff` is
 [#7](https://github.com/redox-rpi/redox-rpi/issues/7).
+
+## Sound
+
+The headphone jack plays sound (beta). At boot a short chime plays once.
+To switch it off:
+
+```sh
+echo off > /etc/startup-sound              # SD-card image
+echo off > /scheme/data/startup-sound      # network or direct boot
+```
+
+```sh
+volume                                     # the volume, 0 to 100 (default 50)
+volume 70                                  # set it; also +10, -10, mute
+tone -s 2 > /scheme/audio                  # a test tone
+```
+
+`volume` keeps the volume across reboots (in `/etc/audio-volume`, or on
+network and direct boot in `/scheme/data/audio-volume`).
 
 ## Where the logs are
 

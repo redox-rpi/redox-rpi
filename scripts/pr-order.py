@@ -5,12 +5,16 @@ Usage:
     scripts/pr-order.py [--repo redox-rpi/redox-rpi] [--no-fetch] [--json]
 
 For every open pull request it shows what the coordinator checks before a
-merge (docs/test-plan.md, "Merging through pull requests"):
+merge (docs/test-plan.md, "Merging through pull requests"; the queue itself
+is in redox-rpi/pi-tests):
 
   base      the branch it merges into; stacked pull requests come after
             the one they build on
-  CI        green, failed, running or none
-  Pi test   the newest docs/test-plan.md row that names the branch or the
+  CI        green, failed, running or none; "stale" when it is green but
+            older than main's last change to patches/, config/, scripts/,
+            tools/ or .github/ (rerun or rebase before the merge, #257)
+  Pi test   the newest row of the test queue (queue.md in redox-rpi/pi-tests,
+            read by scripts/pi-tests-queue.sh) that names the branch or the
             pull request, and whether it passed
   patches   numbered patches it adds (patches/<area>/NNNN-*.patch), with
             numbers already on main or added by another pull request marked
@@ -25,18 +29,21 @@ first one that conflicts. Pull requests with a patch number clash merge
 fine in git but need their patches renumbered first.
 
 Only reads: it fetches the pull request heads to refs/remotes/origin/pr/N,
-nothing else. Needs gh (logged in) and git 2.38 or newer.
+nothing else, and reads the test queue from redox-rpi/pi-tests. Needs gh
+(logged in) and git 2.38 or newer.
 """
 
 import argparse
+from datetime import datetime
 import json
+import os
 import re
 import subprocess
 import sys
 
 PATCH = re.compile(r"^patches/(base|kernel|relibc|bootloader|fdt)/(\d{4})-.*\.patch$")
 # Files most pull requests touch; a shared one is no reason to merge in order.
-COMMON = {"docs/test-plan.md", "docs/test-reports.md", "patches/README.md"}
+COMMON = {"docs/test-plan.md", "docs/test-reports.md", "patches/README.md"}  # the first two: pointer pages
 # A result that starts with a bold "fail"/"no"/"not" failed, even if it also
 # says "standard checks pass"; "0 of 100 starts failed" is still a pass.
 FAILED = re.compile(r"\*\*(fail|no\b|not\b|found\b)", re.I)
@@ -64,6 +71,13 @@ def merge_tree(a, b):
     return None, sorted({f for f in lines[1:] if f})
 
 
+def ci_finished(checks):
+    """ISO time of the newest finished check, or None."""
+    times = [c.get("completedAt") for c in checks
+             if c.get("completedAt") and not c["completedAt"].startswith("0001-")]
+    return max(times) if times else None
+
+
 def ci_state(checks):
     states = set()
     for c in checks:
@@ -81,7 +95,7 @@ def ci_state(checks):
 
 
 def test_rows(text):
-    """Rows of the queue and the done list in docs/test-plan.md, newest first.
+    """Rows of the queue and the done list in queue.md (pi-tests), newest first.
 
     Queue rows are "| # | Test | Owner | Image | Needs | Status |", done rows
     "| Date | Test | Build ID | Result |" with the number at the start of
@@ -140,12 +154,19 @@ def main():
         git("fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*",
             "+refs/pull/*/head:refs/remotes/origin/pr/*")
 
-    rows = test_rows(git("show", "origin/main:docs/test-plan.md"))
+    rows = test_rows(run(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "pi-tests-queue.sh")).stdout)
     on_main = set()
     for path in git("ls-tree", "-r", "--name-only", "origin/main", "patches").splitlines():
         m = PATCH.match(path)
         if m:
             on_main.add(m.groups())
+
+    # Main's last change to what CI builds and tests; a green run before it
+    # may no longer hold (#257: base 0083 merged after a PR's last run).
+    main_changed = git("log", "-1", "--format=%cI", "origin/main", "--",
+                       "patches", "config", "scripts", "tools", ".github")
+    main_changed = datetime.fromisoformat(main_changed)
 
     info = {}
     for p in prs:
@@ -162,11 +183,17 @@ def main():
             "main": "clean" if merge_tree("origin/main", head)[0] else "conflict",
         }
         info[n]["pi"] = pi_test(rows, info[n])
+        finished = ci_finished(p["statusCheckRollup"] or [])
+        if (info[n]["ci"] == "green" and finished and p["baseRefName"] == "main"
+                and datetime.fromisoformat(finished.replace("Z", "+00:00")) < main_changed):
+            info[n]["ci"] = "stale"
 
     by_head = {i["head"]: n for n, i in info.items()}
     for i in info.values():
         i["parent"] = by_head.get(i["base"])
         i["notes"] = []
+        if i["ci"] == "stale":
+            i["notes"].append("CI older than main's last change: rerun or rebase")
         if i["base"] != "main" and i["parent"] is None:
             i["notes"].append(f"base `{i['base']}` has no open pull request")
 
