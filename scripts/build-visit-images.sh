@@ -29,6 +29,11 @@
 #     by scripts/publish-sdcard.sh as family redox-rpi-visit-<name>:
 #     /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz with .sha256,
 #     .manifest.toml and redox-rpi-visit-<name>-latest.* links
+#   - with check=desktop: scripts/qemu-desktop-check.sh on the network-boot
+#     image in QEMU raspi3b (#261, report-only: the image counts as built
+#     whatever the check says); report.md and the screenshots in
+#     /srv/tftp/visit/<name>/<build ID>/desktop-check/, the result as
+#     "desktop-check = ..." in visit.txt
 #   - the last KEEP builds stay, older ones are removed
 # Results per image in /srv/tftp/visit/status.txt, and for a tester at the
 # Pi in /srv/tftp/visit/index.html and README.txt
@@ -118,7 +123,7 @@ prune() {
 
 # Build one image; prints nothing, sets result[name]. Runs in the clone.
 build_one() {
-    local name="$1" owner="$2" ref="$3" clean="$4" sdcard="$5"; shift 5
+    local name="$1" owner="$2" ref="$3" clean="$4" sdcard="$5" check="$6"; shift 6
     local options=("$@") commit key latest left build_id manifest dir work
     if [ -n "$ref" ]; then
         # Only branches of redox-rpi/redox-rpi: the clone's only remote.
@@ -195,6 +200,7 @@ build_one() {
             } > "$dir/visit.txt"
             ln -sfn "$build_id" "$OUT/$name/latest"
             log "$name: $dir"
+            [ "$check" = desktop ] && desktop_check "$name" "$dir"
         else
             # A whole card (make-sdcard.sh --local), published by the one
             # script for the image server (docs/topics/ci.md, "Image server").
@@ -218,18 +224,41 @@ build_one() {
     return 0
 }
 
+# Report-only desktop smoke test in QEMU (#261) on the image just built;
+# never fails the image. Runs in the clone, which has its own images/.
+desktop_check() {
+    local name="$1" dir="$2" left verdict
+    left="$(seconds_left)"
+    [ "$left" -gt 300 ] || { log "$name: no time left for the desktop check"; echo "desktop-check = skipped (deadline)" >> "$dir/visit.txt"; return 0; }
+    [ "$left" -gt 1500 ] && left=1500
+    log "$name: desktop check in QEMU (report-only)"
+    # The clone's own copy (at the image's commit), with its own images/.
+    [ -x scripts/qemu-desktop-check.sh ] || { log "$name: no scripts/qemu-desktop-check.sh at this commit"; echo "desktop-check = no run (script missing)" >> "$dir/visit.txt"; return 0; }
+    timeout --kill-after=60 "$left" scripts/qemu-desktop-check.sh \
+        --image upstream/redox/build/aarch64/minimal/harddrive.img --out "$dir/desktop-check" > /dev/null 2>&1
+    case $? in
+        0) verdict=pass ;;
+        1) verdict=FAIL ;;
+        *) verdict="no run" ;;
+    esac
+    rm -f "$dir/desktop-check/"*.ppm "$dir/desktop-check/monitor.sock"
+    echo "desktop-check = $verdict (desktop-check/report.md)" >> "$dir/visit.txt"
+    log "$name: desktop check $verdict, $dir/desktop-check/report.md"
+}
+
 failed=0
 while read -r name owner rest; do
     case "$name" in ''|'#'*|deadline) continue ;; esac
     rest="${rest%%#*}"
     [ -n "$only" ] && [ "$name" != "$only" ] && continue
-    ref="" clean="" sdcard=""
+    ref="" clean="" sdcard="" check=""
     options=()
     for word in $rest; do
         case "$word" in
             ref=*) ref="${word#ref=}" ;;
             clean=*) clean="${word#clean=}" ;;
             --sdcard) sdcard=1 ;;
+            check=desktop) check=desktop ;;
             *) options+=("$word") ;;
         esac
     done
@@ -237,7 +266,7 @@ while read -r name owner rest; do
     result[$name]="running - - ${ref:-stable} -"
     write_status
     # stdin is the config file: keep the build from reading it.
-    build_one "$name" "$owner" "$ref" "$clean" "$sdcard" "${options[@]}" < /dev/null || failed=1
+    build_one "$name" "$owner" "$ref" "$clean" "$sdcard" "$check" "${options[@]}" < /dev/null || failed=1
     write_status
 done < "$CONF"
 [ "${#names[@]}" -gt 0 ] || { log "no images in $CONF${only:+ named $only}"; write_status; }
