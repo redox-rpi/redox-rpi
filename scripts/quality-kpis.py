@@ -38,7 +38,10 @@ TRACKED = {
 }
 # KPIs in the nightly report's short block (--summary), by stable key.
 SUMMARY = ["open_bugs", "no_topic", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
-           "pi_pass_rate", "flaky_rate", "req_coverage", "net_loss", "boot_no_net", "clippy_redox"]
+           "pi_pass_rate", "flaky_not_in_notes", "req_coverage", "net_loss", "boot_no_net", "clippy_redox"]
+# Flaky bugs (qmp.md "Flaky results", #277): this label on the issue.
+FLAKY_LABEL = "flaky"
+RELEASE_NOTES_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta))?\.md$")
 # Network loss records (qmp.md "Network loss", #259), in the root of --tests-repo.
 NETWORK_FILE = "network.jsonl"
 PR_RULE_SINCE = datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
@@ -70,6 +73,27 @@ def gh_raw_or_none(repo, path):
             return None
         sys.exit(f"gh api {repo}/{path}: {r.stderr.strip()[:300]}")
     return r.stdout
+
+
+def known_issues(rev, main_name):
+    """The newest release notes at rev (not candidates or checklists) and
+    the issue refs under their "Known issues" heading."""
+    names = sh("git", "ls-tree", "--name-only", rev, "docs/releases/").split()
+    notes = [(tuple(int(x) for x in m.groups()), n) for n in names
+             if (m := RELEASE_NOTES_RE.match(os.path.basename(n)))]
+    if not notes:
+        return None
+    path = max(notes)[1]
+    text = sh("git", "show", f"{rev}:{path}")
+    m = re.search(r"^## Known issues\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    refs = set()
+    for mm in re.finditer(r"redox-rpi/([\w.-]+)/issues/(\d+)|(?<![\w/])(?:([\w.-]+))?#(\d+)", m.group(1) if m else ""):
+        if mm.group(2):
+            repo, num = mm.group(1), mm.group(2)
+        else:
+            repo, num = mm.group(3) or main_name, mm.group(4)
+        refs.add(f"#{num}" if repo == main_name else f"{repo}#{num}")
+    return {"version": os.path.basename(path)[:-3], "path": path, "has_section": bool(m), "refs": sorted(refs)}
 
 
 def network(text, since):
@@ -233,6 +257,10 @@ def collect(args):
                  "unclassified")
         sev.setdefault(s, []).append(b["ref"])
     k["open_bugs"] = {s: n for s, n in sorted(sev.items())}
+    k["flaky_open"] = [{"ref": i["ref"], "repo": i["repo"], "number": i["number"],
+                        "severity": next((label.split(":", 1)[1] for label in i["labels"]
+                                          if label.startswith("severity:")), None)}
+                       for i in open_all if FLAKY_LABEL in i["labels"]]
     k["s1_older_7d"] = [b["ref"] for b in bugs if "severity:S1" in b["labels"]
                         and now - ts(b["createdAt"]) > datetime.timedelta(days=7)]
     # Risks and opportunities are project-level, kept in the risk register
@@ -356,10 +384,12 @@ def collect(args):
         result = " | ".join(cells[3:])
         m = re.search(r"\*\*([^*]+)\*\*", result)
         head = (m.group(1) if m else result).lower()
-        verdict = "pass" if head.startswith("pass") else "fail" if head.startswith("fail") else "other"
+        verdict = ("pass" if head.startswith("pass") else "fail" if head.startswith("fail")
+                   else "flaky" if head.startswith("flaky") else "other")
         rows.append({"date": cells[0], "test": cells[1], "build": cells[2], "verdict": verdict,
                      "text": cells[1] + " " + result})
-    k["pi_rows"] = {v: sum(1 for r in rows if r["verdict"] == v) for v in ("pass", "fail", "other")}
+    k["pi_rows"] = {v: sum(1 for r in rows if r["verdict"] == v) for v in ("pass", "fail", "flaky", "other")}
+    k["flaky_result_rows"] = [row_id(r) for r in rows if r["verdict"] == "flaky"]
     sightings = {}
     for n in TRACKED:
         ref = re.compile(rf"#{n}\b|issues/{n}\b")
@@ -450,6 +480,7 @@ def collect(args):
             if ISSUE_REF_RE.search(text.split("\ndiff --git", 1)[0]):
                 named += 1
     k["patches_with_issue"] = {"named": named, "total": total}
+    k["release_notes"] = known_issues(args.rev, main_name)
     text = gh_raw_or_none(args.tests_repo, NETWORK_FILE)
     k["network"] = network(text, since.date()) if text is not None else None
     return k
@@ -522,10 +553,32 @@ def render(k, repo):
         n["fail"] == 0)
     p = k["pi_rows"]
     allrows = sum(p.values())
-    row("pi_pass_rate", "Pi pass rate", f"{pct(p['pass'], allrows)} ({p['pass']} pass, {p['fail']} fail, {p['other']} other)",
+    row("pi_pass_rate", "Pi pass rate",
+        f"{pct(p['pass'], allrows)} ({p['pass']} pass, {p['fail']} fail, {p['flaky']} flaky, {p['other']} other)",
         True, "\"other\": partly, finding, diagnosis")
     row("flaky_rate", "Flaky rate", f"{pct(k['flaky_rows'], allrows)} ({k['flaky_rows']} of {allrows} rows)", True,
         "rows that name a tracked bug")
+    fr = k["flaky_result_rows"]
+    row("flaky_results", "Flaky results (fail, then pass on the same image)", len(fr), True,
+        ", ".join(fr[:10]) if fr else "no row with a **flaky** verdict yet")
+    fo = k["flaky_open"]
+    by_sev = {}
+    for f in fo:
+        by_sev.setdefault(f["severity"] or "unclassified", []).append(f["ref"])
+    row("flaky_bugs", f"Open flaky bugs (label `{FLAKY_LABEL}`)",
+        f"{len(fo)}" + (": " + ", ".join(f"{s} {len(v)}" for s, v in sorted(by_sev.items())) if fo else ""),
+        bool(fo) and "S1" not in by_sev and "unclassified" not in by_sev,
+        ", ".join(f["ref"] for f in fo[:12]) if fo else f"no issue labelled `{FLAKY_LABEL}` yet")
+    rn = k.get("release_notes")
+    if rn is None:
+        row("flaky_not_in_notes", "Flaky bugs missing from the release notes", "–", True, "no release notes at this revision")
+    else:
+        missing = [f["ref"] for f in fo if f["ref"] not in rn["refs"]]
+        notes_link = f"[{rn['version']}](https://github.com/{repo}/blob/main/{rn['path']})"
+        row("flaky_not_in_notes", f"Flaky bugs missing from the known issues of {rn['version']}", len(missing),
+            not missing and rn["has_section"],
+            (", ".join(missing[:12]) + f" (not in {notes_link}: add them to the next notes, release gate 4)") if missing
+            else (f"{notes_link} has no \"Known issues\" heading" if not rn["has_section"] else ""))
     pw = k["patches_with_issue"]
     row("patches_with_issue", "Patches with an issue (P8)", f"{pct(pw['named'], pw['total'])} ({pw['named']} of {pw['total']})", True)
     row("dirty_results", "Dirty results (P9)", len(k["dirty_rows"]), True, ", ".join(k["dirty_rows"][:10]))

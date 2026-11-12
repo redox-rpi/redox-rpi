@@ -69,6 +69,9 @@ owner, as in [qmp.md](../process/qmp.md#bug-analysis). The topic owner
 finds the cause; Quality tracks the pattern and the recurrence. Rows that
 name each bug (sightings and repro attempts): [kpis.md](../process/kpis.md#rows-that-name-a-tracked-bug).
 
+Flaky results follow the rerun rule, the label `flaky` and the release
+gate in [qmp.md](../process/qmp.md#bug-analysis) (#277).
+
 | Issue | Status | Last seen | Pattern | Check (V&V) |
 |---|---|---|---|---|
 | [#92](https://github.com/redox-rpi/redox-rpi/issues/92) network lost minutes after boot | open Bug, network | row 316, 2026-11-10: under 4× `dd bs=16M` with vc4d, `netstack-watch: main loop stuck in read`; 319, 321 (same load, with and without vc4d) no stall | rows 211, 213, 226, 229, 237 B, 285, 316; netstack, dwc2d, devshd alive, no ARP answer; first time a watch caught the place (read loop) | none in the nightly: [#259](https://github.com/redox-rpi/redox-rpi/issues/259), V&V special tests #266 |
