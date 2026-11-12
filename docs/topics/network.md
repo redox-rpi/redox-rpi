@@ -10,6 +10,12 @@
 
 ## Next
 
+- [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
+  ignored the DHCP name server (fritz.box hung, bare names failed): fixed
+  in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
+  server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
+  3 s, and try names without a dot in the DHCP domain
+  (`resolv/domain`, option 15) first. QEMU passes; Pi row pending.
 - [#92](https://github.com/redox-rpi/redox-rpi/issues/92) and
   [#217](https://github.com/redox-rpi/redox-rpi/issues/217): netstack
   stops (#92: once in 60 chaos rounds, Pi tests 237 and 263; #217: no
