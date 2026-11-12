@@ -4,7 +4,7 @@
 # unpacks it in RAM,
 # exposes it as a block device with blkmap and starts the live bootloader from
 # TFTP, which copies the image into memory for the kernel. Compiled into
-# netboot.scr by scripts/netboot.sh.
+# netboot.scr by scripts/netboot.sh, after the boot menu (config/bootmenu.cmd).
 #
 # Variables (defaults set by scripts/netboot.sh, override in the environment):
 #   redox_server   TFTP server (IP address)
@@ -18,10 +18,13 @@
 echo "redox-rpi: network boot from ${redox_server}"
 
 # Ethernet on the Pi is a USB device. Harmless where there is no USB.
-usb start
-
-setenv autoload no
-dhcp || exit
+# boot.scr (scripts/netboot.sh) has started USB and asked DHCP already when
+# it loads this script; asking again costs seconds on the Pi (#47).
+if test -z "${ipaddr}"; then
+    usb start
+    setenv autoload no
+    dhcp || exit
+fi
 # DHCP may set serverip from the router; ours wins.
 setenv serverip ${redox_server}
 

@@ -50,15 +50,13 @@ index 9aaac3a..c10be2e 100644
  name = "e1000d"
  version = "0.1.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 67666be..e8f1350 100644
+index 67666be7..9066b557 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -66,6 +66,7 @@ members = [
-     "drivers/storage/usbscsid",
-     "drivers/storage/virtio-blkd",
+@@ -68,4 +68,5 @@ members = [
  
-+    "drivers/usb/dwc2d",
      "drivers/usb/xhcid",
++    "drivers/usb/dwc2d",
      "drivers/usb/usbctl",
      "drivers/usb/usbhubd",
 diff --git a/Makefile b/Makefile

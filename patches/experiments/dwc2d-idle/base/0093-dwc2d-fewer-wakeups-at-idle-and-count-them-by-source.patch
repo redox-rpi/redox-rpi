@@ -1,0 +1,142 @@
+From f1035629cde39c830d7f103f998fe5acb615c8a2 Mon Sep 17 00:00:00 2001
+From: dwc2d <dwc2d@localhost>
+Date: Thu, 5 Nov 2026 02:51:02 +0000
+Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
+
+- The test request in /tmp/dwc2d-cycle is looked for on every third
+  rescan instead of every one: a failing path lookup is a round trip
+  through the namespace manager and RedoxFS each time.
+- The network adapters are asked for their link every 5 s, and when one
+  is new, instead of every second: two PHY reads on the LAN7800, each
+  with a 1 ms sleep.
+- /tmp/dwc2d-wakeups, every 10 s: the event loop's wakeups by source
+  (irq, scheme, time, hotplug), the time spent on each, and the parts of
+  a hotplug rescan.
+---
+ drivers/usb/dwc2d/src/main.rs    | 39 +++++++++++++++++++--
+ drivers/usb/dwc2d/src/wakeups.rs | 58 ++++++++++++++++++++++++++++++++
+ 2 files changed, 95 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/wakeups.rs
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 12be94ad..9eee9ac4 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -18,2 +18,3 @@ use fdt::Fdt;
+ mod dwc2;
++mod wakeups;
+ mod ecm;
+@@ -388,2 +389,6 @@ impl Timer {
+ 
++/// How often to ask the network adapters for their link: two PHY register
++/// reads on the LAN7800, a few control transfers each (#126).
++const LINK_INTERVAL: Duration = Duration::from_secs(5);
++
+ /// How often to look for devices plugged in or removed.
+@@ -550,3 +560,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     scheme.tick().expect("dwc2d: network scheme failed");
++    let mut wake = wakeups::Wakeups::new();
++    let mut last_links = Instant::now();
+     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
++        let source = event.user_data;
++        let woke = Instant::now();
+         match event.user_data {
+@@ -581,3 +596,4 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let mut cycled = Vec::new();
++                let t = Instant::now();
+                 if let Ok(request) = aside::cycle_request() {
+                     let net = scheme.adapter_mut();
+@@ -610,3 +632,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
++                wake.part(0, t.elapsed());
++                let t = Instant::now();
+                 let mut changes = bus.scan();
++                wake.part(1, t.elapsed());
+                 changes.removed.extend(cycled);
+@@ -633,5 +658,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 }
+-                net.refresh_links(&mut bus);
++                // New adapters bring their link with them; the others are
++                // asked now and then.
++                let t = Instant::now();
++                if !changes.added.is_empty() || last_links.elapsed() >= LINK_INTERVAL {
++                    net.refresh_links(&mut bus);
++                    last_links = Instant::now();
++                }
++                wake.part(2, t.elapsed());
++                let t = Instant::now();
+                 net.select(&mut bus);
+                 scheme.tick().expect("dwc2d: network scheme failed");
++                wake.part(3, t.elapsed());
+                 hotplug.arm(HOTPLUG_INTERVAL);
+@@ -639,2 +673,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         }
++        wake.count(source as usize, woke.elapsed());
+     }
+diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
+new file mode 100644
+index 00000000..2841d11d
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/wakeups.rs
+@@ -0,0 +1,58 @@
++//! Wakeups of dwc2d's event loop by source, with the time spent on each,
++//! in `/tmp/dwc2d-wakeups` every 10 s: what keeps the driver busy when the
++//! Pi is idle (#126).
++
++use std::time::{Duration, Instant};
++
++const FILE: &str = "/tmp/dwc2d-wakeups";
++const NAMES: [&str; 4] = ["irq", "scheme", "time", "hotplug"];
++const EVERY: Duration = Duration::from_secs(10);
++/// The parts of a hotplug rescan, timed on their own.
++const PARTS: [&str; 4] = ["cycle-request", "scan", "links", "select-tick"];
++
++pub struct Wakeups {
++    start: Instant,
++    written: Instant,
++    count: [u64; 4],
++    busy: [Duration; 4],
++    parts: [Duration; 4],
++}
++
++impl Wakeups {
++    pub fn new() -> Self {
++        let now = Instant::now();
++        Self { start: now, written: now, count: [0; 4], busy: [Duration::ZERO; 4], parts: [Duration::ZERO; 4] }
++    }
++
++    /// Time spent in part `part` of a hotplug rescan (see [`PARTS`]).
++    pub fn part(&mut self, part: usize, busy: Duration) {
++        if let Some(d) = self.parts.get_mut(part) {
++            *d += busy;
++        }
++    }
++
++    /// One wakeup by `source` (the event source's index) that took `busy`.
++    pub fn count(&mut self, source: usize, busy: Duration) {
++        if let Some(n) = self.count.get_mut(source) {
++            *n += 1;
++            self.busy[source] += busy;
++        }
++        if self.written.elapsed() >= EVERY {
++            self.written = Instant::now();
++            let secs = self.start.elapsed().as_secs_f64();
++            let mut text = format!("seconds {secs:.0}\n");
++            for (i, name) in NAMES.iter().enumerate() {
++                text += &format!(
++                    "{name} {} {:.1}/s busy {} ms\n",
++                    self.count[i],
++                    self.count[i] as f64 / secs,
++                    self.busy[i].as_millis()
++                );
++            }
++            for (i, name) in PARTS.iter().enumerate() {
++                text += &format!("hotplug {name} busy {} ms\n", self.parts[i].as_millis());
++            }
++            let _ = std::fs::write(FILE, text);
++        }
++    }
++}
+-- 
+2.53.0
+

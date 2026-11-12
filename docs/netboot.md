@@ -86,6 +86,27 @@ changes, run `scripts/netboot.sh` with the new one and make a new card.
 `boot.scr` fetches `redox/netboot.scr` from the server, so changes to the boot
 script also only need `scripts/netboot.sh`, not a new card.
 
+### Boot menu
+
+`netboot.scr` starts with a boot menu ([#243](https://github.com/redox-rpi/redox-rpi/issues/243),
+[`config/bootmenu.cmd`](../config/bootmenu.cmd)), on HDMI and serial: arrow
+keys and Enter on a USB keyboard or the serial console. After 3 seconds
+without a key it boots the default.
+
+| entry | network-boot card | card with Redox (`make-sdcard.sh --local`) |
+|---|---|---|
+| This SD card | – | default |
+| Network: `redox/` | default | yes |
+| Network: `stable/` | yes | yes |
+
+The first network entry is the directory the script came from, the second
+`stable/` (or `redox/` when the script came from `stable/`).
+`scripts/netboot.sh --menu-delay <s>` sets the wait; `0` skips the menu.
+Cards with Redox on them get the menu as their `boot.scr` (`boot-local.scr`
+from `netboot.sh`), so they no longer network-boot by accident. The menu needs
+a U-Boot with `bootmenu` (since #243); an older one on a card boots the
+default without showing it.
+
 ## What the Pi loads
 
 Three places decide it:
@@ -274,12 +295,16 @@ sudo loginctl enable-linger "$USER"   # keep it running without a login
 ### SD card images for download
 
 SD card images to test, such as release candidates, go to
-`/srv/tftp/sdcard/` on the build server, not to anyone's own computer.
-The same HTTP server offers them at
+`/srv/tftp/sdcard/` on the build server, not to anyone's own computer,
+always through `scripts/publish-sdcard.sh`
+([ci.md](topics/ci.md#image-server)): it names the file, writes the
+checksum, the card's `/.uuid` and `index.json`, and never overwrites. The
+same HTTP server offers them at
 `http://homenodellm:8080/sdcard/<name>.img.xz`, so SwiftFlash
-(`SwiftFlashCLI`) or `curl` flashes them straight from there. Put the
-manifest (`<name>.img.manifest.toml`) and a `SHA256SUMS` next to each image.
-Name release candidates `redox-rpi-v<version>-rc<N>.img.xz`.
+(`swiftflash source add redox http://homenodellm:8080/sdcard/`, then
+`sudo swiftflash redox:<family>`) or `curl` flashes them straight from
+there. Release candidates are family `redox-rpi`, version
+`v<version>-rc<N>`.
 
 ## Limits
 

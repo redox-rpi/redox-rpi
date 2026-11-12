@@ -1,0 +1,13 @@
+# Test programs for the tcc experiment (patches/experiments/tcc): sources
+# that tcc compiles on the Pi, the benchmark built by gcc -O2 for comparison,
+# and timeit. -ffixed-x18: see the tcc recipe.
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+D="${COOKBOOK_STAGE}/usr/share/tcc-tests"
+mkdir -p "$D" "${COOKBOOK_STAGE}/usr/bin"
+cp "${COOKBOOK_SOURCE}"/*.c "${COOKBOOK_SOURCE}/run.ion" "$D/"
+"${CC}" ${CFLAGS} -O2 -ffixed-x18 ${LDFLAGS} -o "$D/bench-gcc" "${COOKBOOK_SOURCE}/bench.c"
+"${CC}" ${CFLAGS} -O2 -ffixed-x18 ${LDFLAGS} -o "${COOKBOOK_STAGE}/usr/bin/timeit" "${COOKBOOK_SOURCE}/timeit.c"
+"""

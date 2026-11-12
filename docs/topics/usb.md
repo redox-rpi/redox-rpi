@@ -23,6 +23,11 @@
   person (`scripts/test-hotplug.sh` in QEMU, `scripts/pi-hotplug-test.sh`
   on the Pi). Pi tests #35 and #67 ([reports](../test-reports.md)). The
   Anker hub steps stay with test #4.
+- Shorter boot (#47, base `0034`): hubs take the ports that are connected
+  after power-good instead of waiting for empty ones, and the wait for the
+  network link overlaps with rescans for late devices. On the Pi 3B+ dwc2d
+  is ready after 3.3 s instead of 6.2 s (2.1 s of it is the LAN7800's
+  link), kernel to login 7.4 s instead of 10.3 s (test #67).
 
 ## In progress
 
@@ -35,11 +40,12 @@
   write, unplug, plug in again); not yet on the Pi.
 
 - [#48](https://github.com/redox-rpi/redox-rpi/issues/48) USB mouse and
-  tablet, branch [`usb-mouse`](https://github.com/redox-rpi/redox-rpi/tree/usb-mouse)
-  experiment `usb-mouse` (base `0035` there). Events go
+  tablet, branch [`t48-mouse`](https://github.com/redox-rpi/redox-rpi/tree/t48-mouse)
+  (on main, PR #149), base `0059`, a default patch since PR #223
+  (was experiment `usb-mouse`). Events go
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
-  passes** (`scripts/test-usb-mouse.sh`); Pi test #56 with a person, same
-  visit as #50.
+  passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
+  same visit as #50.
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
@@ -53,15 +59,6 @@
   experiment `lan78xx-multicast` (base `0024` there). Builds and boots in
   QEMU (no LAN7800 there); the Pi check rides on the network session's
   test #47.
-
-- `dwc2d` boot time (#47): branch [`dwc2d-boottime`](https://github.com/redox-rpi/redox-rpi/tree/dwc2d-boottime)
-  (on `usb-hotplug`), experiment `dwc2d-boottime` (base `0034` there, PR #69).
-  Test 53 measured 6.2 s until dwc2d is ready on the Pi: 1.2 s per hub
-  waiting for empty ports, 1.7 s for the LAN7800's link. Hubs now take
-  what is connected, and the link wait overlaps with rescans. QEMU: ready
-  after 0.5 s instead of 1.6 s, `scripts/test-hotplug.sh` 15/15. **Pi test
-  #67 passes**: ready after 3.3 s instead of 6.2 s (2.1 s of it is the
-  LAN7800's link), kernel to login 7.4 s instead of 10.3 s, hotplug 15/15.
 
 - [#52](https://github.com/redox-rpi/redox-rpi/issues/52) card readers
   (a disk per LUN with a card) and several sticks at once, branch
@@ -80,6 +77,43 @@
   182 MB/s), since QEMU finishes a chunk at once; the real check is Pi test
   #135, like for like against #71's image, no person needed.
 
+- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) **Download
+  stall, cause found (2026-11-11), fix base `0090`** (branch
+  `dwc2d-no-sleep`): a `nanosleep` in dwc2d that never returns. dwc2d's
+  1 s LAN7800 link check polls the MII with 1 ms sleeps. When one does not
+  come back, the main loop waits for good without CPU use, and netstack,
+  served by that loop, hangs in its read from the network device. Pi test
+  326: a 382 MB download into the SD card stalled 3 of 3 times on main,
+  2 of 3 on stable, 0 of 3 on row 319's image (it had `usb-hub-drop`). In
+  Pi test 342, main + `usb-hub-drop` completed 3 of 3, and in a stall on
+  main dwc2d's main thread was `US` with its CPU time frozen. `0090` takes
+  the `sleep`-to-`delay()` part of `usb-hub-drop` into base. The lost
+  wakeup itself (kernel timer or scheduler) is still open. QEMU does not
+  show it: its CDC Ethernet adapter has no link check.
+  Earlier: the Pi's inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
+  during a download into the SD card, once with dwc2d stuck afterwards:
+  branch [`usb-hub-drop`](https://github.com/redox-rpi/redox-rpi/tree/usb-hub-drop)
+  (on main, PR #156), experiments `dwc2d-netstats` (`0052`) and
+  `usb-hub-drop` (`0083`). No `sleep` in dwc2d any more (a `nanosleep`
+  could hang it); a removal logs the hub port's status and change bits and
+  the channel errors; a disabled or unpowered port is brought back, a
+  failed device gets three more tries; counters in `/tmp/dwc2d-usbstats`,
+  the hotplug step in `/tmp/dwc2d-step`. **Pi: 0 hub drops in 4 downloads**
+  (tests [172](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-31-v030-dev-857-g7ed9070xa901-dwc2d-hub-drop-fix-the-171-download-again),
+  [174](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-3111-01-hub-drop-fix-v030-dev-857-g7ed9070xa901-new-against-v030-dev-838-g64fa695x8116-old-alternating)),
+  against 8, 12 and 4 on the old image (171, 174); no undervoltage. Why
+  the drops stop without `sleep` is not known. The download stalls that
+  remain are a lost wakeup in the scheduler (#181, relibc topic), not
+  dwc2d.
+  A different case came in test 189: the controller itself got stuck
+  (channels that do not halt, every request timing out). Branch
+  [`usb-restart`](https://github.com/redox-rpi/redox-rpi/tree/usb-restart)
+  (on `usb-hub-drop`), experiment `dwc2d-restart` (`0084`): after four
+  timeouts in a row dwc2d logs the registers, resets the controller, powers
+  the root port and finds the devices again (up to 5 tries, 10 s apart).
+  **Pi 191: forced restarts recover**; a real stall did not come in 6
+  downloads.
+
 ## Next
 
 - Pi tests of USB sticks and card readers: rows #50 and #71, one image,
@@ -89,24 +123,75 @@
 
 [#95](https://github.com/redox-rpi/redox-rpi/issues/95): the Zero 2 W as a
 network adapter on the computer its USB cable is plugged into, without a
-HAT. No code yet.
+HAT. Analysis only, no code yet (updated 2026-11-04).
 
 - **What `dwc2d` needs:** device mode next to today's host mode, chosen
   by the device tree (`dr_mode=peripheral` in a `[pi02]` section); the
-  device core (FIFOs, device interrupts, endpoint registers); the endpoint
-  0 state machine with the standard requests; a CDC-ECM function (Linux,
-  macOS) registered as `network.usb-gadget`, CDC-NCM later for Windows.
-  The port is host or device, not both. The Pi 3B+ can't do device mode
-  (its DWC2 sits behind the LAN7515 hub).
-- **Testing:** QEMU's DWC2 model is host only, so: a host model in Rust
-  that plays a host's enumeration against the code, then a Zero 2 W cabled
-  to homenodellm (powered by it, `cdc_ether` on the Linux side, tests over
-  SSH), booted from SD or, if it works, by rpiboot over the same cable. A
-  second USB serial adapter for the Zero's console; one person visit to
-  set it up and try a Mac or PC.
-- **Size:** about 1700 lines for ECM (half of today's `dwc2d`), about 4–5
-  sessions; NCM about 400 lines more. Medium; the risk is the test bench,
-  not the code.
+  device core (FIFO sizes `GRXFSIZ`/`GNPTXFSIZ`/`DIEPTXFn`, `DCFG`/`DCTL`
+  for address and soft connect, the device interrupts, the endpoint
+  registers `DIEPCTLn`/`DOEPCTLn`/`DIEPTSIZn`/`DOEPTSIZn`/`DIEPDMAn`/
+  `DOEPDMAn`, buffer DMA as in host mode); the endpoint 0 state machine
+  with the standard requests; a network function with two bulk endpoints
+  and one interrupt endpoint. The port is host or device, not both. The
+  Pi 3B+ can't do device mode (its DWC2 sits behind the LAN7515 hub).
+- **One driver owns the controller:** `dwc2d` starts from initfs, and
+  Redox's init can't pick a service by a device-tree value, so a separate
+  gadget daemon would grab the same registers. The same binary reads
+  `dr_mode` at start and runs either today's host code or a new device
+  part (`device.rs`: core and endpoint 0; `gadget_net.rs`: the function),
+  sharing `regs.rs`, the register mapping and the network scheme code.
+  Nothing changes on the Pi 3B+ or on a Zero 2 W without the overlay.
+- **Which class:**
+
+  | Class | Linux | macOS | Windows |
+  |---|---|---|---|
+  | CDC-ECM | built in (`cdc_ether`) | built in | no driver from Microsoft |
+  | CDC-NCM | built in (`cdc_ncm`) | built in | built in on 11; on 10 since 1903 (`UsbNcm`), bound without an `.inf` only with Microsoft OS descriptors (`WINNCM`) |
+  | RNDIS | built in (its removal has been proposed) | no | built in, but an old Microsoft-only protocol |
+
+  So **NCM is the target**: one class for all three. ECM goes first
+  because it is simpler (one Ethernet frame per bulk transfer, no NTB
+  framing) and enough for the Linux test bench; NCM adds the NTB16
+  framing and the Microsoft OS 2.0 descriptors. RNDIS is left out.
+- **Into netstack:** the device part is one more adapter in `dwc2d`'s
+  `UsbNet` (`Adapter::Gadget`), registered as `network.usb_gadget` like
+  `network.usb_ecm`; netstack already opens every `network.*` scheme, so it
+  needs no change. `read_packet`/`write_packet` take frames from the bulk
+  OUT endpoint and queue them on bulk IN; the interrupt endpoint reports
+  link up when the host selects the data interface. Addresses: the computer
+  usually wants a DHCP server on the gadget, and Redox has only the client.
+  The gadget gets a fixed address (`192.168.7.1/24`, as on BeagleBone) and
+  a small DHCP server that gives the computer `192.168.7.2`; `dhcpd` must
+  not run as a client on that adapter. mDNS (`redox-rpi.local`, PR #93)
+  then finds it by name. For the first test, fixed addresses on both sides.
+- **Testing:** QEMU can't: its DWC2 model (`hw/usb/hcd-dwc2.c`) is host
+  only and no QEMU machine has a DWC2 device side. What can be tested on
+  the build host: a fake device register file in Rust that plays a host's
+  enumeration (reset, GET_DESCRIPTOR, SET_ADDRESS, SET_CONFIGURATION, bulk
+  packets) against endpoint 0 and the function (`cargo test`), plus unit
+  tests of the descriptors and of NCM's NTB encoding and decoding. The QEMU
+  tests keep checking that host mode is unchanged. The real test: a Zero 2
+  W cabled to homenodellm (powered by it; `cdc_ether`/`cdc_ncm` on the
+  Linux side, tests over SSH without a person), booted from SD or by
+  rpiboot over the same cable; a second USB serial adapter for its console;
+  one person visit to set it up and try a Mac and a Windows PC.
+
+| Step | What | Size |
+|---|---|---|
+| 1 | Mode selection from the device tree, `dwc2d` split into host and device start | ~100 lines |
+| 2 | Device core: FIFOs, interrupts, endpoints, soft connect | ~600 lines |
+| 3 | Endpoint 0, standard requests, descriptors | ~300 lines |
+| 4 | Host model with `cargo test` for steps 2–3 | ~300 lines |
+| 5 | CDC-ECM function, `network.usb_gadget`, fixed address | ~400 lines |
+| 6 | Zero 2 W bench at homenodellm, first Linux test | setup, 1 person visit |
+| 7 | Small DHCP server for the computer's side | ~250 lines |
+| 8 | CDC-NCM: NTB16 framing, Microsoft OS 2.0 descriptors, tests | ~450 lines |
+| 9 | Mac and Windows check | 1 person visit |
+
+About 2400 lines in all (today's `dwc2d` is about 4600), roughly 5–6
+sessions: 2 for steps 1–4, 1 for step 5, 1 for steps 7–8, and 1–2 for the
+bench and fixes found on the Zero. **Medium**; the risk is the test bench,
+not the code.
 
 ## Later
 

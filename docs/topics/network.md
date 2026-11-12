@@ -10,6 +10,70 @@
 
 ## Next
 
+- [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
+  ignored the DHCP name server (fritz.box hung, bare names failed): fixed
+  in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
+  server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
+  3 s, and try names without a dot in the DHCP domain
+  (`resolv/domain`, option 15) first. QEMU passes; Pi row pending.
+- [#92](https://github.com/redox-rpi/redox-rpi/issues/92) and
+  [#217](https://github.com/redox-rpi/redox-rpi/issues/217): netstack
+  stops (#92: once in 60 chaos rounds, Pi tests 237 and 263; #217: no
+  network after 3 of about 14 boots, 0 of 21 since, Pi test 264). Neither
+  is caught yet, so experiment `netstack-watch` is **on in every test
+  image** (`config/test-experiments.conf`, branch `netstack-watch-default`):
+  stable, nightly and Pi test rows; never releases or the pkg repository.
+  It names a call the main loop is stuck in, says when no timer event has
+  come for 10 s (the case Pi test 213 could not show), and writes a
+  heartbeat every 10 min. Benchmark rows build with
+  `--no-test-experiments`.
+  **Cause found (2026-11-10), fix candidate base `0087`** (PR
+  [#344](https://github.com/redox-rpi/redox-rpi/pull/344)): dwc2d's main
+  loop also serves the network, and it wrote mouse and keyboard events to
+  inputd itself; inputd waits for the display driver on every VT event.
+  So a hung inputd stopped dwc2d and the network for good. In QEMU,
+  stopping inputd and pressing keys gives exactly Pi test 316's lines
+  (2 of 4 runs); with `0087` (input events from a thread of their own,
+  dropped when inputd doesn't take them; the `/tmp` test files read by
+  another thread) the network stays up (2 of 2), and Pi test 329 found
+  nothing broken. Why inputd hung in #316 (vc4d, no monitor on HDMI) is
+  still open.
+- [#184](https://github.com/redox-rpi/redox-rpi/issues/184) a TCP
+  connection Redox closes gets no FIN: netstack dropped the socket when
+  its last file closed, so the peer kept the connection open (sshd after
+  its login grace time). The fix from PR
+  [#185](https://github.com/redox-rpi/redox-rpi/pull/185) went into the
+  stacked branch `relibc-quiet`, which never reached main. Now default
+  base `0089` (branch `tcp-fin`): close the TCP way (rest of the send
+  buffer, then FIN), remove the socket once closed, reset after 60 s.
+  `scripts/tcp-fin-check.py` checks it from the host. QEMU 2026-11-11:
+  main sends no FIN (Redox nc out and `nc -l` in), `0089` sends it at once.
+- [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
+  answer ping (test 164): netstack left out smoltcp's feature
+  `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
+  PR [#178](https://github.com/redox-rpi/redox-rpi/pull/178)); QEMU 10 of
+  10 answered, **Pi test 196 passed** (20 of 20).
+- [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):
+  OpenSSH from source; key and password login and an interactive shell
+  work in QEMU after fixes in relibc (`setitimer`, `setgroups`, `poll`
+  with a repeated fd, `ld.so` and login shells), `procmgr` (SIGCHLD of a
+  child that dropped its privileges) and OpenSSH (no `chroot`, PTY
+  without owner). Pi test #59 failed: no host keys, because rename does
+  not work on `/scheme/data`; the keys are now made in `/etc/ssh` and
+  copied there. Rerun #81 passed on the Pi (2026-10-30): login in
+  1.3 s, the keys stay the same after a reset. Since then: the listening
+  `sshd` no longer uses a whole CPU (netstack reported a listening socket
+  always readable), and the shell exits cleanly when the session ends
+  (ptyd sends SIGHUP and fails `tcgetattr` on the hung-up PTY, Ion exits
+  instead of panicking). Pi rerun #101 passed (2026-10-30): 2.9 s of
+  `sshd` CPU after 22 sessions, 10 dropped sessions without an Ion
+  exception or leftovers. Pull request #78. Branch `sshd-keys` (on top
+  of it): netstack keeps spare listening sockets, so `ssh-keyscan` with
+  several types gets every key (connections that came in together were
+  reset), and sshd also reads `authorized_keys` from the data partition,
+  so keys survive a reset of the network-boot image. Pi test #120 passed.
+  Ctrl-C while a program starts:
+  [#55](https://github.com/redox-rpi/redox-rpi/issues/55), branch `pty-sigint`.
 - Confirm the Zero 2 W's IP address and TCP (`timesync -n` worked).
 - [#53](https://github.com/redox-rpi/redox-rpi/issues/53) several adapters
   (draft PR [#81](https://github.com/redox-rpi/redox-rpi/pull/81) on top
@@ -32,7 +96,9 @@
   next interface or is removed. QEMU passes with two testnetds; **Pi test
   140 passed**. Not done: link state (a pulled cable shows only when the lease
   ends); a restarted driver cannot take its old scheme name again
-  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117), kernel).
+  ([#117](https://github.com/redox-rpi/redox-rpi/issues/117): the namespace
+  manager keeps the name; fixed by experiment `scheme-reregister`, PR
+  [#128](https://github.com/redox-rpi/redox-rpi/pull/128), Pi test 146).
 - IPv6 SLAAC took only one prefix and no router on the Pi (tests #47,
   #55: ULA address yes, global 2a02 address and default route no): smoltcp
   keeps only the last prefix option of a router advertisement, and each
@@ -43,6 +109,28 @@
   [#82](https://github.com/redox-rpi/redox-rpi/pull/82) brings the
   `multicast` and `ipv6` experiments to main; whichever of #81 and #82
   lands second gets its netstack patches rebased.
+  Step 2, PR [#194](https://github.com/redox-rpi/redox-rpi/pull/194) on
+  top of #82: multicast (base `0083`, relibc `0016`) and the LAN7800
+  multicast filter (base `0084`) as default patches; QEMU passes, **Pi
+  test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
+- [#216](https://github.com/redox-rpi/redox-rpi/issues/216) idle wakeups
+  since #194 (Pi test #246: dwc2d +28/s, netstack +28/s): `0084` passes
+  all multicast on the LAN. Branch `mcast-filter` (2026-11-12, redone on
+  the multi-adapter netstack):
+  - base `0085`: a `multicast` file in the adapter scheme and
+    `NetworkAdapter::set_multicast`; netstack writes all-hosts plus each
+    joined IPv4 group to every adapter that has the file, also adapters
+    that come later;
+  - base `0095`: the LAN7800 programs its multicast hash filter from that
+    list instead of passing all multicast (was Firmware's experiment
+    `lan78xx-mcast-hash`, PR #219; Pi test 247 passed: dwc2d 108 -> 81
+    wakeups/s, netstack 60 -> 30/s).
+  - The `ipv6` experiment (it does not apply to main right now) must add
+    its IPv6 groups (33:33:…) to the list, or write `all`, before it is
+    used with `0095`.
+- [#217](https://github.com/redox-rpi/redox-rpi/issues/217) 2 of about 10
+  boots on 2026-11-05 reached login without network (devshd's bind
+  blocked); QEMU boot loop next.
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
@@ -87,6 +175,16 @@
   (7.4 MB/s, steady, 0 USB errors) with the network alone; the same
   download written to `/scheme/data` hung the whole Pi. The card writes
   during a download cause it; the hang is with the SD card & storage area.
+- [#140](https://github.com/redox-rpi/redox-rpi/issues/140) an ARP entry
+  expired during a busy connection and ACKs were dropped from the full
+  queue; [#141](https://github.com/redox-rpi/redox-rpi/issues/141) a read
+  after a TCP reset gave `ENOTCONN` although data was still buffered. Both
+  seen in #119, both upstream code. Experiment `netstack-arp-ack` (base
+  `0082`): a stale entry stays in use while ARP asks again; buffered data
+  comes first. **Pi test 156 passed** (65535 buffered bytes read after a
+  reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
+  [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
+  patch `0082`.
 
 ## Later
 

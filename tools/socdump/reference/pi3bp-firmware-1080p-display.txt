@@ -1,0 +1,15 @@
+socdump: BCM2837, peripherals at 0x3f000000, crystal 19.200 MHz (devicetree)
+HVS (DISPCTRL 0x9a0c0fff, enabled 1, DISPSTAT 0x00000000)
+  channel 0: off 0x0, background 0x00000000, mode 0 full 0 empty 1 frame 11 line 0, cob 15504..=20735, list at word 0
+  channel 1: on 1920x1080, background 0x01000000, mode 2 full 1 empty 0 frame 36 line 720, cob 2048..=15503, list at word 1636
+    plane at word 1636: rgba8888 1920x1035 at (0, 22) scaled from 1824x984, 14 words: 4e005807 ff016000 040b0780 43d80720 029a0000 fe914000 fedb6500 00001c80 00008300 40f33261 40f36260 8001f35a 00000ff4 00000ff4
+  channel 2: off 0x0, background 0x00000000, mode 0 full 0 empty 1 frame 0 line 0, cob 0..=2047, list at word 0
+Pixel valves
+  pv0 (DSI0 or DPI): control 0x00048000 v_control 0x00000000, off
+  pv1 (DSI1): control 0x00048000 v_control 0x00000000, off
+  pv2 (HDMI): control 0x00177005 v_control 0x00000003, video 1, 1920x1080, h 1920 fp 88 sync 44 bp 148 (total 2200), v 1080 fp 4 sync 5 bp 36 (total 1125); pixel clock pllh_pix 148.500 MHz, 60.000 Hz; stat 0x00000444 intstat 0x00000000 hact_act 1920
+HDMI (core rev 0x00000600)
+  1920x1080, h 1920 fp 88 sync 44 bp 148 (total 2200), v 1080 fp 4 sync 5 bp 36 (total 1125), hsync +, vsync +; pixel clock pllh_pix 148.500 MHz, 60.000 Hz
+  scheduler 0x000cb02b (hdmi mode 1, active 1), hotplug 0x00000000, fifo_ctl 0x00004041, misc 0x00000000
+  phy: reset_ctl 0x00000000, ctl_0 0x8c000000
+  hd: m_ctl 0x00000201, vid_ctl 0x80000000 (enable 1), csc_ctl 0x0000002f, frame count 4196

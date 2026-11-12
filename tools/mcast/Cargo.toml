@@ -1,0 +1,9 @@
+[package]
+name = "mcast"
+description = "Join an IPv4 multicast group and receive from it, or send to it, to test multicast in the network stack"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

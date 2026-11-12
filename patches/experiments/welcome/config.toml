@@ -1,0 +1,4 @@
+# First-boot setup (#24): getty (base patch 0040 here) runs /usr/bin/welcome
+# before login on each console until /etc/welcome.done exists.
+[packages]
+welcome = "source"

@@ -26,7 +26,8 @@ have the same code; `usb-hotplug` has it at line 216.
   before.
 - PR #84 merged first; PR #68 (hotplug, base `0031`–`0033`) refreshed
   `0037` against those, since both change `enumerate.rs`. Same code, other
-  context lines.
+  context lines. PR #69 (boot time, base `0034`) refreshed it once more
+  on top of `0034`.
 
 ## Tests
 
@@ -34,7 +35,7 @@ have the same code; `usb-hotplug` has it at line 216.
   network card enumerated, network up, no panic, no retry line. QEMU's
   devices never send a short reply, so the retry itself does not run
   there.
-- Pi: test 105 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#2026-10-30-v030-dev-419-g65391aex1a87), Pi test agent): **5 of 5 boots without
+- Pi: test 105 ([report](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-419-g65391aex1a87), Pi test agent): **5 of 5 boots without
   a panic**, network up and the standard checks passing every time. No
   boot printed the retry line: no short reply came, so this shows nothing
   breaks, not that the retry catches the case (test 98 hit it in 1 of 2

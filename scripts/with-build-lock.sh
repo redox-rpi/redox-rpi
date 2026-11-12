@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run a command while holding the build host lock, so it does not run at the
-# same time as a build in this tree (docs/test-plan.md). For jobs that use
+# same time as a build in this tree (docs/testing.md). For jobs that use
 # the build output, e.g. a QEMU test of the image just built; a
 # scripts/build-image.sh started inside does not lock again.
 #

@@ -1,0 +1,37 @@
+From a46ba9426fc16a78265b7e04a51b185780de4af4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 29 Oct 2026 13:28:23 +0100
+Subject: [PATCH] dwc2d: LAN7800 receives all multicast (mDNS, IPv6 neighbor
+ discovery)
+
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index 7de1c28..0896ddf 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -59,6 +59,7 @@ const PMT_CTL_PHY_RST: u32 = 1 << 4;
+ const USB_CFG_BCE: u32 = 1 << 5;
+ const USB_CFG_BIR: u32 = 1 << 6;
+ const RFE_CTL_DA_PERFECT: u32 = 1 << 1;
++const RFE_CTL_MCAST_EN: u32 = 1 << 9;
+ const RFE_CTL_BCAST_EN: u32 = 1 << 10;
+ const FCT_CTL_EN: u32 = 1 << 31;
+ const MAC_CR_AUTO_SPEED: u32 = 1 << 11;
+@@ -246,7 +247,10 @@ pub fn init(bus: &mut Bus, f: &Lan78xxFunction, dt_mac: Option<[u8; 6]>, led_mod
+     r.write(INT_STS, u32::MAX)?;
+     r.write(FLOW, 0)?;
+     r.write(FCT_FLOW, 0)?;
+-    r.set(RFE_CTL, RFE_CTL_BCAST_EN | RFE_CTL_DA_PERFECT)?;
++    // Own address, broadcast and all multicast: mDNS (01:00:5e:00:00:fb,
++    // 33:33:00:00:00:fb) and IPv6 neighbor discovery (33:33:ff:…) need it,
++    // and the network stack does not tell the driver its groups.
++    r.set(RFE_CTL, RFE_CTL_BCAST_EN | RFE_CTL_MCAST_EN | RFE_CTL_DA_PERFECT)?;
+ 
+     r.write(PMT_CTL, PMT_CTL_PHY_RST)?;
+     r.wait_clear(PMT_CTL, PMT_CTL_PHY_RST, "PHY reset")?;
+-- 
+2.54.0 (Apple Git-157)
+
