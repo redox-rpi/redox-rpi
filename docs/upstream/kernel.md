@@ -116,6 +116,15 @@ Our [#207](https://github.com/redox-rpi/redox-rpi/issues/207). Checked against t
   (once in 7 runs) without a stall line, so there may be a second, rarer
   cause (our #207 stays open). Test 241, with extra lock-wait watches, ran
   1360 rounds without a freeze.
+- **Second part (our kernel `0053`):** without the watches the Pi froze
+  again (row 379, 2 in 3 loops). The watches only slow each spin, so this
+  looks like a livelock on the lock word: spin 0.9.8 `try_read` adds a
+  reader before it checks for a writer and takes it back, so spinning
+  readers keep a writer or an upgrade (which needs zero readers) from
+  ever succeeding. `0053` backs off exponentially in every wait in
+  `src/sync/ordered.rs`, and `RwLockUpgradableGuard::upgrade`, which also
+  spun inside spin without handling TLB shootdowns, now loops on
+  `try_upgrade` like the others. Pi result: our row 384.
 
 ## aarch64: no cache maintenance when user code becomes executable (bug)
 
