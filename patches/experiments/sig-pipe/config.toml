@@ -1,5 +1,6 @@
 # Experiment sig-pipe (#205): signals sent with kill() must reach a process
-# that loops on pipe read/write. The check needs tcc in the image
+# that loops on pipe read/write (patch relibc/0001: a forked child no longer
+# keeps signal delivery inhibited). The check needs tcc in the image
 # (experiment tcc): `ion /usr/share/sig-pipe/check.ion`.
 
 [[files]]
@@ -47,16 +48,18 @@ int main(int argc, char **argv) {
     int ms = 800;
     if (argc > 2 && !strcmp(argv[1], "-r")) return receiver(argv[2], ms);
     const char *modes[] = { "user", "getpid", "sleep", "pipe" };
+    int bad = 0;
     for (int i = 0; i < 4; i++) {
         printf("[direct] "); fflush(stdout);
         pid_t c = fork();
         if (c == 0) _exit(receiver(modes[i], ms));
-        int st; waitpid(c, &st, 0);
+        int st; waitpid(c, &st, 0); bad += !(WIFEXITED(st) && WEXITSTATUS(st) == 0);
         printf("[exec] "); fflush(stdout);
         c = fork();
         if (c == 0) { execl(argv[0], argv[0], "-r", modes[i], (char *)NULL); _exit(127); }
-        waitpid(c, &st, 0);
+        waitpid(c, &st, 0); bad += !(WIFEXITED(st) && WEXITSTATUS(st) == 0);
     }
+    printf("SIGREPRO: %s, %d of 8 receivers got no signal\n", bad ? "FAIL" : "pass", bad);
     printf("SIGREPRO done\n");
     return 0;
 }
@@ -68,7 +71,7 @@ data = '''
 #!/usr/bin/ion
 # kill() storm against a receiver that loops in user code, getpid(),
 # usleep() and pipe read/write, once as a forked child and once exec'd.
-# Each line must show more than 0 signals. "SIGREPRO done" marks the end.
+# Each line must show more than 0 signals; then "SIGREPRO: pass". "SIGREPRO done" marks the end.
 mkdir -p /tmp/sig-pipe
 cd /tmp/sig-pipe
 tcc -o sigrepro /usr/share/sig-pipe/sigrepro.c

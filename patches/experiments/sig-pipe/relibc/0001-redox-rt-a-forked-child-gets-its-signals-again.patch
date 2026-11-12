@@ -1,0 +1,89 @@
+From 4cad24aba3d4bf25abfb6d7c7e2e14ca8eba61d7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 08:19:20 +0000
+Subject: [PATCH] redox-rt: a forked child gets its signals again
+
+fork_inner copies the address space inside dup_into_upper("exclusive"),
+which holds a tmp_disable_signals() guard. The child starts from that
+copy at __relibc_internal_fork_ret and never drops the guard, so its
+disable_signals_depth stays 1 and INHIBIT_DELIVERY stays set for the
+rest of its life: the kernel never runs a handler in it. Only blocking
+calls that return EINTR delivered signals, through
+manually_enter_trampoline. kill() storms against a forked child that
+loops in user code, getpid or pipe I/O got 0 signals (redox-rpi #205).
+
+fork_impl now notes the caller's depth before forking, and the child
+sets the depth and INHIBIT_DELIVERY back to it.
+---
+ redox-rt/src/proc.rs   |  4 ++++
+ redox-rt/src/signal.rs | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/redox-rt/src/proc.rs b/redox-rt/src/proc.rs
+index 804cf14..9119fc6 100644
+--- a/redox-rt/src/proc.rs
++++ b/redox-rt/src/proc.rs
+@@ -958,6 +958,7 @@ pub fn create_set_addr_space_buf_for_fork(
+ /// descriptors are reobtained through `fmap`. Other mappings are kept but duplicated using CoW.
+ pub fn fork_impl(args: &ForkArgs<'_>) -> Result<usize> {
+     let old_mask = crate::signal::get_sigmask()?;
++    let old_depth = crate::signal::tmp_disable_signals_depth();
+     let pid = unsafe {
+         Error::demux(__relibc_internal_fork_wrapper(
+             core::ptr::from_ref::<ForkArgs>(args) as usize,
+@@ -965,6 +966,9 @@ pub fn fork_impl(args: &ForkArgs<'_>) -> Result<usize> {
+     };
+ 
+     if pid == 0 {
++        // The child's TCB was copied while fork held tmp_disable_signals() guards that only
++        // the parent drops; go back to the caller's depth, or delivery stays inhibited.
++        unsafe { crate::signal::set_tmp_disable_signals_depth(old_depth) };
+         crate::signal::set_sigmask(Some(old_mask), None)?;
+     }
+     Ok(pid)
+diff --git a/redox-rt/src/signal.rs b/redox-rt/src/signal.rs
+index 5d3a415..0de382e 100644
+--- a/redox-rt/src/signal.rs
++++ b/redox-rt/src/signal.rs
+@@ -698,6 +698,38 @@ pub unsafe extern "C" fn __redox_rt_debug_print_tmp_disable_signals_info() {
+     let _ = crate::sys::posix_write(1, alloc::format!("Inhibited: {inhibited}, depth: {depth}. These should be false and 0 unless redox-rt is leaking tmp_disable_signals() guards.\n").as_bytes());
+ }
+ 
++/// How many `tmp_disable_signals()` guards this thread holds now.
++pub(crate) fn tmp_disable_signals_depth() -> u64 {
++    if !crate::TLS_ACTIVATED.load(Ordering::Relaxed) {
++        return 0;
++    }
++    unsafe { (*Tcb::current().unwrap().os_specific.arch.get()).disable_signals_depth }
++}
++
++/// Set this thread's `tmp_disable_signals()` depth, and `INHIBIT_DELIVERY` with it.
++///
++/// For the child of `fork`: its memory is copied while the parent holds a guard
++/// (`dup_into_upper` around the address-space copy), but the child starts at the fork
++/// return path and never drops that guard. Without this the child keeps
++/// `INHIBIT_DELIVERY` set for its whole life, and the kernel never runs its handlers.
++pub(crate) unsafe fn set_tmp_disable_signals_depth(depth: u64) {
++    if !crate::TLS_ACTIVATED.load(Ordering::Relaxed) {
++        return;
++    }
++    unsafe {
++        let os = &Tcb::current().unwrap().os_specific;
++        (*os.arch.get()).disable_signals_depth = depth;
++        let ctl = &os.control.control_flags;
++        let inhibit = syscall::flag::INHIBIT_DELIVERY.bits();
++        let flags = ctl.load(Ordering::Relaxed);
++        ctl.store(
++            if depth == 0 { flags & !inhibit } else { flags | inhibit },
++            Ordering::Release,
++        );
++        core::sync::atomic::compiler_fence(Ordering::Acquire);
++    }
++}
++
+ /// Used to disable jumping to signal handler while the guard active
+ pub fn tmp_disable_signals() -> TmpDisableSignalsGuard {
+     if !crate::TLS_ACTIVATED.load(Ordering::Relaxed) {
+-- 
+2.53.0
+
