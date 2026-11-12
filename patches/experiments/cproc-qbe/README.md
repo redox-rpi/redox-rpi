@@ -71,6 +71,16 @@ and object tools): all of `cproc.ion` passes. `cproc -c` builds
 links against it and the program prints `twice(21) = 42`; `strip` takes
 it from 4304 to 2528 bytes, it still runs, and `nm` then says `no symbols`.
 
+Real Pi 3B+ with the archive and object tools ([test 359](https://github.com/redox-rpi/pi-tests/blob/main/reports/359.md),
+2026-11-12): pass. Every step of the check passes; hello dynamic 422 ms,
+static 16.9 s, both run; benchmark totals cproc 1143.5 ms, tcc 1470.0 ms,
+gcc -O2 1026.7 ms; pi-test 6/6, no panic. The counted run is on a local
+merge with PR #373 (`v0.5.0-dev-108-gf98efe3b+x88fd`), because the #151
+stall hit the row's own image. A first run on that image showed `timeit:
+Interrupted system call` twice (`waitpid` returned `EINTR`, the child kept
+running): [#386](https://github.com/redox-rpi/redox-rpi/issues/386), not
+caused by this change.
+
 Real Pi 3B+ ([test 317](https://github.com/redox-rpi/pi-tests/blob/main/reports/317.md),
 `v0.5.0-dev-25-gd3ca14bc+x898d`): pass. Hello World compiles in 422 ms
 (static 16.8 s, runs); benchmark totals cproc 1052 ms, tcc 1381 ms,
