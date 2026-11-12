@@ -102,8 +102,22 @@ Code quality CI job runs it.
 
 ## Display reference dumps (#224 step 4)
 
-- 1920x1080, closed firmware, NanoKVM: Pi test row 337 (no person),
-  saved as `reference/pi3bp-firmware-1080p-display.txt` and `.regs`.
+- **1920x1080, closed firmware, NanoKVM** (Pi test row 337, 2026-11-12,
+  `v0.5.0-dev-84-g3e5d67f0`): [`reference/pi3bp-firmware-1080p-display.txt`](reference/pi3bp-firmware-1080p-display.txt)
+  and `.regs` (224 registers). No hang, everything as expected:
+  - pixel valve 2 and HDMI: 1920x1080, h 88/44/148 (total 2200), v 4/5/36
+    (total 1125), sync + / +, `pllh_pix` 148.5 MHz, 60.000 Hz; HDMI frame
+    count rising; PHY `ctl_0` 0x8c000000, `reset_ctl` 0.
+  - HVS channel 1 at 1920x1080 with one plane: the firmware's 1824x984
+    framebuffer (overscan), scaled to 1920x1035 at (0, 22). Channels 0 and
+    2 off; COB split 2048..=15503 for channel 1.
+  - Pixel valves 0 and 1 off.
+- **What changes by itself:** two dumps 5 s apart differ in PLLA/B/C
+  `CTRL`/`FRAC`, the `vpu`, `v3d` and `emmc` dividers and a `GPLEV1` bit:
+  the firmware's dynamic clocking moves them. Any `diff` shows those; the
+  display registers stay put apart from status and frame counters.
+- `socdump check` still shows `v3d` at 300 MHz against the firmware's 250
+  (the open question from step 1).
 - 1280x720: needs `hdmi_mode=4` (with `hdmi_group=1`) in the SD card's
   `config.txt`, since the test Pi reads `config.txt` from the card, not
   from TFTP. So it waits for a card visit.

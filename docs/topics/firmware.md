@@ -103,7 +103,7 @@
   the clock manager (`fw`). Reference dump in `tools/socdump/reference/`.
   Steps 3 and 5 (branch `socdump-display`): `socdump display` decodes the
   HVS channels and planes, the pixel valves and HDMI; `socdump diff`
-  compares two register dumps. Pi test row 337 takes the 1080p display
+  compares two register dumps. Pi test row 337 took the 1080p display
   reference; 720p waits for a card visit (`hdmi_mode` in the card's
   `config.txt`).
 
