@@ -1,5 +1,6 @@
 # Experiment waitpid-signal (#387): a caught signal must reach a process
-# that blocks in waitpid(). The check needs tcc in the image (experiment
+# that blocks in waitpid() (patch relibc/0001, on top of experiment
+# sigcont-restart's relibc/0001: build with both). The check needs tcc in the image (experiment
 # tcc): `ion /usr/share/waitpid-signal/check.ion`.
 
 [[files]]
@@ -26,15 +27,6 @@ static int one(int restart, int storm) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sig; sa.sa_flags = restart ? SA_RESTART : 0;
     sigaction(SIGUSR1, &sa, NULL);
-    /* A pending signal that is not blocked does not show in sigpending():
-     * block SIGUSR1 for a moment to see a left-over one, then unblock it,
-     * which must deliver it. */
-    sigset_t u1, pend; sigemptyset(&u1); sigaddset(&u1, SIGUSR1);
-    caught = 0;
-    sigprocmask(SIG_BLOCK, &u1, NULL); sigpending(&pend);
-    int left = sigismember(&pend, SIGUSR1);
-    sigprocmask(SIG_UNBLOCK, &u1, NULL);
-    printf("    before: SIGUSR1 %s, %d caught on unblock\n", left ? "LEFT PENDING" : "not pending", (int)caught);
     caught = 0; caught_at = -1; t0 = now_ms();
     pid_t me = getpid();
     pid_t c = fork();
@@ -56,16 +48,25 @@ static int one(int restart, int storm) {
     }
     int e = errno;
     while (waitpid(s, NULL, 0) < 0 && errno == EINTR) {}
-    printf("  %-13s %-6s waitpid -> %d%s%s after %ld ms, status %d; caught %d, first at %ld ms, %d EINTR\n",
+    /* A pending signal that is not blocked does not show in sigpending():
+     * block SIGUSR1 for a moment to see one left over (never delivered),
+     * then unblock it, which delivers it. */
+    sigset_t u1, pend; sigemptyset(&u1); sigaddset(&u1, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &u1, NULL); sigpending(&pend);
+    int left = sigismember(&pend, SIGUSR1);
+    sigprocmask(SIG_UNBLOCK, &u1, NULL);
+    printf("  %-13s %-6s waitpid -> %d%s%s after %ld ms, status %d; caught %d, first at %ld ms, %d EINTR%s\n",
            restart ? "SA_RESTART" : "no SA_RESTART", storm ? "storm" : "one",
            (int)r, r < 0 ? " " : "", r < 0 ? strerror(e) : "", ret_at,
-           WIFEXITED(st) ? WEXITSTATUS(st) : -1, caught, caught_at, eintr);
+           WIFEXITED(st) ? WEXITSTATUS(st) : -1, caught, caught_at, eintr,
+           left ? ", SIGUSR1 LEFT PENDING" : "");
     fflush(stdout);
     /* Want: the signal caught while waiting (first at < 1000 ms), child
      * still reaped with status 7; without SA_RESTART an EINTR first. */
     int ok = caught > 0 && caught_at >= 0 && caught_at < 1000 && r == c && WEXITSTATUS(st) == 7;
     if (!restart && eintr == 0) ok = 0;
     if (restart && eintr != 0) ok = 0;
+    if (left) ok = 0;
     return ok;
 }
 
@@ -89,8 +90,8 @@ data = '''
 #!/usr/bin/ion
 # A process blocked in waitpid() gets SIGUSR1 (once, then a storm), with
 # and without SA_RESTART. Each case: caught while waiting (first at
-# < 1000 ms), the child reaped with status 7; EINTR only without
-# SA_RESTART. Then "WPSIG: pass"; "WPSIG done" marks the end.
+# < 1000 ms), the child reaped with status 7, no SIGUSR1 left pending;
+# EINTR only without SA_RESTART. Then "WPSIG: pass"; "WPSIG done" marks the end.
 mkdir -p /tmp/waitpid-signal
 cd /tmp/waitpid-signal
 tcc -o wpsig /usr/share/waitpid-signal/wpsig.c
