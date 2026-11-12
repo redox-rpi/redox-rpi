@@ -55,3 +55,12 @@ seed from #205) must report more than 0 signals.
   receivers got 29/27/1119/7 and exec'd 28/31/4568/8, so `SIGREPRO: pass`.
   `chaos --kind signals` with the #205 seed: 13 signals (before: 0); seeds
   1 and 2: 27 and 10. No `RELIBC PANIC`.
+- **Real Pi 3B+, 2026-11-12**, pi-tests row 352
+  ([report](https://github.com/redox-rpi/pi-tests/blob/main/reports/352.md)):
+  the first run on `v0.5.0-dev-103-g08bc7239+xb4a3` hit the #151 network
+  stall (devsh unreachable, no panic) and does not count. Rerun on
+  `v0.5.0-dev-106-g0e7b4571+xb4a3`, which is this branch merged with the
+  dwc2d fix #373 (dwc2d-no-sleep), same experiments: `SIGREPRO: pass`.
+  Forked/exec'd receivers got user 20/23, getpid 24/24, sleep 51/42159
+  and pipe 7/6 signals. `chaos --kind signals` with seeds 0x218d87da9382bd2e,
+  1 and 2 got 7, 19 and 5 signals. No panic; pi-test passes. **Pass.**
