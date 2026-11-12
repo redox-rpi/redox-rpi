@@ -1,0 +1,97 @@
+# Experiment sigcont-restart (#386): a signal the program does not catch
+# (SIGCONT with its default action) must not make a blocking call return
+# EINTR. The check needs tcc in the image (experiment tcc):
+# `ion /usr/share/sigcont-restart/check.ion`.
+
+[[files]]
+path = "/usr/share/sigcont-restart/sigcont.c"
+data = '''
+/* #386: does a signal interrupt waitpid() and read() with EINTR?
+ * A forked sender sends the signal to this process every 0.2 ms while it
+ * waits for a child (waitpid) or reads a pipe the child writes after
+ * 0.5 s. POSIX: only a caught signal without SA_RESTART gives EINTR. */
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+
+static volatile sig_atomic_t caught;
+static void on_sig(int s) { (void)s; caught++; }
+
+static long now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+
+static pid_t storm(pid_t target, int sig, int ms) {
+    pid_t k = fork();
+    if (k == 0) {
+        long end = now_ms() + ms;
+        while (now_ms() < end) { kill(target, sig); usleep(200); }
+        _exit(0);
+    }
+    return k;
+}
+
+/* Returns how many of the calls returned EINTR. */
+static int run(const char *call, int sig, int rounds) {
+    int eintr = 0;
+    for (int r = 0; r < rounds; r++) {
+        int p[2]; pipe(p);
+        pid_t c = fork();
+        if (c == 0) { usleep(500000); char x = 'x'; write(p[1], &x, 1); _exit(7); }
+        pid_t s = storm(getpid(), sig, 700);
+        int st = 0; long n;
+        if (!strcmp(call, "waitpid")) n = waitpid(c, &st, 0);
+        else { char b; n = read(p[0], &b, 1); }
+        if (n < 0 && errno == EINTR) eintr++;
+        else if (n < 0) printf("  %s: %s\n", call, strerror(errno));
+        while (waitpid(c, &st, 0) < 0 && errno == EINTR) {}
+        while (waitpid(s, &st, 0) < 0 && errno == EINTR) {}
+        close(p[0]); close(p[1]);
+    }
+    return eintr;
+}
+
+int main(void) {
+    const int rounds = 5;
+    struct sigaction sa;
+    const char *calls[] = { "waitpid", "read" };
+    int bad = 0;
+    for (int i = 0; i < 2; i++) {
+        int e;
+        e = run(calls[i], SIGCONT, rounds);
+        printf("%-7s SIGCONT, default action:  %d of %d EINTR (want 0)\n", calls[i], e, rounds);
+        bad += e != 0;
+
+        memset(&sa, 0, sizeof sa); sa.sa_handler = on_sig; sa.sa_flags = SA_RESTART;
+        sigaction(SIGUSR1, &sa, NULL); caught = 0;
+        e = run(calls[i], SIGUSR1, rounds);
+        printf("%-7s SIGUSR1, SA_RESTART:      %d of %d EINTR (want 0), %ld caught\n", calls[i], e, rounds, (long)caught);
+        bad += e != 0;
+
+        sa.sa_flags = 0; sigaction(SIGUSR1, &sa, NULL); caught = 0;
+        e = run(calls[i], SIGUSR1, rounds);
+        printf("%-7s SIGUSR1, no SA_RESTART:   %d of %d EINTR (want > 0, the control)\n", calls[i], e, rounds);
+        bad += e == 0;
+        signal(SIGUSR1, SIG_IGN);
+    }
+    printf("SIGCONT-REPRO: %s, %d of 6 lines wrong\n", bad ? "FAIL" : "pass", bad);
+    printf("SIGCONT-REPRO done\n");
+    return 0;
+}
+'''
+
+[[files]]
+path = "/usr/share/sigcont-restart/check.ion"
+data = '''
+#!/usr/bin/ion
+# A signal storm while the program blocks in waitpid() and read().
+# Default SIGCONT and SIGUSR1 with SA_RESTART: 0 EINTR. SIGUSR1 without
+# SA_RESTART: EINTR (shows the signals arrive during the call). Then
+# "SIGCONT-REPRO: pass"; "SIGCONT-REPRO done" marks the end.
+mkdir -p /tmp/sigcont-restart
+cd /tmp/sigcont-restart
+tcc -o sigcont /usr/share/sigcont-restart/sigcont.c
+./sigcont
+'''
