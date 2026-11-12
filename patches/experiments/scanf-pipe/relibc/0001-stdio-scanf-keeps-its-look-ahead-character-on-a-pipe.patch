@@ -1,0 +1,227 @@
+From 630fd794c444f69aab12a4885d98e922974c0229 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 20:20:59 +0000
+Subject: [PATCH] stdio: scanf keeps its look-ahead character on a pipe
+
+scanf's file reader returned each character and then fseek'ed back to
+it, so the character scanf stops at stayed in the stream. On a pipe
+fseek drops the FILE's read buffer and fails: the look-ahead character
+and all input already buffered were lost, and every later read on the
+stream returned EOF.
+
+Put each character back into the FILE's unget buffer instead (as
+ungetc does) and take it out when the next character is read. The
+stream ends where it did before on a file, and now also on a pipe.
+Test stdio/fscanf_pipe, its expected output from glibc.
+---
+ src/header/stdio/reader.rs              | 56 +++++++++++++++++--------
+ tests/Makefile.tests.mk                 |  1 +
+ tests/expected/stdio/fscanf_pipe.stdout |  9 ++++
+ tests/stdio/fscanf_pipe.c               | 45 ++++++++++++++++++++
+ 4 files changed, 94 insertions(+), 17 deletions(-)
+ create mode 100644 tests/expected/stdio/fscanf_pipe.stdout
+ create mode 100644 tests/stdio/fscanf_pipe.c
+
+diff --git a/src/header/stdio/reader.rs b/src/header/stdio/reader.rs
+index e069de1..a503d50 100644
+--- a/src/header/stdio/reader.rs
++++ b/src/header/stdio/reader.rs
+@@ -1,4 +1,4 @@
+-use super::{FILE, SEEK_SET, fseek_locked, ftell_locked};
++use super::FILE;
+ use crate::{
+     c_str::{CStr, Kind, NulStr, Thin, WStr, Wide},
+     header::{
+@@ -10,7 +10,7 @@ use crate::{
+     io::Read,
+     platform::{
+         ERRNO,
+-        types::{c_char, off_t, wchar_t, wint_t},
++        types::{c_char, wchar_t, wint_t},
+     },
+ };
+ use core::{
+@@ -46,25 +46,37 @@ impl<'a, T: Kind> Iterator for BufferReader<'a, T> {
+     }
+ }
+ 
++/// Reads characters from a FILE for scanf, leaving the character it
++/// returned last in the stream: that is scanf's look-ahead character, which
++/// the next read on the stream must get when scanf stops at it.
++///
++/// Each character's bytes go back into the FILE's unget buffer (as with
++/// ungetc) and are taken out when the next character is read. Not with
++/// fseek, as before: on a pipe fseek drops the FILE's read buffer and then
++/// fails, so the look-ahead character and all buffered input were lost.
+ pub struct FileReader<'a, T: Kind> {
+     f: &'a mut FILE,
+-    position: off_t,
++    /// Bytes of the character returned last that the next read consumes
++    /// (0 after an invalid multibyte sequence: it is read again, as before).
++    consumed: usize,
+     phantom: PhantomData<T>,
+ }
+ 
+ impl<'a, T: Kind> FileReader<'a, T> {
+-    // Gets the wchar at the current position
++    // Gets the character at the current position: the character, the
++    // bytes read for it and its encoded length.
+     #[inline]
+-    fn get_curret_char(&mut self) -> Result<Option<(T::Char, usize)>, i32> {
++    fn get_curret_char(
++        &mut self,
++    ) -> Result<Option<(T::Char, [u8; MB_CUR_MAX as usize], usize, usize)>, i32> {
++        let mut buf = [0; MB_CUR_MAX as usize];
+         if T::IS_THIN_NOT_WIDE {
+-            let mut buf: [u8; 1] = [0];
+-            match self.f.read(&mut buf) {
++            match self.f.read(&mut buf[..1]) {
+                 Ok(0) => Ok(None),
+-                Ok(n) => Ok(Some((T::Char::from(buf[0]), n))),
++                Ok(n) => Ok(Some((T::Char::from(buf[0]), buf, n, n))),
+                 Err(_) => Err(-1),
+             }
+         } else {
+-            let buf = &mut [0; MB_CUR_MAX as usize];
+             let mut encoded_length = 0;
+             let mut bytes_read = 0;
+ 
+@@ -82,7 +94,7 @@ impl<'a, T: Kind> FileReader<'a, T> {
+                         el
+                     } else {
+                         ERRNO.set(EILSEQ);
+-                        return Self::get_char_from_wint(WEOF).map(|c| Some((c, 0)));
++                        return Self::get_char_from_wint(WEOF).map(|c| Some((c, buf, 1, 0)));
+                     };
+                 }
+ 
+@@ -101,7 +113,8 @@ impl<'a, T: Kind> FileReader<'a, T> {
+                 );
+             }
+ 
+-            Self::get_char_from_wint(wc as wint_t).map(|c| Some((c, encoded_length)))
++            Self::get_char_from_wint(wc as wint_t)
++                .map(|c| Some((c, buf, bytes_read, encoded_length)))
+         }
+     }
+ 
+@@ -120,12 +133,22 @@ impl<'a, T: Kind> Iterator for FileReader<'a, T> {
+     type Item = Result<T::Char, i32>;
+ 
+     fn next(&mut self) -> Option<Self::Item> {
+-        unsafe { fseek_locked(self.f, self.position, SEEK_SET) };
++        // Take the character returned last out of the stream.
++        let mut skip = [0; MB_CUR_MAX as usize];
++        let mut skipped = 0;
++        while skipped < self.consumed {
++            match self.f.read(&mut skip[skipped..self.consumed]) {
++                Ok(0) | Err(_) => break,
++                Ok(n) => skipped += n,
++            }
++        }
++        self.consumed = 0;
+ 
+         match self.get_curret_char() {
+-            Ok(Some((wc, encoded_length))) => {
+-                unsafe { fseek_locked(self.f, self.position, SEEK_SET) };
+-                self.position += encoded_length as off_t;
++            Ok(Some((wc, bytes, read, encoded_length))) => {
++                // Back into the stream until the next read.
++                self.f.unget.extend(bytes[..read].iter().rev());
++                self.consumed = encoded_length;
+                 Some(Ok(wc))
+             }
+             Ok(None) => None,
+@@ -136,10 +159,9 @@ impl<'a, T: Kind> Iterator for FileReader<'a, T> {
+ 
+ impl<'a, T: Kind> From<&'a mut FILE> for FileReader<'a, T> {
+     fn from(f: &'a mut FILE) -> Self {
+-        let position = unsafe { ftell_locked(f) } as off_t;
+         FileReader {
+             f,
+-            position,
++            consumed: 0,
+             phantom: PhantomData::<T>,
+         }
+     }
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index a3a45a0..257523e 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -105,6 +105,7 @@ EXPECT_NAMES=\
+ 	stdio/ungetc_ftell \
+ 	stdio/ungetc_multiple \
+ 	stdio/fscanf_offby1 \
++	stdio/fscanf_pipe \
+ 	stdio/fscanf \
+ 	stdio/printf_neg_pad \
+ 	stdlib/a64l \
+diff --git a/tests/expected/stdio/fscanf_pipe.stdout b/tests/expected/stdio/fscanf_pipe.stdout
+new file mode 100644
+index 0000000..1dcdbf6
+--- /dev/null
++++ b/tests/expected/stdio/fscanf_pipe.stdout
+@@ -0,0 +1,9 @@
++%c: 1 'a', next 'b'
++%d: 1 12, next ','
++_%lf: 0, next 'c'
++%lf: 0, next 'd'
++%3d: 1 1, next '.'
++' x%d': 0, next '5'
++';%d': 1 12345, next ' '
++' x%d': 1 7, next '!'
++then: -1
+diff --git a/tests/stdio/fscanf_pipe.c b/tests/stdio/fscanf_pipe.c
+new file mode 100644
+index 0000000..add0a57
+--- /dev/null
++++ b/tests/stdio/fscanf_pipe.c
+@@ -0,0 +1,45 @@
++// fscanf on a pipe: the character scanf looks ahead at must stay in the
++// stream, as on a file (fscanf.c), although a pipe cannot seek back.
++#include <stdio.h>
++#include <unistd.h>
++
++#include "test_helpers.h"
++
++int main(void) {
++    int fds[2];
++    int status = pipe(fds);
++    ERROR_IF(pipe, status, == -1);
++
++    const char input[] = "ab12,cd1.5;12345  x7!";
++    ssize_t written = write(fds[1], input, sizeof(input) - 1);
++    ERROR_IF(write, written, == -1);
++    close(fds[1]);
++
++    FILE *f = fdopen(fds[0], "r");
++    ERROR_IF(fdopen, f, == NULL);
++
++    char c;
++    int n = 0, r;
++    double d = 0;
++    // Each line: what fscanf returned, then the next character in the stream.
++    r = fscanf(f, "%c", &c);
++    printf("%%c: %d '%c', next '%c'\n", r, c, fgetc(f));
++    r = fscanf(f, "%d", &n);
++    printf("%%d: %d %d, next '%c'\n", r, n, fgetc(f));
++    r = fscanf(f, "_%lf", &d);
++    printf("_%%lf: %d, next '%c'\n", r, fgetc(f));
++    r = fscanf(f, "%lf", &d);
++    printf("%%lf: %d, next '%c'\n", r, fgetc(f));
++    r = fscanf(f, "%3d", &n);
++    printf("%%3d: %d %d, next '%c'\n", r, n, fgetc(f));
++    r = fscanf(f, " x%d", &n);
++    printf("' x%%d': %d, next '%c'\n", r, fgetc(f));
++    r = fscanf(f, ";%d", &n);
++    printf("';%%d': %d %d, next '%c'\n", r, n, fgetc(f));
++    r = fscanf(f, " x%d", &n);
++    printf("' x%%d': %d %d, next '%c'\n", r, n, fgetc(f));
++    printf("then: %d\n", fgetc(f));
++
++    fclose(f);
++    return 0;
++}
+-- 
+2.53.0
+
