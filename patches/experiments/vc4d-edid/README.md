@@ -2,7 +2,7 @@
 
 Test only ([#188](https://github.com/redox-rpi/redox-rpi/issues/188),
 stage 2b), after `vc4d`: builds vc4d from branch `edid` (redox-rpi/vc4d
-`80aa2fe`, on `host-tests`). Instead of `vc4d-diag` (both replace the vc4d
+`c95249f`, on `host-tests`). Instead of `vc4d-diag` (both replace the vc4d
 recipe).
 
 At start, before it touches the HVS, vc4d reads the EDID over DDC (I2C
