@@ -52,6 +52,7 @@ copy="$out/harddrive.img"
 cp "$image" "$copy"
 console="$out/console.log"
 report="$out/report.md"
+: > "$console"
 start=$SECONDS
 log "booting $image in QEMU (devsh on port $DEVSH_PORT)"
 DEVSH_PORT="$DEVSH_PORT" SSH_PORT="$SSH_PORT" timeout 1800 \
@@ -77,8 +78,9 @@ for _ in $(seq 60); do
     python3 scripts/devsh.py 127.0.0.1 "$DEVSH_PORT" true > /dev/null 2>&1 && break
     sleep 2
 done
-args=(127.0.0.1 --port "$DEVSH_PORT" --serial-log "$console" --tcp-host 10.0.2.2 --dead-dns 10.0.2.99
-      --report "$report")
+# QEMU's USB network moves about 0.1 MiB/s, so 1 MiB is enough for the TCP check.
+args=(127.0.0.1 --port "$DEVSH_PORT" --serial-log "$console" --tcp-host 10.0.2.2 --tcp-mib 1
+      --dead-dns 10.0.2.99 --report "$report")
 [ -n "$manifest" ] && args+=(--manifest "$manifest")
 rc=0
 python3 scripts/regression-set.py "${args[@]}" "${pass[@]}" || rc=$?

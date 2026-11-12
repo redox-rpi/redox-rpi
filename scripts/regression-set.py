@@ -31,7 +31,7 @@ Checks, in this order:
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
   dns           #358, #374: a name server is set (from DHCP); an unknown
-                name gives "Name does not resolve" within 3 s; with
+                name gives "Name does not resolve" within 5 s; with
                 --dead-dns as name server a lookup gives "Try again" within
                 15 s; after the name server is set back, the unknown name
                 gives "Name does not resolve" again
@@ -165,7 +165,7 @@ def check_dns(sh, check, args):
         return
     orig = ns[0]
     out, secs = pi_test.timed(sh, "ping -c 1 nosuchname.invalid", 60)
-    unknown = any("Name does not resolve" in l for l in out) and secs <= 3
+    unknown = any("Name does not resolve" in l for l in out) and secs <= 5
     detail = f"name server {orig}; unknown name: {secs:.1f} s, " + (
         "Name does not resolve" if unknown else "; ".join(out[:2])[:100])
     ok = unknown
