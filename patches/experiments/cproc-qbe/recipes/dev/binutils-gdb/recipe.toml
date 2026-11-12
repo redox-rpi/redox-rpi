@@ -37,7 +37,16 @@ for f in "${COOKBOOK_STAGE}"/usr/bin/*; do
         *) rm -f "$f" ;;
     esac
 done
-# ranlib is ar again (978 KB); ar acts as ranlib when called by that name.
-ln -sf ar "${COOKBOOK_STAGE}/usr/bin/ranlib"
+# ranlib is ar again (978 KB, linked with is-ranlib.o instead of
+# not-ranlib.o, so a link to ar does not work): a script that runs
+# `ar s` on each archive does the same.
+cat > "${COOKBOOK_STAGE}/usr/bin/ranlib" << 'EOS'
+#!/usr/bin/ion
+# ranlib: write the symbol index of each archive (ar s).
+for a in @args[1..]
+    ar s $a || exit 1
+end
+EOS
+chmod 755 "${COOKBOOK_STAGE}/usr/bin/ranlib"
 ls -l "${COOKBOOK_STAGE}/usr/bin"
 """

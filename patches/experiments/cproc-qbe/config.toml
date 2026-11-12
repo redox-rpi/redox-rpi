@@ -33,8 +33,8 @@ timeit as -o bench.o bench.s
 echo "== ar, ranlib, nm, objdump, strip"
 cproc -c -o twice.o $T/twice.c
 ar rc libtwice.a twice.o && ranlib libtwice.a
+echo "ranlib rc=$?"
 ar t libtwice.a
-ls -l /usr/bin/ranlib
 nm -s libtwice.a
 objdump -d twice.o | grep -c "ret"
 cproc -o usetwice $T/usetwice.c -L. -ltwice && ./usetwice
