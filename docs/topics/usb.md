@@ -39,7 +39,7 @@
   after the last change, otherwise every 40 ms. A keyboard that refuses
   SET_IDLE is logged. **QEMU** (idle, `dwc2d-idle` counters, +60 to
   +180 s): timer wakeups 50.6/s → 19.5/s, their busy time 9.1 → 2.0 ms/s;
-  keyboard test passes. Pi: row 373 (no person, idle CPU); fast typing
+  keyboard test passes. Pi: row 378 (no person, idle CPU); fast typing
   needs a person.
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
