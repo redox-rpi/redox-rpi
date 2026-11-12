@@ -1,0 +1,86 @@
+# Experiment waitpid-signal (#387): a caught signal must reach a process
+# that blocks in waitpid(). The check needs tcc in the image (experiment
+# tcc): `ion /usr/share/waitpid-signal/check.ion`.
+
+[[files]]
+path = "/usr/share/waitpid-signal/wpsig.c"
+data = '''
+/* #387: does a signal reach a process blocked in waitpid()?
+ * The child sleeps 1.5 s and exits 7. A forked sender sends SIGUSR1 once
+ * at 0.3 s (or a storm with -s). The handler notes the time. */
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <time.h>
+
+static long t0;
+static volatile long caught_at = -1;
+static volatile int caught;
+static long now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+static void on_sig(int s) { (void)s; if (caught_at < 0) caught_at = now_ms() - t0; caught++; }
+
+static int one(int restart, int storm) {
+    struct sigaction sa; memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_sig; sa.sa_flags = restart ? SA_RESTART : 0;
+    sigaction(SIGUSR1, &sa, NULL);
+    caught = 0; caught_at = -1; t0 = now_ms();
+    pid_t me = getpid();
+    pid_t c = fork();
+    if (c == 0) { usleep(1500000); _exit(7); }
+    pid_t s = fork();
+    if (s == 0) {
+        usleep(300000);
+        if (storm) { long end = now_ms() + 500; while (now_ms() < end) { kill(me, SIGUSR1); usleep(200); } }
+        else kill(me, SIGUSR1);
+        _exit(0);
+    }
+    int st = 0, eintr = 0; pid_t r;
+    long ret_at;
+    for (;;) {
+        r = waitpid(c, &st, 0);
+        ret_at = now_ms() - t0;
+        if (r < 0 && errno == EINTR) { if (!eintr) printf("    EINTR at %ld ms\n", ret_at); eintr++; continue; }
+        break;
+    }
+    int e = errno;
+    while (waitpid(s, NULL, 0) < 0 && errno == EINTR) {}
+    printf("  %-13s %-6s waitpid -> %d%s%s after %ld ms, status %d; caught %d, first at %ld ms, %d EINTR\n",
+           restart ? "SA_RESTART" : "no SA_RESTART", storm ? "storm" : "one",
+           (int)r, r < 0 ? " " : "", r < 0 ? strerror(e) : "", ret_at,
+           WIFEXITED(st) ? WEXITSTATUS(st) : -1, caught, caught_at, eintr);
+    fflush(stdout);
+    /* Want: the signal caught while waiting (first at < 1000 ms), child
+     * still reaped with status 7; without SA_RESTART an EINTR first. */
+    int ok = caught > 0 && caught_at >= 0 && caught_at < 1000 && r == c && WEXITSTATUS(st) == 7;
+    if (!restart && eintr == 0) ok = 0;
+    if (restart && eintr != 0) ok = 0;
+    return ok;
+}
+
+int main(void) {
+    int bad = 0;
+    for (int restart = 0; restart < 2; restart++)
+        for (int storm = 0; storm < 2; storm++)
+            bad += !one(restart, storm);
+    printf("WPSIG: %s, %d of 4 cases wrong\n", bad ? "FAIL" : "pass", bad);
+    printf("WPSIG done\n");
+    return 0;
+}
+'''
+
+[[files]]
+path = "/usr/share/waitpid-signal/check.ion"
+data = '''
+#!/usr/bin/ion
+# A process blocked in waitpid() gets SIGUSR1 (once, then a storm), with
+# and without SA_RESTART. Each case: caught while waiting (first at
+# < 1000 ms), the child reaped with status 7; EINTR only without
+# SA_RESTART. Then "WPSIG: pass"; "WPSIG done" marks the end.
+mkdir -p /tmp/waitpid-signal
+cd /tmp/waitpid-signal
+tcc -o wpsig /usr/share/waitpid-signal/wpsig.c
+./wpsig
+'''
