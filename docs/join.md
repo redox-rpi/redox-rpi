@@ -29,7 +29,9 @@ and writing down what happened helps already.
    comment that you take it.
 3. Work as described in [CONTRIBUTING.md](../CONTRIBUTING.md): a branch, a
    pull request that names the issue, test results with the build ID.
-4. Questions and ideas: [Discussions](https://github.com/redox-rpi/redox-rpi/discussions).
+4. Questions and ideas: [Discussions](https://github.com/redox-rpi/redox-rpi/discussions),
+   or chat with us in the Matrix room
+   [#redox-rpi:matrix.org](https://matrix.to/#/#redox-rpi:matrix.org).
 
 ## Growing into a role
 

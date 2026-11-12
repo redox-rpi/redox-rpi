@@ -5,7 +5,7 @@
 [packages]
 qbe = "source"
 cproc = "source"
-# as and ld only (this experiment's recipe).
+# as, ld, ar, ranlib, nm, objdump and strip only (this experiment's recipe).
 binutils-gdb = "source"
 
 # The cproc checks: `ion /usr/share/tcc-tests/cproc.ion`; "CPROC-TEST done"
@@ -30,6 +30,21 @@ echo "== the steps: preprocess, cproc-qbe, qbe, as, ld"
 timeit tcc -E -undef -nostdinc -isystem /usr/include -D__aarch64__ -D__redox__ -D__LP64__ -o bench.i $T/bench.c
 timeit cproc -S -o bench.s $T/bench.c
 timeit as -o bench.o bench.s
+echo "== ar, ranlib, nm, objdump, strip"
+cproc -c -o twice.o $T/twice.c
+ar rc libtwice.a twice.o && ranlib libtwice.a
+echo "ranlib rc=$?"
+ar t libtwice.a
+nm -s libtwice.a
+objdump -d twice.o | grep -c "ret"
+cproc -o usetwice $T/usetwice.c -L. -ltwice && ./usetwice
+echo "rc=$?"
+cp usetwice usetwice-stripped
+strip usetwice-stripped && ./usetwice-stripped
+echo "rc=$?"
+ls -l usetwice usetwice-stripped
+nm usetwice | grep twice
+nm usetwice-stripped
 echo "== bench, compiled by cproc"
 timeit cproc -o bench $T/bench.c && timeit ./bench
 echo "== bench, compiled by tcc"
@@ -37,4 +52,19 @@ timeit tcc -o bench-tcc $T/bench.c && timeit ./bench-tcc
 echo "== bench, compiled by gcc -O2 (cross)"
 timeit $T/bench-gcc
 echo "CPROC-TEST done"
+"""
+
+# A small library for the ar/nm/objdump/strip check.
+[[files]]
+path = "/usr/share/tcc-tests/twice.c"
+data = """
+int twice(int x) { return 2 * x; }
+"""
+
+[[files]]
+path = "/usr/share/tcc-tests/usetwice.c"
+data = """
+#include <stdio.h>
+int twice(int x);
+int main(void) { printf("twice(21) = %d\\n", twice(21)); return twice(21) == 42 ? 0 : 1; }
 """
