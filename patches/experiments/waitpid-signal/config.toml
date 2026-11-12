@@ -26,9 +26,15 @@ static int one(int restart, int storm) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_sig; sa.sa_flags = restart ? SA_RESTART : 0;
     sigaction(SIGUSR1, &sa, NULL);
-    sigset_t blk, pend; sigprocmask(SIG_BLOCK, NULL, &blk); sigpending(&pend);
-    printf("    before: SIGUSR1 %s, %s\n", sigismember(&blk, SIGUSR1) ? "BLOCKED" : "unblocked",
-           sigismember(&pend, SIGUSR1) ? "PENDING" : "not pending");
+    /* A pending signal that is not blocked does not show in sigpending():
+     * block SIGUSR1 for a moment to see a left-over one, then unblock it,
+     * which must deliver it. */
+    sigset_t u1, pend; sigemptyset(&u1); sigaddset(&u1, SIGUSR1);
+    caught = 0;
+    sigprocmask(SIG_BLOCK, &u1, NULL); sigpending(&pend);
+    int left = sigismember(&pend, SIGUSR1);
+    sigprocmask(SIG_UNBLOCK, &u1, NULL);
+    printf("    before: SIGUSR1 %s, %d caught on unblock\n", left ? "LEFT PENDING" : "not pending", (int)caught);
     caught = 0; caught_at = -1; t0 = now_ms();
     pid_t me = getpid();
     pid_t c = fork();
