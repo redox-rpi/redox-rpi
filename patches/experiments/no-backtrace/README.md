@@ -50,4 +50,13 @@ QEMU (`qemu-raspi3b.sh --usb-net`), over devsh:
 
 ## Results
 
-See the pull request; filled in after the QEMU run.
+QEMU, 2026-11-12, build `v0.5.0-dev-102-g0d83238a+x6f6f`
+(`--experiment no-backtrace`). devsh logs in through getty and login, as
+a user on the console does:
+
+| check | result |
+|---|---|
+| `env`, lines with `RUST_BACKTRACE` | 0 |
+| `ping -c 1 no.such.name` | `Error: failed to lookup address information: Non-recoverable error`, nothing after it |
+| `env RUST_BACKTRACE=1 ping -c 1 no.such.name` | the same error, then `Stack backtrace:` with frames 0–6 `<unknown>` |
+| `Stack backtrace` in the whole boot log | 0 |
