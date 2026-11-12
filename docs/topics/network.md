@@ -38,6 +38,16 @@
   another thread) the network stays up (2 of 2), and Pi test 329 found
   nothing broken. Why inputd hung in #316 (vc4d, no monitor on HDMI) is
   still open.
+- [#184](https://github.com/redox-rpi/redox-rpi/issues/184) a TCP
+  connection Redox closes gets no FIN: netstack dropped the socket when
+  its last file closed, so the peer kept the connection open (sshd after
+  its login grace time). The fix from PR
+  [#185](https://github.com/redox-rpi/redox-rpi/pull/185) went into the
+  stacked branch `relibc-quiet`, which never reached main. Now default
+  base `0089` (branch `tcp-fin`): close the TCP way (rest of the send
+  buffer, then FIN), remove the socket once closed, reset after 60 s.
+  `scripts/tcp-fin-check.py` checks it from the host. QEMU 2026-11-11:
+  main sends no FIN (Redox nc out and `nc -l` in), `0089` sends it at once.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
   `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
