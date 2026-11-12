@@ -5,9 +5,9 @@ Issue [#211](https://github.com/redox-rpi/redox-rpi/issues/211), for #126
 test 239): 2.5 % CPU and about 77 wakeups/s.
 
 - **base `0093`** (`0090` in Pi rows 242 and 243):
-  - The test request in `/tmp/dwc2d-cycle` (base `0033`) is looked for on
-    every third rescan instead of every one. A path that doesn't exist is
-    a round trip through the namespace manager and RedoxFS each time.
+  - (Until base `0087`: the test request in `/tmp/dwc2d-cycle` was looked
+    for on every third rescan only. Since `0087` a thread of its own looks
+    for it, outside the event loop, so this part is gone.)
   - The network adapters are asked for their link every 5 s, and when one
     is new, instead of every second. On the LAN7800 that is two PHY reads,
     each with a 1 ms sleep.

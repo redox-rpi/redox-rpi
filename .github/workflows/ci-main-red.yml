@@ -1,0 +1,51 @@
+name: CI main red
+
+# A failed "QEMU boot test" on a push to main opens the issue "CI: main is
+# red", or comments on it if it is open already; the next green run on main
+# comments and closes it (#257). Same idea as scripts/update-stable.sh for
+# the nightly. Cancelled and skipped runs change nothing.
+
+on:
+  workflow_run:
+    workflows: ["QEMU boot test"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  issues: write
+
+jobs:
+  issue:
+    if: github.event.workflow_run.event == 'push' && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'timed_out')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 'Open, update or close "CI: main is red"'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          TITLE_COMMIT: ${{ github.event.workflow_run.display_title }}
+        run: |
+          set -euo pipefail
+          title="CI: main is red"
+          number="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" \
+              --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)"
+          short="${SHA:0:8}"
+          if [ "$CONCLUSION" = success ]; then
+              if [ -n "$number" ]; then
+                  gh issue comment "$number" --repo "$REPO" \
+                      --body "Green again on \`$short\` ($TITLE_COMMIT): $RUN_URL"
+                  gh issue close "$number" --repo "$REPO"
+              fi
+              exit 0
+          fi
+          body="\`QEMU boot test\` failed ($CONCLUSION) on main at \`$short\` ($TITLE_COMMIT): $RUN_URL
+
+          No release candidate from a red commit (docs/release-process.md, Candidate checks). The issue closes itself on the next green run on main."
+          if [ -n "$number" ]; then
+              gh issue comment "$number" --repo "$REPO" --body "$body"
+          else
+              gh issue create --repo "$REPO" --title "$title" --label topic:ci --body "$body"
+          fi

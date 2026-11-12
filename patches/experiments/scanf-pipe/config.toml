@@ -1,0 +1,103 @@
+# Experiment scanf-pipe (#338): relibc's scanf keeps its look-ahead
+# character on a pipe (patch relibc/0001). The check needs tcc in the image
+# (experiment tcc): `ion /usr/share/scanf-pipe/check.ion`.
+
+[[files]]
+path = "/usr/share/scanf-pipe/scanf-pipe.c"
+data = '''
+// fscanf on a pipe: the character scanf looks ahead at must stay in the
+// stream, as on a file (fscanf.c), although a pipe cannot seek back.
+#include <stdio.h>
+#include <unistd.h>
+
+#include <stdlib.h>
+#include <string.h>
+
+#define ERROR_IF(f, x, cond) do { if ((x) cond) { perror(#f); exit(1); } } while (0)
+
+int main(int argc, char **argv) {
+    // "-": read stdin (a pipe or a file from the shell) instead.
+    FILE *f;
+    if (argc > 1 && strcmp(argv[1], "-") == 0) {
+        f = stdin;
+    } else {
+    int fds[2];
+    int status = pipe(fds);
+    ERROR_IF(pipe, status, == -1);
+
+    const char input[] = "ab12,cd1.5;12345  x7!";
+    ssize_t written = write(fds[1], input, sizeof(input) - 1);
+    ERROR_IF(write, written, == -1);
+    close(fds[1]);
+
+    f = fdopen(fds[0], "r");
+    ERROR_IF(fdopen, f, == NULL);
+    }
+
+    char c;
+    int n = 0, r;
+    double d = 0;
+    // Each line: what fscanf returned, then the next character in the stream.
+    r = fscanf(f, "%c", &c);
+    printf("%%c: %d '%c', next '%c'\n", r, c, fgetc(f));
+    r = fscanf(f, "%d", &n);
+    printf("%%d: %d %d, next '%c'\n", r, n, fgetc(f));
+    r = fscanf(f, "_%lf", &d);
+    printf("_%%lf: %d, next '%c'\n", r, fgetc(f));
+    r = fscanf(f, "%lf", &d);
+    printf("%%lf: %d, next '%c'\n", r, fgetc(f));
+    r = fscanf(f, "%3d", &n);
+    printf("%%3d: %d %d, next '%c'\n", r, n, fgetc(f));
+    r = fscanf(f, " x%d", &n);
+    printf("' x%%d': %d, next '%c'\n", r, fgetc(f));
+    r = fscanf(f, ";%d", &n);
+    printf("';%%d': %d %d, next '%c'\n", r, n, fgetc(f));
+    r = fscanf(f, " x%d", &n);
+    printf("' x%%d': %d %d, next '%c'\n", r, n, fgetc(f));
+    printf("then: %d\n", fgetc(f));
+
+    fclose(f);
+    return 0;
+}
+'''
+
+[[files]]
+path = "/usr/share/scanf-pipe/expected.txt"
+data = '''
+%c: 1 'a', next 'b'
+%d: 1 12, next ','
+_%lf: 0, next 'c'
+%lf: 0, next 'd'
+%3d: 1 1, next '.'
+' x%d': 0, next '5'
+';%d': 1 12345, next ' '
+' x%d': 1 7, next '!'
+then: -1
+'''
+
+[[files]]
+path = "/usr/share/scanf-pipe/check.ion"
+data = '''
+#!/usr/bin/ion
+# fscanf on a pipe (#338): compiles scanf-pipe.c with tcc and runs it three
+# ways; each must print expected.txt (glibc's output). "SCANF-PIPE done"
+# marks the end.
+let D = /usr/share/scanf-pipe
+mkdir -p /tmp/scanf-pipe
+cd /tmp/scanf-pipe
+tcc -o scanf-pipe $D/scanf-pipe.c
+printf "ab12,cd1.5;12345  x7!" > input.txt
+./scanf-pipe > own-pipe.txt
+./scanf-pipe - < input.txt > file.txt
+cat input.txt | ./scanf-pipe - > shell-pipe.txt
+for t in own-pipe file shell-pipe
+    # No cmp in the image: compare the texts.
+    if test "$(cat $D/expected.txt)" = "$(cat $t.txt)"
+        echo "$t: pass"
+    else
+        echo "$t: FAIL"
+        cat $t.txt
+    end
+end
+echo "SCANF-PIPE done"
+'''

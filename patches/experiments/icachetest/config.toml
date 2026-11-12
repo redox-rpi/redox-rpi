@@ -1,0 +1,3 @@
+# The icache stress test (#3), for images with and without icache-sync.
+[packages]
+icachetest = "source"

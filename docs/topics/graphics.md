@@ -66,22 +66,23 @@ on the CPU into a dumb buffer.
 ## Step plan at a glance
 
 From the firmware's framebuffer to the GPU, each step on top of the one
-before. "Before" is the estimate written before any code, "Now" what
-QEMU showed by 2026-10-30 (details in the step sections, In progress and
-Effort below).
+before. "Before" is the estimate written before any code, "Now" the
+state on 2026-11-07 (details in the step sections, In progress, Effort
+and Later below).
 
 | Step | What | Before | Now | Left, new estimate |
 |---|---|---|---|---|
 | 1a | Firmware framebuffer: `rpi-fbd` gets its buffer, modes and EDID through the mailbox (`rpi-firmwared`), boot stub framebuffer for direct boot | 1–2 weeks | works in QEMU (`graphics-fb`) | Pi test #34; a few days of calendar time |
 | 1b | Double buffering by page flip: two screens in one buffer, the mailbox's virtual offset (tag `0x00048009`) shows the finished one; EDID polling, blanking | part of 1a | works in QEMU (`graphics-fb2`, patch `0026`); waiting for the vertical blank after a flip on `graphics-vsync` (patch `0036`, tag `0x0004800e`, falls back where the firmware lacks it, as in QEMU) | Pi tests #43 and #97. Missing: two screens at 1920x1080/1200 (need `gpu_mem` 32 or more, two 8–9 MiB screens); 1–3 days with Pi tests |
 | 2a | DMA blits: the copy to the screen by the DMA controller | 2–4 weeks | prototype in QEMU (`graphics-fb3`) | Pi test #44 decides if it pays; cached dumb buffers need cache maintenance from user space (kernel, DMA plan #21); a few days |
-| – | Desktop: Orbital on `rpi-fbd`, keyboard, terminal, mouse | not planned | works in QEMU (`graphics-gui`, `graphics-gui-mouse`) | Pi test #54 and the mouse test; faster terminal is upstream work |
-| 2b | Own display driver (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware | 2–3 months | not started | unchanged; no template in Redox, debugging on the Pi with someone at the screen (the NanoKVM helps) |
-| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | not started | unchanged; needs render nodes and buffer sharing in upstream Redox first |
+| – | Desktop: Orbital on `rpi-fbd`, keyboard, terminal, mouse | in v0.4.0 as a beta | optional in the release image ([#255](https://github.com/redox-rpi/redox-rpi/pull/255), experiment [`desktop`](https://github.com/redox-rpi/redox-rpi/blob/desktop-console/patches/experiments/desktop/README.md)): boots to the console, `sudo desktop` warns, asks and starts Orbital on VT 3, Super+F2 back; Pi tests 287, 288 | real keyboard and mouse with a person; slow editor and window drag (beta limits in the README); faster terminal is upstream work |
+| 2b | Own display driver [`vc4d`](https://github.com/redox-rpi/vc4d) (VC4 HVS, pixel valves, HDMI): real hotplug, hardware planes and cursor, modes without the firmware ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)) | 2–3 months | HVS part runs on the Pi (vc4d stage 1, draft [vc4d#1](https://github.com/redox-rpi/vc4d/pull/1), branch `graphics-vc4d`, experiment `vc4d`; Pi tests 220a, 256, 259, 276): primary plane scanned out directly, 64x64 hardware cursor, the firmware's mode | pixel valves, HDMI, EDID, modes, vertical blank; windows as planes need Orbital changes; noise bands on HDMI seen at #275, cause open (see Later) |
+| 3 | 3D with the V3D (OpenGL ES 2.0 through Mesa `vc4`) | 6+ months | no code (vc4d stage 2) | unchanged; needs render nodes and buffer sharing in upstream Redox first |
 
 Steps 1 and 2a went fast because Redox had a template for every part and
-the firmware does the HDMI work; 2b and 3 have neither, so their
-estimates stand.
+the firmware does the HDMI work. The HVS part of 2b went fast too, because
+it keeps the firmware's mode; the rest of 2b and step 3 have no template,
+so their estimates stand.
 
 ## Step 1: a firmware framebuffer driver
 
@@ -319,49 +320,46 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
-- **Draft PR [#113](https://github.com/redox-rpi/redox-rpi/pull/113)**
-  (branch `rpi-fb-pr`): experiments `rpi-fb` and `orbital` on current
-  main, the base patches renumbered to `0060`–`0067` (main now uses
-  `0024`–`0037` for default patches), kernel `0049`. Builds and runs in
-  QEMU on main (`v0.3.0-dev-560-g475be97+x4af4`); ready once #116 boots
-  2–3 and #130 pass.
-- **rpi-fb towards a PR:** Pi test #116 (serial only, Pi test agent)
-  judges `rpi-fbd` from the boot log, the `RPI_FB_BENCH` numbers,
-  `drawbench` and the vsync line, without a screen. If it passes, a draft
-  PR from `graphics-vsync` brings experiment `rpi-fb` (patches `0024`–
-  `0029`, `0036`) and experiment `orbital` (a config file) to main, still
-  as experiments, not default; the report goes into the PR. Making
-  `rpi-fbd` the default waits for the screen visit (#34, #43, #44, then
-  #54 with #108), which checks what the screen shows.
-  Known limit for the PR: at 1824x984 (the NanoKVM's mode) the Pi logged
-  `dumb buffer 1824x984 in normal memory: Out of memory` with 591 MB
-  free. The cause is the kernel: its page allocator hands out at most 4
-  MiB of physically contiguous memory (11 orders), however much is free,
-  so any dumb buffer above 4 MiB (1824x984 is 7 MiB) falls back to CPU
-  blits. Kernel patch `0049` (branch `graphics-dma-order`) raises it to
-  16 MiB; in QEMU the 1824x984 buffers then get DMA blits. On the Pi (#130)
-  the DMA test blit at start failed (`test blit of 2 rows moved 4`, while
-  #116 got 3 with the same code), so the DMA path was not reached; the
-  allocator change itself ran without trouble. Likely cause: "zeroed" DMA
-  memory that is not zero, because the kernel clears it through a cached
-  mapping and the driver reads it uncached. Patch `0068` clears the test
-  buffer itself and logs what was there; Pi test #138
-  (serial only). Boots 2–3 of #116 set `RPI_FB*` through
-  `cmdline.txt` (patch `0037`), which needs the user's OK for the shared
-  file in `/srv/tftp/`.
-- Pi test #34; the stub framebuffer on the Pi with #18 (direct boot).
-- Pi test #43 (`graphics-fb2`) right after #34: monitor turned on after
-  boot (is `monitor connected` logged?), and double buffering at 1280x720.
-- Pi test #44 (`graphics-fb3`), same visit: the DMA row count and the
-  benchmark, CPU against DMA. If DMA wins, cached dumb buffers with cache
-  maintenance (DMA plan step 2, a kernel change) are the next gain.
-- Pi test #54 (`graphics-gui`), same visit: Orbital on the real screen,
-  login to desktop time, frame rate with `drawbench`, terminal speed,
-  memory. With the NanoKVM most screen checks need no person.
-- For a usable desktop: the USB mouse works in QEMU (`usb-mouse` on
-  `usb-hotplug`, #48, keyboard and mouse at the same time); next is the
-  Pi test with a mouse (the NanoKVM's USB can be one) and then `usb-mouse`
-  and the graphics branches on main once their Pi tests pass.
+Updated 2026-11-10. Done since the last version of this list: draft PR
+[#113](https://github.com/redox-rpi/redox-rpi/pull/113) merged on
+2026-11-08 (experiments `rpi-fb` and `orbital` on main, kernel `0049`);
+the optional desktop in v0.4.0 runs on `rpi-fbd`
+([#255](https://github.com/redox-rpi/redox-rpi/pull/255)), with a game in
+v0.4.1 ([#298](https://github.com/redox-rpi/redox-rpi/pull/298)). The
+#116, #130 and #138 named here before are Pi test rows of that PR, not
+issues; row #138 (the DMA test blit) is still in the queue but blocks
+nothing now. Graphics work goes on apart from the weekly releases
+(maintainer, 2026-11-10).
+
+In this order:
+
+1. **Direct boot (v0.5.0, [#324](https://github.com/redox-rpi/redox-rpi/issues/324)) first, if it needs graphics:**
+   the desktop on the boot stub's framebuffer, without U-Boot. Anything
+   that blocks it comes before the steps below until the Friday cut-off.
+2. **Noise bands on HDMI with vc4d (Pi test #275).** vc4shot of the same
+   buffer is clean and the buffers are contiguous (#276). Found on
+   2026-11-10: the firmware still takes the HVS interrupts and clears the
+   latched status bits, so vc4d's underrun check (EUFLOW) could be blind.
+   Branch `vc4d-fifo-diag` (vc4d `underrun-diag`) reads the channel's live
+   FIFO state every second and logs the composite output buffer (COB)
+   split; `/tmp/vc4d.cob` gives the channel a larger part of the COB at
+   runtime. Pi row in [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests)
+   (serial; a screen check only if the FIFO is clean).
+3. **vc4d stage 2b ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)):**
+   pixel valves, HDMI, EDID and modes without the firmware, the vertical
+   blank and real hotplug. QEMU's raspi3b has no HVS, pixel valve or HDMI
+   model, so only the logic runs there (fake registers); each part needs a
+   Pi row. Screen checks are collected for one visit with the user.
+4. **vc4d host tests in CI ([#271](https://github.com/redox-rpi/redox-rpi/issues/271)):**
+   the pure logic (display lists, register fields, mode and timing math)
+   in a crate without Redox dependencies, so `cargo test` and clippy run
+   on homenodellm and in CI. Done before larger stage 2b changes, so they
+   are checked.
+5. **vc4d stage 1 into vc4d's main** ([vc4d#1](https://github.com/redox-rpi/vc4d/pull/1)),
+   then experiment `vc4d` on redox-rpi main (only a recipe pinned to a
+   vc4d commit, RFC 0002), still not the default display driver.
+6. **Windows as planes** (step 2 of the stage plan): needs changes in
+   Orbital; the window drag costs about 90 % of a core today (#259).
 
 ## Effort: estimate and what it took
 
@@ -431,9 +429,9 @@ the screen.
 - DMA blits beyond the prototype once #21's common DMA code and cache
   maintenance exist.
 - **`vc4d`, a VideoCore IV display and 3D driver ported from Linux `vc4`
-  ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)).** A plan,
-  no code, no milestone yet. It replaces steps 2b and 3 above, in three
-  stages:
+  ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)).** Stage
+  (a) has code and runs on the Pi (below); (b) and (c) have no code. No
+  milestone yet. It replaces steps 2b and 3 above, in three stages:
   - (a) display only: `vc4d` programs the HVS and replaces `rpi-fbd`;
     pointer and windows as hardware planes, so moving them copies
     nothing. The first and smallest stage, and most of the gain for a 2D
@@ -455,8 +453,94 @@ the screen.
   64x64 cursor plane is Orbital's pointer. Branch `graphics-vc4d`,
   experiment `vc4d` (a recipe that pins a vc4d commit, instead of
   `rpi-fb`). QEMU has no HVS: it checks the start, the fallback and, with
-  `VC4D_FAKE`, the handover and the lists, not the picture. Pi test #220
-  (queued). `rpi-fbd` (#113) stays the fallback.
+  `VC4D_FAKE`, the handover and the lists, not the picture. `rpi-fbd`
+  (#113) stays the fallback.
+
+  **On the Pi, 2026-11-05 (row 220a, HDMI on the NanoKVM, no person):**
+  the firmware leaves HVS channel 1 running at 1920x1080 with one scaled
+  plane. vc4d's check without a screen (colour bars, a cursor plane
+  moved once, read back from the HVS) passed: the channel takes vc4d's
+  lists, the active word moves into them, frames go on, the cursor's
+  position word is the new one, and no underrun or other error bits are
+  set. Over two minutes with fbcond and then Orbital on vc4d's lists,
+  frames kept going and no errors appeared. The only failures were in the
+  read-back check, and they were the check's own fault: the HVS fills in
+  the context words of each plane while it scans it out (fixed in vc4d
+  `0f87698`). Without HDMI at power-on the firmware may not enable a
+  channel (not tested). Still open: the picture itself (colours, pointer
+  tip), Pi test #220 with a screen check by the user.
+
+  **Screen check, 2026-11-06 (row 220, the user on the NanoKVM):** the
+  Orbital desktop and taskbar show through vc4d at 1920x1080, the pointer
+  is visible and the keyboard works (that image had no USB mouse driver).
+  Black bars at the left and right and a dark bar at the top are still
+  to be explained. vc4d's plane is exactly the channel's width, so the
+  side bars are more likely the NanoKVM's capture or the HDMI timing.
+
+  **Pointer moves, 2026-11-06 (row 256, no person):** `pointer-bench`
+  (experiment `pointer-bench`) moves Orbital's pointer at 60 moves/s
+  through inputd while `cputop` measures, with Orbital's login window
+  open:
+
+  | Display | orblogin | orbital | display daemon | busiest core |
+  |---|---|---|---|---|
+  | vesad (software cursor) | 54.5 % | 28.8 % | vesad 16.2 % | 100 % |
+  | vc4d (cursor plane) | 53.5 % | 45.8 % | vc4d 0.5 % | 92 % |
+
+  The cursor plane takes the display daemon's share from 16 % to 0.5 %.
+  But in both cases one core is full: orblogin redraws its window on
+  every pointer move (upstream behaviour), and orblogin, Orbital and the
+  display daemon all run on the same core. So the Orbital numbers are
+  shares of a full core, not the cost of a move. The next measurement
+  is on the desktop after login (no orblogin), and dragging a window.
+  The rpi-fbd boot failed twice: right after `pointer-bench` started,
+  `cputop` returned at once and `pointer-bench` wrote nothing (explained
+  by row 259, below). `vc4shot` could not map the buffers (Redox allows no
+  physical mapping of RAM); since vc4d `5ec9079` vc4d writes the
+  picture itself on request.
+
+  **Desktop and window drag, 2026-11-06 (row 259, no person):** logged
+  in as `user` (pointer-bench types Enter), a terminal open (Super+t),
+  then 60 pointer moves/s, then a drag of the terminal window with Super
+  held. Share of one core:
+
+  | | vc4d | rpi-fbd | vesad |
+  |---|---|---|---|
+  | idle, orbital | 0.3 % | 0.2 % | 0.2 % |
+  | moving, orbital | 1.7 % | (failed sample) | 1.5 % |
+  | moving, display daemon | vc4d 0.3 % | – | vesad 0.4 % |
+  | drag, orbital | (failed sample) | 90.9 % | 89.4 % |
+  | drag, display daemon | – | rpi-fbd 7.6 % | vesad 10.2 % |
+
+  So pointer moves on the desktop are cheap with every driver. The 92–100 %
+  core of row 256 was orblogin alone: Orbital passes every move to the
+  window under the pointer, and orblogin repaints its whole window
+  (with its full-screen background) for each one. With a hardware cursor
+  Orbital itself only moves the cursor plane (vc4d builds one display
+  list per move). A window drag is the expensive case: Orbital redraws
+  the window and what it uncovers in software, about 90 % of a core.
+  The cursor plane does not help there; a plane per window (step 2)
+  would. Two samples (vc4d drag, rpi-fbd moving) failed as in row 256:
+  `cputop` printed `0.0 s`, because `sleep` came back early right after
+  `pointer-bench` started in the background. It is not a display driver
+  failure: rpi-fbd ran `pointer-bench 5` cleanly (`300 moves in 5.0 s`).
+  cputop now sleeps until the round time has passed (branch
+  `cputop-full-sleep`). `vc4shot` worked on the Pi (both planes, cursor
+  with alpha) and shows no side bars and no top bar, so the bars seen in
+  row 220 come from the HDMI or NanoKVM side, not from vc4d's planes.
+
+  **Noise bands, 2026-11-07 (rows 275 and 276):** at the desktop visit
+  (#275) the lower half of the HDMI picture showed bands of noise, with
+  the desktop faintly showing through, on the NanoKVM and on a monitor.
+  A normal boot and the firmware framebuffer (no vc4d) do not show them,
+  so they come with vc4d, while vc4shot of the same buffer was clean. So
+  the black bars of row 220 may also not be the NanoKVM's. Row 276
+  (experiment `vc4d-diag`: HVS errors every second, buffer contiguity,
+  display list checks) found the HVS side clean while typing and
+  dragging: no underrun, all buffers contiguous, the channel always on
+  vc4d's list. Nobody watched the screen in that run, so it is open
+  whether the bands showed; the next step is the same run with someone
+  at the screen.
 
 ## License rule for `vc4d`
 

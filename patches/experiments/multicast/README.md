@@ -7,7 +7,7 @@ LAN7800 multicast filter (was experiment `lan78xx-multicast`).
 below keeps the old numbers.
 
 Pi 3B+, test 210 (`v0.4.0-dev-292-ge95959aa+xfa87`, with `ipv6`): **pass**
-([report](https://github.com/redox-rpi/redox-rpi/blob/main/docs/test-reports.md#210-multicast-and-the-lan7800-multicast-filter-as-default-patches-with-ipv6-2026-11-04-pi-test-agent)). Multicast from homenodellm to `239.1.2.3` arrives over the
+([report](https://github.com/redox-rpi/redox-rpi/blob/main/https://github.com/redox-rpi/pi-tests/blob/main/reports/210.md)). Multicast from homenodellm to `239.1.2.3` arrives over the
 LAN7800; IPv6 link-local, global and ULA addresses and the default route;
 ping 5/5 to the global and 3/3 to the ULA address; 0 of 300 starts failed.
 

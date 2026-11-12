@@ -5,7 +5,7 @@ Usage:
     scripts/sd-stress.py <host> [--port 2323] [--dir /scheme/data/stress]
                          [--serial /dev/ttyUSB0 --serial-log <file>]
                          [--big-mib 256] [--small 1000] [--cycles 5]
-                         [--cycle-mib 32] [--report docs/test-reports.md]
+                         [--cycle-mib 32] [--report <file>]
                          [--note <text>] [--keep]
 
 Writes to the card, then restarts the Pi several times and checks that
