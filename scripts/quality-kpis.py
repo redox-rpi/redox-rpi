@@ -8,7 +8,8 @@ Usage:
 
 Reads GitHub through the gh CLI (set GH_TOKEN, e.g.
 GH_TOKEN=$(gh auth token --user zehrer-xyz)) and the repository at --rev
-(patches/, git log), and the Pi test queue in --tests-repo (queue.md). Changes nothing on GitHub or in
+(patches/, git log), and the Pi test queue in --tests-repo (queue.md, and
+network.jsonl for the network-loss KPIs of #259). Changes nothing on GitHub or in
 the repository except the files it writes. Exits 1 only when a source
 cannot be read.
 """
@@ -36,8 +37,10 @@ TRACKED = {
     207: "chaos test froze the Pi",
 }
 # KPIs in the nightly report's short block (--summary), by stable key.
-SUMMARY = ["open_bugs", "no_type", "no_topic", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
-           "pi_pass_rate", "flaky_rate", "req_coverage", "dirty_results", "clippy_redox"]
+SUMMARY = ["open_bugs", "no_topic", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
+           "pi_pass_rate", "flaky_rate", "req_coverage", "net_loss", "boot_no_net", "clippy_redox"]
+# Network loss records (qmp.md "Network loss", #259), in the root of --tests-repo.
+NETWORK_FILE = "network.jsonl"
 PR_RULE_SINCE = datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
 NIGHTLY_ISSUE = "Nightly: main fails on the Pi"
 CODE_PATHS = ("patches/", "tools/", "config/")
@@ -56,6 +59,71 @@ def sh(*args, cwd=ROOT):
 
 def gh_json(*args):
     return json.loads(sh("gh", *args))
+
+
+def gh_raw_or_none(repo, path):
+    """A file of a repository's default branch, or None when it does not exist."""
+    r = subprocess.run(["gh", "api", f"repos/{repo}/contents/{path}", "-H", "Accept: application/vnd.github.raw+json"],
+                       cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        if "404" in r.stderr or "Not Found" in r.stderr:
+            return None
+        sys.exit(f"gh api {repo}/{path}: {r.stderr.strip()[:300]}")
+    return r.stdout
+
+
+def network(text, since):
+    """Sum network.jsonl (qmp.md "Network loss"): boots without devsh (#217),
+    losses per soak hour (#92), seconds to devsh, per ISO week."""
+    recs, bad = [], 0
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+            day = datetime.date.fromisoformat(r["date"])
+        except (ValueError, KeyError, TypeError):
+            bad += 1
+            continue
+        if day >= since and r.get("kind") in ("boot", "soak"):
+            recs.append({**r, "day": day})
+    boots = [r for r in recs if r["kind"] == "boot"]
+    soaks = [r for r in recs if r["kind"] == "soak"]
+    secs = sorted(r["devsh_s"] for r in boots if isinstance(r.get("devsh_s"), (int, float)))
+    # V&V's boot loops also check devsh 2 minutes after the login prompt
+    # ("network") and count "main loop stuck" lines ("stuck"): #92 at boot.
+    checked = [r for r in boots if r.get("devsh_s") is not None and isinstance(r.get("network"), bool)]
+
+    def who(r):
+        return {"date": r["date"], "build": r.get("build", "?"), "source": r.get("source", "?")}
+
+    losses = [{**who(r), "at_s": x.get("at_s"), "down_s": x.get("down_s")}
+              for r in soaks for x in (r.get("losses") or [])]
+    weeks = {}
+    for r in recs:
+        y, w, _ = r["day"].isocalendar()
+        wk = weeks.setdefault(f"{y}-W{w:02d}", {"boots": 0, "no_net": 0, "soaks": 0, "hours": 0.0, "losses": 0})
+        if r["kind"] == "boot":
+            wk["boots"] += 1
+            wk["no_net"] += r.get("devsh_s") is None
+        else:
+            wk["soaks"] += 1
+            wk["hours"] += (r.get("minutes") or 0) / 60
+            wk["losses"] += len(r.get("losses") or [])
+    return {
+        "boots": len(boots),
+        "boots_no_net": [who(r) for r in boots if r.get("devsh_s") is None],
+        "boots_checked_2min": len(checked),
+        "boots_lost_2min": [who(r) for r in checked if not r["network"]],
+        "boots_stuck": [who(r) for r in boots if (r.get("stuck") or 0) > 0],
+        "devsh_s": {"median": round(statistics.median(secs), 1),
+                    "p90": round(secs[min(len(secs) - 1, int(0.9 * len(secs)))], 1)} if secs else None,
+        "soaks": len(soaks),
+        "soak_hours": round(sum((r.get("minutes") or 0) for r in soaks) / 60, 2),
+        "losses": losses,
+        "weeks": dict(sorted(weeks.items())),
+        "bad_lines": bad,
+    }
 
 
 def ts(s):
@@ -382,6 +450,8 @@ def collect(args):
             if ISSUE_REF_RE.search(text.split("\ndiff --git", 1)[0]):
                 named += 1
     k["patches_with_issue"] = {"named": named, "total": total}
+    text = gh_raw_or_none(args.tests_repo, NETWORK_FILE)
+    k["network"] = network(text, since.date()) if text is not None else None
     return k
 
 
@@ -496,6 +566,52 @@ def render(k, repo):
             "most: " + ", ".join(f"{c}{' (upstream)' if v.get('upstream') else ''} {v.get('warnings', 0)}"
                                  for c, v in worst))
 
+    net, net_lines = k.get("network"), []
+    net_src = f"[{NETWORK_FILE}](https://github.com/{k['tests_repo']}/blob/main/{NETWORK_FILE})"
+    if net is None:
+        row("net_loss", "Network losses in soak (#92)", "not measured", False, f"no {NETWORK_FILE} in pi-tests yet (#259)")
+        row("boot_no_net", "Boots without network (#217)", "not measured", False, f"no {NETWORK_FILE} in pi-tests yet (#259)")
+    else:
+        h, lost = net["soak_hours"], net["losses"]
+        if lost:
+            last = lost[-1]
+            note = (f"{len(lost) / h * 10:.1f} per 10 soak h; last {last['date']} {last['build']} ({last['source']}) "
+                    f"at {last['at_s']} s, down {last['down_s'] if last['down_s'] is not None else 'to the end'}")
+        else:
+            note = f"0: rate below {3 / h:.2f} per soak h (95 %)" if h else "no soak yet"
+        row("net_loss", "Network losses in soak (#92)", f"{len(lost)} in {h:g} h ({net['soaks']} soaks)",
+            h > 0 and not lost, note)
+        n, nn = net["boots"], net["boots_no_net"]
+        if nn:
+            note = "last: " + ", ".join(f"{b['date']} {b['build']} ({b['source']})" for b in nn[-3:])
+        else:
+            note = f"0: rate below 1 in {n / 3:.0f} boots (95 %)" if n else "no boot recorded yet"
+        row("boot_no_net", "Boots without network (#217)", f"{len(nn)} of {n} ({pct(len(nn), n)})", n > 0 and not nn, note)
+        c, cl = net["boots_checked_2min"], net["boots_lost_2min"]
+        if cl:
+            note = "last: " + ", ".join(f"{b['date']} {b['build']} ({b['source']})" for b in cl[-3:])
+        else:
+            note = f"0: rate below 1 in {c / 3:.0f} boots (95 %)" if c else "no boot checked at +2 min yet"
+        st = net["boots_stuck"]
+        note += f"; `main loop stuck` in {len(st)} boot{'s' if len(st) > 1 else ''}" if st else ""
+        row("boot_net_lost", "Network gone 2 min after boot (#92)", f"{len(cl)} of {c} ({pct(len(cl), c)})",
+            c > 0 and not cl, note)
+        d = net["devsh_s"]
+        row("devsh_seconds", "Seconds from login prompt to devsh (#47)",
+            f"median {d['median']} s, 90th {d['p90']} s" if d else "–", True,
+            f"{net['bad_lines']} unreadable lines in {NETWORK_FILE}" if net["bad_lines"] else "")
+        net_lines = [
+            "",
+            "## Network loss (#92, #217)",
+            "",
+            f"From {net_src}, as defined in [qmp.md](https://github.com/{repo}/blob/main/docs/process/qmp.md#network-loss-92-217).",
+            "",
+            "| Week | Boots | without network | Soaks | Soak hours | Losses |",
+            "|---|---|---|---|---|---|",
+            *[f"| {w} | {v['boots']} | {v['no_net']} | {v['soaks']} | {v['hours']:.2f} | {v['losses']} |"
+              for w, v in net["weeks"].items()],
+        ]
+
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]
     return table, "\n".join([
@@ -516,6 +632,7 @@ def render(k, repo):
         "| Bug | Rows | Which |",
         "|---|---|---|",
         *sight,
+        *net_lines,
         "",
     ])
 
