@@ -181,6 +181,7 @@ tests), **acc** accepted gap.
 | Host scripts: pi-test, publish, KPI | ○ parsers (OW) | – | ● topics check | ● used every night | – | – |
 | Zero 2 W | – | – | – | ● once (row 206); ○ no second board on the network (acc) | ● 9 | – |
 | TCC (native C compiler) | – | ○ (OW) | – | ● rows 278, 282 | – | – |
+| TinyCC VC4 (compiler for the VPU, [WBS 2.15](wbs.md#215-tinycc-vc4-quality-track): GCC ships, TCC is a non-gating nightly track) | ● native `make test`, enc/asm/abi tests | ● resim: abi-sim, fat-sim; ○ weekly csmith differential (tinycc#3, OW) | ○ tinycc CI (tinycc#2, RC) | ● rows 347, 349, 358, 371, 383 by hand; ○ nightly G/T comparison (#410, RC) | – | – |
 | Robustness: chaos, start and reboot loops, soak | – | ● start loop | – | ● chaos by hand (#196), 1000 starts and reboot loops for releases; ○ soak (#266, ST) | – | – |
 | Release image: download, checksum, notes | – | ● rc in QEMU | – | ● release 1–5 | ● visit | – |
 
