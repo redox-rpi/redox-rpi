@@ -28,7 +28,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 import urllib.request
 
 REPO = "redox-rpi/redox-rpi"
