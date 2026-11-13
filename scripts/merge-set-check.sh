@@ -23,7 +23,8 @@
 #   --force      run even if main and the pull request heads are the same as
 #                in the last run
 #   --no-status  do not set commit statuses; only write the report
-#   --starts     program starts for scripts/pi-test.py (default 100)
+#   --starts     program starts for the basics check of
+#                scripts/regression-set.py (default 100)
 #
 # Steps:
 #   1. Fetch main and the pull request heads; the set is the open pull
@@ -34,9 +35,12 @@
 #   3. scripts/build-image.sh with config/stable-image.conf (the nightly's
 #      options); it waits for other builds on the host (build lock).
 #   4. QEMU: boot with --usb-net --data, wait for the login prompt, then
-#      scripts/pi-test.py --starts <n>; then the pwm-audio QEMU check
-#      (patches/experiments/pwm-audio/qemu-check.sh). Serial rules: no kernel
-#      panic, no UNHANDLED EXCEPTION, no pcid or rtcd (base patch 0030).
+#      scripts/regression-set.py (#265): pi-test.py's standard checks with
+#      --starts <n>, then the regression checks (signals, waitpid, pipes,
+#      DNS, TCP, serial); then the pwm-audio QEMU check
+#      (patches/experiments/pwm-audio/qemu-check.sh). Serial rules, again
+#      after QEMU stopped: no kernel panic, no UNHANDLED EXCEPTION, no pcid
+#      or rtcd (base patch 0030).
 #   5. Status "full-image-qemu" on each head: success, or failure with the
 #      first failing step. The report goes to build/merge-set-check/.
 #
@@ -190,12 +194,15 @@ if [ "$result" = pass ]; then
     if tr -d '\r' < "$console" | grep -aq 'redox login:'; then
         ok "login prompt after $t s"
         sleep 30
-        if timeout 2400 python3 scripts/pi-test.py 127.0.0.1 --port "$DEVSH_PORT" --starts "$starts" \
-            --manifest "$work/manifest.toml" --serial-log "$console" --report "$work/pi-test.md" \
-            --note "merge-set-check $stamp" > "$work/pi-test.out" 2>&1; then
-            ok "pi-test.py --starts $starts: $(grep -E '^(PASS|FAIL) ' "$work/pi-test.out" | cut -d: -f1 | paste -sd ' ' -)"
+        # QEMU user networking: the guest sees this host as 10.0.2.2, and
+        # 10.0.2.99 answers no DNS (the dead name server for the dns check).
+        if timeout 2400 python3 scripts/regression-set.py 127.0.0.1 --port "$DEVSH_PORT" \
+            --starts "$starts" --manifest "$work/manifest.toml" --serial-log "$console" \
+            --tcp-host 10.0.2.2 --tcp-mib 1 --dead-dns 10.0.2.99 \
+            --report "$work/regression-set.md" > "$work/regression-set.out" 2>&1; then
+            ok "regression-set.py --starts $starts: $(grep -E '^(PASS|SKIP) ' "$work/regression-set.out" | awk '{sub(/:$/, "", $2); print $1, $2}' | paste -sd ' ' -)"
         else
-            fail "pi-test.py: $(grep -E '^FAIL ' "$work/pi-test.out" | head -3 | cut -c1-120 | paste -sd ';' -)"
+            fail "regression-set.py: $(grep -E '^FAIL ' "$work/regression-set.out" | head -3 | cut -c1-120 | paste -sd ';' -)"
         fi
     else
         fail "no login prompt within $LOGIN_TIMEOUT s"
@@ -238,7 +245,7 @@ set_status() {
 if [ "$status" = 1 ]; then
     for n in "${merged[@]}"; do
         if [ "$result" = pass ]; then
-            set_status "${head[$n]}" success "Built and booted with main ${main:0:8} and $(echo "${merged[@]}" | wc -w) merge-next PRs; pi-test --starts $starts passed" || log "no status for #$n"
+            set_status "${head[$n]}" success "Built and booted with main ${main:0:8} and $(echo "${merged[@]}" | wc -w) merge-next PRs; regression-set.py passed" || log "no status for #$n"
         else
             set_status "${head[$n]}" failure "Merge set failed at: $step. Run merge-set-check.sh --prs $n to isolate" || log "no status for #$n"
         fi
