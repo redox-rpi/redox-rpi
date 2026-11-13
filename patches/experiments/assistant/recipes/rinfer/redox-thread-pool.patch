@@ -1,0 +1,31 @@
+diff --git a/candle-core/src/utils.rs b/candle-core/src/utils.rs
+index 324e623..6731f16 100644
+--- a/candle-core/src/utils.rs
++++ b/candle-core/src/utils.rs
+@@ -7,6 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+ use std::sync::{Mutex, OnceLock};
+ use std::thread::Thread;
+ 
++/// How often a pool worker ran out of spins and slept (Redox only). A sleep
++/// lasts until the next timer tick, up to 10 ms, so this counts stalls.
++pub static POOL_SLEEPS: AtomicUsize = AtomicUsize::new(0);
++
+ const DEFAULT_BARRIER_POOL_SPIN_LIMIT: u32 = 25_000;
+ 
+ /// Per-worker control on its own 64-byte cache line to prevent false sharing.
+@@ -164,7 +168,15 @@ impl BarrierPool {
+                                     spin_loop();
+                                 } else {
+                                     // Park deposits a token; unpark() before park() returns immediately — no race.
++                                    #[cfg(not(target_os = "redox"))]
+                                     std::thread::park();
++                                    // On Redox a wakeup from unpark() is sometimes lost and
++                                    // the pool hangs; poll the go flag instead.
++                                    #[cfg(target_os = "redox")]
++                                    {
++                                        POOL_SLEEPS.fetch_add(1, Ordering::Relaxed);
++                                        std::thread::sleep(std::time::Duration::from_micros(200));
++                                    }
+                                     spins = 0;
+                                 }
+                             }

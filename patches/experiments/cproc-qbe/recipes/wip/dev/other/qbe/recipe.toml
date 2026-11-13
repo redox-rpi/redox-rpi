@@ -1,0 +1,28 @@
+# QBE, the compiler backend behind cproc, running on Redox (aarch64).
+# Replaces upstream's wip recipe (1.1 tarball, no build script).
+[source]
+# git://: c9x.me's dumb HTTP clone fails (missing pack index).
+git = "git://c9x.me/qbe.git"
+# master, 2026-11-09: arm64 fixes after 1.2.
+rev = "180d2eb4157b706dc480bce50ff6d03a65ec334b"
+patches = [
+    "0001-arm64-never-use-x18-as-a-scratch-register-for-stores.patch",
+    "0002-parse-read-float-constants-without-fscanf.patch",
+]
+
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+# The image build's make variables would reach this make (see tcc).
+unset MAKEFLAGS MFLAGS
+rsync -a --delete "${COOKBOOK_SOURCE}/" ./
+# The Makefile picks the default target with uname on the build host.
+echo '#define Deftgt T_arm64' > config.h
+# -ffixed-x18: relibc's signal entry clobbers x18 (redox-rpi #127). The code
+# qbe generates never uses x18 (patch 0001, arm64/targ.c keeps it global).
+"${COOKBOOK_MAKE}" -j"${COOKBOOK_MAKE_JOBS}" qbe CC="${CC}" \
+    CFLAGS="-std=c99 -O2 -ffixed-x18 ${CFLAGS}" LDFLAGS="${LDFLAGS}"
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp qbe "${COOKBOOK_STAGE}/usr/bin/"
+"""

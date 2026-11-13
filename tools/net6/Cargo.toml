@@ -1,0 +1,8 @@
+[package]
+name = "net6"
+description = "Resolve a name and send UDP or TCP over IPv6, to test IPv6 in relibc and the network stack"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

@@ -1,4 +1,4 @@
-# Nightly stable image (scripts/update-stable.sh, docs/test-plan.md).
+# Nightly stable image (scripts/update-stable.sh, pi-tests lab.md).
 # Install on the build host as a systemd user unit:
 #   cp config/redox-stable.service config/redox-stable.timer ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now redox-stable.timer

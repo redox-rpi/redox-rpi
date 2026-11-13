@@ -1,0 +1,153 @@
+From 088d8c3ff7ef234195b399be63a5a3851380e40d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 16:03:49 +0000
+Subject: [PATCH 4/4] Redox: gcc's integer type macros for relibc's stdint.h
+
+relibc ships gcc's stdint-gcc.h as stdint.h, which builds every type
+and limit from gcc's predefined macros (__INT_LEAST8_TYPE__,
+__INTPTR_MAX__, __INT8_C, ...). tcc defines only a few of them, so
+#include <stdint.h> (and <stdlib.h>) failed with "';' expected (got
+'int_least8_t')". Define the missing ones with the values of
+aarch64-unknown-redox-gcc, and make wchar_t unsigned int as gcc does
+on aarch64.
+
+c2str evaluates the #if lines of tccdefs.h when tcc is built, so it
+maps __redox__ to TARGETOS_Redox like the other target OS macros.
+---
+ conftest.c        |   1 +
+ include/tccdefs.h | 100 +++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/conftest.c b/conftest.c
+index a4450d51..f07f4338 100644
+--- a/conftest.c
++++ b/conftest.c
+@@ -22,6 +22,7 @@ const char *platform_macros[] = {
+     "__NetBSD__",           "TARGETOS_NetBSD",
+     "__linux__",            "TARGETOS_Linux",
+     "__ANDROID__",          "TARGETOS_ANDROID",
++    "__redox__",            "TARGETOS_Redox",
+ 
+     "__SIZEOF_POINTER__",   "PTR_SIZE",
+     "__SIZEOF_LONG__",      "LONG_SIZE",
+diff --git a/include/tccdefs.h b/include/tccdefs.h
+index c4baf1f8..23d6dc8a 100644
+--- a/include/tccdefs.h
++++ b/include/tccdefs.h
+@@ -60,7 +60,11 @@
+ #if defined _WIN32
+     #define __WCHAR_TYPE__ unsigned short
+     #define __WINT_TYPE__ unsigned short
+-#elif defined __linux__
++#elif defined __redox__ && defined __aarch64__
++    /* as gcc for aarch64-unknown-redox, which relibc is built with */
++    #define __WCHAR_TYPE__ unsigned int
++    #define __WINT_TYPE__ unsigned int
++#elif defined __linux__ || defined __redox__
+     #define __WCHAR_TYPE__ int
+     #define __WINT_TYPE__ unsigned int
+ #else
+@@ -68,6 +72,100 @@
+     #define __WINT_TYPE__ int
+ #endif
+ 
++#if defined __redox__ && defined __aarch64__
++    /* relibc's stdint.h is gcc's stdint-gcc.h: it needs gcc's type
++       macros. Values from aarch64-unknown-redox-gcc 13.2 -dM -E, without
++       the ones defined above. */
++    #define __CHAR16_TYPE__ short unsigned int
++    #define __CHAR32_TYPE__ unsigned int
++    #define __INT16_C(c) c
++    #define __INT16_MAX__ 0x7fff
++    #define __INT16_TYPE__ short int
++    #define __INT32_C(c) c
++    #define __INT32_MAX__ 0x7fffffff
++    #define __INT64_C(c) c ## L
++    #define __INT64_MAX__ 0x7fffffffffffffffL
++    #define __INT8_C(c) c
++    #define __INT8_MAX__ 0x7f
++    #define __INT8_TYPE__ signed char
++    #define __INTMAX_C(c) c ## L
++    #define __INTMAX_MAX__ 0x7fffffffffffffffL
++    #define __INTMAX_TYPE__ long int
++    #define __INTMAX_WIDTH__ 64
++    #define __INTPTR_MAX__ 0x7fffffffffffffffL
++    #define __INTPTR_WIDTH__ 64
++    #define __INT_FAST16_MAX__ 0x7fffffff
++    #define __INT_FAST16_TYPE__ int
++    #define __INT_FAST16_WIDTH__ 32
++    #define __INT_FAST32_MAX__ 0x7fffffff
++    #define __INT_FAST32_TYPE__ int
++    #define __INT_FAST32_WIDTH__ 32
++    #define __INT_FAST64_MAX__ 0x7fffffffffffffffL
++    #define __INT_FAST64_TYPE__ long int
++    #define __INT_FAST64_WIDTH__ 64
++    #define __INT_FAST8_MAX__ 0x7fffffff
++    #define __INT_FAST8_TYPE__ int
++    #define __INT_FAST8_WIDTH__ 32
++    #define __INT_LEAST16_MAX__ 0x7fff
++    #define __INT_LEAST16_TYPE__ short int
++    #define __INT_LEAST16_WIDTH__ 16
++    #define __INT_LEAST32_MAX__ 0x7fffffff
++    #define __INT_LEAST32_TYPE__ int
++    #define __INT_LEAST32_WIDTH__ 32
++    #define __INT_LEAST64_MAX__ 0x7fffffffffffffffL
++    #define __INT_LEAST64_TYPE__ long int
++    #define __INT_LEAST64_WIDTH__ 64
++    #define __INT_LEAST8_MAX__ 0x7f
++    #define __INT_LEAST8_TYPE__ signed char
++    #define __INT_LEAST8_WIDTH__ 8
++    #define __INT_WIDTH__ 32
++    #define __PTRDIFF_MAX__ 0x7fffffffffffffffL
++    #define __PTRDIFF_WIDTH__ 64
++    #define __SIG_ATOMIC_MAX__ 0x7fffffff
++    #define __SIG_ATOMIC_MIN__ (-__SIG_ATOMIC_MAX__ - 1)
++    #define __SIG_ATOMIC_WIDTH__ 32
++    #define __SIZE_MAX__ 0xffffffffffffffffUL
++    #define __SIZE_WIDTH__ 64
++    #define __UINT16_C(c) c
++    #define __UINT16_MAX__ 0xffff
++    #define __UINT16_TYPE__ short unsigned int
++    #define __UINT32_C(c) c ## U
++    #define __UINT32_MAX__ 0xffffffffU
++    #define __UINT32_TYPE__ unsigned int
++    #define __UINT64_C(c) c ## UL
++    #define __UINT64_MAX__ 0xffffffffffffffffUL
++    #define __UINT64_TYPE__ long unsigned int
++    #define __UINT8_C(c) c
++    #define __UINT8_MAX__ 0xff
++    #define __UINT8_TYPE__ unsigned char
++    #define __UINTMAX_C(c) c ## UL
++    #define __UINTMAX_MAX__ 0xffffffffffffffffUL
++    #define __UINTMAX_TYPE__ long unsigned int
++    #define __UINTPTR_MAX__ 0xffffffffffffffffUL
++    #define __UINT_FAST16_MAX__ 0xffffffffU
++    #define __UINT_FAST16_TYPE__ unsigned int
++    #define __UINT_FAST32_MAX__ 0xffffffffU
++    #define __UINT_FAST32_TYPE__ unsigned int
++    #define __UINT_FAST64_MAX__ 0xffffffffffffffffUL
++    #define __UINT_FAST64_TYPE__ long unsigned int
++    #define __UINT_FAST8_MAX__ 0xffffffffU
++    #define __UINT_FAST8_TYPE__ unsigned int
++    #define __UINT_LEAST16_MAX__ 0xffff
++    #define __UINT_LEAST16_TYPE__ short unsigned int
++    #define __UINT_LEAST32_MAX__ 0xffffffffU
++    #define __UINT_LEAST32_TYPE__ unsigned int
++    #define __UINT_LEAST64_MAX__ 0xffffffffffffffffUL
++    #define __UINT_LEAST64_TYPE__ long unsigned int
++    #define __UINT_LEAST8_MAX__ 0xff
++    #define __UINT_LEAST8_TYPE__ unsigned char
++    #define __WCHAR_MAX__ 0xffffffffU
++    #define __WCHAR_MIN__ 0U
++    #define __WCHAR_WIDTH__ 32
++    #define __WINT_MAX__ 0xffffffffU
++    #define __WINT_MIN__ 0U
++    #define __WINT_WIDTH__ 32
++#endif
++
+     #if __STDC_VERSION__ >= 201112L
+     # define __STDC_NO_ATOMICS__ 1
+     # define __STDC_NO_COMPLEX__ 1
+-- 
+2.53.0
+
