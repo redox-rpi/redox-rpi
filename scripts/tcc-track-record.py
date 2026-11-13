@@ -9,7 +9,12 @@ tcc.jsonl in redox-rpi/pi-tests, as network.jsonl):
 
   {"date", "build", "source": "nightly", "kind": "tcc-night", "tinycc",
    "fat_boot", "gcc", "resim_pass", "pi_pass", "size_g", "size_t",
-   "fl_g_s", "fl_t_s"}
+   "fl_g_s", "fl_t_s", "pi_back"}
+
+pi_back is false when the Pi part could not bring the Pi back to Redox
+(scripts/update-stable.sh then opens or updates an issue for the Pi test
+agent); null without a Pi run. Without host.json (the host part failed in
+its setup) the record has resim_pass false and null sizes.
 
 --host is scripts/tcc-track.sh's host.json. --pi is the Pi part's result
 (scripts/tcc-track-pi.py): {"pi_pass": bool,
@@ -41,9 +46,9 @@ def main():
     ap.add_argument("--build", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
-    host = load(args.host)
-    if host is None:
-        return 1
+    # No host.json: the host part failed before its checks (setup); the
+    # night still gets a record, with resim_pass false.
+    host = load(args.host) or {"resim_pass": False}
     pi = load(args.pi) or {}
     rec = {"date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
            "build": args.build, "source": "nightly", "kind": "tcc-night",
@@ -51,7 +56,8 @@ def main():
            "resim_pass": bool(host.get("resim_pass")),
            "pi_pass": pi.get("pi_pass") if isinstance(pi.get("pi_pass"), bool) else None,
            "size_g": host.get("size_g"), "size_t": host.get("size_t"),
-           "fl_g_s": pi.get("fl_g_s"), "fl_t_s": pi.get("fl_t_s")}
+           "fl_g_s": pi.get("fl_g_s"), "fl_t_s": pi.get("fl_t_s"),
+           "pi_back": pi.get("pi_back") if isinstance(pi.get("pi_back"), bool) else None}
     line = json.dumps(rec)
     with open(args.out, "a") as f:
         f.write(line + "\n")

@@ -132,6 +132,20 @@ fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags) ($head)"
 
+# The token never appears on a command line, in a URL or in .git/config:
+# the credential helper and curl read it from the file.
+# git_push <dir>: push HEAD of the clone in <dir> to its main.
+git_push() {
+    git -C "$1" -c credential.helper= \
+        -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
+        push -q origin HEAD:main
+}
+
+github() {
+    curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' < "$TOKEN_FILE")") \
+        -H "Accept: application/vnd.github+json" "$@"
+}
+
 # Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
 # 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.
 kpis_dir=""
@@ -167,10 +181,9 @@ run_tcc_track() {
     dir="$HOME/redox-rpi/logs/tcc-track/$(date -u +%Y-%m-%d)"
     mkdir -p "$dir"
     log "TCC track: host part (log in $dir)"
-    if ! timeout 1200 scripts/tcc-track.sh --out "$dir" > "$dir/run.log" 2>&1; then
+    rm -f "$dir/host.json" "$dir/pi.json"
+    timeout 1200 scripts/tcc-track.sh --out "$dir" > "$dir/run.log" 2>&1 ||
         log "TCC track: host part failed: $(tail -n 1 "$dir/run.log")"
-        return 0
-    fi
     if [ -x scripts/tcc-track-pi.py ] && [ -s "$dir/G.bin" ] && [ -s "$dir/T.bin" ]; then
         # The night's own check (step 2) did not run on a night without changes.
         if ! queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh 2> /dev/null)" ||
@@ -181,11 +194,39 @@ run_tcc_track() {
             timeout 900 scripts/tcc-track-pi.py --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
                 >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
             pi=(--pi "$dir/pi.json")
+            # Not back on Redox (or no answer at all): tell the Pi test agent
+            # and the maintainer; their rules decide about a power cycle.
+            if ! grep -q '"pi_back": true' "$dir/pi.json" 2> /dev/null; then
+                log "TCC track: the Pi is NOT back on Redox"
+                tcc_pi_not_back "$dir"
+            fi
         fi
     fi
+    # A record every night, also when the host part failed (resim_pass false).
     python3 scripts/tcc-track-record.py --host "$dir/host.json" "${pi[@]}" \
         --build "${build_id:-${stable_id:-none}}" --out "$tccrec" | sed 's/^/TCC track: /' ||
         log "TCC track: no record"
+    return 0
+}
+
+# The TCC track's Pi part left the Pi off Redox: open or update an issue for
+# the Pi test agent (labels needs:pi, topic:ci). Never fails.
+tcc_pi_not_back() {
+    [ "$push" = 1 ] || { log "--no-push: no issue about the Pi"; return 0; }
+    local title="Nightly TCC track: the Pi did not come back to Redox" number payload body
+    body="The TinyCC VC4 track's Pi part (scripts/tcc-track-pi.py) ended on $(date -u '+%Y-%m-%d %H:%M') UTC without \`redox login:\` (step: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("step","?"))' "$1/pi.json" 2> /dev/null || echo "no pi.json")). The Pi may still be in the bootcode monitor. Pi test agent: please bring it back under your rules (power cycle to /srv/tftp/redox). Logs: \`$1\` on the build host."
+    number="$(github "https://api.github.com/repos/$REPO/issues?state=open&per_page=100" |
+        python3 -c 'import json, sys; t = sys.argv[1]
+print(next((str(i["number"]) for i in json.load(sys.stdin) if i["title"] == t and "pull_request" not in i), ""))' "$title" 2> /dev/null)" || true
+    if [ -n "$number" ]; then
+        payload="$(python3 -c 'import json, sys; print(json.dumps({"body": sys.argv[1]}))' "$body")"
+        github -X POST "https://api.github.com/repos/$REPO/issues/$number/comments" -d "$payload" > /dev/null &&
+            log "commented on issue #$number" || true
+    else
+        payload="$(python3 -c 'import json, sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2], "labels": ["topic:ci", "needs:pi"]}))' "$title" "$body")"
+        github -X POST "https://api.github.com/repos/$REPO/issues" -d "$payload" > /dev/null &&
+            log "opened an issue: $title" || true
+    fi
     return 0
 }
 
@@ -264,7 +305,12 @@ fi
 # One option per word; the file may end without a newline.
 mapfile -t options < <(grep -v '^#' config/stable-image.conf | tr -s ' \t' '\n' | grep -v '^$')
 log "building with: ${options[*]}"
-scripts/build-image.sh "${options[@]}"
+if ! scripts/build-image.sh "${options[@]}"; then
+    # A failed build still gets the night's KPIs and TCC track record.
+    log "the build failed"
+    push_kpis_only
+    exit 1
+fi
 image="$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img"
 manifest="$(readlink -f build/manifests/netboot-latest.toml)"
 build_id="$(sed -n 's/^build_id = "\(.*\)"$/\1/p' "$manifest")"
@@ -354,20 +400,6 @@ if reset_pi record; then
 else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
 fi
-
-# The token never appears on a command line, in a URL or in .git/config:
-# the credential helper and curl read it from the file.
-# git_push <dir>: push HEAD of the clone in <dir> to its main.
-git_push() {
-    git -C "$1" -c credential.helper= \
-        -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
-        push -q origin HEAD:main
-}
-
-github() {
-    curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' < "$TOKEN_FILE")") \
-        -H "Accept: application/vnd.github+json" "$@"
-}
 
 # Our pkg repository follows the stable image (#44). Never devshd, and the
 # signing key stays in ~/.config/redox-rpi/pkg-key. Every non-release build

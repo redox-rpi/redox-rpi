@@ -23,7 +23,7 @@ the card. Pass when every command gives the same reply on T as on G after
 dropping the lines that depend on time or build (banner, BUILD_ID, timer
 and microsecond values, mbox counters).
 
-Writes --out: {"pi_pass": bool|null, "fl_g_s", "fl_t_s", "size_g", "size_t",
+Writes --out: {"pi_pass": bool|null, "pi_back": bool, "fl_g_s", "fl_t_s", "size_g", "size_t",
 "diff": [...], "step": last step reached, "note"}. pi_pass is null when the
 run did not get to compare (no reset, no monitor, deadline). Exit 0 when
 --out was written and the Pi is back on Redox, 1 otherwise (the Pi test
@@ -127,7 +127,7 @@ def main():
     ap.add_argument("--deadline", default="04:15", help="UTC time by which the Pi must be back (Pi test agent's window)")
     args = ap.parse_args()
     here = os.path.dirname(os.path.abspath(__file__))
-    result = {"pi_pass": None, "fl_g_s": None, "fl_t_s": None,
+    result = {"pi_pass": None, "pi_back": None, "fl_g_s": None, "fl_t_s": None,
               "size_g": os.path.getsize(args.g), "size_t": os.path.getsize(args.t),
               "diff": [], "step": "start", "note": ""}
 
@@ -194,6 +194,7 @@ def main():
         back = log_size()
         send("reset")
         ok = wait_log(back, r"redox login:", 240)
+    result["pi_back"] = ok
     result["step"] += ", back on Redox" if ok else ", NOT back on Redox"
     with open(os.path.splitext(args.out)[0] + "-serial.log", "w") as f:
         f.write(log_text(start))
