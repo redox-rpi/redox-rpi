@@ -1,0 +1,45 @@
+From 2c28312af9bf5b2b93601c1a1dc8d88ca1789fbf Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 15:56:37 +0000
+Subject: [PATCH 3/4] armflush: __clear_cache for arm64 when gcc builds
+ libtcc1.a
+
+__arm64_clear_cache is a tcc builtin. With make arm64-libtcc1-usegcc=yes
+(cross build, the new tcc cannot run on the build host) gcc left it as
+an undefined symbol, and programs that call __clear_cache, such as tcc
+itself, did not link. Do the same dc cvau / ic ivau loop with inline
+assembly.
+---
+ lib/armflush.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/lib/armflush.c b/lib/armflush.c
+index 6ec11f38..3ba092d7 100644
+--- a/lib/armflush.c
++++ b/lib/armflush.c
+@@ -57,7 +57,22 @@ void __clear_cache(void *beginning, void *end)
+ #elif defined __aarch64__
+ void __clear_cache(void *beg, void *end)
+ {
++#ifdef __TINYC__
+     __arm64_clear_cache(beg, end);
++#else
++    /* libtcc1.a built by gcc (cross build): the same cache maintenance
++       as tcc's __arm64_clear_cache */
++    unsigned long ctr, dline, iline, p;
++    __asm__ volatile ("mrs %0, ctr_el0" : "=r" (ctr));
++    dline = 4ul << ((ctr >> 16) & 15);
++    iline = 4ul << (ctr & 15);
++    for (p = (unsigned long)beg & -dline; p < (unsigned long)end; p += dline)
++        __asm__ volatile ("dc cvau, %0" :: "r" (p) : "memory");
++    __asm__ volatile ("dsb ish" ::: "memory");
++    for (p = (unsigned long)beg & -iline; p < (unsigned long)end; p += iline)
++        __asm__ volatile ("ic ivau, %0" :: "r" (p) : "memory");
++    __asm__ volatile ("dsb ish\n\tisb" ::: "memory");
++#endif
+ }
+ 
+ /* ------------------------------------------------------------- */
+-- 
+2.53.0
+

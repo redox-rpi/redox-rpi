@@ -18,6 +18,8 @@ efi_partition_size = 32
 redoxfs = {}
 # Development shell over TCP port 2323 (tools/devshd), until SSH works.
 devshd = "source"
+# `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
+socdump = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.
@@ -35,6 +37,24 @@ requires_weak = ["00_base.target"]
 cmd = "redoxfs"
 args = ["/scheme/disk.mmc/0p1", "data"]
 type = "oneshot"
+"""
+
+# The startup sound (#292, config/raspi3bp-sdcard.toml) after the data
+# partition too, where /scheme/data/startup-sound and audio-volume live on
+# these RAM images. init takes a unit in /etc/init.d over the one of the
+# same name in /usr/lib/init.d. Pi test 314: without this the sound
+# started before the partition was mounted and ignored `off`.
+[[files]]
+path = "/etc/init.d/21_startup-sound.service"
+data = """
+[unit]
+description = "Saved volume and startup sound (off: write off to /scheme/data/startup-sound)"
+requires_weak = ["20_audiod.service", "60_data.service"]
+
+[service]
+cmd = "ion"
+args = ["/usr/lib/startup-sound.ion"]
+type = "oneshot_async"
 """
 
 # Start the development shell. Unencrypted: for the home network only.

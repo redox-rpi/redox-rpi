@@ -1,5 +1,11 @@
 # Experiment: sigentry-by-name, registers saved by field name
 
+**Retired** with relibc `0013` ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)): `0013` rewrote the
+restore at the end of the signal entry (every register, then
+`svc #0x5352`), so this patch no longer applies. The patch is in the git
+history (commit `7cd36d6`); the by-name save and restore could be redone
+on top of `0013` if wanted. The name is still accepted and does nothing.
+
 Relibc patch that rewrites how the aarch64 signal entry
 (`__relibc_internal_sigentry` in `redox-rt/src/arch/aarch64.rs`) saves and
 restores the interrupted code's registers.

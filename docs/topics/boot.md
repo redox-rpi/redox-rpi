@@ -10,6 +10,17 @@
 
 ## In progress
 
+- [#243](https://github.com/redox-rpi/redox-rpi/issues/243) U-Boot boot menu (this SD card, network
+  `redox/`, network `stable/`), branch `boot-menu`: the default boots after
+  3 s, so the Pi agent needs no key. QEMU: menu, defaults, entries chosen by
+  keys, and an older U-Boot booting the default all pass; network boot itself
+  cannot run in QEMU (no USB network driver for QEMU's card in our U-Boot).
+
+- [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time, QEMU timeline of a direct boot and a
+  one-app initfs (2026-11-12, [boot-time.md](../boot-time.md)): login 10–11 s after kernel start
+  in QEMU, an app with the SD driver 2.4–2.9 s. The kernel's aarch64 debug lines (16.8 KB
+  before userspace, written byte by byte) cost about 1.4 s at 115200 baud on the Pi; not
+  yet confirmed on the Pi.
 - [#47](https://github.com/redox-rpi/redox-rpi/issues/47) boot time. After the bootloader: [PR #85](https://github.com/redox-rpi/redox-rpi/pull/85)
   (`boot-time`: bootloader wait 1 s, parallel init; login 21 s after reset
   instead of 33.7 s) and the USB session's PR #69 (`dwc2d-boottime`).
@@ -44,10 +55,16 @@
   `fw-direct-boot`: `tools/rpi-boot-stub` as `kernel8.img` wraps the
   unchanged kernel; boots to the login prompt in QEMU `raspi3b`
   (`scripts/fw-direct-boot.sh --test`). `NAME=value` words of the
-  command line (`cmdline.txt`) go into the environment. The MAC address
-  probably comes from the firmware's devicetree; to check at the first Pi
-  test with the serial console. `make-sdcard.sh --direct` writes a card
-  for it (checked in QEMU); Pi test #18 in [test-plan.md](../test-plan.md).
+  command line (`cmdline.txt`) go into the environment.
+  `make-sdcard.sh --direct` writes a card for it. The stub switches the
+  firmware's USB power domain on, as U-Boot's `board_init` does: without
+  it Pi test #18 had no USB (no network, no keyboard). **Pi test #205
+  passed** (2026-11-03): USB at high speed, keyboard, LAN7800 with the
+  board MAC from the firmware's devicetree, pi-test, `/scheme/data`, and
+  the FAT boot partition through `fatfsd`. The banner says `direct`
+  instead of `netboot`. **PR [#183](https://github.com/redox-rpi/redox-rpi/pull/183)**
+  (firmware session). Open: the root runs from the 222 MiB live disk in
+  RAM, and updates go through the FAT partition (`rpi-update`, test #72).
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
@@ -99,17 +116,23 @@
   onto the SD data partition and copies the files into the RAM root, and
   a boot service copies them again after every reset. It needed a redoxfs
   fix: rename failed on any RedoxFS mounted at `/scheme/<name>`. pkg now
-  also says when the clock makes a certificate look invalid. Pi tests
+  also says when the clock makes a certificate look invalid (seen in QEMU
+  at 1970, 2026-11-01; the experiment now builds pkgutils itself, before
+  it relied on `pkg-hold` for that). Install speed on the Pi: nano 27 s,
+  26 small programs 3 min, python312 9 min (#142, #163). Pi tests
   #124 and #127 passed (the boot copy of nano's 214 files takes 3.9 s);
-  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106), to be merged after PR #75.
+  [PR #106](https://github.com/redox-rpi/redox-rpi/pull/106): #66 and #75 are merged, main merged in
+  (2026-11-04); `pkg-persist install` and `update` refuse with a plain
+  message while the clock is at 1970. Pi test #209 (end to end with a
+  reset and an update after a new publish) queued.
 
 ## Next
 
 - Pi test #72 of `rpi-update` after #18: does the Pi firmware start
   `tryboot.txt` once after the flag, and `config.txt` again after the
   watchdog reset? Needs a person to put in the direct-boot card.
-- Packages (#44): the nightly
-  run should publish our repository after a passing build; that needs
-  `scripts/publish-pkg-repo.sh` on main (PR #75) and a step in the nightly
-  script by its owner. Whether Redox's prebuilt programs run is #40
-  (relibc topic).
+- Packages (#44): the nightly run publishes our repository after a
+  passing stable build: draft PR #193 (one step in `update-stable.sh`,
+  to agree with Release & CI). The stable image itself is built without
+  `pkg-repo`/`pkg-hold`, so it does not ask our repository yet. Whether
+  Redox's prebuilt programs run is #40 (relibc topic, PR #152).
