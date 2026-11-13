@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 13 Nov 2026 07:45:20 +0000
+Subject: [PATCH] Debug: log replies that reach a caller that is gone or being
+ killed (issue #401)
+
+Experiment scheme-dead-reply. A scheme reply with data for a caller
+that has exited, or is being SIGKILLed, is lost; for a pty that is a
+typed line. The log tells whether the kernel had sent a Cancel first.
+---
+ src/scheme/user.rs | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/src/scheme/user.rs b/src/scheme/user.rs
+index 1f686154..caeffefd 100644
+--- a/src/scheme/user.rs
++++ b/src/scheme/user.rs
+@@ -390,6 +390,19 @@ impl UserInner {
+ 
+                         State::Responded(response) => {
+                             states.remove(sqe.tag as usize);
++                            // Debug (issue #401): a reply that reaches a caller
++                            // being killed is lost as well.
++                            if let Response::Regular(Ok(n), _, _) = &response
++                                && *n > 0
++                                && context::current().read(token.token()).being_sigkilled
++                            {
++                                warn!(
++                                    "scheme {}: reply of {} bytes for a caller being killed (tag {})",
++                                    self.scheme_id.get(),
++                                    n,
++                                    sqe.tag
++                                );
++                            }
+                             return Ok(response);
+                         }
+                     },
+@@ -990,6 +1003,19 @@ impl UserInner {
+                                 unblock_context(&context, &mut lock_token.token().downgrade());
+                             }
+                             _ => {
++                                // Debug (issue #401): data handed to a caller
++                                // that is gone is lost, for a pty a typed line.
++                                if let Response::Regular(Ok(n), _, _) = &response
++                                    && *n > 0
++                                {
++                                    warn!(
++                                        "scheme {}: reply of {} bytes for a caller that is gone (tag {}, cancel sent {})",
++                                        self.scheme_id.get(),
++                                        n,
++                                        tag,
++                                        canceling
++                                    );
++                                }
+                                 states.remove(tag as usize);
+                             }
+                         }
+-- 
+2.53.0
+
