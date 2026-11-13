@@ -184,6 +184,15 @@ push_kpis_only() {
 
 run_kpis
 
+# Mondays: refresh the CI image mirror, release ci-image (#409,
+# docs/build-host.md "CI image mirror"). Uses its own token
+# (~/.config/redox-rpi/ci-image-token), never the nightly's; without one it
+# only logs that. Never fails the night.
+if [ "$(date -u +%u)" = 1 ] && [ -x scripts/refresh-ci-image.py ]; then
+    { env -u GH_TOKEN timeout 900 scripts/refresh-ci-image.py 2>&1 || echo "failed ($?)"; } |
+        while IFS= read -r l; do log "ci-image: $l"; done
+fi
+
 # 1. Anything new for the image?
 stable_commit=""
 [ -f "$STABLE_LINK/manifest.toml" ] &&

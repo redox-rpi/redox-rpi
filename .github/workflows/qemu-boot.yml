@@ -15,12 +15,18 @@ on:
 
 jobs:
   raspi3b:
-    runs-on: ubuntu-24.04
+    # Our own runner on the build host (label homenode, docs/build-host.md
+    # "CI runner") once the maintainer turns it on with the repository variable
+    # HOMENODE_RUNNER=on; only for pushes, the schedule and pull requests
+    # from branches of this repository. Pull requests from forks always run
+    # on GitHub's runners.
+    runs-on: ${{ vars.HOMENODE_RUNNER == 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","homenode"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Install QEMU and tools
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-arm zstd
@@ -40,16 +46,25 @@ jobs:
         env:
           UBOOT_REPO: https://github.com/u-boot/u-boot.git
         run: |
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu bison flex bc \
-            swig libssl-dev libgnutls28-dev python3-pyelftools device-tree-compiler
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu bison flex bc \
+              swig libssl-dev libgnutls28-dev python3-pyelftools device-tree-compiler
+          fi
           scripts/build-uboot.sh rpi
+
+      - name: Newest image in our mirror
+        # latest.txt in release ci-image names the newest copy;
+        # scripts/refresh-ci-image.py refreshes it weekly. Falls back to the
+        # copy of 2026-11-11 while latest.txt does not exist yet.
+        run: |
+          name=$(curl -fsSL https://github.com/redox-rpi/redox-rpi/releases/download/ci-image/latest.txt || true)
+          echo "DAILY_IMAGE=${name:-redox_server_aarch64_2026-11-11_584_livedisk.iso.zst}" >> "$GITHUB_ENV"
 
       - name: Boot in QEMU raspi3b
         # Redox's daily image from our mirror (release ci-image, #409):
         # static.redox-os.org answers GitHub's runners with 403.
         env:
           DAILY_URL: https://github.com/redox-rpi/redox-rpi/releases/download/ci-image
-          DAILY_IMAGE: redox_server_aarch64_2026-11-11_584_livedisk.iso.zst
         run: |
           scripts/qemu-raspi3b.sh --test --uboot ours --timeout 2400 --usb-net \
             --kernel upstream/kernel/build/aarch64/kernel \
