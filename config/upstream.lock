@@ -11,3 +11,4 @@ bootloader    cc922ec0bb3f9dd31cce589bb513ab2f15ac9746
 pkgutils      fe21bfd95d869cafd356bcdec4d1a81739ede5ee
 fdt           8fa4388e056e48826e8898557a1c8600f9ee5d6a
 redoxfs       db847d87c68052618d1427537c7277293a626a18
+netutils      4900bdc333e291abc61ac8790908a295ec92cd0b
