@@ -45,7 +45,7 @@
 #   does not exist; never fails this script.
 #   Every night, after the Redox part: the TinyCC VC4 track (#410), not
 #   gating. scripts/tcc-track.sh builds the bootcode with GCC and TCC and
-#   runs the resim tests; scripts/tcc-track-pi.sh (the Pi test agent's)
+#   runs the resim tests; scripts/tcc-track-pi.py
 #   compares both on the Pi when it exists and no row is on the Pi; the
 #   record (scripts/tcc-track-record.py) goes into tcc.jsonl in
 #   redox-rpi/pi-tests. Logs in ~/redox-rpi/logs/tcc-track/<date>/.
@@ -171,14 +171,14 @@ run_tcc_track() {
         log "TCC track: host part failed: $(tail -n 1 "$dir/run.log")"
         return 0
     fi
-    if [ -x scripts/tcc-track-pi.sh ] && [ -s "$dir/G.bin" ] && [ -s "$dir/T.bin" ]; then
+    if [ -x scripts/tcc-track-pi.py ] && [ -s "$dir/G.bin" ] && [ -s "$dir/T.bin" ]; then
         # The night's own check (step 2) did not run on a night without changes.
         if ! queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh 2> /dev/null)" ||
             grep -q '^| .*\*\*on the Pi\*\*' <<< "$queue"; then
             log "TCC track: a test is on the Pi (or no queue), no Pi part"
         else
             log "TCC track: Pi part"
-            timeout 900 scripts/tcc-track-pi.sh --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
+            timeout 900 scripts/tcc-track-pi.py --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
                 >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
             pi=(--pi "$dir/pi.json")
         fi

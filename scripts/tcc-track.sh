@@ -14,8 +14,8 @@
 # host.json: {"tinycc", "fat_boot", "gcc", "resim_pass", "size_g", "size_t",
 # "sha256_g", "sha256_t", "checks": {name: "pass"|"fail"}}. resim_pass is
 # true when abi-sim and fat-sim pass (fat-sim runs TCC's and GCC's fat.c;
-# GCC's run is informational there). The Pi part (the Pi test agent's
-# scripts/tcc-track-pi.sh) loads G.bin and T.bin over serial;
+# GCC's run is informational there). The Pi part (scripts/tcc-track-pi.py)
+# loads G.bin and T.bin over serial;
 # scripts/tcc-track-record.py writes the night's record from both.
 #
 # Exit 0 when host.json was written (even with failed checks), 1 when the

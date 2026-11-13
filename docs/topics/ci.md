@@ -34,9 +34,10 @@
 - [#410](https://github.com/redox-rpi/redox-rpi/issues/410) nightly TinyCC VC4 track (WBS 2.15 point 3, branch
   `tcc-track`): `scripts/tcc-track.sh` builds the fat-boot bootcode with
   GCC (G) and TCC (T) from `config/tcc-track.lock` and runs the resim tests
-  (20 s on the build host); the Pi part is the Pi test agent's
-  `scripts/tcc-track-pi.sh`; the record goes to `tcc.jsonl` in pi-tests.
-  Not gating.
+  (20 s on the build host); `scripts/tcc-track-pi.py` loads both over
+  serial into the card's monitor after a watchdog reset (no power cycle, no
+  card writes) and compares their replies; the record goes to `tcc.jsonl`
+  in pi-tests. Not gating; first Pi run by hand through the queue.
 
 - [#10](https://github.com/redox-rpi/redox-rpi/issues/10) crash details in `pi-test.py`, branch `t10-start-loop`,
   [PR #74](https://github.com/redox-rpi/redox-rpi/pull/74): each failed start with its program, exit

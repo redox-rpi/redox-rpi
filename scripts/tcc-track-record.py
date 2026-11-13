@@ -12,7 +12,7 @@ tcc.jsonl in redox-rpi/pi-tests, as network.jsonl):
    "fl_g_s", "fl_t_s"}
 
 --host is scripts/tcc-track.sh's host.json. --pi is the Pi part's result
-(scripts/tcc-track-pi.sh, the Pi test agent): {"pi_pass": bool,
+(scripts/tcc-track-pi.py): {"pi_pass": bool,
 "fl_g_s": float, "fl_t_s": float, ...}; without it, or when it is missing
 or unreadable, pi_pass, fl_g_s and fl_t_s are null (no Pi run that night).
 """
