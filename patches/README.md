@@ -12,6 +12,7 @@ license.
 | [bootloader/](bootloader/) | [Redox bootloader](https://gitlab.redox-os.org/redox-os/bootloader) (MIT) | `git am patches/bootloader/*.patch` |
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [redoxfs/](redoxfs/) | [RedoxFS](https://gitlab.redox-os.org/redox-os/redoxfs) (MIT): the filesystem and its scheme daemon | `git am patches/redoxfs/*.patch` |
+| [netutils/](netutils/) | [netutils](https://gitlab.redox-os.org/redox-os/netutils) (MIT): nc, ping, ifconfig and other network tools | `git am patches/netutils/*.patch` |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
 ## Patch numbers
