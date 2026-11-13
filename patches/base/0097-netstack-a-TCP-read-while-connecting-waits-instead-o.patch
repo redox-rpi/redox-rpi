@@ -1,0 +1,52 @@
+From 252bac2e2bb4d5c078498260fb13c4ff4cefb870 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 13 Nov 2026 10:40:30 +0000
+Subject: [PATCH] netstack: a TCP read while connecting waits instead of
+ returning EOF
+
+connect() returns once the SYN is sent. smoltcp reports may_recv() as
+false in SYN-SENT, so a read before the handshake finished returned 0,
+and nc exited with none of the reply when the server answered and
+closed quickly (redox-rpi issue 404). The may_recv of the scheme socket
+now treats SYN-SENT and SYN-RECEIVED as may receive, and read_buf calls
+it by its trait name: a plain self.may_recv() there called the smoltcp
+method of the same name, which wins over the trait method. The read
+waits, and a refused connection fails with ENOTCONN once the socket is
+closed. The event path, which already used the trait method, no longer
+reports a connecting socket as readable.
+---
+ netstack/src/scheme/tcp.rs | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
+index a9193163..fdd50f71 100644
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -36,7 +36,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+     }
+ 
+     fn may_recv(&self) -> bool {
+-        self.may_recv()
++        // connect() returns as soon as the SYN is out. A read before the
++        // handshake ends must wait for data, not report end of file: smoltcp
++        // says "may not receive" while SYN-SENT, so nc saw EOF and lost the
++        // whole reply when the server answered quickly (issue #404). A
++        // refused connection ends in Closed, and the read then fails with
++        // ENOTCONN.
++        matches!(self.state(), TcpState::SynSent | TcpState::SynReceived) || self.may_recv()
+     }
+ 
+     fn start_close(socket_set: &mut SocketSet, handle: SocketHandle) -> bool {
+@@ -211,7 +217,8 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+         } else if self.can_recv(&file.data) {
+             let length = self.recv_slice(buf).expect("Can't receive slice");
+             Ok(length)
+-        } else if !self.may_recv() {
++        } else if !<Self as SchemeSocket>::may_recv(self) {
++            // The scheme's may_recv, not smoltcp's: still connecting is not EOF
+             Ok(0)
+         } else if file.flags & syscall::O_NONBLOCK == syscall::O_NONBLOCK {
+             Err(SyscallError::new(syscall::EAGAIN))
+-- 
+2.53.0
+
