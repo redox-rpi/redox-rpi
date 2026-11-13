@@ -76,3 +76,21 @@ allocated.
 - On the build host (FUSE, same code): 3000 files written, removed while
   open, then closed. Without 0002, about 24 MB of 36 MB stays allocated
   per round; with 0002 all space comes back.
+
+## Results on today's main (2026-11-12, QEMU)
+
+`pkg install --yes vim` then `pkg remove --yes vim` from a local mirror,
+`df /` after each step, QEMU `--usb-net`, about 12.5 min per round.
+
+| after remove | before (`v0.5.0-dev-184`, main + `timesync`) | after (`v0.5.0-dev-185-g841ffe14+xb56b`, + `redoxfs-truncate` + `futex-wait-lock`) |
+|---|---|---|
+| round 1 | 88384 KB free | 101352 KB |
+| round 2 | 75164 KB | 101424 KB |
+| round 3 | 61940 KB | 101496 KB |
+| round 4 | 48712 KB | 101560 KB |
+| round 5 | 35472 KB | 101612 KB |
+| round 6 | install fails: `No space left on device (os error 28)` | 101408 KB |
+| round 7 | | 101480 KB |
+
+Before: about 13.2 MB lost per round. After: flat within 0.3 MB over 7
+rounds, every install and remove `rc=0`, no hang, no panic.
