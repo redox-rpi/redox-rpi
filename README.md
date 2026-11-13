@@ -85,7 +85,8 @@ Help is welcome, also from your AI coding agent: [docs/tasks.md](docs/tasks.md)
 lists small, self-contained tasks, and [CONTRIBUTING.md](CONTRIBUTING.md)
 describes the workflow (clone, analyse, test, pull request) and how to run
 the automated tests in QEMU and on a real Pi. Please report problems with
-this fork here, not to the Redox OS project.
+this fork here, not to the Redox OS project. To chat, join the Matrix room
+[#redox-rpi:matrix.org](https://matrix.to/#/#redox-rpi:matrix.org).
 
 ## License
 

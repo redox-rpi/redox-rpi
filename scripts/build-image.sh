@@ -7,7 +7,8 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
+#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
+#                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
 #                          [--allow-dirty]
 #                          [make target]   (default: all)
@@ -17,6 +18,10 @@
 #                 image (config/raspi3bp.toml)
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
+#   --release-netboot
+#                 the network-boot variant of the SD card image
+#                 (config/raspi3bp-release-netboot.toml): its packages, no
+#                 devshd; for automated rows on a release (T-SEC-1, T-SEC-2)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
@@ -39,6 +44,8 @@
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
 #         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
+#         upstream/redox/build/aarch64/release-netboot/harddrive.img
+#         (--release-netboot),
 #         and its manifest in build/manifests/
 
 set -euo pipefail
@@ -68,6 +75,10 @@ while [ $# -gt 0 ]; do
         --zero2w)
             CONFIG_NAME=zero2w
             CONFIG="$ROOT/config/raspizero2w.toml"
+            shift ;;
+        --release-netboot)
+            CONFIG_NAME=release-netboot
+            CONFIG="$ROOT/config/raspi3bp-release-netboot.toml"
             shift ;;
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }
@@ -537,9 +548,12 @@ ${exp_list:+experiments: $exp_list
 EOF
 
 # Experiments may add packages and files with a config.toml. A generated
-# config includes them after the image's own config, so they win.
+# config includes them after the image's own config, so they win. Every
+# image but the Zero 2 W's also gets curl (config/raspi3bp-http-client.toml
+# says why it is not in the image configs).
 fs_config="$CONFIG"
 exp_configs=()
+[ "$CONFIG_NAME" = zero2w ] || exp_configs+=("$ROOT/config/raspi3bp-http-client.toml")
 for exp in "${experiments[@]}"; do
     conf="$ROOT/patches/experiments/$exp/config.toml"
     [ -f "$conf" ] && exp_configs+=("$conf")
@@ -575,6 +589,52 @@ image="$REDOX/build/aarch64/$CONFIG_NAME/harddrive.img"
 stage_file() {
     find "$REDOX/recipes/core/$1/target" -path "*/stage/$2" 2>/dev/null | head -1
 }
+# The packages installed in the image: the installer records each one as
+# /var/lib/packages/<name>.pkgar_head. Read them from a copy of the image
+# through the RedoxFS FUSE tool; without FUSE, fall back to the installer's
+# own list (the configured packages, without runtime dependencies).
+# (Until 2026-11-11 the manifest listed every package in the cookbook's
+# repository, which also has packages of other builds: row 326.)
+installed_packages() {
+    local mnt copy
+    packages=""
+    if command -v fusermount > /dev/null && [ -x build/fstools/bin/redoxfs ]; then
+        mnt="$(mktemp -d)"
+        copy="$(mktemp)"
+        cp "$image" "$copy"
+        build/fstools/bin/redoxfs -d "$copy" "$mnt" > /dev/null 2>&1 &
+        fuse_pid=$!
+        for _ in $(seq 1 20); do
+            [ -d "$mnt/var/lib/packages" ] && break
+            sleep 0.5
+        done
+        [ -d "$mnt/var/lib/packages" ] &&
+            packages="$(ls "$mnt/var/lib/packages" | sed -n 's/\.pkgar_head$//p')"
+        fusermount -u "$mnt" 2> /dev/null
+        wait "$fuse_pid" 2> /dev/null
+        rm -rf "$mnt" "$copy"
+    fi
+    packages_source="installed in the image (/var/lib/packages)"
+    if [ -z "$packages" ]; then
+        packages="$(build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null)"
+        packages_source="configured (redox_installer --list-packages, without runtime dependencies; no FUSE to read the image)"
+    fi
+}
+installed_packages
+[ -n "$packages" ] || { echo "cannot tell the packages in $image" >&2; exit 1; }
+# Every configured package must be in the image. The installer can list a
+# package and still install nothing for it, when its entry in the local
+# repository has no hash (#365: curl = "ignore" in another config).
+if [ "$packages_source" = "installed in the image (/var/lib/packages)" ]; then
+    missing="$(comm -23 <(build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null | sort) \
+        <(sort <<< "$packages") | tr '\n' ' ')"
+    if [ -n "${missing// }" ]; then
+        echo "configured but not installed in $image: $missing" >&2
+        echo "(check their entries in $REDOX/repo/aarch64-unknown-redox/repo.toml)" >&2
+        exit 1
+    fi
+fi
+
 mkdir -p "$MANIFESTS"
 manifest="$MANIFESTS/$image_name-$build_id.toml"
 {
@@ -590,12 +650,16 @@ manifest="$MANIFESTS/$image_name-$build_id.toml"
     libc="$(stage_file relibc usr/lib/libc.so)"
     [ -n "$libc" ] && echo "libc_build_id = \"$(readelf -n "$libc" | awk '/Build ID/ { print $3 }')\""
     echo
-    echo "# Packages of the repository the image was installed from:"
+    echo "# Packages in the image, $packages_source:"
     echo "# version, upstream source commit, package hash."
     echo "[packages]"
-    for toml in "$REDOX"/repo/aarch64-unknown-redox/*.toml; do
-        [ "$(basename "$toml")" = repo.toml ] && continue
-        awk -v name="$(basename "$toml" .toml)" -F' = ' '
+    for name in $(sort <<< "$packages"); do
+        toml="$REDOX/repo/aarch64-unknown-redox/$name.toml"
+        if [ ! -f "$toml" ]; then
+            echo "$name = \"? (not in the local repository)\""
+            continue
+        fi
+        awk -v name="$name" -F' = ' '
             $1 == "version" { gsub(/"/, "", $2); v = $2 }
             $1 == "source_identifier" { gsub(/"/, "", $2); s = substr($2, 1, 12) }
             $1 == "blake3" { gsub(/"/, "", $2); b = substr($2, 1, 16) }
