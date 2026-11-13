@@ -15,11 +15,11 @@ gigabit first (Pi test 231). /tmp/dwc2d-link still changes it later
  2 files changed, 44 insertions(+)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index baeee81f..34c6dd37 100644
+index b5051868..ff3ce028 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
 @@ -307,6 +307,12 @@ pub fn init(
-         sleep(Duration::from_millis(10));
+         delay(Duration::from_millis(10));
      }
      r.mii_write(MII_ANAR, ANAR_ALL)?;
 +    if let Some(mbit) = boot_speed() {
@@ -76,10 +76,10 @@ index baeee81f..34c6dd37 100644
  pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
      Regs { bus, f }.link()
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 01dfbc39..f7dcb07b 100644
+index 35a6bf3a..b528f0b4 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -468,6 +468,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -469,6 +469,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      let boot_start = Instant::now();
      let mut hc = Dwc2::new(base);
      println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());

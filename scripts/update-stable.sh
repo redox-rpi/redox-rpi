@@ -23,7 +23,11 @@
 #      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py.
+#      serial console and run scripts/pi-test.py. Network records (#259,
+#      scripts/network-record.py): the boot (seconds from the login prompt to
+#      the first devsh login), then a 15-minute soak after pi-test.py, pass
+#      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
+#      KPIs, on failed nights too.
 #   5. Pass: back up the TFTP files to /srv/tftp/backup-<build ID>/, point
 #      /srv/tftp/stable at it, publish its packages to the pkg repository
 #      /srv/tftp/pkg (scripts/publish-pkg-repo.sh; a build with a test-only
@@ -71,6 +75,9 @@ ISSUE_TITLE="Nightly: main fails on the Pi"
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
 RESET_TIMEOUT=120
 BOOT_TIMEOUT=1500
+# Network soak after pi-test.py (#259): ping every 10 s, devsh login every
+# minute.
+SOAK_MINUTES=15
 
 args=("$@")
 force=0
@@ -122,6 +129,9 @@ log "$ref is $(git describe --tags) ($head)"
 # Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
 # 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.
 kpis_dir=""
+# Network records of this night (scripts/network-record.py, #259), appended
+# to network.jsonl in pi-tests with the KPIs.
+netrec=""
 run_kpis() {
     [ -x scripts/quality-kpis.py ] || { log "no scripts/quality-kpis.py at $ref, no KPIs"; return 0; }
     kpis_dir="$(mktemp -d)"
@@ -142,6 +152,10 @@ run_kpis() {
 # Copy the KPI page into the pi-tests clone (checked out on origin/main) and
 # stage it.
 stage_kpis() {
+    if [ -n "$netrec" ] && [ -s "$netrec" ]; then
+        cat "$netrec" >> "$TESTS/network.jsonl"
+        git -C "$TESTS" add network.jsonl
+    fi
     [ -n "$kpis_dir" ] || return 0
     cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
     git -C "$TESTS" add kpis.md kpis.json
@@ -150,7 +164,7 @@ stage_kpis() {
 # Nights without a report (nothing new, or a failed build): the KPI page on
 # its own commit. Never fails.
 push_kpis_only() {
-    [ -n "$kpis_dir" ] || return 0
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || return 0
     [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
     git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
     stage_kpis
@@ -229,8 +243,15 @@ reset_pi() {
         wait_serial "$start" 'redox-rpi: network boot' "$RESET_TIMEOUT" ||
             { log "the Pi did not reset"; return 1; }
     fi
-    wait_serial "$start" 'redox login:' "$BOOT_TIMEOUT" ||
-        { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    if [ "${1:-}" = record ]; then
+        # Waits for the login prompt, then for the first devsh login (#259).
+        python3 scripts/network-record.py boot --serial-log "$SERIAL_LOG" --start "$start" \
+            --timeout "$BOOT_TIMEOUT" --pi "$PI" --build "$build_id" --out "$netrec" ||
+            { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    else
+        wait_serial "$start" 'redox login:' "$BOOT_TIMEOUT" ||
+            { log "no login prompt after $BOOT_TIMEOUT s"; return 1; }
+    fi
     # devshd starts shortly before the prompt; give the network a moment.
     sleep 20
 }
@@ -251,7 +272,7 @@ wait_serial() {
     local start=$1 pattern=$2 timeout=$3 t=0
     while [ "$t" -lt "$timeout" ]; do
         tail -c +"$((start + 1))" "$SERIAL_LOG" | tr -d '\r' | grep -aq "$pattern" && return 0
-        sleep 5; t=$((t + 5))
+        sleep 1; t=$((t + 1))
     done
     return 1
 }
@@ -270,16 +291,21 @@ restore_stable() {
 # 4. Stage and test.
 report="$(mktemp)"
 output="$(mktemp)"
-trap 'rm -f "$report" "$output" "$0"' EXIT
+netrec="$(mktemp)"
+trap 'rm -f "$report" "$output" "$netrec" "$0"' EXIT
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
-if reset_pi; then
+if reset_pi record; then
     log "running scripts/pi-test.py"
-    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" \
+    if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
         --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
         passed=1
     fi
+    # Soak on the tested build, pass or fail (#259, #92).
+    log "network soak, $SOAK_MINUTES min"
+    python3 scripts/network-record.py soak --minutes "$SOAK_MINUTES" --pi "$PI" \
+        --build "$build_id" --out "$netrec" || true
 else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
 fi

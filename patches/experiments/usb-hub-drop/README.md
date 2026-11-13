@@ -12,11 +12,12 @@ Applies after [`dwc2d-netstats`](../dwc2d-netstats/README.md):
 `--experiment dwc2d-netstats --experiment usb-hub-drop`.
 
 - **base `0083`:**
-  - **No `sleep` in dwc2d.** The hotplug code waits 100 ms after a port
-    change before it resets the port; nothing was printed after that point
-    in test 168. A `nanosleep` in dwc2d already never returned in QEMU (50
-    µs sleeps, while #104 was worked on). `delay()` yields the CPU until the
-    time has passed.
+  - **No `sleep` in dwc2d:** now default base patch `0090` (Pi tests 326
+    and 342), so this patch no longer has it. The hotplug code waits 100 ms
+    after a port change before it resets the port; nothing was printed
+    after that point in test 168. A `nanosleep` in dwc2d already never
+    returned in QEMU (50 µs sleeps, while #104 was worked on). `delay()`
+    yields the CPU until the time has passed.
   - **What the hub said:** a removal prints the port's status and change
     bits by name (connected, enabled, over-current, power; connection,
     enable, over-current changes) and the channel errors so far. Other

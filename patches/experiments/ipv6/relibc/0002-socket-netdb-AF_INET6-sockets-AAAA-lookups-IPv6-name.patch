@@ -15,30 +15,35 @@ with a 5 s timeout each, and closes its socket.
  src/header/netdb/redox.rs    |  21 ++-
  src/platform/redox/socket.rs |  70 ++++++++-
  4 files changed, 288 insertions(+), 133 deletions(-)
-
 diff --git a/src/header/netdb/lookup.rs b/src/header/netdb/lookup.rs
-index 361aa8aa..4ae98ba2 100644
+index 4dec28c3..cd5a54e5 100644
 --- a/src/header/netdb/lookup.rs
 +++ b/src/header/netdb/lookup.rs
-@@ -1,4 +1,5 @@
- use alloc::{string::ToString, vec::Vec};
+@@ -1,7 +1,5 @@
+-use alloc::{
+-    string::{String, ToString},
+-    vec::Vec,
+-};
++use alloc::{string::ToString, vec::Vec};
 +use core::net::IpAddr;
  
  use crate::{
      error::Errno,
-@@ -9,8 +10,9 @@ use crate::{
+@@ -11,10 +9,10 @@ use crate::{
+ 
  use crate::header::{
      bits_arpainet::htons,
-     errno::EINVAL,
+-    bits_timeval::timeval,
+     errno::{EINVAL, ETIMEDOUT},
 -    netinet_in::{IPPROTO_UDP, in_addr, sockaddr_in},
--    sys_socket::constants::{AF_INET, SOCK_DGRAM},
+-    sys_socket::constants::{AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_RCVTIMEO},
 +    netinet_in::{IPPROTO_UDP, in_addr, in6_addr, sockaddr_in, sockaddr_in6},
 +    sys_select::timeval,
 +    sys_socket::constants::{AF_INET, AF_INET6, SO_RCVTIMEO, SOCK_DGRAM, SOL_SOCKET},
      time::{self, timespec},
  };
  
-@@ -21,18 +23,91 @@ use super::{
+@@ -25,17 +23,41 @@ use super::{
  
  pub type LookupHost = Vec<in_addr>;
  
@@ -79,8 +84,68 @@ index 361aa8aa..4ae98ba2 100644
 +            s6_addr: addr.octets(),
 +        })]);
      }
- 
+-
 -    let dns_string = get_dns_server()?;
+-
+-    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
+ 
+     // A name without a dot is tried in the local domain first (DHCP option
+     // 15, e.g. "homenodellm" as "homenodellm.fritz.box"), then as it is. A
+@@ -54,52 +76,72 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+         }
+         names.push(host.to_string());
+     }
+-
+-    let mut error = None;
++    let mut last_err = None;
+     for name in names {
+-        match query(dns_addr, name, 0x0001) {
+-            Ok(response) => {
+-                let addrs: Vec<_> = response
+-                    .answers
+-                    .into_iter()
+-                    .filter_map(|answer| {
+-                        if answer.a_type == 0x0001 && answer.a_class == 0x0001 && answer.data.len() == 4
+-                        {
+-                            Some(in_addr {
+-                                s_addr: u32::from_ne_bytes([
+-                                    answer.data[0],
+-                                    answer.data[1],
+-                                    answer.data[2],
+-                                    answer.data[3],
+-                                ]),
+-                            })
+-                        } else {
+-                            None
+-                        }
+-                    })
+-                    .collect();
+-                if !addrs.is_empty() {
+-                    return Ok(addrs);
+-                }
+-            }
+-            Err(err) => error = Some(err),
++        match lookup_name(&name, family) {
++            Ok(addrs) if !addrs.is_empty() => return Ok(addrs),
++            Ok(_) => {}
++            Err(err) => last_err = Some(err),
+         }
+     }
+-    match error {
++    match last_err {
+         Some(err) => Err(err),
+         None => Ok(Vec::new()),
+     }
+ }
+ 
+-/// How long to wait for the name server's reply, per try. Without a
+-/// timeout a lost reply (or a server that never answers, like a public
+-/// resolver asked for "fritz.box") blocked the caller for good
+-/// (redox-rpi #290).
+-const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
++/// A and/or AAAA records of one name.
++fn lookup_name(host: &str, family: i32) -> Result<Vec<HostAddr>, Errno> {
++
 +    let mut addrs = Vec::new();
 +    let mut last_err = None;
 +    if family != AF_INET6 {
@@ -113,7 +178,9 @@ index 361aa8aa..4ae98ba2 100644
 +    }
 +}
  
--    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
+-/// Sends one query to the name server and waits for the reply with the
+-/// same transaction id, asking again after each timeout.
+-fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
 +/// The name servers: those in the platform's config (IPv4 or IPv6), then on
 +/// Redox the IPv6 servers that netstack learned from router advertisements.
 +fn dns_servers() -> Vec<IpAddr> {
@@ -128,26 +195,24 @@ index 361aa8aa..4ae98ba2 100644
 +    servers.extend(super::sys::get_dns_servers_ipv6().into_iter().map(IpAddr::V6));
 +    servers
 +}
- 
++
 +/// Asks the name servers in turn until one answers.
 +fn query(name: &str, q_type: u16) -> Result<Dns, Errno> {
      let mut timespec = timespec::default();
      Sys::clock_gettime(
          time::constants::CLOCK_REALTIME,
-@@ -44,128 +119,104 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
+@@ -111,25 +153,63 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
          transaction_id: tid,
          flags: 0x0100,
          queries: vec![DnsQuery {
--            name: host.to_string(),
--            q_type: 0x0001,
--            q_class: 0x0001,
+-            name,
 +            name: name.to_string(),
-+            q_type,
+             q_type,
+-            q_class: 0x0001,
 +            q_class: CLASS_IN,
          }],
          answers: vec![],
      };
--
      let packet_data = packet.compile();
  
 -    let mut dest = [0_u8; size_of::<sockaddr_in>()];
@@ -158,16 +223,22 @@ index 361aa8aa..4ae98ba2 100644
 -        ..Default::default()
 +    let mut last_err = Errno(EINVAL);
 +    for server in dns_servers() {
-+        match query_server(server, &packet_data) {
-+            Ok(response) if response.transaction_id == tid => return Ok(response),
-+            Ok(_) => last_err = Errno(EINVAL),
++        match query_server(server, &packet_data, tid) {
++            Ok(response) => return Ok(response),
 +            Err(err) => last_err = err,
 +        }
 +    }
 +    Err(last_err)
 +}
 +
-+fn query_server(server: IpAddr, packet_data: &[u8]) -> Result<Dns, Errno> {
++/// How long to wait for a server's reply, per try. Without a timeout a
++/// lost reply (or a server that never answers, like a public resolver
++/// asked for "fritz.box") blocked the caller for good (redox-rpi #290).
++const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
++
++/// Sends the query to one server and waits for the reply with transaction
++/// id `tid`, asking again after each timeout.
++fn query_server(server: IpAddr, packet_data: &[u8], tid: u16) -> Result<Dns, Errno> {
 +    let (domain, dest) = match server {
 +        IpAddr::V4(addr) => {
 +            let mut dest = vec![0_u8; size_of::<sockaddr_in>()];
@@ -197,152 +268,47 @@ index 361aa8aa..4ae98ba2 100644
      };
  
 -    let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
--    let _ = Sys::connect(sock, &dest)?;
--    Sys::sendto(sock, &packet_data, 0, None)?;
 +    let sock = Sys::socket(domain, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
-+    let result = (|| {
+     let result = (|| {
+-        Sys::connect(sock, &dest)?;
 +        let _ = Sys::connect(sock, &dest)?;
-+
-+        // Don't wait forever for a server that does not answer
-+        let timeout = timeval {
-+            tv_sec: 5,
-+            tv_usec: 0,
-+        };
-+        let timeout_bytes = unsafe {
-+            core::slice::from_raw_parts((&raw const timeout).cast::<u8>(), size_of::<timeval>())
-+        };
-+        let _ = Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout_bytes);
+         let mut buf = vec![0u8; 65536];
+         for timeout_ms in QUERY_TIMEOUTS_MS {
+             let timeout = timeval {
+@@ -139,7 +219,7 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+             // SAFETY: timeval is plain data (repr(C), impl Plain).
+             let timeout = unsafe { plain::as_bytes(&timeout) };
+             Sys::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout)?;
+-            Sys::sendto(sock, &packet_data, 0, None)?;
++            Sys::sendto(sock, packet_data, 0, None)?;
+             // Replies to an earlier query (another id) are skipped; a
+             // timeout or error ends this try.
+             while let Ok((count, _)) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None) {
+@@ -157,9 +237,6 @@ fn query(dns_addr: u32, name: String, q_type: u16) -> Result<Dns, Errno> {
+ }
  
--    let mut buf = vec![0u8; 65536];
-+        Sys::sendto(sock, packet_data, 0, None)?;
+ pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
+-    let dns_string = get_dns_server()?;
+-    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
+-
+     let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
+     // Address intentionally backwards for reverse lookup
+     let name = format!(
+@@ -167,12 +244,12 @@ pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
+         addr[3], addr[2], addr[1], addr[0]
+     );
  
--    let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
-+        let mut buf = vec![0u8; 65536];
-+        let (count, _srcaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
-+        Dns::parse(&buf[..count]).map_err(|_| Errno(EINVAL))
-+    })();
-+    let _ = Sys::close(sock);
-+    result
-+}
- 
--    let response = Dns::parse(&buf[..count]).map_err(|_| Errno(EINVAL))?;
--    let addrs: Vec<_> = response
-+pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
-+    let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
-+    // Address intentionally backwards for reverse lookup
-+    let name = format!(
-+        "{}.{}.{}.{}.in-addr.arpa",
-+        addr[3], addr[2], addr[1], addr[0]
-+    );
-+
+-    let response = query(dns_addr, name, 0x000C)?;
 +    let response = query(&name, TYPE_PTR)?;
-+    let names = response
+     let names = response
          .answers
          .into_iter()
          .filter_map(|answer| {
--            if answer.a_type == 0x0001 && answer.a_class == 0x0001 && answer.data.len() == 4 {
--                let addr = in_addr {
--                    s_addr: u32::from_ne_bytes([
--                        answer.data[0],
--                        answer.data[1],
--                        answer.data[2],
--                        answer.data[3],
--                    ]),
--                };
--                Some(addr)
+-            if answer.a_type == 0x000C && answer.a_class == 0x0001 {
 +            if answer.a_type == TYPE_PTR && answer.a_class == CLASS_IN {
-+                // answer.data is encoded kinda weird.
-+                // Basically length-prefixed strings for each
-+                // subsection of the domain.
-+                // We need to parse this to insert periods where
-+                // they belong (ie at the end of each string)
-+                Some(parse_revdns_answer(&answer.data))
-             } else {
-                 None
-             }
-         })
-         .collect();
--
--    Ok(addrs)
--}
--
--pub fn lookup_addr(addr: &in_addr) -> Result<Vec<Vec<u8>>, Errno> {
--    let dns_string = get_dns_server()?;
--
--    if let Some(dns_addr) = parse_ipv4_string(&dns_string) {
--        let addr: [u8; 4] = addr.s_addr.to_ne_bytes();
--        // Address intentionally backwards for reverse lookup
--        let name = format!(
--            "{}.{}.{}.{}.in-addr.arpa",
--            addr[3], addr[2], addr[1], addr[0]
--        );
--
--        let mut timespec = timespec::default();
--        if let Ok(()) = Sys::clock_gettime(
--            time::constants::CLOCK_REALTIME,
--            Out::from_mut(&mut timespec),
--        ) {}; // TODO handle error
--        let tid = (timespec.tv_nsec >> 16) as u16;
--
--        let packet = Dns {
--            transaction_id: tid,
--            flags: 0x0100,
--            queries: vec![DnsQuery {
--                name,
--                q_type: 0x000C,
--                q_class: 0x0001,
--            }],
--            answers: vec![],
--        };
--
--        let packet_data = packet.compile();
--
--        let mut dest_addr = [0_u8; size_of::<sockaddr_in>()];
--        *plain::from_mut_bytes(&mut dest_addr).unwrap() = sockaddr_in {
--            sin_family: u16::try_from(AF_INET).expect("AF_INET is positive and below u16::MAX"),
--            sin_port: htons(53),
--            sin_addr: in_addr { s_addr: dns_addr },
--            ..Default::default()
--        };
--
--        let sock = Sys::socket(AF_INET, SOCK_DGRAM, i32::from(IPPROTO_UDP))?;
--        let _ = Sys::connect(sock, &dest_addr)?;
--
--        let _bytes_sent = Sys::sendto(sock, &packet_data, 0, None)?;
--
--        let mut buf = [0u8; 65536];
--
--        let (count, _dstaddr_len) = Sys::recvfrom(sock, Out::from_mut(&mut buf), 0, None)?;
--
--        match Dns::parse(&buf[..count]) {
--            Ok(response) => {
--                let names = response
--                    .answers
--                    .into_iter()
--                    .filter_map(|answer| {
--                        if answer.a_type == 0x000C && answer.a_class == 0x0001 {
--                            // answer.data is encoded kinda weird.
--                            // Basically length-prefixed strings for each
--                            // subsection of the domain.
--                            // We need to parse this to insert periods where
--                            // they belong (ie at the end of each string)
--                            Some(parse_revdns_answer(&answer.data))
--                        } else {
--                            None
--                        }
--                    })
--                    .collect();
--                Ok(names)
--            }
--            Err(_err) => Err(Errno(EINVAL)),
--        }
--    } else {
--        Err(Errno(EINVAL))
--    }
-+    Ok(names)
- }
- 
- fn parse_revdns_answer(data: &[u8]) -> Vec<u8> {
+                 // answer.data is encoded kinda weird.
+                 // Basically length-prefixed strings for each
+                 // subsection of the domain.
 diff --git a/src/header/netdb/mod.rs b/src/header/netdb/mod.rs
 index b731551f..572051a6 100644
 --- a/src/header/netdb/mod.rs
@@ -432,7 +398,7 @@ index b731551f..572051a6 100644
  
          let ai_canonname = if ai_flags & AI_CANONNAME > 0 {
 diff --git a/src/header/netdb/redox.rs b/src/header/netdb/redox.rs
-index 314dffcd..3fc9f735 100644
+index 8d424d19..913801be 100644
 --- a/src/header/netdb/redox.rs
 +++ b/src/header/netdb/redox.rs
 @@ -4,7 +4,7 @@ use crate::{
@@ -442,11 +408,11 @@ index 314dffcd..3fc9f735 100644
 -use alloc::string::String;
 +use alloc::{string::String, vec::Vec};
  
- pub fn get_dns_server() -> Result<String, Errno> {
+ fn read_file(path: &core::ffi::CStr) -> Result<String, Errno> {
      let mut string = String::new();
-@@ -14,3 +14,22 @@ pub fn get_dns_server() -> Result<String, Errno> {
- 
-     Ok(string)
+@@ -29,3 +29,22 @@ pub fn get_dns_server() -> Result<String, Errno> {
+ pub fn get_search_domain() -> Result<String, Errno> {
+     read_file(c"/scheme/netcfg/resolv/domain")
  }
 +
 +/// IPv6 name servers that netstack learned from router advertisements
@@ -548,7 +514,9 @@ index b3d0834b..4b867ae6 100644
  
      let sep = memchr::memchr(b':', &unparsed_addr).expect("missing port");
      let (raw_addr, rest) = unparsed_addr.split_at_mut(sep);
-@@ -559,5 +611,5 @@ impl PalSocket for Sys {
+@@ -557,7 +609,7 @@ impl PalSocket for Sys {
+ 
+     fn bind(socket: c_int, address_raw: &[u8]) -> Result<()> {
          match extract_sa_family(address_raw)? {
 -            AF_INET => {
 +            AF_INET | AF_INET6 => {
@@ -589,5 +557,4 @@ index b3d0834b..4b867ae6 100644
                  redox_rt::sys::open("/scheme/uds_stream", flags | O_CREAT)? as c_int
              }
 -- 
-2.54.0 (Apple Git-157)
-
+2.53.0

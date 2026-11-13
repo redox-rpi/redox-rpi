@@ -1,0 +1,64 @@
+From 9d2d865c7807b50b98085b03ba79bcc85b082975 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 15:54:27 +0000
+Subject: [PATCH] ld.so: aarch64 static TLSDESC points at the copied TLS data
+
+On aarch64 the thread pointer is 16 bytes (the TCB) below the static
+TLS block. copy_masters and the DTV place a module block at
+tls_start + tls_offset, but the static TLSDESC returned tls_offset + sym,
+so every access of a shared object (libc.so itself) landed 16 bytes
+early: the .tdata init bytes overlapped the next variables and the
+variables lost their init values. Add the 16 bytes, and size the static
+TLS area up to the end of the block.
+---
+ src/ld_so/dso.rs    |  5 +++++
+ src/ld_so/linker.rs | 10 ++++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/src/ld_so/dso.rs b/src/ld_so/dso.rs
+index b840714..432b659 100644
+--- a/src/ld_so/dso.rs
++++ b/src/ld_so/dso.rs
+@@ -1199,6 +1199,11 @@ impl DSO {
+             })) as usize;
+         } else {
+             *resolver = __tlsdesc_static as *const () as usize;
++            // AArch64 (TLS variant I): the thread pointer sits 16 bytes (the TCB) below the
++            // static TLS block, while copy_masters and the DTV place a module's block at
++            // tls_start + tls_offset. Add those 16 bytes so the access lands on the copied data.
++            #[cfg(target_arch = "aarch64")]
++            let tls_offset = tls_offset + 16;
+             *descriptor = sym + tls_offset + reloc.addend.unwrap_or_default();
+         }
+     }
+diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
+index d0d7724..4667c93 100644
+--- a/src/ld_so/linker.rs
++++ b/src/ld_so/linker.rs
+@@ -933,6 +933,11 @@ impl Linker {
+             }
+ 
+             self.tls_size = master.offset;
++            // AArch64 places the block at tls_start + offset, so it ends at offset + size.
++            #[cfg(target_arch = "aarch64")]
++            {
++                self.tls_size += master.segment_size;
++            }
+             self.next_tls_module_id += 1;
+             self.next_object_id += 1;
+ 
+@@ -994,6 +999,11 @@ impl Linker {
+         if let Some(master) = tcb_master {
+             if !dlopened {
+                 self.tls_size = master.offset; // => aligned ph.p_memsz
++                // AArch64 places the block at tls_start + offset, so it ends at offset + size.
++                #[cfg(target_arch = "aarch64")]
++                {
++                    self.tls_size += master.segment_size;
++                }
+             }
+ 
+             tcb_masters.push(master);
+-- 
+2.53.0
+

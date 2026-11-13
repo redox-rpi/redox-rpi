@@ -6,6 +6,7 @@ Usage:
                        [--serial-log <file>] [--serial-lines 15]
                        [--crash-log <file.jsonl>]
                        [--report <file>] [--note <text>]
+                       [--extended] [--tcp-host <ip>] [--tcp-mib 10]
 
 Checks, in this order:
   version   /etc/redox-rpi-release is readable and names a build ID (and the
@@ -19,6 +20,22 @@ Checks, in this order:
             exit status, what it printed, and the crash dump lines the
             serial console logged meanwhile (with --serial-log, e.g.
             ~/redox-rpi/logs/serial.log, or images/qrun.log under QEMU)
+
+With --extended (the nightly, #258), also:
+  audio     /scheme/audiohw/stats: measured_rate_hz within 2 % of 44 100,
+            dma_faults and pwm_errors 0; `tone -s 3 > /scheme/audio` takes
+            2.7-3.3 s (devsh overhead subtracted) and audiod still runs
+  time      the clock was set by NTP (/tmp/timesync.synced from timesync)
+            and is within 120 s of this host's clock
+  tcp       --tcp-mib MiB (default 10) from this host over TCP with nc into
+            /tmp, the same SHA-256 (nc's "Remote host: …" line before the
+            data allowed); the speed goes into the detail
+  cpu       after the starts: the ARM clock reached 1400 MHz
+            (/scheme/rpi-firmware/arm_clock) and no throttle flag is set now
+            (/scheme/rpi-firmware/throttled, bits 0-3)
+  reboot    last: `reboot`, then devsh must answer again within 120 s with
+            the same build ID; the seconds go into the detail (boot-time
+            trend, #47)
 
 Prints a summary and, with --report, appends it to that Markdown file.
 With --crash-log, appends one JSON object per line for each failed start,
@@ -36,6 +53,7 @@ import re
 import signal
 import socket
 import sys
+import threading
 import time
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
@@ -272,6 +290,136 @@ def describe_status(status):
     return f"exit {code}"
 
 
+def kv(lines):
+    """`name value` lines (stats files) as a dict."""
+    out = {}
+    for l in lines:
+        parts = l.split(None, 1)
+        if len(parts) == 2:
+            out[parts[0]] = parts[1].strip()
+    return out
+
+
+def timed(sh, command, timeout=120):
+    """(output lines, seconds) of one command, without the devsh round trip
+    (measured with `true` right before)."""
+    t0 = time.time()
+    sh.run("true")
+    base = time.time() - t0
+    t0 = time.time()
+    out = sh.run(command, timeout)
+    return out, max(0.0, time.time() - t0 - base)
+
+
+def check_audio(sh, check):
+    stats = kv(sh.run("cat /scheme/audiohw/stats"))
+    rate = int(stats.get("measured_rate_hz", "0") or 0)
+    faults = stats.get("dma_faults", "?")
+    # "pwm_errors 0 bits=0x000": the count is the first word.
+    pwm = (stats.get("pwm_errors", "0").split() or ["0"])[0]
+    ok = abs(rate - 44100) <= 882 and faults == "0" and pwm == "0"
+    out, secs = timed(sh, "tone -s 3 > /scheme/audio; echo rc=$?", 60)
+    rc = out[-1] if out else "no output"
+    alive = any("audiod" in l for l in sh.run("ps"))
+    ok = ok and rc == "rc=0" and 2.7 <= secs <= 3.3 and alive
+    check("audio", ok, f"mode {stats.get('mode', '?')}, measured {rate} Hz, dma_faults {faults}, "
+          f"pwm_errors {pwm}; tone -s 3 took {secs:.2f} s, {rc}; audiod {'running' if alive else 'gone'}")
+
+
+def check_time(sh, check):
+    out = sh.run("cat /tmp/timesync.synced; date +%s")
+    nums = [int(l) for l in out if l.isdigit()]
+    if len(nums) < 2:
+        check("time", False, "no NTP answer yet (/tmp/timesync.synced missing): " + "; ".join(out[:2]))
+        return
+    synced, now = nums[0], nums[-1]
+    skew = now - int(time.time())
+    when = datetime.datetime.fromtimestamp(synced, datetime.timezone.utc).strftime("%H:%M:%S")
+    check("time", abs(skew) <= 120, f"set by NTP at {when} UTC; Pi clock {skew:+d} s against this host")
+
+
+def local_ip(sh):
+    return sh.sock.getsockname()[0]
+
+
+def check_tcp(sh, check, host, mib):
+    payload = os.urandom(mib << 20)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", 0))
+    srv.listen(1)
+    srv.settimeout(120)
+    port = srv.getsockname()[1]
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+            with conn:
+                # A short pause on both ends: with a small payload sent and
+                # closed at once, nc on Redox lost the data (QEMU,
+                # 2026-11-11); this check is about the transfer.
+                time.sleep(0.5)
+                conn.sendall(payload)
+                time.sleep(1)
+                conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        finally:
+            srv.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    out, secs = timed(sh, f"nc {host}:{port} > /tmp/pi-test-tcp.bin; sha256sum /tmp/pi-test-tcp.bin; "
+                      "rm /tmp/pi-test-tcp.bin", 300)
+    got = next((l.split()[0] for l in out if l.endswith("pi-test-tcp.bin")), "")
+    # Redox's nc writes "Remote host: <ip>:<port>" to stdout before the data.
+    digests = {hashlib.sha256(payload).hexdigest(),
+               hashlib.sha256(f"Remote host: {host}:{port}\n".encode() + payload).hexdigest()}
+    ok = got in digests
+    speed = f", {mib / secs:.1f} MiB/s" if secs > 0 else ""
+    check("tcp", ok, f"{mib} MiB from {host}:{port} in {secs:.1f} s{speed}, "
+          f"SHA-256 {'matches' if ok else 'differs: ' + (got[:16] or '; '.join(out[:2]))}")
+
+
+def check_cpu(sh, check):
+    clocks = []
+    for _ in range(3):
+        out = sh.run("cat /scheme/rpi-firmware/arm_clock")
+        clocks += [int(l) for l in out if l.isdigit()]
+    thr = (sh.run("cat /scheme/rpi-firmware/throttled") or ["?"])[0]
+    try:
+        flags = int(thr, 16 if thr.lower().startswith("0x") else 10)
+    except ValueError:
+        flags = None
+    top = max(clocks) if clocks else 0
+    ok = top >= 1400000000 and flags is not None and flags & 0xF == 0
+    check("cpu", ok, f"ARM clock up to {top // 1000000} MHz, throttled {thr}")
+
+
+def check_reboot(sh, check, build_id):
+    try:
+        sh.sock.sendall(b"reboot\r")
+        time.sleep(1)
+        sh.sock.close()
+    except OSError:
+        pass
+    t0 = time.time()
+    time.sleep(5)
+    while time.time() - t0 < 120:
+        try:
+            again = Shell(sh.host, sh.port)
+        except (OSError, RuntimeError):
+            time.sleep(2)
+            continue
+        secs = time.time() - t0
+        release = " ".join(again.run("cat /etc/redox-rpi-release"))
+        again.close()
+        ok = build_id in release
+        check("reboot", ok, f"devsh back {secs:.0f} s after reboot"
+              + ("" if ok else f", but the build ID is not {build_id}"))
+        return
+    check("reboot", False, "devsh did not answer within 120 s after reboot")
+
+
 def parse_manifest(path):
     values = {}
     for line in open(path):
@@ -292,6 +440,10 @@ def main():
     ap.add_argument("--crash-log", help="append failed starts and crash dumps as JSON lines")
     ap.add_argument("--report")
     ap.add_argument("--note", default="")
+    ap.add_argument("--extended", action="store_true",
+                    help="also audio, time, tcp, cpu and reboot (the nightly, #258)")
+    ap.add_argument("--tcp-host", help="this host's address as the Pi sees it (default: from the devsh connection)")
+    ap.add_argument("--tcp-mib", type=int, default=10)
     args = ap.parse_args()
 
     results = []  # (check, ok, detail)
@@ -341,6 +493,15 @@ def main():
             f"echo {token} > /scheme/data/pi-test.txt; cat /scheme/data/pi-test.txt; rm /scheme/data/pi-test.txt"
         )
         check("sdcard", token in out, "write, read back, delete on /scheme/data" if token in out else f"got {'; '.join(out[:2]) or 'nothing'}")
+
+        if args.extended:
+            for name, fn in (("audio", lambda: check_audio(sh, check)),
+                             ("time", lambda: check_time(sh, check)),
+                             ("tcp", lambda: check_tcp(sh, check, args.tcp_host or local_ip(sh), args.tcp_mib))):
+                try:
+                    fn()
+                except (OSError, RuntimeError, ValueError) as e:
+                    check(name, False, f"could not run: {str(e).splitlines()[0][:200]}")
 
         done, others = 0, set()
         per_run = 25  # iterations per command line, 2 starts each
@@ -409,8 +570,17 @@ def main():
             for l in c["serial"] if i < 3 else []:
                 print(f"    serial: {l}", flush=True)
         info["starts"] = (len(crashes), done)
+        if args.extended:
+            try:
+                check_cpu(sh, check)
+            except (OSError, RuntimeError, ValueError) as e:
+                check("cpu", False, f"could not run: {str(e).splitlines()[0][:200]}")
+            # Last: the session ends with the reboot.
+            check_reboot(sh, check, info["build_id"])
+            sh = None
     finally:
-        sh.close()
+        if sh:
+            sh.close()
 
     passed = all(ok for _, ok, _ in results)
     if args.crash_log and (crashes or stray):
