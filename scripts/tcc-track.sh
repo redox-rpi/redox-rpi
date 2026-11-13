@@ -8,8 +8,8 @@
 #   scripts/tcc-track.sh --out <dir> [--work <dir>]
 #
 #   --out   writes G.bin, T.bin, host.json and the logs there
-#   --work  clones of redox-rpi/tinycc and rpi-open-firmware and the resim
-#           build (default ~/tcc-track); only this script uses them
+#   --work  clones of redox-rpi/tinycc and rpi-open-firmware (default
+#           ~/tcc-track); only this script uses them
 #
 # host.json: {"tinycc", "fat_boot", "gcc", "resim_pass", "size_g", "size_t",
 # "sha256_g", "sha256_t", "checks": {name: "pass"|"fail"}}. resim_pass is
@@ -23,6 +23,8 @@
 #
 # vc4-elf toolchain: $VC4_PREFIX (default
 # ~/rbc-build/toolchains/prefix/bin/vc4-elf-), from build-toolchain.sh.
+# resim's vc4emul: $VC4EMUL (default the build host's own build in
+# ~/rbc-build/tcc-vc4-tools/resim); resim has no licence and stays local.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -59,8 +61,11 @@ log "tinycc ${tinycc_full:0:10}, fat-boot ${fat_full:0:10}, vc4-elf-gcc $gcc_ver
 
 (cd "$tcc" && ./configure --config-bcheck=no --config-backtrace=no && make vc4-tcc) \
     > "$out/vc4-tcc.log" 2>&1 || { log "vc4-tcc does not build, see $out/vc4-tcc.log"; exit 1; }
-E="$("$tcc/tests/vc4/ci/build-resim.sh" "$work/resim" 2> "$out/resim.log")" ||
-    { log "resim does not build, see $out/resim.log"; exit 1; }
+# resim has no licence, so it is never built or patched in public CI; the
+# build host's own build (TinyCC VC4's, with the asr, OP_BCHG and counter
+# changes) is used here.
+E="${VC4EMUL:-$HOME/rbc-build/tcc-vc4-tools/resim/vc4emul/vc4emul}"
+[ -x "$E" ] || { log "no vc4emul at $E"; exit 1; }
 
 declare -A checks
 run() { # name command...

@@ -2,9 +2,9 @@
 # scripts/tcc-track.sh and written into each night's record. Change them by
 # pull request, like config/upstream.lock.
 
-# redox-rpi/tinycc: vc4-tcc, the vc4 tests and tests/vc4/ci/build-resim.sh.
-# 690da973 is vc4 73d65d06 plus the CI files of redox-rpi/tinycc PR #5;
-# move to the vc4 branch once that is merged.
+# redox-rpi/tinycc: vc4-tcc and the vc4 tests. 690da973 is vc4 73d65d06
+# plus the first CI files of redox-rpi/tinycc PR #5; move to the vc4 branch
+# once that is merged.
 TINYCC_REV=690da973
 # redox-rpi/rpi-open-firmware branch fat-boot (not m3-mbox): the bootcode
 # built as G (vc4-elf-gcc) and as T (vc4-tcc, linked by vc4-tcc).
