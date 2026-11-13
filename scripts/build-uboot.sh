@@ -39,7 +39,8 @@ esac
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 
 if [ ! -d "$SRC" ]; then
-    git clone --depth 1 --branch "$UBOOT_TAG" https://source.denx.de/u-boot/u-boot.git "$SRC"
+    # UBOOT_REPO: CI uses the GitHub mirror (#409).
+    git clone --depth 1 --branch "$UBOOT_TAG" "${UBOOT_REPO:-https://source.denx.de/u-boot/u-boot.git}" "$SRC"
 fi
 if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
