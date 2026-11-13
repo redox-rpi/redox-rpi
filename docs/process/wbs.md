@@ -45,6 +45,47 @@ How it is used:
 | 2.14 | Timers and DMA | project lead (no owner yet) | 2.3.11 | [dma](../topics/dma.md), [time](../topics/time.md) |
 | 2.15 | TinyCC VC4 backend in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc): own compiler for the VPU, to understand the VPU and own the toolchain; not used for the firmware build yet (GCC stays) | TinyCC VC4 | 2.1.2 | [tcc](../topics/tcc.md), rpi-open-firmware `docs/tcc-vc4.md` |
 
+### 2.15 TinyCC VC4: quality track
+
+Decided by the maintainer on 2026-11-13. These rules are written down only
+here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
+
+1. **Two tracks.** Everything shipped (releases, and later firmware images)
+   is built with GCC (vc4-elf-gcc), and the release notes say so. TCC is a
+   nightly track: not gating, reported in the KPIs. A red TCC track never
+   blocks a release or the promotion of the stable image.
+2. **CI in redox-rpi/tinycc** (Release and CI). Every PR runs native
+   `make test`, `make test` with `-DTCC_LOOP_ROTATE` passed to both stages of
+   `tccb`, and the VC4 tests (`tests/vc4`: enc, asm, abi-sim, fat-sim,
+   bootcode-build `LINK=tcc`). It runs on GitHub-hosted runners, never
+   self-hosted. The vc4 toolchain is built once and published as a release
+   asset. resim gets a redox-rpi fork with its patches, after its licence is
+   checked, or CI builds it.
+3. **Nightly TCC track** (Release and CI, Pi Tests). Open firmware
+   `fat-boot` is built with GCC (G) and TCC (T) from pinned commits (tinycc
+   `vc4`, `fat-boot` and the GCC version in the manifest), and the resim tests
+   run on both. On the Pi, right after the nightly's own reset and through
+   the Pi test agent's flow, G and T are loaded over serial with the monitor
+   (`l` and `chain`) and run the same commands. Nothing is written to the
+   selector card unattended. **Pass:** T gives the same replies and crc32
+   as G, compared after removing the banner and `BUILD_ID` line and all
+   time-dependent values (`fl` timings, mbox counters, udelay values).
+4. **Differential tests** (TinyCC VC4). Every week, random programs
+   (csmith, limited to the supported subset) are compiled by host gcc and
+   by vc4-tcc and run in resim, outside the nightly window. Every mismatch
+   is reduced to a minimal case and becomes an issue with a test in
+   `tests/vc4`.
+5. **KPIs** (Quality, on the KPI dashboard). TCC track pass rate over 14
+   nights, size T/G (`bootcode.bin`), speed T/G (`fl START.ELF`), csmith
+   programs and mismatches per week, and open TCC VC4 bugs by severity.
+6. **Bugs.** A failure in the TCC track is a normal bug owned by TinyCC
+   VC4, with the QMP's severity and flaky rules.
+7. **Switching to TCC** is the maintainer's decision, by RFC. It needs:
+   28 green nights in a row; size at most 1.3 × and speed at most 1.2 × GCC;
+   no open S1/S2 TCC VC4 bug; at least 10,000 csmith programs without a
+   mismatch; and one release cycle with a T image beside the G image for
+   the maintainer's own Pi test.
+
 ## 3 Boards
 
 | WP | Work | Owner | PBS | Topic page |

@@ -188,7 +188,8 @@ place these rules are written down; other pages link here.
 Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
 (WBS 2.15): after a review by the project lead or Quality, the reviewer sets
 `merge-next`; the PR need not stay a draft, since the fork is not used by
-any build yet. The maintainer merges.
+any build yet. The maintainer merges. The quality track (GCC ships, TCC runs in the
+nightly) is in [WBS 2.15](wbs.md#215-tinycc-vc4-quality-track).
 
 Quality merges only when all of these hold:
 1. CI is green and `merge-set-check` passes.
