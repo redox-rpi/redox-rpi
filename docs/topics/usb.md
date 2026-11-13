@@ -41,8 +41,9 @@
   +180 s): timer wakeups 50.6/s → 19.5/s, their busy time 9.1 → 2.0 ms/s;
   keyboard test passes, mouse test 18/18. Pi row 378 was inconclusive:
   no keyboard on the 3B+, only a low-speed gamepad (0079:0011) polled as
-  a pointer, so the pointer poll got the same change; rerun row 386. Fast
-  typing needs a person.
+  a pointer, so the pointer poll got the same change. **Pi row 386
+  passes**: dwc2d at idle 74–77 → 44–46 wakeups/s, 2.8 → 1.2 % CPU;
+  pi-test pass. Keyboard path on the Pi and fast typing need a person.
 
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
