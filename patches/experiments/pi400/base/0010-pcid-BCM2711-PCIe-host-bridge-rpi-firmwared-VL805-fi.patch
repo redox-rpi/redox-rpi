@@ -17,14 +17,17 @@ The register arithmetic and devicetree cell parsing are in
 brcmstb_layout.rs, with host tests (rustc --edition 2021 --test).
 ---
  drivers/hwd/src/main.rs                       |  15 +-
- drivers/pcid/src/cfg_access/brcmstb.rs        | 382 +++++++++++++++++
+ drivers/pcid-spawner/src/main.rs              |   6 +
+ drivers/pcid/src/cfg_access/brcmstb.rs        | 382 ++++++++++++++++
  drivers/pcid/src/cfg_access/brcmstb_dt.rs     |  89 ++++
- drivers/pcid/src/cfg_access/brcmstb_layout.rs | 394 ++++++++++++++++++
+ drivers/pcid/src/cfg_access/brcmstb_layout.rs | 417 ++++++++++++++++++
  drivers/pcid/src/cfg_access/mod.rs            |  45 ++
  drivers/pcid/src/main.rs                      |  11 +-
  drivers/rpi-firmwared/src/main.rs             |  19 +-
  drivers/rpi-firmwared/src/mbox.rs             |   2 +
- 8 files changed, 950 insertions(+), 7 deletions(-)
+ init.d/00_pcid-spawner.service                |   6 +-
+ init.initfs.d/40_pcid-spawner-initfs.service  |   6 +-
+ 11 files changed, 987 insertions(+), 11 deletions(-)
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_dt.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_layout.rs
@@ -62,9 +65,26 @@ index 0654fd01..ee707f05 100644
  fn main() {
      daemon::Daemon::new(daemon);
  }
+diff --git a/drivers/pcid-spawner/src/main.rs b/drivers/pcid-spawner/src/main.rs
+index daf85684..eb742d73 100644
+--- a/drivers/pcid-spawner/src/main.rs
++++ b/drivers/pcid-spawner/src/main.rs
+@@ -30,6 +30,12 @@ fn main() -> Result<()> {
+ 
+     let config: Config = toml::from_str(&config_data)?;
+ 
++    // No PCI bus (Raspberry Pi 3): hwd started no pcid.
++    if fs::metadata("/scheme/pci").is_err() {
++        log::info!("pcid-spawner: no /scheme/pci, no PCI devices");
++        return Ok(());
++    }
++
+     for entry in fs::read_dir("/scheme/pci")? {
+         let entry = entry.context("failed to get entry")?;
+         let device_path = entry.path();
 diff --git a/drivers/pcid/src/cfg_access/brcmstb.rs b/drivers/pcid/src/cfg_access/brcmstb.rs
 new file mode 100644
-index 00000000..87736122
+index 00000000..bed914aa
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb.rs
 @@ -0,0 +1,382 @@
@@ -248,12 +268,12 @@ index 00000000..87736122
 +            MISC_CTRL_SCB_ACCESS_EN | MISC_CTRL_CFG_READ_UR_MODE,
 +        );
 +
-+        // Inbound: devices reach RAM through RC_BAR2. Without dma-ranges,
-+        // PCI 0 is CPU 0 for 4 GB, as on every Pi 4 devicetree we know.
-+        let (pci, size) = inbound.map_or((0, 1 << 32), |r| (r.pci, r.size));
++        // Inbound: devices reach RAM through RC_BAR2, PCI X = CPU X (see
++        // inbound_window).
++        let (pci, size) = inbound_window(inbound.map(|r| (r.pci, r.parent, r.size)));
 +        let code = inbound_size_code(size).ok_or_else(|| invalid(format!("inbound window of {size} bytes")))?;
 +        if inbound.is_some_and(|r| r.pci != r.parent) {
-+            log::warn!("pcid: dma-ranges with an offset; devices will get CPU addresses for DMA");
++            log::info!("pcid: dma-ranges has an offset; inbound window PCI 0 = CPU 0 ({} MB) instead", size >> 20);
 +        }
 +        self.write32(MISC_RC_BAR2_CONFIG_LO, (pci as u32 & !0x1f) | code);
 +        self.write32(MISC_RC_BAR2_CONFIG_HI, (pci >> 32) as u32);
@@ -547,10 +567,10 @@ index 00000000..6588be8b
 +}
 diff --git a/drivers/pcid/src/cfg_access/brcmstb_layout.rs b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
 new file mode 100644
-index 00000000..fed19f5d
+index 00000000..e26fe48a
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb_layout.rs
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,417 @@
 +//! The arithmetic of the BCM2711 PCIe host bridge: register values, the
 +//! devicetree's `ranges`, `dma-ranges` and `interrupt-map` cells, BAR
 +//! sizes. No hardware here, so it is tested on the build host
@@ -796,6 +816,19 @@ index 00000000..fed19f5d
 +    out
 +}
 +
++/// The inbound window (RC_BAR2) as PCI address and size, from `dma-ranges`
++/// as (PCI, CPU, size). Redox drivers give devices CPU addresses for DMA,
++/// so the window must map PCI X to CPU X. When `dma-ranges` has an offset
++/// (U-Boot's Pi 400 devicetree: PCI 0x4_0000_0000 = CPU 0, 1 GB, Pi row
++/// 377), or there is none, the window is PCI 0 = CPU 0 for 4 GB: all the
++/// RAM a Pi 4 has below 4 GB.
++pub fn inbound_window(dma: Option<(u64, u64, u64)>) -> (u64, u64) {
++    match dma {
++        Some((pci, cpu, size)) if pci == cpu => (pci, size),
++        _ => (0, 1 << 32),
++    }
++}
++
 +/// Whether a register may be touched while the bridge is in reset
 +/// (`SW_INIT_BRIDGE`). U-Boot leaves the BCM2711 bridge so when it starts
 +/// the OS (`brcm_pcie_remove`); any other register then answers with an
@@ -815,6 +848,16 @@ index 00000000..fed19f5d
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn inbound_identity() {
++        // Firmware devicetree: PCI 0 = CPU 0, 3 GB, used as it is.
++        assert_eq!(inbound_window(Some((0, 0, 3 << 30))), (0, 3 << 30));
++        // U-Boot Pi 400 devicetree (row 377): offset, so identity 4 GB.
++        assert_eq!(inbound_window(Some((0x4_0000_0000, 0, 1 << 30))), (0, 1 << 32));
++        assert_eq!(inbound_window(None), (0, 1 << 32));
++        assert!(inbound_size_code(1 << 32).is_some());
++    }
 +
 +    #[test]
 +    fn only_sw_init_in_reset() {
@@ -1139,3 +1182,36 @@ index 39ad30e7..4b7b2cd7 100644
  
  /// Clock id of the ARM cores.
  pub const CLOCK_ARM: u32 = 3;
+diff --git a/init.d/00_pcid-spawner.service b/init.d/00_pcid-spawner.service
+index ad7a78e5..9418ebe2 100644
+--- a/init.d/00_pcid-spawner.service
++++ b/init.d/00_pcid-spawner.service
+@@ -1,7 +1,9 @@
+ [unit]
+ description = "PCI driver spawner"
+-# The Raspberry Pi 3 has no PCI bus
+-condition_board_not = ["raspi3bp"]
++# Runs on every board: where hwd started no pcid (Raspberry Pi 3),
++# pcid-spawner finds no /scheme/pci and ends. Our builds set BOARD=raspi3bp
++# for the Pi 400 too, so a board condition would keep xhcid off there
++# (Pi row 377).
+ 
+ [service]
+ cmd = "pcid-spawner"
+diff --git a/init.initfs.d/40_pcid-spawner-initfs.service b/init.initfs.d/40_pcid-spawner-initfs.service
+index 080b8e02..38303eb7 100644
+--- a/init.initfs.d/40_pcid-spawner-initfs.service
++++ b/init.initfs.d/40_pcid-spawner-initfs.service
+@@ -1,8 +1,10 @@
+ [unit]
+ description = "PCI driver spawner"
+ requires_weak = ["10_inputd.service", "20_graphics.target", "40_hwd.service"]
+-# The Raspberry Pi 3 has no PCI bus
+-condition_board_not = ["raspi3bp"]
++# Runs on every board: where hwd started no pcid (Raspberry Pi 3),
++# pcid-spawner finds no /scheme/pci and ends. Our builds set BOARD=raspi3bp
++# for the Pi 400 too, so a board condition would keep xhcid off there
++# (Pi row 377).
+ 
+ [service]
+ cmd = "pcid-spawner"
