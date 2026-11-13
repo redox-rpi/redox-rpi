@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 13 Nov 2026 01:39:01 +0000
+Subject: [PATCH] scheme: a SIGKILLed caller still cancels its pending request
+ (issue #401)
+
+When a thread blocked in a scheme call is SIGKILLed, for example the
+other threads of an exiting process, UserInner::call returned EINTR
+without sending a cancellation. The scheme kept the request, and ptyd
+handed the next line typed to the dead reader: after nc exits in a
+devsh session, the next command line is lost. Send the Cancel first,
+then return EINTR.
+---
+ src/scheme/user.rs | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/scheme/user.rs b/src/scheme/user.rs
+index d91ae0ab..1f686154 100644
+--- a/src/scheme/user.rs
++++ b/src/scheme/user.rs
+@@ -336,7 +336,11 @@ impl UserInner {
+                                 callee_responsible,
+                             };
+ 
+-                            maybe_eintr?;
++                            // A caller that is being SIGKILLed (for example a
++                            // thread of an exiting process) still cancels the
++                            // request, so the scheme drops it. Otherwise ptyd
++                            // hands the next line typed to the dead reader and
++                            // it is lost (issue #401).
+ 
+                             // We do not want to preempt between sending the
+                             // cancellation and blocking again where we might
+@@ -360,6 +364,8 @@ impl UserInner {
+                                 token.token(),
+                             );
+ 
++                            maybe_eintr?;
++
+                             // 1. If cancellation was requested and arrived
+                             // before the scheme processed the request, an
+                             // acknowledgement will be sent back after the
+-- 
+2.53.0
+
