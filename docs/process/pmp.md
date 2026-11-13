@@ -185,6 +185,11 @@ place these rules are written down; other pages link here.
 | Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
 | Project lead | docs-only PRs; docs may also go straight to `main` as a draft | code PRs |
 
+Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
+(WBS 2.15): after a review by the project lead or Quality, the reviewer sets
+`merge-next`; the PR need not stay a draft, since the fork is not used by
+any build yet. The maintainer merges.
+
 Quality merges only when all of these hold:
 1. CI is green and `merge-set-check` passes.
 2. The base is `main`, not a stacked branch.

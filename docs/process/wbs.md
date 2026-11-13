@@ -43,6 +43,7 @@ How it is used:
 | 2.12 | Assistant (local language model) | Log triage | 2.5.5 | [assistant](../topics/assistant.md) |
 | 2.13 | Open-source VPU firmware | Open firmware | 2.1.2 | [open-firmware](../topics/open-firmware.md) |
 | 2.14 | Timers and DMA | project lead (no owner yet) | 2.3.11 | [dma](../topics/dma.md), [time](../topics/time.md) |
+| 2.15 | TinyCC VC4 backend in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc): own compiler for the VPU, to understand the VPU and own the toolchain; not used for the firmware build yet (GCC stays) | TinyCC VC4 | 2.1.2 | [tcc](../topics/tcc.md), rpi-open-firmware `docs/tcc-vc4.md` |
 
 ## 3 Boards
 
