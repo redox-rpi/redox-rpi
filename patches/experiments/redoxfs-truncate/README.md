@@ -94,3 +94,11 @@ allocated.
 
 Before: about 13.2 MB lost per round. After: flat within 0.3 MB over 7
 rounds, every install and remove `rc=0`, no hang, no panic.
+
+Pi 3B+, row [390](https://github.com/redox-rpi/pi-tests/blob/main/reports/390.md),
+2026-11-13, on the PR's image `v0.5.0-dev-185-g841ffe14+xb56b`: **pass**.
+10 of 10 rounds `rc=0`, no hang; free after each remove 101364–101608 KiB
+(spread 244 KiB), install 300–313 s, remove 20–21 s; pi-test all pass, no
+panic. The first round ends 12.2 MB below the start (113520 KiB) and then
+stays flat: that is `/tmp/pkg_download`, which keeps the last download of
+vim and its dependencies (11.8 MB, see above).
