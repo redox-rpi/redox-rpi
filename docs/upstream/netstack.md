@@ -28,6 +28,30 @@ Both problems are still there.
 - **Tested:** QEMU, Pi 3B+ test 128 (`ls` of `/scheme/netcfg`, `ifaces`,
   `ifaces/eth0`, `ifaces/eth0/addr` and `route` lists the names).
 
+## A TCP read before the handshake ends returns end of file
+
+Our [#404](https://github.com/redox-rpi/redox-rpi/issues/404). Checked against the base we pin, `eddcaa21`.
+
+- **What breaks:** `nc <host>:<port>` on the Pi often got none of the
+  server's reply when the server answered and closed at once. Only nc's own
+  `Remote host:` line reached its output. To reproduce in QEMU:
+  `nc 192.0.2.1:80` (an address that never answers) exits at once with
+  status 0 instead of waiting for the connection.
+- **Why:** relibc's `connect()` dups the socket with the address, and
+  netstack's TCP `open` calls smoltcp's `connect` and returns. The socket is
+  still in SYN-SENT. smoltcp's `may_recv()` is false there, so
+  `read_buf` in `netstack/src/scheme/tcp.rs` returns 0 when the read comes
+  before the SYN-ACK. nc's read thread takes that as end of file and exits.
+  The event path (`can_recv || !may_recv` in `socket.rs`) uses the
+  scheme's `may_recv` and gets the same answer.
+- **Our fix:** default base patch `0097`: the scheme's `may_recv` for TCP
+  is also true in SYN-SENT and SYN-RECEIVED, and `read_buf` calls it by its
+  trait name. A plain `self.may_recv()` there calls smoltcp's method of the
+  same name, which wins over the trait method. The read now waits for
+  data. A refused connection ends in Closed, and the read then fails with
+  ENOTCONN. A blocking `connect()` that waits for the handshake, as POSIX
+  has it, would be the fuller fix.
+
 ## Every open of a scheme's root leaves a page mapped in the daemon (kernel)
 
 - **What breaks:** a scheme daemon's memory grows 4 KiB on every open of
