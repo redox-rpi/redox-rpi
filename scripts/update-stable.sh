@@ -43,6 +43,12 @@
 #   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
 #   its --summary goes into the day's report too. Skipped while the script
 #   does not exist; never fails this script.
+#   Every night, after the Redox part: the TinyCC VC4 track (#410), not
+#   gating. scripts/tcc-track.sh builds the bootcode with GCC and TCC and
+#   runs the resim tests; scripts/tcc-track-pi.sh (the Pi test agent's)
+#   compares both on the Pi when it exists and no row is on the Pi; the
+#   record (scripts/tcc-track-record.py) goes into tcc.jsonl in
+#   redox-rpi/pi-tests. Logs in ~/redox-rpi/logs/tcc-track/<date>/.
 #
 # GitHub access: a token in ~/.config/redox-rpi/github-token (mode 600) with
 # write access to issues of redox-rpi/redox-rpi and to contents of
@@ -149,12 +155,50 @@ run_kpis() {
     return 0
 }
 
+# TinyCC VC4 track (#410, WBS 2.15 point 3), once per night after the Redox
+# part, so the Pi is on the stable image (or the night's) when it starts.
+# Not gating: never fails this script and never changes the stable image.
+tccrec=""
+run_tcc_track() {
+    [ -z "$tccrec" ] || return 0
+    tccrec="$(mktemp)"
+    [ -x scripts/tcc-track.sh ] || { log "no scripts/tcc-track.sh at $ref, no TCC track"; return 0; }
+    local dir pi=() queue
+    dir="$HOME/redox-rpi/logs/tcc-track/$(date -u +%Y-%m-%d)"
+    mkdir -p "$dir"
+    log "TCC track: host part (log in $dir)"
+    if ! timeout 1200 scripts/tcc-track.sh --out "$dir" > "$dir/run.log" 2>&1; then
+        log "TCC track: host part failed: $(tail -n 1 "$dir/run.log")"
+        return 0
+    fi
+    if [ -x scripts/tcc-track-pi.sh ] && [ -s "$dir/G.bin" ] && [ -s "$dir/T.bin" ]; then
+        # The night's own check (step 2) did not run on a night without changes.
+        if ! queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh 2> /dev/null)" ||
+            grep -q '^| .*\*\*on the Pi\*\*' <<< "$queue"; then
+            log "TCC track: a test is on the Pi (or no queue), no Pi part"
+        else
+            log "TCC track: Pi part"
+            timeout 900 scripts/tcc-track-pi.sh --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
+                >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
+            pi=(--pi "$dir/pi.json")
+        fi
+    fi
+    python3 scripts/tcc-track-record.py --host "$dir/host.json" "${pi[@]}" \
+        --build "${build_id:-${stable_id:-none}}" --out "$tccrec" | sed 's/^/TCC track: /' ||
+        log "TCC track: no record"
+    return 0
+}
+
 # Copy the KPI page into the pi-tests clone (checked out on origin/main) and
 # stage it.
 stage_kpis() {
     if [ -n "$netrec" ] && [ -s "$netrec" ]; then
         cat "$netrec" >> "$TESTS/network.jsonl"
         git -C "$TESTS" add network.jsonl
+    fi
+    if [ -n "$tccrec" ] && [ -s "$tccrec" ]; then
+        cat "$tccrec" >> "$TESTS/tcc.jsonl"
+        git -C "$TESTS" add tcc.jsonl
     fi
     [ -n "$kpis_dir" ] || return 0
     cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
@@ -164,7 +208,8 @@ stage_kpis() {
 # Nights without a report (nothing new, or a failed build): the KPI page on
 # its own commit. Never fails.
 push_kpis_only() {
-    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || return 0
+    run_tcc_track
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || return 0
     [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
     git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
     stage_kpis
@@ -292,7 +337,7 @@ restore_stable() {
 report="$(mktemp)"
 output="$(mktemp)"
 netrec="$(mktemp)"
-trap 'rm -f "$report" "$output" "$netrec" "$0"' EXIT
+trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$0"' EXIT
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
@@ -359,6 +404,7 @@ if [ "$passed" = 1 ]; then
     ln -sfn "$(basename "$backup")" "$STABLE_LINK"
     log "$build_id is the stable image, backup in $backup"
     publish_pkg_repo
+    run_tcc_track
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
     # The report goes to pi-tests, on top of its newest main.

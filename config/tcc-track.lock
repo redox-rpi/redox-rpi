@@ -1,0 +1,15 @@
+# Pins of the nightly TinyCC VC4 track (#410, WBS 2.15 point 3), read by
+# scripts/tcc-track.sh and written into each night's record. Change them by
+# pull request, like config/upstream.lock.
+
+# redox-rpi/tinycc: vc4-tcc, the vc4 tests and tests/vc4/ci/build-resim.sh.
+# 690da973 is vc4 73d65d06 plus the CI files of redox-rpi/tinycc PR #5;
+# move to the vc4 branch once that is merged.
+TINYCC_REV=690da973
+# redox-rpi/rpi-open-firmware branch fat-boot (not m3-mbox): the bootcode
+# built as G (vc4-elf-gcc) and as T (vc4-tcc, linked by vc4-tcc).
+FAT_BOOT_REV=a8bcbe7
+# vc4-elf-gcc on the build host (rpi-open-firmware redox-rpi/build-toolchain.sh,
+# itszor/vc4-toolchain 2f57f09); the script checks the version.
+VC4_GCC=6.2.1
+VC4_TOOLCHAIN_REV=2f57f09
