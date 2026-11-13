@@ -59,6 +59,11 @@ jobs:
           scripts/build-uboot.sh rpi
 
       - name: Boot in QEMU raspi3b
+        # Redox's daily image from our mirror (release ci-image, #409):
+        # static.redox-os.org answers GitHub's runners with 403.
+        env:
+          DAILY_URL: https://github.com/redox-rpi/redox-rpi/releases/download/ci-image
+          DAILY_IMAGE: redox_server_aarch64_2026-11-11_584_livedisk.iso.zst
         id: boot
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
