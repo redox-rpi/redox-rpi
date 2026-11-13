@@ -92,7 +92,7 @@ def info(name):
     return os.path.getsize(p), hashlib.sha256(open(p, "rb").read()).hexdigest()
 size_g, sha_g = info("G.bin")
 size_t, sha_t = info("T.bin")
-rec = {"tinycc": tinycc[:12], "fat_boot": fat[:12], "gcc": f"{gcc} vc4-toolchain {tc}",
+rec = {"tinycc": tinycc[:12], "fat_boot": fat[:12], "gcc": f"{gcc} vc4-toolchain {tc[:7]}",
        "resim_pass": checks.get("abi-sim") == "pass" and checks.get("fat-sim") == "pass"
                      and checks.get("bootcode") == "pass",
        "size_g": size_g, "size_t": size_t, "sha256_g": sha_g, "sha256_t": sha_t,
