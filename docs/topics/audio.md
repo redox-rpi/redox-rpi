@@ -45,7 +45,9 @@ are enough; A3 and polish may follow in a later release.
   Sopwith opens it at start, and its title tune reaches the driver
   (`loud_chunks` 133 → 1553). No code needed. With A3 (PR #354, the PWM
   sleeps after 3 s of silence) Sopwith wakes the sleeping driver: QEMU
-  `qemu-sdl-check.sh` 6/6 (2026-11-13), Pi row 399. Nobody has listened
+  `qemu-sdl-check.sh` 6/6 (2026-11-13); Pi row 399: asleep at the
+  desktop, Sopwith wakes it (`loud_chunks` 133 → 5851, `dma_faults 0`),
+  asleep again after Sopwith (SIGTERM does not end Sopwith, #405). Nobody has listened
   yet: row 315 (new card with #354, step 7 for the hiss and clicks),
   waiting for a visit.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
