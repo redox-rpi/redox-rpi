@@ -27,9 +27,9 @@ Every role below can also be held, or shared, by a contributor who joins.
 
 | Role | Who | Owns |
 |---|---|---|
-| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
+| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs that change the image, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
 | Project lead | coordinator session | this plan, the coarse work packages and who owns them, overall status (`STATUS.md`), merge readiness (`merge-next`), docs-only merges, reporting to the maintainer |
-| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard. Quality does not test |
+| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard; merging build and test system PRs under the [merge policy](../topics/merge-policy.md) (never its own). Quality does not test |
 | Verification and validation (V&V) | Pi test agent, extended | test standards, test plan and reports, automated and special tests on QEMU and the real Pi, the regression set, preparing person tests |
 | Requirements | Requirements session | the requirements, their IDs and their trace to issues, code and tests |
 | Architect | Architect session | architecture, coding standards and coding rules, RFC drafts, cross-topic technical decisions |
@@ -169,8 +169,11 @@ per week and one release per sprint:
    report linked and the topic page updated.
 5. The project lead checks base, CI and Pi test and sets `merge-next`;
    Quality may audit the PR against the process.
-6. The maintainer merges code PRs; the project lead may merge docs-only
-   PRs. RFCs (`docs/rfcs/`) are always the maintainer's.
+6. The maintainer merges code PRs that change the image. Quality merges
+   PRs that only change the build and test system (CI, scripts, regression
+   set, test plan), never its own, under the
+   [merge policy](../topics/merge-policy.md). The project lead may merge
+   docs-only PRs. RFCs (`docs/rfcs/`) are always the maintainer's.
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
 
