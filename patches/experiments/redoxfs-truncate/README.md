@@ -82,7 +82,7 @@ allocated.
 `pkg install --yes vim` then `pkg remove --yes vim` from a local mirror,
 `df /` after each step, QEMU `--usb-net`, about 12.5 min per round.
 
-| after remove | before (`v0.5.0-dev-184`, main + `timesync`) | after (`v0.5.0-dev-185-g841ffe14+xb56b`, + `redoxfs-truncate` + `futex-wait-lock`) |
+| after remove | before (`v0.5.0-dev-184-g07304cce+x097a`, main + `timesync`) | after (`v0.5.0-dev-185-g841ffe14+xb56b`, + `redoxfs-truncate` + `futex-wait-lock`) |
 |---|---|---|
 | round 1 | 88384 KB free | 101352 KB |
 | round 2 | 75164 KB | 101424 KB |
