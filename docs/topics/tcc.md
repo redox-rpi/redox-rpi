@@ -119,8 +119,11 @@ gcc-built program.
 
 ## Other compilers: cproc + QBE
 
-Draft, from the Architect discussions with the maintainer (2026-11-04 and
-2026-11-07). Nothing is started and no issue waits for it.
+From the Architect discussions with the maintainer (2026-11-04 and
+2026-11-07). **Experiment [`cproc-qbe`](../../patches/experiments/cproc-qbe/README.md)
+([#327](https://github.com/redox-rpi/redox-rpi/issues/327)) runs on the
+Pi**, see [Pi results](#cproc--qbe-on-the-pi) below; not in any image yet,
+that needs the maintainer's decision.
 
 [QBE](https://c9x.me/compile/) ([git](https://c9x.me/git/qbe.git/)) is a
 small compiler backend, about 10,000 lines, with an arm64 backend (also
@@ -133,10 +136,51 @@ speed of a big optimising compiler with about 10 % of the code.
 | Size | ~390 KB, one program | ~20,000 lines, several programs | 100 MB and more |
 | Assembler and linker | built in, writes ELF | none: needs `as` and `ld` (binutils) | binutils / lld |
 | Optimisation | almost none, compiles line by line, keeps much on the stack | SSA, register allocation, simple folding | full: inlining, loops, NEON vectorising, Cortex-A53 scheduling |
-| Code speed (rough) | 1.3-3.3× slower than gcc -O2 (measured on the Pi, above) | about 70 % of gcc -O2 (project's claim, not measured here) | reference |
-| On the Pi today | yes, beta in the image | no | no (upstream has a `dev/gcc13` recipe, not tried for aarch64) |
+| Code speed | 1.3-3.3× slower than gcc -O2 (Pi, above) | 1.0-2.3× slower than gcc -O2 (Pi, below) | reference |
+| On the Pi today | yes, beta in the image | experiment, Pi-tested | no (upstream has a `dev/gcc13` recipe, not tried for aarch64) |
 
-What it would take on Redox aarch64:
+### cproc + QBE on the Pi
+
+Experiment `cproc-qbe` (build after `tcc`): qbe and cproc cross-built,
+GNU `as` and `ld` from Redox' binutils 2.43.1 fork, and `tcc -E -undef`
+(tcc patch `0005`) as the preprocessor, since cproc's own is not finished.
+The chain adds 4.2 MB on top of tcc (`as` 2.1 MB, `ld` 1.6 MB, qbe and
+cproc 0.35 MB).
+
+Real Pi 3B+ ([test 317](https://github.com/redox-rpi/pi-tests/blob/main/reports/317.md),
+`v0.5.0-dev-25-gd3ca14bc+x898d`, 2026-11-10): pass, no panic, `pi-test.py`
+6 of 6.
+
+| Check | cproc + QBE | tcc |
+|---|---|---|
+| Hello World, dynamic | compile 422 ms, run 31 ms | compile 100 ms |
+| Hello World, **static** | compile 16.8 s, run 28 ms: **works**, GNU ld links relibc's TLS descriptor relocations | fails |
+| Steps alone (`bench.c`) | `tcc -E -undef` 113 ms, `cproc -S` 232 ms, `as` 68 ms | |
+| Benchmark compile | 480 ms | 152 ms |
+
+Speed of the compiled code, the same benchmark as above:
+
+| Part | cproc | tcc | gcc -O2 | cproc / gcc |
+|---|---|---|---|---|
+| fib(32), calls | 82.4 ms | 118.3 ms | 36.1 ms | 2.3× |
+| sieve 5 × 2M, memory loops | 914.7 ms | 1146.4 ms | 865.8 ms | 1.06× |
+| mandelbrot 200, floating point | 52.8 ms | 115.3 ms | 35.3 ms | 1.5× |
+| total | 1052 ms | 1381 ms | 938 ms | 1.12× |
+
+cproc's code is clearly faster than tcc's (fib 1.4×, mandelbrot 2.2×) and
+on the memory-bound sieve close to gcc -O2; it compiles 3 times slower
+than tcc, still under half a second for the benchmark. Static programs
+are possible with it, not with tcc.
+
+Found on the way (relibc, worked around, to fix there):
+
+- `fscanf` loses the character it looks ahead at on a pipe (qbe read
+  cproc's `data` as `dta`); qbe patch `0002` avoids `fscanf`.
+- `signal.h` has an empty member declaration in `struct ucontext` on
+  aarch64; cproc patch `0002` accepts it.
+- `as` and `ld` print `TODO: getrusage … not implemented` once.
+
+What it took on Redox aarch64 (the plan before the experiment):
 
 - Build `qbe` and `cproc` for `aarch64-unknown-redox`. Upstream Redox has a
   WIP recipe for QBE without a build script.

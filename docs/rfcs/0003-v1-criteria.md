@@ -4,9 +4,9 @@
 |---|---|
 | Status | Draft |
 | Created | 2026-11-08 |
-| Updated | 2026-11-09: Raspberry Pi 400 (maintainer, customers) |
+| Updated | 2026-11-09: Raspberry Pi 400 (maintainer, customers); 2026-11-10: roadmap themes without version numbers (#316), Pi 400 state |
 | Author | Requirements agent, for the maintainer |
-| Releases | v0.5.0 … v0.9.0, v0.10.0 …, until all criteria are met |
+| Releases | the weekly releases from v0.5.0 on, until all criteria are met |
 
 ## Summary
 
@@ -67,30 +67,30 @@ into 1.0.
 
 | ID | Criterion | Prio | Theme | PBS | Today |
 |---|---|---|---|---|---|
-| [REQ-BOARD-2](#req-board-2-supported-boards-for-10) | Pi 3B+ and Zero 2 W fully supported | must | v0.9 | 1.1, 1.2 | 3B+ tested; Zero 2 W by hand only |
-| [REQ-BOARD-3](#req-board-3-other-bcm2837-boards) | Pi 3B and 3A+ boot and work | should | v0.9 | 1.3 | untested |
-| [REQ-BOARD-4](#req-board-4-raspberry-pi-400) | Raspberry Pi 400 (German keyboard) | must | Pi 400, set when the hardware arrives | 1.4 | no Pi 4 support at all; board ordered |
-| [REQ-STAB-4](#req-stab-4-no-open-crash-bugs) | no open crash bugs | must | v0.9 | 2.2, 2.3, 2.4 | #207, #92, #217, #151, #205, #4, #129 open |
-| [REQ-STAB-5](#req-stab-5-long-run) | 7 days running without a fault | must | v0.9 | 2 | longest run not measured (#259) |
-| [REQ-STAB-6](#req-stab-6-chaos-test) | survives the chaos test | must | v0.9 | 2.2.1, 2.4 | experiment `chaos`; froze the Pi once (#207) |
-| [REQ-STAB-7](#req-stab-7-power-loss) | survives power loss | must | v0.5 | 2.3.3, 2.4.3 | not tested |
-| [REQ-STAB-8](#req-stab-8-reboot-cycles) | 500 reboots, network every time | must | v0.9 | 2.1, 2.3.4 | #217 open |
-| [REQ-FW-5](#req-fw-5-power-off) | `poweroff` | should | v0.5 | 2.2.1, 2.3.8 | #7 open |
-| [REQ-NET-6](#req-net-6-ssh-server) | SSH server for login and file copy | must | v0.7 | 2.5.6 | experiment `sshd` |
-| [REQ-SEC-1](#req-sec-1-no-default-password-on-the-network) | no default password on the network | must | v0.7 | 2.4.6, 2.5.6 | root/password, devshd in test images |
-| [REQ-SEC-2](#req-sec-2-only-wanted-services-listen) | only wanted services listen | must | v0.7 | 2.4.2, 2.6.1 | not tested |
-| [REQ-SEC-3](#req-sec-3-signed-packages-and-images) | signed packages, updates and images | must | v0.5, v0.9 | 2.4.7, 4.1 | upstream pkg checks signatures; images only have checksums |
-| [REQ-SEC-4](#req-sec-4-security-fixes) | security fixes in time | must | v0.9 | 2.5.6, 4.1 | no process (#190) |
-| [REQ-PKG-1](#req-pkg-1-install-and-remove-packages) | `pkg install` and `remove` | must | v0.5 | 2.4.7 | experiments `pkg-repo`, `pkg-persist`; #197 |
-| [REQ-PKG-2](#req-pkg-2-base-set-of-programs) | a base set of programs runs | must | v0.7 | 2.4.1, 2.4.7 | many prebuilt programs fail (#40) |
-| [REQ-PKG-3](#req-pkg-3-system-update-without-a-new-card) | system update without a new SD card | must | v0.9 | 2.1, 2.6, 4.1 | none |
-| [REQ-DOC-1](#req-doc-1-beginner-guide) | beginner guide, followed by a newcomer | must | v0.9 | 5.1 | parts in user-guide, getting-started |
-| [REQ-DOC-2](#req-doc-2-hardware-list) | list of tested hardware | should | v0.9 | 5.1 | scattered over topic pages |
-| [REQ-REL-6](#req-rel-6-all-must-requirements-verified) | every must requirement verified on the 1.0 build | must | v0.9 | 3, 4 | trace exists (#270) |
-| [REQ-REL-7](#req-rel-7-nightly-green-before-the-release) | nightly green for 14 nights | must | v0.9 | 3.2, 3.3 | nightly runs; no streak count |
-| [REQ-REL-8](#req-rel-8-support-promise) | written support and compatibility promise | must | v0.9 | 4.2 | none |
-| [REQ-REL-9](#req-rel-9-close-to-upstream) | close to upstream Redox | should | v0.9 | 3.1 | pin and drift check exist |
-| [REQ-CON-3](#req-con-3-keyboard-layouts) | German keyboard layout (Pi 400 DE) | must | v0.5, Pi 400 | 2.3.2 | US only (#36) |
+| [REQ-BOARD-2](#req-board-2-supported-boards-for-10) | Pi 3B+ and Zero 2 W fully supported | must | Towards 1.0 | 1.1, 1.2 | 3B+ tested; Zero 2 W by hand only |
+| [REQ-BOARD-3](#req-board-3-other-bcm2837-boards) | Pi 3B and 3A+ boot and work | should | Towards 1.0 | 1.3 | untested |
+| [REQ-BOARD-4](#req-board-4-raspberry-pi-400) | Raspberry Pi 400 (German keyboard) | must | More boards (Pi 400) | 1.4 | first boot to the login over netboot (PR #310, draft; #332 open) |
+| [REQ-STAB-4](#req-stab-4-no-open-crash-bugs) | no open crash bugs | must | Towards 1.0 | 2.2, 2.3, 2.4 | #207, #92, #217, #151, #205, #4, #129 open |
+| [REQ-STAB-5](#req-stab-5-long-run) | 7 days running without a fault | must | Towards 1.0 | 2 | longest run not measured (#259) |
+| [REQ-STAB-6](#req-stab-6-chaos-test) | survives the chaos test | must | Towards 1.0 | 2.2.1, 2.4 | experiment `chaos`; froze the Pi once (#207) |
+| [REQ-STAB-7](#req-stab-7-power-loss) | survives power loss | must | Devices | 2.3.3, 2.4.3 | not tested |
+| [REQ-STAB-8](#req-stab-8-reboot-cycles) | 500 reboots, network every time | must | Towards 1.0 | 2.1, 2.3.4 | #217 open |
+| [REQ-FW-5](#req-fw-5-power-off) | `poweroff` | should | Devices | 2.2.1, 2.3.8 | #7 open |
+| [REQ-NET-6](#req-net-6-ssh-server) | SSH server for login and file copy | must | Remote access | 2.5.6 | experiment `sshd` |
+| [REQ-SEC-1](#req-sec-1-no-default-password-on-the-network) | no default password on the network | must | Remote access | 2.4.6, 2.5.6 | root/password, devshd in test images |
+| [REQ-SEC-2](#req-sec-2-only-wanted-services-listen) | only wanted services listen | must | Remote access | 2.4.2, 2.6.1 | not tested |
+| [REQ-SEC-3](#req-sec-3-signed-packages-and-images) | signed packages, updates and images | must | Devices, Towards 1.0 | 2.4.7, 4.1 | upstream pkg checks signatures; images only have checksums |
+| [REQ-SEC-4](#req-sec-4-security-fixes) | security fixes in time | must | Towards 1.0 | 2.5.6, 4.1 | no process (#190) |
+| [REQ-PKG-1](#req-pkg-1-install-and-remove-packages) | `pkg install` and `remove` | must | Devices | 2.4.7 | experiments `pkg-repo`, `pkg-persist`; #197 |
+| [REQ-PKG-2](#req-pkg-2-base-set-of-programs) | a base set of programs runs | must | Remote access | 2.4.1, 2.4.7 | many prebuilt programs fail (#40) |
+| [REQ-PKG-3](#req-pkg-3-system-update-without-a-new-card) | system update without a new SD card | must | Towards 1.0 | 2.1, 2.6, 4.1 | none |
+| [REQ-DOC-1](#req-doc-1-beginner-guide) | beginner guide, followed by a newcomer | must | Towards 1.0 | 5.1 | parts in user-guide, getting-started |
+| [REQ-DOC-2](#req-doc-2-hardware-list) | list of tested hardware | should | Towards 1.0 | 5.1 | scattered over topic pages |
+| [REQ-REL-6](#req-rel-6-all-must-requirements-verified) | every must requirement verified on the 1.0 build | must | Towards 1.0 | 3, 4 | trace exists (#270) |
+| [REQ-REL-7](#req-rel-7-nightly-green-before-the-release) | nightly green for 14 nights | must | Towards 1.0 | 3.2, 3.3 | nightly runs; no streak count |
+| [REQ-REL-8](#req-rel-8-support-promise) | written support and compatibility promise | must | Towards 1.0 | 4.2 | none |
+| [REQ-REL-9](#req-rel-9-close-to-upstream) | close to upstream Redox | should | Towards 1.0 | 3.1 | pin and drift check exist |
+| [REQ-CON-3](#req-con-3-keyboard-layouts) | German keyboard layout (Pi 400 DE) | must | Devices, More boards | 2.3.2 | US only (#36) |
 
 ## Criteria
 
@@ -101,7 +101,7 @@ into 1.0.
 Every 1.0 requirement shall hold on the Raspberry Pi 3 Model B+ and the
 Raspberry Pi Zero 2 W, except where a board lacks the hardware.
 
-- Kind: constraint. Priority: must. PBS 1.1, 1.2. Theme: v0.9.
+- Kind: constraint. Priority: must. PBS 1.1, 1.2. Theme: Towards 1.0.
 - Rationale: these are the boards we test on and the vision starts at the
   Zero 2 W (maintainer, 2026-11-08). The Pi 400 is added by
   [REQ-BOARD-4](#req-board-4-raspberry-pi-400); the other Pi 4 boards and the
@@ -119,7 +119,7 @@ Raspberry Pi Zero 2 W, except where a board lacks the hardware.
 The 1.0 image shall boot and offer console, keyboard and network on the
 Raspberry Pi 3 Model B and 3 Model A+.
 
-- Kind: functional. Priority: should. PBS 1.3. Theme: v0.9.
+- Kind: functional. Priority: should. PBS 1.3. Theme: Towards 1.0.
 - Rationale: same SoC; "almost every Pi from the Zero 2 W" (vision). The
   3B has a different USB Ethernet chip (LAN9514) and needs a driver.
 - Acceptance criteria:
@@ -134,7 +134,7 @@ The 1.0 release shall run on the Raspberry Pi 400 with the German keyboard
 (Pi 400 DE): boot from the SD card, console on HDMI, its built-in keyboard,
 Ethernet and USB.
 
-- Kind: functional. Priority: must. PBS 1.4. Theme: its own (Pi 400).
+- Kind: functional. Priority: must. PBS 1.4. Theme: More boards.
 - Source: maintainer, 2026-11-09, for customers who want to use the Pi 400
   ("ich hab Kunden die den verwenden wollen"). The maintainer has ordered
   one. **Its priority against the other work is set when the hardware
@@ -186,7 +186,7 @@ Ethernet and USB.
 
 At the 1.0 candidate, no crash bug shall be open.
 
-- Kind: quality. Priority: must. PBS 2.2, 2.3, 2.4. Theme: v0.9.
+- Kind: quality. Priority: must. PBS 2.2, 2.3, 2.4. Theme: Towards 1.0.
 - Definition: a **crash bug** is a Bug issue where the kernel panics, the
   system or a service hangs or stops for good, data on the card is lost or
   changed, or a program is killed without cause. Such issues carry the
@@ -207,7 +207,7 @@ At the 1.0 candidate, no crash bug shall be open.
 
 Each supported board shall run 7 days under a mixed load without a fault.
 
-- Kind: quality. Priority: must. PBS 2. Theme: v0.9.
+- Kind: quality. Priority: must. PBS 2. Theme: Towards 1.0.
 - Acceptance criteria (proposed numbers):
   1. 7 days (168 h) of a loop of program starts, network transfers in both
      directions and SD card writes, with the CPU governor on `ondemand`.
@@ -222,7 +222,7 @@ Each supported board shall run 7 days under a mixed load without a fault.
 
 The system shall stay usable when services and programs fail.
 
-- Kind: quality. Priority: must. PBS 2.2.1, 2.4. Theme: v0.9.
+- Kind: quality. Priority: must. PBS 2.2.1, 2.4. Theme: Towards 1.0.
 - Acceptance criteria:
   1. The chaos test suite (experiment `chaos`, #196) runs 10 times on the
      1.0 candidate: killed services, full memory, a full disk, host faults.
@@ -235,7 +235,7 @@ The system shall stay usable when services and programs fail.
 Pulling the power shall never leave the SD card unbootable or the
 filesystem corrupt.
 
-- Kind: quality. Priority: must. PBS 2.3.3, 2.4.3. Theme: v0.5.
+- Kind: quality. Priority: must. PBS 2.3.3, 2.4.3. Theme: Devices.
 - Rationale: a Pi has no power button; people pull the plug.
 - Acceptance criteria:
   1. 50 power cuts at random times while files are written (power plug
@@ -250,7 +250,7 @@ filesystem corrupt.
 
 The system shall come back with network after every restart.
 
-- Kind: quality. Priority: must. PBS 2.1, 2.3.4. Theme: v0.9.
+- Kind: quality. Priority: must. PBS 2.1, 2.3.4. Theme: Towards 1.0.
 - Acceptance criteria:
   1. 500 `reboot` cycles: each back at login with a DHCP address within
      60 s (#217 is the known failure).
@@ -261,7 +261,7 @@ The system shall come back with network after every restart.
 
 `poweroff` shall stop the system safely.
 
-- Kind: functional. Priority: should. PBS 2.2.1, 2.3.8. Theme: v0.5.
+- Kind: functional. Priority: should. PBS 2.2.1, 2.3.8. Theme: Devices.
 - Acceptance criteria:
   1. `poweroff` as root writes all data, stops all cores, and the Pi stays
      off (no reboot) until the power is cycled.
@@ -274,7 +274,7 @@ The system shall come back with network after every restart.
 
 The system shall offer an SSH server for remote login and file copy.
 
-- Kind: functional. Priority: must. PBS 2.5.6. Theme: v0.7.
+- Kind: functional. Priority: must. PBS 2.5.6. Theme: Remote access.
 - Acceptance criteria:
   1. When enabled, `sshd` starts at boot and accepts a login with a key
      and, if the user allows it, a password.
@@ -291,7 +291,7 @@ The system shall offer an SSH server for remote login and file copy.
 No account shall be reachable from the network with a default or empty
 password.
 
-- Kind: constraint. Priority: must. PBS 2.4.6, 2.5.6. Theme: v0.7.
+- Kind: constraint. Priority: must. PBS 2.4.6, 2.5.6. Theme: Remote access.
 - Rationale: today root has the password `password` and `user` none; fine
   on a console, not on a network.
 - Acceptance criteria:
@@ -309,7 +309,7 @@ password.
 A fresh image shall listen only on the network ports of services the user
 turned on.
 
-- Kind: constraint. Priority: must. PBS 2.4.2, 2.6.1. Theme: v0.7.
+- Kind: constraint. Priority: must. PBS 2.4.2, 2.6.1. Theme: Remote access.
 - Acceptance criteria:
   1. A TCP and UDP port scan from the LAN of a fresh image finds only the
      ports listed in the documentation (none, or SSH once set up, plus mDNS
@@ -321,8 +321,8 @@ turned on.
 Packages, system updates and release images shall be signed, and the
 system shall refuse a package or update whose signature does not match.
 
-- Kind: constraint. Priority: must. PBS 2.4.7, 4.1. Theme: v0.5 (packages),
-  v0.9 (images).
+- Kind: constraint. Priority: must. PBS 2.4.7, 4.1. Theme: Devices (packages),
+  Towards 1.0 (images).
 - Rationale: upstream `pkg` already checks package signatures against the
   repository key; our own repository and our images need the same.
 - Acceptance criteria:
@@ -340,7 +340,7 @@ system shall refuse a package or update whose signature does not match.
 A known vulnerability in a component of the release image shall be fixed
 in a release soon after its fix is public.
 
-- Kind: constraint. Priority: must. PBS 2.5.6, 4.1. Theme: v0.9.
+- Kind: constraint. Priority: must. PBS 2.5.6, 4.1. Theme: Towards 1.0.
 - Acceptance criteria (proposed numbers):
   1. Network-facing components (SSH, TLS, network stack) get a fix release
      within 14 days of a public fix; others within 30 days.
@@ -355,7 +355,7 @@ in a release soon after its fix is public.
 `pkg install` and `pkg remove` shall work on the Pi from the project's
 repository, and installed packages shall survive reboots and updates.
 
-- Kind: functional. Priority: must. PBS 2.4.7. Theme: v0.5.
+- Kind: functional. Priority: must. PBS 2.4.7. Theme: Devices.
 - Acceptance criteria:
   1. `pkg install <name>` of each package in the base set
      ([REQ-PKG-2](#req-pkg-2-base-set-of-programs)) succeeds, and the
@@ -369,7 +369,7 @@ repository, and installed packages shall survive reboots and updates.
 
 A base set of common programs shall install and run.
 
-- Kind: functional. Priority: must. PBS 2.4.1, 2.4.7. Theme: v0.7.
+- Kind: functional. Priority: must. PBS 2.4.1, 2.4.7. Theme: Remote access.
 - Acceptance criteria:
   1. Each program in the base set starts and does one basic task (for
      example `nano` edits and saves a file, `curl` downloads over HTTPS,
@@ -385,7 +385,7 @@ The system shall update itself to the next release over the network,
 keeping the user's data and settings, and fall back to the old version if
 the update fails.
 
-- Kind: functional. Priority: must. PBS 2.1, 2.6, 4.1. Theme: v0.9.
+- Kind: functional. Priority: must. PBS 2.1, 2.6, 4.1. Theme: Towards 1.0.
 - Acceptance criteria:
   1. From each of the last 3 releases, one command updates to the
      candidate; after reboot the banner shows the new version.
@@ -405,7 +405,7 @@ the update fails.
 One guide shall take a beginner from download to an updated, reachable
 Pi.
 
-- Kind: functional. Priority: must. PBS 5.1. Theme: v0.9.
+- Kind: functional. Priority: must. PBS 5.1. Theme: Towards 1.0.
 - Acceptance criteria:
   1. The guide covers: download and check, flashing (Raspberry Pi Imager
      and one other tool), first boot, setting a password, network, SSH,
@@ -421,7 +421,7 @@ Pi.
 
 The documentation shall list the hardware tested with the release.
 
-- Kind: functional. Priority: should. PBS 5.1. Theme: v0.9.
+- Kind: functional. Priority: should. PBS 5.1. Theme: Towards 1.0.
 - Acceptance criteria:
   1. A page lists boards, USB Ethernet adapters, keyboards, mice and SD
      cards with the release they were last tested on.
@@ -434,7 +434,7 @@ The documentation shall list the hardware tested with the release.
 The 1.0 release shall have every `must` requirement verified on its
 candidate.
 
-- Kind: constraint. Priority: must. PBS 3, 4. Theme: v0.9.
+- Kind: constraint. Priority: must. PBS 3, 4. Theme: Towards 1.0.
 - Acceptance criteria:
   1. The trace for the candidate shows no `must` requirement as gap, fails,
      queued or earlier.
@@ -446,7 +446,7 @@ candidate.
 `main` shall pass the nightly Pi run for 14 nights in a row before 1.0 is
 built.
 
-- Kind: quality. Priority: must. PBS 3.2, 3.3. Theme: v0.9.
+- Kind: quality. Priority: must. PBS 3.2, 3.3. Theme: Towards 1.0.
 - Acceptance criteria:
   1. The nightly run (with the checks of the 1.0 set that run without a
      person) passed on 14 consecutive nights, the last one on the commit of
@@ -457,7 +457,7 @@ built.
 
 The project shall publish what 1.x users can rely on.
 
-- Kind: constraint. Priority: must. PBS 4.2. Theme: v0.9.
+- Kind: constraint. Priority: must. PBS 4.2. Theme: Towards 1.0.
 - Acceptance criteria (proposed):
   1. A support page says how long 1.x gets fixes (proposed: the newest 1.x
      release gets crash and security fixes; each 1.x release is supported
@@ -473,7 +473,7 @@ The project shall publish what 1.x users can rely on.
 
 The 1.0 release shall be based on a recent upstream Redox.
 
-- Kind: constraint. Priority: should. PBS 3.1. Theme: v0.9.
+- Kind: constraint. Priority: should. PBS 3.1. Theme: Towards 1.0.
 - Acceptance criteria (proposed):
   1. The upstream commits in `config/upstream.lock` are at most 3 months
      older than the 1.0 build.
@@ -490,7 +490,7 @@ keyboard layouts other than US, German first.
 
 - Kind: functional. Priority: must (was should; the Pi 400 DE has a
   German keyboard built in, [REQ-BOARD-4](#req-board-4-raspberry-pi-400)).
-  PBS 2.3.2. Theme: v0.5, Pi 400. Issue #36.
+  PBS 2.3.2. Theme: Devices, More boards. Issue #36.
 - Acceptance criteria:
   1. A setting chooses the layout; with `de`, umlauts, `ß` and the AltGr
      characters type correctly on the console and survive a reboot.
@@ -502,13 +502,12 @@ keyboard layouts other than US, German first.
 
 | Theme | Criteria it delivers |
 |---|---|
-| v0.5 Devices | REQ-FW-5, REQ-PKG-1, REQ-SEC-3 (packages), REQ-STAB-7, REQ-CON-3 |
-| v0.6 Network | (Wi-Fi only if open question 2 makes it a criterion) |
-| v0.7 Remote access | REQ-NET-6, REQ-SEC-1, REQ-SEC-2, REQ-PKG-2 |
-| v0.8 Smart home | none (features, not 1.0 criteria) |
-| Pi 400 (priority set when the board arrives) | REQ-BOARD-4, REQ-CON-3 (German layout on its keyboard) |
-| v0.9 Towards 1.0 | REQ-BOARD-2, REQ-BOARD-3, REQ-STAB-4, -5, -6, -8, REQ-SEC-3 (images), REQ-SEC-4, REQ-PKG-3, REQ-DOC-1, -2, REQ-REL-6 to -9 |
-| v0.10 … | whatever is still open |
+| Devices | REQ-FW-5, REQ-PKG-1, REQ-SEC-3 (packages), REQ-STAB-7, REQ-CON-3 |
+| More boards | REQ-BOARD-4 (Pi 400), REQ-CON-3 (German layout on its keyboard) |
+| Network | (Wi-Fi only if open question 2 makes it a criterion) |
+| Remote access | REQ-NET-6, REQ-SEC-1, REQ-SEC-2, REQ-PKG-2 |
+| Smart home | none (features, not 1.0 criteria) |
+| Towards 1.0 | REQ-BOARD-2, REQ-BOARD-3, REQ-STAB-4, -5, -6, -8, REQ-SEC-3 (images), REQ-SEC-4, REQ-PKG-3, REQ-DOC-1, -2, REQ-REL-6 to -9 |
 
 ## Steps
 
@@ -535,7 +534,8 @@ keyboard layouts other than US, German first.
 
 1. **Boards:** Pi 3B+, Zero 2 W and Pi 400 must, Pi 3B and 3A+ should,
    other Pi 4 boards and Pi 5 after 1.0. Agreed? Should the Pi 4 Model B
-   come with the Pi 400, as it needs almost the same work?
+   come with the Pi 400, as it needs almost the same work? (The roadmap's
+   "More boards" theme already names the Pi 400 and the Pi 4 for v1.0.)
 2. **Wi-Fi:** the Zero 2 W without a HAT has no network without Wi-Fi.
    Is Wi-Fi a 1.0 must, a should, or after 1.0?
 3. **Desktop and audio:** today beta. Stay beta in 1.0 (not criteria), or

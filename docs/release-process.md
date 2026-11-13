@@ -130,6 +130,11 @@ agreed with V&V on 2026-11-08).
      it. A control file such as `/usr/bin/ion` must be found.
   2. In the visit, on the booted SD image: `nc -z -w 3 <pi> 2323` from the
      build host fails, and `ps` on the console shows no `devshd`.
+- **Green CI on the commit ([#257](https://github.com/redox-rpi/redox-rpi/issues/257)).**
+  A candidate is built only from a commit whose `QEMU boot test` run on
+  main passed; the checklist names that run (its URL). While the issue
+  "CI: main is red" is open (opened and closed by
+  `.github/workflows/ci-main-red.yml`), no candidate is built.
 - **REQ-REL-5, fits a 2 GB card:** the uncompressed image
   (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
 
