@@ -76,15 +76,15 @@ here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
    is reduced to a minimal case and becomes an issue with a test in
    `tests/vc4`.
 5. **KPIs** (Quality, on the KPI dashboard). TCC track pass rate over 14
-   nights, size T/G (`bootcode.bin`), speed T/G (`fl START.ELF`), csmith
+   nights, size T/G (`bootcode.bin`) and speed T/G (`fl START.ELF`) to watch, csmith
    programs and mismatches per week, and open TCC VC4 bugs by severity.
 6. **Bugs.** A failure in the TCC track is a normal bug owned by TinyCC
    VC4, with the QMP's severity and flaky rules.
-7. **Switching to TCC** is the maintainer's decision, by RFC. It needs:
-   28 green nights in a row; size at most 1.3 × and speed at most 1.2 × GCC;
-   no open S1/S2 TCC VC4 bug; at least 10,000 csmith programs without a
-   mismatch; and one release cycle with a T image beside the G image for
-   the maintainer's own Pi test.
+7. **Switching to TCC.** Criteria are set once the open firmware is in a
+   release and has run stably with the TCC build over a longer time. Until
+   then, size and speed are KPIs to watch, with no limit and no target. The
+   linker.ld hard limits (bss end, trampoline size) stay as checks in
+   bootcode-build `LINK=tcc`.
 
 ## 3 Boards
 
