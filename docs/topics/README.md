@@ -27,7 +27,6 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Audio (plan) | [audio.md](audio.md) | [#250](https://github.com/redox-rpi/redox-rpi/issues/250), [topic:audio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aaudio) |
 | DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
-| Who merges what | [merge-policy.md](merge-policy.md) | |
 
 Each page has the same sections: **State** (on `main` and tested on a real
 Pi), **In progress** (branch, experiment, Pi test number), **Next**
