@@ -24,7 +24,7 @@ scheme memory while tearing down, and that must reach the scheme.
  1 file changed, 28 insertions(+), 4 deletions(-)
 
 diff --git a/src/scheme/user.rs b/src/scheme/user.rs
-index d91ae0ab..5a2d8c5c 100644
+index d91ae0ab..d92627b0 100644
 --- a/src/scheme/user.rs
 +++ b/src/scheme/user.rs
 @@ -232,9 +232,22 @@ impl UserInner {
@@ -66,7 +66,7 @@ index d91ae0ab..5a2d8c5c 100644
 +                            // behaviour: no Cancel, so the scheme still unmaps
 +                            // while an exiting thread tears down its memory.
 +                            if maybe_eintr.is_err() && sqe.opcode == Opcode::Munmap as u8 {
-+                                return maybe_eintr;
++                                return Err(Error::new(EINTR));
 +                            }
  
                              // We do not want to preempt between sending the
