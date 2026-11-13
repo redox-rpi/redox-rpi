@@ -37,7 +37,7 @@ Nothing on `main` yet.
   round froze the whole Pi (test 237) and QEMU. Cause: a context switch
   waited for a context lock without handling TLB shootdowns while another
   CPU waited for its acknowledgement. Fix in PR #209
-  (experiment `kernel-switch-shootdown`); QEMU no longer freezes. The Pi
+  (default kernel patch `0052`); QEMU no longer freezes. The Pi
   still froze, more rarely, in tests 238 and 240, so #207 stays open.
 - Pi test 237 part B, host fault round 20: after an 85 s netem delay, the network
   did not come back (#92 picture). The network session follows it up.
