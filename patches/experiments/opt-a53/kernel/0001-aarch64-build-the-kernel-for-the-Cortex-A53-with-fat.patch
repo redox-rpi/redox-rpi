@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 6 Nov 2026 16:31:45 +0000
+Subject: [PATCH] aarch64: build the kernel for the Cortex-A53 with fat LTO and
+ one codegen unit (redox-rpi opt-a53)
+
+---
+ Cargo.toml                          | 3 ++-
+ targets/aarch64-unknown-kernel.json | 1 +
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 46a72b41..9970c8a7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -115,5 +115,6 @@ panic = "abort"
+ [profile.release]
+ # Avoids having to define the eh_personality lang item and reduces kernel size
+ panic = "abort"
+-#lto = true
++lto = "fat"
++codegen-units = 1
+ debug = "full"
+diff --git a/targets/aarch64-unknown-kernel.json b/targets/aarch64-unknown-kernel.json
+--- a/targets/aarch64-unknown-kernel.json
++++ b/targets/aarch64-unknown-kernel.json
+@@ -1,13 +1,14 @@
+ {
+     "abi": "softfloat",
+     "arch": "aarch64",
++    "cpu": "cortex-a53",
+     "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32",
+     "disable-redzone": true,
+     "dynamic-linking": false,
+     "env": "",
+     "exe-suffix": "",
+     "executables": true,
+-    "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
++    "features": "+strict-align,-neon,-fp-armv8,-aes,-sha2,+tpidr-el1",
+     "frame-pointer": "always",
+     "has-rpath": false,
+     "linker": "rust-lld",
