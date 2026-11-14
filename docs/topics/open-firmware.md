@@ -10,7 +10,7 @@ own repository,
 [redox-rpi/rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware)
 (GPLv2+), together with all of its documentation:
 
-- [Broadcom's firmware per Pi model](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/broadcom-firmware.md):
+- [Broadcom's firmware per Pi model](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/broadcom/README.md):
   what `bootcode.bin`, `start*.elf`, `fixup*.dat` and the `armstub*` do,
   and their variants on the Zero W, Zero 2 W, 3B+ and Pi 400.
 - [Boot chain by release](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-chain.md):
