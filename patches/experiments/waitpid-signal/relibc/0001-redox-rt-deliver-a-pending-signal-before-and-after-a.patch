@@ -1,0 +1,89 @@
+From a30a7aacb71beea39046546340a1c96f644ae2a2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 21:06:42 +0000
+Subject: [PATCH] redox-rt: deliver a pending signal before and after a
+ blocking call
+
+procmgr sends a signal by setting its pending bit and interrupting a
+thread that allows it. The interrupt only wakes a blocked thread. When
+the signal comes while the thread runs with delivery inhibited (inside
+wrapper(), between two calls, or in the trampoline handling the signal
+before), the interrupt wakes nothing, and the thread then blocks in its
+next call with the signal pending. procmgr sends no second interrupt for
+a signal that is already pending (idempotent kill), so every further
+kill() of that signal is dropped while the call blocks.
+
+Seen as a process in waitpid() that catches no signal at all after a
+storm of SIGUSR1 (redox-rpi #387): one SIGUSR1 stayed pending, unblocked
+and undelivered, and later signals merged into it.
+
+In wrapper(), enter the trampoline when a signal this thread allows is
+pending, right before the call and again after a call that succeeded.
+A signal that arrives in the last moment before the thread blocks still
+waits until the call returns, but no longer.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ redox-rt/src/signal.rs | 14 ++++++++++++++
+ redox-rt/src/sys.rs    | 13 +++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/redox-rt/src/signal.rs b/redox-rt/src/signal.rs
+index 301be3b..fa47e9b 100644
+--- a/redox-rt/src/signal.rs
++++ b/redox-rt/src/signal.rs
+@@ -933,6 +933,20 @@ pub unsafe fn sigaltstack(
+ 
+ pub const MIN_SIGALTSTACK_SIZE: usize = 2048;
+ 
++/// Pending signals this thread allows, thread- or process-directed, which
++/// the next signal entry would deliver.
++pub(crate) fn currently_pending_unblocked() -> u64 {
++    let control = &unsafe { Tcb::current().unwrap() }.os_specific.control;
++    let w0 = control.word[0].load(Ordering::Relaxed);
++    let w1 = control.word[1].load(Ordering::Relaxed);
++    let allow = (w0 >> 32) | ((w1 >> 32) << 32);
++    let thread_pending = (w0 & 0xffff_ffff) | ((w1 & 0xffff_ffff) << 32);
++    let proc_pending = PROC_CONTROL_STRUCT.pending.load(Ordering::Relaxed);
++
++    core::sync::atomic::fence(Ordering::Acquire);
++
++    (thread_pending | proc_pending) & allow
++}
+ pub fn currently_pending_blocked() -> u64 {
+     let control = &unsafe { Tcb::current().unwrap() }.os_specific.control;
+     let w0 = control.word[0].load(Ordering::Relaxed);
+diff --git a/redox-rt/src/sys.rs b/redox-rt/src/sys.rs
+index 8503b00..97510df 100644
+--- a/redox-rt/src/sys.rs
++++ b/redox-rt/src/sys.rs
+@@ -31,6 +31,14 @@ fn wrapper<T>(restart: bool, erestart: bool, mut f: impl FnMut() -> Result<T>) -
+     loop {
+         let _guard = tmp_disable_signals();
+         let rt_sigarea = unsafe { &Tcb::current().unwrap().os_specific };
++        // A signal that became pending while delivery was inhibited (between
++        // two calls, or in the trampoline) found this thread running, so its
++        // interrupt woke nothing, and procmgr sends no second interrupt for a
++        // signal that is already pending. Deliver it now instead of blocking
++        // with it (redox-rpi #387).
++        if crate::signal::currently_pending_unblocked() != 0 {
++            unsafe { manually_enter_trampoline() };
++        }
+         let res = f();
+         let code = if erestart { ERESTART } else { EINTR };
+ 
+@@ -49,6 +57,11 @@ fn wrapper<T>(restart: bool, erestart: bool, mut f: impl FnMut() -> Result<T>) -
+             }
+         }
+ 
++        // The same for a signal that came while the call was about to block:
++        // deliver it when the call returns rather than leave it pending.
++        if res.is_ok() && crate::signal::currently_pending_unblocked() != 0 {
++            unsafe { manually_enter_trampoline() };
++        }
+         return res;
+     }
+ }
+-- 
+2.53.0
+
