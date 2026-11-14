@@ -39,4 +39,6 @@ own repository,
 
 - M2: load `armstub8`, U-Boot and the devicetree from the SD card.
 - M3 mailbox service, M4 HDMI, M5 network boot and 3D.
+- After M4: a boot status bar with a few status lines on HDMI, built
+  into the firmware ([#430](https://github.com/redox-rpi/redox-rpi/issues/430)).
 - Decision on a project of its own: [#333](https://github.com/redox-rpi/redox-rpi/issues/333).
