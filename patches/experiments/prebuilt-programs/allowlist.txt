@@ -1,0 +1,65 @@
+# Prebuilt aarch64 packages from Redox' package repository
+# (https://static.redox-os.org/pkg/aarch64-unknown-redox) that run
+# unchanged on our image (issue #40). One package per line, then a comment:
+# what was checked and how much space it needs installed (with the
+# dependencies it pulls in that the image does not already have).
+#
+# Checked with build v0.3.0-dev-772-g8dc59fc+x0e02 (main, experiments
+# timesync and sigreturn-svc), relibc c303135; the repository's relibc is
+# ad0c479. `pkg install --yes <name>` in QEMU over the network, then
+# pkg-check.sh. Static check of all 82 non-GUI packages: abi-check.py.
+# Pi test #163 (real Pi 3B+) passed for the 26 small ones, git, python312
+# and sqlite3; vim, rustpython not run on the Pi.
+#
+# Install these one at a time or in small groups: the network-boot image
+# has about 130 MB free, and pkg also needs room for the downloads in /tmp.
+
+# Shells and editors
+bash         # bash -c with an array; 10 MB with ncursesw and readline
+dash         # dash -c
+nano         # nano --version; 5 MB with ncursesw and terminfo
+kibi         # kibi --version; replaces the image's older kibi
+vim          # vim --version; 39 MB
+
+# Scripting languages (each needs most of the free space: install alone)
+python312    # python3.12 with json and re; 122 MB with bash, curl and its libraries, 12 MB left
+rustpython   # rustpython -c; 72 MB with bash and curl
+
+# Text tools
+ripgrep      # rg -c
+gawk         # gawk BEGIN
+sed          # GNU sed -n
+findutils    # find -name
+diffutils    # diff; replaces the image's older diffutils
+patch        # patch --version
+file         # file /usr/bin/ion; 11 MB (magic database)
+
+# Network (needs ca-certificates for https)
+curl         # HTTP download; 5 MB plus openssl3 24 MB, nghttp2
+wget         # HTTP download; needs openssl3
+git          # init and commit; 24 MB plus curl, openssl3, expat (git and vim with bash and curl: 116 MB)
+
+# Compression
+zstd         # round trip
+bzip2        # round trip
+lz4          # round trip
+
+# Development and other tools
+gnu-make     # make --version
+nasm         # nasm -v
+patchelf     # patchelf --version
+rldd         # rldd /usr/bin/rg
+smith        # installed, command found
+sqlite3      # in-memory table; prints two harmless "Unknown special reference: memory:" lines from init's namespace manager
+tmux         # tmux -V; needs libevent
+bottom       # btm --version
+pls          # pls --version
+miniserve    # miniserve --version
+
+# Not on the list:
+# xz         package has liblzma and the xzgrep/xzdiff scripts, but no xz program
+# rsync      `rsync -a` of one local file spins at 100 % CPU and never ends
+# libmpfr    needs 12 decimal-float helpers (__bid_*) that our libgcc_s lacks
+# base, bootloader, kernel, relibc, redoxfs, pkgutils, ion, userutils,
+# coreutils, uutils, extrautils, netutils, contain, installer: system
+#            packages; upstream's would replace our patched ones
