@@ -17,8 +17,8 @@
 - [#4](https://github.com/redox-rpi/redox-rpi/issues/4) signal mask bug after `pthread_kill` (experiment
   `sigentry-thread-signals`): reviewed against x86_64 on branch
   `t4-thread-signals`, patch `0002` fixes two more differences; Pi tests
-  #37 and #68 pass. Draft PR #64 makes both patches default relibc
-  `0008` and `0009` (stacked on #62).
+  #37 and #68 pass. PR #64 makes both patches default relibc `0008` and
+  `0009`; rebuilt on main 2026-10-31, no longer stacked on #62.
 - [#40](https://github.com/redox-rpi/redox-rpi/issues/40) prebuilt programs (bash, vim, …) from the Redox package
   repository: experiment `prebuilt-programs`, with experiment
   `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
