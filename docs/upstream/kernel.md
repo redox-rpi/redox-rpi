@@ -81,6 +81,51 @@ Our [#157](https://github.com/redox-rpi/redox-rpi/issues/157) and [#151](https:/
   context. One of the 6 downloads stopped from a separate USB controller
   fault. QEMU: relibc suite unchanged, the download completes.
 
+
+## A context switch and a TLB shootdown wait for each other (bug)
+
+Our [#207](https://github.com/redox-rpi/redox-rpi/issues/207). Checked against the kernel we pin, `c951af42`.
+
+- **What breaks:** the whole system freezes, with interrupts masked on
+  every CPU. The only sign is one line, `TLB shootdown stalled on CPU #N:
+  acknowledgements 0/1`, from the aarch64 `StallWatch` in
+  `Flusher::flush`. Found by our chaos test: waves of up to 63 threads in
+  one process that share a mutex and call `sched_yield`. It froze the Pi
+  3B+ (test 237) and freezes QEMU raspi3b (4 CPUs) on the first or second
+  run.
+- **Why:** `src/sync/ordered.rs`, `RwLock::write_arc` (about line 557)
+  waits with the spin crate's plain `write()`. Every other wait in that
+  file loops on `try_*` and calls `PercpuBlock::maybe_handle_tlb_shootdown()`.
+  The context switch takes context locks with `write_arc`
+  (`direct_switch_to`, `switch_inner`, …) with interrupts masked. When the
+  CPU holding the lock is in `Flusher::flush` waiting for this CPU's
+  shootdown ack, neither CPU can go on. The QEMU monitor showed exactly
+  that: one CPU in `Flusher::flush`, the CPU that owed the ack in
+  `direct_switch_to` → `write_arc` → `spin::RwLock::try_write_internal`,
+  its `wants_tlb_shootdown` still set.
+- **Reproduce:** our `chaos` tool (`tools/chaos`, C):
+  `chaos --kind threads --round-seed 0x4e3014eeaaa65f76`, or a loop of
+  `chaos --kind threads --rounds 3`, on 4 CPUs.
+- **Our fix:** default kernel patch `0052` (was `0042` in experiment
+  `kernel-switch-shootdown`).
+  `write_arc` loops on `try_write` and calls `maybe_handle_tlb_shootdown()`
+  while it waits. About 15 lines.
+- **Tested:** QEMU raspi3b. Without the fix, the `threads` loop froze in its
+  first iteration; with it, 200 iterations (600 rounds) passed. Real Pi
+  3B+: it helps, but the Pi still froze, more rarely, in tests 238 and 240
+  (once in 7 runs) without a stall line, so there may be a second, rarer
+  cause (our #207 stays open). Test 241, with extra lock-wait watches, ran
+  1360 rounds without a freeze.
+- **Second part (our kernel `0053`):** without the watches the Pi froze
+  again (row 379, 2 in 3 loops). The watches only slow each spin, so this
+  looks like a livelock on the lock word: spin 0.9.8 `try_read` adds a
+  reader before it checks for a writer and takes it back, so spinning
+  readers keep a writer or an upgrade (which needs zero readers) from
+  ever succeeding. `0053` backs off exponentially in every wait in
+  `src/sync/ordered.rs`, and `RwLockUpgradableGuard::upgrade`, which also
+  spun inside spin without handling TLB shootdowns, now loops on
+  `try_upgrade` like the others. Pi result: our row 384.
+
 ## aarch64: no cache maintenance when user code becomes executable (bug)
 
 Found in the kernel `c951af42` (the commit we pin) and still in upstream
