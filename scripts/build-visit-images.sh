@@ -29,6 +29,11 @@
 #     by scripts/publish-sdcard.sh as family redox-rpi-visit-<name>:
 #     /srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz with .sha256,
 #     .manifest.toml and redox-rpi-visit-<name>-latest.* links
+#   - with check=desktop: scripts/qemu-desktop-check.sh on the network-boot
+#     image in QEMU raspi3b (#261, report-only: the image counts as built
+#     whatever the check says); report.md and the screenshots in
+#     /srv/tftp/visit/<name>/<build ID>/desktop-check/, the result as
+#     "desktop-check = ..." in visit.txt
 #   - the last KEEP builds stay, older ones are removed
 # Results per image in /srv/tftp/visit/status.txt, and for a tester at the
 # Pi in /srv/tftp/visit/index.html and README.txt
@@ -118,7 +123,7 @@ prune() {
 
 # Build one image; prints nothing, sets result[name]. Runs in the clone.
 build_one() {
-    local name="$1" owner="$2" ref="$3" clean="$4" sdcard="$5"; shift 5
+    local name="$1" owner="$2" ref="$3" clean="$4" sdcard="$5" check="$6"; shift 6
     local options=("$@") commit key latest left build_id manifest dir work
     if [ -n "$ref" ]; then
         # Only branches of redox-rpi/redox-rpi: the clone's only remote.
@@ -207,6 +212,9 @@ build_one() {
             log "$name: $SDCARD/redox-rpi-visit-$name-$build_id.img.xz"
         fi
     done
+    # After the SD card, so the check does not take the card's time before
+    # the deadline; minimal/harddrive.img is still the network-boot image.
+    [ "$check" = desktop ] && desktop_check "$name" "$dir"
     result[$name]="built $(cat "$latest/BUILD_ID") ${commit:0:9} ${ref:-stable} $(date -u '+%Y-%m-%dT%H:%M')Z"
     prune "$OUT/$name/v*"
     if [ -n "$sdcard" ]; then
@@ -218,18 +226,44 @@ build_one() {
     return 0
 }
 
+# Report-only desktop smoke test in QEMU (#261) on the image just built;
+# never fails the image. Runs in the clone, which has its own images/.
+desktop_check() {
+    local name="$1" dir="$2" left verdict rc=0
+    left="$(seconds_left)"
+    [ "$left" -gt 300 ] || { log "$name: no time left for the desktop check"; echo "desktop-check = skipped (deadline)" >> "$dir/visit.txt"; return 0; }
+    [ "$left" -gt 1500 ] && left=1500
+    log "$name: desktop check in QEMU (report-only)"
+    # The clone's own copy (at the image's commit), with its own images/.
+    [ -x scripts/qemu-desktop-check.sh ] || { log "$name: no scripts/qemu-desktop-check.sh at this commit"; echo "desktop-check = no run (script missing)" >> "$dir/visit.txt"; return 0; }
+    mkdir -p "$dir/desktop-check"
+    timeout --kill-after=60 "$left" scripts/qemu-desktop-check.sh \
+        --image upstream/redox/build/aarch64/minimal/harddrive.img --out "$dir/desktop-check" \
+        > "$dir/desktop-check/run.log" 2>&1 || rc=$?
+    case $rc in
+        0) verdict="pass (desktop-check/report.md)" ;;
+        1) verdict="FAIL (desktop-check/report.md)" ;;
+        124|137) verdict="no run (timeout, see desktop-check/run.log)" ;;
+        *) verdict="no run (exit $rc, see desktop-check/run.log)" ;;
+    esac
+    rm -f "$dir/desktop-check/"*.ppm "$dir/desktop-check/monitor.sock"
+    echo "desktop-check = $verdict" >> "$dir/visit.txt"
+    log "$name: desktop check $verdict in $dir"
+}
+
 failed=0
 while read -r name owner rest; do
     case "$name" in ''|'#'*|deadline) continue ;; esac
     rest="${rest%%#*}"
     [ -n "$only" ] && [ "$name" != "$only" ] && continue
-    ref="" clean="" sdcard=""
+    ref="" clean="" sdcard="" check=""
     options=()
     for word in $rest; do
         case "$word" in
             ref=*) ref="${word#ref=}" ;;
             clean=*) clean="${word#clean=}" ;;
             --sdcard) sdcard=1 ;;
+            check=desktop) check=desktop ;;
             *) options+=("$word") ;;
         esac
     done
@@ -237,7 +271,7 @@ while read -r name owner rest; do
     result[$name]="running - - ${ref:-stable} -"
     write_status
     # stdin is the config file: keep the build from reading it.
-    build_one "$name" "$owner" "$ref" "$clean" "$sdcard" "${options[@]}" < /dev/null || failed=1
+    build_one "$name" "$owner" "$ref" "$clean" "$sdcard" "$check" "${options[@]}" < /dev/null || failed=1
     write_status
 done < "$CONF"
 [ "${#names[@]}" -gt 0 ] || { log "no images in $CONF${only:+ named $only}"; write_status; }
