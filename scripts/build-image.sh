@@ -454,7 +454,7 @@ fi
 # the build has unrecorded changes. Shown above the login prompt and in
 # /etc/redox-rpi-release. The same set of experiments, in any order, gives the
 # same hash; their names are in the manifest and on the line below the ID.
-version="${VERSION:-$(git -C "$ROOT" describe --tags --always)}"
+version="${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always)}"
 build_id="$version"
 exp_list=""
 if [ "${#experiments[@]}" -gt 0 ]; then
