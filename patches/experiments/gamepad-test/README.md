@@ -44,6 +44,27 @@ icon. It is a static binary, so it needs no other package.
   the root filesystem is in RAM, so the package is gone after a reset.
 - With `pkg-persist` and an SD card with a data partition: `sudo
   pkg-persist install gamepad-test`. This keeps it across resets.
+- pkg reads static.redox-os.org too (over TLS), so the clock must be set
+  first (timesync does it a few seconds after boot); in scripts, add
+  `--yes` (`pkg install --yes gamepad-test`).
 - The launcher reads its entries when it starts, so the new entry shows
   only after the next login. Until then, start it from a terminal:
   `gamepad-test`.
+
+## QEMU test (2026-11-14)
+
+- **Window:** QEMU raspi3b, image `v0.5.0-dev-228-g921bcca6+x4096` (this
+  experiment on branch `gamepad-test-image`, which is `usb-gamepad` plus
+  this branch). `desktop`, then `gamepad-test &`, then `gamepad-test
+  --send`. The window received all 45 events (15 buttons pressed and
+  released, 14 axis moves, A held), each as a stdout line with controller
+  id 11. The screenshot shows the left stick up-right, the RZ bar half full
+  and `last: axis RZ = 128`.
+- **Package:** image `v0.5.0-dev-228-g921bcca6+x3ea3` (the same without
+  the test-only experiments), `gamepad-test` published to a separate test
+  repository (`scripts/publish-pkg-repo.sh --out /srv/tftp/pkg-test
+  gamepad-test`). In QEMU with `--usb-net`: `pkg remove --yes
+  gamepad-test` removed the binary and the launcher entry. Then, with
+  `/etc/pkg.d/40_redox-rpi` pointing at `pkg-test`, `pkg install --yes
+  gamepad-test` brought back the binary, the launcher entry and the icon,
+  and the binary runs.
