@@ -143,11 +143,16 @@ As `ci-runner` (`sudo -iu ci-runner`):
 7. On GitHub, go to redox-rpi/redox-rpi → Settings → Actions → Runners →
    *New self-hosted runner*. Copy only the token from the `--token` line.
    It is valid for one hour. Then:
-   `install -m 600 /dev/null ~/reg-token && nano ~/reg-token` (paste it).
+   `mkdir -m 700 ~/ci-runner-secret && install -m 600 /dev/null ~/ci-runner-secret/reg-token && nano ~/ci-runner-secret/reg-token`
+   (paste it). Then `podman unshare chown -R 1001:1001 ~/ci-runner-secret`:
+   in the rootless container the host user `ci-runner` is root, and the
+   container's user `runner` (uid 1001) could not read the file otherwise.
 8. `mkdir -p ~/.config/systemd/user && cp redox-rpi/scripts/ci-runner/ci-runner.service ~/.config/systemd/user/`,
    then `systemctl --user enable --now ci-runner`. The runner registers as
    `homenode` and shows up as *Idle* on the Runners page.
-9. `rm ~/reg-token`. The registration is in the volume `ci-runner-state`.
+9. `podman unshare rm ~/ci-runner-secret/reg-token`. The registration is in
+   the volume `ci-runner-state`. Keep the empty directory: the unit mounts
+   it on every start.
 
 On GitHub:
 
