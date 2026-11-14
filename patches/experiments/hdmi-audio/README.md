@@ -19,8 +19,9 @@ issue; the background is in [docs/topics/audio.md](../../../docs/topics/audio.md
   - **HDMI core** (`0x7e902000`):
     - channel map and mask
     - audio packets (B-frame identifier 8)
-    - N = 128 × fs / 1000, and CTS from the pixel clock that
-      `rpi-firmwared` reports
+    - N = 128 × fs / 1000, and CTS from the pixel clock: the one
+      `rpi-firmwared` reports, else PLLH_PIX from the clock manager (the
+      3B+ firmware reports none), else 148.5 MHz
     - the audio info frame in packet RAM slot 4
     - DVI mode is switched to HDMI mode
   - **DMA channel 0, DREQ 17** (not channel 2, which the PWM driver has):

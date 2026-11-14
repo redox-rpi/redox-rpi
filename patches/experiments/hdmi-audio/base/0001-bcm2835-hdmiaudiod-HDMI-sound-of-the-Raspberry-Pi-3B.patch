@@ -1,4 +1,4 @@
-From a0271351e20581af2defadfb39adc2e78fcd9978 Mon Sep 17 00:00:00 2001
+From d78f7e49c821df29ab12b673be11135980ac4363 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 14 Nov 2026 19:10:26 +0000
 Subject: [PATCH] bcm2835-hdmiaudiod: HDMI sound of the Raspberry Pi 3B+ and
@@ -13,7 +13,8 @@ picture; no display driver is needed.
   HSM clock, 2 channels PCM 44.1 kHz, thresholds as Linux.
 - HDMI core (0x7e902000): channel map and mask, audio packet set-up
   (B-frame identifier 8), audio clock regeneration (N = 128 fs / 1000,
-  CTS from the pixel clock rpi-firmwared reports), the audio info frame
+  CTS from the pixel clock: rpi-firmwared, else PLLH_PIX from the
+  clock manager, else 148.5 MHz), the audio info frame
   in packet RAM slot 4. DVI mode is switched to HDMI mode.
 - DMA channel 0 with DREQ 17 plays a ring of 8 x 512 frames of IEC958
   subframes (preamble, channel status, parity) into MAI_DATA.
@@ -27,7 +28,7 @@ picture; no display driver is needed.
   bcm2835-pwmaudiod. Without an HDMI output (QEMU) the ring plays to
   the clock.
 
-15 host tests: IEC958 subframes, channel status, block alignment
+16 host tests: IEC958 subframes, channel status, block alignment
 across slots, register values, N/CTS, MAI_SMP, info frame and its
 packet RAM layout.
 
@@ -39,13 +40,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Makefile                                      |   1 +
  drivers/audio/bcm2835-hdmiaudiod/Cargo.toml   |  19 +
  drivers/audio/bcm2835-hdmiaudiod/src/dma.rs   | 221 +++++
- drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs  | 456 ++++++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs  | 499 ++++++++++
  .../audio/bcm2835-hdmiaudiod/src/iec958.rs    | 193 ++++
- drivers/audio/bcm2835-hdmiaudiod/src/main.rs  | 843 ++++++++++++++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/main.rs  | 878 ++++++++++++++++++
  drivers/audio/bcm2835-hdmiaudiod/src/ring.rs  | 139 +++
  init.initfs.d/40_drivers.target               |   2 +-
  init.initfs.d/41_bcm2835-hdmiaudiod.service   |  10 +
- 10 files changed, 1884 insertions(+), 1 deletion(-)
+ 10 files changed, 1962 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
@@ -332,10 +333,10 @@ index 00000000..fdfeb19b
 +}
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
 new file mode 100644
-index 00000000..077879ff
+index 00000000..749f0d98
 --- /dev/null
 +++ b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,499 @@
 +//! The audio part of the VC4 HDMI block of the BCM2835/2837, as Linux
 +//! `vc4_hdmi.c` (v6.12) programs it. The firmware keeps the picture; this
 +//! driver touches only the MAI FIFO, the audio clock regeneration (N/CTS),
@@ -567,6 +568,36 @@ index 00000000..077879ff
 +    (ctl & 1 << 4 != 0 && div >= 1 << 12).then(|| source * 4096 / div)
 +}
 +
++/// Clock manager offsets (from its base, 0x7e101000) of PLLH and its pixel
++/// channel, as Linux `clk-bcm2835.c` reads them.
++pub const A2W_PLLH_ANA1: usize = 0x1074;
++pub const A2W_PLLH_CTRL: usize = 0x1160;
++pub const A2W_PLLH_FRAC: usize = 0x1260;
++pub const A2W_PLLH_PIX: usize = 0x1560;
++const OSC_HZ: u64 = 19_200_000;
++
++/// The HDMI pixel clock, PLLH_PIX: PLLH = 19.2 MHz × (NDIV + FRAC / 2^20)
++/// / PDIV (NDIV and FRAC doubled when the feedback prediv bit 11 of ANA1
++/// is set), then the channel divider (8 bits, 0 = 256) and a fixed 10.
++/// `None` if PDIV is 0 or the channel is off (bit 8).
++pub fn pixel_from_pllh(ctrl: u32, frac: u32, ana1: u32, pix: u32) -> Option<u64> {
++    let (mut ndiv, mut fdiv) = (u64::from(ctrl & 0x3ff), u64::from(frac & 0xf_ffff));
++    let pdiv = u64::from(ctrl >> 12 & 0x7);
++    if pdiv == 0 || pix & 1 << 8 != 0 {
++        return None;
++    }
++    if ana1 & 1 << 11 != 0 {
++        ndiv *= 2;
++        fdiv *= 2;
++    }
++    let pll = (OSC_HZ * ((ndiv << 20) + fdiv) / pdiv) >> 20;
++    let div = match u64::from(pix & 0xff) {
++        0 => 256,
++        d => d,
++    };
++    Some(pll / div / 10)
++}
++
 +/// What the driver found in the HDMI core at start.
 +pub struct State {
 +    pub hotplug: bool,
@@ -787,6 +818,19 @@ index 00000000..077879ff
 +    }
 +
 +    #[test]
++    fn pixel_clock_from_pllh() {
++        // 2970 MHz = 19.2 MHz × 154.6875; / 2 / 10 = 148.5 MHz (1080p60).
++        let frac = (0.6875 * f64::from(1 << 20)) as u32;
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 2), Some(148_500_000));
++        // The same with the prediv bit: half NDIV and FRAC.
++        assert_eq!(pixel_from_pllh(1 << 12 | 77, frac / 2, 1 << 11, 2), Some(148_500_000));
++        // 720p60: divider 4.
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 4), Some(74_250_000));
++        assert_eq!(pixel_from_pllh(154, frac, 0, 2), None, "PDIV 0");
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 1 << 8 | 2), None, "channel off");
++    }
++
++    #[test]
 +    fn state_mode() {
 +        let s = State { hotplug: true, scheduler: 0x3 };
 +        assert!(s.hdmi_mode());
@@ -993,10 +1037,10 @@ index 00000000..d8b8c342
 +}
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
 new file mode 100644
-index 00000000..e9c90212
+index 00000000..71bda6d1
 --- /dev/null
 +++ b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
-@@ -0,0 +1,843 @@
+@@ -0,0 +1,878 @@
 +//! HDMI sound of the Raspberry Pi 3B+ and Zero 2 W as the `audiohw` scheme
 +//! for `audiod` (issue #423). The firmware sets up the picture; this driver
 +//! programs only the audio part of the VC4 HDMI block (`hdmi.rs`), so no
@@ -1130,6 +1174,8 @@ index 00000000..e9c90212
 +    forced_hdmi_mode: bool,
 +    scheduler: u32,
 +    pixel_hz: u64,
++    pixel_source: &'static str,
++    pllh_regs: [u32; 4],
 +    hsm_hz: u64,
 +    hsm_source: HsmSource,
 +    hsm_regs: (u32, u32),
@@ -1458,7 +1504,9 @@ index 00000000..e9c90212
 +            let _ = writeln!(text, "hdmi_mode {}", yes(s.hdmi_mode));
 +            let _ = writeln!(text, "forced_hdmi_mode {}", yes(s.forced_hdmi_mode));
 +            let _ = writeln!(text, "scheduler 0x{:08x}", s.scheduler);
-+            let _ = writeln!(text, "pixel_hz {}", s.pixel_hz);
++            let _ = writeln!(text, "pixel_hz {} {}", s.pixel_hz, s.pixel_source);
++            let [c, f, a, p] = s.pllh_regs;
++            let _ = writeln!(text, "pllh ctrl=0x{c:08x} frac=0x{f:08x} ana1=0x{a:08x} pix=0x{p:08x}");
 +            let _ = writeln!(text, "hsm_hz {} {}", s.hsm_hz, s.hsm_source.name());
 +            let _ = writeln!(text, "cm_hsm ctl=0x{:08x} div=0x{:08x}", s.hsm_regs.0, s.hsm_regs.1);
 +            let _ = writeln!(text, "infoframe_sent {}", yes(s.infoframe));
@@ -1639,9 +1687,15 @@ index 00000000..e9c90212
 +
 +/// Map the page holding `phys`; the pointer points at `phys` itself.
 +fn map(phys: usize) -> *mut u32 {
++    map_len(phys, PAGE_SIZE)
++}
++
++/// Map `len` bytes from `phys` (rounded out to pages).
++fn map_len(phys: usize, len: usize) -> *mut u32 {
 +    let page = phys & !(PAGE_SIZE - 1);
++    let size = (phys - page + len).div_ceil(PAGE_SIZE) * PAGE_SIZE;
 +    unsafe {
-+        let base = common::physmap(page, PAGE_SIZE, common::Prot::RW, common::MemoryType::DeviceMemory)
++        let base = common::physmap(page, size, common::Prot::RW, common::MemoryType::DeviceMemory)
 +            .expect("bcm2835-hdmiaudiod: failed to map registers") as *mut u8;
 +        base.add(phys - page) as *mut u32
 +    }
@@ -1690,15 +1744,38 @@ index 00000000..e9c90212
 +            if forced { "now active" } else { "did not come up" }
 +        );
 +    }
-+    let pixel_hz = pixel_clock().unwrap_or_else(|why| {
-+        println!(
-+            "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), assuming {} MHz",
-+            DEFAULT_PIXEL_HZ as f64 / 1e6
-+        );
-+        DEFAULT_PIXEL_HZ
-+    });
-+    let cm = map(soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], 0, CPRMAN_BUS_ADDR)));
-+    let hsm_regs = unsafe { (cm.add(CM_HSMCTL / 4).read_volatile(), cm.add(CM_HSMDIV / 4).read_volatile()) };
++    // The clock manager, up to the PLLH registers.
++    let cm = map_len(
++        soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], 0, CPRMAN_BUS_ADDR)),
++        0x2000,
++    );
++    let cm_reg = |offset: usize| unsafe { cm.add(offset / 4).read_volatile() };
++    let hsm_regs = (cm_reg(CM_HSMCTL), cm_reg(CM_HSMDIV));
++    let pllh_regs = [
++        cm_reg(hdmi::A2W_PLLH_CTRL),
++        cm_reg(hdmi::A2W_PLLH_FRAC),
++        cm_reg(hdmi::A2W_PLLH_ANA1),
++        cm_reg(hdmi::A2W_PLLH_PIX),
++    ];
++    let pllh_hz = hdmi::pixel_from_pllh(pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3])
++        .filter(|hz| (20_000_000..=200_000_000).contains(hz));
++    // The firmware's answer first (the 3B+ firmware gives none), then PLLH,
++    // then 1080p60.
++    let (pixel_hz, pixel_source) = match (pixel_clock(), pllh_hz) {
++        (Ok(hz), _) => (hz, "rpi-firmwared"),
++        (Err(why), Some(hz)) => {
++            println!("bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), using PLLH_PIX");
++            (hz, "pllh")
++        }
++        (Err(why), None) => {
++            println!(
++                "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}) nor PLLH (ctrl=0x{:08x} frac=0x{:08x} ana1=0x{:08x} pix=0x{:08x}), assuming {} MHz",
++                pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3],
++                DEFAULT_PIXEL_HZ as f64 / 1e6
++            );
++            (DEFAULT_PIXEL_HZ, "default")
++        }
++    };
 +    let (hsm_hz, hsm_source) = match hdmi::hsm_from_cprman(hsm_regs.0, hsm_regs.1) {
 +        Some(hz) => (hz, HsmSource::Cprman),
 +        None => (DEFAULT_HSM_HZ, HsmSource::Default),
@@ -1719,13 +1796,15 @@ index 00000000..e9c90212
 +        forced_hdmi_mode: forced,
 +        scheduler: state.scheduler,
 +        pixel_hz,
++        pixel_source,
++        pllh_regs,
 +        hsm_hz,
 +        hsm_source,
 +        hsm_regs,
 +        infoframe,
 +    };
 +    println!(
-+        "bcm2835-hdmiaudiod: HDMI at 0x{core_phys:08x}, hotplug {}, {} mode, pixel clock {:.3} MHz, HSM {:.3} MHz ({}), N {} CTS {}, info frame {}, DMA channel {} (DREQ {}), {SLOTS} x {SLOT_FRAMES} frames",
++        "bcm2835-hdmiaudiod: HDMI at 0x{core_phys:08x}, hotplug {}, {} mode, pixel clock {:.3} MHz ({pixel_source}), HSM {:.3} MHz ({}), N {} CTS {}, info frame {}, DMA channel {} (DREQ {}), {SLOTS} x {SLOT_FRAMES} frames",
 +        yes(state.hotplug),
 +        if state.hdmi_mode() || forced { "HDMI" } else { "DVI" },
 +        pixel_hz as f64 / 1e6,
