@@ -1,0 +1,47 @@
+From 112eb43c6e455593ffacec926789302723d23db6 Mon Sep 17 00:00:00 2001
+From: Ibuki Omatsu <isan.ethen@gmail.com>
+Date: Wed, 28 Oct 2026 23:10:19 +0900
+Subject: [PATCH] fix: Set extra_flags for sys_call
+
+Backport of upstream relibc 112eb43c (redox-rt/src/sys.rs only; the
+redox_syscall pinned here already has Call::extra_flags).
+---
+diff --git a/redox-rt/src/sys.rs b/redox-rt/src/sys.rs
+index 237c4a32..fd1afe69 100644
+--- a/redox-rt/src/sys.rs
++++ b/redox-rt/src/sys.rs
+@@ -180,6 +180,8 @@ pub fn sys_call_ro<T: Call>(
+     flags: CallFlags,
+     metadata: &[u64],
+ ) -> Result<usize> {
++    let flags = flags | fd.extra_flags();
++
+     if !flags.contains(CallFlags::FD) {
+         return unsafe {
+             fd.raw_call(
+@@ -258,6 +260,8 @@ pub fn sys_call_wo<T: Call>(
+     flags: CallFlags,
+     metadata: &[u64],
+ ) -> Result<usize> {
++    let flags = flags | fd.extra_flags();
++
+     if !flags.contains(CallFlags::FD) {
+         return unsafe {
+             fd.raw_call(
+@@ -304,6 +308,8 @@ pub fn sys_call_rw<T: Call>(
+     flags: CallFlags,
+     metadata: &[u64],
+ ) -> Result<usize> {
++    let flags = flags | fd.extra_flags();
++
+     unsafe {
+         fd.raw_call(
+             payload.as_mut_ptr(),
+@@ -314,6 +320,7 @@ pub fn sys_call_rw<T: Call>(
+     }
+ }
+ pub fn sys_call<T: Call>(fd: T, flags: CallFlags, metadata: &[u64]) -> Result<usize> {
++    let flags = flags | fd.extra_flags();
+     unsafe { fd.raw_call(core::ptr::null_mut(), 0, flags, metadata) }
+ }
+ 
