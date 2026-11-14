@@ -93,6 +93,10 @@ whose head is not `redox-rpi/redox-rpi`. Still, before approving a fork PR
 that changes anything under `.github/`, read the workflow diff first. Who may merge what is in the
 [PMP, Merge rights](process/pmp.md#merge-rights).
 
+The runner registers with the label `homenode` only (`--no-default-labels`,
+so not `self-hosted`). `runs-on` therefore names just `homenode`; a job that
+also asks for `self-hosted` stays queued.
+
 Until the repository variable `HOMENODE_RUNNER` is `on`, every job stays on
 GitHub's runners. So the workflows can be merged before the runner exists.
 
