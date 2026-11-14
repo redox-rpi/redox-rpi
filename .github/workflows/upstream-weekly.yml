@@ -29,7 +29,7 @@ jobs:
     # HOMENODE_RUNNER=on; only for pushes, the schedule and pull requests
     # from branches of this repository. Pull requests from forks always run
     # on GitHub's runners.
-    runs-on: ${{ vars.HOMENODE_RUNNER == 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","homenode"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.HOMENODE_RUNNER == 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'homenode' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
