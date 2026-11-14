@@ -1,0 +1,859 @@
+From c43a2c5dd19e27e4f66024792a30ca1e485312ec Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 08:16:57 +0000
+Subject: [PATCH] dwc2d: USB joysticks and gamepads as controller events (#320)
+
+---
+ drivers/usb/dwc2d/src/hidreport.rs | 494 +++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs      |   1 +
+ drivers/usb/dwc2d/src/mouse.rs     | 226 ++++---------
+ 3 files changed, 565 insertions(+), 156 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/hidreport.rs
+
+diff --git a/drivers/usb/dwc2d/src/hidreport.rs b/drivers/usb/dwc2d/src/hidreport.rs
+new file mode 100644
+index 00000000..ae759cd9
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/hidreport.rs
+@@ -0,0 +1,494 @@
++//! HID report descriptors (HID 1.11, 6.2.2) and gamepad reports. No
++//! hardware here, so it is tested on the build host
++//! (`rustc --edition 2021 --test hidreport.rs`).
++//!
++//! `items` lists every input value of a descriptor with its report ID,
++//! usage and the usage of the top-level application collection around it,
++//! which tells a mouse (Mouse, Pointer) from a joystick or a gamepad.
++//! `Pad` turns a gamepad's reports into the controller events of
++//! orbclient, which SDL's Redox joystick driver reads.
++
++pub const PAGE_GENERIC_DESKTOP: u16 = 0x01;
++pub const PAGE_BUTTON: u16 = 0x09;
++pub const USAGE_JOYSTICK: u16 = 0x04;
++pub const USAGE_GAMEPAD: u16 = 0x05;
++pub const USAGE_X: u16 = 0x30;
++pub const USAGE_Y: u16 = 0x31;
++pub const USAGE_RZ: u16 = 0x35;
++pub const USAGE_WHEEL: u16 = 0x38;
++pub const USAGE_HAT: u16 = 0x39;
++
++// orbclient's controller axes are the generic desktop usages X to RZ; its
++// buttons are 1 to 11 (A, B, X, Y, LB, RB, BACK, START, LS, RS, GUIDE) and
++// the D-pad 0x90 to 0x93 (orbclient::CONTROLLER_*).
++pub const DPAD_UP: u16 = 0x90;
++pub const DPAD_DOWN: u16 = 0x91;
++pub const DPAD_RIGHT: u16 = 0x92;
++pub const DPAD_LEFT: u16 = 0x93;
++const LAST_BUTTON: u16 = 11;
++
++/// One value in a report: its bits and range.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Field {
++    /// Bit offset after the report ID byte, if any.
++    pub offset: usize,
++    pub size: usize,
++    pub min: i32,
++    pub max: i32,
++}
++
++impl Field {
++    pub fn get(&self, data: &[u8]) -> Option<i32> {
++        if self.size == 0 || self.size > 32 || self.offset + self.size > data.len() * 8 {
++            return None;
++        }
++        let mut raw = 0u64;
++        for bit in 0..self.size {
++            let at = self.offset + bit;
++            if data[at / 8] & (1 << (at % 8)) != 0 {
++                raw |= 1 << bit;
++            }
++        }
++        Some(if self.min < 0 && raw & (1 << (self.size - 1)) != 0 {
++            (raw as i64 - (1i64 << self.size)) as i32
++        } else {
++            raw as i32
++        })
++    }
++
++    /// `value` on a scale from `lo` to `hi`.
++    fn scale(&self, value: i32, lo: i32, hi: i32) -> i32 {
++        let span = i64::from(self.max) - i64::from(self.min);
++        if span <= 0 {
++            return lo;
++        }
++        let at = (i64::from(value) - i64::from(self.min)).clamp(0, span);
++        (i64::from(lo) + at * (i64::from(hi) - i64::from(lo)) / span) as i32
++    }
++}
++
++/// An input value of a report descriptor.
++#[derive(Clone, Copy, Debug)]
++pub struct Item {
++    pub report_id: Option<u8>,
++    pub page: u16,
++    pub usage: u16,
++    pub field: Field,
++    pub relative: bool,
++    /// The generic desktop usage of the top-level application collection
++    /// around it (Mouse, Joystick, Gamepad, ...), if any.
++    pub application: Option<u16>,
++}
++
++/// The input values of a report descriptor, or `None` when it is cut off.
++pub fn items(desc: &[u8]) -> Option<Vec<Item>> {
++    #[derive(Clone, Copy, Default)]
++    struct Globals {
++        page: u16,
++        min: i32,
++        max: i32,
++        max_unsigned: u32,
++        size: usize,
++        count: usize,
++        id: Option<u8>,
++    }
++    let mut g = Globals::default();
++    let mut stack = Vec::new();
++    let mut usages: Vec<(u16, u16)> = Vec::new();
++    let mut usage_range: (Option<u32>, Option<u32>) = (None, None);
++    let mut depth = 0usize;
++    let mut application = None;
++    // Bits so far per report ID.
++    let mut offsets: Vec<(Option<u8>, usize)> = Vec::new();
++    let mut items = Vec::new();
++
++    let mut pos = 0;
++    while pos < desc.len() {
++        let prefix = desc[pos];
++        if prefix == 0xFE {
++            // Long item: data size in the next byte.
++            pos += 3 + usize::from(*desc.get(pos + 1)?);
++            continue;
++        }
++        let len = [0, 1, 2, 4][usize::from(prefix & 3)];
++        let data = desc.get(pos + 1..pos + 1 + len)?;
++        pos += 1 + len;
++        let mut bytes = [0; 4];
++        bytes[..len].copy_from_slice(data);
++        let unsigned = u32::from_le_bytes(bytes);
++        let signed = match len {
++            1 => i32::from(data[0] as i8),
++            2 => i32::from(i16::from_le_bytes([data[0], data[1]])),
++            4 => unsigned as i32,
++            _ => 0,
++        };
++        match (prefix >> 2) & 3 {
++            // Main
++            0 => {
++                match prefix >> 4 {
++                    // Input
++                    0x8 => {
++                        let constant = unsigned & 1 != 0;
++                        let variable = unsigned & 2 != 0;
++                        let relative = unsigned & 4 != 0;
++                        let at = match offsets.iter_mut().find(|(id, _)| *id == g.id) {
++                            Some((_, at)) => at,
++                            None => {
++                                offsets.push((g.id, 0));
++                                &mut offsets.last_mut().unwrap().1
++                            }
++                        };
++                        // A logical maximum below the minimum is meant
++                        // unsigned (255 written as the byte 0xFF).
++                        let max = if g.max < g.min { g.max_unsigned as i32 } else { g.max };
++                        for i in 0..g.count {
++                            if variable && !constant {
++                                let usage = match usage_range {
++                                    (Some(lo), Some(hi)) if lo + i as u32 <= hi => {
++                                        let u = lo + i as u32;
++                                        Some(((u >> 16) as u16, u as u16))
++                                    }
++                                    _ => usages.get(i).or(usages.last()).copied(),
++                                };
++                                if let Some((page, usage)) = usage {
++                                    items.push(Item {
++                                        report_id: g.id,
++                                        page: if page == 0 { g.page } else { page },
++                                        usage,
++                                        field: Field { offset: *at, size: g.size, min: g.min, max },
++                                        relative,
++                                        application,
++                                    });
++                                }
++                            }
++                            *at += g.size;
++                        }
++                    }
++                    // Collection: the usage before a top-level application
++                    // collection says what the device is.
++                    0xA => {
++                        if depth == 0 && unsigned == 1 {
++                            application = usages.first().and_then(|&(page, usage)| {
++                                let page = if page == 0 { g.page } else { page };
++                                (page == PAGE_GENERIC_DESKTOP).then_some(usage)
++                            });
++                        }
++                        depth += 1;
++                    }
++                    // End Collection
++                    0xC => {
++                        depth = depth.saturating_sub(1);
++                        if depth == 0 {
++                            application = None;
++                        }
++                    }
++                    _ => {}
++                }
++                usages.clear();
++                usage_range = (None, None);
++            }
++            // Global
++            1 => match prefix >> 4 {
++                0x0 => g.page = unsigned as u16,
++                0x1 => g.min = signed,
++                0x2 => (g.max, g.max_unsigned) = (signed, unsigned),
++                0x7 => g.size = unsigned as usize,
++                0x8 => g.id = Some(unsigned as u8),
++                0x9 => g.count = unsigned as usize,
++                0xA => stack.push(g),
++                0xB => g = stack.pop()?,
++                _ => {}
++            },
++            // Local
++            2 => {
++                // A 4-byte usage carries its page in the high half.
++                let page = if len == 4 { (unsigned >> 16) as u16 } else { 0 };
++                let full = if len == 4 { unsigned } else { (u32::from(g.page) << 16) | unsigned };
++                match prefix >> 4 {
++                    0x0 => usages.push((page, unsigned as u16)),
++                    0x1 => usage_range.0 = Some(full),
++                    0x2 => usage_range.1 = Some(full),
++                    _ => {}
++                }
++            }
++            _ => {}
++        }
++    }
++    Some(items)
++}
++
++/// Whether an item belongs to a joystick or a gamepad, not to a pointer.
++pub fn is_pad(item: &Item) -> bool {
++    matches!(item.application, Some(USAGE_JOYSTICK | USAGE_GAMEPAD))
++}
++
++/// A controller event: `Axis(orbclient axis, value)` or `Button(orbclient
++/// button, pressed)`.
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub enum PadEvent {
++    Axis(u16, i32),
++    Button(u16, bool),
++}
++
++/// Where a joystick's or gamepad's values are in its reports.
++#[derive(Clone, Debug)]
++pub struct PadLayout {
++    pub report_id: Option<u8>,
++    /// (orbclient axis, field). A usage that comes again (cheap pads list
++    /// X four times) takes the next free axis, as Linux does.
++    axes: Vec<(u16, Field)>,
++    /// (orbclient button, field) for Button page usages 1 to 11.
++    buttons: Vec<(u16, Field)>,
++    hat: Option<Field>,
++    /// Every X and every Y value: pushed far enough, any of them presses
++    /// the D-pad, since games such as Sopwith only read the D-pad and the
++    /// cross of cheap pads is an axis pair.
++    cross_x: Vec<Field>,
++    cross_y: Vec<Field>,
++}
++
++impl PadLayout {
++    /// The first joystick or gamepad report of a descriptor.
++    pub fn parse(desc: &[u8]) -> Option<Self> {
++        let items = items(desc)?;
++        let id = items.iter().find(|i| is_pad(i))?.report_id;
++        let mut layout =
++            Self { report_id: id, axes: Vec::new(), buttons: Vec::new(), hat: None, cross_x: Vec::new(), cross_y: Vec::new() };
++        for item in items.iter().filter(|i| i.report_id == id && is_pad(i)) {
++            match (item.page, item.usage) {
++                (PAGE_GENERIC_DESKTOP, usage @ USAGE_X..=USAGE_RZ) => {
++                    if let Some(axis) = (usage..=USAGE_RZ).find(|a| !layout.axes.iter().any(|(b, _)| b == a)) {
++                        layout.axes.push((axis, item.field));
++                    }
++                    match usage {
++                        USAGE_X => layout.cross_x.push(item.field),
++                        USAGE_Y => layout.cross_y.push(item.field),
++                        _ => {}
++                    }
++                }
++                (PAGE_GENERIC_DESKTOP, USAGE_HAT) => layout.hat = layout.hat.or(Some(item.field)),
++                (PAGE_BUTTON, n @ 1..=LAST_BUTTON) => layout.buttons.push((n, item.field)),
++                _ => {}
++            }
++        }
++        (!layout.axes.is_empty() || !layout.buttons.is_empty() || layout.hat.is_some()).then_some(layout)
++    }
++
++    pub fn describe(&self) -> String {
++        format!(
++            "gamepad, {} axis(es), {} button(s){}",
++            self.axes.len(),
++            self.buttons.len(),
++            if self.hat.is_some() { ", hat" } else { "" }
++        )
++    }
++}
++
++/// A gamepad's state: only changes become events.
++pub struct Pad {
++    pub layout: PadLayout,
++    axes: Vec<Option<i32>>,
++    buttons: u32,
++    dpad: [bool; 4],
++}
++
++impl Pad {
++    pub fn new(layout: PadLayout) -> Self {
++        let axes = vec![None; layout.axes.len()];
++        Pad { layout, axes, buttons: 0, dpad: [false; 4] }
++    }
++
++    /// The events for one report (with its report ID byte, if any).
++    pub fn update(&mut self, report: &[u8]) -> Vec<PadEvent> {
++        let mut events = Vec::new();
++        let data = match self.layout.report_id {
++            Some(id) if report.first() != Some(&id) => return events,
++            Some(_) => &report[1..],
++            None => report,
++        };
++        for (n, (axis, field)) in self.layout.axes.iter().enumerate() {
++            let Some(raw) = field.get(data) else { continue };
++            // SDL reads X, Y, RX, RY from -32768 to 32767 with Y and RY
++            // negated (up is positive in orbclient), Z and RZ (triggers)
++            // from 0 to 255.
++            let value = match *axis {
++                0x32 | 0x35 => field.scale(raw, 0, 255),
++                0x31 | 0x34 => field.scale(raw, 32767, -32767),
++                _ => field.scale(raw, -32767, 32767),
++            };
++            if self.axes[n] != Some(value) {
++                self.axes[n] = Some(value);
++                events.push(PadEvent::Axis(*axis, value));
++            }
++        }
++        let mut buttons = 0;
++        for &(button, field) in &self.layout.buttons {
++            if field.get(data).is_some_and(|v| v != 0) {
++                buttons |= 1 << button;
++            }
++        }
++        for button in 1..=LAST_BUTTON {
++            let pressed = buttons & 1 << button != 0;
++            if pressed != (self.buttons & 1 << button != 0) {
++                events.push(PadEvent::Button(button, pressed));
++            }
++        }
++        self.buttons = buttons;
++
++        // The D-pad from the hat (0 up, then clockwise in eighths; outside
++        // the range: centred) and from the X and Y values pushed past
++        // half way from the middle.
++        let mut dpad = [false; 4];
++        if let Some(hat) = self.layout.hat {
++            if let Some(v) = hat.get(data).filter(|v| (hat.min..=hat.max).contains(v)) {
++                let eighth = (v - hat.min) * 8 / (hat.max - hat.min + 1).max(1);
++                dpad[0] |= matches!(eighth, 7 | 0 | 1);
++                dpad[2] |= matches!(eighth, 1..=3);
++                dpad[1] |= matches!(eighth, 3..=5);
++                dpad[3] |= matches!(eighth, 5..=7);
++            }
++        }
++        let pushed = |fields: &[Field]| {
++            let (mut low, mut high) = (false, false);
++            for f in fields {
++                if let Some(v) = f.get(data) {
++                    let percent = f.scale(v, -100, 100);
++                    low |= percent <= -50;
++                    high |= percent >= 50;
++                }
++            }
++            (low, high)
++        };
++        let (left, right) = pushed(&self.layout.cross_x);
++        let (up, down) = pushed(&self.layout.cross_y);
++        dpad[0] |= up;
++        dpad[1] |= down;
++        dpad[2] |= right;
++        dpad[3] |= left;
++        for (n, button) in [DPAD_UP, DPAD_DOWN, DPAD_RIGHT, DPAD_LEFT].into_iter().enumerate() {
++            if dpad[n] != self.dpad[n] {
++                events.push(PadEvent::Button(button, dpad[n]));
++            }
++        }
++        self.dpad = dpad;
++        events
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// The DragonRise "Generic USB Joystick" (0079:0006, 0079:0011): five
++    /// bytes of axes (X four times, then Y), a 4-bit value with an
++    /// undefined usage, 10 buttons, 10 vendor bits.
++    const DRAGONRISE: &[u8] = &[
++        0x05, 0x01, 0x09, 0x04, 0xA1, 0x01, 0xA1, 0x02, 0x75, 0x08, 0x95, 0x05, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x35,
++        0x00, 0x46, 0xFF, 0x00, 0x09, 0x30, 0x09, 0x30, 0x09, 0x30, 0x09, 0x30, 0x09, 0x31, 0x81, 0x02, 0x75, 0x04,
++        0x95, 0x01, 0x25, 0x07, 0x46, 0x3B, 0x01, 0x65, 0x14, 0x09, 0x00, 0x81, 0x42, 0x65, 0x00, 0x75, 0x01, 0x95,
++        0x0A, 0x25, 0x01, 0x45, 0x01, 0x05, 0x09, 0x19, 0x01, 0x29, 0x0A, 0x81, 0x02, 0x06, 0x00, 0xFF, 0x75, 0x01,
++        0x95, 0x0A, 0x25, 0x01, 0x45, 0x01, 0x09, 0x01, 0x81, 0x02, 0xC0, 0xA1, 0x02, 0x75, 0x08, 0x95, 0x04, 0x46,
++        0xFF, 0x00, 0x26, 0xFF, 0x00, 0x09, 0x02, 0x91, 0x02, 0xC0, 0xC0,
++    ];
++
++    /// A gamepad with a hat and two 8-bit sticks, report ID 1.
++    const HAT_PAD: &[u8] = &[
++        0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01, // Gamepad, report 1
++        0x09, 0x30, 0x09, 0x31, 0x09, 0x33, 0x09, 0x34, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x04, 0x81,
++        0x02, // X Y RX RY, -127..127
++        0x09, 0x39, 0x15, 0x00, 0x25, 0x07, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42, // hat, null state
++        0x05, 0x09, 0x19, 0x01, 0x29, 0x0C, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0C, 0x81, 0x02, // 12 buttons
++        0xC0,
++    ];
++
++    /// QEMU's usb-mouse: a boot mouse in a Mouse application collection.
++    const MOUSE: &[u8] = &[
++        0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00,
++        0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01, 0x05, 0x01, 0x09, 0x30,
++        0x09, 0x31, 0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x03, 0x81, 0x06, 0xC0, 0xC0,
++    ];
++
++    #[test]
++    fn applications() {
++        let mouse = items(MOUSE).unwrap();
++        assert!(mouse.iter().all(|i| i.application == Some(0x02) && !is_pad(i)));
++        let pad = items(DRAGONRISE).unwrap();
++        // Five axes, the undefined 4-bit value, 10 buttons, 10 vendor bits.
++        assert_eq!(pad.len(), 5 + 1 + 10 + 10);
++        assert!(pad.iter().all(|i| i.application == Some(USAGE_JOYSTICK) && is_pad(i)));
++        assert!(PadLayout::parse(MOUSE).is_none());
++    }
++
++    #[test]
++    fn dragonrise_layout() {
++        let layout = PadLayout::parse(DRAGONRISE).unwrap();
++        assert_eq!(layout.report_id, None);
++        let axes: Vec<_> = layout.axes.iter().map(|(a, f)| (*a, f.offset)).collect();
++        // X X X X Y: X, Y, Z, RX, then Y takes RY.
++        assert_eq!(axes, vec![(0x30, 0), (0x31, 8), (0x32, 16), (0x33, 24), (0x34, 32)]);
++        assert_eq!(layout.buttons.len(), 10);
++        assert_eq!(layout.buttons[0], (1, Field { offset: 44, size: 1, min: 0, max: 1 }));
++        assert!(layout.hat.is_none());
++        assert_eq!(layout.cross_x.len(), 4);
++        assert_eq!(layout.describe(), "gamepad, 5 axis(es), 10 button(s)");
++    }
++
++    /// The SNES-style pad (0079:0011) rests at 0x7F and moves the cross on
++    /// bytes 3 and 4; buttons start at bit 4 of byte 5.
++    #[test]
++    fn dragonrise_cross_and_buttons() {
++        let mut pad = Pad::new(PadLayout::parse(DRAGONRISE).unwrap());
++        let rest = [0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x0F, 0x00, 0x00];
++        let first = pad.update(&rest);
++        assert!(first.iter().all(|e| matches!(e, PadEvent::Axis(..))));
++        assert!(pad.update(&rest).is_empty());
++
++        // Cross left (byte 3 = 0) and button 1.
++        let events = pad.update(&[0x7F, 0x7F, 0x7F, 0x00, 0x7F, 0x1F, 0x00, 0x00]);
++        assert_eq!(events, vec![PadEvent::Axis(0x33, -32767), PadEvent::Button(1, true), PadEvent::Button(DPAD_LEFT, true)]);
++
++        // Cross down (byte 4 = 0xFF), left released, button 10 (bit 5 of
++        // byte 6).
++        let events = pad.update(&[0x7F, 0x7F, 0x7F, 0x7F, 0xFF, 0x0F, 0x20, 0x00]);
++        assert_eq!(
++            events,
++            vec![
++                PadEvent::Axis(0x33, -129),
++                PadEvent::Axis(0x34, -32767),
++                PadEvent::Button(1, false),
++                PadEvent::Button(10, true),
++                PadEvent::Button(DPAD_DOWN, true),
++                PadEvent::Button(DPAD_LEFT, false),
++            ]
++        );
++    }
++
++    #[test]
++    fn hat_pad() {
++        let mut pad = Pad::new(PadLayout::parse(HAT_PAD).unwrap());
++        assert_eq!(pad.layout.describe(), "gamepad, 4 axis(es), 11 button(s), hat");
++        // Another report ID: ignored.
++        assert!(pad.update(&[2, 0, 0, 0, 0, 0x08, 0, 0]).is_empty());
++        // Centred, hat null (8).
++        let events = pad.update(&[1, 0, 0, 0, 0, 0x08, 0, 0]);
++        assert_eq!(events.len(), 4);
++        // Hat right-down (3): right and down. Left stick fully up: up too.
++        let events = pad.update(&[1, 0, 0x81, 0, 0, 0x03, 0, 0]);
++        assert_eq!(
++            events,
++            vec![
++                PadEvent::Axis(0x31, 32767),
++                PadEvent::Button(DPAD_UP, true),
++                PadEvent::Button(DPAD_DOWN, true),
++                PadEvent::Button(DPAD_RIGHT, true),
++            ]
++        );
++        // Button 12 is beyond GUIDE and ignored; button 8 is START.
++        assert_eq!(pad.update(&[1, 0, 0x81, 0, 0, 0x03, 0x88, 0]), vec![PadEvent::Button(8, true)]);
++    }
++
++    #[test]
++    fn cut_off_descriptor() {
++        assert!(items(&DRAGONRISE[..3]).is_none());
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index d8fe5348..44481e87 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -20,6 +20,7 @@ mod dwc2;
+ mod ecm;
+ mod enumerate;
+ mod hid;
++mod hidreport;
+ mod lan78xx;
+ mod mouse;
+ mod regs;
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 4704ac59..10550549 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -1,19 +1,25 @@
+-//! USB mice and tablets (HID): polled on their interrupt endpoint, movement,
+-//! buttons and the wheel go to inputd like those of usbhidd.
++//! USB mice, tablets, joysticks and gamepads (HID): polled on their
++//! interrupt endpoint, movement, buttons and the wheel go to inputd like
++//! those of usbhidd.
+ //!
+ //! The report descriptor says where X, Y, the wheel and the buttons are in a
+ //! report and whether X and Y are relative (a mouse) or absolute (a tablet,
+ //! such as QEMU's usb-tablet). A boot protocol mouse whose descriptor does
+ //! not parse falls back to the boot report: buttons, X, Y.
++//!
++//! A joystick or gamepad (its application collection says so) is no
++//! pointer: its axes and buttons go to inputd as controller events, which
++//! SDL reads as the Redox joystick (see `hidreport`).
+ 
+ use std::time::{Duration, Instant};
+ 
+ use common::dma::Dma;
+ use crate::aside::Input;
+-use orbclient::{ButtonEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
++use orbclient::{ButtonEvent, ControllerAxisEvent, ControllerButtonEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
+ 
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+ use crate::enumerate::{Bus, Device};
++use crate::hidreport::{self, Field, Pad, PadEvent, PadLayout, PAGE_BUTTON, PAGE_GENERIC_DESKTOP, USAGE_WHEEL, USAGE_X, USAGE_Y};
+ use crate::regs::*;
+ 
+ const CLASS_HID: u8 = 0x03;
+@@ -32,49 +38,13 @@ const REQ_SET_PROTOCOL: u8 = 0x0B;
+ const PROTOCOL_BOOT: u16 = 0;
+ const PROTOCOL_REPORT: u16 = 1;
+ 
+-const PAGE_GENERIC_DESKTOP: u16 = 0x01;
+-const PAGE_BUTTON: u16 = 0x09;
+-const USAGE_X: u16 = 0x30;
+-const USAGE_Y: u16 = 0x31;
+-const USAGE_WHEEL: u16 = 0x38;
+-
+ /// The host channel for mouse reports; the keyboard uses 3, USB sticks 4
+ /// and 5.
+ const CHANNEL: usize = 6;
+ const POLL_INTERVAL: Duration = Duration::from_millis(10);
+-/// The largest report read; mice send 3 to 8 bytes.
++/// The largest report read; mice and gamepads send 3 to 8 bytes.
+ const REPORT_MAX: usize = 64;
+ 
+-/// One value in a report: its bits and range.
+-#[derive(Clone, Copy, Debug)]
+-struct Field {
+-    /// Bit offset after the report ID byte, if any.
+-    offset: usize,
+-    size: usize,
+-    min: i32,
+-    max: i32,
+-}
+-
+-impl Field {
+-    fn get(&self, data: &[u8]) -> Option<i32> {
+-        if self.size == 0 || self.size > 32 || self.offset + self.size > data.len() * 8 {
+-            return None;
+-        }
+-        let mut raw = 0u64;
+-        for bit in 0..self.size {
+-            let at = self.offset + bit;
+-            if data[at / 8] & (1 << (at % 8)) != 0 {
+-                raw |= 1 << bit;
+-            }
+-        }
+-        Some(if self.min < 0 && raw & (1 << (self.size - 1)) != 0 {
+-            (raw as i64 - (1i64 << self.size)) as i32
+-        } else {
+-            raw as i32
+-        })
+-    }
+-}
+-
+ /// Where a pointer's values are in its reports.
+ #[derive(Clone, Debug)]
+ struct Layout {
+@@ -102,113 +72,14 @@ impl Layout {
+     }
+ 
+     /// Find X and Y in a report descriptor (HID 1.11, 6.2.2), with the
+-    /// buttons and the wheel of the same report.
++    /// buttons and the wheel of the same report. Joysticks and gamepads are
++    /// left out: their X and Y are no pointer.
+     fn parse(desc: &[u8]) -> Option<Self> {
+-        #[derive(Clone, Copy, Default)]
+-        struct Globals {
+-            page: u16,
+-            min: i32,
+-            max: i32,
+-            max_unsigned: u32,
+-            size: usize,
+-            count: usize,
+-            id: Option<u8>,
+-        }
+-        let mut g = Globals::default();
+-        let mut stack = Vec::new();
+-        let mut usages: Vec<(u16, u16)> = Vec::new();
+-        let mut usage_range: (Option<u32>, Option<u32>) = (None, None);
+-        // Bits so far per report ID.
+-        let mut offsets: Vec<(Option<u8>, usize)> = Vec::new();
+-        // (report ID, page, usage, field, relative)
+-        let mut fields: Vec<(Option<u8>, u16, u16, Field, bool)> = Vec::new();
+-
+-        let mut pos = 0;
+-        while pos < desc.len() {
+-            let prefix = desc[pos];
+-            if prefix == 0xFE {
+-                // Long item: data size in the next byte.
+-                pos += 3 + usize::from(*desc.get(pos + 1)?);
+-                continue;
+-            }
+-            let len = [0, 1, 2, 4][usize::from(prefix & 3)];
+-            let data = desc.get(pos + 1..pos + 1 + len)?;
+-            pos += 1 + len;
+-            let mut bytes = [0; 4];
+-            bytes[..len].copy_from_slice(data);
+-            let unsigned = u32::from_le_bytes(bytes);
+-            let signed = match len {
+-                1 => i32::from(data[0] as i8),
+-                2 => i32::from(i16::from_le_bytes([data[0], data[1]])),
+-                4 => unsigned as i32,
+-                _ => 0,
+-            };
+-            match (prefix >> 2) & 3 {
+-                // Main
+-                0 => {
+-                    let tag = prefix >> 4;
+-                    if tag == 0x8 {
+-                        let constant = unsigned & 1 != 0;
+-                        let variable = unsigned & 2 != 0;
+-                        let relative = unsigned & 4 != 0;
+-                        let at = match offsets.iter_mut().find(|(id, _)| *id == g.id) {
+-                            Some((_, at)) => at,
+-                            None => {
+-                                offsets.push((g.id, 0));
+-                                &mut offsets.last_mut().unwrap().1
+-                            }
+-                        };
+-                        // A logical maximum below the minimum is meant
+-                        // unsigned (255 written as the byte 0xFF).
+-                        let max = if g.max < g.min { g.max_unsigned as i32 } else { g.max };
+-                        for i in 0..g.count {
+-                            if variable && !constant {
+-                                let usage = match usage_range {
+-                                    (Some(lo), Some(hi)) if lo + i as u32 <= hi => {
+-                                        let u = lo + i as u32;
+-                                        Some(((u >> 16) as u16, u as u16))
+-                                    }
+-                                    _ => usages.get(i).or(usages.last()).copied(),
+-                                };
+-                                if let Some((page, usage)) = usage {
+-                                    let page = if page == 0 { g.page } else { page };
+-                                    let field = Field { offset: *at, size: g.size, min: g.min, max };
+-                                    fields.push((g.id, page, usage, field, relative));
+-                                }
+-                            }
+-                            *at += g.size;
+-                        }
+-                    }
+-                    usages.clear();
+-                    usage_range = (None, None);
+-                }
+-                // Global
+-                1 => match prefix >> 4 {
+-                    0x0 => g.page = unsigned as u16,
+-                    0x1 => g.min = signed,
+-                    0x2 => (g.max, g.max_unsigned) = (signed, unsigned),
+-                    0x7 => g.size = unsigned as usize,
+-                    0x8 => g.id = Some(unsigned as u8),
+-                    0x9 => g.count = unsigned as usize,
+-                    0xA => stack.push(g),
+-                    0xB => g = stack.pop()?,
+-                    _ => {}
+-                },
+-                // Local
+-                2 => {
+-                    // A 4-byte usage carries its page in the high half.
+-                    let page = if len == 4 { (unsigned >> 16) as u16 } else { 0 };
+-                    let full = if len == 4 { unsigned } else { (u32::from(g.page) << 16) | unsigned };
+-                    match prefix >> 4 {
+-                        0x0 => usages.push((page, unsigned as u16)),
+-                        0x1 => usage_range.0 = Some(full),
+-                        0x2 => usage_range.1 = Some(full),
+-                        _ => {}
+-                    }
+-                }
+-                _ => {}
+-            }
+-        }
++        let fields: Vec<_> = hidreport::items(desc)?
++            .into_iter()
++            .filter(|i| !hidreport::is_pad(i))
++            .map(|i| (i.report_id, i.page, i.usage, i.field, i.relative))
++            .collect();
+ 
+         let find = |id: Option<u8>, page: u16, usage: u16| {
+             fields.iter().find(|f| f.0 == id && f.1 == page && f.2 == usage).map(|f| (f.3, f.4))
+@@ -254,10 +125,17 @@ pub struct MouseFunction {
+     boot_reports: bool,
+     endpoint: u8,
+     max_packet: u16,
+-    layout: Layout,
++    kind: Kind,
+ }
+ 
+-/// Find a pointer among the device's HID interfaces (not a boot keyboard).
++#[derive(Clone, Debug)]
++enum Kind {
++    Pointer(Layout),
++    Gamepad(PadLayout),
++}
++
++/// Find a pointer or a gamepad among the device's HID interfaces (not a
++/// boot keyboard).
+ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+     let config = bus
+         .request(
+@@ -314,10 +192,18 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+                 report_len.max(64),
+             )
+             .ok();
+-        let (layout, boot_reports) = match report.as_deref().and_then(Layout::parse) {
+-            Some(layout) => (layout, false),
+-            None if boot => (Layout::boot(), true),
+-            None => continue,
++        let report = report.as_deref();
++        let (kind, boot_reports) = if let Some(layout) = report.and_then(Layout::parse) {
++            (Kind::Pointer(layout), false)
++        } else if let Some(layout) = report.and_then(PadLayout::parse) {
++            // Pads differ a lot: the descriptor helps when one maps badly.
++            let hex: String = report.unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect();
++            println!("dwc2d: gamepad report descriptor: {hex}");
++            (Kind::Gamepad(layout), false)
++        } else if boot {
++            (Kind::Pointer(Layout::boot()), true)
++        } else {
++            continue;
+         };
+         return Some(MouseFunction {
+             address: device.address,
+@@ -330,7 +216,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+             boot_reports,
+             endpoint,
+             max_packet,
+-            layout,
++            kind,
+         });
+     }
+     None
+@@ -357,10 +243,14 @@ pub fn init(bus: &mut Bus, f: &MouseFunction, configure: bool) -> Result<(), Err
+ 
+ impl MouseFunction {
+     pub fn describe(&self) -> String {
+-        self.layout.describe()
++        match &self.kind {
++            Kind::Pointer(layout) => layout.describe(),
++            Kind::Gamepad(layout) => layout.describe(),
++        }
+     }
+ }
+ 
++
+ pub struct Mouse {
+     hc: Dwc2,
+     f: MouseFunction,
+@@ -368,6 +258,8 @@ pub struct Mouse {
+     pid: u32,
+     buttons: [bool; 3],
+     position: Option<(i32, i32)>,
++    /// A gamepad's last state.
++    pad: Option<Pad>,
+     input: Input,
+     next_poll: Instant,
+     /// Print every event (tests without a person).
+@@ -379,9 +271,14 @@ impl Mouse {
+         let input = Input::new()
+             .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+             .ok()?;
++        let pad = match &f.kind {
++            Kind::Gamepad(layout) => Some(Pad::new(layout.clone())),
++            Kind::Pointer(_) => None,
++        };
+         Some(Self {
+             hc,
+             f,
++            pad,
+             buf: Dma::new([0; REPORT_MAX]).expect("dwc2d: DMA allocation failed"),
+             pid: PID_DATA0,
+             buttons: [false; 3],
+@@ -428,7 +325,23 @@ impl Mouse {
+     }
+ 
+     fn update(&mut self, report: &[u8]) {
+-        let layout = self.f.layout.clone();
++        if let Some(pad) = self.pad.as_mut() {
++            for event in pad.update(report) {
++                match event {
++                    PadEvent::Axis(axis, value) => {
++                        let event = ControllerAxisEvent { id: 0, axis, value };
++                        self.send(event.to_event(), format_args!("axis 0x{axis:02x} {value}"));
++                    }
++                    PadEvent::Button(button, pressed) => {
++                        let event = ControllerButtonEvent { id: 0, button, pressed };
++                        let what = if pressed { "pressed" } else { "released" };
++                        self.send(event.to_event(), format_args!("button 0x{button:02x} {what}"));
++                    }
++                }
++            }
++            return;
++        }
++        let Kind::Pointer(layout) = self.f.kind.clone() else { return };
+         let data = match layout.report_id {
+             Some(id) if report.first() != Some(&id) => return,
+             Some(_) => &report[1..],
+@@ -464,7 +377,8 @@ impl Mouse {
+ 
+     fn send(&mut self, event: orbclient::Event, what: std::fmt::Arguments) {
+         if self.log {
+-            println!("dwc2d: mouse: {what}");
++            let kind = if self.pad.is_some() { "gamepad" } else { "mouse" };
++            println!("dwc2d: {kind}: {what}");
+         }
+         let _ = self.input.write_event(event);
+     }
+-- 
+2.53.0
+

@@ -46,6 +46,17 @@
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
   same visit as #50.
+- [#320](https://github.com/redox-rpi/redox-rpi/issues/320) USB joysticks
+  and gamepads, branch [`usb-gamepad`](https://github.com/redox-rpi/redox-rpi/tree/usb-gamepad),
+  base `0092`. A HID device whose application collection says Joystick or
+  Gamepad is no longer taken for a mouse (the DragonRise pad moved the
+  cursor); its axes, buttons and hat go to inputd as controller events,
+  which SDL2 reads as the Redox joystick (Sopwith, other SDL games). X/Y
+  pushed half way and the hat also press the D-pad. dwc2d prints the
+  report descriptor of each pad. Host tests for the parser
+  (`hidreport.rs`); QEMU has no USB gamepad, so `scripts/test-usb-mouse.sh`
+  checks only that mice and tablets still work. Person test with the
+  DragonRise pad at a visit.
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
