@@ -1,0 +1,32 @@
+# Container for our own GitHub Actions runner on the build host (label
+# homenode). Guide and isolation rules: docs/build-host.md "CI runner".
+# Build as the user ci-runner:  podman build -t redox-rpi-runner scripts/ci-runner
+FROM docker.io/library/ubuntu:24.04
+
+# What qemu-boot.yml and upstream-weekly.yml install on GitHub's runners
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq zstd xz-utils make build-essential pkg-config \
+      python3 python3-pyelftools qemu-system-arm \
+      gcc-aarch64-linux-gnu bison flex bc swig libssl-dev libgnutls28-dev \
+      device-tree-compiler libicu74 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The runner as an unprivileged user; no sudo in the container
+RUN useradd -m -u 1001 runner
+USER runner
+WORKDIR /home/runner
+
+# GitHub's runner, pinned; the digest is the release's own (sha256 field)
+ARG RUNNER_VERSION=2.338.2
+ARG RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+RUN curl -fsSLo runner.tgz \
+      https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
+    && echo "${RUNNER_SHA256}  runner.tgz" | sha256sum -c - \
+    && mkdir actions-runner && tar -xzf runner.tgz -C actions-runner && rm runner.tgz
+
+# rustup; build-kernel.sh installs the kernel's pinned toolchain itself
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ENV PATH=/home/runner/.cargo/bin:$PATH RUNNER_ALLOW_RUNASROOT=0
+
+COPY --chown=runner entrypoint.sh /home/runner/entrypoint.sh
+ENTRYPOINT ["/home/runner/entrypoint.sh"]

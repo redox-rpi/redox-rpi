@@ -1,0 +1,24 @@
+# systemd user unit of the user ci-runner (not zehrer): our GitHub Actions
+# runner in a rootless podman container. docs/build-host.md "CI runner".
+# Install: ~ci-runner/.config/systemd/user/ci-runner.service, then
+#   systemctl --user enable --now ci-runner   (as ci-runner, with linger on)
+[Unit]
+Description=redox-rpi GitHub Actions runner (label homenode)
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=30
+# No host directories except the runner's own state volume; no devices, no
+# host loopback (pasta --no-map-gw), so the host's services stay out of reach.
+ExecStart=/usr/bin/podman run --rm --name ci-runner \
+  --network pasta:--no-map-gw \
+  --cpus 6 --memory 12g --pids-limit 4096 \
+  --security-opt no-new-privileges --cap-drop all \
+  -v ci-runner-state:/home/runner/state \
+  -v %h/reg-token:/run/secrets/reg-token:ro \
+  redox-rpi-runner
+ExecStop=/usr/bin/podman stop -t 120 ci-runner
+
+[Install]
+WantedBy=default.target

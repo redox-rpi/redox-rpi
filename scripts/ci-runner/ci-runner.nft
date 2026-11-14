@@ -1,0 +1,15 @@
+# nftables rules for the build host: the user ci-runner (its rootless podman
+# container sends from processes of that user) reaches the internet and the
+# router's DNS, nothing else on the home network or the host itself.
+# docs/build-host.md "CI runner". Install as root:
+#   cp ci-runner.nft /etc/nftables.d/ && nft -f /etc/nftables.d/ci-runner.nft
+# and include it from /etc/nftables.conf so it survives reboots.
+table inet ci_runner {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		meta skuid != "ci-runner" accept
+		ip daddr { 127.0.0.53, 192.168.178.1 } meta l4proto { tcp, udp } th dport 53 accept
+		ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } counter drop
+		ip6 daddr { ::1, fc00::/7, fe80::/10 } counter drop
+	}
+}
