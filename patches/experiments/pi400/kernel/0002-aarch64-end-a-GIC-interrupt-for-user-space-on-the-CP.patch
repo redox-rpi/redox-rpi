@@ -1,0 +1,156 @@
+From c001d10446df667f979652385a0607751d9c283d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 14 Nov 2026 09:05:40 +0000
+Subject: [PATCH] aarch64: end a GIC interrupt for user space on the CPU that
+ took it
+
+A user space driver acknowledges its interrupt through the irq scheme,
+and the kernel wrote the EOI then, on whatever CPU ran that write. The
+GICv2 CPU interface is per CPU: an EOI from another CPU does not end the
+interrupt, which stays active on the CPU that took it and blocks that
+CPU timer and IPIs at the same priority. On the Raspberry Pi 400 the
+whole system stopped soon after bcmgenetd got its first interrupts.
+
+Mask the SPI at the distributor and end it at once on the CPU that took
+it; the driver acknowledgement unmasks it again. A level interrupt that
+is still asserted fires again then.
+
+Also write only the one bit to GICD_ICENABLER in irq_disable: writing
+back the value read disabled every enabled line of the word.
+---
+ src/arch/aarch64/device/irqchip/gic.rs | 35 +++++++++++++++++++++++---
+ src/arch/aarch64/interrupt/irq.rs      |  9 +++++++
+ src/dtb/irqchip.rs                     | 22 +++++++++++++++-
+ 3 files changed, 61 insertions(+), 5 deletions(-)
+
+diff --git a/src/arch/aarch64/device/irqchip/gic.rs b/src/arch/aarch64/device/irqchip/gic.rs
+index a89befc1..9c56c939 100644
+--- a/src/arch/aarch64/device/irqchip/gic.rs
++++ b/src/arch/aarch64/device/irqchip/gic.rs
+@@ -120,6 +120,28 @@ pub(crate) fn enable_local_irq(hwirq: u32) -> Result<()> {
+     Ok(())
+ }
+ 
++/// Masks one shared peripheral interrupt at the distributor. GICD_ICENABLER
++/// is write-one-to-clear, so no other line changes. False if no GIC is up or
++/// `hwirq` is no SPI.
++pub(crate) fn mask_spi(hwirq: u32) -> bool {
++    let dist = GICD_BASE.load(Ordering::Acquire);
++    if dist == 0 || !(32..1020).contains(&hwirq) {
++        return false;
++    }
++    write32(dist, GICD_ICENABLER + 4 * (hwirq / 32), 1 << (hwirq % 32));
++    true
++}
++
++/// Unmasks one shared peripheral interrupt (write-one-to-set).
++pub(crate) fn unmask_spi(hwirq: u32) -> bool {
++    let dist = GICD_BASE.load(Ordering::Acquire);
++    if dist == 0 || !(32..1020).contains(&hwirq) {
++        return false;
++    }
++    write32(dist, GICD_ISENABLER + 4 * (hwirq / 32), 1 << (hwirq % 32));
++    true
++}
++
+ pub(crate) fn acknowledge_local() -> Option<u32> {
+     let cpu = GICC_BASE.load(Ordering::Acquire);
+     (cpu != 0).then(|| read32(cpu, GICC_IAR))
+@@ -266,6 +288,12 @@ impl InterruptController for GenericInterruptController {
+     fn irq_eoi(&mut self, irq_num: u32) {
+         unsafe { self.gic_cpu_if.irq_eoi(irq_num) }
+     }
++    fn irq_user_ack(&mut self, irq_num: u32) {
++        // dispatch() masked the SPI and ended it on the CPU that took it.
++        if !unmask_spi(irq_num) {
++            self.irq_eoi(irq_num);
++        }
++    }
+     fn irq_enable(&mut self, irq_num: u32) {
+         unsafe { self.gic_dist_if.irq_enable(irq_num) }
+     }
+@@ -368,11 +396,10 @@ impl GicDistIf {
+ 
+     pub unsafe fn irq_disable(&mut self, irq: u32) {
+         unsafe {
++            // Write-one-to-clear: write only this line's bit. Writing back
++            // the value read would disable every enabled line of the word.
+             let offset = GICD_ICENABLER + (4 * (irq / 32));
+-            let shift = 1 << (irq % 32);
+-            let mut val = self.read(offset);
+-            val |= shift;
+-            self.write(offset, val);
++            self.write(offset, 1 << (irq % 32));
+         }
+     }
+ 
+diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
+index 1331ab48..d13b5749 100644
+--- a/src/arch/aarch64/interrupt/irq.rs
++++ b/src/arch/aarch64/interrupt/irq.rs
+@@ -23,6 +23,15 @@ unsafe fn dispatch() {
+     if let Some(virq) = virq
+         && virq < 1024
+     {
++        // A user space driver acknowledges this interrupt later through the
++        // irq scheme, maybe on another CPU. The GIC CPU interface is per CPU:
++        // an EOI written there does not end the interrupt here, so it stays
++        // active and blocks this CPU's timer and IPIs at the same priority
++        // (the Pi 400 hung with bcmgenetd's interrupt). Mask the SPI, end it
++        // here now, and unmask it when the driver acknowledges.
++        if unsafe { IRQ_CHIP.delivers_to_user(virq as u32) } && irqchip::gic::mask_spi(hwirq) {
++            irqchip::end_root(raw_iar);
++        }
+         unsafe { IRQ_CHIP.trigger_virq(virq as u32, &mut token) };
+     } else if hwirq == u32::MAX {
+         // The BCM2836 local controller found nothing pending: the source,
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index f65e7e5e..55cb348f 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -46,6 +46,11 @@ pub trait InterruptController: InterruptHandler {
+     ) -> Result<()>;
+     fn irq_ack(&mut self) -> u32;
+     fn irq_eoi(&mut self, irq_num: u32);
++    /// A user space driver acknowledged the interrupt through the irq scheme.
++    /// This may run on any CPU, not the one that took the interrupt.
++    fn irq_user_ack(&mut self, irq_num: u32) {
++        self.irq_eoi(irq_num)
++    }
+     fn irq_enable(&mut self, irq_num: u32);
+     #[allow(unused)]
+     fn irq_disable(&mut self, irq_num: u32);
+@@ -282,6 +287,21 @@ pub struct IrqChipCore {
+ }
+ 
+ impl IrqChipCore {
++    /// True if an interrupt goes straight to a user space driver: no kernel
++    /// handler and no chained controller.
++    pub fn delivers_to_user(&self, virq: u32) -> bool {
++        let desc = &self.irq_desc[virq as usize];
++        desc.handler.is_none() && desc.basic.child_ic_idx.is_none()
++    }
++
++    pub fn irq_user_ack(&mut self, virq: u32) {
++        let irq_desc = &self.irq_desc[virq as usize];
++        let ic_idx = irq_desc.basic.ic_idx;
++        let hwirq = irq_desc.basic.ic_irq;
++
++        self.irq_chip_list.chips[ic_idx].ic.irq_user_ack(hwirq)
++    }
++
+     pub fn irq_eoi(&mut self, virq: u32) {
+         let irq_desc = &self.irq_desc[virq as usize];
+         let ic_idx = irq_desc.basic.ic_idx;
+@@ -372,7 +392,7 @@ impl IrqChipCore {
+ 
+ pub unsafe fn acknowledge(irq: usize) {
+     unsafe {
+-        IRQ_CHIP.irq_eoi(irq as u32);
++        IRQ_CHIP.irq_user_ack(irq as u32);
+     }
+ }
+ 
+-- 
+2.53.0
+

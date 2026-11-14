@@ -1,0 +1,1447 @@
+From 642a3217705c54357cdc8bdb450e597e22a22fce Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 11:21:41 +0000
+Subject: [PATCH] bcmgenetd: Ethernet of the Raspberry Pi 4 and 400 (BCM2711
+ GENET v5)
+
+A network scheme driver for the GENET v5 controller with its BCM54213PE
+PHY: one receive and one transmit ring (the default queue 16), receive
+and transmit interrupts, MDIO for the link, a link check every second.
+
+U-Boot leaves GENET running after a network boot (rings set up, receive
+on). The driver turns receive off, stops both DMA engines and waits for
+them before the soft reset, so no frame lands in U-Boot's buffers later.
+
+The MAC address comes from the devicetree, else from the firmware
+mailbox (tag 0x00010003, now a "mac" line in rpi-firmwared's board
+file), else from the controller registers U-Boot left set, else from the
+serial number. The PHY keeps the setup the firmware or U-Boot gave it.
+
+The register layout follows FreeBSD if_genet.c (BSD-2-Clause); no GPL
+code was used. Register, ring, MDIO and devicetree logic is a library
+with host unit tests (cargo test --lib).
+
+redox-rpi #306.
+---
+ Cargo.toml                         |   1 +
+ Makefile                           |   2 +-
+ drivers/net/bcmgenetd/Cargo.toml   |  27 ++
+ drivers/net/bcmgenetd/src/dt.rs    |  99 ++++++
+ drivers/net/bcmgenetd/src/lib.rs   |  36 ++
+ drivers/net/bcmgenetd/src/main.rs  | 401 ++++++++++++++++++++++
+ drivers/net/bcmgenetd/src/regs.rs  | 174 ++++++++++
+ drivers/net/bcmgenetd/src/ring.rs  | 532 +++++++++++++++++++++++++++++
+ drivers/rpi-firmwared/src/main.rs  |   8 +
+ drivers/rpi-firmwared/src/mbox.rs  |   4 +-
+ init.initfs.d/40_bcmgenetd.service |   9 +
+ init.initfs.d/40_drivers.target    |   1 +
+ 12 files changed, 1292 insertions(+), 2 deletions(-)
+ create mode 100644 drivers/net/bcmgenetd/Cargo.toml
+ create mode 100644 drivers/net/bcmgenetd/src/dt.rs
+ create mode 100644 drivers/net/bcmgenetd/src/lib.rs
+ create mode 100644 drivers/net/bcmgenetd/src/main.rs
+ create mode 100644 drivers/net/bcmgenetd/src/regs.rs
+ create mode 100644 drivers/net/bcmgenetd/src/ring.rs
+ create mode 100644 init.initfs.d/40_bcmgenetd.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index b1e3c33..702dfea 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -47,6 +47,7 @@ members = [
+     "drivers/input/ps2d",
+     "drivers/input/usbhidd",
+ 
++    "drivers/net/bcmgenetd",
+     "drivers/net/driver-network",
+     "drivers/net/e1000d",
+     "drivers/net/ixgbed",
+diff --git a/Makefile b/Makefile
+index 29a0646..3306efd 100644
+--- a/Makefile
++++ b/Makefile
+@@ -31,7 +31,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+ endif
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
++	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d bcmgenetd
+ endif
+ 
+ # For testing/benchmarking only
+diff --git a/drivers/net/bcmgenetd/Cargo.toml b/drivers/net/bcmgenetd/Cargo.toml
+new file mode 100644
+index 0000000..193acd3
+--- /dev/null
++++ b/drivers/net/bcmgenetd/Cargo.toml
+@@ -0,0 +1,27 @@
++[package]
++name = "bcmgenetd"
++description = "Broadcom GENET v5 Ethernet (BCM2711: Raspberry Pi 4 and 400) as a network scheme"
++version = "0.1.0"
++edition = "2021"
++
++[lib]
++path = "src/lib.rs"
++
++[[bin]]
++name = "bcmgenetd"
++path = "src/main.rs"
++
++# The register, ring and devicetree logic in the library has no Redox
++# dependencies, so `cargo test --lib` runs on the build host.
++[target.'cfg(target_os = "redox")'.dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++driver-network = { path = "../driver-network" }
++
++libredox.workspace = true
++redox_event.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/net/bcmgenetd/src/dt.rs b/drivers/net/bcmgenetd/src/dt.rs
+new file mode 100644
+index 0000000..b63a73c
+--- /dev/null
++++ b/drivers/net/bcmgenetd/src/dt.rs
+@@ -0,0 +1,99 @@
++//! Devicetree helpers that need no parser: address translation through
++//! `ranges` and `dma-ranges`, and reading a MAC address property.
++
++/// Reads `cells` big-endian 32-bit cells as one number.
++fn number(cells: &[u32]) -> u64 {
++    cells.iter().fold(0, |acc, &c| (acc << 32) | u64::from(c))
++}
++
++/// Splits raw property bytes into big-endian cells.
++pub fn cells(raw: &[u8]) -> Vec<u32> {
++    raw.chunks_exact(4).map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]])).collect()
++}
++
++/// Translates `addr` through a `ranges` (or `dma-ranges`) property, given as
++/// cells: each entry is a child address, a parent address and a size.
++/// An empty property means identity; an address in no entry gives `None`.
++pub fn translate(addr: u64, ranges: &[u32], child_cells: usize, parent_cells: usize, size_cells: usize) -> Option<u64> {
++    if ranges.is_empty() {
++        return Some(addr);
++    }
++    let entry = child_cells + parent_cells + size_cells;
++    for e in ranges.chunks_exact(entry) {
++        let child = number(&e[..child_cells]);
++        let parent = number(&e[child_cells..child_cells + parent_cells]);
++        let size = number(&e[child_cells + parent_cells..]);
++        if addr >= child && addr - child < size {
++            return Some(parent + (addr - child));
++        }
++    }
++    None
++}
++
++/// The other way: a parent address to the child address space (for
++/// `dma-ranges`, CPU physical to bus address).
++pub fn translate_back(addr: u64, ranges: &[u32], child_cells: usize, parent_cells: usize, size_cells: usize) -> Option<u64> {
++    if ranges.is_empty() {
++        return Some(addr);
++    }
++    let entry = child_cells + parent_cells + size_cells;
++    for e in ranges.chunks_exact(entry) {
++        let child = number(&e[..child_cells]);
++        let parent = number(&e[child_cells..child_cells + parent_cells]);
++        let size = number(&e[child_cells + parent_cells..]);
++        if addr >= parent && addr - parent < size {
++            return Some(child + (addr - parent));
++        }
++    }
++    None
++}
++
++/// A usable unicast MAC address from a `local-mac-address` or
++/// `mac-address` property.
++pub fn mac(raw: &[u8]) -> Option<[u8; 6]> {
++    let mac: [u8; 6] = raw.get(..6)?.try_into().ok()?;
++    let valid = mac != [0; 6] && mac != [0xff; 6] && mac[0] & 1 == 0;
++    valid.then_some(mac)
++}
++
++#[cfg(test)]
++mod test {
++    use super::*;
++
++    // /scb of bcm2711-rpi-400.dtb (firmware 1.20260915): #address-cells 2
++    // and #size-cells 2 below a root with #address-cells 2. The size of an
++    // entry has the child's #size-cells.
++    const SCB_RANGES: [u32; 24] = [
++        0x0, 0x7c00_0000, 0x0, 0xfc00_0000, 0x0, 0x0380_0000, //
++        0x0, 0x4000_0000, 0x0, 0xff80_0000, 0x0, 0x0080_0000, //
++        0x6, 0x0000_0000, 0x6, 0x0000_0000, 0x0, 0x4000_0000, //
++        0x0, 0x0000_0000, 0x0, 0x0000_0000, 0x0, 0xfc00_0000,
++    ];
++    const SCB_DMA_RANGES: [u32; 12] = [
++        0x4, 0x7c00_0000, 0x0, 0xfc00_0000, 0x0, 0x0380_0000, //
++        0x0, 0x0000_0000, 0x0, 0x0000_0000, 0x4, 0x0000_0000,
++    ];
++
++    #[test]
++    fn genet_registers() {
++        assert_eq!(translate(0x7d58_0000, &SCB_RANGES, 2, 2, 2), Some(0xfd58_0000));
++        assert_eq!(translate(0x1000, &SCB_RANGES, 2, 2, 2), Some(0x1000), "low RAM entry");
++        assert_eq!(translate(0x1_0000_0000, &SCB_RANGES, 2, 2, 2), None);
++        assert_eq!(translate(0x1234, &[], 2, 2, 2), Some(0x1234));
++    }
++
++    #[test]
++    fn ram_is_bus_address() {
++        assert_eq!(translate_back(0x3b00_0000, &SCB_DMA_RANGES, 2, 2, 2), Some(0x3b00_0000));
++        assert_eq!(translate_back(0xfd58_0000, &SCB_DMA_RANGES, 2, 2, 2), Some(0x4_7d58_0000));
++    }
++
++    #[test]
++    fn mac_property() {
++        assert_eq!(mac(&[0xdc, 0xa6, 0x32, 1, 2, 3]), Some([0xdc, 0xa6, 0x32, 1, 2, 3]));
++        assert_eq!(mac(&[0; 6]), None);
++        assert_eq!(mac(&[1, 2, 3, 4, 5, 6]), None, "multicast");
++        assert_eq!(mac(&[1, 2]), None);
++        assert_eq!(cells(&[0, 0, 0, 1, 0xfd, 0x58, 0, 0]), vec![1, 0xfd58_0000]);
++    }
++}
+diff --git a/drivers/net/bcmgenetd/src/lib.rs b/drivers/net/bcmgenetd/src/lib.rs
+new file mode 100644
+index 0000000..17722a0
+--- /dev/null
++++ b/drivers/net/bcmgenetd/src/lib.rs
+@@ -0,0 +1,36 @@
++//! Broadcom GENET v5, the Ethernet controller of the BCM2711 (Raspberry Pi 4
++//! and 400), redox-rpi #306.
++//!
++//! The register layout follows FreeBSD's `if_genet.c` and `if_genetreg.h`
++//! (BSD-2-Clause, Mike Karels and Jared McNeill). No GPL code was used.
++//!
++//! This library holds what can be tested on the build host: the register
++//! offsets, the receive and transmit rings over a [`Mmio`] interface, the
++//! MDIO commands and the devicetree address translation. `main.rs` maps the
++//! real registers and serves the network scheme.
++
++pub mod dt;
++pub mod regs;
++pub mod ring;
++
++/// 32-bit register access, so the ring logic can run against a fake
++/// register file in tests.
++pub trait Mmio {
++    fn read(&self, offset: usize) -> u32;
++    fn write(&mut self, offset: usize, value: u32);
++
++    fn set(&mut self, offset: usize, bits: u32) {
++        let value = self.read(offset);
++        self.write(offset, value | bits);
++    }
++
++    fn clear(&mut self, offset: usize, bits: u32) {
++        let value = self.read(offset);
++        self.write(offset, value & !bits);
++    }
++
++    /// Orders buffer memory against register accesses, so the controller
++    /// sees a frame before its producer index and the CPU reads a received
++    /// frame only after its index. Nothing to do in tests.
++    fn barrier(&self) {}
++}
+diff --git a/drivers/net/bcmgenetd/src/main.rs b/drivers/net/bcmgenetd/src/main.rs
+new file mode 100644
+index 0000000..b85577f
+--- /dev/null
++++ b/drivers/net/bcmgenetd/src/main.rs
+@@ -0,0 +1,401 @@
++//! bcmgenetd: the Ethernet port of the Raspberry Pi 4 and 400 (BCM2711
++//! GENET v5 with a BCM54213PE PHY) as the network scheme `network.genet`.
++//!
++//! One receive and one transmit ring (the default queue 16), interrupts for
++//! both, a link check every second. The PHY keeps the settings the firmware
++//! or U-Boot gave it; only a powered-down PHY is woken and autonegotiation
++//! restarted.
++
++#[cfg(not(target_os = "redox"))]
++fn main() {
++    eprintln!("bcmgenetd runs on Redox only");
++}
++
++#[cfg(target_os = "redox")]
++fn main() {
++    daemon::Daemon::new(redox::daemon);
++}
++
++#[cfg(target_os = "redox")]
++mod redox {
++    use std::fs::{File, OpenOptions};
++    use std::io::{Read, Write};
++    use std::os::unix::fs::OpenOptionsExt;
++    use std::os::unix::io::AsRawFd;
++    use std::process;
++    use std::time::{Duration, Instant};
++
++    use bcmgenetd::regs::{BUF_SIZE, DESC_COUNT, IRQ_RXDMA_DONE, IRQ_TXDMA_DONE};
++    use bcmgenetd::ring::{Genet, PhyMode, Speed, TxError};
++    use bcmgenetd::{dt, Mmio};
++    use common::dma::Dma;
++    use driver_network::{NetworkAdapter, NetworkScheme};
++    use event::{user_data, EventQueue};
++    use fdt::node::FdtNode;
++    use fdt::Fdt;
++    use syscall::error::{Error, Result, EIO};
++
++    const COMPATIBLE: &[&str] = &["brcm,bcm2711-genet-v5"];
++    /// How long the start may wait for the link, so DHCP does not start into
++    /// a dead cable (gigabit autonegotiation takes about 3 s).
++    const BOOT_LINK_WAIT: Duration = Duration::from_secs(5);
++    /// Receive poll in case an interrupt is lost; every tenth also checks
++    /// the link.
++    const POLL: Duration = Duration::from_millis(100);
++
++    /// About 10 µs, without sleeping (see redox-rpi #372: a nanosleep can
++    /// miss its wakeup).
++    fn delay() {
++        let start = Instant::now();
++        while start.elapsed() < Duration::from_micros(10) {
++            std::hint::spin_loop();
++        }
++    }
++
++    struct Regs(usize);
++
++    impl Mmio for Regs {
++        fn read(&self, offset: usize) -> u32 {
++            unsafe { ((self.0 + offset) as *const u32).read_volatile() }
++        }
++        fn write(&mut self, offset: usize, value: u32) {
++            unsafe { ((self.0 + offset) as *mut u32).write_volatile(value) }
++        }
++        fn barrier(&self) {
++            unsafe { core::arch::asm!("dsb sy") }
++        }
++    }
++
++    struct Buf(Dma<[u8]>);
++
++    impl AsRef<[u8]> for Buf {
++        fn as_ref(&self) -> &[u8] {
++            &self.0
++        }
++    }
++    impl AsMut<[u8]> for Buf {
++        fn as_mut(&mut self) -> &mut [u8] {
++            &mut self.0
++        }
++    }
++
++    fn buffer() -> Buf {
++        let dma = Dma::<[u8]>::zeroed_slice(DESC_COUNT * BUF_SIZE).expect("bcmgenetd: DMA allocation failed");
++        Buf(unsafe { dma.assume_init() })
++    }
++
++    struct Adapter {
++        genet: Genet<Regs, Buf>,
++        mac: [u8; 6],
++        phy: u32,
++        mode: PhyMode,
++        link: Option<Speed>,
++    }
++
++    impl Adapter {
++        /// Looks at the PHY and sets the MAC to its speed when it changed.
++        fn check_link(&mut self) {
++            let link = self.genet.phy_link(self.phy, delay);
++            if link == self.link {
++                return;
++            }
++            match link {
++                Some(speed) => {
++                    self.genet.set_link(speed, self.mode);
++                    println!("bcmgenetd: link up, {:?}", speed);
++                }
++                None => println!("bcmgenetd: link down"),
++            }
++            self.link = link;
++        }
++    }
++
++    impl NetworkAdapter for Adapter {
++        fn mac_address(&mut self) -> [u8; 6] {
++            self.mac
++        }
++
++        fn available_for_read(&mut self) -> usize {
++            self.genet.rx_pending()
++        }
++
++        fn read_packet(&mut self, buf: &mut [u8]) -> Result<Option<usize>> {
++            Ok(self.genet.receive(buf))
++        }
++
++        fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
++            // The ring holds 256 frames; when it is full, wait for the
++            // controller a little, then drop the frame as a cable would.
++            let start = Instant::now();
++            loop {
++                match self.genet.transmit(buf) {
++                    Ok(()) => return Ok(buf.len()),
++                    Err(TxError::TooLong) => return Err(Error::new(EIO)),
++                    Err(TxError::Full) if start.elapsed() < Duration::from_millis(10) => std::hint::spin_loop(),
++                    Err(TxError::Full) => return Ok(buf.len()),
++                }
++            }
++        }
++    }
++
++    fn cells(node: FdtNode, name: &str) -> Option<Vec<u32>> {
++        Some(dt::cells(node.property(name)?.value))
++    }
++
++    fn cell(node: FdtNode, name: &str) -> Option<usize> {
++        cells(node, name)?.first().map(|&c| c as usize)
++    }
++
++    struct Found {
++        phys: u64,
++        size: usize,
++        irq: Option<String>,
++        mac: Option<[u8; 6]>,
++        mode: PhyMode,
++        phy: u32,
++        /// CPU physical to bus address for DMA.
++        dma_ranges: Vec<u32>,
++        serial: Option<String>,
++    }
++
++    /// The controller in the devicetree. It sits below /scb, whose `ranges`
++    /// give the CPU address and whose `dma-ranges` the bus address of RAM.
++    fn find(fdt: &Fdt) -> Option<Found> {
++        let node = fdt.find_compatible(COMPATIBLE)?;
++        if node.property("status").and_then(|p| p.as_str()).is_some_and(|s| s != "okay" && s != "ok") {
++            return None;
++        }
++        let root = fdt.find_node("/")?;
++        let scb = fdt.find_node("/scb");
++        let child_addr = scb.and_then(|n| cell(n, "#address-cells")).unwrap_or(2);
++        let child_size = scb.and_then(|n| cell(n, "#size-cells")).unwrap_or(1);
++        let parent_addr = cell(root, "#address-cells").unwrap_or(2);
++
++        let reg = cells(node, "reg")?;
++        let number = |c: &[u32]| c.iter().fold(0u64, |a, &x| (a << 32) | u64::from(x));
++        let addr = number(reg.get(..child_addr)?);
++        let size = number(reg.get(child_addr..child_addr + child_size)?) as usize;
++        let ranges = scb.and_then(|n| cells(n, "ranges")).unwrap_or_default();
++        let phys = dt::translate(addr, &ranges, child_addr, parent_addr, child_size)?;
++        let dma_ranges = scb.and_then(|n| cells(n, "dma-ranges")).unwrap_or_default();
++
++        // interrupt-parent is inherited, here from the root.
++        let irq = [Some(node), scb, Some(root)]
++            .into_iter()
++            .flatten()
++            .find_map(|n| cell(n, "interrupt-parent"))
++            .and_then(|phandle| {
++                let parent = fdt.find_phandle(phandle as u32)?;
++                let count = cell(parent, "#interrupt-cells")?;
++                let spec = cells(node, "interrupts")?;
++                let spec: Vec<String> = spec.get(..count)?.iter().map(u32::to_string).collect();
++                Some(format!("/scheme/irq/phandle-{}/{}", phandle, spec.join(",")))
++            });
++
++        let mac = ["local-mac-address", "mac-address"]
++            .iter()
++            .find_map(|name| dt::mac(node.property(name)?.value));
++        let mode = PhyMode::from_dt(node.property("phy-mode").and_then(|p| p.as_str()).unwrap_or("rgmii-rxid"));
++        let phy = cell(node, "phy-handle")
++            .and_then(|h| fdt.find_phandle(h as u32))
++            .and_then(|phy| cell(phy, "reg"))
++            .unwrap_or(1) as u32;
++        let serial = root.property("serial-number").and_then(|p| p.as_str()).map(str::to_owned);
++        Some(Found { phys, size, irq, mac, mode, phy, dma_ranges, serial })
++    }
++
++    /// The board MAC the firmware gives (mailbox tag 0x00010003), from the
++    /// `mac` line of rpi-firmwared's board file.
++    fn mac_from_firmware() -> Option<[u8; 6]> {
++        let board = std::fs::read_to_string("/scheme/rpi-firmware/board").ok()?;
++        let text = board.lines().find_map(|l| l.strip_prefix("mac "))?;
++        let bytes: Vec<u8> = text.split(':').filter_map(|b| u8::from_str_radix(b, 16).ok()).collect();
++        dt::mac(&bytes)
++    }
++
++    /// A locally administered address made from the board's serial number,
++    /// the same on every boot, when neither the devicetree nor the
++    /// controller has one.
++    fn mac_from_serial(serial: Option<&str>) -> [u8; 6] {
++        let digits = serial.unwrap_or("").trim_matches(char::from(0));
++        let n = u32::from_str_radix(&digits[digits.len().saturating_sub(8)..], 16).unwrap_or(0x0102_0304);
++        let b = n.to_be_bytes();
++        [0x02, 0x00, b[0], b[1], b[2], b[3]]
++    }
++
++    /// A one-shot timer on the monotonic clock, delivered as an event.
++    struct Timer(File);
++
++    impl Timer {
++        fn new() -> std::io::Result<Self> {
++            OpenOptions::new()
++                .read(true)
++                .write(true)
++                .custom_flags(syscall::O_NONBLOCK as i32)
++                .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))
++                .map(Self)
++        }
++
++        fn arm(&mut self, after: Duration) {
++            let mut time = syscall::TimeSpec::default();
++            if self.0.read(&mut time).is_err() {
++                return;
++            }
++            let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++            time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++            time.tv_nsec = (nsec % 1_000_000_000) as i32;
++            let _ = self.0.write(&time);
++        }
++
++        fn fired(&mut self) {
++            let mut time = syscall::TimeSpec::default();
++            let _ = self.0.read(&mut time);
++        }
++    }
++
++    user_data! {
++        enum Source {
++            Irq,
++            Scheme,
++            Time,
++        }
++    }
++
++    pub fn daemon(daemon: daemon::Daemon) -> ! {
++        common::init();
++
++        let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++        let Some(found) = Fdt::new(&dtb).ok().and_then(|fdt| find(&fdt)) else {
++            // Not a Pi 4 or 400, or the node is disabled (QEMU's raspi4b
++            // disables it): nothing to do.
++            if Fdt::new(&dtb).is_ok_and(|fdt| fdt.find_compatible(COMPATIBLE).is_some()) {
++                println!("bcmgenetd: GENET disabled in the devicetree; not starting");
++            }
++            daemon.ready();
++            process::exit(0);
++        };
++        let base = unsafe {
++            common::physmap(found.phys as usize, found.size, common::Prot::RW, common::MemoryType::DeviceMemory)
++                .expect("bcmgenetd: failed to map registers") as usize
++        };
++
++        let rx = buffer();
++        let tx = buffer();
++        let bus = |b: &Buf| {
++            dt::translate_back(b.0.physical() as u64, &found.dma_ranges, 2, 2, 2)
++                .expect("bcmgenetd: DMA buffer outside the controller's dma-ranges")
++        };
++        let (rx_bus, tx_bus) = (bus(&rx), bus(&tx));
++        let mut genet = Genet::new(Regs(base), rx, rx_bus, tx, tx_bus);
++        let rev = genet.revision();
++        if rev == 0 || rev == u32::MAX {
++            // QEMU's raspi4b has the node but no controller behind it.
++            eprintln!("bcmgenetd: no controller answers at {:#x}; not starting", found.phys);
++            daemon.ready();
++            process::exit(0);
++        }
++        println!("bcmgenetd: GENET at {:#x}, revision {:#010x}", found.phys, rev);
++        if (rev >> 24) & 0xf != 6 {
++            eprintln!("bcmgenetd: not GENET v5 (major {}), trying anyway", (rev >> 24) & 0xf);
++        }
++
++        // The devicetree (firmware, U-Boot fixup), the firmware mailbox, the
++        // registers U-Boot left set, the serial number: the first that has one.
++        let (mac, source) = if let Some(mac) = found.mac {
++            (mac, "devicetree")
++        } else if let Some(mac) = mac_from_firmware() {
++            (mac, "firmware")
++        } else if let Some(mac) = genet.mac_from_regs() {
++            (mac, "controller")
++        } else {
++            (mac_from_serial(found.serial.as_deref()), "serial number")
++        };
++        println!(
++            "bcmgenetd: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} from the {}",
++            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], source
++        );
++
++        genet.reset(delay);
++        genet.set_mac(mac);
++        genet.init_rings();
++        genet.enable();
++
++        let mut adapter = Adapter { genet, mac, phy: found.phy, mode: found.mode, link: None };
++        // A PHY left powered down (BMCR bit 11) or with autonegotiation off
++        // gets autonegotiation (bits 12 and 9).
++        match adapter.genet.mdio_read(adapter.phy, 0, delay) {
++            Some(bmcr) if bmcr & (1 << 11) != 0 || bmcr & (1 << 12) == 0 => {
++                println!("bcmgenetd: PHY {} BMCR {:#06x}, starting autonegotiation", adapter.phy, bmcr);
++                adapter.genet.mdio_write(adapter.phy, 0, (1 << 12) | (1 << 9), delay);
++            }
++            Some(_) => {}
++            None => eprintln!("bcmgenetd: no answer from PHY {} over MDIO", adapter.phy),
++        }
++        let start = Instant::now();
++        loop {
++            adapter.check_link();
++            if adapter.link.is_some() || start.elapsed() >= BOOT_LINK_WAIT {
++                break;
++            }
++            let wait = Instant::now();
++            while wait.elapsed() < Duration::from_millis(50) {
++                std::thread::yield_now();
++            }
++        }
++        if adapter.link.is_none() {
++            println!("bcmgenetd: no link yet");
++        }
++
++        let irq_file = found.irq.as_deref().and_then(|path| match OpenOptions::new().read(true).write(true).create(true).open(path) {
++            Ok(file) => Some(file),
++            Err(err) => {
++                eprintln!("bcmgenetd: {}: {}, polling only", path, err);
++                None
++            }
++        });
++        let mut timer = Timer::new().expect("bcmgenetd: no monotonic timer");
++
++        let mut scheme = NetworkScheme::new(move || adapter, daemon, "network.genet".into());
++
++        let event_queue = EventQueue::<Source>::new().expect("bcmgenetd: no event queue");
++        if let Some(irq) = &irq_file {
++            event_queue.subscribe(irq.as_raw_fd() as usize, Source::Irq, event::EventFlags::READ).unwrap();
++        }
++        event_queue.subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ).unwrap();
++        event_queue.subscribe(timer.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ).unwrap();
++        timer.arm(POLL);
++
++        libredox::call::setrens(0, 0).expect("bcmgenetd: failed to enter the null namespace");
++        scheme.tick().unwrap();
++
++        let mut polls = 0u32;
++        for event in event_queue.map(|e| e.expect("bcmgenetd: event queue failed")) {
++            match event.user_data {
++                Source::Irq => {
++                    let mut irq = irq_file.as_ref().unwrap();
++                    let mut buf = [0; 8];
++                    if irq.read(&mut buf).is_ok() {
++                        let stat = scheme.adapter_mut().genet.ack_irq();
++                        let _ = irq.write(&buf);
++                        if stat & (IRQ_RXDMA_DONE | IRQ_TXDMA_DONE) != 0 {
++                            scheme.tick().unwrap();
++                        }
++                    }
++                }
++                Source::Scheme => scheme.tick().unwrap(),
++                Source::Time => {
++                    timer.fired();
++                    timer.arm(POLL);
++                    polls += 1;
++                    if polls % 10 == 0 {
++                        scheme.adapter_mut().check_link();
++                    }
++                    if scheme.adapter_mut().available_for_read() > 0 {
++                        scheme.tick().unwrap();
++                    }
++                }
++            }
++        }
++        unreachable!()
++    }
++}
+diff --git a/drivers/net/bcmgenetd/src/regs.rs b/drivers/net/bcmgenetd/src/regs.rs
+new file mode 100644
+index 0000000..1f2d61b
+--- /dev/null
++++ b/drivers/net/bcmgenetd/src/regs.rs
+@@ -0,0 +1,174 @@
++//! GENET v5 register offsets and bits (layout as in FreeBSD's
++//! `if_genetreg.h`, BSD-2-Clause).
++
++// System block
++pub const SYS_REV_CTRL: usize = 0x0000;
++pub const SYS_PORT_CTRL: usize = 0x0004;
++pub const PORT_MODE_EXT_GPHY: u32 = 3;
++pub const SYS_RBUF_FLUSH_CTRL: usize = 0x0008;
++pub const SYS_TBUF_FLUSH_CTRL: usize = 0x000c;
++pub const RBUF_FLUSH_RESET: u32 = 1 << 1;
++
++// RGMII out-of-band control
++pub const EXT_RGMII_OOB_CTRL: usize = 0x008c;
++pub const RGMII_LINK: u32 = 1 << 4;
++pub const OOB_DISABLE: u32 = 1 << 5;
++pub const RGMII_MODE_EN: u32 = 1 << 6;
++pub const ID_MODE_DISABLE: u32 = 1 << 16;
++
++// Interrupt controller 0 (the default queue's DMA interrupts)
++pub const INTRL2_CPU_STAT: usize = 0x0200;
++pub const INTRL2_CPU_CLEAR: usize = 0x0208;
++pub const INTRL2_CPU_SET_MASK: usize = 0x0210;
++pub const INTRL2_CPU_CLEAR_MASK: usize = 0x0214;
++pub const IRQ_RXDMA_DONE: u32 = 1 << 13;
++pub const IRQ_TXDMA_DONE: u32 = 1 << 16;
++
++// Receive buffer
++pub const RBUF_CTRL: usize = 0x0300;
++/// Two bytes of padding before each received frame, so the IP header is
++/// 4-byte aligned.
++pub const RBUF_ALIGN_2B: u32 = 1 << 1;
++/// A 64-byte status block before each frame; kept off.
++pub const RBUF_64B_EN: u32 = 1 << 0;
++pub const RBUF_TBUF_SIZE_CTRL: usize = 0x03b4;
++
++// UniMAC
++pub const UMAC_CMD: usize = 0x0808;
++pub const CMD_TXEN: u32 = 1 << 0;
++pub const CMD_RXEN: u32 = 1 << 1;
++pub const CMD_SPEED_SHIFT: u32 = 2;
++pub const CMD_SPEED_MASK: u32 = 3 << CMD_SPEED_SHIFT;
++pub const CMD_SPEED_10: u32 = 0;
++pub const CMD_SPEED_100: u32 = 1;
++pub const CMD_SPEED_1000: u32 = 2;
++pub const CMD_PROMISC: u32 = 1 << 4;
++pub const CMD_SW_RESET: u32 = 1 << 13;
++pub const CMD_LCL_LOOP_EN: u32 = 1 << 15;
++pub const UMAC_MAC0: usize = 0x080c;
++pub const UMAC_MAC1: usize = 0x0810;
++pub const UMAC_MAX_FRAME_LEN: usize = 0x0814;
++pub const UMAC_TX_FLUSH: usize = 0x0b34;
++pub const UMAC_MIB_CTRL: usize = 0x0d80;
++pub const MIB_RESET_RX: u32 = 1 << 0;
++pub const MIB_RESET_RUNT: u32 = 1 << 1;
++pub const MIB_RESET_TX: u32 = 1 << 2;
++pub const UMAC_MDIO_CMD: usize = 0x0e14;
++pub const MDIO_START_BUSY: u32 = 1 << 29;
++pub const MDIO_READ_FAILED: u32 = 1 << 28;
++pub const MDIO_READ: u32 = 2 << 26;
++pub const MDIO_WRITE: u32 = 1 << 26;
++pub const MDIO_PHY_SHIFT: u32 = 21;
++pub const MDIO_REG_SHIFT: u32 = 16;
++pub const UMAC_MDF_CTRL: usize = 0x0e50;
++
++// DMA. The descriptors live in the controller, 256 per direction, three
++// words each; ring 16 is the default queue and uses all of them.
++pub const RX_BASE: usize = 0x2000;
++pub const TX_BASE: usize = 0x4000;
++pub const DESC_SIZE: usize = 12;
++pub const DESC_COUNT: usize = 256;
++pub const DEFAULT_Q: usize = 16;
++const RING_SIZE: usize = 0x40;
++
++pub const fn desc_status(base: usize, idx: usize) -> usize {
++    base + DESC_SIZE * idx
++}
++pub const fn desc_addr_lo(base: usize, idx: usize) -> usize {
++    base + DESC_SIZE * idx + 0x04
++}
++pub const fn desc_addr_hi(base: usize, idx: usize) -> usize {
++    base + DESC_SIZE * idx + 0x08
++}
++
++const fn ring(base: usize, q: usize) -> usize {
++    base + 0xc00 + RING_SIZE * q
++}
++
++// Receive ring registers
++pub const fn rx_write_ptr_lo(q: usize) -> usize { ring(RX_BASE, q) }
++pub const fn rx_write_ptr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x04 }
++pub const fn rx_prod_index(q: usize) -> usize { ring(RX_BASE, q) + 0x08 }
++pub const fn rx_cons_index(q: usize) -> usize { ring(RX_BASE, q) + 0x0c }
++pub const fn rx_ring_buf_size(q: usize) -> usize { ring(RX_BASE, q) + 0x10 }
++pub const fn rx_start_addr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x14 }
++pub const fn rx_start_addr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x18 }
++pub const fn rx_end_addr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x1c }
++pub const fn rx_end_addr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x20 }
++pub const fn rx_xon_xoff_thres(q: usize) -> usize { ring(RX_BASE, q) + 0x28 }
++pub const fn rx_read_ptr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x2c }
++pub const fn rx_read_ptr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x30 }
++pub const RX_RING_CFG: usize = RX_BASE + 0x1040;
++pub const RX_DMA_CTRL: usize = RX_BASE + 0x1044;
++pub const RX_DMA_STATUS: usize = RX_BASE + 0x1048;
++pub const RX_SCB_BURST_SIZE: usize = RX_BASE + 0x104c;
++
++// Transmit ring registers
++pub const fn tx_read_ptr_lo(q: usize) -> usize { ring(TX_BASE, q) }
++pub const fn tx_read_ptr_hi(q: usize) -> usize { ring(TX_BASE, q) + 0x04 }
++pub const fn tx_cons_index(q: usize) -> usize { ring(TX_BASE, q) + 0x08 }
++pub const fn tx_prod_index(q: usize) -> usize { ring(TX_BASE, q) + 0x0c }
++pub const fn tx_ring_buf_size(q: usize) -> usize { ring(TX_BASE, q) + 0x10 }
++pub const fn tx_start_addr_lo(q: usize) -> usize { ring(TX_BASE, q) + 0x14 }
++pub const fn tx_start_addr_hi(q: usize) -> usize { ring(TX_BASE, q) + 0x18 }
++pub const fn tx_end_addr_lo(q: usize) -> usize { ring(TX_BASE, q) + 0x1c }
++pub const fn tx_end_addr_hi(q: usize) -> usize { ring(TX_BASE, q) + 0x20 }
++pub const fn tx_mbuf_done_thres(q: usize) -> usize { ring(TX_BASE, q) + 0x24 }
++pub const fn tx_flow_period(q: usize) -> usize { ring(TX_BASE, q) + 0x28 }
++pub const fn tx_write_ptr_lo(q: usize) -> usize { ring(TX_BASE, q) + 0x2c }
++pub const fn tx_write_ptr_hi(q: usize) -> usize { ring(TX_BASE, q) + 0x30 }
++pub const TX_RING_CFG: usize = TX_BASE + 0x1040;
++pub const TX_DMA_CTRL: usize = TX_BASE + 0x1044;
++pub const TX_DMA_STATUS: usize = TX_BASE + 0x1048;
++pub const TX_SCB_BURST_SIZE: usize = TX_BASE + 0x104c;
++
++pub const DMA_CTRL_EN: u32 = 1 << 0;
++/// In the DMA status register: the engine has stopped.
++pub const DMA_STATUS_DISABLED: u32 = 1 << 0;
++pub const fn dma_ctrl_ring_en(q: usize) -> u32 {
++    1 << (q + 1)
++}
++/// Producer and consumer indices count up and wrap at 16 bits.
++pub const INDEX_MASK: u32 = 0xffff;
++
++// Descriptor status word
++pub const DESC_LEN_SHIFT: u32 = 16;
++pub const DESC_LEN_MASK: u32 = 0xfff;
++pub const DESC_OWN: u32 = 1 << 15;
++pub const DESC_EOP: u32 = 1 << 14;
++pub const DESC_SOP: u32 = 1 << 13;
++pub const TX_DESC_QTAG: u32 = 0x3f << 7;
++pub const TX_DESC_CRC: u32 = 1 << 6;
++pub const RX_DESC_ERROR: u32 = 1 << 2;
++
++/// Each buffer holds one frame.
++pub const BUF_SIZE: usize = 2048;
++pub const MAX_FRAME_LEN: u32 = 1536;
++
++// PHY registers (IEEE 802.3 clause 22)
++pub const MII_BMSR: u32 = 1;
++pub const BMSR_LINK: u16 = 1 << 2;
++pub const MII_ANAR: u32 = 4;
++pub const MII_ANLPAR: u32 = 5;
++pub const MII_GBCR: u32 = 9;
++pub const MII_GBSR: u32 = 10;
++
++#[cfg(test)]
++mod test {
++    use super::*;
++
++    #[test]
++    fn default_queue_registers() {
++        // Ring 16 starts right after the 256 descriptors of ring 0..15's
++        // register blocks: 0xc00 + 16 * 0x40 = 0x1000.
++        assert_eq!(rx_prod_index(DEFAULT_Q), 0x3008);
++        assert_eq!(rx_cons_index(DEFAULT_Q), 0x300c);
++        assert_eq!(tx_cons_index(DEFAULT_Q), 0x5008);
++        assert_eq!(tx_prod_index(DEFAULT_Q), 0x500c);
++        assert_eq!(RX_DMA_CTRL, 0x3044);
++        assert_eq!(TX_DMA_CTRL, 0x5044);
++        // The descriptors end where the ring registers begin.
++        assert_eq!(desc_status(RX_BASE, DESC_COUNT), RX_BASE + 0xc00);
++        assert_eq!(dma_ctrl_ring_en(DEFAULT_Q), 1 << 17);
++    }
++}
+diff --git a/drivers/net/bcmgenetd/src/ring.rs b/drivers/net/bcmgenetd/src/ring.rs
+new file mode 100644
+index 0000000..2a3e84c
+--- /dev/null
++++ b/drivers/net/bcmgenetd/src/ring.rs
+@@ -0,0 +1,532 @@
++//! Bring-up, the default receive and transmit rings, MDIO and the link, over
++//! a [`Mmio`] register interface and two plain buffer areas.
++//!
++//! The descriptors are in the controller. Each of the 256 receive
++//! descriptors points at its own [`BUF_SIZE`] slot of the receive area for
++//! good; the transmit descriptor of a frame gets the address of the slot the
++//! frame was copied to. Both areas must be uncached DMA memory.
++
++use crate::regs::*;
++use crate::Mmio;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Speed {
++    Mbit10,
++    Mbit100,
++    Mbit1000,
++}
++
++impl Speed {
++    fn umac(self) -> u32 {
++        match self {
++            Speed::Mbit10 => CMD_SPEED_10,
++            Speed::Mbit100 => CMD_SPEED_100,
++            Speed::Mbit1000 => CMD_SPEED_1000,
++        }
++    }
++}
++
++#[derive(Debug, PartialEq, Eq)]
++pub enum TxError {
++    /// All 256 transmit descriptors are still in flight.
++    Full,
++    /// Larger than a buffer slot.
++    TooLong,
++}
++
++/// How the PHY's RGMII delays are set up (devicetree `phy-mode`).
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum PhyMode {
++    /// `rgmii`: no internal delay anywhere; the MAC's ID mode is turned off.
++    Rgmii,
++    /// `rgmii-id`, `rgmii-rxid`, `rgmii-txid`: the PHY adds delays.
++    RgmiiWithDelay,
++}
++
++impl PhyMode {
++    pub fn from_dt(mode: &str) -> Self {
++        if mode == "rgmii" {
++            PhyMode::Rgmii
++        } else {
++            PhyMode::RgmiiWithDelay
++        }
++    }
++}
++
++pub struct Genet<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> {
++    pub mmio: M,
++    rx: B,
++    rx_bus: u64,
++    tx: B,
++    tx_bus: u64,
++    /// Next receive index to take (16-bit counter, as the controller's).
++    rx_cons: u32,
++    /// Next transmit index to fill.
++    tx_prod: u32,
++}
++
++/// The speed the PHY negotiated, from its registers; `None` without a link.
++pub fn link_speed(bmsr: u16, anar: u16, anlpar: u16, gbcr: u16, gbsr: u16) -> Option<Speed> {
++    if bmsr & BMSR_LINK == 0 {
++        return None;
++    }
++    // 1000BASE-T: we advertise full (GBCR bit 9) or half (8) duplex and the
++    // partner has the same (GBSR bits 11 and 10).
++    if (gbcr & (1 << 9) != 0 && gbsr & (1 << 11) != 0) || (gbcr & (1 << 8) != 0 && gbsr & (1 << 10) != 0) {
++        return Some(Speed::Mbit1000);
++    }
++    let common = anar & anlpar;
++    // 100BASE-TX full (bit 8) or half (bit 7)
++    if common & (3 << 7) != 0 {
++        Some(Speed::Mbit100)
++    } else {
++        Some(Speed::Mbit10)
++    }
++}
++
++impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
++    /// `rx` and `tx` are [`DESC_COUNT`] * [`BUF_SIZE`] bytes each, at the
++    /// given bus addresses.
++    pub fn new(mmio: M, rx: B, rx_bus: u64, tx: B, tx_bus: u64) -> Self {
++        assert!(rx.as_ref().len() >= DESC_COUNT * BUF_SIZE);
++        assert!(tx.as_ref().len() >= DESC_COUNT * BUF_SIZE);
++        Self { mmio, rx, rx_bus, tx, tx_bus, rx_cons: 0, tx_prod: 0 }
++    }
++
++    /// The controller's version register, for the log (GENET v5 reads major
++    /// version 6 in bits 24..27).
++    pub fn revision(&self) -> u32 {
++        self.mmio.read(SYS_REV_CTRL)
++    }
++
++    /// The MAC address left in the UniMAC by the firmware or U-Boot, if any.
++    pub fn mac_from_regs(&self) -> Option<[u8; 6]> {
++        let hi = self.mmio.read(UMAC_MAC0).to_be_bytes();
++        let lo = self.mmio.read(UMAC_MAC1).to_be_bytes();
++        let mac = [hi[0], hi[1], hi[2], hi[3], lo[2], lo[3]];
++        let valid = mac != [0; 6] && mac != [0xff; 6] && mac[0] & 1 == 0;
++        valid.then_some(mac)
++    }
++
++    /// Stops what U-Boot left running (its rings, receive on) and resets
++    /// the MAC and the receive buffer, as at power-up. Until the DMA engines
++    /// have stopped, the controller may still write received frames into
++    /// U-Boot's buffers, so this waits for them. `delay` waits about 10 µs.
++    pub fn reset(&mut self, mut delay: impl FnMut()) {
++        self.mmio.write(INTRL2_CPU_SET_MASK, 0xffff_ffff);
++        self.mmio.write(INTRL2_CPU_CLEAR, 0xffff_ffff);
++        // Receive off first, so no new frame starts; then both engines and
++        // every ring.
++        self.mmio.clear(UMAC_CMD, CMD_RXEN);
++        self.mmio.write(RX_DMA_CTRL, 0);
++        self.mmio.write(TX_DMA_CTRL, 0);
++        for _ in 0..1000 {
++            let stopped = self.mmio.read(RX_DMA_STATUS) & self.mmio.read(TX_DMA_STATUS) & DMA_STATUS_DISABLED;
++            if stopped != 0 {
++                break;
++            }
++            delay();
++        }
++        self.mmio.clear(UMAC_CMD, CMD_TXEN);
++        self.mmio.write(UMAC_TX_FLUSH, 1);
++        delay();
++        self.mmio.write(UMAC_TX_FLUSH, 0);
++
++        self.mmio.set(SYS_RBUF_FLUSH_CTRL, RBUF_FLUSH_RESET);
++        delay();
++        self.mmio.clear(SYS_RBUF_FLUSH_CTRL, RBUF_FLUSH_RESET);
++        delay();
++        self.mmio.write(SYS_RBUF_FLUSH_CTRL, 0);
++        delay();
++
++        self.mmio.write(UMAC_CMD, 0);
++        self.mmio.write(UMAC_CMD, CMD_LCL_LOOP_EN | CMD_SW_RESET);
++        delay();
++        self.mmio.write(UMAC_CMD, 0);
++
++        self.mmio.write(UMAC_MIB_CTRL, MIB_RESET_RUNT | MIB_RESET_RX | MIB_RESET_TX);
++        self.mmio.write(UMAC_MIB_CTRL, 0);
++        self.mmio.write(UMAC_MAX_FRAME_LEN, MAX_FRAME_LEN);
++
++        let rbuf = self.mmio.read(RBUF_CTRL);
++        self.mmio.write(RBUF_CTRL, (rbuf | RBUF_ALIGN_2B) & !RBUF_64B_EN);
++        self.mmio.write(RBUF_TBUF_SIZE_CTRL, 1);
++    }
++
++    pub fn set_mac(&mut self, mac: [u8; 6]) {
++        self.mmio.write(UMAC_MAC0, u32::from_be_bytes([mac[0], mac[1], mac[2], mac[3]]));
++        self.mmio.write(UMAC_MAC1, u32::from_be_bytes([0, 0, mac[4], mac[5]]));
++    }
++
++    /// Sets up ring 16 in both directions and points every receive
++    /// descriptor at its buffer slot.
++    pub fn init_rings(&mut self) {
++        let q = DEFAULT_Q;
++        let n = DESC_COUNT as u32;
++        let end = (DESC_COUNT * DESC_SIZE / 4 - 1) as u32;
++
++        // Transmit
++        self.mmio.write(TX_SCB_BURST_SIZE, 0x08);
++        self.mmio.write(tx_read_ptr_lo(q), 0);
++        self.mmio.write(tx_read_ptr_hi(q), 0);
++        self.mmio.write(tx_cons_index(q), 0);
++        self.mmio.write(tx_prod_index(q), 0);
++        self.mmio.write(tx_ring_buf_size(q), (n << 16) | BUF_SIZE as u32);
++        self.mmio.write(tx_start_addr_lo(q), 0);
++        self.mmio.write(tx_start_addr_hi(q), 0);
++        self.mmio.write(tx_end_addr_lo(q), end);
++        self.mmio.write(tx_end_addr_hi(q), 0);
++        self.mmio.write(tx_mbuf_done_thres(q), 1);
++        self.mmio.write(tx_flow_period(q), 0);
++        self.mmio.write(tx_write_ptr_lo(q), 0);
++        self.mmio.write(tx_write_ptr_hi(q), 0);
++        self.mmio.write(TX_RING_CFG, 1 << q);
++        self.mmio.set(TX_DMA_CTRL, dma_ctrl_ring_en(q));
++        self.tx_prod = 0;
++
++        // Receive
++        self.mmio.write(RX_SCB_BURST_SIZE, 0x08);
++        self.mmio.write(rx_write_ptr_lo(q), 0);
++        self.mmio.write(rx_write_ptr_hi(q), 0);
++        self.mmio.write(rx_prod_index(q), 0);
++        self.mmio.write(rx_cons_index(q), 0);
++        self.mmio.write(rx_ring_buf_size(q), (n << 16) | BUF_SIZE as u32);
++        self.mmio.write(rx_start_addr_lo(q), 0);
++        self.mmio.write(rx_start_addr_hi(q), 0);
++        self.mmio.write(rx_end_addr_lo(q), end);
++        self.mmio.write(rx_end_addr_hi(q), 0);
++        self.mmio.write(rx_xon_xoff_thres(q), (5 << 16) | (n >> 4));
++        self.mmio.write(rx_read_ptr_lo(q), 0);
++        self.mmio.write(rx_read_ptr_hi(q), 0);
++        for i in 0..DESC_COUNT {
++            let addr = self.rx_bus + (i * BUF_SIZE) as u64;
++            self.mmio.write(desc_addr_lo(RX_BASE, i), addr as u32);
++            self.mmio.write(desc_addr_hi(RX_BASE, i), (addr >> 32) as u32);
++        }
++        self.mmio.write(RX_RING_CFG, 1 << q);
++        self.mmio.set(RX_DMA_CTRL, dma_ctrl_ring_en(q));
++        self.rx_cons = 0;
++    }
++
++    /// Starts DMA, the MAC (all frames: netstack filters) and the receive
++    /// and transmit interrupts.
++    pub fn enable(&mut self) {
++        self.mmio.set(RX_DMA_CTRL, DMA_CTRL_EN);
++        self.mmio.set(TX_DMA_CTRL, DMA_CTRL_EN);
++        self.mmio.write(UMAC_TX_FLUSH, 0);
++        self.mmio.set(UMAC_CMD, CMD_TXEN | CMD_RXEN | CMD_PROMISC);
++        self.mmio.write(INTRL2_CPU_CLEAR_MASK, IRQ_RXDMA_DONE | IRQ_TXDMA_DONE);
++    }
++
++    /// Reads and clears the pending interrupt bits.
++    pub fn ack_irq(&mut self) -> u32 {
++        let stat = self.mmio.read(INTRL2_CPU_STAT);
++        self.mmio.write(INTRL2_CPU_CLEAR, stat);
++        stat
++    }
++
++    /// Frames received and not yet taken.
++    pub fn rx_pending(&self) -> usize {
++        let prod = self.mmio.read(rx_prod_index(DEFAULT_Q)) & INDEX_MASK;
++        (prod.wrapping_sub(self.rx_cons) & INDEX_MASK) as usize
++    }
++
++    /// Copies the next good frame into `buf`; frames with errors or that do
++    /// not fit are dropped. `None` when nothing is waiting.
++    pub fn receive(&mut self, buf: &mut [u8]) -> Option<usize> {
++        while self.rx_pending() > 0 {
++            let idx = (self.rx_cons as usize) % DESC_COUNT;
++            self.mmio.barrier();
++            let status = self.mmio.read(desc_status(RX_BASE, idx));
++            let len = ((status >> DESC_LEN_SHIFT) & DESC_LEN_MASK) as usize;
++            let whole = status & (DESC_SOP | DESC_EOP) == DESC_SOP | DESC_EOP;
++            let good = whole && status & RX_DESC_ERROR == 0 && len > 2 && len <= BUF_SIZE;
++            // The length counts the two padding bytes of RBUF_ALIGN_2B.
++            let frame_len = len.saturating_sub(2);
++            let taken = if good && frame_len <= buf.len() {
++                let start = idx * BUF_SIZE + 2;
++                buf[..frame_len].copy_from_slice(&self.rx.as_ref()[start..start + frame_len]);
++                Some(frame_len)
++            } else {
++                None
++            };
++            self.rx_cons = (self.rx_cons + 1) & INDEX_MASK;
++            self.mmio.write(rx_cons_index(DEFAULT_Q), self.rx_cons);
++            if taken.is_some() {
++                return taken;
++            }
++        }
++        None
++    }
++
++    /// Transmit descriptors in flight.
++    pub fn tx_in_flight(&self) -> usize {
++        let cons = self.mmio.read(tx_cons_index(DEFAULT_Q)) & INDEX_MASK;
++        (self.tx_prod.wrapping_sub(cons) & INDEX_MASK) as usize
++    }
++
++    /// Queues one frame (without its CRC; the MAC adds it).
++    pub fn transmit(&mut self, frame: &[u8]) -> Result<(), TxError> {
++        if frame.len() > BUF_SIZE || frame.len() > MAX_FRAME_LEN as usize {
++            return Err(TxError::TooLong);
++        }
++        if self.tx_in_flight() >= DESC_COUNT {
++            return Err(TxError::Full);
++        }
++        let idx = (self.tx_prod as usize) % DESC_COUNT;
++        let start = idx * BUF_SIZE;
++        self.tx.as_mut()[start..start + frame.len()].copy_from_slice(frame);
++        let addr = self.tx_bus + start as u64;
++        self.mmio.write(desc_addr_lo(TX_BASE, idx), addr as u32);
++        self.mmio.write(desc_addr_hi(TX_BASE, idx), (addr >> 32) as u32);
++        let status = ((frame.len() as u32) << DESC_LEN_SHIFT) | DESC_SOP | DESC_EOP | TX_DESC_CRC | TX_DESC_QTAG;
++        self.mmio.write(desc_status(TX_BASE, idx), status);
++        self.mmio.barrier();
++        self.tx_prod = (self.tx_prod + 1) & INDEX_MASK;
++        self.mmio.write(tx_prod_index(DEFAULT_Q), self.tx_prod);
++        Ok(())
++    }
++
++    fn mdio_wait(&mut self, delay: &mut impl FnMut()) -> Option<u32> {
++        for _ in 0..1000 {
++            let cmd = self.mmio.read(UMAC_MDIO_CMD);
++            if cmd & MDIO_START_BUSY == 0 {
++                return Some(cmd);
++            }
++            delay();
++        }
++        None
++    }
++
++    /// Reads a PHY register over MDIO. `delay` waits about 10 µs; gives up
++    /// after about 10 ms.
++    pub fn mdio_read(&mut self, phy: u32, reg: u32, mut delay: impl FnMut()) -> Option<u16> {
++        let cmd = MDIO_READ | (phy & 0x1f) << MDIO_PHY_SHIFT | (reg & 0x1f) << MDIO_REG_SHIFT;
++        self.mmio.write(UMAC_MDIO_CMD, cmd);
++        self.mmio.write(UMAC_MDIO_CMD, cmd | MDIO_START_BUSY);
++        let done = self.mdio_wait(&mut delay)?;
++        (done & MDIO_READ_FAILED == 0).then_some(done as u16)
++    }
++
++    /// Writes a PHY register over MDIO.
++    pub fn mdio_write(&mut self, phy: u32, reg: u32, value: u16, mut delay: impl FnMut()) -> bool {
++        let cmd = MDIO_WRITE | (phy & 0x1f) << MDIO_PHY_SHIFT | (reg & 0x1f) << MDIO_REG_SHIFT | u32::from(value);
++        self.mmio.write(UMAC_MDIO_CMD, cmd);
++        self.mmio.write(UMAC_MDIO_CMD, cmd | MDIO_START_BUSY);
++        self.mdio_wait(&mut delay).is_some()
++    }
++
++    /// Reads the PHY's link and speed.
++    pub fn phy_link(&mut self, phy: u32, mut delay: impl FnMut()) -> Option<Speed> {
++        let mut read = |reg| self.mdio_read(phy, reg, &mut delay);
++        // The link bit latches low: read twice for the current state.
++        read(MII_BMSR)?;
++        let bmsr = read(MII_BMSR)?;
++        let anar = read(MII_ANAR)?;
++        let anlpar = read(MII_ANLPAR)?;
++        let gbcr = read(MII_GBCR)?;
++        let gbsr = read(MII_GBSR)?;
++        link_speed(bmsr, anar, anlpar, gbcr, gbsr)
++    }
++
++    /// Sets the RGMII port and the MAC speed for a link that came up.
++    pub fn set_link(&mut self, speed: Speed, mode: PhyMode) {
++        self.mmio.write(SYS_PORT_CTRL, PORT_MODE_EXT_GPHY);
++        let mut oob = self.mmio.read(EXT_RGMII_OOB_CTRL);
++        oob &= !OOB_DISABLE;
++        oob |= RGMII_LINK | RGMII_MODE_EN;
++        if mode == PhyMode::Rgmii {
++            oob |= ID_MODE_DISABLE;
++        } else {
++            oob &= !ID_MODE_DISABLE;
++        }
++        self.mmio.write(EXT_RGMII_OOB_CTRL, oob);
++        let mut cmd = self.mmio.read(UMAC_CMD);
++        cmd = (cmd & !CMD_SPEED_MASK) | speed.umac() << CMD_SPEED_SHIFT;
++        self.mmio.write(UMAC_CMD, cmd);
++    }
++}
++
++#[cfg(test)]
++mod test {
++    use super::*;
++    use std::cell::RefCell;
++    use std::collections::HashMap;
++
++    /// Register file; an MDIO command completes at once with `phy_regs`.
++    #[derive(Default)]
++    struct Fake {
++        regs: RefCell<HashMap<usize, u32>>,
++        phy_regs: HashMap<u32, u16>,
++    }
++
++    impl Mmio for Fake {
++        fn read(&self, offset: usize) -> u32 {
++            *self.regs.borrow().get(&offset).unwrap_or(&0)
++        }
++        fn write(&mut self, offset: usize, value: u32) {
++            let mut value = value;
++            if offset == UMAC_MDIO_CMD && value & MDIO_START_BUSY != 0 {
++                let reg = (value >> MDIO_REG_SHIFT) & 0x1f;
++                value &= !MDIO_START_BUSY;
++                if value & MDIO_READ != 0 {
++                    match self.phy_regs.get(&reg) {
++                        Some(&data) => value = (value & !0xffff) | u32::from(data),
++                        None => value |= MDIO_READ_FAILED,
++                    }
++                }
++            }
++            self.regs.get_mut().insert(offset, value);
++        }
++    }
++
++    fn genet() -> Genet<Fake, Vec<u8>> {
++        let size = DESC_COUNT * BUF_SIZE;
++        Genet::new(Fake::default(), vec![0; size], 0x1000_0000, vec![0; size], 0x2000_0000)
++    }
++
++    #[test]
++    fn reset_stops_what_uboot_left_running() {
++        let mut g = genet();
++        g.mmio.write(UMAC_CMD, CMD_TXEN | CMD_RXEN);
++        g.mmio.write(RX_DMA_CTRL, DMA_CTRL_EN | dma_ctrl_ring_en(DEFAULT_Q));
++        g.mmio.write(TX_DMA_CTRL, DMA_CTRL_EN | dma_ctrl_ring_en(DEFAULT_Q));
++        let mut waits = 0;
++        g.reset(|| waits += 1);
++        assert_eq!(g.mmio.read(RX_DMA_CTRL), 0);
++        assert_eq!(g.mmio.read(TX_DMA_CTRL), 0);
++        assert_eq!(g.mmio.read(UMAC_CMD) & (CMD_TXEN | CMD_RXEN), 0);
++        // The fake never reports the engines stopped: reset gives up after
++        // about 10 ms instead of hanging.
++        assert!(waits >= 1000);
++        assert_eq!(g.mmio.read(RBUF_CTRL) & RBUF_ALIGN_2B, RBUF_ALIGN_2B);
++    }
++
++    #[test]
++    fn rings_point_at_the_buffers() {
++        let mut g = genet();
++        g.init_rings();
++        let q = DEFAULT_Q;
++        assert_eq!(g.mmio.read(rx_ring_buf_size(q)), (256 << 16) | 2048);
++        assert_eq!(g.mmio.read(rx_end_addr_lo(q)), 767);
++        assert_eq!(g.mmio.read(tx_end_addr_lo(q)), 767);
++        assert_eq!(g.mmio.read(desc_addr_lo(RX_BASE, 0)), 0x1000_0000);
++        assert_eq!(g.mmio.read(desc_addr_lo(RX_BASE, 255)), 0x1000_0000 + 255 * 2048);
++        assert_eq!(g.mmio.read(RX_DMA_CTRL) & dma_ctrl_ring_en(q), dma_ctrl_ring_en(q));
++        assert_eq!(g.mmio.read(RX_DMA_CTRL) & DMA_CTRL_EN, 0, "DMA starts only in enable()");
++        g.enable();
++        assert_eq!(g.mmio.read(RX_DMA_CTRL) & DMA_CTRL_EN, DMA_CTRL_EN);
++        assert_eq!(g.mmio.read(UMAC_CMD) & (CMD_TXEN | CMD_RXEN), CMD_TXEN | CMD_RXEN);
++    }
++
++    fn deliver(g: &mut Genet<Fake, Vec<u8>>, idx: usize, frame: &[u8], status_extra: u32) {
++        let start = idx * BUF_SIZE;
++        g.rx[start] = 0xaa; // padding
++        g.rx[start + 1] = 0xaa;
++        g.rx[start + 2..start + 2 + frame.len()].copy_from_slice(frame);
++        let len = (frame.len() + 2) as u32;
++        g.mmio.write(desc_status(RX_BASE, idx), (len << DESC_LEN_SHIFT) | DESC_SOP | DESC_EOP | status_extra);
++    }
++
++    #[test]
++    fn receive_skips_padding_and_bad_frames() {
++        let mut g = genet();
++        g.init_rings();
++        deliver(&mut g, 0, &[1, 2, 3, 4], RX_DESC_ERROR);
++        deliver(&mut g, 1, &[5, 6, 7], 0);
++        g.mmio.write(rx_prod_index(DEFAULT_Q), 2);
++        assert_eq!(g.rx_pending(), 2);
++        let mut buf = [0; 64];
++        assert_eq!(g.receive(&mut buf), Some(3));
++        assert_eq!(&buf[..3], &[5, 6, 7]);
++        assert_eq!(g.mmio.read(rx_cons_index(DEFAULT_Q)), 2);
++        assert_eq!(g.receive(&mut buf), None);
++    }
++
++    #[test]
++    fn receive_wraps_the_index() {
++        let mut g = genet();
++        g.init_rings();
++        g.rx_cons = 0xffff;
++        g.mmio.write(rx_cons_index(DEFAULT_Q), 0xffff);
++        // Index 0xffff is descriptor 255; the producer wrapped to 1.
++        deliver(&mut g, 255, &[9; 60], 0);
++        deliver(&mut g, 0, &[8; 60], 0);
++        g.mmio.write(rx_prod_index(DEFAULT_Q), 1);
++        assert_eq!(g.rx_pending(), 2);
++        let mut buf = [0; 64];
++        assert_eq!(g.receive(&mut buf), Some(60));
++        assert_eq!(buf[0], 9);
++        assert_eq!(g.receive(&mut buf), Some(60));
++        assert_eq!(buf[0], 8);
++        assert_eq!(g.mmio.read(rx_cons_index(DEFAULT_Q)), 1);
++    }
++
++    #[test]
++    fn transmit_fills_a_descriptor() {
++        let mut g = genet();
++        g.init_rings();
++        g.transmit(&[1, 2, 3]).unwrap();
++        g.transmit(&[4; 100]).unwrap();
++        assert_eq!(g.mmio.read(tx_prod_index(DEFAULT_Q)), 2);
++        assert_eq!(g.mmio.read(desc_addr_lo(TX_BASE, 1)), 0x2000_0000 + 2048);
++        let status = g.mmio.read(desc_status(TX_BASE, 1));
++        assert_eq!((status >> DESC_LEN_SHIFT) & DESC_LEN_MASK, 100);
++        assert_eq!(status & (DESC_SOP | DESC_EOP | TX_DESC_CRC), DESC_SOP | DESC_EOP | TX_DESC_CRC);
++        assert_eq!(&g.tx[2048..2051], &[4, 4, 4]);
++        assert_eq!(g.transmit(&[0; 1600]), Err(TxError::TooLong));
++    }
++
++    #[test]
++    fn transmit_stops_when_the_ring_is_full() {
++        let mut g = genet();
++        g.init_rings();
++        for _ in 0..DESC_COUNT {
++            g.transmit(&[0; 60]).unwrap();
++        }
++        assert_eq!(g.transmit(&[0; 60]), Err(TxError::Full));
++        g.mmio.write(tx_cons_index(DEFAULT_Q), 10);
++        assert_eq!(g.tx_in_flight(), DESC_COUNT - 10);
++        g.transmit(&[0; 60]).unwrap();
++    }
++
++    #[test]
++    fn mdio_read_and_link() {
++        let mut g = genet();
++        // Gigabit full duplex on both sides
++        g.mmio.phy_regs = HashMap::from([
++            (MII_BMSR, 0x796d),
++            (MII_ANAR, 0x01e1),
++            (MII_ANLPAR, 0xc5e1),
++            (MII_GBCR, 0x0200),
++            (MII_GBSR, 0x3800),
++        ]);
++        assert_eq!(g.mdio_read(1, MII_BMSR, || ()), Some(0x796d));
++        assert_eq!(g.phy_link(1, || ()), Some(Speed::Mbit1000));
++        g.mmio.phy_regs.insert(2, 0);
++        assert_eq!(g.mdio_read(1, 3, || ()), None, "a failed read");
++    }
++
++    #[test]
++    fn link_speeds() {
++        assert_eq!(link_speed(0x7969, 0x01e1, 0xc5e1, 0x200, 0x3800), None, "no link bit");
++        assert_eq!(link_speed(0x796d, 0x01e1, 0xc5e1, 0x200, 0x0000), Some(Speed::Mbit100));
++        assert_eq!(link_speed(0x796d, 0x0061, 0x0061, 0x000, 0x0000), Some(Speed::Mbit10));
++    }
++
++    #[test]
++    fn mac_and_speed_registers() {
++        let mut g = genet();
++        assert_eq!(g.mac_from_regs(), None);
++        g.set_mac([0xdc, 0xa6, 0x32, 0x01, 0x02, 0x03]);
++        assert_eq!(g.mmio.read(UMAC_MAC0), 0xdca6_3201);
++        assert_eq!(g.mmio.read(UMAC_MAC1), 0x0203);
++        assert_eq!(g.mac_from_regs(), Some([0xdc, 0xa6, 0x32, 0x01, 0x02, 0x03]));
++        g.mmio.write(UMAC_CMD, CMD_TXEN | CMD_RXEN);
++        g.set_link(Speed::Mbit1000, PhyMode::RgmiiWithDelay);
++        assert_eq!(g.mmio.read(UMAC_CMD), CMD_TXEN | CMD_RXEN | 2 << CMD_SPEED_SHIFT);
++        let oob = g.mmio.read(EXT_RGMII_OOB_CTRL);
++        assert_eq!(oob & (RGMII_LINK | RGMII_MODE_EN | ID_MODE_DISABLE), RGMII_LINK | RGMII_MODE_EN);
++        assert_eq!(g.mmio.read(SYS_PORT_CTRL), PORT_MODE_EXT_GPHY);
++    }
++}
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 5875830..246b388 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -242,6 +242,14 @@ fn board(mbox: &mut Mailbox, text: &mut String) {
+     if let Ok([low, high]) = mbox.property(TAG_BOARD_SERIAL, &[], 2).as_deref() {
+         writeln!(text, "serial {high:08x}{low:08x}").unwrap();
+     }
++    // The MAC address of the board's own Ethernet (on the BCM2711 for
++    // bcmgenetd), six bytes in order.
++    if let Ok([low, high]) = mbox.property(TAG_BOARD_MAC, &[], 2).as_deref() {
++        let b = [low.to_le_bytes(), high.to_le_bytes()].concat();
++        if b[..6] != [0; 6] {
++            writeln!(text, "mac {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", b[0], b[1], b[2], b[3], b[4], b[5]).unwrap();
++        }
++    }
+     if let Ok([model]) = mbox.property(TAG_BOARD_MODEL, &[], 1).as_deref() {
+         writeln!(text, "board_model {model}").unwrap();
+     }
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e..16c0593 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -34,6 +34,7 @@ const BUF_WORDS: usize = 64;
+ pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
+ pub const TAG_BOARD_MODEL: u32 = 0x0001_0001;
+ pub const TAG_BOARD_REVISION: u32 = 0x0001_0002;
++pub const TAG_BOARD_MAC: u32 = 0x0001_0003;
+ pub const TAG_BOARD_SERIAL: u32 = 0x0001_0004;
+ pub const TAG_ARM_MEMORY: u32 = 0x0001_0005;
+ pub const TAG_VC_MEMORY: u32 = 0x0001_0006;
+@@ -163,7 +164,8 @@ impl Mailbox {
+             }
+             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+         }
+-        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        // In bytes; the board MAC is 6, so round up to whole words.
++        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
+         Ok(buf[5..5 + len.min(value_words)].to_vec())
+     }
+ 
+diff --git a/init.initfs.d/40_bcmgenetd.service b/init.initfs.d/40_bcmgenetd.service
+new file mode 100644
+index 0000000..9eba1af
+--- /dev/null
++++ b/init.initfs.d/40_bcmgenetd.service
+@@ -0,0 +1,9 @@
++[unit]
++description = "BCM2711 GENET Ethernet (Raspberry Pi 4 and 400)"
++requires_weak = ["40_rpi-firmwared.service"]
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "bcmgenetd"
++type = "notify"
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 7d5ae36..ba724ac 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -10,6 +10,7 @@ requires_weak = [
+     "41_bcm2835-pwmaudiod.service",
+     "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
++    "40_bcmgenetd.service",
+     "40_hwd.service",
+     "40_pcid-spawner-initfs.service",
+     "40_rpi-firmwared.service",
+-- 
+2.53.0
+
