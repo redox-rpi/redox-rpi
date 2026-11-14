@@ -1,0 +1,11 @@
+# gamepad-test (#320): the binary plus its launcher entry and icon, so the
+# package alone (pkg install gamepad-test) brings the launcher entry.
+[build]
+template = "custom"
+script = """
+cookbook_cargo
+
+mkdir -p "${COOKBOOK_STAGE}/usr/share/ui/apps" "${COOKBOOK_STAGE}/usr/share/icons/redox-rpi"
+cp "${COOKBOOK_SOURCE}/launcher-entry" "${COOKBOOK_STAGE}/usr/share/ui/apps/75_gamepad-test"
+cp "${COOKBOOK_SOURCE}/icon.png" "${COOKBOOK_STAGE}/usr/share/icons/redox-rpi/gamepad-test.png"
+"""
