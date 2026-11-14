@@ -13,7 +13,9 @@ issue; the background is in [docs/topics/audio.md](../../../docs/topics/audio.md
   - **MAI FIFO** (HD block `0x7e808000`): it holds 2 channels of PCM at
     44.1 kHz. The sample clock `MAI_SMP` comes from the HSM clock: the
     rate in `CM_HSMCTL`/`CM_HSMDIV` when the source is known, otherwise
-    163.682864 MHz. After 3 s the DMA progress corrects it once.
+    163.682864 MHz. Two 3 s measurements of the DMA progress that agree
+    correct it once; a refresh gap over 60 ms starts the measurement over
+    (row 417: missed ring turns had measured 12.6 % too slow).
   - **HDMI core** (`0x7e902000`):
     - channel map and mask
     - audio packets (B-frame identifier 8)
@@ -48,7 +50,7 @@ It can't check the HDMI path, since QEMU has none.
 1. **3B+ with the NanoKVM, automated.** `stats` after boot, `tone 3`, the
    chime, `stats` again. It passes when:
    - `mode hdmi-dma`, `hdmi_mode yes`, `infoframe_active yes`
-   - `rate_since_restart_hz` within 1 % of 44100
+   - `rate_window_hz` and `rate_last_measured_hz` within 1 % of 44100
    - `mai_underflow_polls` and `dma_faults` 0 while sound plays
    - `loud_chunks` grows
 2. **Listening, with a person:** a monitor or TV with speakers, on the 3B+

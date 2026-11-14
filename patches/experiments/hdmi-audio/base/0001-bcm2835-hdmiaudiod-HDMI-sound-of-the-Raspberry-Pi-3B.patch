@@ -1,4 +1,4 @@
-From 2b5b40c0ebeab4973b27cc439172aacfdbbc1234 Mon Sep 17 00:00:00 2001
+From a0271351e20581af2defadfb39adc2e78fcd9978 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 14 Nov 2026 19:10:26 +0000
 Subject: [PATCH] bcm2835-hdmiaudiod: HDMI sound of the Raspberry Pi 3B+ and
@@ -18,7 +18,9 @@ picture; no display driver is needed.
 - DMA channel 0 with DREQ 17 plays a ring of 8 x 512 frames of IEC958
   subframes (preamble, channel status, parity) into MAI_DATA.
 - The HSM rate comes from CM_HSMCTL/HSMDIV if the source is known,
-  else 163.682864 MHz; after 3 s the DMA progress corrects it once.
+  else 163.682864 MHz. Two 3 s measurements of the DMA progress that
+  agree correct it once; a refresh gap over 60 ms (a ring turn is 93 ms,
+  turns would go uncounted) starts the measurement over.
 - A 10 ms timer counts FIFO underflows and overflows and programs the
   audio part again if the firmware reset it.
 - stats, tone (a sine through the ring) and stop as in
@@ -38,12 +40,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  drivers/audio/bcm2835-hdmiaudiod/Cargo.toml   |  19 +
  drivers/audio/bcm2835-hdmiaudiod/src/dma.rs   | 221 +++++
  drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs  | 456 ++++++++++
- .../audio/bcm2835-hdmiaudiod/src/iec958.rs    | 193 +++++
- drivers/audio/bcm2835-hdmiaudiod/src/main.rs  | 805 ++++++++++++++++++
+ .../audio/bcm2835-hdmiaudiod/src/iec958.rs    | 193 ++++
+ drivers/audio/bcm2835-hdmiaudiod/src/main.rs  | 843 ++++++++++++++++++
  drivers/audio/bcm2835-hdmiaudiod/src/ring.rs  | 139 +++
  init.initfs.d/40_drivers.target               |   2 +-
  init.initfs.d/41_bcm2835-hdmiaudiod.service   |  10 +
- 10 files changed, 1846 insertions(+), 1 deletion(-)
+ 10 files changed, 1884 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
@@ -991,10 +993,10 @@ index 00000000..d8b8c342
 +}
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
 new file mode 100644
-index 00000000..762fbebb
+index 00000000..e9c90212
 --- /dev/null
 +++ b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
-@@ -0,0 +1,805 @@
+@@ -0,0 +1,843 @@
 +//! HDMI sound of the Raspberry Pi 3B+ and Zero 2 W as the `audiohw` scheme
 +//! for `audiod` (issue #423). The firmware sets up the picture; this driver
 +//! programs only the audio part of the VC4 HDMI block (`hdmi.rs`), so no
@@ -1060,10 +1062,16 @@ index 00000000..762fbebb
 +/// If rpi-firmwared knows no pixel clock: 1080p60.
 +const DEFAULT_PIXEL_HZ: u64 = 148_500_000;
 +const POLL: Duration = Duration::from_millis(10);
-+/// After this long, the sample rate the DMA progress shows corrects the HSM
-+/// rate once, if it is off by more than `RATE_TOLERANCE`.
++/// Length of one rate measurement. Two in a row that agree within
++/// `RATE_AGREE` correct the HSM rate once, if they are off by more than
++/// `RATE_TOLERANCE`.
 +const MEASURE_AFTER: Duration = Duration::from_secs(3);
 +const RATE_TOLERANCE: f64 = 0.005;
++const RATE_AGREE: f64 = 0.002;
++/// The ring's position is only seen at a refresh. A gap longer than a turn
++/// of the ring (8 x 512 frames, 93 ms) loses whole turns, so a gap longer
++/// than this starts the measurement over (row 417: busy boot, 12.6 % lost).
++const MAX_GAP: Duration = Duration::from_millis(60);
 +const MAX_TONE_SECONDS: f64 = 10.0;
 +/// The tone's amplitude, a quarter of full scale, to spare ears.
 +const TONE_AMPLITUDE: f64 = 0.25;
@@ -1149,10 +1157,14 @@ index 00000000..762fbebb
 +    ring: Ring,
 +    enc: Encoder,
 +    started: Instant,
-+    /// Start of the rate measurement (time, slot), and whether the HSM rate
-+    /// was corrected already.
++    /// Start of the rate measurement (time, slot), the previous
++    /// measurement, and whether the HSM rate was settled already.
 +    window: (Instant, u64),
++    previous_rate: Option<f64>,
 +    corrected: bool,
++    last_refresh: Instant,
++    /// Refreshes after a gap over `MAX_GAP`.
++    long_gaps: u64,
 +    chunks: u64,
 +    loud_chunks: u64,
 +    peak: u16,
@@ -1178,7 +1190,10 @@ index 00000000..762fbebb
 +            enc: Encoder::new(SAMPLE_RATE),
 +            started: now,
 +            window: (now, 0),
++            previous_rate: None,
 +            corrected: false,
++            last_refresh: now,
++            long_gaps: 0,
 +            chunks: 0,
 +            loud_chunks: 0,
 +            peak: 0,
@@ -1215,6 +1230,13 @@ index 00000000..762fbebb
 +                enc.silence(out.slot_mut((n % SLOTS as u64) as usize), next * SLOT_FRAMES as u64);
 +            });
 +        }
++        let now = Instant::now();
++        if now - self.last_refresh > MAX_GAP {
++            // Turns may have gone uncounted: measure from here.
++            self.long_gaps += 1;
++            self.window = (now, self.ring.current());
++        }
++        self.last_refresh = now;
 +        self.feed_tone();
 +        let Output::Hdmi { hdmi, dma, .. } = &self.out else {
 +            return;
@@ -1254,18 +1276,26 @@ index 00000000..762fbebb
 +        self.correct_rate();
 +    }
 +
-+    /// Once, after `MEASURE_AFTER`: if the DMA progress shows another sample
-+    /// rate than set, the HSM rate was wrong; set the sample clock from the
-+    /// corrected rate.
++    /// Once two measurements of `MEASURE_AFTER` without a long gap agree:
++    /// if the DMA progress shows another sample rate than set, the HSM rate
++    /// was wrong; set the sample clock from the corrected rate.
 +    fn correct_rate(&mut self) {
 +        let (since, first) = self.window;
 +        let elapsed = since.elapsed();
 +        if self.corrected || elapsed < MEASURE_AFTER {
 +            return;
 +        }
-+        self.corrected = true;
 +        let frames = (self.ring.current() - first) * SLOT_FRAMES as u64;
 +        let measured = frames as f64 / elapsed.as_secs_f64();
++        self.window = (Instant::now(), self.ring.current());
++        let agrees = self
++            .previous_rate
++            .is_some_and(|prev| prev > 0.0 && (measured / prev - 1.0).abs() < RATE_AGREE);
++        self.previous_rate = Some(measured);
++        if !agrees {
++            return;
++        }
++        self.corrected = true;
 +        let (Output::Hdmi { hdmi, .. }, Some(setup)) = (&self.out, &mut self.setup) else {
 +            return;
 +        };
@@ -1445,9 +1475,15 @@ index 00000000..762fbebb
 +        let (since, first) = self.window;
 +        let window = since.elapsed().as_secs_f64();
 +        if window > 0.0 {
++            // Since the last long gap or the last measurement.
 +            let recent = (played - first) as f64 * SLOT_FRAMES as f64 / window;
-+            let _ = writeln!(text, "rate_since_restart_hz {recent:.0}");
++            let _ = writeln!(text, "rate_window_hz {recent:.0} over {window:.1} s");
 +        }
++        if let Some(rate) = self.previous_rate {
++            let _ = writeln!(text, "rate_last_measured_hz {rate:.0}");
++        }
++        let _ = writeln!(text, "rate_settled {}", yes(self.corrected));
++        let _ = writeln!(text, "long_gaps {}", self.long_gaps);
 +        let _ = writeln!(text, "chunks {}", self.chunks);
 +        let _ = writeln!(text, "loud_chunks {}", self.loud_chunks);
 +        let _ = writeln!(text, "peak {}", self.peak);
@@ -1613,12 +1649,16 @@ index 00000000..762fbebb
 +
 +/// The pixel clock from rpi-firmwared (`clocks`: name, current and maximum
 +/// rate per line).
-+fn pixel_clock() -> Option<u64> {
-+    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").ok()?;
-+    clocks.lines().find_map(|line| {
-+        let mut words = line.split_whitespace();
-+        (words.next() == Some("pixel")).then(|| words.next()?.parse::<u64>().ok())?
-+    })
++fn pixel_clock() -> std::result::Result<u64, String> {
++    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").map_err(|err| format!("no clocks file ({err})"))?;
++    let line = clocks
++        .lines()
++        .find(|line| line.split_whitespace().next() == Some("pixel"))
++        .ok_or("no pixel line in the clocks file")?;
++    match line.split_whitespace().nth(1).and_then(|w| w.parse::<u64>().ok()) {
++        Some(hz) if hz > 0 => Ok(hz),
++        _ => Err(format!("clocks file says \"{line}\"")),
++    }
 +}
 +
 +/// Find the HDMI output and program its audio part, or the clock stand-in.
@@ -1650,14 +1690,13 @@ index 00000000..762fbebb
 +            if forced { "now active" } else { "did not come up" }
 +        );
 +    }
-+    let pixel_hz = pixel_clock().filter(|&hz| hz > 0);
-+    if pixel_hz.is_none() {
++    let pixel_hz = pixel_clock().unwrap_or_else(|why| {
 +        println!(
-+            "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared, assuming {} MHz",
++            "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), assuming {} MHz",
 +            DEFAULT_PIXEL_HZ as f64 / 1e6
 +        );
-+    }
-+    let pixel_hz = pixel_hz.unwrap_or(DEFAULT_PIXEL_HZ);
++        DEFAULT_PIXEL_HZ
++    });
 +    let cm = map(soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], 0, CPRMAN_BUS_ADDR)));
 +    let hsm_regs = unsafe { (cm.add(CM_HSMCTL / 4).read_volatile(), cm.add(CM_HSMDIV / 4).read_volatile()) };
 +    let (hsm_hz, hsm_source) = match hdmi::hsm_from_cprman(hsm_regs.0, hsm_regs.1) {
@@ -1758,6 +1797,7 @@ index 00000000..762fbebb
 +        dma.start();
 +    }
 +    driver.window = (Instant::now(), 0);
++    driver.last_refresh = Instant::now();
 +
 +    let mut timer = Timer::new().expect("bcm2835-hdmiaudiod: failed to open /scheme/time");
 +    let socket = Socket::nonblock().expect("bcm2835-hdmiaudiod: failed to create the audiohw scheme");
