@@ -1,0 +1,24 @@
+# Raspberry Pi firmware configuration for Redox on the Pi 4 family
+# (Pi 400, Pi 4 Model B, CM4; BCM2711). Test version, work package #299.
+# Written to the FAT partition by scripts/make-sdcard.sh --board pi4.
+
+# Start U-Boot on the ARM cores in 64-bit mode.
+arm_64bit=1
+kernel=u-boot.bin
+
+# Serial console on GPIO14/15 (pins 8/10) through the PL011 UART, which is the
+# UART Redox supports. Bluetooth loses its UART.
+enable_uart=1
+dtoverlay=disable-bt
+
+# The firmware sets the GIC-400 up for the non-secure kernel (default on the
+# Pi 4, set here so it is visible).
+enable_gic=1
+
+# Test version: only the first GB of RAM. Older DMA engines reach only the
+# first GB and PCIe only the first 3 GB; Redox has no limits per driver yet.
+total_mem=1024
+
+# No gpu_mem=16 as on the Pi 3: on the Pi 4 it makes the firmware look for
+# the cut-down start4cd.elf, which the card does not carry. The default GPU
+# memory (76 MB) leaves enough for Redox.

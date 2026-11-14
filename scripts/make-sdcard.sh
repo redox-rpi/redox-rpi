@@ -36,6 +36,15 @@
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
 #   all three also take [--family <name>]
+#   --local also takes [--live] and [--board pi4]
+#
+#   --live             with --local: the live bootloader (bootloader-live.efi)
+#                      as BOOTAA64.EFI, which copies the root filesystem into
+#                      RAM, as network boot does; for boards without an SD
+#                      card driver in Redox (Pi 400, #299)
+#   --board pi4        a card for the Pi 4 family (Pi 400, Pi 4B, CM4): the
+#                      BCM2711 firmware files and config/config-pi4.txt
+#                      instead of the Pi 3 ones (test version, #299)
 #
 #   --dir <name>       the directory of scripts/netboot.sh --dir whose boot.scr
 #                      goes on the card (default redox; redox-zero2w for the
@@ -74,6 +83,8 @@ data_mib=960
 image=
 direct=
 family=
+live=
+board=pi3
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -84,9 +95,25 @@ while [ $# -gt 0 ]; do
         --local) image="$2"; shift 2 ;;
         --direct) direct="$2"; shift 2 ;;
         --family) family="$2"; shift 2 ;;
+        --live) live=yes; shift ;;
+        --board) board="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+case "$board" in
+    pi3) config_txt="$ROOT/config/config.txt" ;;
+    pi4)
+        config_txt="$ROOT/config/config-pi4.txt"
+        [ -n "$image" ] && [ -z "$direct" ] || { echo "--board pi4 needs --local (test version, #299)" >&2; exit 1; }
+        FIRMWARE_FILES=("${PI4_FIRMWARE_FILES[@]}") ;;
+    *) echo "unknown board: $board" >&2; exit 1 ;;
+esac
+if [ -n "$live" ]; then
+    [ -n "$image" ] || { echo "--live needs --local" >&2; exit 1; }
+    live_efi="$(find "$ROOT/upstream/redox/recipes/core/bootloader/target" -path '*stage/usr/lib/boot/bootloader-live.efi' | head -1)"
+    [ -n "$live_efi" ] || { echo "bootloader-live.efi missing, run scripts/build-image.sh" >&2; exit 1; }
+fi
 
 uboot="$ROOT/build/u-boot/u-boot.bin"
 bootscr="$tftp/$dir/boot.scr"
@@ -156,7 +183,7 @@ if [ -n "$direct" ]; then
     mcopy -i "$fat" "$out.config" ::config.txt
     rm -f "$out.config"
 else
-    mcopy -i "$fat" "$ROOT/config/config.txt" ::config.txt
+    mcopy -i "$fat" "$config_txt" ::config.txt
 fi
 if [ -n "$direct" ]; then image_id=sdcard-direct
 elif [ -n "$image" ]; then image_id=sdcard-redox; else image_id=sdcard-netboot; fi
@@ -167,7 +194,7 @@ cat > "$out.uuid" <<EOF
   "image": {
     "id": "$image_id",
     "name": "Redox OS for Raspberry Pi (redox-rpi)",
-    "version": "${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty)}",
+    "version": "${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always --dirty)}",
     "build": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "commit": "$(git -C "$ROOT" rev-parse --short HEAD)"
   }
@@ -183,6 +210,7 @@ elif [ -n "$image" ]; then
     efi="$out.efi"
     rm -rf "$efi"
     mcopy -s -i "$image@@$((efi_start * 512))" ::EFI "$efi"
+    [ -z "$live" ] || cp "$live_efi" "$efi/BOOT/BOOTAA64.EFI"
     mcopy -s -i "$fat" "$efi" ::EFI
     rm -rf "$efi"
     mcopy -i "$fat" "$bootscr" ::boot.scr

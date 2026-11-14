@@ -27,9 +27,9 @@ Every role below can also be held, or shared, by a contributor who joins.
 
 | Role | Who | Owns |
 |---|---|---|
-| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
+| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs that change the image, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
 | Project lead | coordinator session | this plan, the coarse work packages and who owns them, overall status (`STATUS.md`), merge readiness (`merge-next`), docs-only merges, reporting to the maintainer |
-| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard. Quality does not test |
+| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard; merging build and test system PRs (see [Merge rights](#merge-rights), never its own). Quality does not test |
 | Verification and validation (V&V) | Pi test agent, extended | test standards, test plan and reports, automated and special tests on QEMU and the real Pi, the regression set, preparing person tests |
 | Requirements | Requirements session | the requirements, their IDs and their trace to issues, code and tests |
 | Architect | Architect session | architecture, coding standards and coding rules, RFC drafts, cross-topic technical decisions |
@@ -169,10 +169,38 @@ per week and one release per sprint:
    report linked and the topic page updated.
 5. The project lead checks base, CI and Pi test and sets `merge-next`;
    Quality may audit the PR against the process.
-6. The maintainer merges code PRs; the project lead may merge docs-only
-   PRs. RFCs (`docs/rfcs/`) are always the maintainer's.
+6. The PR is merged by whoever holds the merge right for it (see
+   [Merge rights](#merge-rights) below).
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
+
+### Merge rights
+
+In force since 2026-11-13, decided by the maintainer. This is the only
+place these rules are written down; other pages link here.
+
+| Who | Merges | Never |
+|---|---|---|
+| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code), PRs by the Quality session, RFCs | — |
+| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
+| Project lead | docs-only PRs; docs may also go straight to `main` as a draft | code PRs |
+
+Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
+(WBS 2.15): after a review by the project lead or Quality, the reviewer sets
+`merge-next`; the PR need not stay a draft, since the fork is not used by
+any build yet. The maintainer merges. The quality track (GCC ships, TCC runs in the
+nightly) is in [WBS 2.15](wbs.md#215-tinycc-vc4-quality-track).
+
+Quality merges only when all of these hold:
+1. CI is green and `merge-set-check` passes.
+2. The base is `main`, not a stacked branch.
+3. If the change affects how images are built or tested, a QEMU run or a
+   Pi row passed on that head commit.
+4. A short merge comment names the criterion it merged under.
+
+If `main` or the nightly goes red after such a merge, Quality reverts it at
+once (a revert PR, merged under the same rule) and tells the project lead.
+Releases, tags and release candidates stay with the maintainer in every case.
 
 ## Communication
 

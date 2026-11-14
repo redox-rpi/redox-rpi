@@ -4,8 +4,10 @@
 //!
 //! ```text
 //! socdump [plls|clocks|gpio|all]   decoded (default all)
+//! socdump display                  HVS, pixel valves and HDMI, decoded
 //! socdump check                    compare with /scheme/rpi-firmware/clocks
 //! socdump regs                     every register as `block address value name`
+//! socdump diff A B                 registers that differ between two `regs` dumps
 //! ```
 //!
 //! The chip comes from the devicetree's root `compatible` (or the board
@@ -18,6 +20,7 @@
 //! Raspberry Pi OS.
 
 mod chip;
+mod display;
 
 use chip::{Chip, Parents, CHIPS, CM_BASE, CM_LEN, CM_LOCK, GPIO_BASE, GPIO_LEN};
 use std::collections::HashMap;
@@ -25,7 +28,7 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: socdump [plls|clocks|gpio|all|check|regs]";
+const USAGE: &str = "usage: socdump [plls|clocks|gpio|display|all|check|regs] | socdump diff A B";
 const FIRMWARE_CLOCKS: &str = "/scheme/rpi-firmware/clocks";
 const FIRMWARE_BOARD: &str = "/scheme/rpi-firmware/board";
 
@@ -354,6 +357,176 @@ fn check(board: &Board, cm: &Window) -> Result<bool, String> {
     Ok(all_ok)
 }
 
+/// Whether the HDMI blocks may be read: their state machine clock and PLLH
+/// must run, since a read of a block without its clock can hang the bus.
+fn hdmi_clocked(board: &Board, cm: &Window) -> Result<(), String> {
+    let hsm = board.chip.clocks.iter().find(|c| c.name == "hsm").ok_or("no hsm clock in the table")?;
+    if !chip::clock_ctl(cm.read(hsm.ctl)).enabled {
+        return Err("hsm clock off".into());
+    }
+    let pllh = board.chip.plls.iter().find(|p| p.name == "pllh").ok_or("no pllh in the table")?;
+    if chip::pll_powered_down(cm.read(pllh.ctrl)) {
+        return Err("pllh powered down".into());
+    }
+    Ok(())
+}
+
+fn print_display(board: &Board, cm: &Window) -> Result<(), String> {
+    use display::*;
+    let hvs = board.map(HVS.bus, HVS.len)?;
+    let ctrl = hvs.read(0x00);
+    println!("HVS (DISPCTRL 0x{ctrl:08x}, enabled {}, DISPSTAT 0x{:08x})", u32::from(ctrl & (1 << 31) != 0), hvs.read(0x04));
+    for ch in 0..3u32 {
+        let base = 0x40 + 0x10 * ch;
+        let (on, width, height) = hvs_channel(hvs.read(base));
+        let (mode, full, empty, frame, line) = hvs_status(hvs.read(base + 8));
+        let cob = hvs.read(base + 0xc);
+        let list = hvs.read(0x20 + 4 * ch) & 0x3fff;
+        println!(
+            "  channel {ch}: {} {width}x{height}, background 0x{:08x}, mode {mode} full {} empty {} frame {frame} line {line}, cob {}..={}, list at word {list}",
+            if on { "on" } else { "off" }, hvs.read(base + 4), u32::from(full), u32::from(empty), cob & 0xffff, cob >> 16
+        );
+        if !on {
+            continue;
+        }
+        if list >= HVS_DLIST_WORDS {
+            println!("    list outside the display list memory");
+            continue;
+        }
+        let read = |i: u32| if i < HVS_DLIST_WORDS { hvs.read(HVS_DLIST + 4 * i) } else { 1 << 31 };
+        match walk_list(list, 16, read) {
+            Ok(planes) if planes.is_empty() => println!("    no planes"),
+            Ok(planes) => {
+                for p in planes {
+                    let raw: Vec<String> = (p.start..p.start + p.words).map(|i| format!("{:08x}", read(i))).collect();
+                    println!(
+                        "    plane at word {}: {} {}x{} at ({}, {}){}, {} words: {}",
+                        p.start, hvs_format(p.format), p.width, p.height, p.x, p.y,
+                        p.source.map_or(" unscaled".into(), |(w, h)| format!(" scaled from {w}x{h}")),
+                        p.words, raw.join(" ")
+                    );
+                }
+            }
+            Err(err) => println!("    {err}"),
+        }
+    }
+    println!();
+
+    println!("Pixel valves");
+    for (block, feeds, clock) in PVS {
+        let pv = board.map(block.bus, block.len)?;
+        let (control, vcontrol) = (pv.read(0x00), pv.read(0x04));
+        print!("  {} ({feeds}): control 0x{control:08x} v_control 0x{vcontrol:08x}", block.name);
+        if control & 1 == 0 {
+            println!(", off");
+            continue;
+        }
+        let t = pv_timing(pv.read(0x0c), pv.read(0x10), pv.read(0x14), pv.read(0x18));
+        let pixel = rate_by_name(board, cm, clock).unwrap_or(0.0);
+        println!(
+            ", video {}, {}; pixel clock {clock} {} MHz, {:.3} Hz; stat 0x{:08x} intstat 0x{:08x} hact_act {}",
+            u32::from(vcontrol & 1 != 0), t.describe(), mhz(pixel), t.refresh(pixel), pv.read(0x2c), pv.read(0x28), pv.read(0x30)
+        );
+    }
+    println!();
+
+    if let Err(why) = hdmi_clocked(board, cm) {
+        println!("HDMI: not read ({why})\n");
+        return Ok(());
+    }
+    let (core, hd) = (board.map(HDMI.bus, HDMI.len)?, board.map(HD.bus, HD.len)?);
+    let horza = core.read(0xc4);
+    let t = hdmi_timing(horza, core.read(0xc8), core.read(0xcc), core.read(0xd0));
+    let (hpos, vpos) = hdmi_polarity(horza);
+    let pixel = rate_by_name(board, cm, "pllh_pix").unwrap_or(0.0);
+    let sched = core.read(0xc0);
+    let vid = hd.read(0x38);
+    println!("HDMI (core rev 0x{:08x})", core.read(0x00));
+    println!("  {}, hsync {}, vsync {}; pixel clock pllh_pix {} MHz, {:.3} Hz", t.describe(),
+        if hpos { "+" } else { "-" }, if vpos { "+" } else { "-" }, mhz(pixel), t.refresh(pixel));
+    println!(
+        "  scheduler 0x{sched:08x} (hdmi mode {}, active {}), hotplug 0x{:08x}, fifo_ctl 0x{:08x}, misc 0x{:08x}",
+        u32::from(sched & 1 != 0), u32::from(sched & 2 != 0), core.read(0x0c), core.read(0x5c), core.read(0xe4)
+    );
+    println!("  phy: reset_ctl 0x{:08x}, ctl_0 0x{:08x}", core.read(0x2c0), core.read(0x2c4));
+    println!(
+        "  hd: m_ctl 0x{:08x}, vid_ctl 0x{vid:08x} (enable {}), csc_ctl 0x{:08x}, frame count {}",
+        hd.read(0x0c), u32::from(vid & (1 << 31) != 0), hd.read(0x40), hd.read(0x68)
+    );
+    println!();
+    Ok(())
+}
+
+fn print_block(board: &Board, block: &display::Block) -> Result<(), String> {
+    let w = board.map(block.bus, block.len)?;
+    for &(offset, name) in block.regs {
+        println!("{} 0x{:08x} 0x{:08x} {name}", block.name, block.bus + offset, w.read(offset));
+    }
+    Ok(())
+}
+
+fn print_display_regs(board: &Board, cm: &Window) -> Result<(), String> {
+    print_block(board, &display::HVS)?;
+    for (block, _, _) in display::PVS {
+        print_block(board, block)?;
+    }
+    match hdmi_clocked(board, cm) {
+        Ok(()) => {
+            print_block(board, &display::HDMI)?;
+            print_block(board, &display::HD)?;
+        }
+        Err(why) => println!("# hdmi and hd not read: {why}"),
+    }
+    Ok(())
+}
+
+/// `block address value name` lines of a `regs` dump, by block and address.
+fn read_regs(path: &str) -> Result<Vec<(String, String, String)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|err| format!("{path}: {err}"))?;
+    Ok(text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut w = line.split_whitespace();
+            let (block, addr, value) = (w.next()?, w.next()?, w.next()?);
+            let name = w.next().unwrap_or("");
+            Some((format!("{block} {addr}"), value.to_string(), name.to_string()))
+        })
+        .collect())
+}
+
+/// Registers that differ between two `regs` dumps, and those in only one.
+fn diff(a: &str, b: &str) -> Result<bool, String> {
+    let (left, right) = (read_regs(a)?, read_regs(b)?);
+    let right_map: HashMap<&str, (&str, &str)> = right.iter().map(|(k, v, n)| (k.as_str(), (v.as_str(), n.as_str()))).collect();
+    let left_keys: std::collections::HashSet<&str> = left.iter().map(|(k, _, _)| k.as_str()).collect();
+    let mut same = true;
+    println!("{:<20} {:<10} {:<10} name", "block address", "A", "B");
+    for (key, value, name) in &left {
+        match right_map.get(key.as_str()) {
+            Some((other, _)) if other == value => {}
+            Some((other, _)) => {
+                same = false;
+                println!("{key:<20} {value:<10} {other:<10} {name}");
+            }
+            None => {
+                same = false;
+                println!("{key:<20} {value:<10} {:<10} {name}", "-");
+            }
+        }
+    }
+    for (key, value, name) in &right {
+        if !left_keys.contains(key.as_str()) {
+            same = false;
+            println!("{key:<20} {:<10} {value:<10} {name}", "-");
+        }
+    }
+    if same {
+        println!("(no differences)");
+    }
+    Ok(same)
+}
+
 fn print_regs(board: &Board, cm: &Window, gpio: &Window) {
     let line = |w: &Window, block: &str, offset: u32, name: &str| {
         println!("{block} 0x{:08x} 0x{:08x} {name}", w.bus + offset, w.read(offset));
@@ -404,9 +577,14 @@ fn run(what: &str) -> Result<bool, String> {
             print_plls(&board, &cm);
             print_clocks(&board, &cm);
             print_gpio(&board, &board.map(GPIO_BASE, GPIO_LEN)?);
+            print_display(&board, &cm)?;
         }
         "check" => return check(&board, &cm),
-        "regs" => print_regs(&board, &cm, &board.map(GPIO_BASE, GPIO_LEN)?),
+        "display" => print_display(&board, &cm)?,
+        "regs" => {
+            print_regs(&board, &cm, &board.map(GPIO_BASE, GPIO_LEN)?);
+            print_display_regs(&board, &cm)?;
+        }
         _ => return Err(USAGE.into()),
     }
     Ok(true)
@@ -414,6 +592,18 @@ fn run(what: &str) -> Result<bool, String> {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [cmd, a, b] = args.as_slice() {
+        if cmd == "diff" {
+            return match diff(a, b) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(err) => {
+                    eprintln!("socdump: {err}");
+                    ExitCode::from(2)
+                }
+            };
+        }
+    }
     let what = match args.as_slice() {
         [] => "all",
         [one] if one != "-h" && one != "--help" => one.as_str(),

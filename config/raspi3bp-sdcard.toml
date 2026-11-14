@@ -25,6 +25,8 @@ base = "source"
 bootloader = "source"
 # relibc: our fix for fork() on aarch64 (patches/relibc).
 relibc = "source"
+# netutils: nc errors to stderr with exit status 1 (patches/netutils, #407).
+netutils = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
 # `i2c` and `spi` commands for the I2C and SPI drivers (tools/i2c,
@@ -33,11 +35,13 @@ i2c = "source"
 spi = "source"
 # `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
 socdump = "source"
-# Programs beyond the minimal system, prebuilt by Redox. Most of them
-# (bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils) crash at
-# start with today's prebuilt aarch64 packages, in QEMU too; see
-# docs/status.md.
+# Programs beyond the minimal system, prebuilt by Redox. They load our
+# libc.so through /lib/ld.so.1; since the x18 fix (#137) they run (Pi test
+# 165: bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils, 450 of
+# 450 starts; #40).
 diffutils = {}
+# curl comes from config/raspi3bp-http-client.toml, which
+# scripts/build-image.sh adds to every image but the Zero 2 W's.
 # `tone` writes test sound for /scheme/audio (tools/tone; base patch
 # 0086, sound from the headphone jack, beta).
 tone = "source"

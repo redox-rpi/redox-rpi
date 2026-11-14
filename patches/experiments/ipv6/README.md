@@ -7,6 +7,13 @@ v0.6.0). Applies after the [`multicast`](../multicast) experiment (file `needs`,
 scripts/build-image.sh --experiment multicast --experiment ipv6   # multicast: patches are default now, it adds the mcast tool
 ```
 
+**With base `0095` (#216):** the LAN7800 receives only the multicast
+groups netstack writes to the adapter's `multicast` file (base `0085`).
+When this experiment is refreshed, netstack must add `33:33:00:00:00:01`
+and the solicited-node groups (`33:33:ff:…`) to that list in
+`EthernetLink::set_multicast`, or neighbor discovery and SLAAC stop
+working on the Pi 3B+.
+
 Base `0025`, `netstack`:
 
 - smoltcp with `proto-ipv6`. Its neighbor discovery and SLAAC only work on

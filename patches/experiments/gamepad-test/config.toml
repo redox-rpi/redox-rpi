@@ -1,0 +1,5 @@
+# Experiment gamepad-test (#320): the gamepad test window, with its
+# launcher entry. Build after the desktop experiments (orbital, ...).
+
+[packages]
+gamepad-test = "source"

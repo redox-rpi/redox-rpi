@@ -89,6 +89,17 @@ fallback, the week has no release.
   v0.3.0-rc2.
 - The build waits for other builds on the host (`build/.build-image.lock`).
 - `devshd` stays out of candidate and release images.
+- Next to each candidate it builds the **network-boot variant** from the
+  same commit and options: `scripts/build-image.sh --release-netboot
+  --release v<version>-rc<N>` (`config/raspi3bp-release-netboot.toml`: the
+  SD image's packages and files, no `devshd`, a 256 MiB filesystem that
+  U-Boot can load). Automated rows that need the image a user gets
+  (T-SEC-1, T-SEC-2 in
+  [v1-test-drafts.md](requirements/v1-test-drafts.md)) run on it over the
+  serial console; the test that holds the Pi stages it with
+  `scripts/netboot.sh --image upstream/redox/build/aarch64/release-netboot/harddrive.img`.
+  Its manifest is `build/manifests/release-netboot-<build ID>.toml`. It is
+  not published as a download.
 - The build ID (`git describe` plus the experiment hash) is shown next to
   the candidate's name, so `v0.3.0-rc2` can be traced to an exact build.
 
@@ -101,7 +112,7 @@ anyone's own computer:
 |---|---|
 | `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local`, published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
 | `redox-rpi-v<version>-rc<N>.img.xz.sha256`, `.manifest.toml` | its checksum and manifest, written by `publish-sdcard.sh` |
-| `SHA256SUMS` | one line per file in the directory |
+| `index.json` | the list SwiftFlash reads, rewritten by `publish-sdcard.sh` (`scripts/sdcard-index.py`); there is no `SHA256SUMS` in `/srv/tftp/sdcard/`, each image has its own `.sha256` |
 
 The image is offered at
 `http://homenodellm:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
