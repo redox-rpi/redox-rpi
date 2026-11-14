@@ -124,7 +124,7 @@ if [ -z "${UPDATE_STABLE_REEXEC:-}" ] && ! cmp -s "$0" "$ROOT/scripts/update-sta
     UPDATE_STABLE_REEXEC=1 exec bash "$copy" "${args[@]}"
 fi
 head="$(git rev-parse HEAD)"
-log "$ref is $(git describe --tags) ($head)"
+log "$ref is $(git describe --tags --match 'v[0-9]*') ($head)"
 
 # Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
 # 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.

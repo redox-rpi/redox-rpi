@@ -167,7 +167,7 @@ cat > "$out.uuid" <<EOF
   "image": {
     "id": "$image_id",
     "name": "Redox OS for Raspberry Pi (redox-rpi)",
-    "version": "${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty)}",
+    "version": "${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always --dirty)}",
     "build": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "commit": "$(git -C "$ROOT" rev-parse --short HEAD)"
   }
