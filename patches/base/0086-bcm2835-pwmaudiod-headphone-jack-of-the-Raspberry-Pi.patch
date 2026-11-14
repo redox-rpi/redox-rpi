@@ -1,4 +1,4 @@
-From b30bf88040308411faec01e49743ef51e74de4c1 Mon Sep 17 00:00:00 2001
+From b3bed5e4d464f37484c7de38933cfcb464da9183 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 7 Nov 2026 16:36:14 +0000
 Subject: [PATCH] bcm2835-pwmaudiod: headphone jack of the Raspberry Pi 3 as
@@ -26,13 +26,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  Cargo.toml                                  |   1 +
  Makefile                                    |   2 +-
  drivers/audio/bcm2835-pwmaudiod/Cargo.toml  |  19 +
- drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 +++++++
- drivers/audio/bcm2835-pwmaudiod/src/main.rs | 649 ++++++++++++++++++++
- drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 321 ++++++++++
- drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 145 +++++
+ drivers/audio/bcm2835-pwmaudiod/src/dma.rs  | 230 ++++++
+ drivers/audio/bcm2835-pwmaudiod/src/main.rs | 733 ++++++++++++++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/pwm.rs  | 321 +++++++++
+ drivers/audio/bcm2835-pwmaudiod/src/ring.rs | 166 +++++
  init.initfs.d/40_drivers.target             |   1 +
  init.initfs.d/41_bcm2835-pwmaudiod.service  |   9 +
- 9 files changed, 1376 insertions(+), 1 deletion(-)
+ 9 files changed, 1481 insertions(+), 1 deletion(-)
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/Cargo.toml
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/dma.rs
  create mode 100644 drivers/audio/bcm2835-pwmaudiod/src/main.rs
@@ -328,10 +328,10 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..ac023dfb
+index 00000000..793324b2
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -0,0 +1,649 @@
+@@ -0,0 +1,733 @@
 +//! The headphone jack of the Raspberry Pi 3 as the `audiohw` scheme for
 +//! `audiod`. Two PWM channels (GPIO 40 and 41) make the right and left
 +//! signal; a filter on the board turns them into sound.
@@ -345,6 +345,8 @@ index 00000000..ac023dfb
 +//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>] [mono] [range=<n>]
 +//!   [div=<n>]` plays a sine with the CPU filling the FIFO, without DMA
 +//!   (stage A1, a test); the result is in `stats`.
++//! - After 3 s of silence the outputs ramp down to 0 V and the PWM stops
++//!   (no hiss); the next sound ramps them up again, 46 ms later.
 +//! - `/scheme/audiohw/stop`: any write ramps both outputs down to 0 V over
 +//!   50 ms and stops the PWM, so the reset that follows does not click
 +//!   (`reboot` writes it). Later chunks are taken and dropped.
@@ -402,6 +404,12 @@ index 00000000..ac023dfb
 +/// A chunk counts as loud when a sample reaches 1/256 of full scale: tests
 +/// tell sound from silence by it (#292, #335).
 +const LOUD: u16 = 128;
++/// Below this every sample of a chunk counts as silence.
++const QUIET: u16 = 4;
++/// After this many silent chunks in a row (3 s) the outputs ramp down to
++/// 0 V and the PWM stops, against the hiss at idle; the next chunk with
++/// sound ramps them up again (A3).
++const IDLE_CHUNKS: u64 = 3 * SAMPLE_RATE as u64 / SLOT_FRAMES as u64;
 +
 +enum Output {
 +    Pwm { pwm: Pwm, dma: DmaRing, phys: usize },
@@ -455,6 +463,12 @@ index 00000000..ac023dfb
 +    tone: Option<ToneReport>,
 +    /// After `stop`: the outputs rest at 0 V until the driver restarts.
 +    stopped: bool,
++    /// Silent chunks in a row.
++    quiet_chunks: u64,
++    /// While idle (PWM off): since when, and the ring index then; the ring
++    /// follows the clock meanwhile, so `audiod` is paced as before.
++    idle: Option<(Instant, usize)>,
++    sleeps: u64,
 +    handles: HandleMap<Handle>,
 +}
 +
@@ -476,7 +490,22 @@ index 00000000..ac023dfb
 +            sta_gaps: 0,
 +            tone: None,
 +            stopped: false,
++            quiet_chunks: 0,
++            idle: None,
++            sleeps: 0,
 +            handles: HandleMap::new(),
++        }
++    }
++
++    /// The ring index being played: from the controller, or from the clock
++    /// while idle.
++    fn position(&self) -> Option<usize> {
++        match self.idle {
++            Some((since, base)) => {
++                let frames = since.elapsed().as_nanos() * u128::from(SAMPLE_RATE) / 1_000_000_000;
++                Some(((base as u128 + frames / SLOT_FRAMES as u128) % SLOTS as u128) as usize)
++            }
++            None => self.out.position(),
 +        }
 +    }
 +
@@ -486,10 +515,13 @@ index 00000000..ac023dfb
 +        if self.stopped {
 +            return;
 +        }
-+        if let Some(index) = self.out.position() {
++        if let Some(index) = self.position() {
 +            let silence = self.range / 2;
 +            let out = &mut self.out;
 +            self.ring.advance(index, |i| out.slot_mut(i).fill(silence));
++        }
++        if self.idle.is_some() {
++            return;
 +        }
 +        let (bits, fault) = match &self.out {
 +            Output::Pwm { pwm, dma, .. } => (pwm.take_errors(), dma.fault()),
@@ -534,6 +566,9 @@ index 00000000..ac023dfb
 +            self.chunks += 1;
 +            return Ok(chunk.len());
 +        }
++        if peak >= QUIET && self.idle.is_some() {
++            self.wake();
++        }
 +        self.refresh();
 +        let index = self.ring.reserve().ok_or(Error::new(EWOULDBLOCK))?;
 +        let range = self.range;
@@ -550,7 +585,48 @@ index 00000000..ac023dfb
 +            self.loud_chunks += 1;
 +        }
 +        self.peak = self.peak.max(peak);
++        if peak < QUIET {
++            self.quiet_chunks += 1;
++            if self.quiet_chunks >= IDLE_CHUNKS && self.idle.is_none() {
++                self.sleep();
++            }
++        } else {
++            self.quiet_chunks = 0;
++        }
 +        Ok(chunk.len())
++    }
++
++    /// Ramp the outputs down to 0 V and stop the PWM and the DMA; the ring
++    /// holds only silence by now.
++    fn sleep(&mut self) {
++        let base = self.out.position().unwrap_or(0);
++        if let Output::Pwm { pwm, dma, .. } = &self.out {
++            pwm.stop_dma();
++            dma.reset();
++            pwm::cpu_ramp(pwm, self.range / 2, 0, STOP_RAMP_FRAMES);
++            pwm.stop();
++        }
++        self.idle = Some((Instant::now(), base));
++        self.sleeps += 1;
++    }
++
++    /// Start the PWM again at 0 V with the start-up ramp up to the middle;
++    /// the chunk that woke it plays after the ramp.
++    fn wake(&mut self) {
++        self.idle = None;
++        self.quiet_chunks = 0;
++        fill_ramp(&mut self.out, self.range / 2);
++        self.ring.restart(RAMP_SLOTS);
++        match &mut self.out {
++            Output::Pwm { pwm, dma, .. } => {
++                if let Err(err) = pwm.start(true) {
++                    eprintln!("bcm2835-pwmaudiod: {err}");
++                }
++                dma::barrier();
++                dma.start();
++            }
++            Output::Clock { start, .. } => *start = Instant::now(),
++        }
 +    }
 +
 +    /// `<seconds> [<hz>] [mono] [range=<n>] [div=<n>]`: the options run
@@ -579,12 +655,15 @@ index 00000000..ac023dfb
 +                }
 +            }
 +        }
++        if self.stopped || !matches!(self.out, Output::Pwm { .. }) {
++            return Err(Error::new(ENODEV));
++        }
++        if self.idle.is_some() {
++            self.wake();
++        }
 +        let Output::Pwm { pwm, dma, .. } = &self.out else {
 +            return Err(Error::new(ENODEV));
 +        };
-+        if self.stopped {
-+            return Err(Error::new(ENODEV));
-+        }
 +        // Hold the ring where it is and let the CPU have the FIFO.
 +        dma.set_active(false);
 +        if divisor != CLOCK_DIVISOR {
@@ -619,9 +698,12 @@ index 00000000..ac023dfb
 +        }
 +        self.stopped = true;
 +        if let Output::Pwm { pwm, dma, .. } = &self.out {
-+            pwm.stop_dma();
-+            dma.reset();
-+            pwm::cpu_ramp(pwm, self.range / 2, 0, STOP_RAMP_FRAMES);
++            // Idle: already at 0 V.
++            if self.idle.is_none() {
++                pwm.stop_dma();
++                dma.reset();
++                pwm::cpu_ramp(pwm, self.range / 2, 0, STOP_RAMP_FRAMES);
++            }
 +            pwm.stop();
 +        }
 +        println!("bcm2835-pwmaudiod: stopped, outputs at 0 V");
@@ -645,6 +727,8 @@ index 00000000..ac023dfb
 +        if self.stopped {
 +            let _ = writeln!(text, "stopped");
 +        }
++        let _ = writeln!(text, "idle {}", if self.idle.is_some() { "yes" } else { "no" });
++        let _ = writeln!(text, "sleeps {}", self.sleeps);
 +        let _ = writeln!(text, "clock_hz {}", self.clock_hz);
 +        let _ = writeln!(text, "range {}", self.range);
 +        let _ = writeln!(text, "sample_rate {}", self.clock_hz / self.range / 2);
@@ -1310,10 +1394,10 @@ index 00000000..49e98682
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/ring.rs b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
 new file mode 100644
-index 00000000..585c96c3
+index 00000000..5475e8a7
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,166 @@
 +//! Bookkeeping for the ring of slots the DMA controller plays in a loop:
 +//! which slot it plays now, which slots hold new sound, which slot the next
 +//! chunk goes into. No hardware here, so it is tested on the build host.
@@ -1383,6 +1467,13 @@ index 00000000..585c96c3
 +        }
 +    }
 +
++    /// Start over at ring index 0, where the controller starts again, and
++    /// keep the counters. Slots below `first_free` hold a ramp.
++    pub fn restart(&mut self, first_free: usize) {
++        self.current = (self.current / self.slots + 1) * self.slots;
++        self.written = self.current + first_free as u64;
++    }
++
 +    /// The ring index for the next chunk, or `None` while the ring is full.
 +    pub fn reserve(&mut self) -> Option<usize> {
 +        if self.written < self.current + 2 {
@@ -1447,6 +1538,20 @@ index 00000000..585c96c3
 +        assert_eq!(ring.queued(), 0);
 +        // Slot 6 plays, 7 may be about to start: the next chunk goes to 0.
 +        assert_eq!(ring.reserve(), Some(0));
++    }
++
++    #[test]
++    fn restart_keeps_counting() {
++        let mut ring = Ring::new(8, 2);
++        ring.advance(5, |_| {});
++        ring.restart(4);
++        assert_eq!(ring.current(), 8);
++        assert_eq!(ring.queued(), 3);
++        assert_eq!(ring.reserve(), Some(4));
++        let mut silenced = Vec::new();
++        ring.advance(2, |i| silenced.push(i));
++        assert_eq!(silenced, vec![0, 1]);
++        assert_eq!(ring.current(), 10);
 +    }
 +
 +    #[test]

@@ -39,6 +39,11 @@ are enough; A3 and polish may follow in a later release.
   shows and sets the volume and keeps it across reboots; restored before
   the startup sound. The driver's `stats` count `loud_chunks` and `peak`,
   so tests tell sound from silence without listening.
+- **Quiet when idle (A3), Pi-tested (332)** (branch `audio-idle`, on top of
+  #292): after 3 s of silence the driver ramps the jack down to 0 V and
+  stops the PWM, so there is no hiss between sounds; the next sound ramps
+  it up again (46 ms). `audiod` keeps writing silence, paced by the
+  clock meanwhile. `stats` shows `idle` and `sleeps`.
 - **Sound in SDL games, Pi-tested (335)**
   ([#335](https://github.com/redox-rpi/redox-rpi/issues/335)): SDL2's
   Redox audio driver writes to `/scheme/audio` and is already built in;
