@@ -3,13 +3,21 @@
 # router's DNS, nothing else on the home network or the host itself.
 # docs/build-host.md "CI runner". Install as root:
 #   cp ci-runner.nft /etc/nftables.d/ && nft -f /etc/nftables.d/ci-runner.nft
-# and include it from /etc/nftables.conf so it survives reboots.
+# and include it from /etc/nftables.conf so it survives reboots. Loading it
+# again replaces the table (the first two lines), so a changed file is
+# applied with the same two commands.
+table inet ci_runner
+delete table inet ci_runner
 table inet ci_runner {
 	chain output {
 		type filter hook output priority 0; policy accept;
 		meta skuid != "ci-runner" accept
 		ip daddr { 127.0.0.53, 192.168.178.1 } meta l4proto { tcp, udp } th dport 53 accept
+		# every address of the host itself, IPv4 and global IPv6 too (#427)
+		fib daddr type local counter drop
+		# no IPv6 at all: the home network's global IPv6 prefix comes from
+		# the ISP and changes; GitHub is reachable over IPv4 (#427)
+		meta nfproto ipv6 counter drop
 		ip daddr { 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10 } counter drop
-		ip6 daddr { ::1, fc00::/7, fe80::/10 } counter drop
 	}
 }

@@ -80,9 +80,17 @@ and builds U-Boot itself.
 Our own GitHub Actions runner on the build host (label `homenode`) runs
 `qemu-boot.yml` and `upstream-weekly.yml`. It runs them only for pushes to
 `main`, the schedule, and pull requests from branches of this repository.
-Pull requests from forks always run on GitHub's runners, and only after a
+Pull requests from forks run on GitHub's runners, and only after a
 maintainer approves them. They get the label `external` (`label-external.yml`,
-which never checks out or runs their code). Who may merge what is in the
+which never checks out or runs their code).
+
+What keeps forks off the runner is the runner's job-started hook
+(`job-started.sh`, #426), not `runs-on`. For a pull request, GitHub takes
+the workflow from the PR itself, so a fork can change `runs-on` to
+`homenode`. The hook runs before the first step of every job, and the
+workflow cannot skip it. It fails the job if the event is a pull request
+whose head is not `redox-rpi/redox-rpi`. Still, before approving a fork PR
+that changes anything under `.github/`, read the workflow diff first. Who may merge what is in the
 [PMP, Merge rights](process/pmp.md#merge-rights).
 
 Until the repository variable `HOMENODE_RUNNER` is `on`, every job stays on
@@ -96,10 +104,13 @@ Isolation (files in `scripts/ci-runner/`):
   runner's own state. There are no host directories, no devices, no
   capabilities and no host loopback (`pasta --no-map-gw`). It is limited to
   6 CPUs and 12 GB RAM, so the nightly and the Pi tests keep the rest.
-- One runner, one job at a time.
+- One runner, one job at a time. It is not ephemeral (`--ephemeral`, a
+  new registration for every job): that would need a fresh registration
+  token for each job, so for now the hook above is the guard.
 - nftables (`ci-runner.nft`): the user `ci-runner` reaches the internet and
   DNS only. It cannot reach the home network (Shelly plug, NanoKVM, Pi,
-  router web UI) or services on the host.
+  router web UI) or any address of the host itself, and it has no IPv6 at
+  all (#427).
 
 ### Setting it up (maintainer)
 
@@ -116,6 +127,14 @@ On homenodellm, as root:
    - `sudo -u ci-runner curl -sI https://github.com` works.
    - `sudo -u ci-runner curl -m 5 http://shellyplug-01.fritz.box` fails.
    - `sudo -u ci-runner curl -m 5 http://127.0.0.1:8080` fails.
+   - IPv6: the host's global address must be blocked too (Samba, port 445):
+     `G=$(ip -6 addr show scope global -deprecated | grep -oP '(?<=inet6 )2[0-9a-f:]+' | head -1)`,
+     then `sudo -u ci-runner timeout 5 bash -c "</dev/tcp/$G/445" && echo reachable`
+     must print nothing. `sudo -u ci-runner curl -6 -m 5 -sI https://github.com` fails as well.
+
+When `ci-runner.nft` changes, copy it again and load it:
+`sudo cp scripts/ci-runner/ci-runner.nft /etc/nftables.d/ && sudo nft -f /etc/nftables.d/ci-runner.nft`.
+The file replaces its own table, so loading it twice does no harm.
 
 As `ci-runner` (`sudo -iu ci-runner`):
 
@@ -147,4 +166,5 @@ run `podman build` again (step 6) and `systemctl --user restart ci-runner`.
 
 Not covered: what a pull request from our own branches runs, it runs with
 internet access and the runner's registration. That is acceptable only
-because branches here are pushed by us. Fork PRs never reach the runner.
+because branches here are pushed by us. Fork PRs are refused by the
+job-started hook before their first step.
