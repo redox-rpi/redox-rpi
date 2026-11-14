@@ -59,9 +59,10 @@ here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
    `tccb`, and the VC4 tests that need no simulator (`tests/vc4`: enc, asm,
    bootcode-build `LINK=tcc`). It runs on GitHub-hosted runners, never
    self-hosted. The vc4 toolchain is built once and published as a release
-   asset. resim has no licence, so neither resim nor our patch to it is
-   published or built in public CI: the simulator tests (abi-sim, fat-sim)
-   run on the build host only (nightly track, and before a PR).
+   asset ([redox-rpi/vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain)).
+   The simulator is our fork [redox-rpi/resim](https://github.com/redox-rpi/resim)
+   (MIT). Until CI builds it, the simulator tests (abi-sim, fat-sim) run
+   on the build host (nightly track, and before a PR).
 3. **Nightly TCC track** (Release and CI, Pi Tests). Open firmware
    `fat-boot` is built with GCC (G) and TCC (T) from pinned commits (tinycc
    `vc4`, `fat-boot` and the GCC version in the manifest), and the resim tests
