@@ -50,6 +50,18 @@ are enough; A3 and polish may follow in a later release.
   asleep again after Sopwith (SIGTERM does not end Sopwith, #405). Nobody has listened
   yet: row 315 (new card with #354, step 7 for the hiss and clicks),
   waiting for a visit.
+- **HDMI audio, experiment** ([#423](https://github.com/redox-rpi/redox-rpi/issues/423),
+  high priority: the Zero 2 W has no jack). The plan is in the issue.
+  Branch `hdmi-audio`, experiment `hdmi-audio`: `bcm2835-hdmiaudiod`
+  takes the place of `bcm2835-pwmaudiod` and programs only the audio part
+  of the HDMI block, as Linux `vc4_hdmi.c` does (see
+  [HDMI audio](#hdmi-audio)). The firmware keeps the picture.
+  - Tests so far: 15 host tests; QEMU 18/18 (2026-11-14). QEMU has no
+    HDMI, so the driver plays to the clock there.
+  - Pi row 417 (automated, NanoKVM) checks that the HDMI block takes the
+    samples.
+  - Listening on a monitor with speakers is described in the issue and
+    is not queued yet.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
   in the left ear only (so left and right are right), the sweep and
   volume 100 all played; a faint hiss at idle and a little crackle (cheap
@@ -178,10 +190,23 @@ The HDMI output can carry sound next to the picture. Linux has two ways:
   meant.
 - The Linux `vc4` display driver plays HDMI sound **itself**: the samples
   go by DMA into the HDMI block's audio FIFO (MAI), and the driver sets the
-  audio info frames. That needs a driver that owns HDMI: the later part of
-  stage (a) of [`vc4d`](graphics.md), which takes over the pixel valves
-  and HDMI (today `vc4d` takes over the HVS only; HDMI timing stays with
-  the firmware).
+  audio info frames.
+
+The audio registers don't depend on who set the timing. Linux plays sound
+whenever the output is in HDMI mode rather than DVI mode. So
+`bcm2835-hdmiaudiod` (#423) leaves the picture to the firmware and needs
+no `vc4d`. It sets:
+- the MAI FIFO in the HD block (`0x7e808000`): reset, thresholds, format,
+  and the sample clock `MAI_SMP` from the HSM clock
+- in the HDMI core (`0x7e902000`): the channel map, the audio packets,
+  N/CTS from the pixel clock, and the audio info frame in packet RAM
+- DMA channel 0, DREQ 17, into `MAI_DATA`
+
+The samples go as IEC958 subframes: preamble, the 16-bit sample in bits
+12–27, the channel-status bit, and parity.
+
+Open risk: the firmware may program HDMI again on a hotplug. The driver
+checks its registers every 10 ms and sets them again when they change.
 
 ### I2S on the GPIO header
 
