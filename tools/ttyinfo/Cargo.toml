@@ -1,0 +1,9 @@
+[package]
+name = "ttyinfo"
+description = "Show the terminal state of stdin (process group, ISIG) and whether a Ctrl-C reaches the process"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

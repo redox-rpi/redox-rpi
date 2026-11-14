@@ -1,0 +1,70 @@
+diff --git a/ptyd/src/pty.rs b/ptyd/src/pty.rs
+index 638419dd..4695ccab 100644
+--- a/ptyd/src/pty.rs
++++ b/ptyd/src/pty.rs
+@@ -248,6 +248,35 @@ impl Pty {
+         self.update();
+     }
+ 
++    /// ISIG was switched on again. Input that came while it was off (a line
++    /// editor in raw mode) is still unread; an interrupt character in it
++    /// becomes SIGINT now, as if ISIG had been on when it arrived. Without
++    /// this a Ctrl-C typed right after Enter is read by the next prompt.
++    pub fn isig_enabled(&mut self) {
++        let vintr = self.termios.c_cc[VINTR];
++        if vintr == 0 || vintr == _POSIX_VDISABLE {
++            return;
++        }
++        let pending = self.mosi.iter().flatten().chain(self.cooked.iter());
++        if !pending.clone().any(|&b| b == vintr) {
++            return;
++        }
++        let mut rest: Vec<u8> = pending.copied().collect();
++        let pos = rest.iter().rposition(|&b| b == vintr).expect("found above");
++        rest.drain(..=pos);
++        self.mosi.clear();
++        self.cooked.clear();
++
++        if let Some(fd) = &self.pgrp_handle {
++            let _ = Pty::kill(fd, ProcKillTarget::ThisGroup, libredox::flag::SIGINT as usize);
++        } else if self.pgrp != 0 {
++            let _ = libredox::call::kill(-(self.pgrp as isize) as usize, libredox::flag::SIGINT as _);
++        }
++
++        // What came after the interrupt is input under the new settings.
++        self.input(&rest);
++    }
++
+     pub fn output(&mut self, buf: &[u8]) {
+         //TODO: more output flags
+ 
+diff --git a/ptyd/src/termios.rs b/ptyd/src/termios.rs
+index 5630d22e..d239bbed 100644
+--- a/ptyd/src/termios.rs
++++ b/ptyd/src/termios.rs
+@@ -1,6 +1,7 @@
+ use std::cell::RefCell;
+ use std::rc::Weak;
+ 
++use redox_termios::ISIG;
+ use syscall::error::{Error, Result, EBADF, EINVAL, EPIPE};
+ use syscall::flag::{EventFlags, F_GETFL, F_SETFL, O_ACCMODE};
+ 
+@@ -55,6 +56,7 @@ impl Resource for PtyTermios {
+     fn write(&mut self, buf: &[u8]) -> Result<usize> {
+         if let Some(pty_lock) = self.pty.upgrade() {
+             let mut pty = pty_lock.borrow_mut();
++            let isig_before = pty.termios.c_lflag & ISIG == ISIG;
+             let termios: &mut [u8] = &mut pty.termios;
+ 
+             let mut i = 0;
+@@ -62,6 +64,9 @@ impl Resource for PtyTermios {
+                 termios[i] = buf[i];
+                 i += 1;
+             }
++            if !isig_before && pty.termios.c_lflag & ISIG == ISIG {
++                pty.isig_enabled();
++            }
+             Ok(i)
+         } else {
+             Err(Error::new(EPIPE))
