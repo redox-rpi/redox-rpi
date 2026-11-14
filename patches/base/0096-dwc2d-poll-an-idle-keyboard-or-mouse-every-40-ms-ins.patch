@@ -1,0 +1,233 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 20:38:01 +0000
+Subject: [PATCH] dwc2d: poll an idle keyboard or mouse every 40 ms instead of
+ 10 ms
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A poll of a low-speed device behind the hub spins about 130 µs on the
+split transactions, data or not (#214). While a key or button is held
+and for 3 s after the last change, the device is still polled every
+10 ms; otherwise every 40 ms. A keyboard that refuses SET_IDLE is logged.
+---
+ drivers/usb/dwc2d/src/hid.rs      | 22 ++++++++---
+ drivers/usb/dwc2d/src/main.rs     |  1 +
+ drivers/usb/dwc2d/src/mouse.rs    | 12 +++++-
+ drivers/usb/dwc2d/src/pollrate.rs | 65 +++++++++++++++++++++++++++++++
+ 4 files changed, 93 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/pollrate.rs
+
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 66ce54b8..5df02088 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -9,6 +9,7 @@ use orbclient::KeyEvent;
+ 
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+ use crate::enumerate::{Bus, Device};
++use crate::pollrate;
+ use crate::regs::*;
+ 
+ const CLASS_HID: u8 = 0x03;
+@@ -26,7 +27,6 @@ const PROTOCOL_BOOT: u16 = 0;
+ /// The host channel for keyboard reports; 0 does control transfers, the
+ /// network adapters use 1 and 2.
+ const CHANNEL: usize = 3;
+-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+ /// Auto-repeat of a held key, as keyboards in the boot protocol leave it to
+ /// the host.
+ const REPEAT_DELAY: Duration = Duration::from_millis(500);
+@@ -99,8 +99,11 @@ pub fn init(bus: &mut Bus, f: &KeyboardFunction) -> Result<(), Error> {
+     let index = u16::from(f.interface);
+     bus.request(f.address, f.max_packet0, f.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(f.configuration), 0, 0)?;
+     bus.request(f.address, f.max_packet0, f.speed, 0x21, REQ_SET_PROTOCOL, PROTOCOL_BOOT, index, 0)?;
+-    // Report only on changes. Optional: some keyboards stall it.
+-    let _ = bus.request(f.address, f.max_packet0, f.speed, 0x21, REQ_SET_IDLE, 0, index, 0);
++    // Report only on changes. Optional: some keyboards stall it and then
++    // send a report on every poll, which costs about as much as a NAK.
++    if let Err(err) = bus.request(f.address, f.max_packet0, f.speed, 0x21, REQ_SET_IDLE, 0, index, 0) {
++        println!("dwc2d: keyboard at address {}: SET_IDLE refused ({err:?}), reports on every poll", f.address);
++    }
+     Ok(())
+ }
+ 
+@@ -113,6 +116,8 @@ pub struct Keyboard {
+     report: [u8; 8],
+     input: Input,
+     next_poll: Instant,
++    /// When the report last changed: polls are fast for a while after it.
++    changed: Instant,
+     /// The key that repeats while held and when it repeats next.
+     repeat: Option<(u8, Instant)>,
+ }
+@@ -130,6 +135,7 @@ impl Keyboard {
+             report: [0; 8],
+             input,
+             next_poll: Instant::now(),
++            changed: Instant::now(),
+             repeat: None,
+         })
+     }
+@@ -138,8 +144,6 @@ impl Keyboard {
+         self.f.address
+     }
+ 
+-    /// Fetch a report when the poll interval has passed and send the key
+-    /// changes. Errors are dropped: the next poll tries again.
+     /// Poll the keyboard and repeat a held key when due. Returns the time
+     /// until the next call is due.
+     pub fn poll(&mut self) -> Duration {
+@@ -162,7 +166,6 @@ impl Keyboard {
+         if now < self.next_poll {
+             return;
+         }
+-        self.next_poll = now + POLL_INTERVAL;
+ 
+         let phase = Phase {
+             dev_addr: self.f.address,
+@@ -186,9 +189,16 @@ impl Keyboard {
+             }
+             Ok(None) | Err(_) => {}
+         }
++        // Fast while keys are down or were just used, slower otherwise.
++        let now = Instant::now();
++        let held = pollrate::held(&self.report);
++        self.next_poll = now + pollrate::interval(held, now.saturating_duration_since(self.changed));
+     }
+ 
+     fn update(&mut self, report: [u8; 8]) {
++        if report != self.report {
++            self.changed = Instant::now();
++        }
+         // Too many keys at once: every key slot says "rollover error".
+         if report[2..].contains(&0x01) {
+             return;
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 402a7a35..51204ce9 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -22,6 +22,7 @@ mod enumerate;
+ mod hid;
+ mod lan78xx;
+ mod mouse;
++mod pollrate;
+ mod regs;
+ mod rtl8152;
+ 
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 4704ac59..2a8dfc60 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -370,6 +370,8 @@ pub struct Mouse {
+     position: Option<(i32, i32)>,
+     input: Input,
+     next_poll: Instant,
++    /// When the last event was sent: polls are fast for a while after it.
++    active: Instant,
+     /// Print every event (tests without a person).
+     pub log: bool,
+ }
+@@ -388,6 +390,7 @@ impl Mouse {
+             position: None,
+             input,
+             next_poll: Instant::now(),
++            active: Instant::now(),
+             log: false,
+         })
+     }
+@@ -402,8 +405,14 @@ impl Mouse {
+     pub fn poll(&mut self) -> Duration {
+         let now = Instant::now();
+         if now >= self.next_poll {
+-            self.next_poll = now + POLL_INTERVAL;
+             self.poll_now();
++            // As for the keyboard (#214): every 10 ms while a button is
++            // held or for a while after the last event, else every 40 ms.
++            // A low-speed device behind the hub costs about 130 us a poll.
++            let now = Instant::now();
++            let held = self.buttons.iter().any(|&b| b);
++            let interval = crate::pollrate::interval(held, now.saturating_duration_since(self.active));
++            self.next_poll = now + interval.max(POLL_INTERVAL);
+         }
+         self.next_poll.saturating_duration_since(Instant::now())
+     }
+@@ -467,5 +476,6 @@ impl Mouse {
+             println!("dwc2d: mouse: {what}");
+         }
+         let _ = self.input.write_event(event);
++        self.active = Instant::now();
+     }
+ }
+diff --git a/drivers/usb/dwc2d/src/pollrate.rs b/drivers/usb/dwc2d/src/pollrate.rs
+new file mode 100644
+index 00000000..3e65f46a
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/pollrate.rs
+@@ -0,0 +1,65 @@
++//! How often to poll a keyboard or mouse (#214). A poll of a low-speed device
++//! behind a hub costs about 130 µs of spinning on the split transactions,
++//! whether it brings a report or not, so polling less while nobody types
++//! is the main saving at idle.
++
++use std::time::Duration;
++
++/// While a key is held and shortly after the last change: fast typing and
++/// short taps between two keys need every poll.
++pub const ACTIVE: Duration = Duration::from_millis(10);
++/// While no key is held. A press and its release both between two polls
++/// would be lost; keys stay down 50 ms or more even in fast typing, and the
++/// first key after a pause switches to `ACTIVE`.
++pub const IDLE: Duration = Duration::from_millis(40);
++/// How long `ACTIVE` lasts after the last change of the report.
++pub const HOLD: Duration = Duration::from_secs(3);
++
++/// The interval to the next poll: `held` is whether the last report had a
++/// key or modifier down, `since_change` the time since the report changed.
++pub fn interval(held: bool, since_change: Duration) -> Duration {
++    if held || since_change < HOLD {
++        ACTIVE
++    } else {
++        IDLE
++    }
++}
++
++/// Whether a boot protocol report has a key or modifier down.
++pub fn held(report: &[u8; 8]) -> bool {
++    report[0] != 0 || report[2..].iter().any(|&key| key != 0)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn idle_after_hold() {
++        assert_eq!(interval(false, Duration::ZERO), ACTIVE);
++        assert_eq!(interval(false, HOLD - Duration::from_millis(1)), ACTIVE);
++        assert_eq!(interval(false, HOLD), IDLE);
++        assert_eq!(interval(false, Duration::from_secs(3600)), IDLE);
++    }
++
++    #[test]
++    fn held_key_stays_active() {
++        assert_eq!(interval(true, Duration::from_secs(3600)), ACTIVE);
++    }
++
++    #[test]
++    fn held_reports() {
++        assert!(!held(&[0; 8]));
++        assert!(held(&[0x02, 0, 0, 0, 0, 0, 0, 0]));
++        assert!(held(&[0, 0, 0x04, 0, 0, 0, 0, 0]));
++        // Rollover error counts as held: keys are down.
++        assert!(held(&[0, 0, 1, 1, 1, 1, 1, 1]));
++        // The reserved byte is not a key.
++        assert!(!held(&[0, 0xff, 0, 0, 0, 0, 0, 0]));
++    }
++
++    #[test]
++    fn idle_saves_three_quarters() {
++        assert_eq!(IDLE.as_millis() / ACTIVE.as_millis(), 4);
++    }
++}
