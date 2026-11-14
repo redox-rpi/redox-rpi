@@ -18,8 +18,10 @@
 #   --server <ip>     address of the TFTP server as the board sees it
 #                     (QEMU user networking: 10.0.2.2)
 #   --board           rpi (default, Pi 3 and 3B+), zero2w (Pi Zero 2 W, 512 MB
-#                     RAM, image at most 128 MiB) or qemu; selects the RAM
-#                     addresses
+#                     RAM, image at most 128 MiB), pi4 (Pi 400 test version,
+#                     #299: the RAM addresses of rpi, config-pi4.txt caps the
+#                     RAM at 1 GB; default directory pi400) or qemu; selects
+#                     the RAM addresses
 #   --dir <name>      directory below the TFTP root, so boards with different
 #                     images share one server (default: redox, for zero2w
 #                     redox-zero2w). The SD card's boot.scr names it.
@@ -71,7 +73,7 @@ case "$board" in
     # RAM starts at 0; U-Boot and the firmware live near the top of the first
     # GiB, the kernel is loaded at 0x80000.
     # The compressed image goes right after the 256 MiB disk image.
-    rpi) img_addr=0x10000000; gz_addr=0x20000000; mkimage="$ROOT/build/u-boot/obj/tools/mkimage" ;;
+    rpi|pi4) img_addr=0x10000000; gz_addr=0x20000000; mkimage="$ROOT/build/u-boot/obj/tools/mkimage" ;;
     # 512 MB, less the GPU's share (gpu_mem=16): a 128 MiB image from
     # 128 MiB on, the compressed one after it. U-Boot sits near the top, the
     # Redox bootloader copies the RedoxFS partition into what is left.
@@ -91,7 +93,7 @@ fi
 if [ -z "$blocksize" ] && [ "$board" = zero2w ]; then blocksize=512; fi
 if [ "$http" = 1 ]; then http_url="http://$server:8080/"; else http_url=none; fi
 if [ -z "$dir" ]; then
-    if [ "$board" = zero2w ]; then dir=redox-zero2w; else dir=redox; fi
+    case "$board" in zero2w) dir=redox-zero2w ;; pi4) dir=pi400 ;; *) dir=redox ;; esac
 fi
 
 bootloader="$(find "$REDOX/recipes/core/bootloader/target" -path '*stage/usr/lib/boot/bootloader-live.efi' | head -1)"
