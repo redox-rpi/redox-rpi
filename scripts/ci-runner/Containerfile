@@ -29,4 +29,8 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 ENV PATH=/home/runner/.cargo/bin:$PATH RUNNER_ALLOW_RUNASROOT=0
 
 COPY --chown=runner entrypoint.sh /home/runner/entrypoint.sh
+# Refuses fork pull requests before any step runs (#426). Owned by root, so
+# a job (uid runner) cannot change the hook for later jobs.
+COPY --chown=root:root --chmod=755 job-started.sh /usr/local/lib/ci-runner/job-started.sh
+ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/ci-runner/job-started.sh
 ENTRYPOINT ["/home/runner/entrypoint.sh"]
