@@ -202,6 +202,25 @@ If `main` or the nightly goes red after such a merge, Quality reverts it at
 once (a revert PR, merged under the same rule) and tells the project lead.
 Releases, tags and release candidates stay with the maintainer in every case.
 
+### Pull requests from outside
+
+Status: proposal, 2026-11-13, for the maintainer's decision.
+
+A pull request from someone outside the organisation (from a fork):
+1. Is marked automatically with the label `external`.
+2. Runs no CI on its own. GitHub waits until someone from the
+   organisation clicks "Approve and run" (organisation setting: approval
+   for all outside collaborators). It never runs on the self-hosted
+   runner on the build host, only on GitHub's runners.
+3. Before approving the run, Quality reads the diff, above all changes in
+   `.github/`, `scripts/` and build files, and comments on what it found.
+   The click itself stays with the maintainer.
+4. The owner of the topic reviews the content, as for our own PRs.
+5. Before `merge-next`, the change is built on our side and tested in
+   QEMU and on a real Pi (a V&V row), the same as our own code.
+6. The maintainer merges, whatever the PR touches. Quality's merge right
+   (above) does not cover outside PRs.
+
 ## Communication
 
 - Agents report to the project lead when a package or step is done or
