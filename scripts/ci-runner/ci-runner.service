@@ -9,14 +9,21 @@ After=network-online.target
 [Service]
 Restart=always
 RestartSec=30
+# The entrypoint stops the runner on SIGTERM; podman stop waits up to 120 s
+# for a job to end, so systemd must wait longer than that.
+TimeoutStopSec=150
+# A container left over from a stop that timed out would block the name.
+ExecStartPre=-/usr/bin/podman rm -f ci-runner
 # No host directories except the runner's own state volume; no devices, no
 # host loopback (pasta --no-map-gw), so the host's services stay out of reach.
-ExecStart=/usr/bin/podman run --rm --name ci-runner \
+# ~/ci-runner-secret holds the one-hour registration token only until the
+# first start; the directory stays (empty), so later starts need no token.
+ExecStart=/usr/bin/podman run --rm --replace --name ci-runner \
   --network pasta:--no-map-gw \
   --cpus 6 --memory 12g --pids-limit 4096 \
   --security-opt no-new-privileges --cap-drop all \
   -v ci-runner-state:/home/runner/state \
-  -v %h/reg-token:/run/secrets/reg-token:ro \
+  -v %h/ci-runner-secret:/run/secrets:ro \
   redox-rpi-runner
 ExecStop=/usr/bin/podman stop -t 120 ci-runner
 

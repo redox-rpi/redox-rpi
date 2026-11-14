@@ -1,8 +1,9 @@
 #!/bin/bash
 # Registers the runner once (state in the volume /home/runner/state), then
 # runs jobs one at a time until stopped. The registration token is read from
-# /run/secrets/reg-token on the first start only; it is a one-hour token the
-# user creates (docs/build-host.md "CI runner"), never a personal token.
+# /run/secrets/reg-token (~ci-runner/ci-runner-secret/reg-token on the host)
+# on the first start only; it is a one-hour token the user creates
+# (docs/build-host.md "CI runner"), never a personal token.
 set -euo pipefail
 cd /home/runner/actions-runner
 state=/home/runner/state
@@ -18,4 +19,15 @@ if [ ! -e .runner ]; then
 		mv "$f" "$state/$f" && ln -s "$state/$f" "$f"
 	done
 fi
-exec ./run.sh
+# Runner.Listener stops cleanly on SIGINT, but as PID 1 behind run.sh it
+# never sees podman stop's SIGTERM. So run it in its own process group and
+# pass SIGTERM/SIGINT on to that group as SIGINT.
+set -m
+./run.sh &
+pid=$!
+trap 'kill -INT -- "-$pid" 2>/dev/null || true' TERM INT
+rc=0
+while kill -0 "$pid" 2>/dev/null; do
+	wait "$pid" && rc=0 || rc=$?
+done
+exit "$rc"
