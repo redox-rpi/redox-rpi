@@ -1,0 +1,51 @@
+From c897bf76c506c92dd807a6d993ae2cd0701a555e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 5 Nov 2026 17:37:17 +0000
+Subject: [PATCH] Relink the release list oldest block first
+
+release_unused_nodes read the release list blocks into a queue with the
+oldest at the front, then walked it from the back (newest first) while
+carrying the new address of each block into the prev pointer of the next
+one. That links an older block to the newer one, and leaves the newer
+block pointing at the old copy of the older block, which has just been
+deallocated. With more than one release list block (more than about 1000
+files removed while still open) the files in the other blocks were never
+freed, and once the freed block was used again the list could loop, so
+the walk never ended.
+
+Walk from the front (oldest first), and write a block again whenever its
+prev pointer changed. Writing and removing 3000 files that are still
+open, then closing them, now frees all their space (before: about 24 MB
+of 36 MB stayed allocated per round).
+---
+ src/transaction.rs | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/transaction.rs b/src/transaction.rs
+index 0ce0fe0..0a969ca 100644
+--- a/src/transaction.rs
++++ b/src/transaction.rs
+@@ -1262,15 +1262,17 @@ impl<'a, D: Disk> Transaction<'a, D> {
+             }
+         }
+ 
+-        // Find unused nodes and remove them (going backwards through list)
++        // Find unused nodes and remove them, oldest block first, so that a
++        // block that moves or goes away can be relinked in the next newer one
+         let mut update_prev = None;
+         let mut release_nodes = Vec::new();
+-        while let Some(mut release) = releases.pop_back() {
++        while let Some(mut release) = releases.pop_front() {
++            let mut changed = false;
+             if let Some(prev_ptr) = update_prev.take() {
+                 release.data_mut().prev = prev_ptr;
++                changed = true;
+             }
+ 
+-            let mut changed = false;
+             let mut empty = true;
+             for entry in release.data_mut().entries.iter_mut() {
+                 if !entry.is_null() {
+-- 
+2.53.0
+

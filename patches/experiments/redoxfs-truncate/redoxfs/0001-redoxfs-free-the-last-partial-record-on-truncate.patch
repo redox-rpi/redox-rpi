@@ -1,0 +1,38 @@
+From 537414c8852ac125bb74c37c50d45dbe8b053b9c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 20:57:22 +0000
+Subject: [PATCH] Free the last partial record when a file is truncated or
+ removed
+
+truncate_node_inner deallocated the records from size.div_ceil(record)
+up to old_size / record. The upper end rounds down, so the last,
+partly filled record of the old size was never freed. Removing a file
+truncates it to 0, so every removed file lost its last record: a file
+smaller than one record (up to 128 KiB) kept all its blocks allocated,
+a larger one its tail. The space stayed lost after a remount.
+
+On a 222 MiB root, installing and removing vim (2223 files, mostly
+small) lost about 12 MiB each time, and the root was full after seven
+rounds (redox-rpi issue #197).
+
+Round the upper end up, like the lower end.
+---
+ src/transaction.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/transaction.rs b/src/transaction.rs
+index 2fc5594..0ce0fe0 100644
+--- a/src/transaction.rs
++++ b/src/transaction.rs
+@@ -1850,7 +1850,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
+         } else if !node.data().has_inline_data() {
+             // Deallocate records
+             for record in
+-                (size.div_ceil(record_level.bytes())..old_size / record_level.bytes()).rev()
++                (size.div_ceil(record_level.bytes())..old_size.div_ceil(record_level.bytes())).rev()
+             {
+                 self.remove_node_record_ptr(node, record)?;
+             }
+-- 
+2.53.0
+
