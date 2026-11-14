@@ -303,12 +303,12 @@ EOF
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
 # keep their old order (it decides the order in the manifest). pkgutils
-# only when an experiment patches it (pkg-hold); otherwise the image takes
-# the upstream binary.
+# and netutils only when an experiment patches them (pkg-hold,
+# ifconfig-mac); otherwise the image takes the upstream binary.
 recipes=(bootloader base relibc)
 while read -r name; do
     case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
-    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
+    case "$name" in pkgutils|netutils) [ -z "$(patch_files "$name")" ] && continue ;; esac
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
 done < <(

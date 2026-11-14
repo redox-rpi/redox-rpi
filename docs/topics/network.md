@@ -10,6 +10,13 @@
 
 ## Next
 
+- [#171](https://github.com/redox-rpi/redox-rpi/issues/171) `ifconfig`
+  showed `00:00:00:00:00:00` as the MAC address (a placeholder in upstream
+  `netutils`) and the prefix length as the netmask. Experiment
+  `ifconfig-mac` (netutils `0001`, netutils now pinned) reads the address
+  from `netcfg` (PR
+  [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
+  and on the Pi (**test 194 passed**).
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
   ignored the DHCP name server (fritz.box hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
