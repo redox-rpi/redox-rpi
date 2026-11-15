@@ -101,6 +101,7 @@ class Shell:
         data, deadline = b"", time.time() + timeout
         self.sock.settimeout(1)
         begin_line = re.compile(rb"[\r\n]" + BEGIN.encode() + rb"\r?\n")
+        at_prompt = False
         while time.time() < deadline and not end_line.search(ANSI.sub(b"", data).replace(b"\x00", b"")):
             try:
                 chunk = self.sock.recv(65536)
@@ -111,12 +112,16 @@ class Shell:
                 text = ANSI.sub(b"", data).replace(b"\x00", b"")
                 after = text[begin_line.search(text).end():] if begin_line.search(text) else b""
                 if after and SHELL_PROMPT.search(after.rstrip(b" ") + b" "):
+                    at_prompt = True
                     break
                 continue
             if not chunk:
                 break
             data += chunk
-        read_until(self.sock, SHELL_PROMPT, 5)
+        # Without the end marker the prompt is already read: waiting for
+        # another one only adds 5 s to every failed line (#405).
+        if not at_prompt:
+            read_until(self.sock, SHELL_PROMPT, 5)
         text = ANSI.sub(b"", data).decode(errors="replace")
         lines = [l.replace("\x00", "").strip() for l in text.replace("\r", "\n").split("\n")]
         if BEGIN not in lines:
