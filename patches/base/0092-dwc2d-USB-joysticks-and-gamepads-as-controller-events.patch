@@ -1,4 +1,4 @@
-From 90e572841e965873876d24b3cc18439f21371689 Mon Sep 17 00:00:00 2001
+From 6d87c122b63354e318b5eb45370e96b4c6b7df59 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 08:16:57 +0000
 Subject: [PATCH] dwc2d: USB joysticks and gamepads as controller events (#320)
@@ -16,13 +16,17 @@ Pi row 416 with the DragonRise pad (0079:0011):
   -129) reads 0.
 - dwc2d prints a pad's first raw report (every report with
   /tmp/dwc2d-input-log), to see its resting values.
+- A device that refuses the report descriptor before configuration
+  (an 8BitDo Micro, 2dc8:9020, stalls it: Pi test 431) is configured and
+  asked again, up to three times, as Linux asks only after
+  SET_CONFIGURATION. Each step is printed.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/usb/dwc2d/src/hidreport.rs | 621 +++++++++++++++++++++++++++++
  drivers/usb/dwc2d/src/main.rs      |   1 +
- drivers/usb/dwc2d/src/mouse.rs     | 234 ++++-------
- 3 files changed, 700 insertions(+), 156 deletions(-)
+ drivers/usb/dwc2d/src/mouse.rs     | 300 ++++++--------
+ 3 files changed, 754 insertions(+), 168 deletions(-)
  create mode 100644 drivers/usb/dwc2d/src/hidreport.rs
 
 diff --git a/drivers/usb/dwc2d/src/hidreport.rs b/drivers/usb/dwc2d/src/hidreport.rs
@@ -665,7 +669,7 @@ index 402a7a35..674731ce 100644
  mod mouse;
  mod regs;
 diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
-index 4704ac59..f054cb56 100644
+index 4704ac59..49089ec7 100644
 --- a/drivers/usb/dwc2d/src/mouse.rs
 +++ b/drivers/usb/dwc2d/src/mouse.rs
 @@ -1,19 +1,25 @@
@@ -875,28 +879,43 @@ index 4704ac59..f054cb56 100644
      max_packet: u16,
 -    layout: Layout,
 +    kind: Kind,
- }
- 
--/// Find a pointer among the device's HID interfaces (not a boot keyboard).
++}
++
 +#[derive(Clone, Debug)]
 +enum Kind {
 +    Pointer(Layout),
 +    Gamepad(PadLayout),
-+}
-+
+ }
+ 
+-/// Find a pointer among the device's HID interfaces (not a boot keyboard).
 +/// Find a pointer or a gamepad among the device's HID interfaces (not a
 +/// boot keyboard).
  pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
      let config = bus
          .request(
-@@ -314,10 +192,18 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
-                 report_len.max(64),
-             )
-             .ok();
+@@ -301,23 +179,21 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+         pos += desc.len();
+     }
+ 
++    let mut configured = false;
+     for (interface, boot, report_len, endpoint, max_packet) in candidates {
+-        let report = bus
+-            .request(
+-                device.address,
+-                device.max_packet,
+-                device.speed,
+-                0x81,
+-                REQ_GET_DESCRIPTOR,
+-                u16::from(DESC_REPORT) << 8,
+-                u16::from(interface),
+-                report_len.max(64),
+-            )
+-            .ok();
 -        let (layout, boot_reports) = match report.as_deref().and_then(Layout::parse) {
 -            Some(layout) => (layout, false),
 -            None if boot => (Layout::boot(), true),
 -            None => continue,
++        let report = report_descriptor(bus, device, configuration, &mut configured, interface, report_len);
 +        let report = report.as_deref();
 +        let (kind, boot_reports) = if let Some(layout) = report.and_then(Layout::parse) {
 +            (Kind::Pointer(layout), false)
@@ -912,7 +931,7 @@ index 4704ac59..f054cb56 100644
          };
          return Some(MouseFunction {
              address: device.address,
-@@ -330,7 +216,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+@@ -330,12 +206,64 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
              boot_reports,
              endpoint,
              max_packet,
@@ -921,7 +940,64 @@ index 4704ac59..f054cb56 100644
          });
      }
      None
-@@ -357,10 +243,14 @@ pub fn init(bus: &mut Bus, f: &MouseFunction, configure: bool) -> Result<(), Err
+ }
+ 
++/// The report descriptor of `interface`. Linux asks for it only after
++/// SET_CONFIGURATION and tries up to four times. dwc2d asks before
++/// configuring, which most devices answer. An 8BitDo Micro (2dc8:9020)
++/// stalls it (Pi test 431). So after a failure the device is configured and
++/// asked again.
++fn report_descriptor(
++    bus: &mut Bus,
++    device: &Device,
++    configuration: u8,
++    configured: &mut bool,
++    interface: u8,
++    report_len: u16,
++) -> Option<Vec<u8>> {
++    let mut ask = |bus: &mut Bus| {
++        bus.request(
++            device.address,
++            device.max_packet,
++            device.speed,
++            0x81,
++            REQ_GET_DESCRIPTOR,
++            u16::from(DESC_REPORT) << 8,
++            u16::from(interface),
++            report_len.max(64),
++        )
++    };
++    let first = match ask(bus) {
++        Ok(report) => return Some(report),
++        Err(e) => e,
++    };
++    println!(
++        "dwc2d: {:04x}:{:04x} interface {interface}: report descriptor ({report_len} bytes) refused unconfigured: {first:?}",
++        device.vendor, device.product
++    );
++    if !*configured {
++        if let Err(e) = bus.request(device.address, device.max_packet, device.speed, 0x00, REQ_SET_CONFIGURATION, u16::from(configuration), 0, 0) {
++            println!("dwc2d: SET_CONFIGURATION {configuration} failed too: {e:?}");
++            return None;
++        }
++        *configured = true;
++    }
++    for attempt in 1..=3 {
++        match ask(bus) {
++            Ok(report) => {
++                println!("dwc2d: report descriptor after SET_CONFIGURATION, attempt {attempt}");
++                return Some(report);
++            }
++            Err(e) => println!("dwc2d: report descriptor after SET_CONFIGURATION, attempt {attempt}: {e:?}"),
++        }
++    }
++    None
++}
++
+ /// Configure the device (unless a keyboard function of it already did) and
+ /// the interface for the reports the layout describes.
+ pub fn init(bus: &mut Bus, f: &MouseFunction, configure: bool) -> Result<(), Error> {
+@@ -357,10 +285,14 @@ pub fn init(bus: &mut Bus, f: &MouseFunction, configure: bool) -> Result<(), Err
  
  impl MouseFunction {
      pub fn describe(&self) -> String {
@@ -937,7 +1013,7 @@ index 4704ac59..f054cb56 100644
  pub struct Mouse {
      hc: Dwc2,
      f: MouseFunction,
-@@ -368,6 +258,10 @@ pub struct Mouse {
+@@ -368,6 +300,10 @@ pub struct Mouse {
      pid: u32,
      buttons: [bool; 3],
      position: Option<(i32, i32)>,
@@ -948,7 +1024,7 @@ index 4704ac59..f054cb56 100644
      input: Input,
      next_poll: Instant,
      /// Print every event (tests without a person).
-@@ -379,9 +273,15 @@ impl Mouse {
+@@ -379,9 +315,15 @@ impl Mouse {
          let input = Input::new()
              .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
              .ok()?;
@@ -964,7 +1040,7 @@ index 4704ac59..f054cb56 100644
              buf: Dma::new([0; REPORT_MAX]).expect("dwc2d: DMA allocation failed"),
              pid: PID_DATA0,
              buttons: [false; 3],
-@@ -428,7 +328,28 @@ impl Mouse {
+@@ -428,7 +370,28 @@ impl Mouse {
      }
  
      fn update(&mut self, report: &[u8]) {
@@ -994,7 +1070,7 @@ index 4704ac59..f054cb56 100644
          let data = match layout.report_id {
              Some(id) if report.first() != Some(&id) => return,
              Some(_) => &report[1..],
-@@ -464,7 +385,8 @@ impl Mouse {
+@@ -464,7 +427,8 @@ impl Mouse {
  
      fn send(&mut self, event: orbclient::Event, what: std::fmt::Arguments) {
          if self.log {
