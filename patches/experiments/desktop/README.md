@@ -11,8 +11,10 @@ prints what the desktop is, how to get back and its main limits
 (`/usr/share/desktop/info.txt`, see Beta limits below) and starts
 Orbital on VT 3: the login window (user `user`, empty password: press
 Enter), then the desktop with the launcher. After the login the same text
-opens in a window (`desktop-session` runs `desktop-welcome` in orbterm,
-then the launcher), since the console cannot be seen from the desktop;
+opens in a window (`desktop-session` starts the launcher and, 3 seconds
+later, `desktop-welcome` in orbterm: Orbital sends Super+key to its
+oldest window, which must be the launcher's bar for Super+T to open a
+terminal), since the console cannot be seen from the desktop;
 Enter in it, or its close button, closes it. When Orbital already runs,
 `desktop` just switches to it. Until v0.4.1 it asked `[y/N]` first;
 `--yes` is still accepted and changes nothing. Keys:
