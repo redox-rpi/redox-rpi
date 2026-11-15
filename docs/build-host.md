@@ -13,56 +13,44 @@
 Redox is developed and tested on x86_64 Linux, and its prebuilt cross
 toolchains target that host. Use it for full image builds.
 
-## Our build host: what runs on homenodellm
+## What the project needs from a build server
 
-Our own build host is `homenodellm` (192.168.178.120, Ubuntu, x86_64). It
-builds the images, boots the test Pis over the network and keeps their
-serial logs. This is everything the project needs on it; the setup steps
-are in [netboot.md](netboot.md) and the sections below.
+Network boot and the image downloads need a build server on the same LAN
+as the Pi. How it is set up is up to whoever runs it; the project only
+relies on these services and paths. Setup steps for your own server are in
+[netboot.md](netboot.md).
 
-| Service | Unit (user) | Port | What for | Who needs it |
-|---|---|---|---|---|
-| TFTP | `tftpd-hpa` (system) | UDP 69 | `/srv/tftp`: Pi firmware for network boot, U-Boot's `netboot.scr`, image fallback | every network-boot test, the nightly |
-| Proxy DHCP | `redox-pxe-proxy` (system, dnsmasq) | UDP 67, 4011 | tells the Pi firmware where the TFTP server is; the router keeps doing DHCP | Pis that boot from the network with no SD card (firmware network boot) |
-| HTTP | `redox-http` (zehrer); Caddy as a system service proposed in #436 | TCP 8080 | `/srv/tftp` over HTTP, see the list below | U-Boot, SwiftFlash, the maintainer, `pkg` on the Pi |
-| Serial logs | `redox-serial`, `redox-serial-pi400` (zehrer), `redox-serial-rotate.timer` | | serial consoles of the 3B+ (`ttyUSB0`) and the Pi 400 into `~/redox-rpi/logs/` | every Pi test; one reader per port only |
-| Nightly | `redox-stable.timer` (zehrer), 03:30 UTC | | builds main, tests it on the Pi, promotes the stable image, refreshes the CI image on Mondays | releases, the Pi test agent |
-| csmith | `csmith-weekly.timer` (zehrer), Tuesdays | | differential test of the TinyCC VC4 backend | VC4 Tools |
-| CI runner | `ci-runner` (user `ci-runner`, rootless Podman) + nft table `ci_runner` | | GitHub Actions jobs with label `homenode` | CI (section CI runner) |
-| MQTT broker | started by hand (`~/mqtt-broker/`) | 1883, 8883 | smart-home tests | Pi test rows that need it |
-
-On the LAN, not on the host: the Shelly plug that switches the test Pi
-(`shellyplug-01.fritz.box`), the NanoKVM (HDMI and keyboard of the Pi), and
-the router with the DHCP reservations. Builds run in each session's own
-clone below `~` (`redox-rpi-*`), never in the shared `~/redox-rpi`.
+| Service | What for |
+|---|---|
+| TFTP (UDP 69), root `/srv/tftp` | Pi firmware network boot, U-Boot's `netboot.scr`, image fallback |
+| Proxy DHCP | only for Pis that boot from the network with no SD card |
+| HTTP on port 8080, same root | see below |
+| Serial console reader | Pi tests read the Pi's serial log |
 
 ### What the HTTP server serves
 
 | Path | Content | Read by |
 |---|---|---|
-| `/` (`/srv/tftp`) | `harddrive.img.gz`, `bootloader-live.efi` for network boot | U-Boot's `wget` (falls back to TFTP) |
-| `/stable/` | the promoted stable network-boot image | the nightly, U-Boot when it is staged |
-| `/sdcard/` | SD card images, `.sha256`, manifests, `index.json` | SwiftFlash (`swiftflash source add redox http://homenodellm:8080/sdcard/`), browsers, Raspberry Pi Imager |
-| `/visit/` | images for person tests, `index.html` | the maintainer |
+| `/` | `harddrive.img.gz`, `bootloader-live.efi`, `netboot.scr` | U-Boot's `wget` (falls back to TFTP) |
+| `/stable/` | the promoted stable network-boot image | the nightly |
+| `/sdcard/` | SD card images, `.sha256`, manifests, `index.json` | SwiftFlash, browsers, Raspberry Pi Imager |
+| `/visit/` | images for person tests, `index.html` | people |
 | `/pkg/` | our package repository | `pkg` on the Pi |
 
-What a server on port 8080 has to do:
-- plain HTTP on the same URLs, no redirect to HTTPS
-- answer U-Boot's simple `wget` client (one GET, `Content-Length`), and
-  serve `.gz` files as they are, without `Content-Encoding`
-- range requests, so a broken download can be resumed (Python's
-  `http.server` cannot)
-- `ETag` or `Last-Modified`, so clients can skip unchanged images
-  (`scripts/http-etag-server.py` adds an `ETag` to Python's server)
-- IPv4 and IPv6: Python's server listens on IPv4 only. Clients that try
-  `homenodellm` over IPv6 first fall back to IPv4 (the hangs by name were
-  the firewall, fixed in #434)
-- directory listings for people
-- read-only access to `/srv/tftp`; the `ci-runner` user must not reach it
-  (nft blocks `127.0.0.1:8080` for it)
+Port 8080 and the paths must stay as they are: U-Boot on cards already in
+use has them built in.
 
-Today it is `python3 -m http.server 8080 --directory /srv/tftp`. A
-replacement is discussed in [#436](https://github.com/redox-rpi/redox-rpi/issues/436).
+What the server has to do:
+- plain HTTP, no redirect to HTTPS (U-Boot and `pkg` follow no redirects
+  and cannot do TLS)
+- a `Content-Length` and no chunked or compressed replies: U-Boot's lwIP
+  `wget` needs the length and cannot decode chunks; `.gz` and `.pkgar`
+  files go out byte for byte, without `Content-Encoding`
+- range requests (resume a broken download), `ETag` or `Last-Modified`,
+  IPv4 and IPv6, directory listings for people
+- read-only access to the served directory
+
+Discussion of the server: [#436](https://github.com/redox-rpi/redox-rpi/issues/436).
 
 ## x86_64 Linux (Debian, Ubuntu, Fedora, Arch, …)
 
@@ -128,103 +116,24 @@ and builds U-Boot itself.
 
 ## CI runner
 
-Our own GitHub Actions runner on the build host (label `homenode`) runs
-`qemu-boot.yml` and `upstream-weekly.yml`. It runs them only for pushes to
-`main`, the schedule, and pull requests from branches of this repository.
-Pull requests from forks run on GitHub's runners, and only after a
-maintainer approves them. They get the label `external` (`label-external.yml`,
-which never checks out or runs their code).
+Some jobs (`qemu-boot.yml`, `upstream-weekly.yml`) can run on a
+self-hosted runner with the label `homenode` (only that label, so not
+`self-hosted`). Until the repository variable `HOMENODE_RUNNER` is `on`,
+every job runs on GitHub's runners; set it to `off` to go back, for example
+while the runner is down. Pull requests from forks run on GitHub's runners
+only, after a maintainer approves them, and get the label `external`
+(`label-external.yml`, which never checks out their code). Who may merge
+what is in the [PMP, Merge rights](process/pmp.md#merge-rights).
 
-What keeps forks off the runner is the runner's job-started hook
-(`job-started.sh`, #426), not `runs-on`. For a pull request, GitHub takes
-the workflow from the PR itself, so a fork can change `runs-on` to
-`homenode`. The hook runs before the first step of every job, and the
-workflow cannot skip it. It fails the job if the event is a pull request
-whose head is not `redox-rpi/redox-rpi`. Still, before approving a fork PR
-that changes anything under `.github/`, read the workflow diff first. Who may merge what is in the
-[PMP, Merge rights](process/pmp.md#merge-rights).
+What the project requires from such a runner (the admins implement it):
+- **Forks never run on it.** For a pull request GitHub takes the workflow
+  from the PR, so a fork can change `runs-on`; the runner itself must refuse
+  any pull-request job whose head is not `redox-rpi/redox-rpi`, before the
+  first step. Still read the workflow diff before approving a fork PR that
+  touches `.github/`.
+- **Isolated:** its own user and container, no access to the maintainer's
+  files, secrets or signing key, no devices (no serial ports), no access to
+  the local network or the host's own services, internet only. Limited CPU
+  and RAM, so builds and Pi tests keep running.
+- **Registered for this repository only**, one job at a time.
 
-The runner registers with the label `homenode` only (`--no-default-labels`,
-so not `self-hosted`). `runs-on` therefore names just `homenode`; a job that
-also asks for `self-hosted` stays queued.
-
-Until the repository variable `HOMENODE_RUNNER` is `on`, every job stays on
-GitHub's runners. So the workflows can be merged before the runner exists.
-
-Isolation (files in `scripts/ci-runner/`):
-- Own Linux user `ci-runner`, not `zehrer`. It has no sudo, is not in
-  `dialout` (no `/dev/ttyUSB*`), and cannot read `~zehrer` (no
-  `~/.config/redox-rpi`, signing key or tokens).
-- A rootless podman container (`Containerfile`). The only volume is the
-  runner's own state. There are no host directories, no devices, no
-  capabilities and no host loopback (`pasta --no-map-gw`). It is limited to
-  6 CPUs and 12 GB RAM, so the nightly and the Pi tests keep the rest.
-- One runner, one job at a time. It is not ephemeral (`--ephemeral`, a
-  new registration for every job): that would need a fresh registration
-  token for each job, so for now the hook above is the guard.
-- nftables (`ci-runner.nft`): the user `ci-runner` reaches the internet and
-  DNS only. It cannot reach the home network (Shelly plug, NanoKVM, Pi,
-  router web UI) or any address of the host itself, and it has no IPv6 at
-  all (#427).
-
-### Setting it up (maintainer)
-
-On homenodellm, as root:
-
-1. `apt install podman uidmap passt nftables`
-2. `useradd -m -s /bin/bash ci-runner && loginctl enable-linger ci-runner`
-3. Check: `sudo -u ci-runner ls ~zehrer` must fail. `/home/zehrer` is mode 750
-   today; keep it that way.
-4. Copy `scripts/ci-runner/ci-runner.nft` to `/etc/nftables.d/`. Add
-   `include "/etc/nftables.d/*.nft"` to `/etc/nftables.conf`. Then run
-   `systemctl enable --now nftables`.
-5. Check:
-   - `sudo -u ci-runner curl -sI https://github.com` works.
-   - `sudo -u ci-runner curl -m 5 http://shellyplug-01.fritz.box` fails.
-   - `sudo -u ci-runner curl -m 5 http://127.0.0.1:8080` fails.
-   - IPv6: the host's global address must be blocked too (Samba, port 445):
-     `G=$(ip -6 addr show scope global -deprecated | grep -oP '(?<=inet6 )2[0-9a-f:]+' | head -1)`,
-     then `sudo -u ci-runner timeout 5 bash -c "</dev/tcp/$G/445" && echo reachable`
-     must print nothing. `sudo -u ci-runner curl -6 -m 5 -sI https://github.com` fails as well.
-
-When `ci-runner.nft` changes, copy it again and load it:
-`sudo cp scripts/ci-runner/ci-runner.nft /etc/nftables.d/ && sudo nft -f /etc/nftables.d/ci-runner.nft`.
-The file replaces its own table, so loading it twice does no harm.
-
-As `ci-runner` (`sudo -iu ci-runner`):
-
-6. Clone the repository and build the container:
-   `git clone https://github.com/redox-rpi/redox-rpi && podman build -t redox-rpi-runner redox-rpi/scripts/ci-runner`
-7. On GitHub, go to redox-rpi/redox-rpi → Settings → Actions → Runners →
-   *New self-hosted runner*. Copy only the token from the `--token` line.
-   It is valid for one hour. Then:
-   `mkdir -m 700 ~/ci-runner-secret && install -m 600 /dev/null ~/ci-runner-secret/reg-token && nano ~/ci-runner-secret/reg-token`
-   (paste it). Then `podman unshare chown -R 1001:1001 ~/ci-runner-secret`:
-   in the rootless container the host user `ci-runner` is root, and the
-   container's user `runner` (uid 1001) could not read the file otherwise.
-8. `mkdir -p ~/.config/systemd/user && cp redox-rpi/scripts/ci-runner/ci-runner.service ~/.config/systemd/user/`,
-   then `systemctl --user enable --now ci-runner`. The runner registers as
-   `homenode` and shows up as *Idle* on the Runners page.
-9. `podman unshare rm ~/ci-runner-secret/reg-token`. The registration is in
-   the volume `ci-runner-state`. Keep the empty directory: the unit mounts
-   it on every start.
-
-On GitHub:
-
-10. Org redox-rpi → Settings → Actions → General → *Fork pull request
-    workflows from outside collaborators*: **Require approval for all
-    outside collaborators**.
-11. In the same place, under *Runners*, the repository runner is enough. Do
-    not add the runner to the org or give it to other repositories.
-12. redox-rpi/redox-rpi → Settings → Secrets and variables → Actions →
-    Variables: `HOMENODE_RUNNER` = `on`. Turn it back off (delete it or set
-    `off`) to send everything to GitHub's runners again, for example while
-    the build host is down.
-
-Updating the runner: GitHub's runner updates itself. For a new base image,
-run `podman build` again (step 6) and `systemctl --user restart ci-runner`.
-
-Not covered: what a pull request from our own branches runs, it runs with
-internet access and the runner's registration. That is acceptable only
-because branches here are pushed by us. Fork PRs are refused by the
-job-started hook before their first step.
