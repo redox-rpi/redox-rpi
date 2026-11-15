@@ -34,7 +34,7 @@ failures with
 The result goes to `build/relibc-tests/<build ID>.txt`, the serial log
 next to it. A run takes about 12 minutes (8 build, 4 QEMU). It needs no Pi.
 
-Nightly: [`config/redox-relibc-tests.service`](../../../config/redox-relibc-tests.service)
+Nightly: a timer on the build server (set up by the admins)
 and `.timer` run it at 01:30 UTC on `origin/main` in
 `~/redox-rpi-relibc-tests`, with `--issue`: a result that differs from the
 list opens or comments on the issue "Nightly: relibc tests differ from the

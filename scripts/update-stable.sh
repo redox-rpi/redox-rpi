@@ -4,7 +4,7 @@
 # (lab.md in redox-rpi/pi-tests, "Stable image").
 #
 # Runs on the build host from its own clone (default ~/redox-rpi-stable),
-# started by the systemd user timer redox-stable.timer, or by hand:
+# started nightly by a timer on the build server (set up by the admins), or by hand:
 #
 #   scripts/update-stable.sh [--force] [--taken <N>] [--no-push] [--ref <ref>]
 #
