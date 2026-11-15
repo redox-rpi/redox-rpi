@@ -637,6 +637,14 @@ sysroot_relibc="$(pin relibc) $(cat recipes/core/relibc/.redox-rpi-patches)"
 if [ -d "$sysroot" ] && [ "$(cat "$sysroot_stamp" 2>/dev/null)" != "$sysroot_relibc" ]; then
     echo "relibc differs from the prefix sysroot's: rebuilding the sysroot and static recipes" >&2
     CI="${CI:-1}" make static_clean "${make_vars[@]}"
+    # static_clean removed their target/: reset the sources we patch, as
+    # above, or cook trips over the files our patches created.
+    for name in kernel "${recipes[@]}"; do
+        reset_source "recipes/core/$name" || true
+    done
+    while read -r rel; do
+        [ -n "$rel" ] && { reset_source "recipes/$rel" || true; }
+    done < "$extra_list"
 fi
 mkdir -p "$(dirname "$sysroot_stamp")"
 echo "$sysroot_relibc" > "$sysroot_stamp"
