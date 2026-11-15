@@ -31,8 +31,10 @@ SIGTERM handler: a flag the main loop polls). `./killtime <case>` runs one.
   `orbital-apps/recipes/games/sopwith/0001-*.patch`;
   `pwm-audio/qemu-sdl-check.sh` checks it.
 - **SIGKILL "5 s":** `killwatch` sees Sopwith's threads gone 30–45 ms after
-  `kill -KILL`. The 5 s were the test harness: when a background job ends by
-  a signal, Ion prints `pipeline execution error: process (N) ended by
-  signal SIGKILL` and drops the rest of the current command line, the end
-  marker of `pi_test.Shell.run` included, which then waited 5 s for a
-  second prompt (fixed in `scripts/pi-test.py`, its own PR).
+  `kill -KILL`, and `kill` itself returns in 0.3 s. The 5 s were the test
+  harness: when a background job ends by a signal, Ion prints `pipeline
+  execution error: process (N) ended by signal SIGKILL` at some point
+  around the next prompt, and `pi_test.Shell.run` waited 5 s for a prompt
+  at the very end of the output (once up to its timeout, when the notice
+  landed in front of its end marker). A failed command cost the same 5 s.
+  Fixed in `scripts/pi-test.py`, its own PR.
