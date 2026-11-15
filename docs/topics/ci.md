@@ -72,6 +72,20 @@ tests are built every night.
   `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
   `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
   `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
+- **Desktop smoke test** ([#261](https://github.com/redox-rpi/redox-rpi/issues/261)),
+  for an image with `check=desktop` (today `desktop`): after its network-boot
+  build, [`scripts/qemu-desktop-check.sh`](../../scripts/qemu-desktop-check.sh)
+  boots it in QEMU raspi3b, runs `desktop` on the serial console, presses
+  Enter at Orbital's login window through the QEMU monitor and checks: no
+  panic, `orbital` and the launcher still running a minute later, and a
+  screenshot that shows the launcher bar (many colours, not the dark text
+  console). Report-only: the image counts as built whatever it says. The
+  result is the `desktop-check =` line in `visit.txt`; `report.md`, `run.log`,
+  `desktop.png` and `console.png` are in
+  `/srv/tftp/visit/<name>/<build ID>/desktop-check/`. QEMU's framebuffer is
+  the firmware mailbox model, so it checks Orbital, `rpi-fbd`, the launcher
+  and the session, not HDMI. It also runs by hand on any desktop image:
+  `scripts/qemu-desktop-check.sh --image <harddrive.img>`.
 - **For a tester:** http://homenodellm:8080/visit/ (`index.html` and
   `README.txt`, from `scripts/visit-index.py` after each image): per image
   OK or FAILED, build ID, date, the command to stage it, the SD image with
