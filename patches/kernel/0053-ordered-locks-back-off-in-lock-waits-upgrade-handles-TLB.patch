@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 22:10:30 +0000
+Subject: [PATCH] ordered locks: back off in lock waits, upgrade handles TLB
+ shootdowns (issue #207)
+
+The Pi 3B+ still froze silently in chaos threads rounds with 0052 (row
+379, 2 in 3 loops), but never with the lock-wait watches of experiment
+kernel-tlb-debug (row 241, 0 in 34), which only add a counter read to
+each spin. That points at a livelock on the lock word: spin try_read
+adds a reader before it checks for a writer and takes it back, so
+spinning readers keep the word changing, and a writer or upgrade that
+needs no readers never gets its compare-and-swap through.
+
+- Every wait in ordered.rs backs off exponentially, up to 1024 spin hints.
+- RwLockUpgradableGuard::upgrade waited inside spin without handling TLB
+  shootdowns, as write_arc did; it now loops on try_upgrade like the rest.
+---
+ src/sync/ordered.rs | 65 +++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 57 insertions(+), 8 deletions(-)
+
+diff --git a/src/sync/ordered.rs b/src/sync/ordered.rs
+index 62a7f2b2..6edbc12c 100644
+--- a/src/sync/ordered.rs
++++ b/src/sync/ordered.rs
+@@ -230,13 +230,14 @@ impl<L: Level, T> Mutex<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+ 
+             loop {
+                 match self.inner.try_lock() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -376,12 +377,13 @@ impl<L: Level, T> RwLock<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -416,12 +418,13 @@ impl<L: Level, T> RwLock<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+             loop {
+                 match self.inner.try_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -447,12 +450,13 @@ impl<L: Level, T> RwLock<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -503,12 +507,13 @@ impl<L: Level, T> RwLock<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -533,12 +538,13 @@ impl<L: Level, T> RwLock<L, T> {
+             #[cfg(feature = "busy_panic")]
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
+-                        core::hint::spin_loop();
++                        backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+                             i -= 1;
+@@ -560,12 +566,13 @@ impl<L: Level, T> RwLock<L, T> {
+         // acknowledgement, so handle shootdowns while waiting, like the
+         // other lock loops in this file (issue #207).
+         let my_percpu = PercpuBlock::current();
++            let mut backoff = Backoff::new();
+         let guard = loop {
+             match self.inner.try_write() {
+                 Some(guard) => break guard,
+                 None => {
+                     my_percpu.maybe_handle_tlb_shootdown();
+-                    core::hint::spin_loop();
++                    backoff.spin();
+                 }
+             }
+         };
+@@ -664,8 +671,23 @@ impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
+ 
+     /// Upgrade to RW lock
+     pub fn upgrade(self) -> RwLockWriteGuard<'a, L, T> {
++        // spin's own upgrade() spins without handling TLB shootdowns, as
++        // write_arc did (issue #207), so wait here instead.
++        let my_percpu = PercpuBlock::current();
++        let mut backoff = Backoff::new();
++        let mut inner = self.inner;
++        let inner = loop {
++            match spin::RwLockUpgradableGuard::try_upgrade(inner) {
++                Ok(guard) => break guard,
++                Err(guard) => {
++                    inner = guard;
++                    my_percpu.maybe_handle_tlb_shootdown();
++                    backoff.spin();
++                }
++            }
++        };
+         RwLockWriteGuard {
+-            inner: spin::RwLockUpgradableGuard::upgrade(self.inner),
++            inner,
+             lock_token: self.lock_token,
+         }
+     }
+@@ -758,3 +780,30 @@ impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
+ /// This function can only be called if no lock is held by the calling thread/task
+ #[inline]
+ pub fn check_no_locks(_: LockToken<'_, L0>) {}
++
++/// Exponential backoff for the lock waits above (issue #207). A tight loop
++/// of failed atomic updates on one lock word can starve a CPU for good on
++/// the Cortex-A53: spin's try_read adds a reader before it checks for a
++/// writer and takes it back, so CPUs spinning in try_read keep the word
++/// changing, and a waiting writer or upgrade (which needs no readers) never
++/// gets its compare-and-swap through. Waiting longer after each failure
++/// gives the lock word quiet windows.
++struct Backoff(u32);
++
++impl Backoff {
++    const MAX: u32 = 1024;
++
++    fn new() -> Self {
++        Self(1)
++    }
++
++    #[inline]
++    fn spin(&mut self) {
++        for _ in 0..self.0 {
++            core::hint::spin_loop();
++        }
++        if self.0 < Self::MAX {
++            self.0 *= 2;
++        }
++    }
++}
+-- 
+2.53.0
+
