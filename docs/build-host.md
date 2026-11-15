@@ -13,6 +13,56 @@
 Redox is developed and tested on x86_64 Linux, and its prebuilt cross
 toolchains target that host. Use it for full image builds.
 
+## Our build host: what runs on homenodellm
+
+Our own build host is `homenodellm` (192.168.178.120, Ubuntu, x86_64). It
+builds the images, boots the test Pis over the network and keeps their
+serial logs. This is everything the project needs on it; the setup steps
+are in [netboot.md](netboot.md) and the sections below.
+
+| Service | Unit (user) | Port | What for | Who needs it |
+|---|---|---|---|---|
+| TFTP | `tftpd-hpa` (system) | UDP 69 | `/srv/tftp`: Pi firmware for network boot, U-Boot's `netboot.scr`, image fallback | every network-boot test, the nightly |
+| Proxy DHCP | `redox-pxe-proxy` (system, dnsmasq) | UDP 67, 4011 | tells the Pi firmware where the TFTP server is; the router keeps doing DHCP | Pis that boot from the network with no SD card (firmware network boot) |
+| HTTP | `redox-http` (zehrer) | TCP 8080 | `/srv/tftp` over HTTP, see the list below | U-Boot, SwiftFlash, the maintainer, `pkg` on the Pi |
+| Serial logs | `redox-serial`, `redox-serial-pi400` (zehrer), `redox-serial-rotate.timer` | | serial consoles of the 3B+ (`ttyUSB0`) and the Pi 400 into `~/redox-rpi/logs/` | every Pi test; one reader per port only |
+| Nightly | `redox-stable.timer` (zehrer), 03:30 UTC | | builds main, tests it on the Pi, promotes the stable image, refreshes the CI image on Mondays | releases, the Pi test agent |
+| csmith | `csmith-weekly.timer` (zehrer), Tuesdays | | differential test of the TinyCC VC4 backend | VC4 Tools |
+| CI runner | `ci-runner` (user `ci-runner`, rootless Podman) + nft table `ci_runner` | | GitHub Actions jobs with label `homenode` | CI (section CI runner) |
+| MQTT broker | started by hand (`~/mqtt-broker/`) | 1883, 8883 | smart-home tests | Pi test rows that need it |
+
+On the LAN, not on the host: the Shelly plug that switches the test Pi
+(`shellyplug-01.fritz.box`), the NanoKVM (HDMI and keyboard of the Pi), and
+the router with the DHCP reservations. Builds run in each session's own
+clone below `~` (`redox-rpi-*`), never in the shared `~/redox-rpi`.
+
+### What the HTTP server serves
+
+| Path | Content | Read by |
+|---|---|---|
+| `/` (`/srv/tftp`) | `harddrive.img.gz`, `bootloader-live.efi` for network boot | U-Boot's `wget` (falls back to TFTP) |
+| `/stable/` | the promoted stable network-boot image | the nightly, U-Boot when it is staged |
+| `/sdcard/` | SD card images, `.sha256`, manifests, `index.json` | SwiftFlash (`swiftflash source add redox http://homenodellm:8080/sdcard/`), browsers, Raspberry Pi Imager |
+| `/visit/` | images for person tests, `index.html` | the maintainer |
+| `/pkg/` | our package repository | `pkg` on the Pi |
+
+What a server on port 8080 has to do:
+- plain HTTP on the same URLs, no redirect to HTTPS
+- answer U-Boot's simple `wget` client (one GET, `Content-Length`), and
+  serve `.gz` files as they are, without `Content-Encoding`
+- range requests, so a broken download can be resumed (Python's
+  `http.server` cannot)
+- `ETag` or `Last-Modified`, so clients can skip unchanged images
+  (`scripts/http-etag-server.py` adds an `ETag` to Python's server)
+- IPv4 and IPv6: `homenodellm` resolves to IPv6 too, and Python's server
+  listens on IPv4 only
+- directory listings for people
+- read-only access to `/srv/tftp`; the `ci-runner` user must not reach it
+  (nft blocks `127.0.0.1:8080` for it)
+
+Today it is `python3 -m http.server 8080 --directory /srv/tftp`. A
+replacement is discussed in [#436](https://github.com/redox-rpi/redox-rpi/issues/436).
+
 ## x86_64 Linux (Debian, Ubuntu, Fedora, Arch, …)
 
 Follow the official script; it installs the packages and Rust toolchains:
