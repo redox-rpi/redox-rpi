@@ -8,18 +8,19 @@ of other chips such as Wi-Fi. Only the Boot ROM in the chip stays. We
 start with the Pi 3B+. It lives in its
 own repository,
 [redox-rpi/rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware)
-(GPLv2+), together with all of its documentation:
+(GPLv2+). Its documentation is in the
+[rpi-open-firmware wiki](https://github.com/redox-rpi/rpi-open-firmware/wiki):
 
-- [Broadcom's firmware per Pi model](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/broadcom/README.md):
+- [Broadcom's firmware per Pi model](https://github.com/redox-rpi/rpi-open-firmware/wiki/Broadcom):
   what `bootcode.bin`, `start*.elf`, `fixup*.dat` and the `armstub*` do,
   and their variants on the Zero W, Zero 2 W, 3B+ and Pi 400.
-- [Boot chain by release](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-chain.md):
+- [Boot chain by release](https://github.com/redox-rpi/rpi-open-firmware/wiki/Boot-chain):
   how v0.4.0, v0.5.0 and the development card start, and the steps to no
   Broadcom code after the Boot ROM.
-- [Our firmware](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/own-firmware.md),
-  [Pi test results](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/test-results.md),
-  [rpi-open-firmware (2019)](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/rpi-open-firmware-2019.md)
-  and [lk-overlay](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/lk-overlay.md)
+- [Our firmware](https://github.com/redox-rpi/rpi-open-firmware/wiki/Own-firmware),
+  [Pi test results](https://github.com/redox-rpi/pi-tests/blob/main/queue.md#done),
+  [rpi-open-firmware (2019)](https://github.com/redox-rpi/rpi-open-firmware/wiki/rpi-open-firmware-2019)
+  and [lk-overlay](https://github.com/redox-rpi/rpi-open-firmware/wiki/lk-overlay)
   on our Pi.
 
 ## State
