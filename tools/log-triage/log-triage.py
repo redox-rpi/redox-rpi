@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-sort a Redox serial or QEMU log with the local model on homenodellm.
+"""Pre-sort a Redox serial or QEMU log with the local model on the build server.
 
 The log is cleaned (ANSI codes, prompt redraws, kernel debug noise), split
 into boots, and each boot is reduced to the lines that matter: errors,

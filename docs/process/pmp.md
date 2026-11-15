@@ -52,6 +52,7 @@ Every role below can also be held, or shared, by a contributor who joins.
 | assistant | Log triage (local language model) |
 | quality | Quality |
 | open firmware (`topic:boot`, own repository) | Open firmware |
+| VC4 tools (tinycc VC4 backend, resim, vc4-toolchain; own repositories) | VC4 Tools |
 | boards (Pi 4, Pi 5, test lab), dma | no owner yet (project lead) |
 
 A topic without an active owner falls back to the project lead, who hands
@@ -166,7 +167,10 @@ per week and one release per sprint:
 2. The owner splits it into issues, works on a branch, and tests in QEMU.
 3. V&V runs the Pi test for the exact build and files the report.
 4. The owner opens a pull request (draft until the Pi test passes) with the
-   report linked and the topic page updated.
+   report linked and the topic page updated. The description says what the
+   PR changes, why, and what has to be tested (test plan); it carries no
+   test status. Test results, Pi rows and reports go into comments, one
+   per run with date, image and report, so the history stays readable.
 5. The project lead checks base, CI and Pi test and sets `merge-next`;
    Quality may audit the PR against the process.
 6. The PR is merged by whoever holds the merge right for it (see
@@ -183,7 +187,43 @@ place these rules are written down; other pages link here.
 |---|---|---|
 | Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code), PRs by the Quality session, RFCs | — |
 | Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
-| Project lead | docs-only PRs; docs may also go straight to `main` as a draft | code PRs |
+| Project lead | docs-only PRs | code PRs |
+
+Docs need no pull request: anyone on the team may push changes to docs
+(`README.md`, `docs/`, topic pages) straight to the default branch, as a
+draft that the owner of the page reviews later. A doc that describes code
+from an open PR goes into that PR instead.
+
+### All repositories
+
+Since 2026-11-14 (maintainer): this plan, the merge rights above and
+[CONTRIBUTING.md](../../CONTRIBUTING.md) apply to **every repository of the
+organisation** ([redox-rpi](https://github.com/redox-rpi)), not only to
+redox-rpi/redox-rpi. Code goes through a branch and a pull request, docs
+straight to the default branch. A repository writes down only what differs
+(for example its licence or build), and links here for the rest.
+
+When the maintainer creates a new repository, the project lead:
+1. adds the ruleset `protect-main` (no force push, no deletion of the
+   default branch)
+2. adds a `CLAUDE.md` that links to this plan and names the owning session,
+   and a README with the licence
+3. adds the repository to the table in the organisation profile
+   ([.github](https://github.com/redox-rpi/.github), `profile/README.md`)
+   and its owner to [Topic owners](#topic-owners)
+
+A new agent session gets this plan as the first link in its brief and
+keeps its rules in its own memory.
+
+**Where docs live** (maintainer, 2026-11-15):
+- Hardware reference (boards, SoC, clocks, GPIO, memory map, peripherals),
+  used by several repositories: the
+  [wiki of redox-rpi/redox-rpi](https://github.com/redox-rpi/redox-rpi/wiki).
+  Edit it like docs, straight away (it is the git repository
+  `redox-rpi.wiki.git`); repositories link to its pages instead of keeping
+  copies.
+- Docs that belong to code (decisions, design, how to build and test): in
+  the repository of that code, under `docs/`.
 
 Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
 (WBS 2.15): after a review by the project lead or Quality, the reviewer sets

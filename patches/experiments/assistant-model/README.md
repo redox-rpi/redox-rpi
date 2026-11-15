@@ -15,6 +15,6 @@ assistant --experiment assistant-netboot`, and the model is fetched onto
 the data partition of the network-boot card, in 16 MiB parts:
 
 ```bash
-rinfer --download http://192.168.178.120:8080/models/qwen3-parts/Qwen3-0.6B-Q4_0.gguf.partNNN /scheme/data/Qwen3-0.6B-Q4_0.gguf
+rinfer --download http://<build-server>:8080/models/qwen3-parts/Qwen3-0.6B-Q4_0.gguf.partNNN /scheme/data/Qwen3-0.6B-Q4_0.gguf
 ASSISTANT_MODEL=/scheme/data/Qwen3-0.6B-Q4_0.gguf assistant
 ```

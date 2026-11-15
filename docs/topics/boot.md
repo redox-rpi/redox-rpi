@@ -79,7 +79,7 @@
   and `rpi-fb`). The direct-boot FAT has two slots, `kernel8.img` +
   `initramfs` and `kernel8-b.img` + `initramfs-b`; the initramfs is the
   whole system. `rpi-update fetch` downloads a build from
-  `http://192.168.178.120:8080/update` (written by
+  `http://<build-server>:8080/update` (written by
   `scripts/publish-rpi-update.sh`) into the free slot and checks
   `SHA256SUMS`; `rpi-update try` sets the firmware's tryboot flag (mailbox
   tag `0x00038064` through `/scheme/rpi-firmware/property`) and reboots.
@@ -101,7 +101,7 @@
   stops it, without commit it stops after 120 s, a normal start leaves it
   alone.
 - Packages ([#44](https://github.com/redox-rpi/redox-rpi/issues/44), v0.5.0): `pkg` with our
-  own repository at `http://homenodellm:8080/pkg` (branch `pkg-repo`,
+  own repository at `http://<build-server>:8080/pkg` (branch `pkg-repo`,
   experiments `pkg-hold` and `pkg-repo`). The hold list keeps our patched
   packages (kernel, relibc, base, …) on our builds (Pi test #52 passed);
   pkgutils patch 0003 makes `pkg update` replace files at all (Pi test #73

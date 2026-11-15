@@ -12,11 +12,17 @@ FIRMWARE_FILES=(
     bcm2710-rpi-3-b.dtb bcm2710-rpi-3-b-plus.dtb bcm2710-rpi-zero-2-w.dtb
     overlays/disable-bt.dtbo overlays/mmc.dtbo
 )
+# Pi 4 family (BCM2711): only on cards made with make-sdcard.sh --board pi4.
+PI4_FIRMWARE_FILES=(
+    start4.elf fixup4.dat LICENCE.broadcom
+    bcm2711-rpi-400.dtb bcm2711-rpi-4-b.dtb bcm2711-rpi-cm4.dtb
+    overlays/disable-bt.dtbo
+)
 
 fetch_firmware() {
     firmware_cache="$1/build/firmware/$FIRMWARE_TAG"
     local file
-    for file in "${FIRMWARE_FILES[@]}"; do
+    for file in "${FIRMWARE_FILES[@]}" "${PI4_FIRMWARE_FILES[@]}"; do
         if [ ! -f "$firmware_cache/$file" ]; then
             mkdir -p "$(dirname "$firmware_cache/$file")"
             curl -fsSL -o "$firmware_cache/$file" "$FIRMWARE_URL/$file"
