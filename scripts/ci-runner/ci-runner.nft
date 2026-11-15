@@ -11,7 +11,12 @@ delete table inet ci_runner
 table inet ci_runner {
 	chain output {
 		type filter hook output priority 0; policy accept;
-		meta skuid != "ci-runner" accept
+		# match the owner positively: packets without a socket owner (ICMP
+		# replies, neighbour discovery, the rest of a closed socket's send
+		# queue) must not fall through to the drops below
+		meta skuid "ci-runner" jump ci_runner_out
+	}
+	chain ci_runner_out {
 		ip daddr { 127.0.0.53, 192.168.178.1 } meta l4proto { tcp, udp } th dport 53 accept
 		# every address of the host itself, IPv4 and global IPv6 too (#427)
 		fib daddr type local counter drop
