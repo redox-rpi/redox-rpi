@@ -1,0 +1,120 @@
+# Experiment kill-time (#405): how long SIGTERM and SIGKILL take to end a
+# process, by what it is doing (sleeping, in a loop, blocked in read() or in
+# a write to /scheme/audio, with a worker thread that blocks SIGTERM as SDL's
+# threads do). Needs tcc in the image (experiment tcc):
+# `ion /usr/share/kill-time/check.ion`. Test only, changes nothing else.
+
+[[files]]
+path = "/usr/share/kill-time/killtime.c"
+data = '''
+/* #405: how long until SIGTERM / SIGKILL end a process, by what it does.
+ * Each case forks a child, waits 300 ms, sends the signal and measures how
+ * long kill() takes to return and when waitpid() sees the child gone. A
+ * child still alive after 3 s gets SIGKILL and counts as "not ended". */
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+static long now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+static void msleep(int ms) { struct timespec t = { ms / 1000, (ms % 1000) * 1000000L }; nanosleep(&t, NULL); }
+
+static int pfd[2];
+static volatile sig_atomic_t got;
+static void on_term(int s) { (void)s; got = 1; }
+
+static void block_term(void) { sigset_t s; sigemptyset(&s); sigaddset(&s, SIGTERM); pthread_sigmask(SIG_BLOCK, &s, NULL); }
+
+static void *t_read(void *a) { char c; if (a) block_term(); read(pfd[0], &c, 1); return NULL; }
+static void *t_sleeploop(void *a) { (void)a; for (;;) msleep(1); return NULL; }
+static void *t_audio(void *a) {
+    if (a) block_term();
+    int fd = open("/scheme/audio", O_WRONLY);
+    if (fd < 0) { perror("  open /scheme/audio"); for (;;) msleep(100); }
+    static short buf[4096];
+    for (;;) write(fd, buf, sizeof buf);
+    return NULL;
+}
+
+static void child(const char *c) {
+    pthread_t t;
+    pipe(pfd);
+    if (!strcmp(c, "sleep")) { for (;;) sleep(100); }
+    if (!strcmp(c, "sleeploop")) { for (;;) msleep(1); }
+    if (!strcmp(c, "spin")) { volatile unsigned long x = 0; for (;;) x++; }
+    if (!strcmp(c, "read")) { char ch; read(pfd[0], &ch, 1); }
+    if (!strcmp(c, "audio")) t_audio(NULL);
+    /* SDL style: a worker with SIGTERM blocked sits in a blocking call, the
+     * main thread loops with short sleeps. */
+    if (!strcmp(c, "thr-read")) { pthread_create(&t, NULL, t_read, (void *)1); for (;;) msleep(10); }
+    if (!strcmp(c, "thr-audio")) { pthread_create(&t, NULL, t_audio, (void *)1); for (;;) msleep(10); }
+    /* The main thread blocks SIGTERM, an unmasked worker must take it. */
+    if (!strcmp(c, "main-masked")) { pthread_create(&t, NULL, t_sleeploop, NULL); block_term(); for (;;) sleep(100); }
+    /* SDL's own SIGTERM handler: sets a flag the main loop polls. */
+    if (!strcmp(c, "handler")) {
+        struct sigaction sa; memset(&sa, 0, sizeof sa); sa.sa_handler = on_term; sigaction(SIGTERM, &sa, NULL);
+        pthread_create(&t, NULL, t_audio, (void *)1);
+        while (!got) msleep(10);
+        _exit(0);
+    }
+    fprintf(stderr, "unknown case %s\n", c);
+    _exit(2);
+}
+
+static const char *self;
+
+static int run(const char *c, int sig) {
+    /* exec, not only fork: a forked child without exec keeps signal
+     * delivery inhibited until relibc gets the sig-pipe fix (#205). */
+    pid_t p = fork();
+    if (p == 0) { execl(self, self, "-c", c, (char *)NULL); _exit(127); }
+    msleep(300);
+    long t0 = now_ms();
+    int r = kill(p, sig);
+    long t1 = now_ms();
+    int st = 0; long gone = -1;
+    while (now_ms() - t0 < 3000) {
+        if (waitpid(p, &st, WNOHANG) == p) { gone = now_ms() - t0; break; }
+        msleep(5);
+    }
+    if (gone < 0) { kill(p, SIGKILL); waitpid(p, &st, 0); }
+    int ok = r == 0 && gone >= 0 && gone < 1000 && t1 - t0 < 500;
+    printf("KILLTIME %-4s %-11s kill() %4ld ms, ended %s%5ld ms  %s\n",
+           sig == SIGKILL ? "KILL" : "TERM", c, t1 - t0,
+           gone < 0 ? "never " : "after ", gone < 0 ? 3000 : gone, ok ? "ok" : "SLOW");
+    fflush(stdout);
+    return ok;
+}
+
+int main(int argc, char **argv) {
+    const char *cases[] = { "sleep", "sleeploop", "spin", "read", "audio", "thr-read", "thr-audio", "main-masked", "handler" };
+    int n = sizeof cases / sizeof *cases, bad = 0;
+    self = argv[0];
+    if (argc > 2 && !strcmp(argv[1], "-c")) { child(argv[2]); return 0; }
+    if (argc > 1) { cases[0] = argv[1]; n = 1; }
+    for (int i = 0; i < n; i++) bad += !run(cases[i], SIGTERM);
+    for (int i = 0; i < n; i++) if (strcmp(cases[i], "handler")) bad += !run(cases[i], SIGKILL);
+    printf("KILLTIME: %s, %d slow\n", bad ? "FAIL" : "pass", bad);
+    printf("KILLTIME done\n");
+    return 0;
+}
+'''
+
+[[files]]
+path = "/usr/share/kill-time/check.ion"
+data = '''
+#!/usr/bin/ion
+# One line per case and signal: kill() must return within 0.5 s and the
+# process must be gone within 1 s. Then "KILLTIME: pass". "KILLTIME done"
+# marks the end.
+mkdir -p /tmp/kill-time
+cd /tmp/kill-time
+tcc -o killtime /usr/share/kill-time/killtime.c
+./killtime
+'''
