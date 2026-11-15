@@ -224,7 +224,7 @@ the prompt. This matters more for good answers than the choice of model.
 ## In progress
 
 Branch [`assistant`](https://github.com/redox-rpi/redox-rpi/tree/assistant),
-started 2026-10-29. Clone on homenodellm: `~/redox-rpi-assistant`,
+started 2026-10-29. Clone on the build server: `~/redox-rpi-assistant`,
 llama.cpp and models in `~/assistant-work` (model files stay there, not in
 git).
 

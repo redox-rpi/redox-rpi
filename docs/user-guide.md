@@ -132,7 +132,7 @@ ifconfig                                  # address of eth0
 cat /scheme/netcfg/ifaces/eth0/addr/list  # the same, raw
 cat /scheme/netcfg/route/list             # routes; "default via" is the router
 cat /scheme/netcfg/resolv/nameserver      # DNS server from DHCP
-ping -c 2 192.168.178.1                   # Ctrl-C stops ping without -c
+ping -c 2 <router>                   # Ctrl-C stops ping without -c
 dns example.com                           # look up a name
 ```
 

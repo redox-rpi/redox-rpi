@@ -41,7 +41,7 @@ llama-bench -m /usr/share/assistant/models/Qwen3-0.6B-Q4_0.gguf -p 64 -n 16 -t 4
 
 [`redox-aarch64.cmake`](redox-aarch64.cmake) is a CMake toolchain file for
 building llama.cpp by hand outside the cookbook (static; the paths point
-at the Redox prefix of a build clone on homenodellm):
+at the Redox prefix of a build clone on the build server):
 
 ```bash
 cmake -S . -B build-redox -DCMAKE_TOOLCHAIN_FILE=redox-aarch64.cmake \

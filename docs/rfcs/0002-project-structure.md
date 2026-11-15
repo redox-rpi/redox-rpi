@@ -137,7 +137,7 @@ moves only what is alive.
 | "Delete head branches on merge" | turn on, so merged branches disappear by themselves. This is a repository setting: maintainer's OK |
 | 57 open PRs | each owner: rebase and mark ready, or close with a one-line reason. PRs older than 14 days without activity are closed, and the branch is kept as a tag |
 | 69 experiment directories | Experiments that became default patches, and experiments that failed, are deleted. They get one line each in an index table in `patches/experiments/README.md`: name, result, last commit. Only live experiments stay |
-| Worktrees and clones | Mac: `~/Developement/redox-wt/`, weekly cleanup as today. homenodellm: the sessions' own clones and their `keep/` images, deleted once the owner confirms |
+| Worktrees and clones | Mac: `~/Developement/redox-wt/`, weekly cleanup as today. The build server: the sessions' own clones and their `keep/` images, deleted once the owner confirms |
 | Issues | Close duplicates and issues that a merged PR already fixed. The 8 issues without a topic get one. Retire `docs/tasks.md`, the old T-number map |
 | Stale docs | `docs/status.md` (last updated 2026-10-24) gives way to STATUS.md (section 2) |
 | Topics without an owner | Group them under fewer owners, see below |
@@ -214,7 +214,7 @@ to it.
 | **`vc4d`** (exists) | display and 3D driver | GPL-2.0-only, so it must stay apart from MIT code | its bugs and tasks |
 | **`tools`** (new) | the programs we build into the image: `cputop`, `devshd`, `welcome`, `timesync`, `timerd`, `zoneinfo`, `pkg-persist`, `reboot`, `tone`, `i2c`, `spi`, `mcast`, `net6`, `redox-fatfs2`, `socdump`, and the test programs `chaos`, `sigregs`, `polltest`, `icachetest`, `tcc-bench` | MIT | their bugs and tasks |
 | **`assistant`** (new) | the local language model assistant | MIT | its bugs, tasks and features |
-| **`log-triage`** (new) | host tool on homenodellm, not in any image | MIT | its bugs and tasks |
+| **`log-triage`** (new) | host tool on the build server, not in any image | MIT | its bugs and tasks |
 | **`rpi-open-firmware`** (exists) | open VPU firmware, and `tools/rpi-boot-stub` moves here: both replace parts of the closed boot chain | as today | its bugs and tasks |
 | **`relibc`** (exists) | relibc with our changes as commits on a branch; `upstream.lock` pins the commit, and `patches/relibc/` goes away (decision 3, after phase 3) | MIT | relibc bugs (moved from `topic:relibc`, among them #4, #14, #94, #109) |
 | **`pi-tests`** (new) | the test queue, one report file per row (`tests/NNNN.md`), `done/`, `reports/`, nightly reports, small raw data, the test lab, a tag per release (decision 1, details below) | MIT | requests for tests and test-lab problems |
@@ -256,7 +256,7 @@ repository:
   (`pi-test.py`, the QEMU scripts, `tools/`), the test standards, the
   requirements, the release checklist, and `devshd`.
 - **Never in a repository:** images and binaries (image server, GitHub
-  releases), raw logs over about 1 MB (archive on homenodellm, linked from
+  releases), raw logs over about 1 MB (archive on the build server, linked from
   the report), and secrets.
 - Every result names the build ID and the manifest hash, and a release
   points to its `pi-tests` commit.
@@ -513,7 +513,7 @@ drivers move one at a time, because each move changes `patches/base/`.
   it stay smaller.
 - **Test queue as a GitHub Project board instead of `pi-tests`.** "Take
   the Pi" would no longer be an atomic commit, and every script would need
-  the GitHub API and a token on homenodellm. The Project tracks work, and
+  the GitHub API and a token on the build server. The Project tracks work, and
   `pi-tests` holds the queue and the records.
 - **Milestones in every repository.** GitHub milestones are per
   repository, so they would have to be kept in sync by hand. A Release
