@@ -1,0 +1,322 @@
+From 2e8e84a537c1b7321879deab660978d765559028 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 15 Nov 2026 17:06:25 +0000
+Subject: [PATCH] dwc2d: gamepad sticks count only once near the middle;
+ DragonRise button order
+
+A DragonRise pad (0079:0011) lists X four times. If an unused one rests
+at one end, it held D-pad LEFT from the first report on (redox-rpi Pi
+test row 416). A stick value now counts, as an axis and for the D-pad,
+only after it has once been within 25 % of the middle, and values near
+the middle are sent as 0 (the pad rested at -129).
+
+The pad's buttons are in SNES order: a table by USB id maps them by
+position as SDL does, so Select and Start are BACK and START instead of
+LS and RS. With the input log on, dwc2d logs each new raw report.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/hidreport.rs | 165 +++++++++++++++++++++++++----
+ drivers/usb/dwc2d/src/mouse.rs     |  11 +-
+ 2 files changed, 155 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/hidreport.rs b/drivers/usb/dwc2d/src/hidreport.rs
+index ae759cd9..2b96c88e 100644
+--- a/drivers/usb/dwc2d/src/hidreport.rs
++++ b/drivers/usb/dwc2d/src/hidreport.rs
+@@ -240,30 +240,59 @@ pub struct PadLayout {
+     /// (orbclient button, field) for Button page usages 1 to 11.
+     buttons: Vec<(u16, Field)>,
+     hat: Option<Field>,
+-    /// Every X and every Y value: pushed far enough, any of them presses
+-    /// the D-pad, since games such as Sopwith only read the D-pad and the
+-    /// cross of cheap pads is an axis pair.
+-    cross_x: Vec<Field>,
+-    cross_y: Vec<Field>,
++    /// Every X and every Y value (as indices into `axes`): pushed far
++    /// enough, any of them presses the D-pad, since games such as Sopwith
++    /// only read the D-pad and the cross of cheap pads is an axis pair.
++    cross_x: Vec<usize>,
++    cross_y: Vec<usize>,
++    /// HID button number to orbclient button, for a pad in `QUIRKS`;
++    /// otherwise HID buttons 1 to 11 are A to GUIDE in that order.
++    button_map: Option<&'static [(u16, u16)]>,
++    /// The pad's name when it is in `QUIRKS`.
++    pub quirk: Option<&'static str>,
+ }
+ 
++/// Pads whose buttons are not in the Xbox order: (vendor, product, name,
++/// HID button to orbclient button). By position, as SDL's game controller
++/// database maps them (A bottom, B right, X left, Y top).
++const QUIRKS: &[(u16, u16, &str, &[(u16, u16)])] = &[(
++    // SNES-style pad (DragonRise): HID 1 is the top face button (X on the
++    // pad), 2 right (A), 3 bottom (B), 4 left (Y), 9 Select, 10 Start
++    // (redox-rpi Pi test row 416). SDL: a:b2, b:b1, x:b3, y:b0, back:b8,
++    // start:b9.
++    0x0079,
++    0x0011,
++    "DragonRise SNES-style pad",
++    &[(1, 4), (2, 2), (3, 1), (4, 3), (5, 5), (6, 6), (9, 7), (10, 8)],
++)];
++
+ impl PadLayout {
+     /// The first joystick or gamepad report of a descriptor.
+     pub fn parse(desc: &[u8]) -> Option<Self> {
+         let items = items(desc)?;
+         let id = items.iter().find(|i| is_pad(i))?.report_id;
+         let mut layout =
+-            Self { report_id: id, axes: Vec::new(), buttons: Vec::new(), hat: None, cross_x: Vec::new(), cross_y: Vec::new() };
++            Self {
++                report_id: id,
++                axes: Vec::new(),
++                buttons: Vec::new(),
++                hat: None,
++                cross_x: Vec::new(),
++                cross_y: Vec::new(),
++                button_map: None,
++                quirk: None,
++            };
+         for item in items.iter().filter(|i| i.report_id == id && is_pad(i)) {
+             match (item.page, item.usage) {
+                 (PAGE_GENERIC_DESKTOP, usage @ USAGE_X..=USAGE_RZ) => {
+                     if let Some(axis) = (usage..=USAGE_RZ).find(|a| !layout.axes.iter().any(|(b, _)| b == a)) {
++                        let index = layout.axes.len();
+                         layout.axes.push((axis, item.field));
+-                    }
+-                    match usage {
+-                        USAGE_X => layout.cross_x.push(item.field),
+-                        USAGE_Y => layout.cross_y.push(item.field),
+-                        _ => {}
++                        match usage {
++                            USAGE_X => layout.cross_x.push(index),
++                            USAGE_Y => layout.cross_y.push(index),
++                            _ => {}
++                        }
+                     }
+                 }
+                 (PAGE_GENERIC_DESKTOP, USAGE_HAT) => layout.hat = layout.hat.or(Some(item.field)),
+@@ -274,12 +303,30 @@ impl PadLayout {
+         (!layout.axes.is_empty() || !layout.buttons.is_empty() || layout.hat.is_some()).then_some(layout)
+     }
+ 
++    /// The button order of a known pad (`QUIRKS`), from its USB ids.
++    pub fn for_device(mut self, vendor: u16, product: u16) -> Self {
++        if let Some(&(_, _, name, map)) = QUIRKS.iter().find(|q| q.0 == vendor && q.1 == product) {
++            self.button_map = Some(map);
++            self.quirk = Some(name);
++        }
++        self
++    }
++
++    /// The orbclient button for HID button `n`, if any.
++    fn button(&self, n: u16) -> Option<u16> {
++        match self.button_map {
++            Some(map) => map.iter().find(|m| m.0 == n).map(|m| m.1),
++            None => (1..=LAST_BUTTON).contains(&n).then_some(n),
++        }
++    }
++
+     pub fn describe(&self) -> String {
+         format!(
+-            "gamepad, {} axis(es), {} button(s){}",
++            "gamepad, {} axis(es), {} button(s){}{}",
+             self.axes.len(),
+             self.buttons.len(),
+-            if self.hat.is_some() { ", hat" } else { "" }
++            if self.hat.is_some() { ", hat" } else { "" },
++            self.quirk.map(|q| format!(", buttons as {q}")).unwrap_or_default()
+         )
+     }
+ }
+@@ -288,14 +335,31 @@ impl PadLayout {
+ pub struct Pad {
+     pub layout: PadLayout,
+     axes: Vec<Option<i32>>,
++    /// A stick value counts (as an axis and for the D-pad) only once it
++    /// has been near the middle: cheap pads have values that never move
++    /// and may sit at one end. The DragonRise pad lists X four times; if
++    /// one of the unused ones rests at 0, it held LEFT pressed from the
++    /// first report on (Pi test row 416).
++    armed: Vec<bool>,
+     buttons: u32,
+     dpad: [bool; 4],
+ }
+ 
++/// Percent from the middle within which a stick value arms.
++const ARM_PERCENT: i32 = 25;
++/// Stick values this close to the middle are sent as 0: the middle of
++/// 0..255 is 127.5, so a pad at rest sent -129 (Pi test row 416).
++const DEAD_ZONE: i32 = 1024;
++
++fn is_trigger(axis: u16) -> bool {
++    matches!(axis, 0x32 | 0x35)
++}
++
+ impl Pad {
+     pub fn new(layout: PadLayout) -> Self {
+         let axes = vec![None; layout.axes.len()];
+-        Pad { layout, axes, buttons: 0, dpad: [false; 4] }
++        let armed = layout.axes.iter().map(|(a, _)| is_trigger(*a)).collect();
++        Pad { layout, axes, armed, buttons: 0, dpad: [false; 4] }
+     }
+ 
+     /// The events for one report (with its report ID byte, if any).
+@@ -311,20 +375,27 @@ impl Pad {
+             // SDL reads X, Y, RX, RY from -32768 to 32767 with Y and RY
+             // negated (up is positive in orbclient), Z and RZ (triggers)
+             // from 0 to 255.
++            if !is_trigger(*axis) && field.scale(raw, -100, 100).abs() <= ARM_PERCENT {
++                self.armed[n] = true;
++            }
+             let value = match *axis {
+                 0x32 | 0x35 => field.scale(raw, 0, 255),
++                _ if !self.armed[n] => 0,
+                 0x31 | 0x34 => field.scale(raw, 32767, -32767),
+                 _ => field.scale(raw, -32767, 32767),
+             };
++            let value = if !is_trigger(*axis) && value.abs() < DEAD_ZONE { 0 } else { value };
+             if self.axes[n] != Some(value) {
+                 self.axes[n] = Some(value);
+                 events.push(PadEvent::Axis(*axis, value));
+             }
+         }
+         let mut buttons = 0;
+-        for &(button, field) in &self.layout.buttons {
+-            if field.get(data).is_some_and(|v| v != 0) {
+-                buttons |= 1 << button;
++        for &(n, field) in &self.layout.buttons {
++            if let Some(button) = self.layout.button(n) {
++                if field.get(data).is_some_and(|v| v != 0) {
++                    buttons |= 1 << button;
++                }
+             }
+         }
+         for button in 1..=LAST_BUTTON {
+@@ -348,9 +419,10 @@ impl Pad {
+                 dpad[3] |= matches!(eighth, 5..=7);
+             }
+         }
+-        let pushed = |fields: &[Field]| {
++        let pushed = |indices: &[usize]| {
+             let (mut low, mut high) = (false, false);
+-            for f in fields {
++            for &i in indices.iter().filter(|&&i| self.armed[i]) {
++                let f = self.layout.axes[i].1;
+                 if let Some(v) = f.get(data) {
+                     let percent = f.scale(v, -100, 100);
+                     low |= percent <= -50;
+@@ -453,7 +525,7 @@ mod tests {
+         assert_eq!(
+             events,
+             vec![
+-                PadEvent::Axis(0x33, -129),
++                PadEvent::Axis(0x33, 0), // dead zone: 0x7F is just below the middle
+                 PadEvent::Axis(0x34, -32767),
+                 PadEvent::Button(1, false),
+                 PadEvent::Button(10, true),
+@@ -463,6 +535,59 @@ mod tests {
+         );
+     }
+ 
++    /// The same pad as it may really rest: the first X at 0x01 (one end),
++    /// which must neither hold LEFT nor show as a stick pushed left.
++    #[test]
++    fn dragonrise_unused_x_at_one_end() {
++        let mut pad = Pad::new(PadLayout::parse(DRAGONRISE).unwrap());
++        let rest = [0x01, 0x7F, 0x7F, 0x7F, 0x7F, 0x0F, 0x00, 0x00];
++        let first = pad.update(&rest);
++        assert!(!first.contains(&PadEvent::Button(DPAD_LEFT, true)), "{first:?}");
++        // At rest every stick reads 0 (dead zone; the first X is not armed).
++        // (0x32, the third X, is read as a trigger: 0..255.)
++        assert!(first.iter().all(|e| matches!(e, PadEvent::Axis(0x32, 127) | PadEvent::Axis(_, 0))), "{first:?}");
++        let events = pad.update(&[0x01, 0x7F, 0x7F, 0x00, 0x7F, 0x0F, 0x00, 0x00]);
++        assert_eq!(events, vec![PadEvent::Axis(0x33, -32767), PadEvent::Button(DPAD_LEFT, true)]);
++        let events = pad.update(&rest);
++        assert_eq!(events, vec![PadEvent::Axis(0x33, 0), PadEvent::Button(DPAD_LEFT, false)]);
++        // RIGHT and UP work as before.
++        let events = pad.update(&[0x01, 0x7F, 0x7F, 0xFF, 0x00, 0x0F, 0x00, 0x00]);
++        assert_eq!(
++            events,
++            vec![
++                PadEvent::Axis(0x33, 32767),
++                PadEvent::Axis(0x34, 32767),
++                PadEvent::Button(DPAD_UP, true),
++                PadEvent::Button(DPAD_RIGHT, true)
++            ]
++        );
++    }
++
++    /// 0079:0011 buttons by position: HID 3 (bottom) is A, 1 (top) is Y,
++    /// 9 and 10 are BACK and START (row 416 had them as LS and RS).
++    #[test]
++    fn dragonrise_button_order() {
++        let layout = PadLayout::parse(DRAGONRISE).unwrap().for_device(0x0079, 0x0011);
++        assert_eq!(layout.quirk, Some("DragonRise SNES-style pad"));
++        let mut pad = Pad::new(layout);
++        pad.update(&[0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x0F, 0x00, 0x00]);
++        // Buttons 1..10 start at bit 4 of byte 5: HID 1 = 0x10, 3 = 0x40.
++        assert_eq!(pad.update(&[0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x1F, 0x00, 0x00]), vec![PadEvent::Button(4, true)]);
++        assert_eq!(
++            pad.update(&[0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x4F, 0x00, 0x00]),
++            vec![PadEvent::Button(1, true), PadEvent::Button(4, false)]
++        );
++        // HID 9 = byte 6 bit 4, HID 10 = byte 6 bit 5.
++        assert_eq!(
++            pad.update(&[0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x0F, 0x30, 0x00]),
++            vec![PadEvent::Button(1, false), PadEvent::Button(7, true), PadEvent::Button(8, true)]
++        );
++        // Another pad keeps the Xbox order.
++        let other = PadLayout::parse(DRAGONRISE).unwrap().for_device(0x0079, 0x0006);
++        assert_eq!(other.quirk, None);
++        assert_eq!(other.button(10), Some(10));
++    }
++
+     #[test]
+     fn hat_pad() {
+         let mut pad = Pad::new(PadLayout::parse(HAT_PAD).unwrap());
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 10550549..3dcdcad5 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -195,7 +195,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+         let report = report.as_deref();
+         let (kind, boot_reports) = if let Some(layout) = report.and_then(Layout::parse) {
+             (Kind::Pointer(layout), false)
+-        } else if let Some(layout) = report.and_then(PadLayout::parse) {
++        } else if let Some(layout) = report.and_then(PadLayout::parse).map(|l| l.for_device(device.vendor, device.product)) {
+             // Pads differ a lot: the descriptor helps when one maps badly.
+             let hex: String = report.unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect();
+             println!("dwc2d: gamepad report descriptor: {hex}");
+@@ -260,6 +260,8 @@ pub struct Mouse {
+     position: Option<(i32, i32)>,
+     /// A gamepad's last state.
+     pad: Option<Pad>,
++    /// A gamepad's last raw report, for the input log.
++    raw: Vec<u8>,
+     input: Input,
+     next_poll: Instant,
+     /// Print every event (tests without a person).
+@@ -279,6 +281,7 @@ impl Mouse {
+             hc,
+             f,
+             pad,
++            raw: Vec::new(),
+             buf: Dma::new([0; REPORT_MAX]).expect("dwc2d: DMA allocation failed"),
+             pid: PID_DATA0,
+             buttons: [false; 3],
+@@ -325,6 +328,12 @@ impl Mouse {
+     }
+ 
+     fn update(&mut self, report: &[u8]) {
++        if self.pad.is_some() && self.log && report != self.raw.as_slice() {
++            // The raw bytes tell which value is which on a new pad.
++            let hex: String = report.iter().map(|b| format!("{b:02x}")).collect();
++            println!("dwc2d: gamepad: report {hex}");
++            self.raw = report.to_vec();
++        }
+         if let Some(pad) = self.pad.as_mut() {
+             for event in pad.update(report) {
+                 match event {
+-- 
+2.53.0
+
