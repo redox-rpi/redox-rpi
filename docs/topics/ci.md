@@ -31,6 +31,11 @@
 
 ## In progress
 
+- [#265](https://github.com/redox-rpi/redox-rpi/issues/265) regression set before a Pi row:
+  `scripts/regression-set.py` and `scripts/regression-qemu.sh` (PR #396),
+  8 checks in QEMU in under 3 minutes with the boot; `merge-set-check.sh`
+  could run it instead of `pi-test.py` alone.
+
 - [#10](https://github.com/redox-rpi/redox-rpi/issues/10) crash details in `pi-test.py`, branch `t10-start-loop`,
   [PR #74](https://github.com/redox-rpi/redox-rpi/pull/74): each failed start with its program, exit
   status and its own kernel crash dump (FAR, ELR, ESR, LR, SP, PID, stack

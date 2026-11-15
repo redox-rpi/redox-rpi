@@ -146,6 +146,24 @@ agreed with V&V on 2026-11-08).
   main passed; the checklist names that run (its URL). While the issue
   "CI: main is red" is open (opened and closed by
   `.github/workflows/ci-main-red.yml`), no candidate is built.
+
+  Since #445 a commit that changes only Markdown or `docs/` starts no
+  `QEMU boot test` on push. If the candidate commit is such a commit, the
+  build agent starts the run by hand (`workflow_dispatch`) on exactly that
+  commit before the build:
+  - If the commit is still the head of `main`:
+    `gh workflow run qemu-boot.yml --ref main`.
+  - If `main` has moved on: a dispatch takes a branch, not a commit, so
+    first push a branch to the commit,
+    `git push origin <commit>:refs/heads/candidate-v<version>-rc<N>`, then
+    `gh workflow run qemu-boot.yml --ref candidate-v<version>-rc<N>`.
+    The branch only serves the run; its deletion after the release is the
+    maintainer's.
+
+  Check that the run's commit is the candidate commit (`headSha` in
+  `gh run list --workflow qemu-boot.yml --event workflow_dispatch --json headSha,url,conclusion`),
+  and name that run in the checklist. A manual run does not open or close
+  "CI: main is red"; that issue still follows the last push run.
 - **REQ-REL-5, fits a 2 GB card:** the uncompressed image
   (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
 
