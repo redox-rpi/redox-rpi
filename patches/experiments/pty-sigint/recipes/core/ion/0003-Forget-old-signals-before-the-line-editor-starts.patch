@@ -1,0 +1,27 @@
+Subject: [PATCH] Forget old signals before the line editor starts, not after
+
+A SIGINT that ptyd sends while liner restores the terminal (a Ctrl-C
+typed in raw mode right after Enter) stays pending, so 0002 passes it
+on to the job.
+---
+--- a/src/binary/readln.rs
++++ b/src/binary/readln.rs
+@@ -16,6 +16,10 @@
+         Self::change_blocking(1);
+         Self::change_blocking(2);
+         let prompt = self.prompt();
++        // Forget signals from before the line, but keep a SIGINT that comes
++        // while liner hands the terminal back: ptyd sends it for a Ctrl-C
++        // typed in raw mode, and the job gets it when it starts.
++        self.shell.borrow().clear_pending_signals();
+         let line = self.context.borrow_mut().read_line(
+             prompt,
+             None,
+@@ -24,7 +28,6 @@
+ 
+         match line {
+             Ok(line) => {
+-                self.shell.borrow().clear_pending_signals();
+                 if line.bytes().next() != Some(b'#')
+                     && line.bytes().any(|c| !c.is_ascii_whitespace())
+                 {
