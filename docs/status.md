@@ -53,7 +53,7 @@ through `devshd`.
 for every TCP connection on port 2323. From the build server, through the
 router: `redox login: root`, `uname -a` → `Redox redox 0.5.12 … aarch64`,
 `ps` (4 CPUs, `dwc2d`, `netstack`, `devshd`, `ion`), and
-`/scheme/netcfg/ifaces/eth0/addr/list` → `192.168.178.148/24`. Port 2323 is
+`/scheme/netcfg/ifaces/eth0/addr/list` → `<pi>/24`. Port 2323 is
 open about 80 s after power-on. Unencrypted: for the home network only,
 until SSH works.
 
@@ -69,7 +69,7 @@ BCM2835 watchdog, as Linux does.
 Redox on the Raspberry Pi 3B+ is on the LAN: `dwc2d` enumerates both onboard
 hubs and the LAN7800, our LAN7800 driver brings up the chip and the PHY
 (`link up after 2880 ms`) with the board's MAC address from the devicetree,
-and Redox' `netstack`/`dhcpd` get `192.168.178.148` from the router. From the
+and Redox' `netstack`/`dhcpd` get `<pi>` from the router. From the
 build server, TCP connections to the Pi are refused instantly (RST from
 Redox' TCP stack, no service listening yet) and ARP shows it `REACHABLE`.
 

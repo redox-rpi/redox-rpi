@@ -12,7 +12,7 @@
 #
 # Usage:
 #   scripts/build-uboot.sh [rpi|qemu]    (default: rpi)
-#   scripts/build-uboot.sh rpi-net <server-ip>
+#   scripts/build-uboot.sh rpi-net <server-ip> [<dir>]
 #
 # Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/,
 # or build/u-boot-qemu/u-boot.bin for qemu.
@@ -20,7 +20,10 @@
 # rpi-net builds build/u-boot-net/u-boot.bin for a Pi without SD card, which
 # the Pi firmware loads over TFTP (scripts/netboot-firmware.sh). There is no
 # boot.scr then, so its boot command fetches redox/netboot.scr from
-# <server-ip> itself.
+# <server-ip> itself. <dir> is the netboot directory (default redox); with
+# another one the result goes to build/u-boot-net-<dir>/, e.g. pi400 for
+# the Pi 400, whose EEPROM loads it over TFTP (scripts/netboot-firmware.sh
+# --board pi4, #299).
 
 set -euo pipefail
 
@@ -31,15 +34,18 @@ SRC="$ROOT/upstream/u-boot"
 case "${1:-rpi}" in
     rpi) DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot" ;;
     rpi-net)
+        server="${2:?rpi-net needs the server address}"
+        net_dir="${3:-redox}"
         DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot-net"
-        server="${2:?rpi-net needs the server address}" ;;
+        [ "$net_dir" = redox ] || OUT="$ROOT/build/u-boot-net-$net_dir" ;;
     qemu) DEFCONFIG=qemu_arm64_defconfig; OUT="$ROOT/build/u-boot-qemu" ;;
     *) echo "unknown target: $1" >&2; exit 1 ;;
 esac
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 
 if [ ! -d "$SRC" ]; then
-    git clone --depth 1 --branch "$UBOOT_TAG" https://source.denx.de/u-boot/u-boot.git "$SRC"
+    # UBOOT_REPO: CI uses the GitHub mirror (#409).
+    git clone --depth 1 --branch "$UBOOT_TAG" "${UBOOT_REPO:-https://source.denx.de/u-boot/u-boot.git}" "$SRC"
 fi
 if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
@@ -49,10 +55,16 @@ fi
 mkdir -p "$OUT/obj" "$OUT/dtb"
 fragments=("$ROOT/config/u-boot.config")
 if [ -n "${server:-}" ]; then
-    # The same steps as boot.scr from scripts/netboot.sh.
+    # The same steps as boot.scr from scripts/netboot.sh. netboot.scr comes
+    # over HTTP first: with the lwIP stack (CONFIG_NET_LWIP) TFTP of files
+    # larger than one block often times out on the Pi 4 GENET, and lwIP's
+    # TFTP ignores tftpwindowsize. HTTP runs over TCP, which retransmits.
+    # TFTP stays as the fallback, tried twice.
+    ub_addr="\${scriptaddr}"
+    ub_http="http://$server:${NETBOOT_HTTP_PORT:-8080}/$net_dir/netboot.scr"
     cat > "$OUT/net.config" <<EOF
 CONFIG_USE_BOOTCOMMAND=y
-CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; tftpboot \${scriptaddr} redox/netboot.scr && source \${scriptaddr}"
+CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; if wget $ub_addr $ub_http; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; fi"
 EOF
     fragments+=("$OUT/net.config")
 fi
@@ -64,5 +76,5 @@ make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
 
 cp "$OUT/obj/u-boot.bin" "$OUT/u-boot.bin"
 # Mainline devicetrees, used to boot this U-Boot in QEMU without Pi firmware.
-find "$OUT/obj" -name 'bcm2837-rpi-*.dtb' -exec cp {} "$OUT/dtb/" \;
+find "$OUT/obj" \( -name 'bcm2837-rpi-*.dtb' -o -name 'bcm2711-rpi-*.dtb' \) -exec cp {} "$OUT/dtb/" \;
 echo "u-boot: $OUT/u-boot.bin ($UBOOT_TAG)"

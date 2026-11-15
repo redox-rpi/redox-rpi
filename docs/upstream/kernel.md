@@ -126,6 +126,25 @@ Our [#207](https://github.com/redox-rpi/redox-rpi/issues/207). Checked against t
   spun inside spin without handling TLB shootdowns, now loops on
   `try_upgrade` like the others. Pi result: our row 384.
 
+## A killed thread does not cancel its pending scheme call (bug)
+
+Our [#401](https://github.com/redox-rpi/redox-rpi/issues/401). Checked against the kernel we pin, `c951af42`.
+
+- **What breaks:** after `nc` exits in a shell, the next line typed is
+  lost. nc's stdin thread is blocked in a pty read when the process exits;
+  the thread is SIGKILLed, but ptyd keeps the read and hands it the next
+  line.
+- **Why:** `src/scheme/user.rs`, `UserInner::call`: on a wakeup while the
+  caller is `being_sigkilled`, `eintr_if_sigkill` returns EINTR before the
+  `Opcode::Cancel` request is sent ("data loss doesn't matter"). The scheme
+  never learns the caller is gone. For a pty it does matter.
+- **Our fix:** default kernel patch `0054`: send the Cancel first, then
+  return EINTR. ptyd (`scheme_utils::ReadinessBased`) answers it with
+  ECANCELED and drops the read; the kernel then removes the request because
+  the caller's context is gone.
+- **Tested:** QEMU raspi3b over devsh: lost line 3 of 3 times before,
+  0 of 3 after. Chaos `killio`, `procs` and `threads` rounds unchanged.
+
 ## aarch64: no cache maintenance when user code becomes executable (bug)
 
 Found in the kernel `c951af42` (the commit we pin) and still in upstream

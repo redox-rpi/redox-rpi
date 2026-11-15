@@ -25,6 +25,8 @@ base = "source"
 bootloader = "source"
 # relibc: our fix for fork() on aarch64 (patches/relibc).
 relibc = "source"
+# netutils: nc errors to stderr with exit status 1 (patches/netutils, #407).
+netutils = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
 # `i2c` and `spi` commands for the I2C and SPI drivers (tools/i2c,

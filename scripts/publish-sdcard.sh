@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Publish a finished SD card image on the image server, the one way into
-# /srv/tftp/sdcard (http://homenodellm:8080/sdcard/), so SwiftFlash
+# /srv/tftp/sdcard (<image server>/sdcard/, REDOX_HTTP_BASE in lab.env), so SwiftFlash
 # (github.com/zehrer/SwiftFlashCLI, docs/build-server.md) can flash it with
-#   swiftflash source add redox http://homenodellm:8080/sdcard/
+#   swiftflash source add redox <image server>/sdcard/
 #   sudo swiftflash redox:<family>
 # Rules in docs/topics/ci.md, "Image server".
 #
@@ -164,6 +164,12 @@ plan="$work/test-plan.md"
 "$ROOT/scripts/pi-tests-queue.sh" > "$plan" 2>/dev/null || : > "$plan"
 python3 "$ROOT/scripts/sdcard-index.py" "$DIR" "$plan"
 
-echo "published: http://homenodellm:8080/sdcard/$name"
+# Only for the message: the URL if lab.env names the image server.
+. "$ROOT/scripts/lab-env.sh"
+if [ -n "${REDOX_HTTP_BASE:-}" ] && [ -z "${SDCARD_DIR:-}" ]; then
+    echo "published: $REDOX_HTTP_BASE/sdcard/$name"
+else
+    echo "published: $DIR/$name"
+fi
 echo "sha256:    $(cut -d' ' -f1 "$DIR/$name.sha256")"
 echo "flash:     sudo swiftflash redox:$family"

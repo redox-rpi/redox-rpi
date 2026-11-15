@@ -78,7 +78,7 @@ PL011).
 
 ## Test build with the newest sources
 
-In a separate clone on homenodellm (`~/redox-rpi-rebase`, local branch
+In a separate clone on the build server (`~/redox-rpi-rebase`, local branch
 `rebase-try`, not pushed): `config/upstream.lock` set to the heads above,
 the base patches refreshed, then
 `scripts/build-image.sh --experiment timesync`, the set of the releases.

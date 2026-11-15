@@ -303,12 +303,12 @@ EOF
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
 # keep their old order (it decides the order in the manifest). pkgutils
-# only when an experiment patches it (pkg-hold); otherwise the image takes
-# the upstream binary.
+# and netutils only when an experiment patches them (pkg-hold,
+# ifconfig-mac); otherwise the image takes the upstream binary.
 recipes=(bootloader base relibc)
 while read -r name; do
     case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
-    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
+    case "$name" in pkgutils|netutils) [ -z "$(patch_files "$name")" ] && continue ;; esac
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
 done < <(
@@ -454,7 +454,7 @@ fi
 # the build has unrecorded changes. Shown above the login prompt and in
 # /etc/redox-rpi-release. The same set of experiments, in any order, gives the
 # same hash; their names are in the manifest and on the line below the ID.
-version="${VERSION:-$(git -C "$ROOT" describe --tags --always)}"
+version="${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always)}"
 build_id="$version"
 exp_list=""
 if [ "${#experiments[@]}" -gt 0 ]; then
@@ -471,6 +471,23 @@ build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 title="$build_id"
 [ -n "$release" ] && title="$release ($build_id)"
 
+# Experiment configs may name the build server as @BUILD_SERVER@ (pkg-repo,
+# pkg-persist): filled in from REDOX_BUILD_SERVER (scripts/lab-env.sh, the
+# admins' lab.env on the build server) and recorded in the manifest, so the
+# build stays reproducible. No value, no build: never a guessed address.
+build_server=""
+for exp in "${experiments[@]}"; do
+    conf="$ROOT/patches/experiments/$exp/config.toml"
+    if [ -f "$conf" ] && grep -q '@BUILD_SERVER@' "$conf"; then
+        . "$ROOT/scripts/lab-env.sh"
+        lab_need REDOX_BUILD_SERVER
+        build_server="$REDOX_BUILD_SERVER"
+        [[ "$build_server" =~ ^[A-Za-z0-9.:-]+$ ]] ||
+            { echo "REDOX_BUILD_SERVER is not an address or host name: $build_server" >&2; exit 1; }
+        break
+    fi
+done
+
 # Manifest: everything that decides what is in the image.
 manifest_head="$(mktemp)"
 {
@@ -482,6 +499,7 @@ manifest_head="$(mktemp)"
     echo "built = \"$build_date\""
     echo "commit = \"$(git -C "$ROOT" rev-parse HEAD)\""
     echo "dirty = \"${dirty_sum:-no}\""
+    [ -n "$build_server" ] && echo "build_server = \"$build_server\""
     printf 'experiments = ['
     for exp in "${experiments[@]}"; do printf ' "%s",' "$exp"; done
     echo ' ]'
@@ -556,7 +574,13 @@ exp_configs=()
 [ "$CONFIG_NAME" = zero2w ] || exp_configs+=("$ROOT/config/raspi3bp-http-client.toml")
 for exp in "${experiments[@]}"; do
     conf="$ROOT/patches/experiments/$exp/config.toml"
-    [ -f "$conf" ] && exp_configs+=("$conf")
+    [ -f "$conf" ] || continue
+    if grep -q '@BUILD_SERVER@' "$conf"; then
+        mkdir -p "$ROOT/build/experiments"
+        sed "s/@BUILD_SERVER@/$build_server/g" "$conf" > "$ROOT/build/experiments/$exp.toml"
+        conf="$ROOT/build/experiments/$exp.toml"
+    fi
+    exp_configs+=("$conf")
 done
 if [ ${#exp_configs[@]} -gt 0 ]; then
     fs_config="$ROOT/build/experiments-$CONFIG_NAME.toml"

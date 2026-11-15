@@ -1,6 +1,11 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
-set(TC /home/zehrer/redox-rpi-assistant/upstream/redox/prefix/aarch64-unknown-redox/gcc-install/bin)
+# The cross toolchain of this checkout (scripts/build-image.sh builds it);
+# -DREDOX_TC=<dir> uses another one.
+if(NOT DEFINED REDOX_TC)
+  set(REDOX_TC ${CMAKE_CURRENT_LIST_DIR}/../../../upstream/redox/prefix/aarch64-unknown-redox/gcc-install/bin)
+endif()
+set(TC ${REDOX_TC})
 set(CMAKE_C_COMPILER ${TC}/aarch64-unknown-redox-gcc)
 set(CMAKE_CXX_COMPILER ${TC}/aarch64-unknown-redox-g++)
 set(CMAKE_AR ${TC}/aarch64-unknown-redox-ar)

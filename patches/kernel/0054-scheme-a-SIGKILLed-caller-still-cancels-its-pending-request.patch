@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 13 Nov 2026 01:39:01 +0000
+Subject: [PATCH] scheme: a SIGKILLed caller cancels its request, and a killed
+ thread starts none (issue #401)
+
+After nc exits in a devsh session, the next command line was lost. nc
+stdin thread is SIGKILLed while it reads the pty:
+
+- If it was already blocked, UserInner::call returned EINTR without a
+  Cancel, and ptyd handed the next line to the dead request. Now the
+  Cancel is sent first.
+- If the kill came just before call_inner blocked, the kill found the
+  thread runnable and woke nothing, and the thread then slept until
+  ptyd answered with the next line, which was lost with the thread
+  (Pi row 397: reply of 48 bytes for a caller being killed). Now
+  call_inner checks being_sigkilled under the context lock before it
+  blocks and returns EINTR without sending anything.
+
+Munmap keeps the old behaviour in both places: an exiting thread unmaps
+scheme memory while tearing down, and that must reach the scheme.
+---
+ src/scheme/user.rs | 32 ++++++++++++++++++++++++++++----
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/src/scheme/user.rs b/src/scheme/user.rs
+index d91ae0ab..d92627b0 100644
+--- a/src/scheme/user.rs
++++ b/src/scheme/user.rs
+@@ -232,9 +232,22 @@ impl UserInner {
+     ) -> Result<Response> {
+         {
+             let current_context = context::current();
+-            current_context
+-                .write(token.token())
+-                .block("UserInner::call");
++            {
++                let mut context = current_context.write(token.token());
++                // A SIGKILL that came before this point found the thread
++                // runnable and had nothing to wake; blocking now would sleep
++                // until the scheme answers, and that answer (for ptyd the
++                // next typed line) is then lost (issue #401). The kill sets
++                // being_sigkilled under this lock, so checking here closes
++                // the window: nothing is sent yet, so nothing needs a Cancel.
++                // Munmap is left out: an exiting thread unmaps scheme memory
++                // while it tears down its address space, and that must reach
++                // the scheme.
++                if context.being_sigkilled && sqe.opcode != Opcode::Munmap as u8 {
++                    return Err(Error::new(EINTR));
++                }
++                context.block("UserInner::call");
++            }
+             {
+                 let mut states = self.states.lock(token.token());
+                 states[sqe.tag as usize] = State::Waiting {
+@@ -336,7 +349,16 @@ impl UserInner {
+                                 callee_responsible,
+                             };
+ 
+-                            maybe_eintr?;
++                            // A caller that is being SIGKILLed (for example a
++                            // thread of an exiting process) still cancels the
++                            // request, so the scheme drops it. Otherwise ptyd
++                            // hands the next line typed to the dead reader and
++                            // it is lost (issue #401). Munmap keeps the old
++                            // behaviour: no Cancel, so the scheme still unmaps
++                            // while an exiting thread tears down its memory.
++                            if maybe_eintr.is_err() && sqe.opcode == Opcode::Munmap as u8 {
++                                return Err(Error::new(EINTR));
++                            }
+ 
+                             // We do not want to preempt between sending the
+                             // cancellation and blocking again where we might
+@@ -360,6 +382,8 @@ impl UserInner {
+                                 token.token(),
+                             );
+ 
++                            maybe_eintr?;
++
+                             // 1. If cancellation was requested and arrived
+                             // before the scheme processed the request, an
+                             // acknowledgement will be sent back after the
+-- 
+2.53.0
+

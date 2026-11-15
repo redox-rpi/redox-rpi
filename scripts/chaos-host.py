@@ -219,7 +219,7 @@ class Netem:
             on = [f"iptables -I {rule}"]
             off = [f"iptables -D {rule}"]
         elif fault == "tcp-reset":
-            # No iptables (homenodellm): kill this host's TCP connections
+            # No iptables (the build server): kill this host's TCP connections
             # with the Pi every second instead; the kernel sends a reset.
             on, off = [], []
             self.pulse_cmds = [f"ss -K dst {pi}"]

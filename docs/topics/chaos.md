@@ -21,7 +21,7 @@ Nothing on `main` yet.
     the stressor over devsh, a misbehaving HTTP/TLS server for a TCP client
     and for `pkg`, forced `dwc2d` port power cycles, and `tc netem` /
     iptables network faults for the Pi's address only (`ss -K` resets
-    where there is no iptables, as on homenodellm). After each fault devsh
+    where there is no iptables, as on the build server). After each fault devsh
     must answer and the serial log must have no panic.
 - QEMU, 2026-11-04: 70 stressor rounds, only `signals` fails (#205); 26
   host faults (server, pkg, dwc2d), devsh back within 2–5 s; no panic.
