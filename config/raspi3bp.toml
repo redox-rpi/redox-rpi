@@ -58,8 +58,13 @@ type = "oneshot_async"
 """
 
 # Start the development shell. Unencrypted: for the home network only.
+# Right after the network (11_): init starts one unit at a time and waits
+# for each oneshot, so as 90_ devshd waited behind audiod, the startup sound
+# and the data partition mount (60_data), about 40 s in QEMU without a data
+# partition, and for good when that mount hangs: network up, devshd never
+# listening (#217).
 [[files]]
-path = "/usr/lib/init.d/90_devshd.service"
+path = "/usr/lib/init.d/11_devshd.service"
 data = """
 [unit]
 description = "Development shell on TCP port 2323"
