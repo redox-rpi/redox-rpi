@@ -7,11 +7,24 @@ name: QEMU boot test
 # The full image from the pinned sources is built and tested on the real Pi
 # every night on the build host (scripts/update-stable.sh).
 
+# Documentation alone does not change what boots: a push or pull request that
+# only touches Markdown or docs/ starts no run (the runner takes one job at a
+# time, and release days push many docs commits). No status check is required
+# on main, so a skipped pull request is not blocked.
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
+
+# Pushes to main: only the newest commit is tested, a newer push cancels the
+# run before it (ci-main-red.yml ignores cancelled runs). Pull requests and
+# manual runs each get their own group and are never cancelled.
+concurrency:
+  group: qemu-boot-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   raspi3b:
