@@ -167,7 +167,10 @@ per week and one release per sprint:
 2. The owner splits it into issues, works on a branch, and tests in QEMU.
 3. V&V runs the Pi test for the exact build and files the report.
 4. The owner opens a pull request (draft until the Pi test passes) with the
-   report linked and the topic page updated.
+   report linked and the topic page updated. The description says what the
+   PR changes, why, and what has to be tested (test plan); it carries no
+   test status. Test results, Pi rows and reports go into comments, one
+   per run with date, image and report, so the history stays readable.
 5. The project lead checks base, CI and Pi test and sets `merge-next`;
    Quality may audit the PR against the process.
 6. The PR is merged by whoever holds the merge right for it (see
