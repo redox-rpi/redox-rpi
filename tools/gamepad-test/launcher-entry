@@ -1,0 +1,4 @@
+name=Gamepad test
+binary=/usr/bin/gamepad-test
+icon=/usr/share/icons/redox-rpi/gamepad-test.png
+description=Shows the buttons and sticks of a USB gamepad live
