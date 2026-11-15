@@ -16,7 +16,14 @@
   `ifconfig-mac` (netutils `0001`, netutils now pinned) reads the address
   from `netcfg` (PR
   [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
-  and on the Pi (**test 194 passed**).
+  and on the Pi (**test 194 passed**). Release images have it since
+  v0.5.0-rc1. **Person observation (2026-11-14, the user, v0.5.0-rc1
+  card on the 3B+):** a ping to the build host by name worked, and
+  `ifconfig` showed the real MAC address. Test and branch images without
+  the experiment still print zeros (Pi rows 345, 356, 401: "MAC zeros");
+  that is the upstream placeholder, not a driver fault.
+  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): make it a
+  default netutils patch, so zeros would mean a real fault.
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
   ignored the DHCP name server (lan hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
