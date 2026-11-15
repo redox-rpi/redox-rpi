@@ -24,7 +24,7 @@ are in [netboot.md](netboot.md) and the sections below.
 |---|---|---|---|---|
 | TFTP | `tftpd-hpa` (system) | UDP 69 | `/srv/tftp`: Pi firmware for network boot, U-Boot's `netboot.scr`, image fallback | every network-boot test, the nightly |
 | Proxy DHCP | `redox-pxe-proxy` (system, dnsmasq) | UDP 67, 4011 | tells the Pi firmware where the TFTP server is; the router keeps doing DHCP | Pis that boot from the network with no SD card (firmware network boot) |
-| HTTP | `redox-http` (zehrer) | TCP 8080 | `/srv/tftp` over HTTP, see the list below | U-Boot, SwiftFlash, the maintainer, `pkg` on the Pi |
+| HTTP | `redox-http` (zehrer); Caddy as a system service proposed in #436 | TCP 8080 | `/srv/tftp` over HTTP, see the list below | U-Boot, SwiftFlash, the maintainer, `pkg` on the Pi |
 | Serial logs | `redox-serial`, `redox-serial-pi400` (zehrer), `redox-serial-rotate.timer` | | serial consoles of the 3B+ (`ttyUSB0`) and the Pi 400 into `~/redox-rpi/logs/` | every Pi test; one reader per port only |
 | Nightly | `redox-stable.timer` (zehrer), 03:30 UTC | | builds main, tests it on the Pi, promotes the stable image, refreshes the CI image on Mondays | releases, the Pi test agent |
 | csmith | `csmith-weekly.timer` (zehrer), Tuesdays | | differential test of the TinyCC VC4 backend | VC4 Tools |
@@ -54,8 +54,9 @@ What a server on port 8080 has to do:
   `http.server` cannot)
 - `ETag` or `Last-Modified`, so clients can skip unchanged images
   (`scripts/http-etag-server.py` adds an `ETag` to Python's server)
-- IPv4 and IPv6: `homenodellm` resolves to IPv6 too, and Python's server
-  listens on IPv4 only
+- IPv4 and IPv6: Python's server listens on IPv4 only. Clients that try
+  `homenodellm` over IPv6 first fall back to IPv4 (the hangs by name were
+  the firewall, fixed in #434)
 - directory listings for people
 - read-only access to `/srv/tftp`; the `ci-runner` user must not reach it
   (nft blocks `127.0.0.1:8080` for it)
