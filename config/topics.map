@@ -88,6 +88,7 @@ scripts/check-upstream-drift.py         ci
 scripts/check-topics.py                 ci
 scripts/pr-order.py                     ci
 scripts/pi-test.py                      ci
+scripts/clippy-redox.py                 ci
 scripts/devsh.py                        ci
 scripts/qemu-*                          ci
 scripts/with-build-lock.sh              ci
