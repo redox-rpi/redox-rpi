@@ -107,6 +107,24 @@ int main(int argc, char **argv) {
 '''
 
 [[files]]
+path = "/usr/share/kill-time/killwatch.c"
+data = '''
+/* kill pid, then watch /scheme/sys/context for its threads, 10 s */
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+static long now_ms(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1000+t.tv_nsec/1000000;}
+static int count(int pid, char *st){FILE*f=fopen("/scheme/sys/context","r");char l[512];int n=0;st[0]=0;if(!f)return -1;
+ while(fgets(l,sizeof l,f)){if(atoi(l)==pid&&l[0]>=48&&l[0]<=57){n++;char a[8],b[8],s[8];if(sscanf(l,"%7s %7s %7s %7s",a,b,s,s)==4){strcat(st,s);strcat(st," ");}}}fclose(f);return n;}
+int main(int c,char**v){int pid=atoi(v[1]),sig=c>2?atoi(v[2]):9;char st[256],last[256]="?";long t0=now_ms();int r=kill(pid,sig);
+ printf("KW kill(%d,%d)=%d after %ld ms\n",pid,sig,r,now_ms()-t0);int lastn=-2;
+ while(now_ms()-t0<10000){int n=count(pid,st);if(n!=lastn||strcmp(st,last)){printf("KW %5ld ms: %d threads %s\n",now_ms()-t0,n,st);fflush(stdout);lastn=n;strcpy(last,st);}if(n==0)break;struct timespec t={0,20000000};nanosleep(&t,0);}
+ return 0;}
+'''
+
+[[files]]
 path = "/usr/share/kill-time/check.ion"
 data = '''
 #!/usr/bin/ion
