@@ -1,9 +1,11 @@
 # Roadmap: Redox OS (server) on the Raspberry Pi Zero 2 W
 
-> **Current state (2026-11-09):** [v0.4.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.4.0)
+> **Current state (2026-11-15):** [v0.5.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.5.0)
 > runs on a real Pi 3B+ and a Zero 2 W, from the SD card or over the
-> network, with an optional desktop (beta), sound from the headphone jack
-> (beta), fast SD writes and every network adapter at once. We release
+> network, with an optional desktop (beta) with a game, a C compiler on
+> the Pi (TinyCC, beta), a startup sound and volume control, sound from
+> the headphone jack (beta), fast SD writes and every network adapter at
+> once. We release
 > every week ([PMP](docs/process/pmp.md#sprints-and-weekly-releases)).
 > The state of each topic is in [docs/topics/](docs/topics/README.md), the
 > tasks are [GitHub issues](https://github.com/redox-rpi/redox-rpi/issues).
@@ -46,18 +48,18 @@ The main hurdles:
 
 ---
 
-## Next release: v0.5.0
+## Last release: v0.5.0
 
-Sprint 2026-11-10 to 2026-11-15, release Sunday 2026-11-15
-(milestone [v0.5.0](https://github.com/redox-rpi/redox-rpi/milestone/8)).
-Already merged: a game (Sopwith) in the desktop instead of the text editor,
-with an info window and no yes/no question ([#33](https://github.com/redox-rpi/redox-rpi/issues/33));
-TinyCC in the image as a beta ([#293](https://github.com/redox-rpi/redox-rpi/issues/293)).
-Planned: our own startup sound ([#292](https://github.com/redox-rpi/redox-rpi/issues/292)),
+Released Sunday 2026-11-15
+([release](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.5.0),
+[notes](docs/releases/v0.5.0.md)): Sopwith on the desktop with sound
+([#33](https://github.com/redox-rpi/redox-rpi/issues/33), [#335](https://github.com/redox-rpi/redox-rpi/issues/335)),
+TinyCC on the Pi as a beta ([#293](https://github.com/redox-rpi/redox-rpi/issues/293)),
+our own startup sound and a `volume` command ([#292](https://github.com/redox-rpi/redox-rpi/issues/292), [#336](https://github.com/redox-rpi/redox-rpi/issues/336)),
 DNS from DHCP ([#290](https://github.com/redox-rpi/redox-rpi/issues/290)),
-MAC address in `ifconfig` ([#171](https://github.com/redox-rpi/redox-rpi/issues/171)),
+the MAC address in `ifconfig` ([#171](https://github.com/redox-rpi/redox-rpi/issues/171)),
 no Rust backtraces on the console ([#291](https://github.com/redox-rpi/redox-rpi/issues/291)).
-What is ready by the cut-off goes in, the rest moves to the next week.
+The next sprint's plan is set at planning.
 
 ## Themes
 
@@ -71,7 +73,7 @@ parts land in whichever weekly release they are ready for.
 
 | Theme | Contents |
 |---|---|
-| Done in v0.3.0 and v0.4.0 | stable starts, sdhost, clean boot, USB hotplug, clock follows the load, RedoxFS small writes, sound from the headphone jack (beta), optional desktop (beta), every network adapter at once, multicast |
+| Done in v0.3.0 to v0.5.0 | stable starts, sdhost, clean boot, USB hotplug, clock follows the load, RedoxFS small writes, sound from the headphone jack (beta), optional desktop (beta), every network adapter at once, multicast, a game on the desktop, TinyCC (beta), startup sound and volume, DNS from DHCP |
 | Devices | `poweroff` and reboot ([#7](https://github.com/redox-rpi/redox-rpi/issues/7)), USB sticks with `redox-fatfs2` ([#25](https://github.com/redox-rpi/redox-rpi/issues/25)), `pkg install` for Pi packages, keyboard layouts (German first) |
 | More boards | Raspberry Pi 400 and Pi 4 (BCM2711), wanted for v1.0 ([pi400.md](docs/topics/pi400.md), [boards.md](docs/topics/boards.md)); Pi 5 later |
 | [Network](https://github.com/redox-rpi/redox-rpi/milestone/4) | Wi-Fi ([#26](https://github.com/redox-rpi/redox-rpi/issues/26)), IPv6 ([#27](https://github.com/redox-rpi/redox-rpi/issues/27)), first steps of [RFC 0001](docs/rfcs/0001-identity-and-secure-channels.md): key store `keys:` and encrypted connections `secure:` |
