@@ -5,7 +5,7 @@ Subject: [PATCH] netdb: name server from netcfg, timeout and retries, local
  domain
 
 Name lookups read /etc/net/dns only, so the name server from DHCP was
-never used and local names like "fritz.box" did not resolve; a server
+never used and local names like "buildhost.lan" did not resolve; a server
 that never answered blocked the caller for good (redox-rpi #290).
 
 - The name server comes from /scheme/netcfg/resolv/nameserver (DHCP,
@@ -85,7 +85,7 @@ index 361aa8aa..4dec28c3 100644
      let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
  
 +    // A name without a dot is tried in the local domain first (DHCP option
-+    // 15, e.g. "homenodellm" as "homenodellm.fritz.box"), then as it is. A
++    // 15, e.g. "buildhost" as "buildhost.lan"), then as it is. A
 +    // trailing dot means the name is complete.
 +    let mut names = Vec::new();
 +    if let Some(full) = host.strip_suffix('.') {
@@ -140,7 +140,7 @@ index 361aa8aa..4dec28c3 100644
 +
 +/// How long to wait for the name server's reply, per try. Without a
 +/// timeout a lost reply (or a server that never answers, like a public
-+/// resolver asked for "fritz.box") blocked the caller for good
++/// resolver asked for "lan") blocked the caller for good
 +/// (redox-rpi #290).
 +const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
 +
@@ -361,7 +361,7 @@ index 314dffcd..8d424d19 100644
 +/// The name server netstack uses: from DHCP once there is a lease, else
 +/// the image's default. /etc/net/dns only when netstack has none to give
 +/// (redox-rpi #290: the DHCP name server was never used, so local names
-+/// like "fritz.box" did not resolve).
++/// like "buildhost.lan" did not resolve).
 +pub fn get_dns_server() -> Result<String, Errno> {
 +    match read_file(c"/scheme/netcfg/resolv/nameserver") {
 +        Ok(server) if !server.trim().is_empty() && server.trim() != "0.0.0.0" => Ok(server),

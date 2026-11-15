@@ -1,6 +1,6 @@
 # log-triage
 
-Pre-sorts a Redox serial or QEMU log with the local model on homenodellm
+Pre-sorts a Redox serial or QEMU log with the local model on the build server
 (gpt-oss-20b on vLLM, `http://127.0.0.1:8000/v1`), so a session reads a
 short summary instead of thousands of lines. Python 3, standard library only.
 

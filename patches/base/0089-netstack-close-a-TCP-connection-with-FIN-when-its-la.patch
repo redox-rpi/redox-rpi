@@ -1,4 +1,4 @@
-From 191efc4ef188418aee35049f455ced4b03bb5052 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 3 Nov 2026 20:24:50 +0100
 Subject: [PATCH] netstack: close a TCP connection with FIN when its last file
@@ -26,10 +26,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 73 insertions(+), 2 deletions(-)
 
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index e5cd6d34..04f0b83b 100644
+index 451e648..0306324 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -483,6 +483,8 @@ where
+@@ -518,6 +518,8 @@ where
      }
  
      pub fn notify_sockets(&mut self) -> Result<()> {
@@ -39,7 +39,7 @@ index e5cd6d34..04f0b83b 100644
              .map_err(|e| Error::from_syscall_error(e.into(), "Can't get time"))?;
  
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 8bf1d7d7..9026e211 100644
+index f337f7b..9c8e226 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
 @@ -6,6 +6,7 @@ use std::marker::PhantomData;
@@ -99,8 +99,8 @@ index 8bf1d7d7..9026e211 100644
              socket_set,
              scheme_data: SocketT::new_scheme_data(),
              scheme_file,
-@@ -316,6 +338,22 @@ where
-         Ok(scheme)
+@@ -321,6 +343,22 @@ where
+         self.context.multicast_groups.keys()
      }
  
 +    /// Removes the sockets that finished closing after their last file was
@@ -122,7 +122,7 @@ index 8bf1d7d7..9026e211 100644
      pub fn handle_block(&mut self, op: &Op) -> SyscallResult<Option<TimeSpec>> {
          let fd = op.file_id().expect("op is not fd based request");
          let (read_timeout, write_timeout) = {
-@@ -739,7 +777,11 @@ where
+@@ -744,7 +782,11 @@ where
                  };
  
                  if remove {
@@ -136,7 +136,7 @@ index 8bf1d7d7..9026e211 100644
              }
          }
 diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
-index 949f3dba..a9193163 100644
+index 949f3db..a919316 100644
 --- a/netstack/src/scheme/tcp.rs
 +++ b/netstack/src/scheme/tcp.rs
 @@ -3,7 +3,7 @@ use std::str;

@@ -118,7 +118,6 @@ tools/tcc-bench/*                       tcc
 
 # Configuration
 config/stable-image.conf                ci
-config/redox-stable.*                   ci
 config/topics.map                       ci
 config/*relibc-tests*                   relibc,ci
 config/raspizero2w.toml                 zero2w

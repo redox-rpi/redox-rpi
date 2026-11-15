@@ -53,24 +53,24 @@ within `--recover` seconds (180) and the serial log must have no panic.
 
 ```bash
 # real Pi (the netem faults run through sudo -n with --netem)
-scripts/chaos-host.py 192.168.178.148 --serial-log ~/redox-rpi/logs/serial.log --rounds 20 --netem
+scripts/chaos-host.py <pi> --serial-log ~/redox-rpi/logs/serial.log --rounds 20 --netem
 # only print the tc/iptables commands
-scripts/chaos-host.py 192.168.178.148 --faults netem-loss --print-sudo
+scripts/chaos-host.py <pi> --faults netem-loss --print-sudo
 # QEMU (scripts/qemu-raspi3b.sh --usb-net, DEVSH_PORT=12423)
 scripts/chaos-host.py 127.0.0.1 --port 12423 --serve-addr 10.0.2.2 --faults stressor,server,pkg,dwc2d
 ```
 
-The netem commands, if you run them by hand (`enp12s0` on homenodellm):
+The netem commands, if you run them by hand (`enp12s0` on the build server):
 
 ```bash
 sudo tc qdisc replace dev enp12s0 root handle 1: prio
 sudo tc qdisc add dev enp12s0 parent 1:3 handle 30: netem loss 30% 25%
-sudo tc filter add dev enp12s0 protocol ip parent 1:0 prio 3 u32 match ip dst 192.168.178.148/32 flowid 1:3
+sudo tc filter add dev enp12s0 protocol ip parent 1:0 prio 3 u32 match ip dst <pi>/32 flowid 1:3
 sudo tc qdisc del dev enp12s0 root        # end of the fault
-sudo iptables -I INPUT -s 192.168.178.148 -p tcp -j REJECT --reject-with tcp-reset
-sudo iptables -D INPUT -s 192.168.178.148 -p tcp -j REJECT --reject-with tcp-reset
-# homenodellm has no iptables; there tcp-reset does this instead:
-for i in $(seq 60); do sudo ss -K dst 192.168.178.148; sleep 1; done
+sudo iptables -I INPUT -s <pi> -p tcp -j REJECT --reject-with tcp-reset
+sudo iptables -D INPUT -s <pi> -p tcp -j REJECT --reject-with tcp-reset
+# the build server has no iptables; there tcp-reset does this instead:
+for i in $(seq 60); do sudo ss -K dst <pi>; sleep 1; done
 ```
 
 Power cuts are not in the script: the Shelly plug is switched only by the
@@ -111,7 +111,7 @@ Real Pi 3B+, Pi tests 237–241 (2026-11-04/05, Pi test agent; reports in
   boot, `signals` failed 3 of 3 (#205), and 19 of 20 host faults
   recovered within 1–6 s (delay, reordering, loss, pkg, server, dwc2d).
   After round 20, an 85 s delay, the network did not come back (#92
-  picture). homenodellm has no iptables, so `tcp-reset` now uses `ss -K`.
+  picture). The build server has no iptables, so `tcp-reset` now uses `ss -K`.
 - **238, 240:** with the fix from PR #209, the freeze still came, but more
   rarely: once in the first run in 238, once in 7 runs in 240.
 - **241:** with the fix and lock-wait watches, 34 runs of 40 rounds (1360

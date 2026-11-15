@@ -45,7 +45,7 @@ By hand:
 timesync -n              # print the time from the server, do not set it
 timesync                 # set the clock (root) and save it
 timesync -d              # keep running: resync and save every hour
-timesync 192.168.178.1   # another server, here a router with NTP
+timesync <router>   # another server, here a router with NTP
 date
 cat /var/lib/timesync.last /scheme/data/timesync.last
 ```
