@@ -46,7 +46,10 @@ fn main() {
         eprintln!("usage: gamepad-test [--console | --send]   (unknown argument {arg})");
         std::process::exit(2);
     }
-    let mut window = Window::new_flags(-1, -1, W, H, "Gamepad test", &[]).unwrap_or_else(|| {
+    // Async: Orbital answers a blocked read only when the next input
+    // arrives, so a synchronous window saw each press only at the release
+    // (Pi test 431). This window polls instead.
+    let mut window = Window::new_flags(-1, -1, W, H, "Gamepad test", &[WindowFlag::Async]).unwrap_or_else(|| {
         eprintln!("gamepad-test: no window (is Orbital running?); on a text console: gamepad-test --console");
         std::process::exit(1)
     });
@@ -72,6 +75,8 @@ fn main() {
         }
         if changed {
             draw(&mut window, &pad);
+        } else {
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
