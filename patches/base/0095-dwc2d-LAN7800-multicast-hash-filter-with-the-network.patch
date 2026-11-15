@@ -1,0 +1,271 @@
+From bd0f874118422c471e536b993276b13c72acb2f7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 5 Nov 2026 11:00:43 +0100
+Subject: [PATCH] dwc2d: LAN7800 multicast hash filter with the network stack's
+ groups
+
+lan78xx::set_multicast programs the chip's 512-bit multicast hash table
+(through the DP_SEL data port, like Linux lan78xx_set_multicast) and
+switches RFE_CTL from "all multicast" to the hash filter. None keeps
+accepting all multicast; an empty list accepts none.
+
+UsbNet implements NetworkAdapter::set_multicast (base 0085): it keeps
+the list netstack writes to the `multicast` file, and the event loop,
+which has the bus, programs the LAN7800 in use after the scheme event
+and whenever another adapter takes over. Until netstack writes a list,
+all multicast passes as before ("all" from netstack turns the filter off again). RTL815x and CDC Ethernet are unchanged.
+
+With only the joined groups, the LAN's other multicast (mDNS for
+others, SSDP, all IPv6) no longer wakes dwc2d and netstack (#126, #216).
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 97 ++++++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs    | 50 +++++++++++++++-
+ netstack/src/adapters.rs         |  2 +-
+ 3 files changed, 146 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index aedc682..8860b23 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -30,6 +30,11 @@ const ID_REV: u16 = 0x000;
+ const INT_STS: u16 = 0x00C;
+ const HW_CFG: u16 = 0x010;
+ const PMT_CTL: u16 = 0x014;
++/// Data port to the chip's internal tables (here the multicast hash table).
++const DP_SEL: u16 = 0x024;
++const DP_CMD: u16 = 0x028;
++const DP_ADDR: u16 = 0x02C;
++const DP_DATA: u16 = 0x030;
+ const USB_CFG0: u16 = 0x080;
+ const BURST_CAP: u16 = 0x090;
+ const BULK_IN_DLY: u16 = 0x094;
+@@ -59,9 +64,18 @@ const PMT_CTL_PHY_RST: u32 = 1 << 4;
+ const USB_CFG_BCE: u32 = 1 << 5;
+ const USB_CFG_BIR: u32 = 1 << 6;
+ const RFE_CTL_DA_PERFECT: u32 = 1 << 1;
++const RFE_CTL_MCAST_HASH: u32 = 1 << 3;
+ const RFE_CTL_MCAST_EN: u32 = 1 << 9;
+ const RFE_CTL_BCAST_EN: u32 = 1 << 10;
+ const FCT_CTL_EN: u32 = 1 << 31;
++const DP_SEL_RSEL_MASK: u32 = 0xF;
++/// The VLAN and destination-address hash RAM.
++const DP_SEL_RSEL_VLAN_DA: u32 = 1;
++const DP_SEL_DPRDY: u32 = 1 << 31;
++const DP_CMD_WRITE: u32 = 1;
++/// The multicast hash table (512 bits) follows the 128 VLAN words.
++const VHF_HASH_OFFSET: u32 = 128;
++const VHF_HASH_WORDS: usize = 16;
+ const MAC_CR_AUTO_SPEED: u32 = 1 << 11;
+ const MAC_CR_AUTO_DUPLEX: u32 = 1 << 12;
+ const MAC_RX_EN: u32 = 1 << 0;
+@@ -188,6 +202,32 @@ impl Regs<'_> {
+         Ok(())
+     }
+ 
++    fn wait_set(&mut self, reg: u16, bits: u32, what: &'static str) -> Result<(), Error> {
++        let start = Instant::now();
++        while self.read(reg)? & bits == 0 {
++            if start.elapsed() > Duration::from_secs(1) {
++                return Err(Error::Timeout(what));
++            }
++            // No sleep: a nanosleep in dwc2d can miss its wakeup (#151).
++            std::thread::yield_now();
++        }
++        Ok(())
++    }
++
++    /// Write `words` to the hash RAM, starting at word `addr`.
++    fn dataport_write(&mut self, addr: u32, words: &[u32]) -> Result<(), Error> {
++        self.wait_set(DP_SEL, DP_SEL_DPRDY, "data port")?;
++        let sel = self.read(DP_SEL)? & !DP_SEL_RSEL_MASK;
++        self.write(DP_SEL, sel | DP_SEL_RSEL_VLAN_DA)?;
++        for (i, &word) in (0u32..).zip(words) {
++            self.write(DP_ADDR, addr + i)?;
++            self.write(DP_DATA, word)?;
++            self.write(DP_CMD, DP_CMD_WRITE)?;
++            self.wait_set(DP_SEL, DP_SEL_DPRDY, "data port write")?;
++        }
++        Ok(())
++    }
++
+     fn mii_read(&mut self, reg: u32) -> Result<u16, Error> {
+         self.wait_clear(MII_ACC, MII_ACC_BUSY, "MII busy")?;
+         self.write(MII_ACC, (PHY_ADDR << 11) | (reg << 6) | MII_ACC_BUSY)?;
+@@ -340,6 +380,48 @@ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), E
+     r.write(MAF_HI0, address_high | MAF_HI_VALID)
+ }
+ 
++/// The bit of `mac` in the multicast hash table: the top 9 bits of the
++/// Ethernet CRC (Linux `ether_crc`: data bits least significant first,
++/// no final inversion).
++fn multicast_hash(mac: &[u8; 6]) -> usize {
++    let mut crc = u32::MAX;
++    for &byte in mac {
++        for i in 0..8 {
++            let bit = u32::from(byte >> i) & 1;
++            let msb = crc >> 31;
++            crc <<= 1;
++            if msb ^ bit != 0 {
++                crc ^= 0x04C1_1DB7;
++            }
++        }
++    }
++    (crc >> 23) as usize & 0x1FF
++}
++
++/// Receive only the multicast groups in `groups` (and the own address and
++/// broadcast), or all multicast with `None`. Accepting all multicast wakes
++/// the driver and the network stack for every mDNS, SSDP and IPv6 frame
++/// on the LAN (#126, #216).
++pub fn set_multicast(bus: &mut Bus, f: &Lan78xxFunction, groups: Option<&[[u8; 6]]>) -> Result<(), Error> {
++    let mut r = Regs { bus, f };
++    let mut table = [0u32; VHF_HASH_WORDS];
++    for mac in groups.unwrap_or(&[]) {
++        let bit = multicast_hash(mac);
++        table[bit / 32] |= 1 << (bit % 32);
++    }
++    // The table is written with the hash filter off and switched on
++    // afterwards, as Linux does.
++    let rfe = r.read(RFE_CTL)? & !(RFE_CTL_MCAST_EN | RFE_CTL_MCAST_HASH);
++    r.write(RFE_CTL, rfe)?;
++    r.dataport_write(VHF_HASH_OFFSET, &table)?;
++    let rfe = match groups {
++        None => rfe | RFE_CTL_MCAST_EN,
++        Some([]) => rfe,
++        Some(_) => rfe | RFE_CTL_MCAST_HASH,
++    };
++    r.write(RFE_CTL, rfe)
++}
++
+ pub struct Lan78xx {
+     hc: Dwc2,
+     f: Lan78xxFunction,
+@@ -476,3 +558,18 @@ impl NetworkAdapter for Lan78xx {
+         Ok(len)
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::multicast_hash;
++
++    /// Reference values from Linux's formula, computed with zlib:
++    /// `bitrev32(crc32(mac) ^ 0xffffffff) >> 23`.
++    #[test]
++    fn hash() {
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x00, 0x00, 0x01]), 255);
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb]), 126);
++        assert_eq!(multicast_hash(&[0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa]), 348);
++        assert_eq!(multicast_hash(&[0x33, 0x33, 0x00, 0x00, 0x00, 0x01]), 499);
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index d8fe534..21ab343 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -102,6 +102,12 @@ struct UsbNet {
+     adapters: Vec<(Adapter, bool)>,
+     /// Bus address of the adapter in use.
+     active: Option<u8>,
++    /// The multicast addresses the network stack asked for; `None` is all
++    /// multicast, which is also what an adapter receives after its init.
++    multicast: Option<Vec<[u8; 6]>>,
++    /// The list changed or another adapter took over: the next
++    /// [`UsbNet::apply_multicast`] programs the adapter in use.
++    multicast_pending: bool,
+ }
+ 
+ impl UsbNet {
+@@ -178,6 +184,28 @@ impl UsbNet {
+         }
+         adapter.resume();
+         println!("dwc2d: network on the adapter at address {}", adapter.address());
++        self.multicast_pending = self.multicast.is_some();
++        self.apply_multicast(bus);
++    }
++
++    /// Program the multicast filter of the adapter in use, if the list
++    /// changed. Only the LAN7800 filters; the others receive all multicast
++    /// (#216).
++    fn apply_multicast(&mut self, bus: &mut Bus) {
++        if !std::mem::take(&mut self.multicast_pending) {
++            return;
++        }
++        let groups = self.multicast.clone();
++        let Some(Adapter::Lan78xx(a)) = self.active_adapter() else {
++            return;
++        };
++        match lan78xx::set_multicast(bus, a.function(), groups.as_deref()) {
++            Ok(()) => match groups {
++                Some(g) => println!("dwc2d: LAN7800 multicast filter: {} groups", g.len()),
++                None => println!("dwc2d: LAN7800 multicast filter off, all multicast"),
++            },
++            Err(err) => println!("dwc2d: LAN7800 multicast filter: {err:?}"),
++        }
+     }
+ }
+ 
+@@ -204,6 +232,13 @@ impl NetworkAdapter for UsbNet {
+             None => Ok(buf.len()),
+         }
+     }
++
++    /// Kept for the event loop, which has the bus to program the adapter.
++    fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
++        self.multicast = addrs.map(<[_]>::to_vec);
++        self.multicast_pending = true;
++        Ok(())
++    }
+ }
+ 
+ /// What a device turned out to be.
+@@ -459,7 +494,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             process::exit(0);
+         }
+     };
+-    let mut net = UsbNet { hc: hc.clone(), mac: [0; 6], adapters: Vec::new(), active: None };
++    let mut net = UsbNet {
++        hc: hc.clone(),
++        mac: [0; 6],
++        adapters: Vec::new(),
++        active: None,
++        multicast: None,
++        multicast_pending: false,
++    };
+     let mut keyboard = None;
+     let mut mouse = None;
+     let mut macs = Vec::new();
+@@ -590,12 +632,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let _ = file.write(&irq);
+                 }
+             }
+-            Source::Scheme => scheme.tick().expect("dwc2d: network scheme failed"),
++            Source::Scheme => {
++                scheme.tick().expect("dwc2d: network scheme failed");
++                scheme.adapter_mut().apply_multicast(&mut bus);
++            }
+             Source::Time => {
+                 timer.fired();
+                 let mut next = None;
+                 if irq_file.is_none() {
+                     scheme.tick().expect("dwc2d: network scheme failed");
++                    scheme.adapter_mut().apply_multicast(&mut bus);
+                     next = Some(POLL_FALLBACK);
+                 }
+                 if let Some(k) = keyboard.as_mut() {
+diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
+index 5df6d11..e12fc2f 100644
+--- a/netstack/src/adapters.rs
++++ b/netstack/src/adapters.rs
+@@ -20,7 +20,7 @@ pub struct Adapter {
+     pub name: String,
+     pub file: Fd,
+     pub mac: EthernetAddress,
+-    /// The driver's  file, if it filters multicast in hardware.
++    /// The driver's `multicast` file, if it filters multicast in hardware.
+     pub multicast: Option<Fd>,
+ }
+ 
+-- 
+2.53.0
+

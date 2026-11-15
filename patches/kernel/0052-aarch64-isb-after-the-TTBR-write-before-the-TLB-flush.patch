@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@redox-rpi>
+Date: Wed, 11 Nov 2026 08:00:00 +0000
+Subject: [PATCH] aarch64: ISB after the TTBR write, before the TLB flush
+
+set_table wrote TTBR0/TTBR1 and went straight to the TLB flush. Until a
+context synchronization event the core may still use the old table base,
+so an out-of-order core (the Cortex-A72 of the Pi 4 and Pi 400) can walk
+the old table speculatively after the TLBI and keep those entries. The
+next address space then sees pages of the previous one, e.g. code where
+its TLS block should be (redox-rpi #332).
+---
+--- a/rmm/src/arch/aarch64.rs
++++ b/rmm/src/arch/aarch64.rs
+@@ -92,6 +92,12 @@
+                     asm!("msr ttbr1_el1, {0}", in(reg) address.data());
+                 }
+             }
++            // Make the new table base take effect before the TLB flush. Without
++            // the ISB the core may still walk the old table after the MSR, and
++            // an out-of-order core (Cortex-A72) can refill the TLB from it after
++            // the TLBI: the next address space then reads the pages of the
++            // previous one through those stale entries.
++            asm!("isb");
+             Self::invalidate_all();
+         }
+     }
+-- 
+2.53.0

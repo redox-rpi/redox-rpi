@@ -145,7 +145,10 @@ Experiment `cproc-qbe` (build after `tcc`): qbe and cproc cross-built,
 GNU `as` and `ld` from Redox' binutils 2.43.1 fork, and `tcc -E -undef`
 (tcc patch `0005`) as the preprocessor, since cproc's own is not finished.
 The chain adds 4.2 MB on top of tcc (`as` 2.1 MB, `ld` 1.6 MB, qbe and
-cproc 0.35 MB).
+cproc 0.35 MB). Since #327 step 2 the experiment also has `ar`, `ranlib`
+(a script running `ar s`), `nm`, `objdump` and `strip`, another 5.5 MB:
+static libraries can be made and linked on the Pi (QEMU-tested; Pi row in
+the PR).
 
 Real Pi 3B+ ([test 317](https://github.com/redox-rpi/pi-tests/blob/main/reports/317.md),
 `v0.5.0-dev-25-gd3ca14bc+x898d`, 2026-11-10): pass, no panic, `pi-test.py`

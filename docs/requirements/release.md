@@ -95,7 +95,7 @@ a checksum and a manifest.
 Acceptance criteria:
 
 1. `redox-rpi-<version>.img.xz`, its `.sha256` and `.manifest.toml` are at
-   `http://homenodellm:8080/sdcard/`.
+   `http://<build-server>:8080/sdcard/`.
 2. A download passes `sha256sum -c` and `xz -t`.
 
 ### REQ-REL-5 Fits a 2 GB card

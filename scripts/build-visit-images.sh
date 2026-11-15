@@ -3,7 +3,7 @@
 # with a person at the Pi, built after the stable image so they are ready
 # when the person comes (docs/topics/ci.md, "Nightly visit images").
 #
-# Runs on the build host as the systemd user unit redox-visit.service, which
+# Runs on the build server as the user unit redox-visit.service (set up by the admins), which
 # scripts/update-stable.sh starts when the stable image passed or nothing
 # changed since it. Or by hand:
 #
@@ -32,7 +32,7 @@
 #   - the last KEEP builds stay, older ones are removed
 # Results per image in /srv/tftp/visit/status.txt, and for a tester at the
 # Pi in /srv/tftp/visit/index.html and README.txt
-# (http://homenodellm:8080/visit/, scripts/visit-index.py). A failed image
+# ($REDOX_HTTP_BASE/visit/, scripts/visit-index.py). A failed image
 # does not stop the others.
 #
 # No release, no package repository, no GitHub API: the clone only fetches.
@@ -47,7 +47,10 @@ TFTP=/srv/tftp
 OUT="$TFTP/visit"
 SDCARD="$TFTP/sdcard"
 STATUS="$OUT/status.txt"
-SERVER=192.168.178.120
+# Build server address and image server URL: scripts/lab-env.sh (lab.env).
+. "$ROOT/scripts/lab-env.sh"
+lab_need REDOX_BUILD_SERVER REDOX_HTTP_BASE
+SERVER="$REDOX_BUILD_SERVER"
 KEEP=3
 
 force=0

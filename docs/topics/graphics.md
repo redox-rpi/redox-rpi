@@ -227,7 +227,7 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
   checks need a person and wait for another visit.
 - **Branch [`graphics-fb2`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb2)**
   (on `graphics-fb`, so #34 stays as queued), patch `0026`, works in QEMU
-  (`v0.3.0-dev-179-gc7d38dd+xb2e2`, homenodellm
+  (`v0.3.0-dev-179-gc7d38dd+xb2e2`, the build server
   `~/redox-rpi-graphics/keep/`):
   - **EDID polling** every 5 seconds: a monitor that comes or goes is
     logged and clients get a hotplug event. It does not give the monitor a
@@ -353,7 +353,7 @@ In this order:
 4. **vc4d host tests in CI ([#271](https://github.com/redox-rpi/redox-rpi/issues/271)):**
    the pure logic (display lists, register fields, mode and timing math)
    in a crate without Redox dependencies, so `cargo test` and clippy run
-   on homenodellm and in CI. Done before larger stage 2b changes, so they
+   on the build server and in CI. Done before larger stage 2b changes, so they
    are checked.
 5. **vc4d stage 1 into vc4d's main** ([vc4d#1](https://github.com/redox-rpi/vc4d/pull/1)),
    then experiment `vc4d` on redox-rpi main (only a recipe pinned to a
@@ -365,7 +365,7 @@ In this order:
 
 The estimates above were made before any code. What step 1 really took,
 in agent time on 2026-10-29 (from the commit times; one session, builds
-on homenodellm about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
+on the build server about 3 to 20 minutes each, QEMU runs 2 to 5 minutes):
 
 | Piece | Estimate | Took, to working in QEMU | Lines |
 |---|---|---|---|

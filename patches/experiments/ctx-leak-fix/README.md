@@ -40,6 +40,6 @@ With `ctx-leak-debug` on top: `live_kstacks` stays at 38 over 5 `dd` runs
 (before: +1 per run), and the `status` handle the thread wrote to is now
 closed. No `dd` is left in `ps`.
 
-Not yet tested on the Pi. Image: homenodellm
+Not yet tested on the Pi. Image: the build server
 `~/redox-rpi-sd/keep/netboot-v0.3.0-dev-110-gefa605d+x197a.img`
 (`--experiment timesync --experiment rtl8152 --experiment ctx-leak-fix`).
