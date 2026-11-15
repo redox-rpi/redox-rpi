@@ -90,6 +90,7 @@ scripts/pr-order.py                     ci
 scripts/pi-test.py                      ci
 scripts/devsh.py                        ci
 scripts/qemu-*                          ci
+scripts/regression-*                    ci
 scripts/with-build-lock.sh              ci
 scripts/update-stable.sh                ci
 scripts/relibc-checkout.sh              relibc
