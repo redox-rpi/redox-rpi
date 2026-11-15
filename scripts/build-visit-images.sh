@@ -3,7 +3,7 @@
 # with a person at the Pi, built after the stable image so they are ready
 # when the person comes (docs/topics/ci.md, "Nightly visit images").
 #
-# Runs on the build host as the systemd user unit redox-visit.service, which
+# Runs on the build server as the user unit redox-visit.service (set up by the admins), which
 # scripts/update-stable.sh starts when the stable image passed or nothing
 # changed since it. Or by hand:
 #

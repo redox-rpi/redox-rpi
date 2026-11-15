@@ -53,7 +53,7 @@ person at the Pi should never wait for a build, so the images for such
 tests are built every night.
 
 - `update-stable.sh` starts the systemd user unit `redox-visit.service`
-  ([config/redox-visit.service](../../config/redox-visit.service)) when the
+  (set up by the admins) when the
   stable image passed or nothing changed since it; not when it failed or a
   test was on the Pi. The unit runs
   [`scripts/build-visit-images.sh`](../../scripts/build-visit-images.sh)
@@ -128,7 +128,7 @@ The rules it keeps:
   `family`, `version` and `date`, plus our own `board`, `commit`,
   `build_id`, `experiments`, `owner` and `rows` (the queued test-plan rows
   that name the family or file). The user unit `redox-sdcard-index.path`
-  ([config/redox-sdcard-index.path](../../config/redox-sdcard-index.path))
+  (set up by the admins)
   rewrites it whenever the directory changes, so a file copied in by hand
   is not hidden: SwiftFlash reads only `index.json` when there is one. Older images get their fields from the
   file name and manifest; `redox-rpi-zero2w-fastnet-db5ea27` has version
