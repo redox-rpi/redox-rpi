@@ -65,8 +65,11 @@ TESTS_REPO=redox-rpi/pi-tests
 TESTS="${PI_TESTS_CLONE:-$HOME/pi-tests-stable}"
 TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
-SERVER=192.168.178.120
-PI=192.168.178.148
+# Build server and test Pi addresses: scripts/lab-env.sh (lab.env).
+. "$ROOT/scripts/lab-env.sh"
+lab_need REDOX_BUILD_SERVER REDOX_PI
+SERVER="$REDOX_BUILD_SERVER"
+PI="$REDOX_PI"
 SERIAL_DEV=/dev/ttyUSB0
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"

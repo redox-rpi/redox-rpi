@@ -90,7 +90,7 @@ index 4dec28c3..cd5a54e5 100644
 -    let dns_addr = parse_ipv4_string(&dns_string).ok_or(Errno(EINVAL))?;
  
      // A name without a dot is tried in the local domain first (DHCP option
-     // 15, e.g. "homenodellm" as "homenodellm.fritz.box"), then as it is. A
+     // 15, e.g. "buildhost" as "buildhost.lan"), then as it is. A
 @@ -54,52 +76,72 @@ pub fn lookup_host(host: &str) -> Result<LookupHost, Errno> {
          }
          names.push(host.to_string());
@@ -140,7 +140,7 @@ index 4dec28c3..cd5a54e5 100644
  
 -/// How long to wait for the name server's reply, per try. Without a
 -/// timeout a lost reply (or a server that never answers, like a public
--/// resolver asked for "fritz.box") blocked the caller for good
+-/// resolver asked for "lan") blocked the caller for good
 -/// (redox-rpi #290).
 -const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
 +/// A and/or AAAA records of one name.
@@ -233,7 +233,7 @@ index 4dec28c3..cd5a54e5 100644
 +
 +/// How long to wait for a server's reply, per try. Without a timeout a
 +/// lost reply (or a server that never answers, like a public resolver
-+/// asked for "fritz.box") blocked the caller for good (redox-rpi #290).
++/// asked for "lan") blocked the caller for good (redox-rpi #290).
 +const QUERY_TIMEOUTS_MS: [i64; 3] = [1000, 2000, 3000];
 +
 +/// Sends the query to one server and waits for the reply with transaction
