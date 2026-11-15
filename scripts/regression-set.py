@@ -27,6 +27,11 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
+  kill-time     #405: /usr/share/kill-time/check.ion: SIGTERM and SIGKILL
+                end a process within 1 s, whether it sleeps, loops, is
+                blocked in read() or in a write to /scheme/audio, or has a
+                worker thread with SIGTERM blocked as SDL's threads have
+                (skip without the experiments kill-time and tcc)
   dns           #358, #374: a name server is set (from DHCP); an unknown
                 name gives "Name does not resolve" within 5 s; with
                 --dead-dns as name server a lookup gives "Try again" within
@@ -234,6 +239,8 @@ def main():
                                              lambda out: sum(l.strip().endswith(": pass") or l.strip() == "/ pass"
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
+            ("kill-time", lambda: check_ion(sh, check, "kill-time", "/usr/share/kill-time/check.ion", tcc,
+                                            "KILLTIME done", lambda out: any("KILLTIME: pass" in l for l in out))),
             ("dns", lambda: check_dns(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.

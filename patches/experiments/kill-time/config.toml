@@ -87,7 +87,7 @@ static int run(const char *c, int sig) {
     int ok = r == 0 && gone >= 0 && gone < 1000 && t1 - t0 < 500;
     printf("KILLTIME %-4s %-11s kill() %4ld ms, ended %s%5ld ms  %s\n",
            sig == SIGKILL ? "KILL" : "TERM", c, t1 - t0,
-           gone < 0 ? "never " : "after ", gone < 0 ? 3000 : gone, ok ? "ok" : "SLOW");
+           gone < 0 ? "never " : "after ", gone < 0 ? 3000 : gone, ok ? "ok" : "FAIL");
     fflush(stdout);
     return ok;
 }
@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
     if (argc > 1) { cases[0] = argv[1]; n = 1; }
     for (int i = 0; i < n; i++) bad += !run(cases[i], SIGTERM);
     for (int i = 0; i < n; i++) if (strcmp(cases[i], "handler")) bad += !run(cases[i], SIGKILL);
-    printf("KILLTIME: %s, %d slow\n", bad ? "FAIL" : "pass", bad);
+    printf("KILLTIME: %s, %d too slow\n", bad ? "FAIL" : "pass", bad);
     printf("KILLTIME done\n");
     return 0;
 }
