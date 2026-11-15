@@ -1,0 +1,76 @@
+From 1e5dc7ebe593595d9b6ba9b38ac10c64615c17b4 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 13 Nov 2026 12:40:32 +0000
+Subject: [PATCH] nc: errors to stderr and exit status 1
+
+nc printed its errors (connection refused, read errors, invalid
+arguments) to stdout and exited with status 0. With nc host:port > file
+the error landed in the file, and a script could not tell that nc
+failed (redox-rpi issue 407). Print them to stderr and exit with 1.
+---
+ src/nc/main.rs | 37 ++++++++++++++-----------------------
+ 1 file changed, 14 insertions(+), 23 deletions(-)
+
+diff --git a/src/nc/main.rs b/src/nc/main.rs
+index 467f643..d959c2e 100644
+--- a/src/nc/main.rs
++++ b/src/nc/main.rs
+@@ -1,5 +1,6 @@
+ use std::env;
+ use std::io::{self, Write};
++use std::process;
+ 
+ mod modes;
+ use modes::*;
+@@ -57,8 +58,8 @@ fn main() {
+                     mode = NcMode::Listen;
+                 }
+                 _ => {
+-                    println!("Invalid argument!");
+-                    return;
++                    eprintln!("nc: invalid argument {arg}");
++                    process::exit(1);
+                 }
+             }
+         } else {
+@@ -66,26 +67,16 @@ fn main() {
+         }
+     }
+ 
+-    match (mode, proto) {
+-        (NcMode::Connect, TransportProtocol::Tcp) => {
+-            connect_tcp(&hostname).unwrap_or_else(|e| {
+-                println!("nc error: {e}");
+-            });
+-        }
+-        (NcMode::Listen, TransportProtocol::Tcp) => {
+-            listen_tcp(&hostname).unwrap_or_else(|e| {
+-                println!("nc error: {e}");
+-            });
+-        }
+-        (NcMode::Connect, TransportProtocol::Udp) => {
+-            connect_udp(&hostname).unwrap_or_else(|e| {
+-                println!("nc error: {e}");
+-            });
+-        }
+-        (NcMode::Listen, TransportProtocol::Udp) => {
+-            listen_udp(&hostname).unwrap_or_else(|e| {
+-                println!("nc error: {e}");
+-            });
+-        }
++    let result = match (mode, proto) {
++        (NcMode::Connect, TransportProtocol::Tcp) => connect_tcp(&hostname),
++        (NcMode::Listen, TransportProtocol::Tcp) => listen_tcp(&hostname),
++        (NcMode::Connect, TransportProtocol::Udp) => connect_udp(&hostname),
++        (NcMode::Listen, TransportProtocol::Udp) => listen_udp(&hostname),
++    };
++    // Errors go to stderr, so `nc host:port > file` keeps only the data, and
++    // the exit status tells a script that nc failed.
++    if let Err(e) = result {
++        eprintln!("nc error: {e}");
++        process::exit(1);
+     }
+ }
+-- 
+2.53.0
+

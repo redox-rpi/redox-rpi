@@ -1,0 +1,39 @@
+From 5d59461f1d0542db3c39f4576e45e2dbd950d248 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 9 Nov 2026 15:57:54 +0000
+Subject: [PATCH] irqchip: a GIC that names itself as its parent is still the
+ root
+
+The BCM2711 devicetree (Pi 4, Pi 400) gives the GIC-400 node the virtual
+GIC maintenance interrupt, with the GIC itself as interrupt parent. The
+chip then had a parent, the tree had no root, and no interrupt controller
+was initialized: no timer interrupt, no serial interrupt, and no IPIs, so
+the secondary CPUs stayed off. Drop a connection from a controller to
+itself.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/dtb/irqchip.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/dtb/irqchip.rs b/src/dtb/irqchip.rs
+index f591df3b..f65e7e5e 100644
+--- a/src/dtb/irqchip.rs
++++ b/src/dtb/irqchip.rs
+@@ -173,6 +173,13 @@ impl IrqChipList {
+                     }
+                 }
+ 
++                // A GIC-400 that names itself as its interrupt parent (the
++                // BCM2711 devicetree lists the virtual GIC maintenance
++                // interrupt) is still the root controller: drop the
++                // connection to itself, or the tree has no root and no
++                // controller gets initialized.
++                item.parents.retain(|conn| conn.parent_phandle != phandle);
++
+                 self.chips.push(item);
+             }
+         }
+-- 
+2.53.0
+

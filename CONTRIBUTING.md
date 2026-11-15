@@ -80,9 +80,10 @@ Release candidates and releases are built by one build agent only; see
 
 ## Merging
 
-Only maintainers merge pull requests and push to `main`
-([CODEOWNERS](.github/CODEOWNERS)). Everyone else, people and agents,
-works in a fork or a branch and opens a pull request. A maintainer merges a
+Who may merge which pull request is set in the
+[project management plan](docs/process/pmp.md#merge-rights) and nowhere
+else. Everyone else, people and agents, works in a fork or a branch and
+opens a pull request. A maintainer merges a
 feature only after its test on a real Pi (see [Branches](#branches)).
 
 ## Rules

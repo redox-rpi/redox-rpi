@@ -17,7 +17,7 @@
 - **Network boot, current image (#206, 2026-11-03):** `v0.4.0-dev-135-g2416130`
   (`build-image.sh --zero2w`, `timesync` and `rtl8152`, no graphics: the user
   finds the desktop too slow on the Zero) boots over the PoE HAT. devsh
-  answers on 192.168.178.194, pi-test passes except the SD card check, and
+  answers on <lan-host>, pi-test passes except the SD card check, and
   191 of 333 MB are free after boot (46 processes). The old netboot card had
   no data partition. A new card from
   `scripts/make-sdcard.sh --dir redox-zero2w --boot-size 32 --data-size 24`

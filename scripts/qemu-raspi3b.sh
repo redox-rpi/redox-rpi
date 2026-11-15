@@ -72,7 +72,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGES="$ROOT/images"
 UBOOT_URL="https://gitlab.redox-os.org/Ivan/redox_firmware/-/raw/main/platform/raspberry_pi/rpi3/u-boot-rpi-3-b-plus.bin"
-DAILY_URL="https://static.redox-os.org/img/aarch64"
+# DAILY_URL and DAILY_IMAGE (a file name there, instead of the newest in the
+# listing) let CI use our mirror, release ci-image (#409).
+DAILY_URL="${DAILY_URL:-https://static.redox-os.org/img/aarch64}"
 BOOT_MENU="Arrow keys and enter select mode"
 
 kernel=""
@@ -152,7 +154,7 @@ esac
 echo "U-Boot: $uboot"
 
 if [ -z "$image" ]; then
-    name="$(curl -fsSL "$DAILY_URL/" | grep -oE 'redox_server_aarch64_[0-9-]+_[0-9]+_livedisk\.iso\.zst' | sort -u | tail -1)"
+    name="${DAILY_IMAGE:-$(curl -fsSL "$DAILY_URL/" | grep -oE 'redox_server_aarch64_[0-9-]+_[0-9]+_livedisk\.iso\.zst' | sort -u | tail -1)}"
     if [ ! -f "$name" ]; then
         echo "downloading $name"
         curl -fsSLO "$DAILY_URL/$name"
