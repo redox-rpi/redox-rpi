@@ -33,6 +33,27 @@ USB pads send these events only with dwc2d from PR
 of all buttons and axes through inputd, as dwc2d would. This is how QEMU,
 which has no USB gamepad, tests the window.
 
+## On a text console, without Orbital
+
+`gamepad-test --console` opens no window. It prints one line per
+controller event on the console it runs on (the serial line, or the HDMI
+console of an image without the desktop), with the buttons held and the
+axes that are not 0:
+
+```
+gamepad-test: controller 4: button START pressed     | held START | axes -
+gamepad-test: controller 4: axis X = -32767          | held START | axes X -32767
+```
+
+Ctrl-C quits. It reads inputd's `controllers` handle
+(`/scheme/input/controllers`, base patch `0098`), which gets the
+controller events of all devices whichever VT is in front, and no keys.
+Without that patch it says so and exits.
+
+The experiment needs no desktop: on its own, as in the stable image
+(`config/stable-image.conf`), it brings only the binary; the launcher entry
+is unused there.
+
 ## Installing it later, on a running system
 
 The package `gamepad-test` holds the binary, the launcher entry and the

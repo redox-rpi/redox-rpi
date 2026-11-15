@@ -1,6 +1,6 @@
 [package]
 name = "gamepad-test"
-description = "A window that shows a game controller's buttons and axes live, from Orbital's controller events"
+description = "Shows a game controller's buttons and axes live: a window on Orbital, or text lines on a console (--console)"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
