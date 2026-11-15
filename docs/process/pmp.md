@@ -212,6 +212,16 @@ When the maintainer creates a new repository, the project lead:
 A new agent session gets this plan as the first link in its brief and
 keeps its rules in its own memory.
 
+**Where docs live** (maintainer, 2026-11-15):
+- Hardware reference (boards, SoC, clocks, GPIO, memory map, peripherals),
+  used by several repositories: the
+  [wiki of redox-rpi/redox-rpi](https://github.com/redox-rpi/redox-rpi/wiki).
+  Edit it like docs, straight away (it is the git repository
+  `redox-rpi.wiki.git`); repositories link to its pages instead of keeping
+  copies.
+- Docs that belong to code (decisions, design, how to build and test): in
+  the repository of that code, under `docs/`.
+
 Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
 (WBS 2.15): after a review by the project lead or Quality, the reviewer sets
 `merge-next`; the PR need not stay a draft, since the fork is not used by
