@@ -14,7 +14,7 @@ The window shows Orbital's `ControllerButton` and `ControllerAxis` events
 while it is the front window:
 
 - the 15 buttons of SDL's "Redox OS Controller" (A B X Y LB RB BACK START
-  LS RS GUIDE and the D-pad UP DOWN RIGHT LEFT) as boxes that light up
+  LS RS GUIDE and the D-pad LEFT UP DOWN RIGHT) as boxes that light up
   while pressed;
 - the sticks X/Y and RX/RY as a cross with a dot (up is a positive Y, as
   dwc2d sends it), the triggers Z and RZ (0..255) as bars, each with its
