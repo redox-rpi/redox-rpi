@@ -1,7 +1,8 @@
 # The smallest Redox for the Raspberry Pi 3 Model B+ that boots from the SD
 # card to the login prompt: kernel, drivers, init, login, the Ion shell and
 # the uutils commands. No desktop, no curl, no sound, no package manager.
-# Made for a 64 MB card (rpi-open-firmware's make-small-card.sh), so it
+# Made for a 64 MB card (rpi-open-firmware's redox-rpi/make-small-card.sh,
+# which also trims it), so it
 # includes Redox's base.toml directly instead of the minimal.toml that
 # config/raspi3bp-sdcard.toml builds on (that one adds ca-certificates,
 # pkgutils, kibi, procps and extrautils, about 12 MiB).
@@ -15,10 +16,12 @@ include = [
 ]
 
 [general]
-# RedoxFS size in MiB. A 64 MB card holds about 57 MiB after the boot
-# partition; the files need about 40 (measured with the FUSE tool).
-filesystem_size = 48
-# scripts/make-sdcard.sh copies the bootloader (160 KiB) from here.
+# Image size in MiB, EFI partition included. The installer needs room for
+# all package files (about 67 MiB, measured with the FUSE tool);
+# make-small-card.sh then removes about 16 MiB (PCI drivers, static
+# libraries, headers) and clones the rest into a 53 MiB RedoxFS.
+filesystem_size = 96
+# The card gets the bootloader (160 KiB) from here.
 efi_partition_size = 8
 
 [packages]
