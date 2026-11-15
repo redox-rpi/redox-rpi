@@ -1,0 +1,40 @@
+# The smallest Redox for the Raspberry Pi 3 Model B+ that boots from the SD
+# card to the login prompt: kernel, drivers, init, login, the Ion shell and
+# the uutils commands. No desktop, no curl, no sound, no package manager.
+# Made for a 64 MB card (rpi-open-firmware's make-small-card.sh), so it
+# includes Redox's base.toml directly instead of the minimal.toml that
+# config/raspi3bp-sdcard.toml builds on (that one adds ca-certificates,
+# pkgutils, kibi, procps and extrautils, about 12 MiB).
+#
+# Build with scripts/build-image.sh --small.
+
+include = [
+    "../upstream/redox/config/base.toml",
+    # Version files, written by scripts/build-image.sh.
+    "../build/redox-rpi-version.toml",
+]
+
+[general]
+# RedoxFS size in MiB. A 64 MB card holds about 57 MiB after the boot
+# partition; the files need about 40 (measured with the FUSE tool).
+filesystem_size = 48
+# scripts/make-sdcard.sh copies the bootloader (160 KiB) from here.
+efi_partition_size = 8
+
+[packages]
+kernel = "source"
+base = "source"
+bootloader = "source"
+# relibc: our fix for fork() on aarch64 (patches/relibc).
+relibc = "source"
+ion = {}
+# `reboot` command (tools/reboot).
+reboot = "source"
+
+# Console switch, as in Redox's minimal.toml.
+[[files]]
+path = "/usr/lib/init.d/30_console_switch"
+data = """
+requires_weak 30_console.target
+inputd -A 2
+"""
