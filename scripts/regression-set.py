@@ -64,8 +64,8 @@ Checks, in this order:
   gamepad-console  #320: `gamepad-test --console` prints every event that
                 `gamepad-test --send` sends through inputd, and the last
                 line holds A with X, Y and RZ set (skip without
-                /scheme/input/controllers, base patch, or without
-                gamepad-test, experiment gamepad-test)
+                gamepad-test, experiment gamepad-test, or when it reports
+                no controllers handle or no --console: #455)
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -457,12 +457,19 @@ def check_ifconfig_mac(sh, check, args):
 
 
 def check_gamepad_console(sh, check, args):
-    if not has(sh, "/scheme/input/controllers") or not has(sh, "/usr/bin/gamepad-test"):
-        check("gamepad-console", None, "no /scheme/input/controllers (base patch, #455) "
-              "or no gamepad-test (experiment gamepad-test)")
+    if not has(sh, "/usr/bin/gamepad-test"):
+        check("gamepad-console", None, "no gamepad-test (experiment gamepad-test)")
         return
-    sh.run("rm -f /tmp/regr-gp.out; gamepad-test --console > /tmp/regr-gp.out ^> /tmp/regr-gp.err &")
+    sh.run("rm -f /tmp/regr-gp.out /tmp/regr-gp.err; "
+           "gamepad-test --console > /tmp/regr-gp.out ^> /tmp/regr-gp.err &")
     time.sleep(2)
+    # `test -e` does not see /scheme/input/controllers (no stat on inputd's
+    # scheme), so the tool says itself when the handle or --console is
+    # missing: inputd without base patch 0098 (#455), or an older binary.
+    err = " ".join(sh.run("cat /tmp/regr-gp.err"))
+    if "controllers handle" in err or "unknown argument" in err:
+        check("gamepad-console", None, f"gamepad-test --console not usable yet (#455): {err[:100]}")
+        return
     sent = [l for l in sh.run("gamepad-test --send", 120) if l.startswith("gamepad-test: sent ")]
     time.sleep(2)
     for pid in context_pids(sh, ["gamepad-test"]).values():
