@@ -253,6 +253,23 @@ fi
 }
 check_drift fdt "$FDT" "${fdt_patches[@]}"
 
+# A recipe whose target/ is gone (removed by hand, by `repo clean-target` or
+# `make c.<name>`) has no source_info.toml: cook then resets its source with
+# `git reset --hard` and applies the patches again. That keeps untracked
+# files, so a file one of our patches created is still there and the patch
+# fails with "file already exists" (#447). Reset such a source to its commit
+# here, untracked files included (ignored ones such as target/ stay); cook
+# checks out the pinned commit and patches it, so there is nothing to compare.
+# Returns 1 when it reset the source, 0 when cook keeps the source as it is.
+reset_source() {
+    local recipe="$1"
+    [ -d "$recipe/source/.git" ] || return 0
+    [ -f "$recipe/target/aarch64-unknown-redox/source_info.toml" ] && return 0
+    git -C "$recipe/source" reset -q --hard
+    git -C "$recipe/source" clean -fdq
+    return 1
+}
+
 # Pin a core recipe, copy its patches next to it and check its source.
 # The cookbook does not notice changed patches in an already fetched recipe:
 # drop its source and build when the patch set changed.
@@ -266,7 +283,9 @@ prepare_recipe() {
         rm -rf "$recipe/source" "$recipe/target"
         echo "$sum" > "$stamp"
     fi
-    check_drift "$name" "$recipe/source" "${files[@]}"
+    if reset_source "$recipe"; then
+        check_drift "$name" "$recipe/source" "${files[@]}"
+    fi
     recipe_patches=""
     for patch in "${files[@]}"; do
         cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
@@ -369,6 +388,7 @@ while read -r rel; do
         rm -rf "$recipe/source" "$recipe/target"
         echo "$sum" > "$stamp"
     fi
+    reset_source "$recipe" || true
     names=""
     for patch in "${files[@]}"; do
         cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
@@ -428,6 +448,7 @@ for exp in "${experiments[@]}"; do
         done
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
+            reset_source "$(dirname "$REDOX/recipes/$rel")" || true
         fi
     done
 done
@@ -593,18 +614,39 @@ if [ ${#exp_configs[@]} -gt 0 ]; then
 fi
 
 cd "$REDOX"
+make_vars=(
+    PODMAN_BUILD=0
+    ARCH=aarch64
+    BOARD=raspi3bp
+    CONFIG_NAME="$CONFIG_NAME"
+    REPO_BINARY=1
+    FILESYSTEM_CONFIG="$fs_config"
+)
+
+# The prefix's sysroot gets a copy of relibc (libc.a, crt*.o, headers) when
+# it is first built, and make never builds it again. Statically linked
+# programs (base with the initfs drivers, redoxfs, extrautils, ...) link
+# against that copy, so in a clone that built before they kept the relibc
+# of its first build while /usr/lib/libc.so was current: the same build ID,
+# another image (#447). When relibc's commit or patches differ from the ones
+# the sysroot was built with, upstream's static_clean removes the sysroot
+# and the static recipes, and make builds them again with this relibc.
+sysroot="prefix/aarch64-unknown-redox/sysroot"
+sysroot_stamp="prefix/aarch64-unknown-redox/.redox-rpi-sysroot-relibc"
+sysroot_relibc="$(pin relibc) $(cat recipes/core/relibc/.redox-rpi-patches)"
+if [ -d "$sysroot" ] && [ "$(cat "$sysroot_stamp" 2>/dev/null)" != "$sysroot_relibc" ]; then
+    echo "relibc differs from the prefix sysroot's: rebuilding the sysroot and static recipes" >&2
+    CI="${CI:-1}" make static_clean "${make_vars[@]}"
+fi
+mkdir -p "$(dirname "$sysroot_stamp")"
+echo "$sysroot_relibc" > "$sysroot_stamp"
+
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged
 # recipes, so letting it check every time is cheap.
 rm -f "build/aarch64/$CONFIG_NAME/repo.tag"
 # CI disables the cookbook's terminal UI, which needs a real terminal.
-CI="${CI:-1}" make "${1:-all}" \
-    PODMAN_BUILD=0 \
-    ARCH=aarch64 \
-    BOARD=raspi3bp \
-    CONFIG_NAME="$CONFIG_NAME" \
-    REPO_BINARY=1 \
-    FILESYSTEM_CONFIG="$fs_config"
+CI="${CI:-1}" make "${1:-all}" "${make_vars[@]}"
 
 # The full manifest next to the image: the build inputs, hashes of the main
 # outputs and the packages the image was installed from.
@@ -673,6 +715,10 @@ manifest="$MANIFESTS/$image_name-$build_id.toml"
     done
     libc="$(stage_file relibc usr/lib/libc.so)"
     [ -n "$libc" ] && echo "libc_build_id = \"$(readelf -n "$libc" | awk '/Build ID/ { print $3 }')\""
+    # The relibc the static programs were linked with (see static_clean above).
+    echo "sysroot_relibc = \"$sysroot_relibc\""
+    sysroot_libc="$REDOX/$sysroot/aarch64-unknown-redox/lib/libc.a"
+    [ -f "$sysroot_libc" ] && echo "\"sysroot libc.a\" = \"$(sha256sum < "$sysroot_libc" | cut -d' ' -f1)\""
     echo
     echo "# Packages in the image, $packages_source:"
     echo "# version, upstream source commit, package hash."
