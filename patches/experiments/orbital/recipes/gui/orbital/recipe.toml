@@ -1,0 +1,18 @@
+# Experiment orbital (#33): Orbital built from source with one fix.
+# input-before-delayed-reads.patch: when input arrived, Orbital first
+# answered the reads it holds for blocking windows and only then queued the
+# new events, so a blocking window got each event only with the next input
+# (a gamepad press showed at the release, redox-rpi Pi test 431). The patch
+# queues the events first.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/orbital.git"
+rev = "56620bba7dfd2652bd6b4e97909faecfcde2e27d"
+patches = ["input-before-delayed-reads.patch"]
+
+[build]
+template = "cargo"
+
+[package]
+dependencies = [
+    "orbdata"
+]
