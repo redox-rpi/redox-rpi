@@ -72,7 +72,7 @@ fallback, the week has no release.
 
 ## Building
 
-- The build agent builds in its own clone `~/redox-rpi-rel` on homenodellm,
+- The build agent builds in its own clone `~/redox-rpi-rel` on the build server,
   never in the shared clone `~/redox-rpi`.
 - It checks out the requested commit on a branch `release-v<version>` and
   runs `scripts/build-image.sh --release v<version>-rc<N>` with the
@@ -105,7 +105,7 @@ fallback, the week has no release.
 
 ## Results
 
-Each candidate goes to `/srv/tftp/sdcard/` on homenodellm, never to
+Each candidate goes to `/srv/tftp/sdcard/` on the build server, never to
 anyone's own computer:
 
 | File | Content |
@@ -115,7 +115,7 @@ anyone's own computer:
 | `index.json` | the list SwiftFlash reads, rewritten by `publish-sdcard.sh` (`scripts/sdcard-index.py`); there is no `SHA256SUMS` in `/srv/tftp/sdcard/`, each image has its own `.sha256` |
 
 The image is offered at
-`http://homenodellm:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
+`http://<server>:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
 SwiftFlash or `curl` flashes it straight from there
 ([netboot.md](netboot.md#sd-card-images-for-download)). Network-boot
 candidates are staged with `scripts/netboot.sh` only by the test that holds
@@ -150,7 +150,7 @@ agreed with V&V on 2026-11-08).
   (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
 
 ```bash
-# on homenodellm, in ~/redox-rpi-rel after the candidate build
+# on the build server, in ~/redox-rpi-rel after the candidate build
 img=/srv/tftp/sdcard/redox-rpi-v<version>-rc<N>.img.xz
 hd=upstream/redox/build/aarch64/sdcard/harddrive.img
 tool=tools/redoxfs-file/target/release/redoxfs-file

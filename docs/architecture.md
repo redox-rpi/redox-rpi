@@ -53,7 +53,7 @@ VPU, and **AArch64** (ARMv8-A) on the Cortex-A53. Which compiler builds what:
 | # | Piece | Instruction set | Compiler |
 |---|---|---|---|
 | 1a | Boot ROM | VideoCore IV | Broadcom, in the chip |
-| 1b, 1c | `bootcode.bin`, `start*.elf` | VideoCore IV | Broadcom, closed; the compiler is not documented (reportedly Synopsys MetaWare). The open firmware uses VC4 GCC 6.2.1 ([itszor/vc4-toolchain](https://github.com/itszor/vc4-toolchain), target `vc4-elf`) |
+| 1b, 1c | `bootcode.bin`, `start*.elf` | VideoCore IV | Broadcom, closed; the compiler is not documented (reportedly Synopsys MetaWare). The open firmware uses VC4 GCC 6.2.1 ([itszor/vc4-toolchain](https://github.com/itszor/vc4-toolchain), target `vc4-elf`; our versions in [redox-rpi/vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain)); the experimental TinyCC backend is in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc) |
 | 1d | `armstub8` | AArch64 | built into the firmware (our `config.txt` has no `armstub=` line); source [`armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S), GCC |
 | 2 | U-Boot | AArch64 | GCC `aarch64-linux-gnu-` ([`build-uboot.sh`](../scripts/build-uboot.sh)) |
 | 3 | Redox bootloader | AArch64 | rustc (LLVM), target `aarch64-unknown-uefi`: a UEFI program in PE format, linked by `rust-lld` |
