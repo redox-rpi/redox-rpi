@@ -300,8 +300,8 @@ Nobody can hear the Pi from the test rack, and the NanoKVM captures only
 HDMI. Two ways:
 
 - **Automatic (proposed):** a cheap USB sound card with a line input on
-  homenodellm, a cable from the Pi's jack to it. The test plays a known
-  tone or sweep on the Pi, records it on homenodellm, and checks the
+  the build server, a cable from the Pi's jack to it. The test plays a known
+  tone or sweep on the Pi, records it on the build server, and checks the
   frequency, the level and the noise with a small script. Needs about
   10 euros of hardware and a cable, plugged in once by the maintainer.
 - **By ear:** a person with headphones, bundled with other person tests

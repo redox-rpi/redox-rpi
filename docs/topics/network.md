@@ -18,7 +18,7 @@
   [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
   and on the Pi (**test 194 passed**).
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
-  ignored the DHCP name server (fritz.box hung, bare names failed): fixed
+  ignored the DHCP name server (lan hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
   server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
   3 s, and try names without a dot in the DHCP domain
@@ -144,7 +144,7 @@
   firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
   with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
   netstack takes it as `wlan0` and dhcpd leases it. The network name and
-  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  passphrase come from `~/.config/redox-rpi/wifi` on the build server (made by
   the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
   chip: unit tests and a QEMU check of the settings path pass; Pi test
   #110.

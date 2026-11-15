@@ -111,7 +111,7 @@ with a `brk` exception.
 
 ### How to reproduce
 
-On the build host (`ssh zehrer@homenodellm`, repository `~/redox-rpi`), after
+On the build host (`ssh <user>@<build-server>`, repository `~/redox-rpi`), after
 `scripts/build-image.sh`:
 
 ```bash
