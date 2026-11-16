@@ -27,6 +27,16 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
+  tcc           REQ-TCC-1 criterion 5: /usr/share/tcc-tests/run.ion (package
+                tcc-bench) reaches "TCC-TEST done", and these steps give
+                their output: hello.c built dynamically and run; tcc -run
+                hello.c; hallo.c as a #!/usr/bin/tcc -run script with stdin
+                and two arguments (exit status 42, from its shebang's
+                -DANSWER=42); bench.c built and run (time reported, no
+                limit); tcc builds /usr/src/tinycc/tcc.c and that tcc2
+                builds hello.c, which runs. tcc -static (a known limit) and
+                bench-gcc (comparison) are not judged (skip without the
+                experiment tcc)
   dns           #358, #374: a name server is set (from DHCP); an unknown
                 name gives "Name does not resolve" within 5 s; with
                 --dead-dns as name server a lookup gives "Try again" within
@@ -158,6 +168,71 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
 
 
+TCC_RUN = "/usr/share/tcc-tests/run.ion"
+TCC_LOG = "/tmp/regr-tcc.log"
+TIMEIT = re.compile(r"\[timeit\] ([0-9.]+) ms, status (\d+): (\S+)")
+
+
+def tcc_sections(out):
+    """run.ion's output split at its "== <step>" lines: {step: lines}."""
+    secs, cur = {}, None
+    for l in out:
+        l = ANSI_TEXT.sub("", l).rstrip()
+        if l.startswith("== "):
+            cur = l[3:]
+            secs[cur] = []
+        elif cur is not None:
+            secs[cur].append(l)
+    return secs
+
+
+def tcc_ms(lines, prog):
+    """Wall time and exit status timeit gave for prog, or (None, None)."""
+    for l in lines:
+        m = TIMEIT.search(l)
+        if m and m.group(3) == prog:
+            return float(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def check_tcc(sh, check, tcc):
+    """REQ-TCC-1 criterion 5: the named subset of run.ion. stderr goes to
+    the log too: timeit writes its times there."""
+    if not tcc or not has(sh, TCC_RUN):
+        check("tcc", None, f"no {TCC_RUN} or no tcc (experiment tcc)")
+        return
+    out, secs = pi_test.timed(sh, f"ion {TCC_RUN} &> {TCC_LOG}; cat {TCC_LOG}", 1800)
+    s = tcc_sections(out)
+
+    def sec(prefix):
+        return next((v for k, v in s.items() if k.startswith(prefix)), [])
+
+    def says(lines, text):
+        return any(text in l for l in lines)
+
+    hello = "Hello from tcc on Redox ("
+    script = sec("shebang")
+    bench = sec("bench, compiled by tcc")
+    selfh = sec("self-hosting")
+    bench_ms = next((l.split()[-2] for l in bench if l.startswith("total")), None)
+    self_ms, _ = tcc_ms(selfh, "tcc")
+    steps = [
+        ("dynamic", says(sec("hello (dynamic)"), hello + "./hello)")),
+        ("-run", says(sec("tcc -run"), hello)),
+        ("script", says(script, "argv[1]=a") and says(script, "argv[2]=b")
+         and says(script, "Hallo, stdin 6 bytes") and says(script, "rc=42")),
+        ("bench", bench_ms is not None and tcc_ms(bench, "./bench")[1] == 0),
+        ("self-hosting", says(selfh, hello + "./hello2)")),
+        ("done", any(l.strip() == "TCC-TEST done" for l in out)),
+    ]
+    failed = [n for n, ok in steps if not ok]
+    detail = (f"{secs:.1f} s; " + ("all 5 steps and TCC-TEST done" if not failed
+                                   else "failed: " + ", ".join(failed))
+              + (f"; bench total {bench_ms} ms" if bench_ms else "")
+              + (f"; tcc.c built in {self_ms:.0f} ms" if self_ms is not None else ""))
+    check("tcc", not failed, detail)
+
+
 def check_dns(sh, check, args):
     ns = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
     if not ns:
@@ -234,6 +309,7 @@ def main():
                                              lambda out: sum(l.strip().endswith(": pass") or l.strip() == "/ pass"
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
+            ("tcc", lambda: check_tcc(sh, check, tcc)),
             ("dns", lambda: check_dns(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
