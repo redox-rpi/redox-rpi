@@ -27,7 +27,8 @@ Acceptance criteria:
 5. `run.ion` in `/usr/share/tcc-tests/` (package `tcc-bench`) reaches
    `TCC-TEST done`, and these steps give the expected output:
    `hello.c` compiled dynamically and run; `tcc -run hello.c`; `hallo.c` as
-   a `#!/usr/bin/tcc -run` script with stdin and arguments, rc 0; `bench.c`
+   a `#!/usr/bin/tcc -run -DANSWER=42` script with stdin and arguments,
+   exit status 42 (options after `-run` reach tcc); `bench.c`
    compiled and run (time reported, no limit); self-hosting: tcc compiles
    `/usr/src/tinycc/tcc.c`, and that `tcc2` builds `hello.c`, which runs.
    Not part of it: `tcc -static` (criterion 3), `bench-gcc` (comparison
