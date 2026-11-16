@@ -10,7 +10,7 @@
 #   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
 #                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
-#                          [--allow-dirty]
+#                          [--allow-dirty] [--recipes-only]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
@@ -40,6 +40,10 @@
 #                 scripts/ or tools/, or with recipe sources that differ from
 #                 their pinned commit plus patches; the differences are saved
 #                 next to the manifest and the build ID gets "-dirty"
+#   --recipes-only
+#                 pin the recipes and add the patches as a build does, print
+#                 the pinned recipes and stop: no cooking, no image. CI runs
+#                 it, since the QEMU boot test builds only the kernel (#394)
 #
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
@@ -66,6 +70,7 @@ experiments=()
 allow_dirty=0
 release=""
 test_experiments=1
+recipes_only=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --sdcard)
@@ -90,6 +95,7 @@ while [ $# -gt 0 ]; do
             shift 2 ;;
         --no-test-experiments) test_experiments=0; shift ;;
         --allow-dirty) allow_dirty=1; shift ;;
+        --recipes-only) recipes_only=1; shift ;;
         -*) echo "unknown argument: $1" >&2; exit 1 ;;
         *) break ;;
     esac
@@ -406,6 +412,12 @@ while read -r rel; do
         sed -i "0,/^\[source\]/s//[source]\npatches = [ $names]/" "$recipe/recipe.toml"
     fi
 done < <(recipe_dirs)
+
+if [ "$recipes_only" = 1 ]; then
+    echo "recipes: kernel ${recipes[*]}"
+    [ ! -s "$extra_list" ] || echo "patched by experiments: $(paste -sd' ' "$extra_list")"
+    exit 0
+fi
 
 # Our own packages, built from this repository: every tools/<name>/ with a
 # recipe.toml, which holds the [build] part of its recipe. Host tools
