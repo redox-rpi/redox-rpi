@@ -1,0 +1,646 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 20:14:41 +0000
+Subject: [PATCH] dwc2d: several keyboards, mice and gamepads at once (#450)
+
+Each input function polls on a host channel of its own, taken from a
+pool of channels 3 to 7 (0 does control transfers, the network
+adapters use 1 and 2). Up to five functions run at once; a further one
+is logged and left out until another one goes. Removing a device frees
+the channels of all its functions.
+
+mouse::find returns every pointer and gamepad interface of a device,
+not only the first, and the device is configured once. Gamepads get
+controller ids 0, 1, ... in plug order, and a freed id is given again.
+
+The pool sits in inputs.rs, apart from the HID code, so that the usb
+scheme can take its channels from it later.
+---
+ drivers/usb/dwc2d/src/hid.rs    |  20 +++-
+ drivers/usb/dwc2d/src/inputs.rs | 190 ++++++++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs   |  97 ++++++----------
+ drivers/usb/dwc2d/src/mouse.rs  |  49 ++++++--
+ 4 files changed, 277 insertions(+), 79 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/inputs.rs
+
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 5df02088..b02844a7 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -24,9 +24,6 @@ const REQ_SET_IDLE: u8 = 0x0A;
+ const REQ_SET_PROTOCOL: u8 = 0x0B;
+ const PROTOCOL_BOOT: u16 = 0;
+ 
+-/// The host channel for keyboard reports; 0 does control transfers, the
+-/// network adapters use 1 and 2.
+-const CHANNEL: usize = 3;
+ /// Auto-repeat of a held key, as keyboards in the boot protocol leave it to
+ /// the host.
+ const REPEAT_DELAY: Duration = Duration::from_millis(500);
+@@ -107,9 +104,17 @@ pub fn init(bus: &mut Bus, f: &KeyboardFunction) -> Result<(), Error> {
+     Ok(())
+ }
+ 
++impl KeyboardFunction {
++    pub fn address(&self) -> u8 {
++        self.address
++    }
++}
++
+ pub struct Keyboard {
+     hc: Dwc2,
+     f: KeyboardFunction,
++    /// The host channel for its reports, from the pool (inputs.rs).
++    channel: usize,
+     buf: Dma<[u8; 8]>,
+     pid: u32,
+     /// The last boot protocol report: modifier bits, reserved, six keys.
+@@ -123,13 +128,14 @@ pub struct Keyboard {
+ }
+ 
+ impl Keyboard {
+-    pub fn new(hc: Dwc2, f: KeyboardFunction) -> Option<Self> {
++    pub fn new(hc: Dwc2, f: KeyboardFunction, channel: usize) -> Option<Self> {
+         let input = Input::new()
+             .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+             .ok()?;
+         Some(Self {
+             hc,
+             f,
++            channel,
+             buf: Dma::new([0; 8]).expect("dwc2d: DMA allocation failed"),
+             pid: PID_DATA0,
+             report: [0; 8],
+@@ -144,6 +150,10 @@ impl Keyboard {
+         self.f.address
+     }
+ 
++    pub fn channel(&self) -> usize {
++        self.channel
++    }
++
+     /// Poll the keyboard and repeat a held key when due. Returns the time
+     /// until the next call is due.
+     pub fn poll(&mut self) -> Duration {
+@@ -178,7 +188,7 @@ impl Keyboard {
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(8),
+         };
+-        match self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
++        match self.hc.interrupt_in(self.channel, &phase, self.f.tt, Duration::from_millis(5)) {
+             Ok(Some((len, next_pid))) => {
+                 self.pid = next_pid;
+                 if len >= 3 {
+diff --git a/drivers/usb/dwc2d/src/inputs.rs b/drivers/usb/dwc2d/src/inputs.rs
+new file mode 100644
+index 00000000..20ccb259
+--- /dev/null
++++ b/drivers/usb/dwc2d/src/inputs.rs
+@@ -0,0 +1,190 @@
++//! Several keyboards, mice and gamepads at the same time (redox-rpi #450).
++//!
++//! Each input function polls its interrupt endpoint on a host channel of
++//! its own. Channel 0 does control transfers and the network adapters use 1
++//! and 2, so input functions take theirs from a pool of the others (the
++//! BCM283x DWC2 has 8). When the pool is empty, a new function is logged and
++//! left out until another one goes. Gamepads get controller ids 0, 1, … in
++//! plug order; a freed id is given again.
++
++use std::time::Duration;
++
++use crate::dwc2::Dwc2;
++use crate::hid::{Keyboard, KeyboardFunction};
++use crate::mouse::{Mouse, MouseFunction};
++
++/// The host channels input functions may use.
++pub const INPUT_CHANNELS: std::ops::RangeInclusive<usize> = 3..=7;
++
++/// Host channels free for input functions.
++#[derive(Debug)]
++pub struct ChannelPool {
++    free: Vec<usize>,
++}
++
++impl ChannelPool {
++    pub fn new(channels: impl IntoIterator<Item = usize>, available: usize) -> Self {
++        // Only channels the controller has (hc.channels()).
++        let mut free: Vec<usize> = channels.into_iter().filter(|&c| c < available).collect();
++        // Take the lowest first: pop from the end.
++        free.sort_unstable_by(|a, b| b.cmp(a));
++        Self { free }
++    }
++
++    pub fn take(&mut self) -> Option<usize> {
++        self.free.pop()
++    }
++
++    pub fn give(&mut self, channel: usize) {
++        if !self.free.contains(&channel) {
++            self.free.push(channel);
++            self.free.sort_unstable_by(|a, b| b.cmp(a));
++        }
++    }
++
++    pub fn free(&self) -> usize {
++        self.free.len()
++    }
++}
++
++/// The lowest controller id not in `used`.
++pub fn lowest_free_id(used: impl IntoIterator<Item = u8>) -> u8 {
++    let used: Vec<u8> = used.into_iter().collect();
++    (0..=u8::MAX).find(|id| !used.contains(id)).unwrap_or(u8::MAX)
++}
++
++/// Every keyboard and pointer or gamepad function in use.
++pub struct Inputs {
++    hc: Dwc2,
++    pool: ChannelPool,
++    pub keyboards: Vec<Keyboard>,
++    pub mice: Vec<Mouse>,
++}
++
++impl Inputs {
++    pub fn new(hc: Dwc2) -> Self {
++        let pool = ChannelPool::new(INPUT_CHANNELS, hc.channels());
++        Self { hc, pool, keyboards: Vec::new(), mice: Vec::new() }
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.keyboards.is_empty() && self.mice.is_empty()
++    }
++
++    /// Take the functions of a newly found device, as far as channels last.
++    pub fn add(&mut self, keyboard: Option<KeyboardFunction>, mice: Vec<MouseFunction>) {
++        if let Some(f) = keyboard {
++            let address = f.address();
++            match self.pool.take() {
++                Some(channel) => match Keyboard::new(self.hc.clone(), f, channel) {
++                    Some(k) => {
++                        println!("dwc2d: keyboard at address {address} polls on channel {channel}");
++                        self.keyboards.push(k);
++                    }
++                    None => self.pool.give(channel),
++                },
++                None => println!("dwc2d: keyboard at address {address} left out: no free channel"),
++            }
++        }
++        for f in mice {
++            let address = f.address();
++            let pad_id = f
++                .is_gamepad()
++                .then(|| lowest_free_id(self.mice.iter().filter_map(Mouse::pad_id)));
++            match self.pool.take() {
++                Some(channel) => match Mouse::new(self.hc.clone(), f, channel, pad_id) {
++                    Some(m) => {
++                        match pad_id {
++                            Some(id) => println!("dwc2d: gamepad at address {address} polls on channel {channel}, controller {id}"),
++                            None => println!("dwc2d: mouse at address {address} polls on channel {channel}"),
++                        }
++                        self.mice.push(m);
++                    }
++                    None => self.pool.give(channel),
++                },
++                None => println!("dwc2d: mouse or gamepad at address {address} left out: no free channel"),
++            }
++        }
++    }
++
++    /// Drop every function of the device at `address` and free its channels.
++    pub fn remove(&mut self, address: u8) {
++        let pool = &mut self.pool;
++        self.keyboards.retain(|k| {
++            let keep = k.address() != address;
++            if !keep {
++                println!("dwc2d: keyboard removed (address {address}, channel {})", k.channel());
++                pool.give(k.channel());
++            }
++            keep
++        });
++        self.mice.retain(|m| {
++            let keep = m.address() != address;
++            if !keep {
++                println!("dwc2d: mouse removed (address {address}, channel {})", m.channel());
++                pool.give(m.channel());
++            }
++            keep
++        });
++    }
++
++    /// Poll whatever is due. Returns the time until the next poll is due,
++    /// if anything is there to poll.
++    pub fn poll(&mut self) -> Option<Duration> {
++        let keyboards = self.keyboards.iter_mut().map(Keyboard::poll);
++        let mice = self.mice.iter_mut().map(Mouse::poll);
++        keyboards.chain(mice).collect::<Vec<_>>().into_iter().min()
++    }
++
++    pub fn set_log(&mut self, log: bool) {
++        for m in &mut self.mice {
++            m.log = log;
++        }
++    }
++
++    pub fn first_keyboard(&self) -> Option<u8> {
++        self.keyboards.first().map(Keyboard::address)
++    }
++
++    pub fn first_mouse(&self) -> Option<u8> {
++        self.mice.first().map(Mouse::address)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn pool_takes_the_lowest_and_takes_back() {
++        let mut pool = ChannelPool::new(INPUT_CHANNELS, 8);
++        assert_eq!(pool.free(), 5);
++        assert_eq!(pool.take(), Some(3));
++        assert_eq!(pool.take(), Some(4));
++        pool.give(3);
++        assert_eq!(pool.take(), Some(3));
++        assert_eq!(pool.take(), Some(5));
++        assert_eq!(pool.take(), Some(6));
++        assert_eq!(pool.take(), Some(7));
++        assert_eq!(pool.take(), None, "five input functions at most");
++        pool.give(6);
++        pool.give(6);
++        assert_eq!(pool.free(), 1, "a channel given twice is free once");
++    }
++
++    #[test]
++    fn pool_only_has_channels_the_controller_has() {
++        let mut pool = ChannelPool::new(INPUT_CHANNELS, 6);
++        assert_eq!(pool.free(), 3);
++        assert_eq!((pool.take(), pool.take(), pool.take(), pool.take()), (Some(3), Some(4), Some(5), None));
++    }
++
++    #[test]
++    fn pad_ids_in_plug_order_and_reused() {
++        assert_eq!(lowest_free_id([]), 0);
++        assert_eq!(lowest_free_id([0]), 1);
++        assert_eq!(lowest_free_id([0, 1]), 2);
++        assert_eq!(lowest_free_id([1]), 0, "the first pad was unplugged");
++        assert_eq!(lowest_free_id([0, 2]), 1);
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 92958ecc..f1855484 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -3,8 +3,8 @@
+ //!
+ //! Brings up the controller, enumerates the devices behind the root port and
+ //! hubs, and runs network adapters (CDC Ethernet, LAN7800, RTL8152/8153), a boot
+-//! protocol keyboard and a mouse directly in this process. It does not offer the USB
+-//! scheme to class drivers yet.
++//! protocol keyboards, mice and gamepads directly in this process (several at
++//! once, see inputs.rs). It does not offer the USB scheme to class drivers yet.
+ 
+ use std::fs::{File, OpenOptions};
+ use std::io::{Read, Write};
+@@ -21,6 +21,7 @@ mod ecm;
+ mod enumerate;
+ mod hid;
+ mod hidreport;
++mod inputs;
+ mod lan78xx;
+ mod mouse;
+ mod pollrate;
+@@ -32,9 +33,8 @@ use dwc2::Dwc2;
+ use ecm::Ecm;
+ use enumerate::{Bus, Device};
+ use event::{user_data, EventQueue};
+-use hid::Keyboard;
+ use lan78xx::Lan78xx;
+-use mouse::Mouse;
++use inputs::Inputs;
+ use rtl8152::Rtl8152;
+ 
+ /// A network adapter on the bus, initialized. It receives only while the
+@@ -247,9 +247,9 @@ impl NetworkAdapter for UsbNet {
+ enum Found {
+     /// A network adapter, initialized, with its own MAC address and link.
+     Net(Adapter, [u8; 6], bool),
+-    /// A keyboard, a mouse, or both in one device (a wireless receiver),
+-    /// configured.
+-    Input(Option<hid::KeyboardFunction>, Option<mouse::MouseFunction>),
++    /// A keyboard, mice or gamepads, or both in one device (a wireless
++    /// receiver), configured.
++    Input(Option<hid::KeyboardFunction>, Vec<mouse::MouseFunction>),
+ }
+ 
+ /// Recognize a device and bring it up. `link_wait` is how long a network
+@@ -303,18 +303,22 @@ fn probe(
+             None
+         }
+     });
+-    // A keyboard's setup already chose the configuration.
+-    let mouse = mouse::find(bus, device).and_then(|f| match mouse::init(bus, &f, keyboard.is_none()) {
+-        Ok(()) => {
+-            println!("dwc2d: mouse at address {address}: {}", f.describe());
+-            Some(f)
+-        }
+-        Err(err) => {
+-            println!("dwc2d: mouse at address {address}: {err:?}");
+-            None
++    // Configure the device once: a keyboard's setup or the first mouse
++    // function's. SET_CONFIGURATION again would reset the data toggles of
++    // the functions already set up.
++    let mut configured = keyboard.is_some();
++    let mut mice = Vec::new();
++    for f in mouse::find(bus, device) {
++        match mouse::init(bus, &f, !configured) {
++            Ok(()) => {
++                configured = true;
++                println!("dwc2d: mouse at address {address}: {}", f.describe());
++                mice.push(f);
++            }
++            Err(err) => println!("dwc2d: mouse at address {address}: {err:?}"),
+         }
+-    });
+-    (keyboard.is_some() || mouse.is_some()).then_some(Found::Input(keyboard, mouse))
++    }
++    (keyboard.is_some() || !mice.is_empty()).then_some(Found::Input(keyboard, mice))
+ }
+ 
+ /// The channel the network adapters receive on (see ecm.rs and lan78xx.rs).
+@@ -504,14 +508,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         multicast: None,
+         multicast_pending: false,
+     };
+-    let mut keyboard = None;
+-    let mut mouse = None;
++    let mut inputs = Inputs::new(hc.clone());
+     let mut macs = Vec::new();
+-    let mut boot_probe = |bus: &mut Bus,
+-                          net: &mut UsbNet,
+-                          keyboard: &mut Option<Keyboard>,
+-                          mouse: &mut Option<Mouse>,
+-                          addresses: Vec<u8>| {
++    let mut boot_probe = |bus: &mut Bus, net: &mut UsbNet, inputs: &mut Inputs, addresses: Vec<u8>| {
+         for address in addresses {
+             let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+                 continue;
+@@ -521,20 +520,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     macs.push((adapter.address(), mac));
+                     net.adapters.push((adapter, link));
+                 }
+-                Some(Found::Input(k, m)) => {
+-                    if keyboard.is_none() {
+-                        *keyboard = k.and_then(|f| Keyboard::new(hc.clone(), f));
+-                    }
+-                    if mouse.is_none() {
+-                        *mouse = m.and_then(|f| Mouse::new(hc.clone(), f));
+-                    }
+-                }
++                Some(Found::Input(k, m)) => inputs.add(k, m),
+                 _ => {}
+             }
+         }
+     };
+     let addresses = bus.devices.iter().map(|d| d.address).collect();
+-    boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, addresses);
++    boot_probe(&mut bus, &mut net, &mut inputs, addresses);
+     // Wait for a network adapter's link, so DHCP does not start into a dead
+     // cable, or, without an adapter, a moment for devices that connect late
+     // after power-on. Rescans meanwhile take devices that connect now, so
+@@ -555,7 +547,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         }
+         dwc2::delay(Duration::from_millis(50));
+         let changes = bus.scan();
+-        boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
++        boot_probe(&mut bus, &mut net, &mut inputs, changes.added);
+     }
+     println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
+     // The network stack keeps the address of the adapter it starts with.
+@@ -600,13 +592,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         _ => eprintln!("dwc2d: no interrupt, polling every {POLL_FALLBACK:?}"),
+     }
+ 
+-    // The keyboard's and mouse's polls and, without an interrupt, the
++    // The input functions' polls and, without an interrupt, the
+     // receive polls.
+     let mut timer = Timer::new().expect("dwc2d: failed to open /scheme/time");
+     events
+         .subscribe(timer.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
+         .expect("dwc2d: failed to subscribe to the timer");
+-    if keyboard.is_some() || mouse.is_some() || irq_file.is_none() {
++    if !inputs.is_empty() || irq_file.is_none() {
+         timer.arm(Duration::ZERO);
+     }
+     let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
+@@ -646,12 +638,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     scheme.adapter_mut().apply_multicast(&mut bus);
+                     next = Some(POLL_FALLBACK);
+                 }
+-                if let Some(k) = keyboard.as_mut() {
+-                    let due = k.poll();
+-                    next = Some(next.map_or(due, |n: Duration| n.min(due)));
+-                }
+-                if let Some(m) = mouse.as_mut() {
+-                    let due = m.poll();
++                if let Some(due) = inputs.poll() {
+                     next = Some(next.map_or(due, |n: Duration| n.min(due)));
+                 }
+                 if let Some(next) = next {
+@@ -666,8 +653,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let request = request.trim();
+                     let port = match request {
+                         "network" => net.active.and_then(|a| bus.port_of(a)),
+-                        "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
+-                        "mouse" => mouse.as_ref().and_then(|m| bus.port_of(m.address())),
++                        "keyboard" => inputs.first_keyboard().and_then(|a| bus.port_of(a)),
++                        "mouse" => inputs.first_mouse().and_then(|a| bus.port_of(a)),
+                         _ => {
+                             let mut words = request.split_whitespace().map(str::parse::<u16>);
+                             match (words.next(), words.next()) {
+@@ -695,14 +682,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let net = scheme.adapter_mut();
+                 for &address in &changes.removed {
+                     net.remove(address);
+-                    if keyboard.as_ref().is_some_and(|k| k.address() == address) {
+-                        println!("dwc2d: keyboard removed");
+-                        keyboard = None;
+-                    }
+-                    if mouse.as_ref().is_some_and(|m| m.address() == address) {
+-                        println!("dwc2d: mouse removed");
+-                        mouse = None;
+-                    }
++                    inputs.remove(address);
+                 }
+                 for &address in &changes.added {
+                     let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
+@@ -711,20 +691,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
+                         Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
+                         Some(Found::Input(k, m)) => {
+-                            if keyboard.is_none() {
+-                                keyboard = k.and_then(|f| Keyboard::new(hc.clone(), f));
+-                            }
+-                            if mouse.is_none() {
+-                                mouse = m.and_then(|f| Mouse::new(hc.clone(), f));
+-                            }
++                            inputs.add(k, m);
+                             timer.arm(Duration::ZERO);
+                         }
+                         _ => {}
+                     }
+                 }
+-                if let Some(m) = mouse.as_mut() {
+-                    m.log = aside::input_log();
+-                }
++                inputs.set_log(aside::input_log());
+                 net.refresh_links(&mut bus);
+                 net.select(&mut bus);
+                 scheme.tick().expect("dwc2d: network scheme failed");
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 99bc9129..a66e2977 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -38,9 +38,6 @@ const REQ_SET_PROTOCOL: u8 = 0x0B;
+ const PROTOCOL_BOOT: u16 = 0;
+ const PROTOCOL_REPORT: u16 = 1;
+ 
+-/// The host channel for mouse reports; the keyboard uses 3, USB sticks 4
+-/// and 5.
+-const CHANNEL: usize = 6;
+ const POLL_INTERVAL: Duration = Duration::from_millis(10);
+ /// The largest report read; mice and gamepads send 3 to 8 bytes.
+ const REPORT_MAX: usize = 64;
+@@ -134,9 +131,13 @@ enum Kind {
+     Gamepad(PadLayout),
+ }
+ 
+-/// Find a pointer or a gamepad among the device's HID interfaces (not a
+-/// boot keyboard).
+-pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
++/// Find the pointers and gamepads among the device's HID interfaces (not a
++/// boot keyboard). A receiver or a pad with a touchpad can have several.
++pub fn find(bus: &mut Bus, device: &Device) -> Vec<MouseFunction> {
++    find_some(bus, device).unwrap_or_default()
++}
++
++fn find_some(bus: &mut Bus, device: &Device) -> Option<Vec<MouseFunction>> {
+     let config = bus
+         .request(
+             device.address,
+@@ -180,6 +181,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+     }
+ 
+     let mut configured = false;
++    let mut found = Vec::new();
+     for (interface, boot, report_len, endpoint, max_packet) in candidates {
+         let report = report_descriptor(bus, device, configuration, &mut configured, interface, report_len);
+         let report = report.as_deref();
+@@ -195,7 +197,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+         } else {
+             continue;
+         };
+-        return Some(MouseFunction {
++        found.push(MouseFunction {
+             address: device.address,
+             speed: device.speed,
+             max_packet0: device.max_packet,
+@@ -209,7 +211,7 @@ pub fn find(bus: &mut Bus, device: &Device) -> Option<MouseFunction> {
+             kind,
+         });
+     }
+-    None
++    Some(found)
+ }
+ 
+ /// The report descriptor of `interface`. Linux asks for it only after
+@@ -284,6 +286,14 @@ pub fn init(bus: &mut Bus, f: &MouseFunction, configure: bool) -> Result<(), Err
+ }
+ 
+ impl MouseFunction {
++    pub fn address(&self) -> u8 {
++        self.address
++    }
++
++    pub fn is_gamepad(&self) -> bool {
++        matches!(self.kind, Kind::Gamepad(_))
++    }
++
+     pub fn describe(&self) -> String {
+         match &self.kind {
+             Kind::Pointer(layout) => layout.describe(),
+@@ -296,6 +306,10 @@ impl MouseFunction {
+ pub struct Mouse {
+     hc: Dwc2,
+     f: MouseFunction,
++    /// The host channel for its reports, from the pool (inputs.rs).
++    channel: usize,
++    /// A gamepad's controller id in its events.
++    pad_id: Option<u8>,
+     buf: Dma<[u8; REPORT_MAX]>,
+     pid: u32,
+     buttons: [bool; 3],
+@@ -313,7 +327,7 @@ pub struct Mouse {
+ }
+ 
+ impl Mouse {
+-    pub fn new(hc: Dwc2, f: MouseFunction) -> Option<Self> {
++    pub fn new(hc: Dwc2, f: MouseFunction, channel: usize, pad_id: Option<u8>) -> Option<Self> {
+         let input = Input::new()
+             .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+             .ok()?;
+@@ -324,6 +338,8 @@ impl Mouse {
+         Some(Self {
+             hc,
+             f,
++            channel,
++            pad_id,
+             pad,
+             first_report: false,
+             buf: Dma::new([0; REPORT_MAX]).expect("dwc2d: DMA allocation failed"),
+@@ -341,6 +357,14 @@ impl Mouse {
+         self.f.address
+     }
+ 
++    pub fn channel(&self) -> usize {
++        self.channel
++    }
++
++    pub fn pad_id(&self) -> Option<u8> {
++        self.pad_id
++    }
++
+     /// Fetch a report when the poll interval has passed and send what
+     /// changed. Errors are dropped: the next poll tries again. Returns the
+     /// time until the next call is due.
+@@ -371,7 +395,7 @@ impl Mouse {
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(REPORT_MAX),
+         };
+-        if let Ok(Some((len, next_pid))) = self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
++        if let Ok(Some((len, next_pid))) = self.hc.interrupt_in(self.channel, &phase, self.f.tt, Duration::from_millis(5)) {
+             self.pid = next_pid;
+             let report = self.buf[..len].to_vec();
+             self.update(&report);
+@@ -384,15 +408,16 @@ impl Mouse {
+             let hex: String = report.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+             println!("dwc2d: gamepad report: {hex}");
+         }
++        let id = u32::from(self.pad_id.unwrap_or(0));
+         if let Some(pad) = self.pad.as_mut() {
+             for event in pad.update(report) {
+                 match event {
+                     PadEvent::Axis(axis, value) => {
+-                        let event = ControllerAxisEvent { id: 0, axis, value };
++                        let event = ControllerAxisEvent { id, axis, value };
+                         self.send(event.to_event(), format_args!("axis 0x{axis:02x} {value}"));
+                     }
+                     PadEvent::Button(button, pressed) => {
+-                        let event = ControllerButtonEvent { id: 0, button, pressed };
++                        let event = ControllerButtonEvent { id, button, pressed };
+                         let what = if pressed { "pressed" } else { "released" };
+                         self.send(event.to_event(), format_args!("button 0x{button:02x} {what}"));
+                     }
+-- 
+2.53.0
+

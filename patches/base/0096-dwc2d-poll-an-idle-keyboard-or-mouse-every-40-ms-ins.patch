@@ -105,11 +105,11 @@ index 66ce54b8..5df02088 100644
          if report[2..].contains(&0x01) {
              return;
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 402a7a35..51204ce9 100644
+index 674731ce..92958ecc 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -22,6 +22,7 @@ mod enumerate;
- mod hid;
+@@ -23,6 +23,7 @@ mod hid;
+ mod hidreport;
  mod lan78xx;
  mod mouse;
 +mod pollrate;
@@ -117,11 +117,11 @@ index 402a7a35..51204ce9 100644
  mod rtl8152;
  
 diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
-index 4704ac59..2a8dfc60 100644
+index 49089ec7..99bc9129 100644
 --- a/drivers/usb/dwc2d/src/mouse.rs
 +++ b/drivers/usb/dwc2d/src/mouse.rs
-@@ -370,6 +370,8 @@ pub struct Mouse {
-     position: Option<(i32, i32)>,
+@@ -306,6 +306,8 @@ pub struct Mouse {
+     first_report: bool,
      input: Input,
      next_poll: Instant,
 +    /// When the last event was sent: polls are fast for a while after it.
@@ -129,7 +129,7 @@ index 4704ac59..2a8dfc60 100644
      /// Print every event (tests without a person).
      pub log: bool,
  }
-@@ -388,6 +390,7 @@ impl Mouse {
+@@ -330,6 +332,7 @@ impl Mouse {
              position: None,
              input,
              next_poll: Instant::now(),
@@ -137,7 +137,7 @@ index 4704ac59..2a8dfc60 100644
              log: false,
          })
      }
-@@ -402,8 +405,14 @@ impl Mouse {
+@@ -344,8 +347,14 @@ impl Mouse {
      pub fn poll(&mut self) -> Duration {
          let now = Instant::now();
          if now >= self.next_poll {
@@ -153,8 +153,8 @@ index 4704ac59..2a8dfc60 100644
          }
          self.next_poll.saturating_duration_since(Instant::now())
      }
-@@ -467,5 +476,6 @@ impl Mouse {
-             println!("dwc2d: mouse: {what}");
+@@ -431,5 +440,6 @@ impl Mouse {
+             println!("dwc2d: {kind}: {what}");
          }
          let _ = self.input.write_event(event);
 +        self.active = Instant::now();
@@ -231,3 +231,6 @@ index 00000000..3e65f46a
 +        assert_eq!(IDLE.as_millis() / ACTIVE.as_millis(), 4);
 +    }
 +}
+-- 
+2.53.0
+
