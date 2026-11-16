@@ -338,14 +338,20 @@ def check_dns(sh, check, args):
         fqdn = says(out1, "Try again") and s1 <= DNS_DEAD_FQDN_S
         short = says(out2, "Try again") and s2 <= DNS_DEAD_SHORT_S
         out3, _ = lookup(sh, f"nosuch-{tag}.invalid")
-        back = says(out3, "Name does not resolve")
+        # the name server and domain read back as before (an empty write
+        # sets "no domain")
+        ns_now = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
+        dom_now = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/domain") if l.strip()]
+        restored = ns_now[:1] == [orig] and (dom_now[0] if dom_now else "") == orig_dom
+        back = says(out3, "Name does not resolve") and restored
         check("dns-silent", fqdn and short and back,
               f"silent name server {args.dead_dns}: fully qualified {s1:.1f} s "
               + ("Try again" if says(out1, "Try again") else "; ".join(out1[:2])[:60])
               + f" (limit {DNS_DEAD_FQDN_S} s), short name {s2:.1f} s "
               + ("Try again" if says(out2, "Try again") else "; ".join(out2[:2])[:60])
               + f" (limit {DNS_DEAD_SHORT_S} s); set back: "
-              + ("resolves again" if back else "; ".join(out3[:2])[:80]))
+              + ("resolves again" if says(out3, "Name does not resolve") else "; ".join(out3[:2])[:80])
+              + ("" if restored else f"; NOT restored: name server {ns_now[:1]}, domain {dom_now[:1]}"))
 
 
 SOPWITH_ENTRY = "/usr/share/ui/apps/70_sopwith"
