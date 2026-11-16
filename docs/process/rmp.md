@@ -206,9 +206,8 @@ new Feature issues linked to it.
   the product repository of each area.
 - `docs/requirements/trace-<release>.md`: the trace of each release,
   written when its candidate is tested; this is the release's baseline.
-- Until the move, the first set lives in files (draft PR #270). The move
-  creates or updates the issues with `scripts/req-issues.py` and then
-  deletes the area files.
+- The first set lived in files (PR #270) and moved to Feature issues on
+  2026-11-16; the area files are in the git history.
 
 ## Lifecycle
 
@@ -336,9 +335,8 @@ agent updates it when a candidate is tested and before the release.
 
 ## Open points
 
-1. **Approval of the first set:** the maintainer approves the v0.4.0 set
-   in draft PR #270; then `scripts/req-issues.py` creates or updates the
-   Feature issues and the area files go away.
+1. **Approval of the first set:** done (PR #270 merged 2026-11-11; Feature
+   issues created 2026-11-16).
 2. **Check script** for the trace checks (reads the Feature issues and the
    pi-tests reports): after the move.
 3. **Areas `PKG`, `SEC`, `DOC`** from RFC 0003: added to the area table
