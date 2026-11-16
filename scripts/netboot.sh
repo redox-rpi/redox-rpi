@@ -136,8 +136,10 @@ script="$tftp/$dir/netboot.cmd"
         # frames, FCS and length errors, RX and TX), the RBUF overflow and
         # error counters, and the registers of RX ring 16 (write pointer,
         # producer index with the discard count in bits 31:16, consumer
-        # index, ..., read pointer).
-        echo "if test -z \"\${redox_netdiag}\"; then setenv redox_netdiag 'md.l 0xfd580c00 0x60; md.l 0xfd580394 2; md.l 0xfd583000 0xc'; fi"
+        # index, ..., read pointer), EXT_RGMII_OOB_CTRL (bit 16: TXC delay
+        # off), and the PHY's RGMII delays: misc control (bit 8: RX skew)
+        # and clock alignment (bit 9: TX delay).
+        echo "if test -z \"\${redox_netdiag}\"; then setenv redox_netdiag 'md.l 0xfd580c00 0x60; md.l 0xfd580394 2; md.l 0xfd583000 0xc; md.l 0xfd58008c 1; mii write 1 0x18 0x7007; mii read 1 0x18; mii write 1 0x1c 0x0c00; mii read 1 0x1c'; fi"
     fi
     echo "if test -z \"\${redox_menu_delay}\"; then setenv redox_menu_delay $menu_delay; fi"
     cat "$ROOT/config/bootmenu.cmd"
