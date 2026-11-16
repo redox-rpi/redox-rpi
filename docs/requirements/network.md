@@ -138,13 +138,19 @@ Acceptance criteria:
 
 1. The name server and the local domain (for example `.lan`) come from
    DHCP; a fully qualified name and a short name of a LAN host resolve.
-2. A name outside the LAN resolves (for example the package server).
+2. A name outside the LAN resolves (for example the package server). On
+   the Pi this needs the lab's internet uplink, so a failure may be the
+   uplink, not Redox; the QEMU `dns` set (user network, DNS forwarded to
+   the host) covers it too.
 3. An unknown name fails with `EAI_NONAME` within 1 s (proposed; 0.22 s in
    row 414).
 4. If the name server does not answer, the lookup retries and then fails
-   within 10 s (proposed) instead of hanging.
+   instead of hanging: within 10 s for a fully qualified name and within
+   15 s for a short name (proposed; relibc waits 1 + 2 + 3 s per name, and
+   a short name is tried in the local domain first).
 
 New for v0.6.0 (Requirements agent, 2026-11-16): written from #290 and the
-v0.5.0 release notes. REQ-NET-6 is reserved by the parked RFC 0003 (SSH).
+v0.5.0 release notes; criteria 2 and 4 from the network owner
+(2026-11-16). REQ-NET-6 is reserved by the parked RFC 0003 (SSH).
 Impact: release checklist (DNS step), the QEMU `dns` check, row 414's
 step 10.

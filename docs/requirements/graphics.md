@@ -45,7 +45,7 @@ The desktop shall offer a terminal, a game and a file manager.
 | PBS | 2.5.4 |
 | Status | proposed |
 | Since | v0.4.0; changed for v0.6.0 (editor replaced by Sopwith in v0.5.0) |
-| Implemented by | #33, PR #255, PR #298 (Sopwith), #335 (sound in SDL games) |
+| Implemented by | #33, PR #255, PR #298 (Sopwith), #335 (sound in SDL games, closed in v0.5.0); experiments `orbital`, `orbital-apps`, `cosmic-apps-source`; open: PR #452 (Super+T opens orbterm), PR #456 (orbital from source) |
 | Verification | test, person: checklist v0.4.0 test 22, row 286 (rc2 visit): orbterm and Files pass, the editor cannot save (#33). v0.5.0: Sopwith in row 414 (started from the shell) and the rc1 person test (played, with sound) |
 
 Acceptance criteria:
