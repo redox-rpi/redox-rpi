@@ -27,6 +27,7 @@ the requirement block on top and the ID in the title (RMP, Storage).
 | REQ-STAB-7 | Power loss | must | Devices | to create | **none** | **gap** (needs the Shelly plug rules) |
 | REQ-STAB-8 | Reboot cycles | must | Towards 1.0 | to create | #217 | rows 264, 266 (dev builds); **gap** for 500 reboots, 50 cold starts |
 | REQ-FW-5 | Power off | should | Devices | #7 | #7 | **gap** |
+|  | → moved into REQ-FW-3 ([#484](https://github.com/redox-rpi/redox-rpi/issues/484)) for v0.6.0, when #418 went into the milestone (2026-11-16) | | | | | |
 | REQ-NET-6 | SSH server | must | Remote access | #45 | #45, #190, #184; experiment `sshd` | no row on a candidate |
 | REQ-SEC-1 | No default password on the network | must | Remote access | to create | **none** | **gap** |
 | REQ-SEC-2 | Only wanted services listen | must | Remote access | to create | **none** | **gap** (no port-scan row) |
