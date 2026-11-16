@@ -59,12 +59,15 @@ if [ -n "${server:-}" ]; then
     # over HTTP first: with the lwIP stack (CONFIG_NET_LWIP) TFTP of files
     # larger than one block often times out on the Pi 4 GENET, and lwIP's
     # TFTP ignores tftpwindowsize. HTTP runs over TCP, which retransmits.
-    # TFTP stays as the fallback, tried twice.
+    # TFTP stays as the fallback. DHCP and the load are tried a few times
+    # with a 2 s pause: right after a reboot the Pi 400 sometimes needs
+    # several seconds before DHCP binds or HTTP works (#394). redox_ub is
+    # our own flag, never empty, so the tests need no quotes in this string.
     ub_addr="\${scriptaddr}"
     ub_http="http://$server:${NETBOOT_HTTP_PORT:-8080}/$net_dir/netboot.scr"
     cat > "$OUT/net.config" <<EOF
 CONFIG_USE_BOOTCOMMAND=y
-CONFIG_BOOTCOMMAND="usb start; setenv autoload no; dhcp; setenv serverip $server; if wget $ub_addr $ub_http; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; elif tftpboot $ub_addr $net_dir/netboot.scr; then source $ub_addr; fi"
+CONFIG_BOOTCOMMAND="usb start; setenv autoload no; setenv redox_ub no; for try in 1 2 3; do if test \${redox_ub} = no; then if dhcp; then setenv redox_ub dhcp; else echo redox-rpi: DHCP failed, try \${try} of 3; sleep 2; fi; fi; done; setenv serverip $server; for try in 1 2 3 4; do if test \${redox_ub} != ok; then if wget $ub_addr $ub_http; then setenv redox_ub ok; elif tftpboot $ub_addr $net_dir/netboot.scr; then setenv redox_ub ok; else echo redox-rpi: netboot.scr load failed, try \${try} of 4; sleep 2; fi; fi; done; if test \${redox_ub} = ok; then source $ub_addr; fi"
 EOF
     fragments+=("$OUT/net.config")
 fi

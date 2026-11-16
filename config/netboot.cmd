@@ -18,9 +18,10 @@
 #                  the network controller's counters (set for the Pi 4 and
 #                  400 by scripts/netboot.sh)
 #
-# Each file is tried three times over HTTP, then three times over TFTP: on
-# the Pi 400 a load over GENET fails at random and the next try succeeds
-# (#394).
+# DHCP is tried three times. Each file is tried three times over HTTP, then
+# three times over TFTP, with a 2 s pause after each failure: on the Pi 400
+# the first loads after a reboot fail at random over GENET (slow DHCP, then
+# HTTP timeouts), and a try a few seconds later succeeds (#394).
 
 echo "redox-rpi: network boot from ${redox_server}"
 
@@ -30,7 +31,18 @@ echo "redox-rpi: network boot from ${redox_server}"
 if test -z "${ipaddr}"; then
     usb start
     setenv autoload no
-    dhcp || exit
+    setenv redox_dhcp no
+    for try in 1 2 3; do
+        if test "${redox_dhcp}" = no; then
+            if dhcp; then
+                setenv redox_dhcp yes
+            else
+                echo "redox-rpi: DHCP failed, try ${try} of 3"
+                sleep 2
+            fi
+        fi
+    done
+    if test "${redox_dhcp}" = no; then exit; fi
 fi
 # DHCP may set serverip from the router; ours wins.
 setenv serverip ${redox_server}
@@ -45,7 +57,7 @@ for try in 1 2 3; do
         else
             echo "redox-rpi: HTTP load of harddrive.img.gz failed, try ${try} of 3"
             if test -n "${redox_netdiag}"; then run redox_netdiag; fi
-            sleep 1
+            sleep 2
         fi
     fi
 done
@@ -57,7 +69,7 @@ for try in 1 2 3; do
         else
             echo "redox-rpi: TFTP load of harddrive.img.gz failed, try ${try} of 3"
             if test -n "${redox_netdiag}"; then run redox_netdiag; fi
-            sleep 1
+            sleep 2
         fi
     fi
 done
@@ -78,7 +90,7 @@ for try in 1 2 3; do
         else
             echo "redox-rpi: HTTP load of bootloader-live.efi failed, try ${try} of 3"
             if test -n "${redox_netdiag}"; then run redox_netdiag; fi
-            sleep 1
+            sleep 2
         fi
     fi
 done
@@ -90,7 +102,7 @@ for try in 1 2 3; do
         else
             echo "redox-rpi: TFTP load of bootloader-live.efi failed, try ${try} of 3"
             if test -n "${redox_netdiag}"; then run redox_netdiag; fi
-            sleep 1
+            sleep 2
         fi
     fi
 done
