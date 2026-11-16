@@ -49,8 +49,15 @@ if [ ! -d "$SRC" ]; then
 fi
 if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
-    git -C "$SRC" checkout -q "$UBOOT_TAG"
 fi
+# Our fixes (patches/u-boot/), applied to a clean checkout on every build:
+# local changes in $SRC are discarded.
+git -C "$SRC" checkout -q -f "$UBOOT_TAG"
+git -C "$SRC" reset -q --hard
+for p in "$ROOT"/patches/u-boot/*.patch; do
+    [ -e "$p" ] || continue
+    git -C "$SRC" apply "$p"
+done
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
 fragments=("$ROOT/config/u-boot.config")
