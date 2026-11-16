@@ -108,7 +108,7 @@ A new area is added by a change to this table.
 | Statement | One sentence, "The system shall …": what, not how. |
 | Rationale | Why, and the source (decision, issue, release). |
 | Kind | functional, quality or constraint |
-| Priority | `must` (a release fails without it), `should` (a failure is a known issue in the notes), `may` |
+| Priority | `must` (a release fails without it), `should` (a failure is a known issue in the notes), `may`; kept in the issue field Priority, not in the text (see Issue format) |
 | Level | release, beta, experiment, test image |
 | PBS | the PBS IDs of the parts that implement it (`2.3.4, 2.4.2`) |
 | Status | proposed, approved, retired (see below) |
@@ -146,6 +146,12 @@ code.
   `REQ-NET-1 DHCP on the onboard Ethernet`.
 - **Labels:** the `topic:<name>` of the area (the shared label list of RFC
   0002; no extra labels for priority or level).
+- **Priority:** the organisation's issue field **Priority**, never in the
+  body or the title (maintainer, 2026-11-16: "Die sollte generell nicht im
+  Text vorkommen"). `must` → High, `should` → Medium, `may` → Low;
+  Urgent is not used for requirements. In this plan, the trace and the
+  release checklist the words must/should/may stay; they mean these field
+  values.
 - **Milestone:** the release in which the requirement must first hold.
 - **Project fields:** Release, Type, Topic, Owner, as for every issue.
 - **Body**, in this order:
@@ -157,7 +163,6 @@ code.
 |---|---|
 | Status | proposed / approved / retired |
 | Kind | functional / quality / constraint |
-| Priority | must / should / may |
 | Level | release / beta / experiment / test image |
 | PBS | 2.3.4, 2.4.2 |
 | Source | maintainer decision 2026-11-08 / issue / release |
