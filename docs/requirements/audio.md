@@ -80,6 +80,8 @@ Acceptance criteria:
    and `poweroff`. It becomes one after a listening test at a visit (rows
    315, 333) and, if needed, a fix (PR #354); no log shows a click, so it
    always needs a person. Until then REQ-AUDIO-2 criterion 3 stays a note.
+   State: `reboot` "no click" in the v0.5.0-rc1 person test (to confirm
+   at the next visit that it was listened to); `poweroff` not checked.
 
 New for v0.6.0 (Requirements agent, 2026-11-16): written from the v0.5.0
 release notes and row 414; criteria 1 and 4 as the audio owner proposed
