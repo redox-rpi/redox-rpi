@@ -78,8 +78,11 @@ def subject(patch):
     return re.sub(r"\n ", " ", m.group(1)) if m else patch.name
 
 
-def try_patch(repo, patch, pin):
-    """Apply one patch to the checkout and commit it; return its result."""
+def try_patch(repo, patch, pin, upstream):
+    """Apply one patch to the checkout and commit it; return its result.
+
+    For a conflict, the upstream commits listed are those in pin..upstream
+    that touch its files: never our own patch commits of this series."""
     r = {"patch": str(patch.relative_to(ROOT / "patches")), "subject": subject(patch)}
     if git(repo, "apply", "--check", str(patch)).returncode == 0:
         git(repo, "apply", "--index", str(patch), check=True)
@@ -94,17 +97,17 @@ def try_patch(repo, patch, pin):
         files = files or sorted(set(PLUS.findall(patch.read_text(errors="replace"))))
         git(repo, "reset", "-q", "--hard")
         git(repo, "clean", "-qfd")
-        log = git(repo, "log", "--format=%h %cs %s", f"{pin}..HEAD", "--", *files).stdout
+        log = git(repo, "log", "--format=%h %cs %s", f"{pin}..{upstream}", "--", *files).stdout
         r.update(result="conflicts", files=files, commits=log.strip().splitlines()[:5])
         return r
     git(repo, "commit", "-q", "--no-verify", "-m", r["patch"], check=True)
     return r
 
 
-def series(repo, start, patches, pin):
+def series(repo, start, patches, pin, upstream):
     git(repo, "checkout", "-q", "-f", "--detach", start, check=True)
     git(repo, "clean", "-qfd")
-    return [try_patch(repo, p, pin) for p in patches]
+    return [try_patch(repo, p, pin, upstream) for p in patches]
 
 
 def component(name, work, pin, fetch, need):
@@ -122,9 +125,9 @@ def component(name, work, pin, fetch, need):
     defaults = sorted((ROOT / "patches" / name).glob("*.patch"))
     comp = {"pin": pin, "head": head,
             "behind": int(git(repo, "rev-list", "--count", f"{pin}..{head}").stdout or 0),
-            "pinned": series(repo, pin, defaults, pin)}
+            "pinned": series(repo, pin, defaults, pin, pin)}
     pinned_tip = git(repo, "rev-parse", "HEAD").stdout.strip()
-    comp["latest"] = series(repo, head, defaults, pin)
+    comp["latest"] = series(repo, head, defaults, pin, head)
     latest_tip = git(repo, "rev-parse", "HEAD").stdout.strip()
     comp["experiments"] = {}
     for d in sorted((ROOT / "patches/experiments").glob(f"*/{name}")):
@@ -134,8 +137,8 @@ def component(name, work, pin, fetch, need):
             files += sorted((ROOT / "patches/experiments" / dep / name).glob("*.patch"))
         files += sorted(d.glob("*.patch"))
         if files:
-            comp["experiments"][exp] = {"pinned": series(repo, pinned_tip, files, pin),
-                                        "latest": series(repo, latest_tip, files, pin)}
+            comp["experiments"][exp] = {"pinned": series(repo, pinned_tip, files, pin, pin),
+                                        "latest": series(repo, latest_tip, files, pin, head)}
     return comp
 
 

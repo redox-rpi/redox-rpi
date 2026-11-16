@@ -1,0 +1,94 @@
+From bf2c0061ca4c6dc12d1e859ef259b7614d307f63 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 15:23:28 +0000
+Subject: [PATCH] -undef: predefine only the standard macros
+
+As with gcc: no __TINYC__, no target or gcc-compatible macros, no
+tccdefs.h builtins; only __STDC__, __STDC_HOSTED__ and __STDC_VERSION__.
+For cproc on Redox, which uses tcc as its preprocessor and defines the
+target macros itself.
+---
+ libtcc.c |  5 +++++
+ tcc.c    |  1 +
+ tcc.h    |  1 +
+ tccpp.c  | 10 ++++++++++
+ 4 files changed, 17 insertions(+)
+
+diff --git a/libtcc.c b/libtcc.c
+index 44ea25fa..736220c5 100644
+--- a/libtcc.c
++++ b/libtcc.c
+@@ -1580,6 +1580,7 @@ enum {
+     TCC_OPTION_iwithprefix,
+     TCC_OPTION_include,
+     TCC_OPTION_nostdinc,
++    TCC_OPTION_undef,
+     TCC_OPTION_nostdlib,
+     TCC_OPTION_print_search_dirs,
+     TCC_OPTION_rdynamic,
+@@ -1667,6 +1668,7 @@ static const TCCOption tcc_options[] = {
+     { "isystem", TCC_OPTION_isystem, TCC_OPTION_HAS_ARG },
+     { "include", TCC_OPTION_include, TCC_OPTION_HAS_ARG },
+     { "nostdinc", TCC_OPTION_nostdinc, 0 },
++    { "undef", TCC_OPTION_undef, 0 },
+     { "nostdlib", TCC_OPTION_nostdlib, 0 },
+     { "print-search-dirs", TCC_OPTION_print_search_dirs, 0 },
+     { "w", TCC_OPTION_w, 0 },
+@@ -2021,6 +2023,9 @@ PUB_FUNC int tcc_parse_args(TCCState *s, int *pargc, char ***pargv)
+         case TCC_OPTION_nostdinc:
+             s->nostdinc = 1;
+             break;
++        case TCC_OPTION_undef:
++            s->undef = 1;
++            break;
+         case TCC_OPTION_nostdlib:
+             s->nostdlib = 1;
+             break;
+diff --git a/tcc.c b/tcc.c
+index c2274fb2..aff49476 100644
+--- a/tcc.c
++++ b/tcc.c
+@@ -51,6 +51,7 @@ static const char help[] =
+     "  -Usym        undefine 'sym'\n"
+     "  -E           preprocess only\n"
+     "  -nostdinc    do not use standard system include paths\n"
++    "  -undef       predefine only the standard __STDC__ macros\n"
+     "Linker options:\n"
+     "  -Ldir        add library path 'dir'\n"
+     "  -llib        link with dynamic or static library 'lib'\n"
+diff --git a/tcc.h b/tcc.h
+index 864a4e32..c287b15a 100644
+--- a/tcc.h
++++ b/tcc.h
+@@ -735,6 +735,7 @@ struct sym_attr {
+ struct TCCState {
+     unsigned char verbose; /* if true, display some information during compilation */
+     unsigned char nostdinc; /* if true, no standard headers are added */
++    unsigned char undef; /* -undef: only the standard predefined macros */
+     unsigned char nostdlib; /* if true, no standard libraries are added */
+     unsigned char nostdlib_paths; /* if true, the default paths are not searched for libraries */
+     unsigned char nocommon; /* if true, do not use common symbols for .bss data */
+diff --git a/tccpp.c b/tccpp.c
+index b841a2a2..b307c33b 100644
+--- a/tccpp.c
++++ b/tccpp.c
+@@ -3586,6 +3586,16 @@ static void putdefs(CString *cs, const char *p)
+ 
+ static void tcc_predefs(TCCState *s1, CString *cs, int is_asm)
+ {
++    /* -undef (as with gcc): only the macros the C standard requires, for
++       another compiler that uses tcc as its preprocessor (cproc) */
++    if (s1->undef) {
++        if (!is_asm) {
++            putdef(cs, "__STDC__");
++            cstr_printf(cs, "#define __STDC_HOSTED__ %d\n", s1->nostdlib ? 0 : 1);
++            cstr_printf(cs, "#define __STDC_VERSION__ %dL\n", s1->cversion);
++        }
++        return;
++    }
+     cstr_printf(cs, "#define __TINYC__ 9%.2s\n", &TCC_VERSION[4]);
+     putdefs(cs, target_machine_defs);
+     putdefs(cs, target_os_defs);
+-- 
+2.53.0
+

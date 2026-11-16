@@ -8,6 +8,10 @@
 //!                     tone -s 3 > /scheme/audio
 //! tone sweep [-s seconds] [-a amplitude] [-o file]
 //!                     100 Hz to 10 kHz, logarithmic
+//! tone chime [-a amplitude] [-o file]
+//!                     the startup sound: C, E, G and C an octave up, one
+//!                     after the other, each with a soft attack and a long
+//!                     fade, from left to right; about 1.8 s
 //! tone check          the audiohw contract: a short write fails with
 //!                     EINVAL, a full ring answers EWOULDBLOCK
 //! ```
@@ -22,13 +26,24 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::FromRawFd;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: tone [sweep] [-f hz] [-s seconds] [-a amplitude] [-c both|left|right] [-o file] | check";
+const USAGE: &str = "usage: tone [sweep|chime] [-f hz] [-s seconds] [-a amplitude] [-c both|left|right] [-o file] | check";
 const RATE: f64 = 44_100.0;
 const CHUNK: usize = 2048;
 const O_NONBLOCK: i32 = 0x0004_0000;
 
+/// The chime's notes: start in seconds, frequency in Hz, place from left
+/// (0) to right (1).
+const CHIME: [(f64, f64, f64); 4] = [
+    (0.00, 523.25, 0.30),
+    (0.14, 659.26, 0.45),
+    (0.28, 783.99, 0.60),
+    (0.42, 1046.50, 0.70),
+];
+const CHIME_SECONDS: f64 = 1.8;
+
 struct Options {
     sweep: bool,
+    chime: bool,
     hz: f64,
     seconds: f64,
     amplitude: f64,
@@ -40,6 +55,7 @@ struct Options {
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
         sweep: false,
+        chime: false,
         hz: 1000.0,
         seconds: 2.0,
         amplitude: 0.25,
@@ -53,6 +69,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         let number = |text: &String| text.parse::<f64>().map_err(|_| format!("{arg}: not a number: {text}"));
         match arg.as_str() {
             "sweep" => o.sweep = true,
+            "chime" => o.chime = true,
             "-f" => o.hz = number(value()?)?,
             "-s" => o.seconds = number(value()?)?,
             "-a" => o.amplitude = number(value()?)?,
@@ -69,7 +86,31 @@ fn parse(args: &[String]) -> Result<Options, String> {
     if !(o.hz > 0.0 && o.hz < RATE / 2.0) || !(o.seconds > 0.0) || !(0.0..=1.0).contains(&o.amplitude) {
         return Err("need 0 < hz < 22050, seconds > 0, 0 <= amplitude <= 1".to_string());
     }
+    if o.chime {
+        o.seconds = CHIME_SECONDS;
+    }
     Ok(o)
+}
+
+/// The chime at `t` seconds, left and right, at most about 1. Each note is a
+/// sine with a little of its octave, rising over 10 ms and fading with a
+/// time constant of 0.5 s; the whole sound fades out over its last 0.3 s.
+fn chime(t: f64) -> (f64, f64) {
+    let (mut left, mut right) = (0.0, 0.0);
+    for (start, hz, place) in CHIME {
+        let t = t - start;
+        if t < 0.0 {
+            continue;
+        }
+        let envelope = (t / 0.01).min(1.0) * (-t / 0.5).exp();
+        let w = 2.0 * std::f64::consts::PI * hz * t;
+        let note = envelope * (w.sin() + 0.2 * (2.0 * w).sin());
+        left += note * (1.0 - place);
+        right += note * place;
+    }
+    let fade = ((CHIME_SECONDS - t) / 0.3).clamp(0.0, 1.0);
+    // Up to four notes overlap; keep the sum below full scale.
+    (left * fade / 2.0, right * fade / 2.0)
 }
 
 fn generate(o: &Options, out: &mut dyn Write) -> io::Result<()> {
@@ -79,6 +120,17 @@ fn generate(o: &Options, out: &mut dyn Write) -> io::Result<()> {
     let mut buf = Vec::with_capacity(CHUNK);
     for n in 0..frames {
         let t = n as f64 / RATE;
+        if o.chime {
+            let (left, right) = chime(t);
+            for value in [left, right] {
+                buf.extend_from_slice(&((peak * value) as i16).to_le_bytes());
+            }
+            if buf.len() >= CHUNK {
+                out.write_all(&buf)?;
+                buf.clear();
+            }
+            continue;
+        }
         let hz = if o.sweep { 100.0 * 100f64.powf(t / o.seconds) } else { o.hz };
         phase = (phase + hz / RATE).fract();
         let fade = (t / 0.01).min((o.seconds - t) / 0.01).clamp(0.0, 1.0);

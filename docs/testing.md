@@ -107,6 +107,48 @@ hardware, the serial console, the stable image and the nightly run).
 [process/test-standards.md](process/test-standards.md) says what a row and a
 report contain.
 
+### Regression set before a Pi row
+
+[`scripts/regression-set.py`](../scripts/regression-set.py) runs the checks
+of regressions we already had, each named after the issue it guards
+([#265](https://github.com/redox-rpi/redox-rpi/issues/265)). A PR that
+changes `patches/`, `config/` or recipes runs it in QEMU on the build host
+before its Pi row is queued; the row names the result. On the build host, in
+your own clone, after `build-image.sh`:
+
+```bash
+scripts/regression-qemu.sh
+```
+
+It boots the last network-boot build in QEMU (`--usb-net --data`), runs the
+set against it and writes `build/regression/<time>/report.md` next to the
+console log; `--image <file>` boots another image. Exit 1 means a check
+failed: fix it before the row. The checks:
+
+| Check | Guards | Pass |
+|---|---|---|
+| basics | – | `pi-test.py` standard checks, 50 starts |
+| signals-stop | #345 | inputd and logd survive SIGSTOP/SIGCONT with the same PIDs; `/scheme/log` still reaches the console |
+| waitpid | #386 | `waitpid` while only default-action signals arrive returns the child, never EINTR (needs the experiment tcc) |
+| sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
+| scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
+| tcc | REQ-TCC-1 crit. 5, #247 | `/usr/share/tcc-tests/run.ion` reaches `TCC-TEST done`; hello dynamic, `tcc -run`, the `hallo.c` shebang script (exit status 42), bench, self-hosting give their output; `-static` and bench-gcc not judged (experiment tcc) |
+| dns | #358, #374 | name server from DHCP; unknown name: "Name does not resolve" within 5 s; dead name server: "Try again" within 15 s; works again after it is set back |
+| launcher-sopwith | #335, REQ-GFX-2 | launcher entry `70_sopwith` names `/usr/bin/sopwith` and its icon; both exist (experiment orbital-apps) |
+| tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
+| sopwith | #335, #33, REQ-GFX-2 | only with `--desktop`, last: starts the desktop and Sopwith; an Orbital window, SDL's Redox audio driver, still running after 15 s, `loud_chunks` higher than before it started; then SIGTERM (SIGKILL if needed; reported only until #460, #405). Orbital keeps running, so the caller reboots afterwards |
+| serial | #92, #151, base 0030 | no panic, `RELIBC PANIC`, `UNHANDLED EXCEPTION` or `main loop stuck` in the console log; no pcid or rtcd |
+
+A check whose experiment is not in the image is skipped, not failed.
+`sopwith` leaves Orbital running until the next reboot, so it runs only with
+`--desktop` (`scripts/regression-qemu.sh --desktop`), after all other devsh
+checks; on the Pi, reboot after it. Keys and audible sound stay a person step
+in the rc test. On the Pi the same script runs against devshd (`scripts/regression-set.py <pi>
+--serial-log ~/redox-rpi/logs/serial.log --dead-dns <unused address>`).
+QEMU does not see hardware: the audio rate, real USB and the 3B+ external
+abort stay with `pi-test.py --extended` and the Pi rows. A new regression
+gets a check here at the cheapest level that sees it.
+
 ### Building on the build host
 
 `scripts/build-image.sh` waits for any other build in the same clone to
