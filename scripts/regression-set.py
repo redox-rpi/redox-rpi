@@ -5,8 +5,8 @@ Usage:
     scripts/regression-set.py <host> [--port 2323] [--serial-log <file>]
                               [--manifest <file>] [--starts 50]
                               [--tcp-host <ip>] [--tcp-mib 4]
-                              [--dead-dns <ip>] [--report <file>]
-                              [--only <check>]...
+                              [--dead-dns <ip>] [--desktop]
+                              [--report <file>] [--only <check>]...
 
 Runs, through devshd, checks for regressions we already had, each named
 after the issue it guards. A PR runs it in QEMU before its Pi row
@@ -32,9 +32,27 @@ Checks, in this order:
                 --dead-dns as name server a lookup gives "Try again" within
                 15 s; after the name server is set back, the unknown name
                 gives "Name does not resolve" again
+  launcher-sopwith
+                #335, REQ-GFX-2: the launcher entry
+                /usr/share/ui/apps/70_sopwith names /usr/bin/sopwith and
+                an icon, and both files exist (skip without the experiment
+                orbital-apps)
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
+  sopwith       #335, #33, REQ-GFX-2, only with --desktop or --only
+                sopwith, last and in a new devsh session: starts the
+                desktop (desktop --yes) and Sopwith in it, as the launcher
+                would; its log shows an Orbital window and SDL's Redox
+                audio driver, it still runs after 15 s, and
+                /scheme/audiohw/stats loud_chunks is higher than before
+                Sopwith started (its title tune reached the driver). It is
+                then ended with SIGTERM, or SIGKILL if that does not end it
+                within 2 s; which one is only reported until #460 is on
+                main (#405). Orbital keeps running afterwards, so the
+                caller reboots before anything else (regression-qemu.sh
+                ends QEMU; a Pi row reboots). Keys and audible sound stay a
+                person step (rc test)
   serial        with --serial-log: no kernel panic, "panicked at",
                 "RELIBC PANIC", "UNHANDLED EXCEPTION" or "main loop stuck"
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
@@ -185,6 +203,79 @@ def check_dns(sh, check, args):
     check("dns", ok, detail)
 
 
+SOPWITH_ENTRY = "/usr/share/ui/apps/70_sopwith"
+SOPWITH_SCRIPT = "/tmp/regr-sopwith.ion"
+SOPWITH_LOG = "/tmp/regr-sopwith.log"
+
+
+def check_launcher_sopwith(sh, check, args):
+    if not has(sh, SOPWITH_ENTRY):
+        check("launcher-sopwith", None, f"no {SOPWITH_ENTRY} (experiment orbital-apps)")
+        return
+    entry = dict(l.split("=", 1) for l in sh.run(f"cat {SOPWITH_ENTRY}") if "=" in l)
+    binary, icon = entry.get("binary", ""), entry.get("icon", "")
+    missing = [f for f in (binary, icon) if not f or not has(sh, f)]
+    ok = binary.endswith("/sopwith") and icon and not missing
+    detail = (f"name={entry.get('name', '?')}, binary={binary or '?'}, icon={icon or '?'}"
+              + (f"; missing: {', '.join(m or '(empty)' for m in missing)}" if missing else "; both exist"))
+    check("launcher-sopwith", ok, detail)
+
+
+def loud_chunks(sh):
+    for l in sh.run("cat /scheme/audiohw/stats"):
+        m = re.match(r"loud_chunks\s+(\d+)$", l)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def check_sopwith(sh, check, args):
+    if not has(sh, "/usr/bin/sopwith") or not has(sh, "/usr/bin/desktop"):
+        check("sopwith", None, "no /usr/bin/sopwith or /usr/bin/desktop (experiments orbital-apps, desktop)")
+        return
+    notes = []
+    if "orbital" not in context_pids(sh, ["orbital"]):
+        out = sh.run("desktop --yes > /tmp/regr-desktop.out; cat /tmp/regr-desktop.out", 90)
+        if "orbital" not in context_pids(sh, ["orbital"]):
+            check("sopwith", False, "Orbital did not start: " + "; ".join(out[-2:])[:150])
+            return
+        notes.append("desktop started")
+    else:
+        notes.append("Orbital already ran")
+    before = loud_chunks(sh)
+    # Through a script: "cmd &!" followed by "; echo" (how Shell.run wraps a
+    # command) is not valid Ion. &! disowns it, so it outlives the script.
+    sh.run(f"echo 'sopwith &> {SOPWITH_LOG} &!' > {SOPWITH_SCRIPT}; ion {SOPWITH_SCRIPT}")
+    t0 = time.time()
+    pid = None
+    while time.time() - t0 < 15:
+        time.sleep(3)
+        pid = context_pids(sh, ["sopwith"]).get("sopwith")
+        if not pid:
+            break
+    log = sh.run(f"cat {SOPWITH_LOG}")
+    after = loud_chunks(sh)
+    window = any("Initializing orbital window" in l for l in log)
+    driver = any("SDL redox audio driver" in l for l in log)
+    sound = before is not None and after is not None and after > before
+    notes += [f"window {'yes' if window else 'no'}", f"Redox audio driver {'yes' if driver else 'no'}",
+              f"running after 15 s: {'yes, PID ' + pid if pid else 'no'}",
+              f"loud_chunks {before} -> {after}"]
+    if pid:
+        # kill, wait and the process list in one line: ion's notice that a
+        # job ended would otherwise come in the next command's output.
+        alive = any(re.search(rf"^\s*{pid}\b.*sopwith", l)
+                    for l in sh.run(f"kill {pid}; sleep 2; ps"))
+        if alive:
+            sh.run(f"kill -KILL {pid}; sleep 1; ps")
+            notes.append("SIGTERM did not end it within 2 s, SIGKILL did (#405, info until #460)")
+        else:
+            notes.append("ended by SIGTERM")
+    elif log:
+        notes.append("log: " + " / ".join(log[-3:])[:150])
+    check("sopwith", bool(window and driver and pid and sound), "; ".join(notes))
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -204,6 +295,8 @@ def main():
     ap.add_argument("--tcp-host", help="this host as the guest sees it (default: the address devsh came from)")
     ap.add_argument("--tcp-mib", type=int, default=4)
     ap.add_argument("--dead-dns", help="an address where no name server answers (QEMU: 10.0.2.99)")
+    ap.add_argument("--desktop", action="store_true",
+                    help="also run sopwith: starts the desktop, which then runs until the next reboot")
     ap.add_argument("--report")
     ap.add_argument("--only", action="append", help="run only these checks")
     args = ap.parse_args()
@@ -216,6 +309,8 @@ def main():
         print(f"{word} {name}: {detail}", flush=True)
 
     def want(name):
+        if name == "sopwith":  # opt-in: it leaves Orbital running
+            return args.desktop or bool(args.only and name in args.only)
         return not args.only or name in args.only
 
     t0 = time.time()
@@ -235,6 +330,7 @@ def main():
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
             ("dns", lambda: check_dns(sh, check, args)),
+            ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
             ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),
@@ -247,6 +343,16 @@ def main():
                     check(name, False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
     finally:
         sh.close()
+    # Last, in its own session (nothing follows tcp in one): it leaves
+    # Orbital running, so the caller reboots afterwards.
+    if want("sopwith"):
+        sh = pi_test.Shell(args.host, args.port)
+        try:
+            check_sopwith(sh, check, args)
+        except Exception as e:
+            check("sopwith", False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
+        finally:
+            sh.close()
     if args.serial_log and want("serial"):
         check_serial(check, args)
 

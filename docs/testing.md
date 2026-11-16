@@ -133,11 +133,16 @@ failed: fix it before the row. The checks:
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
 | dns | #358, #374 | name server from DHCP; unknown name: "Name does not resolve" within 5 s; dead name server: "Try again" within 15 s; works again after it is set back |
+| launcher-sopwith | #335, REQ-GFX-2 | launcher entry `70_sopwith` names `/usr/bin/sopwith` and its icon; both exist (experiment orbital-apps) |
 | tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
+| sopwith | #335, #33, REQ-GFX-2 | only with `--desktop`, last: starts the desktop and Sopwith; an Orbital window, SDL's Redox audio driver, still running after 15 s, `loud_chunks` higher than before it started; then SIGTERM (SIGKILL if needed; reported only until #460, #405). Orbital keeps running, so the caller reboots afterwards |
 | serial | #92, #151, base 0030 | no panic, `RELIBC PANIC`, `UNHANDLED EXCEPTION` or `main loop stuck` in the console log; no pcid or rtcd |
 
-A check whose experiment is not in the image is skipped, not failed. On the
-Pi the same script runs against devshd (`scripts/regression-set.py <pi>
+A check whose experiment is not in the image is skipped, not failed.
+`sopwith` leaves Orbital running until the next reboot, so it runs only with
+`--desktop` (`scripts/regression-qemu.sh --desktop`), after all other devsh
+checks; on the Pi, reboot after it. Keys and audible sound stay a person step
+in the rc test. On the Pi the same script runs against devshd (`scripts/regression-set.py <pi>
 --serial-log ~/redox-rpi/logs/serial.log --dead-dns <unused address>`).
 QEMU does not see hardware: the audio rate, real USB and the 3B+ external
 abort stay with `pi-test.py --extended` and the Pi rows. A new regression
