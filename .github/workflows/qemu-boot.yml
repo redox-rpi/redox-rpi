@@ -47,6 +47,17 @@ jobs:
       - name: Check patches on the pinned commits
         run: scripts/check-patches.sh
 
+      # The QEMU boot test builds only the kernel: this catches a recipe list
+      # that a full image build would stop at (#394: patches/u-boot taken for
+      # a Redox recipe). Seconds, no cooking.
+      - name: Recipe list of build-image.sh (default and each experiment)
+        run: |
+          scripts/build-image.sh --recipes-only
+          for exp in patches/experiments/*/; do
+            scripts/build-image.sh --recipes-only --no-test-experiments \
+              --experiment "$(basename "$exp")" > /dev/null
+          done
+
       - name: Build kernel (pinned commit)
         run: scripts/build-kernel.sh
 

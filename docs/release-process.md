@@ -103,6 +103,25 @@ fallback, the week has no release.
 - The build ID (`git describe` plus the experiment hash) is shown next to
   the candidate's name, so `v0.3.0-rc2` can be traced to an exact build.
 
+### The release card: a direct card
+
+From v0.6.0 the SD card of a candidate and a release starts straight from
+the Pi firmware, without U-Boot ([#324](https://github.com/redox-rpi/redox-rpi/issues/324),
+maintainer decision 2026-11-10; Pi 3B+ row 205, Zero 2 W row 415 with
+#421). One card serves both boards.
+
+- It is made from the network-boot variant above, which has no `devshd`:
+  `scripts/make-sdcard.sh --direct upstream/redox/build/aarch64/release-netboot/harddrive.img`.
+  Partition 1 (FAT) holds the firmware, `kernel8.img` (`tools/rpi-boot-stub`
+  with the kernel) and the `initramfs` (initfs plus the image's RedoxFS
+  partition); partition 2 is the data partition. The whole system runs from
+  RAM, as with network boot, so the filesystem is at most 256 MiB.
+- The card's banner and release files say `direct` (`scripts/fw-direct-boot.sh`);
+  the build ID is the release-netboot build's.
+- The `--sdcard` build and the U-Boot card (`make-sdcard.sh --local`) stay
+  as the fallback: if the direct card fails its Pi test and no fix comes
+  in time, the maintainer can release the U-Boot card as in v0.5.0.
+
 ## Results
 
 Each candidate goes to `/srv/tftp/sdcard/` on the build server, never to
@@ -110,7 +129,7 @@ anyone's own computer:
 
 | File | Content |
 |---|---|
-| `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local`, published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
+| `redox-rpi-v<version>-rc<N>.img.xz` | the image, the direct card from `scripts/make-sdcard.sh --direct` ([above](#the-release-card-a-direct-card)), published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
 | `redox-rpi-v<version>-rc<N>.img.xz.sha256`, `.manifest.toml` | its checksum and manifest, written by `publish-sdcard.sh` |
 | `index.json` | the list SwiftFlash reads, rewritten by `publish-sdcard.sh` (`scripts/sdcard-index.py`); there is no `SHA256SUMS` in `/srv/tftp/sdcard/`, each image has its own `.sha256` |
 
@@ -125,20 +144,27 @@ the Pi.
 
 The build agent runs these on every candidate's published SD image and
 writes the results into the release checklist next to the checksum. They
-come from the requirements REQ-REL-1 and REQ-REL-5 (`docs/requirements/release.md`,
+come from the requirements REQ-REL-1 and REQ-REL-5 ([#496](https://github.com/redox-rpi/redox-rpi/issues/496), [#500](https://github.com/redox-rpi/redox-rpi/issues/500),
 draft [PR #270](https://github.com/redox-rpi/redox-rpi/pull/270); method
 agreed with V&V on 2026-11-08).
 
 - **REQ-REL-1, no remote shell.** The automated Pi rows run the netboot
   image, which has `devshd`, so only these checks look at the SD image
   itself:
-  1. Inspection by the build agent: `redoxfs-file` reads only GPT images,
-     so check that the card's partition 2 is a byte copy of partition 3
-     of the build's `harddrive.img` (whose hash the manifest lists), then
-     `redoxfs-file harddrive.img get /usr/bin/devshd <file>` must fail with
-     "No such file or directory", and the string `devshd` must not occur
-     anywhere in the card's partition 2, so no init service file names
-     it. A control file such as `/usr/bin/ion` must be found.
+  1. Inspection by the build agent. On the direct card the system is the
+     `initramfs` in partition 1: the initfs, then the RedoxFS partition of
+     `build/fw-direct/harddrive.img`. That is the copy of the
+     release-netboot `harddrive.img` (whose hash the card's manifest
+     lists) in which `fw-direct-boot.sh` changed only `/etc/issue`,
+     `/etc/redox-rpi-release` and `/etc/redox-rpi-manifest` to `direct`.
+     `redoxfs-file` reads only GPT images, so check that the `initramfs`
+     ends with a byte copy of that copy's RedoxFS partition (partition 3),
+     then `redoxfs-file <copy> get /usr/bin/devshd <file>` must fail
+     with "No such file or directory", and the string `devshd` must not
+     occur anywhere in the card's partition 1, so no init service file
+     names it. A control file such as `/usr/bin/ion` must be found. (On a
+     U-Boot card, the fallback, the root filesystem is partition 2 of the
+     card and partition 3 of the `--sdcard` build's `harddrive.img`.)
   2. In the visit, on the booted SD image: `nc -z -w 3 <pi> 2323` from the
      build host fails, and `ps` on the console shows no `devshd`.
 - **Green CI on the commit ([#257](https://github.com/redox-rpi/redox-rpi/issues/257)).**
@@ -168,19 +194,21 @@ agreed with V&V on 2026-11-08).
   (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
 
 ```bash
-# on the build server, in ~/redox-rpi-rel after the candidate build
+# on the build server, in ~/redox-rpi-rel after the candidate build (direct card)
 img=/srv/tftp/sdcard/redox-rpi-v<version>-rc<N>.img.xz
-hd=upstream/redox/build/aarch64/sdcard/harddrive.img
+hd=build/fw-direct/harddrive.img       # make-sdcard.sh --direct leaves it there
 tool=tools/redoxfs-file/target/release/redoxfs-file
 d=$(mktemp -d); xz -dc "$img" > $d/card.img
 stat -c %s $d/card.img                                  # REQ-REL-5: <= 1800000000
-read cs cn < <(partx -g -o START,SECTORS -n 2 $d/card.img)
+read cs cn < <(partx -g -o START,SECTORS -n 1 $d/card.img)
+dd if=$d/card.img bs=512 skip=$cs count=$cn status=none > $d/p1
+mcopy -i $d/p1 ::initramfs $d/initramfs
 read hs hn < <(partx -g -o START,SECTORS -n 3 $hd)
-cmp <(dd if=$d/card.img bs=512 skip=$cs count=$hn status=none) \
+cmp <(tail -c $((hn * 512)) $d/initramfs) \
     <(dd if=$hd bs=512 skip=$hs count=$hn status=none)  # same root filesystem
 $tool $hd get /usr/bin/devshd $d/x                      # REQ-REL-1: must fail
 $tool $hd get /usr/bin/ion $d/ion                       # control: must work
-dd if=$d/card.img bs=512 skip=$cs count=$cn status=none | grep -c -a devshd   # must print 0
+grep -c -a devshd $d/p1                                 # must print 0
 rm -rf $d
 ```
 
