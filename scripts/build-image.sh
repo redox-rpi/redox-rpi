@@ -324,9 +324,10 @@ EOF
 # keep their old order (it decides the order in the manifest). pkgutils
 # and netutils only when an experiment patches them (pkg-hold,
 # ifconfig-mac); otherwise the image takes the upstream binary.
+# patches/u-boot/ is for scripts/build-uboot.sh, not a Redox recipe (#394).
 recipes=(bootloader base relibc)
 while read -r name; do
-    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    case " ${recipes[*]} redox kernel fdt experiments recipes u-boot " in *" $name "*) continue ;; esac
     case "$name" in pkgutils|netutils) [ -z "$(patch_files "$name")" ] && continue ;; esac
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
