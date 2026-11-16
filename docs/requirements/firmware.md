@@ -1,8 +1,14 @@
 # Firmware interface and CPU clock (`FW`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [firmware](../topics/firmware.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-FW-1 Full CPU speed without throttling
+
+Feature issue: [#482](https://github.com/redox-rpi/redox-rpi/issues/482)
 
 The system shall run the ARM cores up to their maximum clock (1400 MHz on
 the Pi 3B+) and log undervoltage or overheating.
@@ -26,6 +32,8 @@ Acceptance criteria:
 2. With a good power supply, no throttling or undervoltage line in the log.
 
 ### REQ-FW-2 CPU clock follows the load
+
+Feature issue: [#483](https://github.com/redox-rpi/redox-rpi/issues/483)
 
 By default the CPU clock shall follow the load; `/etc/rpi-firmware/governor`
 shall set another mode at boot.
@@ -52,6 +60,8 @@ Acceptance criteria:
 
 ### REQ-FW-3 Reboot
 
+Feature issue: [#484](https://github.com/redox-rpi/redox-rpi/issues/484)
+
 `reboot` as root shall restart the Pi.
 
 | Field | Value |
@@ -76,6 +86,8 @@ Power off is not part of this requirement; the parked v1.0 criterion
 REQ-FW-5 ([RFC 0003](../rfcs/0003-v1-criteria.md)) covers it.
 
 ### REQ-FW-4 Firmware information
+
+Feature issue: [#485](https://github.com/redox-rpi/redox-rpi/issues/485)
 
 The system shall show the board model, memory, clocks, temperature and
 throttling state from the VideoCore firmware under `/scheme/rpi-firmware`.

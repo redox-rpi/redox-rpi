@@ -1,8 +1,14 @@
 # Time (`TIME`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [time](../topics/time.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-TIME-1 Clock from NTP
+
+Feature issue: [#508](https://github.com/redox-rpi/redox-rpi/issues/508)
 
 The system shall set its clock from NTP at boot when the network is up.
 
@@ -25,6 +31,8 @@ Acceptance criteria:
 2. The same with the network cable plugged in only after boot.
 
 ### REQ-TIME-2 Clock without network
+
+Feature issue: [#509](https://github.com/redox-rpi/redox-rpi/issues/509)
 
 Without a network, the system shall start from the last saved time, never
 from a time before the build.
@@ -49,6 +57,8 @@ Acceptance criteria:
    earlier than the time saved before the reboot (`/scheme/data/timesync.last`).
 
 ### REQ-TIME-3 Set the clock by hand
+
+Feature issue: [#51](https://github.com/redox-rpi/redox-rpi/issues/51)
 
 The system shall let root set the clock (`clock_settime`, `settimeofday`,
 `timesync -s`).

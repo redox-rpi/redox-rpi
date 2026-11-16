@@ -1,9 +1,15 @@
 # Release image (`REL`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topics: [ci](../topics/ci.md), [release-process.md](../release-process.md).
 Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-REL-1 No remote shell in the release image
+
+Feature issue: [#496](https://github.com/redox-rpi/redox-rpi/issues/496)
 
 The release and candidate SD card images shall not contain `devshd` or any
 other unencrypted remote login.
@@ -30,6 +36,8 @@ Acceptance criteria:
 
 ### REQ-REL-2 The image names its release and build
 
+Feature issue: [#497](https://github.com/redox-rpi/redox-rpi/issues/497)
+
 The release image shall show its release name and build ID above the login
 prompt and keep them in `/etc/redox-rpi-release` and `/.uuid`.
 
@@ -52,6 +60,8 @@ Acceptance criteria:
 3. `/.uuid` has id `redox-rpi`, the version and the commit.
 
 ### REQ-REL-3 Reproducible release build
+
+Feature issue: [#498](https://github.com/redox-rpi/redox-rpi/issues/498)
 
 A release or candidate shall be built from a clean commit, without
 `--allow-dirty`, and match its manifest.
@@ -77,6 +87,8 @@ Acceptance criteria:
 
 ### REQ-REL-4 Published and checkable download
 
+Feature issue: [#499](https://github.com/redox-rpi/redox-rpi/issues/499)
+
 Each candidate and release shall be downloadable from the image server with
 a checksum and a manifest.
 
@@ -99,6 +111,8 @@ Acceptance criteria:
 2. A download passes `sha256sum -c` and `xz -t`.
 
 ### REQ-REL-5 Fits a 2 GB card
+
+Feature issue: [#500](https://github.com/redox-rpi/redox-rpi/issues/500)
 
 The release image shall fit a 2 GB microSD card.
 

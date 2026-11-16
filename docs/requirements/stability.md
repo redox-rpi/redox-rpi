@@ -1,9 +1,15 @@
 # Stability (`STAB`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topics: [stability](../topics/stability.md), [relibc](../topics/relibc.md).
 Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-STAB-1 Programs start every time
+
+Feature issue: [#504](https://github.com/redox-rpi/redox-rpi/issues/504)
 
 Dynamically linked programs shall start every time.
 
@@ -26,6 +32,8 @@ Acceptance criteria:
 
 ### REQ-STAB-2 Pipes keep all data
 
+Feature issue: [#505](https://github.com/redox-rpi/redox-rpi/issues/505)
+
 A write into a pipe shall deliver all its bytes.
 
 | Field | Value |
@@ -46,6 +54,8 @@ Acceptance criteria:
    of 16 MiB.
 
 ### REQ-STAB-3 C library regressions
+
+Feature issue: [#506](https://github.com/redox-rpi/redox-rpi/issues/506)
 
 The C library (relibc) shall pass its test suite on the Pi's target, with
 no failure beyond the known list.

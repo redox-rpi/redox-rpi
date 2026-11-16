@@ -16,7 +16,68 @@ Requirements agent runs `scripts/req-issues.py`, which creates or updates
 one issue per `### REQ-…` entry. Then the area files are deleted, and this
 page keeps the list of areas, the search links and the per-release traces.
 
-## Move to Feature issues
+## Feature issues
+
+Since 2026-11-16 every requirement is a Feature issue, and the issue is the
+record ([RMP, Storage](../process/rmp.md#storage)). Search:
+[all requirements](https://github.com/search?q=org%3Aredox-rpi+is%3Aissue+type%3AFeature+%22REQ-%22+in%3Atitle&type=issues).
+Created from these files with `scripts/req-issues.py` against
+[trace-v0.5.0.md](trace-v0.5.0.md): requirements verified in full on
+v0.5.0 are closed as completed with milestone v0.5.0; the four new or
+changed for v0.6.0 (REQ-AUDIO-3, REQ-NET-7, REQ-GFX-2, REQ-TCC-1) are
+open with Status proposed and no milestone. Firmware requirements
+(`REQ-VPU-…`) live in
+[rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware/issues?q=REQ-VPU+in%3Atitle).
+
+| Requirement | Issue |
+|---|---|
+| REQ-AUDIO-1 | [#250](https://github.com/redox-rpi/redox-rpi/issues/250) |
+| REQ-AUDIO-2 | [#472](https://github.com/redox-rpi/redox-rpi/issues/472) |
+| REQ-AUDIO-3 | [#473](https://github.com/redox-rpi/redox-rpi/issues/473) |
+| REQ-BOARD-1 | [#474](https://github.com/redox-rpi/redox-rpi/issues/474) |
+| REQ-BOOT-1 | [#475](https://github.com/redox-rpi/redox-rpi/issues/475) |
+| REQ-BOOT-2 | [#476](https://github.com/redox-rpi/redox-rpi/issues/476) |
+| REQ-BOOT-3 | [#477](https://github.com/redox-rpi/redox-rpi/issues/477) |
+| REQ-BOOT-4 | [#478](https://github.com/redox-rpi/redox-rpi/issues/478) |
+| REQ-BOOT-5 | [#479](https://github.com/redox-rpi/redox-rpi/issues/479) |
+| REQ-CON-1 | [#480](https://github.com/redox-rpi/redox-rpi/issues/480) |
+| REQ-CON-2 | [#481](https://github.com/redox-rpi/redox-rpi/issues/481) |
+| REQ-FW-1 | [#482](https://github.com/redox-rpi/redox-rpi/issues/482) |
+| REQ-FW-2 | [#483](https://github.com/redox-rpi/redox-rpi/issues/483) |
+| REQ-FW-3 | [#484](https://github.com/redox-rpi/redox-rpi/issues/484) |
+| REQ-FW-4 | [#485](https://github.com/redox-rpi/redox-rpi/issues/485) |
+| REQ-GFX-1 | [#489](https://github.com/redox-rpi/redox-rpi/issues/489) |
+| REQ-GFX-2 | [#490](https://github.com/redox-rpi/redox-rpi/issues/490) |
+| REQ-GPIO-1 | [#486](https://github.com/redox-rpi/redox-rpi/issues/486) |
+| REQ-GPIO-2 | [#487](https://github.com/redox-rpi/redox-rpi/issues/487) |
+| REQ-GPIO-3 | [#488](https://github.com/redox-rpi/redox-rpi/issues/488) |
+| REQ-NET-1 | [#491](https://github.com/redox-rpi/redox-rpi/issues/491) |
+| REQ-NET-2 | [#492](https://github.com/redox-rpi/redox-rpi/issues/492) |
+| REQ-NET-3 | [#493](https://github.com/redox-rpi/redox-rpi/issues/493) |
+| REQ-NET-4 | [#494](https://github.com/redox-rpi/redox-rpi/issues/494) |
+| REQ-NET-5 | [#495](https://github.com/redox-rpi/redox-rpi/issues/495) |
+| REQ-NET-7 | [#471](https://github.com/redox-rpi/redox-rpi/issues/471) |
+| REQ-REL-1 | [#496](https://github.com/redox-rpi/redox-rpi/issues/496) |
+| REQ-REL-2 | [#497](https://github.com/redox-rpi/redox-rpi/issues/497) |
+| REQ-REL-3 | [#498](https://github.com/redox-rpi/redox-rpi/issues/498) |
+| REQ-REL-4 | [#499](https://github.com/redox-rpi/redox-rpi/issues/499) |
+| REQ-REL-5 | [#500](https://github.com/redox-rpi/redox-rpi/issues/500) |
+| REQ-SD-1 | [#501](https://github.com/redox-rpi/redox-rpi/issues/501) |
+| REQ-SD-2 | [#502](https://github.com/redox-rpi/redox-rpi/issues/502) |
+| REQ-SD-3 | [#503](https://github.com/redox-rpi/redox-rpi/issues/503) |
+| REQ-STAB-1 | [#504](https://github.com/redox-rpi/redox-rpi/issues/504) |
+| REQ-STAB-2 | [#505](https://github.com/redox-rpi/redox-rpi/issues/505) |
+| REQ-STAB-3 | [#506](https://github.com/redox-rpi/redox-rpi/issues/506) |
+| REQ-TCC-1 | [#507](https://github.com/redox-rpi/redox-rpi/issues/507) |
+| REQ-TIME-1 | [#508](https://github.com/redox-rpi/redox-rpi/issues/508) |
+| REQ-TIME-2 | [#509](https://github.com/redox-rpi/redox-rpi/issues/509) |
+| REQ-TIME-3 | [#51](https://github.com/redox-rpi/redox-rpi/issues/51) |
+| REQ-USB-1 | [#510](https://github.com/redox-rpi/redox-rpi/issues/510) |
+| REQ-USB-2 | [#511](https://github.com/redox-rpi/redox-rpi/issues/511) |
+| REQ-USB-3 | [#512](https://github.com/redox-rpi/redox-rpi/issues/512) |
+| REQ-USB-4 | [#513](https://github.com/redox-rpi/redox-rpi/issues/513) |
+
+## Move to Feature issues (done)
 
 | Entry | Feature issue |
 |---|---|

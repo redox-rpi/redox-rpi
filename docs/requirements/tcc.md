@@ -1,8 +1,14 @@
 # Native C compiler (`TCC`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [tcc](../topics/tcc.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-TCC-1 Compile and run C on the Pi (beta)
+
+Feature issue: [#507](https://github.com/redox-rpi/redox-rpi/issues/507)
 
 The release image shall compile, link and run a C program on the Pi
 itself with TinyCC (`tcc`).

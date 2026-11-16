@@ -1,8 +1,14 @@
 # USB (`USB`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [usb](../topics/usb.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-USB-1 USB keyboard
+
+Feature issue: [#510](https://github.com/redox-rpi/redox-rpi/issues/510)
 
 The system shall take input from a USB boot-protocol keyboard on any USB
 port of the Pi 3B+ (behind its onboard hubs) and on the Zero 2 W.
@@ -26,6 +32,8 @@ Acceptance criteria:
 2. A held key repeats.
 
 ### REQ-USB-2 USB hotplug
+
+Feature issue: [#511](https://github.com/redox-rpi/redox-rpi/issues/511)
 
 The system shall use a keyboard or network adapter plugged in after boot,
 and keep working when one is unplugged and plugged in again.
@@ -51,6 +59,8 @@ Acceptance criteria:
 
 ### REQ-USB-3 USB mouse
 
+Feature issue: [#512](https://github.com/redox-rpi/redox-rpi/issues/512)
+
 The system shall report a USB mouse or tablet as input events.
 
 | Field | Value |
@@ -74,6 +84,8 @@ Acceptance criteria:
 3. No `dwc2d` panic.
 
 ### REQ-USB-4 Low idle load of the USB driver
+
+Feature issue: [#513](https://github.com/redox-rpi/redox-rpi/issues/513)
 
 The USB host driver shall not keep a CPU core busy when nothing happens on
 the bus.

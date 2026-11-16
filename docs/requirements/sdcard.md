@@ -1,8 +1,14 @@
 # SD card (`SD`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [sdcard](../topics/sdcard.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-SD-1 Reliable reads and writes
+
+Feature issue: [#501](https://github.com/redox-rpi/redox-rpi/issues/501)
 
 The system shall read and write the SD card without losing or changing data,
 also across restarts.
@@ -28,6 +34,8 @@ Acceptance criteria:
 
 ### REQ-SD-2 Small writes
 
+Feature issue: [#502](https://github.com/redox-rpi/redox-rpi/issues/502)
+
 Small writes shall be about as fast as large ones, and reach the card soon.
 
 | Field | Value |
@@ -49,6 +57,8 @@ Acceptance criteria:
    after 3 s loses nothing).
 
 ### REQ-SD-3 Rename on every RedoxFS
+
+Feature issue: [#503](https://github.com/redox-rpi/redox-rpi/issues/503)
 
 `rename` (`mv`) shall work on every mounted RedoxFS, not only the root one.
 

@@ -1,8 +1,14 @@
 # Boot (`BOOT`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [boot](../topics/boot.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-BOOT-1 Boot from the SD card
+
+Feature issue: [#475](https://github.com/redox-rpi/redox-rpi/issues/475)
 
 The system shall boot from its SD card image to the login prompt, with the
 root filesystem on the card and without a network.
@@ -31,6 +37,8 @@ Acceptance criteria:
 
 ### REQ-BOOT-2 Network boot
 
+Feature issue: [#476](https://github.com/redox-rpi/redox-rpi/issues/476)
+
 With a netboot SD card (firmware and U-Boot only), the system shall load
 its image over the network from the build host and boot to the login
 prompt.
@@ -56,6 +64,8 @@ Acceptance criteria:
 
 ### REQ-BOOT-3 Clean boot log
 
+Feature issue: [#477](https://github.com/redox-rpi/redox-rpi/issues/477)
+
 The system shall boot without error lines from services that do not apply
 to the Pi.
 
@@ -79,6 +89,8 @@ Acceptance criteria:
 
 ### REQ-BOOT-4 Boot time
 
+Feature issue: [#478](https://github.com/redox-rpi/redox-rpi/issues/478)
+
 The system shall reach the login prompt soon after power-on or `reboot`.
 
 | Field | Value |
@@ -101,6 +113,8 @@ Acceptance criteria:
    7.4 s in row 67).
 
 ### REQ-BOOT-5 Damaged data partition
+
+Feature issue: [#479](https://github.com/redox-rpi/redox-rpi/issues/479)
 
 The bootloader shall boot when a RedoxFS partition on the card is damaged
 or needs a write, instead of stopping.

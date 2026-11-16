@@ -1,8 +1,14 @@
 # Audio (`AUDIO`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [audio](../topics/audio.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-AUDIO-1 Sound from the headphone jack (beta)
+
+Feature issue: [#250](https://github.com/redox-rpi/redox-rpi/issues/250)
 
 The system shall play 16-bit stereo sound at 44.1 kHz written to
 `/scheme/audio` through the Pi 3B+'s 3.5 mm jack, in real time.
@@ -29,6 +35,8 @@ Acceptance criteria:
 
 ### REQ-AUDIO-2 Audible on both channels (beta)
 
+Feature issue: [#472](https://github.com/redox-rpi/redox-rpi/issues/472)
+
 The sound shall be audible through headphones, with left and right on the
 right sides.
 
@@ -51,6 +59,8 @@ Acceptance criteria:
 3. Any click at boot is noted in the report (not yet a pass criterion).
 
 ### REQ-AUDIO-3 Startup sound and volume (beta)
+
+Feature issue: [#473](https://github.com/redox-rpi/redox-rpi/issues/473)
 
 The Pi 3B+ shall play a short startup sound at boot, let root set and keep
 the volume, and fade the output out at `reboot` and `poweroff`.

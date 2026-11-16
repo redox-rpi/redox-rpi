@@ -1,10 +1,16 @@
 # Graphics (`GFX`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [graphics](../topics/graphics.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 In the release image since v0.4.0 (PR #255, rc2).
 
 ### REQ-GFX-1 Optional desktop from the console (beta)
+
+Feature issue: [#489](https://github.com/redox-rpi/redox-rpi/issues/489)
 
 The release image shall boot to the text console; `desktop` as root shall
 start the Orbital desktop, and the user shall switch between console and
@@ -33,6 +39,8 @@ Acceptance criteria:
 4. Mouse and keyboard work in the desktop.
 
 ### REQ-GFX-2 Desktop apps (beta)
+
+Feature issue: [#490](https://github.com/redox-rpi/redox-rpi/issues/490)
 
 The desktop shall offer a terminal, a game and a file manager.
 

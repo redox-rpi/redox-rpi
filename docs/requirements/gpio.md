@@ -1,11 +1,17 @@
 # GPIO, I2C, SPI (`GPIO`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [gpio](../topics/gpio.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 The drivers start in every image since base patches `0045`–`0048`; their
 issues #38, #39 and #42 are closed.
 
 ### REQ-GPIO-1 GPIO pins
+
+Feature issue: [#486](https://github.com/redox-rpi/redox-rpi/issues/486)
 
 The system shall offer the 54 GPIO pins as `/scheme/gpio`, with mode,
 value and pull per pin.
@@ -31,6 +37,8 @@ Acceptance criteria:
 
 ### REQ-GPIO-2 I2C bus 1
 
+Feature issue: [#487](https://github.com/redox-rpi/redox-rpi/issues/487)
+
 The system shall offer I2C bus 1 (pins 3 and 5) as `/scheme/i2c` with the
 `i2c` tool.
 
@@ -53,6 +61,8 @@ Acceptance criteria:
    `i2c get` reads a register (**gap**).
 
 ### REQ-GPIO-3 SPI0
+
+Feature issue: [#488](https://github.com/redox-rpi/redox-rpi/issues/488)
 
 The system shall offer SPI0 (pins 19, 21, 23, 24, 26) as `/scheme/spi`
 with the `spi` tool.

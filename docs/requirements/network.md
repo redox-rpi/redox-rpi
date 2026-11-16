@@ -1,8 +1,14 @@
 # Network (`NET`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topic: [network](../topics/network.md). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-NET-1 DHCP on the onboard Ethernet
+
+Feature issue: [#491](https://github.com/redox-rpi/redox-rpi/issues/491)
 
 The system shall get an IPv4 address by DHCP on the Pi 3B+'s onboard
 Ethernet (LAN7800) at every boot and accept TCP connections.
@@ -30,6 +36,8 @@ Acceptance criteria:
 
 ### REQ-NET-2 USB Ethernet adapters
 
+Feature issue: [#492](https://github.com/redox-rpi/redox-rpi/issues/492)
+
 The system shall get an address by DHCP through an RTL8152 or RTL8153 USB
 Ethernet adapter, on the Pi 3B+ and on the Zero 2 W.
 
@@ -52,6 +60,8 @@ Acceptance criteria:
 
 ### REQ-NET-3 Several adapters at once
 
+Feature issue: [#493](https://github.com/redox-rpi/redox-rpi/issues/493)
+
 The network stack shall use every Ethernet adapter at the same time, with a
 DHCP lease on each.
 
@@ -73,6 +83,8 @@ Acceptance criteria:
    lease and answers on its address.
 
 ### REQ-NET-4 Long TCP transfers
+
+Feature issue: [#494](https://github.com/redox-rpi/redox-rpi/issues/494)
 
 The system shall receive a long TCP transfer without stalling.
 
@@ -97,6 +109,8 @@ Acceptance criteria:
 
 ### REQ-NET-5 IPv4 multicast
 
+Feature issue: [#495](https://github.com/redox-rpi/redox-rpi/issues/495)
+
 The system shall send and receive IPv4 multicast, also through the
 LAN7800.
 
@@ -118,6 +132,8 @@ Acceptance criteria:
    LAN, and a packet it sends there reaches the LAN.
 
 ### REQ-NET-7 Name lookup (DNS)
+
+Feature issue: [#471](https://github.com/redox-rpi/redox-rpi/issues/471)
 
 The system shall resolve host names with the name server and local domain
 it gets by DHCP, and fail at once for an unknown name.

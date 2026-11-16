@@ -1,9 +1,15 @@
 # Console (`CON`)
 
+> **Moved to Feature issues (2026-11-16).** Each requirement below is now a
+> Feature issue in redox-rpi, and the issue is the record ([README](README.md#feature-issues)).
+> This file stays until the links to it are moved; do not edit it.
+
 Topics: [boot](../topics/boot.md) (boot and console),
 [stability](../topics/stability.md) (serial input). Trace: [trace-v0.4.0.md](trace-v0.4.0.md).
 
 ### REQ-CON-1 HDMI console with login
+
+Feature issue: [#480](https://github.com/redox-rpi/redox-rpi/issues/480)
 
 The system shall show a text console on HDMI where a user logs in with a
 USB keyboard.
@@ -29,6 +35,8 @@ Acceptance criteria:
    back, and typing works on each.
 
 ### REQ-CON-2 Serial console
+
+Feature issue: [#481](https://github.com/redox-rpi/redox-rpi/issues/481)
 
 The system shall offer a login on the PL011 serial port (GPIO 14/15,
 115200 baud) that takes fast input without losing characters.
