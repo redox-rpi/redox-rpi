@@ -80,7 +80,7 @@ for _ in $(seq 60); do
 done
 # QEMU's USB network moves about 0.1 MiB/s, so 1 MiB is enough for the TCP check.
 args=(127.0.0.1 --port "$DEVSH_PORT" --serial-log "$console" --tcp-host 10.0.2.2 --tcp-mib 1
-      --dead-dns 10.0.2.99 --report "$report")
+      --dead-dns 10.0.2.99 --outside-name static.redox-os.org --report "$report")
 [ -n "$manifest" ] && args+=(--manifest "$manifest")
 rc=0
 python3 scripts/regression-set.py "${args[@]}" "${pass[@]}" || rc=$?
