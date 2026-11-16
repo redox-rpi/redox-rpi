@@ -117,9 +117,11 @@ mountpoint -q "$mnt" || { cat "$work/redoxfs.log" >&2; echo "cannot mount the ro
         -exec "$strip" --strip-unneeded {} \;
     for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
         [ -f "$file" ] || continue
-        sed -i -E -e 's/^(redox-rpi .*) \(direct, /\1 (direct console, /' \
+        # Rewritten in place: sed -i cannot keep the owner on the FUSE mount.
+        sed -E -e 's/^(redox-rpi .*) \(direct, /\1 (direct console, /' \
             -e 's/^IMAGE="direct"$/IMAGE="direct-console"/' \
-            -e 's/^image = "direct"$/image = "direct-console"/' "$file"
+            -e 's/^image = "direct"$/image = "direct-console"/' "$file" > "$work/banner"
+        cat "$work/banner" > "$file"
     done
 )
 used_kib="$(du -sk "$mnt" | cut -f1)"
