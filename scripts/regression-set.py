@@ -33,8 +33,9 @@ Checks, in this order:
                 qualified and short, gives "Name does not resolve" within
                 1 s (criterion 3). Times come from ion's `time` on the
                 guest. Also, as their own lines:
-                dns-lan with --lan-name: that name and its short form
-                resolve (criterion 1);
+                dns-lan with --lan-name: that name (with a host part, not
+                the bare domain) and its short form each resolve within 2 s
+                (criterion 1);
                 dns-outside with --outside-name: it resolves (criterion 2);
                 dns-silent with --dead-dns as name server: "Try again"
                 within 10 s for a fully qualified name and within 15 s for
@@ -167,6 +168,7 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
 
 
+DNS_LAN_S = 2        # REQ-NET-7 criterion 1, each lookup of an existing LAN name
 DNS_UNKNOWN_S = 1    # REQ-NET-7 criterion 3
 DNS_DEAD_FQDN_S = 10  # criterion 4, a fully qualified name
 DNS_DEAD_SHORT_S = 15  # criterion 4, a short name (tried in the local domain first)
@@ -208,8 +210,11 @@ def check_dns(sh, check, args):
         for n in names:
             out, secs = lookup(sh, n)
             res.append((n, says(out, "packets transmitted") or says(out, "PING "), secs))
-        check("dns-lan", all(r[1] for r in res), f"local domain '{orig_dom or 'none'}'; "
-              + "; ".join(f"{n}: {'resolves' if ok else 'FAILS'} ({s:.2f} s)" for n, ok, s in res))
+        check("dns-lan", all(ok and s <= DNS_LAN_S for _, ok, s in res),
+              f"local domain '{orig_dom or 'none'}'; "
+              + "; ".join(f"{n}: {'resolves' if ok else 'FAILS'} ({s:.2f} s"
+                          + (f", over {DNS_LAN_S} s" if ok and s > DNS_LAN_S else "") + ")"
+                          for n, ok, s in res) + f" (limit {DNS_LAN_S} s each)")
     # 2: a name outside the LAN
     if args.outside_name:
         out, secs = lookup(sh, args.outside_name)
