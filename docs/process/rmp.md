@@ -135,15 +135,24 @@ A requirement is:
 
 Since [RFC 0002](../rfcs/0002-project-structure.md#4-issues-types-labels-and-the-project)
 (accepted 2026-11-09) **each requirement is one GitHub issue of type
-Feature in `redox-rpi`**. The Feature issue is the record; tasks and bugs
-that implement it hang below it as sub-issues, in the repository of their
-code.
+Feature**. Since the maintainer's decision of 2026-11-16, **every issue
+lives in the repository of its product**, and so does the Feature issue:
+`redox-rpi` (the system on the Pi), `rpi-open-firmware`, `vc4d`, `tinycc`,
+and any later product repository. The Feature issue is the record; tasks
+and bugs that implement it hang below it as sub-issues (GitHub allows
+sub-issues across repositories in the organisation), and bugs are Bug
+issues in the same product repository.
 
 ### Issue format
 
-- **Type:** Feature. **Repository:** `redox-rpi`.
+- **Type:** Feature. **Repository:** the product's repository (see above).
 - **Title:** `REQ-<AREA>-<n> <name>`, for example
   `REQ-NET-1 DHCP on the onboard Ethernet`.
+- **IDs:** one ID space for the whole organisation, so `REQ-NET-1` means
+  the same in every repository. Product repositories other than `redox-rpi`
+  use their own area codes (for example `VC4D`,
+  `TCCVC`), agreed with the Requirements agent before the first
+  issue.
 - **Labels:** the `topic:<name>` of the area (the shared label list of RFC
   0002; no extra labels for priority or level).
 - **Milestone:** the release in which the requirement must first hold.
@@ -193,7 +202,8 @@ new Feature issues linked to it.
 ### What stays in files
 
 - `docs/requirements/README.md`: the list of areas with a search link for
-  each (`is:issue type:Feature "REQ-NET-" in:title`).
+  each (`org:redox-rpi is:issue type:Feature "REQ-NET-" in:title`), and
+  the product repository of each area.
 - `docs/requirements/trace-<release>.md`: the trace of each release,
   written when its candidate is tested; this is the release's baseline.
 - Until the move, the first set lives in files (draft PR #270). The move
