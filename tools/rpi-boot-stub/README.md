@@ -32,7 +32,11 @@ stub does what the Redox bootloader does on aarch64 before the jump:
    `REDOXFS_UUID` in the environment), as with `bootloader-live.efi`.
 5. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
    words `NAME=value` with an upper-case `NAME` go into the environment,
-   the firmware's own lower-case Linux options do not.
+   the firmware's own lower-case Linux options do not. The word `quiet`
+   becomes `QUIET=1`: with experiment `quiet-boot`, the kernel and init
+   then keep the boot messages off the screen until the login
+   ([#518](https://github.com/redox-rpi/redox-rpi/issues/518)). The serial
+   console still gets everything.
 6. A framebuffer from the firmware through the mailbox property interface
    ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), `src/fb.rs`):
    the size the firmware chose for the display (from the monitor's EDID, or

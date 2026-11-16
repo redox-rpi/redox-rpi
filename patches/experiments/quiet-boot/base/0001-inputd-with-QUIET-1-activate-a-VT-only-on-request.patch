@@ -1,0 +1,80 @@
+From 335232bcb5e38693337a392662742e19b10dcc14 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 16 Nov 2026 17:33:18 +0000
+Subject: [PATCH] inputd: with QUIET=1, activate a VT only on request
+
+inputd switched to VT 1 when fbbootlogd opened the boot log, and to the
+first console otherwise, so the boot log was on screen during the whole
+boot. With QUIET set (any value but empty or 0; 10_inputd.service
+inherits it from the kernel environment), inputd activates a VT only
+for `inputd -A` (30_console_switch runs `inputd -A 2` once the consoles
+are up) or Super+Fn. Until then no VT is active and the display driver
+leaves the framebuffer as it is. fbbootlogd still collects the whole
+log on VT 1, so Super+F1 shows it.
+
+Without QUIET nothing changes.
+
+redox-rpi #518.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/inputd/src/main.rs      | 11 +++++++++--
+ init.initfs.d/10_inputd.service |  1 +
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 8fe6c44..6bc31d3 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -87,6 +87,10 @@ struct InputScheme<'a> {
+ 
+     has_new_events: bool,
+     pending_activate: Option<usize>,
++    /// QUIET=1 (quiet boot): no VT is activated by itself, only by
++    /// `inputd -A` or Super+Fn, so the boot log stays off the screen until
++    /// init switches to the login.
++    quiet: bool,
+ }
+ 
+ impl<'a> InputScheme<'a> {
+@@ -107,6 +111,7 @@ impl<'a> InputScheme<'a> {
+             rshift: false,
+             has_new_events: false,
+             pending_activate: None,
++            quiet: std::env::var("QUIET").is_ok_and(|v| !v.is_empty() && v != "0"),
+         }
+     }
+ 
+@@ -234,7 +239,7 @@ impl SchemeSync for InputScheme<'_> {
+                 self.next_vt_id += 1;
+                 self.vts.insert(vt);
+ 
+-                if self.active_vt.is_none() {
++                if self.active_vt.is_none() && !self.quiet {
+                     self.switch_vt(vt);
+                 }
+                 Handle::Consumer {
+@@ -250,7 +255,9 @@ impl SchemeSync for InputScheme<'_> {
+                     return Err(SysError::new(EEXIST));
+                 }
+ 
+-                self.switch_vt(1);
++                if !self.quiet {
++                    self.switch_vt(1);
++                }
+                 Handle::Consumer {
+                     events: EventFlags::empty(),
+                     pending: Vec::new(),
+diff --git a/init.initfs.d/10_inputd.service b/init.initfs.d/10_inputd.service
+index ba29104..6ee1a89 100644
+--- a/init.initfs.d/10_inputd.service
++++ b/init.initfs.d/10_inputd.service
+@@ -3,4 +3,5 @@ description = "VT input and graphics multiplexer"
+ 
+ [service]
+ cmd = "inputd"
++inherit_envs = ["QUIET"]
+ type = { scheme = "input" }
+-- 
+2.53.0
+
