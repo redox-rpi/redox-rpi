@@ -150,8 +150,8 @@ issues in the same product repository.
   `REQ-NET-1 DHCP on the onboard Ethernet`.
 - **IDs:** one ID space for the whole organisation, so `REQ-NET-1` means
   the same in every repository. Product repositories other than `redox-rpi`
-  use their own area codes (for example `FWO` for rpi-open-firmware,
-  `VC4D`, `TCCVC`), agreed with the Requirements agent before the first
+  use their own area codes (for example `VC4D`,
+  `TCCVC`), agreed with the Requirements agent before the first
   issue.
 - **Labels:** the `topic:<name>` of the area (the shared label list of RFC
   0002; no extra labels for priority or level).
