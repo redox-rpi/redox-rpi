@@ -1,0 +1,61 @@
+Subject: [PATCH] arm64: extern thread-local variables on ELF (initial-exec)
+
+qbe died with "extern thread unavailable on arm64" for every thread-local
+variable with external linkage (cproc marks all of them extern). Load the
+offset from the GOT (:gottprel:) and add tpidr_el0; GNU ld relaxes this to
+local-exec when the variable is in the program. x17 is the scratch; when
+the result goes to x17, x16 is saved on the stack around it.
+
+---
+--- a/arm64/emit.c
++++ b/arm64/emit.c
+@@ -262,6 +262,36 @@
+ 	}
+ }
+ 
++/* An extern thread-local variable on ELF: initial-exec model. The GOT
++ * entry holds the variable's offset from the thread pointer (the linker
++ * relaxes this to local-exec when the variable ends up in the program).
++ * The thread pointer needs a second register: x17 (IP1) is the emitter's
++ * scratch; when the result itself goes to x17, x16 is saved around it. */
++static void
++loadextthr(Con *c, char *rn, E *e)
++{
++	char *l, *p, *t;
++	int save;
++
++	l = str(c->sym.id);
++	p = l[0] == '"' ? "" : T.assym;
++	save = strcmp(rn, "x17") == 0;
++	t = save ? "x16" : "x17";
++	fprintf(e->f, "\tadrp\t%s, :gottprel:%s%s\n", rn, p, l);
++	fprintf(e->f, "\tldr\t%s, [%s, #:gottprel_lo12:%s%s]\n", rn, rn, p, l);
++	if (save)
++		fprintf(e->f, "\tstr\tx16, [sp, -16]!\n");
++	fprintf(e->f, "\tmrs\t%s, tpidr_el0\n", t);
++	fprintf(e->f, "\tadd\t%s, %s, %s\n", rn, rn, t);
++	if (save)
++		fprintf(e->f, "\tldr\tx16, [sp], 16\n");
++	if (c->bits.i) {
++		if (c->bits.i < 0 || c->bits.i > 4095)
++			die("extern thread offset too large on arm64");
++		fprintf(e->f, "\tadd\t%s, %s, #%"PRIi64"\n", rn, rn, c->bits.i);
++	}
++}
++
+ static void
+ loadaddr(Con *c, char *rn, E *e)
+ {
+@@ -279,8 +309,10 @@
+ 			    "\tadd\tR, R, #:lo12:SO\n";
+ 		break;
+ 	case SExtThr:
+-		if (!T.apple)
+-			die("extern thread unavailable on arm64");
++		if (!T.apple) {
++			loadextthr(c, rn, e);
++			return;
++		}
+ 		/* fall through */
+ 	case SThr:
+ 		if (T.apple)
