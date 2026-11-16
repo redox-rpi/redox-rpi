@@ -9,11 +9,13 @@
 # Made from a network-boot image built by scripts/build-image.sh, in the
 # same clone (it needs base's initfs build folder):
 #   1. the initfs again, from the same files with every program stripped of
-#      its symbols (about 27 -> 18 MB);
+#      its symbols (llvm-strip --strip-unneeded, about 27 -> 18 MB);
 #   2. the root filesystem without what config/console-prune.txt lists
 #      (documentation, headers, static libraries, TLS/HTTP, drivers for other
 #      hardware, ...), every remaining ELF file stripped, copied into a new
 #      RedoxFS of --size MiB (default 32);
+#   (redoxfs-clone takes the source first, although its usage text says
+#   otherwise: the other order formats the source.)
 #   3. kernel8.img from scripts/fw-direct-boot.sh; the banner says
 #      "direct console".
 #
@@ -72,7 +74,8 @@ trap cleanup EXIT
 "$ROOT/scripts/fw-direct-boot.sh" --image "$image" --out "$work/fw" > /dev/null
 cp "$work/fw/kernel8.img" "$out/kernel8.img"
 
-# 1. The initfs, stripped. Its files come from base's build folder; check
+# 1. The initfs, stripped (the bootstrap stays as it is). Its files come
+# from base's build folder; check
 # that they are the ones in the image.
 "$tool" "$image" get usr/lib/boot/initfs "$work/initfs.image" > /dev/null
 if ! cmp -s "$work/initfs.image" "$base/build/initfs.img"; then
@@ -80,10 +83,17 @@ if ! cmp -s "$work/initfs.image" "$base/build/initfs.img"; then
     exit 1
 fi
 cp -a "$base/build/initfs" "$work/initfs"
+bootstrap="$base/build/aarch64-unknown-redox/release/bootstrap"
+# The unchanged files must give the image's initfs byte for byte, so the
+# stripped one differs only in the symbols.
+"$initfs_ar" "$work/initfs" "$bootstrap" -o "$work/initfs.rebuilt" > /dev/null
+cmp -s "$work/initfs.rebuilt" "$work/initfs.image" || {
+    echo "redox-initfs-ar does not rebuild the image's initfs from base's build folder" >&2
+    exit 1
+}
 find "$work/initfs" -type f -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
-    -exec "$strip" {} \;
-"$initfs_ar" "$work/initfs" "$base/build/aarch64-unknown-redox/release/bootstrap" \
-    -o "$work/initfs.small" > /dev/null
+    -exec "$strip" --strip-unneeded {} \;
+"$initfs_ar" "$work/initfs" "$bootstrap" -o "$work/initfs.small" > /dev/null
 
 # 2. The root filesystem, pruned and stripped.
 read -r start sectors < <(partx -g -o START,SECTORS -n 3 "$work/fw/harddrive.img")
@@ -104,7 +114,7 @@ mountpoint -q "$mnt" || { cat "$work/redoxfs.log" >&2; echo "cannot mount the ro
         rm -rf -- $pattern
     done < "$ROOT/config/console-prune.txt"
     find . -type f -size +4k -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
-        -exec "$strip" {} \;
+        -exec "$strip" --strip-unneeded {} \;
     for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
         [ -f "$file" ] || continue
         sed -i -E -e 's/^(redox-rpi .*) \(direct, /\1 (direct console, /' \
@@ -133,4 +143,5 @@ echo "console image: initfs $(($(wc -c < "$work/initfs.small") >> 10)) KiB, root
      "initramfs $(($(wc -c < "$out/initramfs") >> 20)) MiB, kernel8.img $(wc -c < "$out/kernel8.img") bytes, in $out"
 
 [ "$test" = yes ] || exit 0
-"$ROOT/scripts/fw-direct-boot.sh" --out "$out" --boot-only --test
+# With the framebuffer size a Pi's cmdline.txt gives (row 467).
+"$ROOT/scripts/fw-direct-boot.sh" --out "$out" --boot-only --test --append RPI_FB=1280x720
