@@ -3,7 +3,8 @@
 
 Writes JSON lines in the format of docs/process/qmp.md ("Network loss"):
 one object per line, appended to --out. The nightly (scripts/update-stable.sh)
-appends them to network.jsonl in redox-rpi/pi-tests.
+appends them to network.jsonl in redox-rpi/pi-tests. Every record has
+"source": "nightly"; a Pi test row passes --source "row <ID>".
 
   scripts/network-record.py boot --serial-log <file> --start <byte> --pi <ip>
                                  --build <id> --out <file> [--timeout <s>]
@@ -132,9 +133,9 @@ def checksum(data):
     return ~total & 0xFFFF
 
 
-def write(out, record):
+def write(out, record, source):
     record = {"date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
-              "build": record.pop("build"), "source": "nightly", **record}
+              "build": record.pop("build"), "source": source, **record}
     line = json.dumps(record)
     with open(out, "a") as f:
         f.write(line + "\n")
@@ -162,7 +163,7 @@ def boot(args):
             break
         time.sleep(max(0, 2 - (time.monotonic() - tried)))
     write(args.out, {"build": args.build, "kind": "boot", "devsh_s": devsh_s,
-                     "login_s": round(login_at - t0, 1)})
+                     "login_s": round(login_at - t0, 1)}, args.source)
     return 0
 
 
@@ -223,7 +224,8 @@ def soak(args):
         losses.append({"at_s": round(down_at), "down_s": None})
     write(args.out, {"build": args.build, "kind": "soak", "minutes": args.minutes,
                      "pings": pings, "pings_lost": pings_lost, "logins": logins,
-                     "logins_failed": logins_failed, "losses": losses, "ping": method})
+                     "logins_failed": logins_failed, "losses": losses, "ping": method},
+          args.source)
     return 0
 
 
@@ -242,6 +244,8 @@ def main():
         p.add_argument("--ping-host", help="host to ping (default --pi; for QEMU tests)")
         p.add_argument("--build", required=True)
         p.add_argument("--out", required=True)
+        p.add_argument("--source", default="nightly",
+                       help='the record\'s "source": "nightly" (default) or "row <ID>" for a Pi test row')
     args = parser.parse_args()
     return boot(args) if args.kind == "boot" else soak(args)
 

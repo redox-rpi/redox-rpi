@@ -6,8 +6,8 @@ Usage:
                               [--manifest <file>] [--starts 50]
                               [--tcp-host <ip>] [--tcp-mib 4]
                               [--dead-dns <ip>] [--lan-name <name>]
-                              [--outside-name <name>] [--report <file>]
-                              [--only <check>]...
+                              [--outside-name <name>] [--desktop]
+                              [--report <file>] [--only <check>]...
 
 Runs, through devshd, checks for regressions we already had, each named
 after the issue it guards. A PR runs it in QEMU before its Pi row
@@ -28,6 +28,16 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
+  tcc           REQ-TCC-1 criterion 5: /usr/share/tcc-tests/run.ion (package
+                tcc-bench) reaches "TCC-TEST done", and these steps give
+                their output: hello.c built dynamically and run; tcc -run
+                hello.c; hallo.c as a #!/usr/bin/tcc -run script with stdin
+                and two arguments (exit status 42, from its shebang's
+                -DANSWER=42); bench.c built and run (time reported, no
+                limit); tcc builds /usr/src/tinycc/tcc.c and that tcc2
+                builds hello.c, which runs. tcc -static (a known limit) and
+                bench-gcc (comparison) are not judged (skip without the
+                experiment tcc)
   dns           #358, #374, REQ-NET-7 (docs/requirements/network.md): a
                 name server is set (from DHCP); an unknown name, fully
                 qualified and short, gives "Name does not resolve" within
@@ -42,9 +52,27 @@ Checks, in this order:
                 a short name with a local domain set (criterion 4); after
                 the name server is set back, an unknown name gives "Name
                 does not resolve" again
+  launcher-sopwith
+                #335, REQ-GFX-2: the launcher entry
+                /usr/share/ui/apps/70_sopwith names /usr/bin/sopwith and
+                an icon, and both files exist (skip without the experiment
+                orbital-apps)
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
+  sopwith       #335, #33, REQ-GFX-2, only with --desktop or --only
+                sopwith, last and in a new devsh session: starts the
+                desktop (desktop --yes) and Sopwith in it, as the launcher
+                would; its log shows an Orbital window and SDL's Redox
+                audio driver, it still runs after 15 s, and
+                /scheme/audiohw/stats loud_chunks is higher than before
+                Sopwith started (its title tune reached the driver). It is
+                then ended with SIGTERM, or SIGKILL if that does not end it
+                within 2 s; which one is only reported until #460 is on
+                main (#405). Orbital keeps running afterwards, so the
+                caller reboots before anything else (regression-qemu.sh
+                ends QEMU; a Pi row reboots). Keys and audible sound stay a
+                person step (rc test)
   serial        with --serial-log: no kernel panic, "panicked at",
                 "RELIBC PANIC", "UNHANDLED EXCEPTION" or "main loop stuck"
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
@@ -191,6 +219,71 @@ def says(out, text):
     return any(text in l for l in out)
 
 
+TCC_RUN = "/usr/share/tcc-tests/run.ion"
+TCC_LOG = "/tmp/regr-tcc.log"
+TIMEIT = re.compile(r"\[timeit\] ([0-9.]+) ms, status (\d+): (\S+)")
+
+
+def tcc_sections(out):
+    """run.ion's output split at its "== <step>" lines: {step: lines}."""
+    secs, cur = {}, None
+    for l in out:
+        l = ANSI_TEXT.sub("", l).rstrip()
+        if l.startswith("== "):
+            cur = l[3:]
+            secs[cur] = []
+        elif cur is not None:
+            secs[cur].append(l)
+    return secs
+
+
+def tcc_ms(lines, prog):
+    """Wall time and exit status timeit gave for prog, or (None, None)."""
+    for l in lines:
+        m = TIMEIT.search(l)
+        if m and m.group(3) == prog:
+            return float(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def check_tcc(sh, check, tcc):
+    """REQ-TCC-1 criterion 5: the named subset of run.ion. stderr goes to
+    the log too: timeit writes its times there."""
+    if not tcc or not has(sh, TCC_RUN):
+        check("tcc", None, f"no {TCC_RUN} or no tcc (experiment tcc)")
+        return
+    out, secs = pi_test.timed(sh, f"ion {TCC_RUN} &> {TCC_LOG}; cat {TCC_LOG}", 1800)
+    s = tcc_sections(out)
+
+    def sec(prefix):
+        return next((v for k, v in s.items() if k.startswith(prefix)), [])
+
+    def says(lines, text):
+        return any(text in l for l in lines)
+
+    hello = "Hello from tcc on Redox ("
+    script = sec("shebang")
+    bench = sec("bench, compiled by tcc")
+    selfh = sec("self-hosting")
+    bench_ms = next((l.split()[-2] for l in bench if l.startswith("total")), None)
+    self_ms, _ = tcc_ms(selfh, "tcc")
+    steps = [
+        ("dynamic", says(sec("hello (dynamic)"), hello + "./hello)")),
+        ("-run", says(sec("tcc -run"), hello)),
+        ("script", says(script, "argv[1]=a") and says(script, "argv[2]=b")
+         and says(script, "Hallo, stdin 6 bytes") and says(script, "rc=42")),
+        ("bench", bench_ms is not None and tcc_ms(bench, "./bench")[1] == 0),
+        ("self-hosting", says(selfh, hello + "./hello2)")),
+        ("done", any(l.strip() == "TCC-TEST done" for l in out)),
+    ]
+    failed = [n for n, ok in steps if not ok]
+    detail = (f"{secs:.1f} s; " + ("all 5 steps and TCC-TEST done" if not failed
+                                   else "failed: " + ", ".join(failed))
+              + (f"; bench total {bench_ms} ms" if bench_ms else "")
+              + (f"; tcc.c built in {self_ms:.0f} ms" if self_ms is not None else ""))
+    check("tcc", not failed, detail)
+
+
 def check_dns(sh, check, args):
     """REQ-NET-7 (docs/requirements/network.md), one line per criterion."""
     ns = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
@@ -255,6 +348,79 @@ def check_dns(sh, check, args):
               + ("resolves again" if back else "; ".join(out3[:2])[:80]))
 
 
+SOPWITH_ENTRY = "/usr/share/ui/apps/70_sopwith"
+SOPWITH_SCRIPT = "/tmp/regr-sopwith.ion"
+SOPWITH_LOG = "/tmp/regr-sopwith.log"
+
+
+def check_launcher_sopwith(sh, check, args):
+    if not has(sh, SOPWITH_ENTRY):
+        check("launcher-sopwith", None, f"no {SOPWITH_ENTRY} (experiment orbital-apps)")
+        return
+    entry = dict(l.split("=", 1) for l in sh.run(f"cat {SOPWITH_ENTRY}") if "=" in l)
+    binary, icon = entry.get("binary", ""), entry.get("icon", "")
+    missing = [f for f in (binary, icon) if not f or not has(sh, f)]
+    ok = binary.endswith("/sopwith") and icon and not missing
+    detail = (f"name={entry.get('name', '?')}, binary={binary or '?'}, icon={icon or '?'}"
+              + (f"; missing: {', '.join(m or '(empty)' for m in missing)}" if missing else "; both exist"))
+    check("launcher-sopwith", ok, detail)
+
+
+def loud_chunks(sh):
+    for l in sh.run("cat /scheme/audiohw/stats"):
+        m = re.match(r"loud_chunks\s+(\d+)$", l)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def check_sopwith(sh, check, args):
+    if not has(sh, "/usr/bin/sopwith") or not has(sh, "/usr/bin/desktop"):
+        check("sopwith", None, "no /usr/bin/sopwith or /usr/bin/desktop (experiments orbital-apps, desktop)")
+        return
+    notes = []
+    if "orbital" not in context_pids(sh, ["orbital"]):
+        out = sh.run("desktop --yes > /tmp/regr-desktop.out; cat /tmp/regr-desktop.out", 90)
+        if "orbital" not in context_pids(sh, ["orbital"]):
+            check("sopwith", False, "Orbital did not start: " + "; ".join(out[-2:])[:150])
+            return
+        notes.append("desktop started")
+    else:
+        notes.append("Orbital already ran")
+    before = loud_chunks(sh)
+    # Through a script: "cmd &!" followed by "; echo" (how Shell.run wraps a
+    # command) is not valid Ion. &! disowns it, so it outlives the script.
+    sh.run(f"echo 'sopwith &> {SOPWITH_LOG} &!' > {SOPWITH_SCRIPT}; ion {SOPWITH_SCRIPT}")
+    t0 = time.time()
+    pid = None
+    while time.time() - t0 < 15:
+        time.sleep(3)
+        pid = context_pids(sh, ["sopwith"]).get("sopwith")
+        if not pid:
+            break
+    log = sh.run(f"cat {SOPWITH_LOG}")
+    after = loud_chunks(sh)
+    window = any("Initializing orbital window" in l for l in log)
+    driver = any("SDL redox audio driver" in l for l in log)
+    sound = before is not None and after is not None and after > before
+    notes += [f"window {'yes' if window else 'no'}", f"Redox audio driver {'yes' if driver else 'no'}",
+              f"running after 15 s: {'yes, PID ' + pid if pid else 'no'}",
+              f"loud_chunks {before} -> {after}"]
+    if pid:
+        # kill, wait and the process list in one line: ion's notice that a
+        # job ended would otherwise come in the next command's output.
+        alive = any(re.search(rf"^\s*{pid}\b.*sopwith", l)
+                    for l in sh.run(f"kill {pid}; sleep 2; ps"))
+        if alive:
+            sh.run(f"kill -KILL {pid}; sleep 1; ps")
+            notes.append("SIGTERM did not end it within 2 s, SIGKILL did (#405, info until #460)")
+        else:
+            notes.append("ended by SIGTERM")
+    elif log:
+        notes.append("log: " + " / ".join(log[-3:])[:150])
+    check("sopwith", bool(window and driver and pid and sound), "; ".join(notes))
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -278,6 +444,8 @@ def main():
     ap.add_argument("--lan-name", help="fully qualified name of a LAN host for REQ-NET-7 criterion 1 "
                     "(the short name is checked too)")
     ap.add_argument("--outside-name", help="a name outside the LAN for REQ-NET-7 criterion 2")
+    ap.add_argument("--desktop", action="store_true",
+                    help="also run sopwith: starts the desktop, which then runs until the next reboot")
     ap.add_argument("--report")
     ap.add_argument("--only", action="append", help="run only these checks")
     args = ap.parse_args()
@@ -290,6 +458,8 @@ def main():
         print(f"{word} {name}: {detail}", flush=True)
 
     def want(name):
+        if name == "sopwith":  # opt-in: it leaves Orbital running
+            return args.desktop or bool(args.only and name in args.only)
         return not args.only or name in args.only
 
     t0 = time.time()
@@ -308,7 +478,9 @@ def main():
                                              lambda out: sum(l.strip().endswith(": pass") or l.strip() == "/ pass"
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
+            ("tcc", lambda: check_tcc(sh, check, tcc)),
             ("dns", lambda: check_dns(sh, check, args)),
+            ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
             ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),
@@ -321,6 +493,16 @@ def main():
                     check(name, False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
     finally:
         sh.close()
+    # Last, in its own session (nothing follows tcp in one): it leaves
+    # Orbital running, so the caller reboots afterwards.
+    if want("sopwith"):
+        sh = pi_test.Shell(args.host, args.port)
+        try:
+            check_sopwith(sh, check, args)
+        except Exception as e:
+            check("sopwith", False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
+        finally:
+            sh.close()
     if args.serial_log and want("serial"):
         check_serial(check, args)
 

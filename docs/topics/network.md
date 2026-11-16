@@ -198,7 +198,10 @@
   comes first. **Pi test 156 passed** (65535 buffered bytes read after a
   reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
   [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
-  patch `0082`.
+  patch `0082`. The #141 part alone, on current main and with a QEMU test
+  (`scripts/test-tcp-reset-read.sh`: a raw TCP peer over QEMU's socket
+  netdev sends 64 KiB and a reset right behind it), is in its own pull
+  request, branch `tcp-reset-read`.
 
 ## Later
 
