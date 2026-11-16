@@ -24,11 +24,19 @@ Acceptance criteria:
 1. `tcc -o hello hello.c && ./hello` prints the expected line.
 2. `tcc -run hello.c` prints the same.
 4. A file starting with `#!/usr/bin/tcc -run` runs as a script.
-5. The examples in `/usr/share/tcc-tests/` compile and run.
+5. `run.ion` in `/usr/share/tcc-tests/` (package `tcc-bench`) reaches
+   `TCC-TEST done`, and these steps give the expected output:
+   `hello.c` compiled dynamically and run; `tcc -run hello.c`; `hallo.c` as
+   a `#!/usr/bin/tcc -run` script with stdin and arguments, rc 0; `bench.c`
+   compiled and run (time reported, no limit); self-hosting: tcc compiles
+   `/usr/src/tinycc/tcc.c`, and that `tcc2` builds `hello.c`, which runs.
+   Not part of it: `tcc -static` (criterion 3), `bench-gcc` (comparison
+   only), and the cproc files (experiment `cproc-qbe`).
 3. Static linking (`tcc -static`) is a known limit (TLS descriptor
    relocations in relibc's `libc.a`) and not a criterion yet.
 
 Change for v0.6.0 (Requirements agent, 2026-11-16): tcc is in the release
 image as beta since v0.5.0 (#293, PR #297). Level experiment → beta;
-criteria 4 and 5 added from the v0.5.0 release notes. Impact: release
+criteria 4 and 5 added from the v0.5.0 release notes; criterion 5's
+subset from the tcc owner (2026-11-16). Impact: release
 checklist (a tcc step), row 414's tcc steps, the anchor of this entry.
