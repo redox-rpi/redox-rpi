@@ -131,6 +131,12 @@ script="$tftp/$dir/netboot.cmd"
     if [ -n "$blocksize" ]; then
         echo "if test -z \"\${tftpblocksize}\"; then setenv tftpblocksize $blocksize; fi"
     fi
+    if [ "$board" = pi4 ]; then
+        # After a failed load (#394): the GENET MIB counters (UMAC + 0x400:
+        # frames, FCS and length errors, RX and TX) and the RBUF overflow
+        # and error counters, to tell lost frames from bad ones.
+        echo "if test -z \"\${redox_netdiag}\"; then setenv redox_netdiag 'md.l 0xfd580c00 0x60; md.l 0xfd580394 2'; fi"
+    fi
     echo "if test -z \"\${redox_menu_delay}\"; then setenv redox_menu_delay $menu_delay; fi"
     cat "$ROOT/config/bootmenu.cmd"
     cat "$ROOT/config/netboot.cmd"
