@@ -133,7 +133,10 @@ failed: fix it before the row. The checks:
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
 | tcc | REQ-TCC-1 crit. 5, #247 | `/usr/share/tcc-tests/run.ion` reaches `TCC-TEST done`; hello dynamic, `tcc -run`, the `hallo.c` shebang script (exit status 42), bench, self-hosting give their output; `-static` and bench-gcc not judged (experiment tcc) |
-| dns | #358, #374 | name server from DHCP; unknown name: "Name does not resolve" within 5 s; dead name server: "Try again" within 15 s; works again after it is set back |
+| dns | #358, #374, REQ-NET-7 crit. 3 | name server from DHCP; unknown name, fully qualified and short: "Name does not resolve" within 1 s (ion's `time` on the guest) |
+| dns-lan | REQ-NET-7 crit. 1 | with `--lan-name`: a LAN host's full name (with a host part, not the bare domain) and its short form each resolve within 2 s |
+| dns-outside | REQ-NET-7 crit. 2 | with `--outside-name`: a name outside the LAN resolves (QEMU: `static.redox-os.org`) |
+| dns-silent | REQ-NET-7 crit. 4, #374 | with `--dead-dns` as name server: "Try again" within 10 s (full name) and 15 s (short name, local domain set); unknown name resolves to "Name does not resolve" again after it is set back |
 | launcher-sopwith | #335, REQ-GFX-2 | launcher entry `70_sopwith` names `/usr/bin/sopwith` and its icon; both exist (experiment orbital-apps) |
 | tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
 | sopwith | #335, #33, REQ-GFX-2 | only with `--desktop`, last: starts the desktop and Sopwith; an Orbital window, SDL's Redox audio driver, still running after 15 s, `loud_chunks` higher than before it started; then SIGTERM (SIGKILL if needed; reported only until #460, #405). Orbital keeps running, so the caller reboots afterwards |
@@ -144,7 +147,8 @@ A check whose experiment is not in the image is skipped, not failed.
 `--desktop` (`scripts/regression-qemu.sh --desktop`), after all other devsh
 checks; on the Pi, reboot after it. Keys and audible sound stay a person step
 in the rc test. On the Pi the same script runs against devshd (`scripts/regression-set.py <pi>
---serial-log ~/redox-rpi/logs/serial.log --dead-dns <unused address>`).
+--serial-log ~/redox-rpi/logs/serial.log --dead-dns 192.0.2.1
+--lan-name <LAN host> --outside-name <outside name>`).
 QEMU does not see hardware: the audio rate, real USB and the 3B+ external
 abort stay with `pi-test.py --extended` and the Pi rows. A new regression
 gets a check here at the cheapest level that sees it.
