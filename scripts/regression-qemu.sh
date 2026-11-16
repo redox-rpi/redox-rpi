@@ -18,6 +18,12 @@
 #   Every other option goes to scripts/regression-set.py, e.g.
 #   --only dns --only tcp, or --starts 100.
 #
+# The dns-outside check looks up a name outside the LAN
+# (REGRESSION_OUTSIDE_NAME, default static.redox-os.org) through QEMU's user
+# network, so it needs internet access on this host; set
+# REGRESSION_OUTSIDE_NAME= (empty) to skip it offline, or pass
+# --outside-name <name> for another name.
+#
 # One QEMU per clone (images/run.img is shared): run nothing else in QEMU in
 # this clone meanwhile. DEVSH_PORT and SSH_PORT pick the host ports
 # (default 12721, 12722) for parallel runs in different clones.
@@ -80,7 +86,9 @@ for _ in $(seq 60); do
 done
 # QEMU's USB network moves about 0.1 MiB/s, so 1 MiB is enough for the TCP check.
 args=(127.0.0.1 --port "$DEVSH_PORT" --serial-log "$console" --tcp-host 10.0.2.2 --tcp-mib 1
-      --dead-dns 10.0.2.99 --outside-name static.redox-os.org --report "$report")
+      --dead-dns 10.0.2.99 --report "$report")
+outside="${REGRESSION_OUTSIDE_NAME-static.redox-os.org}"
+[ -n "$outside" ] && args+=(--outside-name "$outside")
 [ -n "$manifest" ] && args+=(--manifest "$manifest")
 rc=0
 python3 scripts/regression-set.py "${args[@]}" "${pass[@]}" || rc=$?
