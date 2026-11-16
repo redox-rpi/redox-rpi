@@ -132,12 +132,15 @@ it gets by DHCP, and fail at once for an unknown name.
 | Status | proposed |
 | Since | v0.5.0 (proposed for v0.6.0) |
 | Implemented by | #290, PR #358, PR #381 |
-| Verification | test, automated: row 414 (router name, short name and an unknown name with curl); row 457 (dev build on stable, 3B+: criteria 2–4 pass; criterion 1 failed only on the row's name choice, a name with no short form in the lab); QEMU regression set `dns` |
+| Verification | test, automated: row 414 (router name, short name and an unknown name with curl); row 457 (dev build on stable, 3B+: criteria 1–4 pass with a LAN host; outside name 0.07 s, unknown name 0.06 s, silent server 6.5 s full / 12.5 s short; one LAN lookup took 5.06 s once); QEMU regression set `dns` |
 
 Acceptance criteria:
 
-1. The name server and the local domain (for example `.lan`) come from
-   DHCP; a fully qualified name and a short name of a LAN host resolve.
+1. A fully qualified name and a short name of a LAN host resolve, each
+   within 2 s (proposed). The name server comes from DHCP. The local
+   domain from DHCP (option 15) is verified by inspection (dhcpd reads
+   it, base patch `0088`), because neither the lab router nor QEMU sends
+   one.
 2. A name outside the LAN resolves (for example the package server). On
    the Pi this needs the lab's internet uplink, so a failure may be the
    uplink, not Redox; the QEMU `dns` set (user network, DNS forwarded to
