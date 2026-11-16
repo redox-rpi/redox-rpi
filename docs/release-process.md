@@ -125,7 +125,7 @@ the Pi.
 
 The build agent runs these on every candidate's published SD image and
 writes the results into the release checklist next to the checksum. They
-come from the requirements REQ-REL-1 and REQ-REL-5 (`docs/requirements/release.md`,
+come from the requirements REQ-REL-1 and REQ-REL-5 ([#496](https://github.com/redox-rpi/redox-rpi/issues/496), [#500](https://github.com/redox-rpi/redox-rpi/issues/500),
 draft [PR #270](https://github.com/redox-rpi/redox-rpi/pull/270); method
 agreed with V&V on 2026-11-08).
 
