@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# The console image: a small direct-boot image (kernel8.img and initramfs
+# for the Pi firmware, no U-Boot) for console work and boot-time tests. The
+# Pi firmware reads the initramfs from the SD card at about 1 MB/s
+# (rpi-open-firmware#34), so a 48 MiB initramfs boots much sooner than the
+# 260 MiB one of a full image (row 467: `redox login:` about 68 s after power
+# on, against about 4 minutes).
+#
+# Made from a network-boot image built by scripts/build-image.sh, in the
+# same clone (it needs base's initfs build folder):
+#   1. the initfs again, from the same files with every program stripped of
+#      its symbols (about 27 -> 18 MB);
+#   2. the root filesystem without what config/console-prune.txt lists
+#      (documentation, headers, static libraries, TLS/HTTP, drivers for other
+#      hardware, ...), every remaining ELF file stripped, copied into a new
+#      RedoxFS of --size MiB (default 32);
+#   3. kernel8.img from scripts/fw-direct-boot.sh; the banner says
+#      "direct console".
+#
+# Writes <out>/kernel8.img, <out>/initramfs (initfs, then the RedoxFS) and
+# <out>/console.fs. Copy the two boot files to a direct card's FAT partition
+# (make-sdcard.sh --direct) or give them to the firmware. --test boots them
+# in QEMU raspi3b and waits for `redox login:`.
+#
+# Needs what scripts/fw-direct-boot.sh needs, plus FUSE (/dev/fuse,
+# fusermount) for the redoxfs mount, as the upstream build's `make mount`.
+#
+# Usage:
+#   scripts/console-image.sh [--image <harddrive.img>] [--out <dir>]
+#                            [--size <MiB>] [--test]
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REDOX="$ROOT/upstream/redox"
+image="$REDOX/build/aarch64/minimal/harddrive.img"
+out="$ROOT/build/console"
+size=32
+test=no
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --image) image="$2"; shift 2 ;;
+        --out) out="$2"; shift 2 ;;
+        --size) size="$2"; shift 2 ;;
+        --test) test=yes; shift ;;
+        *) echo "unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+[ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh" >&2; exit 1; }
+
+fstools="$REDOX/build/fstools/bin"
+base="$REDOX/recipes/core/base/target/aarch64-unknown-redox"
+strip="$REDOX/prefix/aarch64-unknown-redox/clang-install/bin/llvm-strip"
+initfs_ar="$base/build/target/debug/redox-initfs-ar"
+tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+for need in "$fstools/redoxfs" "$fstools/redoxfs-clone" "$strip" "$initfs_ar" \
+            "$base/build/initfs" "$base/build/aarch64-unknown-redox/release/bootstrap"; do
+    [ -e "$need" ] || { echo "$need missing: build the image in this clone first" >&2; exit 1; }
+done
+
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
+work="$(mktemp -d "$out/work.XXXXXX")"
+mnt="$work/mnt"
+cleanup() {
+    mountpoint -q "$mnt" 2>/dev/null && fusermount -u "$mnt"
+    rm -rf "$work"
+}
+trap cleanup EXIT
+
+# kernel8.img, and a copy of the image whose banner says "direct".
+"$ROOT/scripts/fw-direct-boot.sh" --image "$image" --out "$work/fw" > /dev/null
+cp "$work/fw/kernel8.img" "$out/kernel8.img"
+
+# 1. The initfs, stripped. Its files come from base's build folder; check
+# that they are the ones in the image.
+"$tool" "$image" get usr/lib/boot/initfs "$work/initfs.image" > /dev/null
+if ! cmp -s "$work/initfs.image" "$base/build/initfs.img"; then
+    echo "the initfs in $image is not base's last build: build the image again in this clone" >&2
+    exit 1
+fi
+cp -a "$base/build/initfs" "$work/initfs"
+find "$work/initfs" -type f -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
+    -exec "$strip" {} \;
+"$initfs_ar" "$work/initfs" "$base/build/aarch64-unknown-redox/release/bootstrap" \
+    -o "$work/initfs.small" > /dev/null
+
+# 2. The root filesystem, pruned and stripped.
+read -r start sectors < <(partx -g -o START,SECTORS -n 3 "$work/fw/harddrive.img")
+dd if="$work/fw/harddrive.img" of="$work/root.fs" bs=512 skip="$start" count="$sectors" status=none
+mkdir "$mnt"
+"$fstools/redoxfs" "$work/root.fs" "$mnt" > "$work/redoxfs.log" 2>&1 &
+for _ in $(seq 1 50); do mountpoint -q "$mnt" && break; sleep 0.1; done
+mountpoint -q "$mnt" || { cat "$work/redoxfs.log" >&2; echo "cannot mount the root filesystem" >&2; exit 1; }
+(
+    cd "$mnt"
+    shopt -s nullglob
+    while read -r pattern; do
+        pattern="${pattern%%#*}"
+        pattern="${pattern%"${pattern##*[![:space:]]}"}"
+        [ -n "$pattern" ] || continue
+        # Unquoted on purpose: the pattern may be a glob.
+        # shellcheck disable=SC2086
+        rm -rf -- $pattern
+    done < "$ROOT/config/console-prune.txt"
+    find . -type f -size +4k -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
+        -exec "$strip" {} \;
+    for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
+        [ -f "$file" ] || continue
+        sed -i -E -e 's/^(redox-rpi .*) \(direct, /\1 (direct console, /' \
+            -e 's/^IMAGE="direct"$/IMAGE="direct-console"/' \
+            -e 's/^image = "direct"$/image = "direct-console"/' "$file"
+    done
+)
+used_kib="$(du -sk "$mnt" | cut -f1)"
+fusermount -u "$mnt"
+wait
+
+truncate -s 0 "$out/console.fs"
+truncate -s "${size}M" "$out/console.fs"
+if ! "$fstools/redoxfs-clone" "$work/root.fs" "$out/console.fs" > "$work/clone.log" 2>&1; then
+    tail -5 "$work/clone.log" >&2
+    echo "the files ($((used_kib / 1024)) MiB) do not fit in --size $size MiB" >&2
+    exit 1
+fi
+
+# 3. The initramfs: the initfs, then the RedoxFS at the next 4 KiB boundary
+# (where rpi-boot-stub looks for it), as scripts/fw-direct-boot.sh does.
+cp "$work/initfs.small" "$out/initramfs"
+truncate -s %4096 "$out/initramfs"
+cat "$out/console.fs" >> "$out/initramfs"
+echo "console image: initfs $(($(wc -c < "$work/initfs.small") >> 10)) KiB, root $((used_kib >> 10)) MiB in ${size} MiB," \
+     "initramfs $(($(wc -c < "$out/initramfs") >> 20)) MiB, kernel8.img $(wc -c < "$out/kernel8.img") bytes, in $out"
+
+[ "$test" = yes ] || exit 0
+"$ROOT/scripts/fw-direct-boot.sh" --out "$out" --boot-only --test
