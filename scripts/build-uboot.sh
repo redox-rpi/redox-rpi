@@ -47,17 +47,26 @@ if [ ! -d "$SRC" ]; then
     # UBOOT_REPO: CI uses the GitHub mirror (#409).
     git clone --depth 1 --branch "$UBOOT_TAG" "${UBOOT_REPO:-https://source.denx.de/u-boot/u-boot.git}" "$SRC"
 fi
-if [ "$(git -C "$SRC" describe --tags)" != "$UBOOT_TAG" ]; then
+if ! git -C "$SRC" rev-parse -q --verify "$UBOOT_TAG^{commit}" >/dev/null; then
     git -C "$SRC" fetch --depth 1 origin tag "$UBOOT_TAG"
 fi
-# Our fixes (patches/u-boot/), applied to a clean checkout on every build:
-# local changes in $SRC are discarded.
-git -C "$SRC" checkout -q -f "$UBOOT_TAG"
-git -C "$SRC" reset -q --hard
-for p in "$ROOT"/patches/u-boot/*.patch; do
-    [ -e "$p" ] || continue
-    git -C "$SRC" apply "$p"
-done
+# The build uses an export of the tag with our fixes (patches/u-boot/)
+# applied, in build/u-boot-src. $SRC itself is only read: its working tree
+# and any local changes there stay as they are. The export is made again
+# only when the tag or a patch changes, so unchanged files keep their times
+# and builds stay incremental.
+BUILD_SRC="$ROOT/build/u-boot-src"
+stamp="$UBOOT_TAG $(cat "$ROOT"/patches/u-boot/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
+if [ "$(cat "$BUILD_SRC/.redox-rpi-stamp" 2>/dev/null)" != "$stamp" ]; then
+    rm -rf "$BUILD_SRC"
+    mkdir -p "$BUILD_SRC"
+    git -C "$SRC" archive "$UBOOT_TAG" | tar -x -C "$BUILD_SRC"
+    for p in "$ROOT"/patches/u-boot/*.patch; do
+        [ -e "$p" ] || continue
+        patch -p1 -s -N -d "$BUILD_SRC" < "$p"
+    done
+    echo "$stamp" > "$BUILD_SRC/.redox-rpi-stamp"
+fi
 
 mkdir -p "$OUT/obj" "$OUT/dtb"
 fragments=("$ROOT/config/u-boot.config")
@@ -78,11 +87,11 @@ CONFIG_BOOTCOMMAND="usb start; setenv autoload no; setenv redox_ub no; for try i
 EOF
     fragments+=("$OUT/net.config")
 fi
-make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" "$DEFCONFIG"
-"$SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT/obj" \
+make -C "$BUILD_SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" "$DEFCONFIG"
+"$BUILD_SRC/scripts/kconfig/merge_config.sh" -m -O "$OUT/obj" \
     "$OUT/obj/.config" "${fragments[@]}"
-make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
-make -C "$SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
+make -C "$BUILD_SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+make -C "$BUILD_SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
 
 cp "$OUT/obj/u-boot.bin" "$OUT/u-boot.bin"
 # Mainline devicetrees, used to boot this U-Boot in QEMU without Pi firmware.

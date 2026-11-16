@@ -13,7 +13,7 @@ license.
 | [relibc/](relibc/) | [relibc](https://gitlab.redox-os.org/redox-os/relibc) (MIT): C library, dynamic loader | `git am patches/relibc/*.patch` |
 | [redoxfs/](redoxfs/) | [RedoxFS](https://gitlab.redox-os.org/redox-os/redoxfs) (MIT): the filesystem and its scheme daemon | `git am patches/redoxfs/*.patch` |
 | [netutils/](netutils/) | [netutils](https://gitlab.redox-os.org/redox-os/netutils) (MIT): nc, ping, ifconfig and other network tools | `git am patches/netutils/*.patch` |
-| [u-boot/](u-boot/) | [U-Boot](https://source.denx.de/u-boot/u-boot) (GPL-2.0), the tag in `scripts/build-uboot.sh` | applied by `scripts/build-uboot.sh` on every build |
+| [u-boot/](u-boot/) | [U-Boot](https://source.denx.de/u-boot/u-boot) (GPL-2.0), the tag in `scripts/build-uboot.sh` | applied by `scripts/build-uboot.sh` to an export of the tag in `build/u-boot-src/`; `upstream/u-boot` stays untouched |
 | [experiments/](experiments/) | Patches tried while debugging, with their results; applied only with `scripts/build-image.sh --experiment <name>` | |
 
 ## Patch numbers
