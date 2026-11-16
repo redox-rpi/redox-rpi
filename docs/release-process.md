@@ -72,7 +72,7 @@ fallback, the week has no release.
 
 ## Building
 
-- The build agent builds in its own clone `~/redox-rpi-rel` on homenodellm,
+- The build agent builds in its own clone `~/redox-rpi-rel` on the build server,
   never in the shared clone `~/redox-rpi`.
 - It checks out the requested commit on a branch `release-v<version>` and
   runs `scripts/build-image.sh --release v<version>-rc<N>` with the
@@ -89,22 +89,33 @@ fallback, the week has no release.
   v0.3.0-rc2.
 - The build waits for other builds on the host (`build/.build-image.lock`).
 - `devshd` stays out of candidate and release images.
+- Next to each candidate it builds the **network-boot variant** from the
+  same commit and options: `scripts/build-image.sh --release-netboot
+  --release v<version>-rc<N>` (`config/raspi3bp-release-netboot.toml`: the
+  SD image's packages and files, no `devshd`, a 256 MiB filesystem that
+  U-Boot can load). Automated rows that need the image a user gets
+  (T-SEC-1, T-SEC-2 in
+  [v1-test-drafts.md](requirements/v1-test-drafts.md)) run on it over the
+  serial console; the test that holds the Pi stages it with
+  `scripts/netboot.sh --image upstream/redox/build/aarch64/release-netboot/harddrive.img`.
+  Its manifest is `build/manifests/release-netboot-<build ID>.toml`. It is
+  not published as a download.
 - The build ID (`git describe` plus the experiment hash) is shown next to
   the candidate's name, so `v0.3.0-rc2` can be traced to an exact build.
 
 ## Results
 
-Each candidate goes to `/srv/tftp/sdcard/` on homenodellm, never to
+Each candidate goes to `/srv/tftp/sdcard/` on the build server, never to
 anyone's own computer:
 
 | File | Content |
 |---|---|
 | `redox-rpi-v<version>-rc<N>.img.xz` | the image, from `scripts/make-sdcard.sh --local`, published with `scripts/publish-sdcard.sh <card> --family redox-rpi --version v<version>-rc<N> --manifest <manifest>` ([ci.md](topics/ci.md#image-server)) |
 | `redox-rpi-v<version>-rc<N>.img.xz.sha256`, `.manifest.toml` | its checksum and manifest, written by `publish-sdcard.sh` |
-| `SHA256SUMS` | one line per file in the directory |
+| `index.json` | the list SwiftFlash reads, rewritten by `publish-sdcard.sh` (`scripts/sdcard-index.py`); there is no `SHA256SUMS` in `/srv/tftp/sdcard/`, each image has its own `.sha256` |
 
 The image is offered at
-`http://homenodellm:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
+`http://<server>:8080/sdcard/redox-rpi-v<version>-rc<N>.img.xz`, so
 SwiftFlash or `curl` flashes it straight from there
 ([netboot.md](netboot.md#sd-card-images-for-download)). Network-boot
 candidates are staged with `scripts/netboot.sh` only by the test that holds
@@ -135,11 +146,29 @@ agreed with V&V on 2026-11-08).
   main passed; the checklist names that run (its URL). While the issue
   "CI: main is red" is open (opened and closed by
   `.github/workflows/ci-main-red.yml`), no candidate is built.
+
+  Since #445 a commit that changes only Markdown or `docs/` starts no
+  `QEMU boot test` on push. If the candidate commit is such a commit, the
+  build agent starts the run by hand (`workflow_dispatch`) on exactly that
+  commit before the build:
+  - If the commit is still the head of `main`:
+    `gh workflow run qemu-boot.yml --ref main`.
+  - If `main` has moved on: a dispatch takes a branch, not a commit, so
+    first push a branch to the commit,
+    `git push origin <commit>:refs/heads/candidate-v<version>-rc<N>`, then
+    `gh workflow run qemu-boot.yml --ref candidate-v<version>-rc<N>`.
+    The branch only serves the run; its deletion after the release is the
+    maintainer's.
+
+  Check that the run's commit is the candidate commit (`headSha` in
+  `gh run list --workflow qemu-boot.yml --event workflow_dispatch --json headSha,url,conclusion`),
+  and name that run in the checklist. A manual run does not open or close
+  "CI: main is red"; that issue still follows the last push run.
 - **REQ-REL-5, fits a 2 GB card:** the uncompressed image
   (`xz -dc <image>.img.xz | wc -c`) is at most 1 800 000 000 bytes.
 
 ```bash
-# on homenodellm, in ~/redox-rpi-rel after the candidate build
+# on the build server, in ~/redox-rpi-rel after the candidate build
 img=/srv/tftp/sdcard/redox-rpi-v<version>-rc<N>.img.xz
 hd=upstream/redox/build/aarch64/sdcard/harddrive.img
 tool=tools/redoxfs-file/target/release/redoxfs-file

@@ -6,7 +6,7 @@ Called by scripts/build-visit-images.sh after each image:
     scripts/visit-index.py <out dir> <config> <queue.md> [<sdcard dir>]
 
 Writes <out dir>/index.html and <out dir>/README.txt (served as
-http://homenodellm:8080/visit/): per image the result, build ID, date, how
+<image server>/visit/, REDOX_HTTP_BASE from scripts/lab-env.sh): per image the result, build ID, date, how
 to stage it for network boot, the SD image with its checksum or why there is
 none, and the queued rows of queue.md (redox-rpi/pi-tests) that name the image
 ("nightly visit `<name>`") with what they check.
@@ -17,7 +17,21 @@ import os
 import re
 import sys
 
-HTTP = "http://homenodellm:8080"
+HTTP = None  # REDOX_HTTP_BASE, set in main()
+
+
+def lab_value(key):
+    """A lab value as scripts/lab-env.sh reads it: the environment first,
+    then KEY=value lines in $REDOX_LAB_ENV or ~/.config/redox-rpi/lab.env."""
+    if os.environ.get(key):
+        return os.environ[key]
+    path = os.environ.get("REDOX_LAB_ENV") or os.path.expanduser("~/.config/redox-rpi/lab.env")
+    for line in read(path).splitlines():
+        line = line.split("#", 1)[0].strip()
+        k, sep, v = line.partition("=")
+        if sep and k.strip() == key:
+            return v.strip().strip('"')
+    return ""
 
 
 def read(path):
@@ -99,6 +113,11 @@ def state(e):
 
 
 def main():
+    global HTTP
+    HTTP = lab_value("REDOX_HTTP_BASE").rstrip("/")
+    if not HTTP:
+        sys.exit("visit-index.py: REDOX_HTTP_BASE not set. Set it in the environment or in "
+                 "~/.config/redox-rpi/lab.env (scripts/lab-env.sh).")
     out, conf, plan_file = sys.argv[1:4]
     sdcard = sys.argv[4] if len(sys.argv) > 4 else "/srv/tftp/sdcard"
     plan = read(plan_file)

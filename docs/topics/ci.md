@@ -31,6 +31,11 @@
 
 ## In progress
 
+- [#265](https://github.com/redox-rpi/redox-rpi/issues/265) regression set before a Pi row:
+  `scripts/regression-set.py` and `scripts/regression-qemu.sh` (PR #396),
+  8 checks in QEMU in under 3 minutes with the boot; `merge-set-check.sh`
+  could run it instead of `pi-test.py` alone.
+
 - [#10](https://github.com/redox-rpi/redox-rpi/issues/10) crash details in `pi-test.py`, branch `t10-start-loop`,
   [PR #74](https://github.com/redox-rpi/redox-rpi/pull/74): each failed start with its program, exit
   status and its own kernel crash dump (FAR, ELR, ESR, LR, SP, PID, stack
@@ -53,7 +58,7 @@ person at the Pi should never wait for a build, so the images for such
 tests are built every night.
 
 - `update-stable.sh` starts the systemd user unit `redox-visit.service`
-  ([config/redox-visit.service](../../config/redox-visit.service)) when the
+  (set up by the admins) when the
   stable image passed or nothing changed since it; not when it failed or a
   test was on the Pi. The unit runs
   [`scripts/build-visit-images.sh`](../../scripts/build-visit-images.sh)
@@ -72,7 +77,7 @@ tests are built every night.
   `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
   `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
   `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
-- **For a tester:** http://homenodellm:8080/visit/ (`index.html` and
+- **For a tester:** `/visit/` on the image server (`index.html` and
   `README.txt`, from `scripts/visit-index.py` after each image): per image
   OK or FAILED, build ID, date, the command to stage it, the SD image with
   its sha256 or why there is none, and the queued rows of
@@ -88,19 +93,17 @@ tests are built every night.
   remove first, and `--sdcard` where the image boots from the card; if it
   can't, a comment at the end of the line says why (shown on the page). How a test row uses it:
   [test-plan.md](../test-plan.md#nightly-visit-images).
-- Install once on the build host:
-  `cp config/redox-visit.service ~/.config/systemd/user/ && systemctl --user daemon-reload`.
 
 ## Image server
 
-SD card images for people are at http://homenodellm:8080/sdcard/
-(`/srv/tftp/sdcard/`, served by `redox-http.service`, `python3 -m
-http.server` on `/srv/tftp`), laid out for SwiftFlash
+SD card images for people are at `/sdcard/` on the image server
+(`/srv/tftp/sdcard/`, requirements in
+[build-host.md](../build-host.md#what-the-http-server-serves)), laid out for SwiftFlash
 ([build-server.md](https://github.com/zehrer/SwiftFlashCLI/blob/main/docs/build-server.md),
 [#237](https://github.com/redox-rpi/redox-rpi/issues/237)). A tester:
 
 ```bash
-swiftflash source add redox http://homenodellm:8080/sdcard/
+swiftflash source add redox http://<server>:8080/sdcard/
 sudo swiftflash redox:redox-rpi-openfw-3bp
 ```
 
@@ -130,7 +133,7 @@ The rules it keeps:
   `family`, `version` and `date`, plus our own `board`, `commit`,
   `build_id`, `experiments`, `owner` and `rows` (the queued test-plan rows
   that name the family or file). The user unit `redox-sdcard-index.path`
-  ([config/redox-sdcard-index.path](../../config/redox-sdcard-index.path))
+  (set up by the admins)
   rewrites it whenever the directory changes, so a file copied in by hand
   is not hidden: SwiftFlash reads only `index.json` when there is one. Older images get their fields from the
   file name and manifest; `redox-rpi-zero2w-fastnet-db5ea27` has version
@@ -141,16 +144,14 @@ The rules it keeps:
   target, so a new target is a new download.
 - **ETag:** `http.server` sends none; SwiftFlash then uses Last-Modified
   plus size. `scripts/http-etag-server.py` is the same server with an ETag
-  (`"<mtime>-<size>"`), tested on a spare port, not in use: switching
-  `redox-http.service` to it (it also serves U-Boot's HTTP boot) is the
-  maintainer's call.
+  (`"<mtime>-<size>"`). Which server runs is the admins' choice
+  ([#436](https://github.com/redox-rpi/redox-rpi/issues/436)).
 
 ## Log triage
 
-homenodellm runs vLLM with `gpt-oss-20b` (unit `vllm.service`, config
-`/etc/vllm/vllm.env`, `http://127.0.0.1:8000/v1`, 16k context, about
-43 tokens/s). It listens on 0.0.0.0 without an API key, so anyone on the
-home network can use it.
+The build server offers a local language model with an OpenAI-compatible
+API (provided by the admins; ask them for the address). It is reachable
+from the local network only.
 
 - `tools/log-triage/log-triage.py LOG [--baseline GOOD]` pre-sorts a serial or
   QEMU log: per boot, reached login, panics and faults with line and program,
@@ -169,8 +170,3 @@ home network can use it.
   right where named. The one-line summary had a wrong cause in 7 of 17
   ("failed to mount, leading to a crash in /tmp/r117"). **Use the facts and
   line numbers, not the reasons.**
-- OpenCode 1.19.5 for small agent tasks on homenodellm:
-  `~/.opencode/bin/opencode` (official script, not on PATH), provider
-  `vllm/gpt-oss-20b` in `~/.config/opencode/opencode.json`, autoupdate and
-  sharing off. `opencode run "…"` in a folder works with tool calls (glob,
-  read): a list-and-read task took 6 s.

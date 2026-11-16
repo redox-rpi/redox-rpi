@@ -12,7 +12,7 @@
 #
 # The boot ROM needs a DHCP answer with "Raspberry Pi Boot" in it, which a
 # home router does not send: run dnsmasq as a proxy next to the router with
-# config/dnsmasq-pxe-proxy.conf (docs/netboot.md, "Without SD card").
+# a proxy DHCP server (docs/netboot.md, "Without SD card").
 #
 # Run scripts/build-uboot.sh rpi-net <server-ip> first.
 #

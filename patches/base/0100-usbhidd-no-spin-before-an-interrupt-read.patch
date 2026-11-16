@@ -1,0 +1,57 @@
+From 4a9f2c2affc1bf8ecaaf15d97ab3a52fb8e27fcb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 09:09:42 +0000
+Subject: [PATCH] usbhidd: no spin before an interrupt read
+
+The report loop spun 1 ms in thread::yield_now before every read. With
+an interrupt endpoint the read already waits in xhcid until the device
+sends a report, so the spin only burned CPU: about 5 % of a core per
+interface with nobody typing (two interfaces of the Pi 400 keyboard,
+test 453; the keyboard repeats its report every 4 ms after SET_IDLE).
+
+The spin stays for devices without an interrupt IN endpoint, which are
+polled with GET_REPORT over the control endpoint.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/usbhidd/src/main.rs | 19 +++++++++++--------
+ 1 file changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
+index 7aaf479c..9822e119 100644
+--- a/drivers/input/usbhidd/src/main.rs
++++ b/drivers/input/usbhidd/src/main.rs
+@@ -425,19 +425,22 @@ fn main() -> Result<()> {
+     let mut last_buttons = [false, false, false];
+     let mut gamepad_state = HashMap::new();
+     loop {
+-        //TODO: get frequency from device
+-        //TODO: use sleeps when accuracy is better: thread::sleep(time::Duration::from_millis(10));
+-        let timer = time::Instant::now();
+-        while timer.elapsed() < time::Duration::from_millis(1) {
+-            thread::yield_now();
+-        }
+-
+         if let Some(endpoint) = &mut endpoint_opt {
+-            // interrupt transfer
++            // interrupt transfer: the read waits in xhcid until the device
++            // sends a report, so no extra wait here. A spin of 1 ms before
++            // each read cost about 5 % of a core per interface while idle
++            // (Pi 400 test 453).
+             endpoint
+                 .transfer_read(&mut report_buffer)
+                 .context("failed to get report")?;
+         } else {
++            //TODO: get frequency from device
++            //TODO: use sleeps when accuracy is better: thread::sleep(time::Duration::from_millis(10));
++            let timer = time::Instant::now();
++            while timer.elapsed() < time::Duration::from_millis(1) {
++                thread::yield_now();
++            }
++
+             // control transfer
+             reqs::get_report(
+                 &handle,
+-- 
+2.53.0
+

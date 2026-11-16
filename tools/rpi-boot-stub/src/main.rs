@@ -29,6 +29,8 @@ const IDENTITY_GIB: usize = 8;
 const KERNEL_MAX: u64 = 4 * BLOCK_2M;
 const STACK_SIZE: usize = 128 * 1024;
 const ENV_SIZE: usize = 64 * 1024;
+/// Room for the copy of the devicetree (a Pi 3 one is about 36 KiB).
+const DTB_MAX: usize = 128 * 1024;
 
 // Page table entry bits, the same values as the bootloader (src/arch/aarch64.rs).
 const PF_PRESENT: u64 = 1 << 0;
@@ -77,6 +79,15 @@ static mut L3_KERNEL: [Table; 4] = [EMPTY; 4];
 static mut STACK: Aligned<[u8; STACK_SIZE]> = Aligned([0; STACK_SIZE]);
 #[link_section = ".data.zeroed"]
 static mut ENV: Aligned<[u8; ENV_SIZE]> = Aligned([0; ENV_SIZE]);
+/// The devicetree the kernel gets (#324): a copy inside this image, so it is
+/// reserved with the image and page-aligned, and its size is padded with
+/// zeros to a multiple of 8. The kernel reads the devicetree as `u32` words,
+/// `hwdesc_size / 4` of them (src/startup/mod.rs): with the firmware's own
+/// `totalsize`, which need not be a multiple of 4, the end of the strings
+/// block fell off and the parse failed with "encountered end of data" (Zero
+/// 2 W direct boot, devicetree at 0xf79d700).
+#[link_section = ".data.zeroed"]
+static mut DTB_COPY: Aligned<[u8; DTB_MAX]> = Aligned([0; DTB_MAX]);
 
 /// Same layout as `KernelArgs` in the kernel (src/startup/mod.rs).
 #[repr(C, packed(8))]
@@ -331,7 +342,27 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     println!("rpi-boot-stub: devicetree at {:#x}", dtb_addr);
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb_addr as *const u8) }
         .unwrap_or_else(|e| panic!("no valid devicetree: {:?}", e));
-    let dtb_size = fdt.total_size() as u64;
+    let fw_dtb_size = fdt.total_size() as u64;
+    assert!(
+        fw_dtb_size as usize <= DTB_MAX,
+        "devicetree of {} bytes, larger than {} KiB",
+        fw_dtb_size,
+        DTB_MAX >> 10
+    );
+    // Copy it before the initramfs move and before the mailbox calls below,
+    // which could touch the firmware's copy.
+    let dtb_copy = addr_of_mut!(DTB_COPY) as *mut u8;
+    unsafe { core::ptr::copy_nonoverlapping(dtb_addr as *const u8, dtb_copy, fw_dtb_size as usize) };
+    let fw_dtb_addr = dtb_addr;
+    let dtb_addr = dtb_copy as u64;
+    let dtb_size = (fw_dtb_size + 7) & !7;
+    // Read everything below from the copy as well.
+    let fdt = unsafe { fdt::Fdt::from_ptr(dtb_copy as *const u8) }
+        .unwrap_or_else(|e| panic!("copied devicetree not valid: {:?}", e));
+    println!(
+        "rpi-boot-stub: devicetree {} bytes, copied from {:#x} to {:#x} ({} bytes for the kernel)",
+        fw_dtb_size, fw_dtb_addr, dtb_addr, dtb_size
+    );
 
     let image_start = addr_of!(__start) as u64;
     let image_end = addr_of!(__end) as u64;
@@ -420,7 +451,7 @@ unsafe fn boot(dtb_addr: u64) -> ! {
         }
     };
     reserve(0, image_end);
-    reserve(dtb_addr, dtb_addr + dtb_size);
+    reserve(fw_dtb_addr, fw_dtb_addr + fw_dtb_size);
     reserve(initrd_start.min(initrd), initrd_used_end);
     if let Some(f) = &framebuffer {
         reserve(f.base, align_up(f.base + f.size));

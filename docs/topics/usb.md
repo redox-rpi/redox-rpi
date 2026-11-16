@@ -77,8 +77,20 @@
   182 MB/s), since QEMU finishes a chunk at once; the real check is Pi test
   #135, like for like against #71's image, no person needed.
 
-- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) the Pi's
-  inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
+- [#151](https://github.com/redox-rpi/redox-rpi/issues/151) **Download
+  stall, cause found (2026-11-11), fix base `0090`** (branch
+  `dwc2d-no-sleep`): a `nanosleep` in dwc2d that never returns. dwc2d's
+  1 s LAN7800 link check polls the MII with 1 ms sleeps. When one does not
+  come back, the main loop waits for good without CPU use, and netstack,
+  served by that loop, hangs in its read from the network device. Pi test
+  326: a 382 MB download into the SD card stalled 3 of 3 times on main,
+  2 of 3 on stable, 0 of 3 on row 319's image (it had `usb-hub-drop`). In
+  Pi test 342, main + `usb-hub-drop` completed 3 of 3, and in a stall on
+  main dwc2d's main thread was `US` with its CPU time frozen. `0090` takes
+  the `sleep`-to-`delay()` part of `usb-hub-drop` into base. The lost
+  wakeup itself (kernel timer or scheduler) is still open. QEMU does not
+  show it: its CDC Ethernet adapter has no link check.
+  Earlier: the Pi's inner USB hub (LAN7515, with the LAN7800 and the keyboard) dropped off
   during a download into the SD card, once with dwc2d stuck afterwards:
   branch [`usb-hub-drop`](https://github.com/redox-rpi/redox-rpi/tree/usb-hub-drop)
   (on main, PR #156), experiments `dwc2d-netstats` (`0052`) and
@@ -159,7 +171,7 @@ HAT. Analysis only, no code yet (updated 2026-11-04).
   packets) against endpoint 0 and the function (`cargo test`), plus unit
   tests of the descriptors and of NCM's NTB encoding and decoding. The QEMU
   tests keep checking that host mode is unchanged. The real test: a Zero 2
-  W cabled to homenodellm (powered by it; `cdc_ether`/`cdc_ncm` on the
+  W cabled to the build server (powered by it; `cdc_ether`/`cdc_ncm` on the
   Linux side, tests over SSH without a person), booted from SD or by
   rpiboot over the same cable; a second USB serial adapter for its console;
   one person visit to set it up and try a Mac and a Windows PC.
@@ -171,7 +183,7 @@ HAT. Analysis only, no code yet (updated 2026-11-04).
 | 3 | Endpoint 0, standard requests, descriptors | ~300 lines |
 | 4 | Host model with `cargo test` for steps 2–3 | ~300 lines |
 | 5 | CDC-ECM function, `network.usb_gadget`, fixed address | ~400 lines |
-| 6 | Zero 2 W bench at homenodellm, first Linux test | setup, 1 person visit |
+| 6 | Zero 2 W bench at the build server, first Linux test | setup, 1 person visit |
 | 7 | Small DHCP server for the computer's side | ~250 lines |
 | 8 | CDC-NCM: NTB16 framing, Microsoft OS 2.0 descriptors, tests | ~450 lines |
 | 9 | Mac and Windows check | 1 person visit |

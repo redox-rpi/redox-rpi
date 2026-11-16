@@ -46,18 +46,22 @@ belong to the v1.0 criteria of [RFC 0003](../rfcs/0003-v1-criteria.md)
 | [boot.md](boot.md) | `BOOT` boot from SD card and network, boot time, clean boot | [boot](../topics/boot.md) |
 | [console.md](console.md) | `CON` HDMI and serial console | [boot](../topics/boot.md), [stability](../topics/stability.md) |
 | [usb.md](usb.md) | `USB` keyboard, mouse, hotplug | [usb](../topics/usb.md) |
-| [network.md](network.md) | `NET` Ethernet, DHCP, TCP, multicast | [network](../topics/network.md) |
+| [network.md](network.md) | `NET` Ethernet, DHCP, TCP, multicast, DNS | [network](../topics/network.md) |
 | [time.md](time.md) | `TIME` clock and NTP | [time](../topics/time.md) |
 | [sdcard.md](sdcard.md) | `SD` SD card and RedoxFS | [sdcard](../topics/sdcard.md) |
 | [gpio.md](gpio.md) | `GPIO` GPIO, I2C, SPI | [gpio](../topics/gpio.md) |
 | [firmware.md](firmware.md) | `FW` CPU clock, firmware interface, reboot | [firmware](../topics/firmware.md) |
-| [audio.md](audio.md) | `AUDIO` headphone jack (beta) | [audio](../topics/audio.md) |
-| [graphics.md](graphics.md) | `GFX` optional desktop (beta, rc2) | [graphics](../topics/graphics.md) |
-| [tcc.md](tcc.md) | `TCC` native C compiler (experiment) | [tcc](../topics/tcc.md) |
+| [audio.md](audio.md) | `AUDIO` headphone jack, startup sound, volume (beta) | [audio](../topics/audio.md) |
+| [graphics.md](graphics.md) | `GFX` optional desktop and its apps (beta) | [graphics](../topics/graphics.md) |
+| [tcc.md](tcc.md) | `TCC` native C compiler (beta) | [tcc](../topics/tcc.md) |
 | [stability.md](stability.md) | `STAB` program starts, kernel, relibc | [stability](../topics/stability.md), [relibc](../topics/relibc.md) |
 | [boards.md](boards.md) | `BOARD` supported boards | [boards](../topics/boards.md), [zero2w](../topics/zero2w.md) |
 | [release.md](release.md) | `REL` release image contents and publishing | [ci](../topics/ci.md), [release-process](../release-process.md) |
 | [trace-v0.4.0.md](trace-v0.4.0.md) | trace table: requirement → issue → test → state | |
+| [trace-v0.5.0.md](trace-v0.5.0.md) | trace for v0.5.0, and the requirement updates it shows for v0.6.0 (draft) | |
+| [v1-criteria.md](v1-criteria.md) | RFC 0003 v1.0 criteria: Feature issues, trace, gaps (draft, parked) | |
+| [v1-work-packages.md](v1-work-packages.md) | proposed work packages for the 8 criteria with no implementing issue (draft, parked) | |
+| [v1-test-drafts.md](v1-test-drafts.md) | test-row drafts for V&V, 20 criteria with no candidate test (draft, parked) | |
 
 Areas follow the topic pages. A new topic that changes what the system does
 gets its own area code and file.

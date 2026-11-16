@@ -60,7 +60,7 @@ All three tools take the broker from, in this order:
 So one line sets it for everything, as root:
 
 ```sh
-echo 192.168.178.120 > /etc/mqtt-host
+echo <build-server> > /etc/mqtt-host
 ```
 
 The image from experiment `mqtt` has `10.0.2.2` there: that is the build
@@ -103,7 +103,7 @@ topic that never comes.
 | `--tls`, `--cafile file`, `--no-tls` | both | encrypted connection, see [below](#encrypted-connections-tls) (branch `mqtt-tls`) |
 
 Exit code 0 on success, 1 on a network or broker error (the message says
-which: `192.168.178.120:1883: Transport endpoint is not connected` when no
+which: `<build-server>:1883: Transport endpoint is not connected` when no
 broker listens there), 2 on wrong options. `--help` lists all options.
 
 ## Publishing at set times
@@ -163,7 +163,7 @@ has the time from the network ([time.md](time.md)). A broker certificate
 made after that time is "not valid yet" until then:
 
 ```
-mqtt-pub: 192.168.178.50:8883: invalid peer certificate: certificate not valid yet: … (is the clock right? check with date -u)
+mqtt-pub: <lan-host>:8883: invalid peer certificate: certificate not valid yet: … (is the clock right? check with date -u)
 ```
 
 `ha-bridge` tries again every 30 seconds and connects as soon as the clock
@@ -184,7 +184,7 @@ experiments `timesync`, `timerd`, `mqtt` and `ha-bridge`.
 **On the Pi**, as root:
 
 ```sh
-echo 192.168.178.50 > /etc/mqtt-host     # your broker
+echo <lan-host> > /etc/mqtt-host     # your broker
 ```
 
 The service tries to connect every 30 seconds and reads the file again
@@ -192,7 +192,7 @@ each time, so no restart is needed. Within half a minute the boot log or
 serial console shows:
 
 ```
-ha-bridge: 6 sensors announced on 192.168.178.50:1883 as redox-rpi/redox
+ha-bridge: 6 sensors announced on <lan-host>:1883 as redox-rpi/redox
 ```
 
 In Home Assistant the device **Redox redox** appears under Settings →

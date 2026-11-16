@@ -1,6 +1,6 @@
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
-@@ -73,6 +73,14 @@ impl<DataT> SocketFile<DataT> {
+@@ -81,6 +81,14 @@ impl<DataT> SocketFile<DataT> {
          }
      }
  
@@ -15,7 +15,7 @@
      pub fn new_with_data(socket_handle: SocketHandle, data: DataT) -> SocketFile<DataT> {
          SocketFile {
              flags: 0,
-@@ -137,10 +145,10 @@ where
+@@ -145,10 +153,10 @@ where
              ..
          }) = self
          {
@@ -28,7 +28,7 @@
              {
                  if !*read_notified {
                      *read_notified = true;
-@@ -191,6 +199,18 @@ where
+@@ -216,6 +224,18 @@ where
          self.can_recv(data) || !self.may_recv()
      }
  
@@ -47,16 +47,16 @@
      fn hop_limit(&self) -> u8;
      fn set_hop_limit(&mut self, hop_limit: u8);
  
-@@ -689,6 +709,9 @@ where
+@@ -782,6 +802,9 @@ where
                  };
  
                  if remove {
 +                    if let SchemeFile::Socket(ref file) = scheme_file {
 +                        SocketT::remove_extra(&mut socket_set, &file.data);
 +                    }
-                     socket_set.remove(socket_handle);
-                 }
-             }
+                     if SocketT::start_close(&mut socket_set, socket_handle) {
+                         self.closing.push((socket_handle, Instant::now()));
+                     } else {
 --- a/netstack/src/scheme/tcp.rs
 +++ b/netstack/src/scheme/tcp.rs
 @@ -1,3 +1,5 @@
@@ -105,7 +105,7 @@
      type SettingT = ();
  
      const BASE_PATH: &'static str = "/scheme/tcp/";
-@@ -50,6 +76,26 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -77,6 +103,26 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
          }
      }
  
@@ -132,7 +132,7 @@
      fn hop_limit(&self) -> u8 {
          self.hop_limit().unwrap_or(64)
      }
-@@ -142,7 +188,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -169,7 +215,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
              tcp_socket
                  .listen(local_endpoint)
                  .expect("Can't listen on local endpoint");
@@ -147,7 +147,7 @@
          };
  
          Ok((socket_handle, listen_enpoint))
-@@ -153,13 +205,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -180,13 +232,13 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
          file: &SchemeFile<Self>,
          port_set: &mut Self::SchemeDataT,
      ) -> SyscallResult<()> {
@@ -164,7 +164,7 @@
              }
          }
          Ok(())
-@@ -220,12 +272,32 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -247,12 +299,32 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
          let file = match path {
              "listen" => {
                  if let SchemeFile::Socket(ref tcp_handle) = *file {
@@ -198,7 +198,7 @@
                          // Socket listening but no connection received
                          if tcp_handle.flags & syscall::O_NONBLOCK == syscall::O_NONBLOCK {
                              return Err(SyscallError::new(syscall::EAGAIN));
-@@ -239,18 +311,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -266,18 +338,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
                      let new_handle = SchemeFile::Socket(tcp_handle.clone_with_data(None));
  
                      // Creating a socket to continue listening
@@ -218,7 +218,7 @@
                      // We got a new connection to the socket so acquire the port
                      port_set.acquire_port(
                          local_endpoint
-@@ -259,7 +320,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -286,7 +347,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
                      );
                      return Ok(Some((
                          new_handle,
@@ -227,7 +227,7 @@
                      )));
                  } else {
                      return Err(SyscallError::new(syscall::EBADF));
-@@ -268,7 +329,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -295,7 +356,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
              _ => {
                  trace!("TCP dup unknown {}", path);
                  if let SchemeFile::Socket(ref tcp_handle) = *file {
@@ -236,7 +236,7 @@
                  } else {
                      SchemeFile::Socket(SocketFile::new_with_data(socket_handle, None))
                  }
-@@ -301,6 +362,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -328,6 +389,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
                          ..
                      }),
                  ) => {
