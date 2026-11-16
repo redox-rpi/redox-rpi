@@ -60,7 +60,7 @@ therefore "earlier" (row 286, v0.4.0).
 | [REQ-AUDIO-2](audio.md#req-audio-2-audible-on-both-channels-beta) audible, left/right | should | beta | #250 | person test (startup sound, Sopwith with sound) | verified (heard); earlier (2: left only, row 286); 3: no click at reboot |
 | [REQ-GFX-1](graphics.md#req-gfx-1-optional-desktop-from-the-console-beta) optional desktop | should | beta | #33, #298 | row 414, person test | verified (1, 2); not shown (3, 4) |
 | [REQ-GFX-2](graphics.md#req-gfx-2-desktop-apps-beta) desktop apps | may | beta | #33, #298 | — | **requirement out of date**: the editor was replaced by Sopwith (#298); 1 and 3 not shown |
-| [REQ-TCC-1](tcc.md#req-tcc-1-compile-and-run-c-on-the-pi-experiment) tcc | may | experiment → **beta in the release** | #247, #293, #297 | row 414 (`tcc -run`, tcc script) | verified (2); not shown (1: `tcc -o`); level needs an update |
+| [REQ-TCC-1](tcc.md#req-tcc-1-compile-and-run-c-on-the-pi-beta) tcc | may | experiment → **beta in the release** | #247, #293, #297 | row 414 (`tcc -run`, tcc script) | verified (2); not shown (1: `tcc -o`); level needs an update |
 | [REQ-STAB-1](stability.md#req-stab-1-programs-start-every-time) program starts | must | release | #1, #12, #127 | row 414 (0 of 1000), row 428 (0 of 300) | verified |
 | [REQ-STAB-2](stability.md#req-stab-2-pipes-keep-all-data) pipes | must | release | #158 | row 414 (16 MiB) | verified |
 | [REQ-STAB-3](stability.md#req-stab-3-c-library-regressions) relibc tests | must | release | #13, #108 | QEMU regression set | verified |

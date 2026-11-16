@@ -49,3 +49,34 @@ Acceptance criteria:
 1. A person hears `tone -s 3 > /scheme/audio` and a sweep on both sides.
 2. `tone -c left -s 2 > /scheme/audio` is heard on the left only.
 3. Any click at boot is noted in the report (not yet a pass criterion).
+
+### REQ-AUDIO-3 Startup sound and volume (beta)
+
+The Pi 3B+ shall play a short startup sound at boot, let root set and keep
+the volume, and fade the output out at `reboot` and `poweroff`.
+
+| Field | Value |
+|---|---|
+| Rationale | The startup sound shows that the system is up without a screen; a kept volume and no click make the jack usable. |
+| Priority | should |
+| Kind | functional |
+| Level | beta |
+| PBS | 2.3.10, 2.4.5 |
+| Status | proposed |
+| Since | v0.5.0 (proposed for v0.6.0) |
+| Implemented by | #292, #336, PR #329, PR #354 |
+| Verification | test, automated: row 414 (startup sound on 7 boots, `volume 70` kept over 5 reboots); QEMU pwm-audio check 26/26; test, person: rc1 person test (heard, no click at reboot) |
+
+Acceptance criteria:
+
+1. Each boot logs `startup-sound: played`, and the boot to login is not
+   longer than without the sound (REQ-BOOT-4).
+2. `off` in `/etc/startup-sound` turns the sound off at the next boot.
+3. `volume 70` sets the volume, `volume` prints 70, and the value is the
+   same after `reboot`; `+10`, `-10` and `mute` work.
+4. A person hears no click at `reboot` and `poweroff` (replaces
+   REQ-AUDIO-2 criterion 3 as a pass criterion).
+
+New for v0.6.0 (Requirements agent, 2026-11-16): written from the v0.5.0
+release notes and row 414. Impact: release checklist (audio steps), the
+nightly's `pi-test --extended` audio check, REQ-AUDIO-2 criterion 3.

@@ -48,7 +48,7 @@ same automated set).
 | [REQ-AUDIO-2](audio.md#req-audio-2-audible-on-both-channels-beta) audible, left/right | should | beta | 2.3.10 | #250 | checklist 17, row 286 | verified (click at power-off and reboot noted) |
 | [REQ-GFX-1](graphics.md#req-gfx-1-optional-desktop-from-the-console-beta) optional desktop | should | beta (rc2) | 2.5.4, 2.3.6 | #33, PR #255 | checklist 22, rows 292 (22 A), 286 | verified |
 | [REQ-GFX-2](graphics.md#req-gfx-2-desktop-apps-beta) desktop apps | may | beta (rc2) | 2.5.4 | #33, PR #255 | checklist 22, row 286 | **fails** (2: the editor cannot save, #33, known issue); verified (1, 3) |
-| [REQ-TCC-1](tcc.md#req-tcc-1-compile-and-run-c-on-the-pi-experiment) tcc | may | experiment | 2.5.3 | #247, PR #249 | row 278 | earlier (draft PR) |
+| [REQ-TCC-1](tcc.md#req-tcc-1-compile-and-run-c-on-the-pi-beta) tcc | may | experiment | 2.5.3 | #247, PR #249 | row 278 | earlier (draft PR) |
 | [REQ-STAB-1](stability.md#req-stab-1-programs-start-every-time) program starts | must | release | 2.2.1, 2.4.1 | #1, #12, #127 | checklist 1, row 292 (0 of 1000) | verified |
 | [REQ-STAB-2](stability.md#req-stab-2-pipes-keep-all-data) pipes | must | release | 2.2.1 | #158 | checklist 20, row 292 | verified |
 | [REQ-STAB-3](stability.md#req-stab-3-c-library-regressions) relibc tests | must | release | 2.4.1 | #13, #108 | checklist 15 (QEMU) | verified |

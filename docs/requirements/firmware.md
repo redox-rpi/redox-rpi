@@ -63,12 +63,17 @@ Acceptance criteria:
 | PBS | 2.2.1, 2.5.2 |
 | Status | proposed |
 | Since | v0.2.0 |
-| Implemented by | kernel `0002` (watchdog), #12; #7 (power off, open) |
+| Implemented by | kernel `0002` (watchdog), #12; power off: #7, #418 (open) |
 | Verification | test, automated: checklist v0.4.0 test 5, rows 292 (v0.4.0 build) and 285 (rc1) |
 
 Acceptance criteria:
 
 1. `reboot` 5 times in a row: the Pi is back at `redox login:` each time.
+
+Note (2026-11-16): `poweroff` exists since v0.5.0 and reaches `kstop`, but
+the Pi stays on and warms up (#418, a known issue in the v0.5.0 notes).
+Power off is not part of this requirement; the parked v1.0 criterion
+REQ-FW-5 ([RFC 0003](../rfcs/0003-v1-criteria.md)) covers it.
 
 ### REQ-FW-4 Firmware information
 

@@ -116,3 +116,35 @@ Acceptance criteria:
 
 1. A program that joins 224.0.0.251 receives a packet sent to it from the
    LAN, and a packet it sends there reaches the LAN.
+
+### REQ-NET-7 Name lookup (DNS)
+
+The system shall resolve host names with the name server and local domain
+it gets by DHCP, and fail at once for an unknown name.
+
+| Field | Value |
+|---|---|
+| Rationale | curl, pkg and SSH need names; a wrong or slow lookup looks like a dead network. |
+| Priority | must |
+| Kind | functional |
+| Level | release |
+| PBS | 2.4.2 |
+| Status | proposed |
+| Since | v0.5.0 (proposed for v0.6.0) |
+| Implemented by | #290, PR #358, PR #381 |
+| Verification | test, automated: row 414 (router name, short name and an unknown name with curl); QEMU regression set `dns` |
+
+Acceptance criteria:
+
+1. The name server and the local domain (for example `.lan`) come from
+   DHCP; a fully qualified name and a short name of a LAN host resolve.
+2. A name outside the LAN resolves (for example the package server).
+3. An unknown name fails with `EAI_NONAME` within 1 s (proposed; 0.22 s in
+   row 414).
+4. If the name server does not answer, the lookup retries and then fails
+   within 10 s (proposed) instead of hanging.
+
+New for v0.6.0 (Requirements agent, 2026-11-16): written from #290 and the
+v0.5.0 release notes. REQ-NET-6 is reserved by the parked RFC 0003 (SSH).
+Impact: release checklist (DNS step), the QEMU `dns` check, row 414's
+step 10.

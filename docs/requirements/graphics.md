@@ -34,24 +34,29 @@ Acceptance criteria:
 
 ### REQ-GFX-2 Desktop apps (beta)
 
-The desktop shall offer a terminal, a text editor that saves files, and a
-file manager.
+The desktop shall offer a terminal, a game and a file manager.
 
 | Field | Value |
 |---|---|
 | Rationale | A desktop without apps is not usable. |
 | Priority | may |
 | Kind | functional |
-| Level | beta (editor about 40 s to start, save dialog up to 30 s) |
+| Level | beta (one resolution; Sopwith's window is cut off on small screens) |
 | PBS | 2.5.4 |
 | Status | proposed |
-| Since | v0.4.0 |
-| Implemented by | #33, PR #255 |
-| Verification | test, person: checklist v0.4.0 test 22, row 286 (rc2 visit): orbterm and Files pass, the editor cannot save (#33) |
+| Since | v0.4.0; changed for v0.6.0 (editor replaced by Sopwith in v0.5.0) |
+| Implemented by | #33, PR #255, PR #298 (Sopwith), #335 (sound in SDL games) |
+| Verification | test, person: checklist v0.4.0 test 22, row 286 (rc2 visit): orbterm and Files pass, the editor cannot save (#33). v0.5.0: Sopwith in row 414 (started from the shell) and the rc1 person test (played, with sound) |
 
 Acceptance criteria:
 
 1. `Super`+`T` opens orbterm, and a command runs in it.
-2. COSMIC Text Editor opens within 60 s (proposed), takes typed text and
-   saves it to a file that `cat` shows on the console.
+2. Sopwith starts from the launcher, reacts to the arrow keys and space,
+   and on the Pi 3B+ plays its sound through `audiod` (#335).
 3. COSMIC Files opens and lists the home directory.
+
+Change for v0.6.0 (Requirements agent, 2026-11-16): criterion 2 was the
+COSMIC Text Editor saving a file (failed in v0.4.0, #33). v0.5.0 replaced
+the editor by Sopwith (PR #298), so the criterion now checks the game.
+Impact: checklist test 22, the v0.6.0 person test; trace-v0.5.0 marks the
+old criterion out of date.

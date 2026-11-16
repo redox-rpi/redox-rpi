@@ -46,14 +46,14 @@ belong to the v1.0 criteria of [RFC 0003](../rfcs/0003-v1-criteria.md)
 | [boot.md](boot.md) | `BOOT` boot from SD card and network, boot time, clean boot | [boot](../topics/boot.md) |
 | [console.md](console.md) | `CON` HDMI and serial console | [boot](../topics/boot.md), [stability](../topics/stability.md) |
 | [usb.md](usb.md) | `USB` keyboard, mouse, hotplug | [usb](../topics/usb.md) |
-| [network.md](network.md) | `NET` Ethernet, DHCP, TCP, multicast | [network](../topics/network.md) |
+| [network.md](network.md) | `NET` Ethernet, DHCP, TCP, multicast, DNS | [network](../topics/network.md) |
 | [time.md](time.md) | `TIME` clock and NTP | [time](../topics/time.md) |
 | [sdcard.md](sdcard.md) | `SD` SD card and RedoxFS | [sdcard](../topics/sdcard.md) |
 | [gpio.md](gpio.md) | `GPIO` GPIO, I2C, SPI | [gpio](../topics/gpio.md) |
 | [firmware.md](firmware.md) | `FW` CPU clock, firmware interface, reboot | [firmware](../topics/firmware.md) |
-| [audio.md](audio.md) | `AUDIO` headphone jack (beta) | [audio](../topics/audio.md) |
-| [graphics.md](graphics.md) | `GFX` optional desktop (beta, rc2) | [graphics](../topics/graphics.md) |
-| [tcc.md](tcc.md) | `TCC` native C compiler (experiment) | [tcc](../topics/tcc.md) |
+| [audio.md](audio.md) | `AUDIO` headphone jack, startup sound, volume (beta) | [audio](../topics/audio.md) |
+| [graphics.md](graphics.md) | `GFX` optional desktop and its apps (beta) | [graphics](../topics/graphics.md) |
+| [tcc.md](tcc.md) | `TCC` native C compiler (beta) | [tcc](../topics/tcc.md) |
 | [stability.md](stability.md) | `STAB` program starts, kernel, relibc | [stability](../topics/stability.md), [relibc](../topics/relibc.md) |
 | [boards.md](boards.md) | `BOARD` supported boards | [boards](../topics/boards.md), [zero2w](../topics/zero2w.md) |
 | [release.md](release.md) | `REL` release image contents and publishing | [ci](../topics/ci.md), [release-process](../release-process.md) |
