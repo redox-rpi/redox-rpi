@@ -132,7 +132,7 @@ it gets by DHCP, and fail at once for an unknown name.
 | Status | proposed |
 | Since | v0.5.0 (proposed for v0.6.0) |
 | Implemented by | #290, PR #358, PR #381 |
-| Verification | test, automated: row 414 (router name, short name and an unknown name with curl); QEMU regression set `dns` |
+| Verification | test, automated: row 414 (router name, short name and an unknown name with curl); row 457 (dev build on stable, 3B+: criteria 2–4 pass; criterion 1 failed only on the row's name choice, a name with no short form in the lab); QEMU regression set `dns` |
 
 Acceptance criteria:
 
