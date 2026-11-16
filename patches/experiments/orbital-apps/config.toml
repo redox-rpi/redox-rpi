@@ -14,6 +14,11 @@ cosmic-files = {}
 # built from source with SDL2 (no aarch64 binaries upstream).
 sopwith = "source"
 sdl2 = "source"
+# Ri-li (#528): a toy train puzzle game with SDL 1.2 and SDL_mixer, from
+# source (recipes/games/ri-li in this experiment).
+ri-li = "source"
+sdl1 = "source"
+sdl1-mixer = "source"
 # Icons the COSMIC apps look up.
 cosmic-icons = {}
 hicolor-icon-theme = {}
@@ -27,4 +32,13 @@ name=Sopwith
 binary=/usr/bin/sopwith
 icon=/usr/share/icons/hicolor/128x128/apps/sopwith.png
 description=Biplane game: arrows fly, space fires, b drops a bomb
+"""
+
+[[files]]
+path = "/usr/share/ui/apps/71_ri-li"
+data = """
+name=Ri-li
+binary=/usr/bin/Ri_li
+icon=/usr/share/Ri-li/Ri-li-icon-48x48.png
+description=Toy train game: arrow keys steer, collect every wagon
 """

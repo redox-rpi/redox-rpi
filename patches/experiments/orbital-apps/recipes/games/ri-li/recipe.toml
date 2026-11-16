@@ -1,0 +1,41 @@
+# Ri-li 2.0.1 (#528): a toy train game, steer the locomotive with the
+# arrow keys and collect every wagon. GPL-2.0 (code), the music under its own
+# free licence (COPYING.Music). C++ with SDL 1.2 and SDL_mixer, both
+# upstream recipes. The tarball has the game data prebuilt (no MakeDat).
+[source]
+tar = "https://downloads.sourceforge.net/project/ri-li/Ri-li%20Linux_Unix/Ri-li%20V2.0.1/Ri-li-2.0.1.tar.bz2"
+blake3 = "f05558b5a2725490794f6ff4a7cb5f2a74a14816e86a2063875522a5e75c407f"
+script = """
+DYNAMIC_INIT
+# The fixes Debian carries for current compilers (fix-gcc4.3-ftbfs,
+# GCC11): <iostream.h> is gone, and a pointer is not ordered against NULL.
+for f in src/*.cc; do
+    sed -i 's|#include <iostream.h>|#include <iostream>\\nusing namespace std;|' "$f"
+done
+sed -i 's/if(Image\\[\\([^]]*\\)\\]<=NULL)/if(!Image[\\1])/' src/sprite.cc
+sed -i 's/if(Buf<=0)/if(!Buf)/' src/tableau.cc
+autotools_recursive_regenerate
+"""
+
+[build]
+template = "custom"
+dependencies = [
+    "sdl1",
+    "sdl1-mixer",
+    "liborbital",
+    "libogg",
+    "libvorbis",
+]
+dev-dependencies = [
+    "libstdcxx"
+]
+script = """
+DYNAMIC_INIT
+rsync -a --delete "${COOKBOOK_SOURCE}/" ./
+COOKBOOK_CONFIGURE="./configure"
+# configure's AC_CHECK_LIB links -lSDL alone, which fails: libSDL.so does
+# not record that it needs liborbital, and SDL_mixer is a static library
+# that needs Vorbis and Ogg. So name the whole link line.
+export LIBS="-lSDL_mixer -lvorbisfile -lvorbis -logg -lSDL -lorbital -lpthread -lm"
+cookbook_configure
+"""
