@@ -5,7 +5,8 @@ Usage:
     scripts/regression-set.py <host> [--port 2323] [--serial-log <file>]
                               [--manifest <file>] [--starts 50]
                               [--tcp-host <ip>] [--tcp-mib 4]
-                              [--dead-dns <ip>] [--report <file>]
+                              [--dead-dns <ip>] [--lan-name <name>]
+                              [--outside-name <name>] [--report <file>]
                               [--only <check>]...
 
 Runs, through devshd, checks for regressions we already had, each named
@@ -27,11 +28,19 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
-  dns           #358, #374: a name server is set (from DHCP); an unknown
-                name gives "Name does not resolve" within 5 s; with
-                --dead-dns as name server a lookup gives "Try again" within
-                15 s; after the name server is set back, the unknown name
-                gives "Name does not resolve" again
+  dns           #358, #374, REQ-NET-7 (docs/requirements/network.md): a
+                name server is set (from DHCP); an unknown name, fully
+                qualified and short, gives "Name does not resolve" within
+                1 s (criterion 3). Times come from ion's `time` on the
+                guest. Also, as their own lines:
+                dns-lan with --lan-name: that name and its short form
+                resolve (criterion 1);
+                dns-outside with --outside-name: it resolves (criterion 2);
+                dns-silent with --dead-dns as name server: "Try again"
+                within 10 s for a fully qualified name and within 15 s for
+                a short name with a local domain set (criterion 4); after
+                the name server is set back, an unknown name gives "Name
+                does not resolve" again
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -158,31 +167,87 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
 
 
+DNS_UNKNOWN_S = 1    # REQ-NET-7 criterion 3
+DNS_DEAD_FQDN_S = 10  # criterion 4, a fully qualified name
+DNS_DEAD_SHORT_S = 15  # criterion 4, a short name (tried in the local domain first)
+REAL = re.compile(r"real\s+([0-9.]+)s")
+
+
+def lookup(sh, name):
+    """(output lines, seconds) of `ping -c 1 <name>`, timed by ion's `time`
+    on the guest, so the devsh round trip does not count (the 1 s
+    limit is close to it). Falls back to pi_test.timed."""
+    out, secs = pi_test.timed(sh, f"time ping -c 1 {name}", 60)
+    for l in out:
+        m = REAL.search(l)
+        if m:
+            return out, float(m.group(1))
+    return out, secs
+
+
+def says(out, text):
+    return any(text in l for l in out)
+
+
 def check_dns(sh, check, args):
+    """REQ-NET-7 (docs/requirements/network.md), one line per criterion."""
     ns = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
     if not ns:
         check("dns", False, "no name server set (DHCP, #358)")
         return
     orig = ns[0]
-    out, secs = pi_test.timed(sh, "ping -c 1 nosuchname.invalid", 60)
-    unknown = any("Name does not resolve" in l for l in out) and secs <= 5
-    detail = f"name server {orig}; unknown name: {secs:.1f} s, " + (
-        "Name does not resolve" if unknown else "; ".join(out[:2])[:100])
-    ok = unknown
+    dom = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/domain") if l.strip()]
+    orig_dom = dom[0] if dom else ""
+    tag = uuid.uuid4().hex[:6]
+
+    # 1: names of a LAN host, fully qualified and short (Pi rows: --lan-name)
+    if args.lan_name:
+        short = args.lan_name.split(".")[0]
+        names = [args.lan_name] + ([short] if short != args.lan_name else [])
+        res = []
+        for n in names:
+            out, secs = lookup(sh, n)
+            res.append((n, says(out, "packets transmitted") or says(out, "PING "), secs))
+        check("dns-lan", all(r[1] for r in res), f"local domain '{orig_dom or 'none'}'; "
+              + "; ".join(f"{n}: {'resolves' if ok else 'FAILS'} ({s:.2f} s)" for n, ok, s in res))
+    # 2: a name outside the LAN
+    if args.outside_name:
+        out, secs = lookup(sh, args.outside_name)
+        ok = says(out, "PING ")
+        check("dns-outside", ok, f"{args.outside_name}: " + ("resolves" if ok else "; ".join(out[:2])[:100])
+              + f" ({secs:.2f} s)")
+    # 3: an unknown name fails with "Name does not resolve" within 1 s
+    res = []
+    for n in (f"nosuch-{tag}.invalid", f"nosuch-{tag}"):
+        out, secs = lookup(sh, n)
+        res.append((n, says(out, "Name does not resolve") and secs <= DNS_UNKNOWN_S, secs, out))
+    check("dns", all(r[1] for r in res), f"name server {orig}; unknown names: " + "; ".join(
+        f"{n} {s:.2f} s" + ("" if ok else " FAIL: " + "; ".join(o[:2])[:80]) for n, ok, s, o in res)
+        + f" (limit {DNS_UNKNOWN_S} s)")
+    # 4: a silent name server: "Try again" within 10 s (fully qualified)
+    #    or 15 s (short, with a local domain set)
     if args.dead_dns:
         sh.run(f"echo {args.dead_dns} > /scheme/netcfg/resolv/nameserver")
+        if not orig_dom:
+            sh.run("echo regr > /scheme/netcfg/resolv/domain")
         try:
-            out, secs = pi_test.timed(sh, f"ping -c 1 regr-{uuid.uuid4().hex[:6]}.example.com", 60)
+            out1, s1 = lookup(sh, f"regr-{tag}.example.com")
+            out2, s2 = lookup(sh, f"regr-{tag}")
         finally:
             sh.run(f"echo {orig} > /scheme/netcfg/resolv/nameserver")
-        again = any("Try again" in l for l in out) and secs <= 15
-        out2, secs2 = pi_test.timed(sh, "ping -c 1 nosuchname.invalid", 60)
-        back = any("Name does not resolve" in l for l in out2)
-        ok = ok and again and back
-        detail += (f"; dead name server {args.dead_dns}: {secs:.1f} s, "
-                   + ("Try again" if again else "; ".join(out[:2])[:100])
-                   + f"; set back: {'resolves again' if back else '; '.join(out2[:2])[:100]}")
-    check("dns", ok, detail)
+            if not orig_dom:
+                sh.run("echo > /scheme/netcfg/resolv/domain")
+        fqdn = says(out1, "Try again") and s1 <= DNS_DEAD_FQDN_S
+        short = says(out2, "Try again") and s2 <= DNS_DEAD_SHORT_S
+        out3, _ = lookup(sh, f"nosuch-{tag}.invalid")
+        back = says(out3, "Name does not resolve")
+        check("dns-silent", fqdn and short and back,
+              f"silent name server {args.dead_dns}: fully qualified {s1:.1f} s "
+              + ("Try again" if says(out1, "Try again") else "; ".join(out1[:2])[:60])
+              + f" (limit {DNS_DEAD_FQDN_S} s), short name {s2:.1f} s "
+              + ("Try again" if says(out2, "Try again") else "; ".join(out2[:2])[:60])
+              + f" (limit {DNS_DEAD_SHORT_S} s); set back: "
+              + ("resolves again" if back else "; ".join(out3[:2])[:80]))
 
 
 def check_serial(check, args):
@@ -203,7 +268,11 @@ def main():
     ap.add_argument("--starts", type=int, default=50)
     ap.add_argument("--tcp-host", help="this host as the guest sees it (default: the address devsh came from)")
     ap.add_argument("--tcp-mib", type=int, default=4)
-    ap.add_argument("--dead-dns", help="an address where no name server answers (QEMU: 10.0.2.99)")
+    ap.add_argument("--dead-dns", help="an address where no name server answers (QEMU: 10.0.2.99; "
+                    "anywhere: 192.0.2.1, a documentation address)")
+    ap.add_argument("--lan-name", help="fully qualified name of a LAN host for REQ-NET-7 criterion 1 "
+                    "(the short name is checked too)")
+    ap.add_argument("--outside-name", help="a name outside the LAN for REQ-NET-7 criterion 2")
     ap.add_argument("--report")
     ap.add_argument("--only", action="append", help="run only these checks")
     args = ap.parse_args()
