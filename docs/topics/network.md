@@ -5,6 +5,9 @@
 - LAN7800 (Pi 3B+ onboard Ethernet) in `dwc2d`: DHCP, TCP from the LAN.
 - RTL8152/RTL8153 USB Ethernet (base patch `0020`, since v0.2.0): the
   Zero 2 W gets its time over the HAT's RTL8152.
+  `scripts/adapter-dhcp-log.py` reads a serial log with times
+  (`~/bin/zero-serial`) and reports per boot the adapter and the seconds
+  to the DHCP address (REQ-NET-2, #492).
 - `devshd`: remote shell on port 2323, unencrypted, LAN only, never in
   release images.
 
