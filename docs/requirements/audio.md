@@ -69,14 +69,19 @@ the volume, and fade the output out at `reboot` and `poweroff`.
 
 Acceptance criteria:
 
-1. Each boot logs `startup-sound: played`, and the boot to login is not
-   longer than without the sound (REQ-BOOT-4).
+1. Each boot logs `startup-sound: played`. The median time from the
+   kernel's first line to `redox login:` over 3 boots with the sound is at
+   most 0.5 s (proposed) above the median over 3 boots of the same image
+   with the sound off (serial log, no person needed).
 2. `off` in `/etc/startup-sound` turns the sound off at the next boot.
 3. `volume 70` sets the volume, `volume` prints 70, and the value is the
    same after `reboot`; `+10`, `-10` and `mute` work.
-4. A person hears no click at `reboot` and `poweroff` (replaces
-   REQ-AUDIO-2 criterion 3 as a pass criterion).
+4. Goal, not yet a pass criterion: a person hears no click at `reboot`
+   and `poweroff`. It becomes one after a listening test at a visit (rows
+   315, 333) and, if needed, a fix (PR #354); no log shows a click, so it
+   always needs a person. Until then REQ-AUDIO-2 criterion 3 stays a note.
 
 New for v0.6.0 (Requirements agent, 2026-11-16): written from the v0.5.0
-release notes and row 414. Impact: release checklist (audio steps), the
+release notes and row 414; criteria 1 and 4 as the audio owner proposed
+(2026-11-16). Impact: release checklist (audio steps), the
 nightly's `pi-test --extended` audio check, REQ-AUDIO-2 criterion 3.
