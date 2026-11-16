@@ -1,0 +1,105 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] DIAGNOSTIC ONLY (#394): lwipstats command, lwIP and bcmgenet counters
+
+Not for main: turns on lwIP statistics and counts bcmgenet RX descriptors
+with error status or without SOP+EOP, and TX completion timeouts. The
+lwipstats command prints them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+diff --git a/drivers/net/bcmgenet.c b/drivers/net/bcmgenet.c
+index fec0afdd..199716d5 100644
+--- a/drivers/net/bcmgenet.c
++++ b/drivers/net/bcmgenet.c
+@@ -271,6 +271,10 @@ static void bcmgenet_enable_dma(struct bcmgenet_eth_priv *priv)
+ 	setbits_32(priv->mac_reg + RDMA_REG_BASE + DMA_CTRL, dma_ctrl);
+ }
+ 
++/* redox-rpi diagnostics (#394), printed by the lwipstats command */
++u32 bcmgenet_diag_tx_timeouts, bcmgenet_diag_rx_err, bcmgenet_diag_rx_frag;
++u32 bcmgenet_diag_rx_frames, bcmgenet_diag_last_rx_status;
++
+ static int bcmgenet_gmac_eth_send(struct udevice *dev, void *packet, int length)
+ {
+ 	struct bcmgenet_eth_priv *priv = dev_get_priv(dev);
+@@ -310,8 +314,10 @@ static int bcmgenet_gmac_eth_send(struct udevice *dev, void *packet, int length)
+ 	do {
+ 		cons = readl(priv->mac_reg + TDMA_CONS_INDEX);
+ 	} while ((cons & 0xffff) < prod_index && --tries);
+-	if (!tries)
++	if (!tries) {
++		bcmgenet_diag_tx_timeouts++;
+ 		return -ETIMEDOUT;
++	}
+ 
+ 	return 0;
+ }
+@@ -346,6 +352,15 @@ static int bcmgenet_gmac_eth_recv(struct udevice *dev,
+ 		return -EAGAIN;
+ 
+ 	length = readl(desc_base + DMA_DESC_LENGTH_STATUS);
++	bcmgenet_diag_rx_frames++;
++	if (length & 0x1f) {
++		bcmgenet_diag_rx_err++;
++		bcmgenet_diag_last_rx_status = length & 0xffff;
++	}
++	if ((length & (DMA_SOP | DMA_EOP)) != (DMA_SOP | DMA_EOP)) {
++		bcmgenet_diag_rx_frag++;
++		bcmgenet_diag_last_rx_status = length & 0xffff;
++	}
+ 	length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+ 	addr = readl(desc_base + DMA_DESC_ADDRESS_LO);
+ 
+diff --git a/lib/lwip/u-boot/lwipopts.h b/lib/lwip/u-boot/lwipopts.h
+index 1c1adc57..04c473da 100644
+--- a/lib/lwip/u-boot/lwipopts.h
++++ b/lib/lwip/u-boot/lwipopts.h
+@@ -177,7 +177,8 @@
+ #define LWIP_SOCKET                     0
+ #define SO_REUSE                        0
+ 
+-#define LWIP_STATS                      0
++#define LWIP_STATS                      1
++#define LWIP_STATS_DISPLAY              1
+ 
+ #define PPP_SUPPORT                     0
+ 
+diff --git a/net/lwip/net-lwip.c b/net/lwip/net-lwip.c
+index 8f8f9d69..02976548 100644
+--- a/net/lwip/net-lwip.c
++++ b/net/lwip/net-lwip.c
+@@ -18,6 +18,7 @@
+ #include <lwip/init.h>
+ #include <lwip/prot/etharp.h>
+ #include <lwip/timeouts.h>
++#include <lwip/stats.h>
+ #include <net.h>
+ #include <timer.h>
+ #include <u-boot/schedule.h>
+@@ -495,3 +496,25 @@ int net_start_again(void)
+ #endif
+ 	return eth_init();
+ }
++
++/* redox-rpi diagnostics (#394) */
++/* weak, so boards without bcmgenet still link */
++u32 __weak bcmgenet_diag_tx_timeouts;
++u32 __weak bcmgenet_diag_rx_err;
++u32 __weak bcmgenet_diag_rx_frag;
++u32 __weak bcmgenet_diag_rx_frames;
++u32 __weak bcmgenet_diag_last_rx_status;
++
++static int do_lwipstats(struct cmd_tbl *cmdtp, int flag, int argc,
++			char *const argv[])
++{
++	printf("bcmgenet: rx %u, rx status errors %u, rx not SOP+EOP %u, last status 0x%04x, tx timeouts %u\n",
++	       bcmgenet_diag_rx_frames, bcmgenet_diag_rx_err,
++	       bcmgenet_diag_rx_frag, bcmgenet_diag_last_rx_status,
++	       bcmgenet_diag_tx_timeouts);
++	stats_display();
++	return 0;
++}
++
++U_BOOT_CMD(lwipstats, 1, 0, do_lwipstats,
++	   "show lwIP and bcmgenet statistics (redox-rpi #394)", "");
+-- 

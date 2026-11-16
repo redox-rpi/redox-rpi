@@ -137,7 +137,7 @@ script="$tftp/$dir/netboot.cmd"
         # error counters, and the registers of RX ring 16 (write pointer,
         # producer index with the discard count in bits 31:16, consumer
         # index, ..., read pointer).
-        echo "if test -z \"\${redox_netdiag}\"; then setenv redox_netdiag 'md.l 0xfd580c00 0x60; md.l 0xfd580394 2; md.l 0xfd583000 0xc'; fi"
+        echo "if test -z \"\${redox_netdiag}\"; then setenv redox_netdiag 'md.l 0xfd580c00 0x60; md.l 0xfd580394 2; md.l 0xfd583000 0xc; md.l 0xfd580808 1; lwipstats'; fi"
     fi
     echo "if test -z \"\${redox_menu_delay}\"; then setenv redox_menu_delay $menu_delay; fi"
     cat "$ROOT/config/bootmenu.cmd"
