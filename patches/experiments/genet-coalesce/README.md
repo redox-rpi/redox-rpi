@@ -34,3 +34,24 @@ GENET (raspi4b in QEMU 10.2), so the effect is measured on the Pi 400:
 the same transfers as Test 485, with CPU time per process
 (`/scheme/sys/context`) and interrupt counts (`/scheme/sys/irq`) before
 and after, on this image and on the image of Test 485.
+
+## Results (pi-tests Test 499, 2026-11-17)
+
+A: same commit without this experiment. B: with it. Both images also had
+`ifconfig-mac`.
+
+| | A | B |
+|---|---|---|
+| nc into `/scheme/null`, 3 runs (host sendall) | 12.6, 12.5, 12.5 MB/s | 14.6, 14.5, 14.9 MB/s |
+| curl, 2 runs (SHA-256 right) | 10.5, 10.8 MB/s | 11.6, 12.0 MB/s |
+| GENET interrupts per 100 MiB | about 103 000 | about 63 000 |
+| CPU per run: bcmgenetd | 3.04 s | 2.52 s |
+| CPU per run: netstack | 5.20 s | 4.36 s |
+| ping from the Pi, 100 (avg) | 0.923 ms | 1.081 ms |
+
+B is about 15 % faster and still below 20 MB/s. At about 12 000 frames/s
+the 100 µs timeout fires before 16 frames have come, so B still takes
+about 0.87 interrupts per frame. netstack uses more CPU than the driver
+in both images and is the next place to look. `ifconfig` showed the
+right MAC on both.
+
