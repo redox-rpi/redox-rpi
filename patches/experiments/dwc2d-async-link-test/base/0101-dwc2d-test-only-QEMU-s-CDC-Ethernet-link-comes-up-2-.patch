@@ -13,7 +13,7 @@ was held, like the LAN7800's autonegotiation on the Pi 3B+.
  1 file changed, 16 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 27018e8..9a84600 100644
+index 27018e8..2e7c36b 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -179,7 +179,11 @@ impl UsbNet {
@@ -24,7 +24,7 @@ index 27018e8..9a84600 100644
 +                Adapter::Ecm(a) => (
 +                    Ok(ECM_TEST_START.get().is_some_and(|t| t.elapsed() >= ECM_TEST_LINK_DELAY)),
 +                    "CDC Ethernet",
-+                    a.address(),
++                    a.function().address,
 +                ),
              };
              if let Ok(now) = now {
