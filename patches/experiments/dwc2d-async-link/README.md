@@ -55,4 +55,22 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 \
 
 ## Results
 
-See below; Pi rows in pi-tests.
+- **QEMU, Pi image** `v0.6.0-dev-72-g9ea1b60b+xa494`: regression set 7 pass,
+  0 fail; `devices ready after 375 ms` (the CDC card has its link at once).
+- **QEMU, with `dwc2d-async-link-test`** `v0.6.0-dev-73-g26ea51f9+x4b57`,
+  3 of 3 boots: `devices ready after 354 ms, link not up yet`, then
+  `link up`, `1 of 1 held frame(s) sent` and `DHCP: eth0 got` on the first
+  attempt; regression set passes.
+- `scripts/test-hotplug.sh`: 12 of 15, the same 3 failures as on main
+  (the keyboard typing step and two dhcpd messages dhcpd no longer prints).
+- **Pi 3B+, pi-tests row 478** (2026-11-17, against stable
+  `v0.6.0-dev-65-gbed4882f+x2d42`, 3 power-cycle boots each):
+  `devices ready` 1.28–1.35 s instead of 4.26 s; the banner before the
+  login prompt 2.94–2.96 s earlier (5.55–5.57 s after the kernel's first
+  line instead of 8.50–8.52 s); `DHCP: eth0 got` 1.14 s earlier, on the
+  first attempt, with the held Discover sent at link-up; no `no link yet`;
+  devsh and `scripts/pi-test.py` 6/6 as on stable. The report counts the
+  prompt line, which the capture stamps only at its next newline (in two
+  boots dwc2d's `link up`), see #536.
+- **Not tested:** a boot without a cable (person), an RTL8153 with slow
+  gigabit autonegotiation, the firmware's minimal image.
