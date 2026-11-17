@@ -1,0 +1,48 @@
+# Upstream's recipes/libs/sdl1-mixer with MOD music via libmodplug (#533):
+# Ri-li's music is MOD and XM. MikMod stays off (no recipe upstream).
+[source]
+tar = "https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-1.2.12.tar.gz"
+blake3 = "ef23bab2d42250dfdc51ce6939ee7b393973ff11a0dd3481f32180b489d2661c"
+patches = ["redox.patch"]
+script = """
+./autogen.sh
+"""
+
+[build]
+dependencies = [
+    "libmodplug1",
+    "libogg",
+    "liborbital",
+    "libvorbis",
+    "sdl1",
+]
+dev-dependencies = [
+    "libstdcxx",
+]
+template = "custom"
+script = """
+DYNAMIC_INIT
+export LIBS="-lvorbis -logg"
+# ModPlug flags for configure (PKG_CHECK_MODULES takes preset values):
+# music_modplug.h includes "modplug.h", which libmodplug installs in
+# include/libmodplug (its .pc file names only include/), and libmodplug
+# is C++.
+export MODPLUG_CFLAGS="-I${COOKBOOK_SYSROOT}/include/libmodplug"
+export MODPLUG_LIBS="-lmodplug -lstdc++ -lm"
+COOKBOOK_CONFIGURE_FLAGS+=(
+    --enable-music-ogg
+    --enable-music-midi
+    --enable-music-mod-modplug
+    --disable-sdltest
+    --disable-music-cmd
+    --disable-music-mp3
+    --disable-smpegtest
+    --disable-music-mod
+)
+"${COOKBOOK_CONFIGURE}" "${COOKBOOK_CONFIGURE_FLAGS[@]}"
+# playwave and playmus link only the libraries from libSDL_mixer.la, where
+# libtool leaves out -lstdc++; give them EXTRA_LDFLAGS like the library.
+sed -i 's|[$](SDL_LIBS) [$](objects)/[$](TARGET)$|& $(EXTRA_LDFLAGS)|' Makefile
+"${COOKBOOK_MAKE}" -j "${COOKBOOK_MAKE_JOBS}"
+"${COOKBOOK_MAKE}" install DESTDIR="${COOKBOOK_STAGE}"
+"""

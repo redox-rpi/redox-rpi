@@ -42,10 +42,10 @@ Build it after the experiments it configures:
   its `recipes/libs/sdl2/recipe.toml`;
   and Ri-li (#528, a toy train game: steer the locomotive with the arrow
   keys and collect every wagon; GPL-2.0, its own recipe in
-  `orbital-apps/recipes/games/ri-li`, with upstream's SDL 1.2 and
-  SDL_mixer). Its window is 800x600, so it is cut off on a smaller
-  screen (QEMU's 640x480). Its music is MOD/XM, which upstream's SDL_mixer
-  recipe leaves out: only the sound effects play;
+  `orbital-apps/recipes/games/ri-li`, with upstream's SDL 1.2 and an
+  SDL_mixer recipe that plays its MOD/XM music through libmodplug,
+  #533). Its window is 800x600, so it is cut off on a smaller
+  screen (QEMU's 640x480);
 - `cosmic-apps-source`: both apps built from source with the icon lookup
   fix (Pi test #274: the editor no longer keeps redoxfs busy, the save
   dialog appears);

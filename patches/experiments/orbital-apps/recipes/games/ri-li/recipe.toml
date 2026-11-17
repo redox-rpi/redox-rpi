@@ -22,6 +22,7 @@ template = "custom"
 dependencies = [
     "sdl1",
     "sdl1-mixer",
+    "libmodplug1",
     "liborbital",
     "libogg",
     "libvorbis",
@@ -35,7 +36,7 @@ rsync -a --delete "${COOKBOOK_SOURCE}/" ./
 COOKBOOK_CONFIGURE="./configure"
 # configure's AC_CHECK_LIB links -lSDL alone, which fails: libSDL.so does
 # not record that it needs liborbital, and SDL_mixer is a static library
-# that needs Vorbis and Ogg. So name the whole link line.
-export LIBS="-lSDL_mixer -lvorbisfile -lvorbis -logg -lSDL -lorbital -lpthread -lm"
+# that needs Vorbis, Ogg and ModPlug (C++). So name the whole link line.
+export LIBS="-lSDL_mixer -lmodplug -lstdc++ -lvorbisfile -lvorbis -logg -lSDL -lorbital -lpthread -lm"
 cookbook_configure
 """
