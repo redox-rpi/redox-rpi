@@ -1,0 +1,102 @@
+From f1aaab2b77289a3e6ac1b9ab7099769b2b111377 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 17 Nov 2026 00:02:06 +0000
+Subject: [PATCH] scanf: any white space in the format skips white space, not
+ only a space
+
+POSIX: a directive of one or more white-space characters reads input
+up to the first non-white-space character. scanf only did that for
+" ". A "\n" or "\t" in the format was matched as a literal, and the
+matched character stayed unread, so a loop over
+fscanf(f, "%[^\n]\n", line) returned 0 and the same line forever
+(Tux Typing hangs reading keyboard.lst this way).
+
+Test: tests/stdio/fscanf_newline.c, same output as glibc.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/stdio/scanf.rs                  |  4 +++-
+ tests/Makefile                             |  1 +
+ tests/Makefile.tests.mk                    |  1 +
+ tests/expected/stdio/fscanf_newline.stdout |  4 ++++
+ tests/stdio/fscanf_newline.c               | 18 ++++++++++++++++++
+ 5 files changed, 27 insertions(+), 1 deletion(-)
+ create mode 100644 tests/expected/stdio/fscanf_newline.stdout
+ create mode 100644 tests/stdio/fscanf_newline.c
+
+diff --git a/src/header/stdio/scanf.rs b/src/header/stdio/scanf.rs
+index 7b6c3aa..8a30451 100644
+--- a/src/header/stdio/scanf.rs
++++ b/src/header/stdio/scanf.rs
+@@ -80,7 +80,9 @@ pub unsafe fn inner_scanf<T: Kind>(
+     while format.peek().is_some() {
+         let mut c = next_char(&mut format)?;
+ 
+-        if c == ' ' {
++        // Any white-space character in the format (space, newline, tab, ...)
++        // skips white space in the input, not only a space (POSIX).
++        if c.is_ascii_whitespace() {
+             maybe_read!(noreset);
+ 
+             while (character).is_whitespace() {
+diff --git a/tests/Makefile b/tests/Makefile
+index 186cbbd..0819bee 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -27,6 +27,7 @@ support_build: $(BUILD)/expected \
+ 	$(BUILD)/stdio/fread.in \
+ 	$(BUILD)/stdio/fscanf_offby1.c \
+ 	$(BUILD)/stdio/fscanf.c \
++	$(BUILD)/stdio/fscanf_newline.c \
+ 	$(BUILD)/stdio/stdio.in \
+ 	$(BUILD)/stdio/getline.in \
+ 	$(BUILD)/stdio/ungetc_ftell.c \
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index a3a45a0..084ae56 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -106,6 +106,7 @@ EXPECT_NAMES=\
+ 	stdio/ungetc_multiple \
+ 	stdio/fscanf_offby1 \
+ 	stdio/fscanf \
++	stdio/fscanf_newline \
+ 	stdio/printf_neg_pad \
+ 	stdlib/a64l \
+ 	stdlib/alloc \
+diff --git a/tests/expected/stdio/fscanf_newline.stdout b/tests/expected/stdio/fscanf_newline.stdout
+new file mode 100644
+index 0000000..9b194f2
+--- /dev/null
++++ b/tests/expected/stdio/fscanf_newline.stdout
+@@ -0,0 +1,4 @@
++1 //first line
++1 //	second line
++1 #include <stdio.h>
++2 1 2
+diff --git a/tests/stdio/fscanf_newline.c b/tests/stdio/fscanf_newline.c
+new file mode 100644
+index 0000000..107f8f6
+--- /dev/null
++++ b/tests/stdio/fscanf_newline.c
+@@ -0,0 +1,18 @@
++//first line
++//	second line
++
++#include <stdio.h>
++int main() {
++    // "\n" in the format skips white space like " " does, so each call
++    // reads the next line (tuxtype reads its word lists this way).
++    FILE *f = fopen("stdio/fscanf_newline.c", "r");
++    char line[256];
++    int i;
++    for (i = 0; i < 3; i++) {
++        int n = fscanf(f, "%[^\n]\n", line);
++        printf("%d %s\n", n, line);
++    }
++    int a, b;
++    int n = sscanf("1\n\t 2", "%d\n%d", &a, &b);
++    printf("%d %d %d\n", n, a, b);
++}
+-- 
+2.53.0
+
