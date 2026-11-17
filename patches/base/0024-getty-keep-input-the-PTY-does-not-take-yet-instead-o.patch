@@ -1,6 +1,6 @@
-From 638626128369dcd23a2dea18a68a355465967c8d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
-Date: Wed, 28 Oct 2026 19:42:11 +0000
+Date: Sun, 1 Nov 2026 04:09:36 +0000
 Subject: [PATCH] getty: keep input the PTY does not take yet instead of
  panicking
 
@@ -8,22 +8,25 @@ ptyd refuses input with EWOULDBLOCK while the program has not read enough
 of the earlier input. getty then panicked ("failed to write master PTY")
 and the console was gone. Fast input on a serial console does this: getty
 keeps reading the TTY and does not forward the program's output, so the
-program stops reading.
+program stops reading. (Upstream's write_nonblocking retries in place
+instead, which still stops forwarding the output.)
 
 Keep the input that was not taken, stop reading the TTY until it is taken,
 and keep forwarding the output meanwhile. With input pending, poll with a
-short timeout to retry it.
+short timeout to retry it. The input goes through the queue, so the
+existing write after the read gets an empty slice; that line is left as it
+is, so the patch applies with and without upstream's write_nonblocking.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- getty/src/main.rs | 37 ++++++++++++++++++++++++++++---------
- 1 file changed, 28 insertions(+), 9 deletions(-)
+ getty/src/main.rs | 40 +++++++++++++++++++++++++++++++++-------
+ 1 file changed, 33 insertions(+), 7 deletions(-)
 
 diff --git a/getty/src/main.rs b/getty/src/main.rs
-index c6497835..4c7ecbd2 100644
+index c649783..d2f4d27 100644
 --- a/getty/src/main.rs
 +++ b/getty/src/main.rs
-@@ -60,25 +60,38 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+@@ -60,13 +60,33 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
      // tty_fd => Display
      // master_fd => PTY
  
@@ -49,17 +52,18 @@ index c6497835..4c7ecbd2 100644
 +                }
                  let count = match tty.read(&mut packet) {
 -                    Ok(0) => return,
+-                    Ok(count) => count,
 +                    Ok(0) => break,
-                     Ok(count) => count,
++                    // Queue the input, written at the top of the loop. The
++                    // write to the master PTY below then has nothing left.
++                    Ok(count) => {
++                        pending.extend_from_slice(&packet[..count]);
++                        0
++                    }
                      Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
                      Err(_) => panic!("getty: failed to read from TTY"),
                  };
--                master
--                    .write_all(&packet[..count])
--                    .expect("getty: failed to write master PTY");
-+                pending.extend_from_slice(&packet[..count]);
-             }
-         } else if event_id == MASTER {
+@@ -78,7 +98,7 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
              let mut packet = [0; 4096];
              loop {
                  let count = match master.read(&mut packet) {
@@ -68,7 +72,7 @@ index c6497835..4c7ecbd2 100644
                      Ok(count) => count,
                      Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
                      Err(_) => panic!("getty: failed to read from master TTY"),
-@@ -90,18 +103,24 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+@@ -90,18 +110,24 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
                  }
              }
          }

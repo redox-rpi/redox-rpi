@@ -5,6 +5,9 @@
 - LAN7800 (Pi 3B+ onboard Ethernet) in `dwc2d`: DHCP, TCP from the LAN.
 - RTL8152/RTL8153 USB Ethernet (base patch `0020`, since v0.2.0): the
   Zero 2 W gets its time over the HAT's RTL8152.
+  `scripts/adapter-dhcp-log.py` reads a serial log with times
+  (`~/bin/zero-serial`) and reports per boot the adapter and the seconds
+  to the DHCP address (REQ-NET-2, #492).
 - `devshd`: remote shell on port 2323, unencrypted, LAN only, never in
   release images.
 
@@ -199,7 +202,10 @@
   comes first. **Pi test 156 passed** (65535 buffered bytes read after a
   reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
   [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
-  patch `0082`.
+  patch `0082`. The #141 part alone, on current main and with a QEMU test
+  (`scripts/test-tcp-reset-read.sh`: a raw TCP peer over QEMU's socket
+  netdev sends 64 KiB and a reset right behind it), is in its own pull
+  request, branch `tcp-reset-read`.
 
 ## Later
 

@@ -1,0 +1,43 @@
+From fd1405bd6c56d517dfa0adac55877c0a4f63baa7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 15 Nov 2026 18:13:33 +0000
+Subject: [PATCH] netstack: a read after a TCP reset returns the buffered data
+ first
+
+When the other side reset a connection, read_buf returned ENOTCONN at
+once, because it checked is_active() before can_recv(). Data that had
+arrived before the reset was still in the receive buffer (smoltcp keeps
+it when a RST closes the socket, and its recv works while the buffer is
+not empty), so the program lost it and saw an error where it should have
+seen the data first (redox-rpi issue 141, os error 107 at the end of a
+download). read_buf now hands out buffered data first and returns
+ENOTCONN only once the buffer is empty. The event path already reports
+such a socket as readable.
+---
+ netstack/src/scheme/tcp.rs | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
+index fdd50f71..6e51975a 100644
+--- a/netstack/src/scheme/tcp.rs
++++ b/netstack/src/scheme/tcp.rs
+@@ -212,11 +212,14 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+     ) -> SyscallResult<usize> {
+         if !file.read_enabled {
+             Ok(0)
+-        } else if !self.is_active() {
+-            Err(SyscallError::new(syscall::ENOTCONN))
+         } else if self.can_recv(&file.data) {
++            // Data that arrived before a reset stays in the receive buffer
++            // (smoltcp keeps it when the socket closes), so hand it out first
++            // and fail with ENOTCONN only once the buffer is empty (#141).
+             let length = self.recv_slice(buf).expect("Can't receive slice");
+             Ok(length)
++        } else if !self.is_active() {
++            Err(SyscallError::new(syscall::ENOTCONN))
+         } else if !<Self as SchemeSocket>::may_recv(self) {
+             // The scheme's may_recv, not smoltcp's: still connecting is not EOF
+             Ok(0)
+-- 
+2.53.0
+

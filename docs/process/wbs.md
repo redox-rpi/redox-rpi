@@ -87,6 +87,14 @@ here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
    then, size and speed are KPIs to watch, with no limit and no target. The
    linker.ld hard limits (bss end, trampoline size) stay as checks in
    bootcode-build `LINK=tcc`.
+8. **Upstream sync** (TinyCC VC4). Every week the `upstream-sync`
+   workflow in redox-rpi/tinycc test-merges upstream TinyCC `mob`
+   (repo.or.cz) into `main`, runs the CI of point 2 on it and offers the
+   result as a PR "upstream sync YYYY-Www"; a conflict becomes an issue.
+   It never merges: the maintainer merges like any code PR, with a merge
+   commit. The aarch64 TCC-on-Redox track uses the same fork, so arm64
+   changes are flagged in the PR. How it works: tinycc
+   [docs/vc4-decisions.md](https://github.com/redox-rpi/tinycc/blob/main/docs/vc4-decisions.md).
 
 ## 3 Boards
 

@@ -1,0 +1,169 @@
+From 8fcb48228b4dda73e29fb391d1a6028e3bb5f2ca Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 15 Nov 2026 20:39:56 +0000
+Subject: [PATCH] xhcid, usbhubd: address a device behind a hub at its own
+ speed
+
+xhcid took the speed for Address Device from the root port, which for a
+device behind a hub is the hub's speed. On the Pi 400, the low-speed
+keyboard behind the VL805's high-speed hub was addressed as high speed
+with a 64-byte control endpoint and failed with completion code 4
+(transaction error); usbhubd then aborted at "Failed to attach" (test
+439).
+
+usbhubd now writes the device's speed (an xHCI speed ID from the hub's
+port status: low, full, high or SuperSpeed) to the port's attach file,
+and xhcid uses it for a hub port. The TT fields (parent hub slot and
+port) are set only for a low- or full-speed device behind a high-speed
+hub, and 0 otherwise, as xHCI 1.2 section 6.2.2 says; before, they were
+always set. The root hub's own ports still write nothing and keep the
+root port's speed.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/usbhubd/src/main.rs           |  6 +++-
+ drivers/usb/xhcid/src/driver_interface.rs |  7 +++++
+ drivers/usb/xhcid/src/usb/hub.rs          | 13 +++++++++
+ drivers/usb/xhcid/src/xhci/mod.rs         | 35 +++++++++++++++++------
+ drivers/usb/xhcid/src/xhci/scheme.rs      |  6 ++--
+ 5 files changed, 56 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
+index 94fd26d0..b2661000 100644
+--- a/drivers/usb/usbhubd/src/main.rs
++++ b/drivers/usb/usbhubd/src/main.rs
+@@ -129,7 +129,11 @@ fn main() {
+             }
+ 
+             if attached {
+-                self.handle.attach().expect("Failed to attach");
++                let speed = self.port_sts.xhci_speed();
++                log::info!("attach port {} at xHCI speed {}", self.port_id, speed);
++                self.handle
++                    .attach_with_speed(speed)
++                    .expect("Failed to attach");
+             } else {
+                 self.handle.detach().expect("Failed to detach");
+             }
+diff --git a/drivers/usb/xhcid/src/driver_interface.rs b/drivers/usb/xhcid/src/driver_interface.rs
+index 574a7a64..81b2b919 100644
+--- a/drivers/usb/xhcid/src/driver_interface.rs
++++ b/drivers/usb/xhcid/src/driver_interface.rs
+@@ -560,6 +560,13 @@ impl XhciClientHandle {
+         let _bytes_written = file.write(&[])?;
+         Ok(())
+     }
++    /// Attach the device on a hub port, telling xhcid its speed (an xHCI
++    /// speed ID, see `HubPortStatus::xhci_speed`).
++    pub fn attach_with_speed(&self, speed: u8) -> result::Result<(), XhciClientHandleError> {
++        let file = self.fd.openat("attach", libredox::flag::O_WRONLY, 0)?;
++        let _bytes_written = file.write(&[speed])?;
++        Ok(())
++    }
+     pub fn detach(&self) -> result::Result<(), XhciClientHandleError> {
+         let file = self.fd.openat("detach", libredox::flag::O_WRONLY, 0)?;
+         let _bytes_written = file.write(&[])?;
+diff --git a/drivers/usb/xhcid/src/usb/hub.rs b/drivers/usb/xhcid/src/usb/hub.rs
+index 9dab55e8..4ea851de 100644
+--- a/drivers/usb/xhcid/src/usb/hub.rs
++++ b/drivers/usb/xhcid/src/usb/hub.rs
+@@ -157,6 +157,19 @@ pub enum HubPortStatus {
+ }
+ 
+ impl HubPortStatus {
++    /// The xHCI speed ID (protocol speed ID value, default PSIVs of xHCI
++    /// 1.2 table 7-13) of the device on this hub port: 1 full, 2 low, 3 high,
++    /// 4 SuperSpeed. xhcid needs it to address a device behind a hub: the
++    /// root port only knows the hub's own speed.
++    pub fn xhci_speed(&self) -> u8 {
++        match self {
++            Self::V2(x) if x.contains(HubPortStatusV2::LOW_SPEED) => 2,
++            Self::V2(x) if x.contains(HubPortStatusV2::HIGH_SPEED) => 3,
++            Self::V2(_) => 1,
++            Self::V3(_) => 4,
++        }
++    }
++
+     pub fn is_powered(&self) -> bool {
+         match self {
+             Self::V2(x) => x.contains(HubPortStatusV2::POWER),
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 4f14f798..7f953487 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -831,6 +831,19 @@ impl<const N: usize> Xhci<N> {
+     }
+ 
+     pub async fn attach_device(&self, port_id: PortId) -> syscall::Result<()> {
++        self.attach_device_at(port_id, None).await
++    }
++
++    /// Attach the device on `port_id`. `child_speed` is the device's xHCI
++    /// speed ID as its hub reported it; without it the root port's speed is
++    /// used, which for a device behind a hub is the hub's speed, not the
++    /// device's (a low-speed keyboard behind a high-speed hub was addressed
++    /// as high speed and failed with a transaction error: Pi 400 test 439).
++    pub async fn attach_device_at(
++        &self,
++        port_id: PortId,
++        child_speed: Option<u8>,
++    ) -> syscall::Result<()> {
+         if self.port_states.contains_key(&port_id) {
+             debug!("Already contains port {}", port_id);
+             return Err(syscall::Error::new(EAGAIN));
+@@ -840,6 +853,13 @@ impl<const N: usize> Xhci<N> {
+             let port = &self.ports.lock().unwrap()[port_id.root_hub_port_index()];
+             (port.read(), port.state(), port.speed(), port.flags())
+         };
++        let speed = match child_speed {
++            Some(child) if port_id.parent().is_some() => {
++                info!("port {}: speed {} from its hub (root port speed {})", port_id, child, speed);
++                child
++            }
++            _ => speed,
++        };
+ 
+         debug!(
+             "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
+@@ -1124,14 +1144,13 @@ impl<const N: usize> Xhci<N> {
+         if let Some((parent_port, port_num)) = port.parent() {
+             match self.port_states.get(&parent_port) {
+                 Some(parent_state) => {
+-                    // parent info must be supplied if:
+-                    let mut needs_parent_info = false;
+-                    // 1. the device is low or full speed and connected through a high speed hub
+-                    //TODO: determine device speed (speed is not accurate as it comes from the port)
+-                    // 2. the device is superspeed and connected through a higher rank hub
+-                    //TODO: determine device speed (speed is not accurate as it comes from the port)
+-                    // For now, this is just set to true to force things to work
+-                    needs_parent_info = true;
++                    // The TT fields (parent hub slot and port) are only
++                    // for a low- or full-speed device behind a high-speed
++                    // hub, and 0 otherwise (xHCI 1.2 section 6.2.2). The
++                    // device's speed now comes from its hub.
++                    let device_ls_fs = protocol_speed.is_lowspeed() || protocol_speed.is_fullspeed();
++                    let needs_parent_info =
++                        device_ls_fs && parent_state.protocol_speed.is_highspeed();
+                     if needs_parent_info {
+                         parent_hub_slot_id = parent_state.slot;
+                         parent_port_num = port_num;
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 6217b87b..43a017a7 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -2355,8 +2355,10 @@ impl<const N: usize> SchemeSync for &Xhci<N> {
+                 Ok(buf.len())
+             }
+             &mut Handle::AttachDevice(port_num) => {
+-                //TODO: accept some arguments in buffer?
+-                block_on(self.attach_device(port_num))?;
++                // usbhubd writes the device's speed for a hub port (one
++                // byte, an xHCI speed ID); the root hub's own ports write
++                // nothing.
++                block_on(self.attach_device_at(port_num, buf.first().copied()))?;
+                 Ok(buf.len())
+             }
+             &mut Handle::DetachDevice(port_num) => {
+-- 
+2.53.0
+
