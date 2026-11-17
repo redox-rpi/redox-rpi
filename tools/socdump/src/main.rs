@@ -45,7 +45,12 @@ const MEMORY: &str = "/dev/mem";
 
 /// A read-only mapping of a register block.
 struct Window {
-    ptr: *const u8,
+    /// Start of the mapping, which begins on a page boundary.
+    base: *const u8,
+    /// Offset of the block inside the mapping (its address minus the page start).
+    offset: usize,
+    /// Length of the mapping.
+    map_len: usize,
     len: usize,
     /// Bus address of the first byte.
     bus: u32,
@@ -59,32 +64,44 @@ impl Window {
         #[cfg(target_os = "linux")]
         std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_SYNC);
         let file = options.open(MEMORY).map_err(|err| format!("{MEMORY}: {err} (root needed)"))?;
+        // mmap takes only page-aligned offsets; vc5 HDMI blocks such as 0x7ef00700 are not.
+        let (start, offset, map_len) = page_span(phys, len);
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                len,
+                map_len,
                 libc::PROT_READ,
                 libc::MAP_SHARED,
                 file.as_raw_fd(),
-                phys as libc::off_t,
+                start as libc::off_t,
             )
         };
         if ptr == libc::MAP_FAILED {
             return Err(format!("map 0x{phys:x}: {}", std::io::Error::last_os_error()));
         }
-        Ok(Window { ptr: ptr as *const u8, len, bus, _file: file })
+        Ok(Window { base: ptr as *const u8, offset, map_len, len, bus, _file: file })
     }
 
     fn read(&self, offset: u32) -> u32 {
         assert!(offset % 4 == 0 && offset as usize + 4 <= self.len, "offset 0x{offset:x} outside the window");
-        unsafe { std::ptr::read_volatile(self.ptr.add(offset as usize) as *const u32) }
+        unsafe { std::ptr::read_volatile(self.base.add(self.offset + offset as usize) as *const u32) }
     }
 }
 
 impl Drop for Window {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+        unsafe { libc::munmap(self.base as *mut libc::c_void, self.map_len) };
     }
+}
+
+const PAGE: u64 = 4096;
+
+/// The page-aligned start, the block's offset in it, and the mapping length for `len` bytes at `phys`.
+fn page_span(phys: u64, len: usize) -> (u64, usize, usize) {
+    let start = phys & !(PAGE - 1);
+    let offset = (phys - start) as usize;
+    let map_len = (offset + len).div_ceil(PAGE as usize) * PAGE as usize;
+    (start, offset, map_len)
 }
 
 /// What the devicetree (and the firmware) say about the board.
@@ -727,6 +744,18 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_span_of_unaligned_blocks() {
+        // HDMI0 core of the Pi 400 at 0xfef00700, 0x100 bytes: one page from 0xfef00000.
+        assert_eq!(page_span(0xfef0_0700, 0x100), (0xfef0_0000, 0x700, 0x1000));
+        // The phy block at +0xf00 with 0x100 bytes still ends inside the page.
+        assert_eq!(page_span(0xfef0_0f00, 0x100), (0xfef0_0000, 0xf00, 0x1000));
+        // A block that crosses a page boundary gets two pages.
+        assert_eq!(page_span(0xfef0_0f80, 0x100), (0xfef0_0000, 0xf80, 0x2000));
+        // Aligned blocks map as before.
+        assert_eq!(page_span(0x3f10_1000, 0x2000), (0x3f10_1000, 0, 0x2000));
+    }
 
     #[test]
     fn ranges_of_the_3bp() {
