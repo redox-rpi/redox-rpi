@@ -1,0 +1,1147 @@
+From 437b2e0aa1206a810e860792fb3471946090e4aa Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 17 Nov 2026 20:46:01 +0000
+Subject: [PATCH] bcm2835-hdmiaudiod: the vc5 HDMI ports of the BCM2711 (Pi 4,
+ Pi 400)
+
+The same audio path at other offsets: per-port MAI registers in the shared
+HD block, the core at 0x7ef00700 (HDMI0) or 0x7ef05700 (HDMI1), packet RAM
+in its own block, 4-bit channel map, gen-5 MAI thresholds, DREQ 10 for
+HDMI0. The sample clock comes from the fixed 108 MHz audio clock, the pixel
+clock from the port PHY PLL. The driver takes the port the firmware sends
+video on, and leaves a port alone whose DVP reset is held or whose clock
+is stopped. QEMU raspi4b aborts reads of the DVP block, so a child
+process (--probe-dvp) reads it first. It powers up the PHY random
+generator, as Linux does.
+
+Address translation goes through /soc ranges and dma-ranges with their
+real cell counts (one address cell below /soc, two above on the BCM2711).
+
+Refs redox-rpi/redox-rpi#543.
+---
+ drivers/audio/bcm2835-hdmiaudiod/src/dma.rs  |  36 +-
+ drivers/audio/bcm2835-hdmiaudiod/src/dt.rs   | 137 ++++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs | 331 +++++++++++++++----
+ drivers/audio/bcm2835-hdmiaudiod/src/main.rs | 295 +++++++++++++----
+ 4 files changed, 651 insertions(+), 148 deletions(-)
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
+
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs b/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
+index fdfeb19b..4d230414 100644
+--- a/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
+@@ -19,7 +19,8 @@ const DMA_BUS_ADDR: usize = 0x7e00_7000;
+ /// are free for SPI or audio; `bcm2835-pwmaudiod` has 2).
+ pub const CHANNEL: usize = 0;
+ const CHANNEL_SIZE: usize = 0x100;
+-/// RAM as the controller sees it when the devicetree has no dma-ranges.
++/// RAM as the controller sees it when the devicetree has no dma-ranges
++/// (BCM283x).
+ const RAM_BUS_OFFSET: usize = 0xc000_0000;
+ 
+ // Channel registers, as byte offsets.
+@@ -99,7 +100,7 @@ impl DmaRing {
+             .and_then(|mut reg| reg.next())
+             .map(|reg| reg.starting_address as usize)
+             .unwrap_or(DMA_BUS_ADDR);
+-        let phys = crate::soc_phys(fdt, bus_addr);
++        let phys = crate::dt::soc_phys(fdt, bus_addr);
+         let page = unsafe {
+             common::physmap(phys, 0x1000, common::Prot::RW, common::MemoryType::DeviceMemory)
+                 .map_err(|err| format!("failed to map the DMA controller: {err:?}"))? as *mut u32
+@@ -114,10 +115,19 @@ impl DmaRing {
+                 .map_err(|err| format!("failed to allocate the ring: {err}"))?
+                 .assume_init()
+         };
+-        let offset = ram_bus_offset(fdt);
+-        let bus = |phys: usize| (phys + offset) as u32;
+-        let cbs_bus = bus(cbs.physical());
+-        let buf_bus = bus(buf.physical());
++        // RAM as the controller sees it: through /soc's dma-ranges (only the
++        // first 1 GB on the BCM2711), else at 0xc0000000 as on the BCM283x.
++        let bus = |phys: usize| -> Result<u32, String> {
++            match crate::dt::dma_bus(fdt, phys) {
++                Some(bus) => u32::try_from(bus).map_err(|_| format!("bus address 0x{bus:x} of RAM 0x{phys:x} too high")),
++                None if fdt.find_node("/soc").and_then(|soc| soc.property("dma-ranges")).is_some() => {
++                    Err(format!("RAM 0x{phys:x} outside /soc dma-ranges"))
++                }
++                None => Ok((phys + RAM_BUS_OFFSET) as u32),
++            }
++        };
++        let cbs_bus = bus(cbs.physical())?;
++        let buf_bus = bus(buf.physical())?;
+         for (i, cb) in cbs.iter_mut().enumerate() {
+             *cb = ControlBlock {
+                 ti: dreq << TI_PERMAP_SHIFT | TI_DEST_DREQ | TI_SRC_INC | TI_WAIT_RESP,
+@@ -195,20 +205,6 @@ impl DmaRing {
+     }
+ }
+ 
+-/// Bus address minus physical address of RAM, from the first entry of
+-/// `/soc`'s dma-ranges (one cell each for bus address, physical address and
+-/// size on the BCM283x).
+-fn ram_bus_offset(fdt: &Fdt) -> usize {
+-    fdt.find_node("/soc")
+-        .and_then(|soc| soc.property("dma-ranges"))
+-        .filter(|prop| prop.value.len() >= 12)
+-        .map(|prop| {
+-            let cell = |i: usize| u32::from_be_bytes(prop.value[i * 4..i * 4 + 4].try_into().unwrap());
+-            (cell(0) as usize).wrapping_sub(cell(1) as usize)
+-        })
+-        .unwrap_or(RAM_BUS_OFFSET)
+-}
+-
+ /// Make the CPU's writes to the ring visible before the register write that
+ /// starts the controller.
+ pub fn barrier() {
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs b/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
+new file mode 100644
+index 00000000..bd1d975a
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
+@@ -0,0 +1,137 @@
++//! Devicetree helpers: address translation through `/soc`'s `ranges` and
++//! `dma-ranges` with their real cell counts (the BCM2711 has one address
++//! cell below `/soc` and two above it), and `reg` entries by name.
++//!
++//! The cell functions are pure and tested on the build host.
++
++use fdt::node::FdtNode;
++use fdt::Fdt;
++
++/// The property as big-endian 32-bit cells.
++pub fn cells(node: &FdtNode, name: &str) -> Option<Vec<u32>> {
++    let prop = node.property(name)?;
++    Some(prop.value.chunks_exact(4).map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]])).collect())
++}
++
++fn number(cells: &[u32]) -> u64 {
++    cells.iter().fold(0u64, |n, c| n << 32 | u64::from(*c))
++}
++
++fn cell_count(node: Option<FdtNode>, name: &str, default: usize) -> usize {
++    node.and_then(|n| n.property(name)).and_then(|p| p.as_usize()).unwrap_or(default)
++}
++
++/// `addr` (a child address) through `ranges`, given the child and parent
++/// address cells and the size cells. `None` if no entry covers it.
++pub fn translate(addr: u64, ranges: &[u32], child: usize, parent: usize, size: usize) -> Option<u64> {
++    let entry = child + parent + size;
++    if entry == 0 {
++        return None;
++    }
++    ranges.chunks_exact(entry).find_map(|e| {
++        let (c, p, s) = (number(&e[..child]), number(&e[child..child + parent]), number(&e[child + parent..]));
++        (c <= addr && addr - c < s).then(|| p + (addr - c))
++    })
++}
++
++/// The other way: a parent address back to the child side (`dma-ranges`:
++/// CPU physical address of RAM to the bus address a DMA controller uses).
++pub fn translate_back(addr: u64, ranges: &[u32], child: usize, parent: usize, size: usize) -> Option<u64> {
++    let entry = child + parent + size;
++    if entry == 0 {
++        return None;
++    }
++    ranges.chunks_exact(entry).find_map(|e| {
++        let (c, p, s) = (number(&e[..child]), number(&e[child..child + parent]), number(&e[child + parent..]));
++        (p <= addr && addr - p < s).then(|| c + (addr - p))
++    })
++}
++
++/// (child address cells, parent address cells, size cells) of `/soc`.
++fn soc_cells(fdt: &Fdt) -> (usize, usize, usize) {
++    let soc = fdt.find_node("/soc");
++    (
++        cell_count(soc, "#address-cells", 1),
++        cell_count(fdt.find_node("/"), "#address-cells", 1),
++        cell_count(soc, "#size-cells", 1),
++    )
++}
++
++/// The CPU physical address of a device at `bus_addr` below `/soc`; the bus
++/// address itself if `/soc` has no `ranges` that cover it.
++pub fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
++    let (child, parent, size) = soc_cells(fdt);
++    fdt.find_node("/soc")
++        .and_then(|soc| cells(&soc, "ranges"))
++        .and_then(|ranges| translate(bus_addr as u64, &ranges, child, parent, size))
++        .map(|phys| phys as usize)
++        .unwrap_or(bus_addr)
++}
++
++/// The bus address a `/soc` DMA controller uses for RAM at CPU address
++/// `phys`, through `/soc`'s `dma-ranges`; `None` without one that covers it.
++pub fn dma_bus(fdt: &Fdt, phys: usize) -> Option<usize> {
++    let (child, parent, size) = soc_cells(fdt);
++    let ranges = fdt.find_node("/soc").and_then(|soc| cells(&soc, "dma-ranges"))?;
++    translate_back(phys as u64, &ranges, child, parent, size).map(|bus| bus as usize)
++}
++
++/// The position of `name` in a `reg-names` string list.
++pub fn name_index(names: &[u8], name: &str) -> Option<usize> {
++    names.split(|b| *b == 0).filter(|s| !s.is_empty()).position(|s| s == name.as_bytes())
++}
++
++/// Bus address of the `reg` entry called `name` (by `reg-names`) of the
++/// first node with one of `compatible`.
++pub fn reg_by_name(fdt: &Fdt, compatible: &[&str], name: &str) -> Option<usize> {
++    let node = fdt.find_compatible(compatible)?;
++    let index = name_index(node.property("reg-names")?.value, name)?;
++    node.reg()?.nth(index).map(|reg| reg.starting_address as usize)
++}
++
++/// The DREQ line in the first `dmas` entry (`<&dma n>`) of the first node
++/// with one of `compatible`.
++pub fn dreq(fdt: &Fdt, compatible: &[&str]) -> Option<u32> {
++    let node = fdt.find_compatible(compatible)?;
++    cells(&node, "dmas")?.get(1).copied()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn bcm2711_soc_ranges() {
++        // Pi 4 / Pi 400: <0x7e000000  0x0 0xfe000000  0x01800000>, ...
++        let ranges = [0x7e00_0000, 0x0, 0xfe00_0000, 0x0180_0000, 0x7c00_0000, 0x0, 0xfc00_0000, 0x0200_0000];
++        assert_eq!(translate(0x7ef0_0700, &ranges, 1, 2, 1), Some(0xfef0_0700));
++        assert_eq!(translate(0x7ef2_0000, &ranges, 1, 2, 1), Some(0xfef2_0000));
++        assert_eq!(translate(0x7c00_0010, &ranges, 1, 2, 1), Some(0xfc00_0010));
++        assert_eq!(translate(0x4000_0000, &ranges, 1, 2, 1), None);
++    }
++
++    #[test]
++    fn bcm2837_soc_ranges() {
++        let ranges = [0x7e00_0000, 0x3f00_0000, 0x0100_0000, 0x4000_0000, 0x4000_0000, 0x1000];
++        assert_eq!(translate(0x7e90_2000, &ranges, 1, 1, 1), Some(0x3f90_2000));
++    }
++
++    #[test]
++    fn dma_ranges_back() {
++        // BCM2711: <0xc0000000  0x0 0x00000000  0x40000000>.
++        let ranges = [0xc000_0000, 0x0, 0x0, 0x4000_0000];
++        assert_eq!(translate_back(0x3b40_0000, &ranges, 1, 2, 1), Some(0xfb40_0000));
++        assert_eq!(translate_back(0x4000_0000, &ranges, 1, 2, 1), None, "above 1 GB");
++        // BCM2837: <0xc0000000 0x00000000 0x3f000000>.
++        assert_eq!(translate_back(0x1000, &[0xc000_0000, 0, 0x3f00_0000], 1, 1, 1), Some(0xc000_1000));
++    }
++
++    #[test]
++    fn reg_names() {
++        let names = b"hdmi\0dvp\0phy\0rm\0packet\0metadata\0csc\0cec\0hd\0";
++        assert_eq!(name_index(names, "hdmi"), Some(0));
++        assert_eq!(name_index(names, "packet"), Some(4));
++        assert_eq!(name_index(names, "hd"), Some(8));
++        assert_eq!(name_index(names, "audio"), None);
++    }
++}
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+index 749f0d98..02a37d9f 100644
+--- a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+@@ -7,34 +7,171 @@
+ //! FIFO the DMA fills; the HDMI core (bus 0x7e902000) packs the samples
+ //! into HDMI audio packets.
+ //!
++//! The BCM2711 (Pi 4, Pi 400) has the same audio path in its two "vc5" HDMI
++//! ports, at other offsets (`Regs`): a shared HD block (bus 0x7ef20000) with
++//! one MAI FIFO per port, the core of each port, and a separate packet RAM
++//! block. Its audio clock is a fixed 108 MHz, and the pixel clock comes from
++//! the port's PHY PLL (`pixel_from_vc5_phy`), as Linux `vc4_hdmi_regs.h`
++//! (`vc5_hdmi_hdmi0_fields`, `vc5_hdmi_hdmi1_fields`) and `vc4_hdmi_phy.c`
++//! have them.
++//!
+ //! The value functions are pure and tested on the build host; `Hdmi` does
+ //! the register accesses.
+ 
+ use std::time::{Duration, Instant};
+ 
+-// HD block.
+-pub const MAI_CTL: usize = 0x14;
+-pub const MAI_THR: usize = 0x18;
+-pub const MAI_FMT: usize = 0x1c;
+-/// The FIFO: the DMA target.
+-pub const MAI_DATA: usize = 0x20;
+-pub const MAI_SMP: usize = 0x2c;
+-
+-// HDMI core.
+-pub const HOTPLUG: usize = 0x0c;
+-pub const MAI_CHANNEL_MAP: usize = 0x90;
+-pub const MAI_CONFIG: usize = 0x94;
+-pub const AUDIO_PACKET_CONFIG: usize = 0x9c;
+-pub const RAM_PACKET_CONFIG: usize = 0xa0;
+-pub const RAM_PACKET_STATUS: usize = 0xa4;
+-pub const CRP_CFG: usize = 0xa8;
+-pub const CTS_0: usize = 0xac;
+-pub const CTS_1: usize = 0xb0;
+-pub const SCHEDULER_CONTROL: usize = 0xc0;
+-pub const RAM_PACKET_START: usize = 0x400;
++/// The register offsets of one HDMI port, and what else differs between the
++/// VC4 (BCM2835/2837) and the vc5 ports (BCM2711).
++pub struct Regs {
++    pub name: &'static str,
++    // HD block.
++    pub mai_ctl: usize,
++    pub mai_thr: usize,
++    pub mai_fmt: usize,
++    /// The FIFO: the DMA target.
++    pub mai_data: usize,
++    pub mai_smp: usize,
++    /// `VID_CTL`, whose bit 31 says the port sends video (vc5 only; the VC4
++    /// driver goes by hotplug and the scheduler).
++    pub vid_ctl: Option<usize>,
++    // HDMI core.
++    pub hotplug: usize,
++    pub mai_channel_map: usize,
++    pub mai_config: usize,
++    pub audio_packet_config: usize,
++    pub ram_packet_config: usize,
++    pub ram_packet_status: usize,
++    pub crp_cfg: usize,
++    pub cts_0: usize,
++    pub cts_1: usize,
++    pub scheduler_control: usize,
++    /// Packet RAM, from the core on VC4 and from the "packet" block on vc5.
++    pub ram_packet_start: usize,
++    /// Bits per channel in `MAI_CHANNEL_MAP`.
++    pub channel_bits: u32,
++    pub mai_thr_value: u32,
++    /// The DREQ line of the FIFO, if the devicetree has no `dmas`.
++    pub dreq: u32,
++}
++
++/// BCM2835/2837.
++pub const VC4: Regs = Regs {
++    name: "vc4",
++    mai_ctl: 0x14,
++    mai_thr: 0x18,
++    mai_fmt: 0x1c,
++    mai_data: 0x20,
++    mai_smp: 0x2c,
++    vid_ctl: None,
++    hotplug: 0x0c,
++    mai_channel_map: 0x90,
++    mai_config: 0x94,
++    audio_packet_config: 0x9c,
++    ram_packet_config: 0xa0,
++    ram_packet_status: 0xa4,
++    crp_cfg: 0xa8,
++    cts_0: 0xac,
++    cts_1: 0xb0,
++    scheduler_control: 0xc0,
++    ram_packet_start: 0x400,
++    channel_bits: 3,
++    mai_thr_value: MAI_THR_VC4,
++    // BCM2835 devicetree: `dmas = <&dma 17>`.
++    dreq: 17,
++};
++
++/// The core registers are the same in both vc5 ports.
++const VC5_CORE: Regs = Regs {
++    name: "vc5",
++    mai_ctl: 0,
++    mai_thr: 0,
++    mai_fmt: 0,
++    mai_data: 0,
++    mai_smp: 0,
++    vid_ctl: None,
++    hotplug: 0x1a8,
++    mai_channel_map: 0x9c,
++    mai_config: 0xa0,
++    audio_packet_config: 0xb8,
++    ram_packet_config: 0xbc,
++    ram_packet_status: 0xc4,
++    crp_cfg: 0xc8,
++    cts_0: 0xcc,
++    cts_1: 0xd0,
++    scheduler_control: 0xe0,
++    ram_packet_start: 0,
++    channel_bits: 4,
++    mai_thr_value: MAI_THR_VC5,
++    dreq: 0,
++};
++
++/// BCM2711 HDMI0 (`dmas = <&dma 10>`).
++pub const VC5_HDMI0: Regs = Regs {
++    name: "hdmi0",
++    mai_ctl: 0x10,
++    mai_thr: 0x14,
++    mai_fmt: 0x18,
++    mai_data: 0x1c,
++    mai_smp: 0x20,
++    vid_ctl: Some(0x44),
++    dreq: 10,
++    ..VC5_CORE
++};
++
++/// BCM2711 HDMI1 (`dmas = <&dma 17>`).
++pub const VC5_HDMI1: Regs = Regs {
++    name: "hdmi1",
++    mai_ctl: 0x30,
++    mai_thr: 0x34,
++    mai_fmt: 0x38,
++    mai_data: 0x3c,
++    mai_smp: 0x40,
++    vid_ctl: Some(0x48),
++    dreq: 17,
++    ..VC5_CORE
++};
++
+ /// Bytes of packet RAM per packet (9 words).
+ pub const PACKET_STRIDE: usize = 0x24;
+ 
++/// `VID_CTL`: the port sends video.
++pub const VID_CTL_ENABLE: u32 = 1 << 31;
++
++// vc5 PHY block (`TX_PHY_*`) and its rate manager (`RM_*`).
++pub const PHY_POWERDOWN_CTL: usize = 0x04;
++pub const PHY_CLK_DIV: usize = 0x28;
++pub const RM_OFFSET: usize = 0x18;
++/// The PHY's random generator; Linux powers it up before audio
++/// (`vc5_hdmi_phy_rng_enable`).
++pub const PHY_POWERDOWN_RNDGEN: u32 = 1 << 4;
++
++/// The BCM2711 DVP block (bus 0x7ef00000, Linux `clk-bcm2711-dvp.c`): one
++/// reset bit per port in `SW_INIT`, one stopped-clock bit per port (bit 3 +
++/// port) in `MISC_CONFIG`. A port in reset or without its clock must not be
++/// touched: its registers can hang the bus.
++pub const DVP_SW_INIT: usize = 0x04;
++pub const DVP_MISC_CONFIG: usize = 0x08;
++
++pub fn vc5_port_clocked(port: usize, sw_init: u32, misc_config: u32) -> bool {
++    sw_init & 1 << port == 0 && misc_config & 1 << (3 + port) == 0
++}
++
++/// The vc5 audio clock: the DVP gate on the fixed 108 MHz.
++pub const VC5_AUDIO_HZ: u64 = 108_000_000;
++const VC5_PHY_REF_HZ: u64 = 54_000_000;
++
++/// The pixel clock of a vc5 port from its PHY PLL: `RM_OFFSET` (bits 30:0)
++/// = VCO × 2^21 / 54 MHz, and `TX_PHY_CLK_DIV` bits 15:8 the VCO divider;
++/// TMDS = VCO / (divider × 10), the pixel clock at 8 bits per channel.
++pub fn pixel_from_vc5_phy(rm_offset: u32, clk_div: u32) -> Option<u64> {
++    let offset = u64::from(rm_offset & 0x7fff_ffff);
++    let div = u64::from(clk_div >> 8 & 0xff);
++    if offset == 0 || div == 0 {
++        return None;
++    }
++    Some(offset * VC5_PHY_REF_HZ / (1 << 21) / (div * 10))
++}
++
+ pub const HOTPLUG_CONNECTED: u32 = 1 << 0;
+ pub const SCHEDULER_MODE_HDMI: u32 = 1 << 0;
+ pub const SCHEDULER_HDMI_ACTIVE: u32 = 1 << 1;
+@@ -61,10 +198,6 @@ const MAI_FORMAT_PCM: u32 = 2;
+ pub const INFOFRAME_AUDIO: u8 = 0x84;
+ pub const AUDIO_PACKET_ID: usize = (INFOFRAME_AUDIO - 0x80) as usize;
+ 
+-/// The DMA request line of the HDMI MAI FIFO (BCM2835 devicetree:
+-/// `dmas = <&dma 17>`).
+-pub const DREQ_HDMI: u32 = 17;
+-
+ fn mask(channels: u32) -> u32 {
+     (1 << channels) - 1
+ }
+@@ -78,8 +211,11 @@ pub fn mai_ctl_play(channels: u32) -> u32 {
+ /// `vc4_hdmi_audio_startup`).
+ pub const MAI_CTL_START: u32 = MAI_CTL_RESET | MAI_CTL_FLUSH | MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF;
+ 
+-/// DREQ high 6, low 8; panic 8 and 8.
+-pub const MAI_THR_VALUE: u32 = 0x08 << 24 | 0x08 << 16 | 0x06 << 8 | 0x08;
++/// VC4: DREQ high 6, low 8; panic 8 and 8.
++pub const MAI_THR_VC4: u32 = 0x08 << 24 | 0x08 << 16 | 0x06 << 8 | 0x08;
++/// vc5 (BCM2711, not the BCM2712's D0 layout): DREQ 0x1c and 0x1c, panic
++/// 0x10 and 0x10.
++pub const MAI_THR_VC5: u32 = 0x10 << 24 | 0x10 << 16 | 0x1c << 8 | 0x1c;
+ 
+ /// The `MAI_FMT` sample-rate code, 0 = not indicated.
+ pub fn mai_rate_code(sample_rate: u32) -> u32 {
+@@ -111,9 +247,10 @@ pub fn mai_config(channels: u32) -> u32 {
+     MAI_CONFIG_BIT_REVERSE | MAI_CONFIG_FORMAT_REVERSE | mask(channels)
+ }
+ 
+-/// Channel `i` of the FIFO to HDMI channel `i` (3 bits each on VC4).
+-pub fn channel_map(channels: u32) -> u32 {
+-    (0..8).filter(|i| mask(channels) & 1 << i != 0).map(|i| i << (3 * i)).sum()
++/// Channel `i` of the FIFO to HDMI channel `i` (`bits` per channel: 3 on
++/// VC4, 4 on vc5).
++pub fn channel_map(channels: u32, bits: u32) -> u32 {
++    (0..8).filter(|i| mask(channels) & 1 << i != 0).map(|i| i << (bits * i)).sum()
+ }
+ 
+ pub fn audio_packet_config(channels: u32) -> u32 {
+@@ -272,19 +409,32 @@ impl State {
+ }
+ 
+ pub struct Hdmi {
++    pub regs: &'static Regs,
+     /// HDMI core registers.
+     core: *mut u32,
+     /// HD block registers.
+     hd: *mut u32,
++    /// Packet RAM: the core on VC4, the "packet" block on vc5.
++    ram: *mut u32,
+ }
+ 
+ unsafe impl Send for Hdmi {}
+ 
+ impl Hdmi {
+     /// # Safety
+-    /// `core` and `hd` map the two register blocks.
+-    pub unsafe fn new(core: *mut u32, hd: *mut u32) -> Self {
+-        Hdmi { core, hd }
++    /// `core`, `hd` and `ram` map the register blocks of a port that is out
++    /// of reset and clocked.
++    pub unsafe fn new(regs: &'static Regs, core: *mut u32, hd: *mut u32, ram: *mut u32) -> Self {
++        Hdmi { regs, core, hd, ram }
++    }
++
++    fn set_ram(&self, offset: usize, value: u32) {
++        unsafe { self.ram.add(offset / 4).write_volatile(value) }
++    }
++
++    /// Whether the port sends video (vc5 `VID_CTL`); `None` on VC4.
++    pub fn video_on(&self) -> Option<bool> {
++        self.regs.vid_ctl.map(|vid_ctl| self.hd(vid_ctl) & VID_CTL_ENABLE != 0)
+     }
+ 
+     pub fn core(&self, offset: usize) -> u32 {
+@@ -305,80 +455,85 @@ impl Hdmi {
+ 
+     pub fn state(&self) -> State {
+         State {
+-            hotplug: self.core(HOTPLUG) & HOTPLUG_CONNECTED != 0,
+-            scheduler: self.core(SCHEDULER_CONTROL),
++            hotplug: self.core(self.regs.hotplug) & HOTPLUG_CONNECTED != 0,
++            scheduler: self.core(self.regs.scheduler_control),
+         }
+     }
+ 
+     /// Switch the output from DVI to HDMI mode, as Linux does when the sink
+     /// says it takes HDMI. True once the core reports HDMI active.
+     pub fn force_hdmi_mode(&self) -> bool {
+-        self.set_core(SCHEDULER_CONTROL, self.core(SCHEDULER_CONTROL) | SCHEDULER_MODE_HDMI);
+-        wait(|| self.core(SCHEDULER_CONTROL) & SCHEDULER_HDMI_ACTIVE != 0, 1000)
++        let reg = self.regs.scheduler_control;
++        self.set_core(reg, self.core(reg) | SCHEDULER_MODE_HDMI);
++        wait(|| self.core(reg) & SCHEDULER_HDMI_ACTIVE != 0, 1000)
+     }
+ 
+     /// Program the audio path for `channels` channels of PCM at
+     /// `sample_rate` (Linux `vc4_hdmi_audio_startup` and `_prepare`), with
+-    /// the DMA not yet running.
++    /// the DMA not yet running. `hsm_hz` is the clock of the sample clock
++    /// divider: HSM on VC4, the 108 MHz audio clock on vc5.
+     pub fn setup(&self, channels: u32, sample_rate: u32, hsm_hz: u64, pixel_hz: u64) {
+-        self.set_hd(MAI_CTL, MAI_CTL_START);
++        let r = self.regs;
++        self.set_hd(r.mai_ctl, MAI_CTL_START);
+         let (n, m) = mai_smp(hsm_hz, sample_rate);
+-        self.set_hd(MAI_SMP, mai_smp_value(n, m));
+-        self.set_hd(MAI_CTL, mai_ctl_play(channels));
+-        self.set_hd(MAI_FMT, mai_fmt(sample_rate));
+-        self.set_hd(MAI_THR, MAI_THR_VALUE);
+-        self.set_core(MAI_CONFIG, mai_config(channels));
+-        self.set_core(MAI_CHANNEL_MAP, channel_map(channels));
+-        self.set_core(AUDIO_PACKET_CONFIG, audio_packet_config(channels));
++        self.set_hd(r.mai_smp, mai_smp_value(n, m));
++        self.set_hd(r.mai_ctl, mai_ctl_play(channels));
++        self.set_hd(r.mai_fmt, mai_fmt(sample_rate));
++        self.set_hd(r.mai_thr, r.mai_thr_value);
++        self.set_core(r.mai_config, mai_config(channels));
++        self.set_core(r.mai_channel_map, channel_map(channels, r.channel_bits));
++        self.set_core(r.audio_packet_config, audio_packet_config(channels));
+         let acr = acr_n(sample_rate);
+-        self.set_core(CRP_CFG, crp_cfg(acr));
++        self.set_core(r.crp_cfg, crp_cfg(acr));
+         let cts = acr_cts(pixel_hz, acr, sample_rate);
+-        self.set_core(CTS_0, cts);
+-        self.set_core(CTS_1, cts);
++        self.set_core(r.cts_0, cts);
++        self.set_core(r.cts_1, cts);
+     }
+ 
+     /// Only the sample clock, after a measurement corrected the HSM rate.
+     pub fn set_sample_clock(&self, hsm_hz: u64, sample_rate: u32) {
+         let (n, m) = mai_smp(hsm_hz, sample_rate);
+-        self.set_hd(MAI_SMP, mai_smp_value(n, m));
++        self.set_hd(self.regs.mai_smp, mai_smp_value(n, m));
+     }
+ 
+     /// Write the audio info frame into packet RAM and send it with every
+     /// frame. False if the core did not take it within 100 ms.
+     pub fn send_audio_infoframe(&self, channels: u32) -> bool {
++        let (config_reg, status_reg) = (self.regs.ram_packet_config, self.regs.ram_packet_status);
+         let bit = 1 << AUDIO_PACKET_ID;
+-        let config = self.core(RAM_PACKET_CONFIG) | RAM_PACKET_ENABLE;
+-        self.set_core(RAM_PACKET_CONFIG, config & !bit);
+-        wait(|| self.core(RAM_PACKET_STATUS) & bit == 0, 100);
+-        let base = RAM_PACKET_START + PACKET_STRIDE * AUDIO_PACKET_ID;
++        let config = self.core(config_reg) | RAM_PACKET_ENABLE;
++        self.set_core(config_reg, config & !bit);
++        wait(|| self.core(status_reg) & bit == 0, 100);
++        let base = self.regs.ram_packet_start + PACKET_STRIDE * AUDIO_PACKET_ID;
+         for (i, word) in packet_words(&audio_infoframe(channels)).iter().enumerate() {
+-            self.set_core(base + i * 4, *word);
++            self.set_ram(base + i * 4, *word);
+         }
+-        self.set_core(RAM_PACKET_CONFIG, config | bit);
+-        wait(|| self.core(RAM_PACKET_STATUS) & bit != 0, 100)
++        self.set_core(config_reg, config | bit);
++        wait(|| self.core(status_reg) & bit != 0, 100)
+     }
+ 
+     pub fn infoframe_active(&self) -> bool {
+-        self.core(RAM_PACKET_STATUS) & 1 << AUDIO_PACKET_ID != 0
++        self.core(self.regs.ram_packet_status) & 1 << AUDIO_PACKET_ID != 0
+     }
+ 
+     /// The FIFO's error flags (underflow, overflow), cleared on read.
+     pub fn take_errors(&self) -> u32 {
+-        let ctl = self.hd(MAI_CTL);
++        let ctl = self.hd(self.regs.mai_ctl);
+         let errors = ctl & (MAI_CTL_ERRORE | MAI_CTL_ERRORF);
+         if errors != 0 {
+             // Write-1-to-clear; RESET and FLUSH stay 0.
+-            self.set_hd(MAI_CTL, (ctl & !(MAI_CTL_RESET | MAI_CTL_FLUSH)) | errors);
++            self.set_hd(self.regs.mai_ctl, (ctl & !(MAI_CTL_RESET | MAI_CTL_FLUSH)) | errors);
+         }
+         errors
+     }
+ 
+     /// Stop the FIFO and the info frame (Linux `vc4_hdmi_audio_reset`).
+     pub fn stop(&self) {
+-        self.set_core(RAM_PACKET_CONFIG, self.core(RAM_PACKET_CONFIG) & !(1 << AUDIO_PACKET_ID));
+-        self.set_hd(MAI_CTL, MAI_CTL_RESET);
+-        self.set_hd(MAI_CTL, MAI_CTL_ERRORF);
+-        self.set_hd(MAI_CTL, MAI_CTL_FLUSH);
++        let reg = self.regs.ram_packet_config;
++        self.set_core(reg, self.core(reg) & !(1 << AUDIO_PACKET_ID));
++        self.set_hd(self.regs.mai_ctl, MAI_CTL_RESET);
++        self.set_hd(self.regs.mai_ctl, MAI_CTL_ERRORF);
++        self.set_hd(self.regs.mai_ctl, MAI_CTL_FLUSH);
+     }
+ }
+ 
+@@ -401,12 +556,12 @@ mod tests {
+     fn register_values_as_linux_writes_them() {
+         assert_eq!(mai_ctl_play(2), 0x3028);
+         assert_eq!(MAI_CTL_START, 0x8207);
+-        assert_eq!(MAI_THR_VALUE, 0x0808_0608);
++        assert_eq!(MAI_THR_VC4, 0x0808_0608);
+         assert_eq!(mai_fmt(44_100), 0x0002_0800);
+         assert_eq!(mai_fmt(48_000), 0x0002_0900);
+         assert_eq!(mai_config(2), 0x0c00_0003);
+-        assert_eq!(channel_map(2), 0x8);
+-        assert_eq!(channel_map(8), 0o76543210);
++        assert_eq!(channel_map(2, 3), 0x8);
++        assert_eq!(channel_map(8, 3), 0o76543210);
+         assert_eq!(audio_packet_config(2), 0x2100_2003);
+         assert_eq!(crp_cfg(6144), 0x0100_1800);
+     }
+@@ -491,6 +646,50 @@ mod tests {
+         assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 1 << 8 | 2), None, "channel off");
+     }
+ 
++    #[test]
++    fn vc5_values_as_linux_writes_them() {
++        assert_eq!(MAI_THR_VC5, 0x1010_1c1c);
++        assert_eq!(channel_map(2, 4), 0x10);
++        // What the Pi 400 firmware leaves there (Test 494).
++        assert_eq!(channel_map(8, 4), 0x7654_3210);
++        // Offsets from vc5_hdmi_hdmi0_fields / _hdmi1_fields.
++        assert_eq!((VC5_HDMI0.mai_ctl, VC5_HDMI0.mai_data, VC5_HDMI0.mai_smp), (0x10, 0x1c, 0x20));
++        assert_eq!((VC5_HDMI1.mai_ctl, VC5_HDMI1.mai_data, VC5_HDMI1.mai_smp), (0x30, 0x3c, 0x40));
++        assert_eq!((VC5_HDMI1.crp_cfg, VC5_HDMI1.hotplug, VC5_HDMI1.ram_packet_start), (0xc8, 0x1a8, 0));
++        assert_eq!((VC5_HDMI0.dreq, VC5_HDMI1.dreq, VC4.dreq), (10, 17, 17));
++    }
++
++    #[test]
++    fn vc5_pixel_clock_from_the_phy() {
++        // Test 494 on the Pi 400: 640x480 at 25.2 MHz, VCO 3024 MHz / 12 / 10.
++        assert_eq!(pixel_from_vc5_phy(0x8700_0000, 0x0000_0c00), Some(25_200_000));
++        // 1080p60: VCO 5940 MHz / 4 / 10 = 148.5 MHz.
++        let offset = (5_940_000_000u64 * (1 << 21) / 54_000_000) as u32;
++        assert_eq!(pixel_from_vc5_phy(offset, 4 << 8), Some(148_500_000));
++        assert_eq!(pixel_from_vc5_phy(0, 0x0c00), None);
++        assert_eq!(pixel_from_vc5_phy(0x8700_0000, 0), None);
++    }
++
++    #[test]
++    fn vc5_audio_clock_and_n_cts() {
++        let (n, m) = mai_smp(VC5_AUDIO_HZ, 44_100);
++        let got = VC5_AUDIO_HZ as f64 * f64::from(m) / f64::from(n);
++        assert!((got / 44_100.0 - 1.0).abs() < 1e-5, "{got}");
++        // 25.2 MHz, 44.1 kHz: N 5644 (Linux), CTS within one step of exact.
++        let cts = acr_cts(25_200_000, acr_n(44_100), 44_100);
++        assert_eq!(cts, 25_196);
++    }
++
++    #[test]
++    fn vc5_dvp_guard() {
++        assert!(vc5_port_clocked(0, 0, 0));
++        assert!(vc5_port_clocked(1, 0, 0));
++        assert!(!vc5_port_clocked(0, 1, 0), "HDMI0 in reset");
++        assert!(vc5_port_clocked(1, 1, 0), "only HDMI0 in reset");
++        assert!(!vc5_port_clocked(1, 0, 1 << 4), "HDMI1 clock stopped");
++        assert!(vc5_port_clocked(0, 0, 1 << 4));
++    }
++
+     #[test]
+     fn state_mode() {
+         let s = State { hotplug: true, scheduler: 0x3 };
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+index 71bda6d1..ebab7889 100644
+--- a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+@@ -1,7 +1,8 @@
+-//! HDMI sound of the Raspberry Pi 3B+ and Zero 2 W as the `audiohw` scheme
+-//! for `audiod` (issue #423). The firmware sets up the picture; this driver
+-//! programs only the audio part of the VC4 HDMI block (`hdmi.rs`), so no
+-//! display driver is needed.
++//! HDMI sound of the Raspberry Pi 3B+ and Zero 2 W (issue #423) and of the
++//! Pi 4 and Pi 400 (BCM2711, issue #543) as the `audiohw` scheme for
++//! `audiod`. The firmware sets up the picture; this driver programs only the
++//! audio part of the HDMI block (`hdmi.rs`), so no display driver is needed.
++//! On the BCM2711 it takes the port the firmware sends video on.
+ //!
+ //! - `/scheme/audiohw`: writes of exactly 2048 bytes, one chunk of 512
+ //!   frames, signed 16-bit little endian, stereo, 44.1 kHz, as
+@@ -14,7 +15,7 @@
+ //! - `/scheme/audiohw/stop`: any write stops the FIFO and the audio info
+ //!   frame (`reboot` writes it). Later chunks are taken and dropped.
+ //!
+-//! The DMA controller (channel 0, DREQ 17) plays a ring of 8 slots of 512
++//! The DMA controller (channel 0, DREQ 17; DREQ 10 for BCM2711 HDMI0) plays a ring of 8 slots of 512
+ //! frames, as IEC958 subframes (`iec958.rs`), into the MAI FIFO; a timer
+ //! every 10 ms follows it, fills played slots with silence, counts FIFO
+ //! errors and programs the audio part again if the firmware reset it (a
+@@ -39,17 +40,21 @@ use syscall::schemev2::NewFdFlags;
+ use syscall::{MODE_DIR, MODE_FILE};
+ 
+ mod dma;
++mod dt;
+ mod hdmi;
+ mod iec958;
+ mod ring;
+ 
+ use dma::{DmaRing, SLOTS, SLOT_WORDS};
+-use hdmi::Hdmi;
++use dt::soc_phys;
++use hdmi::{Hdmi, Regs};
+ use iec958::Encoder;
+ use ring::{Ring, CHUNK_BYTES, SLOT_FRAMES};
+ 
+ /// Bus addresses on the BCM283x, if the devicetree has none.
+ const HDMI_BUS_ADDR: usize = 0x7e90_2000;
++/// The BCM2711 DVP block (reset and clock gate of both HDMI ports).
++const DVP_BUS_ADDR: usize = 0x7ef0_0000;
+ const HD_BUS_ADDR: usize = 0x7e80_8000;
+ const CPRMAN_BUS_ADDR: usize = 0x7e10_1000;
+ const CM_HSMCTL: usize = 0x88;
+@@ -111,6 +116,8 @@ enum HsmSource {
+     Cprman,
+     Default,
+     Measured,
++    /// vc5: the DVP gate on the fixed 108 MHz.
++    Dvp,
+ }
+ 
+ impl HsmSource {
+@@ -119,6 +126,7 @@ impl HsmSource {
+             HsmSource::Cprman => "cprman",
+             HsmSource::Default => "default",
+             HsmSource::Measured => "measured",
++            HsmSource::Dvp => "dvp",
+         }
+     }
+ }
+@@ -132,11 +140,12 @@ struct Setup {
+     scheduler: u32,
+     pixel_hz: u64,
+     pixel_source: &'static str,
+-    pllh_regs: [u32; 4],
++    /// The clock registers the rates came from, as lines for `stats`.
++    clock_regs: String,
+     hsm_hz: u64,
+     hsm_source: HsmSource,
+-    hsm_regs: (u32, u32),
+     infoframe: bool,
++    dreq: u32,
+ }
+ 
+ /// A sine played through the ring.
+@@ -253,7 +262,7 @@ impl Driver {
+         }
+         if let Some(setup) = &self.setup {
+             let want = hdmi::crp_cfg(hdmi::acr_n(SAMPLE_RATE));
+-            if hdmi.hd(hdmi::MAI_CTL) & hdmi::MAI_CTL_ENABLE == 0 || hdmi.core(hdmi::CRP_CFG) != want {
++            if hdmi.hd(hdmi.regs.mai_ctl) & hdmi::MAI_CTL_ENABLE == 0 || hdmi.core(hdmi.regs.crp_cfg) != want {
+                 self.reprogrammed += 1;
+                 if self.reprogrammed <= 3 {
+                     eprintln!("bcm2835-hdmiaudiod: audio set-up was reset (hotplug?), programming it again");
+@@ -439,18 +448,28 @@ impl Driver {
+         let played = self.ring.current();
+         match &self.out {
+             Output::Hdmi { hdmi, phys, .. } => {
++                let r = hdmi.regs;
+                 let _ = writeln!(text, "mode hdmi-dma");
++                let _ = writeln!(text, "port {}", r.name);
+                 let _ = writeln!(text, "hdmi 0x{phys:08x}");
+                 let _ = writeln!(text, "dma_channel {}", dma::CHANNEL);
+-                let _ = writeln!(text, "dreq {}", hdmi::DREQ_HDMI);
+-                let _ = writeln!(text, "mai_ctl 0x{:08x}", hdmi.hd(hdmi::MAI_CTL));
+-                let _ = writeln!(text, "mai_smp 0x{:08x}", hdmi.hd(hdmi::MAI_SMP));
+-                let _ = writeln!(text, "crp_cfg 0x{:08x}", hdmi.core(hdmi::CRP_CFG));
+-                let _ = writeln!(text, "cts 0x{:08x}", hdmi.core(hdmi::CTS_0));
+-                let _ = writeln!(text, "ram_packet_config 0x{:08x}", hdmi.core(hdmi::RAM_PACKET_CONFIG));
+-                let _ = writeln!(text, "ram_packet_status 0x{:08x}", hdmi.core(hdmi::RAM_PACKET_STATUS));
++                if let Some(s) = &self.setup {
++                    let _ = writeln!(text, "dreq {}", s.dreq);
++                }
++                let _ = writeln!(text, "mai_ctl 0x{:08x}", hdmi.hd(r.mai_ctl));
++                let _ = writeln!(text, "mai_smp 0x{:08x}", hdmi.hd(r.mai_smp));
++                let _ = writeln!(text, "mai_thr 0x{:08x}", hdmi.hd(r.mai_thr));
++                let _ = writeln!(text, "mai_fmt 0x{:08x}", hdmi.hd(r.mai_fmt));
++                let _ = writeln!(text, "channel_map 0x{:08x}", hdmi.core(r.mai_channel_map));
++                let _ = writeln!(text, "crp_cfg 0x{:08x}", hdmi.core(r.crp_cfg));
++                let _ = writeln!(text, "cts 0x{:08x}", hdmi.core(r.cts_0));
++                let _ = writeln!(text, "ram_packet_config 0x{:08x}", hdmi.core(r.ram_packet_config));
++                let _ = writeln!(text, "ram_packet_status 0x{:08x}", hdmi.core(r.ram_packet_status));
+                 let _ = writeln!(text, "infoframe_active {}", yes(hdmi.infoframe_active()));
+                 let _ = writeln!(text, "hotplug_now {}", yes(hdmi.state().hotplug));
++                if let Some(video) = hdmi.video_on() {
++                    let _ = writeln!(text, "video_now {}", yes(video));
++                }
+             }
+             Output::Clock { .. } => {
+                 let _ = writeln!(text, "mode clock (no HDMI output)");
+@@ -462,10 +481,8 @@ impl Driver {
+             let _ = writeln!(text, "forced_hdmi_mode {}", yes(s.forced_hdmi_mode));
+             let _ = writeln!(text, "scheduler 0x{:08x}", s.scheduler);
+             let _ = writeln!(text, "pixel_hz {} {}", s.pixel_hz, s.pixel_source);
+-            let [c, f, a, p] = s.pllh_regs;
+-            let _ = writeln!(text, "pllh ctrl=0x{c:08x} frac=0x{f:08x} ana1=0x{a:08x} pix=0x{p:08x}");
+             let _ = writeln!(text, "hsm_hz {} {}", s.hsm_hz, s.hsm_source.name());
+-            let _ = writeln!(text, "cm_hsm ctl=0x{:08x} div=0x{:08x}", s.hsm_regs.0, s.hsm_regs.1);
++            text.push_str(&s.clock_regs);
+             let _ = writeln!(text, "infoframe_sent {}", yes(s.infoframe));
+         }
+         if self.stopped {
+@@ -620,18 +637,6 @@ impl SchemeSync for Driver {
+     }
+ }
+ 
+-/// The CPU physical address of a device at `bus_addr`, through `/soc`'s
+-/// ranges.
+-fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
+-    fdt.find_node("/soc")
+-        .and_then(|soc| soc.ranges())
+-        .and_then(|mut ranges| {
+-            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
+-        })
+-        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
+-        .unwrap_or(bus_addr)
+-}
+-
+ /// Bus address of entry `n` of the `reg` of the first device with one of
+ /// `compatible`, or `fallback`.
+ fn bus_addr(fdt: &Fdt, compatible: &[&str], n: usize, fallback: usize) -> usize {
+@@ -672,35 +677,39 @@ fn pixel_clock() -> std::result::Result<u64, String> {
+     }
+ }
+ 
++fn clock_only(why: String) -> Output {
++    println!("bcm2835-hdmiaudiod: {why}, playing to the clock");
++    Output::Clock {
++        start: Instant::now(),
++        buf: vec![[0; SLOT_WORDS]; SLOTS],
++    }
++}
++
+ /// Find the HDMI output and program its audio part, or the clock stand-in.
+ fn open_output(fdt: &Fdt) -> (Output, Option<Setup>) {
++    if fdt.root().compatible().all().any(|c| c == "brcm,bcm2711") {
++        open_vc5(fdt)
++    } else {
++        open_vc4(fdt)
++    }
++}
++
++/// BCM2835/2837: the one VC4 HDMI block.
++fn open_vc4(fdt: &Fdt) -> (Output, Option<Setup>) {
+     let compatible = ["brcm,bcm2835-hdmi"];
+     let core_bus = bus_addr(fdt, &compatible, 0, HDMI_BUS_ADDR);
+     let hd_bus = bus_addr(fdt, &compatible, 1, HD_BUS_ADDR);
+     let core_phys = soc_phys(fdt, core_bus);
+-    let hdmi = unsafe { Hdmi::new(map(core_phys), map(soc_phys(fdt, hd_bus))) };
++    let core = map(core_phys);
++    // The VC4 packet RAM is part of the core block.
++    let hdmi = unsafe { Hdmi::new(&hdmi::VC4, core, map(soc_phys(fdt, hd_bus)), core) };
+     let state = hdmi.state();
+ 
+-    let clock_only = |why: String| {
+-        println!("bcm2835-hdmiaudiod: {why}, playing to the clock");
+-        Output::Clock {
+-            start: Instant::now(),
+-            buf: vec![[0; SLOT_WORDS]; SLOTS],
+-        }
+-    };
+     // QEMU has no HDMI block (reads give 0); a Pi whose firmware found no
+     // display leaves it off.
+     if !state.hotplug && state.scheduler == 0 {
+         return (clock_only(format!("no HDMI output at 0x{core_phys:08x} (QEMU, or no display at boot?)")), None);
+     }
+-    let mut forced = false;
+-    if !state.hdmi_mode() {
+-        forced = hdmi.force_hdmi_mode();
+-        println!(
+-            "bcm2835-hdmiaudiod: output was in DVI mode; HDMI mode {}",
+-            if forced { "now active" } else { "did not come up" }
+-        );
+-    }
+     // The clock manager, up to the PLLH registers.
+     let cm = map_len(
+         soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], 0, CPRMAN_BUS_ADDR)),
+@@ -716,29 +725,188 @@ fn open_output(fdt: &Fdt) -> (Output, Option<Setup>) {
+     ];
+     let pllh_hz = hdmi::pixel_from_pllh(pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3])
+         .filter(|hz| (20_000_000..=200_000_000).contains(hz));
++    let [c, f, a, p] = pllh_regs;
++    let clock_regs = format!(
++        "pllh ctrl=0x{c:08x} frac=0x{f:08x} ana1=0x{a:08x} pix=0x{p:08x}\ncm_hsm ctl=0x{:08x} div=0x{:08x}\n",
++        hsm_regs.0, hsm_regs.1
++    );
+     // The firmware's answer first (the 3B+ firmware gives none), then PLLH,
+     // then 1080p60.
+-    let (pixel_hz, pixel_source) = match (pixel_clock(), pllh_hz) {
++    let (pixel_hz, pixel_source) = pixel_clock_or(pllh_hz, "pllh", &clock_regs);
++    let (hsm_hz, hsm_source) = match hdmi::hsm_from_cprman(hsm_regs.0, hsm_regs.1) {
++        Some(hz) => (hz, HsmSource::Cprman),
++        None => (DEFAULT_HSM_HZ, HsmSource::Default),
++    };
++    let dreq = dt::dreq(fdt, &compatible).unwrap_or(hdmi::VC4.dreq);
++    start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, hsm_hz, hsm_source, clock_regs)
++}
++
++/// One BCM2711 HDMI port: its devicetree node and the bus addresses if the
++/// node or one of its `reg-names` is missing.
++struct Vc5Port {
++    index: usize,
++    regs: &'static Regs,
++    compatible: &'static str,
++    /// hdmi (core), phy, rm, packet, hd.
++    fallback: [usize; 5],
++}
++
++const VC5_PORTS: [Vc5Port; 2] = [
++    Vc5Port {
++        index: 0,
++        regs: &hdmi::VC5_HDMI0,
++        compatible: "brcm,bcm2711-hdmi0",
++        fallback: [0x7ef0_0700, 0x7ef0_0f00, 0x7ef0_0f80, 0x7ef0_1b00, 0x7ef2_0000],
++    },
++    Vc5Port {
++        index: 1,
++        regs: &hdmi::VC5_HDMI1,
++        compatible: "brcm,bcm2711-hdmi1",
++        fallback: [0x7ef0_5700, 0x7ef0_5f00, 0x7ef0_5f80, 0x7ef0_6b00, 0x7ef2_0000],
++    },
++];
++
++/// BCM2711: the first port the firmware sends video on. Its devicetree
++/// nodes are `disabled` (no KMS), but their `reg` entries are there.
++fn open_vc5(fdt: &Fdt) -> (Output, Option<Setup>) {
++    if !dvp_answers() {
++        return (clock_only("the BCM2711 DVP block does not answer (QEMU raspi4b has no HDMI)".to_string()), None);
++    }
++    let (sw_init, misc_config) = read_dvp(fdt);
++    let mut skipped = Vec::new();
++    for port in &VC5_PORTS {
++        let name = port.regs.name;
++        if !hdmi::vc5_port_clocked(port.index, sw_init, misc_config) {
++            // Reading it could hang the bus.
++            skipped.push(format!("{name} in reset or unclocked"));
++            continue;
++        }
++        let compatible = [port.compatible];
++        let addr = |i: usize, reg: &str| dt::reg_by_name(fdt, &compatible, reg).unwrap_or(port.fallback[i]);
++        let [core_bus, phy_bus, rm_bus, packet_bus, hd_bus] =
++            [(0, "hdmi"), (1, "phy"), (2, "rm"), (3, "packet"), (4, "hd")].map(|(i, reg)| addr(i, reg));
++        let core_phys = soc_phys(fdt, core_bus);
++        let hdmi = unsafe {
++            Hdmi::new(port.regs, map(core_phys), map(soc_phys(fdt, hd_bus)), map(soc_phys(fdt, packet_bus)))
++        };
++        if hdmi.video_on() != Some(true) {
++            skipped.push(format!("{name} sends no video"));
++            continue;
++        }
++        let phy = map(soc_phys(fdt, phy_bus));
++        let rm = map(soc_phys(fdt, rm_bus));
++        let read = |base: *mut u32, offset: usize| unsafe { base.add(offset / 4).read_volatile() };
++        let (rm_offset, clk_div) = (read(rm, hdmi::RM_OFFSET), read(phy, hdmi::PHY_CLK_DIV));
++        // Linux powers up the PHY's random generator before audio.
++        let powerdown = read(phy, hdmi::PHY_POWERDOWN_CTL);
++        unsafe {
++            phy.add(hdmi::PHY_POWERDOWN_CTL / 4).write_volatile(powerdown & !hdmi::PHY_POWERDOWN_RNDGEN);
++        }
++        let clock_regs = format!(
++            "dvp sw_init=0x{sw_init:08x} misc_config=0x{misc_config:08x}\nphy rm_offset=0x{rm_offset:08x} clk_div=0x{clk_div:08x} powerdown=0x{powerdown:08x}->0x{:08x}\n",
++            read(phy, hdmi::PHY_POWERDOWN_CTL)
++        );
++        let phy_hz = hdmi::pixel_from_vc5_phy(rm_offset, clk_div).filter(|hz| (20_000_000..=600_000_000).contains(hz));
++        // The firmware reports no pixel clock on the Pi 400 (Test 494); the PHY
++        // PLL is what runs.
++        let (pixel_hz, pixel_source) = match phy_hz {
++            Some(hz) => (hz, "phy"),
++            None => pixel_clock_or(None, "phy", &clock_regs),
++        };
++        let dreq = dt::dreq(fdt, &compatible).unwrap_or(port.regs.dreq);
++        if !skipped.is_empty() {
++            println!("bcm2835-hdmiaudiod: {}", skipped.join(", "));
++        }
++        return start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, hdmi::VC5_AUDIO_HZ, HsmSource::Dvp, clock_regs);
++    }
++    (clock_only(format!("no BCM2711 HDMI port sends video ({}; QEMU, or no display at boot?)", skipped.join(", "))), None)
++}
++
++/// `SW_INIT` and `MISC_CONFIG` of the BCM2711 DVP block.
++fn read_dvp(fdt: &Fdt) -> (u32, u32) {
++    let dvp = map(soc_phys(fdt, bus_addr(fdt, &["brcm,brcm2711-dvp"], 0, DVP_BUS_ADDR)));
++    let dvp_reg = |offset: usize| unsafe { dvp.add(offset / 4).read_volatile() };
++    (dvp_reg(hdmi::DVP_SW_INIT), dvp_reg(hdmi::DVP_MISC_CONFIG))
++}
++
++/// Whether reading the DVP block works. QEMU's raspi4b answers it with a
++/// synchronous external abort, which ends the process, and no devicetree
++/// property tells it from a Pi: so a child process (this program with
++/// `PROBE_ARG`) reads it first.
++const PROBE_ARG: &str = "--probe-dvp";
++
++fn dvp_answers() -> bool {
++    let program = std::env::args().next().unwrap_or_else(|| "bcm2835-hdmiaudiod".to_string());
++    match std::process::Command::new(&program)
++        .arg(PROBE_ARG)
++        // Inherited: /dev/null does not exist in the initfs (ENODEV).
++        .status()
++    {
++        Ok(status) => status.success(),
++        Err(err) => {
++            // A Pi answers it (Test 494); without the probe, read it here.
++            eprintln!("bcm2835-hdmiaudiod: cannot start the DVP probe ({err}); reading it directly");
++            true
++        }
++    }
++}
++
++/// The child side of `dvp_answers`.
++fn probe_dvp() -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        process::exit(1);
++    };
++    let (sw_init, misc_config) = read_dvp(&fdt);
++    println!("dvp sw_init=0x{sw_init:08x} misc_config=0x{misc_config:08x}");
++    process::exit(0);
++}
++
++/// The pixel clock from rpi-firmwared, else `other` (from the clock
++/// registers), else 1080p60.
++fn pixel_clock_or(other: Option<u64>, other_name: &'static str, regs: &str) -> (u64, &'static str) {
++    match (pixel_clock(), other) {
+         (Ok(hz), _) => (hz, "rpi-firmwared"),
+         (Err(why), Some(hz)) => {
+-            println!("bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), using PLLH_PIX");
+-            (hz, "pllh")
++            println!("bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), using {other_name}");
++            (hz, other_name)
+         }
+         (Err(why), None) => {
+             println!(
+-                "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}) nor PLLH (ctrl=0x{:08x} frac=0x{:08x} ana1=0x{:08x} pix=0x{:08x}), assuming {} MHz",
+-                pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3],
++                "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}) nor {other_name} ({}), assuming {} MHz",
++                regs.trim_end().replace('\n', "; "),
+                 DEFAULT_PIXEL_HZ as f64 / 1e6
+             );
+             (DEFAULT_PIXEL_HZ, "default")
+         }
+-    };
+-    let (hsm_hz, hsm_source) = match hdmi::hsm_from_cprman(hsm_regs.0, hsm_regs.1) {
+-        Some(hz) => (hz, HsmSource::Cprman),
+-        None => (DEFAULT_HSM_HZ, HsmSource::Default),
+-    };
++    }
++}
+ 
+-    let dma = match DmaRing::new(fdt, (hd_bus + hdmi::MAI_DATA) as u32, hdmi::DREQ_HDMI) {
++/// HDMI mode, the DMA ring and the audio set-up of the chosen port.
++#[allow(clippy::too_many_arguments)]
++fn start(
++    fdt: &Fdt,
++    hdmi: Hdmi,
++    core_phys: usize,
++    hd_bus: usize,
++    dreq: u32,
++    pixel_hz: u64,
++    pixel_source: &'static str,
++    hsm_hz: u64,
++    hsm_source: HsmSource,
++    clock_regs: String,
++) -> (Output, Option<Setup>) {
++    let state = hdmi.state();
++    let mut forced = false;
++    if !state.hdmi_mode() {
++        forced = hdmi.force_hdmi_mode();
++        println!(
++            "bcm2835-hdmiaudiod: output was in DVI mode; HDMI mode {}",
++            if forced { "now active" } else { "did not come up" }
++        );
++    }
++    let dma = match DmaRing::new(fdt, (hd_bus + hdmi.regs.mai_data) as u32, dreq) {
+         Ok(dma) => dma,
+         Err(err) => {
+             eprintln!("bcm2835-hdmiaudiod: {err}");
+@@ -754,14 +922,15 @@ fn open_output(fdt: &Fdt) -> (Output, Option<Setup>) {
+         scheduler: state.scheduler,
+         pixel_hz,
+         pixel_source,
+-        pllh_regs,
++        clock_regs,
+         hsm_hz,
+         hsm_source,
+-        hsm_regs,
+         infoframe,
++        dreq,
+     };
+     println!(
+-        "bcm2835-hdmiaudiod: HDMI at 0x{core_phys:08x}, hotplug {}, {} mode, pixel clock {:.3} MHz ({pixel_source}), HSM {:.3} MHz ({}), N {} CTS {}, info frame {}, DMA channel {} (DREQ {}), {SLOTS} x {SLOT_FRAMES} frames",
++        "bcm2835-hdmiaudiod: HDMI {} at 0x{core_phys:08x}, hotplug {}, {} mode, pixel clock {:.3} MHz ({pixel_source}), sample clock from {:.3} MHz ({}), N {} CTS {}, info frame {}, DMA channel {} (DREQ {dreq}), {SLOTS} x {SLOT_FRAMES} frames",
++        hdmi.regs.name,
+         yes(state.hotplug),
+         if state.hdmi_mode() || forced { "HDMI" } else { "DVI" },
+         pixel_hz as f64 / 1e6,
+@@ -771,7 +940,6 @@ fn open_output(fdt: &Fdt) -> (Output, Option<Setup>) {
+         hdmi::acr_cts(pixel_hz, hdmi::acr_n(SAMPLE_RATE), SAMPLE_RATE),
+         if infoframe { "sent" } else { "NOT taken" },
+         dma::CHANNEL,
+-        hdmi::DREQ_HDMI,
+     );
+     (Output::Hdmi { hdmi, dma, phys: core_phys }, Some(setup))
+ }
+@@ -815,6 +983,9 @@ user_data! {
+ }
+ 
+ fn main() {
++    if std::env::args().nth(1).as_deref() == Some(PROBE_ARG) {
++        probe_dvp();
++    }
+     daemon::SchemeDaemon::new(daemon);
+ }
+ 
+-- 
+2.53.0
+
