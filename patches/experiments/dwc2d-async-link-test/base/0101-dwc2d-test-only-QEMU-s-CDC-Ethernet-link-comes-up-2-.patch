@@ -1,19 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 17 Nov 2026 06:04:00 +0000
-Subject: [PATCH] dwc2d: test only, QEMU's CDC Ethernet link comes up 3 s after
- it is found
+Subject: [PATCH] dwc2d: test only, QEMU's CDC Ethernet link comes up 2 s after
+ the first held frame
 
 QEMU's card has its link at once, so the frames held for the link
 (dwc2d-async-link) are never seen there. For the QEMU test the card
-reports no link until 3 s after it was found, like the LAN7800's
-autonegotiation on the Pi 3B+.
+reports no link at boot, and its link comes up 2 s after the first frame
+was held, like the LAN7800's autonegotiation on the Pi 3B+.
 ---
  drivers/usb/dwc2d/src/main.rs | 18 ++++++++++++++++--
  1 file changed, 16 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 2f58f99..df397d6 100644
+index 2f58f99..e1590a8 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -169,7 +169,11 @@ impl UsbNet {
@@ -29,16 +29,23 @@ index 2f58f99..df397d6 100644
              };
              if let Ok(now) = now {
                  if now != *link {
-@@ -327,7 +331,13 @@ fn probe(
+@@ -266,6 +270,7 @@ impl NetworkAdapter for UsbNet {
+                     held.pop_front();
+                 }
+                 held.push_back(buf.to_vec());
++                let _ = ECM_TEST_START.set(Instant::now());
+                 return Ok(buf.len());
+             }
+         }
+@@ -327,7 +332,12 @@ fn probe(
      if let Some(f) = ecm::find(bus, device) {
          println!("dwc2d: CDC Ethernet at address {address}");
          return match ecm::activate(bus, device.max_packet, &f) {
 -            Ok(mac) => Some(Found::Net(Adapter::Ecm(Ecm::new(hc.clone(), f, mac)), mac, true)),
 +            Ok(mac) => {
 +                // Test only (experiment dwc2d-async-link-test): QEMU's card
-+                // has its link at once; pretend it comes up 3 s later, like
-+                // the LAN7800's autonegotiation, so the held frames are seen.
-+                let _ = ECM_TEST_START.set(Instant::now());
++                // has its link at once; pretend it comes up 2 s after the
++                // first frame was held, so the held frames are seen.
 +                Some(Found::Net(Adapter::Ecm(Ecm::new(hc.clone(), f, mac)), mac, false))
 +            }
              Err(err) => {
@@ -48,10 +55,10 @@ index 2f58f99..df397d6 100644
  const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
  /// How long to look for devices at boot when there is no network adapter.
  const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
-+/// Test only: when QEMU's CDC Ethernet card was found, and how long after
-+/// that its link counts as up.
++/// Test only: when the first frame was held for the link, and how long after
++/// that the link of QEMU's CDC Ethernet card counts as up.
 +static ECM_TEST_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-+const ECM_TEST_LINK_DELAY: Duration = Duration::from_secs(3);
++const ECM_TEST_LINK_DELAY: Duration = Duration::from_secs(2);
  /// How often the link is read after boot while frames wait for it.
  const LINK_WATCH: Duration = Duration::from_millis(100);
  /// Frames held for the link at most; the oldest go first.

@@ -39,7 +39,7 @@ Base patch [`0100`](base/0100-dwc2d-report-ready-without-waiting-for-the-network
 
 QEMU's CDC Ethernet card has its link at once, so the queue is never used
 there. `--experiment dwc2d-async-link-test` (patch `0101`, test-only, needs
-this experiment) makes the card report no link until 3 s after it was found.
+this experiment) makes the card report no link until 2 s after the first frame was held.
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 \
