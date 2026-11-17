@@ -48,6 +48,7 @@ patches/experiments/dwc2*               usb
 patches/experiments/usb-*               usb
 patches/experiments/termios-speed/*     usb
 patches/experiments/rtl8152/*           network,usb
+patches/experiments/genet-*             network,pi400
 patches/experiments/lan78xx-*           network,usb
 patches/experiments/ipv6/*              network
 patches/experiments/mdns/*              network
