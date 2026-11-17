@@ -60,7 +60,8 @@ issue; the background is in [docs/topics/audio.md](../../../docs/topics/audio.md
     - packet RAM in its own block
     - 4-bit channel map
     - MAI thresholds 0x10/0x1c
-    - DREQ 10 for HDMI0 and 17 for HDMI1, from the node's `dmas`
+    - DREQ 10 for HDMI0 and 17 for HDMI1, from the low 5 bits of the node's
+      `dmas` cell (the Pi devicetrees put flags above them)
   - **Clocks:** the sample clock comes from the fixed 108 MHz audio clock,
     and the measurement correction stays as on the 3B+. The pixel clock
     comes from the port's PHY PLL (`RM_OFFSET`, `TX_PHY_CLK_DIV`), because

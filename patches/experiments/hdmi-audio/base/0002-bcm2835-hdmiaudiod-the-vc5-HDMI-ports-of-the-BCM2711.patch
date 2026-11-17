@@ -1,4 +1,4 @@
-From 437b2e0aa1206a810e860792fb3471946090e4aa Mon Sep 17 00:00:00 2001
+From 5d2421fea28916f5fe6dd4bf12c20e7ba9d18178 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 17 Nov 2026 20:46:01 +0000
 Subject: [PATCH] bcm2835-hdmiaudiod: the vc5 HDMI ports of the BCM2711 (Pi 4,
@@ -20,10 +20,10 @@ real cell counts (one address cell below /soc, two above on the BCM2711).
 Refs redox-rpi/redox-rpi#543.
 ---
  drivers/audio/bcm2835-hdmiaudiod/src/dma.rs  |  36 +-
- drivers/audio/bcm2835-hdmiaudiod/src/dt.rs   | 137 ++++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/dt.rs   | 152 +++++++++
  drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs | 331 +++++++++++++++----
  drivers/audio/bcm2835-hdmiaudiod/src/main.rs | 295 +++++++++++++----
- 4 files changed, 651 insertions(+), 148 deletions(-)
+ 4 files changed, 666 insertions(+), 148 deletions(-)
  create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
 
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs b/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
@@ -96,10 +96,10 @@ index fdfeb19b..4d230414 100644
  pub fn barrier() {
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs b/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
 new file mode 100644
-index 00000000..bd1d975a
+index 00000000..39921d9a
 --- /dev/null
 +++ b/drivers/audio/bcm2835-hdmiaudiod/src/dt.rs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,152 @@
 +//! Devicetree helpers: address translation through `/soc`'s `ranges` and
 +//! `dma-ranges` with their real cell counts (the BCM2711 has one address
 +//! cell below `/soc` and two above it), and `reg` entries by name.
@@ -191,11 +191,18 @@ index 00000000..bd1d975a
 +    node.reg()?.nth(index).map(|reg| reg.starting_address as usize)
 +}
 +
++/// The DREQ line (bits 0..4) of a `dmas` specifier cell. The Raspberry Pi
++/// devicetrees put flags above it: the cell is 0x09000011 on the 3B+ and
++/// 0x41fa000a on the Pi 400.
++pub fn dreq_line(cell: u32) -> u32 {
++    cell & 0x1f
++}
++
 +/// The DREQ line in the first `dmas` entry (`<&dma n>`) of the first node
 +/// with one of `compatible`.
 +pub fn dreq(fdt: &Fdt, compatible: &[&str]) -> Option<u32> {
 +    let node = fdt.find_compatible(compatible)?;
-+    cells(&node, "dmas")?.get(1).copied()
++    cells(&node, "dmas")?.get(1).copied().map(dreq_line)
 +}
 +
 +#[cfg(test)]
@@ -226,6 +233,14 @@ index 00000000..bd1d975a
 +        assert_eq!(translate_back(0x4000_0000, &ranges, 1, 2, 1), None, "above 1 GB");
 +        // BCM2837: <0xc0000000 0x00000000 0x3f000000>.
 +        assert_eq!(translate_back(0x1000, &[0xc000_0000, 0, 0x3f00_0000], 1, 1, 1), Some(0xc000_1000));
++    }
++
++    #[test]
++    fn dreq_flags_masked() {
++        // Seen in Test 500 (3B+) and Test 498 (Pi 400).
++        assert_eq!(dreq_line(0x0900_0011), 17);
++        assert_eq!(dreq_line(0x41fa_000a), 10);
++        assert_eq!(dreq_line(17), 17);
 +    }
 +
 +    #[test]
