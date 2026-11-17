@@ -25,6 +25,11 @@
 # runs from RAM as with network boot), made by scripts/fw-direct-boot.sh.
 # config.txt starts kernel8.img instead of U-Boot. Partition 2 is the data
 # partition, as for network boot.
+# With --uboot-fallback (experiment, #324) partition 1 also holds our U-Boot
+# and config/boot-direct-fallback.cmd as boot.scr. config.txt starts U-Boot
+# instead of kernel8.img when GPIO3 (header pin 5) is held to ground at
+# power-on (a [gpio3=0] section; the pin has a pull-up on the board), and
+# U-Boot starts the same kernel8.img and initramfs with booti.
 #
 # Needs: curl, sfdisk, partx, mtools, cargo (builds tools/redoxfs-file).
 # Run scripts/build-uboot.sh first, and for network boot
@@ -34,7 +39,7 @@
 #   scripts/make-sdcard.sh [--tftp-dir <dir>] [--dir <name>] [--out <file>]
 #                          [--boot-size <MiB>] [--data-size <MiB>]
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
-#   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
+#   scripts/make-sdcard.sh --direct <harddrive.img> [--uboot-fallback] [--out <file>] [--data-size <MiB>]
 #   all three also take [--family <name>]
 #   --local also takes [--live] and [--board pi4]
 #
@@ -85,6 +90,7 @@ direct=
 family=
 live=
 board=pi3
+uboot_fallback=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -96,6 +102,7 @@ while [ $# -gt 0 ]; do
         --direct) direct="$2"; shift 2 ;;
         --family) family="$2"; shift 2 ;;
         --live) live=yes; shift ;;
+        --uboot-fallback) uboot_fallback=yes; shift ;;
         --board) board="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -109,6 +116,12 @@ case "$board" in
         FIRMWARE_FILES=("${PI4_FIRMWARE_FILES[@]}") ;;
     *) echo "unknown board: $board" >&2; exit 1 ;;
 esac
+if [ -n "$uboot_fallback" ]; then
+    [ -n "$direct" ] || { echo "--uboot-fallback needs --direct" >&2; exit 1; }
+    mkimage="$ROOT/build/u-boot/obj/tools/mkimage"
+    [ -f "$ROOT/build/u-boot/u-boot.bin" ] && [ -x "$mkimage" ] \
+        || { echo "U-Boot missing, run scripts/build-uboot.sh" >&2; exit 1; }
+fi
 if [ -n "$live" ]; then
     [ -n "$image" ] || { echo "--live needs --local" >&2; exit 1; }
     live_efi="$(find "$ROOT/upstream/redox/recipes/core/bootloader/target" -path '*stage/usr/lib/boot/bootloader-live.efi' | head -1)"
@@ -180,6 +193,23 @@ if [ -n "$direct" ]; then
         -e 's/^kernel=u-boot.bin$/kernel=kernel8.img\ninitramfs initramfs followkernel/' \
         "$ROOT/config/config.txt" > "$out.config"
     grep -q '^kernel=kernel8.img$' "$out.config" || { echo "config/config.txt has no kernel=u-boot.bin line" >&2; exit 1; }
+    if [ -n "$uboot_fallback" ]; then
+        # The initramfs only for the stub: U-Boot loads it itself, and the
+        # firmware would spend seconds reading it for nothing.
+        sed -i '/^initramfs initramfs followkernel$/d' "$out.config"
+        cat >> "$out.config" <<'EOF'
+
+# U-Boot fallback (#324): hold GPIO3 (pin 5) to ground (pin 6) while
+# switching on, and the firmware starts U-Boot, which starts the same
+# kernel8.img and initramfs (boot.scr). Pin 5 has a pull-up, so it reads 1
+# when nothing is connected. Or change kernel= above to u-boot.bin.
+[gpio3=0]
+kernel=u-boot.bin
+[gpio3=1]
+initramfs initramfs followkernel
+[all]
+EOF
+    fi
     mcopy -i "$fat" "$out.config" ::config.txt
     rm -f "$out.config"
 else
@@ -205,6 +235,13 @@ rm -f "$out.uuid"
 if [ -n "$direct" ]; then
     mcopy -i "$fat" "$fw/kernel8.img" ::kernel8.img
     mcopy -i "$fat" "$fw/initramfs" ::initramfs
+    if [ -n "$uboot_fallback" ]; then
+        mcopy -i "$fat" "$uboot" ::u-boot.bin
+        "$mkimage" -q -A arm64 -T script -C none -n "redox-rpi direct fallback" \
+            -d "$ROOT/config/boot-direct-fallback.cmd" "$out.scr"
+        mcopy -i "$fat" "$out.scr" ::boot.scr
+        rm -f "$out.scr"
+    fi
 elif [ -n "$image" ]; then
     mcopy -i "$fat" "$uboot" ::u-boot.bin
     efi="$out.efi"

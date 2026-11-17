@@ -65,6 +65,18 @@
   instead of `netboot`. **PR [#183](https://github.com/redox-rpi/redox-rpi/pull/183)**
   (firmware session). Open: the root runs from the 222 MiB live disk in
   RAM, and updates go through the FAT partition (`rpi-update`, test #72).
+- [#324](https://github.com/redox-rpi/redox-rpi/issues/324) U-Boot fallback on the direct card
+  (experiment, branch `direct-uboot-fallback`, not on the v0.6.0-rc1 card):
+  `make-sdcard.sh --direct <img> --uboot-fallback` adds `u-boot.bin` and
+  `boot.scr` (`config/boot-direct-fallback.cmd`) to partition 1. With GPIO3
+  (pin 5, the #418 wake pin) held to ground at power-on, a `[gpio3=0]`
+  section in `config.txt` starts U-Boot, which loads the same `kernel8.img`
+  and `initramfs` and starts them with `booti`. One system, two loaders; the
+  separate U-Boot card stays the release fallback until a Pi row passes.
+  QEMU (2026-11-17): direct path login after 6 s; U-Boot path login after
+  76 s, 65 s of it for loading the 254 MiB initramfs at QEMU's 3.8 MiB/s.
+  Only Broadcom's firmware reads the filter; ours ignores `[filters]` and
+  always starts `kernel8.img`.
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
