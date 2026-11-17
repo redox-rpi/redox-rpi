@@ -17,9 +17,18 @@ start), also on images without a network stack.
 
 Base patch [`0100`](base/0100-dwc2d-report-ready-without-waiting-for-the-network-l.patch):
 
-- `dwc2d` reports ready as soon as a network adapter is up, or, without one,
-  after the 1 s wait for late devices (`BOOT_CONNECT_WAIT`, unchanged). It
-  prints `devices ready after N ms, link not up yet` when the link is not up.
+- After the 1 s look for devices that connect late (`BOOT_CONNECT_WAIT`,
+  unchanged), `dwc2d` reports ready when it found one network adapter (or
+  none), without waiting for its link. It prints `devices ready after N ms,
+  link not up yet` when the link is not up.
+- **Several adapters at boot** (a Pi 3B+ with an RTL815x plugged in): which
+  adapter the network stack gets, and whose MAC address it keeps, depends
+  on the link (an RTL815x with a cable wins over the LAN7800). So `dwc2d`
+  waits for the first link as before (up to `BOOT_LINK_WAIT`, 10 s) and
+  nothing is held. Without this, the stack would keep the LAN7800's
+  address and the RTL815x would take it over (`select()` sets it into the
+  chip), so the RTL815x would get another DHCP lease than before (Quality
+  review of PR #545).
 - Until the adapter in use has its link, the frames the network stack sends
   wait in a queue in `dwc2d` (`UsbNet::held`, at most 32, the oldest go
   first) instead of going into the dead link. The link is read every 100 ms
@@ -32,21 +41,23 @@ Base patch [`0100`](base/0100-dwc2d-report-ready-without-waiting-for-the-network
   answer, and the cable is probably out): the queue is dropped, `dwc2d: no
   link yet` is printed, and dhcpd retries as it does today. With nothing
   sent (an image without a network stack) the link is watched for 10 s
-  (`BOOT_LINK_WAIT`), then by the rescans. A fixed 10 s from ready was
+  (`BOOT_LINK_WAIT`), then only by the rescans; this end prints nothing, so
+  such a log has no `no link yet`. A fixed 10 s from ready was
   tried first: in QEMU netstack sends its first frame about 8 s after
   `dwc2d` is ready, so the queue was dropped just before the link came up.
 - An RTL8153 whose gigabit autonegotiation takes more than 5 s gets its
   address from dhcpd's second attempt, 5 s later than with the old wait.
-- The MAC address the network stack keeps is still that of the adapter in
-  use at ready time. If an RTL815x gets its link later, it takes over
-  through the existing `select()` path with that address (as for an adapter
-  plugged in after boot).
+- An adapter that connects after the 1 s look takes over through the
+  existing `select()` path with the address the stack has, as for an
+  adapter plugged in after boot.
 
 ## Test only: dwc2d-async-link-test
 
 QEMU's CDC Ethernet card has its link at once, so the queue is never used
-there. `--experiment dwc2d-async-link-test` (patch `0101`, test-only, needs
-this experiment) makes the card report no link until 2 s after the first frame was held.
+there. `--experiment dwc2d-async-link-test` (patch `0900`, test-only, needs
+this experiment) makes the cards report no link at boot, and a link 2 s
+after the first frame was held (one card) or 2 s after the wait for the
+first link began (several cards).
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rtl8152 \

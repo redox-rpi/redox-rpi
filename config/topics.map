@@ -44,11 +44,11 @@ patches/experiments/gpio/*              firmware
 patches/experiments/i2c/*               firmware
 patches/experiments/spi/*               firmware
 patches/experiments/ctx-leak-fix/*      stability,sdcard
+patches/experiments/dwc2d-async-link*   usb,network
 patches/experiments/dwc2*               usb
 patches/experiments/usb-*               usb
 patches/experiments/termios-speed/*     usb
 patches/experiments/rtl8152/*           network,usb
-patches/experiments/dwc2d-async-link*   usb,network
 patches/experiments/lan78xx-*           network,usb
 patches/experiments/ipv6/*              network
 patches/experiments/mdns/*              network

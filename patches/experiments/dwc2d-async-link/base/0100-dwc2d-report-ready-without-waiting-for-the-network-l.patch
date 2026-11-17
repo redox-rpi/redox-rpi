@@ -5,21 +5,26 @@ Subject: [PATCH] dwc2d: report ready without waiting for the network link
 
 On the Pi 3B+ dwc2d reported ready only after the LAN7800 link came up,
 about 3 s of autonegotiation after the chip init (rof#44, pi-tests test
-470), and init starts nothing else meanwhile. Now dwc2d reports ready as
-soon as a network adapter is up. Until the adapter in use has its link,
-frames the network stack sends wait in a queue (at most 32), and the link
-is read every 100 ms; when it comes up the queue is sent, so the first
-DHCP Discover leaves then instead of into a dead link.
+470), and init starts nothing else meanwhile. Now, with one network
+adapter after the 1 s look for late devices, dwc2d reports ready without
+waiting for its link. Until the adapter has its link, frames the network
+stack sends wait in a queue (at most 32), and the link is read every
+100 ms; when it comes up the queue is sent, so the first DHCP Discover
+leaves then instead of into a dead link.
 
 The wait ends without a link when a held frame is 5 s old (dhcpd has given
 up on that answer and the cable is probably out; the queue is dropped and
 "no link yet" printed), or after 10 s with nothing sent (no network stack).
+
+With several adapters at boot (a Pi 3B+ with an RTL815x), the choice of
+adapter and of the MAC address the network stack keeps depends on the
+link, so dwc2d waits for the first link as before.
 ---
- drivers/usb/dwc2d/src/main.rs | 125 +++++++++++++++++++++++++++++-----
- 1 file changed, 109 insertions(+), 16 deletions(-)
+ drivers/usb/dwc2d/src/main.rs | 131 ++++++++++++++++++++++++++++++----
+ 1 file changed, 117 insertions(+), 14 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 402a7a3..27018e8 100644
+index 402a7a3..2faa828 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -11,6 +11,7 @@ use std::io::{Read, Write};
@@ -144,7 +149,7 @@ index 402a7a3..27018e8 100644
      };
      let mut keyboard = None;
      let mut mouse = None;
-@@ -533,29 +595,34 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -533,29 +595,44 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      };
      let addresses = bus.devices.iter().map(|d| d.address).collect();
      boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, addresses);
@@ -153,26 +158,34 @@ index 402a7a3..27018e8 100644
 -    // after power-on. Rescans meanwhile take devices that connect now, so
 -    // waiting for the link and for the hub ports overlaps (on the Pi 3B+,
 -    // the LAN7800's autonegotiation takes 1.7 s).
-+    // Report ready once a network adapter is up, without waiting for its
-+    // link (on the Pi 3B+ the LAN7800's autonegotiation takes 2-3 s, and
-+    // init starts nothing else meanwhile): frames wait for the link in
-+    // `UsbNet::held` instead, so DHCP still does not start into a dead
-+    // cable. Without an adapter, a moment for devices that connect late
-+    // after power-on; rescans meanwhile take devices that connect now.
++    // Look for devices for `BOOT_CONNECT_WAIT`, so adapters that connect a
++    // little late are seen too (rescans take them). Then:
++    // - one adapter (or none): report ready without waiting for its link (on
++    //   the Pi 3B+ the LAN7800's autonegotiation takes 2-3 s, and init starts
++    //   nothing else meanwhile); frames wait for the link in `UsbNet::held`,
++    //   so DHCP still does not start into a dead cable;
++    // - several adapters: which one the network stack gets, and whose MAC
++    //   address it keeps, depends on the link (an RTL815x with a cable wins
++    //   over the LAN7800), so wait for the first link as before, up to
++    //   `BOOT_LINK_WAIT`.
      let start = Instant::now();
      loop {
          net.refresh_links(&mut bus);
--        if net.adapters.iter().any(|(_, link)| *link) {
-+        if !net.adapters.is_empty() {
+         if net.adapters.iter().any(|(_, link)| *link) {
              break;
          }
 -        let wait = if net.adapters.is_empty() { BOOT_CONNECT_WAIT } else { BOOT_LINK_WAIT };
 -        if start.elapsed() >= wait {
 -            if !net.adapters.is_empty() {
--                println!("dwc2d: no link yet");
--            }
 +        if start.elapsed() >= BOOT_CONNECT_WAIT {
-             break;
++            if net.adapters.len() <= 1 {
++                break;
++            }
++            if start.elapsed() >= BOOT_LINK_WAIT {
+                 println!("dwc2d: no link yet");
++                break;
+             }
+-            break;
          }
          dwc2::delay(Duration::from_millis(50));
          let changes = bus.scan();
@@ -180,7 +193,7 @@ index 402a7a3..27018e8 100644
      }
 -    println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
 +    let ready_at = Instant::now();
-+    if !net.adapters.is_empty() && !net.adapters.iter().any(|(_, link)| *link) {
++    if net.adapters.len() == 1 && !net.adapters[0].1 {
 +        net.held = Some(VecDeque::new());
 +    }
 +    println!(
@@ -191,7 +204,7 @@ index 402a7a3..27018e8 100644
      // The network stack keeps the address of the adapter it starts with.
      if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
          if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
-@@ -612,6 +679,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -612,6 +689,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the timer");
      hotplug.arm(HOTPLUG_INTERVAL);
@@ -205,7 +218,7 @@ index 402a7a3..27018e8 100644
      aside::spawn_files();
  
      let mut scheme = NetworkScheme::new(move || net, daemon, name.to_string());
-@@ -656,6 +730,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -656,6 +740,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      timer.arm(next);
                  }
              }
@@ -228,7 +241,7 @@ index 402a7a3..27018e8 100644
              Source::Hotplug => {
                  hotplug.fired();
                  let mut cycled = Vec::new();
-@@ -725,6 +815,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -725,6 +825,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
                  net.refresh_links(&mut bus);
                  net.select(&mut bus);
