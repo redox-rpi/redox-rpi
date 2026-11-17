@@ -1,0 +1,170 @@
+From 60269292c590958204aefe2d8eef5e6153844e2b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 17 Nov 2026 10:11:17 +0000
+Subject: [PATCH] aarch64: PL011 receive interrupt at 1/8 full, receive
+ counters in /scheme/sys/uart
+
+Fast input on the serial console still loses a line in about 1 of 20
+(#28, REQ-CON-2) after kernel patch 0007. With the receive interrupt at
+1/2 full, the 16-byte FIFO leaves 8 bytes, 0.7 ms at 115200 baud, for the
+interrupt to be taken; any longer stretch with interrupts masked outside
+the serial write (which 0007 covers) loses input.
+
+Trigger the receive interrupt at 1/8 full (2 bytes): 14 bytes, 1.2 ms, of
+room. The receive timeout interrupt still delivers the last bytes of a
+burst.
+
+Count received bytes, receive FIFO overruns (OE in the data register),
+stashed bytes, the stash's high-water mark and full-stash events, and
+show them in /scheme/sys/uart. A test can then tell a lost character in
+the FIFO (overrun) from one lost later in getty, ptyd or the shell.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/devices/uart_pl011.rs | 48 +++++++++++++++++++++++++++++++++------
+ src/scheme/sys/mod.rs     |  2 ++
+ src/scheme/sys/uart.rs    | 21 +++++++++++++++++
+ 3 files changed, 64 insertions(+), 7 deletions(-)
+ create mode 100644 src/scheme/sys/uart.rs
+
+diff --git a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
+index 555df62..6c5ceed 100644
+--- a/src/devices/uart_pl011.rs
++++ b/src/devices/uart_pl011.rs
+@@ -1,6 +1,9 @@
+ #![allow(unused)]
+ 
+-use core::ptr;
++use core::{
++    ptr,
++    sync::atomic::{AtomicUsize, Ordering},
++};
+ 
+ use crate::{
+     scheme::debug::{debug_input, debug_notify},
+@@ -98,6 +101,19 @@ bitflags! {
+ // longer writes, such as a shell redrawing its line after each key.
+ const RX_STASH_SIZE: usize = 1024;
+ 
++// Receive counters for /scheme/sys/uart (#28): bytes taken from the FIFO,
++// receive FIFO overruns (OE in the data register: a byte arrived while the
++// FIFO was full and is lost), bytes moved into the stash, the most bytes the
++// stash held at once, and stash_rx calls that found the stash full.
++pub static RX_BYTES: AtomicUsize = AtomicUsize::new(0);
++pub static RX_OVERRUNS: AtomicUsize = AtomicUsize::new(0);
++pub static RX_STASHED: AtomicUsize = AtomicUsize::new(0);
++pub static RX_STASH_MAX: AtomicUsize = AtomicUsize::new(0);
++pub static RX_STASH_FULL: AtomicUsize = AtomicUsize::new(0);
++
++// Data register: the received byte and its error bits.
++const DR_OE: u32 = 1 << 11;
++
+ pub struct SerialPort {
+     base: usize,
+     data_reg: u8,
+@@ -137,7 +153,11 @@ impl SerialPort {
+             masked_intr_stat_reg: 0x40,
+             intr_clr_reg: 0x44,
+             dma_ctrl_reg: 0x48,
+-            ifls: 0x12, // RX4_8 | TX4_8
++            // Receive interrupt at 1/8 full (2 of 16 bytes on the BCM283x),
++            // transmit at 1/2: 14 bytes, 1.2 ms at 115200 baud, of room for
++            // the interrupt to be taken, instead of 8 bytes (0.7 ms) at 1/2
++            // (#28).
++            ifls: 0x02, // RX1_8 | TX4_8
+             fifo_size: 32,
+             cts_event_walkaround,
+             rx_stash: [0; RX_STASH_SIZE],
+@@ -200,15 +220,29 @@ impl SerialPort {
+     // receive timeout interrupt still comes and receive() hands over the
+     // stash.
+     fn stash_rx(&mut self) {
+-        while self.intr_stats().contains(UartRisFlags::RXIS)
+-            && self.rx_stash_len < RX_STASH_SIZE
+-        {
+-            let c = self.read_reg(self.data_reg) as u8;
++        while self.intr_stats().contains(UartRisFlags::RXIS) {
++            if self.rx_stash_len >= RX_STASH_SIZE {
++                RX_STASH_FULL.fetch_add(1, Ordering::Relaxed);
++                break;
++            }
++            let c = self.read_rx();
+             if c != 0 {
+                 self.rx_stash[self.rx_stash_len] = c;
+                 self.rx_stash_len += 1;
++                RX_STASHED.fetch_add(1, Ordering::Relaxed);
+             }
+         }
++        RX_STASH_MAX.fetch_max(self.rx_stash_len, Ordering::Relaxed);
++    }
++
++    // One byte from the receive FIFO, counting it and any overrun.
++    fn read_rx(&mut self) -> u8 {
++        let dr = self.read_reg(self.data_reg);
++        RX_BYTES.fetch_add(1, Ordering::Relaxed);
++        if dr & DR_OE != 0 {
++            RX_OVERRUNS.fetch_add(1, Ordering::Relaxed);
++        }
++        dr as u8
+     }
+ 
+     pub fn receive(&mut self, token: &mut CleanLockToken) {
+@@ -233,7 +267,7 @@ impl SerialPort {
+                 if self.line_sts().contains(UartFrFlags::RXFE) {
+                     break;
+                 }
+-                let c = self.read_reg(self.data_reg) as u8;
++                let c = self.read_rx();
+                 if c != 0 {
+                     debug_input(c, token);
+                 }
+diff --git a/src/scheme/sys/mod.rs b/src/scheme/sys/mod.rs
+index f4c0dba..1575df1 100644
+--- a/src/scheme/sys/mod.rs
++++ b/src/scheme/sys/mod.rs
+@@ -37,6 +37,7 @@ mod log;
+ mod numa;
+ mod stat;
+ mod syscall;
++mod uart;
+ mod uname;
+ 
+ enum Handle {
+@@ -81,6 +82,7 @@ const FILES: &[(&str, Kind)] = &[
+     #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+     ("numa", Rd(numa::resource)),
+     ("syscall", Rd(syscall::resource)),
++    ("uart", Rd(uart::resource)),
+     ("uname", Rd(uname::resource)),
+     ("env", Rd(|_| Ok(Vec::from(crate::startup::init_env())))),
+     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+diff --git a/src/scheme/sys/uart.rs b/src/scheme/sys/uart.rs
+new file mode 100644
+index 0000000..4a7cd95
+--- /dev/null
++++ b/src/scheme/sys/uart.rs
+@@ -0,0 +1,21 @@
++use crate::{
++    devices::uart_pl011::{RX_BYTES, RX_OVERRUNS, RX_STASHED, RX_STASH_FULL, RX_STASH_MAX},
++    sync::CleanLockToken,
++    syscall::error::Result,
++};
++use alloc::vec::Vec;
++use core::sync::atomic::Ordering;
++
++/// PL011 receive counters since boot (#28): a lost character on fast serial
++/// input shows up as an overrun when the receive interrupt came too late.
++pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
++    Ok(format!(
++        "rx_bytes {}\nrx_overruns {}\nrx_stashed {}\nrx_stash_max {}\nrx_stash_full {}\n",
++        RX_BYTES.load(Ordering::Relaxed),
++        RX_OVERRUNS.load(Ordering::Relaxed),
++        RX_STASHED.load(Ordering::Relaxed),
++        RX_STASH_MAX.load(Ordering::Relaxed),
++        RX_STASH_FULL.load(Ordering::Relaxed),
++    )
++    .into_bytes())
++}
+-- 
+2.53.0
+
