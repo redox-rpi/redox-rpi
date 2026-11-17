@@ -1,0 +1,101 @@
+From 8df37c6a2c4c8872bad8ea2bc1a954fc9109f3bb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 17 Nov 2026 21:13:03 +0000
+Subject: [PATCH] bcmgenetd: coalesce receive interrupts, no transmit
+ interrupts
+
+A 100 MiB TCP download on a Pi 400 reached 11-13 MB/s. Every received
+frame raised an interrupt, and every ACK sent back raised a transmit
+interrupt, so the driver and netstack woke up about one and a half times
+per frame.
+
+The receive ring now interrupts once per 16 frames, or 100 us after the
+first frame not yet signalled (as Linux bcmgenet_set_rx_coalesce, ring 16
+registers DMA_MBUF_DONE_THRESH and DMA_RING16_TIMEOUT). The transmit done
+interrupt stays masked: transmit() reads the consumer index itself and
+the driver never waits for it.
+---
+ drivers/net/bcmgenetd/src/regs.rs | 10 ++++++++++
+ drivers/net/bcmgenetd/src/ring.rs | 27 ++++++++++++++++++++++++++-
+ 2 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/bcmgenetd/src/regs.rs b/drivers/net/bcmgenetd/src/regs.rs
+index 1f2d61b..d11d140 100644
+--- a/drivers/net/bcmgenetd/src/regs.rs
++++ b/drivers/net/bcmgenetd/src/regs.rs
+@@ -95,10 +95,20 @@ pub const fn rx_start_addr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x14 }
+ pub const fn rx_start_addr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x18 }
+ pub const fn rx_end_addr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x1c }
+ pub const fn rx_end_addr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x20 }
++pub const fn rx_mbuf_done_thres(q: usize) -> usize { ring(RX_BASE, q) + 0x24 }
+ pub const fn rx_xon_xoff_thres(q: usize) -> usize { ring(RX_BASE, q) + 0x28 }
+ pub const fn rx_read_ptr_lo(q: usize) -> usize { ring(RX_BASE, q) + 0x2c }
+ pub const fn rx_read_ptr_hi(q: usize) -> usize { ring(RX_BASE, q) + 0x30 }
+ pub const RX_RING_CFG: usize = RX_BASE + 0x1040;
++/// Receive interrupt timeout of ring q, in units of 8.192 µs (16 bits); the
++/// ring interrupts when this time has passed since its first frame not yet
++/// signalled, or when `rx_mbuf_done_thres` frames are done.
++pub const fn rx_ring_timeout(q: usize) -> usize { RX_RING_CFG + 0x2c + 4 * q }
++pub const DMA_TIMEOUT_MASK: u32 = 0xffff;
++/// Receive interrupt coalescing: one interrupt per this many frames ...
++pub const RX_COALESCE_FRAMES: u32 = 16;
++/// ... or this long after the first of them (rounded up to 8.192 µs units).
++pub const RX_COALESCE_USECS: u32 = 100;
+ pub const RX_DMA_CTRL: usize = RX_BASE + 0x1044;
+ pub const RX_DMA_STATUS: usize = RX_BASE + 0x1048;
+ pub const RX_SCB_BURST_SIZE: usize = RX_BASE + 0x104c;
+diff --git a/drivers/net/bcmgenetd/src/ring.rs b/drivers/net/bcmgenetd/src/ring.rs
+index 2a3e84c..2746dfa 100644
+--- a/drivers/net/bcmgenetd/src/ring.rs
++++ b/drivers/net/bcmgenetd/src/ring.rs
+@@ -196,6 +196,13 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+         self.mmio.write(rx_end_addr_lo(q), end);
+         self.mmio.write(rx_end_addr_hi(q), 0);
+         self.mmio.write(rx_xon_xoff_thres(q), (5 << 16) | (n >> 4));
++        // Interrupt coalescing (as Linux bcmgenet_set_rx_coalesce): a
++        // wakeup of the driver and netstack per frame was most of the cost
++        // of a transfer.
++        self.mmio.write(rx_mbuf_done_thres(q), RX_COALESCE_FRAMES);
++        let timeout = (RX_COALESCE_USECS * 1000).div_ceil(8192);
++        let reg = self.mmio.read(rx_ring_timeout(q)) & !DMA_TIMEOUT_MASK;
++        self.mmio.write(rx_ring_timeout(q), reg | timeout);
+         self.mmio.write(rx_read_ptr_lo(q), 0);
+         self.mmio.write(rx_read_ptr_hi(q), 0);
+         for i in 0..DESC_COUNT {
+@@ -215,7 +222,10 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+         self.mmio.set(TX_DMA_CTRL, DMA_CTRL_EN);
+         self.mmio.write(UMAC_TX_FLUSH, 0);
+         self.mmio.set(UMAC_CMD, CMD_TXEN | CMD_RXEN | CMD_PROMISC);
+-        self.mmio.write(INTRL2_CPU_CLEAR_MASK, IRQ_RXDMA_DONE | IRQ_TXDMA_DONE);
++        // Transmit completion needs no interrupt: `transmit` reads the
++        // consumer index itself, so a TCP receive no longer wakes the driver
++        // for every ACK it sends.
++        self.mmio.write(INTRL2_CPU_CLEAR_MASK, IRQ_RXDMA_DONE);
+     }
+ 
+     /// Reads and clears the pending interrupt bits.
+@@ -419,6 +429,21 @@ mod test {
+         assert_eq!(g.mmio.read(UMAC_CMD) & (CMD_TXEN | CMD_RXEN), CMD_TXEN | CMD_RXEN);
+     }
+ 
++    #[test]
++    fn receive_interrupts_are_coalesced_and_transmit_ones_masked() {
++        let mut g = genet();
++        let q = DEFAULT_Q;
++        // Same offset as Linux: DMA registers at 0x3040, ring 16 timeout 0x6c.
++        assert_eq!(rx_ring_timeout(q), 0x30ac);
++        g.mmio.write(rx_ring_timeout(q), 0xabcd_0000);
++        g.init_rings();
++        assert_eq!(g.mmio.read(rx_mbuf_done_thres(q)), 16);
++        // 100 µs in 8.192 µs units, rounded up; the upper half stays.
++        assert_eq!(g.mmio.read(rx_ring_timeout(q)), 0xabcd_0000 | 13);
++        g.enable();
++        assert_eq!(g.mmio.read(INTRL2_CPU_CLEAR_MASK), IRQ_RXDMA_DONE);
++    }
++
+     fn deliver(g: &mut Genet<Fake, Vec<u8>>, idx: usize, frame: &[u8], status_extra: u32) {
+         let start = idx * BUF_SIZE;
+         g.rx[start] = 0xaa; // padding
+-- 
+2.53.0
+
