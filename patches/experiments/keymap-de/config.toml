@@ -1,0 +1,16 @@
+# Experiment keymap-de (#529): German keyboard layout (QWERTZ, umlauts, ß)
+# for the console and the desktop, through inputd -K de (base patch 0102).
+# AltGr is not supported yet, so @, €, {, [, ], }, \, ~ and | cannot be
+# typed with this layout.
+[[files]]
+path = "/usr/lib/init.d/01_keymap.service"
+data = """
+[unit]
+description = "German keyboard layout"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "inputd"
+args = ["-K", "de"]
+type = "oneshot"
+"""
