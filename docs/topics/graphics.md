@@ -542,6 +542,34 @@ the screen.
   whether the bands showed; the next step is the same run with someone
   at the screen.
 
+## Pi 4 and Pi 400 (BCM2711): what `vc4d` would need
+
+Written 2026-11-17 for the Pi 400 desktop target (December), from Linux v6.12
+`drivers/gpu/drm/vc4/` (`vc4_hvs.c`, `vc4_regs.h`, `vc4_hdmi_regs.h`) and
+the BCM2711 devicetree. Not tested on the board yet.
+
+**Today:** the Pi 400 console on HDMI 0 goes through the framebuffer that U-Boot hands over (UEFI GOP) to `vesad` and `fbcond`, the same as on the 3B+ ([#304](https://github.com/redox-rpi/redox-rpi/issues/304)). Orbital and the desktop can run on that framebuffer unchanged, with no `vc4d`, at CPU speed. So the December desktop doesn't depend on `vc4d`. `vc4d` on the Pi 400 is the speed step after it.
+
+The BCM2711 has VideoCore VI. Linux drives it with the same `vc4` driver, marked "vc5" (`is_vc5`, `brcm,bcm2711-*` compatibles). The differences that matter for `vc4d`:
+
+| Part | BCM2835/7 (3B+, today) | BCM2711 (Pi 4/400) | What `vc4d` needs |
+|---|---|---|---|
+| HVS | `brcm,bcm2835-hvs`, display list memory at 0x2000 | `brcm,bcm2711-hvs` (HVS5), display list memory at 0x4000 (`SCALER5_DLIST_START`) | a second register layout (`SCALER5_*`): `DISPCTRLX` width/height fields, background, interrupt bits |
+| Plane words | `CTL0`, `POS0`, `POS2` (vc4 layout) | `SCALER5_CTL0` (pixel format in bits 4:0, alpha and RGB expand, unity), `SCALER5_POS2` (width 12:0, height 28:16), alpha in `CTL2` | `vc4-hvs::display_list` gets a vc5 variant; the host tests cover both |
+| Channels → outputs | 3 HVS channels, PV0–2, HDMI on PV2 | 3 HVS channels muxed to 5 pixel valves (`DISPECTRL` / `DISPCTRL` mux bits), HDMI 0 on PV2 and HDMI 1 on PV4 in Linux's tables | read the firmware's mux at takeover, like stage 1 reads its channel |
+| HVS clock | fixed by the firmware | Linux raises the core clock through the firmware for big modes (4K needs at least 550 MHz) | keep the firmware's mode first, so no clock change |
+| HDMI | one block plus PLLH | two HDMI controllers (`brcm,bcm2711-hdmi0/1`), each with its registers split over HDMI, DVP, PHY, RM, RAM, CSC and CEC blocks; a different PHY; pixel and HDMI clocks come from the firmware clock driver, not from PLLH writes | stage 3 (mode writing) needs a new HDMI part; the clocks through `rpi-firmwared` (mailbox clock tags) are simpler than PLLH on the 3B+ |
+| Addresses | peripherals at 0x3f000000, RAM bus alias 0xc0000000 | peripherals at 0xfe000000 (low peripheral mode), up to 8 GB RAM; the HVS reads only through `/soc` `dma-ranges` (the first 1 GB) | `soc_phys()` and `ram_bus_offset()` already read the devicetree; dumb buffers must come from below 1 GB |
+| V3D | V3D 2.x, OpenGL ES 2.0 (Mesa `vc4`) | V3D 4.2, a different GPU (Mesa `v3d`, OpenGL ES 3.1, Vulkan through `v3dv`) | stage b for the Pi 4 is a different driver (Linux `v3d`, Mesa `v3d`), not `vc4` |
+
+**Steps, as on the 3B+:**
+
+1. **HVS5 takeover with the firmware's mode** (the stage 1 equivalent): find the enabled channel and its pixel valve, write vc5 display lists with a primary and a cursor plane, and keep the screen-free self check and `vc4shot`. About the size of stage 1 again, mostly the vc5 list encoding and the register layout, with host tests first. QEMU `raspi4b` has no HVS, so `VC4D_FAKE` covers everything but the picture.
+2. Windows as planes, page flips and vertical blank: the same code as on the 3B+, once it exists there.
+3. Modes and HDMI (the stage 3 equivalent): a new HDMI part for the vc5 controllers; clocks through the firmware.
+
+**One gain the Pi 4 has over the 3B+:** V3D 4.2 does OpenGL ES 3.1, which is what wgpu's GL backend needs. With a `v3d` driver and Mesa `v3d`, COSMIC apps could draw on the GPU. That isn't possible on the 3B+ (OpenGL ES 2.0). That's months of work, after display step 1.
+
 ## License rule for `vc4d`
 
 Upstream Redox takes no AI-written code, so `vc4d` may be GPL; the user
