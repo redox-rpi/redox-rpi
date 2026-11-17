@@ -10,6 +10,7 @@ Rust (no code taken). Plan and later steps:
 ```text
 socdump [plls|clocks|gpio|all]   decoded (default all, display included)
 socdump display                  HVS, pixel valves and HDMI, decoded
+socdump hdmi                     BCM2711: both HDMI ports with their audio registers
 socdump check                    compare the rates with /scheme/rpi-firmware/clocks
 socdump regs                     every register as "block address value name", for diff
 socdump diff A B                 the registers that differ between two regs dumps
@@ -82,12 +83,20 @@ turned into CPU addresses through the devicetree, so a new board is a new
 table, not a rewrite:
 
 - **BCM2837** (Pi 3B, 3B+, Zero 2 W): done.
-- **BCM2711** (Pi 4): crystal 54 MHz, no PLLH, no feedback prediv, extra
-  clock `emmc2`, peripherals at `0xfe000000`. Its HDMI registers sit at
-  other offsets (`HORZA` at 0xe4, `HOTPLUG` at 0x1a8; see `hdmi.md` in
-  [librerpi/rpi-open-firmware](https://github.com/librerpi/rpi-open-firmware/tree/master/docs)),
-  and it has more PHY registers, so `src/display.rs` needs a second table.
-  Not done.
+- **BCM2711** (Pi 4, Pi 400, CM4): **HDMI only** (`src/vc5.rs`, for
+  HDMI audio on the Pi 400, #543). `socdump hdmi` (and `display`, `all`)
+  first reads the DVP block (`0x7ef00000`): a port held in reset
+  (`SW_INIT`) or with its 108 MHz clock stopped (`MISC_CONFIG` bit 3 or 4)
+  is not read. For each running port it prints hotplug, HDMI mode, the
+  timing, the pixel clock twice (from the PHY PLL's `RM_OFFSET` and
+  `CLK_DIV` as Linux programs them, and from the frame counter over 1 s),
+  the audio FIFO (`MAI_CTL`, `MAI_SMP` at 108 MHz), N and CTS, the audio
+  packet and info frame state, and the firmware's clock list. `regs`
+  prints the DVP block and each running port's core, HD, PHY and RM
+  registers. Offsets from Linux `vc5_hdmi_hdmi0_fields`/`_hdmi1_fields`.
+  Still to do: its PLLs (no PLLH, no feedback prediv), clocks (extra
+  `emmc2`), the HVS and the five pixel valves, which differ from the
+  BCM2835 tables; `plls` and `clocks` print nothing on it yet.
 - **BCM2712** (Pi 5): different clock block; most I/O (GPIO) is on the RP1
   chip behind PCIe. Needs its own tables. Not done.
 
