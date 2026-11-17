@@ -19,6 +19,8 @@ sdl2 = "source"
 ri-li = "source"
 sdl1 = "source"
 sdl1-mixer = "source"
+# MOD/XM music in SDL_mixer (#533, recipes/libs/sdl1-mixer here).
+libmodplug1 = "source"
 # Icons the COSMIC apps look up.
 cosmic-icons = {}
 hicolor-icon-theme = {}

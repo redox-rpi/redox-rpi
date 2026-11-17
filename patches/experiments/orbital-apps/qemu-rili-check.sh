@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # QEMU check for Ri-li (#528): starts the desktop, then Ri_li; prints its
-# log, whether it runs and the audio counter before and after, and takes two
+# log, whether it runs and the audio counter before, 25 s and 55 s after
+# the start (it keeps rising while the menu music plays, #533), and takes two
 # screenshots (images/rili.ppm, images/rili.ppm.2: the loading screen and
 # the language menu). Build with the desktop experiments (see
 # ../desktop/README.md). Usage: qemu-rili-check.sh [image]
@@ -29,7 +30,9 @@ PY
     --run "cat /tmp/rili.log" \
     --run "ps | grep -i ri_li" \
     --run "grep loud_chunks $H/stats" \
-    --run "sleep 90" > /dev/null 2>&1
+    --run "sleep 30" \
+    --run "grep loud_chunks $H/stats" \
+    --run "sleep 60" > /dev/null 2>&1
 echo "qemu status $?"
 tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | grep -aiE -A3 "rili|ri_li|loud_chunks|orbital window|audio driver|Impossible|error" | grep -v "^--" | tail -40
 ls -la "$ROOT/images/rili.ppm"
