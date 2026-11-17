@@ -1,0 +1,75 @@
+# Tux Typing 1.8.3 (#529): a touch-typing tutor for children, with
+# German lessons, word lists and keyboard layout (theme "deutsch").
+# GPL-2.0. SDL 1.2 with SDL_image, SDL_mixer and SDL_ttf, on t4kcommon;
+# without SDL_Pango, librsvg and SDL_net (all optional).
+[source]
+git = "https://github.com/tux4kids/tuxtype"
+rev = "fa9fc6ce86e7de0cb7eb43bd87201b5d130dd9ec"
+shallow_clone = true
+script = """
+DYNAMIC_INIT
+# $(LTLIBINTL) is libtool syntax (-R for the run path), but tuxtype links
+# with gcc, which rejects -R. LIBS has -lintl already (build script).
+sed -i 's/^tuxtype_LDFLAGS = [$](LTLIBINTL)$/tuxtype_LDFLAGS =/; s/^LDADD = @LIBINTL@$/LDADD =/' src/Makefile.am
+autotools_recursive_regenerate
+"""
+
+[build]
+template = "custom"
+dependencies = [
+    "t4kcommon",
+    "sdl1",
+    "sdl1-image",
+    "sdl1-mixer",
+    "sdl1-ttf",
+    "liborbital",
+    "libxml2",
+    "libpng",
+    "libjpeg",
+    "freetype2",
+    "zlib",
+    "xz",
+    "libogg",
+    "libvorbis",
+    "gettext",
+    "libiconv",
+]
+script = """
+DYNAMIC_INIT
+# See t4kcommon: the whole link line, since configure links each library
+# alone.
+export LIBS="-lt4k_common -lSDL_ttf -lfreetype -lSDL_image -lpng -ljpeg -lSDL_mixer -lvorbisfile -lvorbis -logg -lSDL -lorbital -lxml2 -llzma -lz -lintl -liconv -lpthread -lm"
+# -fcommon: t4kcommon and tuxtype both define globals such as screen and
+# tts_thread without an initializer, as GCC before 10 merged.
+export CFLAGS="${CFLAGS} -fcommon -I${COOKBOOK_SYSROOT}/include/freetype2 -I${COOKBOOK_SYSROOT}/include/libxml2"
+# tuxtype defines fs_res_x, fs_res_y and font_list with a value, as
+# libt4k_common does. With a shared libt4k_common the program's copy would
+# win; with the static one (see t4kcommon) the linker takes the first
+# definition, the program's, which gives the same result.
+export LDFLAGS="${LDFLAGS} -Wl,--allow-multiple-definition"
+COOKBOOK_CONFIGURE_FLAGS+=(
+    --without-sdlpango
+    --without-rsvg
+    --without-sdlnet
+)
+cookbook_configure
+# tuxtype exits when /usr/var/tuxtype or /usr/etc/tuxtype is missing
+# (SetupPaths), and a package keeps no empty directories.
+touch "${COOKBOOK_STAGE}/usr/var/tuxtype/.keep" \
+    "${COOKBOOK_STAGE}/usr/var/tuxtype/words/.keep" \
+    "${COOKBOOK_STAGE}/usr/etc/tuxtype/.keep"
+# The menu translations: built out of tree, po/Makefile installs .gmo files
+# from the source, which a release tarball has and git does not. Compile
+# them with the host's msgfmt.
+for po in "${COOKBOOK_SOURCE}"/po/*.po; do
+    lang="$(basename "${po}" .po)"
+    mkdir -p "${COOKBOOK_STAGE}/usr/share/locale/${lang}/LC_MESSAGES"
+    msgfmt -o "${COOKBOOK_STAGE}/usr/share/locale/${lang}/LC_MESSAGES/tuxtype.mo" "${po}"
+done
+# t4kcommon draws all text and looks for its font in its own data folder
+# (/usr/share/t4k_common/fonts), else at a Debian path; the font comes with
+# tuxtype.
+mkdir -p "${COOKBOOK_STAGE}/usr/share/t4k_common/fonts"
+ln -s ../../tuxtype/fonts/AndikaDesRevG.ttf \
+    "${COOKBOOK_STAGE}/usr/share/t4k_common/fonts/AndikaDesRevG.ttf"
+"""

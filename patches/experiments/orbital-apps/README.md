@@ -58,3 +58,43 @@ Orbital's login screen (the Orbital login does not get through in QEMU):
   `30_cosmic-edit` and `60_viewer`: the launcher shows the terminal,
   the file manager, the editor and the image viewer. Both COSMIC apps
   open again; `free` 314 MB used of 965 MB with both open.
+
+## Tux Typing (#529)
+
+[Tux Typing](https://github.com/tux4kids/tuxtype) 1.8.3 (GPL-2.0), a
+typing tutor for children, with its German theme: German menus, lessons
+(`basis_lektion_01` to `08`) and word lists. Built from source with SDL 1.2
+and [t4kcommon](https://github.com/tux4kids/t4kcommon), Tux4Kids' shared
+library (recipes in `recipes/games/tuxtype` and
+`recipes/wip/games/math/t4kcommon` here). For German keyboards add
+experiment [`keymap-de`](../keymap-de/README.md).
+
+- Launcher entry `72_tuxtype`. The desktop user (`user`) gets
+  `~/.config/tuxtype/settings.txt` with `lang=deutsch`, so it starts in
+  German; tuxtype saves its settings, the language too, in that file. By hand:
+  `tuxtype --theme deutsch` (`--window` for a window instead of full
+  screen).
+- t4kcommon without speech (no espeak on Redox: a stub `t4k_tts.c`),
+  without SDL_Pango, librsvg and SDL_net; static, linked into `tuxtype`.
+- Needs relibc patch 0020: tuxtype reads its files line by line with
+  `fscanf(f, "%[^\n]\n", ...)`, and relibc's scanf only skipped white
+  space for a space in the format, so it read the first line forever.
+- Size: 25 MB (`/usr/share/tuxtype`: images 12 MB, sounds 4.6 MB, themes
+  4.4 MB, fonts 2.8 MB). Together with experiment `desktop` it does not
+  fit the 256 MiB netboot filesystem; the QEMU check ran with a 384 MiB
+  filesystem.
+
+[`qemu-tuxtype-check.sh`](qemu-tuxtype-check.sh) types the German layout
+test at the console, then starts the desktop and tuxtype and walks to
+lesson 1 with the keyboard, taking screenshots.
+
+Limits:
+
+- The menu help lines stay English: relibc's `setlocale(LC_ALL,
+  "de_DE.UTF-8")` returns NULL, so gettext does not use the German
+  translation (`/usr/share/locale/de/LC_MESSAGES/tuxtype.mo`). The theme's
+  own words (menu entries, lessons) are German.
+- No music: SDL_mixer here has no Ogg support for `Mix_Init`
+  (`Failed to init required ogg and mod support`). Whether the WAV sound
+  effects play is not checked yet: the audio counter stayed the same in
+  the QEMU check, which never got into a game.

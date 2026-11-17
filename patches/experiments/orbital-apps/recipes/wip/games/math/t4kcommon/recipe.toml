@@ -1,0 +1,86 @@
+# t4kcommon (Tux4Kids common library), for Tux Typing (#529). Replaces
+# upstream's WIP recipe, which needs SDL_Pango, librsvg and
+# speech-dispatcher. SDL_Pango and librsvg are optional and left out: text
+# is drawn with SDL_ttf, images are PNG. A speech library is required by
+# configure; Redox has none, so the source script adds a build without
+# speech: the T4K_Tts_* functions do nothing.
+[source]
+git = "https://github.com/tux4kids/t4kcommon"
+rev = "9fd11c1bd1b78fc84141fc32cd9755f373eafae3"
+shallow_clone = true
+script = """
+DYNAMIC_INIT
+if ! grep -q "Build without speech" configure.ac; then
+    sed -i 's/      AC_MSG_ERROR(\\[No text-to-speech library found\\]))/      [AC_DEFINE([WITH_ESPEAK],[2],[Build without speech])])/' configure.ac
+    grep -q "Build without speech" configure.ac
+    cat > src/t4k_tts.c <<'TTS'
+/* Without a speech library (Redox): the TTS functions do nothing. */
+#include "t4k_globals.h"
+#include "t4k_common.h"
+#include "SDL_thread.h"
+
+SDL_Thread *tts_thread;
+int text_to_speech_status;
+
+void T4K_Tts_cancel(void) {}
+void T4K_Tts_wait(void) {}
+/* 0: no warning at start (t4k_main.c warns on a non-zero result). */
+int T4K_Tts_init(void) { return 0; }
+int T4K_Tts_set_voice(char voice_name[]) { (void)voice_name; return 0; }
+void T4K_Tts_stop(void) {}
+void T4K_Tts_set_volume(int volume) { (void)volume; }
+void T4K_Tts_set_rate(int rate) { (void)rate; }
+void T4K_Tts_set_pitch(int pitch) { (void)pitch; }
+void T4K_Tts_say(int rate, int pitch, int mode, const char *text, ...)
+{
+    (void)rate; (void)pitch; (void)mode; (void)text;
+}
+TTS
+fi
+# Declared without parameters but defined with a bool, which GCC rejects.
+sed -i 's/^void            set_font_size();/void            set_font_size(bool uniform);/' src/t4k_menu.c
+autotools_recursive_regenerate
+"""
+
+[build]
+template = "custom"
+dependencies = [
+    "sdl1",
+    "sdl1-image",
+    "sdl1-mixer",
+    "sdl1-ttf",
+    "liborbital",
+    "libxml2",
+    "libpng",
+    "libjpeg",
+    "freetype2",
+    "zlib",
+    "xz",
+    "libogg",
+    "libvorbis",
+    "gettext",
+    "libiconv",
+]
+script = """
+DYNAMIC_INIT
+# configure checks each library with a link of it alone, which fails:
+# libSDL.so does not record that it needs liborbital, and SDL_mixer,
+# SDL_image and SDL_ttf are static libraries. So name the whole link line.
+export LIBS="-lSDL_ttf -lfreetype -lSDL_image -lpng -ljpeg -lSDL_mixer -lvorbisfile -lvorbis -logg -lSDL -lorbital -lxml2 -llzma -lz -lintl -liconv -lpthread -lm"
+# -fcommon: t4kcommon and tuxtype both define globals such as screen and
+# tts_thread without an initializer, as GCC before 10 merged.
+export CFLAGS="${CFLAGS} -fcommon -I${COOKBOOK_SYSROOT}/include/freetype2 -I${COOKBOOK_SYSROOT}/include/libxml2"
+COOKBOOK_CONFIGURE_FLAGS+=(
+    --without-sdlpango
+    --without-rsvg
+    --without-sdlnet
+    --without-espeak
+    --without-espeak-ng
+    --without-speech-dispatcher
+    # Static only: SDL_image, SDL_mixer and SDL_ttf are static libraries
+    # built without -fPIC, which a shared libt4k_common cannot take in.
+    --disable-shared
+    --enable-static
+)
+cookbook_configure
+"""
