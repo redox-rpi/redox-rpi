@@ -30,4 +30,5 @@ With the receive interrupt at 1/2 full, the 16-byte FIFO leaves 8 bytes of room 
 
 ## Results
 
-See the PR and pi-tests rows.
+- **Test 490 (Pi 3B+, 2026-11-17): no characters lost.** `rx_overruns` 0 in all 5 readings; `rx_bytes` matches the bytes sent within 1 byte; the stash peaked at 194 bytes and never filled. The script marked 1 of 20 and 3 and 4 of 100 lines "LOST", but each of them is complete in the console log. They came late, not short: the shell redraws the whole line for each character it reads, about 31 KB of console output per 209-byte command, and the script waited only 30 s. The stable image showed the same (98 of 100).
+- Since then `serial-input-test.sh` waits 120 s per line and checks unanswered lines again over the whole log at the end. It reports complete, late and LOST, and fails only on LOST.
