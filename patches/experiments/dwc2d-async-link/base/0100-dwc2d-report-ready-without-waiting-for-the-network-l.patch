@@ -9,14 +9,17 @@ about 3 s of autonegotiation after the chip init (rof#44, pi-tests test
 soon as a network adapter is up. Until the adapter in use has its link,
 frames the network stack sends wait in a queue (at most 32), and the link
 is read every 100 ms; when it comes up the queue is sent, so the first
-DHCP Discover leaves then instead of into a dead link. After 10 s without
-a link the queue is dropped, as before ("no link yet").
+DHCP Discover leaves then instead of into a dead link.
+
+The wait ends without a link when a held frame is 5 s old (dhcpd has given
+up on that answer and the cable is probably out; the queue is dropped and
+"no link yet" printed), or after 10 s with nothing sent (no network stack).
 ---
- drivers/usb/dwc2d/src/main.rs | 106 ++++++++++++++++++++++++++++++----
- 1 file changed, 94 insertions(+), 12 deletions(-)
+ drivers/usb/dwc2d/src/main.rs | 125 +++++++++++++++++++++++++++++-----
+ 1 file changed, 109 insertions(+), 16 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 402a7a3..2f58f99 100644
+index 402a7a3..27018e8 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -11,6 +11,7 @@ use std::io::{Read, Write};
@@ -34,11 +37,11 @@ index 402a7a3..2f58f99 100644
 +    /// After boot, until the adapter in use has its link: frames the network
 +    /// stack sends meanwhile wait here instead of going into a dead link, so
 +    /// the first DHCP Discover leaves when the link comes up (#47, rof#44).
-+    held: Option<VecDeque<Vec<u8>>>,
++    held: Option<VecDeque<(Instant, Vec<u8>)>>,
  }
  
  impl UsbNet {
-@@ -123,6 +128,32 @@ impl UsbNet {
+@@ -123,6 +128,42 @@ impl UsbNet {
          self.adapters.iter_mut().map(|(a, _)| a).find(|a| a.address() == address)
      }
  
@@ -47,6 +50,16 @@ index 402a7a3..2f58f99 100644
 +        self.active
 +            .and_then(|address| self.adapters.iter().find(|(a, _)| a.address() == address))
 +            .is_some_and(|(_, link)| *link)
++    }
++
++    /// Whether the wait for the link should end without it: a held frame
++    /// waited `HELD_MAX_AGE` (dhcpd has stopped waiting for its answer), or
++    /// nothing was sent for `BOOT_LINK_WAIT` after ready (no network stack).
++    fn hold_expired(&self, ready: Instant) -> bool {
++        match self.held.as_ref().and_then(|h| h.front()) {
++            Some((at, _)) => at.elapsed() >= HELD_MAX_AGE,
++            None => ready.elapsed() >= BOOT_LINK_WAIT,
++        }
 +    }
 +
 +    /// End the wait for the link after boot: send the held frames (`send`)
@@ -58,7 +71,7 @@ index 402a7a3..2f58f99 100644
 +        let mut sent = 0;
 +        if send {
 +            if let Some(adapter) = self.active_adapter() {
-+                for frame in &held {
++                for (_, frame) in &held {
 +                    if adapter.net().write_packet(frame).is_ok() {
 +                        sent += 1;
 +                    }
@@ -71,7 +84,7 @@ index 402a7a3..2f58f99 100644
      /// Forget an adapter that was unplugged.
      fn remove(&mut self, address: u8) {
          if self.active == Some(address) {
-@@ -226,6 +257,18 @@ impl NetworkAdapter for UsbNet {
+@@ -226,6 +267,18 @@ impl NetworkAdapter for UsbNet {
      }
  
      fn write_packet(&mut self, buf: &[u8]) -> syscall::Result<usize> {
@@ -83,14 +96,25 @@ index 402a7a3..2f58f99 100644
 +                if held.len() == HELD_MAX {
 +                    held.pop_front();
 +                }
-+                held.push_back(buf.to_vec());
++                held.push_back((Instant::now(), buf.to_vec()));
 +                return Ok(buf.len());
 +            }
 +        }
          match self.active_adapter() {
              Some(a) => a.net().write_packet(buf),
              // No adapter: the frame is lost, like on a cable that is out.
-@@ -450,6 +493,10 @@ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+@@ -443,13 +496,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ /// While this file exists, mouse events are printed too (tests without a
+ /// person); looked at with every rescan.
+ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+-/// How long a network adapter found at boot may wait for its link, so DHCP
+-/// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
+-/// can take longer than 5 s. Adapters plugged in later do not wait: their
+-/// link is looked at with every rescan.
++/// How long after ready the link is watched every `LINK_WATCH` when the
++/// network stack sends nothing (an image without one); afterwards the
++/// rescans follow it. Adapters plugged in later do not wait: their link is
++/// looked at with every rescan.
  const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
  /// How long to look for devices at boot when there is no network adapter.
  const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
@@ -98,10 +122,13 @@ index 402a7a3..2f58f99 100644
 +const LINK_WATCH: Duration = Duration::from_millis(100);
 +/// Frames held for the link at most; the oldest go first.
 +const HELD_MAX: usize = 32;
++/// How long a frame may wait for the link: dhcpd waits 5 s for an answer,
++/// so an older Discover is useless, and the cable is probably out.
++const HELD_MAX_AGE: Duration = Duration::from_secs(5);
  
  user_data! {
      enum Source {
-@@ -457,6 +504,7 @@ user_data! {
+@@ -457,6 +517,7 @@ user_data! {
          Scheme,
          Time,
          Hotplug,
@@ -109,7 +136,7 @@ index 402a7a3..2f58f99 100644
      }
  }
  
-@@ -501,6 +549,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -501,6 +562,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          active: None,
          multicast: None,
          multicast_pending: false,
@@ -117,7 +144,7 @@ index 402a7a3..2f58f99 100644
      };
      let mut keyboard = None;
      let mut mouse = None;
-@@ -533,29 +582,36 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -533,29 +595,34 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      };
      let addresses = bus.devices.iter().map(|d| d.address).collect();
      boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, addresses);
@@ -152,21 +179,19 @@ index 402a7a3..2f58f99 100644
          boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
      }
 -    println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
-+    let link_deadline = if !net.adapters.is_empty() && !net.adapters.iter().any(|(_, link)| *link) {
++    let ready_at = Instant::now();
++    if !net.adapters.is_empty() && !net.adapters.iter().any(|(_, link)| *link) {
 +        net.held = Some(VecDeque::new());
-+        Some(Instant::now() + BOOT_LINK_WAIT)
-+    } else {
-+        None
-+    };
++    }
 +    println!(
 +        "dwc2d: devices ready after {} ms{}",
 +        boot_start.elapsed().as_millis(),
-+        if link_deadline.is_some() { ", link not up yet" } else { "" }
++        if net.held.is_some() { ", link not up yet" } else { "" }
 +    );
      // The network stack keeps the address of the adapter it starts with.
      if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
          if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
-@@ -612,6 +668,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -612,6 +679,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the timer");
      hotplug.arm(HOTPLUG_INTERVAL);
@@ -174,13 +199,13 @@ index 402a7a3..2f58f99 100644
 +    events
 +        .subscribe(link_watch.0.as_raw_fd() as usize, Source::LinkWatch, event::EventFlags::READ)
 +        .expect("dwc2d: failed to subscribe to the timer");
-+    if link_deadline.is_some() {
++    if net.held.is_some() {
 +        link_watch.arm(LINK_WATCH);
 +    }
      aside::spawn_files();
  
      let mut scheme = NetworkScheme::new(move || net, daemon, name.to_string());
-@@ -656,6 +719,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -656,6 +730,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      timer.arm(next);
                  }
              }
@@ -191,7 +216,7 @@ index 402a7a3..2f58f99 100644
 +                net.select(&mut bus);
 +                if net.active_link() {
 +                    net.release_held(true);
-+                } else if link_deadline.is_some_and(|d| Instant::now() >= d) {
++                } else if net.hold_expired(ready_at) {
 +                    println!("dwc2d: no link yet");
 +                    net.release_held(false);
 +                }
@@ -203,7 +228,7 @@ index 402a7a3..2f58f99 100644
              Source::Hotplug => {
                  hotplug.fired();
                  let mut cycled = Vec::new();
-@@ -725,6 +804,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -725,6 +815,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
                  net.refresh_links(&mut bus);
                  net.select(&mut bus);

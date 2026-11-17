@@ -27,9 +27,16 @@ Base patch [`0100`](base/0100-dwc2d-report-ready-without-waiting-for-the-network
   held frame(s) sent` is printed. So dhcpd's first Discover leaves at
   link-up, within its 5 s reply timeout: still no DHCP start without a link
   (#217, #92), with no change in dhcpd or netstack.
-- After 10 s without a link (`BOOT_LINK_WAIT`) the queue is dropped and
-  `dwc2d: no link yet` is printed, as before; dhcpd retries as it does
-  today.
+- The wait ends without a link when the oldest held frame is 5 s old
+  (`HELD_MAX_AGE`, dhcpd's reply timeout: by then dhcpd has given up on that
+  answer, and the cable is probably out): the queue is dropped, `dwc2d: no
+  link yet` is printed, and dhcpd retries as it does today. With nothing
+  sent (an image without a network stack) the link is watched for 10 s
+  (`BOOT_LINK_WAIT`), then by the rescans. A fixed 10 s from ready was
+  tried first: in QEMU netstack sends its first frame about 8 s after
+  `dwc2d` is ready, so the queue was dropped just before the link came up.
+- An RTL8153 whose gigabit autonegotiation takes more than 5 s gets its
+  address from dhcpd's second attempt, 5 s later than with the old wait.
 - The MAC address the network stack keeps is still that of the adapter in
   use at ready time. If an RTL815x gets its link later, it takes over
   through the existing `select()` path with that address (as for an adapter

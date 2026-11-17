@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
-Date: Tue, 17 Nov 2026 06:04:00 +0000
+Date: Tue, 17 Nov 2026 06:22:16 +0000
 Subject: [PATCH] dwc2d: test only, QEMU's CDC Ethernet link comes up 2 s after
  the first held frame
 
@@ -13,10 +13,10 @@ was held, like the LAN7800's autonegotiation on the Pi 3B+.
  1 file changed, 16 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 2f58f99..e1590a8 100644
+index 27018e8..9a84600 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -169,7 +169,11 @@ impl UsbNet {
+@@ -179,7 +179,11 @@ impl UsbNet {
              let (now, name, address) = match adapter {
                  Adapter::Rtl8152(a) => (rtl8152::link(bus, a.function()), "RTL815x", a.function().address),
                  Adapter::Lan78xx(a) => (lan78xx::link(bus, a.function()), "LAN7800", a.function().address),
@@ -24,20 +24,20 @@ index 2f58f99..e1590a8 100644
 +                Adapter::Ecm(a) => (
 +                    Ok(ECM_TEST_START.get().is_some_and(|t| t.elapsed() >= ECM_TEST_LINK_DELAY)),
 +                    "CDC Ethernet",
-+                    a.function().address,
++                    a.address(),
 +                ),
              };
              if let Ok(now) = now {
                  if now != *link {
-@@ -266,6 +270,7 @@ impl NetworkAdapter for UsbNet {
+@@ -276,6 +280,7 @@ impl NetworkAdapter for UsbNet {
                      held.pop_front();
                  }
-                 held.push_back(buf.to_vec());
+                 held.push_back((Instant::now(), buf.to_vec()));
 +                let _ = ECM_TEST_START.set(Instant::now());
                  return Ok(buf.len());
              }
          }
-@@ -327,7 +332,12 @@ fn probe(
+@@ -337,7 +342,12 @@ fn probe(
      if let Some(f) = ecm::find(bus, device) {
          println!("dwc2d: CDC Ethernet at address {address}");
          return match ecm::activate(bus, device.max_packet, &f) {
@@ -51,7 +51,7 @@ index 2f58f99..e1590a8 100644
              Err(err) => {
                  println!("dwc2d: CDC Ethernet: {err:?}");
                  None
-@@ -493,6 +503,10 @@ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+@@ -503,6 +513,10 @@ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
  const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
  /// How long to look for devices at boot when there is no network adapter.
  const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
