@@ -1,0 +1,162 @@
+name: Code quality
+
+# Static checks for our own tools and scripts (#273, targets in the QMP).
+# Gating: pyflakes on every Python file, cargo test for the tool crates
+# with host tests. Report-only (step summary, never fails the job):
+# shellcheck, clippy with undocumented_unsafe_blocks, cppcheck, ruff, and
+# line coverage (cargo llvm-cov) of the tool crates with host tests.
+# Weekly (Monday, with upstream-weekly.yml): cargo audit for every
+# Cargo.lock, report-only.
+# A report-only check becomes gating once it is at 0 on main.
+# Drivers and patches built only for aarch64-unknown-redox are checked
+# after the nightly instead (#272).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  gating:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: pyflakes
+        run: |
+          pip install --quiet pyflakes==3.2.0
+          git ls-files -z '*.py' | xargs -0 python3 -m pyflakes
+      - name: workflow files parse
+        # GitHub cannot load a workflow file with a YAML error and only shows
+        # a failed run without a log on every push (ci-main-red.yml, #371).
+        run: |
+          pip install --quiet pyyaml==6.0.2
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.y*ml")):
+              try:
+                  data = yaml.safe_load(open(path))
+                  if not isinstance(data, dict) or "jobs" not in data:
+                      raise ValueError("no jobs")
+              except Exception as e:
+                  print(f"::error file={path}::{e}")
+                  bad += 1
+          sys.exit(1 if bad else 0)
+          PY
+      - name: cargo test (tool crates with host tests)
+        run: |
+          for crate in assistant cputop socdump timerd timesync welcome; do
+              echo "::group::$crate"
+              (cd "tools/$crate" && cargo test --quiet)
+              echo "::endgroup::"
+          done
+
+  report:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          # Report-only: a mirror outage must not cost the whole report;
+          # a missing tool shows as n/a.
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends shellcheck cppcheck ||
+              echo "::warning::apt-get failed; shellcheck/cppcheck may be missing"
+          pip install --quiet ruff==0.6.9
+          rustup component add clippy llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Report (never fails)
+        run: |
+          set +e
+          sum="$GITHUB_STEP_SUMMARY"
+          echo "## Code quality (report-only)" >> "$sum"
+          echo "" >> "$sum"
+          echo "| Check | Findings |" >> "$sum"
+          echo "|---|---|" >> "$sum"
+          sc="$(git ls-files -z '*.sh' | xargs -0 shellcheck -f gcc 2>/dev/null)"
+          echo "| shellcheck errors | $(grep -c ': error:' <<< "$sc") |" >> "$sum"
+          echo "| shellcheck warnings | $(grep -c ': warning:' <<< "$sc") |" >> "$sum"
+          rf="$(ruff check --select E,F,W,B --ignore E501 --output-format concise $(git ls-files '*.py') 2>/dev/null)"
+          echo "| ruff E/F/W/B (no E501) | $(grep -c ':[0-9]*:[0-9]*: ' <<< "$rf") |" >> "$sum"
+          if ! command -v cppcheck > /dev/null; then
+              echo "| cppcheck | n/a (not installed) |" >> "$sum"; cp=""
+          else
+          cp="$(cppcheck --quiet --enable=warning,portability --template='{file}:{line}: {severity}: {message}' $(git ls-files '*.c') 2>&1)"
+          echo "| cppcheck | $(grep -c ': ' <<< "$cp") |" >> "$sum"
+          fi
+          total=0; unsafe=0; rows=""
+          for toml in tools/*/Cargo.toml; do
+              dir="$(dirname "$toml")"; crate="$(basename "$dir")"
+              # rpi-boot-stub builds only for aarch64-unknown-none. Crates
+              # without a Cargo.lock (mcast, net6, socdump) get one here;
+              # harmless in CI, never committed.
+              [ "$crate" = rpi-boot-stub ] && continue
+              out="$(cd "$dir" && cargo clippy --quiet --message-format short -- -W clippy::undocumented_unsafe_blocks 2>&1)"
+              w="$(grep -c ': warning: ' <<< "$out")"
+              u="$(grep -c 'undocumented_unsafe_blocks\|unsafe block missing a safety comment' <<< "$out")"
+              total=$((total + w)); unsafe=$((unsafe + u))
+              [ "$w" -gt 0 ] && rows="$rows\n| $crate | $w | $u |"
+          done
+          echo "| clippy warnings (tools/*) | $total |" >> "$sum"
+          echo "| unsafe blocks without SAFETY: (tools/*) | $unsafe |" >> "$sum"
+          echo "" >> "$sum"
+          if [ -n "$rows" ]; then
+              echo "| Crate | clippy warnings | of them undocumented unsafe |" >> "$sum"
+              echo "|---|---|---|" >> "$sum"
+              printf "%b\n" "${rows#\\n}" >> "$sum"
+          fi
+          echo "" >> "$sum"
+          echo "| Crate (host tests) | Line coverage |" >> "$sum"
+          echo "|---|---|" >> "$sum"
+          for crate in assistant cputop socdump timerd timesync welcome; do
+              cov="$(cd "tools/$crate" && cargo llvm-cov --quiet --summary-only 2>/dev/null | awk '/^TOTAL/ {print $10}')"
+              echo "| $crate | ${cov:-n/a} |" >> "$sum"
+          done
+          echo "" >> "$sum"
+          echo "<details><summary>shellcheck, ruff, cppcheck output</summary>" >> "$sum"
+          echo "" >> "$sum"
+          printf '```text\n%s\n%s\n%s\n```\n' "$sc" "$rf" "$cp" | head -c 60000 >> "$sum"
+          echo "</details>" >> "$sum"
+          # The step summary needs a GitHub sign-in; the log does not.
+          cat "$sum"
+          exit 0
+
+  audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: cargo audit for every Cargo.lock (never fails)
+        run: |
+          set +e
+          sum="$GITHUB_STEP_SUMMARY"
+          echo "## cargo audit (report-only)" >> "$sum"
+          echo "" >> "$sum"
+          echo "| Cargo.lock | Vulnerabilities | Warnings |" >> "$sum"
+          echo "|---|---|---|" >> "$sum"
+          git ls-files -z 'Cargo.lock' '**/Cargo.lock' | while IFS= read -r -d '' lock; do
+              out="$(cargo audit --json --file "$lock" 2>/dev/null)"
+              v="$(jq -r '.vulnerabilities.count // "error"' <<< "$out" 2>/dev/null || echo error)"
+              w="$(jq -r '[.warnings[]?[]?] | length' <<< "$out" 2>/dev/null || echo error)"
+              echo "| \`$lock\` | $v | $w |" >> "$sum"
+          done
+          cat "$sum"
+          exit 0

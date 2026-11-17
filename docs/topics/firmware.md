@@ -93,15 +93,19 @@
   `dwc2d` wakeups/s (Pi test #245). Then EEE on the LAN7800 and gating clocks that run for nothing.
 
 - `socdump` ([#224](https://github.com/redox-rpi/redox-rpi/issues/224),
-  branch `socdump`, [tools/socdump](../../tools/socdump/README.md)): a
+  [tools/socdump](../../tools/socdump/README.md)): a
   read-only tool that decodes the PLLs, clock manager clocks and GPIO pins
   (BCM2837 table; chip, address and crystal come from the devicetree) and
-  compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`). Pi test #261 queued.
+  compares the rates with `/scheme/rpi-firmware/clocks` (`socdump check`).
   Real Pi (test #261): ARM, EMMC and UART match the firmware exactly; the
   HDMI pixel clock reads 148.5 MHz (1080p60), the first reference value for
   HDMI. `vpu`, `h264`, `isp` and `sdram` are driven by the firmware outside
   the clock manager (`fw`). Reference dump in `tools/socdump/reference/`.
-  Next: display registers (pixel valves, HVS, HDMI), step 2 of #224.
+  Steps 3 and 5 (branch `socdump-display`): `socdump display` decodes the
+  HVS channels and planes, the pixel valves and HDMI; `socdump diff`
+  compares two register dumps. Pi test row 337 took the 1080p display
+  reference; 720p waits for a card visit (`hdmi_mode` in the card's
+  `config.txt`).
 
 ## Bluetooth
 

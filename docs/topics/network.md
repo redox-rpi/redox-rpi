@@ -5,11 +5,34 @@
 - LAN7800 (Pi 3B+ onboard Ethernet) in `dwc2d`: DHCP, TCP from the LAN.
 - RTL8152/RTL8153 USB Ethernet (base patch `0020`, since v0.2.0): the
   Zero 2 W gets its time over the HAT's RTL8152.
+  `scripts/adapter-dhcp-log.py` reads a serial log with times
+  (`~/bin/zero-serial`) and reports per boot the adapter and the seconds
+  to the DHCP address (REQ-NET-2, #492).
 - `devshd`: remote shell on port 2323, unencrypted, LAN only, never in
   release images.
 
 ## Next
 
+- [#171](https://github.com/redox-rpi/redox-rpi/issues/171) `ifconfig`
+  showed `00:00:00:00:00:00` as the MAC address (a placeholder in upstream
+  `netutils`) and the prefix length as the netmask. Experiment
+  `ifconfig-mac` (netutils `0001`, netutils now pinned) reads the address
+  from `netcfg` (PR
+  [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
+  and on the Pi (**test 194 passed**). Release images have it since
+  v0.5.0-rc1. **Person observation (2026-11-14, the user, v0.5.0-rc1
+  card on the 3B+):** a ping to the build host by name worked, and
+  `ifconfig` showed the real MAC address. Test and branch images without
+  the experiment still print zeros (Pi rows 345, 356, 401: "MAC zeros");
+  that is the upstream placeholder, not a driver fault.
+  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): make it a
+  default netutils patch, so zeros would mean a real fault.
+- [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
+  ignored the DHCP name server (lan hung, bare names failed): fixed
+  in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
+  server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
+  3 s, and try names without a dot in the DHCP domain
+  (`resolv/domain`, option 15) first. QEMU passes; Pi row pending.
 - [#92](https://github.com/redox-rpi/redox-rpi/issues/92) and
   [#217](https://github.com/redox-rpi/redox-rpi/issues/217): netstack
   stops (#92: once in 60 chaos rounds, Pi tests 237 and 263; #217: no
@@ -21,6 +44,27 @@
   come for 10 s (the case Pi test 213 could not show), and writes a
   heartbeat every 10 min. Benchmark rows build with
   `--no-test-experiments`.
+  **Cause found (2026-11-10), fix candidate base `0087`** (PR
+  [#344](https://github.com/redox-rpi/redox-rpi/pull/344)): dwc2d's main
+  loop also serves the network, and it wrote mouse and keyboard events to
+  inputd itself; inputd waits for the display driver on every VT event.
+  So a hung inputd stopped dwc2d and the network for good. In QEMU,
+  stopping inputd and pressing keys gives exactly Pi test 316's lines
+  (2 of 4 runs); with `0087` (input events from a thread of their own,
+  dropped when inputd doesn't take them; the `/tmp` test files read by
+  another thread) the network stays up (2 of 2), and Pi test 329 found
+  nothing broken. Why inputd hung in #316 (vc4d, no monitor on HDMI) is
+  still open.
+- [#184](https://github.com/redox-rpi/redox-rpi/issues/184) a TCP
+  connection Redox closes gets no FIN: netstack dropped the socket when
+  its last file closed, so the peer kept the connection open (sshd after
+  its login grace time). The fix from PR
+  [#185](https://github.com/redox-rpi/redox-rpi/pull/185) went into the
+  stacked branch `relibc-quiet`, which never reached main. Now default
+  base `0089` (branch `tcp-fin`): close the TCP way (rest of the send
+  buffer, then FIN), remove the socket once closed, reset after 60 s.
+  `scripts/tcp-fin-check.py` checks it from the host. QEMU 2026-11-11:
+  main sends no FIN (Redox nc out and `nc -l` in), `0089` sends it at once.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
   `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
@@ -86,13 +130,31 @@
   top of #82: multicast (base `0083`, relibc `0016`) and the LAN7800
   multicast filter (base `0084`) as default patches; QEMU passes, **Pi
   test 210 passed** (multicast to the Pi, IPv6 global and ULA ping).
+- [#216](https://github.com/redox-rpi/redox-rpi/issues/216) idle wakeups
+  since #194 (Pi test #246: dwc2d +28/s, netstack +28/s): `0084` passes
+  all multicast on the LAN. Branch `mcast-filter` (2026-11-12, redone on
+  the multi-adapter netstack):
+  - base `0085`: a `multicast` file in the adapter scheme and
+    `NetworkAdapter::set_multicast`; netstack writes all-hosts plus each
+    joined IPv4 group to every adapter that has the file, also adapters
+    that come later;
+  - base `0095`: the LAN7800 programs its multicast hash filter from that
+    list instead of passing all multicast (was Firmware's experiment
+    `lan78xx-mcast-hash`, PR #219; Pi test 247 passed: dwc2d 108 -> 81
+    wakeups/s, netstack 60 -> 30/s).
+  - The `ipv6` experiment (it does not apply to main right now) must add
+    its IPv6 groups (33:33:…) to the list, or write `all`, before it is
+    used with `0095`.
+- [#217](https://github.com/redox-rpi/redox-rpi/issues/217) 2 of about 10
+  boots on 2026-11-05 reached login without network (devshd's bind
+  blocked); QEMU boot loop next.
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the
   firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
   with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
   netstack takes it as `wlan0` and dhcpd leases it. The network name and
-  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  passphrase come from `~/.config/redox-rpi/wifi` on the build server (made by
   the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
   chip: unit tests and a QEMU check of the settings path pass; Pi test
   #110.
@@ -139,7 +201,10 @@
   comes first. **Pi test 156 passed** (65535 buffered bytes read after a
   reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
   [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
-  patch `0082`.
+  patch `0082`. The #141 part alone, on current main and with a QEMU test
+  (`scripts/test-tcp-reset-read.sh`: a raw TCP peer over QEMU's socket
+  netdev sends 64 KiB and a reset right behind it), is in its own pull
+  request, branch `tcp-reset-read`.
 
 ## Later
 

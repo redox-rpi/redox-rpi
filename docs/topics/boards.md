@@ -9,7 +9,7 @@ cards. No work has started; nothing here is planned for a release yet.
 
 - Supported today: Pi 3B+ (BCM2837B0) and Pi Zero 2 W (same SoC family, see
   [zero2w.md](zero2w.md)).
-- One Pi 3B+ on homenodellm: network boot from an SD card with firmware and
+- One Pi 3B+ on the build server: network boot from an SD card with firmware and
   U-Boot, serial console on `/dev/ttyUSB0`, power over a Shelly plug, HDMI on
   a NanoKVM ([pi-tests lab.md](https://github.com/redox-rpi/pi-tests/blob/main/lab.md)).
 - Firmware tests (open firmware, rows 249-254) need a person to swap the SD
@@ -74,7 +74,7 @@ Zero 2 W.
    straight from their EEPROM boot loader, with no SD card at all. Most
    tests would never touch a card.
 2. **An SD switch (SD mux) for firmware tests.** The device sits in the Pi's
-   card slot and is plugged into homenodellm over USB. The host writes the
+   card slot and is plugged into the build server over USB. The host writes the
    image to the card, then switches the card over to the Pi. Known devices:
    `usbsdmux` (Linux Automation) and SDWire. This also works for the Pi 3B+
    today and would remove the card swaps for the open firmware rows.

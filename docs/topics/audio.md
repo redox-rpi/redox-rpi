@@ -16,6 +16,52 @@ are enough; A3 and polish may follow in a later release.
   /scheme/audio` plays a test tone. **Beta:** about 11 usable bits, one
   fixed format (44.1 kHz s16 stereo), the PWM never stops after silence
   yet, a faint hiss when quiet, and the boot click is not checked yet.
+- **Startup sound, volume and Sopwith sound, Pi-tested** (v0.5.0,
+  [#292](https://github.com/redox-rpi/redox-rpi/issues/292)): `tone
+  chime`, our own generated chord (C, E, G, C, about 1.8 s), plays once
+  per boot after `audiod` starts, in the background
+  (`21_startup-sound.service`, oneshot_async). `off` in
+  `/etc/startup-sound` switches it off; on network and direct boot, where
+  `/` lives in RAM, `startup-sound` on the data partition
+  (`/scheme/data/startup-sound`) wins. `reboot` and the new `poweroff`
+  (tools/reboot; halts, then pull the power) first write
+  `/scheme/audiohw/stop`, which ramps the outputs down to 0 V over 50 ms,
+  so neither the reset nor pulling the power afterwards clicks. After the
+  prebuilt `shutdown`, or pulling the plug while running, it still clicks.
+  Pi test 335 (release-options image `v0.5.0-dev-24-g3a763e93+xb2f0`)
+  passed: the chime plays once, `off` and the saved volume on the data
+  partition hold across a reboot, Sopwith's sound reaches the driver,
+  `stop` ramps to 0 V, boot 38–39 s with or without the chime. #314 had
+  failed before the fix: ion's `test` has no `!`, so the script never
+  waited for the data partition. Listening (row 315) at the next visit.
+- **`volume` command, Pi-tested (335)**
+  ([#336](https://github.com/redox-rpi/redox-rpi/issues/336), same PR):
+  shows and sets the volume and keeps it across reboots; restored before
+  the startup sound. The driver's `stats` count `loud_chunks` and `peak`,
+  so tests tell sound from silence without listening.
+- **Sound in SDL games, Pi-tested (335)**
+  ([#335](https://github.com/redox-rpi/redox-rpi/issues/335)): SDL2's
+  Redox audio driver writes to `/scheme/audio` and is already built in;
+  Sopwith opens it at start, and its title tune reaches the driver
+  (`loud_chunks` 133 → 1553). No code needed. With A3 (PR #354, the PWM
+  sleeps after 3 s of silence) Sopwith wakes the sleeping driver: QEMU
+  `qemu-sdl-check.sh` 6/6 (2026-11-13); Pi row 399: asleep at the
+  desktop, Sopwith wakes it (`loud_chunks` 133 → 5851, `dma_faults 0`),
+  asleep again after Sopwith (SIGTERM does not end Sopwith, #405). Nobody has listened
+  yet: row 315 (new card with #354, step 7 for the hiss and clicks),
+  waiting for a visit.
+- **HDMI audio, experiment** ([#423](https://github.com/redox-rpi/redox-rpi/issues/423),
+  high priority: the Zero 2 W has no jack). The plan is in the issue.
+  Branch `hdmi-audio`, experiment `hdmi-audio`: `bcm2835-hdmiaudiod`
+  takes the place of `bcm2835-pwmaudiod` and programs only the audio part
+  of the HDMI block, as Linux `vc4_hdmi.c` does (see
+  [HDMI audio](#hdmi-audio)). The firmware keeps the picture.
+  - Tests so far: 15 host tests; QEMU 18/18 (2026-11-14). QEMU has no
+    HDMI, so the driver plays to the clock there.
+  - Pi row 417 (automated, NanoKVM) checks that the HDMI block takes the
+    samples.
+  - Listening on a monitor with speakers is described in the issue and
+    is not queued yet.
 - **Listened to (#280):** the CPU tone, the tone through `audiod`, 440 Hz
   in the left ear only (so left and right are right), the sweep and
   volume 100 all played; a faint hiss at idle and a little crackle (cheap
@@ -144,10 +190,23 @@ The HDMI output can carry sound next to the picture. Linux has two ways:
   meant.
 - The Linux `vc4` display driver plays HDMI sound **itself**: the samples
   go by DMA into the HDMI block's audio FIFO (MAI), and the driver sets the
-  audio info frames. That needs a driver that owns HDMI: the later part of
-  stage (a) of [`vc4d`](graphics.md), which takes over the pixel valves
-  and HDMI (today `vc4d` takes over the HVS only; HDMI timing stays with
-  the firmware).
+  audio info frames.
+
+The audio registers don't depend on who set the timing. Linux plays sound
+whenever the output is in HDMI mode rather than DVI mode. So
+`bcm2835-hdmiaudiod` (#423) leaves the picture to the firmware and needs
+no `vc4d`. It sets:
+- the MAI FIFO in the HD block (`0x7e808000`): reset, thresholds, format,
+  and the sample clock `MAI_SMP` from the HSM clock
+- in the HDMI core (`0x7e902000`): the channel map, the audio packets,
+  N/CTS from the pixel clock, and the audio info frame in packet RAM
+- DMA channel 0, DREQ 17, into `MAI_DATA`
+
+The samples go as IEC958 subframes: preamble, the 16-bit sample in bits
+12–27, the channel-status bit, and parity.
+
+Open risk: the firmware may program HDMI again on a hotplug. The driver
+checks its registers every 10 ms and sets them again when they change.
 
 ### I2S on the GPIO header
 
@@ -241,8 +300,8 @@ Nobody can hear the Pi from the test rack, and the NanoKVM captures only
 HDMI. Two ways:
 
 - **Automatic (proposed):** a cheap USB sound card with a line input on
-  homenodellm, a cable from the Pi's jack to it. The test plays a known
-  tone or sweep on the Pi, records it on homenodellm, and checks the
+  the build server, a cable from the Pi's jack to it. The test plays a known
+  tone or sweep on the Pi, records it on the build server, and checks the
   frequency, the level and the noise with a small script. Needs about
   10 euros of hardware and a cable, plugged in once by the maintainer.
 - **By ear:** a person with headphones, bundled with other person tests
