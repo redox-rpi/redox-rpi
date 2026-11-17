@@ -43,6 +43,41 @@ issue; the background is in [docs/topics/audio.md](../../../docs/topics/audio.md
   Without an HDMI output (QEMU, or no display at boot) the driver says so
   and plays the ring to the clock.
 
+- **Base `0002`, the BCM2711 (Pi 4, Pi 400), issue
+  [#543](https://github.com/redox-rpi/redox-rpi/issues/543).** The same
+  driver also handles the two "vc5" HDMI ports. The Pi 400 has no jack, so
+  HDMI is its only sound output.
+  - **Port choice:** the port the firmware sends video on (`VID_CTL` bit
+    31). With no screen, `hdmi_force_hotplug=1` + `hdmi_drive=2` in
+    `config.txt` makes the firmware drive HDMI0 (Test 494). A port whose
+    DVP reset is held or whose clock is stopped is never read, because its
+    registers can hang the bus. QEMU raspi4b aborts any read of the DVP
+    block, so a child process (`bcm2835-hdmiaudiod --probe-dvp`) reads it
+    first; when the child dies, the driver plays to the clock.
+  - **Registers** from Linux `vc5_hdmi_hdmi0_fields`/`_hdmi1_fields`:
+    - MAI per port in the shared HD block (`0x7ef20000`)
+    - the core at `0x7ef00700` or `0x7ef05700`
+    - packet RAM in its own block
+    - 4-bit channel map
+    - MAI thresholds 0x10/0x1c
+    - DREQ 10 for HDMI0 and 17 for HDMI1, from the node's `dmas`
+  - **Clocks:** the sample clock comes from the fixed 108 MHz audio clock,
+    and the measurement correction stays as on the 3B+. The pixel clock
+    comes from the port's PHY PLL (`RM_OFFSET`, `TX_PHY_CLK_DIV`), because
+    the Pi 400 firmware reports none. The PHY's random generator is powered
+    up, as in Linux `vc5_hdmi_phy_rng_enable`.
+  - **Devicetree:** addresses go through `/soc`'s `ranges` and
+    `dma-ranges` with their real cell counts. The DMA ring must be in the
+    first 1 GB of RAM.
+  - **`stats` adds:**
+    - `port` (`vc4`, `hdmi0`, `hdmi1`)
+    - `video_now`
+    - `mai_thr`, `mai_fmt`, `channel_map`
+    - the DVP and PHY registers, where the 3B+ has the PLLH and HSM lines
+  - **Applying with `pi400`:** `0001` applies with fuzz 1 on top of it,
+    because `pi400` adds `40_bcmgenetd.service` next to the line `0001`
+    changes in `40_drivers.target`.
+
 `qemu-check.sh` checks the start, `audiod` on top and the scheme in QEMU.
 It can't check the HDMI path, since QEMU has none.
 
@@ -56,6 +91,18 @@ It can't check the HDMI path, since QEMU has none.
    - `loud_chunks` grows
 2. **Listening, with a person:** a monitor or TV with speakers, on the 3B+
    and the Zero 2 W: chime, `tone`, Sopwith.
+
+3. **Pi 400, automated, no screen** (#543 step 3): `hdmi_force_hotplug=1` +
+   `hdmi_drive=2`, images with `pi400` and `hdmi-audio`. `stats` after boot,
+   `time tone -s 3 > /scheme/audio`, the chime, `stats` again. It passes when:
+   - `port hdmi0`, `mode hdmi-dma`, `infoframe_active yes`, `pixel_hz
+     25200000 phy`
+   - the rate is within 2 % of 44100, as REQ-AUDIO-4 (#539) asks
+   - `mai_underflow_polls` and `dma_faults` are 0
+   - `loud_chunks` grows
+   - `tone` takes 3 s ± 0.1 s
+4. **Pi 400, listening** (person): a monitor with speakers. Chime, `tone`,
+   `volume`, Sopwith.
 
 Don't combine with `rpi-fb`: both change the `INITFS_BINS` line of the base
 `Makefile`.
