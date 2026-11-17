@@ -181,6 +181,19 @@ pub const CHIPS: &[Chip] = &[Chip {
     clocks: BCM2837_CLOCKS,
     firmware_clocks: &["vpu", "h264", "isp", "sdram"],
     gpio_pins: 54,
+}, Chip {
+    // Pi 4, Pi 400, CM4: only the HDMI blocks are decoded so far
+    // (`socdump hdmi`, src/vc5.rs); its PLLs and clock manager differ
+    // and have no table yet.
+    name: "BCM2711",
+    compatible: &["brcm,bcm2711"],
+    revision_processor: 3,
+    xosc_hz: 54_000_000,
+    pll_prediv: false,
+    plls: &[],
+    clocks: &[],
+    firmware_clocks: &[],
+    gpio_pins: 58,
 }];
 
 // --- decoding, kept free of register access so it can be tested on a host
