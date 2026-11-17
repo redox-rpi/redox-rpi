@@ -1,0 +1,9 @@
+# vc4d (#188) is GPL-2.0-only and lives in its own repository; this recipe
+# only builds a pinned commit of it. No vc4d source in redox-rpi.
+# Experiment vc4d-mode-hdmi: branch mode-hdmi of redox-rpi/vc4d.
+[source]
+git = "https://github.com/redox-rpi/vc4d.git"
+rev = "fc402858f4f48e7a06b24c1d8b538c4374bf2295"
+
+[build]
+template = "cargo"
