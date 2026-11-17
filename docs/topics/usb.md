@@ -116,6 +116,9 @@
 
 ## Next
 
+- [#536](https://github.com/redox-rpi/redox-rpi/issues/536): dwc2d reports
+  ready without waiting for the network link (about 3 s of boot on the 3B+);
+  frames wait in dwc2d until the link is up. Experiment `dwc2d-async-link`.
 - Pi tests of USB sticks and card readers: rows #50 and #71, one image,
   with a person in the USB visit.
 
