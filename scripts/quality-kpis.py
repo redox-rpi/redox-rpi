@@ -382,7 +382,39 @@ def collect(args):
             if ISSUE_REF_RE.search(text.split("\ndiff --git", 1)[0]):
                 named += 1
     k["patches_with_issue"] = {"named": named, "total": total}
+    k["boot_time"] = boot_times(args.fw_repo, args.fw_ref)
     return k
+
+
+def boot_times(repo, ref):
+    """Firmware KPI (rof #44): power-on to `redox login:` per board, from the
+    "Values so far" table in rof docs/boot-time.md, where every firmware Pi
+    test that boots to the login adds a row. None if the page cannot be read."""
+    r = subprocess.run(["gh", "api", f"repos/{repo}/contents/docs/boot-time.md?ref={ref}",
+                        "-H", "Accept: application/vnd.github.raw+json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"boot time: {repo} docs/boot-time.md: {r.stderr.strip()[:200]}", file=sys.stderr)
+        return None
+    part = r.stdout.split("## Values so far", 1)[-1].split("\n## ", 1)[0]
+    lines = [l for l in part.splitlines() if l.startswith("|")]
+    if len(lines) < 3:
+        return {}
+    head = [c.strip().strip("*").lower() for c in lines[0].strip().strip("|").split("|")]
+    col = lambda name: next((i for i, h in enumerate(head) if name in h), None)
+    i_date, i_board, i_value, i_test = col("date"), col("board"), col("power-on"), col("test")
+    boards = {}
+    for line in lines[2:]:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if None in (i_date, i_board, i_value) or len(cells) <= max(i_date, i_board, i_value):
+            continue
+        m = re.search(r"(\d+(?:\.\d+)?)\s*s\b", cells[i_value])
+        if not m:
+            continue
+        board, _, card = cells[i_board].partition(",")
+        boards.setdefault(board.strip(), []).append({
+            "date": cells[i_date], "seconds": float(m.group(1)), "card": re.sub(r"^the same,?\s*", "", card.strip()),
+            "test": cells[i_test] if i_test is not None and i_test < len(cells) else ""})
+    return boards
 
 
 def link(repo, n, kind="issues"):
@@ -496,6 +528,21 @@ def render(k, repo):
             "most: " + ", ".join(f"{c}{' (upstream)' if v.get('upstream') else ''} {v.get('warnings', 0)}"
                                  for c, v in worst))
 
+    bt = k.get("boot_time")
+    if bt is None:
+        row("boot_time", "Boot time, power-on to `redox login:` (firmware, per board)", "–", True,
+            "rof docs/boot-time.md not readable")
+    elif bt:
+        rising = [b for b, v in bt.items() if len(v) > 1 and v[-1]["seconds"] > v[-2]["seconds"]]
+        row("boot_time", "Boot time, power-on to `redox login:` (firmware, per board)",
+            ", ".join(f"{b}: {v[-1]['seconds']:g} s" for b, v in bt.items()), not rising,
+            "; ".join(f"{b}: Test {v[-1]['test']} ({v[-1]['date']}, {v[-1]['card']})"
+                      + (f", before {v[-2]['seconds']:g} s" if len(v) > 1 else "")
+                      + f", best {min(x['seconds'] for x in v):g} s" for b, v in bt.items())
+            + (f"; **rising:** {', '.join(rising)}" if rising else "")
+            + "; goal: down ([rof #44](https://github.com/redox-rpi/rpi-open-firmware/issues/44), "
+            "[how measured](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-time.md))")
+
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]
     return table, "\n".join([
@@ -527,6 +574,8 @@ def main():
     ap.add_argument("--rev", default="origin/main")
     ap.add_argument("--req-rev", help="revision to read docs/requirements from (default: --rev)")
     ap.add_argument("--tests-repo", default="redox-rpi/pi-tests", help="repository with queue.md")
+    ap.add_argument("--fw-repo", default="redox-rpi/rpi-open-firmware", help="repository with docs/boot-time.md")
+    ap.add_argument("--fw-ref", default="redox-rpi", help="branch of --fw-repo")
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "process", "kpis.md"))
     ap.add_argument("--json", help="also write the raw values and the KPI table (key, name, value, ok, details)")
     ap.add_argument("--summary", action="store_true",
