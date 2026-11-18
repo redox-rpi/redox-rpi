@@ -26,7 +26,6 @@ index 58758304..fa7d89d7 100644
  //! - `/scheme/rpi-firmware/power_led`: the red power LED of the Pi 3B+,
  //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
  //!   expander, so only the firmware can switch it. Other boards do not have
- //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
 @@ -68,6 +72,8 @@ enum Handle {
      File(Vec<u8>),
      /// A setting opened for writing, by file name.
