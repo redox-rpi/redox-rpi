@@ -82,7 +82,7 @@ jobs:
         id: boot
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
-          scripts/qemu-raspi3b.sh --test --uboot ours --timeout 2400 --usb-net \
+          scripts/qemu-raspi3b.sh --daily --test --uboot ours --timeout 2400 --usb-net \
             --kernel upstream/kernel/build/aarch64/kernel \
             --expect "irq_bcm2836:INFO" \
             --expect "CPU activation complete: 4 CPUs online" \

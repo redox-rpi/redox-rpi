@@ -102,7 +102,7 @@ feature only after its test on a real Pi (see [Branches](#branches)).
 
 | Level | Needs | Command | Details |
 |---|---|---|---|
-| Kernel boot in QEMU | macOS or Linux, QEMU | `scripts/qemu-raspi3b.sh --test --kernel <kernel>` | [testing.md](docs/testing.md#automated-boot-test) |
+| Kernel boot in QEMU | macOS or Linux, QEMU | `scripts/qemu-raspi3b.sh --daily --test --kernel <kernel>` | [testing.md](docs/testing.md#automated-boot-test) |
 | Own image in QEMU, commands in the guest | Linux build host | `scripts/qemu-raspi3b.sh --image <harddrive.img> --run '<command>'` | [testing.md](docs/testing.md) |
 | Program start loop in QEMU (start crashes) | Linux build host | `scripts/qemu-run.sh 'for i in 1..=40; ls /; pwd; end'` | [debugging-random-crashes.md](docs/debugging-random-crashes.md) |
 | Real Pi 3B+ | Pi netbooted from your build host | `scripts/pi-test.py <pi-address> --manifest build/manifests/netboot-latest.toml --report report.md` | [netboot.md](docs/netboot.md), [pi-tests](https://github.com/redox-rpi/pi-tests/tree/main/reports) |
