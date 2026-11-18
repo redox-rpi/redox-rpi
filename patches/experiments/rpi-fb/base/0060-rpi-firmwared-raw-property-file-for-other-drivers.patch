@@ -15,16 +15,17 @@ diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.
 index 58758304..fa7d89d7 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
-@@ -23,6 +23,10 @@
- //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
- //!   expander, so only the firmware can switch it. Other boards do not have
- //!   this file.
+@@ -19,6 +19,10 @@
+ //!   changes and time at the minimum and maximum clock (ms) of the
+ //!   governor; writing `ondemand`, `performance` or
+ //!   `powersave` sets the mode
 +//! - `/scheme/rpi-firmware/property`: raw property messages for other
 +//!   drivers (`rpi-fbd`), so only this process uses the mailbox: write a
 +//!   whole message (little-endian 32-bit words), read the firmware's
 +//!   answer. Root only, not listed.
- //!
- //! At start it sets the ARM clock to its maximum; then the governor
+ //! - `/scheme/rpi-firmware/power_led`: the red power LED of the Pi 3B+,
+ //!   `on` or `off`; writing sets it. It hangs on the firmware's GPIO
+ //!   expander, so only the firmware can switch it. Other boards do not have
  //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
 @@ -68,6 +72,8 @@ enum Handle {
      File(Vec<u8>),
