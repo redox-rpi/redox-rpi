@@ -41,6 +41,10 @@ socdump = "source"
 # 165: bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils, 450 of
 # 450 starts; #40).
 diffutils = {}
+# grep: upstream's extrautils had it until its build of 2026-11-16; the one
+# of 2026-11-18 (source f5e8626a) dropped it for uutils-grep. `desktop`
+# needs it, and so do people at the shell (#554).
+uutils-grep = {}
 # curl comes from config/raspi3bp-http-client.toml, which
 # scripts/build-image.sh adds to every image but the Zero 2 W's.
 # `tone` writes test sound for /scheme/audio (tools/tone; base patch
