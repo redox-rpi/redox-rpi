@@ -1,0 +1,5 @@
+[packages]
+# TinyCC, built from recipes/wip/dev/lang/tcc (replaced by this experiment).
+tcc = "source"
+# Test sources, bench-gcc and timeit (tools/tcc-bench).
+tcc-bench = "source"

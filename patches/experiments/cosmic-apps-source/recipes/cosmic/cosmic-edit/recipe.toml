@@ -1,0 +1,39 @@
+[source]
+git = "https://github.com/pop-os/cosmic-edit.git"
+# The commit of upstream's binary package (repo cosmic-edit.toml).
+rev = "9dbaea370cb9f6373338c87125d03bb3e92fa589"
+
+[build]
+template = "custom"
+dependencies = [
+    "libonig",
+]
+script = """
+DYNAMIC_INIT
+# redox-rpi (experiment cosmic-apps-source): freedesktop-icons with our patch,
+# given to cargo as a [patch] in --config, so the app source stays as pinned.
+FDI="${COOKBOOK_BUILD}/freedesktop-icons"
+rm -rf "${FDI}"
+git clone -q https://github.com/pop-os/freedesktop-icons.git "${FDI}"
+git -C "${FDI}" checkout -q ab4c57b8e416c6af9297cb04d101889896fd9a92
+git -C "${FDI}" apply "${COOKBOOK_ROOT}/../../patches/experiments/cosmic-apps-source/freedesktop-icons-0001-keep-index-theme-in-memory-remember-missing-icons.patch"
+FDI_PATCH="patch.\\\"https://github.com/pop-os/freedesktop-icons\\\".cosmic-freedesktop-icons.path=\\\"${FDI}\\\""
+export RUSTONIG_DYNAMIC_LIBONIG=1
+cookbook_cargo --no-default-features --config "${FDI_PATCH}"
+
+mkdir -pv "${COOKBOOK_STAGE}/usr/share/ui/apps"
+cp -v "${COOKBOOK_RECIPE}/manifest" "${COOKBOOK_STAGE}/usr/share/ui/apps/30_cosmic-edit"
+#TODO: install with just?
+APPID="com.system76.CosmicEdit"
+mkdir -pv "${COOKBOOK_STAGE}/usr/share/applications/"
+cp -v "${COOKBOOK_SOURCE}/res/${APPID}.desktop" "${COOKBOOK_STAGE}/usr/share/applications/"
+mkdir -pv "${COOKBOOK_STAGE}/usr/share/metainfo/"
+cp -v "${COOKBOOK_SOURCE}/res/${APPID}.metainfo.xml" "${COOKBOOK_STAGE}/usr/share/metainfo/"
+mkdir -pv "${COOKBOOK_STAGE}/usr/share/icons/"
+cp -rv "${COOKBOOK_SOURCE}/res/icons/hicolor/" "${COOKBOOK_STAGE}/usr/share/icons/"
+"""
+
+[package]
+dependencies = [
+    "libxkbcommon",
+]

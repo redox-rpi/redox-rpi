@@ -1,0 +1,53 @@
+From e934c1493d6a7c29f6f515b6ccb28aa038994580 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 7 Nov 2026 08:41:05 +0000
+Subject: [PATCH] Return an error instead of panicking when RedoxFS writes
+
+RedoxFS commits a transaction when it opens a filesystem, and that commit
+writes when the allocator is due for a cleanup (header generation a
+multiple of ALLOC_GC_THRESHOLD). DiskOrFileEfi::write_at was
+unreachable!(), so the bootloader panicked on such a filesystem, even on
+a data partition it would not boot from. Pass the write on to DiskEfi,
+which returns EIO, and write into the buffer for an in-memory image. The
+partition scan then logs the error and tries the next partition.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/os/uefi/disk.rs | 21 +++++++++++++++++++--
+ 1 file changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/os/uefi/disk.rs b/src/os/uefi/disk.rs
+index 1de3062..c7c8dae 100644
+--- a/src/os/uefi/disk.rs
++++ b/src/os/uefi/disk.rs
+@@ -27,8 +27,25 @@ impl redoxfs::Disk for DiskOrFileEfi {
+         }
+     }
+ 
+-    unsafe fn write_at(&mut self, _block: u64, _buffer: &[u8]) -> syscall::Result<usize> {
+-        unreachable!()
++    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
++        // RedoxFS writes when it opens a filesystem whose allocator is due
++        // for a cleanup (every 1024 generations). Return the error instead
++        // of panicking, so the caller can skip that filesystem.
++        unsafe {
++            match self {
++                DiskOrFileEfi::Disk(disk_efi) => disk_efi.write_at(block, buffer),
++                DiskOrFileEfi::File(data) => {
++                    let start = (block * redoxfs::BLOCK_SIZE) as usize;
++                    match data.get_mut(start..start + buffer.len()) {
++                        Some(dest) => {
++                            dest.copy_from_slice(buffer);
++                            Ok(buffer.len())
++                        }
++                        None => Err(Error::new(EIO)),
++                    }
++                }
++            }
++        }
+     }
+ 
+     fn size(&mut self) -> syscall::Result<u64> {
+-- 
+2.53.0
+

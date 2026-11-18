@@ -1,0 +1,9 @@
+# The Rust model runtime rinfer and the assistant (#43). Small enough for
+# the network-boot image (with assistant-netboot); the model file and
+# llama.cpp are in the experiment assistant-model (SD-card image only), or
+# the model is fetched with `rinfer --download`.
+[packages]
+# Rust inference with candle (recipes/rinfer).
+rinfer = "source"
+# The tool layer (tools/assistant): show_time, list_files, make_folder.
+assistant = "source"

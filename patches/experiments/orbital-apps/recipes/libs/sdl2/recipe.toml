@@ -1,0 +1,175 @@
+# Upstream sdl2 without OpenGL: Mesa (with llvm21, 150+ MB) does not fit
+# the 256 MiB image. Software rendering into the Orbital window is enough
+# for Sopwith. Upstream's Orbital driver draws only through OSMesa, so the
+# source script adds a framebuffer backend (the window's own pixels) and
+# builds the OSMesa parts only with OpenGL.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/sdl2.git"
+branch = "redox-2.0.33"
+shallow_clone = true
+script = '''
+if ! grep -q "SDL draws into a buffer of its own window size" src/video/orbital/SDL_orbitalframebuffer.c; then
+patch -p1 <<'PATCH'
+--- a/src/video/orbital/SDL_orbitalframebuffer.c
++++ b/src/video/orbital/SDL_orbitalframebuffer.c
+@@ -1,16 +1,50 @@
+ #include "SDL_orbitalframebuffer.h"
++#include "SDL_orbitalvideo.h"
++#include <orbital.h>
+ 
+ int ORBITAL_CreateWindowFramebuffer(_THIS, SDL_Window * window,
+                                        Uint32 * format,
+                                        void ** pixels, int *pitch) {
++    // SDL draws into a buffer of its own window size. Orbital may give the
++    // window a different size (clamped to the screen), so the window's own
++    // pixels are written only in UpdateWindowFramebuffer, as far as they fit.
++    SDL_VideoData* video_data = _this->driverdata;
++    SDL_free(video_data->fb_pixels);
++    video_data->fb_w = window->w;
++    video_data->fb_h = window->h;
++    video_data->fb_pixels = SDL_calloc((size_t)window->w * window->h, 4);
++    if (video_data->fb_pixels == NULL) {
++        return SDL_OutOfMemory();
++    }
++    *format = SDL_PIXELFORMAT_ARGB8888;
++    *pixels = video_data->fb_pixels;
++    *pitch = window->w * 4;
+     return 0;
+ }
+ 
+ int ORBITAL_UpdateWindowFramebuffer(_THIS, SDL_Window* window,
+                                       const SDL_Rect* rects, int numrects) {
++    SDL_VideoData* video_data = _this->driverdata;
++    Uint32* dst = orb_window_data(video_data->orb_window);
++    int dst_w = orb_window_width(video_data->orb_window);
++    int dst_h = orb_window_height(video_data->orb_window);
++    int w = SDL_min(video_data->fb_w, dst_w);
++    int h = SDL_min(video_data->fb_h, dst_h);
++    int y;
++    if (dst == NULL || video_data->fb_pixels == NULL) {
++        return 0;
++    }
++    for (y = 0; y < h; y++) {
++        SDL_memcpy(dst + (size_t)y * dst_w,
++                   video_data->fb_pixels + (size_t)y * video_data->fb_w,
++                   (size_t)w * 4);
++    }
++    orb_window_sync(video_data->orb_window);
+     return 0;
+ }
+ 
+ void ORBITAL_DestroyWindowFramebuffer(_THIS, SDL_Window* window) {
+-
++    SDL_VideoData* video_data = _this->driverdata;
++    SDL_free(video_data->fb_pixels);
++    video_data->fb_pixels = NULL;
+ }
+\ No newline at end of file
+--- a/src/video/orbital/SDL_orbitalopengl.c
++++ b/src/video/orbital/SDL_orbitalopengl.c
+@@ -20,6 +20,8 @@
+ */
+ #include "../../SDL_internal.h"
+ 
++#if SDL_VIDEO_OPENGL
++
+ #include "SDL_orbitalopengl.h"
+ #include "SDL_orbitalvideo.h"
+ 
+@@ -144,3 +146,5 @@
+ 
+     video_data->mesa_buffer = buffer;
+ }
++
++#endif /* SDL_VIDEO_OPENGL */
+--- a/src/video/orbital/SDL_orbitalopengl.h
++++ b/src/video/orbital/SDL_orbitalopengl.h
+@@ -29,6 +29,8 @@
+ 
+ #include "../SDL_sysvideo.h"
+ 
++#if SDL_VIDEO_OPENGL
++
+ extern int ORBITAL_GL_LoadLibrary(_THIS, const char *path);      /* FIXME */
+ extern void *ORBITAL_GL_GetProcAddress(_THIS, const char *proc); /* FIXME */
+ extern void ORBITAL_GL_UnloadLibrary(_THIS);                     /* TODO */
+@@ -41,6 +43,10 @@
+ extern void ORBITAL_GL_DeleteContext(_THIS, SDL_GLContext context);
+ 
+ extern void ORBITAL_GL_SetSize(_THIS, int width, int height);
++#else
++#define ORBITAL_GL_SetSize(_this, width, height) ((void)0)
++#define ORBITAL_GL_DeleteContext(_this, context) ((void)0)
++#endif
+ 
+ #ifdef __cplusplus
+ }
+--- a/src/video/orbital/SDL_orbitalvideo.c
++++ b/src/video/orbital/SDL_orbitalvideo.c
+@@ -135,6 +135,7 @@
+     device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
+     device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;*/
+ 
++#if SDL_VIDEO_OPENGL
+     device->GL_LoadLibrary = ORBITAL_GL_LoadLibrary;
+     device->GL_GetProcAddress = ORBITAL_GL_GetProcAddress;
+     device->GL_UnloadLibrary = ORBITAL_GL_UnloadLibrary;
+@@ -144,6 +145,11 @@
+     device->GL_GetSwapInterval = ORBITAL_GL_GetSwapInterval;
+     device->GL_SwapWindow = ORBITAL_GL_SwapWindow;
+     device->GL_DeleteContext = ORBITAL_GL_DeleteContext;
++#else
++    device->CreateWindowFramebuffer = ORBITAL_CreateWindowFramebuffer;
++    device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
++    device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;
++#endif
+ 
+ 	device->free = ORBITAL_DeleteDevice;
+ 
+--- a/src/video/orbital/SDL_orbitalvideo.h
++++ b/src/video/orbital/SDL_orbitalvideo.h
+@@ -30,7 +30,9 @@
+ #endif
+ 
+ #include "../SDL_sysvideo.h"
++#if SDL_VIDEO_OPENGL
+ #include <GL/osmesa.h>
++#endif
+ 
+ /* Private display data */
+ 
+@@ -42,7 +44,11 @@
+     // Color buffer for mesa context
+     void* mesa_buffer;
+     // Mesa context
+-    OSMesaContext mesa_context;
++    void* mesa_context;
++    // Framebuffer without OpenGL: SDL draws here, sized as SDL's window
++    Uint32* fb_pixels;
++    int fb_w;
++    int fb_h;
+ } SDL_VideoData;
+ 
+ #ifdef __cplusplus
+PATCH
+# Link OSMesa only with OpenGL.
+sed -i "s/list(APPEND EXTRA_LIBS orbital OSMesa)/list(APPEND EXTRA_LIBS orbital)\n      if(SDL_OPENGL)\n        list(APPEND EXTRA_LIBS OSMesa)\n      endif()/" cmake/sdlchecks.cmake
+fi
+'''
+
+[build]
+template = "cmake"
+dependencies = [
+    "liborbital",
+    "zlib",
+]
+cmakeflags = [
+    "-DSDL_VIDEO=1",
+    "-DSDL_ORBITAL=1",
+    "-DREDOX=1",
+    "-DSDL_OPENGL=OFF",
+    "-DSDL_OPENGLES=OFF",
+    "-DSDL_KMSDRM=OFF",
+    "-DSDL_X11=OFF",
+    "-DSDL_WAYLAND=OFF",
+]

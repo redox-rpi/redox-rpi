@@ -1,14 +1,21 @@
 //! Who uses the CPU right now: samples `/scheme/sys/context` (the kernel's
-//! CPU time per thread, ACTTIME) and `/scheme/sys/stat` (busy and idle
-//! milliseconds per core) twice and prints the difference.
+//! CPU time per thread, ACTTIME), `/scheme/sys/stat` (busy and idle
+//! milliseconds per core) and `/scheme/sys/irq` (interrupts per line) twice
+//! and prints the difference.
 //!
 //! ```text
-//! cputop [-n rounds] [-l lines] [seconds]
+//! cputop [-n rounds] [-l lines] [-w] [seconds]
 //! ```
 //!
-//! The default is one round of 5 seconds and the 10 busiest threads. A
-//! thread at 100 % keeps one core busy. `ps` only shows the CPU time since
-//! a thread started, which does not say who is busy now.
+//! The default is one round of 5 seconds and the 10 busiest threads; `-w`
+//! sorts by wakeups instead. A thread at 100 % keeps one core busy. `ps`
+//! only shows the CPU time since a thread started, which does not say who
+//! is busy now.
+//!
+//! With kernel patch `cputop` `0001`, `/scheme/sys/cputime` has the CPU
+//! time per thread in nanoseconds and how often each thread was switched
+//! to (its wakeups); without it the times are in hundredths of a second
+//! and the wakeup column is empty.
 
 use std::collections::HashMap;
 use std::fs;
@@ -18,15 +25,31 @@ use std::time::{Duration, Instant};
 
 const CONTEXT: &str = "/scheme/sys/context";
 const STAT: &str = "/scheme/sys/stat";
+const CPUTIME: &str = "/scheme/sys/cputime";
+const IRQ: &str = "/scheme/sys/irq";
 
 /// One row of `/scheme/sys/context`: a thread.
 struct Thread {
     pid: String,
     stat: String,
     cpu: String,
-    /// ACTTIME in hundredths of a second.
+    /// CPU time in nanoseconds.
     time: u64,
+    /// How often the thread was switched to, if the kernel counts it.
+    switches: Option<u64>,
     name: String,
+}
+
+type Key = (String, String, usize);
+
+/// The key of a thread: PID, name and position among the rows with the
+/// same PID and name (the kernel lists a row per thread, sorted by PID).
+fn key<T>(map: &HashMap<Key, T>, pid: &str, name: &str) -> Key {
+    let mut n = 0;
+    while map.contains_key(&(pid.to_owned(), name.to_owned(), n)) {
+        n += 1;
+    }
+    (pid.to_owned(), name.to_owned(), n)
 }
 
 /// `HH:MM:SS.cc` to hundredths of a second.
@@ -37,9 +60,9 @@ fn parse_time(text: &str) -> Option<u64> {
     Some(((h * 60 + m) * 60 + s) * 100 + cc.parse::<u64>().ok()?)
 }
 
-/// The threads, keyed by PID, name and position among the rows with the
-/// same PID and name (the kernel lists a row per thread, sorted by PID).
-fn threads() -> Result<HashMap<(String, String, usize), Thread>, String> {
+/// The threads from `sys:context`, with the exact times from `sys:cputime`
+/// where the kernel has it.
+fn threads() -> Result<HashMap<Key, Thread>, String> {
     let text = fs::read_to_string(CONTEXT).map_err(|err| format!("{CONTEXT}: {err}"))?;
     let mut threads = HashMap::new();
     for line in text.lines().skip(1) {
@@ -70,16 +93,39 @@ fn threads() -> Result<HashMap<(String, String, usize), Thread>, String> {
             pid: fields[0].to_owned(),
             stat: fields[3].to_owned(),
             cpu: if at >= 6 { fields[4].to_owned() } else { "?".to_owned() },
-            time,
+            time: time * 10_000_000,
+            switches: None,
             name,
         };
-        let mut n = 0;
-        while threads.contains_key(&(thread.pid.clone(), thread.name.clone(), n)) {
-            n += 1;
+        threads.insert(key(&threads, &thread.pid, &thread.name), thread);
+    }
+    if let Ok(text) = fs::read_to_string(CPUTIME) {
+        let mut seen = HashMap::new();
+        for line in text.lines().skip(1) {
+            // PID CPU NANOS SWITCHES NAME
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let [pid, _cpu, nanos, switches, ref name @ ..] = fields[..] else { continue };
+            let (Ok(nanos), Ok(switches)) = (nanos.parse(), switches.parse()) else { continue };
+            let k = key(&seen, pid, &name.join(" "));
+            seen.insert(k.clone(), ());
+            if let Some(thread) = threads.get_mut(&k) {
+                thread.time = nanos;
+                thread.switches = Some(switches);
+            }
         }
-        threads.insert((thread.pid.clone(), thread.name.clone(), n), thread);
     }
     Ok(threads)
+}
+
+/// Interrupts per line (`N: count`).
+fn irqs() -> HashMap<String, u64> {
+    let text = fs::read_to_string(IRQ).unwrap_or_default();
+    text.lines()
+        .filter_map(|line| {
+            let (irq, count) = line.split_once(':')?;
+            Some((irq.trim().to_owned(), count.trim().parse().ok()?))
+        })
+        .collect()
 }
 
 /// Per core: busy (user + nice + kernel + irq) and idle milliseconds, and
@@ -99,11 +145,11 @@ fn cores() -> Result<Vec<(String, u64, u64, u64)>, String> {
         .collect())
 }
 
-fn round(seconds: f64, lines: usize) -> Result<(), String> {
-    let (threads_before, cores_before) = (threads()?, cores()?);
+fn round(seconds: f64, lines: usize, by_wakeups: bool) -> Result<(), String> {
+    let (threads_before, cores_before, irqs_before) = (threads()?, cores()?, irqs());
     let started = Instant::now();
     sleep(Duration::from_secs_f64(seconds));
-    let (threads_after, cores_after) = (threads()?, cores()?);
+    let (threads_after, cores_after, irqs_after) = (threads()?, cores()?, irqs());
     let elapsed = started.elapsed().as_secs_f64();
 
     println!("cputop: {elapsed:.1} s, {} threads", threads_after.len());
@@ -115,23 +161,51 @@ fn round(seconds: f64, lines: usize) -> Result<(), String> {
         println!("{name:<5} busy {share:>3} %  ({busy} ms busy, {idle} ms idle, {switches} switches/s)");
     }
 
-    let mut used: Vec<(u64, &Thread)> = threads_after
+    let mut lines_irq: Vec<(u64, &String)> = irqs_after
         .iter()
-        .map(|(key, t)| (t.time.saturating_sub(threads_before.get(key).map_or(0, |b| b.time)), t))
+        .map(|(irq, count)| (count.saturating_sub(irqs_before.get(irq).copied().unwrap_or(0)), irq))
+        .filter(|(delta, _)| *delta > 0)
         .collect();
-    used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.time.cmp(&a.1.time)));
-    println!("{:>6} {:>6} {:>12} {:<5} {:<4} NAME", "PID", "CPU%", "TOTAL", "STAT", "CPU");
-    for (delta, t) in used.iter().take(lines) {
-        let share = *delta as f64 / (elapsed * 100.0) * 100.0;
-        let total = t.time / 100;
+    lines_irq.sort_by(|a, b| b.0.cmp(&a.0));
+    if !lines_irq.is_empty() {
+        let total: u64 = lines_irq.iter().map(|(delta, _)| delta).sum();
+        let each: Vec<String> = lines_irq
+            .iter()
+            .map(|(delta, irq)| format!("{irq}: {:.0}", *delta as f64 / elapsed))
+            .collect();
+        println!("irq   {:.0}/s  ({})", total as f64 / elapsed, each.join(", "));
+    }
+
+    // CPU time (ns) and wakeups in the interval.
+    let mut used: Vec<(u64, Option<u64>, &Thread)> = threads_after
+        .iter()
+        .map(|(key, t)| {
+            let before = threads_before.get(key);
+            let time = t.time.saturating_sub(before.map_or(0, |b| b.time));
+            let wakeups = t.switches.map(|s| s.saturating_sub(before.and_then(|b| b.switches).unwrap_or(0)));
+            (time, wakeups, t)
+        })
+        .collect();
+    if by_wakeups {
+        used.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+    } else {
+        used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)).then_with(|| b.2.time.cmp(&a.2.time)));
+    }
+    println!("{:>6} {:>6} {:>7} {:>12} {:<5} {:<4} NAME", "PID", "CPU%", "WAKE/s", "TOTAL", "STAT", "CPU");
+    for (delta, wakeups, t) in used.iter().take(lines) {
+        let share = *delta as f64 / (elapsed * 1e9) * 100.0;
+        let wakeups = wakeups.map_or("-".to_owned(), |w| format!("{:.0}", w as f64 / elapsed));
+        let total = t.time / 10_000_000;
+        let seconds = total / 100;
         println!(
-            "{:>6} {:>6.1} {:>4}:{:02}:{:02}.{:01} {:<5} {:<4} {}",
+            "{:>6} {:>6.1} {:>7} {:>4}:{:02}:{:02}.{:01} {:<5} {:<4} {}",
             t.pid,
             share,
-            total / 3600,
-            total / 60 % 60,
-            total % 60,
-            t.time % 100 / 10,
+            wakeups,
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60,
+            total % 100 / 10,
             t.stat,
             t.cpu,
             t.name
@@ -141,18 +215,19 @@ fn round(seconds: f64, lines: usize) -> Result<(), String> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: cputop [-n rounds] [-l lines] [seconds]");
+    eprintln!("usage: cputop [-n rounds] [-l lines] [-w] [seconds]");
     process::exit(2);
 }
 
 fn main() {
-    let (mut rounds, mut lines, mut seconds) = (1u32, 10usize, 5.0f64);
+    let (mut rounds, mut lines, mut seconds, mut by_wakeups) = (1u32, 10usize, 5.0f64, false);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let value = |args: &mut dyn Iterator<Item = String>| args.next().and_then(|v| v.parse().ok());
         match arg.as_str() {
             "-n" => rounds = value(&mut args).unwrap_or_else(|| usage()),
             "-l" => lines = value(&mut args).map(|v: u32| v as usize).unwrap_or_else(|| usage()),
+            "-w" => by_wakeups = true,
             "-h" | "--help" => usage(),
             s => seconds = s.parse().ok().filter(|&s: &f64| s > 0.0).unwrap_or_else(|| usage()),
         }
@@ -161,7 +236,7 @@ fn main() {
         if i > 0 {
             println!();
         }
-        if let Err(err) = round(seconds, lines) {
+        if let Err(err) = round(seconds, lines, by_wakeups) {
             eprintln!("cputop: {err}");
             process::exit(1);
         }

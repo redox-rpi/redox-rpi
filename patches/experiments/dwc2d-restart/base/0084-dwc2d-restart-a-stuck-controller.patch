@@ -1,4 +1,4 @@
-From 05a389cd3b6ca668808fc7dd3baaebec91782e47 Mon Sep 17 00:00:00 2001
+From 7d274fcea385bc2a1380c924d3bd0b839fb60452 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 10:25:06 +0000
 Subject: [PATCH] dwc2d: restart a stuck controller (#151)
@@ -246,10 +246,10 @@ index 495f0848..fe8cfd3e 100644
                  }
                  if let Err(err) = self.scan_port(hub, port, &mut changes.removed) {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 7ebbee56..9de69c6c 100644
+index 266c2271..cac88fd5 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -390,6 +390,11 @@ impl Timer {
+@@ -402,6 +402,11 @@ impl Timer {
      }
  }
  
@@ -261,8 +261,8 @@ index 7ebbee56..9de69c6c 100644
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
-@@ -541,6 +546,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-     if keyboard.is_some() || irq_file.is_none() {
+@@ -569,6 +574,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     if keyboard.is_some() || mouse.is_some() || irq_file.is_none() {
          timer.arm(Duration::ZERO);
      }
 +    let mut restart_tries = 0u32;
@@ -270,13 +270,12 @@ index 7ebbee56..9de69c6c 100644
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
      events
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
-@@ -604,11 +611,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -636,10 +643,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  hotplug.fired();
                  usbdiag::step("scan");
                  let mut cycled = Vec::new();
 +                let mut restart = false;
-                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
-                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+                 if let Ok(request) = aside::cycle_request() {
                      let net = scheme.adapter_mut();
                      let request = request.trim();
 +                    restart = request == "restart";
@@ -285,8 +284,8 @@ index 7ebbee56..9de69c6c 100644
 +                        "restart" => None,
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
-                         _ => {
-@@ -630,11 +641,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         "mouse" => mouse.as_ref().and_then(|m| bus.port_of(m.address())),
+@@ -663,11 +674,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                                  println!("dwc2d: cycle: {err:?}");
                              }
                          }

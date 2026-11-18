@@ -1,0 +1,31 @@
+#!/usr/bin/ion
+# tcc experiment checks: run as `ion /usr/share/tcc-tests/run.ion`.
+# Every step prints its result; "TCC-TEST done" marks the end.
+let T = /usr/share/tcc-tests
+mkdir -p /tmp/tcc-test
+cd /tmp/tcc-test
+echo "== tcc -v"
+tcc -v
+echo "== hello (dynamic)"
+timeit tcc -o hello $T/hello.c && timeit ./hello
+echo "== hello (static)"
+# relibc's libc.a gives one error per relocation tcc does not know: keep
+# them in a file, show the first lines and the count.
+timeit tcc -static -o hello-static $T/hello.c ^> /tmp/tcc-static.err && timeit ./hello-static
+tail -1 /tmp/tcc-static.err
+head -4 /tmp/tcc-static.err
+wc -l /tmp/tcc-static.err
+echo "== tcc -run"
+timeit tcc -run $T/hello.c
+echo "== shebang: ./hallo.c run as a script (#!/usr/bin/tcc -run)"
+cp $T/hallo.c hallo.c
+chmod +x hallo.c
+echo hello | timeit ./hallo.c a b
+echo "rc=$?"
+echo "== bench, compiled by tcc"
+timeit tcc -bench -o bench $T/bench.c && timeit ./bench
+echo "== bench, compiled by gcc -O2 (cross)"
+timeit $T/bench-gcc
+echo "== self-hosting: tcc compiles tcc.c"
+timeit tcc -bench -DTARGETOS_Redox=1 -I/usr/src/tinycc -o tcc2 /usr/src/tinycc/tcc.c -lm -ldl -lpthread && timeit ./tcc2 -B/usr/lib/tcc -o hello2 $T/hello.c && ./hello2
+echo "TCC-TEST done"

@@ -16,18 +16,24 @@ the stub at EL2 with the MMU off and `x0` pointing to the devicetree. The
 stub does what the Redox bootloader does on aarch64 before the jump:
 
 1. EL2 (or EL3) to EL1, the same register values as the bootloader.
-2. Memory areas for the kernel: `/memory` from the devicetree as free
+2. The devicetree: copied into the stub image (page-aligned, reserved
+   with the image), its size padded with zeros to a multiple of 8. The
+   kernel reads it as `u32` words, `hwdesc_size / 4` of them. The firmware's
+   `totalsize` need not be a multiple of 4, and then the end of the strings
+   block was cut off: "failed to parse DTB: encountered end of data" on the
+   Zero 2 W ([#324](https://github.com/redox-rpi/redox-rpi/issues/324)).
+3. Memory areas for the kernel: `/memory` from the devicetree as free
    memory, minus everything below the end of the stub (firmware spin
    tables, stub, kernel, page tables, stack), the devicetree, the
    initramfs and `/memreserve/` entries.
-3. The initramfs from `/chosen` (`linux,initrd-start`, `-end`): the Redox
+4. The initramfs from `/chosen` (`linux,initrd-start`, `-end`): the Redox
    initfs, then, at the next 4 KiB boundary, an optional RedoxFS image. With
    one, it becomes the live disk (`DISK_LIVE_ADDR`, `DISK_LIVE_SIZE`,
    `REDOXFS_UUID` in the environment), as with `bootloader-live.efi`.
-4. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
+5. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
    words `NAME=value` with an upper-case `NAME` go into the environment,
    the firmware's own lower-case Linux options do not.
-5. A framebuffer from the firmware through the mailbox property interface
+6. A framebuffer from the firmware through the mailbox property interface
    ([#33](https://github.com/redox-rpi/redox-rpi/issues/33), `src/fb.rs`):
    the size the firmware chose for the display (from the monitor's EDID, or
    its fallback without one), 32 bits per pixel, the same pixel order and
@@ -36,9 +42,9 @@ stub does what the Redox bootloader does on aarch64 before the jump:
    kernel's boot messages use it unchanged. `RPI_FB=1280x720` in
    `cmdline.txt` asks for another size, `RPI_FB=off` for none. Without an
    answer from the firmware the boot goes on without a screen.
-6. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
+7. Page tables in the bootloader's layout: the first 8 GiB identity-mapped
    and at `PHYS_OFFSET`, the kernel at `KERNEL_OFFSET`.
-7. MMU on and the jump to the kernel's entry point with `KernelArgs`.
+8. MMU on and the jump to the kernel's entry point with `KernelArgs`.
 
 The kernel ELF is built into the stub (`REDOX_KERNEL` at build time); the
 kernel's linker script makes the file a flat image, so it runs in place.

@@ -23,8 +23,9 @@
   repository: experiment `prebuilt-programs`, with experiment
   `sigreturn-svc` ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)) so the signal return no longer overwrites x18,
   which these programs use. Pi test #45 passed (2026-10-29): nine
-  programs, 450 of 450 starts. Branch `prebuilt-sigreturn`, draft
-  PR #61. Installing them with `pkg` instead (branch `t40-prebuilt`,
+  programs, 450 of 450 starts. Merged with PR #61. Branch
+  `sigreturn-default` makes `sigreturn-svc` default patches, relibc `0013`
+  and kernel `0009` ([#127](https://github.com/redox-rpi/redox-rpi/issues/127)). Installing them with `pkg` instead (branch `t40-prebuilt`,
   2026-10-31): upstream's packages use our `libc.so` through
   `/lib/ld.so.1`, so the relibc version gap (ad0c479 against our c303135)
   does not matter for them. 71 of 82 packages resolve every library and
@@ -69,7 +70,7 @@
     (ctx-leak fix, #31) makes a process whose last thread ends with
     `pthread_exit` report SIGKILL instead of 0. Every image with main
     merged has it; without `0008` the test passes 20 of 20.
-    Fix: kernel experiment `self-exit-status` (branch `t-self-exit`,
+    Fix: kernel patch `0013` (was experiment `self-exit-status`,
     [#108](https://github.com/redox-rpi/redox-rpi/issues/108)); in QEMU
     10 of 10 runs exit 0 and the #31 leak stays fixed. Pi test 133
     passed (10 of 10 exit 0, no new suite failures).

@@ -1,0 +1,51 @@
+diff --git a/common/arg.cpp b/common/arg.cpp
+index e6d6450..04cbf05 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -47,6 +47,8 @@
+ #   endif
+ #elif defined(_AIX)
+ #include <sys/limits.h>
++#elif defined(__redox__)
++#include <limits.h>
+ #else
+ #include <sys/syslimits.h>
+ #endif
+diff --git a/common/download.cpp b/common/download.cpp
+index 6d4b5e5..7f8e72a 100644
+--- a/common/download.cpp
++++ b/common/download.cpp
+@@ -31,6 +31,8 @@
+ #   endif
+ #elif defined(_AIX)
+ #include <sys/limits.h>
++#elif defined(__redox__)
++#include <limits.h>
+ #else
+ #include <sys/syslimits.h>
+ #endif
+diff --git a/vendor/cpp-httplib/httplib.cpp b/vendor/cpp-httplib/httplib.cpp
+index 934d990..b560b73 100644
+--- a/vendor/cpp-httplib/httplib.cpp
++++ b/vendor/cpp-httplib/httplib.cpp
+@@ -9737,7 +9737,7 @@ bool Server::listen_internal() {
+       // sockets connected via WASAccept inherit flags NO_HANDLE_INHERIT,
+       // OVERLAPPED
+       socket_t sock = WSAAccept(svr_sock_, nullptr, nullptr, nullptr, 0);
+-#elif defined SOCK_CLOEXEC
++#elif defined SOCK_CLOEXEC && !defined(__redox__)
+       socket_t sock = accept4(svr_sock_, nullptr, nullptr, SOCK_CLOEXEC);
+ #else
+       socket_t sock = accept(svr_sock_, nullptr, nullptr);
+diff --git a/vendor/cpp-httplib/httplib.h b/vendor/cpp-httplib/httplib.h
+index 4ab2b5a..5c38ab5 100644
+--- a/vendor/cpp-httplib/httplib.h
++++ b/vendor/cpp-httplib/httplib.h
+@@ -367,6 +367,7 @@ using socklen_t = int;
+ #include <poll.h>
+ #include <pthread.h>
+ #include <sys/socket.h>
++#include <sys/time.h>
+ #include <sys/un.h>
+ #include <unistd.h>
+ 

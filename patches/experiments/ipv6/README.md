@@ -4,8 +4,15 @@ Step 2 of [#27](https://github.com/redox-rpi/redox-rpi/issues/27) (IPv6,
 v0.6.0). Applies after the [`multicast`](../multicast) experiment (file `needs`, which the relibc CI reads).
 
 ```bash
-scripts/build-image.sh --experiment multicast --experiment ipv6
+scripts/build-image.sh --experiment multicast --experiment ipv6   # multicast: patches are default now, it adds the mcast tool
 ```
+
+**With base `0095` (#216):** the LAN7800 receives only the multicast
+groups netstack writes to the adapter's `multicast` file (base `0085`).
+When this experiment is refreshed, netstack must add `33:33:00:00:00:01`
+and the solicited-node groups (`33:33:ff:…`) to that list in
+`EthernetLink::set_multicast`, or neighbor discovery and SLAAC stop
+working on the Pi 3B+.
 
 Base `0025`, `netstack`:
 
@@ -128,8 +135,8 @@ address (smoltcp kept only the last prefix). **Test #85** (2026-10-30,
 `v0.3.0-dev-217-g2d2f24c+xf552`, with base `0029`): **pass**. `eth0` has
 `fe80::…`, the Fritz!Box's global `2a02:590:1504:9901:…` and the unique
 local `fdeb:…` address, the default route goes via the Fritz!Box with the
-global address as source, `ping -6` from homenodellm answers, UDP to the
+global address as source, `ping -6` from the build server answers, UDP to the
 global and the unique local address works, and `net6 tcp` reaches a
 Cloudflare server over IPv6 (internet over IPv6). Same addresses and
 routes after 10 minutes.
-[Report](../../../docs/test-reports.md#2026-10-30-v030-dev-217-g2d2f24cxf552)
+[Report](https://github.com/redox-rpi/pi-tests/blob/main/reports/archive-before-v0.4.0-dev.md#2026-10-30-v030-dev-217-g2d2f24cxf552)

@@ -25,12 +25,14 @@ Our [#127](https://github.com/redox-rpi/redox-rpi/issues/127).
   signals arrive, and reports a register that changed. `sigregs --x18`
   includes x18 and prints `FAIL ...: x18 changed after N signals` on
   upstream; with the fix it prints `PASS`.
-- **Our fix:** experiment `sigreturn-svc`
-  ([PR #61](https://github.com/redox-rpi/redox-rpi/pull/61)). Two patches:
-  - relibc `0001`: the signal entry restores every register and ends with
+- **Our fix:** first experiment `sigreturn-svc`
+  ([PR #61](https://github.com/redox-rpi/redox-rpi/pull/61)), now default
+  patches on branch `sigreturn-default`. Two patches, which must come
+  together:
+  - relibc `0013`: the signal entry restores every register and ends with
     `svc #0x5352` instead of `br x18` (`redox-rt/src/arch/aarch64.rs`,
     `redox-rt/src/signal.rs`).
-  - kernel `0001`: that svc sets pc and x0 from the sigcontrol struct,
+  - kernel `0009`: that svc sets pc and x0 from the sigcontrol struct,
     enables signal delivery again and delivers a pending signal right away
     (`src/arch/aarch64/interrupt/exception.rs`, `src/context/signal.rs`).
     This also closes the window in which a second signal could arrive

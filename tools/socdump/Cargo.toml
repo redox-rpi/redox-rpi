@@ -1,0 +1,10 @@
+[package]
+name = "socdump"
+description = "Read and decode the Raspberry Pi's clock, PLL and GPIO registers (read-only)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+fdt = "0.1.5"
+libc = "0.2"

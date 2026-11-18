@@ -1,0 +1,8 @@
+[package]
+name = "pkg-persist"
+description = "Install pkg packages on the SD data partition and copy them into the RAM root at boot"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

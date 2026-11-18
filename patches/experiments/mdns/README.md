@@ -43,7 +43,8 @@ Needs the [`multicast`](../multicast) experiment first (joining
 Not done yet: probing for name conflicts (RFC 6762 section 8), goodbye
 packets at shutdown, known-answer suppression. On a Pi 3B+, the LAN7800
 multicast filter in `dwc2d` must pass `01:00:5e:00:00:fb` and
-`33:33:00:00:00:fb`: experiment `lan78xx-multicast` (dwc2d session).
+`33:33:00:00:00:fb`. Default base patches `0084` and `0095` do that now
+(a hash filter with the groups netstack joined).
 
 ## Test in QEMU
 

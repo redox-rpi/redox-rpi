@@ -174,11 +174,19 @@ Pi (bash, nano, vim, curl) do not start yet
 
 ```sh
 reboot                              # as root: restart
+poweroff                            # as root: stop and halt the Pi
 ```
 
-There is no real power-off yet: run `reboot`, and pull the power once the
-screen goes dark or the firmware messages appear again. Pulling the power
-while the Pi writes to the card can damage files.
+`poweroff` stops Redox and halts the Pi: the screen loses its signal, the
+ARM cores are off, and the board draws little power. The red power LED
+stays on, since the Pi has no switch of its own. From there:
+- **Start it again:** pull the power and plug it back in, or briefly
+  connect GPIO3 (header pin 5) to ground (pin 6), for example with a push
+  button on those two pins. GPIO3 is also the I2C bus's SDA line, so leave
+  other I2C devices off these pins.
+- **Unplug it:** safe once the screen has gone dark.
+
+Pulling the power while the Pi still writes to the card can damage files.
 
 ## Logging in over the network
 

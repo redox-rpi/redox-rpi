@@ -3,6 +3,10 @@
 For [#1](https://github.com/redox-rpi/redox-rpi/issues/1), the complete
 fix after relibc patch `0007`.
 
+**Default patches now** (relibc `0013`, kernel `0009`;
+[#127](https://github.com/redox-rpi/redox-rpi/issues/127), Pi test 45).
+The name is still accepted and does nothing.
+
 ## The bug
 
 relibc's aarch64 signal entry returned to the interrupted code with
@@ -30,8 +34,8 @@ register of the restore.
   INHIBIT_DELIVERY, and runs `signal_handler`, so a signal that became
   deliverable during the handler is delivered right away (what
   `arch_ret_to_sig` did before).
-- **sigregs**: `--x18` checks x18 too (without this experiment it fails
-  on Redox, so the stable checks run sigregs without it).
+- **sigregs**: `--x18` checks x18 too (it failed on Redox before these
+  patches).
 
 Kernel and relibc must come together: the new relibc on an old kernel
 would run `svc #0x5352` as a syscall.
@@ -39,6 +43,8 @@ would run `svc #0x5352` as a syscall.
 Not covered: when the trampoline was entered with signals explicitly
 disabled and a signal is pending at the end, the signal is no longer
 delivered at once; it stays pending until delivery is enabled again.
+
+Before it became default patches:
 
 ```bash
 scripts/build-image.sh --experiment sigreturn-svc

@@ -1,0 +1,8 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# zoneinfo is data only: the time zone files for /usr/share/zoneinfo.
+[build]
+template = "custom"
+script = """
+mkdir -p "${COOKBOOK_STAGE}/usr/share"
+cp -r "${COOKBOOK_SOURCE}/share/zoneinfo" "${COOKBOOK_STAGE}/usr/share/"
+"""

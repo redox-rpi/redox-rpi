@@ -1,0 +1,127 @@
+# Experiment desktop: Orbital with the COSMIC text editor and file manager
+# in the image, but not started at boot. The text console comes up as
+# without it; the command `desktop` (as root) starts Orbital on VT 3 and
+# switches to it. Super+F2 goes back to the console, Super+F3 to the
+# desktop again. Build after rpi-fb, orbital, orbital-apps and
+# cosmic-apps-source.
+
+# Experiment orbital starts Orbital at boot and stays on its VT: undo both.
+[[files]]
+path = "/usr/lib/init.d/20_orbital"
+data = """
+"""
+
+[[files]]
+path = "/usr/lib/init.d/30_console_switch"
+data = """
+inputd -A 2
+"""
+
+# Shown by login after every login on the console (userutils prints
+# /etc/motd); the image without this experiment has no motd.
+[[files]]
+path = "/etc/motd"
+data = """
+Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`.
+
+"""
+
+[[files]]
+path = "/usr/bin/desktop"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# Starts the desktop (Orbital) from the text console, or switches to it
+# when it already runs. It shows /usr/share/desktop/info.txt first, here
+# and after the login in a window (desktop-session), since the console's
+# text cannot be seen from the desktop. Orbital keeps running until the
+# next reboot. --yes is still accepted (it asked once), it changes nothing.
+# @args[1..] fails when there are no arguments, so skip the script's name.
+let skip = 1
+for arg in @args
+    if test $skip = 1
+        let skip = 0
+    else if test $arg != --yes && test $arg != -y
+        echo "usage: desktop"
+        exit 2
+    end
+end
+if test "$USER" != root
+    echo "desktop: run it as root (sudo desktop)"
+    exit 1
+end
+# Whether Orbital runs, from ps (test -e cannot stat its scheme, and ion
+# gives a pipeline the status of its first command, so no pipe here).
+fn orbital_runs
+    ps > /tmp/desktop.ps
+    grep /usr/bin/orbital /tmp/desktop.ps > /dev/null
+end
+if not orbital_runs
+    cat /usr/share/desktop/info.txt
+    echo "desktop: starting Orbital, its log goes to /tmp/desktop.log"
+    export VT=3
+    # &! runs it in the background, disowned: else ion waits for it before
+    # this script ends.
+    orbital orblogin /usr/bin/desktop-session &> /tmp/desktop.log &!
+    # Wait up to 30 s for it (ion has no `while not`).
+    let tries = 0
+    while test $tries -lt 30
+        if orbital_runs
+            break
+        end
+        sleep 1
+        let tries += 1
+    end
+    if not orbital_runs
+        echo "desktop: Orbital did not start, see /tmp/desktop.log"
+        exit 1
+    end
+end
+inputd -A 3
+echo "desktop: Super+F2 goes back to the console, Super+F3 to the desktop"
+"""
+
+# What the desktop is and how to get back, shown by desktop on the console
+# and in a window after the login (desktop-welcome).
+[[files]]
+path = "/usr/share/desktop/info.txt"
+data = """
+Redox desktop (beta)
+
+  Super+F2   back to the text console
+  Super+F3   back to the desktop
+             (or type desktop on the console)
+  Super+T    a terminal
+
+Known limits:
+- Slow: everything draws in software; dragging a
+  window costs much of a core.
+- Once started, the desktop cannot be stopped; its
+  memory (40 to 80 MB) comes back only with a reboot.
+- No browser, one screen resolution, no HDMI hotplug.
+
+"""
+
+# The session orblogin starts after the login: the info window, then the
+# launcher (the session ends when the launcher does).
+[[files]]
+path = "/usr/bin/desktop-session"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+orbterm /usr/bin/desktop-welcome &!
+launcher
+"""
+
+[[files]]
+path = "/usr/bin/desktop-welcome"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# clear: orbterm leaves a relibc log line at the top.
+clear
+cat /usr/share/desktop/info.txt
+echo "Press Enter to close this window."
+# head reads the line without echoing a variable name, as ion's read does.
+head -n 1 > /dev/null
+"""

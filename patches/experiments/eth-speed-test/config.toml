@@ -1,0 +1,6 @@
+# Test image for the eth-speed boot setting (#126): the link goes to
+# 100 Mbit/s after boot. Use together with --experiment eth-speed.
+
+[[files]]
+path = "/etc/eth-speed"
+data = "100\n"

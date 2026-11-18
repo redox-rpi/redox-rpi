@@ -1,0 +1,30 @@
+From cc1a83fee8277744a30290019baef520c8ea3abe Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 31 Oct 2026 15:05:22 +0000
+Subject: [PATCH] rpi-fbd: an interrupted event wait is not fatal
+
+---
+ drivers/graphics/rpi-fbd/src/main.rs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+index 179639a2..83fc0f75 100644
+--- a/drivers/graphics/rpi-fbd/src/main.rs
++++ b/drivers/graphics/rpi-fbd/src/main.rs
+@@ -251,7 +251,12 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let all = [Source::Scheme];
+     for event in all
+         .into_iter()
+-        .chain(event_queue.map(|e| e.expect("rpi-fbd: failed to get next event").user_data))
++        .chain(event_queue.filter_map(|e| match e {
++            Ok(e) => Some(e.user_data),
++            // The end of the DMA test thread can interrupt the wait.
++            Err(err) if err.is_interrupt() => None,
++            Err(err) => panic!("rpi-fbd: failed to get next event: {err}"),
++        }))
+     {
+         match event {
+             Source::Scheme => {
+-- 
+2.53.0
+

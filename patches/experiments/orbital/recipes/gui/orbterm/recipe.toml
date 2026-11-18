@@ -1,0 +1,28 @@
+# Experiment orbital (#33): orbterm with an opaque window. Upstream draws its
+# background with alpha 224 and asks Orbital for a transparent window, so
+# every redraw blends it over what is behind (#56: slow window moves on the
+# Pi). Built from source (config.toml: orbterm = "source"); the source script
+# sets alpha to 255 and drops WindowFlag::Transparent.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/orbterm.git"
+rev = "5cc7a2d8a50c3aeae4196a7b5661b5e36a23b0bb"
+script = """
+sed -i -e "s/let alpha = 224;/let alpha = 255;/" -e "/WindowFlag::Transparent,/d" src/console.rs
+grep -q "let alpha = 255;" src/console.rs
+! grep -q "WindowFlag::Transparent" src/console.rs
+"""
+
+[build]
+template = "custom"
+script = """
+DYNAMIC_INIT
+mkdir -pv "${COOKBOOK_STAGE}/usr/share/ui"
+cp -rv "${COOKBOOK_SOURCE}/apps" "${COOKBOOK_STAGE}/usr/share/ui/apps"
+
+cookbook_cargo
+"""
+
+[package]
+dependencies = [
+    "orbital"
+]

@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Stephan Zehrer <stephan@zehrer.net>
+Date: Thu, 5 Nov 2026 02:20:27 +0100
+Subject: [PATCH] sys:cputime: CPU time in nanoseconds and wakeups per thread
+
+sys:context rounds a thread's CPU time to hundredths of a second, and
+nothing counts how often a thread runs. At idle the second matters more
+than the first: a thread that wakes a thousand times a second uses
+little CPU time but keeps its core out of idle.
+
+Context gets a switch_count, raised each time the context is switched
+to. The new file sys:cputime lists, in the order of sys:context, the
+PID, the core it was last on, the CPU time in nanoseconds, the switch
+count and the name of each thread.
+---
+ src/context/context.rs    |  4 ++++
+ src/context/switch.rs     |  1 +
+ src/scheme/sys/cputime.rs | 29 +++++++++++++++++++++++++++++
+ src/scheme/sys/mod.rs     |  2 ++
+ 4 files changed, 36 insertions(+)
+ create mode 100644 src/scheme/sys/cputime.rs
+
+diff --git a/src/context/context.rs b/src/context/context.rs
+index f63da92..bddaa69 100644
+--- a/src/context/context.rs
++++ b/src/context/context.rs
+@@ -126,6 +126,9 @@ pub struct Context {
+     pub active_cpu_time: u128,
+     /// Amount of CPU time while being the sched context (see `currently_scheduled`)
+     pub sched_cpu_time: u128,
++    /// How often this context was context-switched to: its wakeups, which keep a core out of
++    /// idle even when they use little CPU time
++    pub switch_count: u64,
+     /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything outside
+     /// this set, and hence, this context can never run on CPUs outside it.
+     pub sched_affinity: LogicalCpuSet,
+@@ -231,6 +234,7 @@ impl Context {
+             switch_time: 0,
+             active_cpu_time: 0,
+             sched_cpu_time: 0,
++            switch_count: 0,
+             sched_affinity: LogicalCpuSet::all(),
+             inside_syscall: false,
+             syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index 5f99123..464654f 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -1219,6 +1219,7 @@ unsafe fn switch_to(
+         prev_context.active_cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+     }
+     next_context.switch_time = switch_time;
++    next_context.switch_count += 1;
+     if next_context.userspace {
+         percpu.stats.set_state(cpu_stats::CpuState::User);
+     } else {
+diff --git a/src/scheme/sys/cputime.rs b/src/scheme/sys/cputime.rs
+new file mode 100644
+index 0000000..0e080e3
+--- /dev/null
++++ b/src/scheme/sys/cputime.rs
+@@ -0,0 +1,29 @@
++use alloc::{string::String, vec::Vec};
++use core::fmt::Write;
++
++use crate::{context::contexts, sync::CleanLockToken, syscall::error::Result};
++
++/// CPU time and wakeups per thread, in the order of `sys:context`: the CPU time in nanoseconds
++/// (`sys:context` rounds it to hundredths of a second) and how often the thread was switched to.
++pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
++    let mut string = String::from("PID   CPU  NANOS                SWITCHES     NAME\n");
++    let mut contexts = contexts(token.downgrade());
++    let (contexts, mut token) = contexts.token_split();
++    for context_ref in contexts.iter() {
++        let context = context_ref.read(token.token());
++        let cpu = match context.cpu_id {
++            Some(cpu_id) => format!("{cpu_id}"),
++            None => "?".into(),
++        };
++        let _ = writeln!(
++            string,
++            "{:<6}{:<5}{:<21}{:<13}{}",
++            context.pid,
++            cpu,
++            context.active_cpu_time,
++            context.switch_count,
++            context.name
++        );
++    }
++    Ok(string.into_bytes())
++}
+diff --git a/src/scheme/sys/mod.rs b/src/scheme/sys/mod.rs
+index f4c0dba..2231a51 100644
+--- a/src/scheme/sys/mod.rs
++++ b/src/scheme/sys/mod.rs
+@@ -28,6 +28,7 @@ use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, StrOrBytes};
+ mod block;
+ mod context;
+ mod cpu;
++mod cputime;
+ mod exe;
+ mod fdstat;
+ mod iostat;
+@@ -72,6 +73,7 @@ const FILES: &[(&str, Kind)] = &[
+     ("block", Rd(block::resource)),
+     ("context", Rd(context::resource)),
+     ("cpu", Rd(cpu::resource)),
++    ("cputime", Rd(cputime::resource)),
+     #[cfg(feature = "sys_fdstat")]
+     ("fdstat", Rd(fdstat::resource)),
+     ("exe", Rd(exe::resource)),

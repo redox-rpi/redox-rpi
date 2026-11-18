@@ -1,0 +1,13 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# chaos is C on purpose: it exercises relibc's C side. No DYNAMIC_INIT, so
+# the cookbook's LDFLAGS link it statically against the libc.a of our
+# relibc recipe (like sigregs; dynamically linked programs fail at start
+# more often, docs/tasks.md T12).
+[build]
+template = "custom"
+dependencies = ["relibc"]
+script = """
+"${CC}" ${CFLAGS} ${CPPFLAGS} -O2 -Wall -o chaos "${COOKBOOK_SOURCE}/chaos.c" ${LDFLAGS} -lpthread
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp chaos "${COOKBOOK_STAGE}/usr/bin/chaos"
+"""

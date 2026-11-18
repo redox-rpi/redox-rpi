@@ -103,23 +103,33 @@ impl Schedule {
         }
     }
 
-    /// The first matching minute after `unix` (seconds), as Unix time.
-    /// None if nothing matches within ten years (such as February 30th).
-    pub fn next_after(&self, unix: u64) -> Option<u64> {
+    /// The first matching minute after `unix` (seconds), as Unix time, with
+    /// the fields matched against local time: `offset(t)` is how many
+    /// seconds local time is ahead of UTC at Unix time t. None if nothing
+    /// matches within ten years (such as February 30th).
+    ///
+    /// When the clocks go forward, the skipped times do not run; when they
+    /// go back, the repeated hour matches twice (timerd runs it once).
+    pub fn next_after(&self, unix: u64, offset: &dyn Fn(u64) -> i64) -> Option<u64> {
+        // Minutes of Unix time; each one is checked in local time.
         let mut minute = unix / 60 + 1;
         let limit = minute + 10 * 366 * 1440;
         while minute < limit {
-            let days = (minute / 1440) as i64;
-            if !self.day_matches(days) {
-                minute = (minute / 1440 + 1) * 1440;
+            let local = (minute * 60) as i64 + offset(minute * 60);
+            let local_minute = local.div_euclid(60);
+            let of_day = local_minute.rem_euclid(1440) as u64;
+            if !self.day_matches(local_minute.div_euclid(1440)) {
+                // To local midnight, but stop an hour early: the offset may
+                // change on the way.
+                let to_midnight = 1440 - of_day;
+                minute += if to_midnight > 120 { to_midnight - 60 } else { to_midnight };
                 continue;
             }
-            let hour = (minute / 60 % 24) as u32;
-            if !self.hour.has(hour) {
-                minute = (minute / 60 + 1) * 60;
+            if !self.hour.has((of_day / 60) as u32) {
+                minute += 60 - of_day % 60;
                 continue;
             }
-            if self.minute.has((minute % 60) as u32) {
+            if self.minute.has((of_day % 60) as u32) {
                 return Some(minute * 60);
             }
             minute += 1;
@@ -161,7 +171,19 @@ mod tests {
     const NOW: u64 = 1_793_175_300;
 
     fn next(schedule: &str, after: u64) -> String {
-        format_utc(Schedule::parse(schedule).unwrap().next_after(after).unwrap())
+        format_utc(Schedule::parse(schedule).unwrap().next_after(after, &|_| 0).unwrap())
+    }
+
+    /// Europe/Berlin in 2026: CEST (+2 h) from 29 March 01:00 UTC to
+    /// 25 October 01:00 UTC, CET (+1 h) otherwise.
+    fn berlin(t: u64) -> i64 {
+        if (1_774_746_000..1_792_890_000).contains(&t) { 7200 } else { 3600 }
+    }
+
+    /// The next run in Berlin local time, written as UTC plus offset.
+    fn next_berlin(schedule: &str, after: u64) -> String {
+        let due = Schedule::parse(schedule).unwrap().next_after(after, &berlin).unwrap();
+        format!("{} +{}", format_utc((due as i64 + berlin(due)) as u64), berlin(due) / 3600)
     }
 
     #[test]
@@ -185,11 +207,31 @@ mod tests {
     }
 
     #[test]
+    fn local_time() {
+        // NOW is 09:15 CET.
+        assert_eq!(next_berlin("30 3 * * *", NOW), "2026-10-29 03:30:00 +1");
+        assert_eq!(next_berlin("0 12 * * *", NOW), "2026-10-28 12:00:00 +1");
+        // Spring: 02:30 does not exist on 29 March, so the 30th.
+        let march = 1_774_652_400; // 2026-03-28 00:00 CET
+        assert_eq!(next_berlin("30 2 * * *", march), "2026-03-28 02:30:00 +1");
+        assert_eq!(next_berlin("30 2 * * *", march + 86_400), "2026-03-30 02:30:00 +2");
+        // Midnight just after the switch is not skipped.
+        assert_eq!(next_berlin("15 0 30 3 *", march), "2026-03-30 00:15:00 +2");
+        assert_eq!(next_berlin("0 4 * * *", march + 86_400), "2026-03-29 04:00:00 +2");
+        // Autumn: 02:30 local comes twice on 25 October, first in CEST.
+        let october = 1_792_879_200; // 2026-10-24 22:00 UTC, 25 Oct 00:00 CEST
+        let first = Schedule::parse("30 2 * * *").unwrap().next_after(october, &berlin).unwrap();
+        let second = Schedule::parse("30 2 * * *").unwrap().next_after(first, &berlin).unwrap();
+        assert_eq!(second - first, 3600);
+        assert_eq!(next_berlin("15 0 26 10 *", october), "2026-10-26 00:15:00 +1");
+    }
+
+    #[test]
     fn errors() {
         assert!(Schedule::parse("* * * *").is_err());
         assert!(Schedule::parse("60 * * * *").is_err());
         assert!(Schedule::parse("*/0 * * * *").is_err());
         assert!(Schedule::parse("0 0 0 * *").is_err());
-        assert_eq!(Schedule::parse("0 0 30 2 *").unwrap().next_after(NOW), None);
+        assert_eq!(Schedule::parse("0 0 30 2 *").unwrap().next_after(NOW, &|_| 0), None);
     }
 }

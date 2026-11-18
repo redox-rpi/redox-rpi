@@ -1,0 +1,9 @@
+[package]
+name = "icachetest"
+description = "Check that code written as data runs as written after it becomes executable (aarch64, redox-rpi #3)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Check USB mice and tablets in dwc2d (experiment usb-mouse) in QEMU,
+# Check USB mice and tablets in dwc2d (base 0059) in QEMU,
 # through QEMU's monitor: plug a usb-mouse in after boot, move it, press a
 # button, turn the wheel, switch its port off and on, unplug it; then the
 # same for a usb-tablet (absolute positions). dwc2d prints the events it
 # sends to inputd while /tmp/dwc2d-input-log exists.
 #
-# Needs an image built with --experiment usb-mouse. The host port for
+# Works with any image (base 0059 is a default patch). The host port for
 # devshd is 12323, or MOUSE_PORT=<port>.
 #
 # Usage:

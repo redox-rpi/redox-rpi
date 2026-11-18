@@ -1,0 +1,45 @@
+# Open firmware
+
+Replacing everything closed from Broadcom on the Pi, as far as possible
+([#230](https://github.com/redox-rpi/redox-rpi/issues/230)). That covers
+the boot firmware on the VPU (`bootcode.bin`, `start*.elf`), the ARM
+stub, what `start.elf` does at run time (mailbox, display), and the blobs
+of other chips such as Wi-Fi. Only the Boot ROM in the chip stays. We
+start with the Pi 3B+. It lives in its
+own repository,
+[redox-rpi/rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware)
+(GPLv2+). Its documentation is in the
+[rpi-open-firmware wiki](https://github.com/redox-rpi/rpi-open-firmware/wiki):
+
+- [Broadcom's firmware per Pi model](https://github.com/redox-rpi/rpi-open-firmware/wiki/Broadcom):
+  what `bootcode.bin`, `start*.elf`, `fixup*.dat` and the `armstub*` do,
+  and their variants on the Zero W, Zero 2 W, 3B+ and Pi 400.
+- [Boot chain by release](https://github.com/redox-rpi/rpi-open-firmware/wiki/Boot-chain):
+  how v0.4.0, v0.5.0 and the development card start, and the steps to no
+  Broadcom code after the Boot ROM.
+- [Our firmware](https://github.com/redox-rpi/rpi-open-firmware/wiki/Own-firmware),
+  [Pi test results](https://github.com/redox-rpi/pi-tests/blob/main/queue.md#done),
+  [rpi-open-firmware (2019)](https://github.com/redox-rpi/rpi-open-firmware/wiki/rpi-open-firmware-2019)
+  and [lk-overlay](https://github.com/redox-rpi/rpi-open-firmware/wiki/lk-overlay)
+  on our Pi.
+
+## State
+
+- Every redox-rpi image still boots with Broadcom's firmware.
+- On the test Pi only: the SD card's `bootcode.bin` is our boot selector.
+  Enter on the serial console opens our monitor (our SDRAM set-up, code
+  loaded over serial); otherwise Broadcom's `bootcode.bin` boots as before.
+  Passed on the Pi (2026-11-11), so firmware tests need no card swap.
+
+## In progress
+
+- M2: our VPU code starts the ARM in AArch64 (rpi-open-firmware PR #7,
+  Pi test row 332); our `armstub8` (PR #4).
+
+## Next
+
+- M2: load `armstub8`, U-Boot and the devicetree from the SD card.
+- M3 mailbox service, M4 HDMI, M5 network boot and 3D.
+- After M4: a boot status bar with a few status lines on HDMI, built
+  into the firmware ([#430](https://github.com/redox-rpi/redox-rpi/issues/430)).
+- Decision on a project of its own: [#333](https://github.com/redox-rpi/redox-rpi/issues/333).

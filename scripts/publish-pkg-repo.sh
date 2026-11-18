@@ -17,7 +17,8 @@
 #   build/tools/bin/pkgar-keys gen --plaintext \
 #       --skey ~/.config/redox-rpi/pkg-key/id_ed25519.toml \
 #       --pkey ~/.config/redox-rpi/pkg-key/id_ed25519.pub.toml
-# and never leaves the build host. The pkgar tool comes from
+# and never leaves the build host. The pkgar tool is installed on the first
+# run (also in the nightly clone) with
 #   cargo install --locked --root build/tools pkgar --version 0.2.4 --features cli
 #
 # Usage:
@@ -25,7 +26,8 @@
 #
 #   default packages: our patched upstream packages and our own tools that
 #   exist in the local repository; devshd is never published (unencrypted,
-#   for development images only)
+#   for development images only), and nothing from a build with a test-only
+#   experiment
 
 set -euo pipefail
 
@@ -46,14 +48,24 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ ${#packages[@]} -gt 0 ] || packages=(base base-initfs bootloader kernel relibc pkgutils
-    redox-fatfs2 reboot timesync)
-[ -x "$pkgar" ] || { echo "$pkgar missing, see the header of this script" >&2; exit 1; }
+    redoxfs pkg-persist redox-fatfs2 reboot timesync)
+[ -x "$pkgar" ] || cargo install -q --locked --root "$ROOT/build/tools" pkgar --version 0.2.4 --features cli
 [ -f "$key_dir/id_ed25519.toml" ] || { echo "no key in $key_dir, see the header of this script" >&2; exit 1; }
 build_pkey="$REDOX/build/id_ed25519.pub.toml"
 [ -f "$build_pkey" ] || { echo "$build_pkey missing, run scripts/build-image.sh" >&2; exit 1; }
 # Build ID of the newest image (its manifest), for repo.toml.
 manifest="$(ls -t "$ROOT"/build/manifests/*-latest.toml 2>/dev/null | head -1 || true)"
 release="$( [ -n "$manifest" ] && sed -n 's/^build_id = "\(.*\)"/\1/p' "$manifest" || true)"
+# Packages of a build with test-only experiments (diagnostics, see
+# config/test-experiments.conf) are never published.
+if [ -n "$manifest" ]; then
+    for exp in $(sed -n 's/^experiments = \[\(.*\)\]/\1/p' "$manifest" | tr -d '",'); do
+        if [ -f "$ROOT/patches/experiments/$exp/test-only" ]; then
+            echo "the last build has test-only experiment $exp; build with --release or --no-test-experiments first" >&2
+            exit 1
+        fi
+    done
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

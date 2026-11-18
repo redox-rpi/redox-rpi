@@ -27,19 +27,22 @@ filesystem; the same image boots on a Zero 2 W. Since
 [v0.3.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.3.0) programs
 start reliably, USB devices can be plugged in at any time, the SD card has a
 faster driver, the CPU clock follows the load (600 to 1400 MHz), and there
-are first drivers for GPIO, I2C and SPI. Next is
-[v0.4.0](https://github.com/redox-rpi/redox-rpi/milestone/3), boot and
-storage. See [docs/status.md](docs/status.md),
+are first drivers for GPIO, I2C and SPI. The current release is
+[v0.5.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.5.0): a game
+on the desktop, a C compiler on the Pi (TinyCC, beta), a startup sound and a
+volume command. See [docs/status.md](docs/status.md),
 [docs/known-issues.md](docs/known-issues.md) and [ROADMAP.md](ROADMAP.md).
 
 **Try it on a Pi 3 Model B+:** flash the image from the
 [latest release](https://github.com/redox-rpi/redox-rpi/releases) to a microSD
 card and log in as `root` / `password`.
 
-**Or in QEMU** on macOS or Linux (needs QEMU, curl and zstd):
+**Or in QEMU** on macOS or Linux (needs QEMU, curl, zstd and Rust): Redox's
+daily image with our kernel.
 
 ```sh
-scripts/qemu-raspi3b.sh
+scripts/build-kernel.sh
+scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel
 ```
 
 **For developers:** boot a Pi over the network from your own build server,
@@ -85,7 +88,8 @@ Help is welcome, also from your AI coding agent: [docs/tasks.md](docs/tasks.md)
 lists small, self-contained tasks, and [CONTRIBUTING.md](CONTRIBUTING.md)
 describes the workflow (clone, analyse, test, pull request) and how to run
 the automated tests in QEMU and on a real Pi. Please report problems with
-this fork here, not to the Redox OS project.
+this fork here, not to the Redox OS project. To chat, join the Matrix room
+[#redox-rpi:matrix.org](https://matrix.to/#/#redox-rpi:matrix.org).
 
 ## License
 

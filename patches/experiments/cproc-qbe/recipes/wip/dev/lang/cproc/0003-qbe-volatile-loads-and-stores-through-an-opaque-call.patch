@@ -1,0 +1,134 @@
+Subject: [PATCH] qbe: volatile loads and stores through an opaque call
+
+cproc rejected every volatile store ("volatile store is not yet
+supported") and compiled volatile loads like plain ones. QBE has no
+volatile accesses. A call to an empty, module-local function with the
+object's address keeps each access: QBE does not merge or drop memory
+accesses across a call, and an object whose address goes to a call stays
+in memory (a volatile local survives longjmp). Costs one call per access.
+
+---
+--- a/qbe.c
++++ b/qbe.c
+@@ -416,6 +416,23 @@
+ 	f->end = end;
+ }
+ 
++/* volatile: QBE has no volatile loads or stores. A call to an empty
++ * function that QBE cannot see into, with the object's address as its
++ * argument, keeps the access: QBE does not merge or drop memory accesses
++ * across a call, and an object whose address is passed to a call stays in
++ * memory (a volatile local survives longjmp). One call per access; the
++ * function is emitted once per translation unit, local to it. */
++static struct value vbarrier = {.kind = VALUE_GLOBAL, .u.name = "__cproc_volatile_barrier"};
++static bool vbarrierused;
++
++static void
++funcvbarrier(struct func *f, struct value *addr)
++{
++	vbarrierused = true;
++	funcinst(f, ICALL, 0, &vbarrier, NULL);
++	funcinst(f, IARG, ptrclass, addr, NULL);
++}
++
+ static void
+ funccopy(struct func *f, struct value *dst, struct value *src, unsigned long long size, int align)
+ {
+@@ -454,8 +471,6 @@
+ 	struct qbetype qt;
+ 	int bits;
+ 
+-	if (tq & QUALVOLATILE)
+-		error(&tok.loc, "volatile store is not yet supported");
+ 	if (tq & QUALCONST)
+ 		error(&tok.loc, "cannot store to 'const' object");
+ 	tp = t->prop;
+@@ -489,11 +504,13 @@
+ 		funcinst(f, qt.store, 0, v, lval.addr);
+ 		break;
+ 	}
++	if (tq & QUALVOLATILE)
++		funcvbarrier(f, lval.addr);
+ 	return r;
+ }
+ 
+ static struct value *
+-funcload(struct func *f, struct type *t, struct lvalue lval)
++funcload(struct func *f, struct type *t, enum typequal tq, struct lvalue lval)
+ {
+ 	struct value *v;
+ 	struct qbetype qt;
+@@ -504,6 +521,8 @@
+ 	case TYPEARRAY:
+ 		return lval.addr;
+ 	}
++	if (tq & QUALVOLATILE)
++		funcvbarrier(f, lval.addr);
+ 	qt = qbetype(t);
+ 	v = funcinst(f, qt.load, qt.base, lval.addr, NULL);
+ 	return funcbits(f, t, v, lval.bits);
+@@ -768,7 +787,7 @@
+ 	case EXPRIDENT:
+ 		d = e->u.ident.decl;
+ 		switch (d->kind) {
+-		case DECLOBJECT: return funcload(f, e->type, (struct lvalue){d->value});
++		case DECLOBJECT: return funcload(f, e->type, e->qual, (struct lvalue){d->value});
+ 		case DECLCONST:  return d->value;
+ 		default:
+ 			fatal("unimplemented declaration kind %d", d->kind);
+@@ -783,10 +802,10 @@
+ 	case EXPRBITFIELD:
+ 	case EXPRCOMPOUND:
+ 		lval = funclval(f, e);
+-		return funcload(f, e->type, lval);
++		return funcload(f, e->type, e->qual, lval);
+ 	case EXPRINCDEC:
+ 		lval = funclval(f, e->base);
+-		l = funcload(f, e->base->type, lval);
++		l = funcload(f, e->base->type, e->base->qual, lval);
+ 		t = e->type;
+ 		if (t->kind == TYPEPOINTER) {
+ 			if (t->base->kind == TYPEARRAY && t->base->size == 0) {
+@@ -834,7 +853,7 @@
+ 			return lval.addr;
+ 		case TMUL:
+ 			r = funcexpr(f, e->base);
+-			return funcload(f, e->type, (struct lvalue){r});
++			return funcload(f, e->type, e->qual, (struct lvalue){r});
+ 		case TSUB:
+ 			r = funcexpr(f, e->base);
+ 			return funcinst(f, INEG, qbetype(e->type).base, r, NULL);
+@@ -1540,3 +1559,13 @@
+ 		printf("z %llu ", d->type->size - offset);
+ 	puts("}");
+ }
++
++void
++emitvbarrier(void)
++{
++	if (!vbarrierused)
++		return;
++	fputs("function ", stdout);
++	emitname(&vbarrier);
++	puts("(l %p) {\n@start\n\tret\n}");
++}
+--- a/main.c
++++ b/main.c
+@@ -64,6 +64,7 @@
+ 			}
+ 		}
+ 		emittentativedefns();
++		emitvbarrier();
+ 	}
+ 
+ 	fflush(stdout);
+--- a/cc.h
++++ b/cc.h
+@@ -394,6 +394,7 @@
+ struct decl *stringdecl(struct expr *);
+ 
+ void emittentativedefns(void);
++void emitvbarrier(void);
+ 
+ /* scope */
+ 

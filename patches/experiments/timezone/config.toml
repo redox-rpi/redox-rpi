@@ -1,0 +1,10 @@
+[packages]
+zoneinfo = "source"
+
+# The system's time zone, as on Linux: /etc/localtime points to the zone
+# file. relibc takes the zone's name from the link, Rust programs (chrono)
+# read the file. Change the zone here; its file must be in tools/zoneinfo.
+[[files]]
+path = "/etc/localtime"
+data = "/usr/share/zoneinfo/Europe/Berlin"
+symlink = true

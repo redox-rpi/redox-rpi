@@ -1,0 +1,63 @@
+From e8d994df03efe206bce3a97d2a2dde9849c26faf Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 08:09:45 +0000
+Subject: [PATCH] inputd, scheme-utils: wait again when a signal interrupts the
+ scheme read
+
+A blocking scheme daemon's read of its scheme socket returns EINTR when
+a signal arrives while it waits; Blocking::process_requests_nonblocking
+then returns ControlFlow::Break. inputd treated that as unreachable and
+process_requests_blocking panicked, so the daemon died. In Pi test 329,
+`kill -STOP` then `kill -CONT` on inputd ended it ("scheme should be
+blocking"), and nothing got keyboard or mouse input until a reboot
+(redox-rpi #345).
+
+Nothing was read in that case, so both now simply wait again. This
+covers inputd and every daemon that uses process_requests_blocking
+(logd, randd, zerod, pcid, xhcid, rpi-firmwared, bcm2835-gpiod, -i2cd,
+-spid).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/inputd/src/main.rs   | 5 ++++-
+ scheme-utils/src/blocking.rs | 8 +++++---
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 4d849c8f..8fe6c440 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -612,7 +612,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+         scheme.has_new_events = false;
+         match handler.process_requests_nonblocking(&mut scheme)? {
+             ControlFlow::Continue(()) => {}
+-            ControlFlow::Break(()) => unreachable!("scheme should be blocking"),
++            // A signal interrupted the read (SIGCONT after SIGSTOP, for
++            // example): nothing was read, so wait again. This used to be
++            // `unreachable!`, and inputd died, taking all input with it.
++            ControlFlow::Break(()) => continue,
+         }
+ 
+         if let Some(vt) = scheme.pending_activate.take() {
+diff --git a/scheme-utils/src/blocking.rs b/scheme-utils/src/blocking.rs
+index 6b273535..4df1b2b1 100644
+--- a/scheme-utils/src/blocking.rs
++++ b/scheme-utils/src/blocking.rs
+@@ -101,9 +101,11 @@ impl<S: Deref<Target = Socket>> Blocking<S> {
+         loop {
+             match self.process_requests_nonblocking(&mut scheme)? {
+                 ControlFlow::Continue(()) => {}
+-                ControlFlow::Break(()) => {
+-                    panic!("process_requests_blocking should not be used on non-blocking schemes");
+-                }
++                // The read of a blocking scheme returns EINTR when a signal
++                // comes in while it waits (SIGCONT after SIGSTOP, for
++                // example). Nothing was read: wait again instead of
++                // panicking.
++                ControlFlow::Break(()) => {}
+             }
+         }
+     }
+-- 
+2.53.0
+

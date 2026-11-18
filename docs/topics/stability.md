@@ -47,9 +47,42 @@
   shell reads late (it keeps the input and retries). Real Pi: 20 of 20
   lines of 200 characters at full speed; QEMU: a line of 1050 characters
   4 of 7 runs panicked before, 0 after.
-  [Details](../../patches/experiments/serial-rx/README.md).
+  [Details](../../patches/experiments/serial-rx/README.md). 2026-11-01:
+  `0024` reworked so it applies to the newest upstream base too, where
+  upstream's own getty fix still stalls the output
+  (`docs/upstream/rebase.md`).
 
 ## In progress
+
+- [#108](https://github.com/redox-rpi/redox-rpi/issues/108) (branch `t108-self-exit-default`): kernel patch `0013`, before
+  experiment `self-exit-status`. Since kernel `0008` (#31 leak fix) a
+  thread that ends itself was reported as ForceKilled, so a process whose
+  last thread calls `pthread_exit` ended with SIGKILL instead of 0 (relibc
+  test `pthread/exit`). `0013` marks such a thread `exiting_itself` and
+  reports it as Dead; real kills stay ForceKilled, the leak fix stays.
+  QEMU and Pi test 133 passed as an experiment, Pi test 195 as the
+  default patch (pthread/exit 10 of 10 exit 0, no leak).
+
+- [#207](https://github.com/redox-rpi/redox-rpi/issues/207) (branch `tlb-switch-shootdown`): the chaos test's `threads`
+  round froze the whole Pi (test 237) and QEMU. The context switch waited
+  for a context lock with interrupts masked and without handling TLB
+  shootdowns (`RwLock::write_arc`), while the CPU holding the lock waited
+  for its shootdown acknowledgement. Kernel `0052` (default, PR #209)
+  handles shootdowns in that wait. QEMU: 600 `threads`
+  rounds pass; without it the first one freezes. On the Pi it froze
+  again, more rarely, in tests 238 and 240 (once in 7 runs). Test 241 ran
+  1360 rounds without a freeze, so #207 stays open for that.
+  Without the watches it froze again (row 379, 2 in 3 loops): likely a
+  livelock on spin's RwLock word. Kernel `0053` (PR #209) adds backoff to
+  every lock wait and shootdown handling to `upgrade()`; Pi row 384.
+  Experiment `kernel-tlb-debug` (debug only) prints each CPU's shootdown state and lock
+  waits longer than 3 s.
+  Upstream note in [docs/upstream/kernel.md](../upstream/kernel.md).
+
+- [#196](https://github.com/redox-rpi/redox-rpi/issues/196) chaos test (branch `chaos-test`): fault injection on
+  the Pi (`tools/chaos`, in C) and from the build host
+  (`scripts/chaos-host.py`), see [chaos.md](chaos.md). First finding:
+  [#205](https://github.com/redox-rpi/redox-rpi/issues/205), signals that never arrive.
 
 - [#158](https://github.com/redox-rpi/redox-rpi/issues/158) (PR #160, branch
   `pipe-write-all`): a blocking pipe write returned after 64 KiB, and
@@ -78,11 +111,36 @@
 - [#3](https://github.com/redox-rpi/redox-rpi/issues/3) (v0.4.0, branch `t3-icache`): nothing cleaned the data
   cache and invalidated the instruction cache after user code was loaded.
   Experiment [`icache-sync`](https://github.com/redox-rpi/redox-rpi/tree/t3-icache/patches/experiments/icache-sync) does it in the kernel on `mprotect` to
-  executable and at exec. QEMU: 0 of 700 starts fail; on one base built
-  with and without it (main merged, 2026-10-30) the loop is about 3 %
-  slower, within the host's noise. No known failure needs it: Pi test 28
-  had 0 of 1000 at 1400 MHz, the same as main without it (test 94: 0 of
-  3000). Pi test 127 measures the cost on the Pi with both builds.
+  executable and at exec (`0001`), and for executable file maps and page
+  faults that copy a frame (`0002`). **Pi test 162: the gap is real.**
+  Without it, the new stress test `icachetest` ran stale code in about a
+  third of the rounds on a fresh page and half on a reused one; with it,
+  0 on both boots, 0 of 1000 failed starts and no measurable cost. Pull
+  request #148; upstream note in `docs/upstream/kernel.md`. Found on the way: RedoxFS maps the old data of a freed disk block
+  (a file deleted or truncated, then a new one written), in QEMU too.
+
+- [#55](https://github.com/redox-rpi/redox-rpi/issues/55) (v0.7.0, branch `pty-sigint`): a Ctrl-C while a
+  program was still starting was lost, so Ctrl-C often seemed not to work
+  (over SSH a start can take seconds). Ion handed the terminal to the
+  program only after the exec, and procmgr dropped a signal that arrived
+  while ld.so loaded the program. Experiment
+  [`pty-sigint`](https://github.com/redox-rpi/redox-rpi/tree/pty-sigint/patches/experiments/pty-sigint)
+  patches Ion, procmgr and relibc. QEMU: SSH 22 of 22, devsh 10 of 10.
+  Pi test #80 passed (2026-10-30): devsh 20 of 20. Pull request #71.
+- [#86](https://github.com/redox-rpi/redox-rpi/issues/86) (v0.7.0, branch `serial-ctrlc`, on top of
+  `pty-sigint`): on the serial console a Ctrl-C right after Enter came only
+  when `sleep 30` ended. Timing, not the serial path: the SIGINT reached
+  Ion's own group before the job had the terminal, and Ion only noted it.
+  Ion patch `0002` passes it on to the job. Pi test #118 passed
+  (2026-10-30): serial 12 of 12 stopped within 0.1 s, devsh 10 of 10.
+  Pull request #100.
+- Left over from #86 (branch `ctrlc-raw`, on top of `serial-ctrlc`): a
+  Ctrl-C within about 0.03 s of Enter came while Ion's line editor had the
+  terminal in raw mode (ISIG off) and stayed a plain byte. ptyd patch
+  `0057` turns such an unread Ctrl-C into SIGINT when ISIG comes back, and
+  Ion patch `0003` keeps that SIGINT for the job. Pi test #131 passed
+  (2026-10-31): serial 19 of 19 stopped within 0.1 s, 15 of them at
+  0.01–0.03 s after Enter; devsh 10 of 10. Pull request open.
 
 ## Next
 

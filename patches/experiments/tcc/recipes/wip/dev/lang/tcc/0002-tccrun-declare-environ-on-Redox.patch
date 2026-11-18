@@ -1,0 +1,28 @@
+From c95c5b36dd901b78853f70a4077bfd48ae289a48 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 15:55:54 +0000
+Subject: [PATCH 2/4] tccrun: declare environ on Redox
+
+relibc declares environ in no header (glibc does in unistd.h with
+_GNU_SOURCE), so declare it as on the BSDs.
+---
+ tccrun.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/tccrun.c b/tccrun.c
+index 1003ea5d..5399c2a1 100644
+--- a/tccrun.c
++++ b/tccrun.c
+@@ -221,7 +221,8 @@ LIBTCCAPI int tcc_run(TCCState *s1, int argc, char **argv)
+ #if defined(__APPLE__)
+     extern char ***_NSGetEnviron(void);
+     char **envp = *_NSGetEnviron();
+-#elif defined(__OpenBSD__) || defined(__NetBSD__)  || defined(__FreeBSD__)
++#elif defined(__OpenBSD__) || defined(__NetBSD__)  || defined(__FreeBSD__) \
++    || defined(__redox__)
+     extern char **environ;
+     char **envp = environ;
+ #else
+-- 
+2.53.0
+
