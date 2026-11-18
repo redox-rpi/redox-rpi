@@ -25,8 +25,9 @@
   `ifconfig` showed the real MAC address. Test and branch images without
   the experiment still print zeros (Pi rows 345, 356, 401: "MAC zeros");
   that is the upstream placeholder, not a driver fault.
-  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): make it a
-  default netutils patch, so zeros would mean a real fault.
+  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): now default
+  netutils `0002` (branch `ifconfig-mac-default`), so zeros would mean a
+  real fault.
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
   ignored the DHCP name server (lan hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the

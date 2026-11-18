@@ -328,8 +328,8 @@ EOF
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
 # keep their old order (it decides the order in the manifest). pkgutils
-# and netutils only when an experiment patches them (pkg-hold,
-# ifconfig-mac); otherwise the image takes the upstream binary.
+# and netutils only when patches/<recipe>/ or an experiment has patches for
+# them (netutils, pkg-hold); otherwise the image takes the upstream binary.
 # patches/u-boot/ is for scripts/build-uboot.sh, not a Redox recipe (#394).
 recipes=(bootloader base relibc)
 while read -r name; do

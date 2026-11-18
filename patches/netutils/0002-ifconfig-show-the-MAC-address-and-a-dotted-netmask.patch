@@ -1,4 +1,4 @@
-From d7205a50f1680e7cebeb305e197f7b90811ff827 Mon Sep 17 00:00:00 2001
+From 0f6f10ac6f4c77a01dfa0191d41f744409dc62d2 Mon Sep 17 00:00:00 2001
 From: zehrer-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 16:35:40 +0100
 Subject: [PATCH] ifconfig: show the MAC address and a dotted netmask
@@ -103,5 +103,5 @@ index a79ceda..d3edc7e 100644
  **Dependencies:**
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
