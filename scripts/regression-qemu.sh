@@ -24,6 +24,10 @@
 # REGRESSION_OUTSIDE_NAME= (empty) to skip it offline, or pass
 # --outside-name <name> for another name.
 #
+# After the regression-set boot, checks that need a QEMU boot of their own run one after
+# the other, each skipped while its script is not in the clone:
+#   tcp-reset   #141: scripts/test-tcp-reset-read.sh (socket netdev, PR #454)
+#
 # One QEMU per clone (images/run.img is shared): run nothing else in QEMU in
 # this clone meanwhile. DEVSH_PORT and SSH_PORT pick the host ports
 # (default 12721, 12722) for parallel runs in different clones.
@@ -92,5 +96,43 @@ outside="${REGRESSION_OUTSIDE_NAME-static.redox-os.org}"
 [ -n "$manifest" ] && args+=(--manifest "$manifest")
 rc=0
 python3 scripts/regression-set.py "${args[@]}" "${pass[@]}" || rc=$?
+stop_qemu
+
+# Checks that need a QEMU boot of their own, after the first one has
+# stopped (one QEMU per clone). Each is skipped while its script is not in
+# this clone, so it starts with the PR that brings it. --only limits them
+# like the regression-set checks.
+only=()
+for i in "${!pass[@]}"; do
+    [ "${pass[$i]}" = --only ] && only+=("${pass[$((i + 1))]:-}")
+done
+own_header=""
+own_boot() { # name, guards, script, script args...
+    local name="$1" guards="$2" script="$3" word detail r=0
+    shift 3
+    if [ ${#only[@]} -gt 0 ] && ! printf '%s\n' "${only[@]}" | grep -qx "$name"; then
+        return 0
+    fi
+    if [ ! -x "$script" ]; then
+        word=SKIP detail="no $script in this clone ($guards)"
+    else
+        log "$name: own QEMU boot ($script)"
+        "$script" "$@" > "$out/$name.log" 2>&1 || r=$?
+        cp images/qemu-test.log "$out/$name-console.log" 2> /dev/null || true
+        detail="$(grep -aE '^(PASS|FAIL)' "$out/$name.log" | tail -1 || true)"
+        detail="${detail#PASS: }"; detail="${detail#FAIL: }"
+        detail="${detail:-exit $r, see $name.log}"
+        if [ "$r" = 0 ]; then word=PASS; else word=FAIL; rc=1; fi
+    fi
+    echo "$word $name: $detail"
+    if [ -z "$own_header" ]; then
+        printf '## Own QEMU boots\n\n| Check | Result | Detail |\n|---|---|---|\n' >> "$report"
+        own_header=yes
+    fi
+    echo "| $name | $word | ${detail//|//} |" >> "$report"
+}
+# #141: a read after a TCP reset returns the buffered data first (PR #454).
+own_boot tcp-reset "#141, #454" scripts/test-tcp-reset-read.sh --image "$image"
+
 log "regression set: $([ "$rc" = 0 ] && echo pass || echo FAIL) in $((SECONDS - start)) s with the boot; report $report"
 exit "$rc"
