@@ -149,6 +149,11 @@
 - [#217](https://github.com/redox-rpi/redox-rpi/issues/217) 2 of about 10
   boots on 2026-11-05 reached login without network (devshd's bind
   blocked); QEMU boot loop next.
+- **Quiet DHCP retries** ([#560](https://github.com/redox-rpi/redox-rpi/issues/560), base `0103`): an interface that
+  gets no answer in its first round is asked again every 30 s without
+  console messages (dwc2d's interface exists with no adapter, as on a Zero
+  2 W with nothing plugged in). Asking only with a link needs a link state
+  from the drivers; with hotplug ([#53](https://github.com/redox-rpi/redox-rpi/issues/53)).
 
 - [#26](https://github.com/redox-rpi/redox-rpi/issues/26) Wi-Fi step 5
   (branch `wifi-join`, on top of #81): after a WPA2-PSK join through the

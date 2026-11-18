@@ -1,0 +1,84 @@
+From 903834e6530d759aaf57d4b2dc071daaf15a128a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 18 Nov 2026 20:18:52 +0000
+Subject: [PATCH] dhcpd: ask again quietly on an interface that got no answer
+
+On a Zero 2 W with no network adapter, dwc2d still has its interface
+and dhcpd printed three "no offer" lines every 35 s on the boot
+console, for as long as the system ran. Now the first round on an
+interface still reports each attempt, then one line says that dhcpd goes
+on asking every 30 s without messages. A lease that comes later is
+reported as before; with -v every attempt is shown.
+---
+ dhcpd/src/main.rs | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index 5729940..174c966 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -1,4 +1,4 @@
+-use std::collections::BTreeMap;
++use std::collections::{BTreeMap, BTreeSet};
+ use std::fs::{File, OpenOptions};
+ use std::io::{ErrorKind, Read, Write};
+ use std::net::{SocketAddr, UdpSocket};
+@@ -428,7 +428,9 @@ const RETRY: Duration = Duration::from_secs(30);
+ /// Attempts per interface before waiting `RETRY`.
+ const ATTEMPTS: usize = 3;
+ 
+-fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
++/// One round of `ATTEMPTS` exchanges. `quiet`: no message per failed
++/// attempt (the interface already failed a round, see `watch`).
++fn try_lease(iface: &str, verbose: bool, quiet: bool) -> Option<Lease> {
+     for attempt in 1..=ATTEMPTS {
+         match dhcp(iface, REPLY_TIMEOUT, verbose) {
+             Ok(lease) => {
+@@ -439,6 +441,7 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+                 );
+                 return Some(lease);
+             }
++            Err(_) if quiet && !verbose => {}
+             Err(err) => eprintln!("dhcpd: {iface}: attempt {attempt}: {err}"),
+         }
+     }
+@@ -447,9 +450,15 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+ 
+ /// Gets a lease on every interface, also those that appear later, and keeps
+ /// one default route: the first wired interface with a lease, else Wi-Fi.
++///
++/// An interface that gets no answer in its first round is asked again every
++/// `RETRY` without messages: dwc2d's interface exists even with no adapter
++/// (a Zero 2 W with nothing plugged in), and a message every 35 s on the
++/// boot console helps no one. A lease that comes later is still reported.
+ fn watch(verbose: bool) -> ! {
+     let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
+     let mut failed: BTreeMap<String, Instant> = BTreeMap::new();
++    let mut silent: BTreeSet<String> = BTreeSet::new();
+     let mut default: Option<(String, Lease)> = None;
+     loop {
+         let mut ifaces = list_ifaces();
+@@ -461,12 +470,19 @@ fn watch(verbose: bool) -> ! {
+             if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
+                 continue;
+             }
+-            match try_lease(&iface, verbose) {
++            match try_lease(&iface, verbose, silent.contains(&iface)) {
+                 Some(lease) => {
+                     failed.remove(&iface);
++                    silent.remove(&iface);
+                     leases.insert(iface, lease);
+                 }
+                 None => {
++                    if silent.insert(iface.clone()) {
++                        eprintln!(
++                            "dhcpd: {iface}: no DHCP answer, asking again every {} s without messages",
++                            RETRY.as_secs()
++                        );
++                    }
+                     failed.insert(iface, Instant::now());
+                 }
+             }
+-- 
+2.53.0
+
