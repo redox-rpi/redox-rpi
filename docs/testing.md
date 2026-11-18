@@ -14,14 +14,24 @@ Latest daily Redox image, with our kernel:
 
 ```sh
 scripts/build-kernel.sh
-scripts/qemu-raspi3b.sh --kernel upstream/kernel/build/aarch64/kernel
+scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel
 ```
 
-Self-built image (after `scripts/build-image.sh` on the Linux host):
+`--daily` is needed: the daily image's own kernel panics on `raspi3b`
+([#550](https://github.com/redox-rpi/redox-rpi/issues/550)), so always
+boot it with `--kernel`.
+
+Self-built image (after `scripts/build-image.sh` on the Linux host). Without
+`--image` or `--daily` the script boots exactly this file and stops if it is
+missing:
 
 ```sh
-scripts/qemu-raspi3b.sh --image upstream/redox/build/aarch64/minimal/harddrive.img
+scripts/qemu-raspi3b.sh
+scripts/qemu-raspi3b.sh --image upstream/redox/build/aarch64/minimal/harddrive.img   # the same
 ```
+
+The script prints `image: …` before it boots, and `--test` names the image in
+its `PASS`/`FAIL` line.
 
 What happens:
 
@@ -40,7 +50,7 @@ on the Linux build host.
 ## Automated boot test
 
 ```sh
-scripts/qemu-raspi3b.sh --test --kernel upstream/kernel/build/aarch64/kernel \
+scripts/qemu-raspi3b.sh --daily --test --kernel upstream/kernel/build/aarch64/kernel \
     --expect "CPU activation complete: 4 CPUs online" --expect "redox login:"
 ```
 
