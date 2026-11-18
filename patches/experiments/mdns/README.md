@@ -1,15 +1,28 @@
-# Experiment: mDNS responder
+# mDNS responder (package `mdnsd`)
 
-[#37](https://github.com/redox-rpi/redox-rpi/issues/37), v0.8.0: the Pi
-answers as `redox-rpi.local` and announces its services with DNS-SD, so
-homenode, Matter and people find it without a fixed address.
+[#37](https://github.com/redox-rpi/redox-rpi/issues/37): the Pi answers as
+`redox-rpi.local` and announces its services with DNS-SD, so homenode,
+Matter and people find it without a fixed address. Later it carries the
+HomeNodeServer (Matter) on Redox.
+
+**Not in the release images.** `mdnsd` is a package in the redox-rpi
+package repository ([#439](https://github.com/redox-rpi/redox-rpi/issues/439)):
 
 ```bash
-scripts/build-image.sh --experiment multicast --experiment mdns
+pkg install mdnsd     # on an image with the redox-rpi repository (pkg-repo)
 ```
 
-Needs the [`multicast`](../multicast) experiment first (joining
-224.0.0.251 with `IP_ADD_MEMBERSHIP`).
+The package brings `/usr/bin/mdnsd` and its service file
+`/usr/lib/init.d/91_mdnsd.service`; it starts at the next boot. The name is
+`/etc/hostname`, else `redox-rpi`. `scripts/publish-pkg-repo.sh` publishes
+it after a build that has it. This experiment only puts it on an image, for
+tests and for that build:
+
+```bash
+scripts/build-image.sh --experiment mdns
+```
+
+The multicast patches it needs are default base patches now.
 
 - [`tools/mdnsd`](../../../tools/mdnsd): answers A queries for
   `<hostname>.local` with the address of `eth0`, and PTR, SRV and TXT

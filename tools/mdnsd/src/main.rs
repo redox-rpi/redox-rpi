@@ -6,7 +6,7 @@
 //!
 //! Usage: `mdnsd [-n <hostname>] [<service type>:<port>[:<path>]]...`, for
 //! example `mdnsd _devsh._tcp:2323 _ssh._tcp:22:/usr/bin/sshd`. The hostname
-//! defaults to `/etc/hostname`. Each service is announced as
+//! defaults to `/etc/hostname`, else `redox-rpi`. Each service is announced as
 //! `<hostname>.<service type>.local`. A service with a path counts only
 //! while that file exists (checked every 30 seconds), so one configuration
 //! fits images with and without the program; mdnsd announces again when
@@ -417,7 +417,7 @@ fn main() {
         .or_else(|| fs::read_to_string("/etc/hostname").ok())
         .map(|h| h.trim().to_string())
         .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "redox".into());
+        .unwrap_or_else(|| "redox-rpi".into());
     let mut responder = Responder {
         host: format!("{hostname}.local"),
         instance: hostname,
