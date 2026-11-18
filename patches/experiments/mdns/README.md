@@ -14,7 +14,8 @@ pkg install mdnsd     # on an image with the redox-rpi repository (pkg-repo)
 
 The package brings `/usr/bin/mdnsd` and its service file
 `/usr/lib/init.d/91_mdnsd.service`; it starts at the next boot. The name is
-`/etc/hostname`, else `redox-rpi`. `scripts/publish-pkg-repo.sh` publishes
+`/etc/hostname` (`redox` on a plain Redox image), else `redox-rpi`; the
+experiment sets it to `redox-rpi`. `scripts/publish-pkg-repo.sh` publishes
 it after a build that has it. This experiment only puts it on an image, for
 tests and for that build:
 

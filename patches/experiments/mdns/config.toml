@@ -4,3 +4,9 @@
 # build it before scripts/publish-pkg-repo.sh.
 [packages]
 mdnsd = "source"
+
+# Test images answer as redox-rpi.local (the Pi test steps use that name).
+# Installed as a package, mdnsd takes the system's /etc/hostname.
+[[files]]
+path = "/etc/hostname"
+data = "redox-rpi"
