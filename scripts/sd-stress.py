@@ -3,7 +3,7 @@
 
 Usage:
     scripts/sd-stress.py <host> [--port 2323] [--dir /scheme/data/stress]
-                         [--serial <tty> --serial-log <file>]
+                         [--serial [<tty>] --serial-log <file>]
                          [--big-mib 256] [--small 1000] [--cycles 5]
                          [--cycle-mib 32] [--report <file>]
                          [--note <text>] [--keep]
@@ -157,6 +157,24 @@ class SerialShell:
         pass
 
 
+
+def lab_value(key):
+    """A lab value as scripts/lab-env.sh reads it: the environment first,
+    then KEY=value lines in $REDOX_LAB_ENV or ~/.config/redox-rpi/lab.env."""
+    if os.environ.get(key):
+        return os.environ[key]
+    path = os.environ.get("REDOX_LAB_ENV") or os.path.expanduser("~/.config/redox-rpi/lab.env")
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return v.strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
 def hashes(sh, patterns, tries=3):
     """SHA-256 of the files matching the glob `patterns` on the Pi, as
     {path: hash}. Ion expands the globs, so the command lines stay short.
@@ -300,9 +318,16 @@ def main():
     parser.add_argument("--report")
     parser.add_argument("--note", default="")
     parser.add_argument("--keep", action="store_true")
-    parser.add_argument("--serial", help="the Pi's console tty, instead of devshd")
+    parser.add_argument("--serial", nargs="?", const="", metavar="TTY",
+                        help="the Pi's console tty, instead of devshd; without a value "
+                             "REDOX_PI_SERIAL from lab.env (scripts/lab-env.sh)")
     parser.add_argument("--serial-log", help="file the console output is appended to")
     args = parser.parse_args()
+    if args.serial == "":
+        args.serial = lab_value("REDOX_PI_SERIAL")
+        if not args.serial:
+            parser.error("--serial without a value needs REDOX_PI_SERIAL in the environment "
+                         "or in lab.env (scripts/lab-env.sh)")
     if args.serial and not args.serial_log:
         parser.error("--serial needs --serial-log")
 

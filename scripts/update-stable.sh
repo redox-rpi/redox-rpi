@@ -67,16 +67,14 @@ TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
 # Build server and test Pi addresses: scripts/lab-env.sh (lab.env).
 . "$ROOT/scripts/lab-env.sh"
-lab_need REDOX_BUILD_SERVER REDOX_PI
+lab_need REDOX_BUILD_SERVER REDOX_PI REDOX_PI_SERIAL
 SERVER="$REDOX_BUILD_SERVER"
 PI="$REDOX_PI"
 # The test Pi's serial console: REDOX_PI_SERIAL in lab.env, a by-path name,
 # because ttyUSB numbers move between adapters across host restarts (the
-# Zero's adapter became ttyUSB0 on 2026-11-19). Only printf writes to it:
-# stty can hang on some adapters.
-# Without it the script never types on a serial console: a guessed
-# /dev/ttyUSB0 may be another board's adapter.
-SERIAL_DEV="${SERIAL_DEV:-${REDOX_PI_SERIAL:-}}"
+# Zero's adapter became ttyUSB0 on 2026-11-19); no guessed default. Only
+# printf writes to it: stty can hang on some adapters.
+SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
 ISSUE_TITLE="Nightly: main fails on the Pi"
