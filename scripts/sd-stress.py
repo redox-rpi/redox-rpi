@@ -3,7 +3,7 @@
 
 Usage:
     scripts/sd-stress.py <host> [--port 2323] [--dir /scheme/data/stress]
-                         [--serial /dev/ttyUSB0 --serial-log <file>]
+                         [--serial <tty> --serial-log <file>]
                          [--big-mib 256] [--small 1000] [--cycles 5]
                          [--cycle-mib 32] [--report <file>]
                          [--note <text>] [--keep]
@@ -28,7 +28,8 @@ Program starts on the Pi can still fail now and then (T12), so a command
 whose output is incomplete runs again, up to three times.
 
 Give --serial-log, a file that something else (for example
-`cat /dev/ttyUSB0 >> logs/serial.log`) keeps appending the console to:
+`cat <tty> >> logs/serial.log`, with <tty> the Pi's console,
+REDOX_PI_SERIAL in lab.env) keeps appending the console to:
 after each reset the script then waits for the kernel's `kreset` and the
 new boot's `redox login:` there. devshd alone does not show a restart:
 it can answer during the shutdown, when the filesystem is already gone.

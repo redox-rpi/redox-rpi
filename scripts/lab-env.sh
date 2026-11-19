@@ -12,6 +12,9 @@
 #   REDOX_HTTP_BASE     base URL of the image server for people, without a
 #                       trailing slash, e.g. http://buildhost.lan:8080
 #   REDOX_SHELLY_URL    status URL of the Pi's power plug (read only)
+#   REDOX_PI_SERIAL     serial console device of the test Pi. Use a stable
+#                       name (/dev/serial/by-path/...): ttyUSB numbers change
+#                       when the host restarts or another adapter is plugged in
 #
 # Usage, in a bash script:
 #   . "$ROOT/scripts/lab-env.sh"
