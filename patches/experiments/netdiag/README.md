@@ -49,3 +49,14 @@ the file in it, as netstack does with `mac`.
   save`, a devsh command, `netdiag diff` after 4.9 s showed
   `network.usb_ecm/rx_frames +48`, `tx_frames +46`, `irqs +48`, the
   matching interrupt line `irq/50 +48`, and CPU time per process.
+- Pi 3B+ (pi-tests Test 512, `v0.6.0-dev-112-gc4cf59b2+x1339`, LAN7800):
+  the snapshot has `network.usb_lan78xx/adapter_3 lan7800 link 1 active`
+  and all counters. A 100 MiB download into `/scheme/null` (9.84 s,
+  10.7 MB/s) between `save` and `diff`: `rx_frames +73608`, `tx_frames
+  +11367`, `irqs` and `irq/50 +12462`, CPU time dwc2d +3.21 s and netstack
+  +5.44 s, no errors. No serial capture in that run (the logger had no
+  input), so no serial panic check.
+
+CPU time per name is a sum over processes with that name: when one exits
+between `save` and `diff` (a `login`), its line can go down a little.
+
