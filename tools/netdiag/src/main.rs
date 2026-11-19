@@ -42,11 +42,12 @@ fn add_stats(snap: &mut Snapshot, prefix: &str, text: &str) {
     }
 }
 
-/// `/scheme/sys/irq` lines `<line>: <count>` under `irq/`.
+/// `/scheme/sys/irq` lines `<line>: <count>` under `irq/`; lines that
+/// never fired are left out.
 fn add_irqs(snap: &mut Snapshot, text: &str) {
     for line in text.lines() {
         if let Some((irq, count)) = line.split_once(':') {
-            if count.trim().parse::<u64>().is_ok() {
+            if count.trim().parse::<u64>().is_ok_and(|n| n > 0) {
                 snap.insert(format!("irq/{}", irq.trim()), count.trim().to_owned());
             }
         }
@@ -63,6 +64,10 @@ fn add_cpu(snap: &mut Snapshot, text: &str) {
         let Some(time) = fields.iter().find_map(|f| parse_time(f)) else { continue };
         let Some(name) = fields.last() else { continue };
         let name = name.rsplit('/').next().unwrap_or(name);
+        // netdiag itself is a new process each time.
+        if name == "netdiag" {
+            continue;
+        }
         *sum.entry(name.to_owned()).or_default() += time;
     }
     for (name, time) in sum {
@@ -174,7 +179,7 @@ fn diff(old: &Snapshot, new: &Snapshot) -> Vec<String> {
         }
         match (before.parse::<i128>(), value.parse::<i128>()) {
             (Ok(a), Ok(b)) if key.starts_with("cpu/") => {
-                out.push(format!("{key} +{:.2} s", (b - a) as f64 / 100.0));
+                out.push(format!("{key} {:+.2} s", (b - a) as f64 / 100.0));
             }
             (Ok(a), Ok(b)) => out.push(format!("{key} {a} -> {b} ({:+})", b - a)),
             _ => out.push(format!("{key} {before} -> {value}")),
@@ -215,7 +220,7 @@ mod tests {
     fn stats_irq_and_cpu() {
         let mut s = Snapshot::new();
         add_stats(&mut s, "network.usb", "rx_frames 12\nadapter_4 lan7800 link 1 active\n");
-        add_irqs(&mut s, "  9: 1200\n189: 7\nbad line\n");
+        add_irqs(&mut s, "  9: 1200\n189: 7\n190: 0\nbad line\n");
         add_cpu(
             &mut s,
             "PID   PGID  PPID  STAT  CPU  AFFINITY  ACTTIME      SCHTIME  MEM  NAME\n\
@@ -227,6 +232,7 @@ mod tests {
         assert_eq!(s["network.usb/adapter_4"], "lan7800 link 1 active");
         assert_eq!(s["irq/9"], "1200");
         assert_eq!(s["irq/189"], "7");
+        assert!(!s.contains_key("irq/190"));
         assert_eq!(s["cpu/bcmgenetd"], "304");
         assert_eq!(s["cpu/netstack"], "6100");
     }

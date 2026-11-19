@@ -9,7 +9,7 @@ problem (#92, #119, #494, #540), instead of numbers collected by hand.
   `/scheme/network.<x>/stats`, one `name value` per line, taken at open.
   Drivers without it have no `stats` file (ENOENT).
 - **base `0101`** (dwc2d): the counters of `dwc2d-netstats` in
-  `/scheme/network.usb/stats` (same names as `/tmp/dwc2d-netstats`), plus
+  `/scheme/network.usb_<adapter>/stats` (same names as `/tmp/dwc2d-netstats`), plus
   one line per adapter, `adapter_<address> <kind> link <0|1> [active]`
   (the link is kept up to date only for the RTL815x).
 - **`tools/netdiag`** (in `config.toml`):
@@ -35,6 +35,17 @@ process with CPU time close to the elapsed seconds is the limit.
 bcmgenetd (Pi 400) gets its `stats()` in experiment `genet-stats`, on top
 of `pi400`.
 
+Build: `--experiment dwc2d-netstats --experiment netdiag` (build-image.sh
+does not follow `needs`).
+
+A plain open of `/scheme/network.<x>/stats` (as `cat` does) fails with
+ENODEV on these schemes; `netdiag` opens the scheme root as a directory and
+the file in it, as netstack does with `mac`.
+
 ## Tests
 
 - Host: `cargo test` in `tools/netdiag` (parsing and diff).
+- QEMU raspi3b (`v0.6.0-dev-111-g394ca4a9+x1339`, CDC Ethernet): `netdiag
+  save`, a devsh command, `netdiag diff` after 4.9 s showed
+  `network.usb_ecm/rx_frames +48`, `tx_frames +46`, `irqs +48`, the
+  matching interrupt line `irq/50 +48`, and CPU time per process.
