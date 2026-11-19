@@ -74,6 +74,32 @@ fn read(path: &str) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
+/// A file inside a network scheme. A plain open of the whole path fails
+/// with ENODEV there, so as netstack does: open the scheme root as a
+/// directory, then the file in it.
+fn read_scheme_file(scheme: &str, file: &str) -> Option<String> {
+    use std::ffi::CString;
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    let root = CString::new(format!("/scheme/{scheme}")).ok()?;
+    let name = CString::new(file).ok()?;
+    // SAFETY: plain libc calls with valid C strings; each fd is owned once.
+    unsafe {
+        let dir = libc::open(root.as_ptr(), libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC);
+        if dir < 0 {
+            return None;
+        }
+        let dir = fs::File::from_raw_fd(dir);
+        let fd = libc::openat(std::os::fd::AsRawFd::as_raw_fd(&dir), name.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
+        if fd < 0 {
+            return None;
+        }
+        let mut text = String::new();
+        fs::File::from_raw_fd(fd).read_to_string(&mut text).ok()?;
+        Some(text)
+    }
+}
+
 fn take() -> Snapshot {
     let mut snap = Snapshot::new();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
@@ -84,7 +110,7 @@ fn take() -> Snapshot {
     schemes.retain(|name| name.starts_with("network."));
     schemes.sort();
     for scheme in schemes {
-        match read(&format!("/scheme/{scheme}/stats")) {
+        match read_scheme_file(&scheme, "stats").or_else(|| read(&format!("/scheme/{scheme}/stats"))) {
             Some(text) => add_stats(&mut snap, &scheme, &text),
             None => {
                 snap.insert(format!("{scheme}/stats"), "none".to_owned());
