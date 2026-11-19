@@ -52,6 +52,8 @@ uutils-grep = {}
 tone = "source"
 # `volume` shows, sets and keeps the volume (tools/volume, #336).
 volume = "source"
+# `audiotop`: live view of the audio driver counters (tools/audiotop, #565).
+audiotop = "source"
 
 # Startup sound (#292): `tone chime`, our own chord, plays once when audiod
 # is up, in the background (oneshot_async), so the boot does not wait for
