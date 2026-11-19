@@ -1,0 +1,8 @@
+[package]
+name = "netdiag"
+description = "Network diagnosis: driver counters, interfaces, interrupts and CPU time per process, as a snapshot and as a difference to a saved one"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
