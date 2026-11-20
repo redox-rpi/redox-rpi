@@ -127,9 +127,11 @@ def stats_text(data, st):
 
 def hw_cursor(out):
     """The cursor plane's position from vc4shot's read-back of the HVS list:
-    the 64x64 plane with alpha."""
+    the plane with alpha (64x64, or scaled)."""
     for line in out:
-        if "vc4shot: plane" in line and "64" in line and "alpha: true" in line:
+        # The only plane with alpha; 64x64, or larger when vc4d scales
+        # (vc4d-scale: 96x96 on 1080p).
+        if "vc4shot: plane" in line and "alpha: true" in line:
             m = re.search(r"x: (\d+), y: (\d+)", line)
             if m:
                 return m.groups()
