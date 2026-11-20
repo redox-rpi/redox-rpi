@@ -16,8 +16,4 @@ envs = { VC4D_MODE = "write" }
 type = "notify"
 """
 
-# vc4d's trace (redox-rpi#563): a CSV time series of damage, flips, display
-# lists and HVS frames in /var/log/vc4d-trace.csv. Test images only.
-[[files]]
-path = "/etc/vc4d-trace"
-data = ""
+# vc4d's trace (/etc/vc4d-trace) is off here: experiment vc4d-trace turns it on.
