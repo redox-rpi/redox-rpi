@@ -16,10 +16,24 @@ scheme"). The first ones:
     time, errors by kind and SDHSTS bit, retries, recoveries, re-inits,
     failed requests, and the last error with its age.
 
+- **driver-network:** the `NetworkAdapter` trait gets `status()`, which
+  returns `None` by default. `NetworkScheme` serves `/scheme/network.*/status`.
+- **dwc2d** (`/scheme/network.usb_*/status`, Pi 0-3 USB and network,
+  patch `0002`):
+  - the controller: GSNPSID, channels, GAHBCFG, GINTSTS, GINTMSK, HPRT0
+    (connected, enabled, power, speed) and HFNUM;
+  - channel results since start by HCINT bit (complete, stall, NAK, NYET,
+    transaction error, babble, AHB error, data toggle), timeouts and
+    interrupts taken;
+  - the network: MAC, the adapter in use, every adapter with link and
+    rank, multicast, and frames and bytes each way;
+  - the devices on the bus (address, vendor:product, class, speed, hub).
+
 Reading the file reads registers only. It doesn't write, wait or log.
 
 ## Test
 
-- QEMU `raspi3b`: `cat /scheme/disk.mmc/status` after boot.
+- QEMU `raspi3b`: `cat /scheme/disk.mmc/status` and the network scheme's
+  `status` after boot.
 - Pi 3B+: read it at idle and after a large read from the card, and check
   that the counters grow and the clock matches the boot line.
