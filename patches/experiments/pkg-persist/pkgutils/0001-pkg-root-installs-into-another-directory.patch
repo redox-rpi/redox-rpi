@@ -9,13 +9,13 @@ The library already takes an install path; only the command line fixed it to /. 
  1 file changed, 6 insertions(+)
 
 diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
-index 007396a..9ca9dc3 100644
+index d040f9e..69f728a 100644
 --- a/pkg-cli/src/main.rs
 +++ b/pkg-cli/src/main.rs
-@@ -28,6 +28,10 @@ struct Cli {
-     /// Do not try to preserve locally changed files
+@@ -40,6 +40,10 @@ struct Cli {
+     /// Install to home dir, experimental
      #[arg(long, global = true)]
-     nocheck: bool,
+     user: bool,
 +    /// Install into this directory instead of /, with its own package list,
 +    /// etc/pkg.d and etc/pkg/hold (e.g. a data partition that survives a reset)
 +    #[arg(long, global = true, value_name = "DIR")]
@@ -23,12 +23,12 @@ index 007396a..9ca9dc3 100644
  }
  
  #[derive(Clone, Debug, Subcommand)]
-@@ -119,6 +123,8 @@ fn main() {
-     } else {
-         ("/tmp/pkg_install", "x86_64-unknown-redox")
+@@ -167,6 +171,8 @@ fn main() {
+             )
+         }
      };
-+    let root = args.root.clone();
-+    let install_path = root.as_deref().unwrap_or(install_path);
++    // --root wins over the default (and over --user).
++    let install_path = args.root.clone().map(PathBuf::from).unwrap_or(install_path);
      let color_support_stdout = is_tty(&io::stdout());
      let color_support_stderr = is_tty(&io::stderr());
      callback.set_interactive(color_support_stdout);

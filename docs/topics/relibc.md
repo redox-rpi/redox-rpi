@@ -121,9 +121,9 @@
 - [#43](https://github.com/redox-rpi/redox-rpi/issues/43) lost wakeups in `thread::park` and `pthread_cond_*`: a kernel
   race, not relibc. `FUTEX_WAIT` compared the word before it queued itself
   under the lock `FUTEX_WAKE` takes, so a wake on another CPU in between
-  was lost. Upstream fixed it on 2026-10-27 (`57ccc8f`, `5805059`), after
-  our pin; experiment `futex-wait-lock` (branch `t-futex-wait-lock`)
-  backports it. New test `pthread/cond_stress`: QEMU 3 of 21 runs lose a
+  was lost. Upstream fixed it on 2026-10-27 (`57ccc8f`, `5805059`); the
+  kernel pin has it since the upstream bump of 2026-11-20 (#309), so
+  experiment `futex-wait-lock`, which backported it, is gone. New test `pthread/cond_stress`: QEMU 3 of 21 runs lose a
   wakeup without, 0 of 41 with it. Pi test #98 queued.
 - The static tests and statically linked C programs link the toolchain's
   `libc.a` (prefix sysroot, built 2026-10-24), not the relibc of the
@@ -181,9 +181,10 @@ commits in `config/upstream.lock`.
     also needs `0008`/`0009`.
   - Not done: `SEGV_ACCERR`, and SIGBUS for alignment faults. The kernel
     passes only the exception class, not the fault status code.
-- **Lost futex wakeups, kernel** (experiment `futex-wait-lock`,
-  [#43](https://github.com/redox-rpi/redox-rpi/issues/43)). No report needed: upstream kernel `57ccc8f` and `5805059`
-  (2026-10-27) fix it, and our experiment backports them.
+- **Lost futex wakeups, kernel**
+  ([#43](https://github.com/redox-rpi/redox-rpi/issues/43)). No report needed: upstream kernel `57ccc8f` and `5805059`
+  (2026-10-27) fix it; our kernel pin has them since the bump of
+  2026-11-20 (#309), and the backport experiment `futex-wait-lock` is gone.
   - Broken in our pin: `FUTEX_WAIT` compared the word before it queued
     itself under the lock `FUTEX_WAKE` takes. With more than one CPU, a
     wake in between was lost (hangs in `thread::park`, `pthread_cond_*`).
