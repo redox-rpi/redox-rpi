@@ -57,7 +57,7 @@ def check(name, ok, detail):
     print(f"{word} {name}: {detail}", flush=True)
 
 
-def fetch(sh, path, dest, host_ip):
+def fetch(sh, path, dest, host_ip, magic=b"P6"):
     """Copies a file from the guest: it connects to us with nc. Returns the
     bytes; nothing reliable follows nc in the same devsh session, so the
     caller starts a new one."""
@@ -88,8 +88,8 @@ def fetch(sh, path, dest, host_ip):
     except (RuntimeError, OSError):
         pass
     t.join(150)
-    # Redox's nc may write "Remote host: ..." first; the picture starts at P6.
-    start = data.find(b"P6")
+    # Redox's nc may write "Remote host: ..." first; the file starts at magic.
+    start = data.find(magic)
     data = bytes(data[start:]) if start >= 0 else b""
     with open(dest, "wb") as f:
         f.write(data)
@@ -184,6 +184,9 @@ def run_checks(sh, args, qemu, console, host_ip):
         detail = f"cursor plane in the HVS list at {sorted(positions)}"
     check("cursor", len(positions) >= 2, detail)
 
+    if args.trace:
+        trace_check(sh, args, qemu, size, host_ip)
+
     if console:
         text = open(console, "rb").read().decode("utf-8", "replace")
         bad = [l.strip()[:120] for l in text.splitlines()
@@ -194,6 +197,49 @@ def run_checks(sh, args, qemu, console, host_ip):
             f.write("\n".join(sh.run("cat /tmp/regr-vc4d.log", 60)))
 
 
+def trace_check(sh, args, qemu, size, host_ip):
+    """vc4d's trace (VC4D_TRACE, /etc/vc4d-trace) during 30 s of window
+    drags: at most one display list per HVS frame, no new HVS errors
+    (redox-rpi#563). QEMU's fake HVS has no frames: there only the file is
+    checked."""
+    sh.run("wc -l /var/log/vc4d-trace.csv", 60)
+    t_start = time.time()
+    sh.run(f"pointer-bench 30 --hz 60 --super-drag --screen {size[0]} {size[1]} "
+           f"--center {int(size[0]) // 2} {int(size[1]) // 2} --radius 150", 120)
+    took = time.time() - t_start
+    data = fetch(sh, "/var/log/vc4d-trace.csv", os.path.join(args.out, "vc4d-trace.csv"), host_ip, b"t_us")
+    lines = data.decode("utf-8", "replace").splitlines()
+    rows = [l.split(",") for l in lines[1:] if l.count(",") == 10]
+    if not rows:
+        check("trace", False, f"no trace lines ({len(data)} bytes)")
+        return
+    end = int(rows[-1][0])
+    window = [r for r in rows if int(r[0]) >= end - int(took * 1e6) - 2_000_000]
+    per_frame, lists, worst, multi = 0, 0, 0, 0
+    frames, gaps, errors = 0, [], 0
+    for r in window:
+        if r[1] == "frame":
+            frames += 1
+            gaps.append(int(r[10]))
+            multi += per_frame > 1
+            worst = max(worst, per_frame)
+            per_frame = 0
+        elif r[1] == "list":
+            per_frame += 1
+            lists += 1
+        elif r[1] == "errors" and int(r[5], 16) != 0:
+            errors += 1
+    gaps.sort()
+    detail = (f"{len(window)} lines in the drag window: {lists} lists, {frames} frames, "
+              f"frames with 2+ lists {multi}, most lists in a frame {worst}, HVS error lines {errors}")
+    if gaps:
+        detail += f", frame gap median {gaps[len(gaps) // 2]} us, max {gaps[-1]} us"
+    if qemu:
+        check("trace", lists > 0, detail + " (QEMU: no HVS frames)")
+    else:
+        check("trace", lists > 0 and frames > 0 and worst <= 1 and errors == 0, detail)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host")
@@ -201,6 +247,8 @@ def main():
     ap.add_argument("--image", default="upstream/redox/build/aarch64/minimal/harddrive.img")
     ap.add_argument("--out", default="build/vc4d-desktop/" + time.strftime("%Y%m%dT%H%M%S", time.gmtime()))
     ap.add_argument("--size", default="1280x720", help="QEMU: VC4D_FAKE size")
+    ap.add_argument("--trace", action="store_true",
+                    help="30 s of window drags, then check vc4d's trace (#563)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
