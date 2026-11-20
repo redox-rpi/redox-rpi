@@ -50,8 +50,10 @@ process with CPU time close to the elapsed seconds is the limit.
 bcmgenetd (Pi 400) gets its `stats()` in experiment `genet-stats`, on top
 of `pi400`.
 
-Build: `--experiment dwc2d-netstats --experiment netdiag` (build-image.sh
-does not follow `needs`).
+Build: `--experiment dwc2d-netstats --experiment netstack-watch
+--experiment netdiag`, in this order: build-image.sh does not follow
+`needs`, and adds the test experiment `netstack-watch` only after the
+chosen ones otherwise.
 
 A plain open of `/scheme/network.<x>/stats` (as `cat` does) fails with
 ENODEV on these schemes; `netdiag` opens the scheme root as a directory and
