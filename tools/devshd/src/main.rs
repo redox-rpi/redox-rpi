@@ -89,14 +89,6 @@ fn serve(stream: TcpStream) -> io::Result<()> {
     let _ = child.wait();
     done.store(true, Ordering::SeqCst);
     let _ = stream.shutdown(Shutdown::Both);
-    // Wake the copier: when login never ran (a stuck fork that was
-    // killed, #577), nothing ever writes to the terminal and the copier
-    // would wait in read for good, holding its copy of the socket. A line
-    // on the slave side makes its read return; the write to the shut-down
-    // socket then fails and it ends.
-    if let Ok(mut slave) = OpenOptions::new().write(true).open(&tty) {
-        let _ = slave.write_all(b"\r\n");
-    }
     let _ = copier.join();
     Ok(())
 }
