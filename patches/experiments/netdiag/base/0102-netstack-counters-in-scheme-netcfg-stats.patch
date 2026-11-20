@@ -1,4 +1,4 @@
-From b981f06fb2caa3a07ef4286a747d5c176f8afb87 Mon Sep 17 00:00:00 2001
+From e3c17de06bce0ddc9de9fc560f7d3aa252a86047 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 08:24:40 +0000
 Subject: [PATCH] netstack: counters in /scheme/netcfg/stats
@@ -7,17 +7,19 @@ For diagnosis (redox-rpi #566, netdiag): frames read from and written to
 the drivers and where they went (IPv4 for this host, ARP, another MAC,
 malformed, another protocol), driver read and write errors, ARP
 requests, expired entries and packets dropped waiting for ARP, the times
-the router queues were full, packets without a route, and one line per
-TCP connection with its state and queue fill, refreshed by the main loop
-at most twice a second.
+the router queues were full, packets without a route, the number of
+sockets of each kind and of TCP sockets in each state (a socket that is
+never freed shows as a growing count, REQ-NET-4), and one line per TCP
+connection with its state and queue fill. The socket part is refreshed by
+the main loop at most twice a second.
 ---
- netstack/src/link/ethernet.rs     | 23 +++++++-
- netstack/src/main.rs              |  1 +
- netstack/src/router/mod.rs        |  3 +
- netstack/src/scheme/mod.rs        |  1 +
- netstack/src/scheme/netcfg/mod.rs |  7 +++
- netstack/src/stats.rs             | 96 +++++++++++++++++++++++++++++++
- 6 files changed, 129 insertions(+), 2 deletions(-)
+ netstack/src/link/ethernet.rs     |  23 +++++-
+ netstack/src/main.rs              |   1 +
+ netstack/src/router/mod.rs        |   3 +
+ netstack/src/scheme/mod.rs        |   1 +
+ netstack/src/scheme/netcfg/mod.rs |   7 ++
+ netstack/src/stats.rs             | 113 ++++++++++++++++++++++++++++++
+ 6 files changed, 146 insertions(+), 2 deletions(-)
  create mode 100644 netstack/src/stats.rs
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
@@ -186,10 +188,10 @@ index dae64a9..a06404f 100644
                  ro [route_table] || {
 diff --git a/netstack/src/stats.rs b/netstack/src/stats.rs
 new file mode 100644
-index 0000000..23c0382
+index 0000000..158ac67
 --- /dev/null
 +++ b/netstack/src/stats.rs
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,113 @@
 +//! Counters for diagnosis (redox-rpi #566), read from
 +//! `/scheme/netcfg/stats` (`netdiag`): one `name value` per line.
 +//!
@@ -198,6 +200,7 @@ index 0000000..23c0382
 +//! queues, and a summary of the TCP connections, refreshed by the main loop
 +//! at most twice a second.
 +
++use std::collections::BTreeMap;
 +use std::fmt::Write;
 +use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 +use std::sync::Mutex;
@@ -239,27 +242,35 @@ index 0000000..23c0382
 +/// TCP summary lines and when they were made.
 +static TCP: Mutex<Option<(Instant, String)>> = Mutex::new(None);
 +
-+/// Refresh the TCP summary if it is older than half a second.
++/// Refresh the socket summary if it is older than half a second: the
++/// number of sockets of each kind and of TCP sockets in each state (a
++/// socket that is never freed shows as a growing count, REQ-NET-4), and one
++/// line per TCP connection.
 +pub fn refresh_tcp(sockets: &SocketSet) {
 +    let Ok(mut tcp) = TCP.lock() else { return };
 +    if tcp.as_ref().is_some_and(|(at, _)| at.elapsed() < Duration::from_millis(500)) {
 +        return;
 +    }
-+    let mut s = String::new();
-+    let (mut listen, mut open) = (0, 0);
++    let mut lines = String::new();
++    let mut kinds: BTreeMap<&'static str, u64> = BTreeMap::new();
++    let mut states: BTreeMap<String, u64> = BTreeMap::new();
 +    for (_, socket) in sockets.iter() {
++        let kind = match socket {
++            Socket::Tcp(_) => "tcp",
++            Socket::Udp(_) => "udp",
++            Socket::Icmp(_) => "icmp",
++            #[allow(unreachable_patterns)]
++            _ => "other",
++        };
++        *kinds.entry(kind).or_default() += 1;
 +        let Socket::Tcp(socket) = socket else { continue };
-+        let Some(local) = socket.local_endpoint() else {
-+            listen += 1;
++        let state = socket.state().to_string().to_ascii_lowercase().replace('-', "_");
++        *states.entry(state).or_default() += 1;
++        let (Some(local), Some(remote)) = (socket.local_endpoint(), socket.remote_endpoint()) else {
 +            continue;
 +        };
-+        let Some(remote) = socket.remote_endpoint() else {
-+            listen += 1;
-+            continue;
-+        };
-+        open += 1;
 +        let _ = writeln!(
-+            s,
++            lines,
 +            "tcp_{}_{}_{} {} rx_queue {}/{} tx_queue {}/{}",
 +            local.port,
 +            remote.addr,
@@ -271,7 +282,15 @@ index 0000000..23c0382
 +            socket.send_capacity()
 +        );
 +    }
-+    *tcp = Some((Instant::now(), format!("tcp_listening {listen}\ntcp_connections {open}\n{s}")));
++    let mut s = String::new();
++    for kind in ["tcp", "udp", "icmp", "other"] {
++        let _ = writeln!(s, "sockets_{kind} {}", kinds.get(kind).copied().unwrap_or(0));
++    }
++    for (state, n) in &states {
++        let _ = writeln!(s, "tcp_state_{state} {n}");
++    }
++    s.push_str(&lines);
++    *tcp = Some((Instant::now(), s));
 +}
 +
 +pub fn text() -> String {
