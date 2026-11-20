@@ -223,18 +223,22 @@ def trace_check(sh, args, qemu, size, host_ip):
         return
     end = int(rows[-1][0])
     window = [r for r in rows if int(r[0]) >= end - int(took * 1e6) - 2_000_000]
-    per_frame, lists, worst, multi = 0, 0, 0, 0
+    # Lists per HVS frame by the frame number each list line carries (6
+    # bits, wrapping); the 1 ms frame sampler can lag a frame behind, so
+    # counting lists between its lines over-counts (Test 525).
+    per_frame, lists, epoch, last_frame = {}, 0, 0, None
     frames, gaps, errors = 0, [], 0
     copies, copy_us, overlays = 0, 0, 0
     for r in window:
         if r[1] == "frame":
             frames += 1
             gaps.append(int(r[10]))
-            multi += per_frame > 1
-            worst = max(worst, per_frame)
-            per_frame = 0
         elif r[1] == "list":
-            per_frame += 1
+            frame = int(r[2])
+            if last_frame is not None and frame < last_frame:
+                epoch += 1
+            last_frame = frame
+            per_frame[(epoch, frame)] = per_frame.get((epoch, frame), 0) + 1
             lists += 1
         elif r[1] == "errors" and int(r[5], 16) != 0:
             errors += 1
@@ -243,6 +247,8 @@ def trace_check(sh, args, qemu, size, host_ip):
             copy_us += int(r[10])
         elif r[1] == "overlay":
             overlays += 1
+    multi = sum(1 for n in per_frame.values() if n > 1)
+    worst = max(per_frame.values(), default=0)
     gaps.sort()
     detail = (f"{len(window)} lines in the drag window: {lists} lists, {frames} frames, "
               f"frames with 2+ lists {multi}, most lists in a frame {worst}, HVS error lines {errors}, "
