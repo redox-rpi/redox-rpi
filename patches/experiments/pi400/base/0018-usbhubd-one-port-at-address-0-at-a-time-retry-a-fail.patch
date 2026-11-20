@@ -1,0 +1,228 @@
+From c5a3abbf30ca061acf296c4bc0b4e000cae7dd7e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 15:52:32 +0000
+Subject: [PATCH] usbhubd: one port at address 0 at a time, retry a failed
+ attach
+
+On a Pi 400 with a mouse and the internal keyboard plugged in at power-on,
+xhcid could not address the device on port 1.2 (completion code 0x4,
+USB transaction error). usbhubd then panicked in ensure_attached
+("Failed to attach"), and no device behind the hub got a driver, the
+keyboard on port 1.4 included. With only the keyboard at power-on and
+the mouse plugged in later, both were addressed.
+
+- usbhubd reset every port that was not enabled in the same pass. With
+  two devices plugged in, both sat at the default address 0 when xhcid
+  sent SET_ADDRESS, which USB does not allow. Now only one port is
+  reset at a time; the next one waits until it is attached, given up
+  or unplugged.
+- Before an attach usbhubd waits 20 ms after the port reset (TRSTRCY,
+  at least 10 ms, USB 2.0 7.1.7.5).
+- A failed attach is no longer a panic. usbhubd logs it, frees what
+  xhcid set up (detach), resets the port and tries again, up to 3
+  times per plug-in. Then it disables the port (so its device leaves
+  address 0) until the device is unplugged, and goes on with the other
+  ports. A failed detach is a warning.
+- xhcid frees the slot when Address Device fails. The slot is not in
+  port_states then, so a detach did not free it, and each retry leaked
+  one.
+- HubPortFeature gets PortEnable (1) for the disable.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/usbhubd/src/main.rs   | 105 +++++++++++++++++++++++++++---
+ drivers/usb/xhcid/src/usb/hub.rs  |   2 +
+ drivers/usb/xhcid/src/xhci/mod.rs |   5 ++
+ 3 files changed, 104 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
+index b2661000..f213966f 100644
+--- a/drivers/usb/usbhubd/src/main.rs
++++ b/drivers/usb/usbhubd/src/main.rs
+@@ -120,25 +120,60 @@ fn main() {
+         port_sts: usb::HubPortStatus,
+         handle: XhciClientHandle,
+         attached: bool,
++        /// Failed attach attempts since the device was plugged in.
++        attach_failures: u32,
+     }
+ 
++    /// Attach attempts per plug-in before the port is left alone until the
++    /// device is unplugged.
++    const MAX_ATTACH_ATTEMPTS: u32 = 3;
++
++    /// Time a device gets after its port reset ends before it is addressed
++    /// (TRSTRCY, at least 10 ms, USB 2.0 section 7.1.7.5).
++    const RESET_RECOVERY: time::Duration = time::Duration::from_millis(20);
++
+     impl PortState {
+-        pub fn ensure_attached(&mut self, attached: bool) {
++        /// Attach or detach the device on this port. Returns false when an
++        /// attach failed: the caller resets the port and tries again on a
++        /// later pass, up to MAX_ATTACH_ATTEMPTS times.
++        pub fn ensure_attached(&mut self, attached: bool) -> bool {
+             if attached == self.attached {
+-                return;
++                return true;
+             }
+ 
+             if attached {
++                if self.attach_failures >= MAX_ATTACH_ATTEMPTS {
++                    return true;
++                }
++                thread::sleep(RESET_RECOVERY);
+                 let speed = self.port_sts.xhci_speed();
+                 log::info!("attach port {} at xHCI speed {}", self.port_id, speed);
+-                self.handle
+-                    .attach_with_speed(speed)
+-                    .expect("Failed to attach");
+-            } else {
+-                self.handle.detach().expect("Failed to detach");
++                if let Err(err) = self.handle.attach_with_speed(speed) {
++                    self.attach_failures += 1;
++                    // Free what xhcid set up for the failed attempt.
++                    let _ = self.handle.detach();
++                    if self.attach_failures >= MAX_ATTACH_ATTEMPTS {
++                        log::error!(
++                            "port {}: attach failed {} times ({}), leaving it until the device is unplugged",
++                            self.port_id,
++                            self.attach_failures,
++                            err
++                        );
++                    } else {
++                        log::warn!(
++                            "port {}: attach failed ({}), resetting the port and trying again",
++                            self.port_id,
++                            err
++                        );
++                    }
++                    return false;
++                }
++            } else if let Err(err) = self.handle.detach() {
++                log::warn!("port {}: detach failed: {}", self.port_id, err);
+             }
+ 
+             self.attached = attached;
++            true
+         }
+     }
+ 
+@@ -155,9 +190,17 @@ fn main() {
+             handle: XhciClientHandle::new(scheme.clone(), child_port_id)
+                 .expect("Failed to open XhciClientHandle"),
+             attached: false,
++            attach_failures: 0,
+         });
+     }
+ 
++    // The port whose device sits at the default address 0: reset and not
++    // attached yet. Only one device may answer at address 0, so no other
++    // port is reset until this one is attached, given up or unplugged.
++    // Resetting two ports at once (two devices plugged in at power-on) made
++    // Address Device fail with a transaction error on a Pi 400.
++    let mut at_default_address: Option<u8> = None;
++
+     //TODO: use change flags?
+     loop {
+         for port in 1..=ports {
+@@ -215,6 +258,11 @@ fn main() {
+ 
+             // Ignore disconnected port
+             if !port_sts.is_connected() {
++                // A new plug-in gets its attach attempts again.
++                state.attach_failures = 0;
++                if at_default_address == Some(port) {
++                    at_default_address = None;
++                }
+                 state.ensure_attached(false);
+                 continue;
+             }
+@@ -227,6 +275,15 @@ fn main() {
+ 
+             // Ensure port is enabled
+             if !port_sts.is_enabled() {
++                if state.attach_failures >= MAX_ATTACH_ATTEMPTS {
++                    // Given up and disabled; wait for an unplug.
++                    continue;
++                }
++                if at_default_address.is_some_and(|other| other != port) {
++                    // Another device is at address 0; reset this one later.
++                    continue;
++                }
++                at_default_address = Some(port);
+                 log::info!("reset port {port}");
+                 handle
+                     .device_request(
+@@ -242,7 +299,39 @@ fn main() {
+                 continue;
+             }
+ 
+-            state.ensure_attached(true);
++            if state.ensure_attached(true) {
++                if state.attached && at_default_address == Some(port) {
++                    at_default_address = None;
++                }
++            } else if state.attach_failures < MAX_ATTACH_ATTEMPTS {
++                log::info!("reset port {port}");
++                if let Err(err) = handle.device_request(
++                    PortReqTy::Class,
++                    PortReqRecipient::Other,
++                    usb::SetupReq::SetFeature as u8,
++                    usb::HubPortFeature::PortReset as u16,
++                    port as u16,
++                    DeviceReqData::NoData,
++                ) {
++                    log::warn!("port {port}: reset failed: {err}");
++                }
++            } else {
++                // Given up: disable the port, so its device no longer
++                // answers at address 0 and the other ports can go on.
++                if let Err(err) = handle.device_request(
++                    PortReqTy::Class,
++                    PortReqRecipient::Other,
++                    usb::SetupReq::ClearFeature as u8,
++                    usb::HubPortFeature::PortEnable as u16,
++                    port as u16,
++                    DeviceReqData::NoData,
++                ) {
++                    log::warn!("port {port}: disable failed: {err}");
++                }
++                if at_default_address == Some(port) {
++                    at_default_address = None;
++                }
++            }
+         }
+ 
+         //TODO: use interrupts or poll faster?
+diff --git a/drivers/usb/xhcid/src/usb/hub.rs b/drivers/usb/xhcid/src/usb/hub.rs
+index 4ea851de..3d1fd36c 100644
+--- a/drivers/usb/xhcid/src/usb/hub.rs
++++ b/drivers/usb/xhcid/src/usb/hub.rs
+@@ -83,6 +83,8 @@ impl Default for HubDescriptorV3 {
+ #[repr(u8)]
+ pub enum HubPortFeature {
+     PortConnection = 0,
++    /// USB 2.0 hubs only; ClearFeature disables the port.
++    PortEnable = 1,
+     PortOverCurrent = 3,
+     PortReset = 4,
+     PortLinkState = 5,
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 762c69af..7c05e7c2 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -902,6 +902,11 @@ impl<const N: usize> Xhci<N> {
+                 Ok(device_ring) => device_ring,
+                 Err(err) => {
+                     error!("Failed to address device for port {}: `{}`", port_id, err);
++                    // The slot is not in port_states yet, so a detach would
++                    // not free it: free it here, or each retry leaks a slot.
++                    if let Err(err) = self.disable_port_slot(slot).await {
++                        warn!("port {}: freeing slot {} failed: {}", port_id, slot, err);
++                    }
+                     return Err(err);
+                 }
+             };
+-- 
+2.53.0
+
