@@ -66,6 +66,12 @@ the file in it, as netstack does with `mac`.
   save`, a devsh command, `netdiag diff` after 4.9 s showed
   `network.usb_ecm/rx_frames +48`, `tx_frames +46`, `irqs +48`, the
   matching interrupt line `irq/50 +48`, and CPU time per process.
+- QEMU raspi3b (`v0.6.0-dev-115-g08842934+x1339`) with base `0102`:
+  `cat /scheme/netcfg/stats` works (netcfg takes a plain open), and a
+  `diff` over 1.7 s showed the driver's `rx_frames +49` matching
+  netstack's `frames_in +49` (`frames_in_ipv4 +49`), `frames_out +47`
+  against the driver's `tx_frames +47`, and the devsh connection as
+  `tcp_2323_<host>_<port> ESTABLISHED rx_queue 0/65535 tx_queue 0/65535`.
 - Pi 3B+ (pi-tests Test 512, `v0.6.0-dev-112-gc4cf59b2+x1339`, LAN7800):
   the snapshot has `network.usb_lan78xx/adapter_3 lan7800 link 1 active`
   and all counters. A 100 MiB download into `/scheme/null` (9.84 s,
