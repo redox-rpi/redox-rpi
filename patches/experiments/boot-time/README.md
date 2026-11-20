@@ -134,10 +134,12 @@ The second DHCP of the stable `netboot.scr` costs only 0.1 s on the Pi.
   /scheme/netcfg/ifaces/eth0/mac`) and the Pi had no network. Cause:
   `netstack` reported ready before `Smolnetd::new` set up `eth0` and its
   schemes; with the parallel start `dhcpd` ran in that gap. Base patch
-  [`0046`](base/0046-netstack-report-ready-after-eth0-and-the-schemes-are.patch)
+  `0046`
   moves `daemon.ready()` after it (agreed with the Network session; its
   `netstack-multi` makes the same move, whichever lands first). QEMU with
-  USB network: DHCP and ping in 3 of 3 boots.
+  USB network: DHCP and ping in 3 of 3 boots. Dropped with the upstream
+  bump of base 20f7573b: the default netstack patches (several adapters)
+  already call `daemon.ready()` after `Smolnetd::new`.
 - Pi test #84 with `0046`: network in 5 of 5 boots, `redox login:`
   21.3–21.9 s after `kreset` (test #53 before the parallel start: 27.3 s).
   Of that, about 15.8 s pass before the kernel starts (firmware, U-Boot,

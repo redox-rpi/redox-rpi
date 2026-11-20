@@ -1,20 +1,20 @@
-From 9aa1ab6338758673132c26892de948336698babd Mon Sep 17 00:00:00 2001
+From f419c9cf65743f4c14e3b2faf77351e48fa12d96 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:14:19 +0100
-Subject: [PATCH] netstack: IPv6 multicast groups for programs
+Subject: [PATCH 28/30] netstack: IPv6 multicast groups for programs
 
 IPV6_JOIN_GROUP and IPV6_LEAVE_GROUP join and leave IPv6 groups on the
 interface, counted like the IPv4 ones; smoltcp sends the MLD reports.
 Other IPPROTO_IPV6 options are accepted and ignored.
 ---
- netstack/src/scheme/socket.rs | 35 ++++++++++++++++++++++++++++++++---
- 1 file changed, 32 insertions(+), 3 deletions(-)
+ netstack/src/scheme/socket.rs | 42 +++++++++++++++++++++++++++++++----
+ 1 file changed, 38 insertions(+), 4 deletions(-)
 
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 5e2ae77..1386d7e 100644
+index 976836c..2c35444 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
-@@ -13,7 +13,7 @@ use redox_scheme::scheme::{register_scheme_inner, Op, SchemeSync};
+@@ -14,7 +14,7 @@ use redox_scheme::scheme::{register_scheme_inner, Op, SchemeSync};
  use redox_scheme::{CallerCtx, OpenResult, Socket};
  use scheme_utils::HandleMap;
  use smoltcp::socket::AnySocket;
@@ -23,7 +23,7 @@ index 5e2ae77..1386d7e 100644
  use syscall::data::TimeSpec;
  use syscall::flag::{EVENT_READ, EVENT_WRITE};
  use syscall::schemev2::NewFdFlags;
-@@ -34,12 +34,15 @@ const SO_SNDBUF: usize = 7;
+@@ -35,12 +35,15 @@ const SO_SNDBUF: usize = 7;
  const IPPROTO_IP: u64 = 0;
  const IP_ADD_MEMBERSHIP: usize = 35;
  const IP_DROP_MEMBERSHIP: usize = 36;
@@ -41,7 +41,21 @@ index 5e2ae77..1386d7e 100644
  }
  
  pub struct NullFile {
-@@ -474,7 +477,30 @@ where
+@@ -348,7 +351,12 @@ where
+ 
+     /// The IPv4 multicast groups joined through this scheme
+     pub fn multicast_groups(&self) -> impl Iterator<Item = &Ipv4Address> {
+-        self.context.multicast_groups.keys()
++        // The hardware filters get the IPv4 groups; IPv6 multicast frames
++        // (33:33:...) pass the link as before.
++        self.context.multicast_groups.keys().filter_map(|group| match group {
++            IpAddress::Ipv4(group) => Some(group),
++            _ => None,
++        })
+     }
+ 
+     /// Removes the sockets that finished closing after their last file was
+@@ -525,7 +533,30 @@ where
          if !group.is_multicast() || group.is_broadcast() {
              return Err(SyscallError::new(EINVAL));
          }
@@ -72,7 +86,7 @@ index 5e2ae77..1386d7e 100644
          let mut iface = self.context.iface.borrow_mut();
          let groups = &mut self.context.multicast_groups;
          if join {
-@@ -517,6 +543,9 @@ where
+@@ -568,6 +599,9 @@ where
              SocketCall::SetSockOpt if metadata.get(2) == Some(&IPPROTO_IP) => {
                  self.set_ip_option(metadata[1] as usize, payload)
              }
@@ -83,5 +97,5 @@ index 5e2ae77..1386d7e 100644
                  // currently not used
                  // self.handle_setsockopt(id, metadata[1] as i32, &payload)
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

@@ -1,7 +1,7 @@
-From 9f213d41698a01b2d65ae18a0d54a615a3463095 Mon Sep 17 00:00:00 2001
+From 826d53a4f2b5314b653c2f85ac338afb81643d6a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:13:38 +0100
-Subject: [PATCH] socket: pass IPPROTO_IPV6 options to the network stack
+Subject: [PATCH 3/3] socket: pass IPPROTO_IPV6 options to the network stack
 
 IPV6_JOIN_GROUP and IPV6_LEAVE_GROUP join IPv6 multicast groups, the way
 IPPROTO_IP options already do for IPv4.
@@ -10,10 +10,10 @@ IPPROTO_IP options already do for IPv4.
  1 file changed, 6 insertions(+), 5 deletions(-)
 
 diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
-index 4b867ae6..8a504cea 100644
+index 89bf028..c2d7a95 100644
 --- a/src/platform/redox/socket.rs
 +++ b/src/platform/redox/socket.rs
-@@ -23,7 +23,7 @@ use crate::{
+@@ -22,7 +22,7 @@ use crate::{
              EPIPE, EPROTONOSUPPORT,
          },
          fcntl,
@@ -22,7 +22,7 @@ index 4b867ae6..8a504cea 100644
          signal::SIGPIPE,
          sys_select::timeval,
          sys_socket::{
-@@ -1061,13 +1061,14 @@ impl PalSocket for Sys {
+@@ -1106,13 +1106,14 @@ impl PalSocket for Sys {
                  }
              }
          }
@@ -42,5 +42,5 @@ index 4b867ae6..8a504cea 100644
              redox_rt::sys::sys_call_wo(
                  socket as usize,
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

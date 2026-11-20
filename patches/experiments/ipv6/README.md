@@ -9,10 +9,15 @@ scripts/build-image.sh --experiment multicast --experiment ipv6   # multicast: p
 
 **With base `0095` (#216):** the LAN7800 receives only the multicast
 groups netstack writes to the adapter's `multicast` file (base `0085`).
-When this experiment is refreshed, netstack must add `33:33:00:00:00:01`
-and the solicited-node groups (`33:33:ff:…`) to that list in
-`EthernetLink::set_multicast`, or neighbor discovery and SLAAC stop
-working on the Pi 3B+.
+Base `0030` (added with the upstream bump to base 20f7573b) adds
+`33:33:00:00:00:01` and the solicited-node group (`33:33:ff:…`) to that
+list in `EthernetLink::set_multicast`; without them neighbor discovery
+and SLAAC stop working on the Pi 3B+. Not yet tested on a Pi.
+
+Ported to base 20f7573b and relibc 74b5e7e3 with the upstream bump (#309):
+the patches are the same except for the code around them, and `0028`
+gives the hardware filter only the IPv4 groups (IPv6 groups that
+programs join do not reach a LAN7800 yet).
 
 Base `0025`, `netstack`:
 

@@ -1,8 +1,8 @@
-From 769f2a67747c10e7d428912aef851de796749990 Mon Sep 17 00:00:00 2001
-From: stephan-xyz <stephan@zehrer.xyz>
-Date: Thu, 29 Oct 2026 13:26:01 +0100
-Subject: [PATCH] netstack: IPv6 endpoints in socket paths, DNS server from
- router advertisements
+From a808209b46d3dd7cb81e0a42531afcf7ce6ad335 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 21:58:42 +0000
+Subject: [PATCH 26/30] netstack: IPv6 endpoints in socket paths, DNS server
+ from  router advertisements
 
 Socket paths take and show IPv6 endpoints in brackets ([fe80::1]:5353),
 so programs can open IPv6 UDP and TCP sockets. The RDNSS option of a
@@ -11,14 +11,14 @@ router advertisement (RFC 8106) gives an IPv6 name server, shown in
 ---
  netstack/src/link/ethernet.rs     | 31 ++++++++++++++++--
  netstack/src/link/mod.rs          |  2 ++
- netstack/src/scheme/mod.rs        | 54 +++++++++++++++++++++++--------
+ netstack/src/scheme/mod.rs        | 53 ++++++++++++++++++++++++-------
  netstack/src/scheme/netcfg/mod.rs | 10 ++++++
- netstack/src/scheme/tcp.rs        | 16 +++------
+ netstack/src/scheme/tcp.rs        | 16 +++-------
  netstack/src/scheme/udp.rs        | 22 +++----------
- 6 files changed, 91 insertions(+), 44 deletions(-)
+ 6 files changed, 91 insertions(+), 43 deletions(-)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index fe60b84..539847f 100644
+index 1874842..112982f 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -44,6 +44,7 @@ struct Ipv6State {
@@ -37,7 +37,7 @@ index fe60b84..539847f 100644
              solicitations: 0,
              next_solicitation: Instant::ZERO,
          }
-@@ -84,6 +86,27 @@ fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
+@@ -85,6 +87,27 @@ fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
  }
  
  /// ff02::1:ffXX:XXXX, where NDP asks for the owner of `addr`.
@@ -65,7 +65,7 @@ index fe60b84..539847f 100644
  fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
      let a = addr.octets();
      Ipv6Address::from([
-@@ -376,9 +399,12 @@ impl EthernetLink {
+@@ -384,9 +407,12 @@ impl EthernetLink {
                          });
                      }
                  }
@@ -80,7 +80,7 @@ index fe60b84..539847f 100644
                  );
              }
              _ => {}
-@@ -728,6 +754,7 @@ impl LinkDevice for EthernetLink {
+@@ -749,6 +775,7 @@ impl LinkDevice for EthernetLink {
              link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
              global: self.ipv6.global,
              router: self.ipv6.router,
@@ -89,7 +89,7 @@ index fe60b84..539847f 100644
      }
  }
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index 620da3e..7a8fda8 100644
+index c91c2d4..a1c27be 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
 @@ -13,6 +13,8 @@ pub struct Ipv6Config {
@@ -102,21 +102,20 @@ index 620da3e..7a8fda8 100644
  
  /// Represent a link layer device (eth0, loopback...)
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index b64e8f3..b6295c8 100644
+index 60d75fa..4f15528 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -14,8 +14,8 @@ use smoltcp::phy::Tracer;
+@@ -15,7 +15,8 @@ use smoltcp::phy::Tracer;
  use smoltcp::socket::AnySocket;
  use smoltcp::time::{Duration, Instant};
  use smoltcp::wire::{
--    EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address,
--    Ipv6Address, Ipv6Cidr,
-+    EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint,
-+    Ipv4Address, Ipv6Address, Ipv6Cidr,
+-    HardwareAddress, IpAddress, IpCidr, IpListenEndpoint, Ipv4Address, Ipv6Address, Ipv6Cidr,
++    HardwareAddress, IpAddress, IpCidr, IpEndpoint, IpListenEndpoint, Ipv4Address, Ipv6Address,
++    Ipv6Cidr,
  };
  use syscall::data::TimeSpec;
  use syscall::{self, Error as SyscallError};
-@@ -370,20 +370,48 @@ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Resu
+@@ -413,20 +414,48 @@ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Resu
  }
  
  fn parse_endpoint(socket: &str) -> IpListenEndpoint {
@@ -177,10 +176,10 @@ index b64e8f3..b6295c8 100644
      until: Option<TimeSpec>,
      cancelling: bool,
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index 554dafd..6a733e7 100644
+index dce9fa2..a6655aa 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
-@@ -77,6 +77,16 @@ fn mk_root_node(
+@@ -78,6 +78,16 @@ fn mk_root_node(
  ) -> CfgNodeRef {
      cfg_node! {
          "resolv" => {
@@ -198,7 +197,7 @@ index 554dafd..6a733e7 100644
                  rw [dns_config, notifier] (Option<Ipv4Address>, None)
                  || {
 diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
-index 949f3db..6df2ae1 100644
+index 479cb97..f7749be 100644
 --- a/netstack/src/scheme/tcp.rs
 +++ b/netstack/src/scheme/tcp.rs
 @@ -8,7 +8,7 @@ use smoltcp::wire::{IpEndpoint, IpListenEndpoint};
@@ -210,7 +209,7 @@ index 949f3db..6df2ae1 100644
  use crate::port_set::PortSet;
  
  const SO_SNDBUF: usize = 7;
-@@ -277,25 +277,19 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -314,25 +314,19 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
          FpathWriter::with(buf, "tcp", |w| {
              let unspecified = "0.0.0.0:0";
              match self.remote_endpoint() {
@@ -239,7 +238,7 @@ index 949f3db..6df2ae1 100644
                  _ => w.push_str(unspecified),
              }
  
-@@ -342,7 +336,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
+@@ -379,7 +373,7 @@ impl<'a> SchemeSocket for TcpSocket<'a> {
                  return Err(SyscallError::new(syscall::EINVAL));
              }
              let address = match self.remote_endpoint() {
@@ -249,7 +248,7 @@ index 949f3db..6df2ae1 100644
              };
  
 diff --git a/netstack/src/scheme/udp.rs b/netstack/src/scheme/udp.rs
-index 3a35d5c..5912e83 100644
+index d8a550d..386e38d 100644
 --- a/netstack/src/scheme/udp.rs
 +++ b/netstack/src/scheme/udp.rs
 @@ -10,7 +10,7 @@ use smoltcp::wire::{IpEndpoint, IpListenEndpoint};
@@ -261,7 +260,7 @@ index 3a35d5c..5912e83 100644
  use crate::port_set::PortSet;
  use crate::router::Router;
  
-@@ -277,22 +277,13 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
+@@ -283,22 +283,13 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
              // remote
              match file {
                  SchemeFile::Socket(SocketFile { data: endpoint, .. }) => {
@@ -286,7 +285,7 @@ index 3a35d5c..5912e83 100644
  
              Ok(())
          })
-@@ -348,12 +339,7 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
+@@ -354,12 +345,7 @@ impl<'a> SchemeSocket for UdpSocket<'a> {
  
              //Address Handling
              let address_formatted = if prepared_name_len > 0 {
@@ -301,5 +300,5 @@ index 3a35d5c..5912e83 100644
                  String::from("")
              };
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

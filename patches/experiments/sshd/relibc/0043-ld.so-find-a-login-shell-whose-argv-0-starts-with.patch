@@ -1,7 +1,7 @@
-From efad7ef8f8049f7e8d9991295318302afa186595 Mon Sep 17 00:00:00 2001
+From 4bf9e355dbe71f870e00aa6d457189acdf09c580 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 14:57:54 +0100
-Subject: [PATCH] ld.so: find a login shell whose argv[0] starts with "-"
+Subject: [PATCH 43/43] ld.so: find a login shell whose argv[0] starts with "-"
 
 ld.so finds the program it runs through argv[0]. A login shell gets "-"
 in front of its name ("-ion" from sshd or login), so ld.so stopped with
@@ -16,10 +16,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 9 insertions(+), 1 deletion(-)
 
 diff --git a/src/ld_so/start.rs b/src/ld_so/start.rs
-index cb667001..59d61205 100644
+index 43e4216..d95a203 100644
 --- a/src/ld_so/start.rs
 +++ b/src/ld_so/start.rs
-@@ -495,7 +495,15 @@ fn stage2(
+@@ -499,7 +499,15 @@ fn stage2(
          crate::platform::init_inner(auxv);
      }
  
@@ -37,5 +37,5 @@ index cb667001..59d61205 100644
          unistd::_exit(1);
      };
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

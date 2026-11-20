@@ -1,0 +1,42 @@
+From b6fd3b40e800ac1bb212c647fa0299d1fd25e76a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 21:59:44 +0000
+Subject: [PATCH 30/30] netstack: IPv6 all-nodes and solicited-node MACs in the
+ multicast filter
+
+Since base 0095 the LAN7800 filters multicast in hardware with the list
+netstack writes to the driver's multicast file. That list had only the
+IPv4 groups, so router advertisements (ff02::1) and neighbor
+solicitations (solicited-node group) never arrived and IPv6 got no
+address on the Pi 3B+. The list now always has all-nodes and the
+solicited-node group of the interface identifier, which the link-local
+and the SLAAC addresses share.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/link/ethernet.rs | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index f5b42be..76ede30 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -802,6 +802,15 @@ impl LinkDevice for EthernetLink {
+             let [_, b1, b2, b3] = group.octets();
+             list.extend_from_slice(&[0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3]);
+         }
++        // IPv6: all-nodes (ff02::1, router advertisements) and the
++        // solicited-node group of our addresses, where neighbor
++        // solicitations arrive (RFC 4861). The link-local and the SLAAC
++        // addresses share the interface identifier, so one group serves
++        // both. Without them a hardware filter drops all of IPv6.
++        list.extend_from_slice(&ipv6_multicast_mac(Ipv6Address::new(0xff02, 0, 0, 0, 0, 0, 0, 1)).0);
++        if let Some(link_local) = self.ipv6.link_local {
++            list.extend_from_slice(&ipv6_multicast_mac(solicited_node(link_local)).0);
++        }
+         if let Err(err) = file.write(&list) {
+             warn!("Failed to set the multicast list on link {}: {}", self.name, err);
+         }
+-- 
+2.53.0
+

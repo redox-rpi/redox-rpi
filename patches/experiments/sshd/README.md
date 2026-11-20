@@ -27,7 +27,10 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
   epoll registration (Redox keeps one per fd; the second `EPOLL_CTL_ADD`
   replaced the first). sshd polls its socket twice, for input and output;
   with nothing to write the socket was not watched at all, and the reply
-  that opens a session never left.
+  that opens a session never left. Ported with the upstream bump to relibc
+  74b5e7e3, where `poll` sends one event per entry to the event queue
+  (`platform/redox/poll.rs`, upstream 1905131b): entries with the same fd
+  now share one event. Not yet tested with sshd on the new pin.
 - relibc `0043`: `ld.so` finds a program whose argv[0] starts with "-"
   (a login shell, "-ion"); it looks the program up by argv[0] and stopped
   with "failed to locate '-ion'".

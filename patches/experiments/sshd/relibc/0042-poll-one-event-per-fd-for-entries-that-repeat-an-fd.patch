@@ -1,0 +1,110 @@
+From 450b4adcef947f8b42743f83fae1ed06ddeb39f2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 21:55:16 +0000
+Subject: [PATCH 42/43] poll: one event per fd, for entries that repeat an fd
+
+poll() and ppoll() send one event per entry to the event queue, which
+keeps one registration per fd: a second entry for the same fd replaced
+the first, and an entry with no events left the fd unwatched. OpenSSH's
+server loop polls its socket for input and, only when it has data to
+write, for output: with nothing to write the socket was not watched at
+all, and the reply that opens a session never left.
+
+Entries with the same fd now share one event with their events
+combined, and each entry gets the events it asked for, plus POLLERR,
+POLLHUP and POLLNVAL, as POSIX says.
+
+Ported to the new poll in platform/redox/poll.rs (upstream 1905131b).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/platform/redox/poll.rs | 55 +++++++++++++++++++++++++++-----------
+ 1 file changed, 40 insertions(+), 15 deletions(-)
+
+diff --git a/src/platform/redox/poll.rs b/src/platform/redox/poll.rs
+index 60c5a6e..de1a818 100644
+--- a/src/platform/redox/poll.rs
++++ b/src/platform/redox/poll.rs
+@@ -59,21 +59,36 @@ impl Sys {
+             &mut heap_buf[..]
+         };
+ 
++        // Entries for the same fd share one event: the event queue keeps one
++        // registration per fd, so a second entry replaced the first, and an
++        // entry with no events left the fd unwatched. The events of all
++        // entries are combined on the first one and the result is given to
++        // each entry. OpenSSH polls its socket twice, for input and output.
++        let first_of = |fds: &[poll::pollfd], i: usize| {
++            fds[..i]
++                .iter()
++                .position(|other| other.fd == fds[i].fd)
++                .unwrap_or(i)
++        };
++
+         let mut input_idx = 0;
+-        for (original_idx, pfd) in fds.iter().enumerate() {
+-            if pfd.fd < 0 {
++        for original_idx in 0..fds.len() {
++            let fd = fds[original_idx].fd;
++            if fd < 0 || first_of(fds, original_idx) != original_idx {
+                 continue;
+             }
+ 
+             let mut flags = EventFlags::empty();
+-            for (p, ep) in &event_map[..2] {
+-                if pfd.events & p > 0 {
+-                    flags |= *ep;
++            for pfd in fds[original_idx..].iter().filter(|pfd| pfd.fd == fd) {
++                for (p, ep) in &event_map[..2] {
++                    if pfd.events & p > 0 {
++                        flags |= *ep;
++                    }
+                 }
+             }
+ 
+             buf_slice[input_idx] = Event {
+-                id: pfd.fd as usize,
++                id: fd as usize,
+                 flags,
+                 data: original_idx,
+             };
+@@ -130,17 +145,27 @@ impl Sys {
+             }
+ 
+             let original_idx = event.data;
+-            if let Some(pfd) = fds.get_mut(original_idx) {
+-                for (p, ep) in &event_map {
+-                    if event.flags.contains(*ep) {
+-                        pfd.revents |= *p;
+-                    }
+-                }
+-
+-                if pfd.revents > 0 {
+-                    count += 1;
++            let Some(fd) = fds.get(original_idx).map(|pfd| pfd.fd) else {
++                continue;
++            };
++            let mut revents = 0;
++            for (p, ep) in &event_map {
++                if event.flags.contains(*ep) {
++                    revents |= *p;
+                 }
+             }
++            // Each entry gets what it asked for, and the conditions that are
++            // always reported.
++            let always = poll::POLLERR | poll::POLLHUP | poll::POLLNVAL;
++            for pfd in fds[original_idx..].iter_mut().filter(|pfd| pfd.fd == fd) {
++                pfd.revents |= revents & (pfd.events | always);
++            }
++        }
++        // Count each entry once, also when its fd had more than one event.
++        for pfd in fds.iter() {
++            if pfd.revents > 0 {
++                count += 1;
++            }
+         }
+ 
+         Ok(count as c_int)
+-- 
+2.53.0
+

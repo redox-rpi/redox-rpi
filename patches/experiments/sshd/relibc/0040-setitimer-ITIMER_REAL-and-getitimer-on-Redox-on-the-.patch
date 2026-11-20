@@ -1,8 +1,8 @@
-From 68e7b532975e364298b2b2e914b94b97e2653546 Mon Sep 17 00:00:00 2001
+From 57453001c4c987b4e7af95a26f8e5b86c3600515 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 13:27:36 +0100
-Subject: [PATCH] setitimer(ITIMER_REAL) and getitimer on Redox, on the alarm()
- timer
+Subject: [PATCH 40/43] setitimer(ITIMER_REAL) and getitimer on Redox, on the
+ alarm() timer
 
 setitimer returned ENOSYS, so programs that use it for timeouts fail;
 OpenSSH's sshd closes every connection with "login grace time setitimer
@@ -179,5 +179,5 @@ index 7892ac1..214d73c 100644
 +    }
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
