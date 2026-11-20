@@ -9,6 +9,7 @@
 //!
 //! or, line by line, with `nc <address> 2323`.
 
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -116,6 +117,55 @@ fn hang_up(master: &File, login_pid: libc::pid_t, done: &AtomicBool) {
     }
 }
 
+/// Kill forks of devshd that hang before they become `login` (#577).
+///
+/// About once in a few hundred connections the fork that `Command::spawn`
+/// makes never reaches exec. The stuck child keeps copies of every socket
+/// devshd had open at fork time, so netstack cannot free them, and the
+/// session thread waits in `spawn()` for good. A normal child is `login`
+/// within milliseconds, so a child still named devshd in two scans 10 s
+/// apart is stuck: kill it. `spawn()` then returns, the session ends and
+/// the sockets are freed.
+fn reap_stuck_forks() {
+    let me = std::process::id();
+    let mut seen = HashSet::new();
+    loop {
+        thread::sleep(Duration::from_secs(10));
+        let Ok(text) = std::fs::read_to_string("/scheme/sys/context") else {
+            continue;
+        };
+        let now = forks_of(&text, me);
+        for pid in now.intersection(&seen) {
+            eprintln!("devshd: killing fork {pid}, stuck before exec (#577)");
+            unsafe {
+                libc::kill(*pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+        seen = now;
+    }
+}
+
+/// PIDs of the processes in a `/scheme/sys/context` listing whose parent
+/// is `parent` and whose name is still devshd. Columns: PID PGID PPID ...
+/// NAME (last); a process has one row per thread.
+fn forks_of(text: &str, parent: u32) -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    for line in text.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4 {
+            continue;
+        }
+        let (Ok(pid), Ok(ppid)) = (fields[0].parse::<u32>(), fields[2].parse::<u32>()) else {
+            continue;
+        };
+        let name = fields[fields.len() - 1];
+        if ppid == parent && pid != parent && name.rsplit('/').next() == Some("devshd") {
+            pids.insert(pid);
+        }
+    }
+    pids
+}
+
 /// Bind the port, trying again every 5 s: after a rebind the old socket
 /// may not be gone at once.
 fn listen(port: u16, first: bool) -> TcpListener {
@@ -143,6 +193,7 @@ fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(2323);
     let mut listener = listen(port, true);
+    thread::spawn(reap_stuck_forks);
     // Accept errors used to be skipped without a word, and an error that
     // stays made the loop spin while clients were refused (#129). Now they
     // are logged, and after 20 in a row the port is bound again.
@@ -176,5 +227,23 @@ fn main() {
         if let Err(err) = started {
             eprintln!("devshd: cannot start a session: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forks_of;
+
+    #[test]
+    fn finds_forks_still_named_devshd() {
+        let text = "PID   PGID  PPID  STAT  CPU  AFFINITY  ACTTIME      SCHTIME  MEM  NAME\n\
+             30    30    1     S     #0   0x1  00:00:01.00  00:00:01.10  2 MB  /usr/bin/devshd\n\
+             30    30    1     S     #0   0x1  00:00:00.10  00:00:00.20  2 MB  /usr/bin/devshd\n\
+             199   30    30    S     #1   0x1  00:00:00.00  00:00:00.01  60 MB  /usr/bin/devshd\n\
+             200   200   30    S     #1   0x1  00:00:00.02  00:00:00.03  1 MB  /usr/bin/login\n\
+             201   201   1     S     #1   0x1  00:00:00.02  00:00:00.03  1 MB  devshd\n";
+        let pids = forks_of(text, 30);
+        assert_eq!(pids.len(), 1);
+        assert!(pids.contains(&199));
     }
 }
