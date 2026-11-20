@@ -78,6 +78,15 @@ issue; the background is in [docs/topics/audio.md](../../../docs/topics/audio.md
   - **Applying with `pi400`:** `0001` applies with fuzz 1 on top of it,
     because `pi400` adds `40_bcmgenetd.service` next to the line `0001`
     changes in `40_drivers.target`.
+- **Base 0003, pixel clock changes:** once a second the driver reads the
+  pixel clock again (PLLH on the 3B+, the port's PHY on the Pi 400). If it
+  moved by more than 0.1 %, CTS is written for the new clock. This happens
+  when `rpi-fbd` switches from the firmware's boot mode to the monitor's
+  mode, for example from 640x480 (25.2 MHz) to 1080p (148.5 MHz). The
+  old CTS would be six times too small, and the monitor would drop or
+  distort the sound. A reset audio set-up is programmed with the current
+  clock too. `stats` adds `pixel_changes`, and `pixel_hz` names the
+  source of the last reading.
 
 `qemu-check.sh` checks the start, `audiod` on top and the scheme in QEMU.
 It can't check the HDMI path, since QEMU has none.
