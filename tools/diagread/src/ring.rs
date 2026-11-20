@@ -10,6 +10,12 @@
 //! record (8 words):  timer us, HVS DISPSTAT, HVS DISPSTAT1, PV2 STAT,
 //!   HDMI frame count, thermal sensor status, PLLB word, marker
 //! ```
+//!
+//! Version 2 adds header word 8 (flags, bit 0: AXI counters) and word 9 (the
+//! six AXI bus numbers, 5 bits each). With AXI counters a record has 32
+//! words: after the 8 above, per bus watcher read transactions, write
+//! transactions and wait cycles since the last record; words 26..31 are
+//! kept for V3D counters.
 
 pub const MAGIC: u32 = 0x4741_4944; // "DIAG"
 pub const HEADER_WORDS: usize = 16;
@@ -22,6 +28,8 @@ const H_WRITTEN: usize = 4;
 const H_PERIOD: usize = 5;
 const H_MARKER: usize = 6;
 const H_DROPPED: usize = 7;
+const H_FLAGS: usize = 8;
+const H_AXI_BUSES: usize = 9;
 
 /// Byte offset of the marker word, which the ARM may write.
 pub const MARKER_OFFSET: usize = H_MARKER * 4;
@@ -35,6 +43,8 @@ pub struct Header {
     pub period_us: u32,
     pub marker: u32,
     pub dropped: u32,
+    pub axi: bool,
+    pub axi_buses: [u32; 6],
 }
 
 impl Header {
@@ -61,11 +71,18 @@ impl Header {
             period_us: words[H_PERIOD],
             marker: words[H_MARKER],
             dropped: words[H_DROPPED],
+            axi: words[H_VERSION] >= 2 && words[H_FLAGS] & 1 != 0,
+            axi_buses: std::array::from_fn(|i| (words[H_AXI_BUSES] >> (5 * i)) & 0x1f),
         };
-        if h.version != 1 || h.rec_words != 8 {
-            return Err(format!("ring version {} with {} words per record: this reader knows version 1, 8 words", h.version, h.rec_words));
+        let known = match h.version {
+            1 => h.rec_words == 8,
+            2 => h.rec_words == if h.axi { 32 } else { 8 },
+            _ => false,
+        };
+        if !known {
+            return Err(format!("ring version {} with {} words per record: this reader knows versions 1 and 2", h.version, h.rec_words));
         }
-        if h.recs == 0 || HEADER_WORDS + (h.recs as usize) * 8 > total_words {
+        if h.recs == 0 || HEADER_WORDS + (h.recs as usize) * (h.rec_words as usize) > total_words {
             return Err(format!("ring says {} records, more than its {} bytes", h.recs, total_words * 4));
         }
         Ok(h)
@@ -87,11 +104,43 @@ pub struct Record {
     pub ts_stat: u32,
     pub pllb: u32,
     pub marker: u32,
+    /// AXI bus watchers (version 2 with AXI), else all 0.
+    pub axi: [Axi; 6],
+}
+
+/// One AXI bus watcher's counts since the record before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Axi {
+    pub reads: u32,
+    pub writes: u32,
+    pub wait: u32,
+}
+
+/// Name of the bus that watcher `w` (0..2 system monitor, 3..5 VPU monitor)
+/// counts. Tables of Raspberry Pi's Linux `raspberrypi_axi_monitor.c`
+/// (BCM2835/6/7).
+pub fn axi_bus_name(w: usize, bus: u32) -> &'static str {
+    const SYSTEM: [&str; 16] = [
+        "DMA_L2", "TRANS", "JPEG", "SYSTEM_UC", "DMA_UC", "SYSTEM_L2", "CCP2TX", "MPHI_RX", "MPHI_TX", "HVS", "H264",
+        "ISP", "V3D", "PERIPHERAL", "CPU_UC", "CPU_L2",
+    ];
+    const VPU: [&str; 16] = [
+        "VPU1_D_L2", "VPU0_D_L2", "VPU1_I_L2", "VPU0_I_L2", "SYSTEM_L2", "L2_FLUSH", "DMA_L2", "VPU1_D_UC",
+        "VPU0_D_UC", "VPU1_I_UC", "VPU0_I_UC", "SYSTEM_UC", "L2_OUT", "DMA_UC", "SDRAM", "L2_IN",
+    ];
+    let table = if w < 3 { &SYSTEM } else { &VPU };
+    table.get(bus as usize).copied().unwrap_or("?")
 }
 
 impl Record {
     pub fn from_words(w: &[u32]) -> Record {
+        let axi = if w.len() >= 26 {
+            std::array::from_fn(|i| Axi { reads: w[8 + 3 * i], writes: w[9 + 3 * i], wait: w[10 + 3 * i] })
+        } else {
+            [Axi::default(); 6]
+        };
         Record {
+            axi,
             t_us: w[0],
             dispstat: w[1],
             dispstat1: w[2],
@@ -143,8 +192,8 @@ pub fn records(words: &[u32], h: &Header) -> Vec<Record> {
     let n = h.valid();
     (h.written - n..h.written)
         .map(|i| {
-            let at = HEADER_WORDS + (i % h.recs) as usize * 8;
-            Record::from_words(&words[at..at + 8])
+            let at = HEADER_WORDS + (i % h.recs) as usize * h.rec_words as usize;
+            Record::from_words(&words[at..at + h.rec_words as usize])
         })
         .collect()
 }
@@ -280,6 +329,7 @@ mod tests {
     fn ring(recs: u32, written: u32) -> Vec<u32> {
         let mut w = vec![0u32; HEADER_WORDS + recs as usize * 8];
         w[..8].copy_from_slice(&[MAGIC, 1, 8, recs, written, 1000, 0, 0]);
+        w[9] = 0x1f; // ignored in version 1
         for i in 0..written {
             let at = HEADER_WORDS + (i % recs) as usize * 8;
             w[at] = i;
@@ -305,11 +355,39 @@ mod tests {
         w[0] = 0;
         assert!(Header::parse(&w).unwrap_err().contains("not started"));
         let mut w = ring(4, 0);
-        w[1] = 2;
+        w[1] = 3;
         assert!(Header::parse(&w).is_err());
         let mut w = ring(4, 0);
         w[3] = 100;
         assert!(Header::parse(&w).is_err());
+    }
+
+    #[test]
+    fn version_2_with_axi() {
+        let recs = 3;
+        let mut w = vec![0u32; HEADER_WORDS + recs * 32];
+        let buses = 9 | 15 << 5 | 12 << 10 | 14 << 15 | 15 << 20 | 13 << 25;
+        w[..10].copy_from_slice(&[MAGIC, 2, 32, recs as u32, 4, 1000, 0, 0, 1, buses]);
+        for i in 0..4usize {
+            let at = HEADER_WORDS + (i % recs) * 32;
+            w[at] = i as u32;
+            w[at + 8] = 100 + i as u32; // HVS reads
+            w[at + 25] = 7; // DMA_UC wait
+        }
+        let h = Header::parse(&w).unwrap();
+        assert!(h.axi);
+        assert_eq!(h.axi_buses, [9, 15, 12, 14, 15, 13]);
+        assert_eq!(axi_bus_name(0, h.axi_buses[0]), "HVS");
+        assert_eq!(axi_bus_name(3, h.axi_buses[3]), "SDRAM");
+        let r = records(&w, &h);
+        assert_eq!(r.iter().map(|r| r.axi[0].reads).collect::<Vec<_>>(), vec![101, 102, 103]);
+        assert_eq!(r[0].axi[5].wait, 7);
+        // version 2 without AXI: 8 words; with the flag but 8 words: refused
+        let mut w8 = ring(4, 2);
+        w8[1] = 2;
+        assert!(!Header::parse(&w8).unwrap().axi);
+        w8[8] = 1;
+        assert!(Header::parse(&w8).is_err());
     }
 
     #[test]

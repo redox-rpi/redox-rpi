@@ -11,6 +11,7 @@ diagread status            header: period, records, dropped, marker
 diagread dump [N]          the last N records (default 20), decoded
 diagread stalls [MS]       stalls of MS or more (default 50) in the ring
 diagread watch [MS]        the same, live, until Ctrl-C
+diagread axi [S]           AXI bus counts per second, last S seconds (10)
 diagread save FILE         the whole ring as a file
 diagread marker VALUE      write the marker word
 diagread start US | stop   Linux only: start or stop by mailbox (/dev/vcio)
@@ -66,5 +67,16 @@ the hang is on the ARM side (driver or compositor), not in the display.
 | Temperature | Linux `bcm2835_thermal.c`: 407 °C − 0.538 °C per step, valid bit 10 |
 | ARM clock | 19.2 MHz × PLLB multiplier, with the feedback prediv and `pllb_arm` / 2 as on the 3B+ and Zero 2 W; an estimate |
 
-No V3D counters and no AXI bus counters yet; they come with later
-firmware steps of #66.
+## AXI bus counters
+
+With `diag_axi=1` next to `diag_period=` (firmware PR rof #70 and later),
+the firmware also reads the two AXI performance monitors of the SoC every
+record: three bus watchers on the system bus (HVS, CPU L2, V3D) and three
+on the VPU bus (SDRAM, L2 in, DMA uncached). `diagread axi` sums them per
+second: read and write transactions and wait cycles, in thousands. High
+SDRAM traffic or long waits during a stall point to memory bandwidth.
+With them a record is 32 words, so the ring holds about 8 s at 1 ms; use
+`diag_period=10000` (10 ms) for 80 s. Register layout and bus names from
+Raspberry Pi's Linux `raspberrypi_axi_monitor.c`.
+
+No V3D counters yet; they come when our firmware powers V3D (M5).

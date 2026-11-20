@@ -6,6 +6,7 @@
 //! diagread dump [N]          the last N records (default 20), decoded
 //! diagread stalls [MS]       stalls of MS or more (default 50) in the ring
 //! diagread watch [MS]        the same, live, until Ctrl-C
+//! diagread axi [S]           AXI bus counts per second, last S seconds (10)
 //! diagread save FILE         the whole ring as a file, for later
 //! diagread marker VALUE      write the marker word (lines records up with
 //!                            what a driver did)
@@ -26,7 +27,7 @@ use std::os::fd::AsRawFd;
 use std::process::ExitCode;
 use std::time::Duration;
 
-const USAGE: &str = "usage: diagread [--addr 0xADDR | --file FILE] status | dump [N] | stalls [MS] | watch [MS] | save FILE | marker VALUE | start US | stop";
+const USAGE: &str = "usage: diagread [--addr 0xADDR | --file FILE] status | dump [N] | stalls [MS] | axi [S] | watch [MS] | save FILE | marker VALUE | start US | stop";
 
 #[cfg(target_os = "redox")]
 const DTB: &str = "/scheme/kernel.dtb";
@@ -143,10 +144,11 @@ impl Source {
     }
 
     fn record(&self, h: &Header, i: u32) -> Record {
-        let at = ring::HEADER_WORDS + (i % h.recs) as usize * 8;
+        let n = h.rec_words as usize;
+        let at = ring::HEADER_WORDS + (i % h.recs) as usize * n;
         match self {
-            Source::Memory { map, .. } => Record::from_words(&map.words(at, 8)),
-            Source::File(w) => Record::from_words(&w[at..at + 8]),
+            Source::Memory { map, .. } => Record::from_words(&map.words(at, n)),
+            Source::File(w) => Record::from_words(&w[at..at + n]),
         }
     }
 }
@@ -196,6 +198,10 @@ fn status(src: &Source) -> Result<(), String> {
     println!("written   {} ({} in the ring of {})", h.written, h.valid(), h.recs);
     println!("dropped   {}", h.dropped);
     println!("marker    0x{:08x}", h.marker);
+    if h.axi {
+        let names: Vec<_> = h.axi_buses.iter().enumerate().map(|(w, b)| ring::axi_bus_name(w, *b)).collect();
+        println!("axi       system {} | VPU {}", names[..3].join(" "), names[3..].join(" "));
+    }
     if h.valid() > 0 {
         let last = src.record(&h, h.written - 1);
         println!("last      t {} s, hdmi frame {}, ARM {:.0} MHz", secs(last.t_us), last.hdmi_frames, last.arm_mhz());
@@ -210,6 +216,35 @@ fn dump(src: &Source, n: u32) -> Result<(), String> {
     println!("{:>10}  {:>6}  {:>2}  {:>8}  {:>8}  {:>5}  {:>4}  {:>8}", "t s", "hdmi", "hv", "dispstat", "pv2stat", "°C", "MHz", "marker");
     for r in &recs[recs.len().saturating_sub(n as usize)..] {
         print_record(r);
+    }
+    Ok(())
+}
+
+/// AXI counts per second: reads, writes and wait cycles per bus watcher.
+fn axi(src: &Source, seconds: u32) -> Result<(), String> {
+    let words = src.snapshot();
+    let h = Header::parse(&words)?;
+    if !h.axi {
+        return Err("the sampler runs without AXI counters (diag_axi=1 in config.txt, or start with 0x80000000 added)".into());
+    }
+    let recs = ring::records(&words, &h);
+    let names: Vec<_> = h.axi_buses.iter().enumerate().map(|(w, b)| ring::axi_bus_name(w, *b)).collect();
+    print!("{:>10}", "t s");
+    for n in &names {
+        print!("  {:>22}", format!("{n} r/w/wait k"));
+    }
+    println!();
+    let per = (1_000_000 / h.period_us.max(1)).max(1) as usize;
+    let skip = recs.len().saturating_sub(seconds as usize * per);
+    for chunk in recs[skip..].chunks(per) {
+        print!("{:>10}", secs(chunk[0].t_us));
+        for w in 0..6 {
+            let (r, wr, wait) = chunk.iter().fold((0u64, 0u64, 0u64), |(a, b, c), x| {
+                (a + u64::from(x.axi[w].reads), b + u64::from(x.axi[w].writes), c + u64::from(x.axi[w].wait))
+            });
+            print!("  {:>22}", format!("{}/{}/{}", r / 1000, wr / 1000, wait / 1000));
+        }
+        println!();
     }
     Ok(())
 }
@@ -327,6 +362,7 @@ fn run(args: &[String]) -> Result<(), String> {
     match rest.first().copied().unwrap_or("status") {
         "status" => status(&Source::open(addr, file, false)?),
         "dump" => dump(&Source::open(addr, file, false)?, arg(1, 20)? as u32),
+        "axi" => axi(&Source::open(addr, file, false)?, arg(1, 10)? as u32),
         "stalls" => stalls(&Source::open(addr, file, false)?, arg(1, 50)? as u32),
         "watch" => watch(&Source::open(addr, file, false)?, arg(1, 50)? as u32),
         "save" => save(&Source::open(addr, file, false)?, rest.get(1).ok_or(USAGE)?),
