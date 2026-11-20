@@ -1,0 +1,10 @@
+[package]
+name = "gamepad-test"
+description = "A window that shows a game controller's buttons and axes live, from Orbital's controller events"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+inputd = { git = "https://gitlab.redox-os.org/redox-os/base.git", rev = "eddcaa21fb2d11b4a6bd64478e0639153266dc04" }
+orbclient = { version = "0.4.6", default-features = false, features = ["std", "unifont"] }

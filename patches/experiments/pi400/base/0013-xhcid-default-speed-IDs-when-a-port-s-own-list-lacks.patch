@@ -1,0 +1,115 @@
+From c0927d4840cd19a137b22ad86964443aa53cafbd Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 07:26:57 +0000
+Subject: [PATCH] xhcid: default speed IDs when a port's own list lacks one
+
+A root port whose protocol lists its own speed IDs (PSIC > 0) may list
+only the speeds it runs at itself. A high-speed port of the VL805 has no
+entry for low speed. A low-speed keyboard behind a hub on that port then
+made xhcid abort at "Failed to retrieve speed ID" (Pi 400 test 442),
+right after it got the speed from its hub.
+
+lookup_psiv now falls back to the default IDs of xHCI 1.2 table 7-13
+(1 full, 2 low, 3 high, 4 and up SuperSpeed), the IDs a hub's port
+status maps to, and logs the port's own IDs when it does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/mod.rs | 74 ++++++++++++++++++++++---------
+ 1 file changed, 52 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 7f953487..762c69af 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -1452,7 +1452,57 @@ impl<const N: usize> Xhci<N> {
+         &self,
+         port: PortId,
+     ) -> impl Iterator<Item = &'static ProtocolSpeed> {
+-        use extended::*;
++
++        match self.supported_protocol(port) {
++            Some(supp_proto) => {
++                if supp_proto.psic() != 0 {
++                    unsafe { supp_proto.protocol_speeds().iter() }
++                } else {
++                    default_protocol_speeds()
++                }
++            }
++            None => {
++                log::warn!(
++                    "falling back to default supported protocol speeds for port {}",
++                    port
++                );
++                default_protocol_speeds()
++            }
++        }
++    }
++    /// The protocol speed with ID `psiv` on `port`. A root port that lists
++    /// its own speed IDs may list only the speeds it runs at itself: a
++    /// high-speed port of the VL805 (Pi 400 test 442) has no entry for low
++    /// speed, which a device behind a hub on that port can have. Then the
++    /// default IDs of xHCI 1.2 table 7-13 (1 full, 2 low, 3 high, 4 and up
++    /// SuperSpeed) apply, the same IDs a hub's port status maps to.
++    pub fn lookup_psiv(&self, port: PortId, psiv: u8) -> Option<&'static ProtocolSpeed> {
++        if let Some(speed) = self
++            .supported_protocol_speeds(port)
++            .find(|speed| speed.psiv() == psiv)
++        {
++            return Some(speed);
++        }
++        let listed: Vec<u8> = self
++            .supported_protocol_speeds(port)
++            .map(|speed| speed.psiv())
++            .collect();
++        let speed = default_protocol_speeds().find(|speed| speed.psiv() == psiv);
++        info!(
++            "port {}: speed ID {} not among the port's own IDs {:?}, default ID used: {}",
++            port,
++            psiv,
++            listed,
++            speed.is_some()
++        );
++        speed
++    }
++}
++
++/// The default protocol speed IDs (xHCI 1.2 table 7-13), for a port whose
++/// protocol lists none (PSIC 0) or lacks the one asked for.
++fn default_protocol_speeds() -> std::slice::Iter<'static, ProtocolSpeed> {
++    use extended::*;
+         const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
+             // Full-speed
+             ProtocolSpeed::from_raw(
+@@ -1516,27 +1566,7 @@ impl<const N: usize> Xhci<N> {
+             ),
+         ];
+ 
+-        match self.supported_protocol(port) {
+-            Some(supp_proto) => {
+-                if supp_proto.psic() != 0 {
+-                    unsafe { supp_proto.protocol_speeds().iter() }
+-                } else {
+-                    DEFAULT_SUPP_PROTO_SPEEDS.iter()
+-                }
+-            }
+-            None => {
+-                log::warn!(
+-                    "falling back to default supported protocol speeds for port {}",
+-                    port
+-                );
+-                DEFAULT_SUPP_PROTO_SPEEDS.iter()
+-            }
+-        }
+-    }
+-    pub fn lookup_psiv(&self, port: PortId, psiv: u8) -> Option<&'static ProtocolSpeed> {
+-        self.supported_protocol_speeds(port)
+-            .find(|speed| speed.psiv() == psiv)
+-    }
++    DEFAULT_SUPP_PROTO_SPEEDS.iter()
+ }
+ pub fn start_irq_reactor<const N: usize>(hci: &Arc<Xhci<N>>, irq_file: Option<InterruptVector>) {
+     let hci_clone = Arc::clone(&hci);
+-- 
+2.53.0
+

@@ -14,7 +14,6 @@ lookup that fails costs a few wakeups each time.
  drivers/usb/dwc2d/src/lan78xx.rs | 43 +++++++++++++++++++++++++++++++-
  drivers/usb/dwc2d/src/main.rs    | 42 ++++++++++++++++++++++++++++++-
  2 files changed, 83 insertions(+), 2 deletions(-)
-
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
 index aedc6822..baeee81f 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
@@ -98,10 +97,10 @@ index aedc6822..baeee81f 100644
  /// adapter takes over from another one.
  pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index a9b077e2..01dfbc39 100644
+index d8fe5348..b23fe1ef 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -136,7 +136,14 @@ impl UsbNet {
+@@ -137,7 +137,14 @@ impl UsbNet {
              if let Ok(now) = now {
                  if now != *link {
                      let state = if now { "up" } else { "down" };
@@ -117,7 +116,7 @@ index a9b077e2..01dfbc39 100644
                      *link = now;
                  }
              }
-@@ -407,6 +414,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+@@ -408,6 +415,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
  /// While this file exists, mouse events are printed too (tests without a
  /// person); looked at with every rescan.
  const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
@@ -138,7 +137,7 @@ index a9b077e2..01dfbc39 100644
  /// How long a network adapter found at boot may wait for its link, so DHCP
  /// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
  /// can take longer than 5 s. Adapters plugged in later do not wait: their
-@@ -610,6 +631,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -612,6 +633,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
@@ -162,8 +161,7 @@ index a9b077e2..01dfbc39 100644
 +                    }
 +                }
                  let mut cycled = Vec::new();
-                 if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
-                     let _ = std::fs::remove_file(CYCLE_REQUEST);
+                 if let Ok(request) = aside::cycle_request() {
+                     let net = scheme.adapter_mut();
 -- 
 2.53.0
-

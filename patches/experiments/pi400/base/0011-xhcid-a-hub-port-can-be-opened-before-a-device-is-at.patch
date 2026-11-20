@@ -1,0 +1,54 @@
+From 62ed662b20faaa92929bdc70047fcb0585ffb35d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 15 Nov 2026 20:13:15 +0000
+Subject: [PATCH] xhcid: a hub port can be opened before a device is attached
+ to it
+
+usbhubd opens /scheme/<xhci>/port<root>.<n> for every downstream port of
+its hub when it starts, and writes `attach` there when a device shows
+up. xhcid answered that open with ENOENT while the port had no port
+state, so usbhubd aborted at "Failed to open XhciClientHandle" (Pi 400
+test 412: the VL805's hub on root port 1). Upstream main has the same
+code.
+
+The port directory now opens without a port state and lists only
+`attach` and `detach`. Attaching already worked without one.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme.rs | 17 ++++++++++-------
+ 1 file changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 47e7bd1e..6217b87b 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -1895,15 +1895,18 @@ impl<const N: usize> Xhci<N> {
+         if (flags & O_DIRECTORY != 0) || (flags & O_STAT != 0) {
+             let mut contents = Vec::new();
+ 
++            // A hub's downstream port with nothing attached yet: usbhubd
++            // opens every port of its hub at start and writes `attach` when
++            // a device shows up. Without a port state this open failed with
++            // ENOENT and usbhubd aborted (Pi 400 test 412, the VL805 hub).
++            let Some(port_state) = self.port_states.get(&port_num) else {
++                write!(contents, "attach\ndetach\n").unwrap();
++                return Ok(Handle::Port(port_num, contents));
++            };
++
+             write!(contents, "descriptors\nendpoints\n").unwrap();
+ 
+-            if self.slot_state(
+-                self.port_states
+-                    .get(&port_num)
+-                    .ok_or(Error::new(ENOENT))?
+-                    .slot as usize,
+-            ) != SlotState::Configured as u8
+-            {
++            if self.slot_state(port_state.slot as usize) != SlotState::Configured as u8 {
+                 write!(contents, "configure\n").unwrap();
+             }
+ 
+-- 
+2.53.0
+

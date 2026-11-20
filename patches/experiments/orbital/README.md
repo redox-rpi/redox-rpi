@@ -40,7 +40,7 @@ whole core on polling the keyboard.
 ## Results
 
 QEMU `raspi3b` (4 cores, 1 GiB), 2026-10-29, `RPI_FB=1280x720` typed
-into the bootloader's editor, helper `build/fbgui.py` on homenodellm
+into the bootloader's editor, helper `build/fbgui.py` on the build server
 (screenshots, serial commands, keys through QEMU's USB keyboard):
 
 - `v0.3.0-dev-191-g2d7a1b2+xc786` (packages only): Orbital's login window
@@ -132,7 +132,7 @@ into the bootloader's editor, helper `build/fbgui.py` on homenodellm
     (`recipes/gui/orbterm/recipe.toml`, pinned to `5cc7a2d`), and the
     source script sets alpha to 255 and removes the flag. Orbital then
     copies the terminal instead of blending it over what is behind.
-  - **QEMU measurement** (`build/dragbench.sh` on homenodellm, at the
+  - **QEMU measurement** (`build/dragbench.sh` on the build server, at the
     Pi's 1824x984): `orbterm` started from the serial shell over the
     login screen, which has its own full-screen picture, then 40 window
     moves with Super-arrow. `ps` shows Orbital's CPU time before and

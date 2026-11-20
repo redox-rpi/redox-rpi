@@ -10,7 +10,9 @@ is in redox-rpi/pi-tests):
 
   base      the branch it merges into; stacked pull requests come after
             the one they build on
-  CI        green, failed, running or none
+  CI        green, failed, running or none; "stale" when it is green but
+            older than main's last change to patches/, config/, scripts/,
+            tools/ or .github/ (rerun or rebase before the merge, #257)
   Pi test   the newest row of the test queue (queue.md in redox-rpi/pi-tests,
             read by scripts/pi-tests-queue.sh) that names the branch or the
             pull request, and whether it passed
@@ -32,6 +34,7 @@ nothing else, and reads the test queue from redox-rpi/pi-tests. Needs gh
 """
 
 import argparse
+from datetime import datetime
 import json
 import os
 import re
@@ -66,6 +69,13 @@ def merge_tree(a, b):
     if p.returncode == 0:
         return lines[0], []
     return None, sorted({f for f in lines[1:] if f})
+
+
+def ci_finished(checks):
+    """ISO time of the newest finished check, or None."""
+    times = [c.get("completedAt") for c in checks
+             if c.get("completedAt") and not c["completedAt"].startswith("0001-")]
+    return max(times) if times else None
 
 
 def ci_state(checks):
@@ -152,6 +162,12 @@ def main():
         if m:
             on_main.add(m.groups())
 
+    # Main's last change to what CI builds and tests; a green run before it
+    # may no longer hold (#257: base 0083 merged after a PR's last run).
+    main_changed = git("log", "-1", "--format=%cI", "origin/main", "--",
+                       "patches", "config", "scripts", "tools", ".github")
+    main_changed = datetime.fromisoformat(main_changed)
+
     info = {}
     for p in prs:
         n, head = p["number"], f"origin/pr/{p['number']}"
@@ -167,11 +183,17 @@ def main():
             "main": "clean" if merge_tree("origin/main", head)[0] else "conflict",
         }
         info[n]["pi"] = pi_test(rows, info[n])
+        finished = ci_finished(p["statusCheckRollup"] or [])
+        if (info[n]["ci"] == "green" and finished and p["baseRefName"] == "main"
+                and datetime.fromisoformat(finished.replace("Z", "+00:00")) < main_changed):
+            info[n]["ci"] = "stale"
 
     by_head = {i["head"]: n for n, i in info.items()}
     for i in info.values():
         i["parent"] = by_head.get(i["base"])
         i["notes"] = []
+        if i["ci"] == "stale":
+            i["notes"].append("CI older than main's last change: rerun or rebase")
         if i["base"] != "main" and i["parent"] is None:
             i["notes"].append(f"base `{i['base']}` has no open pull request")
 

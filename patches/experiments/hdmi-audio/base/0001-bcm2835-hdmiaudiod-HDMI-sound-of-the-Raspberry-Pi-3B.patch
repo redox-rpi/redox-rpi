@@ -1,0 +1,2098 @@
+From d78f7e49c821df29ab12b673be11135980ac4363 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 14 Nov 2026 19:10:26 +0000
+Subject: [PATCH] bcm2835-hdmiaudiod: HDMI sound of the Raspberry Pi 3B+ and
+ Zero 2 W
+
+A driver for the audio part of the VC4 HDMI block, as Linux vc4_hdmi.c
+programs it, offering the audiohw scheme for audiod in place of
+bcm2835-pwmaudiod (issue #423 in redox-rpi). The firmware keeps the
+picture; no display driver is needed.
+
+- MAI FIFO (HD block 0x7e808000): reset, sample clock MAI_SMP from the
+  HSM clock, 2 channels PCM 44.1 kHz, thresholds as Linux.
+- HDMI core (0x7e902000): channel map and mask, audio packet set-up
+  (B-frame identifier 8), audio clock regeneration (N = 128 fs / 1000,
+  CTS from the pixel clock: rpi-firmwared, else PLLH_PIX from the
+  clock manager, else 148.5 MHz), the audio info frame
+  in packet RAM slot 4. DVI mode is switched to HDMI mode.
+- DMA channel 0 with DREQ 17 plays a ring of 8 x 512 frames of IEC958
+  subframes (preamble, channel status, parity) into MAI_DATA.
+- The HSM rate comes from CM_HSMCTL/HSMDIV if the source is known,
+  else 163.682864 MHz. Two 3 s measurements of the DMA progress that
+  agree correct it once; a refresh gap over 60 ms (a ring turn is 93 ms,
+  turns would go uncounted) starts the measurement over.
+- A 10 ms timer counts FIFO underflows and overflows and programs the
+  audio part again if the firmware reset it.
+- stats, tone (a sine through the ring) and stop as in
+  bcm2835-pwmaudiod. Without an HDMI output (QEMU) the ring plays to
+  the clock.
+
+16 host tests: IEC958 subframes, channel status, block alignment
+across slots, register values, N/CTS, MAI_SMP, info frame and its
+packet RAM layout.
+
+The service replaces bcm2835-pwmaudiod in 40_drivers.target.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.toml                                    |   1 +
+ Makefile                                      |   1 +
+ drivers/audio/bcm2835-hdmiaudiod/Cargo.toml   |  19 +
+ drivers/audio/bcm2835-hdmiaudiod/src/dma.rs   | 221 +++++
+ drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs  | 499 ++++++++++
+ .../audio/bcm2835-hdmiaudiod/src/iec958.rs    | 193 ++++
+ drivers/audio/bcm2835-hdmiaudiod/src/main.rs  | 878 ++++++++++++++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/ring.rs  | 139 +++
+ init.initfs.d/40_drivers.target               |   2 +-
+ init.initfs.d/41_bcm2835-hdmiaudiod.service   |  10 +
+ 10 files changed, 1962 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/iec958.rs
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+ create mode 100644 drivers/audio/bcm2835-hdmiaudiod/src/ring.rs
+ create mode 100644 init.initfs.d/41_bcm2835-hdmiaudiod.service
+
+diff --git a/Cargo.toml b/Cargo.toml
+index b1e3c330..890a5e11 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -56,6 +56,7 @@ members = [
+     "drivers/net/virtio-netd",
+ 
+     "drivers/audio/bcm2835-pwmaudiod",
++    "drivers/audio/bcm2835-hdmiaudiod",
+     "drivers/bcm2835-gpiod",
+     "drivers/bcm2835-i2cd",
+     "drivers/bcm2835-spid",
+diff --git a/Makefile b/Makefile
+index 29a06463..da95e0d5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -22,6 +22,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+ 	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod
++	INITFS_BINS += bcm2835-hdmiaudiod
+ endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/Cargo.toml b/drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
+new file mode 100644
+index 00000000..770ac5bf
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
+@@ -0,0 +1,19 @@
++[package]
++name = "bcm2835-hdmiaudiod"
++description = "HDMI sound of the Raspberry Pi 3B+ and Zero 2 W (VC4 HDMI MAI) as the audiohw scheme"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../../common" }
++daemon = { path = "../../../daemon" }
++scheme-utils = { path = "../../../scheme-utils" }
++
++libredox.workspace = true
++redox_event.workspace = true
++redox-scheme.workspace = true
++redox_syscall = { workspace = true, features = ["std"] }
++
++[lints]
++workspace = true
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs b/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
+new file mode 100644
+index 00000000..fdfeb19b
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/dma.rs
+@@ -0,0 +1,221 @@
++//! The BCM2835 DMA controller playing a ring of slots into the HDMI MAI
++//! FIFO (docs/topics/dma.md in redox-rpi, step 1: one fixed channel,
++//! uncached buffers, polling instead of the interrupt). The same as in
++//! `bcm2835-pwmaudiod`, with the channel and the DREQ line as parameters.
++//!
++//! Each slot has one control block, and the last block points back to the
++//! first, so the controller plays the ring forever. The FIFO paces it
++//! through its DREQ line: a word moves only when the FIFO has room.
++//! `CONBLK_AD` says which block, and so which slot, is playing.
++
++use common::dma::Dma;
++use fdt::Fdt;
++
++use crate::ring::SLOT_FRAMES;
++
++/// Bus address of the controller on all BCM283x, if the devicetree has none.
++const DMA_BUS_ADDR: usize = 0x7e00_7000;
++/// The channel this driver owns (docs/topics/dma.md, channel table: 2 and 0
++/// are free for SPI or audio; `bcm2835-pwmaudiod` has 2).
++pub const CHANNEL: usize = 0;
++const CHANNEL_SIZE: usize = 0x100;
++/// RAM as the controller sees it when the devicetree has no dma-ranges.
++const RAM_BUS_OFFSET: usize = 0xc000_0000;
++
++// Channel registers, as byte offsets.
++const CS: usize = 0x00;
++const CONBLK_AD: usize = 0x04;
++const DEBUG: usize = 0x20;
++/// Global register: one enable bit per channel.
++const ENABLE: usize = 0xff0;
++
++// CS
++const CS_ACTIVE: u32 = 1 << 0;
++const CS_END: u32 = 1 << 1;
++const CS_INT: u32 = 1 << 2;
++const CS_ERROR: u32 = 1 << 8;
++const CS_WAIT_FOR_OUTSTANDING_WRITES: u32 = 1 << 28;
++const CS_ABORT: u32 = 1 << 30;
++const CS_RESET: u32 = 1 << 31;
++/// AXI priority 8, panic priority 15.
++const CS_PRIORITY: u32 = 8 << 16 | 15 << 20;
++
++// TI, in the control block
++const TI_WAIT_RESP: u32 = 1 << 3;
++const TI_DEST_DREQ: u32 = 1 << 6;
++const TI_SRC_INC: u32 = 1 << 8;
++const TI_PERMAP_SHIFT: u32 = 16;
++
++// DEBUG; each bit is cleared by writing 1
++const DEBUG_ERRORS: u32 = 0x7;
++
++/// Slots in the ring: 8 × 512 frames, about 93 ms.
++pub const SLOTS: usize = 8;
++/// FIFO words per slot: one per channel and frame.
++pub const SLOT_WORDS: usize = SLOT_FRAMES * 2;
++
++/// One control block; the controller needs them aligned to 32 bytes.
++#[repr(C, align(32))]
++#[derive(Clone, Copy)]
++struct ControlBlock {
++    ti: u32,
++    source: u32,
++    dest: u32,
++    len: u32,
++    stride: u32,
++    next: u32,
++    _reserved: [u32; 2],
++}
++
++pub struct DmaRing {
++    /// The channel's registers.
++    regs: *mut u32,
++    /// The controller's register page, for ENABLE.
++    page: *mut u32,
++    /// Only read by the controller.
++    _cbs: Dma<[ControlBlock; SLOTS]>,
++    buf: Dma<[[u32; SLOT_WORDS]; SLOTS]>,
++    cbs_bus: u32,
++}
++
++// The channel and the buffers belong to this driver alone.
++unsafe impl Send for DmaRing {}
++
++impl DmaRing {
++    /// Set up the channel and the ring, not started yet. `fifo_bus` is the
++    /// bus address of the FIFO, `dreq` its DREQ line. Fails if the
++    /// devicetree does not leave the channel free.
++    pub fn new(fdt: &Fdt, fifo_bus: u32, dreq: u32) -> Result<Self, String> {
++        let node = fdt.find_compatible(&["brcm,bcm2835-dma"]);
++        let mask = node
++            .and_then(|node| node.property("brcm,dma-channel-mask"))
++            .and_then(|prop| prop.as_usize())
++            .ok_or("no brcm,dma-channel-mask in the devicetree")?;
++        if mask & 1 << CHANNEL == 0 {
++            return Err(format!("DMA channel {CHANNEL} not free (mask 0x{mask:x})"));
++        }
++        let bus_addr = node
++            .and_then(|node| node.reg())
++            .and_then(|mut reg| reg.next())
++            .map(|reg| reg.starting_address as usize)
++            .unwrap_or(DMA_BUS_ADDR);
++        let phys = crate::soc_phys(fdt, bus_addr);
++        let page = unsafe {
++            common::physmap(phys, 0x1000, common::Prot::RW, common::MemoryType::DeviceMemory)
++                .map_err(|err| format!("failed to map the DMA controller: {err:?}"))? as *mut u32
++        };
++        let mut cbs = unsafe {
++            Dma::<[ControlBlock; SLOTS]>::zeroed()
++                .map_err(|err| format!("failed to allocate the control blocks: {err}"))?
++                .assume_init()
++        };
++        let buf = unsafe {
++            Dma::<[[u32; SLOT_WORDS]; SLOTS]>::zeroed()
++                .map_err(|err| format!("failed to allocate the ring: {err}"))?
++                .assume_init()
++        };
++        let offset = ram_bus_offset(fdt);
++        let bus = |phys: usize| (phys + offset) as u32;
++        let cbs_bus = bus(cbs.physical());
++        let buf_bus = bus(buf.physical());
++        for (i, cb) in cbs.iter_mut().enumerate() {
++            *cb = ControlBlock {
++                ti: dreq << TI_PERMAP_SHIFT | TI_DEST_DREQ | TI_SRC_INC | TI_WAIT_RESP,
++                source: buf_bus + (i * SLOT_WORDS * 4) as u32,
++                dest: fifo_bus,
++                len: (SLOT_WORDS * 4) as u32,
++                stride: 0,
++                next: cbs_bus + (((i + 1) % SLOTS) * size_of::<ControlBlock>()) as u32,
++                _reserved: [0; 2],
++            };
++        }
++        let ring = DmaRing {
++            regs: unsafe { page.add(CHANNEL * CHANNEL_SIZE / 4) },
++            page,
++            _cbs: cbs,
++            buf,
++            cbs_bus,
++        };
++        let enable = ring.page_reg(ENABLE);
++        ring.set_page_reg(ENABLE, enable | 1 << CHANNEL);
++        ring.reset();
++        Ok(ring)
++    }
++
++    pub fn slot_mut(&mut self, index: usize) -> &mut [u32; SLOT_WORDS] {
++        &mut self.buf[index]
++    }
++
++    /// Start the ring at slot 0.
++    pub fn start(&self) {
++        self.reset();
++        barrier();
++        self.set_reg(CONBLK_AD, self.cbs_bus);
++        self.set_reg(CS, CS_ACTIVE | CS_END | CS_INT | CS_PRIORITY | CS_WAIT_FOR_OUTSTANDING_WRITES);
++    }
++
++    /// The slot whose control block the controller holds, if any.
++    pub fn position(&self) -> Option<usize> {
++        let cb = self.reg(CONBLK_AD).wrapping_sub(self.cbs_bus) as usize;
++        let size = size_of::<ControlBlock>();
++        (cb % size == 0 && cb / size < SLOTS).then_some(cb / size)
++    }
++
++    /// CS and DEBUG if the channel stopped with an error or is not running.
++    pub fn fault(&self) -> Option<(u32, u32)> {
++        let cs = self.reg(CS);
++        (cs & CS_ERROR != 0 || cs & CS_ACTIVE == 0).then(|| (cs, self.reg(DEBUG)))
++    }
++
++    /// Stop whatever the channel does and clear its errors.
++    pub fn reset(&self) {
++        if self.reg(CS) & CS_ACTIVE != 0 {
++            self.set_reg(CS, CS_ABORT);
++            let start = std::time::Instant::now();
++            while self.reg(CS) & CS_ACTIVE != 0 && start.elapsed() < std::time::Duration::from_millis(10) {}
++        }
++        self.set_reg(CS, CS_RESET);
++        self.set_reg(DEBUG, DEBUG_ERRORS);
++    }
++
++    fn reg(&self, offset: usize) -> u32 {
++        unsafe { self.regs.add(offset / 4).read_volatile() }
++    }
++
++    fn set_reg(&self, offset: usize, value: u32) {
++        unsafe { self.regs.add(offset / 4).write_volatile(value) }
++    }
++
++    fn page_reg(&self, offset: usize) -> u32 {
++        unsafe { self.page.add(offset / 4).read_volatile() }
++    }
++
++    fn set_page_reg(&self, offset: usize, value: u32) {
++        unsafe { self.page.add(offset / 4).write_volatile(value) }
++    }
++}
++
++/// Bus address minus physical address of RAM, from the first entry of
++/// `/soc`'s dma-ranges (one cell each for bus address, physical address and
++/// size on the BCM283x).
++fn ram_bus_offset(fdt: &Fdt) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.property("dma-ranges"))
++        .filter(|prop| prop.value.len() >= 12)
++        .map(|prop| {
++            let cell = |i: usize| u32::from_be_bytes(prop.value[i * 4..i * 4 + 4].try_into().unwrap());
++            (cell(0) as usize).wrapping_sub(cell(1) as usize)
++        })
++        .unwrap_or(RAM_BUS_OFFSET)
++}
++
++/// Make the CPU's writes to the ring visible before the register write that
++/// starts the controller.
++pub fn barrier() {
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("dsb sy", options(nostack, preserves_flags));
++    }
++    #[cfg(not(target_arch = "aarch64"))]
++    std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
++}
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+new file mode 100644
+index 00000000..749f0d98
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+@@ -0,0 +1,499 @@
++//! The audio part of the VC4 HDMI block of the BCM2835/2837, as Linux
++//! `vc4_hdmi.c` (v6.12) programs it. The firmware keeps the picture; this
++//! driver touches only the MAI FIFO, the audio clock regeneration (N/CTS),
++//! the audio packet set-up and the audio info frame.
++//!
++//! Two register blocks: the HD block (`MAI_*`, bus 0x7e808000) holds the
++//! FIFO the DMA fills; the HDMI core (bus 0x7e902000) packs the samples
++//! into HDMI audio packets.
++//!
++//! The value functions are pure and tested on the build host; `Hdmi` does
++//! the register accesses.
++
++use std::time::{Duration, Instant};
++
++// HD block.
++pub const MAI_CTL: usize = 0x14;
++pub const MAI_THR: usize = 0x18;
++pub const MAI_FMT: usize = 0x1c;
++/// The FIFO: the DMA target.
++pub const MAI_DATA: usize = 0x20;
++pub const MAI_SMP: usize = 0x2c;
++
++// HDMI core.
++pub const HOTPLUG: usize = 0x0c;
++pub const MAI_CHANNEL_MAP: usize = 0x90;
++pub const MAI_CONFIG: usize = 0x94;
++pub const AUDIO_PACKET_CONFIG: usize = 0x9c;
++pub const RAM_PACKET_CONFIG: usize = 0xa0;
++pub const RAM_PACKET_STATUS: usize = 0xa4;
++pub const CRP_CFG: usize = 0xa8;
++pub const CTS_0: usize = 0xac;
++pub const CTS_1: usize = 0xb0;
++pub const SCHEDULER_CONTROL: usize = 0xc0;
++pub const RAM_PACKET_START: usize = 0x400;
++/// Bytes of packet RAM per packet (9 words).
++pub const PACKET_STRIDE: usize = 0x24;
++
++pub const HOTPLUG_CONNECTED: u32 = 1 << 0;
++pub const SCHEDULER_MODE_HDMI: u32 = 1 << 0;
++pub const SCHEDULER_HDMI_ACTIVE: u32 = 1 << 1;
++pub const RAM_PACKET_ENABLE: u32 = 1 << 16;
++
++pub const MAI_CTL_RESET: u32 = 1 << 0;
++pub const MAI_CTL_ERRORF: u32 = 1 << 1;
++pub const MAI_CTL_ERRORE: u32 = 1 << 2;
++pub const MAI_CTL_ENABLE: u32 = 1 << 3;
++pub const MAI_CTL_FLUSH: u32 = 1 << 9;
++pub const MAI_CTL_WHOLSMP: u32 = 1 << 12;
++pub const MAI_CTL_CHALIGN: u32 = 1 << 13;
++pub const MAI_CTL_DLATE: u32 = 1 << 15;
++
++const CRP_CFG_EXTERNAL_CTS_EN: u32 = 1 << 24;
++const MAI_CONFIG_FORMAT_REVERSE: u32 = 1 << 27;
++const MAI_CONFIG_BIT_REVERSE: u32 = 1 << 26;
++const AUDIO_PACKET_ZERO_DATA_ON_SAMPLE_FLAT: u32 = 1 << 29;
++const AUDIO_PACKET_ZERO_DATA_ON_INACTIVE_CHANNELS: u32 = 1 << 24;
++const AUDIO_PACKET_B_FRAME_SHIFT: u32 = 10;
++const MAI_FORMAT_PCM: u32 = 2;
++
++/// The audio info frame's type; it sits in packet RAM slot 0x84 − 0x80.
++pub const INFOFRAME_AUDIO: u8 = 0x84;
++pub const AUDIO_PACKET_ID: usize = (INFOFRAME_AUDIO - 0x80) as usize;
++
++/// The DMA request line of the HDMI MAI FIFO (BCM2835 devicetree:
++/// `dmas = <&dma 17>`).
++pub const DREQ_HDMI: u32 = 17;
++
++fn mask(channels: u32) -> u32 {
++    (1 << channels) - 1
++}
++
++/// `MAI_CTL` while playing.
++pub fn mai_ctl_play(channels: u32) -> u32 {
++    channels << 4 | MAI_CTL_WHOLSMP | MAI_CTL_CHALIGN | MAI_CTL_ENABLE
++}
++
++/// `MAI_CTL` to reset the FIFO and clear its error flags (Linux
++/// `vc4_hdmi_audio_startup`).
++pub const MAI_CTL_START: u32 = MAI_CTL_RESET | MAI_CTL_FLUSH | MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF;
++
++/// DREQ high 6, low 8; panic 8 and 8.
++pub const MAI_THR_VALUE: u32 = 0x08 << 24 | 0x08 << 16 | 0x06 << 8 | 0x08;
++
++/// The `MAI_FMT` sample-rate code, 0 = not indicated.
++pub fn mai_rate_code(sample_rate: u32) -> u32 {
++    match sample_rate {
++        8_000 => 1,
++        11_025 => 2,
++        12_000 => 3,
++        16_000 => 4,
++        22_050 => 5,
++        24_000 => 6,
++        32_000 => 7,
++        44_100 => 8,
++        48_000 => 9,
++        64_000 => 10,
++        88_200 => 11,
++        96_000 => 12,
++        128_000 => 13,
++        176_400 => 14,
++        192_000 => 15,
++        _ => 0,
++    }
++}
++
++pub fn mai_fmt(sample_rate: u32) -> u32 {
++    MAI_FORMAT_PCM << 16 | mai_rate_code(sample_rate) << 8
++}
++
++pub fn mai_config(channels: u32) -> u32 {
++    MAI_CONFIG_BIT_REVERSE | MAI_CONFIG_FORMAT_REVERSE | mask(channels)
++}
++
++/// Channel `i` of the FIFO to HDMI channel `i` (3 bits each on VC4).
++pub fn channel_map(channels: u32) -> u32 {
++    (0..8).filter(|i| mask(channels) & 1 << i != 0).map(|i| i << (3 * i)).sum()
++}
++
++pub fn audio_packet_config(channels: u32) -> u32 {
++    AUDIO_PACKET_ZERO_DATA_ON_SAMPLE_FLAT
++        | AUDIO_PACKET_ZERO_DATA_ON_INACTIVE_CHANNELS
++        | crate::iec958::PREAMBLE_B << AUDIO_PACKET_B_FRAME_SHIFT
++        | mask(channels)
++}
++
++/// N of the audio clock regeneration, as Linux picks it: 128 × fs / 1000.
++pub fn acr_n(sample_rate: u32) -> u32 {
++    128 * sample_rate / 1000
++}
++
++/// CTS = pixel clock × N / (128 × fs).
++pub fn acr_cts(pixel_hz: u64, n: u32, sample_rate: u32) -> u32 {
++    (pixel_hz * u64::from(n) / (128 * u64::from(sample_rate))) as u32
++}
++
++pub fn crp_cfg(n: u32) -> u32 {
++    CRP_CFG_EXTERNAL_CTS_EN | (n & 0xf_ffff)
++}
++
++/// Linux `rational_best_approximation`: the fraction n/d closest to
++/// `num`/`den` with n ≤ `max_n` and d ≤ `max_d`.
++pub fn best_approximation(num: u64, den: u64, max_n: u64, max_d: u64) -> (u64, u64) {
++    let (mut n, mut d) = (num, den);
++    let (mut n0, mut d1, mut n1, mut d0) = (0u64, 0u64, 1u64, 1u64);
++    loop {
++        if d == 0 {
++            break;
++        }
++        let dp = d;
++        let a = n / d;
++        d = n % d;
++        n = dp;
++        let n2 = n0 + a * n1;
++        let d2 = d0 + a * d1;
++        if n2 > max_n || d2 > max_d {
++            let mut t = u64::MAX;
++            if d1 != 0 {
++                t = (max_d - d0) / d1;
++            }
++            if n1 != 0 {
++                t = t.min((max_n - n0) / n1);
++            }
++            // Take the semi-convergent if it is closer than the last
++            // convergent (always on the first step).
++            if d1 == 0 || 2 * t > a || (2 * t == a && d0 * dp > d1 * d) {
++                n1 = n0 + t * n1;
++                d1 = d0 + t * d1;
++            }
++            break;
++        }
++        n0 = n1;
++        n1 = n2;
++        d0 = d1;
++        d1 = d2;
++    }
++    (n1, d1)
++}
++
++/// `MAI_SMP`: the FIFO takes a sample every HSM / (N / M) clocks. N has 24
++/// bits, M − 1 has 8.
++pub fn mai_smp(hsm_hz: u64, sample_rate: u32) -> (u32, u32) {
++    let (n, m) = best_approximation(hsm_hz, u64::from(sample_rate), 0xff_ffff, 0x100);
++    (n as u32, m as u32)
++}
++
++pub fn mai_smp_value(n: u32, m: u32) -> u32 {
++    n << 8 | (m - 1)
++}
++
++/// The audio info frame (CEA-861 type 0x84, version 1, 10 bytes) for
++/// `channels` channels; coding, rate and size come from the stream.
++pub fn audio_infoframe(channels: u32) -> [u8; 14] {
++    let mut frame = [0u8; 14];
++    frame[0] = INFOFRAME_AUDIO;
++    frame[1] = 1;
++    frame[2] = 10;
++    frame[4] = (channels - 1) as u8;
++    let sum = frame.iter().fold(0u8, |s, b| s.wrapping_add(*b));
++    frame[3] = sum.wrapping_neg();
++    frame
++}
++
++/// The packet RAM words of an info frame, as Linux
++/// `vc4_hdmi_write_infoframe` writes them: groups of 7 bytes as a 3-byte
++/// and a 4-byte word, the rest of the slot zero.
++pub fn packet_words(frame: &[u8]) -> [u32; PACKET_STRIDE / 4] {
++    let b = |i: usize| u32::from(*frame.get(i).unwrap_or(&0));
++    let mut words = [0u32; PACKET_STRIDE / 4];
++    let (mut i, mut w) = (0, 0);
++    while i < frame.len() && w + 1 < words.len() {
++        words[w] = b(i) | b(i + 1) << 8 | b(i + 2) << 16;
++        words[w + 1] = b(i + 3) | b(i + 4) << 8 | b(i + 5) << 16 | b(i + 6) << 24;
++        i += 7;
++        w += 2;
++    }
++    words
++}
++
++/// The HSM clock from the clock manager (`CM_HSMCTL` 0x88, `CM_HSMDIV`
++/// 0x8c, 12.12 fixed-point divisor), if its source has a known rate: the
++/// oscillator (19.2 MHz) or PLLD_PER (500 MHz on the BCM2837).
++pub fn hsm_from_cprman(ctl: u32, div: u32) -> Option<u64> {
++    let source: u64 = match ctl & 0xf {
++        1 => 19_200_000,
++        6 => 500_000_000,
++        _ => return None,
++    };
++    let div = u64::from(div & 0xff_ffff);
++    (ctl & 1 << 4 != 0 && div >= 1 << 12).then(|| source * 4096 / div)
++}
++
++/// Clock manager offsets (from its base, 0x7e101000) of PLLH and its pixel
++/// channel, as Linux `clk-bcm2835.c` reads them.
++pub const A2W_PLLH_ANA1: usize = 0x1074;
++pub const A2W_PLLH_CTRL: usize = 0x1160;
++pub const A2W_PLLH_FRAC: usize = 0x1260;
++pub const A2W_PLLH_PIX: usize = 0x1560;
++const OSC_HZ: u64 = 19_200_000;
++
++/// The HDMI pixel clock, PLLH_PIX: PLLH = 19.2 MHz × (NDIV + FRAC / 2^20)
++/// / PDIV (NDIV and FRAC doubled when the feedback prediv bit 11 of ANA1
++/// is set), then the channel divider (8 bits, 0 = 256) and a fixed 10.
++/// `None` if PDIV is 0 or the channel is off (bit 8).
++pub fn pixel_from_pllh(ctrl: u32, frac: u32, ana1: u32, pix: u32) -> Option<u64> {
++    let (mut ndiv, mut fdiv) = (u64::from(ctrl & 0x3ff), u64::from(frac & 0xf_ffff));
++    let pdiv = u64::from(ctrl >> 12 & 0x7);
++    if pdiv == 0 || pix & 1 << 8 != 0 {
++        return None;
++    }
++    if ana1 & 1 << 11 != 0 {
++        ndiv *= 2;
++        fdiv *= 2;
++    }
++    let pll = (OSC_HZ * ((ndiv << 20) + fdiv) / pdiv) >> 20;
++    let div = match u64::from(pix & 0xff) {
++        0 => 256,
++        d => d,
++    };
++    Some(pll / div / 10)
++}
++
++/// What the driver found in the HDMI core at start.
++pub struct State {
++    pub hotplug: bool,
++    pub scheduler: u32,
++}
++
++impl State {
++    pub fn hdmi_mode(&self) -> bool {
++        self.scheduler & SCHEDULER_MODE_HDMI != 0
++    }
++}
++
++pub struct Hdmi {
++    /// HDMI core registers.
++    core: *mut u32,
++    /// HD block registers.
++    hd: *mut u32,
++}
++
++unsafe impl Send for Hdmi {}
++
++impl Hdmi {
++    /// # Safety
++    /// `core` and `hd` map the two register blocks.
++    pub unsafe fn new(core: *mut u32, hd: *mut u32) -> Self {
++        Hdmi { core, hd }
++    }
++
++    pub fn core(&self, offset: usize) -> u32 {
++        unsafe { self.core.add(offset / 4).read_volatile() }
++    }
++
++    pub fn set_core(&self, offset: usize, value: u32) {
++        unsafe { self.core.add(offset / 4).write_volatile(value) }
++    }
++
++    pub fn hd(&self, offset: usize) -> u32 {
++        unsafe { self.hd.add(offset / 4).read_volatile() }
++    }
++
++    pub fn set_hd(&self, offset: usize, value: u32) {
++        unsafe { self.hd.add(offset / 4).write_volatile(value) }
++    }
++
++    pub fn state(&self) -> State {
++        State {
++            hotplug: self.core(HOTPLUG) & HOTPLUG_CONNECTED != 0,
++            scheduler: self.core(SCHEDULER_CONTROL),
++        }
++    }
++
++    /// Switch the output from DVI to HDMI mode, as Linux does when the sink
++    /// says it takes HDMI. True once the core reports HDMI active.
++    pub fn force_hdmi_mode(&self) -> bool {
++        self.set_core(SCHEDULER_CONTROL, self.core(SCHEDULER_CONTROL) | SCHEDULER_MODE_HDMI);
++        wait(|| self.core(SCHEDULER_CONTROL) & SCHEDULER_HDMI_ACTIVE != 0, 1000)
++    }
++
++    /// Program the audio path for `channels` channels of PCM at
++    /// `sample_rate` (Linux `vc4_hdmi_audio_startup` and `_prepare`), with
++    /// the DMA not yet running.
++    pub fn setup(&self, channels: u32, sample_rate: u32, hsm_hz: u64, pixel_hz: u64) {
++        self.set_hd(MAI_CTL, MAI_CTL_START);
++        let (n, m) = mai_smp(hsm_hz, sample_rate);
++        self.set_hd(MAI_SMP, mai_smp_value(n, m));
++        self.set_hd(MAI_CTL, mai_ctl_play(channels));
++        self.set_hd(MAI_FMT, mai_fmt(sample_rate));
++        self.set_hd(MAI_THR, MAI_THR_VALUE);
++        self.set_core(MAI_CONFIG, mai_config(channels));
++        self.set_core(MAI_CHANNEL_MAP, channel_map(channels));
++        self.set_core(AUDIO_PACKET_CONFIG, audio_packet_config(channels));
++        let acr = acr_n(sample_rate);
++        self.set_core(CRP_CFG, crp_cfg(acr));
++        let cts = acr_cts(pixel_hz, acr, sample_rate);
++        self.set_core(CTS_0, cts);
++        self.set_core(CTS_1, cts);
++    }
++
++    /// Only the sample clock, after a measurement corrected the HSM rate.
++    pub fn set_sample_clock(&self, hsm_hz: u64, sample_rate: u32) {
++        let (n, m) = mai_smp(hsm_hz, sample_rate);
++        self.set_hd(MAI_SMP, mai_smp_value(n, m));
++    }
++
++    /// Write the audio info frame into packet RAM and send it with every
++    /// frame. False if the core did not take it within 100 ms.
++    pub fn send_audio_infoframe(&self, channels: u32) -> bool {
++        let bit = 1 << AUDIO_PACKET_ID;
++        let config = self.core(RAM_PACKET_CONFIG) | RAM_PACKET_ENABLE;
++        self.set_core(RAM_PACKET_CONFIG, config & !bit);
++        wait(|| self.core(RAM_PACKET_STATUS) & bit == 0, 100);
++        let base = RAM_PACKET_START + PACKET_STRIDE * AUDIO_PACKET_ID;
++        for (i, word) in packet_words(&audio_infoframe(channels)).iter().enumerate() {
++            self.set_core(base + i * 4, *word);
++        }
++        self.set_core(RAM_PACKET_CONFIG, config | bit);
++        wait(|| self.core(RAM_PACKET_STATUS) & bit != 0, 100)
++    }
++
++    pub fn infoframe_active(&self) -> bool {
++        self.core(RAM_PACKET_STATUS) & 1 << AUDIO_PACKET_ID != 0
++    }
++
++    /// The FIFO's error flags (underflow, overflow), cleared on read.
++    pub fn take_errors(&self) -> u32 {
++        let ctl = self.hd(MAI_CTL);
++        let errors = ctl & (MAI_CTL_ERRORE | MAI_CTL_ERRORF);
++        if errors != 0 {
++            // Write-1-to-clear; RESET and FLUSH stay 0.
++            self.set_hd(MAI_CTL, (ctl & !(MAI_CTL_RESET | MAI_CTL_FLUSH)) | errors);
++        }
++        errors
++    }
++
++    /// Stop the FIFO and the info frame (Linux `vc4_hdmi_audio_reset`).
++    pub fn stop(&self) {
++        self.set_core(RAM_PACKET_CONFIG, self.core(RAM_PACKET_CONFIG) & !(1 << AUDIO_PACKET_ID));
++        self.set_hd(MAI_CTL, MAI_CTL_RESET);
++        self.set_hd(MAI_CTL, MAI_CTL_ERRORF);
++        self.set_hd(MAI_CTL, MAI_CTL_FLUSH);
++    }
++}
++
++fn wait(done: impl Fn() -> bool, ms: u64) -> bool {
++    let start = Instant::now();
++    while start.elapsed() < Duration::from_millis(ms) {
++        if done() {
++            return true;
++        }
++        std::thread::yield_now();
++    }
++    done()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn register_values_as_linux_writes_them() {
++        assert_eq!(mai_ctl_play(2), 0x3028);
++        assert_eq!(MAI_CTL_START, 0x8207);
++        assert_eq!(MAI_THR_VALUE, 0x0808_0608);
++        assert_eq!(mai_fmt(44_100), 0x0002_0800);
++        assert_eq!(mai_fmt(48_000), 0x0002_0900);
++        assert_eq!(mai_config(2), 0x0c00_0003);
++        assert_eq!(channel_map(2), 0x8);
++        assert_eq!(channel_map(8), 0o76543210);
++        assert_eq!(audio_packet_config(2), 0x2100_2003);
++        assert_eq!(crp_cfg(6144), 0x0100_1800);
++    }
++
++    #[test]
++    fn n_and_cts() {
++        assert_eq!(acr_n(48_000), 6144);
++        assert_eq!(acr_n(44_100), 5644);
++        // 1080p60 and 720p60, 48 kHz: the HDMI spec's CTS values.
++        assert_eq!(acr_cts(148_500_000, 6144, 48_000), 148_500);
++        assert_eq!(acr_cts(74_250_000, 6144, 48_000), 74_250);
++        // 44.1 kHz: CTS × 128 × fs = pixel × N to within one CTS step.
++        let cts = acr_cts(148_500_000, 5644, 44_100);
++        let lhs = u64::from(cts) * 128 * 44_100;
++        assert!(lhs <= 148_500_000 * 5644 && 148_500_000 * 5644 - lhs < 128 * 44_100);
++    }
++
++    #[test]
++    fn best_approximation_as_linux() {
++        assert_eq!(best_approximation(3, 4, 100, 100), (3, 4));
++        assert_eq!(best_approximation(31_415_926, 10_000_000, 400, 400), (355, 113));
++        // 10230179/3000 reduced: the denominator must shrink to 256 or less.
++        let (n, d) = best_approximation(163_682_864, 48_000, 0xff_ffff, 0x100);
++        assert!(d <= 0x100 && n <= 0xff_ffff);
++        assert!((n as f64 / d as f64 - 163_682_864.0 / 48_000.0).abs() < 1e-4);
++    }
++
++    #[test]
++    fn mai_smp_hits_the_rate() {
++        for hsm in [163_682_864u64, 120_000_000, 148_500_000, 500_000_000 / 3] {
++            for fs in [44_100u32, 48_000] {
++                let (n, m) = mai_smp(hsm, fs);
++                assert!(n <= 0xff_ffff && (1..=256).contains(&m));
++                let got = hsm as f64 * f64::from(m) / f64::from(n);
++                assert!((got - f64::from(fs)).abs() / f64::from(fs) < 1e-6, "{hsm} {fs}: {got}");
++                assert_eq!(mai_smp_value(n, m) & 0xff, m - 1);
++            }
++        }
++    }
++
++    #[test]
++    fn audio_infoframe_and_packet_ram() {
++        let f = audio_infoframe(2);
++        assert_eq!(&f[..3], &[0x84, 1, 10]);
++        assert_eq!(f[4], 1, "two channels");
++        assert_eq!(f.iter().fold(0u8, |s, b| s.wrapping_add(*b)), 0, "checksum");
++        assert_eq!(f[3], 0x70);
++        let w = packet_words(&f);
++        assert_eq!(w[0], 0x000a_0184);
++        assert_eq!(w[1], 0x0000_0170, "checksum, PB1 = 1, PB2, PB3");
++        assert_eq!(w[2], 0);
++        assert_eq!(&w[3..], &[0; 6]);
++        // A frame that fills more groups lands in the same 3/4 pattern.
++        let long: Vec<u8> = (1..=17).collect();
++        let w = packet_words(&long);
++        assert_eq!(w[0], 0x0003_0201);
++        assert_eq!(w[1], 0x0706_0504);
++        assert_eq!(w[2], 0x000a_0908);
++        assert_eq!(w[3], 0x0e0d_0c0b);
++        assert_eq!(w[4], 0x0011_100f);
++        assert_eq!(w[5], 0);
++    }
++
++    #[test]
++    fn hsm_from_the_clock_manager() {
++        // PLLD_PER / 3, enabled.
++        assert_eq!(hsm_from_cprman(0x16, 3 << 12), Some(166_666_666));
++        assert_eq!(hsm_from_cprman(0x06, 3 << 12), None, "not enabled");
++        assert_eq!(hsm_from_cprman(0x15, 3 << 12), None, "PLLC: rate unknown");
++    }
++
++    #[test]
++    fn pixel_clock_from_pllh() {
++        // 2970 MHz = 19.2 MHz × 154.6875; / 2 / 10 = 148.5 MHz (1080p60).
++        let frac = (0.6875 * f64::from(1 << 20)) as u32;
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 2), Some(148_500_000));
++        // The same with the prediv bit: half NDIV and FRAC.
++        assert_eq!(pixel_from_pllh(1 << 12 | 77, frac / 2, 1 << 11, 2), Some(148_500_000));
++        // 720p60: divider 4.
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 4), Some(74_250_000));
++        assert_eq!(pixel_from_pllh(154, frac, 0, 2), None, "PDIV 0");
++        assert_eq!(pixel_from_pllh(1 << 12 | 154, frac, 0, 1 << 8 | 2), None, "channel off");
++    }
++
++    #[test]
++    fn state_mode() {
++        let s = State { hotplug: true, scheduler: 0x3 };
++        assert!(s.hdmi_mode());
++    }
++}
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/iec958.rs b/drivers/audio/bcm2835-hdmiaudiod/src/iec958.rs
+new file mode 100644
+index 00000000..d8b8c342
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/iec958.rs
+@@ -0,0 +1,193 @@
++//! IEC958 (S/PDIF) subframes, the only sample format the VC4 HDMI audio
++//! path takes (Linux `vc4_hdmi.c` offers only `IEC958_SUBFRAME_LE`). No
++//! hardware here, so it is tested on the build host.
++//!
++//! One 32-bit word per channel and frame:
++//!
++//! | Bits | Field |
++//! |---|---|
++//! | 0–3 | preamble: `B` (block start, left), `M` (left), `W` (right) |
++//! | 4–27 | the sample, left-aligned (a 16-bit sample is in 12–27) |
++//! | 28 | V, validity: 0 = the sample is valid PCM |
++//! | 29 | U, user data: 0 |
++//! | 30 | C, one bit of the channel status |
++//! | 31 | P, parity: bits 4–31 hold an even number of ones |
++//!
++//! The channel status is 192 bits, one per frame, the same for both
++//! channels; a block of 192 frames carries it once and starts with a `B`
++//! preamble. The HDMI core finds the block starts by that preamble
++//! (`AUDIO_PACKET_CONFIG`, B-frame identifier 0x8).
++
++/// Frames per channel-status block.
++pub const BLOCK_FRAMES: usize = 192;
++
++/// Preamble codes as ALSA's `iec958` plugin writes them (alsa-lib
++/// `pcm_iec958.c`: Z = 0x08, X = 0x02, Y = 0x04).
++pub const PREAMBLE_B: u32 = 0x8;
++pub const PREAMBLE_M: u32 = 0x2;
++pub const PREAMBLE_W: u32 = 0x4;
++
++const BIT_C: u32 = 1 << 30;
++const BIT_P: u32 = 1 << 31;
++
++/// The consumer channel status (IEC 60958-3) for linear PCM, 16 bits, no
++/// copyright: the bytes Linux's `snd_pcm_create_iec958_consumer` makes.
++pub fn channel_status(sample_rate: u32) -> [u8; 24] {
++    let mut cs = [0u8; 24];
++    // Byte 0: consumer (bit 0 = 0), linear PCM (bit 1 = 0), no copyright
++    // asserted (bit 2), no pre-emphasis, mode 0.
++    cs[0] = 1 << 2;
++    // Byte 1: category general (0). Byte 2: source and channel unspecified.
++    // Byte 3: sampling frequency in bits 0–3, clock accuracy level II (0).
++    cs[3] = match sample_rate {
++        44_100 => 0x0,
++        48_000 => 0x2,
++        32_000 => 0x3,
++        88_200 => 0x8,
++        96_000 => 0xa,
++        _ => 0x1, // not indicated
++    };
++    // Byte 4: word length: maximum 20 bits (bit 0 = 0), 16 bits (bits 1–3
++    // = 0b001).
++    cs[4] = 0b001 << 1;
++    cs
++}
++
++/// Bit `n` (0–191) of a channel-status block, LSB of byte 0 first.
++fn cs_bit(cs: &[u8; 24], n: usize) -> bool {
++    cs[n / 8] >> (n % 8) & 1 != 0
++}
++
++/// Set the parity bit so bits 4–31 hold an even number of ones.
++pub fn with_parity(word: u32) -> u32 {
++    let word = word & !BIT_P;
++    if (word >> 4).count_ones() % 2 == 1 {
++        word | BIT_P
++    } else {
++        word
++    }
++}
++
++/// One subframe: `sample` (s16) with `preamble` and channel-status bit `c`.
++pub fn subframe(sample: i16, preamble: u32, c: bool) -> u32 {
++    let mut word = (u32::from(sample as u16) << 12) | preamble;
++    if c {
++        word |= BIT_C;
++    }
++    with_parity(word)
++}
++
++/// Turns stereo s16 frames into subframes. The place in the
++/// channel-status block follows from the frame's number since the start, so
++/// slots can be filled in any order (sound, silence after it) and the
++/// blocks still line up.
++pub struct Encoder {
++    cs: [u8; 24],
++}
++
++impl Encoder {
++    pub fn new(sample_rate: u32) -> Self {
++        Encoder {
++            cs: channel_status(sample_rate),
++        }
++    }
++
++    /// The two words of frame number `n`, left then right.
++    pub fn frame(&self, n: u64, left: i16, right: i16) -> [u32; 2] {
++        let position = (n % BLOCK_FRAMES as u64) as usize;
++        let c = cs_bit(&self.cs, position);
++        let first = if position == 0 { PREAMBLE_B } else { PREAMBLE_M };
++        [subframe(left, first, c), subframe(right, PREAMBLE_W, c)]
++    }
++
++    /// Fill `words` (two per frame) with silence, the first frame being
++    /// number `first`.
++    pub fn silence(&self, words: &mut [u32], first: u64) {
++        for (i, pair) in words.chunks_exact_mut(2).enumerate() {
++            pair.copy_from_slice(&self.frame(first + i as u64, 0, 0));
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn even(word: u32) -> bool {
++        (word >> 4).count_ones() % 2 == 0
++    }
++
++    #[test]
++    fn sample_bits_and_parity() {
++        let w = subframe(0x1234, PREAMBLE_M, false);
++        assert_eq!(w & 0xf, PREAMBLE_M);
++        assert_eq!(w >> 12 & 0xffff, 0x1234);
++        assert_eq!(w >> 4 & 0xff, 0, "bits below the 16-bit sample stay 0");
++        assert_eq!(w >> 28 & 0x7, 0, "V and U are 0, C as given");
++        assert!(even(w));
++        let w = subframe(-1, PREAMBLE_W, true);
++        assert_eq!(w >> 12 & 0xffff, 0xffff);
++        assert_ne!(w & BIT_C, 0);
++        assert!(even(w));
++        // 16 + 1 ones: odd, so P is set.
++        assert_ne!(w & BIT_P, 0);
++        assert_eq!(subframe(0, PREAMBLE_M, false), PREAMBLE_M, "silence: no bits, P = 0");
++    }
++
++    #[test]
++    fn every_word_has_even_parity() {
++        let enc = Encoder::new(44_100);
++        for i in 0..1000i32 {
++            let s = (i * 977 - 30000) as i16;
++            for w in enc.frame(i as u64, s, s.wrapping_neg()) {
++                assert!(even(w), "word {w:08x}");
++            }
++        }
++    }
++
++    #[test]
++    fn block_start_every_192_frames() {
++        let enc = Encoder::new(48_000);
++        for n in 0..3 * BLOCK_FRAMES {
++            let [l, r] = enc.frame(n as u64, 0, 0);
++            let want = if n % BLOCK_FRAMES == 0 { PREAMBLE_B } else { PREAMBLE_M };
++            assert_eq!(l & 0xf, want, "frame {n}");
++            assert_eq!(r & 0xf, PREAMBLE_W);
++        }
++    }
++
++    #[test]
++    fn channel_status_comes_back_from_the_c_bits() {
++        for rate in [44_100, 48_000] {
++            let enc = Encoder::new(rate);
++            let mut got = [0u8; 24];
++            // From the second block on: the same bits.
++            for n in 0..BLOCK_FRAMES {
++                let [l, r] = enc.frame((BLOCK_FRAMES + n) as u64, 100, -100);
++                assert_eq!(l & BIT_C, r & BIT_C, "both channels carry the same bit");
++                if l & BIT_C != 0 {
++                    got[n / 8] |= 1 << (n % 8);
++                }
++            }
++            assert_eq!(got, channel_status(rate));
++        }
++        let cs = channel_status(44_100);
++        assert_eq!(cs[0], 0x04);
++        assert_eq!(cs[3], 0x00);
++        assert_eq!(cs[4], 0x02);
++        assert_eq!(channel_status(48_000)[3], 0x02);
++    }
++
++    #[test]
++    fn silence_slots_line_up_with_sound() {
++        // A ring slot of 512 frames is not a whole number of blocks: slot 1
++        // starts at frame 512 = 2 × 192 + 128.
++        let enc = Encoder::new(44_100);
++        let mut slot = vec![0u32; 2 * 512];
++        enc.silence(&mut slot, 512);
++        assert_eq!(slot[0] & 0xf, PREAMBLE_M);
++        assert_eq!(slot[2 * 64] & 0xf, PREAMBLE_B, "frame 576 starts a block");
++        assert_eq!(slot[2 * 64 + 1] & 0xf, PREAMBLE_W);
++        assert!(slot.iter().all(|w| w >> 4 & 0xff_ffff == 0), "silence");
++    }
++}
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+new file mode 100644
+index 00000000..71bda6d1
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+@@ -0,0 +1,878 @@
++//! HDMI sound of the Raspberry Pi 3B+ and Zero 2 W as the `audiohw` scheme
++//! for `audiod` (issue #423). The firmware sets up the picture; this driver
++//! programs only the audio part of the VC4 HDMI block (`hdmi.rs`), so no
++//! display driver is needed.
++//!
++//! - `/scheme/audiohw`: writes of exactly 2048 bytes, one chunk of 512
++//!   frames, signed 16-bit little endian, stereo, 44.1 kHz, as
++//!   `bcm2835-pwmaudiod` takes them. When the ring is full the write waits,
++//!   or fails with `EWOULDBLOCK` on a non-blocking handle.
++//! - `/scheme/audiohw/stats`: what the driver found in the HDMI block,
++//!   clocks, ring and error counters, `loud_chunks` and `peak`.
++//! - `/scheme/audiohw/tone`: writing `<seconds> [<hz>]` plays a sine
++//!   through the ring (a quarter of full scale), mixed in place of chunks.
++//! - `/scheme/audiohw/stop`: any write stops the FIFO and the audio info
++//!   frame (`reboot` writes it). Later chunks are taken and dropped.
++//!
++//! The DMA controller (channel 0, DREQ 17) plays a ring of 8 slots of 512
++//! frames, as IEC958 subframes (`iec958.rs`), into the MAI FIFO; a timer
++//! every 10 ms follows it, fills played slots with silence, counts FIFO
++//! errors and programs the audio part again if the firmware reset it (a
++//! hotplug). Without an HDMI output (QEMU, or no display at boot) the ring
++//! is played by the clock instead, so `audiod` and the scheme still run.
++
++use std::fmt::Write as _;
++use std::fs::{File, OpenOptions};
++use std::io::{Read, Write};
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::io::AsRawFd;
++use std::process;
++use std::time::{Duration, Instant};
++
++use event::{user_data, EventQueue};
++use fdt::Fdt;
++use redox_scheme::scheme::SchemeSync;
++use redox_scheme::{CallerCtx, OpenResult, Socket};
++use scheme_utils::{FpathWriter, HandleMap, ReadinessBased};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENODEV, ENOENT, EROFS, EWOULDBLOCK};
++use syscall::schemev2::NewFdFlags;
++use syscall::{MODE_DIR, MODE_FILE};
++
++mod dma;
++mod hdmi;
++mod iec958;
++mod ring;
++
++use dma::{DmaRing, SLOTS, SLOT_WORDS};
++use hdmi::Hdmi;
++use iec958::Encoder;
++use ring::{Ring, CHUNK_BYTES, SLOT_FRAMES};
++
++/// Bus addresses on the BCM283x, if the devicetree has none.
++const HDMI_BUS_ADDR: usize = 0x7e90_2000;
++const HD_BUS_ADDR: usize = 0x7e80_8000;
++const CPRMAN_BUS_ADDR: usize = 0x7e10_1000;
++const CM_HSMCTL: usize = 0x88;
++const CM_HSMDIV: usize = 0x8c;
++const PAGE_SIZE: usize = 4096;
++const SAMPLE_RATE: u32 = 44_100;
++const CHANNELS: u32 = 2;
++/// The HSM clock Linux used to set on the BCM2835 (vc4_hdmi.c before 5.x),
++/// if the clock manager's source is not one with a known rate.
++const DEFAULT_HSM_HZ: u64 = 163_682_864;
++/// If rpi-firmwared knows no pixel clock: 1080p60.
++const DEFAULT_PIXEL_HZ: u64 = 148_500_000;
++const POLL: Duration = Duration::from_millis(10);
++/// Length of one rate measurement. Two in a row that agree within
++/// `RATE_AGREE` correct the HSM rate once, if they are off by more than
++/// `RATE_TOLERANCE`.
++const MEASURE_AFTER: Duration = Duration::from_secs(3);
++const RATE_TOLERANCE: f64 = 0.005;
++const RATE_AGREE: f64 = 0.002;
++/// The ring's position is only seen at a refresh. A gap longer than a turn
++/// of the ring (8 x 512 frames, 93 ms) loses whole turns, so a gap longer
++/// than this starts the measurement over (row 417: busy boot, 12.6 % lost).
++const MAX_GAP: Duration = Duration::from_millis(60);
++const MAX_TONE_SECONDS: f64 = 10.0;
++/// The tone's amplitude, a quarter of full scale, to spare ears.
++const TONE_AMPLITUDE: f64 = 0.25;
++/// A chunk counts as loud when a sample reaches 1/256 of full scale (as in
++/// `bcm2835-pwmaudiod`; tests tell sound from silence by it).
++const LOUD: u16 = 128;
++
++enum Output {
++    Hdmi { hdmi: Hdmi, dma: DmaRing, phys: usize },
++    /// No HDMI output: slots count as played by the clock.
++    Clock { start: Instant, buf: Vec<[u32; SLOT_WORDS]> },
++}
++
++impl Output {
++    fn slot_mut(&mut self, index: usize) -> &mut [u32; SLOT_WORDS] {
++        match self {
++            Output::Hdmi { dma, .. } => dma.slot_mut(index),
++            Output::Clock { buf, .. } => &mut buf[index],
++        }
++    }
++
++    fn position(&self) -> Option<usize> {
++        match self {
++            Output::Hdmi { dma, .. } => dma.position(),
++            Output::Clock { start, .. } => {
++                let frames = start.elapsed().as_nanos() * u128::from(SAMPLE_RATE) / 1_000_000_000;
++                Some((frames / SLOT_FRAMES as u128 % SLOTS as u128) as usize)
++            }
++        }
++    }
++}
++
++/// How the driver came by the HSM rate.
++#[derive(Clone, Copy)]
++enum HsmSource {
++    Cprman,
++    Default,
++    Measured,
++}
++
++impl HsmSource {
++    fn name(self) -> &'static str {
++        match self {
++            HsmSource::Cprman => "cprman",
++            HsmSource::Default => "default",
++            HsmSource::Measured => "measured",
++        }
++    }
++}
++
++/// What the driver found and set at start.
++struct Setup {
++    hotplug: bool,
++    hdmi_mode: bool,
++    /// The driver switched the output from DVI to HDMI mode.
++    forced_hdmi_mode: bool,
++    scheduler: u32,
++    pixel_hz: u64,
++    pixel_source: &'static str,
++    pllh_regs: [u32; 4],
++    hsm_hz: u64,
++    hsm_source: HsmSource,
++    hsm_regs: (u32, u32),
++    infoframe: bool,
++}
++
++/// A sine played through the ring.
++struct Tone {
++    hz: f64,
++    frames_left: u64,
++    phase: u64,
++}
++
++enum Handle {
++    Root,
++    Pcm,
++    Stats(Vec<u8>),
++    Tone,
++    Stop,
++}
++
++struct Driver {
++    out: Output,
++    setup: Option<Setup>,
++    ring: Ring,
++    enc: Encoder,
++    started: Instant,
++    /// Start of the rate measurement (time, slot), the previous
++    /// measurement, and whether the HSM rate was settled already.
++    window: (Instant, u64),
++    previous_rate: Option<f64>,
++    corrected: bool,
++    last_refresh: Instant,
++    /// Refreshes after a gap over `MAX_GAP`.
++    long_gaps: u64,
++    chunks: u64,
++    loud_chunks: u64,
++    peak: u16,
++    dma_faults: u64,
++    last_fault: Option<(u32, u32)>,
++    mai_underflows: u64,
++    mai_overflows: u64,
++    /// Times the audio registers were found reset and programmed again.
++    reprogrammed: u64,
++    tone: Option<Tone>,
++    tones: u64,
++    stopped: bool,
++    handles: HandleMap<Handle>,
++}
++
++impl Driver {
++    fn new(out: Output, setup: Option<Setup>) -> Self {
++        let now = Instant::now();
++        Driver {
++            out,
++            setup,
++            ring: Ring::new(SLOTS, 1),
++            enc: Encoder::new(SAMPLE_RATE),
++            started: now,
++            window: (now, 0),
++            previous_rate: None,
++            corrected: false,
++            last_refresh: now,
++            long_gaps: 0,
++            chunks: 0,
++            loud_chunks: 0,
++            peak: 0,
++            dma_faults: 0,
++            last_fault: None,
++            mai_underflows: 0,
++            mai_overflows: 0,
++            reprogrammed: 0,
++            tone: None,
++            tones: 0,
++            stopped: false,
++            handles: HandleMap::new(),
++        }
++    }
++
++    /// Fill the whole ring with silence, slot `i` being number `i`.
++    fn fill_silence(&mut self) {
++        for i in 0..SLOTS {
++            let first = (i * SLOT_FRAMES) as u64;
++            self.enc.silence(self.out.slot_mut(i), first);
++        }
++    }
++
++    /// Follow the controller: silence the slots it has played, count errors,
++    /// restart the channel after a fault, keep the audio set-up in place.
++    fn refresh(&mut self) {
++        if self.stopped {
++            return;
++        }
++        if let Some(index) = self.out.position() {
++            let (out, enc) = (&mut self.out, &self.enc);
++            self.ring.advance(index, |n| {
++                let next = n + SLOTS as u64;
++                enc.silence(out.slot_mut((n % SLOTS as u64) as usize), next * SLOT_FRAMES as u64);
++            });
++        }
++        let now = Instant::now();
++        if now - self.last_refresh > MAX_GAP {
++            // Turns may have gone uncounted: measure from here.
++            self.long_gaps += 1;
++            self.window = (now, self.ring.current());
++        }
++        self.last_refresh = now;
++        self.feed_tone();
++        let Output::Hdmi { hdmi, dma, .. } = &self.out else {
++            return;
++        };
++        let errors = hdmi.take_errors();
++        if errors & hdmi::MAI_CTL_ERRORE != 0 {
++            self.mai_underflows += 1;
++        }
++        if errors & hdmi::MAI_CTL_ERRORF != 0 {
++            self.mai_overflows += 1;
++        }
++        if let Some(setup) = &self.setup {
++            let want = hdmi::crp_cfg(hdmi::acr_n(SAMPLE_RATE));
++            if hdmi.hd(hdmi::MAI_CTL) & hdmi::MAI_CTL_ENABLE == 0 || hdmi.core(hdmi::CRP_CFG) != want {
++                self.reprogrammed += 1;
++                if self.reprogrammed <= 3 {
++                    eprintln!("bcm2835-hdmiaudiod: audio set-up was reset (hotplug?), programming it again");
++                }
++                hdmi.setup(CHANNELS, SAMPLE_RATE, setup.hsm_hz, setup.pixel_hz);
++                hdmi.send_audio_infoframe(CHANNELS);
++            }
++        }
++        if let Some((cs, debug)) = dma.fault() {
++            self.dma_faults += 1;
++            self.last_fault = Some((cs, debug));
++            if self.dma_faults <= 3 {
++                eprintln!("bcm2835-hdmiaudiod: DMA stopped (CS 0x{cs:08x}, DEBUG 0x{debug:08x}), restarting");
++            }
++            self.fill_silence();
++            self.ring = Ring::new(SLOTS, 1);
++            self.window = (Instant::now(), 0);
++            if let Output::Hdmi { dma, .. } = &self.out {
++                dma::barrier();
++                dma.start();
++            }
++        }
++        self.correct_rate();
++    }
++
++    /// Once two measurements of `MEASURE_AFTER` without a long gap agree:
++    /// if the DMA progress shows another sample rate than set, the HSM rate
++    /// was wrong; set the sample clock from the corrected rate.
++    fn correct_rate(&mut self) {
++        let (since, first) = self.window;
++        let elapsed = since.elapsed();
++        if self.corrected || elapsed < MEASURE_AFTER {
++            return;
++        }
++        let frames = (self.ring.current() - first) * SLOT_FRAMES as u64;
++        let measured = frames as f64 / elapsed.as_secs_f64();
++        self.window = (Instant::now(), self.ring.current());
++        let agrees = self
++            .previous_rate
++            .is_some_and(|prev| prev > 0.0 && (measured / prev - 1.0).abs() < RATE_AGREE);
++        self.previous_rate = Some(measured);
++        if !agrees {
++            return;
++        }
++        self.corrected = true;
++        let (Output::Hdmi { hdmi, .. }, Some(setup)) = (&self.out, &mut self.setup) else {
++            return;
++        };
++        if measured < f64::from(SAMPLE_RATE) / 4.0 {
++            eprintln!("bcm2835-hdmiaudiod: the FIFO takes only {measured:.0} frames/s; HSM clock off?");
++            return;
++        }
++        let error = measured / f64::from(SAMPLE_RATE) - 1.0;
++        if error.abs() > RATE_TOLERANCE {
++            let hsm = (setup.hsm_hz as f64 * measured / f64::from(SAMPLE_RATE)) as u64;
++            println!(
++                "bcm2835-hdmiaudiod: measured {measured:.0} frames/s, HSM clock {} Hz rather than {}; correcting",
++                hsm, setup.hsm_hz
++            );
++            setup.hsm_hz = hsm;
++            setup.hsm_source = HsmSource::Measured;
++            hdmi.set_sample_clock(hsm, SAMPLE_RATE);
++        } else {
++            println!("bcm2835-hdmiaudiod: measured {measured:.0} frames/s");
++        }
++    }
++
++    /// Put `frames` (left, right) into the next free slot.
++    fn put(&mut self, frames: &mut dyn Iterator<Item = (i16, i16)>) -> Result<()> {
++        let number = self.ring.reserve_numbered().ok_or(Error::new(EWOULDBLOCK))?;
++        let first = number * SLOT_FRAMES as u64;
++        let enc = &self.enc;
++        let slot = self.out.slot_mut((number % SLOTS as u64) as usize);
++        for (i, words) in slot.chunks_exact_mut(2).enumerate() {
++            let (left, right) = frames.next().unwrap_or((0, 0));
++            words.copy_from_slice(&enc.frame(first + i as u64, left, right));
++        }
++        Ok(())
++    }
++
++    fn play(&mut self, chunk: &[u8]) -> Result<usize> {
++        if chunk.len() != CHUNK_BYTES {
++            return Err(Error::new(EINVAL));
++        }
++        let peak = chunk
++            .chunks_exact(2)
++            .map(|s| i16::from_le_bytes([s[0], s[1]]).unsigned_abs())
++            .max()
++            .unwrap_or(0);
++        if self.stopped {
++            self.chunks += 1;
++            return Ok(chunk.len());
++        }
++        self.refresh();
++        if self.tone.is_some() {
++            return Err(Error::new(EWOULDBLOCK));
++        }
++        let mut frames = chunk.chunks_exact(4).map(|f| {
++            (i16::from_le_bytes([f[0], f[1]]), i16::from_le_bytes([f[2], f[3]]))
++        });
++        self.put(&mut frames)?;
++        self.chunks += 1;
++        if peak >= LOUD {
++            self.loud_chunks += 1;
++        }
++        self.peak = self.peak.max(peak);
++        Ok(chunk.len())
++    }
++
++    /// Fill free slots with the tone while it lasts.
++    fn feed_tone(&mut self) {
++        while let Some(mut tone) = self.tone.take() {
++            if tone.frames_left == 0 {
++                break;
++            }
++            let n = tone.frames_left.min(SLOT_FRAMES as u64);
++            let amplitude = TONE_AMPLITUDE * f64::from(i16::MAX);
++            let (hz, phase) = (tone.hz, tone.phase);
++            let mut frames = (0..n).map(|i| {
++                let t = (phase + i) as f64 / f64::from(SAMPLE_RATE);
++                let s = (amplitude * (2.0 * std::f64::consts::PI * hz * t).sin()) as i16;
++                (s, s)
++            });
++            if self.put(&mut frames).is_err() {
++                self.tone = Some(tone);
++                break;
++            }
++            self.loud_chunks += 1;
++            self.peak = self.peak.max(amplitude as u16);
++            tone.phase += n;
++            tone.frames_left -= n;
++            self.tone = Some(tone);
++        }
++        if self.tone.as_ref().is_some_and(|t| t.frames_left == 0) {
++            self.tone = None;
++        }
++    }
++
++    /// `<seconds> [<hz>]`.
++    fn start_tone(&mut self, request: &[u8]) -> Result<()> {
++        let text = std::str::from_utf8(request).map_err(|_| Error::new(EINVAL))?;
++        let mut words = text.split_whitespace();
++        let seconds = match words.next().map(str::parse::<f64>) {
++            Some(Ok(s)) if s > 0.0 && s <= MAX_TONE_SECONDS => s,
++            _ => return Err(Error::new(EINVAL)),
++        };
++        let hz = match words.next().map(str::parse::<f64>) {
++            None => 1000.0,
++            Some(Ok(f)) if f > 0.0 && f < f64::from(SAMPLE_RATE) / 2.0 => f,
++            _ => return Err(Error::new(EINVAL)),
++        };
++        if self.stopped {
++            return Err(Error::new(ENODEV));
++        }
++        self.tone = Some(Tone {
++            hz,
++            frames_left: (seconds * f64::from(SAMPLE_RATE)) as u64,
++            phase: 0,
++        });
++        self.tones += 1;
++        println!("bcm2835-hdmiaudiod: tone {hz} Hz for {seconds} s");
++        self.feed_tone();
++        Ok(())
++    }
++
++    fn stop(&mut self) {
++        if self.stopped {
++            return;
++        }
++        self.stopped = true;
++        self.tone = None;
++        if let Output::Hdmi { hdmi, dma, .. } = &self.out {
++            dma.reset();
++            hdmi.stop();
++        }
++        println!("bcm2835-hdmiaudiod: stopped");
++    }
++
++    fn stats(&mut self) -> String {
++        self.refresh();
++        let mut text = String::new();
++        let uptime = self.started.elapsed().as_secs_f64();
++        let played = self.ring.current();
++        match &self.out {
++            Output::Hdmi { hdmi, phys, .. } => {
++                let _ = writeln!(text, "mode hdmi-dma");
++                let _ = writeln!(text, "hdmi 0x{phys:08x}");
++                let _ = writeln!(text, "dma_channel {}", dma::CHANNEL);
++                let _ = writeln!(text, "dreq {}", hdmi::DREQ_HDMI);
++                let _ = writeln!(text, "mai_ctl 0x{:08x}", hdmi.hd(hdmi::MAI_CTL));
++                let _ = writeln!(text, "mai_smp 0x{:08x}", hdmi.hd(hdmi::MAI_SMP));
++                let _ = writeln!(text, "crp_cfg 0x{:08x}", hdmi.core(hdmi::CRP_CFG));
++                let _ = writeln!(text, "cts 0x{:08x}", hdmi.core(hdmi::CTS_0));
++                let _ = writeln!(text, "ram_packet_config 0x{:08x}", hdmi.core(hdmi::RAM_PACKET_CONFIG));
++                let _ = writeln!(text, "ram_packet_status 0x{:08x}", hdmi.core(hdmi::RAM_PACKET_STATUS));
++                let _ = writeln!(text, "infoframe_active {}", yes(hdmi.infoframe_active()));
++                let _ = writeln!(text, "hotplug_now {}", yes(hdmi.state().hotplug));
++            }
++            Output::Clock { .. } => {
++                let _ = writeln!(text, "mode clock (no HDMI output)");
++            }
++        }
++        if let Some(s) = &self.setup {
++            let _ = writeln!(text, "hotplug {}", yes(s.hotplug));
++            let _ = writeln!(text, "hdmi_mode {}", yes(s.hdmi_mode));
++            let _ = writeln!(text, "forced_hdmi_mode {}", yes(s.forced_hdmi_mode));
++            let _ = writeln!(text, "scheduler 0x{:08x}", s.scheduler);
++            let _ = writeln!(text, "pixel_hz {} {}", s.pixel_hz, s.pixel_source);
++            let [c, f, a, p] = s.pllh_regs;
++            let _ = writeln!(text, "pllh ctrl=0x{c:08x} frac=0x{f:08x} ana1=0x{a:08x} pix=0x{p:08x}");
++            let _ = writeln!(text, "hsm_hz {} {}", s.hsm_hz, s.hsm_source.name());
++            let _ = writeln!(text, "cm_hsm ctl=0x{:08x} div=0x{:08x}", s.hsm_regs.0, s.hsm_regs.1);
++            let _ = writeln!(text, "infoframe_sent {}", yes(s.infoframe));
++        }
++        if self.stopped {
++            let _ = writeln!(text, "stopped");
++        }
++        let _ = writeln!(text, "sample_rate {SAMPLE_RATE}");
++        let _ = writeln!(text, "slots {SLOTS}x{SLOT_FRAMES}");
++        let _ = writeln!(text, "uptime_s {uptime:.1}");
++        let _ = writeln!(text, "played_slots {played}");
++        let rate = if uptime > 0.0 { played as f64 * SLOT_FRAMES as f64 / uptime } else { 0.0 };
++        let _ = writeln!(text, "measured_rate_hz {rate:.0}");
++        let (since, first) = self.window;
++        let window = since.elapsed().as_secs_f64();
++        if window > 0.0 {
++            // Since the last long gap or the last measurement.
++            let recent = (played - first) as f64 * SLOT_FRAMES as f64 / window;
++            let _ = writeln!(text, "rate_window_hz {recent:.0} over {window:.1} s");
++        }
++        if let Some(rate) = self.previous_rate {
++            let _ = writeln!(text, "rate_last_measured_hz {rate:.0}");
++        }
++        let _ = writeln!(text, "rate_settled {}", yes(self.corrected));
++        let _ = writeln!(text, "long_gaps {}", self.long_gaps);
++        let _ = writeln!(text, "chunks {}", self.chunks);
++        let _ = writeln!(text, "loud_chunks {}", self.loud_chunks);
++        let _ = writeln!(text, "peak {}", self.peak);
++        let _ = writeln!(text, "tones {}", self.tones);
++        let _ = writeln!(text, "sound_slots {}", self.ring.played_sound);
++        let _ = writeln!(text, "underruns {}", self.ring.underruns);
++        let _ = writeln!(text, "queued {}", self.ring.queued());
++        let _ = writeln!(text, "dma_faults {}", self.dma_faults);
++        if let Some((cs, debug)) = self.last_fault {
++            let _ = writeln!(text, "last_fault cs=0x{cs:08x} debug=0x{debug:08x}");
++        }
++        let _ = writeln!(text, "mai_underflow_polls {}", self.mai_underflows);
++        let _ = writeln!(text, "mai_overflow_polls {}", self.mai_overflows);
++        let _ = writeln!(text, "reprogrammed {}", self.reprogrammed);
++        text
++    }
++}
++
++fn yes(b: bool) -> &'static str {
++    if b {
++        "yes"
++    } else {
++        "no"
++    }
++}
++
++impl SchemeSync for Driver {
++    fn scheme_root(&mut self) -> Result<usize> {
++        Ok(self.handles.insert(Handle::Root))
++    }
++
++    fn openat(
++        &mut self,
++        dirfd: usize,
++        path: &str,
++        _flags: usize,
++        _fcntl_flags: u32,
++        ctx: &CallerCtx,
++    ) -> Result<OpenResult> {
++        if !matches!(self.handles.get(dirfd)?, Handle::Root) {
++            return Err(Error::new(EACCES));
++        }
++        let handle = match path.trim_matches('/') {
++            "" if ctx.uid == 0 => Handle::Pcm,
++            "tone" if ctx.uid == 0 => Handle::Tone,
++            "stop" if ctx.uid == 0 => Handle::Stop,
++            "" | "tone" | "stop" => return Err(Error::new(EACCES)),
++            "stats" => Handle::Stats(self.stats().into_bytes()),
++            _ => return Err(Error::new(ENOENT)),
++        };
++        Ok(OpenResult::ThisScheme {
++            number: self.handles.insert(handle),
++            flags: NewFdFlags::POSITIONED,
++        })
++    }
++
++    fn read(
++        &mut self,
++        id: usize,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        let data = match self.handles.get(id)? {
++            Handle::Stats(data) => data,
++            Handle::Root => return Err(Error::new(EISDIR)),
++            _ => return Err(Error::new(EBADF)),
++        };
++        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(data.len());
++        let len = buf.len().min(data.len() - start);
++        buf[..len].copy_from_slice(&data[start..start + len]);
++        Ok(len)
++    }
++
++    fn write(
++        &mut self,
++        id: usize,
++        buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++        _ctx: &CallerCtx,
++    ) -> Result<usize> {
++        match self.handles.get(id)? {
++            Handle::Pcm => self.play(buf),
++            Handle::Tone => self.start_tone(buf).map(|()| buf.len()),
++            Handle::Stop => {
++                self.stop();
++                Ok(buf.len())
++            }
++            _ => Err(Error::new(EBADF)),
++        }
++    }
++
++    // Shells truncate a file before writing to it.
++    fn ftruncate(&mut self, id: usize, _len: u64, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Pcm | Handle::Tone | Handle::Stop => Ok(()),
++            _ => Err(Error::new(EROFS)),
++        }
++    }
++
++    fn fstat(&mut self, id: usize, stat: &mut syscall::Stat, _ctx: &CallerCtx) -> Result<()> {
++        match self.handles.get(id)? {
++            Handle::Stats(data) => {
++                stat.st_mode = 0o444 | MODE_FILE;
++                stat.st_size = data.len() as u64;
++            }
++            Handle::Pcm | Handle::Tone | Handle::Stop => stat.st_mode = 0o200 | MODE_FILE,
++            Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
++        }
++        Ok(())
++    }
++
++    fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
++        match self.handles.get(id)? {
++            Handle::Stats(data) => Ok(data.len() as u64),
++            _ => Ok(0),
++        }
++    }
++
++    fn fpath(&mut self, id: usize, buf: &mut [u8], _ctx: &CallerCtx) -> Result<usize> {
++        self.handles.get(id).map_err(|_| Error::new(EBADF))?;
++        FpathWriter::with(buf, "audiohw", |_| Ok(()))
++    }
++
++    fn on_close(&mut self, id: usize) {
++        self.handles.remove(id);
++    }
++}
++
++/// The CPU physical address of a device at `bus_addr`, through `/soc`'s
++/// ranges.
++fn soc_phys(fdt: &Fdt, bus_addr: usize) -> usize {
++    fdt.find_node("/soc")
++        .and_then(|soc| soc.ranges())
++        .and_then(|mut ranges| {
++            ranges.find(|r| r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size)
++        })
++        .map(|r| r.parent_bus_address + (bus_addr - r.child_bus_address))
++        .unwrap_or(bus_addr)
++}
++
++/// Bus address of entry `n` of the `reg` of the first device with one of
++/// `compatible`, or `fallback`.
++fn bus_addr(fdt: &Fdt, compatible: &[&str], n: usize, fallback: usize) -> usize {
++    fdt.find_compatible(compatible)
++        .and_then(|node| node.reg())
++        .and_then(|mut reg| reg.nth(n))
++        .map(|reg| reg.starting_address as usize)
++        .unwrap_or(fallback)
++}
++
++/// Map the page holding `phys`; the pointer points at `phys` itself.
++fn map(phys: usize) -> *mut u32 {
++    map_len(phys, PAGE_SIZE)
++}
++
++/// Map `len` bytes from `phys` (rounded out to pages).
++fn map_len(phys: usize, len: usize) -> *mut u32 {
++    let page = phys & !(PAGE_SIZE - 1);
++    let size = (phys - page + len).div_ceil(PAGE_SIZE) * PAGE_SIZE;
++    unsafe {
++        let base = common::physmap(page, size, common::Prot::RW, common::MemoryType::DeviceMemory)
++            .expect("bcm2835-hdmiaudiod: failed to map registers") as *mut u8;
++        base.add(phys - page) as *mut u32
++    }
++}
++
++/// The pixel clock from rpi-firmwared (`clocks`: name, current and maximum
++/// rate per line).
++fn pixel_clock() -> std::result::Result<u64, String> {
++    let clocks = std::fs::read_to_string("/scheme/rpi-firmware/clocks").map_err(|err| format!("no clocks file ({err})"))?;
++    let line = clocks
++        .lines()
++        .find(|line| line.split_whitespace().next() == Some("pixel"))
++        .ok_or("no pixel line in the clocks file")?;
++    match line.split_whitespace().nth(1).and_then(|w| w.parse::<u64>().ok()) {
++        Some(hz) if hz > 0 => Ok(hz),
++        _ => Err(format!("clocks file says \"{line}\"")),
++    }
++}
++
++/// Find the HDMI output and program its audio part, or the clock stand-in.
++fn open_output(fdt: &Fdt) -> (Output, Option<Setup>) {
++    let compatible = ["brcm,bcm2835-hdmi"];
++    let core_bus = bus_addr(fdt, &compatible, 0, HDMI_BUS_ADDR);
++    let hd_bus = bus_addr(fdt, &compatible, 1, HD_BUS_ADDR);
++    let core_phys = soc_phys(fdt, core_bus);
++    let hdmi = unsafe { Hdmi::new(map(core_phys), map(soc_phys(fdt, hd_bus))) };
++    let state = hdmi.state();
++
++    let clock_only = |why: String| {
++        println!("bcm2835-hdmiaudiod: {why}, playing to the clock");
++        Output::Clock {
++            start: Instant::now(),
++            buf: vec![[0; SLOT_WORDS]; SLOTS],
++        }
++    };
++    // QEMU has no HDMI block (reads give 0); a Pi whose firmware found no
++    // display leaves it off.
++    if !state.hotplug && state.scheduler == 0 {
++        return (clock_only(format!("no HDMI output at 0x{core_phys:08x} (QEMU, or no display at boot?)")), None);
++    }
++    let mut forced = false;
++    if !state.hdmi_mode() {
++        forced = hdmi.force_hdmi_mode();
++        println!(
++            "bcm2835-hdmiaudiod: output was in DVI mode; HDMI mode {}",
++            if forced { "now active" } else { "did not come up" }
++        );
++    }
++    // The clock manager, up to the PLLH registers.
++    let cm = map_len(
++        soc_phys(fdt, bus_addr(fdt, &["brcm,bcm2835-cprman"], 0, CPRMAN_BUS_ADDR)),
++        0x2000,
++    );
++    let cm_reg = |offset: usize| unsafe { cm.add(offset / 4).read_volatile() };
++    let hsm_regs = (cm_reg(CM_HSMCTL), cm_reg(CM_HSMDIV));
++    let pllh_regs = [
++        cm_reg(hdmi::A2W_PLLH_CTRL),
++        cm_reg(hdmi::A2W_PLLH_FRAC),
++        cm_reg(hdmi::A2W_PLLH_ANA1),
++        cm_reg(hdmi::A2W_PLLH_PIX),
++    ];
++    let pllh_hz = hdmi::pixel_from_pllh(pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3])
++        .filter(|hz| (20_000_000..=200_000_000).contains(hz));
++    // The firmware's answer first (the 3B+ firmware gives none), then PLLH,
++    // then 1080p60.
++    let (pixel_hz, pixel_source) = match (pixel_clock(), pllh_hz) {
++        (Ok(hz), _) => (hz, "rpi-firmwared"),
++        (Err(why), Some(hz)) => {
++            println!("bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}), using PLLH_PIX");
++            (hz, "pllh")
++        }
++        (Err(why), None) => {
++            println!(
++                "bcm2835-hdmiaudiod: no pixel clock from rpi-firmwared ({why}) nor PLLH (ctrl=0x{:08x} frac=0x{:08x} ana1=0x{:08x} pix=0x{:08x}), assuming {} MHz",
++                pllh_regs[0], pllh_regs[1], pllh_regs[2], pllh_regs[3],
++                DEFAULT_PIXEL_HZ as f64 / 1e6
++            );
++            (DEFAULT_PIXEL_HZ, "default")
++        }
++    };
++    let (hsm_hz, hsm_source) = match hdmi::hsm_from_cprman(hsm_regs.0, hsm_regs.1) {
++        Some(hz) => (hz, HsmSource::Cprman),
++        None => (DEFAULT_HSM_HZ, HsmSource::Default),
++    };
++
++    let dma = match DmaRing::new(fdt, (hd_bus + hdmi::MAI_DATA) as u32, hdmi::DREQ_HDMI) {
++        Ok(dma) => dma,
++        Err(err) => {
++            eprintln!("bcm2835-hdmiaudiod: {err}");
++            process::exit(1);
++        }
++    };
++    hdmi.setup(CHANNELS, SAMPLE_RATE, hsm_hz, pixel_hz);
++    let infoframe = hdmi.send_audio_infoframe(CHANNELS);
++    let setup = Setup {
++        hotplug: state.hotplug,
++        hdmi_mode: state.hdmi_mode(),
++        forced_hdmi_mode: forced,
++        scheduler: state.scheduler,
++        pixel_hz,
++        pixel_source,
++        pllh_regs,
++        hsm_hz,
++        hsm_source,
++        hsm_regs,
++        infoframe,
++    };
++    println!(
++        "bcm2835-hdmiaudiod: HDMI at 0x{core_phys:08x}, hotplug {}, {} mode, pixel clock {:.3} MHz ({pixel_source}), HSM {:.3} MHz ({}), N {} CTS {}, info frame {}, DMA channel {} (DREQ {}), {SLOTS} x {SLOT_FRAMES} frames",
++        yes(state.hotplug),
++        if state.hdmi_mode() || forced { "HDMI" } else { "DVI" },
++        pixel_hz as f64 / 1e6,
++        hsm_hz as f64 / 1e6,
++        hsm_source.name(),
++        hdmi::acr_n(SAMPLE_RATE),
++        hdmi::acr_cts(pixel_hz, hdmi::acr_n(SAMPLE_RATE), SAMPLE_RATE),
++        if infoframe { "sent" } else { "NOT taken" },
++        dma::CHANNEL,
++        hdmi::DREQ_HDMI,
++    );
++    (Output::Hdmi { hdmi, dma, phys: core_phys }, Some(setup))
++}
++
++/// A one-shot timer on the monotonic clock, delivered as an event.
++struct Timer(File);
++
++impl Timer {
++    fn new() -> std::io::Result<Self> {
++        OpenOptions::new()
++            .read(true)
++            .write(true)
++            .custom_flags(syscall::O_NONBLOCK as i32)
++            .open(format!("/scheme/time/{}", syscall::CLOCK_MONOTONIC))
++            .map(Self)
++    }
++
++    fn arm(&mut self, after: Duration) {
++        let mut time = syscall::TimeSpec::default();
++        if self.0.read(&mut time).is_err() {
++            return;
++        }
++        let nsec = time.tv_nsec as u64 + u64::from(after.subsec_nanos());
++        time.tv_sec += after.as_secs() as i64 + (nsec / 1_000_000_000) as i64;
++        time.tv_nsec = (nsec % 1_000_000_000) as i32;
++        let _ = self.0.write(&time);
++    }
++
++    /// Consume the event.
++    fn fired(&mut self) {
++        let mut time = syscall::TimeSpec::default();
++        let _ = self.0.read(&mut time);
++    }
++}
++
++user_data! {
++    enum Source {
++        Scheme,
++        Time,
++    }
++}
++
++fn main() {
++    daemon::SchemeDaemon::new(daemon);
++}
++
++fn daemon(daemon: daemon::SchemeDaemon) -> ! {
++    common::init();
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = Fdt::new(&dtb) else {
++        eprintln!("bcm2835-hdmiaudiod: no devicetree");
++        process::exit(1);
++    };
++    let (out, setup) = open_output(&fdt);
++    let mut driver = Driver::new(out, setup);
++    driver.fill_silence();
++    if let Output::Hdmi { dma, .. } = &driver.out {
++        dma::barrier();
++        dma.start();
++    }
++    driver.window = (Instant::now(), 0);
++    driver.last_refresh = Instant::now();
++
++    let mut timer = Timer::new().expect("bcm2835-hdmiaudiod: failed to open /scheme/time");
++    let socket = Socket::nonblock().expect("bcm2835-hdmiaudiod: failed to create the audiohw scheme");
++    let mut readiness = ReadinessBased::new(Box::new(socket), 16);
++
++    let events = EventQueue::<Source>::new().expect("bcm2835-hdmiaudiod: failed to create an event queue");
++    events
++        .subscribe(readiness.socket().inner().raw(), Source::Scheme, event::EventFlags::READ)
++        .expect("bcm2835-hdmiaudiod: failed to subscribe to the scheme");
++    events
++        .subscribe(timer.0.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
++        .expect("bcm2835-hdmiaudiod: failed to subscribe to the timer");
++    timer.arm(POLL);
++
++    let _ = daemon.ready_sync_scheme(readiness.socket(), &mut driver);
++    libredox::call::setrens(0, 0).expect("bcm2835-hdmiaudiod: failed to enter the null namespace");
++
++    for source in [Source::Scheme]
++        .into_iter()
++        .chain(events.map(|e| e.expect("bcm2835-hdmiaudiod: failed to get an event").user_data))
++    {
++        match source {
++            Source::Scheme => {
++                readiness
++                    .read_and_process_requests(&mut driver)
++                    .expect("bcm2835-hdmiaudiod: failed to read the scheme");
++            }
++            Source::Time => {
++                timer.fired();
++                timer.arm(POLL);
++                driver.refresh();
++                readiness
++                    .poll_all_requests(&mut driver)
++                    .expect("bcm2835-hdmiaudiod: failed to poll requests");
++            }
++        }
++        readiness
++            .write_responses()
++            .expect("bcm2835-hdmiaudiod: failed to write to the scheme");
++    }
++    process::exit(0);
++}
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/ring.rs b/drivers/audio/bcm2835-hdmiaudiod/src/ring.rs
+new file mode 100644
+index 00000000..72c8bec2
+--- /dev/null
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/ring.rs
+@@ -0,0 +1,139 @@
++//! Bookkeeping for the ring of slots the DMA controller plays in a loop:
++//! which slot it plays now, which slots hold new sound, which slot the next
++//! chunk goes into. No hardware here, so it is tested on the build host.
++//!
++//! Slots are counted without wrapping (`u64`); slot `n` lives at index
++//! `n % slots` of the ring. After a slot has been played, the driver fills
++//! it with silence, so when no new chunk arrives in time the ring plays
++//! silence instead of old sound.
++
++/// Frames per slot: one chunk from `audiod`.
++pub const SLOT_FRAMES: usize = 512;
++/// Bytes of one chunk: 512 frames, two channels, s16le.
++pub const CHUNK_BYTES: usize = SLOT_FRAMES * 2 * 2;
++
++pub struct Ring {
++    slots: u64,
++    /// The slot being played.
++    current: u64,
++    /// The next slot to fill. Slots below it and above `current` hold new
++    /// sound.
++    written: u64,
++    /// Played slots that held new sound.
++    pub played_sound: u64,
++    /// Times the ring ran out of new sound (the end of each sound counts too).
++    pub underruns: u64,
++}
++
++impl Ring {
++    /// The ring starts at slot 0; slots below `first_free` hold the start-up
++    /// ramp and must not be written over.
++    pub fn new(slots: usize, first_free: usize) -> Self {
++        assert!(slots >= 4 && first_free < slots);
++        Ring {
++            slots: slots as u64,
++            current: 0,
++            written: first_free as u64,
++            played_sound: 0,
++            underruns: 0,
++        }
++    }
++
++    /// The slot being played, counted without wrapping.
++    pub fn current(&self) -> u64 {
++        self.current
++    }
++
++    /// Slots after the one being played that hold new sound.
++    pub fn queued(&self) -> u64 {
++        self.written.saturating_sub(self.current + 1)
++    }
++
++    /// The controller now plays ring index `index`. Calls `played` with the
++    /// number of every slot finished since the last call (its ring index is
++    /// the number modulo the ring size; it plays next as number + ring
++    /// size), so the caller can silence it. Must be called at least once per
++    /// turn of the ring.
++    pub fn advance(&mut self, index: usize, mut played: impl FnMut(u64)) {
++        let index = index as u64 % self.slots;
++        let delta = (index + self.slots - self.current % self.slots) % self.slots;
++        for _ in 0..delta {
++            if self.current < self.written {
++                self.played_sound += 1;
++                if self.current + 1 == self.written {
++                    self.underruns += 1;
++                }
++            }
++            played(self.current);
++            self.current += 1;
++        }
++    }
++
++    /// The ring index for the next chunk, or `None` while the ring is full.
++    #[cfg(test)]
++    pub fn reserve(&mut self) -> Option<usize> {
++        self.reserve_numbered().map(|n| (n % self.slots) as usize)
++    }
++
++    /// The number of the slot for the next chunk, or `None` while the ring
++    /// is full.
++    pub fn reserve_numbered(&mut self) -> Option<u64> {
++        if self.written < self.current + 2 {
++            // Out of sound: start two slots ahead, since the controller may
++            // be about to finish the current one.
++            self.written = self.current + 2;
++        }
++        if self.written >= self.current + self.slots {
++            return None;
++        }
++        self.written += 1;
++        Some(self.written - 1)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn fills_until_full_then_frees_slots() {
++        let mut ring = Ring::new(8, 2);
++        let got: Vec<_> = std::iter::from_fn(|| ring.reserve()).collect();
++        // Slot 0 plays; 2..=7 are free (0 and 1 hold the ramp, which counts
++        // as sound).
++        assert_eq!(got, vec![2, 3, 4, 5, 6, 7]);
++        assert_eq!(ring.queued(), 7);
++
++        let mut silenced = Vec::new();
++        ring.advance(3, |i| silenced.push(i));
++        assert_eq!(silenced, vec![0, 1, 2]);
++        assert_eq!(ring.played_sound, 3);
++        assert_eq!(ring.reserve(), Some(0));
++        assert_eq!(ring.reserve(), Some(1));
++        assert_eq!(ring.reserve(), Some(2));
++        assert_eq!(ring.reserve(), None);
++    }
++
++    #[test]
++    fn underrun_restarts_two_slots_ahead() {
++        let mut ring = Ring::new(8, 1);
++        assert_eq!(ring.reserve(), Some(2));
++        ring.advance(2, |_| {});
++        ring.advance(6, |_| {});
++        assert_eq!(ring.underruns, 1);
++        assert_eq!(ring.played_sound, 3);
++        assert_eq!(ring.queued(), 0);
++        // Slot 6 plays, 7 may be about to start: the next chunk goes to 0.
++        assert_eq!(ring.reserve(), Some(0));
++    }
++
++    #[test]
++    fn wraps_around() {
++        let mut ring = Ring::new(4, 1);
++        for turn in 0..10u64 {
++            assert!(ring.reserve().is_some());
++            ring.advance(((turn + 1) % 4) as usize, |_| {});
++        }
++        assert_eq!(ring.current(), 10);
++    }
++}
+diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
+index 7d5ae36a..8cdcc28a 100644
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -7,7 +7,7 @@ requires_weak = [
+     "40_bcm2835-gpiod.service",
+     "41_bcm2835-i2cd.service",
+     "41_bcm2835-spid.service",
+-    "41_bcm2835-pwmaudiod.service",
++    "41_bcm2835-hdmiaudiod.service",
+     "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+diff --git a/init.initfs.d/41_bcm2835-hdmiaudiod.service b/init.initfs.d/41_bcm2835-hdmiaudiod.service
+new file mode 100644
+index 00000000..644a900c
+--- /dev/null
++++ b/init.initfs.d/41_bcm2835-hdmiaudiod.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Raspberry Pi HDMI sound"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++# rpi-firmwared first: CTS needs the pixel clock.
++requires_weak = ["40_rpi-firmwared.service"]
++
++[service]
++cmd = "bcm2835-hdmiaudiod"
++type = { scheme = "audiohw" }
+-- 
+2.53.0
+

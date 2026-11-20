@@ -1,0 +1,38 @@
+From 833fe707294873291063a0abca54a7335e2d3c41 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 12 Nov 2026 10:10:02 +0000
+Subject: [PATCH] init: no RUST_BACKTRACE=1 for the services and the login
+ session
+
+init started every service with RUST_BACKTRACE=1. getty passes its
+environment on to login and the shell, so every program a user started had it
+too. A tool that returns an error from main, such as ping with a name
+that does not resolve, then printed "Stack backtrace:" with frames that
+are all <unknown>: the binaries have no symbols. It tells nothing and
+looks like a crash.
+
+Start the services without it. A panic still prints its message and
+source location. Whoever wants a backtrace sets RUST_BACKTRACE in the
+shell or in a unit's envs.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ init/src/main.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/init/src/main.rs b/init/src/main.rs
+index c2aff750..ac961b94 100644
+--- a/init/src/main.rs
++++ b/init/src/main.rs
+@@ -44,7 +44,7 @@ impl InitConfig {
+         Self {
+             log_debug,
+             skip_cmd,
+-            envs: BTreeMap::from([("RUST_BACKTRACE".to_owned(), "1".into())]),
++            envs: BTreeMap::new(),
+             cwd: "/scheme/initfs".into(),
+         }
+     }
+-- 
+2.53.0
+

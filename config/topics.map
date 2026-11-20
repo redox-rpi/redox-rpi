@@ -48,6 +48,8 @@ patches/experiments/dwc2*               usb
 patches/experiments/usb-*               usb
 patches/experiments/termios-speed/*     usb
 patches/experiments/rtl8152/*           network,usb
+patches/experiments/netdiag/*           network
+tools/netdiag/*                         network
 patches/experiments/lan78xx-*           network,usb
 patches/experiments/ipv6/*              network
 patches/experiments/mdns/*              network
@@ -74,7 +76,6 @@ patches/experiments/rpi-fb/*            graphics
 patches/experiments/orbital/*           graphics
 patches/experiments/relibc-tests/*      relibc
 patches/experiments/sig*                relibc,stability
-patches/experiments/self-exit-status/*  relibc,stability
 patches/experiments/ldso-*              stability
 patches/experiments/kernel-*            stability
 patches/experiments/t1-*                stability
@@ -90,6 +91,7 @@ scripts/pr-order.py                     ci
 scripts/pi-test.py                      ci
 scripts/devsh.py                        ci
 scripts/qemu-*                          ci
+scripts/regression-*                    ci
 scripts/with-build-lock.sh              ci
 scripts/update-stable.sh                ci
 scripts/relibc-checkout.sh              relibc
@@ -118,7 +120,6 @@ tools/tcc-bench/*                       tcc
 
 # Configuration
 config/stable-image.conf                ci
-config/redox-stable.*                   ci
 config/topics.map                       ci
 config/*relibc-tests*                   relibc,ci
 config/raspizero2w.toml                 zero2w

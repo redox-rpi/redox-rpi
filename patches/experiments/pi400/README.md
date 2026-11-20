@@ -21,4 +21,4 @@ boot, because there is no EMMC2 driver yet (step f, #307).
 
 ## QEMU
 
-`raspi4b` in QEMU 10.2 (homenodellm): no PCIe, no GENET.
+`raspi4b` in QEMU 10.2 (the build server): no PCIe, no GENET.

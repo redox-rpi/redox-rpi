@@ -1,0 +1,15 @@
+# An HTTP client in the image itself, so a broken `pkg` can be worked around
+# (REQ-PKG-2 criterion 2, #365); HTTPS with openssl3 and ca-certificates.
+#
+# scripts/build-image.sh includes this file after the image's config for
+# every image except --zero2w: curl and its libraries take about 21 MiB,
+# and the Zero 2 W's 128 MiB filesystem has about 26 MiB free. Not with
+# curl = "ignore" in config/raspizero2w.toml instead: the cookbook then writes
+# an entry without a hash for curl into the local repository that all
+# builds of a clone share, and the next Pi 3B+ build installs no curl.
+#
+# Not wget: it drops about 300 bytes of every HTTP download and still exits
+# with 0 (QEMU, 2026-11-11); curl gets the same files byte for byte.
+
+[packages]
+curl = {}

@@ -1,0 +1,36 @@
+--- a/ptyd/src/pty.rs
++++ b/ptyd/src/pty.rs
+@@ -158,17 +158,21 @@
+             if isig {
+                 if is_cc(b, VINTR) && !is_vdisable(VINTR) {
+                     if let Some(fd) = &self.pgrp_handle {
+-                        let _ = Pty::kill(
++                        let res = Pty::kill(
+                             fd,
+                             ProcKillTarget::ThisGroup,
+                             libredox::flag::SIGINT as usize,
+                         );
++                        eprintln!("ptyd: pty {} VINTR via pgrp handle: {:?}", self.id, res);
+                     } else if self.pgrp != 0 {
+                         // TODO remove fallback after cap-based migration complete
+-                        let _ = libredox::call::kill(
++                        let res = libredox::call::kill(
+                             -(self.pgrp as isize) as usize,
+                             libredox::flag::SIGINT as _,
+                         );
++                        eprintln!("ptyd: pty {} VINTR to pgrp {}: {:?}", self.id, self.pgrp, res);
++                    } else {
++                        eprintln!("ptyd: pty {} VINTR without pgrp", self.id);
+                     }
+ 
+                     b = 0;
+--- a/ptyd/src/pgrp.rs
++++ b/ptyd/src/pgrp.rs
+@@ -68,6 +68,7 @@
+                     .ok_or(Error::new(EBADF))?,
+             );
+             pty.pgrp = new_pgrp as usize;
++            eprintln!("ptyd: pty {} pgrp set to {}", pty.id, new_pgrp);
+ 
+             Ok(4)
+         } else {

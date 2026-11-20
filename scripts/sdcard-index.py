@@ -52,6 +52,10 @@ def manifest_for(path):
 
 def board(name, manifest):
     text = (manifest.get("config", "") + " " + name).lower()
+    # The Pi 400 test images are built with the 3B+ config: the name and the
+    # experiment decide first.
+    if "pi400" in text or "pi400" in (manifest.get("experiments") or []):
+        return "pi400"
     if "zero2w" in text:
         return "zero2w"
     if "raspi3bp" in text or "3bp" in text or "pi3" in text:
