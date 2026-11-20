@@ -20,6 +20,8 @@ redoxfs = {}
 devshd = "source"
 # `socdump`: clock, PLL and GPIO registers, read-only (tools/socdump, #224).
 socdump = "source"
+# `diagread`: display sampler of our open firmware, stall finder (tools/diagread, rof #66).
+diagread = "source"
 
 # Mount the data partition of the network-boot SD card (scripts/make-sdcard.sh,
 # always the second partition) at /scheme/data. Fails harmlessly without it.
