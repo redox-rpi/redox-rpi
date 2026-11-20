@@ -1,0 +1,9 @@
+# Experiment vc4d-mode720 (#563): vc4d switches the monitor to 1280x720
+# at 60 Hz for real (pixel clock divider), when its EDID offers that mode
+# and the firmware runs 1080p60. Otherwise the mode is scaled as with
+# vc4d-scale. Build together with --experiment vc4d-flip (vc4d branch
+# mode-switch). Do not combine with vc4d-scale.
+
+[[files]]
+path = "/etc/vc4d-mode"
+data = "1280x720"

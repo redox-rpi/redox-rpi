@@ -5,4 +5,4 @@
 
 [[files]]
 path = "/etc/vc4d-mode"
-data = "1280x720"
+data = "1280x720 scale"
