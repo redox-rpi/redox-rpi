@@ -1,16 +1,16 @@
-From 3da425304b47465c362691fffa253031aa4fa42f Mon Sep 17 00:00:00 2001
+From bd47ddcfc29110563c5757b83125cec82034b4f4 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 16 Nov 2026 17:33:18 +0000
-Subject: [PATCH] inputd: with QUIET=1, activate a VT only on request
+Subject: [PATCH] inputd: with QUIET=1, the boot log does not take the screen
 
-inputd switched to VT 1 when fbbootlogd opened the boot log, and to the
-first console otherwise, so the boot log was on screen during the whole
-boot. With QUIET set (any value but empty or 0; 10_inputd.service
-inherits it from the kernel environment), inputd activates a VT only
-for `inputd -A` (30_console_switch runs `inputd -A 2` once the consoles
-are up) or Super+Fn. Until then no VT is active and the display driver
-leaves the framebuffer as it is. fbbootlogd still collects the whole
-log on VT 1, so Super+F1 shows it.
+inputd switched to VT 1 when fbbootlogd opened the boot log, so the boot
+log was on screen during the whole boot. With QUIET set (any value but
+empty or 0; 10_inputd.service inherits it from the kernel environment),
+opening the boot log activates no VT. The first normal console that
+opens (fbcond for the login, or Orbital on the desktop image) is
+activated as before, and so are `inputd -A` and Super+Fn. Until then no
+VT is active and the display driver leaves the framebuffer as it is.
+fbbootlogd still collects the whole log on VT 1, so Super+F1 shows it.
 
 If no VT is active after QUIET_TIMEOUT seconds (default 60, 0 = never;
 also inherited), the boot probably hangs: inputd then activates VT 1
@@ -24,12 +24,12 @@ redox-rpi #518.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/inputd/src/main.rs      | 53 +++++++++++++++++++++++++++++++--
+ drivers/inputd/src/main.rs      | 51 ++++++++++++++++++++++++++++++++-
  init.initfs.d/10_inputd.service |  1 +
- 2 files changed, 52 insertions(+), 2 deletions(-)
+ 2 files changed, 51 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 8fe6c440..e2bfa586 100644
+index 8fe6c440..4cdded18 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
 @@ -16,6 +16,8 @@ use std::collections::BTreeSet;
@@ -58,9 +58,9 @@ index 8fe6c440..e2bfa586 100644
  
      has_new_events: bool,
      pending_activate: Option<usize>,
-+    /// QUIET=1 (quiet boot): no VT is activated by itself, only by
-+    /// `inputd -A` or Super+Fn, so the boot log stays off the screen until
-+    /// init switches to the login.
++    /// QUIET=1 (quiet boot): opening the boot log (fbbootlogd) does not
++    /// activate VT 1, so the boot log stays off the screen. The first
++    /// normal console (the login, or Orbital) is activated as before.
 +    quiet: bool,
  }
  
@@ -81,15 +81,6 @@ index 8fe6c440..e2bfa586 100644
      }
  
      fn switch_keymap(&mut self, new_active: usize) {
-@@ -234,7 +248,7 @@ impl SchemeSync for InputScheme<'_> {
-                 self.next_vt_id += 1;
-                 self.vts.insert(vt);
- 
--                if self.active_vt.is_none() {
-+                if self.active_vt.is_none() && !self.quiet {
-                     self.switch_vt(vt);
-                 }
-                 Handle::Consumer {
 @@ -250,7 +264,9 @@ impl SchemeSync for InputScheme<'_> {
                      return Err(SysError::new(EEXIST));
                  }

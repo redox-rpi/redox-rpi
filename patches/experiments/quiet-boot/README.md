@@ -10,7 +10,7 @@ This experiment covers steps I2 and I3 of the quiet-boot plan.
 |---|---|---|
 | `rpi-boot-stub` | turns the word `quiet` in `/chosen/bootargs` into `QUIET=1` in the kernel environment; `QUIET=1` written directly also works | `tools/rpi-boot-stub` (default, harmless without the patches) |
 | kernel | with `QUIET` set, `graphical_debug` does not set up the debug display: kernel lines and init's service output (`/scheme/debug`) go to serial and the log only | [`kernel/0001`](kernel/0001-graphical_debug-no-boot-messages-on-the-screen-with-.patch) |
-| inputd | with `QUIET` set, inputd activates no VT by itself (not VT 1 for `fbbootlogd`, not the first console). The display driver leaves the framebuffer alone until `30_console_switch` runs `inputd -A 2`, which switches to the login | [`base/0001`](base/0001-inputd-with-QUIET-1-activate-a-VT-only-on-request.patch), `10_inputd.service` inherits `QUIET` |
+| inputd | with `QUIET` set, opening the boot log (`fbbootlogd`) does not activate VT 1. The display driver leaves the framebuffer alone until the first normal console opens (the login on VT 2, or Orbital on the desktop image), which inputd activates as before | [`base/0001`](base/0001-inputd-with-QUIET-1-the-boot-log-does-not-take-the-s.patch), `10_inputd.service` inherits `QUIET` |
 
 Without `QUIET` set, nothing changes.
 
