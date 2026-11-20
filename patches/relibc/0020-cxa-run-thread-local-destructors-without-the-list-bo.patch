@@ -1,0 +1,40 @@
+From b0dd6cbf2bfe01bfaa9416ded14c0ef0773f050e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 22:08:54 +0000
+Subject: [PATCH] cxa: run thread-local destructors without the list borrowed
+
+__cxa_thread_finalize kept DTORS borrowed while it ran the destructors.
+A destructor that registers another one (Rust's thread locals do) then
+panicked with "RefCell already borrowed" when a thread ended: on relibc
+74b5e7e3 devshd crashed on every connection in QEMU. Take one entry at a
+time and run it with the list released.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/cxa.rs | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/cxa.rs b/src/cxa.rs
+index c1d7724..bb681db 100644
+--- a/src/cxa.rs
++++ b/src/cxa.rs
+@@ -86,8 +86,14 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
+ 
+ // called internally
+ pub unsafe fn __cxa_thread_finalize() {
+-    let mut dtors = DTORS.borrow_mut();
+-    while let Some(entry) = dtors.pop() {
++    // Take one destructor at a time and run it without the list borrowed:
++    // a destructor may register another one (Rust's thread locals do), and
++    // with the list borrowed for the whole loop that panicked with
++    // "RefCell already borrowed" when a thread ended.
++    loop {
++        let Some(entry) = DTORS.borrow_mut().pop() else {
++            break;
++        };
+         (entry.func)(entry.obj);
+     }
+ }
+-- 
+2.53.0
+
