@@ -9,18 +9,18 @@ get_repository_detail read only the first remote's repo.toml, so with our reposi
  1 file changed, 49 insertions(+), 5 deletions(-)
 
 diff --git a/pkg-lib/src/backend/pkgar_backend/mod.rs b/pkg-lib/src/backend/pkgar_backend/mod.rs
-index 396c079..2465091 100644
+index a4f2e11..ac18c24 100644
 --- a/pkg-lib/src/backend/pkgar_backend/mod.rs
 +++ b/pkg-lib/src/backend/pkgar_backend/mod.rs
-@@ -12,6 +12,7 @@ use super::{Backend, Error};
- use crate::{
+@@ -8,6 +8,7 @@ use crate::{
+     Package, PackageName, PathIndex, RemoteName, RemotePath, RepoPublicKeyFile,
      backend::wrap_io_err,
      callback::Callback,
 +    net_backend::DownloadBackendWriter,
      package::{RemotePackage, Repository},
      package_state::PackageState,
      repo_manager::RepoManager,
-@@ -278,12 +279,55 @@ impl Backend for PkgarBackend {
+@@ -314,12 +315,55 @@ impl Backend for PkgarBackend {
              .ok_or(Error::ValidRepoNotFound)
      }
  

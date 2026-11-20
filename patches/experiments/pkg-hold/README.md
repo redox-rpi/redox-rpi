@@ -32,14 +32,13 @@ installs the upstream version.
 
 ## Updates that replace files
 
-Patch 0003 fixes `pkg update` itself. Upstream (pkgutils fe21bfd with
-pkgar 0.2.4) replaced no file without `--nocheck`: pkgar's
-`replace_diff` takes each path out of its map before it looks it up, so
-every file of the new version counts as new, and the install step skips
-files that exist ("already exists"). `/etc/pkg/packages.toml` still
-recorded the new version. With 0003 an update skips files whose content
-is the same, replaces files the old version installed when they are
-unchanged on disk, and leaves files changed locally alone.
+Patch 0003 fixed `pkg update` itself on pkgutils fe21bfd (pkgar 0.2.4):
+`replace_diff` counted every file of the new version as new, and the
+install step skipped files that exist, so no file was replaced without
+`--nocheck`. Upstream fixed this in pkgutils 00cee502 (fee72a0, "Fixes for
+update conflict"): `replace_diff` now also returns the changed files, and
+`replace_one` replaces a file only when it is unchanged since the install.
+So 0003 was dropped with the upstream bump of 2026-11-20 (#309, #44).
 
 ## Updates from several repositories
 

@@ -9,12 +9,12 @@ Subject: [PATCH] Print the memory map of a process on an unhandled exception
  1 file changed, 14 insertions(+)
 
 diff --git a/src/context/signal.rs b/src/context/signal.rs
-index cd6215c6..e4d4edcb 100644
+index e900b0d..b4bef39 100644
 --- a/src/context/signal.rs
 +++ b/src/context/signal.rs
-@@ -110,8 +110,22 @@ pub fn excp_handler(excp: syscall::Exception) {
+@@ -148,8 +148,22 @@ pub fn excp_handler(excp: syscall::Exception) {
              context.name,
-             Arc::as_ptr(&*current),
+             context.debug_id,
          );
 +        // Diagnostics (redox-rpi, #1): the memory map of the process.
 +        let addr_space = context.addr_space().ok().cloned();

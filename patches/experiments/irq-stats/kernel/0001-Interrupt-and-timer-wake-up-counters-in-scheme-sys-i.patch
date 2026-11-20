@@ -22,7 +22,7 @@ context. The existing /scheme/sys/irq stays as it is.
  create mode 100644 src/scheme/sys/irqstat.rs
 
 diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
-index 1331ab48..8b4b4353 100644
+index 1331ab4..8b4b435 100644
 --- a/src/arch/aarch64/interrupt/irq.rs
 +++ b/src/arch/aarch64/interrupt/irq.rs
 @@ -7,27 +7,49 @@ use crate::{
@@ -76,7 +76,7 @@ index 1331ab48..8b4b4353 100644
          // IDs 1020..1023 are special/spurious GIC values and must not be
          // written to EOIR because no interrupt was acknowledged.
 diff --git a/src/context/switch.rs b/src/context/switch.rs
-index 5f99123a..a8469fe8 100644
+index b801071..a2b93b6 100644
 --- a/src/context/switch.rs
 +++ b/src/context/switch.rs
 @@ -90,6 +90,7 @@ fn update_runnable(
@@ -97,7 +97,7 @@ index 5f99123a..a8469fe8 100644
                  }
 diff --git a/src/irq_stats.rs b/src/irq_stats.rs
 new file mode 100644
-index 00000000..7f53043a
+index 0000000..7f53043
 --- /dev/null
 +++ b/src/irq_stats.rs
 @@ -0,0 +1,101 @@
@@ -203,7 +203,7 @@ index 00000000..7f53043a
 +    s
 +}
 diff --git a/src/main.rs b/src/main.rs
-index a29621fa..fa0e23ca 100644
+index a29621f..fa0e23c 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -79,6 +79,9 @@ mod percpu;
@@ -218,7 +218,7 @@ index a29621fa..fa0e23ca 100644
  
 diff --git a/src/scheme/sys/irqstat.rs b/src/scheme/sys/irqstat.rs
 new file mode 100644
-index 00000000..06b96993
+index 0000000..06b9699
 --- /dev/null
 +++ b/src/scheme/sys/irqstat.rs
 @@ -0,0 +1,7 @@
@@ -230,7 +230,7 @@ index 00000000..06b96993
 +    Ok(crate::irq_stats::report().into_bytes())
 +}
 diff --git a/src/scheme/sys/mod.rs b/src/scheme/sys/mod.rs
-index f4c0dba6..425e17d4 100644
+index 0c86c5f..28a65bf 100644
 --- a/src/scheme/sys/mod.rs
 +++ b/src/scheme/sys/mod.rs
 @@ -32,6 +32,7 @@ mod exe;
@@ -239,16 +239,16 @@ index f4c0dba6..425e17d4 100644
  mod irq;
 +mod irqstat;
  mod log;
+ mod memstat;
  #[cfg(all(feature = "numa", target_arch = "x86_64"))]
- mod numa;
-@@ -77,6 +78,7 @@ const FILES: &[(&str, Kind)] = &[
+@@ -78,6 +79,7 @@ const FILES: &[(&str, Kind)] = &[
      ("exe", Rd(exe::resource)),
      ("iostat", Rd(iostat::resource)),
      ("irq", Rd(irq::resource)),
 +    ("irqstat", Rd(irqstat::resource)),
      ("log", Rd(log::resource)),
+     ("memstat", Rd(memstat::resource)),
      #[cfg(all(feature = "numa", target_arch = "x86_64"))]
-     ("numa", Rd(numa::resource)),
 -- 
 2.53.0
 

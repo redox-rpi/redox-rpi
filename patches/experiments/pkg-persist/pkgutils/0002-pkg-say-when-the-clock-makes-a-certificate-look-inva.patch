@@ -8,10 +8,10 @@ Subject: [PATCH] pkg: say when the clock makes a certificate look invalid
  1 file changed, 12 insertions(+)
 
 diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
-index 9ca9dc3..25181b7 100644
+index 69f728a..cdaa1ed 100644
 --- a/pkg-cli/src/main.rs
 +++ b/pkg-cli/src/main.rs
-@@ -171,6 +171,18 @@ fn main() {
+@@ -224,6 +224,18 @@ fn main() {
              // TODO: ask to rerun as sudo
              eprintln!("Hint: You may need root privileges. Try running with 'sudo'.");
          }

@@ -8,10 +8,10 @@ Subject: [PATCH] redoxfs: rename on a filesystem mounted below /scheme/<name>
  1 file changed, 15 insertions(+)
 
 diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
-index 5117390..64956eb 100644
+index 33d882e..e50fb42 100644
 --- a/src/mount/redox/scheme.rs
 +++ b/src/mount/redox/scheme.rs
-@@ -747,6 +747,21 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -849,6 +849,21 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
      ) -> Result<usize> {
          // println!("Frename {}, {}  {} from {}, {}", old_path, new_path, flags, uid, gid);
  
