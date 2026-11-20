@@ -1,3 +1,0 @@
-[packages]
-# Built from source with patches/experiments/ifconfig-mac/netutils/.
-netutils = "source"

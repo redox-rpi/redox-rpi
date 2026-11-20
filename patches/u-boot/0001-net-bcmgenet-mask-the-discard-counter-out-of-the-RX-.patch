@@ -1,0 +1,60 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] net: bcmgenet: mask the discard counter out of the RX
+ producer index
+
+RDMA_PROD_INDEX holds the producer index in bits 15:0 and, in bits
+31:16, the number of frames the controller discarded because no receive
+descriptor was free (Linux: DMA_P_INDEX_MASK, DMA_P_INDEX_DISCARD_CNT).
+The driver compared the whole register with its 16-bit consumer index.
+Once a frame has been discarded the two never match again: recv() then
+hands out descriptors the controller has not filled, with stale lengths
+and old frame data, and TCP and TFTP transfers stall until they time out.
+
+rx_ring_init() took the whole register as the start index too, so a
+discard count left by an earlier user of the controller (the previous
+network command, or the OS before a warm reboot) had the same effect
+after the first frame.
+
+Mask the index in both places, as Linux does.
+
+Seen on the Raspberry Pi 400: wget fails with "HTTP client error 5" and
+TFTP with "Timeout!" on large files, often right after a reboot, while
+the MAC's MIB counters show no FCS, alignment, length or overrun errors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+diff --git a/drivers/net/bcmgenet.c b/drivers/net/bcmgenet.c
+index a0264dc3..fec0afdd 100644
+--- a/drivers/net/bcmgenet.c
++++ b/drivers/net/bcmgenet.c
+@@ -136,6 +136,9 @@
+ #define DMA_DESC_ADDRESS_LO		0x04
+ #define DMA_DESC_ADDRESS_HI		0x08
+ #define DMA_DESC_SIZE			12
++/* RDMA_PROD_INDEX: the producer index in bits 15:0, the count of frames
++ * discarded for lack of a free descriptor in bits 31:16 */
++#define DMA_P_INDEX_MASK		0xffff
+ 
+ #define GENET_RX_OFF			0x2000
+ #define GENET_RDMA_REG_OFF					\
+@@ -335,7 +338,8 @@ static int bcmgenet_gmac_eth_recv(struct udevice *dev,
+ {
+ 	struct bcmgenet_eth_priv *priv = dev_get_priv(dev);
+ 	void *desc_base = priv->rx_desc_base + priv->rx_index * DMA_DESC_SIZE;
+-	u32 prod_index = readl(priv->mac_reg + RDMA_PROD_INDEX);
++	u32 prod_index = readl(priv->mac_reg + RDMA_PROD_INDEX) &
++			 DMA_P_INDEX_MASK;
+ 	u32 length, addr;
+ 
+ 	if (prod_index == priv->c_index)
+@@ -406,7 +410,8 @@ static void rx_ring_init(struct bcmgenet_eth_priv *priv)
+ 	       priv->mac_reg + RDMA_RING_REG_BASE + DMA_END_ADDR);
+ 
+ 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
+-	priv->c_index = readl(priv->mac_reg + RDMA_PROD_INDEX);
++	priv->c_index = readl(priv->mac_reg + RDMA_PROD_INDEX) &
++			DMA_P_INDEX_MASK;
+ 	writel(priv->c_index, priv->mac_reg + RDMA_CONS_INDEX);
+ 	priv->rx_index = priv->c_index;
+ 	priv->rx_index &= 0xFF;
+-- 

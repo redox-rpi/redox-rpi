@@ -5,7 +5,8 @@ Usage:
     scripts/regression-set.py <host> [--port 2323] [--serial-log <file>]
                               [--manifest <file>] [--starts 50]
                               [--tcp-host <ip>] [--tcp-mib 4]
-                              [--dead-dns <ip>] [--desktop]
+                              [--dead-dns <ip>] [--lan-name <name>]
+                              [--outside-name <name>] [--desktop]
                               [--report <file>] [--only <check>]...
 
 Runs, through devshd, checks for regressions we already had, each named
@@ -37,16 +38,34 @@ Checks, in this order:
                 builds hello.c, which runs. tcc -static (a known limit) and
                 bench-gcc (comparison) are not judged (skip without the
                 experiment tcc)
-  dns           #358, #374: a name server is set (from DHCP); an unknown
-                name gives "Name does not resolve" within 5 s; with
-                --dead-dns as name server a lookup gives "Try again" within
-                15 s; after the name server is set back, the unknown name
-                gives "Name does not resolve" again
+  dns           #358, #374, REQ-NET-7 (docs/requirements/network.md): a
+                name server is set (from DHCP); an unknown name, fully
+                qualified and short, gives "Name does not resolve" within
+                1 s (criterion 3). Times come from ion's `time` on the
+                guest. Also, as their own lines:
+                dns-lan with --lan-name: that name (with a host part, not
+                the bare domain) and its short form each resolve within 2 s
+                (criterion 1);
+                dns-outside with --outside-name: it resolves (criterion 2);
+                dns-silent with --dead-dns as name server: "Try again"
+                within 10 s for a fully qualified name and within 15 s for
+                a short name with a local domain set (criterion 4); after
+                the name server is set back, an unknown name gives "Name
+                does not resolve" again
   launcher-sopwith
                 #335, REQ-GFX-2: the launcher entry
                 /usr/share/ui/apps/70_sopwith names /usr/bin/sopwith and
                 an icon, and both files exist (skip without the experiment
                 orbital-apps)
+  ifconfig-mac  #444, #171: `ifconfig eth0` shows the MAC address netstack
+                has (/scheme/netcfg/ifaces/eth0/mac), not 00:00:00:00:00:00;
+                skip while ifconfig still prints the netmask as a prefix
+                length (no netutils 0002 and no experiment ifconfig-mac)
+  gamepad-console  #320: `gamepad-test --console` prints every event that
+                `gamepad-test --send` sends through inputd, and the last
+                line holds A with X, Y and RZ set (skip without
+                gamepad-test, experiment gamepad-test, or when it reports
+                no controllers handle or no --console: #455)
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -186,6 +205,29 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
 
 
+DNS_LAN_S = 2        # REQ-NET-7 criterion 1, each lookup of an existing LAN name
+DNS_UNKNOWN_S = 1    # REQ-NET-7 criterion 3
+DNS_DEAD_FQDN_S = 10  # criterion 4, a fully qualified name
+DNS_DEAD_SHORT_S = 15  # criterion 4, a short name (tried in the local domain first)
+REAL = re.compile(r"real\s+([0-9.]+)s")
+
+
+def lookup(sh, name):
+    """(output lines, seconds) of `ping -c 1 <name>`, timed by ion's `time`
+    on the guest, so the devsh round trip does not count (the 1 s
+    limit is close to it). Falls back to pi_test.timed."""
+    out, secs = pi_test.timed(sh, f"time ping -c 1 {name}", 60)
+    for l in out:
+        m = REAL.search(l)
+        if m:
+            return out, float(m.group(1))
+    return out, secs
+
+
+def says(out, text):
+    return any(text in l for l in out)
+
+
 TCC_RUN = "/usr/share/tcc-tests/run.ion"
 TCC_LOG = "/tmp/regr-tcc.log"
 TIMEIT = re.compile(r"\[timeit\] ([0-9.]+) ms, status (\d+): (\S+)")
@@ -252,30 +294,73 @@ def check_tcc(sh, check, tcc):
 
 
 def check_dns(sh, check, args):
+    """REQ-NET-7 (docs/requirements/network.md), one line per criterion."""
     ns = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
     if not ns:
         check("dns", False, "no name server set (DHCP, #358)")
         return
     orig = ns[0]
-    out, secs = pi_test.timed(sh, "ping -c 1 nosuchname.invalid", 60)
-    unknown = any("Name does not resolve" in l for l in out) and secs <= 5
-    detail = f"name server {orig}; unknown name: {secs:.1f} s, " + (
-        "Name does not resolve" if unknown else "; ".join(out[:2])[:100])
-    ok = unknown
+    dom = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/domain") if l.strip()]
+    orig_dom = dom[0] if dom else ""
+    tag = uuid.uuid4().hex[:6]
+
+    # 1: names of a LAN host, fully qualified and short (Pi rows: --lan-name)
+    if args.lan_name:
+        short = args.lan_name.split(".")[0]
+        names = [args.lan_name] + ([short] if short != args.lan_name else [])
+        res = []
+        for n in names:
+            out, secs = lookup(sh, n)
+            res.append((n, says(out, "packets transmitted") or says(out, "PING "), secs))
+        check("dns-lan", all(ok and s <= DNS_LAN_S for _, ok, s in res),
+              f"local domain '{orig_dom or 'none'}'; "
+              + "; ".join(f"{n}: {'resolves' if ok else 'FAILS'} ({s:.2f} s"
+                          + (f", over {DNS_LAN_S} s" if ok and s > DNS_LAN_S else "") + ")"
+                          for n, ok, s in res) + f" (limit {DNS_LAN_S} s each)")
+    # 2: a name outside the LAN
+    if args.outside_name:
+        out, secs = lookup(sh, args.outside_name)
+        ok = says(out, "PING ")
+        check("dns-outside", ok, f"{args.outside_name}: " + ("resolves" if ok else "; ".join(out[:2])[:100])
+              + f" ({secs:.2f} s)")
+    # 3: an unknown name fails with "Name does not resolve" within 1 s
+    res = []
+    for n in (f"nosuch-{tag}.invalid", f"nosuch-{tag}"):
+        out, secs = lookup(sh, n)
+        res.append((n, says(out, "Name does not resolve") and secs <= DNS_UNKNOWN_S, secs, out))
+    check("dns", all(r[1] for r in res), f"name server {orig}; unknown names: " + "; ".join(
+        f"{n} {s:.2f} s" + ("" if ok else " FAIL: " + "; ".join(o[:2])[:80]) for n, ok, s, o in res)
+        + f" (limit {DNS_UNKNOWN_S} s)")
+    # 4: a silent name server: "Try again" within 10 s (fully qualified)
+    #    or 15 s (short, with a local domain set)
     if args.dead_dns:
         sh.run(f"echo {args.dead_dns} > /scheme/netcfg/resolv/nameserver")
+        if not orig_dom:
+            sh.run("echo regr > /scheme/netcfg/resolv/domain")
         try:
-            out, secs = pi_test.timed(sh, f"ping -c 1 regr-{uuid.uuid4().hex[:6]}.example.com", 60)
+            out1, s1 = lookup(sh, f"regr-{tag}.example.com")
+            out2, s2 = lookup(sh, f"regr-{tag}")
         finally:
             sh.run(f"echo {orig} > /scheme/netcfg/resolv/nameserver")
-        again = any("Try again" in l for l in out) and secs <= 15
-        out2, secs2 = pi_test.timed(sh, "ping -c 1 nosuchname.invalid", 60)
-        back = any("Name does not resolve" in l for l in out2)
-        ok = ok and again and back
-        detail += (f"; dead name server {args.dead_dns}: {secs:.1f} s, "
-                   + ("Try again" if again else "; ".join(out[:2])[:100])
-                   + f"; set back: {'resolves again' if back else '; '.join(out2[:2])[:100]}")
-    check("dns", ok, detail)
+            if not orig_dom:
+                sh.run("echo > /scheme/netcfg/resolv/domain")
+        fqdn = says(out1, "Try again") and s1 <= DNS_DEAD_FQDN_S
+        short = says(out2, "Try again") and s2 <= DNS_DEAD_SHORT_S
+        out3, _ = lookup(sh, f"nosuch-{tag}.invalid")
+        # the name server and domain read back as before (an empty write
+        # sets "no domain")
+        ns_now = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/nameserver") if l.strip()]
+        dom_now = [l.strip() for l in sh.run("cat /scheme/netcfg/resolv/domain") if l.strip()]
+        restored = ns_now[:1] == [orig] and (dom_now[0] if dom_now else "") == orig_dom
+        back = says(out3, "Name does not resolve") and restored
+        check("dns-silent", fqdn and short and back,
+              f"silent name server {args.dead_dns}: fully qualified {s1:.1f} s "
+              + ("Try again" if says(out1, "Try again") else "; ".join(out1[:2])[:60])
+              + f" (limit {DNS_DEAD_FQDN_S} s), short name {s2:.1f} s "
+              + ("Try again" if says(out2, "Try again") else "; ".join(out2[:2])[:60])
+              + f" (limit {DNS_DEAD_SHORT_S} s); set back: "
+              + ("resolves again" if says(out3, "Name does not resolve") else "; ".join(out3[:2])[:80])
+              + ("" if restored else f"; NOT restored: name server {ns_now[:1]}, domain {dom_now[:1]}"))
 
 
 SOPWITH_ENTRY = "/usr/share/ui/apps/70_sopwith"
@@ -351,6 +436,56 @@ def check_sopwith(sh, check, args):
     check("sopwith", bool(window and driver and pid and sound), "; ".join(notes))
 
 
+MAC = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
+
+
+def check_ifconfig_mac(sh, check, args):
+    want = "".join(sh.run("cat /scheme/netcfg/ifaces/eth0/mac")).strip().replace("-", ":").lower()
+    out = sh.run("ifconfig eth0")
+    text = " ".join(out)
+    shown = [m.lower() for m in MAC.findall(text)]
+    if want and want in shown:
+        check("ifconfig-mac", True, f"ifconfig shows {want}, as netstack has it")
+        return
+    # netutils 0002 (and the experiment ifconfig-mac) print the netmask
+    # dotted; without either, ifconfig still has upstream's placeholder.
+    if not re.search(r"\b255\.\d+\.\d+\.\d+\b", text):
+        check("ifconfig-mac", None, "ifconfig without netutils 0002 (#446) or experiment ifconfig-mac")
+        return
+    check("ifconfig-mac", False, f"netstack has {want or 'no MAC'}, ifconfig shows "
+          f"{', '.join(shown) or 'none'}: " + "; ".join(l.strip() for l in out[:4])[:120])
+
+
+def check_gamepad_console(sh, check, args):
+    if not has(sh, "/usr/bin/gamepad-test"):
+        check("gamepad-console", None, "no gamepad-test (experiment gamepad-test)")
+        return
+    sh.run("rm -f /tmp/regr-gp.out /tmp/regr-gp.err; "
+           "gamepad-test --console > /tmp/regr-gp.out ^> /tmp/regr-gp.err &")
+    time.sleep(2)
+    # `test -e` does not see /scheme/input/controllers (no stat on inputd's
+    # scheme), so the tool says itself when the handle or --console is
+    # missing: inputd without base patch 0098 (#455), or an older binary.
+    err = " ".join(sh.run("cat /tmp/regr-gp.err"))
+    if "controllers handle" in err or "unknown argument" in err:
+        check("gamepad-console", None, f"gamepad-test --console not usable yet (#455): {err[:100]}")
+        return
+    sent = [l for l in sh.run("gamepad-test --send", 120) if l.startswith("gamepad-test: sent ")]
+    time.sleep(2)
+    for pid in context_pids(sh, ["gamepad-test"]).values():
+        sh.run(f"kill {pid}")
+    got = [l for l in sh.run("cat /tmp/regr-gp.out") if l.startswith("gamepad-test: controller ")]
+    last = got[-1] if got else ""
+    ok = (len(sent) > 0 and len(got) == len(sent) and "held A" in last
+          and all(f"{a} " in last.split("| axes", 1)[-1] for a in ("X", "Y", "RZ")))
+    detail = f"sent {len(sent)}, --console printed {len(got)}"
+    if not got:
+        detail += "; " + "; ".join(sh.run("cat /tmp/regr-gp.err"))[:120]
+    else:
+        detail += f"; last: {last.split(':', 2)[-1].strip()[:100]}"
+    check("gamepad-console", ok, detail)
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -369,7 +504,11 @@ def main():
     ap.add_argument("--starts", type=int, default=50)
     ap.add_argument("--tcp-host", help="this host as the guest sees it (default: the address devsh came from)")
     ap.add_argument("--tcp-mib", type=int, default=4)
-    ap.add_argument("--dead-dns", help="an address where no name server answers (QEMU: 10.0.2.99)")
+    ap.add_argument("--dead-dns", help="an address where no name server answers (QEMU: 10.0.2.99; "
+                    "anywhere: 192.0.2.1, a documentation address)")
+    ap.add_argument("--lan-name", help="fully qualified name of a LAN host for REQ-NET-7 criterion 1 "
+                    "(the short name is checked too)")
+    ap.add_argument("--outside-name", help="a name outside the LAN for REQ-NET-7 criterion 2")
     ap.add_argument("--desktop", action="store_true",
                     help="also run sopwith: starts the desktop, which then runs until the next reboot")
     ap.add_argument("--report")
@@ -407,6 +546,8 @@ def main():
             ("tcc", lambda: check_tcc(sh, check, tcc)),
             ("dns", lambda: check_dns(sh, check, args)),
             ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
+            ("ifconfig-mac", lambda: check_ifconfig_mac(sh, check, args)),
+            ("gamepad-console", lambda: check_gamepad_console(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
             ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),

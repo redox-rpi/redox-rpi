@@ -67,10 +67,14 @@ TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
 # Build server and test Pi addresses: scripts/lab-env.sh (lab.env).
 . "$ROOT/scripts/lab-env.sh"
-lab_need REDOX_BUILD_SERVER REDOX_PI
+lab_need REDOX_BUILD_SERVER REDOX_PI REDOX_PI_SERIAL
 SERVER="$REDOX_BUILD_SERVER"
 PI="$REDOX_PI"
-SERIAL_DEV=/dev/ttyUSB0
+# The test Pi's serial console: REDOX_PI_SERIAL in lab.env, a by-path name,
+# because ttyUSB numbers move between adapters across host restarts (the
+# Zero's adapter became ttyUSB0 on 2026-11-19); no guessed default. Only
+# printf writes to it: stty can hang on some adapters.
+SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
 ISSUE_TITLE="Nightly: main fails on the Pi"
@@ -272,6 +276,11 @@ reset_pi() {
 # the console drops characters that come faster (#28).
 serial_type() {
     local text=$1 i
+    if [ ! -c "$SERIAL_DEV" ]; then
+        # Not an error here: the caller's wait for the reset then fails.
+        log "no serial console to type on (REDOX_PI_SERIAL in $lab_env_file: '${SERIAL_DEV}')"
+        return 0
+    fi
     for ((i = 0; i < ${#text}; i++)); do
         printf '%s' "${text:i:1}" > "$SERIAL_DEV"
         sleep 0.15
