@@ -19,8 +19,15 @@
 #   3. kernel8.img from scripts/fw-direct-boot.sh; the banner says
 #      "direct console".
 #
-# Writes <out>/kernel8.img, <out>/initramfs (initfs, then the RedoxFS) and
-# <out>/console.fs. Copy the two boot files to a direct card's FAT partition
+# --minimal also removes what config/console-prune-minimal.txt lists
+# (network, sound, desktop, developer tools): the minimal Redox of the
+# firmware release card (rpi-open-firmware#56). Its default source image is
+# the release-netboot build (scripts/build-image.sh --release-netboot), which
+# has no devshd.
+#
+# Writes <out>/kernel8.img, <out>/initramfs (initfs, then the RedoxFS),
+# <out>/console.fs and <out>/manifest.txt (source build, prune lists, the
+# boot files' SHA-256 and every file of the root filesystem with its size). Copy the two boot files to a direct card's FAT partition
 # (make-sdcard.sh --direct) or give them to the firmware. --test boots them
 # in QEMU raspi3b and waits for `redox login:`.
 #
@@ -28,27 +35,38 @@
 # fusermount) for the redoxfs mount, as the upstream build's `make mount`.
 #
 # Usage:
-#   scripts/console-image.sh [--image <harddrive.img>] [--out <dir>]
+#   scripts/console-image.sh [--minimal] [--image <harddrive.img>] [--out <dir>]
 #                            [--size <MiB>] [--test]
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REDOX="$ROOT/upstream/redox"
-image="$REDOX/build/aarch64/minimal/harddrive.img"
+image=""
 out="$ROOT/build/console"
 size=32
 test=no
+minimal=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
         --size) size="$2"; shift 2 ;;
         --test) test=yes; shift ;;
+        --minimal) minimal=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
-[ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh" >&2; exit 1; }
+prune=("$ROOT/config/console-prune.txt")
+if [ "$minimal" = yes ]; then
+    prune+=("$ROOT/config/console-prune-minimal.txt")
+    [ -n "$image" ] || image="$REDOX/build/aarch64/release-netboot/harddrive.img"
+fi
+[ -n "$image" ] || image="$REDOX/build/aarch64/minimal/harddrive.img"
+hint=""; [ "$minimal" = no ] || hint=" --release-netboot"
+[ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh$hint" >&2; exit 1; }
+[ "$minimal" = no ] || [ "$image" != "$REDOX/build/aarch64/minimal/harddrive.img" ] ||
+    echo "warning: --minimal from the network-boot test build, which has devshd; use --release-netboot" >&2
 
 fstools="$REDOX/build/fstools/bin"
 base="$REDOX/recipes/core/base/target/aarch64-unknown-redox"
@@ -112,7 +130,7 @@ mountpoint -q "$mnt" || { cat "$work/redoxfs.log" >&2; echo "cannot mount the ro
         # Unquoted on purpose: the pattern may be a glob.
         # shellcheck disable=SC2086
         rm -rf -- $pattern
-    done < "$ROOT/config/console-prune.txt"
+    done < <(cat "${prune[@]}")
     find . -type f -size +4k -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
         -exec "$strip" --strip-unneeded {} \;
     for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
@@ -125,6 +143,8 @@ mountpoint -q "$mnt" || { cat "$work/redoxfs.log" >&2; echo "cannot mount the ro
     done
 )
 used_kib="$(du -sk "$mnt" | cut -f1)"
+release="$(cat "$mnt/etc/redox-rpi-release" 2>/dev/null || true)"
+(cd "$mnt" && find . -type f -printf '%P %s\n' | LC_ALL=C sort) > "$work/files.txt"
 fusermount -u "$mnt"
 wait
 
@@ -141,6 +161,19 @@ fi
 cp "$work/initfs.small" "$out/initramfs"
 truncate -s %4096 "$out/initramfs"
 cat "$out/console.fs" >> "$out/initramfs"
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+{
+    echo "# Console image (scripts/console-image.sh$([ "$minimal" = yes ] && echo " --minimal")), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "source_image $(basename "$image") $(sha "$image")"
+    echo "$release" | sed 's/^/release /'
+    for f in "${prune[@]}"; do echo "prune ${f#"$ROOT"/} $(sha "$f")"; done
+    echo "kernel8.img $(wc -c < "$out/kernel8.img") $(sha "$out/kernel8.img")"
+    echo "initramfs $(wc -c < "$out/initramfs") $(sha "$out/initramfs")"
+    echo "initfs $(wc -c < "$work/initfs.small")"
+    echo "root_used_kib $used_kib in ${size} MiB"
+    echo "# root filesystem: path size"
+    cat "$work/files.txt"
+} > "$out/manifest.txt"
 echo "console image: initfs $(($(wc -c < "$work/initfs.small") >> 10)) KiB, root $((used_kib >> 10)) MiB in ${size} MiB," \
      "initramfs $(($(wc -c < "$out/initramfs") >> 20)) MiB, kernel8.img $(wc -c < "$out/kernel8.img") bytes, in $out"
 
