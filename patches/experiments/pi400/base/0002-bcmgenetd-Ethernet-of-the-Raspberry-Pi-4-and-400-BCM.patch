@@ -32,7 +32,7 @@ redox-rpi #306.
  drivers/net/bcmgenetd/src/regs.rs  | 174 ++++++++++
  drivers/net/bcmgenetd/src/ring.rs  | 532 +++++++++++++++++++++++++++++
  drivers/rpi-firmwared/src/main.rs  |   8 +
- drivers/rpi-firmwared/src/mbox.rs  |   4 +-
+ drivers/rpi-firmwared/src/mbox.rs  |   1 +
  init.initfs.d/40_bcmgenetd.service |   9 +
  init.initfs.d/40_drivers.target    |   1 +
  12 files changed, 1292 insertions(+), 2 deletions(-)
@@ -1405,16 +1405,6 @@ index 39ad30e..16c0593 100644
  pub const TAG_BOARD_SERIAL: u32 = 0x0001_0004;
  pub const TAG_ARM_MEMORY: u32 = 0x0001_0005;
  pub const TAG_VC_MEMORY: u32 = 0x0001_0006;
-@@ -163,7 +164,8 @@ impl Mailbox {
-             }
-             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
-         }
--        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
-+        // In bytes; the board MAC is 6, so round up to whole words.
-+        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
-         Ok(buf[5..5 + len.min(value_words)].to_vec())
-     }
- 
 diff --git a/init.initfs.d/40_bcmgenetd.service b/init.initfs.d/40_bcmgenetd.service
 new file mode 100644
 index 0000000..9eba1af
