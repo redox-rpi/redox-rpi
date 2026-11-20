@@ -226,7 +226,7 @@ def trace_check(sh, args, qemu, size, host_ip):
     lines = data.decode("utf-8", "replace").splitlines()
     rows = [l.split(",") for l in lines[1:] if l.count(",") == 10]
     if not rows:
-        check("trace", False, f"no trace lines ({len(data)} bytes)")
+        check("trace", False, f"no trace lines ({len(data)} bytes; image without experiment vc4d-trace?)")
         return
     end = int(rows[-1][0])
     window = [r for r in rows if int(r[0]) >= end - int(took * 1e6) - 2_000_000]
@@ -283,7 +283,7 @@ def main():
     ap.add_argument("--out", default="build/vc4d-desktop/" + time.strftime("%Y%m%dT%H%M%S", time.gmtime()))
     ap.add_argument("--size", default="1280x720", help="QEMU: VC4D_FAKE size")
     ap.add_argument("--trace", action="store_true",
-                    help="30 s of window drags, then check vc4d's trace (#563)")
+                    help="30 s of window drags, then check vc4d's trace (#563); the image needs experiment vc4d-trace")
     ap.add_argument("--planes", action="store_true",
                     help="with --trace: drags move an overlay plane (orbital-planes)")
     args = ap.parse_args()

@@ -1,0 +1,8 @@
+# Experiment vc4d-trace (#563): turns on vc4d's trace, a CSV time series of
+# damage, flips, display lists and HVS frames in /var/log/vc4d-trace.csv.
+# For measuring only: a sampler thread wakes every millisecond and the file
+# grows without limit. Build after --experiment vc4d-flip.
+
+[[files]]
+path = "/etc/vc4d-trace"
+data = ""
