@@ -5,12 +5,20 @@
 # (or sha256sum).
 #
 # Usage:
-#   scripts/qemu-raspi3b.sh [--kernel <file>] [--image <file>] [--uboot ours|redox]
+#   scripts/qemu-raspi3b.sh [--kernel <file>] [--image <file> | --daily] [--uboot ours|redox]
 #                           [--test [--expect <regex>]... [--timeout <seconds>]]
+#
+#   Without --image or --daily it boots this clone's own build,
+#   upstream/redox/build/aarch64/minimal/harddrive.img (scripts/build-image.sh),
+#   and stops if there is none (#550).
 #
 #   --kernel <file>   replace usr/lib/boot/kernel in a copy of the image
 #                     (uses tools/redoxfs-file)
-#   --image <file>    boot this image instead of the latest daily server image
+#   --image <file>    boot this image
+#   --daily           boot Redox's upstream daily server image (the newest in
+#                     $DAILY_URL, or $DAILY_IMAGE) instead. Its own kernel
+#                     panics on raspi3b (#550), so use it with --kernel, as CI
+#                     does
 #   --uboot ours      our U-Boot from scripts/build-uboot.sh (default if built),
 #                     with the mainline devicetree adjusted like the config.txt
 #                     overlays on a real Pi (PL011 console, SD on Arasan)
@@ -79,6 +87,7 @@ BOOT_MENU="Arrow keys and enter select mode"
 
 kernel=""
 image=""
+daily=no
 test=no
 expect=()
 timeout=900
@@ -97,6 +106,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --kernel) kernel="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
         --image) image="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift 2 ;;
+        --daily) daily=yes; shift ;;
         --test) test=yes; shift ;;
         --expect) expect+=("$2"); shift 2 ;;
         --timeout) timeout="$2"; shift 2 ;;
@@ -153,6 +163,19 @@ case "$uboot" in
 esac
 echo "U-Boot: $uboot"
 
+own_build="$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img"
+if [ -n "$image" ] && [ "$daily" = yes ]; then
+    echo "--image and --daily do not go together" >&2; exit 1
+fi
+if [ -z "$image" ] && [ "$daily" = no ]; then
+    if [ ! -f "$own_build" ]; then
+        echo "no image: $own_build does not exist. Build one with" >&2
+        echo "scripts/build-image.sh, or pass --image <file>, or --daily (with --kernel) for" >&2
+        echo "Redox's upstream daily image (#550)" >&2
+        exit 1
+    fi
+    image="$own_build"
+fi
 if [ -z "$image" ]; then
     name="${DAILY_IMAGE:-$(curl -fsSL "$DAILY_URL/" | grep -oE 'redox_server_aarch64_[0-9-]+_[0-9]+_livedisk\.iso\.zst' | sort -u | tail -1)}"
     if [ ! -f "$name" ]; then
@@ -163,7 +186,17 @@ if [ -z "$image" ]; then
     fi
     image="${name%.zst}"
     [ -f "$image" ] || zstd -dq "$name" -o "$image"
+    booted="UPSTREAM daily ${name%.zst}"
+    if [ -z "$kernel" ]; then
+        booted="$booted with its own kernel"
+        echo "warning: booting Redox's UPSTREAM daily image with its own kernel, which panics on raspi3b (#550); not this clone's build" >&2
+    fi
+else
+    booted="${image#"$ROOT"/}"
 fi
+[ -z "$kernel" ] || booted="$booted, kernel ${kernel#"$ROOT"/}"
+[ -z "$direct" ] || booted="$booted, direct ${direct#"$ROOT"/}"
+echo "image: $booted"
 
 # Never boot the downloaded image itself, QEMU and redoxfs-file write to it.
 cp "$image" run.img
@@ -255,24 +288,24 @@ while true; do
         grep -aEq "$pattern" "$log" || missing=$((missing + 1))
     done
     if [ $missing -eq 0 ]; then
-        echo "PASS after $((SECONDS - start))s: all expected patterns seen"
+        echo "PASS after $((SECONDS - start))s: all expected patterns seen [image: $booted]"
         [ ${#run[@]} -gt 0 ] || exit 0
         break
     fi
     if grep -aq "KERNEL PANIC" "$log"; then
         grep -a -A4 "KERNEL PANIC" "$log" >&2
-        echo "FAIL: kernel panic, see $log" >&2
+        echo "FAIL: kernel panic, see $log [image: $booted]" >&2
         exit 1
     fi
     if ! kill -0 $pid 2>/dev/null; then
-        echo "FAIL: QEMU exited, see $log" >&2
+        echo "FAIL: QEMU exited, see $log [image: $booted]" >&2
         exit 1
     fi
     if [ $((SECONDS - start)) -ge "$timeout" ]; then
         for pattern in "${expect[@]}"; do
             grep -aEq "$pattern" "$log" || echo "missing: $pattern" >&2
         done
-        echo "FAIL: timeout after ${timeout}s, see $log" >&2
+        echo "FAIL: timeout after ${timeout}s, see $log [image: $booted]" >&2
         exit 1
     fi
     sleep 2
@@ -283,8 +316,8 @@ done
 # the typed line.
 wait_for() {
     while ! grep -aq "$1" "$log"; do
-        if ! kill -0 $pid 2>/dev/null; then echo "FAIL: QEMU exited, see $log" >&2; exit 1; fi
-        if [ $((SECONDS - start)) -ge "$timeout" ]; then echo "FAIL: timeout waiting for $1" >&2; exit 1; fi
+        if ! kill -0 $pid 2>/dev/null; then echo "FAIL: QEMU exited, see $log [image: $booted]" >&2; exit 1; fi
+        if [ $((SECONDS - start)) -ge "$timeout" ]; then echo "FAIL: timeout waiting for $1 [image: $booted]" >&2; exit 1; fi
         sleep 1
     done
 }

@@ -5,6 +5,11 @@
 # desktop again. Build after rpi-fb, orbital, orbital-apps and
 # cosmic-apps-source.
 
+# `desktop` looks for Orbital with grep. Upstream extrautils dropped grep
+# (its build of 2026-11-18, source f5e8626a); uutils-grep has it now.
+[packages]
+uutils-grep = {}
+
 # Experiment orbital starts Orbital at boot and stays on its VT: undo both.
 [[files]]
 path = "/usr/lib/init.d/20_orbital"

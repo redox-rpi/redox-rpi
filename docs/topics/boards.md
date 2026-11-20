@@ -10,7 +10,7 @@ cards. No work has started; nothing here is planned for a release yet.
 - Supported today: Pi 3B+ (BCM2837B0) and Pi Zero 2 W (same SoC family, see
   [zero2w.md](zero2w.md)).
 - One Pi 3B+ on the build server: network boot from an SD card with firmware and
-  U-Boot, serial console on `/dev/ttyUSB0`, power over a Shelly plug, HDMI on
+  U-Boot, serial console on the build server's 3B+ console port, power over a Shelly plug, HDMI on
   a NanoKVM ([pi-tests lab.md](https://github.com/redox-rpi/pi-tests/blob/main/lab.md)).
 - Firmware tests (open firmware, rows 249-254) need a person to swap the SD
   card. That is the main thing this lab should remove.

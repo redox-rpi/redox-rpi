@@ -37,10 +37,12 @@ volume command. See [docs/status.md](docs/status.md),
 [latest release](https://github.com/redox-rpi/redox-rpi/releases) to a microSD
 card and log in as `root` / `password`.
 
-**Or in QEMU** on macOS or Linux (needs QEMU, curl and zstd):
+**Or in QEMU** on macOS or Linux (needs QEMU, curl, zstd and Rust): Redox's
+daily image with our kernel.
 
 ```sh
-scripts/qemu-raspi3b.sh
+scripts/build-kernel.sh
+scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel
 ```
 
 **For developers:** boot a Pi over the network from your own build server,

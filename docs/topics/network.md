@@ -5,6 +5,9 @@
 - LAN7800 (Pi 3B+ onboard Ethernet) in `dwc2d`: DHCP, TCP from the LAN.
 - RTL8152/RTL8153 USB Ethernet (base patch `0020`, since v0.2.0): the
   Zero 2 W gets its time over the HAT's RTL8152.
+  `scripts/adapter-dhcp-log.py` reads a serial log with times
+  (`~/bin/zero-serial`) and reports per boot the adapter and the seconds
+  to the DHCP address (REQ-NET-2, #492).
 - `devshd`: remote shell on port 2323, unencrypted, LAN only, never in
   release images.
 
@@ -22,8 +25,9 @@
   `ifconfig` showed the real MAC address. Test and branch images without
   the experiment still print zeros (Pi rows 345, 356, 401: "MAC zeros");
   that is the upstream placeholder, not a driver fault.
-  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): make it a
-  default netutils patch, so zeros would mean a real fault.
+  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): now default
+  netutils `0002` (branch `ifconfig-mac-default`), so zeros would mean a
+  real fault.
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
   ignored the DHCP name server (lan hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the

@@ -22,12 +22,18 @@ open with Status proposed and no milestone. Firmware requirements
 (`REQ-VPU-…`) live in
 [rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware/issues?q=REQ-VPU+in%3Atitle).
 
+Pi 400 as a desktop board (2026-11-17): REQ-BOARD-4 #350 with REQ-USB-5,
+REQ-GFX-3, REQ-AUDIO-4, REQ-NET-8, REQ-SD-4 and REQ-NET-9 (Wi-Fi) as
+its sub-issues, all proposed.
+
 | Requirement | Issue |
 |---|---|
 | REQ-AUDIO-1 | [#250](https://github.com/redox-rpi/redox-rpi/issues/250) |
 | REQ-AUDIO-2 | [#472](https://github.com/redox-rpi/redox-rpi/issues/472) |
 | REQ-AUDIO-3 | [#473](https://github.com/redox-rpi/redox-rpi/issues/473) |
+| REQ-AUDIO-4 | [#539](https://github.com/redox-rpi/redox-rpi/issues/539) |
 | REQ-BOARD-1 | [#474](https://github.com/redox-rpi/redox-rpi/issues/474) |
+| REQ-BOARD-4 | [#350](https://github.com/redox-rpi/redox-rpi/issues/350) |
 | REQ-BOOT-1 | [#475](https://github.com/redox-rpi/redox-rpi/issues/475) |
 | REQ-BOOT-2 | [#476](https://github.com/redox-rpi/redox-rpi/issues/476) |
 | REQ-BOOT-3 | [#477](https://github.com/redox-rpi/redox-rpi/issues/477) |
@@ -41,6 +47,7 @@ open with Status proposed and no milestone. Firmware requirements
 | REQ-FW-4 | [#485](https://github.com/redox-rpi/redox-rpi/issues/485) |
 | REQ-GFX-1 | [#489](https://github.com/redox-rpi/redox-rpi/issues/489) |
 | REQ-GFX-2 | [#490](https://github.com/redox-rpi/redox-rpi/issues/490) |
+| REQ-GFX-3 | [#538](https://github.com/redox-rpi/redox-rpi/issues/538) |
 | REQ-GPIO-1 | [#486](https://github.com/redox-rpi/redox-rpi/issues/486) |
 | REQ-GPIO-2 | [#487](https://github.com/redox-rpi/redox-rpi/issues/487) |
 | REQ-GPIO-3 | [#488](https://github.com/redox-rpi/redox-rpi/issues/488) |
@@ -50,6 +57,8 @@ open with Status proposed and no milestone. Firmware requirements
 | REQ-NET-4 | [#494](https://github.com/redox-rpi/redox-rpi/issues/494) |
 | REQ-NET-5 | [#495](https://github.com/redox-rpi/redox-rpi/issues/495) |
 | REQ-NET-7 | [#471](https://github.com/redox-rpi/redox-rpi/issues/471) |
+| REQ-NET-8 | [#540](https://github.com/redox-rpi/redox-rpi/issues/540) |
+| REQ-NET-9 | [#542](https://github.com/redox-rpi/redox-rpi/issues/542) |
 | REQ-REL-1 | [#496](https://github.com/redox-rpi/redox-rpi/issues/496) |
 | REQ-REL-2 | [#497](https://github.com/redox-rpi/redox-rpi/issues/497) |
 | REQ-REL-3 | [#498](https://github.com/redox-rpi/redox-rpi/issues/498) |
@@ -58,6 +67,7 @@ open with Status proposed and no milestone. Firmware requirements
 | REQ-SD-1 | [#501](https://github.com/redox-rpi/redox-rpi/issues/501) |
 | REQ-SD-2 | [#502](https://github.com/redox-rpi/redox-rpi/issues/502) |
 | REQ-SD-3 | [#503](https://github.com/redox-rpi/redox-rpi/issues/503) |
+| REQ-SD-4 | [#541](https://github.com/redox-rpi/redox-rpi/issues/541) |
 | REQ-STAB-1 | [#504](https://github.com/redox-rpi/redox-rpi/issues/504) |
 | REQ-STAB-2 | [#505](https://github.com/redox-rpi/redox-rpi/issues/505) |
 | REQ-STAB-3 | [#506](https://github.com/redox-rpi/redox-rpi/issues/506) |
@@ -69,6 +79,7 @@ open with Status proposed and no milestone. Firmware requirements
 | REQ-USB-2 | [#511](https://github.com/redox-rpi/redox-rpi/issues/511) |
 | REQ-USB-3 | [#512](https://github.com/redox-rpi/redox-rpi/issues/512) |
 | REQ-USB-4 | [#513](https://github.com/redox-rpi/redox-rpi/issues/513) |
+| REQ-USB-5 | [#537](https://github.com/redox-rpi/redox-rpi/issues/537) |
 
 ## Areas
 
