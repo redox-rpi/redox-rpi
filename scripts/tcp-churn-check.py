@@ -60,8 +60,17 @@ def run(host, port, command, timeout):
 
 
 def sockets(host, port):
-    """sockets_* and tcp_state_* from netstack's stats."""
-    out = run(host, port, "cat /scheme/netcfg/stats", 30)
+    """sockets_* and tcp_state_* from netstack's stats. Tries for a minute
+    (devshd may not be up yet right after boot)."""
+    for attempt in range(12):
+        try:
+            out = run(host, port, "cat /scheme/netcfg/stats", 30)
+            break
+        except OSError as err:
+            if attempt == 11:
+                raise
+            log(f"devsh: {err}, again in 5 s")
+            time.sleep(5)
     counts = {}
     for line in out.splitlines():
         m = re.match(r"\s*(sockets_\w+|tcp_state_\w+) (\d+)\s*$", line)
@@ -97,6 +106,8 @@ def part_out(args):
                 c, _ = srv.accept()
             except socket.timeout:
                 continue
+            except OSError:  # closed by part_out
+                break
             with c:
                 accepted[0] += 1
                 try:
