@@ -1,64 +1,37 @@
-From f5aa14ef29c70c2e2e18811abb00e7ca0bcccd4f Mon Sep 17 00:00:00 2001
+From 716fbd67fe68992af7adde172f2a135301f10356 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 15:00:30 +0000
-Subject: [PATCH] rpi-firmwared: SD slot pins as outputs before the power
- cycle, log them (redox-rpi #307)
+Subject: [PATCH] rpi-firmwared: SD slot pins as outputs before the power cycle
+ (redox-rpi #307)
 
-With root on the card (Pi 400) two different cards answered ACMD41
-with the same 0x00f98000 and never finished powering up, as if the
-slot had no real supply. Linux's raspberrypi-exp-gpio makes an
-expander pin an output with SET_GPIO_CONFIG before it switches it;
-we only sent SET_GPIO_STATE, which does nothing on an input. Now
-SD_PWR_ON and VDD_SD_IO_SEL are made outputs first, and their state
-and config are logged before, while off and after power on.
+As Linux's raspberrypi-exp-gpio: make SD_PWR_ON and VDD_SD_IO_SEL
+outputs with SET_GPIO_CONFIG before switching them, so the power cycle
+works whatever state the firmware left them in. On the Pi 400 after a
+boot from the card they were already outputs (person test, dev-152),
+so this is a safeguard, not the fix; the fix was 0009.
 ---
- drivers/rpi-firmwared/src/main.rs | 23 ++++++++++++++++++++++-
- 1 file changed, 22 insertions(+), 1 deletion(-)
+ drivers/rpi-firmwared/src/main.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index d512c6de..fd4979df 100644
+index d512c6de..bbcee89b 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
-@@ -544,9 +544,28 @@ fn sd_power_on(mbox: &mut Mailbox) {
+@@ -544,7 +544,14 @@ fn sd_power_on(mbox: &mut Mailbox) {
      if revision & (1 << 23) == 0 || !matches!((revision >> 4) & 0xff, 0x11 | 0x13) {
          return;
      }
-+    // Linux's raspberrypi-exp-gpio first makes an expander pin an output
-+    // (SET_GPIO_CONFIG) and only then switches it. After a boot from the
-+    // card the firmware may leave SD_PWR_ON as an input, and SET_GPIO_STATE
-+    // alone then changes nothing (redox-rpi #307): the card kept running.
-+    const TAG_GET_GPIO_CONFIG: u32 = 0x0003_0043;
++    // As Linux's raspberrypi-exp-gpio: make the expander pins outputs
++    // (SET_GPIO_CONFIG) before switching them, so the switch works whatever
++    // state the firmware left them in (redox-rpi #307).
 +    const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
-+    fn show(mbox: &mut Mailbox, when: &str) {
-+        for (name, pin) in [("SD_PWR_ON", SD_VCC), ("VDD_SD_IO_SEL", SD_IO_1V8)] {
-+            let state = mbox.property(TAG_GET_GPIO_STATE, &[pin, 0], 2);
-+            let config = mbox.property(TAG_GET_GPIO_CONFIG, &[pin, 0, 0, 0, 0], 5);
-+            println!("rpi-firmwared: {when}: {name} (gpio {pin}) state {state:?} config {config:?}");
-+        }
-+    }
-+    show(mbox, "SD slot before");
      let mut cycle = || -> std::result::Result<(), String> {
 +        // gpio, direction 1 = output, polarity, term_en, term_pull_up, state
-+        let a = mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_VCC, 1, 0, 0, 0, 0])?;
-+        let b = mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_IO_1V8, 1, 0, 0, 0, 0])?;
++        mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_VCC, 1, 0, 0, 0, 0])?;
++        mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_IO_1V8, 1, 0, 0, 0, 0])?;
          mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 0])?;
          mbox.set_property(TAG_SET_GPIO_STATE, &[SD_IO_1V8, 0])?;
-+        println!("rpi-firmwared: SD slot config answers {a:?} {b:?}");
-+        show(mbox, "SD slot off");
          // Long enough for the slot capacitors to discharge, so a card the
-         // boot chain used really restarts (at 3.3 V signalling).
-         thread::sleep(std::time::Duration::from_millis(500));
-@@ -554,7 +573,9 @@ fn sd_power_on(mbox: &mut Mailbox) {
-         thread::sleep(std::time::Duration::from_millis(100));
-         Ok(())
-     };
--    match cycle() {
-+    let result = cycle();
-+    show(mbox, "SD slot on");
-+    match result {
-         Ok(()) => println!("rpi-firmwared: SD card slot power cycled, on at 3.3 V"),
-         Err(err) => eprintln!("rpi-firmwared: SD card slot power not switched: {err}"),
-     }
 -- 
 2.53.0
 
