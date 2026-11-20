@@ -1,0 +1,251 @@
+From bc5fcfeb25452ddeb39079a7ad195f7e1ffe864a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 08:38:18 +0000
+Subject: [PATCH] bcmgenetd: counters in /scheme/network.genet/stats
+
+For diagnosis (redox-rpi #566, netdiag): the link, good frames in and
+out, frames dropped as bad, too big or because the transmit ring stayed
+full, frames waiting in the rings, interrupts and link changes, and the
+controller's own counters (MIB received, good, FCS errors, oversize and
+sent; receive buffer overflows and errors).
+---
+ drivers/net/bcmgenetd/src/main.rs | 52 +++++++++++++++++++++++++-
+ drivers/net/bcmgenetd/src/regs.rs |  9 +++++
+ drivers/net/bcmgenetd/src/ring.rs | 61 ++++++++++++++++++++++++++++++-
+ 3 files changed, 119 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/bcmgenetd/src/main.rs b/drivers/net/bcmgenetd/src/main.rs
+index b85577f..f8ba7a9 100644
+--- a/drivers/net/bcmgenetd/src/main.rs
++++ b/drivers/net/bcmgenetd/src/main.rs
+@@ -90,6 +90,11 @@ mod redox {
+         phy: u32,
+         mode: PhyMode,
+         link: Option<Speed>,
++        /// Interrupts taken, link changes and frames dropped because the
++        /// ring stayed full, for the `stats` file.
++        irqs: u64,
++        link_changes: u64,
++        tx_dropped: u64,
+     }
+ 
+     impl Adapter {
+@@ -99,6 +104,7 @@ mod redox {
+             if link == self.link {
+                 return;
+             }
++            self.link_changes += 1;
+             match link {
+                 Some(speed) => {
+                     self.genet.set_link(speed, self.mode);
+@@ -115,6 +121,35 @@ mod redox {
+             self.mac
+         }
+ 
++        fn stats(&mut self) -> Option<String> {
++            use std::fmt::Write;
++            let c = self.genet.counters;
++            let mut s = String::new();
++            let link = match self.link {
++                Some(speed) => format!("{:?}", speed),
++                None => "down".to_string(),
++            };
++            let _ = writeln!(s, "link {link}");
++            for (name, value) in [
++                ("rx_frames", c.rx_frames),
++                ("rx_bad", c.rx_bad),
++                ("rx_too_big", c.rx_too_big),
++                ("rx_pending", self.genet.rx_pending() as u64),
++                ("tx_frames", c.tx_frames),
++                ("tx_full", c.tx_full),
++                ("tx_dropped", self.tx_dropped),
++                ("tx_in_flight", self.genet.tx_in_flight() as u64),
++                ("irqs", self.irqs),
++                ("link_changes", self.link_changes),
++            ] {
++                let _ = writeln!(s, "{name} {value}");
++            }
++            for (name, value) in self.genet.hw_counters() {
++                let _ = writeln!(s, "{name} {value}");
++            }
++            Some(s)
++        }
++
+         fn available_for_read(&mut self) -> usize {
+             self.genet.rx_pending()
+         }
+@@ -132,7 +167,10 @@ mod redox {
+                     Ok(()) => return Ok(buf.len()),
+                     Err(TxError::TooLong) => return Err(Error::new(EIO)),
+                     Err(TxError::Full) if start.elapsed() < Duration::from_millis(10) => std::hint::spin_loop(),
+-                    Err(TxError::Full) => return Ok(buf.len()),
++                    Err(TxError::Full) => {
++                        self.tx_dropped += 1;
++                        return Ok(buf.len());
++                    }
+                 }
+             }
+         }
+@@ -320,7 +358,16 @@ mod redox {
+         genet.init_rings();
+         genet.enable();
+ 
+-        let mut adapter = Adapter { genet, mac, phy: found.phy, mode: found.mode, link: None };
++        let mut adapter = Adapter {
++            genet,
++            mac,
++            phy: found.phy,
++            mode: found.mode,
++            link: None,
++            irqs: 0,
++            link_changes: 0,
++            tx_dropped: 0,
++        };
+         // A PHY left powered down (BMCR bit 11) or with autonegotiation off
+         // gets autonegotiation (bits 12 and 9).
+         match adapter.genet.mdio_read(adapter.phy, 0, delay) {
+@@ -375,6 +422,7 @@ mod redox {
+                     let mut irq = irq_file.as_ref().unwrap();
+                     let mut buf = [0; 8];
+                     if irq.read(&mut buf).is_ok() {
++                        scheme.adapter_mut().irqs += 1;
+                         let stat = scheme.adapter_mut().genet.ack_irq();
+                         let _ = irq.write(&buf);
+                         if stat & (IRQ_RXDMA_DONE | IRQ_TXDMA_DONE) != 0 {
+diff --git a/drivers/net/bcmgenetd/src/regs.rs b/drivers/net/bcmgenetd/src/regs.rs
+index 1f2d61b..238d73d 100644
+--- a/drivers/net/bcmgenetd/src/regs.rs
++++ b/drivers/net/bcmgenetd/src/regs.rs
+@@ -50,6 +50,15 @@ pub const UMAC_MAC1: usize = 0x0810;
+ pub const UMAC_MAX_FRAME_LEN: usize = 0x0814;
+ pub const UMAC_TX_FLUSH: usize = 0x0b34;
+ pub const UMAC_MIB_CTRL: usize = 0x0d80;
++// Hardware counters (as Linux bcmgenet: MIB at UMAC + 0x400, cleared by
++// reset; receive buffer counters of GENET v3 and later)
++pub const MIB_RX_PKT: usize = 0x0c28;
++pub const MIB_RX_FCS: usize = 0x0c38;
++pub const MIB_RX_OVERSIZE: usize = 0x0c58;
++pub const MIB_RX_GOOD: usize = 0x0c64;
++pub const MIB_TX_PKT: usize = 0x0ca8;
++pub const RBUF_OVFL_CNT: usize = 0x0394;
++pub const RBUF_ERR_CNT: usize = 0x0398;
+ pub const MIB_RESET_RX: u32 = 1 << 0;
+ pub const MIB_RESET_RUNT: u32 = 1 << 1;
+ pub const MIB_RESET_TX: u32 = 1 << 2;
+diff --git a/drivers/net/bcmgenetd/src/ring.rs b/drivers/net/bcmgenetd/src/ring.rs
+index 2a3e84c..821704f 100644
+--- a/drivers/net/bcmgenetd/src/ring.rs
++++ b/drivers/net/bcmgenetd/src/ring.rs
+@@ -63,6 +63,23 @@ pub struct Genet<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> {
+     rx_cons: u32,
+     /// Next transmit index to fill.
+     tx_prod: u32,
++    /// Frames counted on the way through the rings, for diagnosis.
++    pub counters: Counters,
++}
++
++/// Software counters of the rings (the `stats` file).
++#[derive(Debug, Default, Clone, Copy)]
++pub struct Counters {
++    /// Good frames handed on.
++    pub rx_frames: u64,
++    /// Frames the controller marked bad or split, dropped.
++    pub rx_bad: u64,
++    /// Good frames that did not fit the reader's buffer, dropped.
++    pub rx_too_big: u64,
++    /// Frames queued for sending.
++    pub tx_frames: u64,
++    /// Frames refused because the ring was full (each try counts).
++    pub tx_full: u64,
+ }
+ 
+ /// The speed the PHY negotiated, from its registers; `None` without a link.
+@@ -90,7 +107,7 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+     pub fn new(mmio: M, rx: B, rx_bus: u64, tx: B, tx_bus: u64) -> Self {
+         assert!(rx.as_ref().len() >= DESC_COUNT * BUF_SIZE);
+         assert!(tx.as_ref().len() >= DESC_COUNT * BUF_SIZE);
+-        Self { mmio, rx, rx_bus, tx, tx_bus, rx_cons: 0, tx_prod: 0 }
++        Self { mmio, rx, rx_bus, tx, tx_bus, rx_cons: 0, tx_prod: 0, counters: Counters::default() }
+     }
+ 
+     /// The controller's version register, for the log (GENET v5 reads major
+@@ -225,6 +242,20 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+         stat
+     }
+ 
++    /// The controller's own counters: MIB (received, FCS errors, oversize,
++    /// good, sent) and receive buffer overflows and errors.
++    pub fn hw_counters(&self) -> [(&'static str, u32); 7] {
++        [
++            ("hw_rx_pkts", self.mmio.read(MIB_RX_PKT)),
++            ("hw_rx_good", self.mmio.read(MIB_RX_GOOD)),
++            ("hw_rx_fcs_errors", self.mmio.read(MIB_RX_FCS)),
++            ("hw_rx_oversize", self.mmio.read(MIB_RX_OVERSIZE)),
++            ("hw_rbuf_overflows", self.mmio.read(RBUF_OVFL_CNT)),
++            ("hw_rbuf_errors", self.mmio.read(RBUF_ERR_CNT)),
++            ("hw_tx_pkts", self.mmio.read(MIB_TX_PKT)),
++        ]
++    }
++
+     /// Frames received and not yet taken.
+     pub fn rx_pending(&self) -> usize {
+         let prod = self.mmio.read(rx_prod_index(DEFAULT_Q)) & INDEX_MASK;
+@@ -246,8 +277,14 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+             let taken = if good && frame_len <= buf.len() {
+                 let start = idx * BUF_SIZE + 2;
+                 buf[..frame_len].copy_from_slice(&self.rx.as_ref()[start..start + frame_len]);
++                self.counters.rx_frames += 1;
+                 Some(frame_len)
+             } else {
++                if good {
++                    self.counters.rx_too_big += 1;
++                } else {
++                    self.counters.rx_bad += 1;
++                }
+                 None
+             };
+             self.rx_cons = (self.rx_cons + 1) & INDEX_MASK;
+@@ -271,6 +308,7 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+             return Err(TxError::TooLong);
+         }
+         if self.tx_in_flight() >= DESC_COUNT {
++            self.counters.tx_full += 1;
+             return Err(TxError::Full);
+         }
+         let idx = (self.tx_prod as usize) % DESC_COUNT;
+@@ -284,6 +322,7 @@ impl<M: Mmio, B: AsRef<[u8]> + AsMut<[u8]>> Genet<M, B> {
+         self.mmio.barrier();
+         self.tx_prod = (self.tx_prod + 1) & INDEX_MASK;
+         self.mmio.write(tx_prod_index(DEFAULT_Q), self.tx_prod);
++        self.counters.tx_frames += 1;
+         Ok(())
+     }
+ 
+@@ -529,4 +568,24 @@ mod test {
+         assert_eq!(oob & (RGMII_LINK | RGMII_MODE_EN | ID_MODE_DISABLE), RGMII_LINK | RGMII_MODE_EN);
+         assert_eq!(g.mmio.read(SYS_PORT_CTRL), PORT_MODE_EXT_GPHY);
+     }
++
++    #[test]
++    fn counters_count_frames_and_drops() {
++        let mut g = genet();
++        g.init_rings();
++        deliver(&mut g, 0, &[1, 2, 3, 4], RX_DESC_ERROR);
++        deliver(&mut g, 1, &[5, 6, 7], 0);
++        deliver(&mut g, 2, &[0; 100], 0);
++        g.mmio.write(rx_prod_index(DEFAULT_Q), 3);
++        let mut buf = [0; 64];
++        assert_eq!(g.receive(&mut buf), Some(3));
++        assert_eq!(g.receive(&mut buf), None);
++        assert_eq!((g.counters.rx_frames, g.counters.rx_bad, g.counters.rx_too_big), (1, 1, 1));
++        g.transmit(&[0; 60]).unwrap();
++        assert_eq!(g.counters.tx_frames, 1);
++        g.mmio.write(MIB_RX_PKT, 7);
++        g.mmio.write(RBUF_OVFL_CNT, 2);
++        let hw = g.hw_counters();
++        assert!(hw.contains(&("hw_rx_pkts", 7)) && hw.contains(&("hw_rbuf_overflows", 2)));
++    }
+ }
+-- 
+2.53.0
+
