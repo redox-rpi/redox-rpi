@@ -14,6 +14,14 @@ This experiment covers steps I2 and I3 of the quiet-boot plan.
 
 Without `QUIET` set, nothing changes.
 
+## A boot that hangs
+
+A quiet boot that stops before the login would keep the firmware's picture (or black) forever, and look like a dead Pi. So:
+
+- **After 60 seconds without a console,** inputd shows the boot log on VT 1 by itself, and the screen shows where the boot stopped. If the boot goes on, the login still comes. `QUIET_TIMEOUT=<seconds>` in `cmdline.txt` changes the wait, `QUIET_TIMEOUT=0` turns it off.
+- **A kernel panic** shows its message on the screen as in a normal boot, until the display driver takes over.
+- **By hand:** Super+F1 shows the log at any time, or boot without `quiet`.
+
 ## The full log
 
 `fbbootlogd` still collects the whole boot log on VT 1:
@@ -27,7 +35,7 @@ This is upstream Redox, unchanged. Whether it is the key the maintainer wants is
 
 - **Direct boot only.** With U-Boot and the Redox bootloader, `quiet` does not reach the kernel, and U-Boot and the bootloader print on HDMI themselves.
 - **Our firmware.** It writes `cmdline.txt` to `/chosen/bootargs` only after step I1. Broadcom's `start.elf` already does.
-- **Kernel panics.** A panic before the display driver starts shows on serial only.
+- **A panic after the display driver starts** shows on serial only, as in a normal boot.
 
 ## Test
 

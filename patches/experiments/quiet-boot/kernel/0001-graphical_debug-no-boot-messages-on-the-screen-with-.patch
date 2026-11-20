@@ -1,4 +1,4 @@
-From 02790192265591b697dc4f90ca3f0de72aee100b Mon Sep 17 00:00:00 2001
+From feb9b5bd9e8b8fc439dbe002f1181ecaf93dee3a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 16 Nov 2026 17:33:18 +0000
 Subject: [PATCH] graphical_debug: no boot messages on the screen with QUIET=1
@@ -9,19 +9,35 @@ draws nothing on the boot framebuffer. The messages still go to the
 serial console and the kernel log, and FRAMEBUFFER is still recorded for
 the memory map.
 
+The debug display is still set up, only kept off the screen. A kernel
+panic puts it back first, so its message shows on the screen as in a
+normal boot, until the display driver takes over (fini).
+
 redox-rpi #518: on the Raspberry Pi, rpi-boot-stub sets QUIET=1 for the
 word "quiet" in the kernel command line.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/devices/graphical_debug/mod.rs | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ src/devices/graphical_debug/mod.rs | 32 ++++++++++++++++++++++++++++++
+ src/panic.rs                       |  1 +
+ 2 files changed, 33 insertions(+)
 
 diff --git a/src/devices/graphical_debug/mod.rs b/src/devices/graphical_debug/mod.rs
-index b701c9a..8f746af 100644
+index b701c9a8..1cbb6cfb 100644
 --- a/src/devices/graphical_debug/mod.rs
 +++ b/src/devices/graphical_debug/mod.rs
-@@ -18,6 +18,7 @@ pub fn init(env: &[u8]) {
+@@ -7,6 +7,10 @@ pub mod debug;
+ 
+ pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
+ 
++/// Quiet boot: the debug display is set up but kept off the screen, so a
++/// kernel panic can still show its message (see `show_for_panic`).
++static QUIET_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
++
+ pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
+ 
+ #[allow(unused)]
+@@ -18,6 +22,7 @@ pub fn init(env: &[u8]) {
      let mut width = 0;
      let mut height = 0;
      let mut stride = 0;
@@ -29,7 +45,7 @@ index b701c9a..8f746af 100644
  
      //TODO: should errors be reported?
      for line in str::from_utf8(env).unwrap_or("").lines() {
-@@ -44,6 +45,12 @@ pub fn init(env: &[u8]) {
+@@ -44,6 +49,12 @@ pub fn init(env: &[u8]) {
          if name == "FRAMEBUFFER_STRIDE" {
              stride = usize::from_str_radix(value, 16).unwrap_or(0);
          }
@@ -42,18 +58,52 @@ index b701c9a..8f746af 100644
      }
  
      *FRAMEBUFFER.lock() = (phys, virt, stride * height * 4);
-@@ -58,6 +65,11 @@ pub fn init(env: &[u8]) {
-         width, height, stride, phys, virt
+@@ -59,12 +70,33 @@ pub fn init(env: &[u8]) {
      );
  
+     let debug_display = DebugDisplay::new(width, height, stride, virt as *mut u32);
++
 +    if quiet {
 +        println!("QUIET is set: no boot messages on the framebuffer");
++        *QUIET_DISPLAY.lock() = Some(debug_display);
 +        return;
 +    }
 +
-     let debug_display = DebugDisplay::new(width, height, stride, virt as *mut u32);
      *DEBUG_DISPLAY.lock() = Some(debug_display);
  }
+ 
++/// A kernel panic during a quiet boot shows its message on the screen, like
++/// a normal boot does, until the display driver takes over (`fini`).
++pub fn show_for_panic() {
++    let Some(mut quiet) = QUIET_DISPLAY.try_lock() else {
++        return;
++    };
++    if let Some(display) = quiet.take() {
++        if let Some(mut debug) = DEBUG_DISPLAY.try_lock() {
++            *debug = Some(display);
++        }
++    }
++}
++
+ #[allow(unused)]
+ pub fn fini() {
+     DEBUG_DISPLAY.lock().take();
++    QUIET_DISPLAY.lock().take();
+ 
+     println!("Finished graphical debug");
+ }
+diff --git a/src/panic.rs b/src/panic.rs
+index ded62e62..20df5107 100644
+--- a/src/panic.rs
++++ b/src/panic.rs
+@@ -34,6 +34,7 @@ fn panic_handler(info: &PanicInfo) -> ! {
+ 
+ #[cfg_attr(test, expect(dead_code))]
+ fn panic_handler_inner(info: &PanicInfo) -> ! {
++    crate::devices::graphical_debug::show_for_panic();
+     println!("KERNEL PANIC: {}", info);
+ 
+     unsafe {
 -- 
 2.53.0
 

@@ -1,4 +1,4 @@
-From 335232bcb5e38693337a392662742e19b10dcc14 Mon Sep 17 00:00:00 2001
+From 3da425304b47465c362691fffa253031aa4fa42f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 16 Nov 2026 17:33:18 +0000
 Subject: [PATCH] inputd: with QUIET=1, activate a VT only on request
@@ -12,21 +12,49 @@ are up) or Super+Fn. Until then no VT is active and the display driver
 leaves the framebuffer as it is. fbbootlogd still collects the whole
 log on VT 1, so Super+F1 shows it.
 
+If no VT is active after QUIET_TIMEOUT seconds (default 60, 0 = never;
+also inherited), the boot probably hangs: inputd then activates VT 1
+itself, so the screen shows the boot log and where it stopped instead
+of looking like a dead machine. The login switch still comes later if
+the boot goes on.
+
 Without QUIET nothing changes.
 
 redox-rpi #518.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/inputd/src/main.rs      | 11 +++++++++--
+ drivers/inputd/src/main.rs      | 53 +++++++++++++++++++++++++++++++--
  init.initfs.d/10_inputd.service |  1 +
- 2 files changed, 10 insertions(+), 2 deletions(-)
+ 2 files changed, 52 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 8fe6c44..6bc31d3 100644
+index 8fe6c440..e2bfa586 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
-@@ -87,6 +87,10 @@ struct InputScheme<'a> {
+@@ -16,6 +16,8 @@ use std::collections::BTreeSet;
+ use std::fs::File;
+ use std::ops::ControlFlow;
+ use std::os::fd::IntoRawFd;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::time::Duration;
+ 
+ use inputd::{ControlEvent, VtEvent, VtEventKind};
+ use libredox::errno::ESTALE;
+@@ -36,6 +38,12 @@ use keymap::KeymapKind;
+ 
+ use crate::keymap::KeymapData;
+ 
++/// Set once any VT was activated. The quiet-boot fallback reads it.
++static VT_ACTIVATED: AtomicBool = AtomicBool::new(false);
++
++/// Seconds a quiet boot waits for the first VT before it shows the boot log.
++const QUIET_TIMEOUT_DEFAULT: u64 = 60;
++
+ enum Handle {
+     Producer,
+     Consumer {
+@@ -87,6 +95,10 @@ struct InputScheme<'a> {
  
      has_new_events: bool,
      pending_activate: Option<usize>,
@@ -37,7 +65,7 @@ index 8fe6c44..6bc31d3 100644
  }
  
  impl<'a> InputScheme<'a> {
-@@ -107,6 +111,7 @@ impl<'a> InputScheme<'a> {
+@@ -107,6 +119,7 @@ impl<'a> InputScheme<'a> {
              rshift: false,
              has_new_events: false,
              pending_activate: None,
@@ -45,7 +73,15 @@ index 8fe6c44..6bc31d3 100644
          }
      }
  
-@@ -234,7 +239,7 @@ impl SchemeSync for InputScheme<'_> {
+@@ -155,6 +168,7 @@ impl<'a> InputScheme<'a> {
+         });
+ 
+         self.active_vt = Some(new_active);
++        VT_ACTIVATED.store(true, Ordering::Relaxed);
+     }
+ 
+     fn switch_keymap(&mut self, new_active: usize) {
+@@ -234,7 +248,7 @@ impl SchemeSync for InputScheme<'_> {
                  self.next_vt_id += 1;
                  self.vts.insert(vt);
  
@@ -54,7 +90,7 @@ index 8fe6c44..6bc31d3 100644
                      self.switch_vt(vt);
                  }
                  Handle::Consumer {
-@@ -250,7 +255,9 @@ impl SchemeSync for InputScheme<'_> {
+@@ -250,7 +264,9 @@ impl SchemeSync for InputScheme<'_> {
                      return Err(SysError::new(EEXIST));
                  }
  
@@ -65,15 +101,62 @@ index 8fe6c44..6bc31d3 100644
                  Handle::Consumer {
                      events: EventFlags::empty(),
                      pending: Vec::new(),
+@@ -608,6 +624,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+ 
+     let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
+ 
++    if scheme.quiet {
++        spawn_quiet_fallback();
++    }
++
+     loop {
+         scheme.has_new_events = false;
+         match handler.process_requests_nonblocking(&mut scheme)? {
+@@ -659,6 +679,35 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+     }
+ }
+ 
++/// Quiet boot: if no VT is active after QUIET_TIMEOUT seconds (default 60,
++/// 0 = never), the boot probably hangs. Show the boot log on VT 1 then, so
++/// the screen tells where it stopped instead of looking like a dead machine.
++fn spawn_quiet_fallback() {
++    let secs = std::env::var("QUIET_TIMEOUT")
++        .ok()
++        .and_then(|v| v.trim().parse::<u64>().ok())
++        .unwrap_or(QUIET_TIMEOUT_DEFAULT);
++    if secs == 0 {
++        return;
++    }
++    let spawned = std::thread::Builder::new()
++        .name("quiet-fallback".into())
++        .spawn(move || {
++            std::thread::sleep(Duration::from_secs(secs));
++            if VT_ACTIVATED.load(Ordering::Relaxed) {
++                return;
++            }
++            log::warn!("quiet boot: no console after {secs} s, showing the boot log (VT 1)");
++            match inputd::ControlHandle::new().and_then(|mut h| h.activate_vt(1)) {
++                Ok(_) => {}
++                Err(err) => log::error!("quiet boot: failed to show the boot log: {err}"),
++            }
++        });
++    if let Err(err) = spawned {
++        log::error!("quiet boot: no fallback thread: {err}");
++    }
++}
++
+ fn daemon_runner(redox_daemon: daemon::SchemeDaemon) -> ! {
+     daemon(redox_daemon).unwrap();
+     unreachable!();
 diff --git a/init.initfs.d/10_inputd.service b/init.initfs.d/10_inputd.service
-index ba29104..6ee1a89 100644
+index ba291046..39a9b44c 100644
 --- a/init.initfs.d/10_inputd.service
 +++ b/init.initfs.d/10_inputd.service
 @@ -3,4 +3,5 @@ description = "VT input and graphics multiplexer"
  
  [service]
  cmd = "inputd"
-+inherit_envs = ["QUIET"]
++inherit_envs = ["QUIET", "QUIET_TIMEOUT"]
  type = { scheme = "input" }
 -- 
 2.53.0
