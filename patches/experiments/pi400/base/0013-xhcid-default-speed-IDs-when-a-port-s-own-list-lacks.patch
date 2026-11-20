@@ -1,4 +1,4 @@
-From c0927d4840cd19a137b22ad86964443aa53cafbd Mon Sep 17 00:00:00 2001
+From 36d51ce9fa304c2dcab368b09c0f7aa5e6709ff7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Mon, 16 Nov 2026 07:26:57 +0000
 Subject: [PATCH] xhcid: default speed IDs when a port's own list lacks one
@@ -15,19 +15,17 @@ status maps to, and logs the port's own IDs when it does.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/xhcid/src/xhci/mod.rs | 74 ++++++++++++++++++++++---------
- 1 file changed, 52 insertions(+), 22 deletions(-)
+ .../usb/xhcid/src/xhci/controller/extended.rs | 72 +++++++++++++------
+ 1 file changed, 51 insertions(+), 21 deletions(-)
 
-diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
-index 7f953487..762c69af 100644
---- a/drivers/usb/xhcid/src/xhci/mod.rs
-+++ b/drivers/usb/xhcid/src/xhci/mod.rs
-@@ -1452,7 +1452,57 @@ impl<const N: usize> Xhci<N> {
+diff --git a/drivers/usb/xhcid/src/xhci/controller/extended.rs b/drivers/usb/xhcid/src/xhci/controller/extended.rs
+index 2ed436f4..648dcccc 100644
+--- a/drivers/usb/xhcid/src/xhci/controller/extended.rs
++++ b/drivers/usb/xhcid/src/xhci/controller/extended.rs
+@@ -318,6 +318,55 @@ impl<const N: usize> Xhci<N> {
          &self,
          port: PortId,
      ) -> impl Iterator<Item = &'static ProtocolSpeed> {
--        use extended::*;
-+
 +        match self.supported_protocol(port) {
 +            Some(supp_proto) => {
 +                if supp_proto.psic() != 0 {
@@ -63,7 +61,7 @@ index 7f953487..762c69af 100644
 +            .map(|speed| speed.psiv())
 +            .collect();
 +        let speed = default_protocol_speeds().find(|speed| speed.psiv() == psiv);
-+        info!(
++        log::info!(
 +            "port {}: speed ID {} not among the port's own IDs {:?}, default ID used: {}",
 +            port,
 +            psiv,
@@ -77,11 +75,10 @@ index 7f953487..762c69af 100644
 +/// The default protocol speed IDs (xHCI 1.2 table 7-13), for a port whose
 +/// protocol lists none (PSIC 0) or lacks the one asked for.
 +fn default_protocol_speeds() -> std::slice::Iter<'static, ProtocolSpeed> {
-+    use extended::*;
          const DEFAULT_SUPP_PROTO_SPEEDS: [ProtocolSpeed; 7] = [
              // Full-speed
              ProtocolSpeed::from_raw(
-@@ -1516,27 +1566,7 @@ impl<const N: usize> Xhci<N> {
+@@ -381,25 +430,6 @@ impl<const N: usize> Xhci<N> {
              ),
          ];
  
@@ -106,10 +103,9 @@ index 7f953487..762c69af 100644
 -        self.supported_protocol_speeds(port)
 -            .find(|speed| speed.psiv() == psiv)
 -    }
++
 +    DEFAULT_SUPP_PROTO_SPEEDS.iter()
  }
- pub fn start_irq_reactor<const N: usize>(hci: &Arc<Xhci<N>>, irq_file: Option<InterruptVector>) {
-     let hci_clone = Arc::clone(&hci);
 -- 
 2.53.0
 

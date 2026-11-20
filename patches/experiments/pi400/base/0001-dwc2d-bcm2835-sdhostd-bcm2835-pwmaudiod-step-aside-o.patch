@@ -1,4 +1,4 @@
-From a8b0b53bcc4f92efd4bc3d846ed46313456bdf9a Mon Sep 17 00:00:00 2001
+From 67414d1b2891b86f79a69cd47aa093d26518b843 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 9 Nov 2026 15:57:54 +0000
 Subject: [PATCH] dwc2d, bcm2835-sdhostd, bcm2835-pwmaudiod: step aside on the
@@ -20,10 +20,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 22 insertions(+)
 
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-index ef3ed47e..3ddf2905 100644
+index ac023dfb..42d5dfff 100644
 --- a/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
-@@ -539,6 +539,12 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+@@ -603,6 +603,12 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
          eprintln!("bcm2835-pwmaudiod: no devicetree");
          process::exit(1);
      };
@@ -57,10 +57,10 @@ index 7725b894..eee71a2c 100644
      println!("bcm2835-sdhostd: controller at 0x{phys:08x}");
  
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index a9b077e2..b947ffba 100644
+index 402a7a35..9b2fdd59 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -432,6 +432,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -468,6 +468,13 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      common::init();
  
      let dtb = get_dtb();

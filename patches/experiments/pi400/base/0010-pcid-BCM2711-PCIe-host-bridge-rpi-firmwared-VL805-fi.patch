@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 6c2c84c0b7a271f600618e00205ea8a5ee2147c7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 12 Nov 2026 16:45:20 +0000
 Subject: [PATCH] pcid: BCM2711 PCIe host bridge; rpi-firmwared: VL805 firmware
@@ -18,6 +18,7 @@ brcmstb_layout.rs, with host tests (rustc --edition 2021 --test).
 ---
  drivers/hwd/src/main.rs                       |  15 +-
  drivers/pcid-spawner/src/main.rs              |   6 +
+ drivers/pcid/Cargo.toml                       |   3 +
  drivers/pcid/src/cfg_access/brcmstb.rs        | 405 +++++++++++++++++
  drivers/pcid/src/cfg_access/brcmstb_dt.rs     |  89 ++++
  drivers/pcid/src/cfg_access/brcmstb_layout.rs | 417 ++++++++++++++++++
@@ -29,7 +30,7 @@ brcmstb_layout.rs, with host tests (rustc --edition 2021 --test).
  drivers/usb/xhcid/src/main.rs                 |  20 +-
  init.d/00_pcid-spawner.service                |   6 +-
  init.initfs.d/40_pcid-spawner-initfs.service  |   6 +-
- 13 files changed, 1028 insertions(+), 15 deletions(-)
+ 14 files changed, 1031 insertions(+), 15 deletions(-)
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_dt.rs
  create mode 100644 drivers/pcid/src/cfg_access/brcmstb_layout.rs
@@ -84,9 +85,23 @@ index daf85684..eb742d73 100644
      for entry in fs::read_dir("/scheme/pci")? {
          let entry = entry.context("failed to get entry")?;
          let device_path = entry.path();
+diff --git a/drivers/pcid/Cargo.toml b/drivers/pcid/Cargo.toml
+index 69695311..fb931247 100644
+--- a/drivers/pcid/Cargo.toml
++++ b/drivers/pcid/Cargo.toml
+@@ -15,6 +15,9 @@ path = "src/lib.rs"
+ [dependencies]
+ bincode = "1.2"
+ fdt.workspace = true
++# The BCM2711 bridge code (cfg_access/brcmstb*.rs) still uses the fdt
++# API of 0.2.0-alpha1, as rpi-firmwared does.
++fdt_rpi = { package = "fdt", git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ libc.workspace = true
+ log.workspace = true
+ pci_types = "0.10.1"
 diff --git a/drivers/pcid/src/cfg_access/brcmstb.rs b/drivers/pcid/src/cfg_access/brcmstb.rs
 new file mode 100644
-index 00000000..95bbd627
+index 00000000..9e3c7e2e
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb.rs
 @@ -0,0 +1,405 @@
@@ -114,7 +129,7 @@ index 00000000..95bbd627
 +use std::time::{Duration, Instant};
 +
 +use common::{MemoryType, PhysBorrowed, Prot};
-+use fdt::Fdt;
++use fdt_rpi::Fdt;
 +use pci_types::PciAddress;
 +
 +use super::brcmstb_dt::{self, DtBridge};
@@ -497,7 +512,7 @@ index 00000000..95bbd627
 +}
 diff --git a/drivers/pcid/src/cfg_access/brcmstb_dt.rs b/drivers/pcid/src/cfg_access/brcmstb_dt.rs
 new file mode 100644
-index 00000000..6588be8b
+index 00000000..9675cb69
 --- /dev/null
 +++ b/drivers/pcid/src/cfg_access/brcmstb_dt.rs
 @@ -0,0 +1,89 @@
@@ -507,7 +522,7 @@ index 00000000..6588be8b
 +//! `brcmstb_layout.rs`, so it is tested on the build host against the
 +//! Raspberry Pi firmware's devicetrees.
 +
-+use fdt::Fdt;
++use fdt_rpi::Fdt;
 +
 +use super::brcmstb_layout::*;
 +
@@ -1014,11 +1029,11 @@ index 00000000..e26fe48a
 +    }
 +}
 diff --git a/drivers/pcid/src/cfg_access/mod.rs b/drivers/pcid/src/cfg_access/mod.rs
-index 67875e8e..355ada15 100644
+index 0041f0c7..697f0212 100644
 --- a/drivers/pcid/src/cfg_access/mod.rs
 +++ b/drivers/pcid/src/cfg_access/mod.rs
-@@ -5,8 +5,12 @@ use common::{MemoryType, PhysBorrowed, Prot};
- use fdt::Fdt;
+@@ -7,8 +7,12 @@ use fdt::properties::interrupts::InterruptCells;
+ use fdt::properties::PHandle;
  use pci_types::{ConfigRegionAccess, PciAddress};
  
 +use self::brcmstb::Brcmstb;
@@ -1029,8 +1044,8 @@ index 67875e8e..355ada15 100644
 +mod brcmstb_layout;
  mod fallback;
  
- pub struct InterruptMap {
-@@ -217,6 +221,8 @@ pub struct Pcie {
+ type FdtParser<'a> = (
+@@ -228,6 +232,8 @@ pub struct Pcie {
      pub interrupt_map: Vec<InterruptMap>,
      pub interrupt_map_mask: [u32; 4],
      fallback: Pci,
@@ -1039,7 +1054,7 @@ index 67875e8e..355ada15 100644
  }
  struct Alloc {
      seg: u16,
-@@ -232,6 +238,31 @@ const BYTES_PER_BUS: usize = 1 << 20;
+@@ -243,6 +249,31 @@ const BYTES_PER_BUS: usize = 1 << 20;
  
  impl Pcie {
      pub fn new() -> Self {
@@ -1071,7 +1086,7 @@ index 67875e8e..355ada15 100644
          match Mcfg::with(Self::from_allocs) {
              Ok(pcie) => pcie,
              Err(acpi_error) => match locate_ecam_dtb(Self::from_allocs) {
-@@ -250,6 +281,7 @@ impl Pcie {
+@@ -261,6 +292,7 @@ impl Pcie {
                          fallback: Pci::new(),
                          interrupt_map: Vec::new(),
                          interrupt_map_mask: [u32::MAX, u32::MAX, u32::MAX, u32::MAX],
@@ -1079,7 +1094,7 @@ index 67875e8e..355ada15 100644
                      }
                  }
              },
-@@ -298,9 +330,16 @@ impl Pcie {
+@@ -309,9 +341,16 @@ impl Pcie {
              interrupt_map,
              interrupt_map_mask,
              fallback: Pci::new(),
@@ -1096,7 +1111,7 @@ index 67875e8e..355ada15 100644
      fn bus_addr(&self, seg: u16, bus: u8) -> Option<*mut u32> {
          let alloc = match self
              .allocs
-@@ -354,6 +393,9 @@ impl ConfigRegionAccess for Pcie {
+@@ -365,6 +404,9 @@ impl ConfigRegionAccess for Pcie {
      unsafe fn read(&self, address: PciAddress, offset: u16) -> u32 {
          let _guard = self.lock.lock().unwrap();
  
@@ -1106,7 +1121,7 @@ index 67875e8e..355ada15 100644
          match self.mmio_addr(address, offset) {
              Some(addr) => addr.read_volatile(),
              None => self.fallback.read(address, offset),
-@@ -363,6 +405,9 @@ impl ConfigRegionAccess for Pcie {
+@@ -374,6 +416,9 @@ impl ConfigRegionAccess for Pcie {
      unsafe fn write(&self, address: PciAddress, offset: u16, value: u32) {
          let _guard = self.lock.lock().unwrap();
  
@@ -1117,7 +1132,7 @@ index 67875e8e..355ada15 100644
              Some(addr) => addr.write_volatile(value),
              None => self.fallback.write(address, offset, value),
 diff --git a/drivers/pcid/src/main.rs b/drivers/pcid/src/main.rs
-index 7a27cda8..e0200a9e 100644
+index c5a8ef12..5445dfae 100644
 --- a/drivers/pcid/src/main.rs
 +++ b/drivers/pcid/src/main.rs
 @@ -42,14 +42,17 @@ fn handle_parsed_header(
@@ -1300,3 +1315,6 @@ index 080b8e02..38303eb7 100644
  
  [service]
  cmd = "pcid-spawner"
+-- 
+2.53.0
+

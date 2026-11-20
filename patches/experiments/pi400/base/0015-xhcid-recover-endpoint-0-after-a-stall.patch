@@ -1,0 +1,111 @@
+From bc7875ec2ee9778458408bebe050e01155a6c438 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 08:17:36 +0000
+Subject: [PATCH] xhcid: recover endpoint 0 after a stall
+
+An interface with a single alternate setting may stall SET_INTERFACE
+(USB 2.0 section 9.4.10); the Pi 400's keyboard does for its second
+interface, and that usbhidd exited at "Failed to configure endpoints"
+(test 452). Upstream now skips SET_INTERFACE for an interface with a single
+alternate setting (since 2026-11-19), so only this part is left:
+
+A STALL also halts the default control endpoint (xHCI 1.2 section
+4.8.3), so every later request on it failed. execute_control_transfer
+now resets endpoint 0 after a stall (Reset Endpoint, then Set TR
+Dequeue Pointer past the stalled transfer), so the next request works.
+restart_endpoint and set_tr_deque_ptr cannot be used for it: they look
+the endpoint up in the configuration, where endpoint 0 is not.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme/endpoint.rs | 42 +++++++++++++++++++
+ drivers/usb/xhcid/src/xhci/transfer.rs        | 13 +++++-
+ 2 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme/endpoint.rs b/drivers/usb/xhcid/src/xhci/scheme/endpoint.rs
+index df722ebc..616cf707 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme/endpoint.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme/endpoint.rs
+@@ -238,6 +238,48 @@ impl<const N: usize> Xhci<N> {
+         }
+         Ok(())
+     }
++    /// Reset Endpoint on the default control endpoint (DCI 1) after a
++    /// stall, then set its dequeue pointer past the stalled transfer.
++    pub(crate) async fn recover_default_control_endpoint(&self, port_num: PortId) -> Result<()> {
++        let slot = self
++            .port_states
++            .get(&port_num)
++            .ok_or(Error::new(EBADFD))?
++            .slot;
++        let (event_trb, command_trb) = self
++            .execute_command(|trb, cycle| {
++                trb.reset_endpoint(slot, 1, false, cycle);
++            })
++            .await;
++        handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)?;
++        // `restart_endpoint` and `set_tr_deque_ptr` look the endpoint up in
++        // the configuration, where endpoint 0 is not; DCI 1 is its index.
++        let deque_ptr_and_cycle = {
++            let mut port_state = self
++                .port_states
++                .get_mut(&port_num)
++                .ok_or(Error::new(EBADFD))?;
++            let mut endpoint_state = port_state
++                .endpoint_states
++                .get_mut(&EndpNum::new(0))
++                .ok_or(Error::new(EIO))?;
++            endpoint_state.ring().ok_or(Error::new(EIO))?.register()
++        };
++        let (event_trb, command_trb) = self
++            .execute_command(|trb, cycle| {
++                // No streams on endpoint 0: stream ID 0, SCT ignored.
++                trb.set_tr_deque_ptr(
++                    deque_ptr_and_cycle,
++                    cycle,
++                    StreamContextType::SecondaryRing,
++                    0,
++                    1,
++                    slot,
++                )
++            })
++            .await;
++        handle_event_trb("SET_TR_DEQUEUE_PTR", &event_trb, &command_trb)
++    }
+     pub async fn restart_endpoint(&self, port_num: PortId, endp_num: EndpNum) -> Result<()> {
+         let mut port_state = self
+             .port_states
+diff --git a/drivers/usb/xhcid/src/xhci/transfer.rs b/drivers/usb/xhcid/src/xhci/transfer.rs
+index c93f46e4..56b74664 100644
+--- a/drivers/usb/xhcid/src/xhci/transfer.rs
++++ b/drivers/usb/xhcid/src/xhci/transfer.rs
+@@ -4,7 +4,7 @@ use std::{cmp, fmt};
+ 
+ use common::dma::Dma;
+ use common::io::Io;
+-use log::{debug, error, trace};
++use log::{debug, error, trace, warn};
+ use syscall::{Error, Result, EBADF, EBADFD, EINVAL, EIO, ENOSYS};
+ 
+ use self::irq_reactor::{EventDoorbell, RingId};
+@@ -142,6 +142,17 @@ impl<const N: usize> Xhci<N> {
+         let event_trb = trbs.event_trb;
+         let status_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
+ 
++        if event_trb.completion_code() == TrbCompletionCode::Stall as u8 {
++            // A STALL halts the default control endpoint (xHCI 1.2 section
++            // 4.8.3), and every later request on it would fail. A device
++            // stalls a request it does not support (a single alternate
++            // setting's SET_INTERFACE, SET_IDLE); the next one must still
++            // work. Reset and restart it, as Linux does.
++            if let Err(err) = self.recover_default_control_endpoint(port_num).await {
++                warn!("port {}: endpoint 0 not recovered after a stall: {}", port_num, err);
++            }
++        }
++
+         handle_transfer_event_trb("CONTROL_TRANSFER", &event_trb, &status_trb)?;
+ 
+         //self.event_handler_finished();
+-- 
+2.53.0
+

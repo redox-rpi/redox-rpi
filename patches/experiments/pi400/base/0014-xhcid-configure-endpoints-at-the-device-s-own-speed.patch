@@ -1,4 +1,4 @@
-From 7d64e4ad99c9a6e11a85d60fe01c60c03178e5bd Mon Sep 17 00:00:00 2001
+From 8720b746c810a9f17fc2508db73dd67f651059f1 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Mon, 16 Nov 2026 07:46:20 +0000
 Subject: [PATCH] xhcid: configure endpoints at the device's own speed
@@ -16,14 +16,14 @@ on a root port the two are the same.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/xhcid/src/xhci/scheme.rs | 14 +++++++++-----
+ drivers/usb/xhcid/src/xhci/device/configuration.rs | 14 +++++++++-----
  1 file changed, 9 insertions(+), 5 deletions(-)
 
-diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
-index 43a017a7..01fece53 100644
---- a/drivers/usb/xhcid/src/xhci/scheme.rs
-+++ b/drivers/usb/xhcid/src/xhci/scheme.rs
-@@ -993,11 +993,15 @@ impl<const N: usize> Xhci<N> {
+diff --git a/drivers/usb/xhcid/src/xhci/device/configuration.rs b/drivers/usb/xhcid/src/xhci/device/configuration.rs
+index 24b160ba..3482119a 100644
+--- a/drivers/usb/xhcid/src/xhci/device/configuration.rs
++++ b/drivers/usb/xhcid/src/xhci/device/configuration.rs
+@@ -162,11 +162,15 @@ impl<const N: usize> Xhci<N> {
          let lec = self.cap.lec();
          let log_max_psa_size = self.cap.max_psa_size();
  

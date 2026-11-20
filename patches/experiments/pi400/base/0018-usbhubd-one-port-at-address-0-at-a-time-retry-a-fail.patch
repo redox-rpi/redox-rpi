@@ -1,4 +1,4 @@
-From c5a3abbf30ca061acf296c4bc0b4e000cae7dd7e Mon Sep 17 00:00:00 2001
+From ba247c700cc0fd13650cde40869733623014603a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 15:52:32 +0000
 Subject: [PATCH] usbhubd: one port at address 0 at a time, retry a failed
@@ -30,13 +30,13 @@ the mouse plugged in later, both were addressed.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/usbhubd/src/main.rs   | 105 +++++++++++++++++++++++++++---
- drivers/usb/xhcid/src/usb/hub.rs  |   2 +
- drivers/usb/xhcid/src/xhci/mod.rs |   5 ++
+ drivers/usb/usbhubd/src/main.rs      | 105 +++++++++++++++++++++++++--
+ drivers/usb/xhcid/src/usb/hub.rs     |   2 +
+ drivers/usb/xhcid/src/xhci/device.rs |   5 ++
  3 files changed, 104 insertions(+), 8 deletions(-)
 
 diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
-index b2661000..f213966f 100644
+index eaf2e96b..701ac211 100644
 --- a/drivers/usb/usbhubd/src/main.rs
 +++ b/drivers/usb/usbhubd/src/main.rs
 @@ -120,25 +120,60 @@ fn main() {
@@ -207,11 +207,11 @@ index 4ea851de..3d1fd36c 100644
      PortOverCurrent = 3,
      PortReset = 4,
      PortLinkState = 5,
-diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
-index 762c69af..7c05e7c2 100644
---- a/drivers/usb/xhcid/src/xhci/mod.rs
-+++ b/drivers/usb/xhcid/src/xhci/mod.rs
-@@ -902,6 +902,11 @@ impl<const N: usize> Xhci<N> {
+diff --git a/drivers/usb/xhcid/src/xhci/device.rs b/drivers/usb/xhcid/src/xhci/device.rs
+index ab95c32c..75371c80 100644
+--- a/drivers/usb/xhcid/src/xhci/device.rs
++++ b/drivers/usb/xhcid/src/xhci/device.rs
+@@ -159,6 +159,11 @@ impl<const N: usize> Xhci<N> {
                  Ok(device_ring) => device_ring,
                  Err(err) => {
                      error!("Failed to address device for port {}: `{}`", port_id, err);

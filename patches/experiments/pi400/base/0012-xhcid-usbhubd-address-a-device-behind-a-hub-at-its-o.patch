@@ -1,4 +1,4 @@
-From 8fcb48228b4dda73e29fb391d1a6028e3bb5f2ca Mon Sep 17 00:00:00 2001
+From 9167721de36216e6ef4b4f8a106446169ea89e31 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 15 Nov 2026 20:39:56 +0000
 Subject: [PATCH] xhcid, usbhubd: address a device behind a hub at its own
@@ -21,15 +21,16 @@ root port's speed.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/usbhubd/src/main.rs           |  6 +++-
- drivers/usb/xhcid/src/driver_interface.rs |  7 +++++
- drivers/usb/xhcid/src/usb/hub.rs          | 13 +++++++++
- drivers/usb/xhcid/src/xhci/mod.rs         | 35 +++++++++++++++++------
- drivers/usb/xhcid/src/xhci/scheme.rs      |  6 ++--
- 5 files changed, 56 insertions(+), 11 deletions(-)
+ drivers/usb/usbhubd/src/main.rs               |  6 +++++-
+ .../usb/xhcid/src/driver_interface/client.rs  |  7 +++++++
+ drivers/usb/xhcid/src/usb/hub.rs              | 13 ++++++++++++
+ drivers/usb/xhcid/src/xhci/device.rs          | 20 +++++++++++++++++++
+ drivers/usb/xhcid/src/xhci/device/slot.rs     | 15 +++++++-------
+ drivers/usb/xhcid/src/xhci/scheme.rs          |  6 ++++--
+ 6 files changed, 56 insertions(+), 11 deletions(-)
 
 diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
-index 94fd26d0..b2661000 100644
+index 8e198a3b..eaf2e96b 100644
 --- a/drivers/usb/usbhubd/src/main.rs
 +++ b/drivers/usb/usbhubd/src/main.rs
 @@ -129,7 +129,11 @@ fn main() {
@@ -45,11 +46,11 @@ index 94fd26d0..b2661000 100644
              } else {
                  self.handle.detach().expect("Failed to detach");
              }
-diff --git a/drivers/usb/xhcid/src/driver_interface.rs b/drivers/usb/xhcid/src/driver_interface.rs
-index 574a7a64..81b2b919 100644
---- a/drivers/usb/xhcid/src/driver_interface.rs
-+++ b/drivers/usb/xhcid/src/driver_interface.rs
-@@ -560,6 +560,13 @@ impl XhciClientHandle {
+diff --git a/drivers/usb/xhcid/src/driver_interface/client.rs b/drivers/usb/xhcid/src/driver_interface/client.rs
+index 84111c67..ede09a53 100644
+--- a/drivers/usb/xhcid/src/driver_interface/client.rs
++++ b/drivers/usb/xhcid/src/driver_interface/client.rs
+@@ -83,6 +83,13 @@ impl XhciClientHandle {
          let _bytes_written = file.write(&[])?;
          Ok(())
      }
@@ -87,11 +88,11 @@ index 9dab55e8..4ea851de 100644
      pub fn is_powered(&self) -> bool {
          match self {
              Self::V2(x) => x.contains(HubPortStatusV2::POWER),
-diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
-index 4f14f798..7f953487 100644
---- a/drivers/usb/xhcid/src/xhci/mod.rs
-+++ b/drivers/usb/xhcid/src/xhci/mod.rs
-@@ -831,6 +831,19 @@ impl<const N: usize> Xhci<N> {
+diff --git a/drivers/usb/xhcid/src/xhci/device.rs b/drivers/usb/xhcid/src/xhci/device.rs
+index d18ebd61..ab95c32c 100644
+--- a/drivers/usb/xhcid/src/xhci/device.rs
++++ b/drivers/usb/xhcid/src/xhci/device.rs
+@@ -88,6 +88,19 @@ impl<const N: usize> Xhci<N> {
      }
  
      pub async fn attach_device(&self, port_id: PortId) -> syscall::Result<()> {
@@ -111,7 +112,7 @@ index 4f14f798..7f953487 100644
          if self.port_states.contains_key(&port_id) {
              debug!("Already contains port {}", port_id);
              return Err(syscall::Error::new(EAGAIN));
-@@ -840,6 +853,13 @@ impl<const N: usize> Xhci<N> {
+@@ -97,6 +110,13 @@ impl<const N: usize> Xhci<N> {
              let port = &self.ports.lock().unwrap()[port_id.root_hub_port_index()];
              (port.read(), port.state(), port.speed(), port.flags())
          };
@@ -125,7 +126,11 @@ index 4f14f798..7f953487 100644
  
          debug!(
              "XHCI Port {}: {:X}, State {}, Speed {}, Flags {:?}",
-@@ -1124,14 +1144,13 @@ impl<const N: usize> Xhci<N> {
+diff --git a/drivers/usb/xhcid/src/xhci/device/slot.rs b/drivers/usb/xhcid/src/xhci/device/slot.rs
+index 72d86de3..9bc6357d 100644
+--- a/drivers/usb/xhcid/src/xhci/device/slot.rs
++++ b/drivers/usb/xhcid/src/xhci/device/slot.rs
+@@ -130,14 +130,13 @@ impl<const N: usize> Xhci<N> {
          if let Some((parent_port, port_num)) = port.parent() {
              match self.port_states.get(&parent_port) {
                  Some(parent_state) => {
@@ -148,10 +153,10 @@ index 4f14f798..7f953487 100644
                          parent_hub_slot_id = parent_state.slot;
                          parent_port_num = port_num;
 diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
-index 6217b87b..43a017a7 100644
+index 6e3d7815..67ed0ab3 100644
 --- a/drivers/usb/xhcid/src/xhci/scheme.rs
 +++ b/drivers/usb/xhcid/src/xhci/scheme.rs
-@@ -2355,8 +2355,10 @@ impl<const N: usize> SchemeSync for &Xhci<N> {
+@@ -629,8 +629,10 @@ impl<const N: usize> SchemeSync for &Xhci<N> {
                  Ok(buf.len())
              }
              &mut Handle::AttachDevice(port_num) => {
