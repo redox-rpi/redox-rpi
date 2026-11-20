@@ -138,6 +138,9 @@ def hw_cursor(out):
     return None
 
 
+HVS_ERROR_BITS = 0x0e0e0e80
+
+
 def run_checks(sh, args, qemu, console, host_ip):
     if qemu:
         script = [f"export VC4D_FAKE={args.size}", "export VC4D_LOG=1", "export INIT_NOTIFY=2",
@@ -171,7 +174,9 @@ def run_checks(sh, args, qemu, console, host_ip):
 
     positions = set()
     n_before = len([l for l in sh.run("cat /tmp/regr-vc4d.log", 60) if LIST_LINE.match(l)]) if qemu else 0
-    for center in ((300, 200), (700, 450)):
+    w, h = int(size[0]), int(size[1])
+    # Two places well inside the screen: (300, 200) and (700, 450) at 1280x720.
+    for center in ((w * 23 // 100, h * 28 // 100), (w * 55 // 100, h * 62 // 100)):
         sh.run(f"pointer-bench 2 --screen {size[0]} {size[1]} --center {center[0]} {center[1]} --radius 40", 60)
         if not qemu:
             out = sh.run("vc4shot /tmp/regr-cursor.ppm", 60)
@@ -242,7 +247,9 @@ def trace_check(sh, args, qemu, size, host_ip):
             last_frame = frame
             per_frame[(epoch, frame)] = per_frame.get((epoch, frame), 0) + 1
             lists += 1
-        elif r[1] == "errors" and int(r[5], 16) != 0:
+        # Only real errors: ESFRAME, ESLINE, EUFLOW of any channel and the
+        # DMA error. EOLN and COBLOW are events (vc4_regs.h), not errors.
+        elif r[1] == "errors" and int(r[5], 16) & HVS_ERROR_BITS:
             errors += 1
         elif r[1] == "copy":
             copies += 1
