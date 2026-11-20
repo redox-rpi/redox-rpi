@@ -204,8 +204,16 @@ def trace_check(sh, args, qemu, size, host_ip):
     checked."""
     sh.run("wc -l /var/log/vc4d-trace.csv", 60)
     t_start = time.time()
-    sh.run(f"pointer-bench 30 --hz 60 --super-drag --screen {size[0]} {size[1]} "
-           f"--center {int(size[0]) // 2} {int(size[1]) // 2} --radius 150", 120)
+    if args.planes:
+        # The login window is screen-sized (no overlay plane for it): log in
+        # (user, no password) and open a terminal, which Orbital centres.
+        sh.run("pointer-bench --keys enter; sleep 8; pointer-bench --super t; sleep 8", 60)
+        shot(sh, "planes-before", args, host_ip)
+    # --super-drag needs --drag: grab the window at the screen's centre
+    # (the login window, or the terminal) and circle with it.
+    cx, cy = int(size[0]) // 2, int(size[1]) // 2
+    sh.run(f"pointer-bench 30 --hz 60 --super-drag --drag {cx} {cy} --screen {size[0]} {size[1]} "
+           f"--center {cx} {cy} --radius 150", 120)
     took = time.time() - t_start
     data = fetch(sh, "/var/log/vc4d-trace.csv", os.path.join(args.out, "vc4d-trace.csv"), host_ip, b"t_us")
     lines = data.decode("utf-8", "replace").splitlines()
@@ -217,6 +225,7 @@ def trace_check(sh, args, qemu, size, host_ip):
     window = [r for r in rows if int(r[0]) >= end - int(took * 1e6) - 2_000_000]
     per_frame, lists, worst, multi = 0, 0, 0, 0
     frames, gaps, errors = 0, [], 0
+    copies, copy_us, overlays = 0, 0, 0
     for r in window:
         if r[1] == "frame":
             frames += 1
@@ -229,15 +238,26 @@ def trace_check(sh, args, qemu, size, host_ip):
             lists += 1
         elif r[1] == "errors" and int(r[5], 16) != 0:
             errors += 1
+        elif r[1] == "copy":
+            copies += 1
+            copy_us += int(r[10])
+        elif r[1] == "overlay":
+            overlays += 1
     gaps.sort()
     detail = (f"{len(window)} lines in the drag window: {lists} lists, {frames} frames, "
-              f"frames with 2+ lists {multi}, most lists in a frame {worst}, HVS error lines {errors}")
+              f"frames with 2+ lists {multi}, most lists in a frame {worst}, HVS error lines {errors}, "
+              f"copies {copies} ({copy_us // 1000} ms), overlay moves {overlays}")
     if gaps:
         detail += f", frame gap median {gaps[len(gaps) // 2]} us, max {gaps[-1]} us"
     if qemu:
         check("trace", lists > 0, detail + " (QEMU: no HVS frames)")
     else:
         check("trace", lists > 0 and frames > 0 and worst <= 1 and errors == 0, detail)
+    if args.planes:
+        # Orbital with experiment orbital-planes moves the dragged window on
+        # an overlay plane: many plane moves, few copies.
+        check("planes", overlays > 100 and copies < overlays // 4,
+              f"overlay moves {overlays}, copies {copies}")
 
 
 def main():
@@ -249,6 +269,8 @@ def main():
     ap.add_argument("--size", default="1280x720", help="QEMU: VC4D_FAKE size")
     ap.add_argument("--trace", action="store_true",
                     help="30 s of window drags, then check vc4d's trace (#563)")
+    ap.add_argument("--planes", action="store_true",
+                    help="with --trace: drags move an overlay plane (orbital-planes)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 

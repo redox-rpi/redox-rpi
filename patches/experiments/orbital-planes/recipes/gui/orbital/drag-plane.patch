@@ -1,0 +1,402 @@
+diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
+--- a/src/compositor/display.rs	2026-11-20 09:36:26
++++ b/src/compositor/display.rs	2026-11-20 09:37:05
+@@ -1,9 +1,9 @@
+ use drm::buffer::{Buffer as _, DrmFourcc};
+ use drm::control::connector::{self, State};
+ use drm::control::dumbbuffer::{DumbBuffer, DumbMapping};
+-use drm::control::{ClipRect, Device as _, crtc, framebuffer};
++use drm::control::{ClipRect, Device as _, crtc, framebuffer, plane};
+ use drm::{ClientCapability, Device as _, DriverCapability};
+-use drm_ffi::DRM_PLANE_TYPE_CURSOR;
++use drm_ffi::{DRM_PLANE_TYPE_CURSOR, DRM_PLANE_TYPE_OVERLAY};
+ use graphics_ipc::redox_uapi_exts::REDOX_DRM_CLIENT_CAP_HOTPLUG_EVENTS;
+ use graphics_ipc::{CpuBackedBuffer, DrmHandle, RedoxDrmEvent};
+ use log::error;
+@@ -58,6 +58,35 @@
+         })
+     }
+ 
++    /// A buffer of the given size for an overlay plane on `crtc`; not
++    /// shown until the plane is set.
++    fn offscreen(
++        display_handle: &DrmHandle,
++        connector: connector::Handle,
++        crtc: crtc::Handle,
++        (width, height): (u32, u32),
++    ) -> io::Result<Self> {
++        let buffer = CpuBackedBuffer::new(display_handle, (width, height), DrmFourcc::Argb8888, 32)?;
++        let fb = match display_handle.add_framebuffer(buffer.buffer(), 32, 32) {
++            Ok(fb) => fb,
++            Err(err) => {
++                let _ = buffer.destroy(display_handle);
++                return Err(err);
++            }
++        };
++        Ok(Self {
++            fb,
++            connector,
++            crtc,
++            buffer,
++        })
++    }
++
++    fn destroy(self, display_handle: &DrmHandle) {
++        let _ = display_handle.destroy_framebuffer(self.fb);
++        let _ = self.buffer.destroy(display_handle);
++    }
++
+     fn resize_if_necessary(&mut self, display_handle: &DrmHandle) -> io::Result<bool> {
+         let connector_info = display_handle.get_connector(self.connector, true).unwrap();
+ 
+@@ -200,14 +229,19 @@
+                 };
+                 let y = 0;
+ 
+-                displays.push(Display::new(
++                let mut display = Display::new(
+                     x,
+                     y,
+                     &display_handle,
+                     connector,
+                     connector_info,
+                     hw_cursor,
+-                )?);
++                )?;
++                display.overlay = find_overlay_plane(&display_handle, display.map.crtc);
++                if let Some(plane) = display.overlay {
++                    log::info!("Overlay plane {:?} for window moves", plane);
++                }
++                displays.push(display);
+             }
+         }
+ 
+@@ -251,6 +285,27 @@
+     }
+ }
+ 
++/// The first overlay plane that can show on `crtc`.
++fn find_overlay_plane(display_handle: &DrmHandle, crtc: crtc::Handle) -> Option<plane::Handle> {
++    let resources = display_handle.resource_handles().ok()?;
++    display_handle.plane_handles().ok()?.iter().copied().find(|&plane| {
++        let Ok(info) = display_handle.get_plane(plane) else {
++            return false;
++        };
++        if !resources.filter_crtcs(info.possible_crtcs()).contains(&crtc) {
++            return false;
++        }
++        let Ok(props) = display_handle.get_properties(plane) else {
++            return false;
++        };
++        props.iter().any(|(&prop, &val)| {
++            display_handle
++                .get_property(prop)
++                .is_ok_and(|prop| prop.name() == c"type" && val == u64::from(DRM_PLANE_TYPE_OVERLAY))
++        })
++    })
++}
++
+ pub struct Display {
+     x: i32,
+     y: i32,
+@@ -258,8 +313,115 @@
+     factored_scale: u32,
+     map: V2DisplayMap,
+     cursor_map: Option<CursorMap>,
++    /// An overlay plane on this display's CRTC, for a window being moved.
++    overlay: Option<plane::Handle>,
+ }
+ 
++/// A window lifted onto an overlay plane: a display-sized view of its own
++/// buffer, so the window draws into it with the code that composites it.
++pub struct Lifted {
++    /// The display whose overlay plane shows it.
++    display: usize,
++    plane: plane::Handle,
++    view: Display,
++}
++
++impl Lifted {
++    pub fn view(&mut self) -> &mut Display {
++        &mut self.view
++    }
++
++    pub fn rect(&self) -> Rect {
++        self.view.screen_rect()
++    }
++}
++
++impl Displays {
++    /// Lift `rect` (in screen coordinates) onto the overlay plane of the
++    /// display it starts on. `draw` draws into the view; None when there
++    /// is no overlay plane or the driver cannot show this buffer on it.
++    pub(super) fn lift(&mut self, rect: Rect, draw: impl FnOnce(&mut Display, Rect)) -> Option<Lifted> {
++        let index = self
++            .displays
++            .iter()
++            .position(|display| display.screen_rect().contains(rect.left(), rect.top()))?;
++        let display = &self.displays[index];
++        let plane = display.overlay?;
++        if rect.is_empty() {
++            return None;
++        }
++        let map = match V2DisplayMap::offscreen(
++            &self.display_handle,
++            display.map.connector,
++            display.map.crtc,
++            (rect.width(), rect.height()),
++        ) {
++            Ok(map) => map,
++            Err(err) => {
++                log::warn!("no buffer for the overlay plane: {err}");
++                return None;
++            }
++        };
++        let mut view = Display {
++            x: rect.left(),
++            y: rect.top(),
++            scale: display.scale,
++            factored_scale: display.factored_scale,
++            map,
++            cursor_map: None,
++            overlay: None,
++        };
++        draw(&mut view, rect);
++        view.map.buffer.sync_rect(0, 0, rect.width(), rect.height());
++        let mut lifted = Lifted {
++            display: index,
++            plane,
++            view,
++        };
++        if let Err(err) = self.show_lifted(&lifted) {
++            // The driver keeps windows it cannot scan out (vc4d: buffers
++            // not in contiguous memory) to compositing.
++            log::info!("overlay plane refused the window: {err}");
++            self.drop_lifted(lifted);
++            return None;
++        }
++        lifted.view.overlay = Some(plane);
++        Some(lifted)
++    }
++
++    fn show_lifted(&self, lifted: &Lifted) -> io::Result<()> {
++        let display = &self.displays[lifted.display];
++        let (width, height) = lifted.view.map.buffer.buffer().size();
++        self.display_handle.set_plane(
++            lifted.plane,
++            display.map.crtc,
++            Some(lifted.view.map.fb),
++            0,
++            (lifted.view.x - display.x, lifted.view.y - display.y, width, height),
++            (0, 0, width << 16, height << 16),
++        )
++    }
++
++    /// Move a lifted window; only the plane's position changes.
++    pub(super) fn move_lifted(&self, lifted: &mut Lifted, x: i32, y: i32) -> io::Result<()> {
++        lifted.view.x = x;
++        lifted.view.y = y;
++        self.show_lifted(lifted)
++    }
++
++    /// Hide the overlay plane and free the window's buffer.
++    pub(super) fn drop_lifted(&mut self, lifted: Lifted) {
++        let crtc = self.displays[lifted.display].map.crtc;
++        if let Err(err) = self
++            .display_handle
++            .set_plane(lifted.plane, crtc, None, 0, (0, 0, 0, 0), (0, 0, 0, 0))
++        {
++            error!("failed to hide the overlay plane: {err}");
++        }
++        lifted.view.map.destroy(&self.display_handle);
++    }
++}
++
+ impl Display {
+     fn new(
+         x: i32,
+@@ -286,6 +448,7 @@
+             factored_scale,
+             map,
+             cursor_map,
++            overlay: None,
+         })
+     }
+ 
+diff -ruN a/src/compositor/mod.rs b/src/compositor/mod.rs
+--- a/src/compositor/mod.rs	2026-11-20 09:36:26
++++ b/src/compositor/mod.rs	2026-11-20 09:37:05
+@@ -12,7 +12,7 @@
+ 
+ use self::display::Displays;
+ 
+-pub(crate) use self::display::{Display, SCALE_BASELINE};
++pub(crate) use self::display::{Display, Lifted, SCALE_BASELINE};
+ 
+ pub struct Compositor {
+     displays: Displays,
+@@ -166,6 +166,29 @@
+         }
+ 
+         self.redraws.push(request);
++    }
++
++    /// Show `rect` on an overlay plane, drawn by `draw`, so moving it does
++    /// not need compositing (a window being dragged).
++    pub fn lift(&mut self, rect: Rect, draw: impl FnOnce(&mut Display, Rect)) -> Option<Lifted> {
++        self.displays.lift(rect, draw)
++    }
++
++    /// Move a lifted rect to x, y; false if the plane refused, then the
++    /// caller drops it and composites again.
++    pub fn move_lifted(&mut self, lifted: &mut Lifted, x: i32, y: i32) -> bool {
++        match self.displays.move_lifted(lifted, x, y) {
++            Ok(()) => true,
++            Err(err) => {
++                error!("failed to move the overlay plane: {err}");
++                false
++            }
++        }
++    }
++
++    /// Hide a lifted rect again. Call after the redraw that composites it.
++    pub fn drop_lifted(&mut self, lifted: Lifted) {
++        self.displays.drop_lifted(lifted);
+     }
+ 
+     fn cursor_rect(&self) -> Rect {
+diff -ruN a/src/scheme.rs b/src/scheme.rs
+--- a/src/scheme.rs	2026-11-20 09:36:26
++++ b/src/scheme.rs	2026-11-20 09:37:38
+@@ -11,7 +11,7 @@
+ use orbclient::*;
+ use syscall::error::{EBADF, Error, Result};
+ 
+-use crate::compositor::{Compositor, SCALE_BASELINE};
++use crate::compositor::{Compositor, Lifted, SCALE_BASELINE};
+ use crate::config::Config;
+ use crate::core::Properties;
+ use crate::widget::fps::FpsWidget;
+@@ -87,6 +87,11 @@
+     cursor_simulate_speed: i32,
+     dragging: DragMode,
+     dragging_window_initiated: bool,
++    /// The window being moved, shown on an overlay plane instead of
++    /// composited, so a move only changes the plane's position.
++    lifted: Option<(WindowId, Lifted)>,
++    /// The overlay plane refused this drag; composite it as before.
++    lift_failed: bool,
+     modifier_state: u8,
+     volume_value: i32,
+     volume_toggle: i32,
+@@ -151,6 +156,8 @@
+             cursor_simulate_enabled: false,
+             dragging: DragMode::None,
+             dragging_window_initiated: false,
++            lifted: None,
++            lift_failed: false,
+             modifier_state: 0,
+             volume_value: 0,
+             volume_toggle: 0,
+@@ -567,6 +574,27 @@
+ 
+     pub(crate) fn redraw(&mut self) {
+         self.fps_widget.start_measure();
++
++        // A drag that ended (or whose plane refused a move) puts its window
++        // back into compositing; the plane is hidden after this redraw has
++        // drawn the window in its new place.
++        let lifted_id = match &self.lifted {
++            Some((id, _)) if !self.lift_failed && matches!(self.dragging, DragMode::Title(drag_id, ..) if drag_id == *id) => {
++                Some(*id)
++            }
++            _ => None,
++        };
++        let unlift = if lifted_id.is_none() { self.lifted.take() } else { None };
++        if let Some((id, _)) = &unlift
++            && let Some(window) = self.windows.get(id)
++        {
++            self.compositor.schedule(window.title_rect());
++            self.compositor.schedule(window.rect());
++        }
++        if !matches!(self.dragging, DragMode::Title(..)) {
++            self.lift_failed = false;
++        }
++
+         self.order
+             .rezbuffer(&|id| self.windows.get(&id).unwrap().zorder);
+ 
+@@ -635,6 +663,9 @@
+             display.rect(&rect, self.config.background_color.into());
+ 
+             for (id, focused) in self.order.iter_back_to_front() {
++                if Some(id) == lifted_id {
++                    continue;
++                }
+                 if let Some(window) = self.windows.get(&id) {
+                     window.draw_title(
+                         display,
+@@ -671,6 +702,10 @@
+             }
+         });
+ 
++        if let Some((_, lifted)) = unlift {
++            self.compositor.drop_lifted(lifted);
++        }
++
+         self.fps_widget.end_measure();
+     }
+ 
+@@ -1243,6 +1278,44 @@
+             DragMode::Title(window_id, drag_x, drag_y) => {
+                 if let Some(window) = self.windows.get_mut(&window_id) {
+                     if drag_x != event.x || drag_y != event.y {
++                        // The first move lifts the window onto an overlay
++                        // plane; it is drawn once and then only moved.
++                        if self.lifted.is_none() && !self.lift_failed {
++                            let rect = window.title_rect().container(&window.rect());
++                            let background: Color = self.config.background_color.into();
++                            let (max, close) = (&self.window_max, &self.window_close);
++                            match self.compositor.lift(rect, |view, rect| {
++                                view.rect(&rect, background);
++                                window.draw_title(view, &rect, true, max, close);
++                                window.draw(view, &rect);
++                            }) {
++                                Some(lifted) => {
++                                    // Composite the place without the window.
++                                    self.compositor.schedule(rect);
++                                    self.lifted = Some((window_id, lifted));
++                                }
++                                None => self.lift_failed = true,
++                            }
++                        }
++                        if let Some((lifted_id, lifted)) = self.lifted.as_mut()
++                            && *lifted_id == window_id
++                        {
++                            window.x += event.x - drag_x;
++                            window.y += event.y - drag_y;
++                            let rect = window.title_rect().container(&window.rect());
++                            if !self.compositor.move_lifted(lifted, rect.left(), rect.top()) {
++                                // Dropped in redraw(), which composites it.
++                                self.lift_failed = true;
++                            }
++                            window.event(
++                                MoveEvent {
++                                    x: window.x,
++                                    y: window.y,
++                                }
++                                .to_event(),
++                            );
++                            self.dragging = DragMode::Title(window_id, event.x, event.y);
++                        } else {
+                         Self::update_window(&mut self.compositor, window, |_compositor, window| {
+                             //TODO: Min and max
+                             window.x += event.x - drag_x;
+@@ -1257,6 +1330,7 @@
+ 
+                             self.dragging = DragMode::Title(window_id, event.x, event.y);
+                         });
++                        }
+                     }
+                 } else {
+                     self.dragging = DragMode::None;
