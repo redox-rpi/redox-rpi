@@ -1,0 +1,8 @@
+# Experiment vc4d-scale (#563): clients get 1280x720, and vc4d scales it
+# with the HVS to the firmware mode (1920x1080 on our monitors). Fewer
+# pixels to draw and copy on the 3B+ and the Zero 2 W. Build together with
+# --experiment vc4d-flip (vc4d branch modes).
+
+[[files]]
+path = "/etc/vc4d-mode"
+data = "1280x720"
