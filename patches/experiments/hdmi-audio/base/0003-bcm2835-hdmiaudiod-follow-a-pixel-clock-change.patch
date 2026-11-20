@@ -1,0 +1,212 @@
+From 97f88424dd5447d50bf149da376dfbd4519342bd Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 08:26:42 +0000
+Subject: [PATCH] bcm2835-hdmiaudiod: follow a pixel clock change (new video
+ mode)
+
+---
+ drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs | 25 +++++++
+ drivers/audio/bcm2835-hdmiaudiod/src/main.rs | 74 +++++++++++++++++++-
+ 2 files changed, 96 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+index 02a37d9f..86950300 100644
+--- a/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/hdmi.rs
+@@ -163,6 +163,13 @@ const VC5_PHY_REF_HZ: u64 = 54_000_000;
+ /// The pixel clock of a vc5 port from its PHY PLL: `RM_OFFSET` (bits 30:0)
+ /// = VCO × 2^21 / 54 MHz, and `TX_PHY_CLK_DIV` bits 15:8 the VCO divider;
+ /// TMDS = VCO / (divider × 10), the pixel clock at 8 bits per channel.
++/// The new pixel clock if it moved by more than 0.1 % from the last
++/// reading; `None` while either reading is missing or it stayed.
++pub fn pixel_changed(last: Option<u64>, now: Option<u64>) -> Option<u64> {
++    let (last, now) = (last?, now?);
++    (now.abs_diff(last) * 1000 > last).then_some(now)
++}
++
+ pub fn pixel_from_vc5_phy(rm_offset: u32, clk_div: u32) -> Option<u64> {
+     let offset = u64::from(rm_offset & 0x7fff_ffff);
+     let div = u64::from(clk_div >> 8 & 0xff);
+@@ -490,6 +497,13 @@ impl Hdmi {
+         self.set_core(r.cts_1, cts);
+     }
+ 
++    /// Only CTS, after the pixel clock changed (a new video mode).
++    pub fn set_cts(&self, pixel_hz: u64, sample_rate: u32) {
++        let cts = acr_cts(pixel_hz, acr_n(sample_rate), sample_rate);
++        self.set_core(self.regs.cts_0, cts);
++        self.set_core(self.regs.cts_1, cts);
++    }
++
+     /// Only the sample clock, after a measurement corrected the HSM rate.
+     pub fn set_sample_clock(&self, hsm_hz: u64, sample_rate: u32) {
+         let (n, m) = mai_smp(hsm_hz, sample_rate);
+@@ -552,6 +566,17 @@ fn wait(done: impl Fn() -> bool, ms: u64) -> bool {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn pixel_clock_change() {
++        // Firmware 640x480 at boot, rpi-fbd 1080p later (Test 501's set-up).
++        assert_eq!(pixel_changed(Some(25_200_000), Some(148_500_000)), Some(148_500_000));
++        assert_eq!(acr_cts(148_500_000, acr_n(44_100), 44_100), 148_478);
++        // PLL readings that wobble in the last digits are no change.
++        assert_eq!(pixel_changed(Some(148_500_000), Some(148_510_000)), None);
++        assert_eq!(pixel_changed(None, Some(148_500_000)), None);
++        assert_eq!(pixel_changed(Some(148_500_000), None), None);
++    }
++
+     #[test]
+     fn register_values_as_linux_writes_them() {
+         assert_eq!(mai_ctl_play(2), 0x3028);
+diff --git a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+index ebab7889..9afb859e 100644
+--- a/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
++++ b/drivers/audio/bcm2835-hdmiaudiod/src/main.rs
+@@ -140,6 +140,13 @@ struct Setup {
+     scheduler: u32,
+     pixel_hz: u64,
+     pixel_source: &'static str,
++    /// Reads the pixel clock again while playing, to follow a mode change
++    /// (rpi-fbd switching to the monitor's mode, #543).
++    probe: PixelProbe,
++    /// The last value `probe` read.
++    probe_hz: Option<u64>,
++    /// Times the pixel clock changed and CTS was written again.
++    pixel_changes: u64,
+     /// The clock registers the rates came from, as lines for `stats`.
+     clock_regs: String,
+     hsm_hz: u64,
+@@ -148,6 +155,41 @@ struct Setup {
+     dreq: u32,
+ }
+ 
++/// How often the pixel clock is read again.
++const PIXEL_CHECK: Duration = Duration::from_secs(1);
++
++/// Where the pixel clock can be read again while playing.
++enum PixelProbe {
++    /// VC4: the clock manager (mapped up to the PLLH registers).
++    Pllh(*mut u32),
++    /// vc5: the port's PHY and RM blocks.
++    Vc5 { phy: *mut u32, rm: *mut u32 },
++}
++
++impl PixelProbe {
++    fn read(&self) -> Option<u64> {
++        let reg = |base: *mut u32, offset: usize| unsafe { base.add(offset / 4).read_volatile() };
++        match *self {
++            PixelProbe::Pllh(cm) => hdmi::pixel_from_pllh(
++                reg(cm, hdmi::A2W_PLLH_CTRL),
++                reg(cm, hdmi::A2W_PLLH_FRAC),
++                reg(cm, hdmi::A2W_PLLH_ANA1),
++                reg(cm, hdmi::A2W_PLLH_PIX),
++            )
++            .filter(|hz| (20_000_000..=200_000_000).contains(hz)),
++            PixelProbe::Vc5 { phy, rm } => hdmi::pixel_from_vc5_phy(reg(rm, hdmi::RM_OFFSET), reg(phy, hdmi::PHY_CLK_DIV))
++                .filter(|hz| (20_000_000..=600_000_000).contains(hz)),
++        }
++    }
++
++    fn source(&self) -> &'static str {
++        match self {
++            PixelProbe::Pllh(_) => "pllh",
++            PixelProbe::Vc5 { .. } => "phy",
++        }
++    }
++}
++
+ /// A sine played through the ring.
+ struct Tone {
+     hz: f64,
+@@ -175,6 +217,7 @@ struct Driver {
+     previous_rate: Option<f64>,
+     corrected: bool,
+     last_refresh: Instant,
++    last_pixel_check: Instant,
+     /// Refreshes after a gap over `MAX_GAP`.
+     long_gaps: u64,
+     chunks: u64,
+@@ -205,6 +248,7 @@ impl Driver {
+             previous_rate: None,
+             corrected: false,
+             last_refresh: now,
++            last_pixel_check: now,
+             long_gaps: 0,
+             chunks: 0,
+             loud_chunks: 0,
+@@ -260,7 +304,26 @@ impl Driver {
+         if errors & hdmi::MAI_CTL_ERRORF != 0 {
+             self.mai_overflows += 1;
+         }
+-        if let Some(setup) = &self.setup {
++        if let Some(setup) = &mut self.setup {
++            if now - self.last_pixel_check >= PIXEL_CHECK {
++                self.last_pixel_check = now;
++                let hz = setup.probe.read();
++                if let Some(new) = hdmi::pixel_changed(setup.probe_hz, hz) {
++                    setup.pixel_changes += 1;
++                    if setup.pixel_changes <= 3 {
++                        eprintln!(
++                            "bcm2835-hdmiaudiod: pixel clock {:.3} -> {:.3} MHz (mode change), CTS {}",
++                            setup.pixel_hz as f64 / 1e6,
++                            new as f64 / 1e6,
++                            hdmi::acr_cts(new, hdmi::acr_n(SAMPLE_RATE), SAMPLE_RATE)
++                        );
++                    }
++                    setup.pixel_hz = new;
++                    setup.pixel_source = setup.probe.source();
++                    hdmi.set_cts(new, SAMPLE_RATE);
++                }
++                setup.probe_hz = hz.or(setup.probe_hz);
++            }
+             let want = hdmi::crp_cfg(hdmi::acr_n(SAMPLE_RATE));
+             if hdmi.hd(hdmi.regs.mai_ctl) & hdmi::MAI_CTL_ENABLE == 0 || hdmi.core(hdmi.regs.crp_cfg) != want {
+                 self.reprogrammed += 1;
+@@ -481,6 +544,7 @@ impl Driver {
+             let _ = writeln!(text, "forced_hdmi_mode {}", yes(s.forced_hdmi_mode));
+             let _ = writeln!(text, "scheduler 0x{:08x}", s.scheduler);
+             let _ = writeln!(text, "pixel_hz {} {}", s.pixel_hz, s.pixel_source);
++            let _ = writeln!(text, "pixel_changes {}", s.pixel_changes);
+             let _ = writeln!(text, "hsm_hz {} {}", s.hsm_hz, s.hsm_source.name());
+             text.push_str(&s.clock_regs);
+             let _ = writeln!(text, "infoframe_sent {}", yes(s.infoframe));
+@@ -738,7 +802,7 @@ fn open_vc4(fdt: &Fdt) -> (Output, Option<Setup>) {
+         None => (DEFAULT_HSM_HZ, HsmSource::Default),
+     };
+     let dreq = dt::dreq(fdt, &compatible).unwrap_or(hdmi::VC4.dreq);
+-    start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, hsm_hz, hsm_source, clock_regs)
++    start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, PixelProbe::Pllh(cm), hsm_hz, hsm_source, clock_regs)
+ }
+ 
+ /// One BCM2711 HDMI port: its devicetree node and the bus addresses if the
+@@ -817,7 +881,7 @@ fn open_vc5(fdt: &Fdt) -> (Output, Option<Setup>) {
+         if !skipped.is_empty() {
+             println!("bcm2835-hdmiaudiod: {}", skipped.join(", "));
+         }
+-        return start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, hdmi::VC5_AUDIO_HZ, HsmSource::Dvp, clock_regs);
++        return start(fdt, hdmi, core_phys, hd_bus, dreq, pixel_hz, pixel_source, PixelProbe::Vc5 { phy, rm }, hdmi::VC5_AUDIO_HZ, HsmSource::Dvp, clock_regs);
+     }
+     (clock_only(format!("no BCM2711 HDMI port sends video ({}; QEMU, or no display at boot?)", skipped.join(", "))), None)
+ }
+@@ -893,6 +957,7 @@ fn start(
+     dreq: u32,
+     pixel_hz: u64,
+     pixel_source: &'static str,
++    probe: PixelProbe,
+     hsm_hz: u64,
+     hsm_source: HsmSource,
+     clock_regs: String,
+@@ -922,6 +987,9 @@ fn start(
+         scheduler: state.scheduler,
+         pixel_hz,
+         pixel_source,
++        probe_hz: probe.read(),
++        probe,
++        pixel_changes: 0,
+         clock_regs,
+         hsm_hz,
+         hsm_source,
+-- 
+2.53.0
+
