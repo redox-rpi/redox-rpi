@@ -33,7 +33,7 @@ These are upstream Redox's keys, which the maintainer chose for step I5 (#517).
 
 ## The login screen (I5, #517)
 
-- **The hint.** getty prints `/etc/issue` above the login prompt ([`base/0002`](base/0002-getty-print-etc-issue-above-the-login-prompt-on-disp.patch)). This experiment installs `/etc/issue` with the line `Super+F1: boot messages` (`config.toml`), so the login says where the log is. The file is part of the image, so the line shows with or without `quiet`. getty prints it on the display consoles only; the serial console has no Super key. Known: the line shows twice above the prompt (#599, cosmetic).
+- **The hint.** getty prints `/etc/issue` above the login prompt ([`base/0003`](base/0003-getty-print-etc-issue-above-the-login-prompt-on-disp.patch)). This experiment installs `/etc/issue` with the line `Super+F1: boot messages` (`config.toml`), so the login says where the log is. The file is part of the image, so the line shows with or without `quiet`. getty prints it on the display consoles only; the serial console has no Super key. Known: the line shows twice above the prompt (#599, cosmetic).
 - **No black frame before the login (experiment `rpi-fb`).** With `QUIET` set, `rpi-fbd` does not clear a new framebuffer when the console sets its mode, and the first frame covers the whole screen. So the login replaces the firmware's picture in one go ([`rpi-fb/base/0074`](../rpi-fb/base/0074-rpi-fbd-under-QUIET-keep-the-firmware-s-picture-unti.patch)). `vesad` never clears at start, so images without `rpi-fb` need nothing.
 
 ## Limits
