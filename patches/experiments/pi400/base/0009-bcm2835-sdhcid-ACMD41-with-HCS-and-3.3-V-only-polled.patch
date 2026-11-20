@@ -1,0 +1,93 @@
+From e53d14ef2db52aa1bab9f0e0244de1243e613e20 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 14:52:20 +0000
+Subject: [PATCH] bcm2835-sdhcid: ACMD41 with HCS and 3.3 V only, polled up to
+ 2 s (redox-rpi #307)
+
+Person test with 0008 (Pi 400, root on the card): ACMD41 was now
+answered, but six polls returned 0x00f98000, never the power-up bit.
+- Argument 0x40ff8000: HCS and 2.7-3.6 V, without XPC and S18R.
+- Poll every 10 ms for up to 2 s (each poll waited 1 s before, with
+  only 6 polls); log the first, every 50th and the last poll.
+- A timeout starts again from CMD0, up to three times, like an error.
+- A card ready on the last poll no longer counts as a timeout.
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 32 +++++++++++++-------
+ 1 file changed, 21 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index a3bd573a..aa42bb00 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -151,7 +151,12 @@ const HOST_SPEC_V1: u32 = 0;
+ const ACMD41_VOLTAGE: u32 = 0x00ff_8000;
+ const ACMD41_CMD_COMPLETE: u32 = 0x8000_0000;
+ const ACMD41_CMD_CCS: u32 = 0x4000_0000;
+-const ACMD41_ARG_HC: u32 = 0x51ff_8000;
++/// HCS (bit 30) and 2.7-3.6 V. Without XPC (bit 28, more current) and S18R
++/// (bit 24, ask for 1.8 V, which this driver never switches to): with them
++/// a card on the Pi 400 kept its busy bit for 6 s (redox-rpi #307).
++const ACMD41_ARG_HC: u32 = 0x40ff_8000;
++/// ACMD41 polls, 10 ms apart: cards may take up to 1 s to power up.
++const ACMD41_POLLS: i32 = 200;
+ 
+ const SCR_SD_BUS_WIDTH_4: u32 = 0x0000_0400;
+ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
+@@ -372,7 +377,7 @@ impl SdHostCtrl {
+             return;
+         }
+ 
+-        cnt = 6;
++        cnt = ACMD41_POLLS;
+         reg_val = 0;
+ 
+         while ((reg_val & ACMD41_CMD_COMPLETE) == 0) && cnt > 0 {
+@@ -382,7 +387,11 @@ impl SdHostCtrl {
+             if let Ok(val) = self.sd_cmd(CMD_SEND_OP_COND, ACMD41_ARG_HC) {
+                 reg_val = val;
+                 self.ocr = reg_val;
+-                print!("EMMC: CMD_SEND_OP_COND returned 0x{:08x} = ", reg_val);
++                let polls = ACMD41_POLLS - cnt;
++                if (reg_val & ACMD41_CMD_COMPLETE) == 0 && polls != 1 && polls % 50 != 0 {
++                    continue;
++                }
++                print!("EMMC: CMD_SEND_OP_COND poll {polls} returned 0x{:08x} = ", reg_val);
+ 
+                 if (reg_val & ACMD41_CMD_COMPLETE) != 0 {
+                     print!("COMPLETE ");
+@@ -402,13 +411,15 @@ impl SdHostCtrl {
+                 return;
+             }
+         }
+-        break;
+-        }
+-
+-        if (reg_val & ACMD41_CMD_COMPLETE) == 0 || cnt <= 0 {
+-            println!("ACMD41 TIMEOUT");
++        if (reg_val & ACMD41_CMD_COMPLETE) == 0 {
++            println!("ACMD41 TIMEOUT after {} ms (attempt {attempt})", ACMD41_POLLS * 10);
++            if attempt < 3 {
++                continue 'op_cond;
++            }
+             return;
+         }
++        break;
++        }
+ 
+         if (reg_val & ACMD41_VOLTAGE) == 0 {
+             println!("ACMD41 VOLTAGE NOT FOUND!");
+@@ -666,9 +677,8 @@ impl SdHostCtrl {
+         regs.cmdtm.write(code);
+         settle(self.sd_clock);
+ 
+-        if code == CMD_SEND_OP_COND {
+-            wait_msec(1000);
+-        } else if code == CMD_SEND_IF_COND || code == CMD_APP_CMD {
++        // sd_int below waits for the answer; ACMD41 is polled 10 ms apart.
++        if code == CMD_SEND_IF_COND || code == CMD_APP_CMD {
+             wait_msec(200);
+         }
+ 
+-- 
+2.53.0
+
