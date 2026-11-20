@@ -1,0 +1,30 @@
+From 0b0283d0d817445332744446d099af41f9e553c5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 11:01:01 +0000
+Subject: [PATCH] rpi-firmwared: round a tag answer up to whole words
+
+The firmware gives the answer length in bytes. Dividing by 4 dropped
+the last bytes of an answer that is not a multiple of 4, such as the
+6-byte board MAC (TAG_BOARD_MAC). Before this was a hunk in the pi400
+experiment, which made it conflict with rpi-fb 0060 in one order.
+---
+ drivers/rpi-firmwared/src/mbox.rs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e7..4c912fa5 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -163,7 +163,8 @@ impl Mailbox {
+             }
+             return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+         }
+-        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        // In bytes; round up to whole words (the board MAC is 6 bytes).
++        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
+         Ok(buf[5..5 + len.min(value_words)].to_vec())
+     }
+ 
+-- 
+2.53.0
+
