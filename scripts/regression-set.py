@@ -57,6 +57,15 @@ Checks, in this order:
                 /usr/share/ui/apps/70_sopwith names /usr/bin/sopwith and
                 an icon, and both files exist (skip without the experiment
                 orbital-apps)
+  ifconfig-mac  #444, #171: `ifconfig eth0` shows the MAC address netstack
+                has (/scheme/netcfg/ifaces/eth0/mac), not 00:00:00:00:00:00;
+                skip while ifconfig still prints the netmask as a prefix
+                length (no netutils 0002 and no experiment ifconfig-mac)
+  gamepad-console  #320: `gamepad-test --console` prints every event that
+                `gamepad-test --send` sends through inputd, and the last
+                line holds A with X, Y and RZ set (skip without
+                gamepad-test, experiment gamepad-test, or when it reports
+                no controllers handle or no --console: #455)
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -427,6 +436,56 @@ def check_sopwith(sh, check, args):
     check("sopwith", bool(window and driver and pid and sound), "; ".join(notes))
 
 
+MAC = re.compile(r"\b[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\b")
+
+
+def check_ifconfig_mac(sh, check, args):
+    want = "".join(sh.run("cat /scheme/netcfg/ifaces/eth0/mac")).strip().replace("-", ":").lower()
+    out = sh.run("ifconfig eth0")
+    text = " ".join(out)
+    shown = [m.lower() for m in MAC.findall(text)]
+    if want and want in shown:
+        check("ifconfig-mac", True, f"ifconfig shows {want}, as netstack has it")
+        return
+    # netutils 0002 (and the experiment ifconfig-mac) print the netmask
+    # dotted; without either, ifconfig still has upstream's placeholder.
+    if not re.search(r"\b255\.\d+\.\d+\.\d+\b", text):
+        check("ifconfig-mac", None, "ifconfig without netutils 0002 (#446) or experiment ifconfig-mac")
+        return
+    check("ifconfig-mac", False, f"netstack has {want or 'no MAC'}, ifconfig shows "
+          f"{', '.join(shown) or 'none'}: " + "; ".join(l.strip() for l in out[:4])[:120])
+
+
+def check_gamepad_console(sh, check, args):
+    if not has(sh, "/usr/bin/gamepad-test"):
+        check("gamepad-console", None, "no gamepad-test (experiment gamepad-test)")
+        return
+    sh.run("rm -f /tmp/regr-gp.out /tmp/regr-gp.err; "
+           "gamepad-test --console > /tmp/regr-gp.out ^> /tmp/regr-gp.err &")
+    time.sleep(2)
+    # `test -e` does not see /scheme/input/controllers (no stat on inputd's
+    # scheme), so the tool says itself when the handle or --console is
+    # missing: inputd without base patch 0098 (#455), or an older binary.
+    err = " ".join(sh.run("cat /tmp/regr-gp.err"))
+    if "controllers handle" in err or "unknown argument" in err:
+        check("gamepad-console", None, f"gamepad-test --console not usable yet (#455): {err[:100]}")
+        return
+    sent = [l for l in sh.run("gamepad-test --send", 120) if l.startswith("gamepad-test: sent ")]
+    time.sleep(2)
+    for pid in context_pids(sh, ["gamepad-test"]).values():
+        sh.run(f"kill {pid}")
+    got = [l for l in sh.run("cat /tmp/regr-gp.out") if l.startswith("gamepad-test: controller ")]
+    last = got[-1] if got else ""
+    ok = (len(sent) > 0 and len(got) == len(sent) and "held A" in last
+          and all(f"{a} " in last.split("| axes", 1)[-1] for a in ("X", "Y", "RZ")))
+    detail = f"sent {len(sent)}, --console printed {len(got)}"
+    if not got:
+        detail += "; " + "; ".join(sh.run("cat /tmp/regr-gp.err"))[:120]
+    else:
+        detail += f"; last: {last.split(':', 2)[-1].strip()[:100]}"
+    check("gamepad-console", ok, detail)
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -487,6 +546,8 @@ def main():
             ("tcc", lambda: check_tcc(sh, check, tcc)),
             ("dns", lambda: check_dns(sh, check, args)),
             ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
+            ("ifconfig-mac", lambda: check_ifconfig_mac(sh, check, args)),
+            ("gamepad-console", lambda: check_gamepad_console(sh, check, args)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
             ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),

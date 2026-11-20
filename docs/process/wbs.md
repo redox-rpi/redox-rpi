@@ -24,6 +24,7 @@ How it is used:
 | 1.4 | Architecture, coding standards and rules, RFC drafts | Architect | all | [architecture.md](../architecture.md), `coding-standards.md`, RFCs |
 | 1.5 | Project structure (RFC 0002): split repositories, issues per repository | Architect, project lead | — | [RFC 0002](../rfcs/), migration PRs |
 | 1.6 | Community: org profile, join page, Discussions, contributor onboarding | project lead, Architect | 5.4 | profile, [join.md](../join.md) |
+| 1.7 | Process: process rules in the PMP and its sub-plans, CONTRIBUTING.md, issue and PR templates, labels, rulesets, new-repository setup, RFC procedure, process improvement from sprint reviews | Process | — | [pmp.md](pmp.md) (process parts), [CONTRIBUTING.md](../../CONTRIBUTING.md) |
 
 ## 2 Platform development
 

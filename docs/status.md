@@ -264,8 +264,9 @@ hubs; the `xhcid` scheme interface for `usbhidd`.
   RedoxFS partition of an image, without FUSE (works on macOS).
 - [`scripts/build-kernel.sh`](../scripts/build-kernel.sh): build the latest
   upstream kernel with this repository's patches (macOS and Linux).
-- [`scripts/qemu-raspi3b.sh`](../scripts/qemu-raspi3b.sh): download the latest
-  daily server image, optionally inject a kernel, boot in QEMU `raspi3b`;
+- [`scripts/qemu-raspi3b.sh`](../scripts/qemu-raspi3b.sh): boot this clone's
+  own build in QEMU `raspi3b` (or, with `--daily`, the latest upstream daily
+  server image), optionally inject a kernel;
   `--test` checks the console output automatically.
 - CI ([`.github/workflows/qemu-boot.yml`](../.github/workflows/qemu-boot.yml)):
   builds and boot-tests on every push and daily against the latest upstream.
