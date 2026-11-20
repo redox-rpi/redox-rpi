@@ -5,7 +5,7 @@ Subject: [PATCH] memory: a DMA zone below 1 GiB on the BCM2711 (redox-rpi
  #299)
 
 The BCM2711's legacy peripherals reach only the first GiB of RAM
-(/soc dma-ranges). With more RAM, take 64 MiB below 1 GiB out of the
+(/soc dma-ranges). With more RAM, take 256 MiB below 1 GiB out of the
 buddy allocator at boot and serve every phys_contiguous allocation from
 it, so the Pi 4 and 400 can run without total_mem=1024.
 ---
@@ -30,7 +30,7 @@ index 6c942f12..35da011b 100644
 +            if let Ok((dtb, _)) = &dtb_res
 +                && dtb.root().compatible().all().any(|c| c == "brcm,bcm2711")
 +            {
-+                crate::memory::dma_zone::init(0x4000_0000, 64 << 20, crate::memory::ram_end());
++                crate::memory::dma_zone::init(0x4000_0000, 256 << 20, crate::memory::ram_end());
 +            }
 +
              // Activate memory logging

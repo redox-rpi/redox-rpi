@@ -8,8 +8,12 @@ inbound window (VL805, xhcid) covers 3 GiB.
 
 Kernel patch `0001`: a DMA zone, like Linux's ZONE_DMA.
 - On a devicetree with `brcm,bcm2711`, and only when RAM goes past 1 GiB,
-  the kernel takes 64 MiB in 4 MiB blocks below 1 GiB out of the page
+  the kernel takes 256 MiB in blocks of MAX_ORDER size (4 MiB, or 16 MiB
+  with rpi-fb's kernel patch 0049) below 1 GiB out of the page
   allocator at boot.
+- 256 MiB, as Linux's CMA on the Pi 4 with vc4-kms: vc4d's buffers are
+  8.3 MB each at 1080p, and one buffer can't span two blocks (so it needs
+  the 16 MiB blocks of 0049). Tests 531–536 ran with 64 MiB.
 - Every physically contiguous allocation (`zeroed@…?phys_contiguous`, which
   `common::Dma` uses) comes from that pool, and freeing returns it there.
   Drivers don't change.
