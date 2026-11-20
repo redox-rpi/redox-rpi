@@ -165,15 +165,21 @@ impl Record {
         (self.ts_stat & (1 << 10) != 0).then(|| 407_000 - 538 * (self.ts_stat & 0x3ff) as i32)
     }
 
-    /// PLLB multiplier (ndiv + frac / 2^20). With the feedback prediv and
-    /// pllb_arm / 2 as on the Pi 3B+ and Zero 2 W, the ARM clock is about
-    /// 19.2 MHz times this.
+    /// PLLB multiplier (ndiv in bits 29:20 + frac / 2^20). With the feedback
+    /// prediv as on the Pi 3B+ and Zero 2 W, PLLB runs at 19.2 MHz times this.
     pub fn pllb_mult(&self) -> f64 {
-        f64::from(self.pllb >> 20) + f64::from(self.pllb & 0xf_ffff) / f64::from(1u32 << 20)
+        f64::from((self.pllb >> 20) & 0x3ff) + f64::from(self.pllb & 0xf_ffff) / f64::from(1u32 << 20)
     }
 
+    /// The ARM channel divider in bits 31:30 (rof #67 since Test 530; 0 from
+    /// older firmware, taken as 1).
+    pub fn arm_div(&self) -> u32 {
+        (self.pllb >> 30).max(1)
+    }
+
+    /// The ARM clock, an estimate: PLLB / the ARM channel divider.
     pub fn arm_mhz(&self) -> f64 {
-        19.2 * self.pllb_mult()
+        19.2 * self.pllb_mult() / f64::from(self.arm_div())
     }
 }
 
@@ -241,7 +247,7 @@ impl Detector {
             return;
         };
         let dt = r.t_us.wrapping_sub(p.t_us);
-        if dt > 3 * self.period_us.max(1) {
+        if dt > 3 * self.period_us.max(1) && dt >= self.threshold_us {
             out.push(Event::Gap { t_us: p.t_us, len_us: dt });
         }
         let mut stall = |what, since: &mut u32, moved: bool| {
@@ -443,4 +449,20 @@ mod tests {
         let ev = analyse(&stream(3000, 0..0), 50_000, 1000);
         assert!(!ev.iter().any(|e| matches!(e, Event::Stall { what: "marker" | "marker (still)", .. })));
     }
+
+    #[test]
+    fn arm_divider_and_short_gaps() {
+        // PLLB 1200 MHz (ndiv 62, frac 0x80000), ARM channel / 2: 600 MHz
+        let r = Record { pllb: 2 << 30 | 62 << 20 | 0x8_0000, ..stream(1, 0..0)[0] };
+        assert_eq!(r.arm_mhz().round() as u32, 600);
+        assert_eq!(Record { pllb: 1 << 30 | 62 << 20 | 0x8_0000, ..r }.arm_mhz().round() as u32, 1200);
+        // a 20 ms gap is below a 50 ms threshold
+        let mut s = stream(400, 0..0);
+        for r in s.iter_mut().skip(200) {
+            r.t_us += 20_000;
+        }
+        assert!(!analyse(&s, 50_000, 1000).iter().any(|e| matches!(e, Event::Gap { .. })));
+        assert!(analyse(&s, 10_000, 1000).iter().any(|e| matches!(e, Event::Gap { .. })));
+    }
+
 }

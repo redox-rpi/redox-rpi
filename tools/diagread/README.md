@@ -45,7 +45,9 @@ mailbox (tag `0x000f0001`).
 
 Each record holds the VPU timer, HVS `DISPSTAT` and `DISPSTAT1` (channel
 1 and its frame count), pixel valve 2 status, the HDMI frame count, the
-thermal sensor, the PLLB word (ARM clock) and the marker.
+thermal sensor (the firmware starts it as Linux does), the ARM clock word
+(PLLB and the ARM divider) and the marker. Firmware before the Test 530
+fixes reads a fixed 268 °C and shows 600 MHz as 1200.
 
 ## What `stalls` and `watch` report
 
@@ -54,7 +56,7 @@ thermal sensor, the PLLB word (ARM clock) and the marker.
 | `stall hdmi frames` | the HDMI frame count stood still: the display stopped scanning out |
 | `stall hvs1 frames` | the HVS channel 1 frame count stood still |
 | `stall marker` | the marker stood still, once it moved at all (a driver that writes the marker on each flip: no flips) |
-| `gap` | the sampler itself had no record: the VPU was busy |
+| `gap` | the sampler itself had no record for MS or more (and more than 3 periods): the VPU was busy |
 | `flag` | an HVS error bit went from 0 to 1 (underflow, line or frame error, COB low, DMA error); they stay set until written back |
 | `clock` | the ARM clock changed (governor or throttling) |
 
@@ -67,7 +69,7 @@ the hang is on the ARM side (driver or compositor), not in the display.
 |---|---|
 | HVS bits | Linux `vc4_regs.h`, `SCALER_DISPSTAT` and `SCALER_DISPSTATX` (channel 1 feeds pixel valve 2 and HDMI) |
 | Temperature | Linux `bcm2835_thermal.c`: 407 °C − 0.538 °C per step, valid bit 10 |
-| ARM clock | 19.2 MHz × PLLB multiplier, with the feedback prediv and `pllb_arm` / 2 as on the 3B+ and Zero 2 W; an estimate |
+| ARM clock | 19.2 MHz × PLLB multiplier / the ARM channel divider (bits 31:30 of the clock word, rof #67 since Test 530), with the feedback prediv as on the 3B+ and Zero 2 W; an estimate |
 
 ## AXI bus counters
 
