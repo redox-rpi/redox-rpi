@@ -32,7 +32,9 @@ for _ in $(seq 300); do
     grep -aq "sleep 150" "$log" 2>/dev/null && grep -aq "devshd" "$log" && break
     sleep 2
 done
-sleep 10
+# the framebuffer getty comes up after the serial login; keys sent
+# before it are lost
+sleep 30
 
 # QEMU key names, i.e. the keys of a US keyboard.
 sendkeys() {

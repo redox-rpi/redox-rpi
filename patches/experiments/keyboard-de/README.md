@@ -24,6 +24,14 @@ Base patch
   à è ì ò ù, â ê î ô û (and capitals); with space they type themselves;
   with any other key they type themselves and then that key.
 
+Base patch
+[`0043`](base/0043-usbhidd-ISO-keys-and-as-dwc2d-sends-them-redox-rpi-3.patch)
+does the same for `usbhidd`, the keyboard driver behind xHCI (Pi 4 and
+Pi 400): it sent the key left of Enter as `0x56` and the key right of the
+left Shift as `K_APP`. Now it sends `K_BACKSLASH` and `0x56`, as `dwc2d`
+does, so `#` and `< >` work on the Pi 400 keyboard too. For the Pi 400
+build with `--experiment pi400 --experiment keyboard-de`.
+
 An image built with this experiment types German from boot: its
 [`config.toml`](config.toml) adds `/etc/keymap` with `de` and a unit that
 runs `inputd --keymap-file /etc/keymap` once the root file system is up
@@ -62,5 +70,10 @@ rejects `[` even in quotes. It needs no network port.
 - QEMU `raspi3b`, `v0.3.0-dev-765-gc992087+x9ea9` (branch `t36-keymap`,
   today's main): `test-keymap.sh` passes the same way. Pi test with a
   person: #150 in the test plan (replaces #64).
+- QEMU `raspi3b`, `v0.6.0-dev-121-g45a6707c+x5890` (moved from draft PR
+  #132 onto main of 2026-11-20): `test-keymap.sh` passes. The script now
+  waits 30 s instead of 10 s before typing: the framebuffer getty comes up
+  after the serial login, and keys sent before it were lost. `0043`
+  (usbhidd) has no QEMU test: QEMU `raspi4b` has no xHCI.
 
 Details in [test-reports.md](../../../docs/test-reports.md).
