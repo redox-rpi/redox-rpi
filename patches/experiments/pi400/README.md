@@ -19,6 +19,11 @@ Ran on a real Pi 400 on 2026-11-10: network boot to the login prompt.
   PHY) as `network.genet` (step e, #306), and a `mac` line (firmware
   mailbox) in rpi-firmwared's board file. Not tested on the Pi 400 yet.
 - The external-abort fix (#311) is on main as `patches/kernel/0051`.
+- `base/0003`: `bcm2835-sdhcid` drives the SD card slot through EMMC2
+  (#307); on the Pi 3 it exits and `bcm2835-sdhostd` keeps the card.
+- `base/0004`: `rpi-firmwared` power-cycles the card slot at 3.3 V on the
+  Pi 4 and 400 (GPIO expander pins 6 and 4), as Linux does; nothing else
+  in Redox powers the slot.
 
 The root filesystem runs from RAM (`bootloader-live.efi`), as with network
 boot, because there is no EMMC2 driver yet (step f, #307).

@@ -1,0 +1,35 @@
+From 9aa60fbd9464c9c71bce48dcefd1805fb5ee1338 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 09:41:51 +0000
+Subject: [PATCH] bcm2835-sdhcid: no disk without a card (redox-rpi #307)
+
+init() gives up without a card and leaves the size at 0, yet the scheme
+offered disk 0, and every read of it failed and retried (Tests 363, 522,
+527). Offer no disk then.
+---
+ drivers/storage/bcm2835-sdhcid/src/main.rs | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/main.rs b/drivers/storage/bcm2835-sdhcid/src/main.rs
+index 3ed8741d..0c6b0b86 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/main.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
+@@ -158,7 +158,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         sdhci.init();
+     }
+ 
+-    let mut disks = vec![sdhci];
++    // init() gives up without a card and leaves the size at 0: offer no
++    // disk then, instead of a disk 0 whose reads all fail (Test 363, 522).
++    let disks = if driver_block::Disk::size(&sdhci) == 0 {
++        println!("bcm2835-sdhcid: no usable card in the slot, no disk");
++        Vec::new()
++    } else {
++        vec![sdhci]
++    };
+     let mut scheme = DiskScheme::new(
+         Some(daemon),
+         "disk.mmc".to_string(),
+-- 
+2.53.0
+

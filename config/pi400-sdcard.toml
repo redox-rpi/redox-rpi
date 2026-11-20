@@ -1,0 +1,13 @@
+# Redox image for the Raspberry Pi 400 that boots from the SD card, with the
+# root filesystem on the card (not in RAM as with network boot).
+#
+# Build with scripts/build-image.sh --pi400-sdcard, which always adds
+# experiment pi400: the BCM2711 GIC, the SD card on EMMC2 (bcm2835-sdhcid in
+# the initfs), USB behind PCIe and the GENET Ethernet port. Card:
+# scripts/make-sdcard.sh --local <harddrive.img> --board pi4 (U-Boot, then
+# the Redox bootloader from the card, config/config-pi4.txt).
+#
+# Same packages and files as the 3B+ SD card image. The Pi 400 has no
+# headphone jack, so the startup sound logs "failed" and nothing else.
+
+include = ["raspi3bp-sdcard.toml"]

@@ -1,0 +1,17 @@
+# Pi 400 SD card with experiment desktop (scripts/build-image.sh
+# --pi400-sdcard adds this after the experiments): start the desktop at boot,
+# as experiment orbital does, but with desktop's session (welcome window,
+# then the launcher). `desktop` and Super+F2/F3 work as without this.
+
+[[files]]
+path = "/usr/lib/init.d/20_orbital"
+data = """
+requires_weak 10_net.target 20_audiod.service
+nowait VT=3 orbital orblogin /usr/bin/desktop-session
+"""
+
+# Stay on Orbital's VT instead of switching to the text console on VT 2.
+[[files]]
+path = "/usr/lib/init.d/30_console_switch"
+data = """
+"""
