@@ -123,8 +123,8 @@ fn hang_up(master: &File, login_pid: libc::pid_t, done: &AtomicBool) {
 /// makes never reaches exec. The stuck child keeps copies of every socket
 /// devshd had open at fork time, so netstack cannot free them, and the
 /// session thread waits in `spawn()` for good. A normal child is `login`
-/// within milliseconds, so a child still named devshd in two scans 10 s
-/// apart is stuck: kill it. `spawn()` then returns, the session ends and
+/// within milliseconds, so another devshd process seen in two scans 10 s
+/// apart is a stuck fork: kill it. `spawn()` then returns, the session ends and
 /// the sockets are freed.
 fn reap_stuck_forks() {
     let me = std::process::id();
@@ -145,21 +145,21 @@ fn reap_stuck_forks() {
     }
 }
 
-/// PIDs of the processes in a `/scheme/sys/context` listing whose parent
-/// is `parent` and whose name is still devshd. Columns: PID PGID PPID ...
-/// NAME (last); a process has one row per thread.
-fn forks_of(text: &str, parent: u32) -> HashSet<u32> {
+/// PIDs of the other processes named devshd in a `/scheme/sys/context`
+/// listing (PID first, NAME last; one row per thread). The listing shows
+/// PPID 0 for every process, so the parent cannot be checked; only one
+/// devshd runs, so any other devshd is one of its forks.
+fn forks_of(text: &str, me: u32) -> HashSet<u32> {
     let mut pids = HashSet::new();
     for line in text.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 4 {
-            continue;
-        }
-        let (Ok(pid), Ok(ppid)) = (fields[0].parse::<u32>(), fields[2].parse::<u32>()) else {
+        let (Some(first), Some(name)) = (fields.first(), fields.last()) else {
             continue;
         };
-        let name = fields[fields.len() - 1];
-        if ppid == parent && pid != parent && name.rsplit('/').next() == Some("devshd") {
+        let Ok(pid) = first.parse::<u32>() else {
+            continue;
+        };
+        if pid != me && name.rsplit('/').next() == Some("devshd") {
             pids.insert(pid);
         }
     }
@@ -235,15 +235,16 @@ mod tests {
     use super::forks_of;
 
     #[test]
-    fn finds_forks_still_named_devshd() {
-        let text = "PID   PGID  PPID  STAT  CPU  AFFINITY  ACTTIME      SCHTIME  MEM  NAME\n\
-             30    30    1     S     #0   0x1  00:00:01.00  00:00:01.10  2 MB  /usr/bin/devshd\n\
-             30    30    1     S     #0   0x1  00:00:00.10  00:00:00.20  2 MB  /usr/bin/devshd\n\
-             199   30    30    S     #1   0x1  00:00:00.00  00:00:00.01  60 MB  /usr/bin/devshd\n\
-             200   200   30    S     #1   0x1  00:00:00.02  00:00:00.03  1 MB  /usr/bin/login\n\
-             201   201   1     S     #1   0x1  00:00:00.02  00:00:00.03  1 MB  devshd\n";
+    fn finds_other_devshd_processes() {
+        // As seen in QEMU after 1000 connections (#577).
+        let text = "PID   PGID  PPID  STAT  CPU  AFFINITY  ACTTIME     SCHTIME     MEM  NAME\n\
+             30    0     0     UB    #3    F          00:00:07.31 00:00:15.91 39.8 MB 0 B     /usr/bin/devshd\n\
+             30    0     0     US    #3    F          00:00:02.71 00:00:02.47 39.8 MB 0 B     /usr/bin/devshd\n\
+             121   0     0     UB    #3    F          00:00:00.13 00:00:00.19 5.88 MB 0 B     /usr/bin/login\n\
+             1321  0     0     UB    #2    F          00:00:00.00 00:00:00.00 57.6 MB 0 B     /usr/bin/devshd\n\
+             1322  0     0     UB    #2    F          00:00:00.00 00:00:00.00 57.6 MB 0 B     devshd\n";
         let pids = forks_of(text, 30);
-        assert_eq!(pids.len(), 1);
-        assert!(pids.contains(&199));
+        assert_eq!(pids.len(), 2);
+        assert!(pids.contains(&1321) && pids.contains(&1322));
     }
 }
