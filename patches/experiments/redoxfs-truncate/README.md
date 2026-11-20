@@ -25,11 +25,12 @@ the files in the other blocks were never freed, and one block kept pointing
 at a deallocated block. 0002 walks the list oldest block first and writes a
 block again when its link changed.
 
-The hang that came with 0001 (below) is a kernel futex race, not RedoxFS:
-build with experiment `futex-wait-lock` too.
+The hang that came with 0001 (below) is a kernel futex race, not RedoxFS.
+The kernel pin has the upstream fix since the bump of 2026-11-20 (#309);
+before, it took experiment `futex-wait-lock` (now gone) as well.
 
 ```bash
-scripts/build-image.sh --experiment timesync --experiment redoxfs-truncate --experiment futex-wait-lock
+scripts/build-image.sh --experiment timesync --experiment redoxfs-truncate
 ```
 
 Space that was lost before the fix stays lost on that filesystem. On
