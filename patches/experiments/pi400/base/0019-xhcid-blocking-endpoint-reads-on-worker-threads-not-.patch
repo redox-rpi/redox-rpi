@@ -1,0 +1,226 @@
+From 01a5b75382b047a7d38c1a09d4594917ef082cf5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 16:18:39 +0000
+Subject: [PATCH 19/20] xhcid: blocking endpoint reads on worker threads, not
+ in the request loop
+
+xhcid served its scheme requests one after the other
+(scheme_utils::Blocking). A read on an interrupt endpoint (usbhidd's
+transfer_read) ran in line with block_on and returned only when the
+device sent a report, and it held the handle table entry while it
+waited. Until then every other request waited too.
+
+On a Pi 400 the internal keyboard reports every 4 ms (SET_IDLE), so its
+reads return at once. A mouse that refuses SET_IDLE reports only when it
+moves: while it lay still its read blocked xhcid completely, the
+keyboard's reads and usbhubd's port polls included. While it moved, the
+reads took turns: key presses were lost, the mouse got too few reports
+and its motion saturated (redox-rpi #592).
+
+- main.rs: its own request loop, like Blocking, except that a read on
+  an endpoint data handle other than the default control pipe goes to
+  a worker thread, which answers when the transfer completes. Workers
+  stay; one more starts when a read comes in while all of them wait.
+- scheme.rs: a data read drops the handle table guard before it waits.
+  is_blocking_data_handle tells the loop which reads to hand off.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/main.rs        | 121 +++++++++++++++++++++++++--
+ drivers/usb/xhcid/src/xhci/scheme.rs |  22 +++++
+ 2 files changed, 134 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/main.rs b/drivers/usb/xhcid/src/main.rs
+index a4e11686..ef3bce08 100644
+--- a/drivers/usb/xhcid/src/main.rs
++++ b/drivers/usb/xhcid/src/main.rs
+@@ -32,9 +32,8 @@ use std::sync::Arc;
+ use common::MemoryType;
+ use pcid_interface::irq_helpers::{self, pci_try_allocate_interrupt_vector, InterruptVector};
+ use pcid_interface::PciFunctionHandle;
+-use redox_scheme::scheme::register_sync_scheme;
+-use redox_scheme::Socket;
+-use scheme_utils::Blocking;
++use redox_scheme::scheme::{register_sync_scheme, Op, SchemeState, SchemeSync};
++use redox_scheme::{CallerCtx, RequestKind, Response, SignalBehavior, Socket};
+ 
+ use crate::xhci::{InterruptMethod, Xhci};
+ 
+@@ -99,14 +98,13 @@ fn daemon_with_context_size<const N: usize>(
+     log::info!("XHCI {}", pci_config.func.display());
+ 
+     let scheme_name = format!("usb.{}", name);
+-    let socket = Socket::create().expect("xhcid: failed to create usb scheme");
+-    let handler = Blocking::new(Box::new(socket), 16);
++    let socket = Arc::new(Socket::create().expect("xhcid: failed to create usb scheme"));
+ 
+     let hci = Arc::new(
+         Xhci::<N>::new(scheme_name.clone(), address, interrupt_method, pcid_handle)
+             .expect("xhcid: failed to allocate device"),
+     );
+-    register_sync_scheme(handler.socket(), &scheme_name, &mut &*hci)
++    register_sync_scheme(&socket, &scheme_name, &mut &*hci)
+         .expect("xhcid: failed to regsiter scheme to namespace");
+ 
+     daemon.ready();
+@@ -116,9 +114,114 @@ fn daemon_with_context_size<const N: usize>(
+ 
+     hci.poll();
+ 
+-    handler
+-        .process_requests_blocking(&*hci)
+-        .expect("xhcid: failed to process requests");
++    serve_requests(&socket, &hci);
++}
++
++/// A read request handed to a worker thread. The buffer it points to is
++/// the caller's, mapped by the kernel until the response is written, which
++/// the worker does.
++struct BlockingRead(Op, CallerCtx);
++unsafe impl Send for BlockingRead {}
++
++/// The scheme's request loop. It works like scheme_utils::Blocking, one
++/// request after the other, except that a read on an endpoint's data handle
++/// (other than the default control pipe) goes to a worker thread: such a
++/// read waits until the device sends a report. Handled in line, a mouse that
++/// lies still held up every other request, the keyboard's reads and the hub
++/// driver's port polls included (Pi 400, #592).
++fn serve_requests<const N: usize>(socket: &Arc<Socket>, hci: &Arc<Xhci<N>>) -> ! {
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    let (sender, receiver) = crossbeam_channel::unbounded::<BlockingRead>();
++    let idle_workers = Arc::new(AtomicUsize::new(0));
++    let mut state = SchemeState::new();
++
++    loop {
++        let request = match socket.next_request(SignalBehavior::Restart) {
++            Ok(Some(request)) => request,
++            Ok(None) => {
++                log::error!("xhcid: scheme socket closed");
++                std::process::exit(1);
++            }
++            Err(err) => panic!("xhcid: failed to read scheme request: {err}"),
++        };
++        let response = match request.kind() {
++            RequestKind::Call(call) => {
++                let caller = call.caller();
++                match call.op() {
++                    Ok(op) => {
++                        let blocking = matches!(&op, Op::Read(read) if hci.is_blocking_data_handle(read.fd));
++                        if blocking {
++                            if idle_workers.load(Ordering::Acquire) == 0 {
++                                spawn_worker(&receiver, socket, hci, &idle_workers);
++                            }
++                            sender
++                                .send(BlockingRead(op, caller))
++                                .expect("xhcid: worker channel closed");
++                            None
++                        } else {
++                            Some(op.handle_sync(caller, &mut &**hci, &mut state))
++                        }
++                    }
++                    Err(call) => Some(Response::new(Err(syscall::Error::new(syscall::ENOSYS)), call)),
++                }
++            }
++            RequestKind::OnClose { id } => {
++                (&**hci).on_close(id);
++                None
++            }
++            RequestKind::SendFd(request) => {
++                let result = (&**hci).on_sendfd(&request);
++                Some(Response::new(result, request))
++            }
++            RequestKind::RecvFd(request) => {
++                let result = (&**hci).on_recvfd(&request);
++                Some(Response::open_dup_like(result, request))
++            }
++            RequestKind::Cancellation(_)
++            | RequestKind::OnDetach { .. }
++            | RequestKind::MsyncMsg
++            | RequestKind::MunmapMsg
++            | RequestKind::MmapMsg => None,
++        };
++        if let Some(response) = response {
++            socket
++                .write_response(response, SignalBehavior::Restart)
++                .expect("xhcid: failed to write scheme response");
++        }
++    }
++}
++
++/// One more worker for blocking reads. Workers stay; a new one starts only
++/// when a read comes in while all of them wait for their devices.
++fn spawn_worker<const N: usize>(
++    receiver: &crossbeam_channel::Receiver<BlockingRead>,
++    socket: &Arc<Socket>,
++    hci: &Arc<Xhci<N>>,
++    idle_workers: &Arc<std::sync::atomic::AtomicUsize>,
++) {
++    use std::sync::atomic::Ordering;
++
++    let receiver = receiver.clone();
++    let socket = Arc::clone(socket);
++    let hci = Arc::clone(hci);
++    let idle_workers = Arc::clone(idle_workers);
++    idle_workers.fetch_add(1, Ordering::AcqRel);
++    std::thread::spawn(move || {
++        let mut state = SchemeState::new();
++        loop {
++            let BlockingRead(op, caller) = match receiver.recv() {
++                Ok(read) => read,
++                Err(_) => return,
++            };
++            idle_workers.fetch_sub(1, Ordering::AcqRel);
++            let response = op.handle_sync(caller, &mut &*hci, &mut state);
++            socket
++                .write_response(response, SignalBehavior::Restart)
++                .expect("xhcid: failed to write scheme response");
++            idle_workers.fetch_add(1, Ordering::AcqRel);
++        }
++    });
+ }
+ 
+ /// How the registers behind BAR0 are mapped: as device memory on aarch64,
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 67ed0ab3..f2f96430 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -422,6 +422,21 @@ impl<const N: usize> Xhci<N> {
+     }
+ }
+ 
++impl<const N: usize> Xhci<N> {
++    /// Whether `fd` is a data handle of an endpoint other than the default
++    /// control pipe: a read on it waits for the device (an interrupt IN
++    /// endpoint answers only when the device has a report).
++    pub fn is_blocking_data_handle(&self, fd: usize) -> bool {
++        match self.handles.get(&fd) {
++            Some(guard) => matches!(
++                *guard,
++                Handle::Endpoint(_, endp_num, EndpointHandleTy::Data) if endp_num.get() != 0
++            ),
++            None => false,
++        }
++    }
++}
++
+ impl<const N: usize> SchemeSync for &Xhci<N> {
+     fn scheme_root(&mut self) -> Result<usize> {
+         let fd = self.next_handle.fetch_add(1, atomic::Ordering::Relaxed);
+@@ -552,6 +567,13 @@ impl<const N: usize> SchemeSync for &Xhci<N> {
+             buf.as_ptr(),
+             buf.len()
+         );
++        // A data read waits until the device sends something, which for an
++        // interrupt endpoint can take as long as the user leaves the mouse
++        // alone. Don't hold the handle table entry while it waits.
++        if let Handle::Endpoint(port_num, endp_num, EndpointHandleTy::Data) = *guard {
++            drop(guard);
++            return block_on(self.on_read_endp_data(port_num, endp_num, buf));
++        }
+         match &mut *guard {
+             Handle::TopLevel(ref src_buf)
+             | Handle::Port(_, ref src_buf)
+-- 
+2.53.0
+
