@@ -14,8 +14,13 @@ audiotop [-i seconds] [-n rounds] [-c file.csv] [-f stats-file] [-q]
 Example, during a 10 s tone:
 
 ```text
-audiotop -i 2 -n 6 -c /tmp/audio.csv & tone -s 10 > /scheme/audio
+tone -s 10 > /scheme/audio &
+audiotop -i 2 -n 6 -c /tmp/audio.csv
 ```
+
+Put the `&` at the end of its own command. In Ion, `a & b` on one line
+runs only `a`, in the background, and drops `b` (Test 511, checked in
+QEMU).
 
 Line markers:
 
