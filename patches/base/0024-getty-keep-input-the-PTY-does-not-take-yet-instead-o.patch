@@ -23,7 +23,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 7 deletions(-)
 
 diff --git a/getty/src/main.rs b/getty/src/main.rs
-index c649783..d2f4d27 100644
+index 820367a..513e058 100644
 --- a/getty/src/main.rs
 +++ b/getty/src/main.rs
 @@ -60,13 +60,33 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
@@ -63,7 +63,7 @@ index c649783..d2f4d27 100644
                      Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
                      Err(_) => panic!("getty: failed to read from TTY"),
                  };
-@@ -78,7 +98,7 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+@@ -77,7 +97,7 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
              let mut packet = [0; 4096];
              loop {
                  let count = match master.read(&mut packet) {
@@ -72,7 +72,7 @@ index c649783..d2f4d27 100644
                      Ok(count) => count,
                      Err(ref err) if err.raw_os_error() == Some(EAGAIN) => break,
                      Err(_) => panic!("getty: failed to read from master TTY"),
-@@ -90,18 +110,24 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
+@@ -89,18 +109,24 @@ pub fn handle(event_queue: &mut mio::Poll, tty: &mut File, master: &mut File, pr
                  }
              }
          }

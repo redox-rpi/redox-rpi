@@ -113,5 +113,5 @@ index 9320af9..7ffe442 100644
          let power_on_delay = Duration::from_millis(u64::from(desc[5]) * 2);
          // wHubCharacteristics, bits 1:0: 00 all ports powered together,
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

@@ -24,7 +24,7 @@ others, SSDP, all IPv6) no longer wakes dwc2d and netstack (#126, #216).
  3 files changed, 146 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index aedc682..8860b23 100644
+index b6f6aaa..1ca1694 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
 @@ -30,6 +30,11 @@ const ID_REV: u16 = 0x000;
@@ -160,7 +160,7 @@ index aedc682..8860b23 100644
 +    }
 +}
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index d8fe534..21ab343 100644
+index 795edc9..402a7a3 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -102,6 +102,12 @@ struct UsbNet {

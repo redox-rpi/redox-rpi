@@ -14,10 +14,10 @@ failed with ENOENT. Strip the own scheme like validate_new_link does.
  1 file changed, 27 insertions(+), 21 deletions(-)
 
 diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
-index 5117390..e1a8ea8 100644
+index f23cd82..9afdebd 100644
 --- a/src/mount/redox/scheme.rs
 +++ b/src/mount/redox/scheme.rs
-@@ -754,27 +754,6 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -755,27 +755,6 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
              .ok_or(Error::new(EINVAL))?
              .canonical();
  
@@ -45,7 +45,7 @@ index 5117390..e1a8ea8 100644
          let old_start_ptr = if old_path.is_relative() {
              old_start_ptr
          } else {
-@@ -787,6 +766,33 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -788,6 +767,33 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
              TreePtr::root()
          };
  

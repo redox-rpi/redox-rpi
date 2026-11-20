@@ -21,7 +21,7 @@ thread once a second.
 
 diff --git a/drivers/usb/dwc2d/src/aside.rs b/drivers/usb/dwc2d/src/aside.rs
 new file mode 100644
-index 00000000..f964d45c
+index 0000000..f964d45
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/aside.rs
 @@ -0,0 +1,80 @@
@@ -106,66 +106,106 @@ index 00000000..f964d45c
 +    INPUT_LOG_ON.load(Ordering::Relaxed)
 +}
 diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
-index 7e55d02a..66ce54b8 100644
+index 7e55d02..66ce54b 100644
 --- a/drivers/usb/dwc2d/src/hid.rs
 +++ b/drivers/usb/dwc2d/src/hid.rs
-@@ -6,3 +6,3 @@ use std::time::{Duration, Instant};
+@@ -4,7 +4,7 @@
+ use std::time::{Duration, Instant};
+ 
  use common::dma::Dma;
 -use inputd::ProducerHandle;
 +use crate::aside::Input;
  use orbclient::KeyEvent;
-@@ -113,3 +113,3 @@ pub struct Keyboard {
+ 
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+@@ -111,7 +111,7 @@ pub struct Keyboard {
+     pid: u32,
+     /// The last boot protocol report: modifier bits, reserved, six keys.
      report: [u8; 8],
 -    input: ProducerHandle,
 +    input: Input,
      next_poll: Instant,
-@@ -121,3 +121,3 @@ impl Keyboard {
+     /// The key that repeats while held and when it repeats next.
+     repeat: Option<(u8, Instant)>,
+@@ -119,7 +119,7 @@ pub struct Keyboard {
+ 
+ impl Keyboard {
      pub fn new(hc: Dwc2, f: KeyboardFunction) -> Option<Self> {
 -        let input = ProducerHandle::new()
 +        let input = Input::new()
              .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+             .ok()?;
+         Some(Self {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index a9b077e2..d8fe5348 100644
+index a9b077e..d8fe534 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -17,2 +17,3 @@ use fdt::Fdt;
+@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
+ 
+ use fdt::Fdt;
  
 +mod aside;
  mod dwc2;
-@@ -571,2 +572,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ mod ecm;
+ mod enumerate;
+@@ -569,6 +570,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
+         .expect("dwc2d: failed to subscribe to the timer");
      hotplug.arm(HOTPLUG_INTERVAL);
 +    aside::spawn_files();
  
-@@ -613,4 +615,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let mut scheme = NetworkScheme::new(move || net, daemon, name.to_string());
+     events
+@@ -611,8 +613,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Hotplug => {
+                 hotplug.fired();
                  let mut cycled = Vec::new();
 -                if let Ok(request) = std::fs::read_to_string(CYCLE_REQUEST) {
 -                    let _ = std::fs::remove_file(CYCLE_REQUEST);
 +                if let Ok(request) = aside::cycle_request() {
                      let net = scheme.adapter_mut();
-@@ -676,3 +677,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let request = request.trim();
+                     let port = match request {
+@@ -674,7 +675,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     }
+                 }
                  if let Some(m) = mouse.as_mut() {
 -                    m.log = std::path::Path::new(INPUT_LOG).exists();
 +                    m.log = aside::input_log();
                  }
+                 net.refresh_links(&mut bus);
+                 net.select(&mut bus);
 diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
-index 1dc70c7f..4704ac59 100644
+index 1dc70c7..4704ac5 100644
 --- a/drivers/usb/dwc2d/src/mouse.rs
 +++ b/drivers/usb/dwc2d/src/mouse.rs
-@@ -11,3 +11,3 @@ use std::time::{Duration, Instant};
+@@ -9,7 +9,7 @@
+ use std::time::{Duration, Instant};
+ 
  use common::dma::Dma;
 -use inputd::ProducerHandle;
 +use crate::aside::Input;
  use orbclient::{ButtonEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
-@@ -370,3 +370,3 @@ pub struct Mouse {
+ 
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
+@@ -368,7 +368,7 @@ pub struct Mouse {
+     pid: u32,
+     buttons: [bool; 3],
      position: Option<(i32, i32)>,
 -    input: ProducerHandle,
 +    input: Input,
      next_poll: Instant,
-@@ -378,3 +378,3 @@ impl Mouse {
+     /// Print every event (tests without a person).
+     pub log: bool,
+@@ -376,7 +376,7 @@ pub struct Mouse {
+ 
+ impl Mouse {
      pub fn new(hc: Dwc2, f: MouseFunction) -> Option<Self> {
 -        let input = ProducerHandle::new()
 +        let input = Input::new()
              .inspect_err(|err| println!("dwc2d: cannot open the input scheme: {err}"))
+             .ok()?;
+         Some(Self {
 -- 
 2.53.0
 

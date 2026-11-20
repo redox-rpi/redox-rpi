@@ -23,10 +23,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 drivers/net/testnetd/src/responder.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 4bded67..6051ff9 100644
+index 2765f34..a92ee94 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -51,6 +51,7 @@ members = [
+@@ -52,6 +52,7 @@ members = [
      "drivers/net/e1000d",
      "drivers/net/ixgbed",
      "drivers/net/rtl8139d",
@@ -35,14 +35,18 @@ index 4bded67..6051ff9 100644
      "drivers/net/virtio-netd",
  
 diff --git a/Makefile b/Makefile
-index 263a5c4..0af422a 100644
+index 5b1c7af..162104b 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -19,3 +19,3 @@ INITFS_DRIVERS_BINS = nvmed virtio-blkd  virtio-gpud
+@@ -17,7 +17,7 @@ INITFS_BINS = ipcd init logd ramfs randd udsd zerod \
+ 	pcid pcid-spawner rtcd vesad
+ INITFS_DRIVERS_BINS = nvmed virtio-blkd virtio-gpud
  BASE_BINS = fbcond getty inputd pcid pcid-spawner redoxerd audiod dhcpd ptyd netstack nbdd
 -DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
 +DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
  	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Cargo.toml))
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
 diff --git a/drivers/net/testnetd/Cargo.toml b/drivers/net/testnetd/Cargo.toml
 new file mode 100644
 index 0000000..49459b3
@@ -491,3 +495,6 @@ index 0000000..4fcd55a
 +        assert_eq!(r.counters.foreign_src, 0);
 +    }
 +}
+-- 
+2.53.0
+

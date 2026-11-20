@@ -31,22 +31,30 @@ sleeping: a 10 µs nanosleep never came back in QEMU.
  create mode 100644 init.initfs.d/40_bcm2835-gpiod.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 4bded67..5d73326 100644
+index a92ee94..c2a4ae2 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -56,2 +56,3 @@ members = [
+@@ -56,6 +56,7 @@ members = [
+     "drivers/net/rtl8168d",
+     "drivers/net/virtio-netd",
  
 +    "drivers/bcm2835-gpiod",
      "drivers/rpi-firmwared",
+     "drivers/redoxerd",
+ 
 diff --git a/Makefile b/Makefile
-index 263a5c4..7ad0f20 100644
+index 162104b..9e75ea8 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -23,7 +23,7 @@ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Carg
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
+ 
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod
  endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-gpiod/Cargo.toml b/drivers/bcm2835-gpiod/Cargo.toml
 new file mode 100644
 index 0000000..ce60ee0
@@ -604,7 +612,14 @@ diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
 index 89351d0..286d5fa 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -6,2 +6,3 @@ requires_weak = [
+@@ -4,6 +4,7 @@ requires_weak = [
+     "10_lived.service",
+     "20_graphics.target",
      "40_ps2d.service",
 +    "40_bcm2835-gpiod.service",
      "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+-- 
+2.53.0
+

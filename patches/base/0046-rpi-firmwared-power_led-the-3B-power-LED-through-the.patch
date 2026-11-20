@@ -13,7 +13,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 65 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 2961555b..58758304 100644
+index 2961555..5875830 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -19,6 +19,10 @@
@@ -97,7 +97,7 @@ index 2961555b..58758304 100644
  /// bits 4-11 are the type, bits 20-22 the memory size.
  fn decode_revision(revision: u32) -> Option<(&'static str, &'static str)> {
 diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
-index 737398ef..39ad30e7 100644
+index 737398e..39ad30e 100644
 --- a/drivers/rpi-firmwared/src/mbox.rs
 +++ b/drivers/rpi-firmwared/src/mbox.rs
 @@ -44,6 +44,8 @@ pub const TAG_GET_MAX_TEMPERATURE: u32 = 0x0003_000a;

@@ -15,10 +15,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 25 insertions(+), 2 deletions(-)
 
 diff --git a/src/main.rs b/src/main.rs
-index 160c13b..217903d 100644
+index bf8fc6b..8798153 100644
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -108,6 +108,9 @@ pub struct KernelArgs {
+@@ -123,6 +123,9 @@ pub struct KernelArgs {
      bootstrap_size: u64,
  }
  
@@ -28,7 +28,7 @@ index 160c13b..217903d 100644
  /// How long the mode selection waits for a key before it continues.
  const AUTO_SELECT_SECONDS: u64 = 5;
  
-@@ -550,7 +553,7 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
+@@ -582,7 +585,7 @@ fn main(os: &impl Os) -> (usize, u64, KernelArgs) {
      };
  
      let (kernel, kernel_entry) = {
@@ -78,5 +78,5 @@ index 5956e56..e57b595 100644
      match key.ScanCode {
          0 => match key.UnicodeChar {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

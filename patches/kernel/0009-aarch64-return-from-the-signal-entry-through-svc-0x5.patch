@@ -14,7 +14,7 @@ pending unblocked signals right away.
  2 files changed, 46 insertions(+)
 
 diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
-index 29ac806c..75c10726 100644
+index 29ac806..75c1072 100644
 --- a/src/arch/aarch64/interrupt/exception.rs
 +++ b/src/arch/aarch64/interrupt/exception.rs
 @@ -16,6 +16,10 @@ exception_stack!(synchronous_exception_at_el1_with_sp0, |stack| {
@@ -40,7 +40,7 @@ index 29ac806c..75c10726 100644
                  let scratch = &stack.scratch;
                  let elr = stack.iret.elr_el1;
 diff --git a/src/context/signal.rs b/src/context/signal.rs
-index cd6215c6..8cbb579f 100644
+index 5ca64b3..e900b0d 100644
 --- a/src/context/signal.rs
 +++ b/src/context/signal.rs
 @@ -22,6 +22,44 @@ pub fn set_saved_syscall_ret(ret: usize, token: &mut CleanLockToken) {

@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 1 deletion(-)
 
 diff --git a/src/devices/uart_pl011.rs b/src/devices/uart_pl011.rs
-index ba4cceb0..555df62d 100644
+index ba4cceb..555df62 100644
 --- a/src/devices/uart_pl011.rs
 +++ b/src/devices/uart_pl011.rs
 @@ -93,6 +93,11 @@ bitflags! {

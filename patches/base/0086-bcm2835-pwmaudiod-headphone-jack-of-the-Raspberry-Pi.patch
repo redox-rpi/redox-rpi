@@ -41,10 +41,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-pwmaudiod.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index 91aac71f..b1e3c330 100644
+index b2eb2c9..4789463 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -55,6 +55,7 @@ members = [
+@@ -56,6 +56,7 @@ members = [
      "drivers/net/rtl8168d",
      "drivers/net/virtio-netd",
  
@@ -53,11 +53,11 @@ index 91aac71f..b1e3c330 100644
      "drivers/bcm2835-i2cd",
      "drivers/bcm2835-spid",
 diff --git a/Makefile b/Makefile
-index 6e4d9cfc..29a06463 100644
+index 5d1ef1a..13fb135 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -21,7 +21,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
- 	usbctl usbhidd usbhubd usbscsid virtio-netd xhcid
+@@ -23,7 +23,7 @@ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Carg
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
  
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
@@ -67,7 +67,7 @@ index 6e4d9cfc..29a06463 100644
  ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/audio/bcm2835-pwmaudiod/Cargo.toml b/drivers/audio/bcm2835-pwmaudiod/Cargo.toml
 new file mode 100644
-index 00000000..f492b06e
+index 0000000..f492b06
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/Cargo.toml
 @@ -0,0 +1,19 @@
@@ -92,7 +92,7 @@ index 00000000..f492b06e
 +workspace = true
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/dma.rs b/drivers/audio/bcm2835-pwmaudiod/src/dma.rs
 new file mode 100644
-index 00000000..807f6340
+index 0000000..807f634
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/dma.rs
 @@ -0,0 +1,230 @@
@@ -328,7 +328,7 @@ index 00000000..807f6340
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/main.rs b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 new file mode 100644
-index 00000000..ac023dfb
+index 0000000..ac023df
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/main.rs
 @@ -0,0 +1,649 @@
@@ -983,7 +983,7 @@ index 00000000..ac023dfb
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
 new file mode 100644
-index 00000000..49e98682
+index 0000000..49e9868
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/pwm.rs
 @@ -0,0 +1,321 @@
@@ -1310,7 +1310,7 @@ index 00000000..49e98682
 +}
 diff --git a/drivers/audio/bcm2835-pwmaudiod/src/ring.rs b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
 new file mode 100644
-index 00000000..585c96c3
+index 0000000..585c96c
 --- /dev/null
 +++ b/drivers/audio/bcm2835-pwmaudiod/src/ring.rs
 @@ -0,0 +1,145 @@
@@ -1460,7 +1460,7 @@ index 00000000..585c96c3
 +    }
 +}
 diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
-index 2c05be86..7d5ae36a 100644
+index 2c05be8..7d5ae36 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
 @@ -7,6 +7,7 @@ requires_weak = [
@@ -1473,7 +1473,7 @@ index 2c05be86..7d5ae36a 100644
      "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-pwmaudiod.service b/init.initfs.d/41_bcm2835-pwmaudiod.service
 new file mode 100644
-index 00000000..0fff6d57
+index 0000000..0fff6d5
 --- /dev/null
 +++ b/init.initfs.d/41_bcm2835-pwmaudiod.service
 @@ -0,0 +1,9 @@

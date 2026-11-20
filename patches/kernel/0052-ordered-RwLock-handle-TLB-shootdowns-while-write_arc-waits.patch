@@ -2,11 +2,14 @@ From: chaos session <noreply@anthropic.com>
 Subject: [PATCH] ordered RwLock: handle TLB shootdowns while write_arc waits (issue #207)
 
 ---
+ src/sync/ordered.rs | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
 diff --git a/src/sync/ordered.rs b/src/sync/ordered.rs
-index 8042bad3..62a7f2b2 100644
+index 51587c0..91d00e3 100644
 --- a/src/sync/ordered.rs
 +++ b/src/sync/ordered.rs
-@@ -555,7 +555,21 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -556,7 +556,21 @@ impl<L: Level, T> RwLock<L, T> {
  
      // Unsafe due to not using token, currently required by context::switch
      pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
@@ -29,3 +32,6 @@ index 8042bad3..62a7f2b2 100644
          ArcRwLockWriteGuard {
              rwlock: self.clone(),
          }
+-- 
+2.53.0
+

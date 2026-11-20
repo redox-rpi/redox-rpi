@@ -22,10 +22,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 drivers/usb/dwc2d/src/ecm.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index c10be2e..3823eb2 100644
+index a041112..3a590af 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -727,6 +727,7 @@ version = "0.1.0"
+@@ -717,6 +717,7 @@ version = "0.1.0"
  dependencies = [
   "common",
   "daemon",
@@ -545,5 +545,5 @@ index cfe08ae..1df22c0 100644
  pub const HCINT_XFER_COMPL: u32 = 1 << 0;
  pub const HCINT_CH_HLTD: u32 = 1 << 1;
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

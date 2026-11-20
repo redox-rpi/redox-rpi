@@ -11,10 +11,10 @@ level as third metadata word so the option numbers do not mix.
  1 file changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
-index 78ead85b..b3d0834b 100644
+index a237b97..d5d7e78 100644
 --- a/src/platform/redox/socket.rs
 +++ b/src/platform/redox/socket.rs
-@@ -23,7 +23,7 @@ use crate::{
+@@ -22,7 +22,7 @@ use crate::{
              EPIPE, EPROTONOSUPPORT,
          },
          fcntl,
@@ -23,7 +23,7 @@ index 78ead85b..b3d0834b 100644
          signal::SIGPIPE,
          sys_select::timeval,
          sys_socket::{
-@@ -1009,6 +1009,22 @@ impl PalSocket for Sys {
+@@ -1054,6 +1054,22 @@ impl PalSocket for Sys {
                  }
              }
          }
@@ -47,5 +47,5 @@ index 78ead85b..b3d0834b 100644
          todo_skip!(
              0,
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

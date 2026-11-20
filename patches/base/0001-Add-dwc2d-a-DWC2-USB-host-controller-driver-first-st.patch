@@ -28,10 +28,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/40_dwc2d.service
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 9aaac3a..c10be2e 100644
+index bc96c6e..a041112 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -721,6 +721,17 @@ dependencies = [
+@@ -711,6 +711,17 @@ dependencies = [
   "linux-raw-sys 0.9.4",
  ]
  
@@ -50,20 +50,22 @@ index 9aaac3a..c10be2e 100644
  name = "e1000d"
  version = "0.1.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 67666be7..9066b557 100644
+index 202fd17..ecd23be 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -68,4 +68,5 @@ members = [
+@@ -69,6 +69,7 @@ members = [
+     "drivers/storage/virtio-fsd",
  
      "drivers/usb/xhcid",
 +    "drivers/usb/dwc2d",
      "drivers/usb/usbctl",
      "drivers/usb/usbhubd",
+ 
 diff --git a/Makefile b/Makefile
-index 6bdec71..6b454de 100644
+index 6c2970f..7af9f01 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -27,7 +27,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+@@ -37,7 +37,7 @@ ifeq (,$(filter i586-unknown-redox i686-unknown-redox,$(TARGET)))
  endif
  
  ifeq ($(TARGET),aarch64-unknown-redox)
@@ -617,5 +619,5 @@ index 0000000..e9e0ecf
 +cmd = "dwc2d"
 +type = "notify"
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

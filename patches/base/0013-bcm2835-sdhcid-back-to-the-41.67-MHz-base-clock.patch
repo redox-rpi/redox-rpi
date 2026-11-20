@@ -12,7 +12,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 4 insertions(+), 5 deletions(-)
 
 diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
-index f84d571..cb4db51 100644
+index 0a5b86a..0df0636 100644
 --- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 +++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 @@ -124,11 +124,10 @@ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
@@ -32,5 +32,5 @@ index f84d571..cb4db51 100644
  /// Attempts for a block transfer, with a reset of the command and data
  /// lines in between.
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

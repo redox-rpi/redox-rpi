@@ -17,10 +17,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 14 insertions(+), 16 deletions(-)
 
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 2251f6f..d2ef7af 100644
+index 8b153f6..4880c6f 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
-@@ -815,28 +815,26 @@ where
+@@ -829,28 +829,26 @@ where
                  },
              };
  
@@ -64,5 +64,5 @@ index 2251f6f..d2ef7af 100644
          };
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

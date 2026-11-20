@@ -14,10 +14,10 @@ before writing, as a program writing 1 MiB at once would.
  1 file changed, 11 insertions(+), 2 deletions(-)
 
 diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
-index d6ddeb2..7efed08 100644
+index 914f36c..33d882e 100644
 --- a/src/mount/redox/scheme.rs
 +++ b/src/mount/redox/scheme.rs
-@@ -85,6 +85,10 @@ impl<D: Disk> Handle<D> {
+@@ -84,6 +84,10 @@ impl<D: Disk> Handle<D> {
      }
  }
  
@@ -28,7 +28,7 @@ index d6ddeb2..7efed08 100644
  /// Consecutive small writes to one handle, not yet written.
  ///
  /// Every write is its own transaction, and a transaction rewrites the whole
-@@ -92,6 +96,11 @@ impl<D: Disk> Handle<D> {
+@@ -91,6 +95,11 @@ impl<D: Disk> Handle<D> {
  /// path to it, the allocator log and the header. Writing a file in 4 KiB
  /// calls this way sends about 28 times the data to the disk. Collecting the
  /// calls and writing whole records brings that close to 1.
@@ -40,7 +40,7 @@ index d6ddeb2..7efed08 100644
  struct PendingWrite {
      id: usize,
      /// Where the next write of the run must start to join it.
-@@ -1048,8 +1057,8 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -1049,8 +1058,8 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
                  }
                  pending.data.extend_from_slice(buf);
                  pending.offset += buf.len() as u64;

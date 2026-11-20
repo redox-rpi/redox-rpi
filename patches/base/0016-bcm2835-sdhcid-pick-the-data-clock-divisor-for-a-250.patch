@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
-index a4d1115..0352df6 100644
+index f1e8804..14afb6e 100644
 --- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 +++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 @@ -162,6 +162,8 @@ const SCR_SUPP_CCS: u32 = 0x0000_0001;
@@ -44,5 +44,5 @@ index a4d1115..0352df6 100644
          }
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

@@ -15,12 +15,12 @@ data is due.
  2 files changed, 148 insertions(+), 8 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index 70156b0..f733e8e 100644
+index 6ef1e15..86da9bb 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
 @@ -2,9 +2,16 @@ use redox_scheme::{
-     scheme::{Op, SchemeState, SchemeSync},
      RequestKind, Response, SignalBehavior, Socket,
+     scheme::{Op, SchemeState, SchemeSync},
  };
 -use std::io;
 +use std::fs::{File, OpenOptions};
@@ -199,7 +199,7 @@ index 70156b0..f733e8e 100644
                      scheme.flush_pending();
                  }
 diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
-index 13717e5..eae3a99 100644
+index 7f2b5ed..914f36c 100644
 --- a/src/mount/redox/scheme.rs
 +++ b/src/mount/redox/scheme.rs
 @@ -3,7 +3,7 @@ use std::marker::PhantomData;
@@ -211,7 +211,7 @@ index 13717e5..eae3a99 100644
  
  use alloc::borrow::Cow;
  use libredox::Fd;
-@@ -98,6 +98,8 @@ struct PendingWrite {
+@@ -97,6 +97,8 @@ struct PendingWrite {
      offset: u64,
      /// Data from `offset - data.len()` on, not yet written.
      data: Vec<u8>,
@@ -220,7 +220,7 @@ index 13717e5..eae3a99 100644
  }
  
  pub struct FileScheme<'sock, D: Disk> {
-@@ -175,6 +177,14 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -174,6 +176,14 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
          }
      }
  
@@ -235,7 +235,7 @@ index 13717e5..eae3a99 100644
      /// Whether a read of handle `id` has to wait for the collected data:
      /// only a read of the same file does. Copying a file reads the source
      /// between the writes to the copy, and those reads must not cut the
-@@ -1027,6 +1037,9 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -1034,6 +1044,9 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
          let small = (buf.len() as u64) < RECORD_SIZE;
          if let Some(pending) = self.pending.as_mut() {
              if small && pending.id == id && pending.offset == offset {
@@ -245,7 +245,7 @@ index 13717e5..eae3a99 100644
                  pending.data.extend_from_slice(buf);
                  pending.offset += buf.len() as u64;
                  // Write when a record is complete or enough has come together.
-@@ -1049,6 +1062,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -1056,6 +1069,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
                  id,
                  offset: offset + written as u64,
                  data: Vec::new(),

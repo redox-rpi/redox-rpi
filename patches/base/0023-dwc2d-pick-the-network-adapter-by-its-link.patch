@@ -177,5 +177,5 @@ index 1f3e2a8..9c8ae8c 100644
  
  pub struct Rtl8152 {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

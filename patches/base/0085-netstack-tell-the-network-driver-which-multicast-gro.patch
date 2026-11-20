@@ -186,7 +186,7 @@ index 8499e04..5df6d11 100644
  }
  
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index b778a21..d72322c 100644
+index e251300..93d9829 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -41,6 +41,7 @@ pub struct EthernetLink {
@@ -217,7 +217,7 @@ index b778a21..d72322c 100644
      fn send_to<F>(&mut self, dst: EthernetAddress, size: usize, f: F, proto: EthernetProtocol)
      where
          F: FnOnce(&mut [u8]),
-@@ -404,6 +411,21 @@ impl LinkDevice for EthernetLink {
+@@ -403,6 +410,21 @@ impl LinkDevice for EthernetLink {
          &self.name
      }
  
@@ -263,10 +263,10 @@ index e36e331..409b375 100644
  
  #[derive(Default)]
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index e5cd6d3..451e648 100644
+index 114fb27..43941f1 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -68,6 +68,9 @@ pub struct Smolnetd {
+@@ -69,6 +69,9 @@ pub struct Smolnetd {
      tcp_scheme: TcpScheme,
      icmp_scheme: IcmpScheme,
      netcfg_scheme: NetCfgScheme,
@@ -276,7 +276,7 @@ index e5cd6d3..451e648 100644
  }
  
  impl Smolnetd {
-@@ -166,6 +169,7 @@ impl Smolnetd {
+@@ -167,6 +170,7 @@ impl Smolnetd {
                  Rc::clone(&route_table),
                  Rc::clone(&devices),
              )?,
@@ -284,7 +284,7 @@ index e5cd6d3..451e648 100644
          })
      }
  
-@@ -174,6 +178,8 @@ impl Smolnetd {
+@@ -175,6 +179,8 @@ impl Smolnetd {
          let name = adapter.name.clone();
          self.devices.borrow_mut().push(ethernet_link(adapter));
          self.netcfg_scheme.interface_added(&name);
@@ -293,7 +293,7 @@ index e5cd6d3..451e648 100644
      }
  
      pub fn on_network_scheme_event(&mut self) -> Result<()> {
-@@ -265,6 +271,7 @@ impl Smolnetd {
+@@ -266,6 +272,7 @@ impl Smolnetd {
              }
          };
  
@@ -301,7 +301,7 @@ index e5cd6d3..451e648 100644
          self.notify_sockets()?;
  
          Ok(::std::cmp::min(
-@@ -273,6 +280,27 @@ impl Smolnetd {
+@@ -274,6 +281,27 @@ impl Smolnetd {
          ))
      }
  
@@ -329,7 +329,7 @@ index e5cd6d3..451e648 100644
      fn notify_sockets(&mut self) -> Result<()> {
          self.ip_scheme.notify_sockets()?;
          self.udp_scheme.notify_sockets()?;
-@@ -286,6 +314,9 @@ fn ethernet_link(adapter: Adapter) -> EthernetLink {
+@@ -287,6 +315,9 @@ fn ethernet_link(adapter: Adapter) -> EthernetLink {
          File::from_raw_fd(adapter.file.into_raw() as RawFd)
      });
      link.set_mac_address(adapter.mac);
@@ -339,7 +339,7 @@ index e5cd6d3..451e648 100644
      link
  }
  
-@@ -482,6 +513,10 @@ where
+@@ -477,6 +508,10 @@ where
          Ok(result)
      }
  
@@ -347,14 +347,14 @@ index e5cd6d3..451e648 100644
 +        self.scheme.multicast_groups()
 +    }
 +
+     #[expect(clippy::useless_conversion, reason = "cur_time.tv_nsec is i32 on i586")]
      pub fn notify_sockets(&mut self) -> Result<()> {
          let cur_time = libredox::call::clock_gettime(flag::CLOCK_MONOTONIC)
-             .map_err(|e| Error::from_syscall_error(e.into(), "Can't get time"))?;
 diff --git a/netstack/src/scheme/socket.rs b/netstack/src/scheme/socket.rs
-index 8bf1d7d..f337f7b 100644
+index aa5aa69..41f47be 100644
 --- a/netstack/src/scheme/socket.rs
 +++ b/netstack/src/scheme/socket.rs
-@@ -316,6 +316,11 @@ where
+@@ -324,6 +324,11 @@ where
          Ok(scheme)
      }
  

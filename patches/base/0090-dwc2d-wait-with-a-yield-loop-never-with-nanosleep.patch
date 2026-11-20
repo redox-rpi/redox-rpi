@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 41 insertions(+), 29 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index dfc5d19a..4e26ae53 100644
+index dfc5d19..4e26ae5 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -1,7 +1,6 @@
@@ -102,7 +102,7 @@ index dfc5d19a..4e26ae53 100644
          Ok(match (self.read(HPRT0) >> HPRT0_SPD_SHIFT) & HPRT0_SPD_MASK {
              0 => Speed::High,
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 7ffe442b..5574e170 100644
+index 7ffe442..5574e17 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -2,12 +2,11 @@
@@ -201,7 +201,7 @@ index 7ffe442b..5574e170 100644
          }
          Ok(())
 diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
-index aedc6822..b6f6aaad 100644
+index aedc682..b6f6aaa 100644
 --- a/drivers/usb/dwc2d/src/lan78xx.rs
 +++ b/drivers/usb/dwc2d/src/lan78xx.rs
 @@ -5,13 +5,13 @@
@@ -247,7 +247,7 @@ index aedc6822..b6f6aaad 100644
      Ok((mac, link))
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index d8fe5348..795edc97 100644
+index d8fe534..795edc9 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -509,7 +509,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
@@ -269,7 +269,7 @@ index d8fe5348..795edc97 100644
              Err(err) => {
                  println!("dwc2d: enumeration failed: {err:?}");
 diff --git a/drivers/usb/dwc2d/src/rtl8152.rs b/drivers/usb/dwc2d/src/rtl8152.rs
-index 54d6f806..c958f5d2 100644
+index 54d6f80..c958f5d 100644
 --- a/drivers/usb/dwc2d/src/rtl8152.rs
 +++ b/drivers/usb/dwc2d/src/rtl8152.rs
 @@ -8,13 +8,13 @@

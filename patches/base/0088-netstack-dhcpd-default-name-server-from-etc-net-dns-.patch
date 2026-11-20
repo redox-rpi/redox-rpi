@@ -17,7 +17,7 @@ For redox-rpi #290 (relibc reads the name server from netcfg now):
  2 files changed, 67 insertions(+), 2 deletions(-)
 
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
-index 1eb4f1d2..57299401 100644
+index 1eb4f1d..5729940 100644
 --- a/dhcpd/src/main.rs
 +++ b/dhcpd/src/main.rs
 @@ -106,6 +106,8 @@ struct Lease {
@@ -109,7 +109,7 @@ index 1eb4f1d2..57299401 100644
  }
  
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index fcd5d415..dae64a9a 100644
+index 94b122d..ae87afb 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -103,6 +103,37 @@ fn mk_root_node(

@@ -14,7 +14,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 22 insertions(+), 6 deletions(-)
 
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
-index a215312..4c20be3 100644
+index eae5579..f29541c 100644
 --- a/dhcpd/src/main.rs
 +++ b/dhcpd/src/main.rs
 @@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
@@ -53,7 +53,7 @@ index a215312..4c20be3 100644
          "failed to set write timeout"
      );
  
-@@ -457,9 +463,19 @@ fn main() {
+@@ -456,9 +462,19 @@ fn main() {
          }
      }
  
@@ -77,5 +77,5 @@ index a215312..4c20be3 100644
  }
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

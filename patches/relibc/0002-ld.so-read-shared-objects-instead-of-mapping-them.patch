@@ -13,10 +13,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+), 12 deletions(-)
 
 diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
-index 06cd439..1ef106f 100644
+index 1fb2244..9747ef5 100644
 --- a/src/ld_so/linker.rs
 +++ b/src/ld_so/linker.rs
-@@ -101,18 +101,23 @@ impl MmapFile {
+@@ -103,18 +103,23 @@ impl MmapFile {
      }
  
      fn from_fd(fd: i32, size: usize) -> core::result::Result<Self, Errno> {
@@ -53,5 +53,5 @@ index 06cd439..1ef106f 100644
  
      fn anonymous(size: usize) -> core::result::Result<Self, Errno> {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

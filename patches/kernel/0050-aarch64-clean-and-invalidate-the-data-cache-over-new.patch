@@ -9,7 +9,7 @@ Subject: [PATCH] aarch64: clean and invalidate the data cache over new
  1 file changed, 29 insertions(+)
 
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index 74ef9e74..61b2f24e 100644
+index 4930295..675a971 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
 @@ -1356,6 +1356,15 @@ impl Grant {

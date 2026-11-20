@@ -10,9 +10,14 @@ the old table speculatively after the TLBI and keep those entries. The
 next address space then sees pages of the previous one, e.g. code where
 its TLS block should be (redox-rpi #332).
 ---
+ rmm/src/arch/aarch64.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/rmm/src/arch/aarch64.rs b/rmm/src/arch/aarch64.rs
+index b8f220f..94d958e 100644
 --- a/rmm/src/arch/aarch64.rs
 +++ b/rmm/src/arch/aarch64.rs
-@@ -92,6 +92,12 @@
+@@ -92,6 +92,12 @@ impl Arch for AArch64Arch {
                      asm!("msr ttbr1_el1, {0}", in(reg) address.data());
                  }
              }
@@ -27,3 +32,4 @@ its TLS block should be (redox-rpi #332).
      }
 -- 
 2.53.0
+

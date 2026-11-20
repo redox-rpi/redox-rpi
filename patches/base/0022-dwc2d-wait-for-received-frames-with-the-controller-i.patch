@@ -343,5 +343,5 @@ index fc7eaa2..afca2ca 100644
  
  /// PHY clock for full/low speed: 30/60 MHz (UTMI+ PHY, as on the Pi).
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

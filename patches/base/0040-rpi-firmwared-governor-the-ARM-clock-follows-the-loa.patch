@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/drivers/rpi-firmwared/src/governor.rs b/drivers/rpi-firmwared/src/governor.rs
 new file mode 100644
-index 00000000..a51ab2e4
+index 0000000..a51ab2e
 --- /dev/null
 +++ b/drivers/rpi-firmwared/src/governor.rs
 @@ -0,0 +1,263 @@
@@ -288,7 +288,7 @@ index 00000000..a51ab2e4
 +    }
 +}
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 4a7a018a..2961555b 100644
+index 4a7a018..2961555 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -14,11 +14,16 @@

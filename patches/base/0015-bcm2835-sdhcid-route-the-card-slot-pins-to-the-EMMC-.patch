@@ -14,17 +14,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 75 insertions(+)
 
 diff --git a/drivers/storage/bcm2835-sdhcid/src/main.rs b/drivers/storage/bcm2835-sdhcid/src/main.rs
-index 09c3ece..af953c6 100644
+index 107a13b..5cec0cd 100644
 --- a/drivers/storage/bcm2835-sdhcid/src/main.rs
 +++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
-@@ -71,5 +71,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -75,6 +75,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     println!("ioremap 0x{:08x} to 0x{:08x} 2222", reg.address, addr);
      let mut sdhci = sd::SdHostCtrl::new(addr);
      unsafe {
 +        route_sd_pins(reg_addr);
          sdhci.init();
          /*
          let mut buf1 = [0u32; 512];
-@@ -126,3 +127,77 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -131,3 +132,77 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      }
      process::exit(0);
  }
@@ -103,5 +104,5 @@ index 09c3ece..af953c6 100644
 +    );
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

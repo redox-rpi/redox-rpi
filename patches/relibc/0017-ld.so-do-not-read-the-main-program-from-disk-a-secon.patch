@@ -16,10 +16,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 90 insertions(+), 3 deletions(-)
 
 diff --git a/src/ld_so/linker.rs b/src/ld_so/linker.rs
-index 77c96072..d0d77241 100644
+index 7545526..d555db1 100644
 --- a/src/ld_so/linker.rs
 +++ b/src/ld_so/linker.rs
-@@ -121,6 +121,89 @@ impl MmapFile {
+@@ -123,6 +123,89 @@ impl MmapFile {
          Ok(this)
      }
  
@@ -109,7 +109,7 @@ index 77c96072..d0d77241 100644
      fn anonymous(size: usize) -> core::result::Result<Self, Errno> {
          let ptr = unsafe {
              Sys::mmap(
-@@ -876,7 +959,7 @@ impl Linker {
+@@ -909,7 +992,7 @@ impl Linker {
          }
  
          let path = self.search_object(name, parent_runpath)?;
@@ -118,7 +118,7 @@ index 77c96072..d0d77241 100644
          let data = file.data();
          let (obj, tcb_master, elf) = DSO::new(
              &path,
-@@ -999,7 +1082,7 @@ impl Linker {
+@@ -1032,7 +1115,7 @@ impl Linker {
          Err(DlError::NotFound)
      }
  
@@ -127,7 +127,7 @@ index 77c96072..d0d77241 100644
          let debug = self.config.debug_flags.contains(DebugFlags::SEARCH);
  
          let path_c = CString::new(path).map_err(|err| {
-@@ -1012,7 +1095,11 @@ impl Linker {
+@@ -1045,7 +1128,11 @@ impl Linker {
  
          let file = {
              let flags = fcntl::O_RDONLY | fcntl::O_CLOEXEC;

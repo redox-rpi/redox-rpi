@@ -20,10 +20,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/src/header/netdb/mod.rs b/src/header/netdb/mod.rs
-index b731551f..e7a3ecbb 100644
+index f559e44..ac208c2 100644
 --- a/src/header/netdb/mod.rs
 +++ b/src/header/netdb/mod.rs
-@@ -167,6 +167,12 @@ enum AddrInfoErr {
+@@ -179,6 +179,12 @@ enum AddrInfoErr {
  }
  impl From<Errno> for AddrInfoErr {
      fn from(value: Errno) -> Self {
@@ -36,7 +36,7 @@ index b731551f..e7a3ecbb 100644
          value.sync();
          Self::EAI_SYSTEM
      }
-@@ -1006,7 +1012,10 @@ fn getaddrinfo_inner(
+@@ -641,7 +647,10 @@ fn getaddrinfo_inner(
          }
      }
  

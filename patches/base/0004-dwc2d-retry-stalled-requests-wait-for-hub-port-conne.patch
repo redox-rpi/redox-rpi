@@ -110,5 +110,5 @@ index a532417..e6da8d3 100644
              }
              self.request(hub, max_packet, speed, 0x23, REQ_CLEAR_FEATURE, C_PORT_CONNECTION, port, 0)?;
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

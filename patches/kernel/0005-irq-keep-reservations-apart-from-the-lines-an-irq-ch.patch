@@ -56,5 +56,5 @@ index b320d1f..f591df3 100644
              IRQ_CHIP.irq_enable(index as u32);
          } else {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

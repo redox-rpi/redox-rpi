@@ -267,5 +267,5 @@ index 929f829..e112026 100644
          println!("bcm2835-sdhostd: no usable card: {err}");
          process::exit(1);
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

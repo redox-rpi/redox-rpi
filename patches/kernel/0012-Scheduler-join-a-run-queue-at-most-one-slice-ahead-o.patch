@@ -9,10 +9,14 @@ until they wrapped past u64::MAX, and a runnable context was never picked.
 On wakeup and when stolen, clamp vtime to at most one slice ahead of the
 queue v.
 ---
-diff -ruN a/src/context/switch.rs b/src/context/switch.rs
---- a/src/context/switch.rs	2026-11-01 09:07:01.512266225 +0000
-+++ b/src/context/switch.rs	2026-11-01 09:07:01.521063630 +0000
-@@ -397,6 +397,14 @@
+ src/context/switch.rs | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index a86ad1b..97777fd 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -403,6 +403,14 @@ fn schedule(
                  let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
                  let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
  
@@ -27,10 +31,11 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
                  if !guard.is_active {
                      guard.is_active = true;
                      run_queue.total_weight += weight;
-@@ -870,6 +878,15 @@
+@@ -878,6 +886,15 @@ fn select_next_context(
+ 
                      let scaled_slice = guard.rem_slice / weight;
                      guard.vd = guard.vtime.saturating_add(scaled_slice);
- 
++
 +                    // As on wakeup: join at most one slice ahead of this queue's v.
 +                    let max_vtime = contexts_data
 +                        .v
@@ -39,7 +44,9 @@ diff -ruN a/src/context/switch.rs b/src/context/switch.rs
 +                        guard.vtime = max_vtime;
 +                        guard.vd = guard.vtime.saturating_add(scaled_slice);
 +                    }
-+
+                     contexts_data.total_weight = contexts_data.total_weight.saturating_add(weight);
+ 
                      if final_winner.is_none() && !prev_runnable {
-                         final_winner = Some((guard, addr_space));
-                     } else {
+-- 
+2.53.0
+

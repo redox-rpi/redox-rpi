@@ -25,22 +25,30 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-spid.service
 
 diff --git a/Cargo.toml b/Cargo.toml
-index d8958bc..fe17604 100644
+index abb4457..b2eb2c9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -58,2 +58,3 @@ members = [
+@@ -58,6 +58,7 @@ members = [
+ 
+     "drivers/bcm2835-gpiod",
      "drivers/bcm2835-i2cd",
 +    "drivers/bcm2835-spid",
      "drivers/rpi-firmwared",
+     "drivers/redoxerd",
+ 
 diff --git a/Makefile b/Makefile
-index 4692458..00c38a1 100644
+index 74c0824..5d1ef1a 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -23,7 +23,7 @@ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Carg
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
+ 
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid
  endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-spid/Cargo.toml b/drivers/bcm2835-spid/Cargo.toml
 new file mode 100644
 index 0000000..e4ac465
@@ -506,10 +514,14 @@ diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
 index d4f0993..2c05be8 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -8,2 +8,3 @@ requires_weak = [
+@@ -6,6 +6,7 @@ requires_weak = [
+     "40_ps2d.service",
+     "40_bcm2835-gpiod.service",
      "41_bcm2835-i2cd.service",
 +    "41_bcm2835-spid.service",
      "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-spid.service b/init.initfs.d/41_bcm2835-spid.service
 new file mode 100644
 index 0000000..47a6f02
@@ -525,3 +537,6 @@ index 0000000..47a6f02
 +[service]
 +cmd = "bcm2835-spid"
 +type = { scheme = "spi" }
+-- 
+2.53.0
+

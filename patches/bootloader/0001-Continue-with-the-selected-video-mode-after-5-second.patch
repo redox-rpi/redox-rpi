@@ -16,10 +16,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 65 insertions(+), 16 deletions(-)
 
 diff --git a/src/main.rs b/src/main.rs
-index 489a7fe..160c13b 100644
+index 28d1e24..bf8fc6b 100644
 --- a/src/main.rs
 +++ b/src/main.rs
-@@ -108,6 +108,9 @@ pub struct KernelArgs {
+@@ -123,6 +123,9 @@ pub struct KernelArgs {
      bootstrap_size: u64,
  }
  
@@ -29,7 +29,7 @@ index 489a7fe..160c13b 100644
  fn select_mode(
      os: &impl Os,
      output_i: usize,
-@@ -163,12 +166,19 @@ fn select_mode(
+@@ -178,12 +181,19 @@ fn select_mode(
          println!("Press l to  enable live mode");
      }
      println!("Press e to edit boot environment");
@@ -49,7 +49,7 @@ index 489a7fe..160c13b 100644
      while !modes.is_empty() {
          let mut row = 0;
          let mut col = 0;
-@@ -187,7 +197,14 @@ fn select_mode(
+@@ -202,7 +212,14 @@ fn select_mode(
          }
  
          // Read keypress
@@ -157,5 +157,5 @@ index f55d8e8..5956e56 100644
  where
      F: FnMut() -> Result<T>,
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

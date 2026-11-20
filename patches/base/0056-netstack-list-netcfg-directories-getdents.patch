@@ -8,7 +8,7 @@ Subject: [PATCH] netstack: list netcfg directories (getdents)
  1 file changed, 31 insertions(+)
 
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index f344e28..362b110 100644
+index 4476aeb..9c6822a 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -14,6 +14,7 @@ use redox_scheme::{CallerCtx, OpenResult, Socket};
@@ -19,7 +19,7 @@ index f344e28..362b110 100644
  use syscall::flag::{MODE_DIR, MODE_FILE};
  use syscall::schemev2::NewFdFlags;
  use syscall::{
-@@ -532,6 +533,36 @@ impl SchemeSync for NetCfgSchemeInner {
+@@ -625,6 +626,36 @@ impl SchemeSync for NetCfgSchemeInner {
          Ok(i)
      }
  
@@ -57,5 +57,5 @@ index f344e28..362b110 100644
          let handle = self.handles.get_mut(fd)?;
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

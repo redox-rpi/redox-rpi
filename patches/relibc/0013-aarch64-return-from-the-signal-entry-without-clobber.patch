@@ -15,7 +15,7 @@ second signal could arrive while the end of the signal entry ran.
  2 files changed, 77 insertions(+), 52 deletions(-)
 
 diff --git a/redox-rt/src/arch/aarch64.rs b/redox-rt/src/arch/aarch64.rs
-index a489b050..f20cfad5 100644
+index a489b05..f20cfad 100644
 --- a/redox-rt/src/arch/aarch64.rs
 +++ b/redox-rt/src/arch/aarch64.rs
 @@ -400,70 +400,72 @@ asmfunction!(__relibc_internal_sigentry: ["
@@ -144,7 +144,7 @@ index a489b050..f20cfad5 100644
      pctl_pending = const (offset_of!(SigProcControl, pending)),
      pctl_actions = const (offset_of!(SigProcControl, actions)),
 diff --git a/redox-rt/src/signal.rs b/redox-rt/src/signal.rs
-index 19e7edb6..5d3a4152 100644
+index 19e7edb..5d3a415 100644
 --- a/redox-rt/src/signal.rs
 +++ b/redox-rt/src/signal.rs
 @@ -270,6 +270,24 @@ unsafe fn inner(stack: &mut SigStack) {

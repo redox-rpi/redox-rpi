@@ -17,16 +17,17 @@ request, and on close.
  2 files changed, 113 insertions(+), 4 deletions(-)
 
 diff --git a/src/mount/redox/mod.rs b/src/mount/redox/mod.rs
-index cd1462c..20d3ee0 100644
+index c8f29a2..ddb83d6 100644
 --- a/src/mount/redox/mod.rs
 +++ b/src/mount/redox/mod.rs
-@@ -1,5 +1,5 @@
+@@ -1,6 +1,6 @@
  use redox_scheme::{
+     RequestKind, Response, SignalBehavior, Socket,
 -    scheme::{SchemeState, SchemeSync},
 +    scheme::{Op, SchemeState, SchemeSync},
-     RequestKind, Response, SignalBehavior, Socket,
  };
  use std::io;
+ use std::path::Path;
 @@ -46,6 +46,7 @@ where
                  match req.kind() {
                      RequestKind::Call(r) => r,
@@ -64,19 +65,19 @@ index cd1462c..20d3ee0 100644
          if !socket.write_response(response, SignalBehavior::Restart)? {
              break;
 diff --git a/src/mount/redox/scheme.rs b/src/mount/redox/scheme.rs
-index 5117390..d0a3a51 100644
+index 9afdebd..dc89654 100644
 --- a/src/mount/redox/scheme.rs
 +++ b/src/mount/redox/scheme.rs
-@@ -29,7 +29,7 @@ use syscall::MunmapFlags;
+@@ -28,7 +28,7 @@ use syscall::schemev2::NewFdFlags;
  
  use redox_path::RedoxPath;
  
--use crate::{Disk, FileSystem, Node, Transaction, TreeData, TreePtr, BLOCK_SIZE};
-+use crate::{Disk, FileSystem, Node, Transaction, TreeData, TreePtr, BLOCK_SIZE, RECORD_SIZE};
+-use crate::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreeData, TreePtr};
++use crate::{BLOCK_SIZE, Disk, FileSystem, Node, RECORD_SIZE, Transaction, TreeData, TreePtr};
  
  use super::resource::{DirResource, Entry, FileMmapInfo, FileResource, Resource};
  
-@@ -85,6 +85,21 @@ impl<D: Disk> Handle<D> {
+@@ -84,6 +84,21 @@ impl<D: Disk> Handle<D> {
      }
  }
  
@@ -98,7 +99,7 @@ index 5117390..d0a3a51 100644
  pub struct FileScheme<'sock, D: Disk> {
      scheme_name: RedoxScheme<'sock>,
      mounted_path: String,
-@@ -98,6 +113,11 @@ pub struct FileScheme<'sock, D: Disk> {
+@@ -97,6 +112,11 @@ pub struct FileScheme<'sock, D: Disk> {
      other_scheme_fd_map: BTreeMap<u32, Fd>,
  
      proc_creds_capability: Fd,
@@ -110,7 +111,7 @@ index 5117390..d0a3a51 100644
  }
  
  impl<'sock, D: Disk> FileScheme<'sock, D> {
-@@ -124,9 +144,48 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
+@@ -123,9 +143,48 @@ impl<'sock, D: Disk> FileScheme<'sock, D> {
                      0,
                  )?
              },
@@ -159,7 +160,7 @@ index 5117390..d0a3a51 100644
      /// Resolve a symbolic link of given `node`. `full_path` must be non-canonicalized path from root node.
      fn resolve_symlink<'a>(
          scheme_name: &RedoxScheme<'sock>,
-@@ -939,8 +998,37 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -946,8 +1005,37 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
          _ctx: &CallerCtx,
      ) -> Result<usize> {
          // println!("Write {}, {:X} {}", id, buf.as_ptr() as usize, buf.len());
@@ -198,7 +199,7 @@ index 5117390..d0a3a51 100644
      }
  
      fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
-@@ -1085,6 +1173,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -1092,6 +1180,7 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
  
      fn fsync(&mut self, id: usize, _ctx: &CallerCtx) -> Result<()> {
          // println!("Fsync {}", id);
@@ -206,7 +207,7 @@ index 5117390..d0a3a51 100644
          let file = Handle::get_resource_mut(self.handles.get_mut(&id))?;
          let fmaps = &mut self.fmap;
  
-@@ -1141,6 +1230,13 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
+@@ -1148,6 +1237,13 @@ impl<'sock, D: Disk> SchemeSync for FileScheme<'sock, D> {
      }
  
      fn on_close(&mut self, id: usize) {

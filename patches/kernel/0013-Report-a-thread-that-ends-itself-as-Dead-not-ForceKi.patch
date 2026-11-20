@@ -12,11 +12,11 @@ pthread_exit ended with SIGKILL instead of 0. Mark such a thread with
 exiting_itself as well and report it as Dead, as before that patch.
 ---
  src/context/context.rs |  5 +++++
- src/scheme/proc.rs     | 15 ++++++++++++---
- 2 files changed, 17 insertions(+), 3 deletions(-)
+ src/scheme/proc.rs     | 25 ++++++++++++++++++++-----
+ 2 files changed, 25 insertions(+), 5 deletions(-)
 
 diff --git a/src/context/context.rs b/src/context/context.rs
-index f63da92..2855506 100644
+index e189337..f9e4883 100644
 --- a/src/context/context.rs
 +++ b/src/context/context.rs
 @@ -164,6 +164,10 @@ pub struct Context {
@@ -30,7 +30,7 @@ index f63da92..2855506 100644
      pub fmap_ret: Option<Frame>,
      /// Priority
      pub prio: usize,
-@@ -251,6 +255,7 @@ impl Context {
+@@ -252,6 +256,7 @@ impl Context {
              is_active: false,
              queue_key: None,
              being_sigkilled: false,
@@ -39,10 +39,10 @@ index f63da92..2855506 100644
  
              euid: 0,
 diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
-index a804931..bc1343b 100644
+index 7afc6e8..05f461f 100644
 --- a/src/scheme/proc.rs
 +++ b/src/scheme/proc.rs
-@@ -1322,7 +1322,11 @@ impl ContextHandle {
+@@ -1326,7 +1326,11 @@ impl ContextHandle {
                              // does not return, so the references the syscall path still
                              // holds (the file description of this handle, and through it
                              // the handle and this context) would never be dropped.
@@ -55,7 +55,7 @@ index a804931..bc1343b 100644
                              crate::percpu::PercpuBlock::current()
                                  .switch_internals
                                  .being_sigkilled
-@@ -1413,7 +1417,11 @@ impl ContextHandle {
+@@ -1417,7 +1421,11 @@ impl ContextHandle {
                              // does not return, so the references the syscall path still
                              // holds (the file description of this handle, and through it
                              // the handle and this context) would never be dropped.
@@ -68,17 +68,29 @@ index a804931..bc1343b 100644
                              crate::percpu::PercpuBlock::current()
                                  .switch_internals
                                  .being_sigkilled
-@@ -1546,8 +1554,9 @@ impl ContextHandle {
+@@ -1552,12 +1560,19 @@ impl ContextHandle {
+             } // TODO: Replace write() with SYS_SENDFD?
+             ContextHandle::Status { .. } => {
                  let status = {
-                     let context = context.read(token.token());
-                     match context.status {
+-                    let (status, being_sigkilled) = {
++                    let (status, being_sigkilled, exiting_itself) = {
+                         let context = context.read(token.token());
+-                        (context.status.clone(), context.being_sigkilled)
++                        (
++                            context.status.clone(),
++                            context.being_sigkilled,
++                            context.exiting_itself,
++                        )
+                     };
+                     match status {
+-                        Status::Runnable | Status::Dead { excp: None } if being_sigkilled => {
 +                        // A thread that ended itself exited normally (Dead below).
-                         Status::Runnable | Status::Dead { excp: None }
--                            if context.being_sigkilled =>
-+                            if context.being_sigkilled && !context.exiting_itself =>
-                         {
++                        Status::Runnable | Status::Dead { excp: None }
++                            if being_sigkilled && !exiting_itself =>
++                        {
                              ContextStatus::ForceKilled
                          }
+                         Status::Dead { excp: None } => ContextStatus::Dead,
 -- 
 2.53.0
 

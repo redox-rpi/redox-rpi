@@ -8,10 +8,14 @@ unwrap in futex_wake_ptr panics in the exiting thread ("panicked at
 src/sync/mod.rs:103:54: ... Errno(14)", then brk in relibc_panic). Treat a
 failed wake as zero threads woken, as callers on Linux do.
 ---
-diff -ruN a/src/sync/mod.rs b/src/sync/mod.rs
---- a/src/sync/mod.rs	2026-11-01 02:07:23.266757348 +0000
-+++ b/src/sync/mod.rs	2026-11-01 02:07:23.277691460 +0000
-@@ -99,8 +99,11 @@
+ src/sync/mod.rs | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/src/sync/mod.rs b/src/sync/mod.rs
+index 630922b..c37bb3b 100644
+--- a/src/sync/mod.rs
++++ b/src/sync/mod.rs
+@@ -99,8 +99,11 @@ impl FutexAtomicTy for AtomicI32 {
  }
  
  pub unsafe fn futex_wake_ptr(ptr: *mut impl FutexTy, n: i32) -> usize {
@@ -25,3 +29,6 @@ diff -ruN a/src/sync/mod.rs b/src/sync/mod.rs
  }
  pub unsafe fn futex_wait_ptr<T: FutexTy>(
      ptr: *mut T,
+-- 
+2.53.0
+

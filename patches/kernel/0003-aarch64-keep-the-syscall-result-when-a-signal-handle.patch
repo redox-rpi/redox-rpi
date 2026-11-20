@@ -10,7 +10,7 @@ Subject: [PATCH] aarch64: keep the syscall result when a signal handler is set
  2 files changed, 24 insertions(+)
 
 diff --git a/src/arch/aarch64/interrupt/exception.rs b/src/arch/aarch64/interrupt/exception.rs
-index 793a6191..29ac806c 100644
+index 793a619..29ac806 100644
 --- a/src/arch/aarch64/interrupt/exception.rs
 +++ b/src/arch/aarch64/interrupt/exception.rs
 @@ -190,12 +190,22 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
@@ -37,7 +37,7 @@ index 793a6191..29ac806c 100644
  
              ty => {
 diff --git a/src/context/signal.rs b/src/context/signal.rs
-index 07953e04..cd6215c6 100644
+index 5ec2647..5ca64b3 100644
 --- a/src/context/signal.rs
 +++ b/src/context/signal.rs
 @@ -8,6 +8,20 @@ use crate::{

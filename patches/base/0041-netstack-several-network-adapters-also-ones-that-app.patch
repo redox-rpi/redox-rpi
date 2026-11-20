@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
 new file mode 100644
-index 00000000..8499e041
+index 0000000..8499e04
 --- /dev/null
 +++ b/netstack/src/adapters.rs
 @@ -0,0 +1,146 @@
@@ -178,7 +178,7 @@ index 00000000..8499e041
 +    scheme.starts_with("network.wlan")
 +}
 diff --git a/netstack/src/main.rs b/netstack/src/main.rs
-index 084c3d3d..e7f02c0f 100644
+index 8649841..6926f10 100644
 --- a/netstack/src/main.rs
 +++ b/netstack/src/main.rs
 @@ -2,15 +2,15 @@
@@ -198,10 +198,10 @@ index 084c3d3d..e7f02c0f 100644
  use crate::scheme::Smolnetd;
  
 +mod adapters;
- mod buffer_pool;
  mod error;
  mod link;
-@@ -19,48 +19,15 @@ mod port_set;
+ mod logger;
+@@ -18,48 +18,15 @@ mod port_set;
  mod router;
  mod scheme;
  
@@ -257,7 +257,7 @@ index 084c3d3d..e7f02c0f 100644
  
      trace!("opening ip scheme socket");
      let ip_fd = Socket::nonblock()
-@@ -100,11 +67,11 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -99,11 +66,11 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
      let event_queue = EventQueue::<EventSource>::new()
          .map_err(|e| anyhow!("failed to create event queue: {:?}", e))?;
  
@@ -274,7 +274,7 @@ index 084c3d3d..e7f02c0f 100644
  
      event_queue
          .subscribe(time_fd.raw(), EventSource::Time, EventFlags::READ)
-@@ -147,8 +114,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -146,8 +113,7 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
          .context("failed to listen to netcfg scheme events")?;
  
      let mut smolnetd = Smolnetd::new(
@@ -284,7 +284,7 @@ index 084c3d3d..e7f02c0f 100644
          ip_fd,
          udp_fd,
          tcp_fd,
-@@ -158,8 +124,25 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -157,8 +123,25 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
      )
      .context("smolnetd: failed to initialize smolnetd")?;
  
@@ -310,14 +310,14 @@ index 084c3d3d..e7f02c0f 100644
      let all = {
          use EventSource::*;
          [Network, Time, IpScheme, UdpScheme, IcmpScheme, NetcfgScheme].map(Ok)
-@@ -167,11 +150,24 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
+@@ -166,11 +149,24 @@ fn run(daemon: daemon::Daemon) -> Result<()> {
  
      for event_res in all
          .into_iter()
 -        .chain(event_queue.map(|r| r.map(|e| e.user_data)))
 +        .chain(event_queue.iter().map(|r| r.map(|e| e.user_data)))
      {
-         match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
+         let _ = match event_res.map_err(|e| anyhow!("event result is error: {:?}", e))? {
              EventSource::Network => smolnetd.on_network_scheme_event(),
 -            EventSource::Time => smolnetd.on_time_event(),
 +            EventSource::Time => {
@@ -338,10 +338,10 @@ index 084c3d3d..e7f02c0f 100644
              EventSource::UdpScheme => smolnetd.on_udp_scheme_event(),
              EventSource::TcpScheme => smolnetd.on_tcp_scheme_event(),
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index c7d7916e..e5cd6d34 100644
+index ce7e3db..114fb27 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -14,7 +14,7 @@ use smoltcp::phy::Tracer;
+@@ -15,7 +15,7 @@ use smoltcp::phy::Tracer;
  use smoltcp::socket::AnySocket;
  use smoltcp::time::{Duration, Instant};
  use smoltcp::wire::{
@@ -350,7 +350,7 @@ index c7d7916e..e5cd6d34 100644
  };
  use syscall::data::TimeSpec;
  use syscall::{self, Error as SyscallError};
-@@ -24,6 +24,7 @@ use self::ip::IpScheme;
+@@ -25,6 +25,7 @@ use self::ip::IpScheme;
  use self::netcfg::NetCfgScheme;
  use self::tcp::TcpScheme;
  use self::udp::UdpScheme;
@@ -358,7 +358,7 @@ index c7d7916e..e5cd6d34 100644
  use crate::error::{Error, Result};
  use crate::link::ethernet::EthernetLink;
  use crate::link::loopback::LoopbackDevice;
-@@ -55,6 +56,7 @@ fn getcfg(key: &str) -> Result<String> {
+@@ -56,6 +57,7 @@ fn getcfg(key: &str) -> Result<String> {
  
  pub struct Smolnetd {
      router_device: Tracer<Router>,
@@ -366,9 +366,9 @@ index c7d7916e..e5cd6d34 100644
      iface: Interface,
      time_file: File,
  
-@@ -75,8 +77,7 @@ impl Smolnetd {
-     pub const MAX_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
+@@ -76,8 +78,7 @@ impl Smolnetd {
  
+     #[expect(clippy::too_many_arguments, reason = "all needed")]
      pub fn new(
 -        network_file: Fd,
 -        hardware_addr: EthernetAddress,
@@ -376,7 +376,7 @@ index c7d7916e..e5cd6d34 100644
          ip_file: Socket,
          udp_file: Socket,
          tcp_file: Socket,
-@@ -119,15 +120,13 @@ impl Smolnetd {
+@@ -120,15 +121,13 @@ impl Smolnetd {
              "127.0.0.1".parse().unwrap(),
          ));
  
@@ -396,7 +396,7 @@ index c7d7916e..e5cd6d34 100644
              iface: Rc::clone(&iface),
              router_device: network_device,
              socket_set: Rc::clone(&socket_set),
-@@ -170,6 +169,13 @@ impl Smolnetd {
+@@ -171,6 +170,13 @@ impl Smolnetd {
          })
      }
  
@@ -410,7 +410,7 @@ index c7d7916e..e5cd6d34 100644
      pub fn on_network_scheme_event(&mut self) -> Result<()> {
          self.poll()?;
          Ok(())
-@@ -275,6 +281,14 @@ impl Smolnetd {
+@@ -276,6 +282,14 @@ impl Smolnetd {
      }
  }
  
@@ -426,7 +426,7 @@ index c7d7916e..e5cd6d34 100644
      let fevent_response = Response::post_fevent(id, flags);
      match socket.write_response(fevent_response, SignalBehavior::Restart) {
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index f344e285..1e0780b5 100644
+index 2a31cc7..4476aeb 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -120,6 +120,7 @@ fn mk_root_node(
@@ -624,8 +624,8 @@ index f344e285..1e0780b5 100644
 +    }
 +
      pub fn on_scheme_event(&mut self) -> Result<()> {
-         loop {
-             match self
+         while let ControlFlow::Continue(()) = self
+             .handler
 -- 
 2.53.0
 

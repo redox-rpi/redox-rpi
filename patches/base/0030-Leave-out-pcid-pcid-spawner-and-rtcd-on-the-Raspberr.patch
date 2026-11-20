@@ -21,7 +21,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 22 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/hwd/src/main.rs b/drivers/hwd/src/main.rs
-index 79360e34..0654fd01 100644
+index 79360e3..0654fd0 100644
 --- a/drivers/hwd/src/main.rs
 +++ b/drivers/hwd/src/main.rs
 @@ -37,8 +37,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
@@ -39,7 +39,7 @@ index 79360e34..0654fd01 100644
      daemon.ready();
  
 diff --git a/init.d/00_pcid-spawner.service b/init.d/00_pcid-spawner.service
-index 8ba6fc6c..ad7a78e5 100644
+index 8ba6fc6..ad7a78e 100644
 --- a/init.d/00_pcid-spawner.service
 +++ b/init.d/00_pcid-spawner.service
 @@ -1,5 +1,7 @@
@@ -51,7 +51,7 @@ index 8ba6fc6c..ad7a78e5 100644
  [service]
  cmd = "pcid-spawner"
 diff --git a/init.initfs.d/00_rtcd.service b/init.initfs.d/00_rtcd.service
-index ffe8ea2e..4b1199d3 100644
+index ffe8ea2..4b1199d 100644
 --- a/init.initfs.d/00_rtcd.service
 +++ b/init.initfs.d/00_rtcd.service
 @@ -1,6 +1,8 @@
@@ -64,7 +64,7 @@ index ffe8ea2e..4b1199d3 100644
  [service]
  cmd = "rtcd"
 diff --git a/init.initfs.d/40_pcid-spawner-initfs.service b/init.initfs.d/40_pcid-spawner-initfs.service
-index 6945b9ea..080b8e02 100644
+index 6945b9e..080b8e0 100644
 --- a/init.initfs.d/40_pcid-spawner-initfs.service
 +++ b/init.initfs.d/40_pcid-spawner-initfs.service
 @@ -1,6 +1,8 @@
@@ -77,7 +77,7 @@ index 6945b9ea..080b8e02 100644
  [service]
  cmd = "pcid-spawner"
 diff --git a/init/src/unit.rs b/init/src/unit.rs
-index 98053cb2..97a5dfa3 100644
+index 2050651..50e7c23 100644
 --- a/init/src/unit.rs
 +++ b/init/src/unit.rs
 @@ -125,6 +125,7 @@ pub struct UnitInfo {
@@ -96,8 +96,8 @@ index 98053cb2..97a5dfa3 100644
                  },
                  kind: UnitKind::LegacyScript { script: script.0 },
              });
-@@ -246,6 +248,15 @@ impl Unit {
-             }
+@@ -244,6 +246,15 @@ impl Unit {
+             return false;
          }
  
 +        if let Some(condition_board_not) = &self.info.condition_board_not {

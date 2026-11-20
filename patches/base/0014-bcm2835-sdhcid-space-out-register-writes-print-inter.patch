@@ -14,7 +14,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 68 insertions(+)
 
 diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
-index cb4db51..a4d1115 100644
+index 0df0636..f1e8804 100644
 --- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 +++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
 @@ -45,6 +45,40 @@ pub(crate) unsafe fn wait_msec(mut n: usize) {
@@ -249,5 +249,5 @@ index cb4db51..a4d1115 100644
  }
  
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

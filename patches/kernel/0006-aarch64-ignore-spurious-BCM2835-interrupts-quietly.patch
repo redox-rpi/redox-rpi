@@ -74,5 +74,5 @@ index adc5b55..1331ab4 100644
          println!("unexpected irq num {}", hwirq);
          // IDs 1020..1023 are special/spurious GIC values and must not be
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

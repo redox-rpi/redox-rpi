@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/src/header/time/mod.rs b/src/header/time/mod.rs
-index 70948e3e..2bafbfc9 100755
+index fd3db59..f673d20 100755
 --- a/src/header/time/mod.rs
 +++ b/src/header/time/mod.rs
 @@ -830,8 +830,14 @@ fn get_localtime(

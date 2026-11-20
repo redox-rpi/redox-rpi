@@ -20,7 +20,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 33 insertions(+), 11 deletions(-)
 
 diff --git a/src/scheme/pipe.rs b/src/scheme/pipe.rs
-index 118012a..e251484 100644
+index d31671a..edc6236 100644
 --- a/src/scheme/pipe.rs
 +++ b/src/scheme/pipe.rs
 @@ -332,30 +332,48 @@ impl KernelScheme for PipeScheme {
@@ -108,5 +108,5 @@ index 118012a..e251484 100644
          }
      }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

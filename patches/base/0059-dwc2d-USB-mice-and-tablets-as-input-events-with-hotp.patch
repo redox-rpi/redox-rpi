@@ -10,7 +10,7 @@ Subject: [PATCH] dwc2d: USB mice and tablets as input events, with hotplug
  create mode 100644 drivers/usb/dwc2d/src/mouse.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..a9b077e2 100644
+index 12be94a..a9b077e 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -2,8 +2,8 @@
@@ -228,7 +228,7 @@ index 12be94ad..a9b077e2 100644
                  scheme.tick().expect("dwc2d: network scheme failed");
 diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
 new file mode 100644
-index 00000000..1dc70c7f
+index 0000000..1dc70c7
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/mouse.rs
 @@ -0,0 +1,471 @@

@@ -18,7 +18,7 @@ such a socket as readable.
  1 file changed, 5 insertions(+), 2 deletions(-)
 
 diff --git a/netstack/src/scheme/tcp.rs b/netstack/src/scheme/tcp.rs
-index fdd50f71..6e51975a 100644
+index 06f42bd..479cb97 100644
 --- a/netstack/src/scheme/tcp.rs
 +++ b/netstack/src/scheme/tcp.rs
 @@ -212,11 +212,14 @@ impl<'a> SchemeSocket for TcpSocket<'a> {

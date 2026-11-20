@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 261 insertions(+), 79 deletions(-)
 
 diff --git a/src/arch/aarch64/device/cpu/boot.rs b/src/arch/aarch64/device/cpu/boot.rs
-index edaebb5..d8c25b2 100644
+index becbb31..05b22f4 100644
 --- a/src/arch/aarch64/device/cpu/boot.rs
 +++ b/src/arch/aarch64/device/cpu/boot.rs
 @@ -65,7 +65,10 @@ struct BootArgs {
@@ -610,5 +610,5 @@ index 0148906..b628252 100644
 +    }
  }
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

@@ -11,9 +11,14 @@ flush is a broadcast tlbi vmalle1is that has completed on all cores after
 its dsb ish, so also do it when this CPU is not in the address space and
 other CPUs are (redox-rpi #332).
 ---
+ src/context/memory.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 675a971..511a53c 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
-@@ -3046,6 +3046,13 @@
+@@ -3046,6 +3046,13 @@ impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
  
          if self.active_cpus.contains(current_cpu_id) {
              rmm::PageFlushAll::<RmmA>::new().flush();
@@ -29,3 +34,4 @@ other CPUs are (redox-rpi #332).
          #[cfg(target_arch = "aarch64")]
 -- 
 2.53.0
+

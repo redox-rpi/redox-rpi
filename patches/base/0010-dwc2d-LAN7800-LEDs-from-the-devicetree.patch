@@ -139,5 +139,5 @@ index b5e8933..662fbae 100644
                      }
                      if let Some(function) = ecm::find(&mut bus, &device) {
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

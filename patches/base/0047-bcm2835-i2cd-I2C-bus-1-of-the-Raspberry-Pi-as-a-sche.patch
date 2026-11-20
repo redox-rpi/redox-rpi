@@ -27,10 +27,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 init.initfs.d/41_bcm2835-i2cd.service
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 44910fd..a5f72da 100644
+index 56ca813..846926a 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -254,2 +254,28 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+@@ -247,6 +247,32 @@ version = "0.23.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
  
 +[[package]]
 +name = "bcm2835-gpiod"
@@ -59,13 +61,21 @@ index 44910fd..a5f72da 100644
 +]
 +
  [[package]]
-@@ -744,3 +770,5 @@ dependencies = [
+ name = "bcm2835-sdhcid"
+ version = "0.1.0"
+@@ -732,7 +758,9 @@ dependencies = [
+  "daemon",
+  "driver-network",
   "fdt 0.2.0-alpha1",
 + "inputd",
   "libredox",
 + "orbclient",
   "redox_syscall 0.9.5",
-@@ -2211,2 +2239,15 @@ dependencies = [
+ ]
+ 
+@@ -2213,6 +2241,19 @@ dependencies = [
+  "redox_syscall 0.9.5",
+ ]
  
 +[[package]]
 +name = "rpi-firmwared"
@@ -81,23 +91,33 @@ index 44910fd..a5f72da 100644
 +]
 +
  [[package]]
+ name = "scopeguard"
+ version = "1.2.0"
 diff --git a/Cargo.toml b/Cargo.toml
-index 5d73326..d8958bc 100644
+index c2a4ae2..abb4457 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -57,2 +57,3 @@ members = [
+@@ -57,6 +57,7 @@ members = [
+     "drivers/net/virtio-netd",
+ 
      "drivers/bcm2835-gpiod",
 +    "drivers/bcm2835-i2cd",
      "drivers/rpi-firmwared",
+     "drivers/redoxerd",
+ 
 diff --git a/Makefile b/Makefile
-index 7ad0f20..4692458 100644
+index 9e75ea8..74c0824 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -23,3 +23,3 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d \
+@@ -23,7 +23,7 @@ SELFTEST_DIRS := $(patsubst selftests/%/Cargo.toml,%,$(wildcard selftests/*/Carg
+ TEST_BINS := $(addsuffix -selftest,$(SELFTEST_DIRS))
+ 
  ifeq ($(TARGET),aarch64-unknown-redox)
 -	INITFS_BINS += rpi-firmwared bcm2835-gpiod
 +	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd
  endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
 diff --git a/drivers/bcm2835-i2cd/Cargo.toml b/drivers/bcm2835-i2cd/Cargo.toml
 new file mode 100644
 index 0000000..f65ebaa
@@ -600,10 +620,14 @@ diff --git a/init.initfs.d/40_drivers.target b/init.initfs.d/40_drivers.target
 index 286d5fa..d4f0993 100644
 --- a/init.initfs.d/40_drivers.target
 +++ b/init.initfs.d/40_drivers.target
-@@ -7,2 +7,3 @@ requires_weak = [
+@@ -5,6 +5,7 @@ requires_weak = [
+     "20_graphics.target",
+     "40_ps2d.service",
      "40_bcm2835-gpiod.service",
 +    "41_bcm2835-i2cd.service",
      "40_bcm2835-sdhostd.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
 diff --git a/init.initfs.d/41_bcm2835-i2cd.service b/init.initfs.d/41_bcm2835-i2cd.service
 new file mode 100644
 index 0000000..c0b0e2c
@@ -619,3 +643,6 @@ index 0000000..c0b0e2c
 +[service]
 +cmd = "bcm2835-i2cd"
 +type = { scheme = "i2c" }
+-- 
+2.53.0
+

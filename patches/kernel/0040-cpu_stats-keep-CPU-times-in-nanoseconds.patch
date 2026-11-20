@@ -17,10 +17,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 16 insertions(+), 14 deletions(-)
 
 diff --git a/src/context/switch.rs b/src/context/switch.rs
-index 84013be8..fdd70385 100644
+index 97777fd..b801071 100644
 --- a/src/context/switch.rs
 +++ b/src/context/switch.rs
-@@ -459,8 +459,7 @@ fn schedule(
+@@ -465,8 +465,7 @@ fn schedule(
      // Update per-cpu times
      let percpu_nanos =
          schedule_time.saturating_sub(percpu.switch_internals.schedule_time.get()) as u64;
@@ -31,7 +31,7 @@ index 84013be8..fdd70385 100644
  
      let Some((mut next_sched_context, next_address_space)) = select_next_context(
 diff --git a/src/cpu_stats.rs b/src/cpu_stats.rs
-index aa02fd46..bed5a8d9 100644
+index e8777c2..c8b1a0e 100644
 --- a/src/cpu_stats.rs
 +++ b/src/cpu_stats.rs
 @@ -27,13 +27,13 @@ pub enum CpuState {
@@ -70,7 +70,7 @@ index aa02fd46..bed5a8d9 100644
      pub idle: u64,
      /// Number of times the CPU handled an interrupt
      pub irq: u64,
-@@ -148,13 +148,16 @@ impl fmt::Display for CpuStatsData {
+@@ -158,13 +158,16 @@ impl fmt::Display for CpuStatsData {
      }
  }
  

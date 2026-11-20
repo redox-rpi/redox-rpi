@@ -16,10 +16,10 @@ after the syscall, when the references are gone.
  1 file changed, 20 insertions(+), 4 deletions(-)
 
 diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
-index 4d974bf4..a8049314 100644
+index cba8ebf..7afc6e8 100644
 --- a/src/scheme/proc.rs
 +++ b/src/scheme/proc.rs
-@@ -1318,8 +1318,16 @@ impl ContextHandle {
+@@ -1322,8 +1322,16 @@ impl ContextHandle {
                                      handle_notify_files(res, token);
                                  }
                              }
@@ -38,7 +38,7 @@ index 4d974bf4..a8049314 100644
                          } else {
                              let cpu_id = {
                                  let mut ctxt = context.write(token.token());
-@@ -1401,8 +1409,16 @@ impl ContextHandle {
+@@ -1405,8 +1413,16 @@ impl ContextHandle {
                                      handle_notify_files(res, token);
                                  }
                              }

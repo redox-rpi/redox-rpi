@@ -134,5 +134,5 @@ index 2678d75..42b9cb2 100644
          Ok(()) => unreachable!(),
          Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 

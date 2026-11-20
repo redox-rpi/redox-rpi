@@ -24,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 9 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 4d849c8f..8fe6c440 100644
+index 4d849c8..8fe6c44 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
 @@ -612,7 +612,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
@@ -40,7 +40,7 @@ index 4d849c8f..8fe6c440 100644
  
          if let Some(vt) = scheme.pending_activate.take() {
 diff --git a/scheme-utils/src/blocking.rs b/scheme-utils/src/blocking.rs
-index 6b273535..4df1b2b1 100644
+index 6b27353..4df1b2b 100644
 --- a/scheme-utils/src/blocking.rs
 +++ b/scheme-utils/src/blocking.rs
 @@ -101,9 +101,11 @@ impl<S: Deref<Target = Socket>> Blocking<S> {

@@ -10,7 +10,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 7 insertions(+)
 
 diff --git a/Makefile b/Makefile
-index f67f7af2..dfdb3082 100644
+index f67f7af..dfdb308 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -24,6 +24,13 @@ endif

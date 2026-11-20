@@ -24,10 +24,10 @@ an argument it stays in the foreground instead of notifying init.
  create mode 100644 drivers/storage/bcm2835-sdhostd/src/main.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 3823eb2..44910fd 100644
+index 3a590af..56ca813 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -265,6 +265,19 @@ dependencies = [
+@@ -260,6 +260,19 @@ dependencies = [
   "redox_syscall 0.9.5",
  ]
  
@@ -48,10 +48,10 @@ index 3823eb2..44910fd 100644
  name = "bincode"
  version = "1.3.3"
 diff --git a/Cargo.toml b/Cargo.toml
-index 471b877..4bded67 100644
+index 9f1e0fb..2765f34 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -59,6 +59,7 @@ members = [
+@@ -60,6 +60,7 @@ members = [
  
      "drivers/storage/ahcid",
      "drivers/storage/bcm2835-sdhcid",
@@ -60,10 +60,10 @@ index 471b877..4bded67 100644
      "drivers/storage/ided",
      "drivers/storage/lived",          # TODO: not really a driver...
 diff --git a/Makefile b/Makefile
-index 0de2883..263a5c4 100644
+index b633898..5b1c7af 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -31,7 +31,7 @@ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TA
+@@ -41,7 +41,7 @@ ifeq (,$(filter i586-unknown-redox i686-unknown-redox,$(TARGET)))
  endif
  
  ifeq ($(TARGET),aarch64-unknown-redox)
@@ -876,5 +876,5 @@ index 0000000..929f829
 +    );
 +}
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
