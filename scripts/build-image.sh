@@ -24,7 +24,8 @@
 #                 devshd; for automated rows on a release (T-SEC-1, T-SEC-2)
 #   --pi400-sdcard
 #                 the SD card image for the Pi 400 (config/pi400-sdcard.toml):
-#                 the --sdcard image with experiment pi400 always on, root
+#                 the --sdcard image with experiment pi400 always on (added
+#                 after the other experiments; do not name it), root
 #                 filesystem on the card through EMMC2; with experiment
 #                 desktop it starts the desktop at boot
 #                 (config/pi400-sdcard-desktop.toml). Card:
@@ -131,9 +132,11 @@ conflict_of() {
     return 1
 }
 
-# The Pi 400 card needs experiment pi400 (GIC, EMMC2, PCIe, GENET), first.
+# The Pi 400 card needs experiment pi400 (GIC, EMMC2, PCIe, GENET), after
+# the others: rpi-fb's 0060 moves the mailbox answer check that pi400's
+# base/0002 (GENET MAC) changes, and only this order applies both.
 if [ "$CONFIG_NAME" = pi400-sdcard ] && ! has_experiment pi400; then
-    experiments=(pi400 "${experiments[@]}")
+    experiments+=(pi400)
 fi
 
 # Test experiments: diagnostics every image gets, after the chosen
