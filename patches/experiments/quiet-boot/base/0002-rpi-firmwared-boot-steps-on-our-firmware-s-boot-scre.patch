@@ -1,0 +1,396 @@
+From 326374cbdce7b95e78ca1d57e9be27a12f227afc Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 21:37:18 +0000
+Subject: [PATCH] rpi-firmwared: boot steps on our firmware's boot screen with
+ QUIET=1
+
+Quiet boot (redox-rpi #518) with our firmware: the boot screen stays on
+HDMI until the login, and Redox's steps show on it through tag
+0x000f0002 (rpi-open-firmware #43, #77): percent, flags (failed, last)
+and a line of text.
+
+- rpi-firmwared serves a write-only file bootstep: a line
+  `PCT [fail] [last] TEXT` sends one step. Only with QUIET set
+  (inherited by 40_rpi-firmwared.service); without it a write does
+  nothing. If the firmware does not draw the step (no bit 31, length
+  below 4, or answer 0: Broadcom's start.elf, QEMU, no HDMI), it logs
+  one line and answers EIO to this and every later write in this boot.
+  After the last step it sends nothing more.
+- `rpi-firmwared step PCT [fail] [last] TEXT` writes such a line and
+  ignores EIO, so init can call it. rpi-firmwared is now also in
+  /usr/bin for the steps after the switch to the root file system.
+- Steps: drivers (25 %, initfs), file system (50 %, initfs), services
+  (75 %), network (90 %, only if it comes before the login), and the
+  last step "login" (100 %), which fbcond@ waits for, so it comes before
+  the first console draws.
+- inputd's quiet-boot fallback (no console after 60 s) sends
+  `- fail last boot stopped` before it shows the boot log, so no late
+  step draws over the log.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Makefile                                  |   2 +
+ drivers/inputd/src/main.rs                |   4 +
+ drivers/rpi-firmwared/src/main.rs         | 121 +++++++++++++++++++++-
+ drivers/rpi-firmwared/src/mbox.rs         |   3 +
+ init.d/01_bootstep-base.service           |  10 ++
+ init.d/15_bootstep-net.service            |  10 ++
+ init.d/29_bootstep-login.service          |  10 ++
+ init.d/fbcond@.service                    |   2 +
+ init.initfs.d/40_rpi-firmwared.service    |   1 +
+ init.initfs.d/45_bootstep-drivers.service |  10 ++
+ init.initfs.d/50_rootfs.service           |   2 +-
+ init.initfs.d/55_bootstep-rootfs.service  |  10 ++
+ init.initfs.d/90_initfs.target            |   2 +-
+ 13 files changed, 182 insertions(+), 5 deletions(-)
+ create mode 100644 init.d/01_bootstep-base.service
+ create mode 100644 init.d/15_bootstep-net.service
+ create mode 100644 init.d/29_bootstep-login.service
+ create mode 100644 init.initfs.d/45_bootstep-drivers.service
+ create mode 100644 init.initfs.d/55_bootstep-rootfs.service
+
+diff --git a/Makefile b/Makefile
+index 29a06463..b88fa239 100644
+--- a/Makefile
++++ b/Makefile
+@@ -22,6 +22,8 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
+ 
+ ifeq ($(TARGET),aarch64-unknown-redox)
+ 	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod
++	# Also in /usr/bin, for the boot steps after the switch to the root file system.
++	BASE_BINS += rpi-firmwared
+ endif
+ 
+ ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 4cdded18..25db7c43 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -698,6 +698,10 @@ fn spawn_quiet_fallback() {
+                 return;
+             }
+             log::warn!("quiet boot: no console after {secs} s, showing the boot log (VT 1)");
++            // Our firmware's boot screen draws steps until the last one;
++            // end them first, so a late step does not draw over the log.
++            // Without rpi-firmwared (QEMU, other boards) there is no file.
++            let _ = std::fs::write("/scheme/rpi-firmware/bootstep", "- fail last boot stopped, log on screen");
+             match inputd::ControlHandle::new().and_then(|mut h| h.activate_vt(1)) {
+                 Ok(_) => {}
+                 Err(err) => log::error!("quiet boot: failed to show the boot log: {err}"),
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 58758304..fc6270ce 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -24,6 +24,16 @@
+ //!   expander, so only the firmware can switch it. Other boards do not have
+ //!   this file.
+ //!
++//! - `/scheme/rpi-firmware/bootstep`: write-only; one line `PCT [fail]
++//!   [last] TEXT` puts a boot step on our firmware's boot screen (tag
++//!   0x000f0002, rpi-open-firmware #43): PCT is 0 to 100 or `-` (bar
++//!   unchanged), `fail` draws the line red, `last` ends the steps before the
++//!   first console. Only with `QUIET` set (quiet boot, redox-rpi #518);
++//!   without it a write does nothing. If the firmware does not draw the step
++//!   (Broadcom's start.elf, QEMU, no HDMI), the write fails with EIO, and so
++//!   does every later one in this boot. `rpi-firmwared step PCT [fail]
++//!   [last] TEXT` writes such a line, for init.
++//!
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+ //! when the SoC gets too hot or the supply voltage too low. A thread checks
+@@ -40,7 +50,7 @@ use redox_scheme::scheme::SchemeSync;
+ use redox_scheme::{CallerCtx, OpenResult, Socket};
+ use scheme_utils::{Blocking, FpathWriter, HandleMap};
+ use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+-use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS};
++use syscall::error::{Error, Result, EACCES, EBADF, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR, EROFS};
+ use syscall::schemev2::NewFdFlags;
+ use syscall::{MODE_DIR, MODE_FILE, O_WRONLY};
+ 
+@@ -56,9 +66,12 @@ use mbox::*;
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "bootstep", "clocks", "governor", "power_led", "temperature", "throttled"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led"];
++const WRITABLE: &[&str] = &["arm_clock", "bootstep", "governor", "power_led"];
++
++/// Path of the boot step file, for `rpi-firmwared step`.
++const BOOTSTEP_PATH: &str = "/scheme/rpi-firmware/bootstep";
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -70,8 +83,103 @@ enum Handle {
+     Setting(&'static str),
+ }
+ 
++/// Boot steps on our firmware's boot screen (quiet boot, rpi-open-firmware
++/// #43).
++#[derive(Clone, Copy, PartialEq)]
++enum BootSteps {
++    /// QUIET is not set: steps are accepted and dropped.
++    Loud,
++    /// Steps go to the firmware.
++    Sending,
++    /// The last step went out; the firmware draws nothing after it.
++    Done,
++    /// The firmware did not draw a step: none are sent in this boot.
++    Off,
++}
++
++impl BootSteps {
++    fn from_env() -> Self {
++        match std::env::var("QUIET") {
++            Ok(v) if !v.is_empty() && v != "0" => BootSteps::Sending,
++            _ => BootSteps::Loud,
++        }
++    }
++
++    /// One line `PCT [fail] [last] TEXT`.
++    fn send(&mut self, mbox: &mut Mailbox, line: &str) -> Result<()> {
++        match *self {
++            BootSteps::Loud | BootSteps::Done => return Ok(()),
++            BootSteps::Off => return Err(Error::new(EIO)),
++            BootSteps::Sending => {}
++        }
++        let (request, last) = boot_step_request(line).ok_or(Error::new(EINVAL))?;
++        match mbox.property(TAG_BOOT_STEP, &request, 1).as_deref() {
++            Ok([1, ..]) => {
++                if last {
++                    *self = BootSteps::Done;
++                }
++                Ok(())
++            }
++            answer => {
++                let why = match answer {
++                    Ok(words) => format!("answer {words:x?}"),
++                    Err(err) => err.clone(),
++                };
++                println!("rpi-firmwared: the firmware draws no boot steps ({why}), none sent in this boot");
++                *self = BootSteps::Off;
++                Err(Error::new(EIO))
++            }
++        }
++    }
++}
++
++/// The value buffer of tag 0x000f0002 for a line `PCT [fail] [last] TEXT`:
++/// percent (0xFFFFFFFF for `-`), flags (bit 0 failed, bit 1 last), then the
++/// text, ASCII, at most 79 characters and a NUL. Also says whether it is
++/// the last step.
++fn boot_step_request(line: &str) -> Option<([u32; 22], bool)> {
++    let mut words = line.split_whitespace().peekable();
++    let pct = match words.next()? {
++        "-" => u32::MAX,
++        pct => pct.parse::<u32>().ok().filter(|pct| *pct <= 100)?,
++    };
++    let mut flags = 0;
++    while let Some(word) = words.peek() {
++        match *word {
++            "fail" => flags |= 1,
++            "last" => flags |= 2,
++            _ => break,
++        }
++        words.next();
++    }
++    let text: Vec<&str> = words.collect();
++    let mut bytes = [0u8; 80];
++    for (byte, c) in bytes.iter_mut().zip(text.join(" ").chars().take(79)) {
++        *byte = if c.is_ascii() && !c.is_ascii_control() { c as u8 } else { b'?' };
++    }
++    let mut request = [0u32; 22];
++    request[0] = pct;
++    request[1] = flags;
++    for (word, chunk) in request[2..].iter_mut().zip(bytes.chunks(4)) {
++        *word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
++    }
++    Some((request, flags & 2 != 0))
++}
++
++/// `rpi-firmwared step PCT [fail] [last] TEXT`: one boot step, for init. A
++/// step the firmware does not draw is no error: the boot goes on as before.
++fn step(args: &[String]) {
++    let line = args.join(" ");
++    match std::fs::write(BOOTSTEP_PATH, line.as_bytes()) {
++        Ok(()) => {}
++        Err(err) if err.raw_os_error() == Some(EIO) || err.raw_os_error() == Some(ENOENT) => {}
++        Err(err) => eprintln!("rpi-firmwared: boot step {line:?}: {err}"),
++    }
++}
++
+ struct FirmwareScheme {
+     mbox: Arc<Mutex<Mailbox>>,
++    boot_steps: BootSteps,
+     // Lock order: the governor before the mailbox.
+     governor: Arc<Mutex<Governor>>,
+     handles: HandleMap<Handle>,
+@@ -152,6 +260,7 @@ impl FirmwareScheme {
+                 println!("rpi-firmwared: governor {value}");
+                 Ok(())
+             }
++            "bootstep" => self.boot_steps.send(mbox, value),
+             "arm_clock" => {
+                 let rate = match value {
+                     "max" => mbox.value_of(TAG_GET_MAX_CLOCK_RATE, CLOCK_ARM).map_err(log)?,
+@@ -449,6 +558,11 @@ fn mbox_phys(fdt: &Fdt) -> usize {
+ }
+ 
+ fn main() {
++    let args: Vec<String> = std::env::args().skip(1).collect();
++    if args.first().map(String::as_str) == Some("step") {
++        step(&args[1..]);
++        return;
++    }
+     daemon::SchemeDaemon::new(daemon);
+ }
+ 
+@@ -472,6 +586,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> ! {
+     let governor = Arc::new(Mutex::new(Governor::new(&mut mbox.lock().unwrap())));
+     let mut scheme = FirmwareScheme {
+         mbox: mbox.clone(),
++        boot_steps: BootSteps::from_env(),
+         governor: governor.clone(),
+         handles: HandleMap::new(),
+     };
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+index 39ad30e7..c96038ed 100644
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -46,6 +46,9 @@ pub const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
+ pub const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
+ pub const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
++/// redox-rpi's own tag in our firmware: a boot step on the boot screen
++/// (rpi-open-firmware #43).
++pub const TAG_BOOT_STEP: u32 = 0x000f_0002;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
+diff --git a/init.d/01_bootstep-base.service b/init.d/01_bootstep-base.service
+new file mode 100644
+index 00000000..b88faf87
+--- /dev/null
++++ b/init.d/01_bootstep-base.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Boot screen step: services"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["00_base.target"]
++
++[service]
++cmd = "rpi-firmwared"
++args = ["step", "75", "services"]
++type = "oneshot"
+diff --git a/init.d/15_bootstep-net.service b/init.d/15_bootstep-net.service
+new file mode 100644
+index 00000000..d2740386
+--- /dev/null
++++ b/init.d/15_bootstep-net.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Boot screen step: network"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["10_net.target"]
++
++[service]
++cmd = "rpi-firmwared"
++args = ["step", "90", "network"]
++type = "oneshot"
+diff --git a/init.d/29_bootstep-login.service b/init.d/29_bootstep-login.service
+new file mode 100644
+index 00000000..af4e9445
+--- /dev/null
++++ b/init.d/29_bootstep-login.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Boot screen step: login"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["00_base.target"]
++
++[service]
++cmd = "rpi-firmwared"
++args = ["step", "100", "last", "login"]
++type = "oneshot"
+diff --git a/init.d/fbcond@.service b/init.d/fbcond@.service
+index 5c795d9f..412f2152 100644
+--- a/init.d/fbcond@.service
++++ b/init.d/fbcond@.service
+@@ -1,5 +1,7 @@
+ [unit]
+ description = "Framebuffer text console $INSTANCE"
++# Quiet boot: the boot screen's last step comes before the first console.
++requires_weak = ["29_bootstep-login.service"]
+ 
+ [service]
+ cmd = "fbcond"
+diff --git a/init.initfs.d/40_rpi-firmwared.service b/init.initfs.d/40_rpi-firmwared.service
+index 019a7b7b..46c8049d 100644
+--- a/init.initfs.d/40_rpi-firmwared.service
++++ b/init.initfs.d/40_rpi-firmwared.service
+@@ -5,4 +5,5 @@ condition_board = ["raspi3bp"]
+ 
+ [service]
+ cmd = "rpi-firmwared"
++inherit_envs = ["QUIET"]
+ type = { scheme = "rpi-firmware" }
+diff --git a/init.initfs.d/45_bootstep-drivers.service b/init.initfs.d/45_bootstep-drivers.service
+new file mode 100644
+index 00000000..5d1bd53f
+--- /dev/null
++++ b/init.initfs.d/45_bootstep-drivers.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Boot screen step: drivers"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["40_drivers.target"]
++
++[service]
++cmd = "rpi-firmwared"
++args = ["step", "25", "drivers"]
++type = "oneshot"
+diff --git a/init.initfs.d/50_rootfs.service b/init.initfs.d/50_rootfs.service
+index c2d8e477..75a4c059 100644
+--- a/init.initfs.d/50_rootfs.service
++++ b/init.initfs.d/50_rootfs.service
+@@ -1,6 +1,6 @@
+ [unit]
+ description = "Rootfs"
+-requires_weak = ["40_drivers.target"]
++requires_weak = ["40_drivers.target", "45_bootstep-drivers.service"]
+ 
+ [service]
+ cmd = "redoxfs"
+diff --git a/init.initfs.d/55_bootstep-rootfs.service b/init.initfs.d/55_bootstep-rootfs.service
+new file mode 100644
+index 00000000..ed2fc958
+--- /dev/null
++++ b/init.initfs.d/55_bootstep-rootfs.service
+@@ -0,0 +1,10 @@
++[unit]
++description = "Boot screen step: file system"
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++requires_weak = ["50_rootfs.service"]
++
++[service]
++cmd = "rpi-firmwared"
++args = ["step", "50", "file system"]
++type = "oneshot"
+diff --git a/init.initfs.d/90_initfs.target b/init.initfs.d/90_initfs.target
+index 8b567986..56e14c9a 100644
+--- a/init.initfs.d/90_initfs.target
++++ b/init.initfs.d/90_initfs.target
+@@ -1,3 +1,3 @@
+ [unit]
+ description = "initfs finalized"
+-requires_weak = ["50_rootfs.service"]
++requires_weak = ["50_rootfs.service", "55_bootstep-rootfs.service"]
+-- 
+2.53.0
+
