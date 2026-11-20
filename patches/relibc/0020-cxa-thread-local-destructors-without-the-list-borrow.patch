@@ -1,0 +1,59 @@
+From 0de39df790215420224d9a94bfd03a15b00bfa25 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 22:08:54 +0000
+Subject: [PATCH] cxa: thread-local destructors without the list borrowed
+
+__cxa_thread_finalize kept DTORS borrowed while it ran the destructors,
+and __cxa_thread_atexit_impl kept it borrowed while the push grew the
+list. A destructor, or an allocation, that registered another destructor
+then panicked with "RefCell already borrowed": on relibc 74b5e7e3
+timesync crashed at thread exit on the Pi 3B+, and with relibc
+experiments devshd crashed on every connection and rm, mkdir and sleep
+at exit in QEMU. Finalize now takes one entry at a time and runs it with
+the list released; the push happens on the list taken out, and entries
+registered meanwhile are added after it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/cxa.rs | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/src/cxa.rs b/src/cxa.rs
+index c1d7724..9454821 100644
+--- a/src/cxa.rs
++++ b/src/cxa.rs
+@@ -81,13 +81,28 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
+     dso: *mut c_void,
+ ) {
+     let entry = CxaThreadAtExitFunc { func, obj, dso };
+-    DTORS.borrow_mut().push(entry);
++    // Push with the list not borrowed: growing it allocates, and what runs
++    // then may register a destructor itself, which panicked with "RefCell
++    // already borrowed".
++    let mut list = core::mem::take(&mut *DTORS.borrow_mut());
++    list.push(entry);
++    let added = core::mem::replace(&mut *DTORS.borrow_mut(), list);
++    // Destructors registered meanwhile come after this one, in order.
++    for entry in added {
++        unsafe { __cxa_thread_atexit_impl(entry.func, entry.obj, entry.dso) };
++    }
+ }
+ 
+ // called internally
+ pub unsafe fn __cxa_thread_finalize() {
+-    let mut dtors = DTORS.borrow_mut();
+-    while let Some(entry) = dtors.pop() {
++    // Take one destructor at a time and run it without the list borrowed:
++    // a destructor may register another one (Rust's thread locals do), and
++    // with the list borrowed for the whole loop that panicked with
++    // "RefCell already borrowed" when a thread ended.
++    loop {
++        let Some(entry) = DTORS.borrow_mut().pop() else {
++            break;
++        };
+         (entry.func)(entry.obj);
+     }
+ }
+-- 
+2.53.0
+
