@@ -32,7 +32,7 @@ Helps:
 Kernel patch `0001`:
 - **aarch64:** counts in the interrupt dispatcher (`interrupt/irq.rs`), with the
   handler time from the generic timer counter.
-- **All architectures:** the scheduler's wake check (`context/switch.rs`)
+- **All architectures:** the scheduler's two wake paths in `context/switch.rs` (the run queue's timer list and the per-context check)
   counts the lateness.
 
 The counters are relaxed atomics, with no locks.

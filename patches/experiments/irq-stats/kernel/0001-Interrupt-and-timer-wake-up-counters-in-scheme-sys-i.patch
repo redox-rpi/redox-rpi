@@ -1,4 +1,4 @@
-From 9f2a7ee2d4d8a8682a4f3894227f794ccfaf9c55 Mon Sep 17 00:00:00 2001
+From ed843947ca14f7d558759d9fc444b1eaf97b6796 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 19 Nov 2026 15:58:34 +0000
 Subject: [PATCH] Interrupt and timer wake-up counters in /scheme/sys/irqstat
@@ -12,12 +12,12 @@ with its maximum. Relaxed atomics only, so it is safe in interrupt
 context. The existing /scheme/sys/irq stays as it is.
 ---
  src/arch/aarch64/interrupt/irq.rs |  22 +++++++
- src/context/switch.rs             |   1 +
+ src/context/switch.rs             |   2 +
  src/irq_stats.rs                  | 101 ++++++++++++++++++++++++++++++
  src/main.rs                       |   3 +
  src/scheme/sys/irqstat.rs         |   7 +++
  src/scheme/sys/mod.rs             |   2 +
- 6 files changed, 136 insertions(+)
+ 6 files changed, 137 insertions(+)
  create mode 100644 src/irq_stats.rs
  create mode 100644 src/scheme/sys/irqstat.rs
 
@@ -76,7 +76,7 @@ index 1331ab48..8b4b4353 100644
          // IDs 1020..1023 are special/spurious GIC values and must not be
          // written to EOIR because no interrupt was acknowledged.
 diff --git a/src/context/switch.rs b/src/context/switch.rs
-index 5f99123a..e63d7922 100644
+index 5f99123a..a8469fe8 100644
 --- a/src/context/switch.rs
 +++ b/src/context/switch.rs
 @@ -90,6 +90,7 @@ fn update_runnable(
@@ -87,6 +87,14 @@ index 5f99123a..e63d7922 100644
          context.wake = None;
          context.unblock_no_ipi();
      }
+@@ -368,6 +369,7 @@ fn schedule(
+                     && guard.status.is_soft_blocked()
+                     && guard.wake == Some(wake)
+                 {
++                    crate::irq_stats::wake_late(schedule_time.saturating_sub(wake));
+                     guard.wake = None;
+                     guard.unblock_no_ipi();
+                 }
 diff --git a/src/irq_stats.rs b/src/irq_stats.rs
 new file mode 100644
 index 00000000..7f53043a
