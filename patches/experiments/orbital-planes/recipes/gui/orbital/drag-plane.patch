@@ -1,6 +1,6 @@
 diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
 --- a/src/compositor/display.rs	2026-11-20 09:36:26
-+++ b/src/compositor/display.rs	2026-11-20 09:37:05
++++ b/src/compositor/display.rs	2026-11-20 13:08:57
 @@ -1,9 +1,9 @@
  use drm::buffer::{Buffer as _, DrmFourcc};
  use drm::control::connector::{self, State};
@@ -99,7 +99,7 @@ diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
  pub struct Display {
      x: i32,
      y: i32,
-@@ -258,8 +313,115 @@
+@@ -258,8 +313,122 @@
      factored_scale: u32,
      map: V2DisplayMap,
      cursor_map: Option<CursorMap>,
@@ -123,6 +123,13 @@ diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
 +
 +    pub fn rect(&self) -> Rect {
 +        self.view.screen_rect()
++    }
++
++    /// Draw the window again (its content changed during the move).
++    pub fn redraw(&mut self, draw: impl FnOnce(&mut Display, Rect)) {
++        let rect = self.view.screen_rect();
++        draw(&mut self.view, rect);
++        self.view.finish_offscreen();
 +    }
 +}
 +
@@ -162,7 +169,7 @@ diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
 +            overlay: None,
 +        };
 +        draw(&mut view, rect);
-+        view.map.buffer.sync_rect(0, 0, rect.width(), rect.height());
++        view.finish_offscreen();
 +        let mut lifted = Lifted {
 +            display: index,
 +            plane,
@@ -215,7 +222,7 @@ diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
  impl Display {
      fn new(
          x: i32,
-@@ -286,6 +448,7 @@
+@@ -286,11 +455,24 @@
              factored_scale,
              map,
              cursor_map,
@@ -223,9 +230,26 @@ diff -ruN a/src/compositor/display.rs b/src/compositor/display.rs
          })
      }
  
+     pub fn scale(&self) -> u32 {
+         self.scale
++    }
++
++    /// For a lifted window's view: make every pixel opaque, as on the
++    /// primary plane, which a driver shows without alpha; clients such as
++    /// SDL leave alpha at 0, which a plane with per-pixel alpha shows as
++    /// transparent. Then copy it to the buffer the plane shows.
++    fn finish_offscreen(&mut self) {
++        let (width, height) = self.map.buffer.buffer().size();
++        for pixel in self.map.image_mut().data_mut() {
++            *pixel = Color { data: pixel.data | 0xFF00_0000 };
++        }
++        self.map.buffer.sync_rect(0, 0, width, height);
+     }
+ 
+     pub fn factored_scale(&self) -> u32 {
 diff -ruN a/src/compositor/mod.rs b/src/compositor/mod.rs
 --- a/src/compositor/mod.rs	2026-11-20 09:36:26
-+++ b/src/compositor/mod.rs	2026-11-20 09:37:05
++++ b/src/compositor/mod.rs	2026-11-20 13:08:57
 @@ -12,7 +12,7 @@
  
  use self::display::Displays;
@@ -235,7 +259,7 @@ diff -ruN a/src/compositor/mod.rs b/src/compositor/mod.rs
  
  pub struct Compositor {
      displays: Displays,
-@@ -166,6 +166,29 @@
+@@ -166,6 +166,34 @@
          }
  
          self.redraws.push(request);
@@ -259,6 +283,11 @@ diff -ruN a/src/compositor/mod.rs b/src/compositor/mod.rs
 +        }
 +    }
 +
++    /// Whether a redraw is pending that touches `rect`.
++    pub fn redraw_pending(&self, rect: &Rect) -> bool {
++        self.redraws.iter().any(|r| !r.intersection(rect).is_empty())
++    }
++
 +    /// Hide a lifted rect again. Call after the redraw that composites it.
 +    pub fn drop_lifted(&mut self, lifted: Lifted) {
 +        self.displays.drop_lifted(lifted);
@@ -267,7 +296,7 @@ diff -ruN a/src/compositor/mod.rs b/src/compositor/mod.rs
      fn cursor_rect(&self) -> Rect {
 diff -ruN a/src/scheme.rs b/src/scheme.rs
 --- a/src/scheme.rs	2026-11-20 09:36:26
-+++ b/src/scheme.rs	2026-11-20 09:37:38
++++ b/src/scheme.rs	2026-11-20 13:08:57
 @@ -11,7 +11,7 @@
  use orbclient::*;
  use syscall::error::{EBADF, Error, Result};
@@ -298,7 +327,7 @@ diff -ruN a/src/scheme.rs b/src/scheme.rs
              modifier_state: 0,
              volume_value: 0,
              volume_toggle: 0,
-@@ -567,6 +574,27 @@
+@@ -567,6 +574,42 @@
  
      pub(crate) fn redraw(&mut self) {
          self.fps_widget.start_measure();
@@ -322,11 +351,26 @@ diff -ruN a/src/scheme.rs b/src/scheme.rs
 +        if !matches!(self.dragging, DragMode::Title(..)) {
 +            self.lift_failed = false;
 +        }
++        // The lifted window's content changed (a game draws all the time):
++        // draw it again into its plane's buffer.
++        if let Some(id) = lifted_id
++            && let Some((_, lifted)) = self.lifted.as_mut()
++            && let Some(window) = self.windows.get(&id)
++            && self.compositor.redraw_pending(&lifted.rect())
++        {
++            let background: Color = self.config.background_color.into();
++            let (max, close) = (&self.window_max, &self.window_close);
++            lifted.redraw(|view, rect| {
++                view.rect(&rect, background);
++                window.draw_title(view, &rect, true, max, close);
++                window.draw(view, &rect);
++            });
++        }
 +
          self.order
              .rezbuffer(&|id| self.windows.get(&id).unwrap().zorder);
  
-@@ -635,6 +663,9 @@
+@@ -635,6 +678,9 @@
              display.rect(&rect, self.config.background_color.into());
  
              for (id, focused) in self.order.iter_back_to_front() {
@@ -336,7 +380,7 @@ diff -ruN a/src/scheme.rs b/src/scheme.rs
                  if let Some(window) = self.windows.get(&id) {
                      window.draw_title(
                          display,
-@@ -671,6 +702,10 @@
+@@ -671,6 +717,10 @@
              }
          });
  
@@ -347,7 +391,7 @@ diff -ruN a/src/scheme.rs b/src/scheme.rs
          self.fps_widget.end_measure();
      }
  
-@@ -1243,6 +1278,44 @@
+@@ -1243,6 +1293,44 @@
              DragMode::Title(window_id, drag_x, drag_y) => {
                  if let Some(window) = self.windows.get_mut(&window_id) {
                      if drag_x != event.x || drag_y != event.y {
@@ -392,7 +436,7 @@ diff -ruN a/src/scheme.rs b/src/scheme.rs
                          Self::update_window(&mut self.compositor, window, |_compositor, window| {
                              //TODO: Min and max
                              window.x += event.x - drag_x;
-@@ -1257,6 +1330,7 @@
+@@ -1257,6 +1345,7 @@
  
                              self.dragging = DragMode::Title(window_id, event.x, event.y);
                          });
