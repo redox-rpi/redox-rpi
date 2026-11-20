@@ -20,7 +20,8 @@ and a line of text.
   ignores EIO, so init can call it. rpi-firmwared is now also in
   /usr/bin for the steps after the switch to the root file system.
 - Steps: drivers (25 %, initfs), file system (50 %, initfs), services
-  (75 %), network (90 %, only if it comes before the login), and the
+  (75 %), network (90 %, after services, only if it comes before the
+  login), and the
   last step "login" (100 %), which fbcond@ waits for, so it comes before
   the first console draws.
 - inputd's quiet-boot fallback (no console after 60 s) sends
@@ -294,7 +295,7 @@ index 00000000..d2740386
 +description = "Boot screen step: network"
 +condition_architecture = ["aarch64"]
 +condition_board = ["raspi3bp"]
-+requires_weak = ["10_net.target"]
++requires_weak = ["01_bootstep-base.service", "10_net.target"]
 +
 +[service]
 +cmd = "rpi-firmwared"

@@ -31,7 +31,7 @@ With our firmware ([rpi-open-firmware](https://github.com/redox-rpi/rpi-open-fir
 | drivers | 25 % | initfs drivers up (`45_bootstep-drivers`) |
 | file system | 50 % | root file system mounted (`55_bootstep-rootfs`) |
 | services | 75 % | `00_base.target` (`01_bootstep-base`) |
-| network | 90 % | `10_net.target`, only if it comes before the login (`15_bootstep-net`) |
+| network | 90 % | `10_net.target`, after the services step, only if it comes before the login (`15_bootstep-net`) |
 | login (last) | 100 % | before the first console; `fbcond@` waits for it (`29_bootstep-login`) |
 
 - **The interface:** `rpi-firmwared` sends the tag. A line `PCT [fail] [last] TEXT` written to `/scheme/rpi-firmware/bootstep` is one step, and `rpi-firmwared step …` does the same for init. It only sends with `QUIET` set.
