@@ -1,0 +1,70 @@
+From a15e06e19e903342fe16d3c655a0ef95be69bc4b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 14:56:31 +0000
+Subject: [PATCH] bcm2835-sdhcid: log the raw CMD55 and ACMD41 answers
+ (redox-rpi #307)
+
+Two different cards (one a SanDisk Extreme) answered ACMD41 with the
+same 0x00f98000 every time, which does not look like a real OCR. Log
+resp0, resp1, the interrupt flags, the present state and the command
+and argument registers for the first 12 CMD55/ACMD41 answers and every
+50th after that.
+---
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 22 ++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index aa42bb00..b83a161a 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -1,4 +1,5 @@
+ use std::sync::RwLock;
++use std::sync::atomic::{AtomicU32, Ordering};
+ use std::thread;
+ use std::time::Duration;
+ 
+@@ -157,6 +158,10 @@ const ACMD41_CMD_CCS: u32 = 0x4000_0000;
+ const ACMD41_ARG_HC: u32 = 0x40ff_8000;
+ /// ACMD41 polls, 10 ms apart: cards may take up to 1 s to power up.
+ const ACMD41_POLLS: i32 = 200;
++/// The interrupt flags sd_int saw for the last command, for the log.
++static LAST_INT: AtomicU32 = AtomicU32::new(0);
++/// How many CMD55/ACMD41 answers were logged raw.
++static RAW_LOGS: AtomicU32 = AtomicU32::new(0);
+ 
+ const SCR_SD_BUS_WIDTH_4: u32 = 0x0000_0400;
+ const SCR_SUPP_SET_BLKCNT: u32 = 0x0200_0000;
+@@ -689,6 +694,22 @@ impl SdHostCtrl {
+ 
+         let regs = self.regs.get_mut().unwrap();
+         reg_val = regs.resp0.read();
++        if code == CMD_SEND_OP_COND || code == (CMD_APP_CMD | CMD_RSPNS_48) {
++            let n = RAW_LOGS.fetch_add(1, Ordering::Relaxed);
++            if n < 12 || n % 50 == 0 {
++                println!(
++                    "EMMC raw: cmd 0x{:08x} arg 0x{:08x} -> resp0 0x{:08x} resp1 0x{:08x} int 0x{:08x} state 0x{:08x} cmdtm 0x{:08x} arg1 0x{:08x}",
++                    code,
++                    arg,
++                    reg_val,
++                    regs.resp1.read(),
++                    LAST_INT.load(Ordering::Relaxed),
++                    regs.status.read(),
++                    regs.cmdtm.read(),
++                    regs.arg1.read()
++                );
++            }
++        }
+ 
+         if code == CMD_GO_IDLE || code == CMD_APP_CMD {
+             return Ok(0);
+@@ -774,6 +795,7 @@ impl SdHostCtrl {
+             reg_val = regs.interrupt.read() & m;
+         }
+         reg_val = regs.interrupt.read();
++        LAST_INT.store(reg_val, Ordering::Relaxed);
+         let err = reg_val & (INT_CMD_TIMEOUT | INT_DATA_TIMEOUT | INT_ERROR_MASK);
+ 
+         if cnt <= 0 || err != 0 {
+-- 
+2.53.0
+
