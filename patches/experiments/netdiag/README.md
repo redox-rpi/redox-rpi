@@ -19,7 +19,9 @@ problem (#92, #119, #494, #540), instead of numbers collected by hand.
   (`arp_requests`, `arp_expired`, `arp_queue_full`, `arp_unresolved`: the
   last two are dropped packets), `router_rx_full` and `router_tx_full`
   (times a queue between the drivers and smoltcp was full), `no_route`,
-  and `tcp_listening`, `tcp_connections` plus one line per connection,
+  `sockets_tcp`, `sockets_udp`, `sockets_icmp` and `tcp_state_<state>`
+  (a socket that is never freed shows as a growing count; REQ-NET-4
+  criterion 2, `scripts/tcp-churn-check.py`), plus one line per connection,
   `tcp_<local port>_<remote>_<port> <state> rx_queue n/cap tx_queue n/cap`
   (refreshed by the main loop at most twice a second).
 - **`tools/netdiag`** (in `config.toml`):
