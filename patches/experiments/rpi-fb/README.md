@@ -71,6 +71,15 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (`0xc0000000` alias) and the row count (`height - 1` in YLENGTH) were
   already the same as in Linux. QEMU does not model bus priority, so only
   the Pi can show it; QEMU still passes the DMA test and the bench.
+- [`0073`](base/0073-rpi-fbd-screenshots-on-request-fbshot.patch)
+  (branch `pi400-fbshot`): screenshots on request. `fbshot [file.ppm]`
+  (`config.toml`; it runs `/scheme/initfs/bin/rpi-fbd shot`) asks the
+  running `rpi-fbd` for the buffer on screen as a PPM file (default
+  `/tmp/fbshot.ppm`) and prints one line: size, the share of the most
+  common colour and the number of colours. The Pi 400 and QEMU's `raspi4b`
+  have no network to fetch the file over, so a test reads the line on the
+  serial console. `rpi-fbd` looks for `/tmp/fbshot.request` every 500 ms;
+  the EDID is still read every 5 s.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
