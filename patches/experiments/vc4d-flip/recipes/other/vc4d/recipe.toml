@@ -3,7 +3,7 @@
 # Experiment vc4d-flip: branch flip of redox-rpi/vc4d.
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "03e260be69ec5ea21638d50f4d2d8846ee739c94"
+rev = "baccb226791552c2de32b584574958078a7d76db"
 
 [build]
 template = "cargo"
