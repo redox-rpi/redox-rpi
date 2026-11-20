@@ -26,8 +26,10 @@ It needs root (it maps `/scheme/memory/physical@dev` on Redox and
 ## How it works
 
 While the ARM runs, the VPU firmware samples the display hardware every
-period and writes one record into a 1 MB ring at the end of the
-VideoCore's memory, which no ARM kernel uses. The firmware puts the ring's
+period and writes one record into a 1 MB ring in the VideoCore's part of
+the memory, which no ARM kernel uses: 2 MB into it, below the
+framebuffer, so ARM 0x3e200000 on a 1 GB board (rof #67 and later; not
+at the very end, which the ARM sees as the peripherals). The firmware puts the ring's
 address into the devicetree: `/chosen redox-rpi,diag-ring = <address
 bytes>`. The ring holds about 32,000 records, 32 s at 1 ms.
 
