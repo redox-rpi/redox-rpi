@@ -124,8 +124,8 @@ fn hang_up(master: &File, login_pid: libc::pid_t, done: &AtomicBool) {
 /// devshd had open at fork time, so netstack cannot free them, and the
 /// session thread waits in `spawn()` for good. A normal child is `login`
 /// within milliseconds, so another devshd process seen in two scans 10 s
-/// apart is a stuck fork: kill it. `spawn()` then returns, the session ends and
-/// the sockets are freed.
+/// apart is a stuck fork: kill it and reap it. `spawn()` then returns, the
+/// session ends and the sockets are freed.
 fn reap_stuck_forks() {
     let me = std::process::id();
     let mut seen = HashSet::new();
@@ -135,10 +135,21 @@ fn reap_stuck_forks() {
             continue;
         };
         let now = forks_of(&text, me);
-        for pid in now.intersection(&seen) {
+        for &pid in now.intersection(&seen) {
             eprintln!("devshd: killing fork {pid}, stuck before exec (#577)");
+            let pid = pid as libc::pid_t;
             unsafe {
-                libc::kill(*pid as libc::pid_t, libc::SIGKILL);
+                libc::kill(pid, libc::SIGKILL);
+            }
+            // Reap it: when spawn() fails nobody waits for the child, and a
+            // zombie keeps its files, so the socket stayed CLOSED. If the
+            // session thread reaps it first, waitpid fails with ECHILD.
+            for _ in 0..50 {
+                let mut status = 0;
+                if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } != 0 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
             }
         }
         seen = now;
