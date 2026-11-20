@@ -60,6 +60,13 @@ fixes reads a fixed 268 °C and shows 600 MHz as 1200.
 | `flag` | an HVS error bit went from 0 to 1 (underflow, line or frame error, COB low, DMA error); they stay set until written back |
 | `clock` | the ARM clock changed (governor or throttling) |
 
+Frame counters move once per frame, so `stall hdmi` and `stall hvs1`
+need at least 40 ms (two frames at 50 Hz), even with a smaller MS.
+
+The firmware keeps writing while diagread copies the ring. Records in the
+oldest slots that were overwritten during the copy are left out, so the
+first record shown can be a few milliseconds younger than the ring holds.
+
 If the display counters keep running during a hang but the marker stops,
 the hang is on the ARM side (driver or compositor), not in the display.
 

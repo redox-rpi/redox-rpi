@@ -194,14 +194,26 @@ pub const HVS_FLAGS: [(u32, &str); 5] = [
 ];
 
 /// Records oldest first, from a whole ring image (header + records).
+///
+/// The firmware keeps writing while the reader copies the ring, so once
+/// the ring has wrapped, the oldest slots may already hold newer records
+/// than the header said (Test 534: "59.565 s to 59.564 s"). Going back
+/// from the newest record, the times must fall; the records before the
+/// first one that does not are left out.
 pub fn records(words: &[u32], h: &Header) -> Vec<Record> {
     let n = h.valid();
-    (h.written - n..h.written)
+    let mut v: Vec<Record> = (h.written - n..h.written)
         .map(|i| {
             let at = HEADER_WORDS + (i % h.recs) as usize * h.rec_words as usize;
             Record::from_words(&words[at..at + h.rec_words as usize])
         })
-        .collect()
+        .collect();
+    let mut first = v.len().saturating_sub(1);
+    while first > 0 && (v[first].t_us.wrapping_sub(v[first - 1].t_us) as i32) > 0 {
+        first -= 1;
+    }
+    v.drain(..first);
+    v
 }
 
 /// Little-endian bytes to words (a saved ring file).
@@ -220,6 +232,11 @@ pub enum Event {
     /// The ARM clock changed (throttling, governor).
     Clock { t_us: u32, from_mhz: u32, to_mhz: u32 },
 }
+
+/// Frame counters move once per frame (16.7 ms at 60 Hz, 20 ms at 50 Hz),
+/// so they count as stalled only after two frames at 50 Hz, whatever the
+/// threshold (Test 534: `stalls 10` listed every frame).
+pub const FRAME_FLOOR_US: u32 = 40_000;
 
 /// Finds stalls in a stream of records. Feed records oldest first; `finish`
 /// reports a stall still going on at the end.
@@ -250,20 +267,21 @@ impl Detector {
         if dt > 3 * self.period_us.max(1) && dt >= self.threshold_us {
             out.push(Event::Gap { t_us: p.t_us, len_us: dt });
         }
-        let mut stall = |what, since: &mut u32, moved: bool| {
+        let frame_threshold = self.threshold_us.max(FRAME_FLOOR_US);
+        let mut stall = |what, since: &mut u32, moved: bool, threshold: u32| {
             if moved {
                 let len = r.t_us.wrapping_sub(*since);
-                if len >= self.threshold_us {
+                if len >= threshold {
                     out.push(Event::Stall { what, t_us: *since, len_us: len });
                 }
                 *since = r.t_us;
             }
         };
-        stall("hdmi frames", &mut self.hdmi_since, r.hdmi_frames != p.hdmi_frames);
-        stall("hvs1 frames", &mut self.hvs_since, r.hvs_frame() != p.hvs_frame());
+        stall("hdmi frames", &mut self.hdmi_since, r.hdmi_frames != p.hdmi_frames, frame_threshold);
+        stall("hvs1 frames", &mut self.hvs_since, r.hvs_frame() != p.hvs_frame(), frame_threshold);
         if r.marker != p.marker {
             if self.marker_moved {
-                stall("marker", &mut self.marker_since, true);
+                stall("marker", &mut self.marker_since, true, self.threshold_us);
             } else {
                 self.marker_since = r.t_us;
             }
@@ -284,16 +302,17 @@ impl Detector {
     /// Stalls still going on at the last record.
     pub fn finish(&self, out: &mut Vec<Event>) {
         let Some(p) = self.prev else { return };
-        let mut open = |what, since: u32| {
+        let frame_threshold = self.threshold_us.max(FRAME_FLOOR_US);
+        let mut open = |what, since: u32, threshold: u32| {
             let len = p.t_us.wrapping_sub(since);
-            if len >= self.threshold_us {
+            if len >= threshold {
                 out.push(Event::Stall { what, t_us: since, len_us: len });
             }
         };
-        open("hdmi frames (still)", self.hdmi_since);
-        open("hvs1 frames (still)", self.hvs_since);
+        open("hdmi frames (still)", self.hdmi_since, frame_threshold);
+        open("hvs1 frames (still)", self.hvs_since, frame_threshold);
         if self.marker_moved {
-            open("marker (still)", self.marker_since);
+            open("marker (still)", self.marker_since, self.threshold_us);
         }
     }
 }
@@ -463,6 +482,27 @@ mod tests {
         }
         assert!(!analyse(&s, 50_000, 1000).iter().any(|e| matches!(e, Event::Gap { .. })));
         assert!(analyse(&s, 10_000, 1000).iter().any(|e| matches!(e, Event::Gap { .. })));
+    }
+
+
+    #[test]
+    fn copy_overtaken_by_writer() {
+        // header copied at 10 written, then the firmware wrote 2 more
+        // into the oldest slots before the reader got there (Test 534)
+        let mut w = ring(4, 10);
+        for i in 10..12u32 {
+            w[HEADER_WORDS + (i % 4) as usize * 8] = i;
+        }
+        let h = Header::parse(&w).unwrap();
+        let t: Vec<u32> = records(&w, &h).iter().map(|r| r.t_us).collect();
+        assert_eq!(t, vec![8, 9]);
+    }
+
+    #[test]
+    fn frames_below_floor_are_no_stall() {
+        let recs = stream(200, 0..0);
+        let ev = analyse(&recs, 10_000, 1000);
+        assert!(ev.iter().all(|e| !matches!(e, Event::Stall { .. })), "{ev:?}");
     }
 
 }
