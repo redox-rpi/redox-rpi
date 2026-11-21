@@ -14,7 +14,7 @@ The window shows Orbital's `ControllerButton` and `ControllerAxis` events
 while it is the front window:
 
 - the 15 buttons of SDL's "Redox OS Controller" (A B X Y LB RB BACK START
-  LS RS GUIDE and the D-pad UP DOWN RIGHT LEFT) as boxes that light up
+  LS RS GUIDE and the D-pad LEFT UP DOWN RIGHT) as boxes that light up
   while pressed;
 - the sticks X/Y and RX/RY as a cross with a dot (up is a positive Y, as
   dwc2d sends it), the triggers Z and RZ (0..255) as bars, each with its
@@ -32,6 +32,27 @@ USB pads send these events only with dwc2d from PR
 `gamepad-test --send` (as root, while Orbital runs) sends a fixed sequence
 of all buttons and axes through inputd, as dwc2d would. This is how QEMU,
 which has no USB gamepad, tests the window.
+
+## On a text console, without Orbital
+
+`gamepad-test --console` opens no window. It prints one line per
+controller event on the console it runs on (the serial line, or the HDMI
+console of an image without the desktop), with the buttons held and the
+axes that are not 0:
+
+```
+gamepad-test: controller 4: button START pressed     | held START | axes -
+gamepad-test: controller 4: axis X = -32767          | held START | axes X -32767
+```
+
+Ctrl-C quits. It reads inputd's `controllers` handle
+(`/scheme/input/controllers`, base patch `0098`), which gets the
+controller events of all devices whichever VT is in front, and no keys.
+Without that patch it says so and exits.
+
+The experiment needs no desktop: on its own, as in the stable image
+(`config/stable-image.conf`), it brings only the binary; the launcher entry
+is unused there.
 
 ## Installing it later, on a running system
 
