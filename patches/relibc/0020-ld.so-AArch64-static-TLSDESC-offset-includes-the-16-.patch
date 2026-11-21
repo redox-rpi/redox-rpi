@@ -1,0 +1,40 @@
+From 292db7a8bb244a58d43185519bfdedd39044db07 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <zehrer-xyz@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 23:54:58 +0000
+Subject: [PATCH] ld.so: AArch64 static TLSDESC offset includes the 16-byte TCB
+
+On AArch64 the thread pointer is 16 bytes below the static TLS block,
+and copy_masters puts a module image at tls_offset from the start of
+that block. The static TLSDESC descriptor left out the 16 bytes, so
+every TLS variable of libc.so (ld.so) read the initial value of the
+bytes 16 below it. On relibc 74b5e7e3 libc has more initialised TLS,
+and the RefCell DTORS read as borrowed (redox-rpi #601).
+---
+ src/ld_so/dso.rs | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/ld_so/dso.rs b/src/ld_so/dso.rs
+index e55b8dc..cb3fa06 100644
+--- a/src/ld_so/dso.rs
++++ b/src/ld_so/dso.rs
+@@ -1226,7 +1226,16 @@ impl DSO {
+             })) as usize;
+         } else {
+             *resolver = __tlsdesc_static as *const () as usize;
+-            *descriptor = sym + tls_offset + reloc.addend.unwrap_or_default();
++            // The descriptor is the variable's offset from the thread pointer. On AArch64
++            // (TLS variant I) the thread pointer is 16 bytes below the static TLS block (see
++            // `Tcb::os_new`), and `Tcb::copy_masters` puts this module's image at
++            // `tls_offset` from the start of that block, so the 16 bytes belong in here too.
++            // Without them every variable read its neighbour's initial value.
++            #[cfg(target_arch = "aarch64")]
++            let tcb_size = 16;
++            #[cfg(not(target_arch = "aarch64"))]
++            let tcb_size = 0;
++            *descriptor = sym + tls_offset + tcb_size + reloc.addend.unwrap_or_default();
+         }
+     }
+ 
+-- 
+2.53.0
+
