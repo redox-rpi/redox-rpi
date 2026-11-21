@@ -1,0 +1,17 @@
+# Experiment vc4d-mode-hdmi (#188, stage 3b, test only): vc4d with
+# VC4D_MODE=write programs pixel valve 2 and the HDMI timing itself. Replaces experiment vc4d's
+# service file; build after --experiment vc4d.
+
+[[files]]
+path = "/usr/lib/init.d/15_vc4d.service"
+data = """
+[unit]
+description = "VideoCore IV display: HVS planes (vc4d), writing pixel valve 2 and the HDMI timing"
+condition_architecture = ["aarch64"]
+
+[service]
+cmd = "vc4d"
+inherit_envs = ["VC4D", "VC4D_FAKE", "VC4D_LOG"]
+envs = { VC4D_MODE = "write" }
+type = "notify"
+"""
