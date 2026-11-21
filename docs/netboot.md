@@ -103,7 +103,11 @@ The first network entry is the directory the script came from, the second
 `stable/` (or `redox/` when the script came from `stable/`).
 `scripts/netboot.sh --menu-delay <s>` sets the wait; `0` skips the menu.
 Cards with Redox on them get the menu as their `boot.scr` (`boot-local.scr`
-from `netboot.sh`), so they no longer network-boot by accident. The menu needs
+from `netboot.sh`), so they no longer network-boot by accident. A card made
+with `make-sdcard.sh --local <image> --default net` gets `boot-local-net.scr`
+instead: the same menu with the network as default, so the card can stay in
+the Pi for network boots and still hold Redox and `/scheme/data`
+([#605](https://github.com/redox-rpi/redox-rpi/issues/605)). The menu needs
 a U-Boot with `bootmenu` (since #243); an older one on a card boots the
 default without showing it.
 

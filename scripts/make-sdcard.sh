@@ -36,12 +36,16 @@
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
 #   all three also take [--family <name>]
-#   --local also takes [--live] and [--board pi4]
+#   --local also takes [--live], [--board pi4] and [--default card|net]
 #
 #   --live             with --local: the live bootloader (bootloader-live.efi)
 #                      as BOOTAA64.EFI, which copies the root filesystem into
 #                      RAM, as network boot does; for boards without an SD
 #                      card driver in Redox (Pi 400, #299)
+#   --default net      with --local: the boot menu boots the network by
+#                      default instead of this card (boot-local-net.scr), so
+#                      the card can stay in the Pi for network boots and
+#                      still hold Redox and /scheme/data (#605)
 #   --board pi4        a card for the Pi 4 family (Pi 400, Pi 4B, CM4): the
 #                      BCM2711 firmware files and config/config-pi4.txt
 #                      instead of the Pi 3 ones (test version, #299)
@@ -85,6 +89,7 @@ direct=
 family=
 live=
 board=pi3
+default=
 while [ $# -gt 0 ]; do
     case "$1" in
         --tftp-dir) tftp="$2"; shift 2 ;;
@@ -97,6 +102,7 @@ while [ $# -gt 0 ]; do
         --family) family="$2"; shift 2 ;;
         --live) live=yes; shift ;;
         --board) board="$2"; shift 2 ;;
+        --default) default="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -109,6 +115,7 @@ case "$board" in
         FIRMWARE_FILES=("${PI4_FIRMWARE_FILES[@]}") ;;
     *) echo "unknown board: $board" >&2; exit 1 ;;
 esac
+[ -z "$default" ] || [ -n "$image" ] || { echo "--default needs --local" >&2; exit 1; }
 if [ -n "$live" ]; then
     [ -n "$image" ] || { echo "--live needs --local" >&2; exit 1; }
     live_efi="$(find "$ROOT/upstream/redox/recipes/core/bootloader/target" -path '*stage/usr/lib/boot/bootloader-live.efi' | head -1)"
@@ -138,7 +145,11 @@ elif [ -n "$image" ]; then
     read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$image")
     data_mib=$(((root_sectors + 2047) / 2048))
     [ "$out" != "$ROOT/build/sdcard-netboot.img" ] || out="$ROOT/build/sdcard-redox.img"
-    bootscr="$tftp/$dir/boot-local.scr"
+    case "${default:-card}" in
+        card) bootscr="$tftp/$dir/boot-local.scr" ;;
+        net) bootscr="$tftp/$dir/boot-local-net.scr" ;;
+        *) echo "--default takes card or net" >&2; exit 1 ;;
+    esac
     [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
 else
     [ -f "$bootscr" ] || { echo "$bootscr missing, run scripts/netboot.sh --server <ip> --dir $dir" >&2; exit 1; }
