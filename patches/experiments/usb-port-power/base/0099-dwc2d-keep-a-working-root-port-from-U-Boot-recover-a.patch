@@ -1,51 +1,82 @@
-From a00ee5abb5f09d42c4b0603a2ba86729b7ac5cb1 Mon Sep 17 00:00:00 2001
+From bd4945caf2cb314e40f3f5eabb99a4e4a8a870e0 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 21 Nov 2026 02:04:12 +0000
-Subject: [PATCH] dwc2d: recover a root port that stays empty or fails after a
- warm reboot
+Subject: [PATCH] dwc2d: keep a working root port from U-Boot, recover an empty
+ one
 
 After a warm reboot of the Pi 3B+ the root port stays empty for the
 whole boot about one time in three, or its device connects at Full
-speed and fails enumeration, although U-Boot found the hub just before.
-U-Boot hands over with the root port held in reset (dwc2_uninit_common).
+speed and fails enumeration (#576). U-Boot hands over a working port
+(HPRT0 0x100d in every boot of Pi test 566, good and bad); the hub is
+lost during dwc2d's own init, and neither a port reset nor a power
+cycle brings it back.
 
-init_host now ends that reset before the core soft reset and switches
-the PHY clock on (PCGCCTL 0), as U-Boot and Linux do, and logs HPRT0
-and PCGCCTL as found. When the port still stays empty or its device
-fails, start_bus resets the port without waiting for a connection,
-then switches the port power off and on, and tries again each time.
-Each step logs HPRT0, GUSBCFG, GOTGCTL, PCGCCTL and GINTSTS.
+init_host now logs HPRT0 and PCGCCTL as found and writes PCGCCTL 0.
+When the port is connected, enabled and powered, it skips the core soft
+reset and halts the channels instead; otherwise it resets the core as
+before. When the port still stays empty or its device fails, start_bus
+resets the port without waiting for a connection, then switches the
+port power off and on, and tries again each time, logging HPRT0,
+GUSBCFG, GOTGCTL, PCGCCTL and GINTSTS.
 ---
- drivers/usb/dwc2d/src/dwc2.rs | 47 +++++++++++++++++++++++++++++
- drivers/usb/dwc2d/src/main.rs | 57 +++++++++++++++++++++++++----------
+ drivers/usb/dwc2d/src/dwc2.rs | 75 ++++++++++++++++++++++++++++++-----
+ drivers/usb/dwc2d/src/main.rs | 57 ++++++++++++++++++--------
  drivers/usb/dwc2d/src/regs.rs |  3 ++
- 3 files changed, 91 insertions(+), 16 deletions(-)
+ 3 files changed, 110 insertions(+), 25 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 4e26ae5..f6428f6 100644
+index 4e26ae5..f15cac2 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -100,6 +100,19 @@ impl Dwc2 {
+@@ -100,15 +100,38 @@ impl Dwc2 {
          self.channels =
              ((hwcfg2 >> GHWCFG2_NUM_HOST_CHAN_SHIFT) & GHWCFG2_NUM_HOST_CHAN_MASK) as usize + 1;
  
-+        // U-Boot hands over with the root port held in reset (its
-+        // dwc2_uninit_common sets HPRT0_RST). End that reset properly before
-+        // the core reset, and switch the PHY clock on, as U-Boot and Linux do
-+        // at init (#576: after a warm reboot the hub sometimes never
-+        // connects, or connects at Full speed).
+-        // Core soft reset, after the AHB master is idle.
+-        self.wait("AHB idle", Duration::from_millis(100), |s| {
+-            s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
+-        })?;
+-        self.write(GRSTCTL, GRSTCTL_CSFT_RST);
+-        self.wait("core reset", Duration::from_millis(100), |s| {
+-            s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
+-        })?;
+-        delay(Duration::from_millis(1));
++        // On the Pi U-Boot hands over a working root port: connected,
++        // enabled, powered (Pi test 566: HPRT0 0x100d at start in every
++        // boot). The core soft reset then sometimes loses the onboard hub for
++        // the whole boot, and neither a port reset nor a power cycle brings it
++        // back (#576, Pi tests 562, 564, 566). So with such a port the core is
++        // not reset; the channels are halted instead and the rest of the setup
++        // runs as usual. Otherwise (QEMU, a port in reset, nothing on it) the
++        // core is reset as before.
 +        let (hprt0, pcgcctl) = (self.read(HPRT0), self.read(PCGCCTL));
 +        println!("dwc2d: at start HPRT0 {hprt0:#x} PCGCCTL {pcgcctl:#x}");
-+        if hprt0 & HPRT0_RST != 0 {
-+            self.write_port(0, HPRT0_RST);
-+            delay(Duration::from_millis(20));
-+        }
 +        self.write(PCGCCTL, 0);
-+
-         // Core soft reset, after the AHB master is idle.
-         self.wait("AHB idle", Duration::from_millis(100), |s| {
-             s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
-@@ -213,6 +226,40 @@ impl Dwc2 {
++        let working = HPRT0_CONN_STS | HPRT0_ENA | HPRT0_PWR;
++        if hprt0 & working == working && hprt0 & HPRT0_RST == 0 {
++            println!("dwc2d: root port working at start, no core reset");
++            for ch in 0..self.channels {
++                self.halt(ch);
++            }
++        } else {
++            if hprt0 & HPRT0_RST != 0 {
++                self.write_port(0, HPRT0_RST);
++                delay(Duration::from_millis(20));
++            }
++            // Core soft reset, after the AHB master is idle.
++            self.wait("AHB idle", Duration::from_millis(100), |s| {
++                s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
++            })?;
++            self.write(GRSTCTL, GRSTCTL_CSFT_RST);
++            self.wait("core reset", Duration::from_millis(100), |s| {
++                s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
++            })?;
++            delay(Duration::from_millis(1));
++        }
+ 
+         // Force host mode; the switch takes up to 25 ms.
+         let usbcfg = self.read(GUSBCFG);
+@@ -213,6 +236,40 @@ impl Dwc2 {
          self.read(HPRT0) & HPRT0_CONN_STS != 0
      }
  

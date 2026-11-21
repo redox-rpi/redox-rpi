@@ -12,18 +12,36 @@ comes up without USB, and so without network:
   (the onboard hub is High speed), and `GET_DESCRIPTOR` to address 0
   failed with `Transfer(130)` three times.
 
-`init_host` does a core soft reset but leaves the root port power as
-U-Boot left it, and `reset_port` only ever sets the power bit. Nothing
-takes the port through a disconnect.
+Pi test 566 showed where the hub is lost: at dwc2d start the root port
+is fine in every boot, good and bad (`HPRT0 0x100d`: connected, enabled,
+powered, High speed; `PCGCCTL 0`). U-Boot hands over a working port, and the
+hub disappears during dwc2d's own init, whose only port-related step is the
+core soft reset.
 
-- **base `0099`:** in `start_bus`, when the root port stays empty after
-  the 2 s connect wait, or its device fails all three enumeration
-  attempts, dwc2d switches the port power off for 500 ms and on again and
-  starts over, up to twice. Each step logs `HPRT0`, `GUSBCFG` and
-  `GOTGCTL`, also in the final `nothing on the root port` line.
+- **base `0099`:**
+  - `init_host` logs `HPRT0` and `PCGCCTL` as found (`dwc2d: at start
+    …`) and writes `PCGCCTL` 0. When the port is connected, enabled and
+    powered, it **skips the core soft reset** (`dwc2d: root port working
+    at start, no core reset`) and halts the channels instead; the rest of
+    the setup runs as before. Otherwise (QEMU, where U-Boot leaves the port
+    in reset; a port with nothing on it) the core is reset as before.
+  - In `start_bus`, when the root port stays empty after the 2 s connect
+    wait, or its device fails all three enumeration attempts: first a port
+    reset without waiting for a connection, then the port power off for
+    500 ms and on again, starting over after each. Each step logs `HPRT0`,
+    `GUSBCFG`, `GOTGCTL`, `PCGCCTL` and `GINTSTS`, and so does the final
+    `nothing on the root port` line.
   - Cost: with nothing on the root port (a Zero 2 W without its hub) the
     boot waits up to about 5 s longer for dwc2d. On a normal boot it costs
     nothing.
+
+Earlier versions on the Pi 3B+ (30 devsh reboots each):
+
+| Pi test | Version | Boots with USB | After the recovery steps |
+|---|---|---|---|
+| 564 A | without | 18/30 | – |
+| 564 B | power cycle only | 16/30 | hub back 0/14 |
+| 566 | + end port reset, `PCGCCTL` 0, blind port reset | 18/30 | hub back 0/11 |
 
 Test: 30 devsh reboots of the same image on the Pi 3B+, A (without) and
 B (with the experiment), counting boots without the hub. Pass: B has 0,
