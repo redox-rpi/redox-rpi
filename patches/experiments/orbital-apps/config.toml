@@ -14,6 +14,15 @@ cosmic-files = {}
 # built from source with SDL2 (no aarch64 binaries upstream).
 sopwith = "source"
 sdl2 = "source"
+# Tux Typing (#529): a typing tutor for children with German lessons,
+# from source with t4kcommon (recipes/games/tuxtype and
+# recipes/wip/games/math/t4kcommon in this experiment).
+tuxtype = "source"
+t4kcommon = "source"
+sdl1 = "source"
+sdl1-image = "source"
+sdl1-mixer = "source"
+sdl1-ttf = "source"
 # Icons the COSMIC apps look up.
 cosmic-icons = {}
 hicolor-icon-theme = {}
@@ -28,3 +37,37 @@ binary=/usr/bin/sopwith
 icon=/usr/share/icons/hicolor/128x128/apps/sopwith.png
 description=Biplane game: arrows fly, space fires, b drops a bomb
 """
+
+# Tux Typing on the launcher bar (it brings no launcher entry of its own).
+[[files]]
+path = "/usr/share/ui/apps/72_tuxtype"
+data = """
+name=Tux Typing
+binary=/usr/bin/tuxtype
+icon=/usr/share/tuxtype/images/icons/icon.png
+description=Typing tutor: catch the falling fish by typing their letters
+"""
+
+# Tux Typing starts with the German theme (lessons, words, menus) for the
+# desktop user; tuxtype saves its settings, the language too, in this file.
+[[files]]
+path = "/home/user/.config"
+data = ""
+directory = true
+uid = 1000
+gid = 1000
+
+[[files]]
+path = "/home/user/.config/tuxtype"
+data = ""
+directory = true
+uid = 1000
+gid = 1000
+
+[[files]]
+path = "/home/user/.config/tuxtype/settings.txt"
+data = """
+lang=deutsch
+"""
+uid = 1000
+gid = 1000

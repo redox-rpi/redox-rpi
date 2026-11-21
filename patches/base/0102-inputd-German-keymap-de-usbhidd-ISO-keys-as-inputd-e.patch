@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 22:42:16 +0000
+Subject: [PATCH] inputd: German keymap (de); usbhidd: ISO keys as inputd
+ expects (#529)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+inputd -K de selects German QWERTZ: z and y swapped, ß, ü, ö, ä, the
+ISO keys # ' (left of Enter) and < > (right of the left Shift). AltGr is
+not supported yet, as for the other keymaps.
+
+usbhidd mapped HID 0x32 (non-US #, left of Enter on ISO keyboards) to
+0x56 and HID 0x64 (non-US \, right of the left Shift) to K_APP. inputd's
+keymaps (gb and now de) expect K_BACKSLASH and 0x56 there, as dwc2d
+already sends. This matters for German keyboards on the Pi 400 (xhcid).
+---
+ drivers/input/usbhidd/src/main.rs | 10 +++--
+ drivers/inputd/src/keymap.rs      | 68 ++++++++++++++++++++++++++++++-
+ drivers/inputd/src/main.rs        |  2 +-
+ 3 files changed, 74 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
+index 7aaf479c..842cc138 100644
+--- a/drivers/input/usbhidd/src/main.rs
++++ b/drivers/input/usbhidd/src/main.rs
+@@ -68,8 +68,9 @@ fn send_key_event(display: &mut ProducerHandle, usage_page: u16, usage: u16, pre
+             0x2F => orbclient::K_BRACE_OPEN,
+             0x30 => orbclient::K_BRACE_CLOSE,
+             0x31 => orbclient::K_BACKSLASH,
+-            // 0x32 non-us # and ~
+-            0x32 => 0x56,
++            // 0x32 non-US # and ~: the key left of Enter on ISO keyboards,
++            // where inputd's keymaps (gb, de) expect K_BACKSLASH
++            0x32 => orbclient::K_BACKSLASH,
+             0x33 => orbclient::K_SEMICOLON,
+             0x34 => orbclient::K_QUOTE,
+             0x35 => orbclient::K_TICK,
+@@ -119,8 +120,9 @@ fn send_key_event(display: &mut ProducerHandle, usage_page: u16, usage: u16, pre
+             0x61 => orbclient::K_NUM_9,
+             0x62 => orbclient::K_NUM_0,
+             // 0x62 num .
+-            // 0x64 non-us \ and |
+-            0x64 => orbclient::K_APP,
++            // 0x64 non-US \ and |: the key right of the left Shift on ISO
++            // keyboards (< > on German ones), 0x56 in inputd's keymaps
++            0x64 => 0x56,
+             0x66 => orbclient::K_POWER,
+             // 0x67 num =
+             // unmapped values
+diff --git a/drivers/inputd/src/keymap.rs b/drivers/inputd/src/keymap.rs
+index 27d54751..d4f046d1 100644
+--- a/drivers/inputd/src/keymap.rs
++++ b/drivers/inputd/src/keymap.rs
+@@ -285,6 +285,68 @@ mod keymaps {
+         (orbclient::K_SPACE, [' ', ' ']),
+     ];
+ 
++    // German QWERTZ (T1, as printed on German keyboards). No AltGr yet (see
++    // get_char): @, €, {, [, ], }, \, ~ and | need it there. The dead keys
++    // ´ and ^ give their own character.
++    pub static DE: [(u8, [char; 2]); 54] = [
++        (orbclient::K_ESC, ['\0', '\0']),
++        (orbclient::K_1, ['1', '!']),
++        (orbclient::K_2, ['2', '"']),
++        (orbclient::K_3, ['3', '§']),
++        (orbclient::K_4, ['4', '$']),
++        (orbclient::K_5, ['5', '%']),
++        (orbclient::K_6, ['6', '&']),
++        (orbclient::K_7, ['7', '/']),
++        (orbclient::K_8, ['8', '(']),
++        (orbclient::K_9, ['9', ')']),
++        (orbclient::K_0, ['0', '=']),
++        (orbclient::K_MINUS, ['ß', '?']),
++        (orbclient::K_EQUALS, ['´', '`']),
++        (orbclient::K_BKSP, ['\0', '\0']),
++        (orbclient::K_TAB, ['\t', '\t']),
++        (orbclient::K_Q, ['q', 'Q']),
++        (orbclient::K_W, ['w', 'W']),
++        (orbclient::K_E, ['e', 'E']),
++        (orbclient::K_R, ['r', 'R']),
++        (orbclient::K_T, ['t', 'T']),
++        (orbclient::K_Y, ['z', 'Z']),
++        (orbclient::K_U, ['u', 'U']),
++        (orbclient::K_I, ['i', 'I']),
++        (orbclient::K_O, ['o', 'O']),
++        (orbclient::K_P, ['p', 'P']),
++        (orbclient::K_BRACE_OPEN, ['ü', 'Ü']),
++        (orbclient::K_BRACE_CLOSE, ['+', '*']),
++        (orbclient::K_ENTER, ['\0', '\0']),
++        (orbclient::K_CTRL, ['\0', '\0']),
++        (orbclient::K_A, ['a', 'A']),
++        (orbclient::K_S, ['s', 'S']),
++        (orbclient::K_D, ['d', 'D']),
++        (orbclient::K_F, ['f', 'F']),
++        (orbclient::K_G, ['g', 'G']),
++        (orbclient::K_H, ['h', 'H']),
++        (orbclient::K_J, ['j', 'J']),
++        (orbclient::K_K, ['k', 'K']),
++        (orbclient::K_L, ['l', 'L']),
++        (orbclient::K_SEMICOLON, ['ö', 'Ö']),
++        (orbclient::K_QUOTE, ['ä', 'Ä']),
++        (orbclient::K_TICK, ['^', '°']),
++        // The key left of Enter on ISO keyboards.
++        (orbclient::K_BACKSLASH, ['#', '\'']),
++        (orbclient::K_Z, ['y', 'Y']),
++        (orbclient::K_X, ['x', 'X']),
++        (orbclient::K_C, ['c', 'C']),
++        (orbclient::K_V, ['v', 'V']),
++        (orbclient::K_B, ['b', 'B']),
++        (orbclient::K_N, ['n', 'N']),
++        (orbclient::K_M, ['m', 'M']),
++        (orbclient::K_COMMA, [',', ';']),
++        (orbclient::K_PERIOD, ['.', ':']),
++        (orbclient::K_SLASH, ['-', '_']),
++        (orbclient::K_SPACE, [' ', ' ']),
++        // The key right of the left Shift on ISO keyboards.
++        (0x56, ['<', '>']),
++    ];
++
+     pub static IT: [(u8, [char; 2]); 53] = [
+         (orbclient::K_ESC, ['\0', '\0']),
+         (orbclient::K_1, ['1', '!']),
+@@ -351,11 +413,12 @@ pub enum KeymapKind {
+     Azerty,
+     Bepo,
+     IT,
++    DE,
+ }
+ 
+ impl From<usize> for KeymapKind {
+     fn from(value: usize) -> Self {
+-        if value > (KeymapKind::IT as usize) {
++        if value > (KeymapKind::DE as usize) {
+             KeymapKind::US
+         } else {
+             // SAFETY: Checked above
+@@ -379,6 +442,7 @@ impl FromStr for KeymapKind {
+             "azerty" => KeymapKind::Azerty,
+             "bepo" => KeymapKind::Bepo,
+             "it" => KeymapKind::IT,
++            "de" => KeymapKind::DE,
+             &_ => return Err(ParseKeymapError(())),
+         };
+ 
+@@ -395,6 +459,7 @@ impl Display for KeymapKind {
+             KeymapKind::Azerty => "azerty",
+             KeymapKind::Bepo => "bepo",
+             KeymapKind::IT => "it",
++            KeymapKind::DE => "de",
+         };
+         f.write_str(s)
+     }
+@@ -414,6 +479,7 @@ impl KeymapData {
+             KeymapKind::Azerty => HashMap::from(keymaps::AZERTY),
+             KeymapKind::Bepo => HashMap::from(keymaps::BEPO),
+             KeymapKind::IT => HashMap::from(keymaps::IT),
++            KeymapKind::DE => HashMap::from(keymaps::DE),
+         };
+ 
+         Self { keymap_hash, kind }
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 8fe6c440..fb90287e 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -710,7 +710,7 @@ fn main() {
+             // List available keymaps
+             "--keymaps" => {
+                 // TODO: configurable KeymapKind using files
+-                for key in ["dvorak", "us", "gb", "azerty", "bepo", "it"] {
++                for key in ["dvorak", "us", "gb", "azerty", "bepo", "it", "de"] {
+                     println!("{}", key);
+                 }
+             }
+-- 
+2.53.0
+
