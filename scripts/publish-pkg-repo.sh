@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ ${#packages[@]} -gt 0 ] || packages=(base base-initfs bootloader kernel relibc pkgutils
-    redoxfs pkg-persist redox-fatfs2 reboot timesync)
+    redoxfs pkg-persist redox-fatfs2 reboot timesync mdnsd)
 [ -x "$pkgar" ] || cargo install -q --locked --root "$ROOT/build/tools" pkgar --version 0.2.4 --features cli
 [ -f "$key_dir/id_ed25519.toml" ] || { echo "no key in $key_dir, see the header of this script" >&2; exit 1; }
 build_pkey="$REDOX/build/id_ed25519.pub.toml"
