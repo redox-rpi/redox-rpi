@@ -1,0 +1,61 @@
+From ee27050e86618f8d5aa1f6565ad905c36c0f2a87 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 09:25:50 +0000
+Subject: [PATCH] bcm2835-sdhcid: divide from the current EMMC2 clock, not its
+ maximum (redox-rpi #307)
+
+Test 522: the firmware reports EMMC2 at 100 MHz now and 500 MHz at most.
+The controller's capabilities say 100 MHz too. Dividing from the
+maximum made the SD clock five times too slow.
+---
+ drivers/storage/bcm2835-sdhcid/src/main.rs | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhcid/src/main.rs b/drivers/storage/bcm2835-sdhcid/src/main.rs
+index fe5deee1..3ed8741d 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/main.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
+@@ -147,7 +147,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let mut sdhci = if emmc2.is_some() {
+         let clock = emmc2_clock();
+-        sd::SdHostCtrl::with_clock(addr, clock, clock.max(sd::EMMC2_ASSUMED_CLOCK), true)
++        sd::SdHostCtrl::with_clock(addr, clock, clock, true)
+     } else {
+         sd::SdHostCtrl::new(addr)
+     };
+@@ -206,8 +206,11 @@ fn cpu_address(fdt: &Fdt, bus_addr: usize, emmc2: bool) -> usize {
+ }
+ 
+ /// The EMMC2 clock from rpi-firmwared (`/scheme/rpi-firmware/clocks`, a line
+-/// "emmc2 <now> <max>"), its maximum since U-Boot raises it there; without
+-/// it, the assumed highest rate, which keeps the card clock in spec.
++/// "emmc2 <now> <max>"). The current rate is what the controller runs at:
++/// it matches the base clock in the capabilities (100 MHz on the Pi 400,
++/// Test 522), while the maximum (500 MHz) is only what the firmware would
++/// allow. Without it, the assumed highest rate, which keeps the card clock
++/// in spec.
+ fn emmc2_clock() -> u32 {
+     let from_firmware = std::fs::read_to_string("/scheme/rpi-firmware/clocks")
+         .ok()
+@@ -217,15 +220,13 @@ fn emmc2_clock() -> u32 {
+                 if words.next() != Some("emmc2") {
+                     return None;
+                 }
+-                let now = words.next()?.parse::<u32>().ok()?;
+-                let max = words.next()?.parse::<u32>().ok()?;
+-                Some(now.max(max))
++                words.next()?.parse::<u32>().ok()
+             })
+         })
+         .filter(|&rate| rate > 0);
+     match from_firmware {
+         Some(rate) => {
+-            println!("bcm2835-sdhcid: EMMC2 clock up to {} MHz", rate / 1_000_000);
++            println!("bcm2835-sdhcid: EMMC2 clock {} MHz", rate / 1_000_000);
+             rate
+         }
+         None => {
+-- 
+2.53.0
+
