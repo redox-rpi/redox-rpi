@@ -7,7 +7,7 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
+#   scripts/build-image.sh [--sdcard | --zero2w | --small | --release-netboot]
 #                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
 #                          [--allow-dirty] [--recipes-only]
@@ -18,6 +18,8 @@
 #                 image (config/raspi3bp.toml)
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
+#   --small       the smallest SD card image, for a 64 MB card
+#                 (config/raspi3bp-small.toml): no desktop, no curl
 #   --release-netboot
 #                 the network-boot variant of the SD card image
 #                 (config/raspi3bp-release-netboot.toml): its packages, no
@@ -48,6 +50,7 @@
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
 #         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
+#         upstream/redox/build/aarch64/small/harddrive.img (--small),
 #         upstream/redox/build/aarch64/release-netboot/harddrive.img
 #         (--release-netboot),
 #         and its manifest in build/manifests/
@@ -80,6 +83,10 @@ while [ $# -gt 0 ]; do
         --zero2w)
             CONFIG_NAME=zero2w
             CONFIG="$ROOT/config/raspizero2w.toml"
+            shift ;;
+        --small)
+            CONFIG_NAME=small
+            CONFIG="$ROOT/config/raspi3bp-small.toml"
             shift ;;
         --release-netboot)
             CONFIG_NAME=release-netboot
@@ -601,11 +608,11 @@ EOF
 
 # Experiments may add packages and files with a config.toml. A generated
 # config includes them after the image's own config, so they win. Every
-# image but the Zero 2 W's also gets curl (config/raspi3bp-http-client.toml
+# image but the Zero 2 W's and the small one also gets curl (config/raspi3bp-http-client.toml
 # says why it is not in the image configs).
 fs_config="$CONFIG"
 exp_configs=()
-[ "$CONFIG_NAME" = zero2w ] || exp_configs+=("$ROOT/config/raspi3bp-http-client.toml")
+case "$CONFIG_NAME" in zero2w|small) ;; *) exp_configs+=("$ROOT/config/raspi3bp-http-client.toml") ;; esac
 for exp in "${experiments[@]}"; do
     conf="$ROOT/patches/experiments/$exp/config.toml"
     [ -f "$conf" ] || continue
