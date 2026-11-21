@@ -4,7 +4,8 @@
 
 [packages]
 orbdata = {}
-orbital = {}
+# Built from source with a fix (recipes/gui/orbital/recipe.toml).
+orbital = "source"
 # Built from source: opaque window (recipes/gui/orbterm/recipe.toml).
 orbterm = "source"
 orbutils = {}
