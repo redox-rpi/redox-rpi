@@ -87,6 +87,11 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (1824x984 is 7 MiB, 1920x1200 9 MiB) never get DMA memory, however much
   is free, and fall back to CPU blits (`dumb buffer … in normal memory:
   Out of memory`).
+- [`0074`](base/0074-rpi-fbd-under-QUIET-keep-the-firmware-s-picture-unti.patch)
+  (quiet boot I5, #517): with `QUIET` set, a new framebuffer is not
+  cleared when the console sets its mode, and the first frame covers the
+  whole screen, so the login replaces the firmware picture without a black
+  frame. See [experiment `quiet-boot`](../quiet-boot/README.md).
 
 ## What `rpi-fbd` does
 
