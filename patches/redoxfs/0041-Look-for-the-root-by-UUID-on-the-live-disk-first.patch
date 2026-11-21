@@ -1,0 +1,38 @@
+From 5b672168969e0610aaee9f222d530324504cb756 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 21 Nov 2026 17:21:25 +0000
+Subject: [PATCH] Look for the root by UUID on the live disk first
+
+After a network or live boot the root is the image's copy in RAM
+(disk.live). An SD card made from the same image has a RedoxFS with
+the same UUID, and filesystem_by_uuid searched the disk schemes in
+directory order: the card's partition was mounted as the root, and
+writes to / went to the card (redox-rpi #605, QEMU). disk.live is now
+searched first.
+---
+ src/bin/mount.rs | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/bin/mount.rs b/src/bin/mount.rs
+index 2811665..3736e55 100644
+--- a/src/bin/mount.rs
++++ b/src/bin/mount.rs
+@@ -253,6 +253,15 @@ fn filesystem_by_uuid(
+ 
+     match fs::read_dir("/scheme") {
+         Ok(entries) => {
++            // The live disk first: after a network or live boot the root is
++            // its copy in RAM, and an SD card made from the same image has a
++            // RedoxFS with the same UUID. Searched in directory order, the
++            // card could win and become the root (redox-rpi #605).
++            let mut entries: Vec<_> = entries.collect();
++            entries.sort_by_key(|entry| match entry {
++                Ok(entry) if entry.file_name() == "disk.live" => 0,
++                _ => 1,
++            });
+             for entry_res in entries {
+                 if let Ok(entry) = entry_res {
+                     if let Some(disk) = entry.path().to_str() {
+-- 
+2.53.0
+
