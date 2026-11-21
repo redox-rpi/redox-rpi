@@ -148,7 +148,11 @@ fn cores() -> Result<Vec<(String, u64, u64, u64)>, String> {
 fn round(seconds: f64, lines: usize, by_wakeups: bool) -> Result<(), String> {
     let (threads_before, cores_before, irqs_before) = (threads()?, cores()?, irqs());
     let started = Instant::now();
-    sleep(Duration::from_secs_f64(seconds));
+    // On Redox, sleep can come back early (seen as "0.0 s" rounds while
+    // pointer-bench starts in the background), so sleep until it is over.
+    while let Some(left) = Duration::from_secs_f64(seconds).checked_sub(started.elapsed()) {
+        sleep(left);
+    }
     let (threads_after, cores_after, irqs_after) = (threads()?, cores()?, irqs());
     let elapsed = started.elapsed().as_secs_f64();
 
