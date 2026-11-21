@@ -16,12 +16,13 @@ image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 H=/scheme/audiohw
 "$ROOT/scripts/qemu-raspi3b.sh" --image "$image" --timeout 900 \
     --run "desktop --yes" \
-    --run "grep loud_chunks $H/stats" \
+    --run "sleep 6" \
+    --run "grep loud_chunks $H/stats; grep idle $H/stats" \
     --run "sopwith &> /tmp/sop.log &" \
     --run "sleep 15" \
     --run "cat /tmp/sop.log" \
     --run "ps | grep sopwith" \
-    --run "grep loud_chunks $H/stats; grep peak $H/stats" > /dev/null 2>&1
+    --run "grep loud_chunks $H/stats; grep peak $H/stats; grep idle $H/stats; grep dma_faults $H/stats" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
 failed=0
@@ -40,4 +41,14 @@ if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then
 else
     echo "FAIL: the title tune reached the driver"; failed=1
 fi
+# A3: silent for more than 3 s on the desktop, the driver sleeps; the tune
+# wakes it.
+idle="$(grep -E "^idle (yes|no)$" <<< "$log" | awk '{print $2}' | tr '\n' ' ')"
+echo "idle before and after Sopwith: ${idle:-?}"
+if [ "$idle" = "yes no " ]; then
+    echo "PASS: asleep on the silent desktop, Sopwith woke the driver"
+else
+    echo "FAIL: asleep on the silent desktop, Sopwith woke the driver"; failed=1
+fi
+check "no DMA faults" "^dma_faults 0$"
 exit $failed
