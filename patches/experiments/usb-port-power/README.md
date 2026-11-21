@@ -35,13 +35,14 @@ core soft reset.
     boot waits up to about 5 s longer for dwc2d. On a normal boot it costs
     nothing.
 
-Earlier versions on the Pi 3B+ (30 devsh reboots each):
+Versions on the Pi 3B+ (30 devsh reboots each):
 
 | Pi test | Version | Boots with USB | After the recovery steps |
 |---|---|---|---|
 | 564 A | without | 18/30 | – |
 | 564 B | power cycle only | 16/30 | hub back 0/14 |
 | 566 | + end port reset, `PCGCCTL` 0, blind port reset | 18/30 | hub back 0/11 |
+| **568** | **v3: no core reset for a working port** | **30/30** | never needed |
 
 Test: 30 devsh reboots of the same image on the Pi 3B+, A (without) and
 B (with the experiment), counting boots without the hub. Pass: B has 0,
