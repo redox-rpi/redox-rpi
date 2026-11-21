@@ -1,0 +1,79 @@
+From 452a89b3b99e6d8e3d83f99ac91506c6106d3ee8 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 03:46:56 +0000
+Subject: [PATCH] netstack: keep a stale ARP address in use while asking again
+
+A neighbour's ARP entry expired 60 s after it was learned, and every
+packet to that host then waited in a queue of 10 until the ARP reply
+came. A busy connection held back its ACKs once a minute and dropped
+them when the queue was full (redox-rpi issue 140, seen in 119's long
+downloads). Now an expired entry stays in use for 10 s more while an ARP
+request asks again, like Linux's stale state. The reply renews it; an
+entry that stays unanswered is removed as before.
+---
+ netstack/src/link/ethernet.rs | 26 ++++++++++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index d72322ce..0f562945 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -53,6 +53,11 @@ impl EthernetLink {
+     const WAITING_PACKET_BUFFER_SIZE: usize = Self::MTU * Self::MAX_WAITING_PACKET_COUNT;
+ 
+     const NEIGHBOR_LIVE_TIME: Duration = Duration::from_secs(60);
++    // After NEIGHBOR_LIVE_TIME an entry is stale: packets still go to the old
++    // address while an ARP request asks again, so a busy connection doesn't
++    // queue (and drop) its packets once a minute. Only an entry that stays
++    // unanswered this much longer is removed.
++    const NEIGHBOR_STALE_TIME: Duration = Duration::from_secs(10);
+     const ARP_SILENCE_TIME: Duration = Duration::from_secs(1);
+ 
+     pub fn new(name: &str, network_file: File) -> Self {
+@@ -270,6 +275,19 @@ impl EthernetLink {
+         }
+     }
+ 
++    // Ask again for a stale neighbor, unless an ARP request is already going.
++    fn refresh_neighbor(&mut self, next_hop: IpAddress, now: Instant) {
++        let IpAddress::Ipv4(target) = next_hop;
++        if let ArpState::Discovered = self.arp_state {
++            self.arp_state = ArpState::Discovering {
++                target,
++                tries: 0,
++                silent_until: Instant::ZERO,
++            };
++            self.send_arp(now)
++        }
++    }
++
+     fn send_arp(&mut self, now: Instant) {
+         let Some(hardware_address) = self.hardware_address else {
+             return;
+@@ -346,17 +364,21 @@ impl LinkDevice for EthernetLink {
+         match self.neighbor_cache.entry(next_hop) {
+             Entry::Vacant(_) => self.handle_missing_neighbor(next_hop, packet, now),
+             Entry::Occupied(e) => {
+-                if e.get().expires_at < now {
++                if e.get().expires_at + Self::NEIGHBOR_STALE_TIME < now {
+                     e.remove();
+                     self.handle_missing_neighbor(next_hop, packet, now)
+                 } else {
+                     let mac = e.get().hardware_address;
++                    let stale = e.get().expires_at < now;
+                     self.send_to(
+                         mac,
+                         packet.len(),
+                         |buf| buf.copy_from_slice(packet),
+                         EthernetProtocol::Ipv4,
+-                    )
++                    );
++                    if stale {
++                        self.refresh_neighbor(next_hop, now);
++                    }
+                 }
+             }
+         }
+-- 
+2.53.0
+
