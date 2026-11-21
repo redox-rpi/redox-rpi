@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 09:00:00 +0000
+Subject: [PATCH] Build relibc with one codegen unit (redox-rpi opt-speed)
+
+---
+
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -149,6 +149,7 @@ trace_tls = []
+ panic = "abort"
+ 
+ [profile.release]
++codegen-units = 1
+ panic = "abort"
+ 
+ [patch.crates-io]
+-- 

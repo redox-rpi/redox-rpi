@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 09:00:00 +0000
+Subject: [PATCH] Build daemons and drivers with opt-level 3, fat LTO and one codegen unit (redox-rpi opt-speed)
+
+---
+
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -73,14 +73,16 @@ $(SYSROOT)/bin/redoxfs:
+ base:
+ 	@mkdir -pv "$(BUILD_DIR)"
+ # Build daemons and drivers
+-	CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+ 		$(CARGO) build $(BUILD_FLAGS) \
+ 		--manifest-path "$(SRC_DIR)/Cargo.toml" \
+ 		$(BASE_CARGO_ARGS) $(DRIVERS_CARGO_ARGS)
+ # Build initfs daemons and drivers
+ # FIXME fix whatever issue (feature unification?) causes most logs to be omitted
+ # if this is merged with the above build command.
+-	CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+ 		$(CARGO) build $(BUILD_FLAGS) \
+ 		--manifest-path "$(SRC_DIR)/Cargo.toml" \
+ 		$(INITFS_CARGO_ARGS) $(INITFS_DRIVERS_CARGO_ARGS)
+-- 

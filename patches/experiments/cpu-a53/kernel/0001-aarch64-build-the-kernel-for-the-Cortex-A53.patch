@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 09:00:00 +0000
+Subject: [PATCH] aarch64: build the kernel for the Cortex-A53 (redox-rpi cpu-a53)
+
+---
+
+diff --git a/targets/aarch64-unknown-kernel.json b/targets/aarch64-unknown-kernel.json
+--- a/targets/aarch64-unknown-kernel.json
++++ b/targets/aarch64-unknown-kernel.json
+@@ -1,13 +1,14 @@
+ {
+     "abi": "softfloat",
+     "arch": "aarch64",
++    "cpu": "cortex-a53",
+     "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32",
+     "disable-redzone": true,
+     "dynamic-linking": false,
+     "env": "",
+     "exe-suffix": "",
+     "executables": true,
+-    "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
++    "features": "+strict-align,-neon,-fp-armv8,-aes,-sha2,+tpidr-el1",
+     "frame-pointer": "always",
+     "has-rpath": false,
+     "linker": "rust-lld",
+-- 

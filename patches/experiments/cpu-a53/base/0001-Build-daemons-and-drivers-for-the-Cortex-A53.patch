@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 09:00:00 +0000
+Subject: [PATCH] Build daemons and drivers for the Cortex-A53, still opt-level s (redox-rpi cpu-a53)
+
+---
+
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -73,14 +73,16 @@ $(SYSROOT)/bin/redoxfs:
+ base:
+ 	@mkdir -pv "$(BUILD_DIR)"
+ # Build daemons and drivers
+ 	CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_TARGET_AARCH64_UNKNOWN_REDOX_RUSTFLAGS="$$CARGO_TARGET_AARCH64_UNKNOWN_REDOX_RUSTFLAGS -Ctarget-cpu=cortex-a53 -Ctarget-feature=-aes,-sha2" \
+ 		$(CARGO) build $(BUILD_FLAGS) \
+ 		--manifest-path "$(SRC_DIR)/Cargo.toml" \
+ 		$(BASE_CARGO_ARGS) $(DRIVERS_CARGO_ARGS)
+ # Build initfs daemons and drivers
+ # FIXME fix whatever issue (feature unification?) causes most logs to be omitted
+ # if this is merged with the above build command.
+ 	CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_PANIC=abort \
++	CARGO_TARGET_AARCH64_UNKNOWN_REDOX_RUSTFLAGS="$$CARGO_TARGET_AARCH64_UNKNOWN_REDOX_RUSTFLAGS -Ctarget-cpu=cortex-a53 -Ctarget-feature=-aes,-sha2" \
+ 		$(CARGO) build $(BUILD_FLAGS) \
+ 		--manifest-path "$(SRC_DIR)/Cargo.toml" \
+ 		$(INITFS_CARGO_ARGS) $(INITFS_DRIVERS_CARGO_ARGS)
+-- 
