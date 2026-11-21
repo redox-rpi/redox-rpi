@@ -1,0 +1,56 @@
+From dedd34ac140d18cf740fc4c24c7f7244e24cf187 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 21 Nov 2026 12:01:46 +0000
+Subject: [PATCH] fork: the child opens its own poll event queue
+
+poll keeps one event queue per thread (CACHED_EVENT_FD). After fork the
+child copied that fd, so parent and child shared one queue: each
+registered its fds on it and read the other one's events. OpenSSH's
+monitor then took the events its session child polled for, and the
+session hung right after login (Pi test 563 B, QEMU). The child now
+closes the inherited fd and opens a new queue on its next poll.
+---
+ src/platform/redox/mod.rs  |  3 +++
+ src/platform/redox/poll.rs | 12 ++++++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/src/platform/redox/mod.rs b/src/platform/redox/mod.rs
+index 1153f637..22d189f9 100644
+--- a/src/platform/redox/mod.rs
++++ b/src/platform/redox/mod.rs
+@@ -511,6 +511,9 @@ impl Pal for Sys {
+         let _guard = CLONE_LOCK.write();
+ 
+         let r = redox_rt::proc::fork_impl(&redox_rt::proc::ForkArgs::Managed);
++        if matches!(r, Ok(0)) {
++            poll::forget_event_queue_after_fork();
++        }
+ 
+         #[cfg(not(feature = "no_trace"))]
+         if !matches!(r, Ok(0)) {
+diff --git a/src/platform/redox/poll.rs b/src/platform/redox/poll.rs
+index 60c5a6e4..f8cefa33 100644
+--- a/src/platform/redox/poll.rs
++++ b/src/platform/redox/poll.rs
+@@ -12,6 +12,18 @@ use syscall::{Event, EventFlags, O_NONBLOCK};
+ #[thread_local]
+ static CACHED_EVENT_FD: Cell<Option<usize>> = Cell::new(None);
+ 
++/// Called in the child after fork. The child's copy of the cached event
++/// queue fd refers to the parent's queue: both processes would register on
++/// it and read each other's events, and a poll in one of them could take the
++/// event the other is waiting for (OpenSSH's monitor and its session child:
++/// the session hung right after login). The child opens its own queue on its
++/// next poll.
++pub(crate) fn forget_event_queue_after_fork() {
++    if let Some(fd) = CACHED_EVENT_FD.take() {
++        let _ = redox_rt::sys::close(fd);
++    }
++}
++
+ impl Sys {
+     /// Wrapper to use epoll for poll
+     pub(crate) fn redox_poll(
+-- 
+2.53.0
+
