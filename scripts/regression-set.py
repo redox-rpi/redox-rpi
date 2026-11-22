@@ -87,7 +87,11 @@ Checks, in this order:
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
 
 Prints one line per check (PASS, FAIL or SKIP) and, with --report, appends a
-Markdown table to that file. Exits 1 if a check failed. A check that is
+Markdown table to that file. A failed check that has raw output (tcc: the
+failed steps' sections of run.ion; sig-pipe, scanf-pipe: the script's
+output) prints it after its FAIL line, each line indented by "  | ", and
+the report gets it below the table (at most RAW_MAX lines each, #611).
+Exits 1 if a check failed. A check that is
 skipped never fails the set. QEMU does not see hardware (audio rate, real
 USB, the 3B+ external abort): those stay with pi-test.py --extended on the Pi.
 """
@@ -109,6 +113,7 @@ spec.loader.exec_module(pi_test)
 SERIAL_BAD = re.compile(r"kernel panic|panicked at|RELIBC PANIC|UNHANDLED EXCEPTION|main loop stuck", re.I)
 SERIAL_PCID = re.compile(r"^(pcid|rtcd)\b|\b(pcid|rtcd): ", re.M)
 ANSI_TEXT = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+RAW_MAX = 200  # lines of raw output kept per failed check (the last ones)
 
 # One line of C (no #include, so ion's echo can write it): the parent waits
 # for child c (exits 7 after 3 s) while child s sends it SIGWINCH (28) and
@@ -202,7 +207,7 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     out, secs = pi_test.timed(sh, f"ion {script}", 600)
     ok = passed(out) and any(done in l for l in out)
     shown = [l for l in out if "pass" in l.lower() or "fail" in l.lower()]
-    check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
+    check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]), raw=out)
 
 
 DNS_LAN_S = 2        # REQ-NET-7 criterion 1, each lookup of an existing LAN name
@@ -263,6 +268,8 @@ def check_tcc(sh, check, tcc):
         return
     out, secs = pi_test.timed(sh, f"ion {TCC_RUN} &> {TCC_LOG}; cat {TCC_LOG}", 1800)
     s = tcc_sections(out)
+    prefixes = {"dynamic": "hello (dynamic)", "-run": "tcc -run", "script": "shebang",
+                "bench": "bench, compiled by tcc", "self-hosting": "self-hosting"}
 
     def sec(prefix):
         return next((v for k, v in s.items() if k.startswith(prefix)), [])
@@ -290,7 +297,16 @@ def check_tcc(sh, check, tcc):
                                    else "failed: " + ", ".join(failed))
               + (f"; bench total {bench_ms} ms" if bench_ms else "")
               + (f"; tcc.c built in {self_ms:.0f} ms" if self_ms is not None else ""))
-    check("tcc", not failed, detail)
+    # Raw output for #611: the failed steps' sections, or the whole log when
+    # run.ion did not finish or a section is missing.
+    raw = []
+    for n in failed:
+        key = next((k for k in s if k.startswith(prefixes.get(n, "\0"))), None)
+        if key is None:
+            raw = [ANSI_TEXT.sub("", l).rstrip() for l in out]
+            break
+        raw += [f"== {key}"] + s[key]
+    check("tcc", not failed, detail, raw=raw)
 
 
 def check_dns(sh, check, args):
@@ -516,11 +532,16 @@ def main():
     args = ap.parse_args()
 
     results = []
+    raws = {}  # name: raw output of a failed check (#611)
 
-    def check(name, ok, detail):
+    def check(name, ok, detail, raw=None):
         word = "SKIP" if ok is None else "PASS" if ok else "FAIL"
         results.append((name, word, detail))
         print(f"{word} {name}: {detail}", flush=True)
+        if word == "FAIL" and raw:
+            raws[name] = [ANSI_TEXT.sub("", l).rstrip() for l in raw][-RAW_MAX:]
+            for l in raws[name]:
+                print(f"  | {l}", flush=True)
 
     def want(name):
         if name == "sopwith":  # opt-in: it leaves Orbital running
@@ -583,6 +604,9 @@ def main():
             for name, word, detail in results:
                 f.write(f"| {name} | {word} | {detail.replace('|', '/')} |\n")
             f.write("\n")
+            for name, lines in raws.items():
+                f.write(f"### {name}: raw output of the failed check (last {RAW_MAX} lines at most)\n\n"
+                        "```text\n" + "\n".join(l.replace("```", "'''") for l in lines) + "\n```\n\n")
     sys.exit(1 if fails else 0)
 
 
