@@ -105,5 +105,6 @@ It can't check the HDMI path, since QEMU has none.
 4. **Pi 400, listening** (person): a monitor with speakers. Chime, `tone`,
    `volume`, Sopwith.
 
-Don't combine with `rpi-fb`: both change the `INITFS_BINS` line of the base
-`Makefile`.
+`0001` adds `bcm2835-hdmiaudiod` in the second aarch64 `INITFS_BINS` line
+of the base `Makefile`, which no experiment changes, so it applies together
+with `rpi-fb` (that one changes the first line; #423).

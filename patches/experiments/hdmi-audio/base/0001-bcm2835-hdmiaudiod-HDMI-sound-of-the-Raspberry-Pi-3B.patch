@@ -71,14 +71,14 @@ diff --git a/Makefile b/Makefile
 index 29a06463..da95e0d5 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -22,6 +22,7 @@ DRIVERS_BINS = e1000d ihdad ihdgd ixgbed rtl8139d rtl8168d testnetd \
+@@ -32,6 +32,7 @@ endif
  
  ifeq ($(TARGET),aarch64-unknown-redox)
- 	INITFS_BINS += rpi-firmwared bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod
+ 	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
 +	INITFS_BINS += bcm2835-hdmiaudiod
  endif
  
- ifneq (,$(filter i586-unknown-redox i686-unknown-redox x86_64-unknown-redox,$(TARGET)))
+ # For testing/benchmarking only
 diff --git a/drivers/audio/bcm2835-hdmiaudiod/Cargo.toml b/drivers/audio/bcm2835-hdmiaudiod/Cargo.toml
 new file mode 100644
 index 00000000..770ac5bf

@@ -1,0 +1,81 @@
+From fb943d58b98f328c84426358fcebbd59153f2548 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 12:09:24 +0000
+Subject: [PATCH] dwc2d: keyboard and mouse poll on a fixed 10 ms grid
+
+next_poll was set to now + 10 ms after the timer woke the driver,
+so every wakeup delay was added to the interval. On the Pi the mouse
+was polled about every 20 ms (50 Hz): on a 60 Hz display every sixth
+frame had no movement, and dragged windows stuttered. Now the next
+poll is the previous due time + 10 ms; only when a poll is more than
+a whole interval late does the grid start again from now.
+---
+ drivers/usb/dwc2d/src/hid.rs   | 27 ++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/mouse.rs |  2 +-
+ 2 files changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 66ce54b8..4893f088 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -27,6 +27,16 @@ const PROTOCOL_BOOT: u16 = 0;
+ /// network adapters use 1 and 2.
+ const CHANNEL: usize = 3;
+ const POLL_INTERVAL: Duration = Duration::from_millis(10);
++
++/// The poll after `due`, on a fixed grid of `interval` from the first poll.
++/// The timer wakes the driver late; taking `now + interval` added that
++/// delay to every poll, and on the Pi a 10 ms poll came every ~20 ms. A
++/// poll a little late keeps the grid (the next one comes sooner); one more
++/// than a whole interval late starts the grid again at `now`.
++pub fn next_poll_after(due: Instant, now: Instant, interval: Duration) -> Instant {
++    let next = due + interval;
++    if next + interval < now { now } else { next }
++}
+ /// Auto-repeat of a held key, as keyboards in the boot protocol leave it to
+ /// the host.
+ const REPEAT_DELAY: Duration = Duration::from_millis(500);
+@@ -162,7 +172,7 @@ impl Keyboard {
+         if now < self.next_poll {
+             return;
+         }
+-        self.next_poll = now + POLL_INTERVAL;
++        self.next_poll = next_poll_after(self.next_poll, now, POLL_INTERVAL);
+ 
+         let phase = Phase {
+             dev_addr: self.f.address,
+@@ -309,3 +319,18 @@ fn scancode(usage: u8) -> Option<u8> {
+         _ => return None,
+     })
+ }
++
++#[cfg(test)]
++mod poll_tests {
++    use super::*;
++
++    #[test]
++    fn late_wakeups_keep_the_grid() {
++        let t0 = Instant::now();
++        let ms = Duration::from_millis;
++        // Woken 9 ms late: the next poll is still at 20 ms, not 29 ms.
++        assert_eq!(next_poll_after(t0 + ms(10), t0 + ms(19), ms(10)), t0 + ms(20));
++        // More than a whole interval behind: start again from now.
++        assert_eq!(next_poll_after(t0 + ms(10), t0 + ms(35), ms(10)), t0 + ms(35));
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index 4704ac59..b2c60179 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -402,7 +402,7 @@ impl Mouse {
+     pub fn poll(&mut self) -> Duration {
+         let now = Instant::now();
+         if now >= self.next_poll {
+-            self.next_poll = now + POLL_INTERVAL;
++            self.next_poll = crate::hid::next_poll_after(self.next_poll, now, POLL_INTERVAL);
+             self.poll_now();
+         }
+         self.next_poll.saturating_duration_since(Instant::now())
+-- 
+2.53.0
+

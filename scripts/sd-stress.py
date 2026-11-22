@@ -3,7 +3,7 @@
 
 Usage:
     scripts/sd-stress.py <host> [--port 2323] [--dir /scheme/data/stress]
-                         [--serial /dev/ttyUSB0 --serial-log <file>]
+                         [--serial [<tty>] --serial-log <file>]
                          [--big-mib 256] [--small 1000] [--cycles 5]
                          [--cycle-mib 32] [--report <file>]
                          [--note <text>] [--keep]
@@ -28,7 +28,8 @@ Program starts on the Pi can still fail now and then (T12), so a command
 whose output is incomplete runs again, up to three times.
 
 Give --serial-log, a file that something else (for example
-`cat /dev/ttyUSB0 >> logs/serial.log`) keeps appending the console to:
+`cat <tty> >> logs/serial.log`, with <tty> the Pi's console,
+REDOX_PI_SERIAL in lab.env) keeps appending the console to:
 after each reset the script then waits for the kernel's `kreset` and the
 new boot's `redox login:` there. devshd alone does not show a restart:
 it can answer during the shutdown, when the filesystem is already gone.
@@ -155,6 +156,24 @@ class SerialShell:
     def close(self):
         pass
 
+
+
+def lab_value(key):
+    """A lab value as scripts/lab-env.sh reads it: the environment first,
+    then KEY=value lines in $REDOX_LAB_ENV or ~/.config/redox-rpi/lab.env."""
+    if os.environ.get(key):
+        return os.environ[key]
+    path = os.environ.get("REDOX_LAB_ENV") or os.path.expanduser("~/.config/redox-rpi/lab.env")
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return v.strip().strip('"')
+    except OSError:
+        pass
+    return ""
 
 def hashes(sh, patterns, tries=3):
     """SHA-256 of the files matching the glob `patterns` on the Pi, as
@@ -299,9 +318,16 @@ def main():
     parser.add_argument("--report")
     parser.add_argument("--note", default="")
     parser.add_argument("--keep", action="store_true")
-    parser.add_argument("--serial", help="the Pi's console tty, instead of devshd")
+    parser.add_argument("--serial", nargs="?", const="", metavar="TTY",
+                        help="the Pi's console tty, instead of devshd; without a value "
+                             "REDOX_PI_SERIAL from lab.env (scripts/lab-env.sh)")
     parser.add_argument("--serial-log", help="file the console output is appended to")
     args = parser.parse_args()
+    if args.serial == "":
+        args.serial = lab_value("REDOX_PI_SERIAL")
+        if not args.serial:
+            parser.error("--serial without a value needs REDOX_PI_SERIAL in the environment "
+                         "or in lab.env (scripts/lab-env.sh)")
     if args.serial and not args.serial_log:
         parser.error("--serial needs --serial-log")
 
