@@ -81,7 +81,7 @@ automated (network boot and the release-netboot image).
 | [REQ-REL-1](https://github.com/redox-rpi/redox-rpi/issues/496) no devshd | must | release | release-process, #367 | rc3 card inspection; 571 part B (rc2) | verified (1 on rc3; 2 on rc2: port 2323 refused, no open port) |
 | [REQ-REL-2](https://github.com/redox-rpi/redox-rpi/issues/497) release name and build | must | release | #237 | 571, 573, 574 | verified (1, 2); 3 not shown |
 | [REQ-REL-3](https://github.com/redox-rpi/redox-rpi/issues/498) reproducible build | must | release | #257 | 573 (`--manifest`), manifests `dirty = "no"` | verified (1, 2); 3 in part (QEMU boot test green on the rc1 commit; rc3 commit not recorded) |
-| [REQ-REL-4](https://github.com/redox-rpi/redox-rpi/issues/499) download | must | release | #237 | — | at release (checklist: `SHA256SUMS`); the rc3 card has its sha256 |
+| [REQ-REL-4](https://github.com/redox-rpi/redox-rpi/issues/499) download | must | release | #237 | v0.6.0 checklist, Release | 1 verified (card, manifest, `SHA256SUMS` on the build server and the GitHub release); 2 not recorded |
 | [REQ-REL-5](https://github.com/redox-rpi/redox-rpi/issues/500) 2 GB card | should | release | #24 | rc3 card (1 301 282 816 bytes) | verified |
 
 **Not in the v0.6.0 scope:** the Pi 400 set, REQ-BOARD-4
@@ -119,7 +119,7 @@ For the checklist's step "Untested `must` criteria":
 | REQ-NET-7 | 4 | not tested (name server not answering); requirement still proposed |
 | REQ-REL-2 | 3 | `/.uuid` not checked |
 | REQ-REL-3 | 3 | QEMU boot test green on the rc1 commit only |
-| REQ-REL-4 | 1, 2 | at release |
+| REQ-REL-4 | 2 | card, manifest and `SHA256SUMS` published (1); the download check is not recorded |
 | REQ-FW-3, REQ-REL-1 | 2, 3 / 2 | rc2 only (571, `+xcbcb`); rc3 changed only audio |
 
 ## Findings for the other roles
