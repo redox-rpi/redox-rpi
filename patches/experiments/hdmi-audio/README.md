@@ -57,5 +57,6 @@ It can't check the HDMI path, since QEMU has none.
 2. **Listening, with a person:** a monitor or TV with speakers, on the 3B+
    and the Zero 2 W: chime, `tone`, Sopwith.
 
-Don't combine with `rpi-fb`: both change the `INITFS_BINS` line of the base
-`Makefile`.
+`0001` adds `bcm2835-hdmiaudiod` in the second aarch64 `INITFS_BINS` line
+of the base `Makefile`, which no experiment changes, so it applies together
+with `rpi-fb` (that one changes the first line; #423).
