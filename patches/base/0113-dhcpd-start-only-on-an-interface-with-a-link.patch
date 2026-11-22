@@ -1,20 +1,93 @@
-From de39cf63884e6722780d27a3fd436d74e2c1b2c8 Mon Sep 17 00:00:00 2001
+From 5fcaa95a1012c9562a3e11a89e927d169ae7d0a6 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 22 Nov 2026 14:27:46 +0000
-Subject: [PATCH 113/113] dhcpd: start only on an interface with a link
+Subject: [PATCH] dhcpd: start only on an interface with a link
 
-No adapter or no cable: no DHCP and no console lines. A link that comes
-up later (cable plugged in, adapter added) starts DHCP then; a link that
-comes back asks for a lease again (redox-rpi #560).
+No adapter or no cable: no DHCP and no console lines. After link-up
+dhcpd asks without pause; with no lease after 60 s it prints one line
+and then asks quietly every 30 s. A link that goes down and up again
+(cable plugged in again, adapter added) starts over (redox-rpi #560).
 ---
- dhcpd/src/main.rs | 29 ++++++++++++++++++++++++++---
- 1 file changed, 26 insertions(+), 3 deletions(-)
+ Cargo.lock        |  39 ++++++++++++++++++
+ dhcpd/src/main.rs | 100 ++++++++++++++++++++++++++++++++++++----------
+ 2 files changed, 118 insertions(+), 21 deletions(-)
 
+diff --git a/Cargo.lock b/Cargo.lock
+index a5f72da..acc3751 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -278,6 +278,20 @@ dependencies = [
+  "scheme-utils",
+ ]
+ 
++[[package]]
++name = "bcm2835-pwmaudiod"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_event",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+ name = "bcm2835-sdhcid"
+ version = "0.1.0"
+@@ -304,6 +318,19 @@ dependencies = [
+  "redox_syscall 0.9.5",
+ ]
+ 
++[[package]]
++name = "bcm2835-spid"
++version = "0.1.0"
++dependencies = [
++ "common",
++ "daemon",
++ "fdt 0.2.0-alpha1",
++ "libredox",
++ "redox-scheme",
++ "redox_syscall 0.9.5",
++ "scheme-utils",
++]
++
+ [[package]]
+ name = "bincode"
+ version = "1.3.3"
+@@ -771,6 +798,7 @@ dependencies = [
+  "inputd",
+  "libredox",
+  "orbclient",
++ "redox_event",
+  "redox_syscall 0.9.5",
+ ]
+ 
+@@ -2633,6 +2661,17 @@ dependencies = [
+  "numtoa",
+ ]
+ 
++[[package]]
++name = "testnetd"
++version = "0.1.0"
++dependencies = [
++ "daemon",
++ "driver-network",
++ "libredox",
++ "redox_event",
++ "redox_syscall 0.9.5",
++]
++
+ [[package]]
+ name = "thiserror"
+ version = "1.0.69"
 diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
-index 5729940..c2b8426 100644
+index 5729940..25b2058 100644
 --- a/dhcpd/src/main.rs
 +++ b/dhcpd/src/main.rs
-@@ -419,6 +419,13 @@ fn list_ifaces() -> Vec<String> {
+@@ -419,55 +419,113 @@ fn list_ifaces() -> Vec<String> {
          .unwrap_or_default()
  }
  
@@ -28,19 +101,77 @@ index 5729940..c2b8426 100644
  /// How long one DHCP exchange waits for each reply.
  const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
  /// How often the interface list is read.
-@@ -445,17 +452,33 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
-     None
+ const SCAN: Duration = Duration::from_secs(2);
+-/// How long to wait before asking again on an interface that got no lease.
++/// After a link comes up, how long dhcpd keeps asking before it says once
++/// that no answer came (#560).
++const ANSWER_WITHIN: Duration = Duration::from_secs(60);
++/// After that, how often it asks again, without console lines.
+ const RETRY: Duration = Duration::from_secs(30);
+-/// Attempts per interface before waiting `RETRY`.
+-const ATTEMPTS: usize = 3;
+ 
++/// An interface with a link but no lease yet.
++struct Waiting {
++    /// When the link came up (or the interface appeared with one).
++    since: Instant,
++    /// When to ask next.
++    next: Instant,
++    /// The "no DHCP answer" line was printed for this link-up.
++    told: bool,
++}
++
++impl Waiting {
++    fn new() -> Self {
++        let now = Instant::now();
++        Waiting { since: now, next: now, told: false }
++    }
++}
++
++/// One DHCP exchange. Failures are printed only with `-v`; `watch` says
++/// once when no answer came within `ANSWER_WITHIN`.
+ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+-    for attempt in 1..=ATTEMPTS {
+-        match dhcp(iface, REPLY_TIMEOUT, verbose) {
+-            Ok(lease) => {
+-                println!(
+-                    "DHCP: {iface} got {}/{}",
+-                    fmt_ip(lease.addr),
+-                    lease.mask_len
+-                );
+-                return Some(lease);
++    match dhcp(iface, REPLY_TIMEOUT, verbose) {
++        Ok(lease) => {
++            println!(
++                "DHCP: {iface} got {}/{}",
++                fmt_ip(lease.addr),
++                lease.mask_len
++            );
++            Some(lease)
++        }
++        Err(err) => {
++            if verbose {
++                eprintln!("dhcpd: {iface}: {err}");
+             }
+-            Err(err) => eprintln!("dhcpd: {iface}: attempt {attempt}: {err}"),
++            None
+         }
+     }
+-    None
  }
  
 -/// Gets a lease on every interface, also those that appear later, and keeps
 -/// one default route: the first wired interface with a lease, else Wi-Fi.
 +/// Gets a lease on every interface with a link, also those that appear or
 +/// get a link later, and keeps one default route: the first wired
-+/// interface with a lease, else Wi-Fi. When a link comes back (a cable
-+/// plugged in again), the interface asks for a lease again.
++/// interface with a lease, else Wi-Fi. After link-up it asks without pause;
++/// with no lease after `ANSWER_WITHIN` it prints one line and then asks
++/// quietly every `RETRY`. A link that goes down and up again (a cable
++/// plugged in again) starts over.
  fn watch(verbose: bool) -> ! {
      let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
-     let mut failed: BTreeMap<String, Instant> = BTreeMap::new();
+-    let mut failed: BTreeMap<String, Instant> = BTreeMap::new();
++    let mut waiting: BTreeMap<String, Waiting> = BTreeMap::new();
 +    let mut links: BTreeMap<String, bool> = BTreeMap::new();
      let mut default: Option<(String, Lease)> = None;
      loop {
@@ -54,17 +185,43 @@ index 5729940..c2b8426 100644
 +                // network. Address and route stay until then.
 +                Some(true) if !up => {
 +                    leases.remove(&iface);
++                    waiting.remove(&iface);
 +                }
-+                // Link back: no waiting for RETRY.
++                // Link back: start over.
 +                Some(false) if up => {
-+                    failed.remove(&iface);
++                    waiting.remove(&iface);
 +                }
 +                _ => {}
 +            }
 +            if !up || leases.contains_key(&iface) {
                  continue;
              }
-             if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
+-            if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
++            let wait = waiting.entry(iface.clone()).or_insert_with(Waiting::new);
++            if Instant::now() < wait.next {
+                 continue;
+             }
+             match try_lease(&iface, verbose) {
+                 Some(lease) => {
+-                    failed.remove(&iface);
++                    waiting.remove(&iface);
+                     leases.insert(iface, lease);
+                 }
++                None if wait.since.elapsed() < ANSWER_WITHIN => {}
+                 None => {
+-                    failed.insert(iface, Instant::now());
++                    if !wait.told {
++                        eprintln!(
++                            "dhcpd: {iface}: no DHCP answer within {} s, asking again every {} s",
++                            ANSWER_WITHIN.as_secs(),
++                            RETRY.as_secs()
++                        );
++                        wait.told = true;
++                    }
++                    wait.next = Instant::now() + RETRY;
+                 }
+             }
+             let want = preferred(&leases).map(|(n, l)| (n.clone(), l.clone()));
 -- 
 2.53.0
 
