@@ -1,0 +1,178 @@
+From ad6df2d31a028c575cef9370d69e5413904fe5a7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 14:27:32 +0000
+Subject: [PATCH 112/113] netstack: ifaces/<name>/link from the driver link
+ file
+
+1 with a link, 0 without. Drivers without the file read as 1. dhcpd
+waits for it (redox-rpi #560).
+---
+ netstack/src/adapters.rs          | 13 +++++++++----
+ netstack/src/link/ethernet.rs     | 17 +++++++++++++++++
+ netstack/src/link/mod.rs          |  5 +++++
+ netstack/src/scheme/mod.rs        |  3 +++
+ netstack/src/scheme/netcfg/mod.rs | 10 ++++++++++
+ 5 files changed, 44 insertions(+), 4 deletions(-)
+
+diff --git a/netstack/src/adapters.rs b/netstack/src/adapters.rs
+index e12fc2f..507c14b 100644
+--- a/netstack/src/adapters.rs
++++ b/netstack/src/adapters.rs
+@@ -22,6 +22,8 @@ pub struct Adapter {
+     pub mac: EthernetAddress,
+     /// The driver's `multicast` file, if it filters multicast in hardware.
+     pub multicast: Option<Fd>,
++    /// The driver's `link` file, if it reports the link.
++    pub link: Option<Fd>,
+ }
+ 
+ pub struct Adapters {
+@@ -67,7 +69,7 @@ impl Adapters {
+         for scheme in new {
+             self.seen.insert(scheme.clone());
+             match self.open(&scheme) {
+-                Ok((file, mac, multicast)) => {
++                Ok((file, mac, multicast, link)) => {
+                     let name = if is_wlan(&scheme) {
+                         self.wlan += 1;
+                         format!("wlan{}", self.wlan - 1)
+@@ -76,7 +78,7 @@ impl Adapters {
+                         format!("eth{}", self.eth - 1)
+                     };
+                     info!("adapter {scheme} as {name}, MAC {mac}");
+-                    adapters.push(Adapter { scheme, name, file, mac, multicast });
++                    adapters.push(Adapter { scheme, name, file, mac, multicast, link });
+                 }
+                 Err(e) => warn!("cannot use adapter {scheme}: {e}"),
+             }
+@@ -119,7 +121,8 @@ impl Adapters {
+         names
+     }
+ 
+-    fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress, Option<Fd>), String> {
++    #[allow(clippy::type_complexity)]
++    fn open(&self, scheme: &str) -> Result<(Fd, EthernetAddress, Option<Fd>, Option<Fd>), String> {
+         // As relibc's open(): the scheme root from the namespace, then the
+         // path inside the scheme.
+         let scheme_root = match &self.ns {
+@@ -141,7 +144,9 @@ impl Adapters {
+         }
+         // Drivers that filter multicast in hardware take the joined groups here.
+         let multicast = open("multicast", O_WRONLY).ok();
+-        Ok((file, EthernetAddress::from_bytes(&mac), multicast))
++        // Drivers that know the link report it here (dhcpd waits for it).
++        let link = open("link", O_RDONLY).ok();
++        Ok((file, EthernetAddress::from_bytes(&mac), multicast, link))
+     }
+ }
+ 
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index d72322c..8e075ad 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -2,6 +2,7 @@ use std::collections::btree_map::Entry;
+ use std::collections::BTreeMap;
+ use std::fs::File;
+ use std::io::{ErrorKind, Read, Write};
++use std::os::unix::fs::FileExt;
+ use std::rc::Rc;
+ 
+ use smoltcp::storage::PacketMetadata;
+@@ -42,6 +43,7 @@ pub struct EthernetLink {
+     output_buffer: Vec<u8>,
+     network_file: File,
+     multicast_file: Option<File>,
++    link_file: Option<File>,
+     hardware_address: Option<EthernetAddress>,
+     ip_address: Option<Ipv4Cidr>,
+ }
+@@ -65,6 +67,7 @@ impl EthernetLink {
+             name: name.into(),
+             network_file,
+             multicast_file: None,
++            link_file: None,
+             waiting_packets,
+             hardware_address: None,
+             ip_address: None,
+@@ -80,6 +83,11 @@ impl EthernetLink {
+         self.multicast_file = Some(file);
+     }
+ 
++    /// The adapter's `link` file, if its driver has one
++    pub fn set_link_file(&mut self, file: File) {
++        self.link_file = Some(file);
++    }
++
+     fn send_to<F>(&mut self, dst: EthernetAddress, size: usize, f: F, proto: EthernetProtocol)
+     where
+         F: FnOnce(&mut [u8]),
+@@ -411,6 +419,15 @@ impl LinkDevice for EthernetLink {
+         &self.name
+     }
+ 
++    fn link_up(&self) -> bool {
++        let Some(file) = &self.link_file else {
++            return true;
++        };
++        let mut state = [0u8; 1];
++        // A driver that cannot answer is taken as up, as without the file.
++        !matches!(file.read_at(&mut state, 0), Ok(1) if state[0] == b'0')
++    }
++
+     fn set_multicast(&mut self, groups: &[Ipv4Address]) {
+         let Some(file) = &mut self.multicast_file else {
+             return;
+diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
+index 409b375..6842517 100644
+--- a/netstack/src/link/mod.rs
++++ b/netstack/src/link/mod.rs
+@@ -32,6 +32,11 @@ pub trait LinkDevice {
+ 
+     /// The joined IPv4 multicast groups, for devices that filter in hardware
+     fn set_multicast(&mut self, _groups: &[Ipv4Address]) {}
++
++    /// Whether the device has a link; devices that cannot tell say yes
++    fn link_up(&self) -> bool {
++        true
++    }
+ }
+ 
+ #[derive(Default)]
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index 0306324..031f1e2 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -317,6 +317,9 @@ fn ethernet_link(adapter: Adapter) -> EthernetLink {
+     if let Some(file) = adapter.multicast {
+         link.set_multicast_file(unsafe { File::from_raw_fd(file.into_raw() as RawFd) });
+     }
++    if let Some(file) = adapter.link {
++        link.set_link_file(unsafe { File::from_raw_fd(file.into_raw() as RawFd) });
++    }
+     link
+ }
+ 
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index dae64a9..9b99670 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -243,6 +243,16 @@ fn mk_iface_node(
+                         Ok(())
+                     }
+                 },
++                "link" => {
++                    ro [devices, name]
++                    || {
++                        match devices.borrow().get(&name) {
++                            Some(dev) if dev.link_up() => "1\n".into(),
++                            Some(_) => "0\n".into(),
++                            None => "Device not found\n".into(),
++                        }
++                    }
++                },
+                 "addr" => {
+                     "list" => {
+                         ro [devices, name]
+-- 
+2.53.0
+
