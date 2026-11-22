@@ -45,7 +45,7 @@ automated (network boot and the release-netboot image).
 | [REQ-BOOT-5](https://github.com/redox-rpi/redox-rpi/issues/479) damaged data partition | should | release | #232 | row 270 | earlier; **gap** in checklist |
 | [REQ-CON-1](https://github.com/redox-rpi/redox-rpi/issues/480) HDMI console | must | release | — | 575 (3B+), 449 (Zero 2 W) | verified (1, 2 on both boards; 3 on the Zero 2 W); note: black border on the 3B+ at 1920x1080 (overscan, #347/#348) |
 | [REQ-CON-2](https://github.com/redox-rpi/redox-rpi/issues/481) serial console | must | release | #28, #547 | 571 (20 of 20, 0 late, 0 lost) | verified (1, 2) |
-| [REQ-USB-1](https://github.com/redox-rpi/redox-rpi/issues/510) USB keyboard | must | release | #29 | 575 (3B+), 449 (Zero 2 W) | verified (1, on one port of the 3B+); 2 not shown |
+| [REQ-USB-1](https://github.com/redox-rpi/redox-rpi/issues/510) USB keyboard | must | release | #29 | 575 (3B+), 449 (Zero 2 W) | verified (1, on one port of the 3B+; 2: key repeat, the maintainer in the session of Test 575) |
 | [REQ-USB-2](https://github.com/redox-rpi/redox-rpi/issues/511) hotplug | should | release | #17 | 575 (cable after boot), row 286 | 2 verified (575: address after the cable went in; time not recorded); 1, 3 earlier |
 | [REQ-USB-3](https://github.com/redox-rpi/redox-rpi/issues/512) USB mouse | should | release | #48, PR #223 | row 286 | earlier; **gap** in checklist |
 | [REQ-USB-4](https://github.com/redox-rpi/redox-rpi/issues/513) USB idle load | should | release | #29, #214, #104, #344, #373 | row 5 | earlier; **gap** in checklist |
@@ -113,7 +113,6 @@ For the checklist's step "Untested `must` criteria":
 | Requirement | Criterion | State |
 |---|---|---|
 | REQ-BOOT-1 | 2, 3 | out of date: root from RAM by design (#324) |
-| REQ-USB-1 | 2 | key repeat not checked |
 | REQ-CON-1 | 3 on the 3B+ | VT switch only on the Zero 2 W (449) |
 | REQ-NET-1 | 2, 3 | not tested (new wording; PR #614 for v0.7.0) |
 | REQ-NET-1 | 6 | rc1 only (450 B, `+xc80e`) |
