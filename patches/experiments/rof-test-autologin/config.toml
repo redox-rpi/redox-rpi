@@ -1,0 +1,44 @@
+# Experiment rof-test-autologin: root is logged in on the display consoles
+# of the rpi-open-firmware test card (rpi-open-firmware#84). Test cards only:
+# this directory has a test-only file, so --release refuses it.
+#
+# getty starts "login" through PATH. On the display consoles (getty@N) PATH
+# starts with /usr/lib/rof-autologin, where "login" starts the root shell
+# without a password. The serial console (30_getty_debug) keeps the normal
+# login, so automated tests still see "redox login:".
+
+[[files]]
+path = "/usr/lib/init.d/getty@.service"
+postinstall = true
+data = """
+[unit]
+description = "Initialize terminal $INSTANCE (root logged in, rof test card)"
+requires_weak = [
+    "fbcond@$INSTANCE.service",
+    "00_ptyd.service",
+]
+
+[service]
+cmd = "getty"
+args = ["$INSTANCE"]
+type = "oneshot_async"
+envs = { PATH = "/usr/lib/rof-autologin:/usr/bin" }
+"""
+
+[[files]]
+path = "/usr/lib/rof-autologin/login"
+postinstall = true
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# rof test card: root on the display console without a password
+# (experiment rof-test-autologin). getty starts this as "login".
+export HOME=/home/root
+export USER=root
+export LOGNAME=root
+export SHELL=/usr/bin/ion
+export PATH=/usr/bin
+cd /home/root
+echo "root logged in (rof test card)"
+exec ion
+"""
