@@ -1,0 +1,21 @@
+# What scripts/console-image.sh --minimal leaves out of the initfs: drivers
+# for hardware the Pi 3B+ and Zero 2 W do not have, and sound (the minimal
+# card has none). Paths relative to the initfs root; a removed service is
+# also taken out of the targets that list it. # starts a comment.
+
+# ACPI and PCI (hwd uses the devicetree on the Pi and starts neither)
+bin/acpid
+bin/pcid
+bin/pcid-spawner
+lib/pcid.d
+lib/init.d/40_pcid-spawner-initfs.service
+# Drivers that pcid-spawner would start: NVMe and virtio
+lib/drivers
+# The Arasan SD driver (the card is on bcm2835-sdhostd)
+bin/bcm2835-sdhcid
+# PS/2 (no such port on the Pi)
+lib/init.d/40_ps2d.service
+bin/ps2d
+# Sound
+bin/bcm2835-pwmaudiod
+lib/init.d/41_bcm2835-pwmaudiod.service
