@@ -1,0 +1,70 @@
+From de39cf63884e6722780d27a3fd436d74e2c1b2c8 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 14:27:46 +0000
+Subject: [PATCH 113/113] dhcpd: start only on an interface with a link
+
+No adapter or no cable: no DHCP and no console lines. A link that comes
+up later (cable plugged in, adapter added) starts DHCP then; a link that
+comes back asks for a lease again (redox-rpi #560).
+---
+ dhcpd/src/main.rs | 29 ++++++++++++++++++++++++++---
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index 5729940..c2b8426 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -419,6 +419,13 @@ fn list_ifaces() -> Vec<String> {
+         .unwrap_or_default()
+ }
+ 
++/// Whether `iface` has a link (netstack's `ifaces/<name>/link`). An
++/// adapter without a link, or no adapter at all, gets no DHCP and no
++/// console lines. Older netstacks and drivers that cannot tell count as up.
++fn link_up(iface: &str) -> bool {
++    get_iface_cfg_value(iface, "link").map_or(true, |state| state.trim() != "0")
++}
++
+ /// How long one DHCP exchange waits for each reply.
+ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+ /// How often the interface list is read.
+@@ -445,17 +452,33 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+     None
+ }
+ 
+-/// Gets a lease on every interface, also those that appear later, and keeps
+-/// one default route: the first wired interface with a lease, else Wi-Fi.
++/// Gets a lease on every interface with a link, also those that appear or
++/// get a link later, and keeps one default route: the first wired
++/// interface with a lease, else Wi-Fi. When a link comes back (a cable
++/// plugged in again), the interface asks for a lease again.
+ fn watch(verbose: bool) -> ! {
+     let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
+     let mut failed: BTreeMap<String, Instant> = BTreeMap::new();
++    let mut links: BTreeMap<String, bool> = BTreeMap::new();
+     let mut default: Option<(String, Lease)> = None;
+     loop {
+         let mut ifaces = list_ifaces();
+         ifaces.sort_by_key(|name| iface_order(name));
+         for iface in ifaces {
+-            if leases.contains_key(&iface) {
++            let up = link_up(&iface);
++            match links.insert(iface.clone(), up) {
++                // Link lost: ask again when it is back, maybe on another
++                // network. Address and route stay until then.
++                Some(true) if !up => {
++                    leases.remove(&iface);
++                }
++                // Link back: no waiting for RETRY.
++                Some(false) if up => {
++                    failed.remove(&iface);
++                }
++                _ => {}
++            }
++            if !up || leases.contains_key(&iface) {
+                 continue;
+             }
+             if failed.get(&iface).is_some_and(|t| t.elapsed() < RETRY) {
+-- 
+2.53.0
+

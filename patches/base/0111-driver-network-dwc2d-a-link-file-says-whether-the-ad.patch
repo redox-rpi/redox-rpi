@@ -1,0 +1,142 @@
+From 6cd98a2e0cee473db899d7e574302155eb8fa6dd Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 14:27:06 +0000
+Subject: [PATCH 111/113] driver-network, dwc2d: a link file says whether the
+ adapter has a link
+
+NetworkAdapter::link_up, default true. dwc2d says no without an adapter
+(placeholder address) or without a link on the adapter in use. dhcpd
+starts only on a link (redox-rpi #560).
+---
+ drivers/net/driver-network/src/lib.rs | 61 +++++++++++++++++++++++++++
+ drivers/usb/dwc2d/src/main.rs         | 17 +++++++-
+ 2 files changed, 76 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
+index 685b035..cf214d4 100644
+--- a/drivers/net/driver-network/src/lib.rs
++++ b/drivers/net/driver-network/src/lib.rs
+@@ -36,6 +36,13 @@ pub trait NetworkAdapter {
+     fn set_multicast(&mut self, _addrs: Option<&[[u8; 6]]>) -> Result<()> {
+         Ok(())
+     }
++
++    /// Whether the adapter has a link: it is there and a cable connects it
++    /// to a peer. dhcpd starts only on a link. The default is yes, for
++    /// drivers that do not know.
++    fn link_up(&mut self) -> bool {
++        true
++    }
+ }
+ 
+ pub struct NetworkScheme<T: NetworkAdapter> {
+@@ -132,6 +139,7 @@ resource_scheme! {
+         Data(Data<T>),
+         Mac(Mac<T>),
+         Multicast(Multicast<T>),
++        Link(Link<T>),
+     }
+ }
+ 
+@@ -182,6 +190,10 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+                 NetworkResource::Multicast(Multicast(PhantomData)),
+                 NewFdFlags::empty(),
+             ),
++            "link" => (
++                NetworkResource::Link(Link(PhantomData)),
++                NewFdFlags::POSITIONED,
++            ),
+             _ => return Err(Error::new(EINVAL)),
+         };
+ 
+@@ -355,3 +367,52 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
+         Ok(())
+     }
+ }
++
++/// Read-only: `1` with a link, `0` without, read again at each read.
++struct Link<T>(PhantomData<T>);
++
++impl<T> std::fmt::Debug for Link<T> {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_tuple("Link").finish()
++    }
++}
++
++impl<T: NetworkAdapter> ResourceSync for Link<T> {
++    type SchemeData = NetworkSchemeData<T>;
++    type ResourceEnum = NetworkResource<T>;
++
++    fn read(
++        &mut self,
++        scheme_data: &mut Self::SchemeData,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        let state: &[u8] = if scheme_data.adapter.link_up() { b"1\n" } else { b"0\n" };
++        let data = state.get(offset as usize..).unwrap_or_default();
++        let i = cmp::min(buf.len(), data.len());
++        buf[..i].copy_from_slice(&data[..i]);
++        Ok(i)
++    }
++
++    fn write(
++        &mut self,
++        _scheme_data: &mut Self::SchemeData,
++        _buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        Err(Error::new(EINVAL))
++    }
++
++    fn fpath(&mut self, _scheme_data: &mut Self::SchemeData, w: &mut FpathWriter) -> Result<()> {
++        w.push_str("link");
++        Ok(())
++    }
++
++    fn fstat(&mut self, _scheme_data: &mut Self::SchemeData, stat: &mut Stat) -> Result<()> {
++        stat.st_mode = MODE_FILE | 0o400;
++        stat.st_size = 2;
++        Ok(())
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 402a7a3..8b51a71 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -97,8 +97,9 @@ struct UsbNet {
+     /// The address the network stack uses. An adapter that takes over is
+     /// set to it, so the stack and DHCP keep working with the same address.
+     mac: [u8; 6],
+-    /// The adapters and their link state. The link is kept up to date only
+-    /// for the RTL815x, the only adapter where it decides.
++    /// The adapters and their link state, kept up to date for the RTL815x
++    /// and the LAN7800. It decides which adapter is used and whether dhcpd
++    /// starts (`link` file).
+     adapters: Vec<(Adapter, bool)>,
+     /// Bus address of the adapter in use.
+     active: Option<u8>,
+@@ -233,6 +234,18 @@ impl NetworkAdapter for UsbNet {
+         }
+     }
+ 
++    /// The adapter in use and its link. No adapter (the placeholder address)
++    /// is no link. QEMU's CDC Ethernet has no link state and counts as up.
++    fn link_up(&mut self) -> bool {
++        let Some(address) = self.active else {
++            return false;
++        };
++        self.adapters
++            .iter()
++            .find(|(a, _)| a.address() == address)
++            .is_some_and(|(a, link)| *link || matches!(a, Adapter::Ecm(_)))
++    }
++
+     /// Kept for the event loop, which has the bus to program the adapter.
+     fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
+         self.multicast = addrs.map(<[_]>::to_vec);
+-- 
+2.53.0
+
