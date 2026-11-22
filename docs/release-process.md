@@ -236,11 +236,11 @@ agent's session.
 **At the OK, right away:**
 
 1. **Tag** `v<version>` (annotated) on the approved commit and push it.
-2. **Development tag:** tag the newest commit on `main` as
-   `vX.Y.(Z+1)-dev` (annotated) and push it, so the nightly and every other
-   build from then on show `vX.Y.(Z+1)-dev-N-g…`
-   ([versioning.md](versioning.md#development-tags)). Tell the other
-   sessions to `git fetch --tags`.
+2. **Development tag:** tag the newest commit on `main` with the next
+   development tag (annotated; normally `vX.(Y+1).0-dev`, see
+   [versioning.md](versioning.md#development-tags)) and push it, so the
+   nightly and every other build from then on name the next release. Tell
+   the other sessions to `git fetch --tags`.
 
 **Afterwards, in this order, without holding up the next sprint:**
 
