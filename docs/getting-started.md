@@ -183,10 +183,11 @@ reboot                              # as root: restart
 poweroff                            # as root: stop and halt the Pi
 ```
 
-`poweroff` stops Redox and switches the Pi off: the screen loses its
-signal and the board draws almost no power. To start it again, pull the
-power and plug it back in. Unplugging is safe once the screen has gone
-dark.
+`poweroff` stops Redox and halts the Pi: the screen loses its signal and
+the board draws very little power. The red power LED stays on, because
+the Pi has no switch of its own and stays powered. To cut the power,
+unplug it (or switch the plug off); this is safe once the screen has gone
+dark. To start it again, plug it back in.
 
 The system itself runs from memory, so only files being written to
 `/scheme/data` can be damaged if you pull the power without `poweroff`.
