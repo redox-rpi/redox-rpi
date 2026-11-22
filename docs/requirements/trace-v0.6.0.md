@@ -20,6 +20,7 @@ reports:
 | [449](https://github.com/redox-rpi/pi-tests/blob/main/reports/449.md) | rc2 | Zero 2 W | person test on the direct card: boot, login, VT switch, memory |
 | [573](https://github.com/redox-rpi/pi-tests/blob/main/reports/573.md) | rc3 `+x6a9f` | 3B+ | delta, automated: pi-test, regression set `--starts 300`, 5 reboots, HDMI sound (no sink, `hdmi_mode no`) |
 | [574](https://github.com/redox-rpi/pi-tests/blob/main/reports/574.md) | rc3 | Zero 2 W | person test: HDMI sound audible; LAN over a USB Realtek adapter, NTP |
+| [575](https://github.com/redox-rpi/pi-tests/blob/main/reports/575.md) | rc3 | 3B+ | person test on the rc3 card: boot without a cable, HDMI login, USB keyboard, cable in after boot (DHCP, NTP), chime and Sopwith tune over HDMI; overscan border (#347/#348) |
 
 Plus the checklist's candidate checks on each card (REQ-REL-1, REQ-REL-5,
 no missing shared library) and the QEMU regression set on each netboot
@@ -31,22 +32,21 @@ build.
 the table says "rc2" where it does. rc1 rows count only where rc2 changed
 nothing in the path (#609 libz, #603 USB root port after a warm reboot).
 
-**No person test on the 3B+ with a v0.6.0 card.** The 3B+ rows are
-automated (network boot and the release-netboot image). The direct card
-was booted by people only on the Zero 2 W (Tests 449, 574); on the 3B+
-only in QEMU (login prompt after 5 s).
+**The direct card was booted by people on both boards:** the 3B+ in
+Test 575, the Zero 2 W in Tests 449 and 574. The other 3B+ rows are
+automated (network boot and the release-netboot image).
 
 | Requirement | Prio | Level | Issues | Test | State |
 |---|---|---|---|---|---|
-| [REQ-BOOT-1](https://github.com/redox-rpi/redox-rpi/issues/475) SD card boot | must | release | #6, #243, #324 | 449, 574 (Zero 2 W); QEMU | 1: **not tested on the 3B+** (the same card booted the Zero 2 W to login, Tests 449, 574); 2, 3: **requirement out of date**: the direct card runs the root filesystem from RAM (#324), so there is no RedoxFS root on the card by design |
+| [REQ-BOOT-1](https://github.com/redox-rpi/redox-rpi/issues/475) SD card boot | must | release | #6, #243, #324 | 575 (3B+), 449, 574 (Zero 2 W) | 1 verified (575: no cable at boot, login on HDMI); 2, 3: **requirement out of date**: the direct card runs the root filesystem from RAM (#324), so there is no RedoxFS root on the card by design |
 | [REQ-BOOT-2](https://github.com/redox-rpi/redox-rpi/issues/476) network boot | must | test image | #243 | 570, 571, 573 | verified |
 | [REQ-BOOT-3](https://github.com/redox-rpi/redox-rpi/issues/477) clean boot log | should | release | PR #77 | 571, 573 (no `pcid`/`rtcd`, audiod without error, panic 0) | verified |
 | [REQ-BOOT-4](https://github.com/redox-rpi/redox-rpi/issues/478) boot time | should | release | #47 | — | not measured on v0.6.0; earlier (v0.5.0: 1: 28.3 s; 2: 12.0 s, over the proposed 10 s) |
 | [REQ-BOOT-5](https://github.com/redox-rpi/redox-rpi/issues/479) damaged data partition | should | release | #232 | row 270 | earlier; **gap** in checklist |
-| [REQ-CON-1](https://github.com/redox-rpi/redox-rpi/issues/480) HDMI console | must | release | — | 449 (Zero 2 W) | verified (1, 2, 3) on the Zero 2 W; not on the 3B+ |
+| [REQ-CON-1](https://github.com/redox-rpi/redox-rpi/issues/480) HDMI console | must | release | — | 575 (3B+), 449 (Zero 2 W) | verified (1, 2 on both boards; 3 on the Zero 2 W); note: black border on the 3B+ at 1920x1080 (overscan, #347/#348) |
 | [REQ-CON-2](https://github.com/redox-rpi/redox-rpi/issues/481) serial console | must | release | #28, #547 | 571 (20 of 20, 0 late, 0 lost) | verified (1, 2) |
-| [REQ-USB-1](https://github.com/redox-rpi/redox-rpi/issues/510) USB keyboard | must | release | #29 | 449 (Zero 2 W) | verified on the Zero 2 W (1); **not tested on the 3B+** ("every USB port"); 2 not shown |
-| [REQ-USB-2](https://github.com/redox-rpi/redox-rpi/issues/511) hotplug | should | release | #17 | row 286 | earlier; **gap** in checklist |
+| [REQ-USB-1](https://github.com/redox-rpi/redox-rpi/issues/510) USB keyboard | must | release | #29 | 575 (3B+), 449 (Zero 2 W) | verified (1, on one port of the 3B+); 2 not shown |
+| [REQ-USB-2](https://github.com/redox-rpi/redox-rpi/issues/511) hotplug | should | release | #17 | 575 (cable after boot), row 286 | 2 verified (575: address after the cable went in; time not recorded); 1, 3 earlier |
 | [REQ-USB-3](https://github.com/redox-rpi/redox-rpi/issues/512) USB mouse | should | release | #48, PR #223 | row 286 | earlier; **gap** in checklist |
 | [REQ-USB-4](https://github.com/redox-rpi/redox-rpi/issues/513) USB idle load | should | release | #29, #214, #104, #344, #373 | row 5 | earlier; **gap** in checklist |
 | [REQ-NET-1](https://github.com/redox-rpi/redox-rpi/issues/491) DHCP address on every supported adapter | must | release | #217, #92, #576 | 570, 571, 574, 450 | 1 verified (3B+ 571; Zero 2 W 574, about 10 s); 4 verified (571); 5 verified on rc2 (570, 100 of 100; rc1 had 66 of 100, #576); 6 verified on rc1 only (450 B; rc2 changed only the USB root port path); 2, 3 **not tested** (new wording 2026-11-22; PR #614 is for v0.7.0) |
@@ -55,7 +55,7 @@ only in QEMU (login prompt after 5 s).
 | [REQ-NET-4](https://github.com/redox-rpi/redox-rpi/issues/494) long TCP transfers | must | release | #157, #88, #184 | 571 (curl 100 MiB in 22.2 s, SHA-256 right; nc), 450 C | 1 verified; 2 **fails** on rc1 (450 C: 1000 connections work, but memory grows, about 300 KB per connection, mostly outside any process; no socket count; #88); not run on rc2/rc3 |
 | [REQ-NET-5](https://github.com/redox-rpi/redox-rpi/issues/495) IPv4 multicast | should | release | #27, PR #194, #216 | row 218 | earlier; **gap** in checklist |
 | [REQ-NET-7](https://github.com/redox-rpi/redox-rpi/issues/471) name lookup (DNS) | must | release | #290, PR #381, base `0088` | 571 (step 10), 573 (regression `dns`) | proposed requirement; 1 verified (full name 0.5 s, short name 0.2 s); 2 verified (regression set `dns`, Pi and QEMU); 3 verified (0.2 s); 4 **not tested** |
-| [REQ-TIME-1](https://github.com/redox-rpi/redox-rpi/issues/508) NTP | must | release | #22 | 571 (= host), 574 (Zero 2 W) | verified (1); earlier (2: cable after boot, row 286) |
+| [REQ-TIME-1](https://github.com/redox-rpi/redox-rpi/issues/508) NTP | must | release | #22 | 571 (= host), 574 (Zero 2 W), 575 | verified (1; 2: 575, cable in after boot, clock set from NTP) |
 | [REQ-TIME-2](https://github.com/redox-rpi/redox-rpi/issues/509) clock without network | should | release | — | — | **gap** (planned since v0.4.0, not run) |
 | [REQ-TIME-3](https://github.com/redox-rpi/redox-rpi/issues/51) set the clock | should | release | #51, PR #98 | — | **gap** (planned since v0.4.0, not run) |
 | [REQ-SD-1](https://github.com/redox-rpi/redox-rpi/issues/501) reliable reads and writes | must | release | #6, #31 | 571 (sd-stress, `sdcard`) | verified (on the netboot image's data partition) |
@@ -72,7 +72,7 @@ only in QEMU (login prompt after 5 s).
 | [REQ-AUDIO-2](https://github.com/redox-rpi/redox-rpi/issues/472) audible, left/right | should | beta | #250 | — | **not in rc3** (jack silent with `hdmi-audio`); not heard on v0.6.0 |
 | [REQ-AUDIO-3](https://github.com/redox-rpi/redox-rpi/issues/473) startup sound and volume | should | beta | #292, #336 | 571, 573, 574 | proposed requirement; 1 in part (`startup-sound: played` in every boot, 573 on rc3, heard on HDMI in 574; time not measured); 3 verified on rc2 (571: 70 survives the reboots); 2 not tested; 4 goal |
 | [REQ-GFX-1](https://github.com/redox-rpi/redox-rpi/issues/489) optional desktop | should | beta | #33, #298 | 571, 573, 449 | verified (1, 2: Orbital starts; on the Zero 2 W only with `sudo desktop`); 3, 4 not shown |
-| [REQ-GFX-2](https://github.com/redox-rpi/redox-rpi/issues/490) desktop apps | may | beta | #298, #335 | 573 (`launcher-sopwith`, sound reaches the HDMI driver), QEMU desktop check, 449 | proposed requirement; 2 in part (Sopwith starts from the launcher and plays to the driver; keys and hearing need the 3B+ person test, not done); 1, 3 not shown |
+| [REQ-GFX-2](https://github.com/redox-rpi/redox-rpi/issues/490) desktop apps | may | beta | #298, #335 | 573 (`launcher-sopwith`), 575 (tune heard), QEMU desktop check, 449 | proposed requirement; 2 verified in part (Sopwith starts from the launcher; its tune heard over HDMI on the 3B+, 575; steering keys not recorded); 1, 3 not shown |
 | [REQ-TCC-1](https://github.com/redox-rpi/redox-rpi/issues/507) tcc | may | beta | #247, #293, #297 | 571, 573, 458 | proposed requirement; 1, 2, 4 verified; 5 verified with a note: 573 pass, 571 8 of 9 runs, 458 2 of 3 runs; one step fails rarely, cause unknown |
 | [REQ-STAB-1](https://github.com/redox-rpi/redox-rpi/issues/504) program starts | must | release | #1, #12, #127 | 571 (0 of 1000), 573 (0 of 300) | verified |
 | [REQ-STAB-2](https://github.com/redox-rpi/redox-rpi/issues/505) pipes | must | release | #158 | 571 (16 MiB) | verified |
@@ -111,15 +111,13 @@ For the checklist's step "Untested `must` criteria":
 
 | Requirement | Criterion | State |
 |---|---|---|
-| REQ-BOOT-1 | 1 | not on the 3B+; the same card booted the Zero 2 W (449 rc2, 574 rc3); QEMU login after 5 s |
 | REQ-BOOT-1 | 2, 3 | out of date: root from RAM by design (#324) |
-| REQ-USB-1 | 1 (3B+ ports), 2 | keyboard only on the Zero 2 W (449) |
-| REQ-CON-1 | 1–3 on the 3B+ | only on the Zero 2 W (449) |
+| REQ-USB-1 | 2 | key repeat not checked |
+| REQ-CON-1 | 3 on the 3B+ | VT switch only on the Zero 2 W (449) |
 | REQ-NET-1 | 2, 3 | not tested (new wording; PR #614 for v0.7.0) |
 | REQ-NET-1 | 6 | rc1 only (450 B, `+xc80e`) |
 | REQ-NET-4 | 2 | **fails** on rc1 (450 C, `+xc80e`) |
 | REQ-NET-7 | 4 | not tested (name server not answering); requirement still proposed |
-| REQ-TIME-1 | 2 | earlier only (row 286, v0.4.0) |
 | REQ-REL-2 | 3 | `/.uuid` not checked |
 | REQ-REL-3 | 3 | QEMU boot test green on the rc1 commit only |
 | REQ-REL-4 | 1, 2 | at release |
@@ -130,9 +128,8 @@ For the checklist's step "Untested `must` criteria":
 - **Maintainer:** decide whether the silent jack with `hdmi-audio` is
   accepted for v0.6.0 (REQ-AUDIO-1/2), and accept or test the must list
   above. HDMI sound (#423) needs a requirement if it stays in the release.
-- **V&V:** a person test of the rc3 card on the 3B+ would close REQ-BOOT-1
-  criterion 1, REQ-USB-1, REQ-CON-1 on the 3B+ and REQ-GFX-2 criterion 2
-  (keys, Sopwith heard). HDMI mode on the 3B+ (573) needs a run with a sink.
+- **V&V:** HDMI mode on the 3B+ came up with a monitor (575), so 573's
+  `hdmi_mode no` was the setup. Overscan border on the 3B+: #347/#348.
 - **Network (#88):** REQ-NET-4 criterion 2 fails; memory grows outside
   any process (kernel?).
 - **Requirements (me):** reword REQ-BOOT-1 criteria 2 and 3 for the direct
