@@ -166,6 +166,12 @@ QEMU does not see hardware: the audio rate, real USB and the 3B+ external
 abort stay with `pi-test.py --extended` and the Pi rows. A new regression
 gets a check here at the cheapest level that sees it.
 
+[`scripts/tcp-churn-check.py`](../scripts/tcp-churn-check.py) checks REQ-NET-4
+criterion 2 (#494): 1000 short TCP connections out of Redox and 1000 into
+devshd leave no growing `sockets_tcp` in `/scheme/netcfg/stats` (needs the
+experiment `netdiag`). QEMU: `scripts/tcp-churn-check.py 127.0.0.1
+--devsh-port <DEVSH_PORT> --host-ip 10.0.2.2`; Pi: `scripts/tcp-churn-check.py <pi>`.
+
 ### Building on the build host
 
 `scripts/build-image.sh` waits for any other build in the same clone to
