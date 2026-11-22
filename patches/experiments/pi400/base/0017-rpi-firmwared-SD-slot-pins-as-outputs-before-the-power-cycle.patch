@@ -1,0 +1,37 @@
+From 716fbd67fe68992af7adde172f2a135301f10356 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 15:00:30 +0000
+Subject: [PATCH] rpi-firmwared: SD slot pins as outputs before the power cycle
+ (redox-rpi #307)
+
+As Linux's raspberrypi-exp-gpio: make SD_PWR_ON and VDD_SD_IO_SEL
+outputs with SET_GPIO_CONFIG before switching them, so the power cycle
+works whatever state the firmware left them in. On the Pi 400 after a
+boot from the card they were already outputs (person test, dev-152),
+so this is a safeguard, not the fix; the fix was 0009.
+---
+ drivers/rpi-firmwared/src/main.rs | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index d512c6de..bbcee89b 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -544,7 +544,14 @@ fn sd_power_on(mbox: &mut Mailbox) {
+     if revision & (1 << 23) == 0 || !matches!((revision >> 4) & 0xff, 0x11 | 0x13) {
+         return;
+     }
++    // As Linux's raspberrypi-exp-gpio: make the expander pins outputs
++    // (SET_GPIO_CONFIG) before switching them, so the switch works whatever
++    // state the firmware left them in (redox-rpi #307).
++    const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
+     let mut cycle = || -> std::result::Result<(), String> {
++        // gpio, direction 1 = output, polarity, term_en, term_pull_up, state
++        mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_VCC, 1, 0, 0, 0, 0])?;
++        mbox.set_property(TAG_SET_GPIO_CONFIG, &[SD_IO_1V8, 1, 0, 0, 0, 0])?;
+         mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 0])?;
+         mbox.set_property(TAG_SET_GPIO_STATE, &[SD_IO_1V8, 0])?;
+         // Long enough for the slot capacitors to discharge, so a card the
+-- 
+2.53.0
+

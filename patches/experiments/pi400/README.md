@@ -6,10 +6,24 @@ Ran on a real Pi 400 on 2026-11-10: network boot to the login prompt.
 - `kernel/0001`: the GIC-400 of the BCM2711 names itself as its interrupt
   parent in the devicetree; without the fix no interrupt controller is
   initialized (no serial interrupt, one CPU only).
+- `kernel/0002`: a GIC interrupt that goes to a user space driver is
+  masked and ended on the CPU that took it, and unmasked when the driver
+  acknowledges it. Before, the EOI came with the acknowledgement, maybe
+  on another CPU, where it does not end the interrupt: the CPU that took
+  it lost its timer and IPIs, and the Pi 400 hung (row 411, #306). Also
+  fixes `irq_disable`, which disabled every enabled line of the word.
 - `base/0001`: `dwc2d`, `bcm2835-sdhostd` and `bcm2835-pwmaudiod` exit on
   the BCM2711, where the card is on EMMC2, USB is behind PCIe and the PWM
   audio block is not set up yet.
+- `base/0002`: `bcmgenetd`, the Ethernet port (GENET v5 with the BCM54213PE
+  PHY) as `network.genet` (step e, #306), and a `mac` line (firmware
+  mailbox) in rpi-firmwared's board file. Not tested on the Pi 400 yet.
 - The external-abort fix (#311) is on main as `patches/kernel/0051`.
+- `base/0003`: `bcm2835-sdhcid` drives the SD card slot through EMMC2
+  (#307); on the Pi 3 it exits and `bcm2835-sdhostd` keeps the card.
+- `base/0004`: `rpi-firmwared` power-cycles the card slot at 3.3 V on the
+  Pi 4 and 400 (GPIO expander pins 6 and 4), as Linux does; nothing else
+  in Redox powers the slot.
 
 The root filesystem runs from RAM (`bootloader-live.efi`), as with network
 boot, because there is no EMMC2 driver yet (step f, #307).

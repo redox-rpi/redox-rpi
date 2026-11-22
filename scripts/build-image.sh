@@ -7,7 +7,7 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
+#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot | --pi400-sdcard]
 #                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
 #                          [--allow-dirty] [--recipes-only]
@@ -22,6 +22,14 @@
 #                 the network-boot variant of the SD card image
 #                 (config/raspi3bp-release-netboot.toml): its packages, no
 #                 devshd; for automated rows on a release (T-SEC-1, T-SEC-2)
+#   --pi400-sdcard
+#                 the SD card image for the Pi 400 (config/pi400-sdcard.toml):
+#                 the --sdcard image with experiment pi400 always on (added
+#                 after the other experiments; do not name it), root
+#                 filesystem on the card through EMMC2; with experiment
+#                 desktop it starts the desktop at boot
+#                 (config/pi400-sdcard-desktop.toml). Card:
+#                 scripts/make-sdcard.sh --local <image> --board pi4
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
@@ -50,6 +58,8 @@
 #         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
 #         upstream/redox/build/aarch64/release-netboot/harddrive.img
 #         (--release-netboot),
+#         upstream/redox/build/aarch64/pi400-sdcard/harddrive.img
+#         (--pi400-sdcard),
 #         and its manifest in build/manifests/
 
 set -euo pipefail
@@ -85,6 +95,10 @@ while [ $# -gt 0 ]; do
             CONFIG_NAME=release-netboot
             CONFIG="$ROOT/config/raspi3bp-release-netboot.toml"
             shift ;;
+        --pi400-sdcard)
+            CONFIG_NAME=pi400-sdcard
+            CONFIG="$ROOT/config/pi400-sdcard.toml"
+            shift ;;
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }
             experiments+=("$2")
@@ -117,6 +131,13 @@ conflict_of() {
     done
     return 1
 }
+
+# The Pi 400 card needs experiment pi400 (GIC, EMMC2, PCIe, GENET), after
+# the others: rpi-fb's 0060 moves the mailbox answer check that pi400's
+# base/0002 (GENET MAC) changes, and only this order applies both.
+if [ "$CONFIG_NAME" = pi400-sdcard ] && ! has_experiment pi400; then
+    experiments+=(pi400)
+fi
 
 # Test experiments: diagnostics every image gets, after the chosen
 # experiments, except releases and --no-test-experiments. One that conflicts
@@ -616,6 +637,11 @@ for exp in "${experiments[@]}"; do
     fi
     exp_configs+=("$conf")
 done
+# The Pi 400 card boots to the desktop: after experiment desktop, which makes
+# it a command, so this one comes last.
+if [ "$CONFIG_NAME" = pi400-sdcard ] && has_experiment desktop; then
+    exp_configs+=("$ROOT/config/pi400-sdcard-desktop.toml")
+fi
 if [ ${#exp_configs[@]} -gt 0 ]; then
     fs_config="$ROOT/build/experiments-$CONFIG_NAME.toml"
     {

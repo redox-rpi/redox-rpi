@@ -1,0 +1,401 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 12 Nov 2026 18:00:00 +0000
+Subject: [PATCH] bcm2835-sdhcid: SD card on the BCM2711 EMMC2
+
+On the Pi 4 and Pi 400 the card slot is wired to EMMC2, a standard SDHCI
+3.0 controller under /emmc2bus. Use it when the devicetree has a
+brcm,bcm2711-emmc2 node: no pin routing, Power Control set to 3.3 V and
+bus power on after the reset (the Arasan EMMC needs neither), and the SD
+clock divided from the EMMC2 clock (rpi-firmwared, or an assumed 250 MHz
+that keeps the card in spec at any lower rate). Started again at boot;
+without an EMMC2 node (Pi 3: bcm2835-sdhostd has the card) it reports
+ready and exits; the Arasan EMMC only when started by hand with
+"arasan". NOP tokens are dropped from the devicetree before parsing:
+the fdt crate loses every node after NOPs at the end of a node (QEMU
+raspi4b leaves them under avs-monitor, which hid /emmc2bus).
+(redox-rpi #307)
+---
+--- a/drivers/storage/bcm2835-sdhcid/src/main.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/main.rs
+@@ -21,13 +21,74 @@
+     }
+ }
+ 
++/// QEMU (and libfdt's fdt_nop_node) leave FDT_NOP tokens where a node or
++/// property was deleted. fdt 059bb23 stops walking the tree at NOPs that sit
++/// between a node's last property and its end, and every node after that is
++/// lost (in QEMU raspi4b: the removed thermal node under avs-monitor hides
++/// /emmc2bus). Copy the blob without NOP tokens; return it unchanged if the
++/// layout is not the usual header, reserve map, structure, strings order.
++fn strip_fdt_nops(dtb: &[u8]) -> Vec<u8> {
++    strip_fdt_nops_inner(dtb).unwrap_or_else(|| dtb.to_vec())
++}
++
++fn strip_fdt_nops_inner(dtb: &[u8]) -> Option<Vec<u8>> {
++    let be = |o: usize| -> Option<usize> {
++        Some(u32::from_be_bytes(dtb.get(o..o + 4)?.try_into().ok()?) as usize)
++    };
++    let align4 = |x: usize| (x + 3) & !3;
++    if be(0)? != 0xd00d_feed {
++        return None;
++    }
++    let (off_struct, off_strings) = (be(8)?, be(12)?);
++    let (size_strings, size_struct) = (be(32)?, be(36)?);
++    let end = off_struct.checked_add(size_struct)?;
++    if off_struct % 4 != 0 || off_strings < end || off_strings + size_strings > dtb.len() {
++        return None;
++    }
++    let mut out = dtb[..off_struct].to_vec();
++    let mut p = off_struct;
++    loop {
++        let next = match be(p)? {
++            // FDT_BEGIN_NODE: token, NUL-terminated name, padding
++            1 => align4(p + 4 + dtb.get(p + 4..end)?.iter().position(|&b| b == 0)? + 1),
++            // FDT_PROP: token, length, name offset, value, padding
++            3 => align4(p + 12 + be(p + 4)?),
++            // FDT_END_NODE
++            2 => p + 4,
++            // FDT_NOP: drop it
++            4 => {
++                p += 4;
++                continue;
++            }
++            // FDT_END
++            9 => {
++                out.extend_from_slice(&dtb[p..p + 4]);
++                break;
++            }
++            _ => return None,
++        };
++        if next > end {
++            return None;
++        }
++        out.extend_from_slice(&dtb[p..next]);
++        p = next;
++    }
++    let new_size_struct = out.len() - off_struct;
++    out.extend_from_slice(&dtb[off_strings..off_strings + size_strings]);
++    let total = out.len();
++    out[4..8].copy_from_slice(&(total as u32).to_be_bytes());
++    out[12..16].copy_from_slice(&((off_struct + new_size_struct) as u32).to_be_bytes());
++    out[36..40].copy_from_slice(&(new_size_struct as u32).to_be_bytes());
++    Some(out)
++}
++
+ fn main() {
+     daemon::Daemon::new(daemon);
+ }
+ 
+ fn daemon(daemon: daemon::Daemon) -> ! {
+     common::init();
+-    let dtb_data = get_dtb();
++    let dtb_data = strip_fdt_nops(&get_dtb());
+     println!("read from OS, len = {}", dtb_data.len());
+     if dtb_data.len() == 0 {
+         process::exit(0);
+@@ -35,25 +96,45 @@
+ 
+     let fdt = Fdt::new(&dtb_data).unwrap();
+     println!("DTB model = {}", fdt.root().model());
+-    let with = ["brcm,bcm2835-sdhci"];
+-    let compat_node = fdt.find_compatible(&with).unwrap();
++    // BCM2711 (Pi 4, Pi 400): the card slot is on EMMC2, a standard SDHCI
++    // 3.0 controller; the Arasan EMMC there serves the WLAN chip, keep off.
++    // Elsewhere (Pi 3) bcm2835-sdhostd serves the card through sdhost, and
++    // routing the pins to the Arasan EMMC would take them away from it. Use
++    // the Arasan EMMC only when started by hand with "arasan".
++    let emmc2 = fdt.find_compatible(&["brcm,bcm2711-emmc2"]);
++    let arasan_by_hand = std::env::args().nth(1).as_deref() == Some("arasan");
++    let compat_node = match emmc2 {
++        Some(node) => node,
++        None if arasan_by_hand => fdt.find_compatible(&["brcm,bcm2835-sdhci"]).unwrap(),
++        None if fdt.root().compatible().all().any(|c| c == "brcm,bcm2711") => {
++            // A BCM2711 always has EMMC2: list what the devicetree has.
++            println!(
++                "bcm2835-sdhcid: BCM2711 but no EMMC2 in the devicetree ({} bytes, {} nodes); mmc nodes:",
++                fdt.total_size(),
++                fdt.all_nodes().count()
++            );
++            for node in fdt.all_nodes().filter(|n| n.name.starts_with("mmc") || n.name.contains("emmc")) {
++                let compatible: Vec<&str> =
++                    node.compatible().map(|c| c.all().collect()).unwrap_or_default();
++                println!("bcm2835-sdhcid:   {} {:?}", node.name, compatible);
++            }
++            daemon.ready();
++            process::exit(0);
++        }
++        None => {
++            println!("bcm2835-sdhcid: no EMMC2 (the card is on sdhost); not starting");
++            daemon.ready();
++            process::exit(0);
++        }
++    };
+     let reg = compat_node.reg().unwrap().next().unwrap();
+     let reg_size = reg.size.unwrap();
+-    let mut reg_addr = reg.starting_address as usize;
++    let bus_addr = reg.starting_address as usize;
++    let reg_addr = cpu_address(&fdt, bus_addr, emmc2.is_some());
+     println!(
+-        "DeviceMemory start = 0x{:08x}, size = 0x{:08x}",
+-        reg_addr, reg_size
++        "bcm2835-sdhcid: {} at bus 0x{:08x}, CPU 0x{:08x}, size 0x{:x}",
++        compat_node.name, bus_addr, reg_addr, reg_size
+     );
+-    if let Some(mut ranges) = fdt.find_node("/soc").and_then(|f| f.ranges()) {
+-        let range = ranges
+-            .find(|f| f.child_bus_address <= reg_addr && reg_addr - f.child_bus_address < f.size)
+-            .expect("Couldn't find device range in /soc/@ranges");
+-        reg_addr = range.parent_bus_address + (reg_addr - range.child_bus_address);
+-        println!(
+-            "DeviceMemory remapped onto CPU address space: start = 0x{:08x}, size = 0x{:08x}",
+-            reg_addr, reg_size
+-        );
+-    }
+ 
+     let addr = unsafe {
+         common::physmap(
+@@ -64,38 +145,17 @@
+         )
+         .expect("bcm2835-sdhcid: failed to map address") as usize
+     };
+-    println!(
+-        "ioremap 0x{:08x} to 0x{:08x} 2222",
+-        reg.starting_address as usize, addr
+-    );
+-    let mut sdhci = sd::SdHostCtrl::new(addr);
++    let mut sdhci = if emmc2.is_some() {
++        let clock = emmc2_clock();
++        sd::SdHostCtrl::with_clock(addr, clock, clock.max(sd::EMMC2_ASSUMED_CLOCK), true)
++    } else {
++        sd::SdHostCtrl::new(addr)
++    };
+     unsafe {
+-        route_sd_pins(reg_addr);
++        if emmc2.is_none() {
++            route_sd_pins(reg_addr);
++        }
+         sdhci.init();
+-        /*
+-        let mut buf1 = [0u32; 512];
+-        sdhci.sd_readblock(1, &mut buf1, 1);
+-        println!("readblock {:?}", buf1);
+-        buf1[0] = 0xdead_0000;
+-        buf1[1] = 0xdead_0000;
+-        buf1[2] = 0x0000_dead;
+-        buf1[3] = 0x0000_dead;
+-        sdhci.sd_writeblock(1, &buf1, 1);
+-        sdhci.sd_readblock(1, &mut buf1, 1);
+-        println!("readblock {:?}", buf1);
+-        */
+-        /*
+-        let mut buf1 = [0u8; 512];
+-        sdhci.read(1, &mut buf1);
+-        println!("readblock {:?}", buf1);
+-        buf1[0] = 0xde;
+-        buf1[1] = 0xad;
+-        buf1[2] = 0xde;
+-        buf1[3] = 0xad;
+-        sdhci.write(1, &buf1);
+-        sdhci.read(1, &mut buf1);
+-        println!("readblock {:?}", buf1);
+-        */
+     }
+ 
+     let mut disks = vec![sdhci];
+@@ -128,6 +188,56 @@
+     process::exit(0);
+ }
+ 
++/// The CPU address of a register block at `bus_addr`: through the ranges of
++/// /emmc2bus (BCM2711 EMMC2) or /soc.
++fn cpu_address(fdt: &Fdt, bus_addr: usize, emmc2: bool) -> usize {
++    let buses: &[&str] = if emmc2 { &["/emmc2bus", "/soc"] } else { &["/soc"] };
++    for bus in buses {
++        let Some(mut ranges) = fdt.find_node(bus).and_then(|node| node.ranges()) else {
++            continue;
++        };
++        if let Some(range) = ranges.find(|r| {
++            r.child_bus_address <= bus_addr && bus_addr - r.child_bus_address < r.size
++        }) {
++            return range.parent_bus_address + (bus_addr - range.child_bus_address);
++        }
++    }
++    bus_addr
++}
++
++/// The EMMC2 clock from rpi-firmwared (`/scheme/rpi-firmware/clocks`, a line
++/// "emmc2 <now> <max>"), its maximum since U-Boot raises it there; without
++/// it, the assumed highest rate, which keeps the card clock in spec.
++fn emmc2_clock() -> u32 {
++    let from_firmware = std::fs::read_to_string("/scheme/rpi-firmware/clocks")
++        .ok()
++        .and_then(|clocks| {
++            clocks.lines().find_map(|line| {
++                let mut words = line.split_whitespace();
++                if words.next() != Some("emmc2") {
++                    return None;
++                }
++                let now = words.next()?.parse::<u32>().ok()?;
++                let max = words.next()?.parse::<u32>().ok()?;
++                Some(now.max(max))
++            })
++        })
++        .filter(|&rate| rate > 0);
++    match from_firmware {
++        Some(rate) => {
++            println!("bcm2835-sdhcid: EMMC2 clock up to {} MHz", rate / 1_000_000);
++            rate
++        }
++        None => {
++            println!(
++                "bcm2835-sdhcid: no EMMC2 clock from rpi-firmwared, assuming {} MHz",
++                sd::EMMC2_ASSUMED_CLOCK / 1_000_000
++            );
++            sd::EMMC2_ASSUMED_CLOCK
++        }
++    }
++}
++
+ /// Connect the SD card slot to this controller.
+ ///
+ /// The BCM2837 has two SD controllers: this one (Arasan "EMMC") and
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -164,6 +164,18 @@
+ const EMMC_BASE_CLOCK: u32 = 41_666_666;
+ /// The highest clock the firmware can run EMMC at.
+ const EMMC_MAX_CLOCK: u32 = 250_000_000;
++/// The clock assumed for EMMC2 (BCM2711) when the firmware does not tell:
++/// U-Boot raises EMMC2 to its maximum before it starts us, and the divisor
++/// for that keeps the card in spec at any lower rate too.
++pub const EMMC2_ASSUMED_CLOCK: u32 = 250_000_000;
++
++/// Power Control (byte 1 of control0) of a standard SDHCI controller: 3.3 V
++/// and SD bus power on. The BCM2835 EMMC (Arasan) has no such register and
++/// powers the card itself; EMMC2 is a standard SDHCI 3.0 controller and
++/// leaves the card unpowered after a reset until this is set.
++const C0_POWER_3V3_ON: u32 = 0x0000_0f00;
++/// Capabilities register: base clock in MHz in bits 15:8.
++const CAPS_OFFSET: usize = 0x40;
+ 
+ /// Attempts for a block transfer, with a reset of the command and data
+ /// lines in between.
+@@ -233,11 +245,31 @@
+     size: u64,
+     /// The SD clock in Hz, as set by `set_clock`.
+     sd_clock: u32,
++    /// The clock the SD clock is divided from, in Hz.
++    base_clock: u32,
++    /// The highest rate that clock may have been raised to by the boot
++    /// chain; the data clock divisor is picked for it.
++    max_clock: u32,
++    /// Standard SDHCI: switch on SD bus power (EMMC2 on the BCM2711).
++    bus_power: bool,
++    /// Address of the register block, for registers outside the struct.
++    address: usize,
+ }
+ 
+ impl SdHostCtrl {
+     pub fn new(address: usize) -> Self {
++        Self::with_clock(address, EMMC_BASE_CLOCK, EMMC_MAX_CLOCK, false)
++    }
++
++    /// A controller whose SD clock is divided from `base_clock` (which the
++    /// boot chain may have raised up to `max_clock`); `bus_power` for a
++    /// standard SDHCI controller that needs Power Control set.
++    pub fn with_clock(address: usize, base_clock: u32, max_clock: u32, bus_power: bool) -> Self {
+         SdHostCtrl {
++            base_clock,
++            max_clock: max_clock.max(base_clock),
++            bus_power,
++            address,
+             regs: RwLock::new(unsafe { &mut *(address as *mut SdHostCtrlRegs) }),
+             host_spec_ver: 0,
+             cid: [0; 4],
+@@ -273,6 +305,21 @@
+             return;
+         }
+         println!("EMMC: reset OK");
++        if self.bus_power {
++            let caps = unsafe { ((self.address + CAPS_OFFSET) as *const u32).read_volatile() };
++            println!(
++                "EMMC: SDHCI version {}, capabilities 0x{:08x} (base clock {} MHz), dividing {} MHz",
++                self.host_spec_ver + 1,
++                caps,
++                (caps >> 8) & 0xff,
++                self.base_clock / 1_000_000
++            );
++            // The reset switched the card off: 3.3 V, bus power on, and give
++            // the card time to come up.
++            regs.control0.write(C0_POWER_3V3_ON);
++            settle(self.sd_clock);
++            wait_msec(10);
++        }
+         reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_CLK_INTLEN | C1_TOUNIT_MAX);
+         settle(self.sd_clock);
+@@ -375,7 +422,7 @@
+         // its 250 MHz maximum before it starts us, and a divisor picked for
+         // 41.67 MHz then clocks the card at 62.5 MHz: data CRC errors. Pick
+         // the divisor as if it ran at 250 MHz: at most 12.5 MHz either way.
+-        let freq = (25_000_000u64 * EMMC_BASE_CLOCK as u64 / EMMC_MAX_CLOCK as u64) as u32;
++        let freq = (25_000_000u64 * self.base_clock as u64 / self.max_clock as u64) as u32;
+         if let Err(_) = self.set_clock(freq) {
+             println!("failed to set clock {freq} Hz");
+             return;
+@@ -430,7 +477,8 @@
+                 return;
+             }
+             let regs = self.regs.get_mut().unwrap();
+-            regs.control0.write(C0_HCTL_DWITDH);
++            let power = if self.bus_power { C0_POWER_3V3_ON } else { 0 };
++            regs.control0.write(C0_HCTL_DWITDH | power);
+             settle(self.sd_clock);
+         }
+ 
+@@ -472,7 +520,7 @@
+         settle(self.sd_clock);
+         wait_msec(10);
+ 
+-        let c = EMMC_BASE_CLOCK / freq;
++        let c = (self.base_clock / freq).max(1);
+         let mut x: u32 = c - 1;
+         let mut s: u32 = 32;
+ 
+@@ -519,9 +567,9 @@
+         }
+         println!("sd clk divisor: 0x{:08x}, shift: 0x{:08x}", d, s);
+         self.sd_clock = if self.host_spec_ver > HOST_SPEC_V2 {
+-            EMMC_BASE_CLOCK / (2 * d)
++            self.base_clock / (2 * d)
+         } else {
+-            EMMC_BASE_CLOCK / d
++            self.base_clock / d
+         };
+ 
+         let mut h = 0;
+--- a/init.initfs.d/40_drivers.target
++++ b/init.initfs.d/40_drivers.target
+@@ -9,6 +9,7 @@
+     "41_bcm2835-spid.service",
+     "41_bcm2835-pwmaudiod.service",
+     "40_bcm2835-sdhostd.service",
++    "40_bcm2835-sdhcid.service",
+     "40_dwc2d.service",
+     "40_hwd.service",
+     "40_pcid-spawner-initfs.service",
+--- /dev/null
++++ b/init.initfs.d/40_bcm2835-sdhcid.service
+@@ -0,0 +1,11 @@
++[unit]
++description = "SD card on EMMC2 (BCM2711: Pi 4, Pi 400)"
++# rpi-firmwared first: the clock divider needs the EMMC2 clock when it is
++# there. On other boards the driver reports ready and exits.
++requires_weak = ["10_inputd.service", "10_lived.service", "20_graphics.target", "40_rpi-firmwared.service"]
++condition_architecture = ["aarch64"]
++condition_board = ["raspi3bp"]
++
++[service]
++cmd = "bcm2835-sdhcid"
++type = "notify"
