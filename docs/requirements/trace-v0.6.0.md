@@ -43,7 +43,7 @@ automated (network boot and the release-netboot image).
 | [REQ-BOOT-3](https://github.com/redox-rpi/redox-rpi/issues/477) clean boot log | should | release | PR #77 | 571, 573 (no `pcid`/`rtcd`, audiod without error, panic 0) | verified |
 | [REQ-BOOT-4](https://github.com/redox-rpi/redox-rpi/issues/478) boot time | should | release | #47 | — | not measured on v0.6.0; earlier (v0.5.0: 1: 28.3 s; 2: 12.0 s, over the proposed 10 s) |
 | [REQ-BOOT-5](https://github.com/redox-rpi/redox-rpi/issues/479) damaged data partition | should | release | #232 | row 270 | earlier; **gap** in checklist |
-| [REQ-CON-1](https://github.com/redox-rpi/redox-rpi/issues/480) HDMI console | must | release | — | 575 (3B+), 449 (Zero 2 W) | verified (1, 2 on both boards; 3 on the Zero 2 W); note: black border on the 3B+ at 1920x1080 (overscan, #347/#348) |
+| [REQ-CON-1](https://github.com/redox-rpi/redox-rpi/issues/480) HDMI console | must | release | — | 575 (3B+), 449 (Zero 2 W) | verified (1, 2, 3 on both boards; 3B+: Super+F1/F2/F3, typing after switching back, the maintainer in the session of Test 575); note: black border on the 3B+ at 1920x1080 (overscan, #347/#348) |
 | [REQ-CON-2](https://github.com/redox-rpi/redox-rpi/issues/481) serial console | must | release | #28, #547 | 571 (20 of 20, 0 late, 0 lost) | verified (1, 2) |
 | [REQ-USB-1](https://github.com/redox-rpi/redox-rpi/issues/510) USB keyboard | must | release | #29 | 575 (3B+), 449 (Zero 2 W) | verified (1, on one port of the 3B+; 2: key repeat, the maintainer in the session of Test 575) |
 | [REQ-USB-2](https://github.com/redox-rpi/redox-rpi/issues/511) hotplug | should | release | #17 | 575 (cable after boot), row 286 | 2 verified (575: address after the cable went in; time not recorded); 1, 3 earlier |
@@ -71,7 +71,7 @@ automated (network boot and the release-netboot image).
 | [REQ-AUDIO-1](https://github.com/redox-rpi/redox-rpi/issues/250) headphone jack | should | beta | #250, #292, #336 | 571 (rc2: 44 088 Hz, tone 3 s) | verified on rc2 only; **known deviation in v0.6.0**: with `hdmi-audio` there is no `bcm2835-pwmaudiod`, the jack is silent; the maintainer accepted this on 2026-11-22, a choice between jack and HDMI follows in #617 (v0.7.0) |
 | [REQ-AUDIO-2](https://github.com/redox-rpi/redox-rpi/issues/472) audible, left/right | should | beta | #250 | — | **known deviation in v0.6.0** (jack silent with `hdmi-audio`, accepted 2026-11-22, #617); not heard on v0.6.0 |
 | [REQ-AUDIO-3](https://github.com/redox-rpi/redox-rpi/issues/473) startup sound and volume | should | beta | #292, #336 | 571, 573, 574 | proposed requirement; 1 in part (`startup-sound: played` in every boot, 573 on rc3, heard on HDMI in 574; time not measured); 3 verified on rc2 (571: 70 survives the reboots); 2 not tested; 4 goal |
-| [REQ-GFX-1](https://github.com/redox-rpi/redox-rpi/issues/489) optional desktop | should | beta | #33, #298 | 571, 573, 449 | verified (1, 2: Orbital starts; on the Zero 2 W only with `sudo desktop`); 3, 4 not shown |
+| [REQ-GFX-1](https://github.com/redox-rpi/redox-rpi/issues/489) optional desktop | should | beta | #33, #298 | 571, 573, 449 | verified (1, 2: Orbital starts; on the Zero 2 W only with `sudo desktop`; 3: Super+F2/F3 on the 3B+, Test 575 session); 4 not shown |
 | [REQ-GFX-2](https://github.com/redox-rpi/redox-rpi/issues/490) desktop apps | may | beta | #298, #335 | 573 (`launcher-sopwith`), 575 (tune heard), QEMU desktop check, 449 | proposed requirement; 2 verified (575, 3B+: started from the launcher, controls per the in-game help, tune heard over HDMI; criterion reworded 2026-11-22, Sopwith's default keys are not the arrow keys); 1, 3 not shown |
 | [REQ-TCC-1](https://github.com/redox-rpi/redox-rpi/issues/507) tcc | may | beta | #247, #293, #297 | 571, 573, 458 | proposed requirement; 1, 2, 4 verified; 5 verified with a note: 573 pass, 571 8 of 9 runs, 458 2 of 3 runs; one step fails rarely, cause unknown |
 | [REQ-STAB-1](https://github.com/redox-rpi/redox-rpi/issues/504) program starts | must | release | #1, #12, #127 | 571 (0 of 1000), 573 (0 of 300) | verified |
@@ -113,7 +113,6 @@ For the checklist's step "Untested `must` criteria":
 | Requirement | Criterion | State |
 |---|---|---|
 | REQ-BOOT-1 | 2, 3 | out of date: root from RAM by design (#324) |
-| REQ-CON-1 | 3 on the 3B+ | VT switch only on the Zero 2 W (449) |
 | REQ-NET-1 | 2, 3 | not tested (new wording; PR #614 for v0.7.0) |
 | REQ-NET-1 | 6 | rc1 only (450 B, `+xc80e`) |
 | REQ-NET-4 | 2 | **fails** on rc1 (450 C, `+xc80e`) |
