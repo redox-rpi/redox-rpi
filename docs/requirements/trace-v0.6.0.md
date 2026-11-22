@@ -50,7 +50,7 @@ automated (network boot and the release-netboot image).
 | [REQ-USB-3](https://github.com/redox-rpi/redox-rpi/issues/512) USB mouse | should | release | #48, PR #223 | row 286 | earlier; **gap** in checklist |
 | [REQ-USB-4](https://github.com/redox-rpi/redox-rpi/issues/513) USB idle load | should | release | #29, #214, #104, #344, #373 | row 5 | earlier; **gap** in checklist |
 | [REQ-NET-1](https://github.com/redox-rpi/redox-rpi/issues/491) DHCP address on every supported adapter | must | release | #217, #92, #576 | 570, 571, 574, 450 | 1 verified (3B+ 571; Zero 2 W 574, about 10 s); 4 verified (571); 5 verified on rc2 (570, 100 of 100; rc1 had 66 of 100, #576); 6 verified on rc1 only (450 B; rc2 changed only the USB root port path); 2, 3 **not tested** (new wording 2026-11-22; PR #614 is for v0.7.0) |
-| [REQ-NET-2](https://github.com/redox-rpi/redox-rpi/issues/492) supported Ethernet adapters | may | release | base `0020` | 571 (LAN7800), 574 (USB Realtek) | verified (1, 2); proposed wording since 2026-11-22 |
+| [REQ-NET-2](https://github.com/redox-rpi/redox-rpi/issues/492) supported Ethernet adapters | may | release | base `0020` | 571 (LAN7800), 574 (USB Realtek) | verified (1, 2); new wording approved by the maintainer 2026-11-22 |
 | [REQ-NET-3](https://github.com/redox-rpi/redox-rpi/issues/493) several adapters | should | release | #53, PR #81 | row 286 | earlier |
 | [REQ-NET-4](https://github.com/redox-rpi/redox-rpi/issues/494) long TCP transfers | must | release | #157, #88, #184 | 571 (curl 100 MiB in 22.2 s, SHA-256 right; nc), 450 C | 1 verified; 2 **fails** on rc1 (450 C: 1000 connections work, but memory grows, about 300 KB per connection, mostly outside any process; no socket count; #88); not run on rc2/rc3 |
 | [REQ-NET-5](https://github.com/redox-rpi/redox-rpi/issues/495) IPv4 multicast | should | release | #27, PR #194, #216 | row 218 | earlier; **gap** in checklist |
@@ -68,8 +68,8 @@ automated (network boot and the release-netboot image).
 | [REQ-FW-2](https://github.com/redox-rpi/redox-rpi/issues/483) governor | should | release | #23, PR #147 | 571 (`ondemand`, 600/1400 MHz) | verified (1); earlier (2: row 161) |
 | [REQ-FW-3](https://github.com/redox-rpi/redox-rpi/issues/484) reboot and power off | must | release | #12, #418, PR #526 | 571 (5 of 5, part C), 573 (5 of 5) | verified (1 on rc3; 2, 3 on rc2: 0.0 W for 60 s, file unchanged) |
 | [REQ-FW-4](https://github.com/redox-rpi/redox-rpi/issues/485) firmware information | should | release | base 0018 | 571 (throttled flags) | verified (3); **gap** (1, 2) |
-| [REQ-AUDIO-1](https://github.com/redox-rpi/redox-rpi/issues/250) headphone jack | should | beta | #250, #292, #336 | 571 (rc2: 44 088 Hz, tone 3 s) | verified on rc2 only; **not in rc3**: with `hdmi-audio` there is no `bcm2835-pwmaudiod`, the jack is silent (checklist rc3) |
-| [REQ-AUDIO-2](https://github.com/redox-rpi/redox-rpi/issues/472) audible, left/right | should | beta | #250 | — | **not in rc3** (jack silent with `hdmi-audio`); not heard on v0.6.0 |
+| [REQ-AUDIO-1](https://github.com/redox-rpi/redox-rpi/issues/250) headphone jack | should | beta | #250, #292, #336 | 571 (rc2: 44 088 Hz, tone 3 s) | verified on rc2 only; **known deviation in v0.6.0**: with `hdmi-audio` there is no `bcm2835-pwmaudiod`, the jack is silent; the maintainer accepted this on 2026-11-22, a choice between jack and HDMI follows in #617 (v0.7.0) |
+| [REQ-AUDIO-2](https://github.com/redox-rpi/redox-rpi/issues/472) audible, left/right | should | beta | #250 | — | **known deviation in v0.6.0** (jack silent with `hdmi-audio`, accepted 2026-11-22, #617); not heard on v0.6.0 |
 | [REQ-AUDIO-3](https://github.com/redox-rpi/redox-rpi/issues/473) startup sound and volume | should | beta | #292, #336 | 571, 573, 574 | proposed requirement; 1 in part (`startup-sound: played` in every boot, 573 on rc3, heard on HDMI in 574; time not measured); 3 verified on rc2 (571: 70 survives the reboots); 2 not tested; 4 goal |
 | [REQ-GFX-1](https://github.com/redox-rpi/redox-rpi/issues/489) optional desktop | should | beta | #33, #298 | 571, 573, 449 | verified (1, 2: Orbital starts; on the Zero 2 W only with `sudo desktop`); 3, 4 not shown |
 | [REQ-GFX-2](https://github.com/redox-rpi/redox-rpi/issues/490) desktop apps | may | beta | #298, #335 | 573 (`launcher-sopwith`), 575 (tune heard), QEMU desktop check, 449 | proposed requirement; 2 verified in part (Sopwith starts from the launcher; its tune heard over HDMI on the 3B+, 575; steering keys not recorded); 1, 3 not shown |
@@ -101,8 +101,9 @@ proposed, no Pi 400 image in v0.6.0.
 - **Better than v0.5.0:** REQ-FW-3 power off (2, 3), REQ-NET-1 criteria 5
   and 6, REQ-BOARD-1, REQ-NET-2 and REQ-CON-1 criterion 3 on the candidate
   (Zero 2 W), REQ-NET-7 on the Pi, REQ-TCC-1 criterion 5.
-- **Worse than v0.5.0:** REQ-AUDIO-1 and REQ-AUDIO-2: the jack is silent
-  with `hdmi-audio`, which rc3 adds. HDMI sound itself has no requirement in
+- **Known deviation:** REQ-AUDIO-1 and REQ-AUDIO-2: the jack is silent
+  with `hdmi-audio`, which rc3 adds. The maintainer accepted it for v0.6.0
+  on 2026-11-22; a choice between jack and HDMI follows in #617 (v0.7.0). HDMI sound itself has no requirement in
   redox-rpi yet (#423).
 
 ### Must criteria without a test on the candidate
@@ -125,9 +126,8 @@ For the checklist's step "Untested `must` criteria":
 
 ## Findings for the other roles
 
-- **Maintainer:** decide whether the silent jack with `hdmi-audio` is
-  accepted for v0.6.0 (REQ-AUDIO-1/2), and accept or test the must list
-  above. HDMI sound (#423) needs a requirement if it stays in the release.
+- **Maintainer:** accept or test the must list above. (The silent jack
+  is accepted, #617.) HDMI sound (#423) needs a requirement if it stays in the release.
 - **V&V:** HDMI mode on the 3B+ came up with a monitor (575), so 573's
   `hdmi_mode no` was the setup. Overscan border on the 3B+: #347/#348.
 - **Network (#88):** REQ-NET-4 criterion 2 fails; memory grows outside
