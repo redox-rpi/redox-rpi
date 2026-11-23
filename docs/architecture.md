@@ -114,6 +114,23 @@ needed to reach the real root filesystem. On the Pi that is
 `bcm2835-sdhcid` (SD card) and `redoxfs`. Board-specific drivers only start in
 images built with `BOARD=raspi3bp`.
 
+Redox cannot boot without it: the kernel has no storage driver and no
+filesystem, and drivers are programs, so the first ones must already be in
+memory. How the firmware loads it and hands it over:
+[initramfs](https://github.com/redox-rpi/rpi-open-firmware/wiki/Initramfs)
+in the rpi-open-firmware wiki.
+
+| | Live card | Root on the card |
+|---|---|---|
+| initramfs | initfs and the whole RedoxFS, about 51 MB | initfs only, about 12.5 MB |
+| After the start | Redox runs from memory | `init` mounts the RedoxFS partition as `/` |
+| Changes | lost at power-off | kept on the card |
+
+The initfs stays in memory: the initfs daemon (`bootstrap/src/exec.rs`)
+serves `/scheme/initfs` until power-off, and its memory is never freed. A
+smaller initfs means a shorter load and more free memory (#642). Linux frees
+it after `switch_root`; a Redox equivalent is an idea (#643).
+
 Planned: a DWC2 USB host driver, USB hub support and Ethernet drivers
 (LAN7800 for the Pi 3B+, the HAT's chip for the Zero 2 W).
 
