@@ -35,8 +35,19 @@ Rules:
 - Before every pkg run the data partition gets the image's `/etc/pkg.d`
   and `/etc/pkg/hold`, so the same repositories and holds apply.
 - Plain `pkg install` still installs into `/` only, as before.
+- The copies must fit into `/`, which is small on network boot (it is in
+  RAM). pkg-persist adds up what it would copy first; if that and 4 MB for
+  the system do not fit, it copies nothing and says how much is needed and
+  free. The packages stay on the data partition.
 
 Also in this experiment:
+
+- pkgutils patch 0003: pkg downloaded into `/tmp/pkg_download` even with
+  `--root` and never removed the files, so a large install filled the RAM
+  root and `/` stayed full after the rollback (Test 586). Now pkg downloads
+  into `<root>/tmp/pkg_download` (for `/` the same place as before) and
+  removes it when the command ends, after a commit or a rollback.
+  pkg-persist also empties it before and after every pkg run.
 
 - redoxfs patch 0001: rename failed with "No such file or directory" on any
   RedoxFS mounted below `/scheme/<name>` (only the root filesystem worked),

@@ -20,6 +20,10 @@
 //! before every pkg run, so the same repositories and holds apply.
 //! install and update refuse to run while the clock is not set (1970),
 //! with a message that says so, instead of pkg's certificate error.
+//! Before it copies, pkg-persist checks that the files fit into / (the RAM
+//! root is small) and copies nothing if they do not. pkg downloads into
+//! <root>/tmp/pkg_download; pkg-persist empties it before and after every
+//! pkg run, so a failed run leaves no downloads behind.
 //! PKG_PERSIST_ROOT overrides the directory, PKG_PERSIST_DEST the target
 //! (/, for tests).
 
@@ -36,7 +40,11 @@ const DEFAULT_ROOT: &str = "/scheme/data/pkg";
 /// target (the root is in RAM, so the list starts empty after a reset).
 const COPIED: &str = "var/lib/pkg-persist/copied";
 /// pkg's own state and configuration in the root, never copied into /.
-const SKIP: [&str; 4] = ["etc/pkg", "etc/pkg.d", "var/lib/packages", "pkg"];
+const SKIP: [&str; 5] = ["etc/pkg", "etc/pkg.d", "var/lib/packages", "pkg", "tmp"];
+/// pkg's download cache in the root (pkg with --root downloads there).
+const DOWNLOADS: &str = "tmp/pkg_download";
+/// Space left free in / for the running system (logs, /tmp, the desktop).
+const KEEP_FREE: u64 = 4 * 1024 * 1024;
 
 /// Before this (2025-01-01) the clock is not set: the Pi has no battery
 /// clock and starts at 1970 until timesync sets it.
@@ -89,14 +97,26 @@ fn sync_config(root: &Path) -> io::Result<()> {
     }
 }
 
+/// Removes pkg's downloads in the root, left behind by a pkg that failed
+/// or was stopped; pkg itself empties the directory after every run.
+fn clear_downloads(root: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(root.join(DOWNLOADS)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 fn pkg(root: &Path, args: &[String]) -> io::Result<()> {
     sync_config(root)?;
+    clear_downloads(root)?;
     let status = Command::new("pkg")
         .arg("--root")
         .arg(root)
         .arg("--yes")
         .args(args)
-        .status()?;
+        .status();
+    clear_downloads(root)?;
+    let status = status?;
     if status.success() {
         Ok(())
     } else {
@@ -118,7 +138,24 @@ fn restore(root: &Path) -> io::Result<()> {
         .unwrap_or_default();
     let mut copied = copied_before.clone();
     let (mut new, mut kept) = (0, 0);
-    copy_dir(root, root, &target, &copied_before, &mut copied, &mut new, &mut kept)?;
+    let mut needed = 0;
+    copy_dir(root, root, &target, &copied_before, &mut copied, &mut new, &mut kept, Some(&mut needed))?;
+    let free = free_bytes(&target)?;
+    if needed + KEEP_FREE > free {
+        return Err(io::Error::other(format!(
+            "the packages in {} need {} in {}, but it has only {} free (and {} stay free \
+             for the system), so nothing was copied. They stay on the data partition: \
+             remove some with `pkg-persist remove`, or use an image with a larger root",
+            root.display(),
+            mb(needed),
+            target.display(),
+            mb(free),
+            mb(KEEP_FREE)
+        )));
+    }
+    let (mut new, mut kept) = (0, 0);
+    copied = copied_before.clone();
+    copy_dir(root, root, &target, &copied_before, &mut copied, &mut new, &mut kept, None)?;
     if let Some(dir) = list_path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -134,6 +171,26 @@ fn restore(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+}
+
+/// Bytes free for an ordinary user in the filesystem that holds `path`.
+fn free_bytes(path: &Path) -> io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::other("path with a NUL byte"))?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let unit = if st.f_frsize > 0 { st.f_frsize } else { st.f_bsize };
+    Ok(st.f_bavail as u64 * unit as u64)
+}
+
+/// With `count`, only adds up the bytes the copy would write and changes
+/// nothing; without it, copies.
+#[allow(clippy::too_many_arguments)]
 fn copy_dir(
     root: &Path,
     dir: &Path,
@@ -142,6 +199,7 @@ fn copy_dir(
     copied: &mut BTreeSet<String>,
     new: &mut usize,
     kept: &mut usize,
+    mut count: Option<&mut u64>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let src = entry?.path();
@@ -155,8 +213,10 @@ fn copy_dir(
         let dest = target.join(&rel);
         let meta = fs::symlink_metadata(&src)?;
         if meta.is_dir() {
-            fs::create_dir_all(&dest)?;
-            copy_dir(root, &src, target, copied_before, copied, new, kept)?;
+            if count.is_none() {
+                fs::create_dir_all(&dest)?;
+            }
+            copy_dir(root, &src, target, copied_before, copied, new, kept, count.as_deref_mut())?;
             continue;
         }
         let exists = fs::symlink_metadata(&dest).is_ok();
@@ -173,7 +233,16 @@ fn copy_dir(
             if same {
                 continue;
             }
-            fs::remove_file(&dest)?;
+            if count.is_none() {
+                fs::remove_file(&dest)?;
+            }
+        }
+        if let Some(n) = count.as_deref_mut() {
+            // An update frees the old copy first.
+            let old = if exists { fs::symlink_metadata(&dest)?.len() } else { 0 };
+            *n += meta.len().saturating_sub(old);
+            *new += 1;
+            continue;
         }
         if meta.file_type().is_symlink() {
             std::os::unix::fs::symlink(fs::read_link(&src)?, &dest)?;
@@ -225,5 +294,80 @@ fn main() {
     if let Err(e) = result {
         eprintln!("pkg-persist: {e}");
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tempdir(name: &str) -> PathBuf {
+        let d = env::temp_dir().join(format!("pkg-persist-test-{}-{name}", process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn count_skips_downloads_and_image_files() {
+        let root = tempdir("root");
+        let target = tempdir("target");
+        fs::create_dir_all(root.join("usr/bin")).unwrap();
+        fs::create_dir_all(root.join(DOWNLOADS)).unwrap();
+        fs::write(root.join("usr/bin/new"), vec![0u8; 1000]).unwrap();
+        fs::write(root.join("usr/bin/image"), vec![0u8; 500]).unwrap();
+        fs::write(root.join(DOWNLOADS).join("x.pkgar"), vec![0u8; 9000]).unwrap();
+        fs::create_dir_all(target.join("usr/bin")).unwrap();
+        fs::write(target.join("usr/bin/image"), b"from the image").unwrap();
+        let before = BTreeSet::new();
+        let mut copied = BTreeSet::new();
+        let (mut new, mut kept, mut needed) = (0, 0, 0);
+        copy_dir(&root, &root, &target, &before, &mut copied, &mut new, &mut kept, Some(&mut needed)).unwrap();
+        assert_eq!((needed, new, kept), (1000, 1, 1));
+        assert!(!target.join("usr/bin/new").exists(), "counting must not copy");
+        let (mut new, mut kept) = (0, 0);
+        copy_dir(&root, &root, &target, &before, &mut copied, &mut new, &mut kept, None).unwrap();
+        assert_eq!((new, kept), (1, 1));
+        assert_eq!(fs::read(target.join("usr/bin/new")).unwrap().len(), 1000);
+        assert!(!target.join("tmp").exists(), "pkg's downloads must not be copied");
+    }
+
+    #[test]
+    fn count_on_update_is_the_difference() {
+        let root = tempdir("root2");
+        let target = tempdir("target2");
+        fs::write(root.join("f"), vec![1u8; 3000]).unwrap();
+        fs::write(target.join("f"), vec![0u8; 1000]).unwrap();
+        let before: BTreeSet<String> = ["f".to_string()].into();
+        let mut copied = before.clone();
+        let (mut new, mut kept, mut needed) = (0, 0, 0);
+        copy_dir(&root, &root, &target, &before, &mut copied, &mut new, &mut kept, Some(&mut needed)).unwrap();
+        assert_eq!((needed, new), (2000, 1));
+    }
+
+    #[test]
+    fn restore_refuses_when_it_does_not_fit() {
+        let root = tempdir("root3");
+        let target = tempdir("target3");
+        let free = free_bytes(&target).unwrap();
+        // A sparse file larger than the free space: it costs nothing on disk.
+        let f = fs::File::create(root.join("big")).unwrap();
+        f.set_len(free + 1).unwrap();
+        env::set_var("PKG_PERSIST_DEST", &target);
+        let err = restore(&root).unwrap_err().to_string();
+        env::remove_var("PKG_PERSIST_DEST");
+        assert!(err.contains("nothing was copied"), "{err}");
+        assert!(!target.join("big").exists());
+        let _ = clear_downloads(&root);
+    }
+
+    #[test]
+    fn clear_downloads_is_quiet_when_there_are_none() {
+        let root = tempdir("root4");
+        clear_downloads(&root).unwrap();
+        fs::create_dir_all(root.join(DOWNLOADS)).unwrap();
+        fs::write(root.join(DOWNLOADS).join("a.pkgar"), b"x").unwrap();
+        clear_downloads(&root).unwrap();
+        assert!(!root.join(DOWNLOADS).exists());
     }
 }
