@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 23 Nov 2026 19:32:28 +0000
+Subject: [PATCH] memory: out of memory in a user page fault kills the process,
+ not the kernel
+
+The page fault handler panicked with todo!("oom") when no frame was
+left for a user page (redox-rpi#644). Now it marks every thread of the
+faulting process as SIGKILLed, the way a kill through the proc scheme
+does, and ends the current thread. A usercopy inside a syscall fails
+with EFAULT and the thread exits when the syscall returns.
+---
+ src/memory/mod.rs | 57 ++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+index 47a9a0a1..65073050 100644
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -9,6 +9,8 @@ use core::{
+     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
+ };
+ 
++use alloc::sync::Arc;
++
+ pub use kernel_mapper::KernelMapper;
+ use spin::{once::Once, Mutex};
+ use syscall::NumaMemoryPolicy;
+@@ -1456,7 +1458,19 @@ pub fn page_fault_handler(
+         let mut token = unsafe { CleanLockToken::new() };
+         match context::memory::try_correcting_page_tables(faulting_page, mode, &mut token) {
+             Ok(()) => return Ok(()),
+-            Err(PfError::Oom) => todo!("oom"),
++            Err(PfError::Oom) => {
++                // Out of memory: end the process that faulted, not the kernel
++                // (redox-rpi#644).
++                oom_kill_current_process(&mut token);
++                if caused_by_kernel {
++                    // A usercopy inside a syscall: the syscall fails with
++                    // EFAULT and the thread exits when it returns.
++                    stack.recover_and_efault();
++                    return Ok(());
++                }
++                // A fault in user mode holds no kernel references.
++                crate::syscall::process::exit_this_context(None, &mut token);
++            }
+             Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
+             Err(PfError::NonfatalInternalError) => todo!(),
+         }
+@@ -1469,6 +1483,47 @@ pub fn page_fault_handler(
+ 
+     Err(Segv)
+ }
++/// Mark every thread of the current process as SIGKILLed, as a kill
++/// through the proc scheme does. The other threads exit when they next run;
++/// the caller ends the current thread. Allocates nothing.
++fn oom_kill_current_process(token: &mut CleanLockToken) {
++    let current = context::current();
++    let pid = {
++        let mut guard = current.write(token.token());
++        error!(
++            "OUT OF MEMORY: killing PID {} NAME {} on CPU #{}",
++            guard.pid,
++            guard.name,
++            crate::cpu_id()
++        );
++        guard.being_sigkilled = true;
++        guard.pid
++    };
++    crate::percpu::PercpuBlock::current()
++        .switch_internals
++        .being_sigkilled
++        .set(true);
++
++    let mut contexts_guard = context::contexts(token.downgrade());
++    let (contexts, mut token) = contexts_guard.token_split();
++    for context_ref in contexts.iter() {
++        let context_lock = &context_ref.0;
++        if Arc::ptr_eq(context_lock, &current) {
++            continue;
++        }
++        let cpu_id = {
++            let mut ctxt = context_lock.write(token.token());
++            if ctxt.pid != pid || ctxt.status.is_dead() || ctxt.being_sigkilled {
++                continue;
++            }
++            ctxt.status = context::Status::Runnable;
++            ctxt.being_sigkilled = true;
++            ctxt.cpu_id
++        };
++        context::wakeup_context(context_lock, cpu_id, &mut token.downgrade());
++    }
++}
++
+ static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> =
+     SyncUnsafeCell::new(None);
+ 
+-- 
+2.53.0
+
