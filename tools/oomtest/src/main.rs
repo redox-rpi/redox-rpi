@@ -21,6 +21,10 @@ use std::time::Duration;
 const BLOCK: usize = 4 << 20;
 const PAGE: usize = 4096;
 
+// The compiler may drop an allocation that is never read; the writes are
+// volatile and every block is kept in BLOCKS, so the pages are really used.
+static mut BLOCKS: Vec<usize> = Vec::new();
+
 fn block(total: usize) -> &'static mut [u8] {
     let layout = Layout::from_size_align(BLOCK, PAGE).unwrap();
     let p = unsafe { alloc(layout) };
@@ -28,7 +32,10 @@ fn block(total: usize) -> &'static mut [u8] {
         println!("oomtest: allocation failed after {} MiB", total >> 20);
         std::process::exit(2);
     }
-    unsafe { std::slice::from_raw_parts_mut(p, BLOCK) }
+    unsafe {
+        (*std::ptr::addr_of_mut!(BLOCKS)).push(p as usize);
+        std::slice::from_raw_parts_mut(p, BLOCK)
+    }
 }
 
 fn report(total: usize) {
@@ -43,7 +50,7 @@ fn touch() {
     loop {
         let b = block(total);
         for i in (0..BLOCK).step_by(PAGE) {
-            b[i] = 1;
+            unsafe { std::ptr::write_volatile(&mut b[i], 1) };
         }
         total += BLOCK;
         report(total);
@@ -65,6 +72,7 @@ fn pipe() {
     loop {
         let b = block(total);
         reader.read_exact(b).expect("read");
+        std::hint::black_box(&b[BLOCK - 1]);
         total += BLOCK;
         report(total);
     }
