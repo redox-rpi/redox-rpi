@@ -21,6 +21,7 @@ dependencies = [
     "sdl1",
     "sdl1-image",
     "sdl1-mixer",
+    "libmodplug1",
     "sdl1-ttf",
     "liborbital",
     "libxml2",
@@ -38,7 +39,7 @@ script = """
 DYNAMIC_INIT
 # See t4kcommon: the whole link line, since configure links each library
 # alone.
-export LIBS="-lt4k_common -lSDL_ttf -lfreetype -lSDL_image -lpng -ljpeg -lSDL_mixer -lvorbisfile -lvorbis -logg -lSDL -lorbital -lxml2 -llzma -lz -lintl -liconv -lpthread -lm"
+export LIBS="-lt4k_common -lSDL_ttf -lfreetype -lSDL_image -lpng -ljpeg -lSDL_mixer -lmodplug -lstdc++ -lvorbisfile -lvorbis -logg -lSDL -lorbital -lxml2 -llzma -lz -lintl -liconv -lpthread -lm"
 # -fcommon: t4kcommon and tuxtype both define globals such as screen and
 # tts_thread without an initializer, as GCC before 10 merged.
 export CFLAGS="${CFLAGS} -fcommon -I${COOKBOOK_SYSROOT}/include/freetype2 -I${COOKBOOK_SYSROOT}/include/libxml2"
@@ -72,4 +73,27 @@ done
 mkdir -p "${COOKBOOK_STAGE}/usr/share/t4k_common/fonts"
 ln -s ../../tuxtype/fonts/AndikaDesRevG.ttf \
     "${COOKBOOK_STAGE}/usr/share/t4k_common/fonts/AndikaDesRevG.ttf"
+# The package brings its launcher entry and starts in German: tuxtype-de
+# writes lang=deutsch into the user's settings once (tuxtype reads only
+# ~/.config/tuxtype/settings.txt and saves the language there itself).
+mkdir -p "${COOKBOOK_STAGE}/usr/share/ui/apps"
+cat > "${COOKBOOK_STAGE}/usr/share/ui/apps/72_tuxtype" <<'APP'
+name=Tux Typing
+binary=/usr/bin/tuxtype-de
+icon=/usr/share/tuxtype/images/icons/icon.png
+description=Typing tutor: catch the falling fish by typing their letters
+APP
+cat > "${COOKBOOK_STAGE}/usr/bin/tuxtype-de" <<'WRAP'
+#!/usr/bin/ion
+# Tux Typing in German: the first start writes lang=deutsch into the
+# user's settings; later starts keep what the user chose in the game.
+let dir = "$HOME/.config/tuxtype"
+if test -f $dir/settings.txt
+else
+    mkdir -p $dir
+    echo lang=deutsch > $dir/settings.txt
+end
+tuxtype @args[1..]
+WRAP
+chmod 755 "${COOKBOOK_STAGE}/usr/bin/tuxtype-de"
 """
