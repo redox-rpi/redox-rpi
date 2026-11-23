@@ -1,7 +1,7 @@
-From 147238891f88f44c73b564788679e3f83f4e916e Mon Sep 17 00:00:00 2001
+From d91a1916a13efa989ed85d971cd72597b8af3957 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 19 Nov 2026 15:59:16 +0000
-Subject: [PATCH 2/2] dwc2d: the network counters also in
+Subject: [PATCH 101/101] dwc2d: the network counters also in
  /scheme/network.usb/stats
 
 The counters of /tmp/dwc2d-netstats are now also read through the
@@ -13,10 +13,10 @@ per adapter: its kind, bus address, link and whether it is in use.
  2 files changed, 26 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 4faad0a..f41d15f 100644
+index 381a33d..be0a0e9 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -235,6 +235,23 @@ impl NetworkAdapter for UsbNet {
+@@ -248,6 +248,23 @@ impl NetworkAdapter for UsbNet {
      }
  
      /// Kept for the event loop, which has the bus to program the adapter.

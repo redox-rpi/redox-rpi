@@ -50,6 +50,7 @@ patches/experiments/termios-speed/*     usb
 patches/experiments/rtl8152/*           network,usb
 patches/experiments/netdiag/*           network
 tools/netdiag/*                         network
+scripts/tcp-churn-check.py              network
 patches/experiments/lan78xx-*           network,usb
 patches/experiments/ipv6/*              network
 patches/experiments/mdns/*              network

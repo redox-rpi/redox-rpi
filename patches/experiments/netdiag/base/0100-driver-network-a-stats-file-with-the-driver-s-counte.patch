@@ -1,7 +1,8 @@
-From a7adf084b86051271e67588fbc4c16639902feb6 Mon Sep 17 00:00:00 2001
+From 5c2e6dc841ce6c9d5c9beb9ada65fcfbd6ff73dc Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
-Date: Thu, 19 Nov 2026 15:58:57 +0000
-Subject: [PATCH 1/2] driver-network: a stats file with the driver's counters
+Date: Sun, 22 Nov 2026 16:54:46 +0000
+Subject: [PATCH 100/101] driver-network: a stats file with the driver's
+ counters
 
 A network driver can give counters for diagnosis through a new optional
 NetworkAdapter::stats(): one name value per line, read from the
@@ -13,7 +14,7 @@ does not exist (ENOENT).
  1 file changed, 68 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
-index 685b035..12f5a75 100644
+index cf214d4..a61472e 100644
 --- a/drivers/net/driver-network/src/lib.rs
 +++ b/drivers/net/driver-network/src/lib.rs
 @@ -8,7 +8,9 @@ use scheme_utils::{
@@ -27,29 +28,29 @@ index 685b035..12f5a75 100644
  
  pub trait NetworkAdapter {
      /// The [MAC address](https://en.wikipedia.org/wiki/MAC_address) of this
-@@ -36,6 +38,13 @@ pub trait NetworkAdapter {
-     fn set_multicast(&mut self, _addrs: Option<&[[u8; 6]]>) -> Result<()> {
+@@ -37,6 +39,13 @@ pub trait NetworkAdapter {
          Ok(())
      }
-+
+ 
 +    /// Counters for diagnosis, one `name value` per line, read from the
 +    /// scheme's `stats` file. `None` (the default): the driver has no
 +    /// `stats` file.
 +    fn stats(&mut self) -> Option<String> {
 +        None
 +    }
- }
- 
- pub struct NetworkScheme<T: NetworkAdapter> {
-@@ -132,6 +141,7 @@ resource_scheme! {
++
+     /// Whether the adapter has a link: it is there and a cable connects it
+     /// to a peer. dhcpd starts only on a link. The default is yes, for
+     /// drivers that do not know.
+@@ -139,6 +148,7 @@ resource_scheme! {
          Data(Data<T>),
          Mac(Mac<T>),
          Multicast(Multicast<T>),
 +        Stats(Stats<T>),
+         Link(Link<T>),
      }
  }
- 
-@@ -159,7 +169,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+@@ -167,7 +177,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
  
      fn openat<'a>(
          &mut self,
@@ -58,11 +59,15 @@ index 685b035..12f5a75 100644
          path: &str,
          _flags: usize,
          _fcntl_flags: u32,
-@@ -182,6 +192,14 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+@@ -190,10 +200,18 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
                  NetworkResource::Multicast(Multicast(PhantomData)),
                  NewFdFlags::empty(),
              ),
 +            // The counters as they are at open; read again by opening again.
+             "link" => (
+                 NetworkResource::Link(Link(PhantomData)),
+                 NewFdFlags::POSITIONED,
+             ),
 +            "stats" => match scheme_data.adapter.stats() {
 +                Some(text) => (
 +                    NetworkResource::Stats(Stats(text.into_bytes(), PhantomData)),
@@ -73,11 +78,10 @@ index 685b035..12f5a75 100644
              _ => return Err(Error::new(EINVAL)),
          };
  
-@@ -355,3 +373,51 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
-         Ok(())
+@@ -368,6 +386,54 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
      }
  }
-+
+ 
 +/// Read-only: the driver's counters, taken when the file was opened.
 +struct Stats<T>(Vec<u8>, PhantomData<T>);
 +
@@ -125,6 +129,10 @@ index 685b035..12f5a75 100644
 +        Ok(())
 +    }
 +}
++
+ /// Read-only: `1` with a link, `0` without, read again at each read.
+ struct Link<T>(PhantomData<T>);
+ 
 -- 
 2.53.0
 

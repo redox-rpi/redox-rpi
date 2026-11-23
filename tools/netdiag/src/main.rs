@@ -1,5 +1,6 @@
 //! Network diagnosis in one snapshot (#566): the counters of every network
-//! driver (`/scheme/network.<x>/stats`), the interfaces from netcfg, the
+//! driver (`/scheme/network.<x>/stats`) and of netstack
+//! (`/scheme/netcfg/stats`), the interfaces from netcfg, the
 //! interrupts per line (`/scheme/sys/irq`) and the CPU time per process
 //! (`/scheme/sys/context`).
 //!
@@ -121,6 +122,9 @@ fn take() -> Snapshot {
                 snap.insert(format!("{scheme}/stats"), "none".to_owned());
             }
         }
+    }
+    if let Some(text) = read("/scheme/netcfg/stats") {
+        add_stats(&mut snap, "netstack", &text);
     }
     for iface in read("/scheme/netcfg/ifaces").unwrap_or_default().lines().map(str::trim) {
         if iface.is_empty() {
