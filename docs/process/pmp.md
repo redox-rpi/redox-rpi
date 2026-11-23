@@ -189,19 +189,28 @@ Every issue in the organisation has one issue type:
 
 | Type | For | Milestone |
 |---|---|---|
-| Epic | a product goal that spans several milestones, for example "Open Firmware Next" | none |
+| Epic | a feature area: all present and future Features of one area, for example "Boot picture" | none |
 | Feature | something new the system shall do; requirements (`REQ-…`) are Features ([RMP](rmp.md#issue-format)) | the release it first ships in |
 | Task | a piece of work, including work package parents (`wp`) and risks | the sprint or release it is planned for |
 | Bug | something that does not work as it should | the release that fixes it |
 
-- An **epic** holds no code. Its Features, Tasks and Bugs are GitHub
-  sub-issues, each with its own milestone, so the milestones still show
-  what each release brings. The epic says the goal in one or two
-  sentences, what is out of scope, and links its decision record if there
-  is one.
-- An epic is closed only when its goal is reached or the maintainer drops
-  it. The owner of the product proposes an epic; the maintainer approves
-  it.
+- An **epic is a feature area**, for example "Boot picture" (from a
+  static picture to an animation and ideas nobody has had yet) or "HDMI
+  and display". It collects all present and future Features of that area:
+  a new idea becomes a sub-issue of the matching epic. Tasks and Bugs of
+  the area may hang there too.
+- No epic for a whole component or repository; that is the project
+  board. An epic is split into nested epics only when an area really
+  splits.
+- An epic holds no code and has no milestone. Its sub-issues keep their
+  own milestones, so the milestones still show what each release brings.
+  The epic says what the area covers, what is out of scope, and links its
+  decision record if there is one.
+- **Docs and wikis link the epic**, not single Feature issues, so a new
+  idea needs no doc edit. Feature tables have an "Epic" column.
+- An epic stays open while the area is alive. It is closed when the
+  project decides the area is complete, or when the maintainer drops it.
+  The owner of the product proposes an epic; the maintainer approves it.
 - An epic is about the product (what we build, see the [PBS](pbs.md)); a
   work package parent (`wp`) is about the work (who does it, see the
   [WBS](wbs.md)). GitHub allows one parent per issue, so a Feature hangs
