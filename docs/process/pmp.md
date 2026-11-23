@@ -183,6 +183,30 @@ per week and one release per sprint:
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
 
+### Issue types and epics
+
+Every issue in the organisation has one issue type:
+
+| Type | For | Milestone |
+|---|---|---|
+| Epic | a product goal that spans several milestones, for example "Open Firmware Next" | none |
+| Feature | something new the system shall do; requirements (`REQ-…`) are Features ([RMP](rmp.md#issue-format)) | the release it first ships in |
+| Task | a piece of work, including work package parents (`wp`) and risks | the sprint or release it is planned for |
+| Bug | something that does not work as it should | the release that fixes it |
+
+- An **epic** holds no code. Its Features, Tasks and Bugs are GitHub
+  sub-issues, each with its own milestone, so the milestones still show
+  what each release brings. The epic says the goal in one or two
+  sentences, what is out of scope, and links its decision record if there
+  is one.
+- An epic is closed only when its goal is reached or the maintainer drops
+  it. The owner of the product proposes an epic; the maintainer approves
+  it.
+- An epic is about the product (what we build, see the [PBS](pbs.md)); a
+  work package parent (`wp`) is about the work (who does it, see the
+  [WBS](wbs.md)). GitHub allows one parent per issue, so a Feature hangs
+  under its epic, and the work package parent links the epic instead.
+
 ### Merge rights
 
 In force since 2026-11-13, decided by the maintainer. This is the only
