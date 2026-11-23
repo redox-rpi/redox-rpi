@@ -202,6 +202,11 @@ Every issue in the organisation has one issue type:
 - No epic for a whole component or repository; that is the project
   board. Epics are never nested: an epic never has an epic as a
   sub-issue. An area that grows too big becomes two epics side by side.
+- **Boards are not epics.** Which board an issue is about is the
+  single-select field **Board** in the project (Pi 3B+, Pi Zero 2 W,
+  Pi 400, Pi 3, Pi 4, Pi 5/CM5, all). A Feature stays under its area
+  epic and gets the Board field, so one issue never needs two parents.
+  The field is empty when the issue is not about one board.
 - An epic holds no code and has no milestone. Its sub-issues keep their
   own milestones, so the milestones still show what each release brings.
   The epic says what the area covers, what is out of scope, and links its
