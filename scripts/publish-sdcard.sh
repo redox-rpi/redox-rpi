@@ -16,8 +16,10 @@
 #   directory by hand (#625). Each publish ends with the check of
 #   scripts/sdcard-check.py: what `swiftflash redox:<family>` reads (the
 #   index.json entry, that it is the family's newest image, the checksum,
-#   the manifest; over HTTP too when REDOX_HTTP_BASE is set). --check runs
-#   only that check on the family's newest published image.
+#   the manifest; over HTTP too when REDOX_HTTP_BASE is set) and, on a
+#   pass, the command to send: `sudo swiftflash redox:<family>` (the
+#   family, never the -latest name). --check runs only that check on the
+#   family's newest published image.
 #
 #   <card image>  a whole card, .img or .img.xz: from scripts/make-sdcard.sh,
 #                 or made any other way (firmware-only cards)
@@ -35,7 +37,8 @@
 #   --commit      commit for .uuid when there is no manifest
 #   --latest      also point <family>-latest.img.xz (and .sha256,
 #                 .manifest.toml) at it, for people; index.json leaves the
-#                 links out
+#                 links out. Once a family has them, every publish moves
+#                 them. swiftflash takes the family, not the -latest name
 #   --no-uuid     the card has no FAT first partition; publish without
 #                 /.uuid
 #
@@ -199,6 +202,9 @@ for ext in sha256 manifest.toml meta.json; do
 done
 chmod 644 "$work/$name"
 mv "$work/$name" "$DIR/$name"
+# A family that has -latest links keeps them on its newest image, so
+# people and swiftflash get the same one.
+[ -L "$DIR/$family-latest.img.xz" ] && latest=1
 if [ "$latest" = 1 ]; then
     for ext in "" .sha256 .manifest.toml; do
         [ -e "$DIR/$name$ext" ] && ln -sfn "$name$ext" "$DIR/$family-latest.img.xz$ext"
@@ -217,6 +223,7 @@ else
     echo "published: $DIR/$name"
 fi
 echo "sha256:    $(cut -d' ' -f1 "$DIR/$name.sha256")"
-echo "flash:     sudo swiftflash redox:$family"
+[ "$latest" = 1 ] && echo "latest:    $family-latest.img.xz is for download by hand; swiftflash takes the family, redox:$family"
+# The check ends with the swiftflash command that works (the family name).
 check_published "$family" "$name" ||
     die "$name is published, but the check above failed: fix it before you send anyone the swiftflash command"

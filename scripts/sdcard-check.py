@@ -13,7 +13,13 @@ This script checks the same things on the image server's directory:
   must be the newest entry of the family; without, the newest is checked;
 - <file>.sha256 is in sha256sum format, names the file, and matches the
   file's real checksum;
-- <file>.manifest.toml is there and is valid TOML.
+- <file>.manifest.toml is there and is valid TOML;
+- <family>-latest.img.xz, if there, points at that same image.
+
+<family> is what goes after `redox:`. SwiftFlash matches the family, not
+a file name: `redox:<family>-latest` finds nothing, so a name that ends
+in -latest or .img.xz fails with the command that works. On a pass the
+last line is that command.
 
 With --url (the image server's /sdcard/ URL), also over HTTP: index.json
 has the same entry, the image answers with the same size, and the .sha256
@@ -77,7 +83,13 @@ def main():
     top, family = args[0], args[1]
     want = args[2] if len(args) == 3 else None
 
-    print("check: swiftflash redox:%s" % family)
+    print("check: sudo swiftflash redox:%s" % family)
+    if family.endswith(".img.xz") or family.endswith("-latest"):
+        right = family[:-len(".img.xz")] if family.endswith(".img.xz") else family
+        right = right[:-len("-latest")] if right.endswith("-latest") else right
+        fail("swiftflash matches the family, not a file name: redox:%s finds nothing;"
+             " try redox:%s" % (family, right))
+        return summary()
     try:
         with open(os.path.join(top, "index.json")) as f:
             index = json.load(f)
@@ -125,6 +137,14 @@ def main():
     except tomllib.TOMLDecodeError as e:
         fail("%s.manifest.toml is not valid TOML: %s" % (name, e))
 
+    link = os.path.join(top, family + "-latest.img.xz")
+    if os.path.lexists(link):
+        if os.path.realpath(link) == os.path.realpath(path):
+            ok("%s-latest.img.xz points at it" % family)
+        else:
+            fail("%s-latest.img.xz points at %s, swiftflash takes %s"
+                 % (family, os.path.basename(os.path.realpath(link)), name))
+
     if url:
         try:
             remote = json.load(fetch(url + "/index.json"))
@@ -145,11 +165,13 @@ def main():
         except (OSError, ValueError) as e:
             fail("HTTP %s: %s" % (url, e))
 
-    return summary()
+    return summary(family)
 
 
-def summary():
+def summary(family=None):
     print("check: %s" % ("FAIL, %d problem(s)" % failures if failures else "pass"))
+    if family and not failures:
+        print("flash: sudo swiftflash redox:%s" % family)
     return 1 if failures else 0
 
 
