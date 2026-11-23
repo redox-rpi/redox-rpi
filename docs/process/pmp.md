@@ -200,8 +200,8 @@ Every issue in the organisation has one issue type:
   a new idea becomes a sub-issue of the matching epic. Tasks and Bugs of
   the area may hang there too.
 - No epic for a whole component or repository; that is the project
-  board. An epic is split into nested epics only when an area really
-  splits.
+  board. Epics are never nested: an epic never has an epic as a
+  sub-issue. An area that grows too big becomes two epics side by side.
 - An epic holds no code and has no milestone. Its sub-issues keep their
   own milestones, so the milestones still show what each release brings.
   The epic says what the area covers, what is out of scope, and links its
