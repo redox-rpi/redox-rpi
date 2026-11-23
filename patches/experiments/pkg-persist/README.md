@@ -49,9 +49,14 @@ Also in this experiment:
   removes it when the command ends, after a commit or a rollback.
   pkg-persist also empties it before and after every pkg run.
 
-- redoxfs patch 0001: rename failed with "No such file or directory" on any
-  RedoxFS mounted below `/scheme/<name>` (only the root filesystem worked),
-  and pkg renames every file it installs. Built from source and held.
+- redoxfs is built from source at the pinned commit and held. Our old
+  redoxfs patch 0001 (rename on a RedoxFS mounted below `/scheme/<name>`,
+  2026-10-30) is gone: upstream redoxfs (db847d8) handles those paths
+  itself, and on top of it the patch stripped `/scheme/data` first, so a
+  rename into a subdirectory fell back to the scheme `file` and failed with
+  "Cross-device link" (Test 588: pkg's rename of a download).
+- pkgutils patch 0004: pkg exits with 1 when the command fails (it exited
+  with 0), so pkg-persist stops instead of copying and reporting success.
 - pkgutils patch 0002: when a download fails because the certificate is
   "not valid yet" (or expired), pkg says what year the clock is at and to
   set the clock first, instead of only the TLS error (seen in QEMU at 1970,
