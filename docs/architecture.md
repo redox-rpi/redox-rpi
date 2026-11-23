@@ -111,7 +111,7 @@ Source: [redox-os/kernel](https://gitlab.redox-os.org/redox-os/kernel) + our pat
 
 A small filesystem loaded together with the kernel. `init` starts the drivers
 needed to reach the real root filesystem. On the Pi that is
-`bcm2835-sdhcid` (SD card) and `redoxfs`. Board-specific drivers only start in
+`bcm2835-sdhostd` (SD card) and `redoxfs`. Board-specific drivers only start in
 images built with `BOARD=raspi3bp`.
 
 Redox cannot boot without it: the kernel has no storage driver and no
@@ -131,8 +131,9 @@ serves `/scheme/initfs` until power-off, and its memory is never freed. A
 smaller initfs means a shorter load and more free memory ([#642](https://github.com/redox-rpi/redox-rpi/issues/642)). Linux frees
 it after `switch_root`; a Redox equivalent is an idea ([#643](https://github.com/redox-rpi/redox-rpi/issues/643)).
 
-Planned: a DWC2 USB host driver, USB hub support and Ethernet drivers
-(LAN7800 for the Pi 3B+, the HAT's chip for the Zero 2 W).
+USB is in the initfs too: `dwc2d` drives the DWC2 USB host with hubs,
+keyboards and the Ethernet chips LAN7800 (Pi 3B+) and RTL8152/8153
+(USB adapters).
 
 Source: [redox-os/base](https://gitlab.redox-os.org/redox-os/base).
 
