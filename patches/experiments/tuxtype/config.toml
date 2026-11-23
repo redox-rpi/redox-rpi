@@ -1,54 +1,20 @@
-# Experiment tuxtype (#529): Tux Typing, a typing tutor for children with
-# German lessons, on top of the desktop experiments. Its own experiment, so
-# the release image stays small: Tux Typing brings 25 MB of data.
+# Experiment tuxtype (#529): builds the Tux Typing packages for the package
+# repository (scripts/publish-pkg-repo.sh). Tux Typing is not part of an
+# image: people install it with `pkg install tuxtype` (or
+# `pkg-persist install tuxtype` on network and direct boot), see README.md.
 
 [general]
-# The desktop experiments and Tux Typing do not fit the 256 MiB of a
-# network-boot image; 384 MiB does (QEMU check). Network boot runs the
-# filesystem from RAM: fine on the Pi 400 and 3B+, but on the Zero 2 W
-# (512 MB) use an SD-card build. This also sets SD-card builds to 384 MiB.
+# The package build installs Tux Typing into its image; with the desktop
+# experiments that needs more than 256 MiB.
 filesystem_size = 384
 
 [packages]
 # From source with t4kcommon (recipes/games/tuxtype and
-# recipes/wip/games/math/t4kcommon in this experiment).
+# recipes/wip/games/math/t4kcommon in this experiment). The package
+# brings its launcher entry 72_tuxtype and /usr/bin/tuxtype-de.
 tuxtype = "source"
 t4kcommon = "source"
 sdl1 = "source"
 sdl1-image = "source"
 sdl1-mixer = "source"
 sdl1-ttf = "source"
-
-# Tux Typing on the launcher bar (it brings no launcher entry of its own).
-[[files]]
-path = "/usr/share/ui/apps/72_tuxtype"
-data = """
-name=Tux Typing
-binary=/usr/bin/tuxtype
-icon=/usr/share/tuxtype/images/icons/icon.png
-description=Typing tutor: catch the falling fish by typing their letters
-"""
-
-# Tux Typing starts with the German theme (lessons, words, menus) for the
-# desktop user; tuxtype saves its settings, the language too, in this file.
-[[files]]
-path = "/home/user/.config"
-data = ""
-directory = true
-uid = 1000
-gid = 1000
-
-[[files]]
-path = "/home/user/.config/tuxtype"
-data = ""
-directory = true
-uid = 1000
-gid = 1000
-
-[[files]]
-path = "/home/user/.config/tuxtype/settings.txt"
-data = """
-lang=deutsch
-"""
-uid = 1000
-gid = 1000

@@ -8,38 +8,57 @@ source with SDL 1.2 and [t4kcommon](https://github.com/tux4kids/t4kcommon),
 Tux4Kids' shared library. The recipes are in `recipes/games/tuxtype` and
 `recipes/wip/games/math/t4kcommon` here.
 
-It is its own experiment so that the release image stays small. Build it
-after the desktop experiments, with the German keyboard layout:
+Tux Typing is not part of an image. It is a package in our package
+repository (group "ported software", #439), and people install it on a
+running Pi:
+
+```sh
+pkg install tuxtype            # SD-card image
+pkg-persist install tuxtype    # network or direct boot (experiment pkg-persist)
+```
+
+The image needs the desktop (experiments `rpi-fb`, `orbital`, `desktop`),
+relibc patch 0020 (on main with this PR) and, for German keyboards,
+experiment [`keyboard-de`](../keyboard-de/README.md) (PR #581): the full
+de map, AltGr and dead keys. `pkg` needs the network and experiment
+`pkg-repo`.
+
+**Building the packages:** this experiment adds the recipes and installs
+Tux Typing into the build's image, so that the cookbook builds it and its
+libraries. Then publish them:
 
 ```bash
 scripts/build-image.sh --experiment timesync --experiment rpi-fb --experiment orbital \
     --experiment orbital-apps --experiment cosmic-apps-source --experiment desktop \
-    --experiment keyboard-de --experiment tuxtype
+    --experiment tuxtype
+scripts/publish-pkg-repo.sh tuxtype sdl1 sdl1-image sdl1-mixer sdl1-ttf freetype2 \
+    gettext libiconv libjpeg libogg libpng libvorbis libxml2 xz zlib
 ```
 
-- The German layout comes from experiment
-  [`keyboard-de`](../keyboard-de/README.md) (PR #581): the full de map,
-  AltGr and dead keys.
-- Launcher entry `72_tuxtype`. The desktop user (`user`) gets
-  `~/.config/tuxtype/settings.txt` with `lang=deutsch`, so Tux Typing starts
-  in German. It saves its settings, the language too, in that file. By hand:
-  `tuxtype --theme deutsch`, or with `--window` for a window instead of full
-  screen.
+- The package brings the launcher entry `72_tuxtype`, which starts
+  `/usr/bin/tuxtype-de`. On the first start, that script writes
+  `lang=deutsch` into `~/.config/tuxtype/settings.txt`, so Tux Typing
+  starts in German. Tux Typing saves its settings, the language too, in
+  that file. By hand: `tuxtype --theme deutsch`, or with `--window` for a
+  window instead of full screen.
 - t4kcommon is built without speech (there is no espeak on Redox, so
   `t4k_tts.c` is a stub) and without SDL_Pango, librsvg and SDL_net. It is
-  static and linked into `tuxtype`.
-- It needs relibc patch 0020. Tux Typing reads its files line by line with
-  `fscanf(f, "%[^\n]\n", ...)`. relibc's scanf skipped white space only
-  for a space in the format, so it read the first line forever.
-- **Size:** 25 MB (`/usr/share/tuxtype`: images 12 MB, sounds 4.6 MB,
-  themes 4.4 MB, fonts 2.8 MB). Together with the desktop it does not fit
-  the 256 MiB network-boot filesystem, so this experiment sets 384 MiB.
-  The network-boot image runs from RAM. That is fine on the Pi 400 and the
-  3B+. On the Zero 2 W (512 MB) use an SD-card build (`--sdcard`), which
-  this experiment sets to 384 MiB as well.
+  static and linked into `tuxtype`. The other libraries are shared and
+  come as dependencies of the `tuxtype` package.
+- It needs relibc patch 0020 in the image's libc. Tux Typing reads its
+  files line by line with `fscanf(f, "%[^\n]\n", ...)`. relibc's scanf
+  skipped white space only for a space in the format, so it read the first
+  line forever.
+- **Size:** the `tuxtype` package is 21 MB (`/usr/share/tuxtype`: images
+  12 MB, sounds 4.6 MB, themes 4.4 MB, fonts 2.8 MB), plus its libraries.
+  On network boot it goes into RAM with the root filesystem. That is fine
+  on the Pi 400 and the 3B+. On the Zero 2 W (512 MB) watch the free
+  memory. The package build sets a 384 MiB filesystem; images that install
+  the package later do not need that.
 
 [`qemu-tuxtype-check.sh`](qemu-tuxtype-check.sh) types the German layout
-test at the console. Then it starts the desktop and Tux Typing and walks to
+test at the console. Then it starts the desktop and Tux Typing (from an
+image built with this experiment) and walks to
 lesson 1 with the keyboard, taking screenshots.
 
 Limits:
