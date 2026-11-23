@@ -10,6 +10,14 @@
 #   scripts/publish-sdcard.sh <card image> --family <family> [--version <v>]
 #                             [--manifest <toml>] [--owner <topic>]
 #                             [--commit <hash>] [--latest] [--no-uuid]
+#   scripts/publish-sdcard.sh --check <family>
+#
+#   Every session publishes with this script; nothing is copied into the
+#   directory by hand (#625). Each publish ends with the check of
+#   scripts/sdcard-check.py: what `swiftflash redox:<family>` reads (the
+#   index.json entry, that it is the family's newest image, the checksum,
+#   the manifest; over HTTP too when REDOX_HTTP_BASE is set). --check runs
+#   only that check on the family's newest published image.
 #
 #   <card image>  a whole card, .img or .img.xz: from scripts/make-sdcard.sh,
 #                 or made any other way (firmware-only cards)
@@ -18,9 +26,11 @@
 #   --version     v<major>.<minor>… (git describe, a build ID) or YYYYMMDD…;
 #                 default: the build ID of --manifest, else today's date,
 #                 with b, c, … appended when that name is taken
-#   --manifest    the build manifest of the image (build/manifests/*.toml);
-#                 published next to it, and its build ID, commit and time
-#                 go into .uuid and index.json
+#   --manifest    the build manifest of the image (build/manifests/*.toml,
+#                 must be TOML); published next to it, and its build ID,
+#                 commit and time go into .uuid and index.json. Without it
+#                 the script writes a short one (family, version, build
+#                 time, commit, owner, sha256), so every image has one
 #   --owner       topic page that owns the image (shown in index.json)
 #   --commit      commit for .uuid when there is no manifest
 #   --latest      also point <family>-latest.img.xz (and .sha256,
@@ -52,8 +62,10 @@ commit=""
 latest=0
 uuid=1
 visit=""
+check=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --check) check="$2"; shift 2 ;;
         --family) family="$2"; shift 2 ;;
         --version) version="$2"; shift 2 ;;
         --manifest) manifest="$2"; shift 2 ;;
@@ -67,12 +79,31 @@ while [ $# -gt 0 ]; do
     esac
 done
 die() { echo "publish-sdcard.sh: $*" >&2; exit 1; }
+
+# The check of what SwiftFlash reads; over HTTP too when lab.env names the
+# image server and this is the real directory.
+check_published() {
+    local url=()
+    . "$ROOT/scripts/lab-env.sh"
+    if [ -n "${REDOX_HTTP_BASE:-}" ] && [ -z "${SDCARD_DIR:-}" ]; then
+        url=(--url "$REDOX_HTTP_BASE/sdcard")
+    fi
+    python3 "$ROOT/scripts/sdcard-check.py" "$DIR" "$@" ${url[@]+"${url[@]}"}
+}
+if [ -n "$check" ]; then
+    [ -z "$card" ] || die "--check takes no card image"
+    check_published "$check"
+    exit
+fi
+
 [ -n "$card" ] && [ -f "$card" ] || die "no card image given or $card missing"
 [ -n "$family" ] || die "--family is required"
 [[ "$family" =~ ^[a-z0-9][a-z0-9-]*[a-z0-9]$ ]] || die "family $family: only a-z, 0-9 and -"
 [[ "$family" =~ -(v[0-9]+\.[0-9]+|[0-9]{8}) ]] && die "family $family contains a version"
 [[ "$family" = *-latest ]] && die "family $family ends in -latest"
 [ -z "$manifest" ] || [ -f "$manifest" ] || die "$manifest missing"
+[ -z "$manifest" ] || python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$manifest" 2>/dev/null ||
+    die "$manifest is not TOML (pass the build manifest, build/manifests/*.toml)"
 
 field() { sed -n "s/^$1 = \"\(.*\)\"$/\1/p" "$manifest" 2>/dev/null | head -1; }
 build_id="" built="" experiments=""
@@ -136,7 +167,21 @@ fi
 
 xz -T0 -9 -c "$img" > "$work/$name"
 (cd "$work" && sha256sum "$name" > "$name.sha256")
-[ -z "$manifest" ] || cp "$manifest" "$work/$name.manifest.toml"
+if [ -n "$manifest" ]; then
+    cp "$manifest" "$work/$name.manifest.toml"
+else
+    # No build manifest (firmware-only cards, cards from other scripts):
+    # a short one, so SwiftFlash and people see what the image is.
+    python3 - "$family" "$version" "$built" "$commit" "$owner" \
+        "$(cut -d' ' -f1 "$work/$name.sha256")" "$name" > "$work/$name.manifest.toml" <<'EOF'
+import json, sys
+keys = ["family", "version", "built", "commit", "owner", "sha256", "image"]
+print("# Written by scripts/publish-sdcard.sh: the image came without a build manifest.")
+for k, v in zip(keys, sys.argv[1:]):
+    if v:
+        print("%s = %s" % (k, json.dumps(v)))
+EOF
+fi
 python3 - "$family" "$version" "$built" "$commit" "$build_id" "$experiments" "$owner" "$visit" \
     > "$work/$name.meta.json" <<'EOF'
 import json, sys
@@ -173,3 +218,5 @@ else
 fi
 echo "sha256:    $(cut -d' ' -f1 "$DIR/$name.sha256")"
 echo "flash:     sudo swiftflash redox:$family"
+check_published "$family" "$name" ||
+    die "$name is published, but the check above failed: fix it before you send anyone the swiftflash command"
