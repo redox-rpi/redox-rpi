@@ -63,6 +63,20 @@ volume = "source"
 # still waits up to 5 s if the partition is late.
 # First it restores the volume saved by `volume` (#336), so the chime
 # follows it.
+# How the network starts (#622, docs/network-config.md): DHCP on the first
+# wired interface. Every image built from this file gets it; the minimal
+# console card (scripts/console-image.sh --minimal) removes etc/net.
+[[files]]
+path = "/etc/net/config.toml"
+data = """
+# How the network starts (docs/network-config.md in redox-rpi).
+# No section for an interface: nothing is started on it.
+
+[interface.eth0]
+ipv4 = "dhcp"
+ipv6 = "off"
+"""
+
 [[files]]
 path = "/etc/startup-sound"
 data = """

@@ -1,0 +1,210 @@
+From 8b51265374e92a3517e08c4e29657e209b807ca2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 23 Nov 2026 14:08:11 +0000
+Subject: [PATCH] dhcpd: run DHCP only on the interfaces /etc/net/config.toml
+ asks for
+
+One [interface.<name>] section per interface: ipv4 = "dhcp" starts DHCP
+there, "off" or no section starts nothing; boards limits a section to
+some boards (init BOARD names). No file, or no interface with DHCP: dhcpd
+exits at once, silently. Keys for a fixed address and IPv6 are accepted
+for later; unknown keys give one error line (redox-rpi #622).
+---
+ Cargo.lock        |   4 ++
+ dhcpd/Cargo.toml  |   2 +
+ dhcpd/src/main.rs | 116 ++++++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 119 insertions(+), 3 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index ef62d55..c91c910 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -679,6 +679,10 @@ dependencies = [
+ [[package]]
+ name = "dhcpd"
+ version = "0.0.0"
++dependencies = [
++ "serde",
++ "toml",
++]
+ 
+ [[package]]
+ name = "digest"
+diff --git a/dhcpd/Cargo.toml b/dhcpd/Cargo.toml
+index c96d80a..05b9a8c 100644
+--- a/dhcpd/Cargo.toml
++++ b/dhcpd/Cargo.toml
+@@ -5,6 +5,8 @@ edition = "2024"
+ authors = ["Jeremy Soller <jackpot51@gmail.com>"]
+ 
+ [dependencies]
++serde.workspace = true
++toml.workspace = true
+ 
+ [lints]
+ workspace = true
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index 25b2058..b66022f 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -1,4 +1,4 @@
+-use std::collections::BTreeMap;
++use std::collections::{BTreeMap, BTreeSet};
+ use std::fs::{File, OpenOptions};
+ use std::io::{ErrorKind, Read, Write};
+ use std::net::{SocketAddr, UdpSocket};
+@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
+ use std::{env, process, thread, time};
+ 
+ use dhcp::Dhcp;
++use serde::Deserialize;
+ 
+ mod dhcp;
+ 
+@@ -426,6 +427,85 @@ fn link_up(iface: &str) -> bool {
+     get_iface_cfg_value(iface, "link").map_or(true, |state| state.trim() != "0")
+ }
+ 
++/// How the network starts: which interfaces get DHCP (redox-rpi #622,
++/// docs/network-config.md in redox-rpi). No file: none.
++const CONFIG: &str = "/etc/net/config.toml";
++
++#[derive(Deserialize, Default)]
++#[serde(deny_unknown_fields)]
++struct NetConfig {
++    #[serde(default)]
++    interface: BTreeMap<String, IfaceConfig>,
++}
++
++/// One `[interface.<name>]` section. The keys for a fixed address and IPv6
++/// are part of the format already; dhcpd uses only `boards` and `ipv4`.
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++#[allow(dead_code)]
++struct IfaceConfig {
++    /// Only on these boards (init's board names); none: every board.
++    boards: Option<Vec<String>>,
++    /// `dhcp`, `static` or `off`.
++    #[serde(default = "off")]
++    ipv4: String,
++    /// `slaac`, `static` or `off`; not dhcpd's part.
++    #[serde(default = "off")]
++    ipv6: String,
++    address: Option<String>,
++    router: Option<String>,
++    dns: Option<Vec<String>>,
++}
++
++fn off() -> String {
++    "off".into()
++}
++
++/// The interfaces the configuration asks DHCP for on this board. A file
++/// that cannot be read or parsed gives one line and no interface.
++fn dhcp_ifaces() -> BTreeSet<String> {
++    let text = match std::fs::read_to_string(CONFIG) {
++        Ok(text) => text,
++        Err(err) if err.kind() == ErrorKind::NotFound => return BTreeSet::new(),
++        Err(err) => {
++            eprintln!("dhcpd: {CONFIG}: {err}");
++            return BTreeSet::new();
++        }
++    };
++    parse_dhcp_ifaces(&text, option_env!("BOARD"))
++}
++
++fn parse_dhcp_ifaces(text: &str, board: Option<&str>) -> BTreeSet<String> {
++    let config: NetConfig = match toml::from_str(text) {
++        Ok(config) => config,
++        Err(err) => {
++            eprintln!("dhcpd: {CONFIG}: {err}");
++            return BTreeSet::new();
++        }
++    };
++    config
++        .interface
++        .into_iter()
++        .filter(|(_, cfg)| {
++            cfg.boards
++                .as_ref()
++                .is_none_or(|boards| boards.iter().any(|b| Some(b.as_str()) == board))
++        })
++        .filter_map(|(name, cfg)| match cfg.ipv4.as_str() {
++            "dhcp" => Some(name),
++            "off" => None,
++            "static" => {
++                eprintln!("dhcpd: {CONFIG}: {name}: ipv4 = \"static\" is not supported yet");
++                None
++            }
++            other => {
++                eprintln!("dhcpd: {CONFIG}: {name}: ipv4 = {other:?}, expected \"dhcp\", \"static\" or \"off\"");
++                None
++            }
++        })
++        .collect()
++}
++
+ /// How long one DHCP exchange waits for each reply.
+ const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+ /// How often the interface list is read.
+@@ -480,13 +560,14 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+ /// with no lease after `ANSWER_WITHIN` it prints one line and then asks
+ /// quietly every `RETRY`. A link that goes down and up again (a cable
+ /// plugged in again) starts over.
+-fn watch(verbose: bool) -> ! {
++fn watch(verbose: bool, wanted: BTreeSet<String>) -> ! {
+     let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
+     let mut waiting: BTreeMap<String, Waiting> = BTreeMap::new();
+     let mut links: BTreeMap<String, bool> = BTreeMap::new();
+     let mut default: Option<(String, Lease)> = None;
+     loop {
+         let mut ifaces = list_ifaces();
++        ifaces.retain(|name| wanted.contains(name));
+         ifaces.sort_by_key(|name| iface_order(name));
+         for iface in ifaces {
+             let up = link_up(&iface);
+@@ -566,11 +647,40 @@ fn main() {
+         return;
+     }
+ 
+-    watch(verbose)
++    // Only the interfaces /etc/net/config.toml asks DHCP for; none: done,
++    // silently (the minimal card has no file, #622).
++    let wanted = dhcp_ifaces();
++    if wanted.is_empty() {
++        return;
++    }
++    watch(verbose, wanted)
+ }
+ 
+ #[cfg(test)]
+ mod test {
++    #[test]
++    fn config_test() {
++        use super::parse_dhcp_ifaces;
++        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>();
++        let text = r#"
++[interface.eth0]
++ipv4 = "dhcp"
++
++[interface.eth1]
++boards = ["raspi4b"]
++ipv4 = "dhcp"
++
++[interface.wlan0]
++ipv4 = "off"
++ipv6 = "slaac"
++"#;
++        assert_eq!(parse_dhcp_ifaces(text, Some("raspi3bp")), names(&["eth0"]));
++        assert_eq!(parse_dhcp_ifaces(text, Some("raspi4b")), names(&["eth0", "eth1"]));
++        assert_eq!(parse_dhcp_ifaces("", Some("raspi3bp")), names(&[]));
++        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"static\"\naddress = \"10.0.0.2/24\"\n", None), names(&[]));
++        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"dhcp\"\nfoo = 1\n", None), names(&[]));
++    }
++
+     use super::*;
+ 
+     fn reply(op: u8, tid: u32, mac: [u8; 6], options: &[u8]) -> Vec<u8> {
+-- 
+2.53.0
+
