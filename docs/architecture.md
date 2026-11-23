@@ -128,8 +128,8 @@ in the rpi-open-firmware wiki.
 
 The initfs stays in memory: the initfs daemon (`bootstrap/src/exec.rs`)
 serves `/scheme/initfs` until power-off, and its memory is never freed. A
-smaller initfs means a shorter load and more free memory (#642). Linux frees
-it after `switch_root`; a Redox equivalent is an idea (#643).
+smaller initfs means a shorter load and more free memory ([#642](https://github.com/redox-rpi/redox-rpi/issues/642)). Linux frees
+it after `switch_root`; a Redox equivalent is an idea ([#643](https://github.com/redox-rpi/redox-rpi/issues/643)).
 
 Planned: a DWC2 USB host driver, USB hub support and Ethernet drivers
 (LAN7800 for the Pi 3B+, the HAT's chip for the Zero 2 W).
