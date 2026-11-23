@@ -21,7 +21,8 @@
 //! install and update refuse to run while the clock is not set (1970),
 //! with a message that says so, instead of pkg's certificate error.
 //! Before it copies, pkg-persist checks that the files fit into / (the RAM
-//! root is small) and copies nothing if they do not. pkg downloads into
+//! root is small) and copies nothing if they do not: install and update
+//! then fail, the boot copy (restore) warns and exits with 0. pkg downloads into
 //! <root>/tmp/pkg_download; pkg-persist empties it before and after every
 //! pkg run, so a failed run leaves no downloads behind.
 //! PKG_PERSIST_ROOT overrides the directory, PKG_PERSIST_DEST the target
@@ -142,7 +143,7 @@ fn restore(root: &Path) -> io::Result<()> {
     copy_dir(root, root, &target, &copied_before, &mut copied, &mut new, &mut kept, Some(&mut needed))?;
     let free = free_bytes(&target)?;
     if needed + KEEP_FREE > free {
-        return Err(io::Error::other(format!(
+        return Err(io::Error::new(io::ErrorKind::StorageFull, format!(
             "the packages in {} need {} in {}, but it has only {} free (and {} stay free \
              for the system), so nothing was copied. They stay on the data partition: \
              remove some with `pkg-persist remove`, or use an image with a larger root",
@@ -285,7 +286,15 @@ fn main() {
             println!("pkg-persist: removed from {}; the copies in / stay until the next reset", root.display())
         }),
         Some("list") => list(&root),
-        Some("restore") => restore(&root),
+        // At boot a lack of space is a warning, not a failed service: the
+        // packages stay on the data partition and the system runs on.
+        Some("restore") => match restore(&root) {
+            Err(e) if e.kind() == io::ErrorKind::StorageFull => {
+                println!("pkg-persist: warning: {e}");
+                Ok(())
+            }
+            r => r,
+        },
         _ => {
             eprintln!("usage: pkg-persist install|remove <package>... | update | list | restore");
             process::exit(2);
@@ -354,9 +363,11 @@ mod tests {
         let f = fs::File::create(root.join("big")).unwrap();
         f.set_len(free + 1).unwrap();
         env::set_var("PKG_PERSIST_DEST", &target);
-        let err = restore(&root).unwrap_err().to_string();
+        let err = restore(&root).unwrap_err();
+        let kind = err.kind();
         env::remove_var("PKG_PERSIST_DEST");
-        assert!(err.contains("nothing was copied"), "{err}");
+        assert!(err.to_string().contains("nothing was copied"), "{err}");
+        assert_eq!(kind, io::ErrorKind::StorageFull);
         assert!(!target.join("big").exists());
         let _ = clear_downloads(&root);
     }

@@ -38,7 +38,9 @@ Rules:
 - The copies must fit into `/`, which is small on network boot (it is in
   RAM). pkg-persist adds up what it would copy first; if that and 4 MB for
   the system do not fit, it copies nothing and says how much is needed and
-  free. The packages stay on the data partition.
+  free. The packages stay on the data partition. install and update then
+  exit with 1; the boot copy only warns and exits with 0, so init does not
+  report a failed service.
 
 Also in this experiment:
 
