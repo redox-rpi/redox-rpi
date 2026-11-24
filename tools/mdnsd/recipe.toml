@@ -1,0 +1,9 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# The package brings its service file, so `pkg install mdnsd` is enough.
+[build]
+template = "custom"
+script = """
+COOKBOOK_CARGO_PATH=. cookbook_cargo
+mkdir -p "${COOKBOOK_STAGE}/usr/lib/init.d"
+cp "${COOKBOOK_SOURCE}/91_mdnsd.service" "${COOKBOOK_STAGE}/usr/lib/init.d/"
+"""

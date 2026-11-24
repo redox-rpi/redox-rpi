@@ -116,23 +116,65 @@ fn hang_up(master: &File, login_pid: libc::pid_t, done: &AtomicBool) {
     }
 }
 
+/// Bind the port, trying again every 5 s: after a rebind the old socket
+/// may not be gone at once.
+fn listen(port: u16, first: bool) -> TcpListener {
+    loop {
+        match TcpListener::bind(("0.0.0.0", port)) {
+            Ok(listener) => {
+                eprintln!("devshd: listening on port {port}");
+                return listener;
+            }
+            Err(err) if first => {
+                eprintln!("devshd: cannot listen on port {port}: {err}");
+                std::process::exit(1);
+            }
+            Err(err) => {
+                eprintln!("devshd: cannot listen on port {port} again: {err}");
+                thread::sleep(Duration::from_secs(5));
+            }
+        }
+    }
+}
+
 fn main() {
     let port: u16 = std::env::args()
         .nth(1)
         .and_then(|p| p.parse().ok())
         .unwrap_or(2323);
-    let listener = match TcpListener::bind(("0.0.0.0", port)) {
-        Ok(listener) => listener,
-        Err(err) => {
-            eprintln!("devshd: cannot listen on port {port}: {err}");
-            std::process::exit(1);
-        }
-    };
-    eprintln!("devshd: listening on port {port}");
-    for stream in listener.incoming().flatten() {
-        thread::spawn(move || {
-            // No output per connection: nobody may read it after boot.
+    let mut listener = listen(port, true);
+    // Accept errors used to be skipped without a word, and an error that
+    // stays made the loop spin while clients were refused (#129). Now they
+    // are logged, and after 20 in a row the port is bound again.
+    let mut errors = 0u32;
+    loop {
+        let stream = match listener.accept() {
+            Ok((stream, _)) => {
+                errors = 0;
+                stream
+            }
+            Err(err) => {
+                errors += 1;
+                if errors == 1 || errors % 20 == 0 {
+                    eprintln!("devshd: accept failed ({errors} in a row): {err}");
+                }
+                if errors % 20 == 0 {
+                    drop(listener);
+                    thread::sleep(Duration::from_secs(1));
+                    listener = listen(port, false);
+                } else {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            }
+        };
+        // No output per connection: nobody may read it after boot. A thread
+        // that cannot start (out of memory) is reported, not a panic.
+        let started = thread::Builder::new().spawn(move || {
             let _ = serve(stream);
         });
+        if let Err(err) = started {
+            eprintln!("devshd: cannot start a session: {err}");
+        }
     }
 }

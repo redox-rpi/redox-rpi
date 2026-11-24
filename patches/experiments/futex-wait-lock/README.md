@@ -1,0 +1,55 @@
+# Experiment: futex-wait-lock, no lost futex wakeups
+
+Backport of two upstream kernel commits to our pinned kernel
+(`config/upstream.lock`), for `FUTEX_WAIT` in `src/syscall/futex.rs`:
+
+- `0001` = upstream `57ccc8f` "futex: Fix context-wide deadlock"
+- `0002` = upstream `5805059` "futex: Do not return early without rollback"
+
+Both are from 2026-10-27, after our pin; they go away when the pin moves
+past them.
+
+The bug in the pinned kernel: `FUTEX_WAIT` compared the futex word with
+the expected value, blocked the context and only then took the `FUTEXES`
+lock to queue itself. `FUTEX_WAKE` takes that lock and wakes the queued
+contexts. A wake on another CPU between the comparison and the queueing
+found no waiter and returned 0, and the waiter went to sleep although the
+word had changed: a lost wakeup, the thread sleeps forever. Every user of
+futexes can hit it with more than one CPU: relibc's mutexes, condition
+variables (`pthread_cond_*`), semaphores, and so Rust's `thread::park`,
+`Mutex` and `Condvar`
+([#43](https://github.com/redox-rpi/redox-rpi/issues/43)).
+
+Upstream now queues the context first, then reads the word again under
+the lock and rolls back (`EAGAIN`) if it changed, so a waker either sees
+the queued waiter or changed the word before the second read.
+
+```bash
+scripts/relibc-tests.sh --experiment futex-wait-lock
+```
+
+Test: `pthread/cond_stress` in the relibc test suite (relibc-tests patch
+`0005`, branch `t-cond-stress`): two threads hand a turn back and forth
+through a condition variable and through a parker built like Rust's,
+every wait with a 1 s timeout; a timeout while the condition already
+holds is a lost wakeup and the test exits 1.
+
+## Results
+
+QEMU raspi3b (`-smp 4`), 2026-10-30, `pthread/cond_stress` (3 s pingpong
+and 3 s parker per run):
+
+| Build | Kernel | Runs with lost wakeups |
+|---|---|---|
+| `v0.3.0-dev-359-g6e3a9f0+x2fad` | pinned, our patches | 3 of 21 (suite run and 2 of 20 single runs; at least 6 lost, those counted all in the parker part) |
+| `v0.3.0-dev-360-g5e976eb+x9f6b` | first own patch (compare again under the lock) | 0 of 61 |
+| `v0.3.0-dev-361-g0b9f4c5+x9f6b` | this backport | 0 of 41 (suite run and 40 single runs) |
+
+The suite with the backport: 320 tests, 22 failures, all known, none new.
+
+The assistant's candle benchmark (`cbench`, Rust `thread::park` in a
+barrier pool, [#43](https://github.com/redox-rpi/redox-rpi/issues/43)), QEMU `-smp 4` on image
+`v0.3.0-dev-166-g371127e+x18f5` with the kernel replaced: hangs in 2 of 2
+runs with the pinned kernel; no hang with the first own patch (200 × 1,
+100 × 4, 50 × 23 rows) nor with this backport (300 × 1, 200 × 4,
+100 × 23 rows).

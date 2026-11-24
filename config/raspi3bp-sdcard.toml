@@ -25,7 +25,8 @@ base = "source"
 bootloader = "source"
 # relibc: our fix for fork() on aarch64 (patches/relibc).
 relibc = "source"
-# netutils: nc errors to stderr with exit status 1 (patches/netutils, #407).
+# netutils from source with patches/netutils: nc errors to stderr with exit
+# status 1 (#407), ifconfig shows the MAC address (#171, #444).
 netutils = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
@@ -40,6 +41,10 @@ socdump = "source"
 # 165: bash, nano, vim, curl, wget, tmux, ripgrep, gawk, findutils, 450 of
 # 450 starts; #40).
 diffutils = {}
+# grep: upstream's extrautils had it until its build of 2026-11-16; the one
+# of 2026-11-18 (source f5e8626a) dropped it for uutils-grep. `desktop`
+# needs it, and so do people at the shell (#554).
+uutils-grep = {}
 # curl comes from config/raspi3bp-http-client.toml, which
 # scripts/build-image.sh adds to every image but the Zero 2 W's.
 # `tone` writes test sound for /scheme/audio (tools/tone; base patch
@@ -47,6 +52,8 @@ diffutils = {}
 tone = "source"
 # `volume` shows, sets and keeps the volume (tools/volume, #336).
 volume = "source"
+# `audiotop`: live view of the audio driver counters (tools/audiotop, #565).
+audiotop = "source"
 
 # Startup sound (#292): `tone chime`, our own chord, plays once when audiod
 # is up, in the background (oneshot_async), so the boot does not wait for
@@ -58,6 +65,20 @@ volume = "source"
 # still waits up to 5 s if the partition is late.
 # First it restores the volume saved by `volume` (#336), so the chime
 # follows it.
+# How the network starts (#622, docs/network-config.md): DHCP on the first
+# wired interface. Every image built from this file gets it; the minimal
+# console card (scripts/console-image.sh --minimal) removes etc/net.
+[[files]]
+path = "/etc/net/config.toml"
+data = """
+# How the network starts (docs/network-config.md in redox-rpi).
+# No section for an interface: nothing is started on it.
+
+[interface.eth0]
+ipv4 = "dhcp"
+ipv6 = "off"
+"""
+
 [[files]]
 path = "/etc/startup-sound"
 data = """

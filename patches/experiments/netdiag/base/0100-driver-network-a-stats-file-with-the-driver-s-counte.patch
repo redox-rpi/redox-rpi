@@ -1,0 +1,138 @@
+From 5c2e6dc841ce6c9d5c9beb9ada65fcfbd6ff73dc Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 16:54:46 +0000
+Subject: [PATCH 100/101] driver-network: a stats file with the driver's
+ counters
+
+A network driver can give counters for diagnosis through a new optional
+NetworkAdapter::stats(): one name value per line, read from the
+scheme's stats file (/scheme/network.<x>/stats). The text is taken when
+the file is opened. Drivers without it are unchanged; for them stats
+does not exist (ENOENT).
+---
+ drivers/net/driver-network/src/lib.rs | 70 ++++++++++++++++++++++++++-
+ 1 file changed, 68 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
+index cf214d4..a61472e 100644
+--- a/drivers/net/driver-network/src/lib.rs
++++ b/drivers/net/driver-network/src/lib.rs
+@@ -8,7 +8,9 @@ use scheme_utils::{
+     resource_scheme, FpathWriter, ReadinessBased, ResourceOpenResult, ResourceSync,
+ };
+ use syscall::schemev2::NewFdFlags;
+-use syscall::{Error, EventFlags, Result, Stat, EACCES, EAGAIN, EINVAL, EWOULDBLOCK, MODE_FILE};
++use syscall::{
++    Error, EventFlags, Result, Stat, EACCES, EAGAIN, EINVAL, ENOENT, EWOULDBLOCK, MODE_FILE,
++};
+ 
+ pub trait NetworkAdapter {
+     /// The [MAC address](https://en.wikipedia.org/wiki/MAC_address) of this
+@@ -37,6 +39,13 @@ pub trait NetworkAdapter {
+         Ok(())
+     }
+ 
++    /// Counters for diagnosis, one `name value` per line, read from the
++    /// scheme's `stats` file. `None` (the default): the driver has no
++    /// `stats` file.
++    fn stats(&mut self) -> Option<String> {
++        None
++    }
++
+     /// Whether the adapter has a link: it is there and a cable connects it
+     /// to a peer. dhcpd starts only on a link. The default is yes, for
+     /// drivers that do not know.
+@@ -139,6 +148,7 @@ resource_scheme! {
+         Data(Data<T>),
+         Mac(Mac<T>),
+         Multicast(Multicast<T>),
++        Stats(Stats<T>),
+         Link(Link<T>),
+     }
+ }
+@@ -167,7 +177,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+ 
+     fn openat<'a>(
+         &mut self,
+-        _scheme_data: &mut Self::SchemeData,
++        scheme_data: &mut Self::SchemeData,
+         path: &str,
+         _flags: usize,
+         _fcntl_flags: u32,
+@@ -190,10 +200,18 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+                 NetworkResource::Multicast(Multicast(PhantomData)),
+                 NewFdFlags::empty(),
+             ),
++            // The counters as they are at open; read again by opening again.
+             "link" => (
+                 NetworkResource::Link(Link(PhantomData)),
+                 NewFdFlags::POSITIONED,
+             ),
++            "stats" => match scheme_data.adapter.stats() {
++                Some(text) => (
++                    NetworkResource::Stats(Stats(text.into_bytes(), PhantomData)),
++                    NewFdFlags::POSITIONED,
++                ),
++                None => return Err(Error::new(ENOENT)),
++            },
+             _ => return Err(Error::new(EINVAL)),
+         };
+ 
+@@ -368,6 +386,54 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
+     }
+ }
+ 
++/// Read-only: the driver's counters, taken when the file was opened.
++struct Stats<T>(Vec<u8>, PhantomData<T>);
++
++impl<T> std::fmt::Debug for Stats<T> {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_tuple("Stats").finish()
++    }
++}
++
++impl<T: NetworkAdapter> ResourceSync for Stats<T> {
++    type SchemeData = NetworkSchemeData<T>;
++    type ResourceEnum = NetworkResource<T>;
++
++    fn read(
++        &mut self,
++        _scheme_data: &mut Self::SchemeData,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        let data = self.0.get(offset as usize..).unwrap_or(&[]);
++        let i = cmp::min(buf.len(), data.len());
++        buf[..i].copy_from_slice(&data[..i]);
++        Ok(i)
++    }
++
++    fn write(
++        &mut self,
++        _scheme_data: &mut Self::SchemeData,
++        _buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        Err(Error::new(EINVAL))
++    }
++
++    fn fpath(&mut self, _scheme_data: &mut Self::SchemeData, w: &mut FpathWriter) -> Result<()> {
++        w.push_str("stats");
++        Ok(())
++    }
++
++    fn fstat(&mut self, _scheme_data: &mut Self::SchemeData, stat: &mut Stat) -> Result<()> {
++        stat.st_mode = MODE_FILE | 0o400;
++        stat.st_size = self.0.len() as u64;
++        Ok(())
++    }
++}
++
+ /// Read-only: `1` with a link, `0` without, read again at each read.
+ struct Link<T>(PhantomData<T>);
+ 
+-- 
+2.53.0
+

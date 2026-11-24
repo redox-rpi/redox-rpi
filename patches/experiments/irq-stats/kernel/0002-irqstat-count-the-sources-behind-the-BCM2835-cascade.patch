@@ -1,0 +1,117 @@
+From 2d9a2862c5e2f8250ac650c448bf91bf56276a5d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 08:23:41 +0000
+Subject: [PATCH] irqstat: count the sources behind the BCM2835 cascade line
+ (redox-rpi #564)
+
+On the Pi 0-3 every device reaches the CPU over one cascade line, so the
+line table cannot tell UART, USB and SD apart. Count each source the ARM
+interrupt controller reports, with its name, and the reads that found
+nothing pending.
+---
+ .../aarch64/device/irqchip/irq_bcm2835.rs     |  2 +
+ src/irq_stats.rs                              | 66 +++++++++++++++++++
+ 2 files changed, 68 insertions(+)
+
+diff --git a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+index 9f63adea..8fb27a6f 100644
+--- a/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
++++ b/src/arch/aarch64/device/irqchip/irq_bcm2835.rs
+@@ -303,8 +303,10 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
+         unsafe {
+             let irq = self.irq_ack();
+             if irq == SPURIOUS {
++                crate::irq_stats::source_empty();
+                 return;
+             }
++            crate::irq_stats::source(irq);
+             if let Some(virq) = self.irq_to_virq(irq)
+                 && virq < 1024
+             {
+diff --git a/src/irq_stats.rs b/src/irq_stats.rs
+index 7f53043a..20828651 100644
+--- a/src/irq_stats.rs
++++ b/src/irq_stats.rs
+@@ -61,6 +61,45 @@ pub fn wake_late(late_ns: u128) {
+     WAKE_MAX_NS.fetch_max(late_ns.min(u64::MAX as u128) as u64, Relaxed);
+ }
+ 
++/// Sources behind the BCM2835 ARM interrupt controller (Pi 0-3), which all
++/// reach the CPU over one cascade line. Numbered as that driver does: 0-7
++/// basic, 32 + n for GPU IRQ n < 32, 64 + n for GPU IRQ 32 + n.
++const SOURCES: usize = 96;
++static SOURCE_COUNT: [[AtomicU32; SOURCES]; CPUS] =
++    [const { [const { AtomicU32::new(0) }; SOURCES] }; CPUS];
++static SOURCE_EMPTY: [AtomicU32; CPUS] = [const { AtomicU32::new(0) }; CPUS];
++
++/// Count one source the cascaded controller reported pending.
++pub fn source(hwirq: u32) {
++    let hwirq = hwirq as usize;
++    if hwirq < SOURCES {
++        SOURCE_COUNT[cpu()][hwirq].fetch_add(1, Relaxed);
++    }
++}
++
++/// The cascaded controller had nothing pending when read.
++pub fn source_empty() {
++    SOURCE_EMPTY[cpu()].fetch_add(1, Relaxed);
++}
++
++fn source_name(hwirq: usize) -> &'static str {
++    match hwirq {
++        0 => "arm-timer",
++        1 => "mailbox",
++        33 => "systimer1",
++        35 => "systimer3",
++        41 => "usb-dwc2",
++        61 => "aux-uart-spi",
++        81..=84 => "gpio",
++        85 => "i2c",
++        86 => "spi",
++        88 => "sdhost",
++        89 => "uart-pl011",
++        94 => "emmc",
++        _ => "-",
++    }
++}
++
+ pub fn report() -> String {
+     let cpus = (crate::cpu_count() as usize).clamp(1, CPUS);
+     let mut s = String::new();
+@@ -92,6 +131,33 @@ pub fn report() -> String {
+         }
+         let _ = writeln!(s, " {}", LINE_MAX_NS[l].load(Relaxed) / 1000);
+     }
++    let mut header = false;
++    for h in 0..SOURCES {
++        let counts: [u32; CPUS] = core::array::from_fn(|c| SOURCE_COUNT[c][h].load(Relaxed));
++        if counts.iter().all(|&n| n == 0) {
++            continue;
++        }
++        if !header {
++            let _ = write!(s, "\nsource");
++            for c in 0..cpus {
++                let _ = write!(s, " cpu{c}");
++            }
++            let _ = writeln!(s, " name");
++            header = true;
++        }
++        let _ = write!(s, "{h}");
++        for n in &counts[..cpus] {
++            let _ = write!(s, " {n}");
++        }
++        let _ = writeln!(s, " {}", source_name(h));
++    }
++    if header {
++        let _ = write!(s, "source_empty");
++        for c in 0..cpus {
++            let _ = write!(s, " {}", SOURCE_EMPTY[c].load(Relaxed));
++        }
++        let _ = writeln!(s);
++    }
+     let _ = write!(s, "\nwake_late");
+     for (b, name) in WAKE_NAMES.iter().enumerate() {
+         let _ = write!(s, " {name}:{}", WAKE[b].load(Relaxed));
+-- 
+2.53.0
+

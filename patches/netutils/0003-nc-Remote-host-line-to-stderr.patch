@@ -1,0 +1,29 @@
+From 3212a7ce1956f897f4da4870862e47807ccb8fed Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 12:00:00 +0000
+Subject: [PATCH] nc: "Remote host" line to stderr
+
+nc printed "Remote host: <host>" to stdout, so nc host:port > file put
+that line into the file ahead of the data, and the checksum of a
+download was wrong (redox-rpi issue 586). Print it to stderr, as the
+errors and listen mode's "Incoming connection from" line already are.
+---
+ src/nc/modes.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/nc/modes.rs b/src/nc/modes.rs
+index 521774b..f3f749d 100644
+--- a/src/nc/modes.rs
++++ b/src/nc/modes.rs
+@@ -82,7 +82,7 @@ pub fn connect_tcp(host: &str) -> Result<(), String> {
+         .try_clone()
+         .map_err(|e| format!("connect_tcp error: cannot create socket clone ({e})"))?;
+ 
+-    println!("Remote host: {host}");
++    eprintln!("Remote host: {host}");
+ 
+     both_dir_rw_loop(stream_read, stream_write)
+ }
+-- 
+2.53.0
+

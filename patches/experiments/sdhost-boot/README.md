@@ -34,7 +34,7 @@ scripts/build-image.sh --experiment ldso-diagnostics --experiment sdhost-driver 
 Release candidate v0.3.0-rc1 (test #12): `scripts/build-image.sh --sdcard` with
 `ldso-diagnostics`, `timesync`, `rtl8152`, `sdhost-driver` and
 `sdhost-boot`, then `scripts/make-sdcard.sh --local`. Image:
-`http://homenodellm:8080/sdcard/redox-rpi-v0.3.0-rc1.img.xz`, with its
+`http://<build-server>:8080/sdcard/redox-rpi-v0.3.0-rc1.img.xz`, with its
 manifest and `SHA256SUMS` next to it.
 
 For the person at the Pi:

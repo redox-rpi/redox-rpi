@@ -14,5 +14,9 @@ dtoverlay=disable-bt
 # Wi-Fi uses that controller otherwise and is unavailable.
 dtoverlay=mmc
 
+# No overscan border: without this the firmware shrinks its picture (with a
+# 1920x1080 EDID to 1824x984) until vc4d takes over (#347).
+disable_overscan=1
+
 # Leave as much RAM as possible to Redox; there is no graphics driver yet.
 gpu_mem=16

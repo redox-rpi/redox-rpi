@@ -8,6 +8,7 @@ rev = "180d2eb4157b706dc480bce50ff6d03a65ec334b"
 patches = [
     "0001-arm64-never-use-x18-as-a-scratch-register-for-stores.patch",
     "0002-parse-read-float-constants-without-fscanf.patch",
+    "0003-arm64-extern-thread-local-variables-on-ELF.patch",
 ]
 
 [build]

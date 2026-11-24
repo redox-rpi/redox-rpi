@@ -36,7 +36,7 @@ Where the time goes, from the debug run:
 |---|---|---|
 | Kernel, from `Env:` to bootstrap | about 0.6 s | after the last kernel log line; not measured in detail |
 | Each service start | 0.06–0.2 s | about 25 services before the login, so 2–3 s in total |
-| `dwc2d` | 1.5 s | waits `BOOT_CONNECT_WAIT` (1 s) for late USB devices; on the Pi with a LAN7515 it waits for the link instead (up to `BOOT_LINK_WAIT`) |
+| `dwc2d` | 1.5 s | waits `BOOT_CONNECT_WAIT` (1 s) for late USB devices; only while no network adapter is found; it does not wait for the link (base 0114, #536: dhcpd starts on link-up, #560) |
 | `rm -rf /tmp` (`00_tmp`) | 1.0 s | a legacy script in the root filesystem's init.d; QEMU only, quick on the Pi |
 | `mkdir -m a=rwxt /tmp` | 0.7 s | the same script; both start an extra process (`rm`, `mkdir`) |
 | `ion governor.ion` (`15_rpi-governor`) | 1.3 s | starting ion just to read one file; it holds up `audiod` and the login |

@@ -24,6 +24,7 @@ How it is used:
 | 1.4 | Architecture, coding standards and rules, RFC drafts | Architect | all | [architecture.md](../architecture.md), `coding-standards.md`, RFCs |
 | 1.5 | Project structure (RFC 0002): split repositories, issues per repository | Architect, project lead | — | [RFC 0002](../rfcs/), migration PRs |
 | 1.6 | Community: org profile, join page, Discussions, contributor onboarding | project lead, Architect | 5.4 | profile, [join.md](../join.md) |
+| 1.7 | Process: process rules in the PMP and its sub-plans, CONTRIBUTING.md, issue and PR templates, labels, rulesets, new-repository setup, RFC procedure, process improvement from sprint reviews | Process | — | [pmp.md](pmp.md) (process parts), [CONTRIBUTING.md](../../CONTRIBUTING.md) |
 
 ## 2 Platform development
 
@@ -43,7 +44,7 @@ How it is used:
 | 2.12 | Assistant (local language model) | Log triage | 2.5.5 | [assistant](../topics/assistant.md) |
 | 2.13 | Open-source VPU firmware | Open firmware | 2.1.2 | [open-firmware](../topics/open-firmware.md) |
 | 2.14 | Timers and DMA | project lead (no owner yet) | 2.3.11 | [dma](../topics/dma.md), [time](../topics/time.md) |
-| 2.15 | TinyCC VC4 backend in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc): own compiler for the VPU, to understand the VPU and own the toolchain; not used for the firmware build yet (GCC stays) | TinyCC VC4 | 2.1.2 | [tcc](../topics/tcc.md), rpi-open-firmware `docs/tcc-vc4.md` |
+| 2.15 | TinyCC VC4 backend in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc): own compiler for the VPU, to understand the VPU and own the toolchain; not used for the firmware build yet (GCC stays) | TinyCC VC4 | 2.1.2 | [tcc](../topics/tcc.md), tinycc [docs/vc4-decisions.md](https://github.com/redox-rpi/tinycc/blob/main/docs/vc4-decisions.md) |
 
 ### 2.15 TinyCC VC4: quality track
 
@@ -59,9 +60,10 @@ here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
    `tccb`, and the VC4 tests that need no simulator (`tests/vc4`: enc, asm,
    bootcode-build `LINK=tcc`). It runs on GitHub-hosted runners, never
    self-hosted. The vc4 toolchain is built once and published as a release
-   asset. resim has no licence, so neither resim nor our patch to it is
-   published or built in public CI: the simulator tests (abi-sim, fat-sim)
-   run on the build host only (nightly track, and before a PR).
+   asset ([redox-rpi/vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain)).
+   The simulator is our fork [redox-rpi/resim](https://github.com/redox-rpi/resim)
+   (MIT). Until CI builds it, the simulator tests (abi-sim, fat-sim) run
+   on the build host (nightly track, and before a PR).
 3. **Nightly TCC track** (Release and CI, Pi Tests). Open firmware
    `fat-boot` is built with GCC (G) and TCC (T) from pinned commits (tinycc
    `vc4`, `fat-boot` and the GCC version in the manifest), and the resim tests
@@ -86,6 +88,14 @@ here; the QMP and the [PMP](pmp.md#merge-rights) link to them.
    then, size and speed are KPIs to watch, with no limit and no target. The
    linker.ld hard limits (bss end, trampoline size) stay as checks in
    bootcode-build `LINK=tcc`.
+8. **Upstream sync** (TinyCC VC4). Every week the `upstream-sync`
+   workflow in redox-rpi/tinycc test-merges upstream TinyCC `mob`
+   (repo.or.cz) into `main`, runs the CI of point 2 on it and offers the
+   result as a PR "upstream sync YYYY-Www"; a conflict becomes an issue.
+   It never merges: the maintainer merges like any code PR, with a merge
+   commit. The aarch64 TCC-on-Redox track uses the same fork, so arm64
+   changes are flagged in the PR. How it works: tinycc
+   [docs/vc4-decisions.md](https://github.com/redox-rpi/tinycc/blob/main/docs/vc4-decisions.md).
 
 ## 3 Boards
 

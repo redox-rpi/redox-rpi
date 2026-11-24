@@ -53,7 +53,7 @@ VPU, and **AArch64** (ARMv8-A) on the Cortex-A53. Which compiler builds what:
 | # | Piece | Instruction set | Compiler |
 |---|---|---|---|
 | 1a | Boot ROM | VideoCore IV | Broadcom, in the chip |
-| 1b, 1c | `bootcode.bin`, `start*.elf` | VideoCore IV | Broadcom, closed; the compiler is not documented (reportedly Synopsys MetaWare). The open firmware uses VC4 GCC 6.2.1 ([itszor/vc4-toolchain](https://github.com/itszor/vc4-toolchain), target `vc4-elf`) |
+| 1b, 1c | `bootcode.bin`, `start*.elf` | VideoCore IV | Broadcom, closed; the compiler is not documented (reportedly Synopsys MetaWare). The open firmware uses VC4 GCC 6.2.1 ([itszor/vc4-toolchain](https://github.com/itszor/vc4-toolchain), target `vc4-elf`; our versions in [redox-rpi/vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain)); the experimental TinyCC backend is in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc) |
 | 1d | `armstub8` | AArch64 | built into the firmware (our `config.txt` has no `armstub=` line); source [`armstub8.S`](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S), GCC |
 | 2 | U-Boot | AArch64 | GCC `aarch64-linux-gnu-` ([`build-uboot.sh`](../scripts/build-uboot.sh)) |
 | 3 | Redox bootloader | AArch64 | rustc (LLVM), target `aarch64-unknown-uefi`: a UEFI program in PE format, linked by `rust-lld` |
@@ -111,11 +111,29 @@ Source: [redox-os/kernel](https://gitlab.redox-os.org/redox-os/kernel) + our pat
 
 A small filesystem loaded together with the kernel. `init` starts the drivers
 needed to reach the real root filesystem. On the Pi that is
-`bcm2835-sdhcid` (SD card) and `redoxfs`. Board-specific drivers only start in
+`bcm2835-sdhostd` (SD card) and `redoxfs`. Board-specific drivers only start in
 images built with `BOARD=raspi3bp`.
 
-Planned: a DWC2 USB host driver, USB hub support and Ethernet drivers
-(LAN7800 for the Pi 3B+, the HAT's chip for the Zero 2 W).
+Redox cannot boot without it: the kernel has no storage driver and no
+filesystem, and drivers are programs, so the first ones must already be in
+memory. How the firmware loads it and hands it over:
+[initramfs](https://github.com/redox-rpi/rpi-open-firmware/wiki/Initramfs)
+in the rpi-open-firmware wiki.
+
+| | Live card | Root on the card |
+|---|---|---|
+| initramfs | initfs and the whole RedoxFS, about 51 MB | initfs only, about 12.5 MB |
+| After the start | Redox runs from memory | `init` mounts the RedoxFS partition as `/` |
+| Changes | lost at power-off | kept on the card |
+
+The initfs stays in memory: the initfs daemon (`bootstrap/src/exec.rs`)
+serves `/scheme/initfs` until power-off, and its memory is never freed. A
+smaller initfs means a shorter load and more free memory ([#642](https://github.com/redox-rpi/redox-rpi/issues/642)). Linux frees
+it after `switch_root`; a Redox equivalent is an idea ([#643](https://github.com/redox-rpi/redox-rpi/issues/643)).
+
+USB is in the initfs too: `dwc2d` drives the DWC2 USB host with hubs,
+keyboards and the Ethernet chips LAN7800 (Pi 3B+) and RTL8152/8153
+(USB adapters).
 
 Source: [redox-os/base](https://gitlab.redox-os.org/redox-os/base).
 

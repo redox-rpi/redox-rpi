@@ -1,0 +1,416 @@
+From a973a154d1737386f9894871ab8549964dee4bba Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 08:39:09 +0000
+Subject: [PATCH] driver-network, dwc2d: read-only status file in the network
+ scheme (redox-rpi #571)
+
+The NetworkAdapter trait gets status(), None by default, served as
+/scheme/network.*/status. dwc2d reports controller registers, channel
+results by HCINT bit, the adapters and frame counters, and the devices
+on the bus.
+---
+ drivers/net/driver-network/src/lib.rs |  68 +++++++++++-
+ drivers/usb/dwc2d/src/dwc2.rs         |  45 ++++++++
+ drivers/usb/dwc2d/src/main.rs         | 153 +++++++++++++++++++++++++-
+ 3 files changed, 262 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
+index 685b0358..a6de597c 100644
+--- a/drivers/net/driver-network/src/lib.rs
++++ b/drivers/net/driver-network/src/lib.rs
+@@ -36,6 +36,13 @@ pub trait NetworkAdapter {
+     fn set_multicast(&mut self, _addrs: Option<&[[u8; 6]]>) -> Result<()> {
+         Ok(())
+     }
++
++    /// Text for the scheme's read-only `status` file: registers, link and
++    /// counters, one `name: value` per line. Reading it must not change the
++    /// hardware state. `None`: the driver has no status file.
++    fn status(&mut self) -> Option<String> {
++        None
++    }
+ }
+ 
+ pub struct NetworkScheme<T: NetworkAdapter> {
+@@ -132,6 +139,7 @@ resource_scheme! {
+         Data(Data<T>),
+         Mac(Mac<T>),
+         Multicast(Multicast<T>),
++        Status(Status<T>),
+     }
+ }
+ 
+@@ -159,7 +167,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+ 
+     fn openat<'a>(
+         &mut self,
+-        _scheme_data: &mut Self::SchemeData,
++        scheme_data: &mut Self::SchemeData,
+         path: &str,
+         _flags: usize,
+         _fcntl_flags: u32,
+@@ -182,6 +190,13 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+                 NetworkResource::Multicast(Multicast(PhantomData)),
+                 NewFdFlags::empty(),
+             ),
++            "status" => match scheme_data.adapter.status() {
++                Some(text) => (
++                    NetworkResource::Status(Status(text.into_bytes(), PhantomData)),
++                    NewFdFlags::POSITIONED,
++                ),
++                None => return Err(Error::new(syscall::ENOENT)),
++            },
+             _ => return Err(Error::new(EINVAL)),
+         };
+ 
+@@ -355,3 +370,54 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
+         Ok(())
+     }
+ }
++
++/// Read-only: the adapter's status text, taken when the file is opened.
++struct Status<T>(Vec<u8>, PhantomData<T>);
++
++impl<T> std::fmt::Debug for Status<T> {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_tuple("Status").finish()
++    }
++}
++
++impl<T: NetworkAdapter> ResourceSync for Status<T> {
++    type SchemeData = NetworkSchemeData<T>;
++    type ResourceEnum = NetworkResource<T>;
++
++    fn read(
++        &mut self,
++        _scheme_data: &mut Self::SchemeData,
++        buf: &mut [u8],
++        offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        let data = usize::try_from(offset)
++            .ok()
++            .and_then(|o| self.0.get(o..))
++            .unwrap_or(&[]);
++        let i = cmp::min(buf.len(), data.len());
++        buf[..i].copy_from_slice(&data[..i]);
++        Ok(i)
++    }
++
++    fn write(
++        &mut self,
++        _scheme_data: &mut Self::SchemeData,
++        _buf: &[u8],
++        _offset: u64,
++        _fcntl_flags: u32,
++    ) -> Result<usize> {
++        Err(Error::new(EINVAL))
++    }
++
++    fn fpath(&mut self, _scheme_data: &mut Self::SchemeData, w: &mut FpathWriter) -> Result<()> {
++        w.push_str("status");
++        Ok(())
++    }
++
++    fn fstat(&mut self, _scheme_data: &mut Self::SchemeData, stat: &mut Stat) -> Result<()> {
++        stat.st_mode = MODE_FILE | 0o400;
++        stat.st_size = self.0.len() as u64;
++        Ok(())
++    }
++}
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 4e26ae53..73bf5358 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -25,6 +25,47 @@ pub fn delay(d: Duration) {
+     }
+ }
+ 
++/// Channel results since start, for the network scheme's status file.
++pub mod stats {
++    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++
++    use crate::regs::*;
++
++    pub static HALTS: AtomicU64 = AtomicU64::new(0);
++    pub static COMPLETE: AtomicU64 = AtomicU64::new(0);
++    pub static STALL: AtomicU64 = AtomicU64::new(0);
++    pub static NAK: AtomicU64 = AtomicU64::new(0);
++    pub static NYET: AtomicU64 = AtomicU64::new(0);
++    pub static XACT_ERR: AtomicU64 = AtomicU64::new(0);
++    pub static BABBLE: AtomicU64 = AtomicU64::new(0);
++    pub static AHB_ERR: AtomicU64 = AtomicU64::new(0);
++    pub static DATA_TOGGLE_ERR: AtomicU64 = AtomicU64::new(0);
++    pub static TIMEOUTS: AtomicU64 = AtomicU64::new(0);
++
++    /// Count a channel halt by its HCINT bits.
++    pub fn halted(status: u32) {
++        HALTS.fetch_add(1, Relaxed);
++        for (bit, counter) in [
++            (HCINT_XFER_COMPL, &COMPLETE),
++            (HCINT_STALL, &STALL),
++            (HCINT_NAK, &NAK),
++            (HCINT_NYET, &NYET),
++            (HCINT_XACT_ERR, &XACT_ERR),
++            (HCINT_BBL_ERR, &BABBLE),
++            (HCINT_AHB_ERR, &AHB_ERR),
++            (HCINT_DATA_TGL_ERR, &DATA_TOGGLE_ERR),
++        ] {
++            if status & bit != 0 {
++                counter.fetch_add(1, Relaxed);
++            }
++        }
++    }
++
++    pub fn timeout() {
++        TIMEOUTS.fetch_add(1, Relaxed);
++    }
++}
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Speed {
+     High,
+@@ -301,11 +342,13 @@ impl Dwc2 {
+             let status = self.read(hcint(ch));
+             if status & HCINT_CH_HLTD != 0 {
+                 self.write(hcint(ch), u32::MAX);
++                stats::halted(status);
+                 return Ok(status);
+             }
+             if start.elapsed() > timeout {
+                 let value = self.read(hcchar(ch));
+                 self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                stats::timeout();
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+@@ -446,6 +489,7 @@ impl Dwc2 {
+             return None;
+         }
+         self.write(hcint(ch), u32::MAX);
++        stats::halted(status);
+ 
+         if status & HCINT_STALL != 0 {
+             return Some(Err(Error::Stall));
+@@ -474,6 +518,7 @@ impl Dwc2 {
+                 // Halt the channel so it can be reused.
+                 let value = self.read(hcchar(ch));
+                 self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                stats::timeout();
+                 return Err(Error::Timeout("channel halt"));
+             }
+             std::hint::spin_loop();
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 402a7a35..ebbe96b1 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -10,7 +10,10 @@ use std::fs::{File, OpenOptions};
+ use std::io::{Read, Write};
+ use std::os::fd::AsRawFd;
+ use std::os::unix::fs::OpenOptionsExt;
++use std::fmt::Write as _;
+ use std::process;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::Mutex;
+ use std::time::{Duration, Instant};
+ 
+ use fdt::Fdt;
+@@ -89,6 +92,42 @@ impl Adapter {
+     }
+ }
+ 
++/// Interrupts the main loop took from the IRQ file.
++static IRQS: AtomicU64 = AtomicU64::new(0);
++/// Frames to and from the adapter in use.
++static RX_FRAMES: AtomicU64 = AtomicU64::new(0);
++static RX_BYTES: AtomicU64 = AtomicU64::new(0);
++static TX_FRAMES: AtomicU64 = AtomicU64::new(0);
++static TX_BYTES: AtomicU64 = AtomicU64::new(0);
++static TX_NO_ADAPTER: AtomicU64 = AtomicU64::new(0);
++/// The devices on the bus, as text for the status file; set after each
++/// scan that found a change.
++static DEVICES: Mutex<String> = Mutex::new(String::new());
++
++fn update_devices(bus: &Bus) {
++    let mut text = String::new();
++    for d in &bus.devices {
++        let speed = match d.speed {
++            dwc2::Speed::High => "high",
++            dwc2::Speed::Full => "full",
++            dwc2::Speed::Low => "low",
++        };
++        let _ = writeln!(
++            text,
++            "device_{}: {:04x}:{:04x} class 0x{:02x} {speed} speed, depth {}{}",
++            d.address,
++            d.vendor,
++            d.product,
++            d.class,
++            d.depth,
++            d.tt.map_or(String::new(), |(hub, port)| format!(", behind hub {hub} port {port}"))
++        );
++    }
++    if let Ok(mut devices) = DEVICES.lock() {
++        *devices = text;
++    }
++}
++
+ /// The network adapters on the bus. The network stack sees one of them, the
+ /// best by [`Adapter::rank`], and is moved to another when adapters are
+ /// plugged in or removed or a link comes up or goes down.
+@@ -219,20 +258,123 @@ impl NetworkAdapter for UsbNet {
+     }
+ 
+     fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
+-        match self.active_adapter() {
++        let result = match self.active_adapter() {
+             Some(a) => a.net().read_packet(buf),
+             None => Ok(None),
++        };
++        if let Ok(Some(len)) = result {
++            RX_FRAMES.fetch_add(1, Relaxed);
++            RX_BYTES.fetch_add(len as u64, Relaxed);
+         }
++        result
+     }
+ 
+     fn write_packet(&mut self, buf: &[u8]) -> syscall::Result<usize> {
+         match self.active_adapter() {
+-            Some(a) => a.net().write_packet(buf),
++            Some(a) => {
++                let result = a.net().write_packet(buf);
++                if result.is_ok() {
++                    TX_FRAMES.fetch_add(1, Relaxed);
++                    TX_BYTES.fetch_add(buf.len() as u64, Relaxed);
++                }
++                result
++            }
+             // No adapter: the frame is lost, like on a cable that is out.
+-            None => Ok(buf.len()),
++            None => {
++                TX_NO_ADAPTER.fetch_add(1, Relaxed);
++                Ok(buf.len())
++            }
+         }
+     }
+ 
++    fn status(&mut self) -> Option<String> {
++        let hc = &self.hc;
++        let mut s = String::new();
++        let hprt = hc.read(regs::HPRT0);
++        let speed = match hprt >> regs::HPRT0_SPD_SHIFT & regs::HPRT0_SPD_MASK {
++            0 => "high",
++            1 => "full",
++            2 => "low",
++            _ => "-",
++        };
++        let _ = writeln!(s, "## controller");
++        let _ = writeln!(s, "GSNPSID: 0x{:08x}", hc.read(regs::GSNPSID));
++        let _ = writeln!(s, "channels: {}", hc.channels());
++        let _ = writeln!(s, "GAHBCFG: 0x{:08x}", hc.read(regs::GAHBCFG));
++        let _ = writeln!(s, "GINTSTS: 0x{:08x}", hc.read(regs::GINTSTS));
++        let _ = writeln!(s, "GINTMSK: 0x{:08x}", hc.read(regs::GINTMSK));
++        let _ = writeln!(
++            s,
++            "HPRT0: 0x{hprt:08x} (connected {}, enabled {}, power {}, {speed} speed)",
++            hprt & regs::HPRT0_CONN_STS != 0,
++            hprt & regs::HPRT0_ENA != 0,
++            hprt & regs::HPRT0_PWR != 0
++        );
++        let _ = writeln!(s, "HFNUM: 0x{:08x}", hc.read(regs::HFNUM));
++        let _ = writeln!(s, "## channel results");
++        for (name, counter) in [
++            ("halts", &dwc2::stats::HALTS),
++            ("complete", &dwc2::stats::COMPLETE),
++            ("stall", &dwc2::stats::STALL),
++            ("nak", &dwc2::stats::NAK),
++            ("nyet", &dwc2::stats::NYET),
++            ("xact_err", &dwc2::stats::XACT_ERR),
++            ("babble", &dwc2::stats::BABBLE),
++            ("ahb_err", &dwc2::stats::AHB_ERR),
++            ("data_toggle_err", &dwc2::stats::DATA_TOGGLE_ERR),
++            ("timeouts", &dwc2::stats::TIMEOUTS),
++            ("interrupts", &IRQS),
++        ] {
++            let _ = writeln!(s, "{name}: {}", counter.load(Relaxed));
++        }
++        let _ = writeln!(s, "## network");
++        let m = self.mac;
++        let _ = writeln!(
++            s,
++            "mac: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
++            m[0], m[1], m[2], m[3], m[4], m[5]
++        );
++        let active = self.active;
++        match self.active_adapter() {
++            Some(a) => {
++                let _ = writeln!(s, "active: {} at address {}", a.scheme_name(), a.address());
++            }
++            None => {
++                let _ = writeln!(s, "active: none");
++            }
++        }
++        for (a, link) in &self.adapters {
++            let _ = writeln!(
++                s,
++                "adapter_{}: {} link {}, rank {}{}",
++                a.address(),
++                a.scheme_name(),
++                if *link { "up" } else { "down" },
++                a.rank(*link),
++                if active == Some(a.address()) { ", in use" } else { "" }
++            );
++        }
++        let multicast = match &self.multicast {
++            None => "all".to_string(),
++            Some(list) => format!("{} addresses", list.len()),
++        };
++        let _ = writeln!(s, "multicast: {multicast}");
++        for (name, counter) in [
++            ("rx_frames", &RX_FRAMES),
++            ("rx_bytes", &RX_BYTES),
++            ("tx_frames", &TX_FRAMES),
++            ("tx_bytes", &TX_BYTES),
++            ("tx_dropped_no_adapter", &TX_NO_ADAPTER),
++        ] {
++            let _ = writeln!(s, "{name}: {}", counter.load(Relaxed));
++        }
++        let _ = writeln!(s, "## devices");
++        if let Ok(devices) = DEVICES.lock() {
++            s.push_str(&devices);
++        }
++        Some(s)
++    }
++
+     /// Kept for the event loop, which has the bus to program the adapter.
+     fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
+         self.multicast = addrs.map(<[_]>::to_vec);
+@@ -556,6 +698,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
+     }
+     println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
++    update_devices(&bus);
+     // The network stack keeps the address of the adapter it starts with.
+     if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
+         if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
+@@ -626,6 +769,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let file = irq_file.as_mut().unwrap();
+                 let mut irq = [0; 8];
+                 if file.read(&mut irq).unwrap_or(0) == irq.len() {
++                    IRQS.fetch_add(1, Relaxed);
+                     // tick() takes the received frame and clears the
+                     // channel's interrupt; only then unmask the line.
+                     scheme.tick().expect("dwc2d: network scheme failed");
+@@ -723,6 +867,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 if let Some(m) = mouse.as_mut() {
+                     m.log = aside::input_log();
+                 }
++                if !changes.added.is_empty() || !changes.removed.is_empty() {
++                    update_devices(&bus);
++                }
+                 net.refresh_links(&mut bus);
+                 net.select(&mut bus);
+                 scheme.tick().expect("dwc2d: network scheme failed");
+-- 
+2.53.0
+
