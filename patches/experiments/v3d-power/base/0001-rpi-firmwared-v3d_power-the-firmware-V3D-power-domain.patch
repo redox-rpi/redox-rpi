@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 18:00:00 +0000
+Subject: [PATCH] rpi-firmwared: v3d_power, the firmware V3D power domain
+
+The firmware leaves the BCM2711 V3D power domain off at boot (Pi test
+547: PM_GRAFX 0x1000). Linux powers it through raspberrypi-power
+(RPI_POWER_DOMAIN_V3D = 10, SET_DOMAIN_STATE 0x38030). The new file
+/scheme/rpi-firmware/v3d_power reads on or off (GET_DOMAIN_STATE) and
+switches the domain when on or off is written. Only on BCM2711 boards.
+---
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -28,6 +28,11 @@
+ //!   decimal) makes the firmware reset the VL805 USB controller there and
+ //!   load its firmware (Pi 4 family, `NOTIFY_XHCI_RESET`). pcid does this
+ //!   after bringing the PCIe link up.
++//! - `/scheme/rpi-firmware/v3d_power`: the firmware's V3D power domain
++//!   (BCM2711), `on` or `off`; writing switches it, as Linux's
++//!   raspberrypi-power does with SET_DOMAIN_STATE before v3d probes.
++//!   The firmware leaves it off at boot. Other boards do not have this
++//!   file.
+ //!
+ //! At start it sets the ARM clock to its maximum; then the governor
+ //! (`governor.rs`) lets it follow the load. The firmware lowers it by itself
+@@ -61,9 +66,9 @@
+ const MBOX_BUS_ADDR: usize = 0x7e00_b880;
+ const PAGE_SIZE: usize = 4096;
+ 
+-const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled"];
++const FILES: &[&str] = &["arm_clock", "board", "clocks", "governor", "power_led", "temperature", "throttled", "v3d_power"];
+ /// Files that can be written: settings.
+-const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led", "xhci_reset"];
++const WRITABLE: &[&str] = &["arm_clock", "governor", "power_led", "v3d_power", "xhci_reset"];
+ 
+ const THROTTLE_POLL: Duration = Duration::from_secs(5);
+ 
+@@ -127,6 +132,10 @@
+                 }
+             }
+             "board" => board(mbox, &mut text),
++            "v3d_power" => {
++                let on = v3d_power(mbox).ok_or(Error::new(ENOENT))?;
++                writeln!(text, "{}", if on { "on" } else { "off" }).unwrap();
++            }
+             _ => return Err(Error::new(ENOENT)),
+         }
+         Ok(text)
+@@ -180,11 +189,37 @@
+                 println!("rpi-firmwared: VL805 at PCI 0x{address:08x} reset, firmware loaded");
+                 Ok(())
+             }
++            "v3d_power" => {
++                let state = match value {
++                    "on" => 1,
++                    "off" => 0,
++                    _ => return Err(Error::new(EINVAL)),
++                };
++                v3d_power(mbox).ok_or(Error::new(ENOENT))?;
++                mbox.set_property(TAG_SET_DOMAIN_STATE, &[DOMAIN_V3D, state]).map_err(log)?;
++                let now = v3d_power(mbox);
++                println!("rpi-firmwared: V3D power {value}, firmware says {now:?}");
++                if now == Some(state == 1) { Ok(()) } else { Err(log(format!("V3D power: still {now:?}"))) }
++            }
+             _ => Err(Error::new(EROFS)),
+         }
+     }
+ }
+ 
++/// The V3D power domain's state (GET_DOMAIN_STATE); None where the
++/// firmware does not know the domain (not a BCM2711) or the tag.
++fn v3d_power(mbox: &mut Mailbox) -> Option<bool> {
++    // Only the BCM2711's firmware has a separate V3D domain.
++    let [revision] = mbox.property(TAG_BOARD_REVISION, &[], 1).ok()?[..] else { return None };
++    if revision & (1 << 23) == 0 || (revision >> 12) & 0xf != 3 {
++        return None;
++    }
++    match mbox.property(TAG_GET_DOMAIN_STATE, &[DOMAIN_V3D, 0], 2).ok()?[..] {
++        [DOMAIN_V3D, state] => Some(state != 0),
++        _ => None,
++    }
++}
++
+ /// Sets the ARM clock to its maximum and says from what to what.
+ fn arm_clock_max(mbox: &mut Mailbox) {
+     let before = mbox.value_of(TAG_GET_CLOCK_RATE, CLOCK_ARM);
+diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
+--- a/drivers/rpi-firmwared/src/mbox.rs
++++ b/drivers/rpi-firmwared/src/mbox.rs
+@@ -49,6 +49,11 @@
+ pub const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+ /// Reset the VL805 USB controller behind PCIe and load its firmware (Pi 4).
+ pub const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
++pub const TAG_GET_DOMAIN_STATE: u32 = 0x0003_0030;
++pub const TAG_SET_DOMAIN_STATE: u32 = 0x0003_8030;
++/// The firmware's power domain of the V3D (RPI_POWER_DOMAIN_V3D in Linux's
++/// dt-bindings/power/raspberrypi-power.h).
++pub const DOMAIN_V3D: u32 = 10;
+ 
+ /// Clock id of the ARM cores.
+ pub const CLOCK_ARM: u32 = 3;
