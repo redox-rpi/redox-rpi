@@ -3,10 +3,12 @@
  *
  * Each frame clears a 64x64 RGBA texture (bound to a framebuffer object)
  * to blue, draws a red triangle over its lower left half, reads the pixels
- * back and checks them: every pixel red or blue, the red count that of the
- * half below the diagonal (with or without the diagonal itself), the
- * corners right. The first frame's pixels are hashed (FNV-1a), so the
- * result can be compared with Mesa's software renderer
+ * back and checks them: every pixel red or blue, the red pixels exactly the
+ * half below the diagonal plus the diagonal, the corners right. The
+ * triangle's long edge lies half a pixel beyond the diagonal's pixel
+ * centres, so no centre is on an edge and every renderer must give the same
+ * pixels, whatever its fill rule. The first frame's pixels are hashed
+ * (FNV-1a): the hash must match Mesa's software renderer
  * (LIBGL_ALWAYS_SOFTWARE=1).
  *
  *   gles-probe [frames]       default 100
@@ -126,7 +128,9 @@ int main(int argc, char **argv)
 		return fail("program link");
 	glUseProgram(prog);
 	glUniform4f(glGetUniformLocation(prog, "color"), 1.0f, 0.0f, 0.0f, 1.0f);
-	static const GLfloat tri[] = { -1, -1, 1, -1, -1, 1 };
+	/* The edge x + y = E (normalised coordinates) with E = 1/64 passes half a
+	 * pixel beyond the centres on the diagonal x + y = 63 (pixels). */
+	static const GLfloat tri[] = { -1, -1, 1 + 1.0f / 64, -1, -1, 1 + 1.0f / 64 };
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, tri);
 	glEnableVertexAttribArray(0);
 	glViewport(0, 0, SIZE, SIZE);
@@ -153,8 +157,8 @@ int main(int argc, char **argv)
 		}
 		/* Row 0 is the bottom: (0,0) red, (63,63) blue. */
 		int corners = px[0] == 255 && px[(SIZE * SIZE - 1) * 4 + 2] == 255;
-		int below = (SIZE - 1) * SIZE / 2; /* centres strictly below the diagonal */
-		if (red + blue != SIZE * SIZE || (red != below && red != below + SIZE) || !corners) {
+		int want = (SIZE + 1) * SIZE / 2; /* centres on or below the diagonal */
+		if (red + blue != SIZE * SIZE || red != want || !corners) {
 			printf("gles-probe: FAIL: frame %d: %d red, %d blue, other %d, corners %s, first pixel %02x%02x%02x%02x\n",
 			       f, red, blue, SIZE * SIZE - red - blue, corners ? "right" : "wrong",
 			       px[0], px[1], px[2], px[3]);
