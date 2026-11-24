@@ -138,6 +138,13 @@ over the last 30 days unless named otherwise; the page is
 | Feature coverage | release features (the checklist's "In the image since" table) with an automated check or a named person test / all release features | release checklist; by hand until the checklist maps feature → test | 100 % for release features |
 | Pi rows per topic | done queue rows that name an issue of the topic | [pi-tests queue.md](https://github.com/redox-rpi/pi-tests/blob/main/queue.md), issue labels | every topic with code in the image has rows in the window |
 | Boot time (firmware, per board) | power-on to `redox login:` on a cold start with the board's release card: the Boot ROM timer from our firmware banner + (time of `redox login:` − time of the banner line); latest value per board, the one before it, the best. The firmware's main indicator (maintainer, 2026-11-18; owner Open firmware) | the "Values so far" table in [rof docs/boot-time.md](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-time.md), one row per firmware Pi test that boots to the login | falling; a rise from one row to the next on the same board is a **check** ([rof #44](https://github.com/redox-rpi/rpi-open-firmware/issues/44)) |
+| Code lines | code lines (no blank or comment lines) per area: redox-rpi `tools/` and `scripts/`, vc4d, rof's own code (without `broadcom/`) | `scripts/quality-kpis.py --code` (`scripts/code-metrics.py`) | does not grow without a feature behind it |
+| Duplicated code | lines that belong to a 6-line block found twice (whitespace normalised, blocks under 120 characters ignored) / code lines, per area | same | does not rise; a **check** above 3 % in an area |
+| Files over the size limit | files over 600 code lines (Rust, C) or 400 (shell, Python), per the [coding rules](coding-standards.md#code-rules) | same | 0 new; the old ones go down |
+| Long functions | functions over 60 lines (brace or indent scan), per area | same | down |
+| Unit tests | Rust `#[test]` and Python `test_` functions, per area (rof host tests not counted yet) | same | up |
+| REQ- references in code | `REQ-…-n` names in code, per area; later: approved criteria named in code / all approved criteria | same | up; 0 everywhere is a **check** |
+| Image size | initramfs and root of the minimal console card, the 10 largest binaries (stripped) | the card's `manifest.txt` (`scripts/console-image.sh --minimal`), nightly | no rise over 100 KiB without a reason in the PR (not in the generator yet) |
 | Host tests | our Rust crates (`tools/`, vc4d) with host unit tests / all such crates | the repository | see [Coverage](#coverage) |
 | Code coverage | lines covered by host tests in host-testable crates (`cargo llvm-cov`) | build host, once measured | see [Coverage](#coverage) |
 | Static analysis findings | warnings per check of [Code quality](#code-quality), against the baseline | [code-quality-baseline.md](code-quality-baseline.md), later CI | not above the baseline; see targets there |
@@ -210,7 +217,11 @@ kernel code are covered by levels 2–5, not by line coverage.
 
 ## Code quality
 
-Static analysis of our own code, report-only first. Baseline and details:
+The rules are in [coding-standards.md](coding-standards.md#code-rules) (PR #657),
+the CI checks in #656, and the code KPIs in the [KPI table](#kpis) (first
+baseline 2026-11-24: tools 9,589 code lines, 0.5 % duplicated, 61 tests; scripts
+7,243, 1.7 %, 1 test; vc4d 4,690, 2.2 %, 30 tests; rof 7,822, 4.9 %; REQ- refs
+1/13/0/0). Static analysis of our own code, report-only first. Baseline and details:
 [code-quality-baseline.md](code-quality-baseline.md).
 
 | Check | Scope | Baseline (2026-11-08) | Target | CI proposal |
