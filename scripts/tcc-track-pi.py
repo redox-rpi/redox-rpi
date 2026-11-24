@@ -3,7 +3,7 @@
 
   scripts/tcc-track-pi.py --g G.bin --t T.bin --out pi.json
                           [--rbc-load <rpi-open-firmware>/bootcode/rbc-load.sh]
-                          [--pi 192.168.178.148] [--deadline 04:15]
+                          [--pi <addr>] [--serial <dev>] [--deadline 04:15]
 
 Loads the GCC build (G) and the TCC build (T) of the bootcode monitor into
 the Pi's SDRAM over the serial console and runs the same monitor commands on
@@ -40,7 +40,9 @@ import subprocess
 import sys
 import time
 
-TTY = "/dev/ttyUSB0"
+# The test Pi's address and serial console: --pi/--serial, else REDOX_PI and
+# REDOX_PI_SERIAL from lab.env (scripts/lab-env.sh); no guessed default.
+TTY = ""
 LOG = os.path.expanduser("~/redox-rpi/logs/serial.log")
 ADDR = "c1000000"
 COMMANDS = ["sd", "fl START.ELF c2000000", "crc c2000000 1000", "ls",
@@ -72,6 +74,24 @@ def wait_log(start, pattern, timeout):
     return False
 
 
+def lab_value(key):
+    """A lab value as scripts/lab-env.sh reads it: the environment first,
+    then KEY=value lines in $REDOX_LAB_ENV or ~/.config/redox-rpi/lab.env."""
+    if os.environ.get(key):
+        return os.environ[key]
+    path = os.environ.get("REDOX_LAB_ENV") or os.path.expanduser("~/.config/redox-rpi/lab.env")
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return v.strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+
 def send(line):
     with open(TTY, "w") as t:
         t.write(line + "\r")
@@ -99,7 +119,8 @@ def run_build(name, rbc_load, image, enter, before=None):
     """Load and chain <image>; with enter, rbc-load.sh first waits for the
     card monitor's prompt, and before() (the reset) runs once it listens."""
     args = [rbc_load] + (["--enter"] if enter else []) + [image, ADDR, "chainmon"]
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         env=dict(os.environ, TTY=TTY))
     if before:
         time.sleep(1)
         before()
@@ -123,9 +144,15 @@ def main():
     ap.add_argument("--t", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--rbc-load", default=os.path.expanduser("~/tcc-track/rpi-open-firmware/bootcode/rbc-load.sh"))
-    ap.add_argument("--pi", default="192.168.178.148")
+    ap.add_argument("--pi", default=lab_value("REDOX_PI"), help="the test Pi (default: REDOX_PI from lab.env)")
+    ap.add_argument("--serial", default=lab_value("REDOX_PI_SERIAL"),
+                    help="its serial console (default: REDOX_PI_SERIAL from lab.env)")
     ap.add_argument("--deadline", default="04:15", help="UTC time by which the Pi must be back (Pi test agent's window)")
     args = ap.parse_args()
+    if not args.pi or not args.serial:
+        ap.error("no test Pi: --pi and --serial, or REDOX_PI and REDOX_PI_SERIAL in lab.env")
+    global TTY
+    TTY = args.serial
     here = os.path.dirname(os.path.abspath(__file__))
     result = {"pi_pass": None, "pi_back": None, "fl_g_s": None, "fl_t_s": None,
               "size_g": os.path.getsize(args.g), "size_t": os.path.getsize(args.t),

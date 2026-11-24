@@ -199,7 +199,7 @@ run_tcc_track() {
         else
             log "TCC track: Pi part"
             timeout 900 scripts/tcc-track-pi.py --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
-                >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
+                --pi "$PI" --serial "$SERIAL_DEV" >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
             pi=(--pi "$dir/pi.json")
             # Not back on Redox (or no answer at all): tell the Pi test agent
             # and the maintainer; their rules decide about a power cycle.
