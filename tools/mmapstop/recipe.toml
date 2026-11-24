@@ -1,0 +1,15 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# mmapstop is linked statically (the cargo template links dynamically):
+# dynamically linked programs can fail at start on a real Pi (docs/tasks.md,
+# T12), like sigregs. It must link the libc.a of our
+# relibc recipe, not the toolchain's. Cargo does not see a new libc.a,
+# so its fingerprint goes first: otherwise a build with other relibc
+# patches keeps the old mmapstop.
+[build]
+template = "custom"
+dependencies = ["relibc"]
+script = """
+export RUSTFLAGS="${RUSTFLAGS} -L native=${COOKBOOK_SYSROOT}/lib"
+rm -rf "${COOKBOOK_BUILD}"/target/*/release/.fingerprint/mmapstop-*
+COOKBOOK_CARGO_PATH=. cookbook_cargo
+"""
