@@ -55,6 +55,7 @@ cookbook_meson \
     -Ddri-drivers-path=/usr/lib/dri \
     -Dglx=disabled \
     -Dllvm=disabled \
+    -Dzstd=disabled \
     -Dosmesa=true \
     -Dshader-cache=disabled \
     -Dgallium-drivers=swrast,v3d -Dtools=
