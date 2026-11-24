@@ -1,0 +1,36 @@
+From 0ca3b380daadba5baa8d9727697360676fcda927 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 18 Nov 2026 18:49:47 +0000
+Subject: [PATCH] mount: no error lines for the disks a UUID search passes over
+ (redox-rpi #556)
+
+With --uuid, redoxfs tries every disk and logged each one without a
+matching RedoxFS as [ERROR] (on the Raspberry Pi: the SD card's FAT and
+its partitions on a live-disk boot). Not finding the filesystem on one
+disk is normal while searching; "not able to mount uuid" still reports
+when no disk has it.
+---
+ src/bin/mount.rs | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/bin/mount.rs b/src/bin/mount.rs
+index 2811665..f0b80b3 100644
+--- a/src/bin/mount.rs
++++ b/src/bin/mount.rs
+@@ -269,8 +269,12 @@ fn filesystem_by_uuid(
+                                                 entry.path().into_os_string().into_string()
+                                             {
+                                                 log::debug!("found path {}", path);
++                                                // Searching: a disk without RedoxFS is
++                                                // normal here, so no error line for it.
++                                                // "not able to mount uuid" still reports
++                                                // when no disk matches.
+                                                 if let Some((path, filesystem)) =
+-                                                    filesystem_by_path(&path, block_opt, true)
++                                                    filesystem_by_path(&path, block_opt, false)
+                                                 {
+                                                     if &filesystem.header.uuid() == uuid.as_bytes()
+                                                     {
+-- 
+2.53.0
+

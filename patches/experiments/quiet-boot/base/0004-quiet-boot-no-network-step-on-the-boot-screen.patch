@@ -1,0 +1,34 @@
+From 99c1a24b29b975c1a8f8953ba135724df01d8109 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 23 Nov 2026 14:09:03 +0000
+Subject: [PATCH] quiet boot: no network step on the boot screen
+
+The network is no longer part of the boot: dwc2d does not wait for the
+link and dhcpd starts on link-up in the background (redox-rpi #536,
+#560). The network step (90 %) also showed on cards without network
+(rpi-open-firmware #56). Steps now: drivers, file system, services,
+login (redox-rpi #622).
+---
+ init.d/15_bootstep-net.service | 10 ----------
+ 1 file changed, 10 deletions(-)
+ delete mode 100644 init.d/15_bootstep-net.service
+
+diff --git a/init.d/15_bootstep-net.service b/init.d/15_bootstep-net.service
+deleted file mode 100644
+index 02aa5ca..0000000
+--- a/init.d/15_bootstep-net.service
++++ /dev/null
+@@ -1,10 +0,0 @@
+-[unit]
+-description = "Boot screen step: network"
+-condition_architecture = ["aarch64"]
+-condition_board = ["raspi3bp"]
+-requires_weak = ["01_bootstep-base.service", "10_net.target"]
+-
+-[service]
+-cmd = "rpi-firmwared"
+-args = ["step", "90", "network"]
+-type = "oneshot"
+-- 
+2.53.0
+

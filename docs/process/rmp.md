@@ -108,7 +108,7 @@ A new area is added by a change to this table.
 | Statement | One sentence, "The system shall …": what, not how. |
 | Rationale | Why, and the source (decision, issue, release). |
 | Kind | functional, quality or constraint |
-| Priority | `must` (a release fails without it), `should` (a failure is a known issue in the notes), `may` |
+| Priority | `must` (a release fails without it), `should` (a failure is a known issue in the notes), `may`; kept in the issue field Priority, not in the text (see Issue format) |
 | Level | release, beta, experiment, test image |
 | PBS | the PBS IDs of the parts that implement it (`2.3.4, 2.4.2`) |
 | Status | proposed, approved, retired (see below) |
@@ -135,17 +135,32 @@ A requirement is:
 
 Since [RFC 0002](../rfcs/0002-project-structure.md#4-issues-types-labels-and-the-project)
 (accepted 2026-11-09) **each requirement is one GitHub issue of type
-Feature in `redox-rpi`**. The Feature issue is the record; tasks and bugs
-that implement it hang below it as sub-issues, in the repository of their
-code.
+Feature**. Since the maintainer's decision of 2026-11-16, **every issue
+lives in the repository of its product**, and so does the Feature issue:
+`redox-rpi` (the system on the Pi), `rpi-open-firmware`, `vc4d`, `tinycc`,
+and any later product repository. The Feature issue is the record; tasks
+and bugs that implement it hang below it as sub-issues (GitHub allows
+sub-issues across repositories in the organisation), and bugs are Bug
+issues in the same product repository.
 
 ### Issue format
 
-- **Type:** Feature. **Repository:** `redox-rpi`.
+- **Type:** Feature. **Repository:** the product's repository (see above).
 - **Title:** `REQ-<AREA>-<n> <name>`, for example
   `REQ-NET-1 DHCP on the onboard Ethernet`.
+- **IDs:** one ID space for the whole organisation, so `REQ-NET-1` means
+  the same in every repository. Product repositories other than `redox-rpi`
+  use their own area codes (for example `VC4D`,
+  `TCCVC`), agreed with the Requirements agent before the first
+  issue.
 - **Labels:** the `topic:<name>` of the area (the shared label list of RFC
   0002; no extra labels for priority or level).
+- **Priority:** the organisation's issue field **Priority**, never in the
+  body or the title (maintainer, 2026-11-16: "Die sollte generell nicht im
+  Text vorkommen"). `must` → High, `should` → Medium, `may` → Low;
+  Urgent is not used for requirements. In this plan, the trace and the
+  release checklist the words must/should/may stay; they mean these field
+  values.
 - **Milestone:** the release in which the requirement must first hold.
 - **Project fields:** Release, Type, Topic, Owner, as for every issue.
 - **Body**, in this order:
@@ -157,7 +172,6 @@ code.
 |---|---|
 | Status | proposed / approved / retired |
 | Kind | functional / quality / constraint |
-| Priority | must / should / may |
 | Level | release / beta / experiment / test image |
 | PBS | 2.3.4, 2.4.2 |
 | Source | maintainer decision 2026-11-08 / issue / release |
@@ -193,12 +207,12 @@ new Feature issues linked to it.
 ### What stays in files
 
 - `docs/requirements/README.md`: the list of areas with a search link for
-  each (`is:issue type:Feature "REQ-NET-" in:title`).
+  each (`org:redox-rpi is:issue type:Feature "REQ-NET-" in:title`), and
+  the product repository of each area.
 - `docs/requirements/trace-<release>.md`: the trace of each release,
   written when its candidate is tested; this is the release's baseline.
-- Until the move, the first set lives in files (draft PR #270). The move
-  creates or updates the issues with `scripts/req-issues.py` and then
-  deletes the area files.
+- The first set lived in files (PR #270) and moved to Feature issues on
+  2026-11-16; the area files are in the git history.
 
 ## Lifecycle
 
@@ -326,9 +340,8 @@ agent updates it when a candidate is tested and before the release.
 
 ## Open points
 
-1. **Approval of the first set:** the maintainer approves the v0.4.0 set
-   in draft PR #270; then `scripts/req-issues.py` creates or updates the
-   Feature issues and the area files go away.
+1. **Approval of the first set:** done (PR #270 merged 2026-11-11; Feature
+   issues created 2026-11-16).
 2. **Check script** for the trace checks (reads the Feature issues and the
    pi-tests reports): after the move.
 3. **Areas `PKG`, `SEC`, `DOC`** from RFC 0003: added to the area table

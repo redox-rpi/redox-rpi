@@ -1,0 +1,8 @@
+[package]
+name = "audiotop"
+description = "Live view of the audio driver counters in /scheme/audiohw/stats, with CSV and an exit code for tests"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

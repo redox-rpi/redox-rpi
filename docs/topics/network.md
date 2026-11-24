@@ -5,13 +5,35 @@
 - LAN7800 (Pi 3B+ onboard Ethernet) in `dwc2d`: DHCP, TCP from the LAN.
 - RTL8152/RTL8153 USB Ethernet (base patch `0020`, since v0.2.0): the
   Zero 2 W gets its time over the HAT's RTL8152.
+  `scripts/adapter-dhcp-log.py` reads a serial log with times
+  (`~/bin/zero-serial`) and reports per boot the adapter and the seconds
+  to the DHCP address (REQ-NET-2, #492).
 - `devshd`: remote shell on port 2323, unencrypted, LAN only, never in
   release images.
 
 ## Next
 
+- [#622](https://github.com/redox-rpi/redox-rpi/issues/622) one network
+  config file, `/etc/net/config.toml` ([network-config.md](../network-config.md)):
+  step 1 decides which interfaces get DHCP (base `0116`); fixed address and
+  IPv6 later. The minimal card has no file and starts no network.
+- [#171](https://github.com/redox-rpi/redox-rpi/issues/171) `ifconfig`
+  showed `00:00:00:00:00:00` as the MAC address (a placeholder in upstream
+  `netutils`) and the prefix length as the netmask. Experiment
+  `ifconfig-mac` (netutils `0001`, netutils now pinned) reads the address
+  from `netcfg` (PR
+  [#172](https://github.com/redox-rpi/redox-rpi/pull/172)); passes in QEMU
+  and on the Pi (**test 194 passed**). Release images have it since
+  v0.5.0-rc1. **Person observation (2026-11-14, the user, v0.5.0-rc1
+  card on the 3B+):** a ping to the build host by name worked, and
+  `ifconfig` showed the real MAC address. Test and branch images without
+  the experiment still print zeros (Pi rows 345, 356, 401: "MAC zeros");
+  that is the upstream placeholder, not a driver fault.
+  [#444](https://github.com/redox-rpi/redox-rpi/issues/444): now default
+  netutils `0002` (branch `ifconfig-mac-default`), so zeros would mean a
+  real fault.
 - [#290](https://github.com/redox-rpi/redox-rpi/issues/290) name lookups
-  ignored the DHCP name server (fritz.box hung, bare names failed): fixed
+  ignored the DHCP name server (lan hung, bare names failed): fixed
   in relibc `0018` and base `0088` (branch `dns-dhcp`). Lookups ask the
   server in `/scheme/netcfg/resolv/nameserver`, time out after 1, 2 and
   3 s, and try names without a dot in the DHCP domain
@@ -137,7 +159,7 @@
   firmware supplicant (the driver computes the PMK itself, PBKDF2 tested
   with the IEEE vectors), `bcm2835-sdiod` stays as `network.wlan0`;
   netstack takes it as `wlan0` and dhcpd leases it. The network name and
-  passphrase come from `~/.config/redox-rpi/wifi` on homenodellm (made by
+  passphrase come from `~/.config/redox-rpi/wifi` on the build server (made by
   the user, never committed) through `wifi-config.py`. QEMU has no Wi-Fi
   chip: unit tests and a QEMU check of the settings path pass; Pi test
   #110.
@@ -184,7 +206,10 @@
   comes first. **Pi test 156 passed** (65535 buffered bytes read after a
   reset; three 382 MB downloads at 7.7 MB/s without a drop). Draft PR
   [#144](https://github.com/redox-rpi/redox-rpi/pull/144), as default
-  patch `0082`.
+  patch `0082`. The #141 part alone, on current main and with a QEMU test
+  (`scripts/test-tcp-reset-read.sh`: a raw TCP peer over QEMU's socket
+  netdev sends 64 KiB and a reset right behind it), is in its own pull
+  request, branch `tcp-reset-read`.
 
 ## Later
 

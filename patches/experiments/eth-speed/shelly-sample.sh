@@ -9,7 +9,11 @@ set -uo pipefail
 label="${1:?label}"
 n="${2:-18}"
 gap="${3:-10}"
-url="http://shellyplug-01.fritz.box/rpc/Switch.GetStatus?id=0"
+# The plug's status URL (.../rpc/Switch.GetStatus?id=0): REDOX_SHELLY_URL
+# from the environment or lab.env (scripts/lab-env.sh).
+. "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lab-env.sh"
+lab_need REDOX_SHELLY_URL
+url="$REDOX_SHELLY_URL"
 values=()
 for ((i = 0; i < n; i++)); do
     v="$(curl -s -m 15 "$url" | grep -oE '"apower":[0-9.]+' | cut -d: -f2)"

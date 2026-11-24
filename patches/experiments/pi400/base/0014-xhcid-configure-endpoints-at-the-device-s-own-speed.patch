@@ -1,0 +1,49 @@
+From 7d64e4ad99c9a6e11a85d60fe01c60c03178e5bd Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 16 Nov 2026 07:46:20 +0000
+Subject: [PATCH] xhcid: configure endpoints at the device's own speed
+
+configure_endpoints_once took the speed from the root port, which for a
+device behind a hub is the hub's speed. The Pi 400's low-speed keyboard
+behind the VL805's high-speed hub got high-speed interval, burst and
+payload values for its interrupt endpoints, and Configure Endpoint
+failed with completion code 0x11 (parameter error); both usbhidd
+processes then exited at "Failed to configure endpoints" (test 451).
+
+It now uses the speed the device was addressed with (PortState
+protocol_speed), which for a hub port comes from the hub. For a device
+on a root port the two are the same.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme.rs | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 43a017a7..01fece53 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -993,11 +993,15 @@ impl<const N: usize> Xhci<N> {
+         let lec = self.cap.lec();
+         let log_max_psa_size = self.cap.max_psa_size();
+ 
+-        let port_speed_id = self.ports.lock().unwrap()[port.root_hub_port_index()].speed();
+-        let speed_id: &ProtocolSpeed = self.lookup_psiv(port, port_speed_id).ok_or_else(|| {
+-            warn!("no speed_id");
+-            Error::new(EIO)
+-        })?;
++        // The device's own speed, as it was addressed. The root port's speed
++        // is the hub's for a device behind a hub: a low-speed keyboard's
++        // interrupt endpoints got high-speed interval and payload values and
++        // Configure Endpoint failed with a parameter error (Pi 400 test 451).
++        let speed_id: &ProtocolSpeed = self
++            .port_states
++            .get(&port)
++            .ok_or(Error::new(EBADFD))?
++            .protocol_speed;
+ 
+         {
+             let port_state = self.port_states.get(&port).ok_or(Error::new(EBADFD))?;
+-- 
+2.53.0
+

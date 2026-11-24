@@ -24,7 +24,7 @@
 # run: remove them from the list. The result is written to
 # build/relibc-tests/<build ID>.txt, the serial log next to it.
 #
-# Nightly: config/redox-relibc-tests.service checks out origin/main in
+# Nightly: a timer on the build server (set up by the admins) checks out origin/main in
 # ~/redox-rpi-relibc-tests and runs this script with --issue.
 
 set -euo pipefail

@@ -1,0 +1,95 @@
+From c78f8c12c6dc59dc3f36aefb9c77200c2f220835 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Mon, 16 Nov 2026 20:10:04 +0000
+Subject: [PATCH] aarch64: halt the Raspberry Pi through the BCM2835 watchdog
+ at kstop
+
+The Raspberry Pi firmware has no PSCI, so SYSTEM_OFF fails. kstop then
+parked only the calling CPU, and the other CPUs ran on: userspace kept
+going and the board stayed at full clock and warm.
+
+Without PSCI, kstop now does what Linux's bcm2835_wdt power-off does:
+it writes the halt partition (63) to PM_RSTS and resets through the
+watchdog. The firmware sees the partition and does not boot, so the
+board stays halted (ARM off, clocks down) until the power is cycled or
+GPIO3 (header pin 5) is pulled to ground. Without a watchdog in the
+devicetree it falls through to PSCI as before.
+
+redox-rpi #418.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/arch/aarch64/device/bcm2835_wdt.rs | 28 ++++++++++++++++++++++++++
+ src/arch/aarch64/stop.rs               |  6 ++++++
+ 2 files changed, 34 insertions(+)
+
+diff --git a/src/arch/aarch64/device/bcm2835_wdt.rs b/src/arch/aarch64/device/bcm2835_wdt.rs
+index ef8d8b8..b74e03c 100644
+--- a/src/arch/aarch64/device/bcm2835_wdt.rs
++++ b/src/arch/aarch64/device/bcm2835_wdt.rs
+@@ -11,10 +11,15 @@ use core::{
+ };
+ 
+ const PM_RSTC: usize = 0x1c;
++const PM_RSTS: usize = 0x20;
+ const PM_WDOG: usize = 0x24;
+ const PM_PASSWORD: u32 = 0x5a00_0000;
+ const PM_RSTC_WRCFG_CLR: u32 = 0xffff_ffcf;
+ const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x0000_0020;
++/// Boot partition 63 in PM_RSTS (its bits are spread over the even bits 0
++/// to 10): the Raspberry Pi firmware does not boot after a reset with it
++/// and leaves the board halted, as Linux's bcm2835_wdt power-off does.
++const PM_RSTS_RASPBERRYPI_HALT: u32 = 0x0000_0555;
+ 
+ /// Virtual base address of the watchdog, 0 if the board has none.
+ static BASE: AtomicUsize = AtomicUsize::new(0);
+@@ -41,6 +46,29 @@ pub unsafe fn reset() {
+     if base == 0 {
+         return;
+     }
++    unsafe { watchdog_reset(base) }
++}
++
++/// Halt the board: the firmware sees the halt partition after the reset and
++/// does not boot. The ARM cores are off and the clocks down until the power
++/// is cycled or GPIO3 (header pin 5) is pulled to ground. Returns only if
++/// there is no watchdog.
++pub unsafe fn halt() {
++    let base = BASE.load(Ordering::Acquire);
++    if base == 0 {
++        return;
++    }
++    unsafe {
++        let rsts = read_volatile((base + PM_RSTS) as *const u32);
++        write_volatile(
++            (base + PM_RSTS) as *mut u32,
++            PM_PASSWORD | (rsts & 0x00ff_ffff) | PM_RSTS_RASPBERRYPI_HALT,
++        );
++        watchdog_reset(base)
++    }
++}
++
++unsafe fn watchdog_reset(base: usize) -> ! {
+     unsafe {
+         write_volatile((base + PM_WDOG) as *mut u32, PM_PASSWORD | 10);
+         let rstc = read_volatile((base + PM_RSTC) as *const u32);
+diff --git a/src/arch/aarch64/stop.rs b/src/arch/aarch64/stop.rs
+index 42b9cb2..f3ada33 100644
+--- a/src/arch/aarch64/stop.rs
++++ b/src/arch/aarch64/stop.rs
+@@ -39,6 +39,12 @@ pub unsafe fn emergency_reset() -> ! {
+ 
+ pub unsafe fn kstop(_token: &mut CleanLockToken) -> ! {
+     println!("kstop");
++    // Boards without PSCI, like the Raspberry Pi, halt through their
++    // watchdog instead of running on with one CPU parked (#418).
++    if !psci::available() {
++        println!("kstop: halting through the BCM2835 watchdog");
++        unsafe { bcm2835_wdt::halt() };
++    }
+     match psci::system_off() {
+         Ok(()) => unreachable!(),
+         Err(error) => halt_after_failed_psci("SYSTEM_OFF", error),
+-- 
+2.53.0
+
