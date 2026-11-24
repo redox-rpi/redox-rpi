@@ -1,0 +1,6 @@
+# What scripts/console-image.sh --root-on-card leaves out of the initfs:
+# root is a partition of the card, so there is no live disk for lived.
+# Paths relative to the initfs root; a removed service also leaves every
+# unit that names it. # starts a comment.
+bin/lived
+lib/init.d/10_lived.service
