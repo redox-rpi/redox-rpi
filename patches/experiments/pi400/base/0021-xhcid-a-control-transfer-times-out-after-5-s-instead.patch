@@ -1,4 +1,4 @@
-From f664158fd71a89ff84a9f124684bf460c240b38a Mon Sep 17 00:00:00 2001
+From 5b873f77fed835b04258787dedd221a94f1489b3 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 24 Nov 2026 19:42:27 +0000
 Subject: [PATCH] xhcid: a control transfer times out after 5 s instead of
@@ -15,13 +15,43 @@ default control endpoint, wait briefly for the Stopped event, move its
 dequeue pointer past the transfer and return ETIMEDOUT to the driver.
 The dequeue move is shared with the stall recovery.
 
+The deadline is a sleeping thread that wakes block_on's thread waker;
+it must not wake after it is dropped, or the next future on that thread
+gets a spurious poll. An EventTrbFuture polled again before its event
+now waits instead of registering a second state with the IRQ reactor:
+the stale second state took the event of a later transfer on the same
+TRB, and that transfer's waiter never finished (pi-tests row 623, the
+hub's port status request).
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/xhcid/src/xhci/scheme.rs | 117 ++++++++++++++++++++++++++-
- 1 file changed, 115 insertions(+), 2 deletions(-)
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs |  10 ++
+ drivers/usb/xhcid/src/xhci/scheme.rs      | 132 +++++++++++++++++++++-
+ 2 files changed, 140 insertions(+), 2 deletions(-)
 
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index 4214d1f1..e2be0c93 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -651,6 +651,16 @@ impl Future for EventTrbFuture {
+             } => match state.message.lock().unwrap().take() {
+                 Some(message) => message,
+ 
++                // Polled again before the event came (a spurious wake-up):
++                // the reactor still holds the state registered on the first
++                // poll, a clone of `message`. Registering it a second time
++                // would leave a stale state behind that later takes the
++                // event of another transfer on the same TRB, whose waiter
++                // then never finishes (pi-tests row 623).
++                None if Arc::strong_count(&state.message) > 1 => {
++                    return task::Poll::Pending;
++                }
++
+                 None => {
+                     // Register state with IRQ reactor
+                     trace!("Send state {:X?}", state.state_kind);
 diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
-index 77e03036..5aeed9b1 100644
+index 77e03036..b68f20d5 100644
 --- a/drivers/usb/xhcid/src/xhci/scheme.rs
 +++ b/drivers/usb/xhcid/src/xhci/scheme.rs
 @@ -25,6 +25,11 @@ use std::{cmp, fmt, io, str};
@@ -116,7 +146,7 @@ index 77e03036..5aeed9b1 100644
          // `restart_endpoint` and `set_tr_deque_ptr` look the endpoint up in
          // the configuration, where endpoint 0 is not; DCI 1 is its index.
          let deque_ptr_and_cycle = {
-@@ -2993,3 +3053,56 @@ where
+@@ -2993,3 +3053,71 @@ where
          a / b
      }
  }
@@ -144,6 +174,17 @@ index 77e03036..5aeed9b1 100644
 +    }
 +}
 +
++impl Drop for Deadline {
++    // The sleeping thread must not wake the task after this deadline is
++    // gone: the waker is block_on's thread waker, and a late wake-up would
++    // poll whatever future that thread waits on next (a spurious poll).
++    fn drop(&mut self) {
++        let mut shared = self.shared.lock().unwrap();
++        shared.0 = true;
++        shared.1 = None;
++    }
++}
++
 +impl Future for Deadline {
 +    type Output = ();
 +    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
@@ -162,6 +203,10 @@ index 77e03036..5aeed9b1 100644
 +                std::thread::sleep(duration);
 +                let waker = {
 +                    let mut shared = shared.lock().unwrap();
++                    if shared.0 {
++                        // Dropped already (see Drop).
++                        return;
++                    }
 +                    shared.0 = true;
 +                    shared.1.take()
 +                };
