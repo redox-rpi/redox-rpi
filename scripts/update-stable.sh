@@ -77,6 +77,8 @@ PI="$REDOX_PI"
 SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
+# Serial logs of the lab Pis, read for the panic KPI (#675).
+SERIAL_LOGS="${SERIAL_LOGS:-$HOME/redox-rpi/logs}"
 ISSUE_TITLE="Nightly: main fails on the Pi"
 # Seconds from the reset to "redox-rpi: network boot", and to the login prompt
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
@@ -144,8 +146,12 @@ run_kpis() {
     kpis_dir="$(mktemp -d)"
     local clippy=()
     [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    # Panic KPI (#675): the kernel source of the last build and the serial logs.
+    local panic=()
+    [ -d upstream/redox/recipes/core/kernel/source/src ] && panic+=(--kernel upstream/redox/recipes/core/kernel/source)
+    [ -d "$SERIAL_LOGS" ] && panic+=(--serial-logs "$SERIAL_LOGS")
     if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
-        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" "${panic[@]}" \
         > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
         log "quality KPIs collected"
     else
