@@ -246,14 +246,30 @@ redox-rpi/redox-rpi. Code goes through a branch and a pull request, docs
 straight to the default branch. A repository writes down only what differs
 (for example its licence or build), and links here for the rest.
 
+The repositories (this table is the one list; the organisation profile
+links here):
+
+| Repository | What | Owner session |
+|---|---|---|
+| [redox-rpi](https://github.com/redox-rpi/redox-rpi) | the OS: patches, drivers, init, images, firmware glue, package manager side, driver test tools; process docs | project lead; topics as in [Topic owners](#topic-owners) |
+| [apps](https://github.com/redox-rpi/apps) | ported software and our own applications as packages, built against a pinned redox-rpi release (maintainer decision, 2026-11-24) | Release and CI; each application's topic owner owns its recipe |
+| [pi-tests](https://github.com/redox-rpi/pi-tests) | Pi test queue, reports, lab | V&V |
+| [relibc](https://github.com/redox-rpi/relibc) | relibc with our patches, for analysis and tests | Release and CI |
+| [drivers](https://github.com/redox-rpi/drivers) | drivers | no owner yet (project lead) |
+| [rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware) | open VPU boot firmware ([firmware PMP](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md)) | Open firmware |
+| [vc4d](https://github.com/redox-rpi/vc4d) | VideoCore IV display and 3D driver | Graphics |
+| [tinycc](https://github.com/redox-rpi/tinycc) | TinyCC fork: Redox on the Pi and the VC4 backend | VC4 Tools (VC4 backend), TCC (TinyCC on Redox) |
+| [resim](https://github.com/redox-rpi/resim) | VC4 simulator | VC4 Tools |
+| [vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain) | GCC toolchain for the VPU | VC4 Tools |
+| [.github](https://github.com/redox-rpi/.github) | organisation profile, shared issue and PR templates | Process |
+
 When the maintainer creates a new repository, the Process session:
-1. adds the ruleset `protect-main` (no force push, no deletion of the
-   default branch)
+1. asks the maintainer to add the ruleset `protect-main` (a repository
+   setting): target the default branch (`~DEFAULT_BRANCH`), rules "Restrict
+   deletions" and "Block force pushes", enforcement active, no bypass
 2. adds a `CLAUDE.md` that links to this plan and names the owning session,
    and a README with the licence
-3. adds the repository to the table in the organisation profile
-   ([.github](https://github.com/redox-rpi/.github), `profile/README.md`)
-   and its owner to [Topic owners](#topic-owners)
+3. adds the repository to the table above
 
 A new agent session gets this plan as the first link in its brief and
 keeps its rules in its own memory.
