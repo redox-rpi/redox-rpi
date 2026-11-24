@@ -15,7 +15,9 @@ both, the way of pi-tests rows 346-383, without a power cycle:
   2. rbc-load.sh --enter G.bin c1000000 chainmon: G runs, its monitor opens.
   3. The commands below on G; `fl START.ELF` timed from sending to its "ok".
   4. rbc-load.sh T.bin c1000000 chainmon from G's monitor; the same commands.
-  5. `reset` (watchdog) back to the normal boot, then "redox login:".
+  5. `reset` (watchdog) back to the normal boot, then "redox login:" and
+     devsh answering (a login prompt without USB, #576, leaves no
+     network and no devsh: that counts as not back).
 
 Never opens the serial port for reading (redox-serial.service is the only
 reader; replies come from ~/redox-rpi/logs/serial.log) and never writes to
@@ -221,6 +223,16 @@ def main():
         back = log_size()
         send("reset")
         ok = wait_log(back, r"redox login:", 240)
+        if ok:
+            # Login alone is not enough: USB (and with it the LAN7800 and
+            # devsh) may be missing (#576). The network comes up a few
+            # seconds after the prompt.
+            end = time.time() + 120
+            while not (ok := "net-ok" in devsh("echo net-ok", 15)) and time.time() < end:
+                time.sleep(10)
+            if not ok:
+                result["note"] = (result["note"] + "; " if result["note"] else "") + \
+                    "redox login: but no devsh answer within 120 s (no USB/network? #576)"
     result["pi_back"] = ok
     result["step"] += ", back on Redox" if ok else ", NOT back on Redox"
     with open(os.path.splitext(args.out)[0] + "-serial.log", "w") as f:
