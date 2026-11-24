@@ -1,4 +1,4 @@
-From a24d43790c4afeecc763059f087a1424390a2b9c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 10:44:21 +0000
 Subject: [PATCH] usbhidd: ISO keys # and < > as dwc2d sends them (redox-rpi
@@ -9,14 +9,14 @@ and the key right of the left Shift as K_APP. inputd keymaps expect
 K_BACKSLASH and 0x56, as dwc2d sends them. Now German and UK
 keyboards type # ~ and < > on the Pi 400 too.
 ---
- drivers/input/usbhidd/src/main.rs | 10 ++++++----
+ drivers/input/usbhidd/src/input/keyboard.rs | 10 ++++++----
  1 file changed, 6 insertions(+), 4 deletions(-)
 
-diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
-index 7aaf479c..5b038cbc 100644
---- a/drivers/input/usbhidd/src/main.rs
-+++ b/drivers/input/usbhidd/src/main.rs
-@@ -68,8 +68,9 @@ fn send_key_event(display: &mut ProducerHandle, usage_page: u16, usage: u16, pre
+diff --git a/drivers/input/usbhidd/src/input/keyboard.rs b/drivers/input/usbhidd/src/input/keyboard.rs
+index 33ba90d1..8d8ec2b1 100644
+--- a/drivers/input/usbhidd/src/input/keyboard.rs
++++ b/drivers/input/usbhidd/src/input/keyboard.rs
+@@ -55,8 +55,9 @@ pub(crate) fn send_key_event(
              0x2F => orbclient::K_BRACE_OPEN,
              0x30 => orbclient::K_BRACE_CLOSE,
              0x31 => orbclient::K_BACKSLASH,
@@ -28,7 +28,7 @@ index 7aaf479c..5b038cbc 100644
              0x33 => orbclient::K_SEMICOLON,
              0x34 => orbclient::K_QUOTE,
              0x35 => orbclient::K_TICK,
-@@ -119,8 +120,9 @@ fn send_key_event(display: &mut ProducerHandle, usage_page: u16, usage: u16, pre
+@@ -106,8 +107,9 @@ pub(crate) fn send_key_event(
              0x61 => orbclient::K_NUM_9,
              0x62 => orbclient::K_NUM_0,
              // 0x62 num .

@@ -1,4 +1,4 @@
-From 38c3f5593c76d02a5275dac078715d05b5f5923f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 22 Nov 2026 18:35:16 +0000
 Subject: [PATCH] randd: seed from the BCM2835 hardware RNG on the Raspberry Pi
@@ -9,27 +9,12 @@ interrupt mask as in Linux bcm2835-rng), and reads the 32-byte seed from
 it. One line on success; the old NOT SECURE line only without a usable
 generator (redox-rpi #618).
 ---
- Cargo.lock        |  2 +
  randd/Cargo.toml  |  5 +++
  randd/src/main.rs | 99 +++++++++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 106 insertions(+)
+ 2 files changed, 104 insertions(+)
 
-diff --git a/Cargo.lock b/Cargo.lock
-index acc3751..ef62d55 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -2062,7 +2062,9 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
- name = "randd"
- version = "0.1.0"
- dependencies = [
-+ "common",
-  "daemon",
-+ "fdt 0.2.0-alpha1",
-  "libredox",
-  "rand_chacha 0.2.2",
-  "rand_core 0.5.1",
 diff --git a/randd/Cargo.toml b/randd/Cargo.toml
-index 6ff2d7e..47e52c7 100644
+index 6ff2d7e6..47e52c74 100644
 --- a/randd/Cargo.toml
 +++ b/randd/Cargo.toml
 @@ -17,5 +17,10 @@ scheme-utils = { path = "../scheme-utils" }
@@ -44,7 +29,7 @@ index 6ff2d7e..47e52c7 100644
  [lints]
  workspace = true
 diff --git a/randd/src/main.rs b/randd/src/main.rs
-index e286525..057f46d 100644
+index 986307fd..2e23317e 100644
 --- a/randd/src/main.rs
 +++ b/randd/src/main.rs
 @@ -73,6 +73,9 @@ fn create_rdrand_seed() -> [u8; SEED_BYTES] {

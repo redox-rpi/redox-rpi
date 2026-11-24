@@ -1,4 +1,4 @@
-From daed91bf33ba291a90caddcbd01c2be0358f7c66 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Mon, 23 Nov 2026 19:52:06 +0000
 Subject: [PATCH] pkg: download next to the install path and remove the
@@ -8,24 +8,45 @@ pkg always downloaded into /tmp/pkg_download, also with --root, and never remove
 
 Now pkg downloads into <install path>/tmp/pkg_download (for / this is /tmp/pkg_download, as before) and removes that directory when the command ends, after a commit or a rollback.
 ---
- pkg-cli/src/main.rs | 17 +++++++++++++++--
- 1 file changed, 15 insertions(+), 2 deletions(-)
+ pkg-cli/src/main.rs | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
 
 diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
-index 25181b7..c5fd2da 100644
+index cdaa1ed..bf6c995 100644
 --- a/pkg-cli/src/main.rs
 +++ b/pkg-cli/src/main.rs
-@@ -165,6 +165,9 @@ fn main() {
+@@ -185,8 +185,18 @@ fn main() {
+         }
+     }
+ 
+-    let mut library =
+-        LibraryBuilder::new(install_path).with_callback(Rc::new(RefCell::new(callback)));
++    // Download next to the install path, not always to /tmp: with --root on
++    // a data partition the packages must not fill a small root filesystem in
++    // RAM. For / this is /tmp/pkg_download, as before; --user keeps its
++    // runtime directory.
++    let mut path_index = pkg::PathIndex::from_base_path(install_path.clone());
++    if !path_index.use_xdg {
++        path_index.download_dir = download_dir(&install_path);
++    }
++    let download = path_index.download_dir.clone();
++    let mut library = LibraryBuilder::new(&install_path)
++        .with_install_path_index(path_index)
++        .with_callback(Rc::new(RefCell::new(callback)));
+     if args.nocheck {
+         library = library.with_nocheck(args.nocheck)
+     }
+@@ -218,6 +228,9 @@ fn main() {
              Err(e) => break Err(e),
          }
      };
 +    // The downloaded packages are installed (or the transaction was rolled
 +    // back): either way they only take space now, so remove them.
-+    let _ = std::fs::remove_dir_all(download_dir(std::path::Path::new(install_path)));
++    let _ = std::fs::remove_dir_all(&download);
      if let Err(err) = err {
          report_error(color_support_stderr, &err);
          if matches!(err, pkg::backend::Error::MissingPermissions) {
-@@ -188,6 +191,11 @@ fn main() {
+@@ -241,6 +254,11 @@ fn main() {
      }
  }
  
@@ -37,22 +58,6 @@ index 25181b7..c5fd2da 100644
  fn report_error(color_support_stderr: bool, err: &Error) {
      if color_support_stderr {
          eprintln!(
-@@ -232,8 +240,13 @@ fn execute_command(
-         }
-         _ => {}
-     }
--    let mut library =
--        Library::new_with_builder(library, |r| r.update_remotes(target, &install_path))?;
-+    let mut library = Library::new_with_builder(library, |r| {
-+        // Download next to the install path, not always to /tmp: with
-+        // --root on a data partition the packages must not fill a small
-+        // root filesystem in RAM. For / this is /tmp/pkg_download, as before.
-+        r.set_download_path(download_dir(&install_path));
-+        r.update_remotes(target, &install_path)
-+    })?;
-     let library = &mut library;
-     match cli.command {
-         Commands::Install { packages, all } => {
 -- 
 2.53.0
 

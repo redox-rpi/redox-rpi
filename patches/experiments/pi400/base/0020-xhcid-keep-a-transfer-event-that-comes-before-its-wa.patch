@@ -1,4 +1,4 @@
-From 715bd031ba141f6235b2c09752eb9a041025b307 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 16:50:00 +0000
 Subject: [PATCH] xhcid: keep a transfer event that comes before its waiter
@@ -20,13 +20,13 @@ logged for the first 10, then every 1000th.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- drivers/usb/xhcid/src/xhci/irq_reactor.rs | 79 +++++++++++++++++++----
+ .../xhcid/src/xhci/transfer/irq_reactor.rs    | 79 ++++++++++++++++---
  1 file changed, 68 insertions(+), 11 deletions(-)
 
-diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
-index 9350980c..4214d1f1 100644
---- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
-+++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+diff --git a/drivers/usb/xhcid/src/xhci/transfer/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/transfer/irq_reactor.rs
+index da5f70b1..7f5d49e2 100644
+--- a/drivers/usb/xhcid/src/xhci/transfer/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/transfer/irq_reactor.rs
 @@ -96,6 +96,13 @@ pub struct IrqReactor<const N: usize> {
      irq_receiver: Receiver<NewPendingTrb>,
      device_enumerator_sender: Sender<DeviceEnumerationRequest>,
