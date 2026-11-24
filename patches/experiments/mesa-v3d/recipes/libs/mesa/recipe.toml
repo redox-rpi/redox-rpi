@@ -9,13 +9,9 @@ dependencies = [
     "expat",
     "libdrm",
     "liborbital",
-    "llvm21",
     "zlib",
     # disabled, see https://gitlab.redox-os.org/redox-os/redox/-/work_items/1883
     # "libglvnd",
-]
-dev-dependencies = [
-    "llvm21.dev",
 ]
 script = """
 DYNAMIC_INIT
@@ -43,12 +39,13 @@ if grep -q "^        return screen->disk_cache;" "$V3DS"; then sed -i \\
 
 #TODO: Should be CPPFLAGS but cookbook_meson isn't reading it
 export CFLAGS+=" -DHAVE_PTHREAD=1 -I${COOKBOOK_SYSROOT}/include/libdrm"
-export LLVM_CONFIG="${TARGET}-llvm-config"
 export LDFLAGS+=" -lorbital"
 
 if [ "${COOKBOOK_DYNAMIC}" = "1" ]; then
     # TODO: Fix wayland-scanner and enable wayland platform
-    COOKBOOK_MESON_FLAGS+=(-Dshared-llvm=enabled -Degl=enabled -Dplatforms=redox -Dvulkan-drivers=swrast)
+    # G3 (#669): no LLVM and no lavapipe, so Mesa fits a netboot image
+    # (with LLVM, mesa.pkgar alone is about 590 MB).
+    COOKBOOK_MESON_FLAGS+=(-Degl=enabled -Dplatforms=redox -Dvulkan-drivers=)
 else
     # No vulkan, lavapipe or EGL which is strictly requires shared library support
     COOKBOOK_MESON_FLAGS+=(-Dshared-llvm=disabled -Dshared-glapi=disabled -Dgbm=disabled -Dplatforms=)
@@ -57,13 +54,12 @@ fi
 cookbook_meson \
     -Ddri-drivers-path=/usr/lib/dri \
     -Dglx=disabled \
-    -Dllvm=enabled \
+    -Dllvm=disabled \
     -Dosmesa=true \
     -Dshader-cache=disabled \
     -Dgallium-drivers=swrast,v3d -Dtools=
 
-# Hack to add LLVM libs, the list can be seen from meson log and check for matches $("${LLVM_CONFIG}" --libs)
-LLVMLIBS="-lLLVMBitReader -lLLVMCore -lLLVMExecutionEngine -lLLVMInstCombine -lLLVMMCDisassembler" 
-LLVMLIBS+=" -lLLVMMCJIT -lLLVMScalarOpts -lLLVMTransformUtils -lLLVMCoroutines -lLLVMLTO"
-sed -i "s/ -lOSMesa / -lOSMesa ${LLVMLIBS} -lstdc++ /" "${COOKBOOK_STAGE}/usr/lib/pkgconfig/osmesa.pc"
+# G3 (#669): the build links every kmsro driver name to the same
+# megadriver, and the image would get each as a copy. Keep v3d and swrast.
+find "${COOKBOOK_STAGE}/usr/lib/dri" -name "*_dri.so" ! -name v3d_dri.so ! -name swrast_dri.so -delete
 """

@@ -9,6 +9,11 @@ Mesa's v3d driver talks DRM: it finds the render node
 and syncobj ioctls. On Redox these reach `v3dd` (vc4d) through relibc, so
 this experiment needs experiments `v3dd` and `v3d-ioctl`.
 
+Mesa is built without LLVM (`swrast` is softpipe, no lavapipe): with
+LLVM, the mesa package alone was about 590 MB and the 256 MB netboot
+image ran out of space. Of the driver names the build links to the same
+megadriver, only `v3d_dri.so` and `swrast_dri.so` stay.
+
 Three source changes in the recipe script (they would become patches in a
 real port):
 
