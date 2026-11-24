@@ -1,0 +1,95 @@
+From 3097627b117f4720da852a11457421ba55137fd1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 09:30:16 +0000
+Subject: [PATCH 118/119] dwc2d: LAN7800 starts the next receive transfer
+ before taking out the frames (#661)
+
+At 100 Mbit/s the 12 KiB receive FIFO of the LAN7800 fills in about 1 ms.
+The bulk IN channel was armed again only after the frames of the last
+transfer were copied out. Two receive buffers: the next transfer starts
+in the other one first.
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 29 +++++++++++++++++++++--------
+ 1 file changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index 1ca1694..fd3f533 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -428,7 +428,10 @@ pub struct Lan78xx {
+     mac: [u8; 6],
+     in_pid: u32,
+     out_pid: u32,
+-    rx: Dma<[u8; RX_BUF_SIZE]>,
++    /// Two receive buffers: the next transfer starts in one while the
++    /// frames of the other are taken out (#661).
++    rx: [Dma<[u8; RX_BUF_SIZE]>; 2],
++    rx_next: usize,
+     tx: Dma<[u8; TX_BUF_SIZE]>,
+     rx_armed: bool,
+     frames: VecDeque<Vec<u8>>,
+@@ -442,7 +445,11 @@ impl Lan78xx {
+             mac,
+             in_pid: PID_DATA0,
+             out_pid: PID_DATA0,
+-            rx: Dma::new([0; RX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            rx: [
++                Dma::new([0; RX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++                Dma::new([0; RX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
++            ],
++            rx_next: 0,
+             tx: Dma::new([0; TX_BUF_SIZE]).expect("dwc2d: DMA allocation failed"),
+             rx_armed: false,
+             frames: VecDeque::new(),
+@@ -468,7 +475,7 @@ impl Lan78xx {
+             max_packet: if dir_in { self.f.max_packet_in } else { self.f.max_packet_out },
+             low_speed: false,
+             pid: if dir_in { self.in_pid } else { self.out_pid },
+-            buf_phys: if dir_in { self.rx.physical() } else { self.tx.physical() },
++            buf_phys: if dir_in { self.rx[self.rx_next].physical() } else { self.tx.physical() },
+             len,
+         }
+     }
+@@ -479,18 +486,19 @@ impl Lan78xx {
+         self.rx_armed = true;
+     }
+ 
+-    /// Split a completed bulk IN transfer into frames.
+-    fn parse_rx(&mut self, len: usize) {
++    /// Split a completed bulk IN transfer in buffer `which` into frames.
++    fn parse_rx(&mut self, which: usize, len: usize) {
++        let rx = &self.rx[which];
+         let mut off = 0;
+         while off + RX_HEADER_LEN <= len {
+-            let cmd_a = u32::from_le_bytes([self.rx[off], self.rx[off + 1], self.rx[off + 2], self.rx[off + 3]]);
++            let cmd_a = u32::from_le_bytes([rx[off], rx[off + 1], rx[off + 2], rx[off + 3]]);
+             off += RX_HEADER_LEN;
+             let frame_len = (cmd_a & RX_CMD_A_LEN_MASK) as usize;
+             if frame_len < ETHER_CRC_LEN || off + frame_len > len {
+                 break;
+             }
+             if cmd_a & RX_CMD_A_RED == 0 {
+-                self.frames.push_back(self.rx[off..off + frame_len - ETHER_CRC_LEN].to_vec());
++                self.frames.push_back(rx[off..off + frame_len - ETHER_CRC_LEN].to_vec());
+             }
+             // The next header starts on a 4-byte boundary.
+             off = (off + frame_len + 3) & !3;
+@@ -504,9 +512,14 @@ impl Lan78xx {
+         match self.hc.poll(RX_CHANNEL, RX_BUF_SIZE) {
+             None => {}
+             Some(Ok((len, next_pid))) => {
++                // At 100 Mbit/s the 12 KiB receive FIFO fills in about
++                // 1 ms: start the next transfer into the other buffer first,
++                // then take the frames out of this one.
+                 self.in_pid = next_pid;
+-                self.parse_rx(len);
++                let done = self.rx_next;
++                self.rx_next ^= 1;
+                 self.arm_rx();
++                self.parse_rx(done, len);
+             }
+             Some(Err(_)) => self.arm_rx(),
+         }
+-- 
+2.53.0
+

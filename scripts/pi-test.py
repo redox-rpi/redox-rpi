@@ -60,6 +60,8 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from devsh import ANSI, SHELL_PROMPT, STEP_TIMEOUT, read_until  # noqa: E402
 
 BEGIN, END = "PITEST-BEGIN", "PITEST-END"
+# The prompt anywhere in what follows, not only at its end.
+PROMPT_ANYWHERE = re.compile(rb"\S+:\S*# ")
 
 
 class Shell:
@@ -96,11 +98,15 @@ class Shell:
         line = f"echo {BEGIN}; {command}; echo {END}"
         self.sock.sendall(line.encode() + b"\r")
         # Ion redraws its prompt while the line is typed, so wait for the
-        # end marker on a line of its own instead of the next prompt.
-        end_line = re.compile(rb"[\r\n]" + END.encode() + rb"\r?\n")
+        # end marker at the end of a line instead of the next prompt; only
+        # the echo of the typed line has it after "echo ". Ion's notice that
+        # a background job ended can land in front of the marker on the
+        # same line (#405).
+        end_line = re.compile(rb"(?<!echo )" + END.encode() + rb"\r?\n")
         data, deadline = b"", time.time() + timeout
         self.sock.settimeout(1)
         begin_line = re.compile(rb"[\r\n]" + BEGIN.encode() + rb"\r?\n")
+        at_prompt = False
         while time.time() < deadline and not end_line.search(ANSI.sub(b"", data).replace(b"\x00", b"")):
             try:
                 chunk = self.sock.recv(65536)
@@ -111,18 +117,29 @@ class Shell:
                 text = ANSI.sub(b"", data).replace(b"\x00", b"")
                 after = text[begin_line.search(text).end():] if begin_line.search(text) else b""
                 if after and SHELL_PROMPT.search(after.rstrip(b" ") + b" "):
+                    at_prompt = True
                     break
                 continue
             if not chunk:
                 break
             data += chunk
-        read_until(self.sock, SHELL_PROMPT, 5)
+        # Without the end marker the prompt is already read: waiting for
+        # another one only adds 5 s to every failed line. After the marker,
+        # stop at the prompt even when a background job's notice follows it
+        # (#405).
+        if not at_prompt:
+            read_until(self.sock, PROMPT_ANYWHERE, 5)
         text = ANSI.sub(b"", data).decode(errors="replace")
         lines = [l.replace("\x00", "").strip() for l in text.replace("\r", "\n").split("\n")]
         if BEGIN not in lines:
             raise RuntimeError(f"no output for: {command}\n{text[-1500:]!r}")
-        stop = lines.index(END) if END in lines else len(lines)
-        out = [l for l in lines[lines.index(BEGIN) + 1 : stop] if "root:" not in l]
+        start = lines.index(BEGIN) + 1
+        stop = next((i for i in range(start, len(lines))
+                     if lines[i].endswith(END) and "echo " not in lines[i]), len(lines))
+        out = lines[start:stop]
+        if stop < len(lines) and lines[stop] != END:
+            out.append(lines[stop][: -len(END)])
+        out = [l for l in out if "root:" not in l]
         # Ion marks output without a final newline with a "⏎" line.
         return [l for l in out if l and not l.startswith("⏎")]
 
