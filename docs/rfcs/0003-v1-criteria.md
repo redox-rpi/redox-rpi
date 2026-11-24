@@ -243,7 +243,7 @@ filesystem corrupt.
   2. After each cut the Pi boots to login and the root and data
      filesystems mount without error.
   3. Data written and synced more than 2 s before the cut is there
-     ([REQ-SD-2](../requirements/sdcard.md#req-sd-2-small-writes)).
+     ([REQ-SD-2](https://github.com/redox-rpi/redox-rpi/issues/502)).
 - Verification: test, automated with the Shelly plug.
 
 #### REQ-STAB-8 Reboot cycles
@@ -300,7 +300,7 @@ password.
   2. SSH refuses empty passwords, and root login with a password is off by
      default.
   3. devshd is in no image a user can download
-     ([REQ-REL-1](../requirements/release.md#req-rel-1-no-remote-shell-in-the-release-image)).
+     ([REQ-REL-1](https://github.com/redox-rpi/redox-rpi/issues/496)).
 - Verification: test, automated (SSH attempts with the defaults on a fresh
   image), inspection of the image.
 

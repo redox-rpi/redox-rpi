@@ -171,7 +171,7 @@ HAT. Analysis only, no code yet (updated 2026-11-04).
   packets) against endpoint 0 and the function (`cargo test`), plus unit
   tests of the descriptors and of NCM's NTB encoding and decoding. The QEMU
   tests keep checking that host mode is unchanged. The real test: a Zero 2
-  W cabled to homenodellm (powered by it; `cdc_ether`/`cdc_ncm` on the
+  W cabled to the build server (powered by it; `cdc_ether`/`cdc_ncm` on the
   Linux side, tests over SSH without a person), booted from SD or by
   rpiboot over the same cable; a second USB serial adapter for its console;
   one person visit to set it up and try a Mac and a Windows PC.
@@ -183,7 +183,7 @@ HAT. Analysis only, no code yet (updated 2026-11-04).
 | 3 | Endpoint 0, standard requests, descriptors | ~300 lines |
 | 4 | Host model with `cargo test` for steps 2–3 | ~300 lines |
 | 5 | CDC-ECM function, `network.usb_gadget`, fixed address | ~400 lines |
-| 6 | Zero 2 W bench at homenodellm, first Linux test | setup, 1 person visit |
+| 6 | Zero 2 W bench at the build server, first Linux test | setup, 1 person visit |
 | 7 | Small DHCP server for the computer's side | ~250 lines |
 | 8 | CDC-NCM: NTB16 framing, Microsoft OS 2.0 descriptors, tests | ~450 lines |
 | 9 | Mac and Windows check | 1 person visit |

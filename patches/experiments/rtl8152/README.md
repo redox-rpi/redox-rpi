@@ -31,8 +31,11 @@ uses no interrupt endpoint.
   has a link** (base `0023`). Without a cable on the adapter, the LAN7800
   is used, so a hub left plugged in does not cut a Pi 3B+ off the network
   (seen in Pi test #5). The network scheme is then `network.usb_rtl8152`;
-  the other adapter stays initialized but unused. `dhcpd` does not retry
-  when a link comes up after boot.
+  the other adapter stays initialized but unused. `dhcpd` used to give up
+  after its first attempts; it now keeps trying (three attempts about
+  every 35 s, seen in Zero 2 W serial logs of 2026-11-16), so a cable
+  plugged in after boot should get an address on the next round (not
+  tested with an RTL adapter yet, #492).
 
 Patch `0020` applies after the default patches (including `rpi-firmwared`,
 base `0018`) and after `sdhost-driver`, so `--experiment sdhost-driver
@@ -55,7 +58,7 @@ bcdDevice 31.01) on the build host, passed through with
 `--usb-host 0bda:8153`, cable in the LAN. `dwc2d` reports `RTL8153B chip
 version 6010` and the chip's own MAC `6c:6e:07:1a:28:46`, `network.usb_rtl8152`
 is there, the guest gets its address from the router by DHCP, and
-`ping -c 5 192.168.178.1` gets 5 of 5 answers (3.4–7.2 ms). So register
+`ping -c 5 <router>` gets 5 of 5 answers (3.4–7.2 ms). So register
 access, chip init, RX aggregation and TX work on a real chip. The link was
 not up within the 5 s wait (gigabit autonegotiation), but came up before
 DHCP. QEMU puts the device behind its own full-speed hub and does not care
@@ -99,7 +102,7 @@ Then, with the adapter's cable in the LAN (the guest gets its own DHCP
 address from the router, with the adapter's MAC):
 
 ```bash
-scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-host 0bda:8153 --run "ls /scheme" --run "ping -c 5 192.168.178.1"
+scripts/qemu-raspi3b.sh --image <harddrive.img> --usb-host 0bda:8153 --run "ls /scheme" --run "ping -c 5 <router>"
 ```
 
 ## Test on hardware
@@ -121,7 +124,7 @@ clone of your own (see CONTRIBUTING.md, "Branches").
 2. Build and stage, with the stable diagnostics image as base:
    ```bash
    scripts/build-image.sh --experiment ldso-diagnostics --experiment rtl8152
-   scripts/netboot.sh --server 192.168.178.120 --tftp-dir /srv/tftp --image upstream/redox/build/aarch64/minimal/harddrive.img
+   scripts/netboot.sh --server <build-server> --tftp-dir /srv/tftp --image upstream/redox/build/aarch64/minimal/harddrive.img
    ```
 3. Reboot the Pi and read the serial console. Expected:
    ```text

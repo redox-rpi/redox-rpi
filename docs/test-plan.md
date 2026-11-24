@@ -67,15 +67,10 @@ Without a pull request, straight to main: the queue and reports
 (`docs/test-plan.md`, `docs/test-reports.md`), topic pages and other
 docs-only or script fixes.
 
-## Worktrees on the Mac
+## Worktrees
 
-Rule since 2026-11-07 (maintainer's decision), so `~/Developement` stays tidy:
-
-- The main checkout stays at `~/Developement/RedoxOS`. Don't move it: the
-  sessions and their memory are tied to that path.
-- Extra worktrees go only under `~/Developement/redox-wt/<name>` (or the
-  app's own `.claude/worktrees/` or a session scratchpad), never directly
-  in `~/Developement`.
+- Extra worktrees go where the admins of the machine say, never next to
+  the main checkout, and the main checkout is never moved.
 - Push the branch before you leave a worktree. The session that made a
   worktree removes it (`git worktree remove`) once its pull request is
   merged or closed.

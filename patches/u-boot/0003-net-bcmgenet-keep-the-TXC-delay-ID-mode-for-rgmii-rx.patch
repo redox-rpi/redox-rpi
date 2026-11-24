@@ -1,0 +1,39 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] net: bcmgenet: keep the TXC delay (ID mode) for rgmii-rxid
+
+The driver turned the MAC's internal TXC delay off (ID_MODE_DIS) for
+both "rgmii" and "rgmii-rxid". With "rgmii-rxid" the PHY delays only
+RXC, and Linux's PHY driver turns the PHY's own TXC delay off, so the
+MAC must add it: Linux (bcmmii.c) sets ID_MODE_DIS for plain "rgmii"
+only. Do the same, and clear the bit otherwise.
+
+The Raspberry Pi 4 and 400 use "rgmii-rxid". Without any TXC delay the
+transmit timing is marginal: on the Pi 400, network boots failed at
+random with the server holding unacknowledged data, while the Pi's MAC
+counted no receive errors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+diff --git a/drivers/net/bcmgenet.c b/drivers/net/bcmgenet.c
+index fec0afd..d646c95 100644
+--- a/drivers/net/bcmgenet.c
++++ b/drivers/net/bcmgenet.c
+@@ -466,9 +466,15 @@ static int bcmgenet_adjust_link(struct bcmgenet_eth_priv *priv)
+ 	clrsetbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, OOB_DISABLE,
+ 			RGMII_LINK | RGMII_MODE_EN);
+ 
+-	if (phy_dev->interface == PHY_INTERFACE_MODE_RGMII ||
+-	    phy_dev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
++	/*
++	 * ID mode adds the 2 ns delay on TXC. Only plain "rgmii" (delays on
++	 * the board) turns it off; with "rgmii-rxid" the PHY delays RXC only,
++	 * so the MAC must still delay TXC, as in Linux (bcmmii.c).
++	 */
++	if (phy_dev->interface == PHY_INTERFACE_MODE_RGMII)
+ 		setbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, ID_MODE_DIS);
++	else
++		clrbits_32(priv->mac_reg + EXT_RGMII_OOB_CTRL, ID_MODE_DIS);
+ 
+ 	writel(speed << CMD_SPEED_SHIFT, (priv->mac_reg + UMAC_CMD));
+ 
+-- 

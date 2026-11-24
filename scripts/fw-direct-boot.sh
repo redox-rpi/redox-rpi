@@ -18,9 +18,12 @@
 # Usage:
 #   scripts/fw-direct-boot.sh [--image <harddrive.img>] [--out <dir>]
 #                             [--qemu] [--test] [--append <command line>]
+#                             [--boot-only]
 #
 #   --append  command line for QEMU (cmdline.txt on a Pi); NAME=value words
 #             with an upper-case NAME become Redox environment variables
+#   --boot-only  build nothing: boot the kernel8.img and initramfs already in
+#             --out (scripts/console-image.sh --test); implies --qemu
 
 set -euo pipefail
 
@@ -30,6 +33,7 @@ out="$ROOT/build/fw-direct"
 qemu=no
 test=no
 append=""
+boot_only=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
@@ -37,12 +41,14 @@ while [ $# -gt 0 ]; do
         --qemu) qemu=yes; shift ;;
         --test) qemu=yes; test=yes; shift ;;
         --append) append="$2"; shift 2 ;;
+        --boot-only) boot_only=yes; qemu=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
-[ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh" >&2; exit 1; }
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
+if [ "$boot_only" = no ]; then
+[ -f "$image" ] || { echo "$image missing, run scripts/build-image.sh" >&2; exit 1; }
 image="$(cd "$(dirname "$image")" && pwd)/$(basename "$image")"
 
 tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
@@ -50,7 +56,8 @@ tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 "$tool" "$image" get usr/lib/boot/kernel "$out/kernel"
 "$tool" "$image" get usr/lib/boot/initfs "$out/initfs"
 
-# build-image.sh names a network-boot image "netboot" (or "zero2w" for the
+# build-image.sh names a network-boot image "netboot" ("release-netboot" for the
+# release variant without devshd, "zero2w" for the
 # Zero 2 W image) in the login banner and the release files. The live disk
 # of this boot comes from the card: call it "direct" there, in a copy of the
 # image. The build ID still tells the two apart.
@@ -58,9 +65,9 @@ tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
 image="$out/harddrive.img"
 for file in etc/issue etc/redox-rpi-release etc/redox-rpi-manifest; do
     "$tool" "$image" get "$file" "$out/release-file"
-    sed -i -E -e 's/^(redox-rpi .*) \((netboot|zero2w), /\1 (direct, /' \
-        -e 's/^IMAGE="(netboot|zero2w)"$/IMAGE="direct"/' \
-        -e 's/^image = "(netboot|zero2w)"$/image = "direct"/' "$out/release-file"
+    sed -i -E -e 's/^(redox-rpi .*) \((netboot|release-netboot|zero2w), /\1 (direct, /' \
+        -e 's/^IMAGE="(netboot|release-netboot|zero2w)"$/IMAGE="direct"/' \
+        -e 's/^image = "(netboot|release-netboot|zero2w)"$/image = "direct"/' "$out/release-file"
     "$tool" "$image" put "$file" "$out/release-file"
 done
 rm "$out/release-file"
@@ -79,6 +86,7 @@ cp "$out/initfs" "$out/initramfs"
 truncate -s %4096 "$out/initramfs"
 dd if="$image" bs=512 skip="$start" count="$sectors" status=none >> "$out/initramfs"
 echo "kernel8.img: $(wc -c < "$out/kernel8.img") bytes, initramfs: $(($(wc -c < "$out/initramfs") >> 20)) MiB, in $out"
+fi
 
 [ "$qemu" = yes ] || exit 0
 

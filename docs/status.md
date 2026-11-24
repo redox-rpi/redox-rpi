@@ -53,7 +53,7 @@ through `devshd`.
 for every TCP connection on port 2323. From the build server, through the
 router: `redox login: root`, `uname -a` → `Redox redox 0.5.12 … aarch64`,
 `ps` (4 CPUs, `dwc2d`, `netstack`, `devshd`, `ion`), and
-`/scheme/netcfg/ifaces/eth0/addr/list` → `192.168.178.148/24`. Port 2323 is
+`/scheme/netcfg/ifaces/eth0/addr/list` → `<pi>/24`. Port 2323 is
 open about 80 s after power-on. Unencrypted: for the home network only,
 until SSH works.
 
@@ -69,7 +69,7 @@ BCM2835 watchdog, as Linux does.
 Redox on the Raspberry Pi 3B+ is on the LAN: `dwc2d` enumerates both onboard
 hubs and the LAN7800, our LAN7800 driver brings up the chip and the PHY
 (`link up after 2880 ms`) with the board's MAC address from the devicetree,
-and Redox' `netstack`/`dhcpd` get `192.168.178.148` from the router. From the
+and Redox' `netstack`/`dhcpd` get `<pi>` from the router. From the
 build server, TCP connections to the Pi are refused instantly (RST from
 Redox' TCP stack, no service listening yet) and ARP shows it `REACHABLE`.
 
@@ -264,8 +264,9 @@ hubs; the `xhcid` scheme interface for `usbhidd`.
   RedoxFS partition of an image, without FUSE (works on macOS).
 - [`scripts/build-kernel.sh`](../scripts/build-kernel.sh): build the latest
   upstream kernel with this repository's patches (macOS and Linux).
-- [`scripts/qemu-raspi3b.sh`](../scripts/qemu-raspi3b.sh): download the latest
-  daily server image, optionally inject a kernel, boot in QEMU `raspi3b`;
+- [`scripts/qemu-raspi3b.sh`](../scripts/qemu-raspi3b.sh): boot this clone's
+  own build in QEMU `raspi3b` (or, with `--daily`, the latest upstream daily
+  server image), optionally inject a kernel;
   `--test` checks the console output automatically.
 - CI ([`.github/workflows/qemu-boot.yml`](../.github/workflows/qemu-boot.yml)):
   builds and boot-tests on every push and daily against the latest upstream.

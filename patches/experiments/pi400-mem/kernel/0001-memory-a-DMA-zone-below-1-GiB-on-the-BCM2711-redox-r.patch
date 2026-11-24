@@ -1,0 +1,302 @@
+From 85242fa5f76d3690d9dfc6de8ff7bdecb7e902f7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 10:18:43 +0000
+Subject: [PATCH] memory: a DMA zone below 1 GiB on the BCM2711 (redox-rpi
+ #299)
+
+The BCM2711's legacy peripherals reach only the first GiB of RAM
+(/soc dma-ranges). With more RAM, take 256 MiB below 1 GiB out of the
+buddy allocator at boot and serve every phys_contiguous allocation from
+it, so the Pi 4 and 400 can run without total_mem=1024.
+---
+ src/arch/aarch64/start.rs |   9 ++
+ src/context/memory.rs     |  17 ++--
+ src/memory/dma_zone.rs    | 190 ++++++++++++++++++++++++++++++++++++++
+ src/memory/mod.rs         |  12 +++
+ 4 files changed, 222 insertions(+), 6 deletions(-)
+ create mode 100644 src/memory/dma_zone.rs
+
+diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
+index 6c942f12..35da011b 100644
+--- a/src/arch/aarch64/start.rs
++++ b/src/arch/aarch64/start.rs
+@@ -111,6 +111,15 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+             // Setup kernel heap
+             allocator::init();
+ 
++            // BCM2711 (Pi 4, Pi 400): /soc's dma-ranges map only the first
++            // GiB for the legacy peripherals (mailbox, DMA engine), so DMA
++            // buffers must come from there.
++            if let Ok((dtb, _)) = &dtb_res
++                && dtb.root().compatible().all().any(|c| c == "brcm,bcm2711")
++            {
++                crate::memory::dma_zone::init(0x4000_0000, 256 << 20, crate::memory::ram_end());
++            }
++
+             // Activate memory logging
+             crate::log::init();
+ 
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index c404a40f..35a416e0 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -1350,12 +1350,17 @@ impl Grant {
+         flusher: &mut Flusher,
+         mem_policy: NumaMemoryPolicy,
+     ) -> Result<Grant, Enomem> {
+-        let mut frame_allocator = TheFrameAllocator(mem_policy);
+-        let base = Frame::containing(
+-            frame_allocator
+-                .allocate(FrameCount::new(span.count))
+-                .ok_or(Enomem)?,
+-        );
++        let base = match crate::memory::dma_zone::allocate(span.count) {
++            Some(frame) => frame.ok_or(Enomem)?,
++            None => {
++                let mut frame_allocator = TheFrameAllocator(mem_policy);
++                Frame::containing(
++                    frame_allocator
++                        .allocate(FrameCount::new(span.count))
++                        .ok_or(Enomem)?,
++                )
++            }
++        };
+         // The allocator zeroed the frames through the kernel's cached
+         // mapping. Drivers map these uncached for DMA, so write the zeros
+         // back to RAM and drop the lines now: else the CPU and the device
+diff --git a/src/memory/dma_zone.rs b/src/memory/dma_zone.rs
+new file mode 100644
+index 00000000..1b552488
+--- /dev/null
++++ b/src/memory/dma_zone.rs
+@@ -0,0 +1,190 @@
++//! A pool of memory below a DMA limit, for physically contiguous
++//! allocations (`zeroed@…?phys_contiguous`, used by `common::Dma`).
++//!
++//! Some SoCs have devices that reach only part of RAM. On the BCM2711
++//! (Pi 4, Pi 400) the legacy peripherals see RAM through `/soc`'s
++//! `dma-ranges`, which covers the first GiB only; the firmware mailbox, the
++//! DMA engine and others must get buffers there. Linux keeps a ZONE_DMA for
++//! that. The buddy allocator here has no address limits, so at boot this
++//! takes whole max-order blocks below the limit out of it and hands out
++//! DMA memory from them. Frames of the pool stay marked used in the
++//! allocator; freeing one returns it to the pool (redox-rpi #299).
++
++use alloc::vec::Vec;
++use core::sync::atomic::{AtomicBool, Ordering};
++
++use rmm::Arch as _;
++use spin::Mutex;
++
++use super::{
++    allocate_p2frame, deallocate_p2frame, get_page_info, Frame, MAX_ORDER, RC_USED_NOT_FREE,
++};
++use crate::memory::PAGE_SIZE;
++
++const BLOCK_ORDER: u32 = MAX_ORDER;
++const BLOCK_PAGES: usize = 1 << BLOCK_ORDER;
++const WORDS: usize = BLOCK_PAGES / 64;
++
++struct Block {
++    base: Frame,
++    /// One bit per page, set while handed out.
++    used: [u64; WORDS],
++}
++
++impl Block {
++    fn is_used(&self, page: usize) -> bool {
++        self.used[page / 64] & (1 << (page % 64)) != 0
++    }
++
++    fn set(&mut self, page: usize, used: bool) {
++        if used {
++            self.used[page / 64] |= 1 << (page % 64);
++        } else {
++            self.used[page / 64] &= !(1 << (page % 64));
++        }
++    }
++
++    /// First run of `count` free pages.
++    fn find(&self, count: usize) -> Option<usize> {
++        let mut run = 0;
++        for page in 0..BLOCK_PAGES {
++            if self.is_used(page) {
++                run = 0;
++            } else {
++                run += 1;
++                if run == count {
++                    return Some(page + 1 - count);
++                }
++            }
++        }
++        None
++    }
++
++    fn contains(&self, frame: Frame) -> bool {
++        frame >= self.base && frame < self.base.next_by(BLOCK_PAGES)
++    }
++}
++
++struct Zone {
++    limit: usize,
++    blocks: Vec<Block>,
++    used_pages: usize,
++}
++
++static ENABLED: AtomicBool = AtomicBool::new(false);
++static ZONE: Mutex<Option<Zone>> = Mutex::new(None);
++static WARNED: AtomicBool = AtomicBool::new(false);
++
++/// Take `pool_bytes` of memory below `limit` out of the allocator. Call once,
++/// after the heap is up. Does nothing if all RAM is below the limit anyway.
++pub fn init(limit: usize, pool_bytes: usize, ram_end: usize) {
++    if ram_end <= limit {
++        info!(
++            "DMA zone: all RAM (up to {:#x}) is below the DMA limit {:#x}, no pool",
++            ram_end, limit
++        );
++        return;
++    }
++    let wanted = pool_bytes.div_ceil(BLOCK_PAGES * PAGE_SIZE).max(1);
++    let mut blocks = Vec::with_capacity(wanted);
++    let mut above = Vec::new();
++    while blocks.len() < wanted {
++        let Some(frame) = allocate_p2frame(BLOCK_ORDER, false) else {
++            break;
++        };
++        if frame.base().data() + BLOCK_PAGES * PAGE_SIZE <= limit {
++            blocks.push(Block {
++                base: frame,
++                used: [0; WORDS],
++            });
++        } else {
++            above.push(frame);
++        }
++    }
++    for frame in above {
++        unsafe { deallocate_p2frame(frame, BLOCK_ORDER) };
++    }
++    if blocks.is_empty() {
++        warn!("DMA zone: no free memory below {:#x}", limit);
++        return;
++    }
++    info!(
++        "DMA zone: {} KiB below {:#x} for DMA buffers (RAM up to {:#x})",
++        blocks.len() * BLOCK_PAGES * PAGE_SIZE / 1024,
++        limit,
++        ram_end
++    );
++    *ZONE.lock() = Some(Zone {
++        limit,
++        blocks,
++        used_pages: 0,
++    });
++    ENABLED.store(true, Ordering::Release);
++}
++
++/// `None`: no pool, use the normal allocator. `Some(None)`: the pool is
++/// full. Frames come back zeroed and marked used.
++pub fn allocate(count: usize) -> Option<Option<Frame>> {
++    if !ENABLED.load(Ordering::Acquire) {
++        return None;
++    }
++    let mut guard = ZONE.lock();
++    let zone = guard.as_mut()?;
++    if count == 0 || count > BLOCK_PAGES {
++        return Some(None);
++    }
++    for block in zone.blocks.iter_mut() {
++        if let Some(first) = block.find(count) {
++            for page in first..first + count {
++                block.set(page, true);
++            }
++            zone.used_pages += count;
++            let base = block.base.next_by(first);
++            unsafe {
++                (crate::memory::RmmA::phys_to_virt(base.base()).data() as *mut u8)
++                    .write_bytes(0, count * PAGE_SIZE);
++            }
++            return Some(Some(base));
++        }
++    }
++    if !WARNED.swap(true, Ordering::Relaxed) {
++        warn!(
++            "DMA zone below {:#x} full: {} pages in use, {} asked for",
++            zone.limit, zone.used_pages, count
++        );
++    }
++    Some(None)
++}
++
++/// Give pages of the pool back. `false` if `frame` is not in the pool.
++pub fn free(frame: Frame, count: usize) -> bool {
++    if !ENABLED.load(Ordering::Acquire) {
++        return false;
++    }
++    let mut guard = ZONE.lock();
++    let Some(zone) = guard.as_mut() else {
++        return false;
++    };
++    let Some(block) = zone.blocks.iter_mut().find(|b| b.contains(frame)) else {
++        return false;
++    };
++    let first = frame.offset_from(block.base);
++    for page in first..(first + count).min(BLOCK_PAGES) {
++        if block.is_used(page) {
++            block.set(page, false);
++            zone.used_pages -= 1;
++        }
++        if let Some(info) = get_page_info(block.base.next_by(page)) {
++            info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
++            info.next.store(0, Ordering::Relaxed);
++        }
++    }
++    true
++}
++
++/// For `/scheme/sys`-style reports: (pool pages, used pages, limit).
++pub fn usage() -> Option<(usize, usize, usize)> {
++    let guard = ZONE.lock();
++    let zone = guard.as_ref()?;
++    Some((zone.blocks.len() * BLOCK_PAGES, zone.used_pages, zone.limit))
++}
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+index 47a9a0a1..b04b124b 100644
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -27,6 +27,7 @@ use crate::{
+ pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+ use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea};
+ 
++pub mod dma_zone;
+ mod kernel_mapper;
+ pub mod page;
+ pub use page::*;
+@@ -65,6 +66,14 @@ pub fn used_frames() -> usize {
+         .map(|e| e.free_list_inner.lock().used_frames)
+         .sum()
+ }
++/// End of the highest frame the allocator manages.
++pub fn ram_end() -> usize {
++    sections()
++        .iter()
++        .map(|section| section.base.base().data() + section.frames.len() * PAGE_SIZE)
++        .max()
++        .unwrap_or(0)
++}
+ pub fn total_frames() -> usize {
+     // TODO: Include bump allocator static pages?
+     sections().iter().map(|section| section.frames.len()).sum()
+@@ -236,6 +245,9 @@ fn get_index_for_deallocation(addr: usize) -> Option<usize> {
+ }
+ 
+ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
++    if dma_zone::free(orig_frame, 1 << order) {
++        return;
++    }
+     let index = if numa::is_supported() {
+         get_index_for_deallocation(orig_frame.physaddr.get()).expect("Expected an index")
+     } else {
+-- 
+2.53.0
+

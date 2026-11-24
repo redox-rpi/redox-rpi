@@ -376,8 +376,11 @@ def check_tcp(sh, check, host, mib):
                hashlib.sha256(f"Remote host: {host}:{port}\n".encode() + payload).hexdigest()}
     ok = got in digests
     speed = f", {mib / secs:.1f} MiB/s" if secs > 0 else ""
-    check("tcp", ok, f"{mib} MiB from {host}:{port} in {secs:.1f} s{speed}, "
-          f"SHA-256 {'matches' if ok else 'differs: ' + (got[:16] or '; '.join(out[:2]))}")
+    # Reports are public (pi-tests): name the host by its role, never its
+    # address; the address only goes to nc on the Pi.
+    detail = got[:16] or "; ".join(out[:2]).replace(host, "<build host>")
+    check("tcp", ok, f"{mib} MiB from the build host in {secs:.1f} s{speed}, "
+          f"SHA-256 {'matches' if ok else 'differs: ' + detail}")
 
 
 def check_cpu(sh, check):
