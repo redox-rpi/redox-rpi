@@ -1,7 +1,7 @@
-From f419c9cf65743f4c14e3b2faf77351e48fa12d96 Mon Sep 17 00:00:00 2001
+From ca64a595113a4c9578d1f559079ca43878506d0f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:14:19 +0100
-Subject: [PATCH 28/30] netstack: IPv6 multicast groups for programs
+Subject: [PATCH] netstack: IPv6 multicast groups for programs
 
 IPV6_JOIN_GROUP and IPV6_LEAVE_GROUP join and leave IPv6 groups on the
 interface, counted like the IPv4 ones; smoltcp sends the MLD reports.
