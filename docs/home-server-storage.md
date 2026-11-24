@@ -200,9 +200,9 @@ TLS. Writes, cache and offline queue after that.
 
 | Step | Content | Test |
 |---|---|---|
-| 1 | rsync and ssh client for the Pi (experiment) | Pi row as above |
-| 2 | `homesync` command and daily timer | Pi row: setup, push, pull, server off |
-| 3 | `serverfs` read-only over HTTP | QEMU against `rclone serve webdav` |
+| 1 | rsync and ssh client for the Pi (experiment), [#712](https://github.com/redox-rpi/redox-rpi/issues/712) | Pi row as above |
+| 2 | `homesync` command and daily timer ([#712](https://github.com/redox-rpi/redox-rpi/issues/712)) | Pi row: setup, push, pull, server off |
+| 3 | `serverfs` read-only over HTTP, then TLS, [#713](https://github.com/redox-rpi/redox-rpi/issues/713) | QEMU against `rclone serve webdav` |
 | 4 | TLS, pinned certificate, app password | QEMU and Pi |
 | 5 | writes with `If-Match`, cache, offline queue, conflicts | QEMU tests that stop the server mid-way; Pi row |
 | 6 | per-user start at login, namespace name `server` | Pi, two users |
