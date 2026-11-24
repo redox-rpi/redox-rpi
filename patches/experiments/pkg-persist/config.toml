@@ -4,23 +4,25 @@ pkg-persist = "source"
 # and the clock hint). Without this line the image takes upstream's binary
 # unless pkg-hold is in the same build.
 pkgutils = "source"
-# Built from source with patches/experiments/pkg-persist/redoxfs/: rename
-# fails on /scheme/data without it, and pkg renames every file it installs.
+# Built from source at the pinned commit (upstream.lock), which renames
+# correctly on /scheme/data; pkg renames every file it installs. Held, so
+# pkg does not replace it with an older upstream binary.
 redoxfs = "source"
 
 # Replaces the hold list of pkg-repo (list pkg-persist after pkg-repo):
-# the same, plus redoxfs, so an update keeps the patched one.
+# the same, plus redoxfs, so an update keeps the one built here.
+# @BUILD_SERVER@: see patches/experiments/pkg-repo/config.toml.
 [[files]]
 path = "/etc/pkg/hold"
 data = """
 # Packages pkg takes only from the redox-rpi repository (patches/experiments/pkg-persist).
-base 192.168.178.120
-base-initfs 192.168.178.120
-bootloader 192.168.178.120
-kernel 192.168.178.120
-relibc 192.168.178.120
-pkgutils 192.168.178.120
-redoxfs 192.168.178.120
+base @BUILD_SERVER@
+base-initfs @BUILD_SERVER@
+bootloader @BUILD_SERVER@
+kernel @BUILD_SERVER@
+relibc @BUILD_SERVER@
+pkgutils @BUILD_SERVER@
+redoxfs @BUILD_SERVER@
 """
 
 # After 60_data has mounted the SD card's data partition: copy the packages

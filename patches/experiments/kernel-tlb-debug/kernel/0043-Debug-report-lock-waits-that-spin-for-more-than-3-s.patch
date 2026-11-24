@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: chaos session <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 22:21:21 +0000
+Subject: [PATCH] Debug: report lock waits that spin for more than 3 s (issue
+ #207)
+
+Applies after default kernel 0053 (backoff in the lock waits).
+---
+ src/sync/ordered.rs | 46 ++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/src/sync/ordered.rs b/src/sync/ordered.rs
+index 6edbc12c..39e85b3a 100644
+--- a/src/sync/ordered.rs
++++ b/src/sync/ordered.rs
+@@ -231,12 +231,16 @@ impl<L: Level, T> Mutex<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+ 
+             loop {
+                 match self.inner.try_lock() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -378,11 +382,15 @@ impl<L: Level, T> RwLock<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -419,11 +427,15 @@ impl<L: Level, T> RwLock<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+             loop {
+                 match self.inner.try_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -451,11 +463,15 @@ impl<L: Level, T> RwLock<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -508,11 +524,15 @@ impl<L: Level, T> RwLock<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+             loop {
+                 match self.inner.try_write() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -539,11 +559,15 @@ impl<L: Level, T> RwLock<L, T> {
+             let mut i = DEADLOCK_SPIN_CAP;
+             let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+             loop {
+                 match self.inner.try_upgradeable_read() {
+                     Some(inner) => break inner,
+                     None => {
+                         my_percpu.maybe_handle_tlb_shootdown();
++                        #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
+                         backoff.spin();
+                         #[cfg(feature = "busy_panic")]
+                         {
+@@ -567,12 +591,16 @@ impl<L: Level, T> RwLock<L, T> {
+         // other lock loops in this file (issue #207).
+         let my_percpu = PercpuBlock::current();
+             let mut backoff = Backoff::new();
++            #[cfg(target_arch = "aarch64")]
++            let mut stall = crate::arch::misc::StallWatch::start(3);
+         let guard = loop {
+             match self.inner.try_write() {
+                 Some(guard) => break guard,
+                 None => {
+                     my_percpu.maybe_handle_tlb_shootdown();
+-                    backoff.spin();
++                    #[cfg(target_arch = "aarch64")]
++                        lock_stall(&mut stall, self as *const _ as *const u8, core::any::type_name::<T>());
++                        backoff.spin();
+                 }
+             }
+         };
+@@ -807,3 +835,19 @@ impl Backoff {
+         }
+     }
+ }
++
++/// Debug (issue #207): report a lock wait that spins for more than 3 s,
++/// again every 10 s, with the lock address and the type it guards.
++#[cfg(target_arch = "aarch64")]
++#[cold]
++fn lock_stall(stall: &mut crate::arch::misc::StallWatch, lock: *const u8, what: &str) {
++    if stall.stalled() {
++        error!(
++            "lock wait stalled on CPU {}: lock {:p} ({})",
++            crate::cpu_id(),
++            lock,
++            what
++        );
++        *stall = crate::arch::misc::StallWatch::start(10);
++    }
++}
+-- 
+2.53.0
+

@@ -1,10 +1,13 @@
 # pkg asks the redox-rpi repository on the build host first
 # (scripts/publish-pkg-repo.sh), then static.redox-os.org (50_redox).
 # By address: the build host's name does not resolve in QEMU.
+# @BUILD_SERVER@ is the build server's address; scripts/build-image.sh
+# fills it in from REDOX_BUILD_SERVER (scripts/lab-env.sh) and records it
+# in the manifest.
 [[files]]
 path = "/etc/pkg.d/40_redox-rpi"
 data = """
-http://192.168.178.120:8080/pkg
+http://@BUILD_SERVER@:8080/pkg
 """
 
 # Replaces the hold list of pkg-hold (list pkg-repo after pkg-hold): our
@@ -14,10 +17,10 @@ http://192.168.178.120:8080/pkg
 path = "/etc/pkg/hold"
 data = """
 # Packages pkg takes only from the redox-rpi repository (patches/experiments/pkg-repo).
-base 192.168.178.120
-base-initfs 192.168.178.120
-bootloader 192.168.178.120
-kernel 192.168.178.120
-relibc 192.168.178.120
-pkgutils 192.168.178.120
+base @BUILD_SERVER@
+base-initfs @BUILD_SERVER@
+bootloader @BUILD_SERVER@
+kernel @BUILD_SERVER@
+relibc @BUILD_SERVER@
+pkgutils @BUILD_SERVER@
 """

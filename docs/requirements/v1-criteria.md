@@ -2,6 +2,9 @@
 
 Status: **draft**, 2026-11-11. Owner: the Requirements agent.
 
+> **Parked** (maintainer, 2026-11-16): v1.0 is not a priority yet; releases
+> go on as 0.x (after v0.9.0 comes v0.10.0). Kept for later, not worked on.
+
 The 24 criteria of [RFC 0003](../rfcs/0003-v1-criteria.md) (draft) mapped to
 their Feature issues, the issues that implement them and the tests that
 verify them. Rules: [RMP](../process/rmp.md). Until the maintainer decides
@@ -24,6 +27,7 @@ the requirement block on top and the ID in the title (RMP, Storage).
 | REQ-STAB-7 | Power loss | must | Devices | to create | **none** | **gap** (needs the Shelly plug rules) |
 | REQ-STAB-8 | Reboot cycles | must | Towards 1.0 | to create | #217 | rows 264, 266 (dev builds); **gap** for 500 reboots, 50 cold starts |
 | REQ-FW-5 | Power off | should | Devices | #7 | #7 | **gap** |
+|  | → moved into REQ-FW-3 ([#484](https://github.com/redox-rpi/redox-rpi/issues/484)) for v0.6.0, when #418 went into the milestone (2026-11-16) | | | | | |
 | REQ-NET-6 | SSH server | must | Remote access | #45 | #45, #190, #184; experiment `sshd` | no row on a candidate |
 | REQ-SEC-1 | No default password on the network | must | Remote access | to create | **none** | **gap** |
 | REQ-SEC-2 | Only wanted services listen | must | Remote access | to create | **none** | **gap** (no port-scan row) |
@@ -64,13 +68,15 @@ once it exists:
 
 **Criteria with no implementing issue** (8): REQ-BOARD-3, REQ-STAB-7,
 REQ-SEC-1, REQ-SEC-2, REQ-PKG-3, REQ-DOC-1, REQ-DOC-2, REQ-REL-8. These
-need work packages (RFC 0003, Steps 3).
+need work packages (RFC 0003, Steps 3); proposals in
+[v1-work-packages.md](v1-work-packages.md).
 
 **Criteria with no test on a release candidate** (20 of 24). Partly
 covered: REQ-BOARD-2 (rows 292, 286), REQ-STAB-6 (row 237, dev build),
 REQ-STAB-8 (rows 264, 266, dev builds), REQ-REL-6 (trace inspection).
 V&V has to plan the long-run, chaos, power-loss, reboot, port-scan and
-update rows (RFC 0003, Steps 4).
+update rows (RFC 0003, Steps 4); drafts in
+[v1-test-drafts.md](v1-test-drafts.md).
 
 **Other**
 

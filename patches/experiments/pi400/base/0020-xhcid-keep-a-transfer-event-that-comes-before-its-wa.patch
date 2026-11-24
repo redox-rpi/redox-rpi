@@ -1,0 +1,150 @@
+From 715bd031ba141f6235b2c09752eb9a041025b307 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 16:50:00 +0000
+Subject: [PATCH] xhcid: keep a transfer event that comes before its waiter
+
+execute_transfer writes the transfer TRB to the ring (cycle bit set)
+and only then, on the future's first poll, registers its state with the
+IRQ reactor and rings the doorbell. An interrupt endpoint that is
+already running can complete the TRB in between. The reactor then found
+no state for the event, logged "Lost event TRB", and the waiter never
+woke: the read hung for good.
+
+On a Pi 400 with reads on worker threads (0019), the keyboard's second
+interface stopped after 199 reports with one "Lost event TRB type 32,
+completion code 13" (pi-tests Test 549 B).
+
+The reactor now keeps such an event for up to a second (at most 64)
+and answers the state from it when the state comes. Each late match is
+logged for the first 10, then every 1000th.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs | 79 +++++++++++++++++++----
+ 1 file changed, 68 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index 9350980c..4214d1f1 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -96,6 +96,13 @@ pub struct IrqReactor<const N: usize> {
+     irq_receiver: Receiver<NewPendingTrb>,
+     device_enumerator_sender: Sender<DeviceEnumerationRequest>,
+     states: Vec<State>,
++    /// Transfer events that came before their waiter was registered, with
++    /// the time they came. The transfer TRB is on the ring (cycle bit set)
++    /// before execute_transfer's future registers its state, and an
++    /// endpoint that is already running may complete it in between.
++    early_events: Vec<(Trb, std::time::Instant)>,
++    /// How many early events were matched, for the log.
++    early_matched: u64,
+     // TODO: Since the IRQ reactor is the only part of this driver that gets event TRBs, perhaps
+     // the event ring should be owned here?
+ }
+@@ -119,6 +126,8 @@ impl<const N: usize> IrqReactor<N> {
+             irq_receiver,
+             device_enumerator_sender,
+             states: Vec::new(),
++            early_events: Vec::new(),
++            early_matched: 0,
+         }
+     }
+     // TODO: Configure the amount of time wait when no more work can be done (for IRQ-less polling).
+@@ -377,11 +386,42 @@ impl<const N: usize> IrqReactor<N> {
+             .write((dequeue_pointer >> 32) as u32);
+     }
+     fn handle_requests(&mut self) {
+-        self.states.extend(
+-            self.irq_receiver
+-                .try_iter()
+-                .inspect(|req| trace!("Received request: {:X?}", req)),
+-        );
++        let new_states: Vec<State> = self
++            .irq_receiver
++            .try_iter()
++            .inspect(|req| trace!("Received request: {:X?}", req))
++            .collect();
++        for state in new_states {
++            // A transfer whose event came before its state: answer it now.
++            if let StateKind::Transfer {
++                first_phys_ptr,
++                last_phys_ptr,
++                ring_id,
++            } = state.kind
++            {
++                let found = self.early_events.iter().position(|(trb, _)| {
++                    trb.transfer_event_trb_pointer()
++                        .is_some_and(|ptr| ptr_in_range(ptr, first_phys_ptr, last_phys_ptr))
++                });
++                if let Some(index) = found {
++                    let (trb, _) = self.early_events.remove(index);
++                    self.early_matched += 1;
++                    let n = self.early_matched;
++                    if n <= 10 || n % 1000 == 0 {
++                        info!("xhcid: transfer event before its waiter, matched late (#{n})");
++                    }
++                    let src_trb = trb
++                        .transfer_event_trb_pointer()
++                        .and_then(|ptr| self.hci.get_transfer_trb(ptr, ring_id));
++                    state.finish(Some(NextEventTrb {
++                        src_trb,
++                        event_trb: trb,
++                    }));
++                    continue;
++                }
++            }
++            self.states.push(state);
++        }
+     }
+     fn acknowledge(&mut self, trb: Trb) {
+         //TODO: handle TRBs without an attached state
+@@ -441,12 +481,8 @@ impl<const N: usize> IrqReactor<N> {
+                     if trb.trb_type() == TrbType::Transfer as u8 {
+                         match trb.transfer_event_trb_pointer() {
+                             Some(phys_ptr) => {
+-                                let matches = if first_phys_ptr <= last_phys_ptr {
+-                                    phys_ptr >= first_phys_ptr && phys_ptr <= last_phys_ptr
+-                                } else {
+-                                    // Handle ring buffer wrap
+-                                    phys_ptr >= first_phys_ptr || phys_ptr <= last_phys_ptr
+-                                };
++                                let matches =
++                                    ptr_in_range(phys_ptr, first_phys_ptr, last_phys_ptr);
+                                 if matches {
+                                     let src_trb = self.hci.get_transfer_trb(phys_ptr, ring_id);
+                                     // Give the source transfer TRB together with the event TRB, to the future.
+@@ -500,6 +536,17 @@ impl<const N: usize> IrqReactor<N> {
+ 
+             index += 1;
+         }
++        // A transfer event whose waiter is not registered yet: keep it for
++        // a second, handle_requests matches it when the state comes.
++        if trb.trb_type() == TrbType::Transfer as u8 && trb.transfer_event_trb_pointer().is_some() {
++            let now = std::time::Instant::now();
++            self.early_events
++                .retain(|(_, t)| now.duration_since(*t) < std::time::Duration::from_secs(1));
++            if self.early_events.len() < 64 {
++                self.early_events.push((trb, now));
++                return;
++            }
++        }
+         warn!(
+             "Lost event TRB type {}, completion code: {}: {:X?}",
+             trb.trb_type(),
+@@ -747,3 +794,13 @@ impl<const N: usize> Xhci<N> {
+         }
+     }
+ }
++
++/// Whether a TRB pointer lies in a transfer's TRBs, which may wrap around
++/// the end of the ring.
++fn ptr_in_range(ptr: u64, first: u64, last: u64) -> bool {
++    if first <= last {
++        ptr >= first && ptr <= last
++    } else {
++        ptr >= first || ptr <= last
++    }
++}
+-- 
+2.53.0
+

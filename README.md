@@ -22,24 +22,29 @@ onboard Ethernet and by Ethernet/USB hub HATs on the Zero 2 W).
 
 🚧 **Status: experimental (alpha). Boots on the Pi 3B+ and Zero 2 W, not for
 daily use.** Redox boots from the SD card on a real **Raspberry Pi 3 Model B+**
-with all four cores, a USB keyboard, Ethernet and a writable root
-filesystem; the same image boots on a Zero 2 W. Since
+with all four cores, a USB keyboard and Ethernet; the same card boots on a
+Zero 2 W. Since
 [v0.3.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.3.0) programs
 start reliably, USB devices can be plugged in at any time, the SD card has a
 faster driver, the CPU clock follows the load (600 to 1400 MHz), and there
-are first drivers for GPIO, I2C and SPI. Next is
-[v0.4.0](https://github.com/redox-rpi/redox-rpi/milestone/3), boot and
-storage. See [docs/status.md](docs/status.md),
+are first drivers for GPIO, I2C and SPI; v0.5.0 brought a game on the
+desktop and a C compiler on the Pi (TinyCC, beta). The current release is
+[v0.6.0](https://github.com/redox-rpi/redox-rpi/releases/tag/v0.6.0): the
+SD card starts without U-Boot and the system runs from RAM, sound plays
+over HDMI, `poweroff` halts the Pi, and USB comes back after a reboot. See [docs/status.md](docs/status.md),
 [docs/known-issues.md](docs/known-issues.md) and [ROADMAP.md](ROADMAP.md).
 
-**Try it on a Pi 3 Model B+:** flash the image from the
+**Try it on a Pi 3 Model B+ or Zero 2 W:** flash the image from the
 [latest release](https://github.com/redox-rpi/redox-rpi/releases) to a microSD
-card and log in as `root` / `password`.
+card and log in as `root` / `password`
+([getting started](docs/getting-started.md)).
 
-**Or in QEMU** on macOS or Linux (needs QEMU, curl and zstd):
+**Or in QEMU** on macOS or Linux (needs QEMU, curl, zstd and Rust): Redox's
+daily image with our kernel.
 
 ```sh
-scripts/qemu-raspi3b.sh
+scripts/build-kernel.sh
+scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel
 ```
 
 **For developers:** boot a Pi over the network from your own build server,

@@ -1,0 +1,91 @@
+From: stephan-xyz <stephan@zehrer.xyz>
+Subject: [PATCH] net: lwip: seed rand() and use random TCP initial
+ sequence numbers
+
+Nothing seeds rand() before lwip_init(), so lwIP picks the same first
+local TCP and UDP port on every boot, and its default tcp_next_iss()
+starts every connection at the same sequence number (6509 in QEMU, for
+each connection). A board that reboots and loads the same files again
+opens exactly the connections of its previous boot: same addresses,
+same ports, same sequence numbers. A server that still holds those
+connections (TIME_WAIT, or LAST_ACK when U-Boot never acknowledged the
+server's FIN before booting) answers the new SYN as an old duplicate,
+and the transfer fails with "HTTP client error 5". TFTP reuses its UDP
+port the same way.
+
+Seed rand() from the hardware RNG when there is one, mixed with the
+timer, before lwip_init(), and define LWIP_HOOK_TCP_ISN to use rand().
+
+Seen on the Raspberry Pi 400 network-booting over and over with serial
+reboots: about one boot in five stopped at the prompt after every
+HTTP and TFTP try had failed, while the Ethernet controller, the
+driver and lwIP's link and IP layers counted no errors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+diff --git a/lib/lwip/u-boot/lwipopts.h b/lib/lwip/u-boot/lwipopts.h
+index 1c1adc5..1c34b28 100644
+--- a/lib/lwip/u-boot/lwipopts.h
++++ b/lib/lwip/u-boot/lwipopts.h
+@@ -179,6 +179,11 @@
+ 
+ #define LWIP_STATS                      0
+ 
++/* A random initial sequence number per connection (default: a counter
++ * that starts at the same value on every boot) */
++#define LWIP_HOOK_TCP_ISN(local_ip, local_port, remote_ip, remote_port) \
++	((u32_t)rand())
++
+ #define PPP_SUPPORT                     0
+ 
+ #define LWIP_TCPIP_CORE_LOCKING		0
+diff --git a/net/lwip/net-lwip.c b/net/lwip/net-lwip.c
+index 8f8f9d6..5c286e6 100644
+--- a/net/lwip/net-lwip.c
++++ b/net/lwip/net-lwip.c
+@@ -20,6 +20,9 @@
+ #include <lwip/timeouts.h>
+ #include <net.h>
+ #include <timer.h>
++#include <time.h>
++#include <rand.h>
++#include <rng.h>
+ #include <u-boot/schedule.h>
+ 
+ /* xx:xx:xx:xx:xx:xx\0 */
+@@ -303,6 +306,26 @@ void net_lwip_remove_netif(struct netif *netif)
+ 	free(netif);
+ }
+ 
++/*
++ * Seed rand() before lwIP picks its first local TCP and UDP ports and its
++ * TCP initial sequence numbers (LWIP_RAND, LWIP_HOOK_TCP_ISN). Without a
++ * seed every boot uses the same ports and sequence numbers, and a server
++ * that still holds the previous boot's connections (TIME_WAIT, LAST_ACK)
++ * takes the new SYNs for old duplicates. Use the hardware RNG when there is
++ * one, and mix in the timer either way.
++ */
++static void net_lwip_seed(void)
++{
++	struct udevice *dev;
++	u32 seed = 0;
++
++	if (IS_ENABLED(CONFIG_DM_RNG) &&
++	    !uclass_get_device(UCLASS_RNG, 0, &dev))
++		dm_rng_read(dev, &seed, sizeof(seed));
++	seed ^= (u32)get_ticks() ^ (u32)timer_get_us();
++	srand(seed);
++}
++
+ /*
+  * Initialize the network buffers, an ethernet device, and the lwIP stack
+  * (once).
+@@ -313,6 +336,7 @@ int net_init(void)
+ 
+ 	if (!init_done) {
+ 		eth_init_rings();
++		net_lwip_seed();
+ 		lwip_init();
+ 		init_done = true;
+ 	}
+-- 

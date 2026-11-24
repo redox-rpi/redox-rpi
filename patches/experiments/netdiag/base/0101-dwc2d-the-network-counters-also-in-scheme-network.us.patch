@@ -1,0 +1,80 @@
+From d91a1916a13efa989ed85d971cd72597b8af3957 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 19 Nov 2026 15:59:16 +0000
+Subject: [PATCH 101/101] dwc2d: the network counters also in
+ /scheme/network.usb/stats
+
+The counters of /tmp/dwc2d-netstats are now also read through the
+network scheme's stats file, at any time and without /tmp, plus one line
+per adapter: its kind, bus address, link and whether it is in use.
+---
+ drivers/usb/dwc2d/src/main.rs  | 17 +++++++++++++++++
+ drivers/usb/dwc2d/src/stats.rs | 12 +++++++++---
+ 2 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 381a33d..be0a0e9 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -248,6 +248,23 @@ impl NetworkAdapter for UsbNet {
+     }
+ 
+     /// Kept for the event loop, which has the bus to program the adapter.
++    fn stats(&mut self) -> Option<String> {
++        use std::fmt::Write;
++        let mut s = stats::text();
++        let _ = writeln!(s, "adapters {}", self.adapters.len());
++        for (adapter, link) in &self.adapters {
++            let kind = match adapter {
++                Adapter::Ecm(_) => "cdc-ethernet",
++                Adapter::Lan78xx(_) => "lan7800",
++                Adapter::Rtl8152(_) => "rtl815x",
++            };
++            let active = if self.active == Some(adapter.address()) { " active" } else { "" };
++            // The link is kept up to date only for the RTL815x.
++            let _ = writeln!(s, "adapter_{} {kind} link {}{active}", adapter.address(), u8::from(*link));
++        }
++        Some(s)
++    }
++
+     fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
+         self.multicast = addrs.map(<[_]>::to_vec);
+         self.multicast_pending = true;
+diff --git a/drivers/usb/dwc2d/src/stats.rs b/drivers/usb/dwc2d/src/stats.rs
+index 9508ff8..1a9715e 100644
+--- a/drivers/usb/dwc2d/src/stats.rs
++++ b/drivers/usb/dwc2d/src/stats.rs
+@@ -1,5 +1,6 @@
+ //! Counters of the network adapter for diagnosis, written to
+-//! `/tmp/dwc2d-netstats` every few seconds. They tell whether frames still
++//! `/tmp/dwc2d-netstats` every few seconds and readable at any time from
++//! `/scheme/network.usb/stats` (`netdiag`). They tell whether frames still
+ //! arrive from the adapter when the network stops working.
+ //!
+ //! Error codes: the HCINT bits of a halted channel, or `0x10000` for a
+@@ -71,9 +72,14 @@ pub fn tx(result: Result<(), &Error>) {
+     }
+ }
+ 
+-/// Write the counters, one `name value` per line. Errors are ignored: the
++/// Write the counters to `/tmp/dwc2d-netstats`. Errors are ignored: the
+ /// file is only for diagnosis.
+ pub fn write() {
++    let _ = std::fs::write("/tmp/dwc2d-netstats", text());
++}
++
++/// The counters, one `name value` per line.
++pub fn text() -> String {
+     let now = now_ms();
+     let mut s = String::new();
+     let _ = writeln!(s, "uptime_ms {now}");
+@@ -96,5 +102,5 @@ pub fn write() {
+             let _ = writeln!(s, "{name} {value}");
+         }
+     }
+-    let _ = std::fs::write("/tmp/dwc2d-netstats", s);
++    s
+ }
+-- 
+2.53.0
+

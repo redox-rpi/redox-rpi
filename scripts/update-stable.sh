@@ -4,7 +4,7 @@
 # (lab.md in redox-rpi/pi-tests, "Stable image").
 #
 # Runs on the build host from its own clone (default ~/redox-rpi-stable),
-# started by the systemd user timer redox-stable.timer, or by hand:
+# started nightly by a timer on the build server (set up by the admins), or by hand:
 #
 #   scripts/update-stable.sh [--force] [--taken <N>] [--no-push] [--ref <ref>]
 #
@@ -65,9 +65,16 @@ TESTS_REPO=redox-rpi/pi-tests
 TESTS="${PI_TESTS_CLONE:-$HOME/pi-tests-stable}"
 TFTP=/srv/tftp
 STABLE_LINK="$TFTP/stable"
-SERVER=192.168.178.120
-PI=192.168.178.148
-SERIAL_DEV=/dev/ttyUSB0
+# Build server and test Pi addresses: scripts/lab-env.sh (lab.env).
+. "$ROOT/scripts/lab-env.sh"
+lab_need REDOX_BUILD_SERVER REDOX_PI REDOX_PI_SERIAL
+SERVER="$REDOX_BUILD_SERVER"
+PI="$REDOX_PI"
+# The test Pi's serial console: REDOX_PI_SERIAL in lab.env, a by-path name,
+# because ttyUSB numbers move between adapters across host restarts (the
+# Zero's adapter became ttyUSB0 on 2026-11-19); no guessed default. Only
+# printf writes to it: stty can hang on some adapters.
+SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
 ISSUE_TITLE="Nightly: main fails on the Pi"
@@ -184,6 +191,15 @@ push_kpis_only() {
 
 run_kpis
 
+# Mondays: refresh the CI image mirror, release ci-image (#409,
+# docs/build-host.md "CI image mirror"). Uses its own token
+# (~/.config/redox-rpi/ci-image-token), never the nightly's; without one it
+# only logs that. Never fails the night.
+if [ "$(date -u +%u)" = 1 ] && [ -x scripts/refresh-ci-image.py ]; then
+    { env -u GH_TOKEN timeout 900 scripts/refresh-ci-image.py 2>&1 || echo "failed ($?)"; } |
+        while IFS= read -r l; do log "ci-image: $l"; done
+fi
+
 # 1. Anything new for the image?
 stable_commit=""
 [ -f "$STABLE_LINK/manifest.toml" ] &&
@@ -260,6 +276,11 @@ reset_pi() {
 # the console drops characters that come faster (#28).
 serial_type() {
     local text=$1 i
+    if [ ! -c "$SERIAL_DEV" ]; then
+        # Not an error here: the caller's wait for the reset then fails.
+        log "no serial console to type on (REDOX_PI_SERIAL in $lab_env_file: '${SERIAL_DEV}')"
+        return 0
+    fi
     for ((i = 0; i < ${#text}; i++)); do
         printf '%s' "${text:i:1}" > "$SERIAL_DEV"
         sleep 0.15

@@ -1,0 +1,65 @@
+# What scripts/console-image.sh --minimal removes on top of
+# config/console-prune.txt: the minimal Redox of the firmware release card
+# (rpi-open-firmware#56). It boots to a console login on serial and HDMI and
+# has no network, no sound, no desktop and no developer tools. USB stays
+# (dwc2d, usbhidd): the keyboard needs it. Build its source image with
+# scripts/build-image.sh --release-netboot (no devshd) and no desktop
+# options; the desktop lines below only matter for a bigger source image.
+# One path or glob per line, relative to the root; # starts a comment.
+
+# Network: services, daemons and tools
+usr/lib/init.d/10_dhcpd.service
+usr/lib/init.d/10_smolnetd.service
+usr/lib/init.d/10_net.target
+usr/lib/init.d/*devshd*
+usr/lib/init.d/65_timesync.service
+usr/bin/netstack
+usr/bin/smolnetd
+usr/bin/dhcpd
+usr/bin/devshd
+usr/bin/timesync
+usr/bin/ifconfig
+usr/bin/dns
+usr/bin/nslookup
+usr/bin/httpd
+usr/bin/telnetd
+usr/bin/wget
+usr/bin/ssh*
+usr/bin/sshd
+etc/net
+
+# Sound
+usr/lib/init.d/20_audiod.service
+usr/lib/init.d/21_startup-sound.service
+usr/lib/startup-sound.ion
+etc/startup-sound
+usr/bin/audiod
+
+# Desktop
+usr/lib/init.d/20_orbital
+usr/bin/orbital*
+usr/bin/desktop
+usr/bin/launcher
+usr/bin/sopwith
+usr/bin/gamepad-test
+usr/share/sopwith
+usr/share/icons
+usr/share/fonts
+usr/share/ui
+usr/share/applications
+usr/lib/libSDL*
+usr/lib/libfreetype*
+usr/lib/libpng*
+
+# Developer tools
+usr/bin/tcc
+usr/lib/tcc
+usr/share/tcc-tests
+usr/bin/cproc*
+usr/bin/qbe
+usr/bin/ld
+usr/bin/as
+usr/bin/ar
+usr/bin/nm
+usr/bin/objdump
+usr/bin/strip

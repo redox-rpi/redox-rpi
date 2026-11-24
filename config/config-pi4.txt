@@ -15,9 +15,10 @@ dtoverlay=disable-bt
 # Pi 4, set here so it is visible).
 enable_gic=1
 
-# Test version: only the first GB of RAM. Older DMA engines reach only the
-# first GB and PCIe only the first 3 GB; Redox has no limits per driver yet.
-total_mem=1024
+# All RAM. Devices that reach only the first GB (mailbox, DMA engine,
+# HDMI audio) get their buffers from the kernel DMA zone (experiment
+# pi400-mem, #299). Tests 531, 535, 536: keyboard, GENET and the
+# framebuffer work with 4 GiB, with and without the zone.
 
 # No gpu_mem=16 as on the Pi 3: on the Pi 4 it makes the firmware look for
 # the cut-down start4cd.elf, which the card does not carry. The default GPU

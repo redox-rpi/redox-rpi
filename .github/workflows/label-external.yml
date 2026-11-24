@@ -1,0 +1,33 @@
+name: Label external pull requests
+
+# Marks pull requests from forks with the label "external" (docs/build-host.md
+# "CI runner"). pull_request_target runs with a token that can write labels,
+# so this workflow never checks out, builds or runs anything from the pull
+# request: it reads only the event's repository names and calls the label
+# API. Whether a fork's other workflows run at all is the org setting
+# "Require approval for all outside collaborators"; they never run on our
+# own runner (runs-on in qemu-boot.yml).
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  label:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Add the label external
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create external --color d93f0b \
+            --description "Pull request from a fork: CI waits for approval, never on our runner" 2>/dev/null || true
+          gh pr edit "$PR" --add-label external

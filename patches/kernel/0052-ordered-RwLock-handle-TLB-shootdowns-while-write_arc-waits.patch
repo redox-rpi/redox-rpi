@@ -1,0 +1,31 @@
+From: chaos session <noreply@anthropic.com>
+Subject: [PATCH] ordered RwLock: handle TLB shootdowns while write_arc waits (issue #207)
+
+---
+diff --git a/src/sync/ordered.rs b/src/sync/ordered.rs
+index 8042bad3..62a7f2b2 100644
+--- a/src/sync/ordered.rs
++++ b/src/sync/ordered.rs
+@@ -555,7 +555,21 @@ impl<L: Level, T> RwLock<L, T> {
+ 
+     // Unsafe due to not using token, currently required by context::switch
+     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
+-        core::mem::forget(self.inner.write());
++        // The context switch spins here with interrupts masked. Another CPU
++        // may hold this lock while it waits for our TLB shootdown
++        // acknowledgement, so handle shootdowns while waiting, like the
++        // other lock loops in this file (issue #207).
++        let my_percpu = PercpuBlock::current();
++        let guard = loop {
++            match self.inner.try_write() {
++                Some(guard) => break guard,
++                None => {
++                    my_percpu.maybe_handle_tlb_shootdown();
++                    core::hint::spin_loop();
++                }
++            }
++        };
++        core::mem::forget(guard);
+         ArcRwLockWriteGuard {
+             rwlock: self.clone(),
+         }

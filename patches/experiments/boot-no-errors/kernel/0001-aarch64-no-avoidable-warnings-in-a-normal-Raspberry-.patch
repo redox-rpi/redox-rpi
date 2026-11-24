@@ -1,0 +1,151 @@
+From 5d0bd5a76ebca557037d4a6f3203b4750d65f2fb Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 18 Nov 2026 18:49:27 +0000
+Subject: [PATCH] aarch64: no avoidable warnings in a normal Raspberry Pi boot
+ (redox-rpi #556)
+
+- DEBUG lines go to the kernel log (/scheme/sys/log) only, not to the
+  serial line or the screen; feature debug_serial prints them as before.
+  About 200 lines cost 1.4 s of boot at 115200 baud.
+- No ACPI search on a devicetree boot without an RSDP from the
+  bootloader (was: NO RSDP FOUND), and an empty ACPI scheme is a debug
+  line, not a warning.
+- No PL031 RTC and the bcm2835-gpio interrupt controller are info lines:
+  the board has no RTC, and no kernel device uses GPIO interrupts.
+---
+ Cargo.toml                             |  2 ++
+ src/arch/aarch64/device/irqchip/mod.rs |  6 ++++++
+ src/arch/aarch64/device/rtc.rs         |  4 +++-
+ src/arch/aarch64/start.rs              |  4 +++-
+ src/log.rs                             | 15 +++++++++++++++
+ src/macros.rs                          | 11 ++++++++++-
+ src/scheme/acpi.rs                     |  3 ++-
+ 7 files changed, 41 insertions(+), 4 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 46a72b41..c0588352 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -100,6 +100,8 @@ drop_panic = []
+ busy_panic = []
+ qemu_debug = []
+ serial_debug = []
++# Print kernel DEBUG lines on the console too (aarch64, riscv64 keep them in the log only).
++debug_serial = []
+ system76_ec_debug = []
+ x86_kvm_pv = []
+ 
+diff --git a/src/arch/aarch64/device/irqchip/mod.rs b/src/arch/aarch64/device/irqchip/mod.rs
+index b6282520..8be9aa83 100644
+--- a/src/arch/aarch64/device/irqchip/mod.rs
++++ b/src/arch/aarch64/device/irqchip/mod.rs
+@@ -20,6 +20,12 @@ pub(crate) fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>>
+         Some(Box::new(irq_bcm2836::Bcm2836ArmInterruptController::new()))
+     } else if ic_str.contains("brcm,bcm2836-armctrl-ic") {
+         Some(Box::new(irq_bcm2835::Bcm2835ArmInterruptController::new()))
++    } else if ic_str.contains("brcm,bcm2835-gpio") {
++        // The GPIO block is an interrupt controller in the devicetree, but
++        // no kernel device takes its interrupts; the GPIO lines are left to
++        // user space.
++        info!("interrupt controller {:?}: no kernel driver needed", ic_str);
++        Some(Box::new(null::Null))
+     } else {
+         warn!("no driver for interrupt controller {:?}", ic_str);
+         //TODO: return None and handle it properly
+diff --git a/src/arch/aarch64/device/rtc.rs b/src/arch/aarch64/device/rtc.rs
+index d33ec7c5..e26afce5 100644
+--- a/src/arch/aarch64/device/rtc.rs
++++ b/src/arch/aarch64/device/rtc.rs
+@@ -26,7 +26,9 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
+             }
+         }
+     } else {
+-        warn!("No PL031 RTC found");
++        // Boards like the Raspberry Pi have no RTC: the clock starts at 0
++        // until a time service in user space sets it.
++        info!("no PL031 RTC in the devicetree");
+     }
+ }
+ 
+diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
+index 6c942f12..901afd5c 100644
+--- a/src/arch/aarch64/start.rs
++++ b/src/arch/aarch64/start.rs
+@@ -98,8 +98,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+             paging::init();
+ 
+             let mut mapper = rmm::PageMapper::current(rmm::TableKind::Kernel, bump_allocator);
++            // A devicetree board has no ACPI tables: look for them only when
++            // the bootloader passed an RSDP or there is no devicetree.
+             #[cfg(feature = "acpi")]
+-            {
++            if args.acpi_rsdp().is_some() || dtb_res.is_err() {
+                 use crate::acpi;
+                 acpi::init_before_mem(args.acpi_rsdp(), &mut mapper);
+             }
+diff --git a/src/log.rs b/src/log.rs
+index 4be27d5a..3cec0b88 100644
+--- a/src/log.rs
++++ b/src/log.rs
+@@ -10,6 +10,21 @@ pub fn init() {
+     *LOG.lock() = Some(Log::new(1024 * 1024));
+ }
+ 
++/// Write to the kernel log only, not to the serial line or the screen.
++/// Before [`init`] the text is dropped.
++pub fn log_only(args: fmt::Arguments) {
++    struct LogOnly<'a>(MutexGuard<'a, Option<Log>>);
++    impl fmt::Write for LogOnly<'_> {
++        fn write_str(&mut self, s: &str) -> fmt::Result {
++            if let Some(log) = &mut *self.0 {
++                log.write(s.as_bytes());
++            }
++            Ok(())
++        }
++    }
++    let _ = fmt::Write::write_fmt(&mut LogOnly(LOG.lock()), args);
++}
++
+ pub struct Log {
+     data: VecDeque<u8>,
+     size: usize,
+diff --git a/src/macros.rs b/src/macros.rs
+index 2f81a3cb..4f93b0a7 100644
+--- a/src/macros.rs
++++ b/src/macros.rs
+@@ -40,8 +40,17 @@ macro_rules! info {
+ #[macro_export]
+ macro_rules! debug {
+     ($($arg:tt)*) => {
+-        if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
++        if cfg!(feature = "debug_serial") {
+             println!("{}:DEBUG -- {}", core::module_path!(), format_args!($($arg)*));
++        } else if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
++            // Kept in the kernel log (/scheme/sys/log), not printed on the
++            // serial line or the screen: about 200 lines cost 1.4 s of boot
++            // at 115200 baud on the Raspberry Pi.
++            $crate::log::log_only(format_args!(
++                "{}:DEBUG -- {}\n",
++                core::module_path!(),
++                format_args!($($arg)*)
++            ));
+         }
+     };
+ }
+diff --git a/src/scheme/acpi.rs b/src/scheme/acpi.rs
+index e186c7b0..a64b4c4f 100644
+--- a/src/scheme/acpi.rs
++++ b/src/scheme/acpi.rs
+@@ -83,7 +83,8 @@ impl AcpiScheme {
+                 Some(RxsdtEnum::Rsdt(rsdt)) => rsdt.as_slice(),
+                 Some(RxsdtEnum::Xsdt(xsdt)) => xsdt.as_slice(),
+                 None => {
+-                    warn!("expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?");
++                    // Normal on a devicetree board: the scheme is empty.
++                    debug!("no ACPI tables, /scheme/kernel.acpi is empty");
+                     &[]
+                 }
+             };
+-- 
+2.53.0
+
