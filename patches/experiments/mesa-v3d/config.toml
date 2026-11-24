@@ -1,0 +1,6 @@
+# Experiment mesa-v3d (#669, test only): Mesa with the v3d Gallium driver
+# and gles-probe, an OpenGL ES test through EGL surfaceless.
+
+[packages]
+mesa = "source"
+gles-probe = "source"
