@@ -15,6 +15,6 @@ condition_architecture = ["aarch64"]
 
 [service]
 cmd = "vc4d"
-inherit_envs = ["VC4D", "VC4D_FAKE", "VC4D_LOG", "VC4D_FLIP", "VC4D_CHECK", "VC4D_IRQ_PROBE"]
+inherit_envs = ["VC4D", "VC4D_FAKE", "VC4D_LOG", "VC4D_FLIP", "VC4D_CHECK", "VC4D_IRQ_PROBE", "VC4D_VBLANK"]
 type = "notify"
 """
