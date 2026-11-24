@@ -176,8 +176,12 @@ per week and one release per sprint:
    PR changes, why, and what has to be tested (test plan); it carries no
    test status. Test results, Pi rows and reports go into comments, one
    per run with date, image and report, so the history stays readable.
-5. The project lead checks base, CI and Pi test and sets `merge-next`;
-   Quality may audit the PR against the process.
+   **Docs move with the code:** a PR that changes what a repository does
+   updates its README and the docs that describe it (topic page, `docs/`,
+   wiki) in the same PR. Only if that is not possible, its author updates
+   them right after the merge. The PR template has a checkbox for this.
+5. The project lead checks base, CI, Pi test and the docs checkbox and sets
+   `merge-next`; Quality may audit the PR against the process.
 6. The PR is merged by whoever holds the merge right for it (see
    [Merge rights](#merge-rights) below).
 7. Release and CI builds the weekly release candidate; V&V tests it; the
