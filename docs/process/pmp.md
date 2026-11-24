@@ -6,7 +6,7 @@ owned by the Process session, the planning parts (sprints, work packages,
 status) by the project lead. It is changed by pull request; the maintainer
 approves it.
 
-Status: draft, 2026-11-08.
+Status: in force; first draft 2026-11-08, last changed 2026-11-24.
 
 ## Goal
 
@@ -72,23 +72,27 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 
 | Document | Path | Owner | Status |
 |---|---|---|---|
-| Project management plan | `docs/process/pmp.md` | Process (process rules), project lead (planning) | this draft |
-| Firmware project management plan | [rpi-open-firmware `docs/pmp.md`](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md) | Process (process rules), project lead (status) | draft ([rof PR #64](https://github.com/redox-rpi/rpi-open-firmware/pull/64)) |
+| Project management plan | `docs/process/pmp.md` | Process (process rules), project lead (planning) | in force |
+| Firmware project management plan | [rpi-open-firmware `docs/pmp.md`](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md) | Process (process rules), project lead (status) | draft |
 | Product breakdown structure (PBS) | [`docs/process/pbs.md`](pbs.md) | project lead, Architect | draft |
 | Work breakdown structure (WBS) | [`docs/process/wbs.md`](wbs.md) | project lead; process rules in it: Process | draft |
 | Risks and opportunities | issues labelled [`risk`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Arisk) and [`opportunity`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Aopportunity) | project lead | live |
 | Join page | [`docs/join.md`](../join.md) | project lead | draft |
-| Quality management plan | `docs/process/qmp.md` | Quality | to write |
-| Requirements management plan (part of this plan) | `docs/process/rmp.md` | Requirements | to write |
-| Requirements | `docs/requirements/` | Requirements | to write |
-| Architecture | `docs/architecture.md` | Architect | exists |
-| Coding standards and rules | `docs/process/coding-standards.md` | Architect | to write |
-| Test standards | `docs/process/test-standards.md` | V&V | to write |
+| Quality management plan and KPI dashboard | `docs/process/qmp.md` | Quality | to write ([#648](https://github.com/redox-rpi/redox-rpi/issues/648)) |
+| Requirements management plan (part of this plan) | [`docs/process/rmp.md`](rmp.md) | Requirements | draft |
+| Requirements | Feature issues `REQ-…` ([RMP](rmp.md#storage)); traces in [`docs/requirements/`](../requirements/) | Requirements | live |
+| Architecture | [`docs/architecture.md`](../architecture.md) | Architect | exists |
+| Coding standards and rules | [`docs/process/coding-standards.md`](coding-standards.md) | Architect | draft, grows by section |
+| Test standards | `docs/process/test-standards.md` | V&V | to write ([#264](https://github.com/redox-rpi/redox-rpi/issues/264)) |
 | Test plan and reports | [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests) (`queue.md`, `reports/`, `lab.md`, `releases/`); `docs/test-plan.md` and `docs/test-reports.md` point there | V&V | moved (RFC 0002 phase 2) |
 | Release process and checklists | `docs/release-process.md`, `docs/releases/` | Release and CI | exist |
 | Topic pages | `docs/topics/` | topic owners | exist |
 | Contribution rules | `CONTRIBUTING.md` | Process | exists; links the documents above |
-| Overall status | `STATUS.md` | project lead | to write (RFC 0002) |
+| Overall status | `STATUS.md` | project lead | to write ([#649](https://github.com/redox-rpi/redox-rpi/issues/649)) |
+
+Every document marked "to write" links its issue. When a document is
+written or its status changes, its author updates this table in the same
+change.
 
 ### What the standards must cover
 
@@ -332,15 +336,3 @@ they stay current and anyone can raise one:
   and at every release candidate: updates likelihood and handling, closes
   what no longer applies, and turns handling steps into normal issues.
 - Quality shows the open risks on the KPI dashboard.
-
-## Next steps
-
-1. The maintainer reviews the PBS and the WBS; the project lead then opens
-   one parent issue per work package and owners attach their issues as
-   sub-issues.
-2. Quality writes the QMP and the first KPI dashboard.
-3. The Pi test agent takes the V&V role and writes the test standards.
-4. The Architect writes the coding standards and rules.
-5. The Requirements agent writes the requirements management plan, then
-   the first requirements for v0.4.
-6. RFC 0002 (project structure) decided and migrated in small PRs.
