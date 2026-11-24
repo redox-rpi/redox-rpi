@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 24 Nov 2026 11:59:37 +0000
+Subject: [PATCH] Raspberry Pi: the initfs holds only what mounting root needs
+
+The initfs stays in memory until power-off (redox-rpi#642). On the Pi
+(BOARD=raspi3bp) it no longer holds ACPI, PCI, NVMe, virtio, rtcd, hwd,
+the Arasan SD driver or PS/2, none of which start there. GPIO, I2C, SPI,
+sound and the DWC2 USB driver start from the root filesystem: their
+programs go to /usr/bin, their units to /usr/lib/init.d, and netstack
+and audiod wait for them.
+---
+ Makefile | 33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 29a06463..7bba5775 100644
+--- a/Makefile
++++ b/Makefile
+@@ -34,6 +34,25 @@ ifeq ($(TARGET),aarch64-unknown-redox)
+ 	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
+ endif
+ 
++# redox-rpi#642: on the Raspberry Pi (BOARD=raspi3bp) the initfs holds only
++# what mounting the root filesystem needs. Left out: ACPI, PCI, NVMe, virtio,
++# rtcd and hwd (nothing to find on the Pi), the old Arasan SD driver
++# (bcm2835-sdhostd serves the card) and PS/2. GPIO, I2C, SPI, sound and USB
++# start from the root filesystem: their programs go to /usr/bin, their units
++# to /usr/lib/init.d. The initfs stays in memory until power-off, so every
++# byte left out is free memory.
++ifeq ($(BOARD),raspi3bp)
++	PI_ROOT_BINS = bcm2835-gpiod bcm2835-i2cd bcm2835-spid bcm2835-pwmaudiod dwc2d
++	PI_ROOT_UNITS = 40_bcm2835-gpiod.service 41_bcm2835-i2cd.service \
++		41_bcm2835-spid.service 41_bcm2835-pwmaudiod.service 40_dwc2d.service
++	PI_DROP_UNITS = 00_rtcd.service 40_hwd.service 40_pcid-spawner-initfs.service \
++		40_ps2d.service
++	INITFS_BINS := $(filter-out acpid hwd pcid pcid-spawner rtcd bcm2835-sdhcid \
++		$(PI_ROOT_BINS),$(INITFS_BINS))
++	INITFS_DRIVERS_BINS :=
++	BASE_BINS += bcm2835-sdhcid $(PI_ROOT_BINS)
++endif
++
+ # For testing/benchmarking only
+ # BASE_BINS += drawbench
+ 
+@@ -120,6 +139,20 @@ install-base: base $(SYSROOT)/bin/redoxfs
+ 	@mkdir -p "$(BUILD_DIR)/initfs/lib/init.d" "$(BUILD_DIR)/initfs/lib/pcid.d"
+ 	cp "$(SRC_DIR)/init.initfs.d"/* "$(BUILD_DIR)/initfs/lib/init.d/"
+ 	cp "$(SRC_DIR)/drivers/initfs.toml" "$(BUILD_DIR)/initfs/lib/pcid.d/initfs.toml"
++# redox-rpi#642: units that start from root or not at all, out of the
++# initfs and out of the targets that list them
++	@for unit in $(PI_ROOT_UNITS); do \
++		mv -v "$(BUILD_DIR)/initfs/lib/init.d/$$unit" "$(DESTDIR)/usr/lib/init.d/"; \
++	done
++	@for unit in $(PI_ROOT_UNITS) $(PI_DROP_UNITS); do \
++		rm -fv "$(BUILD_DIR)/initfs/lib/init.d/$$unit"; \
++		sed -i "/\"$$unit\"/d" "$(BUILD_DIR)/initfs/lib/init.d/"*.target; \
++	done
++	@[ -z "$(PI_DROP_UNITS)" ] || rm -rfv "$(BUILD_DIR)/initfs/lib/pcid.d" "$(BUILD_DIR)/initfs/lib/drivers"
++	@[ -z "$(PI_ROOT_UNITS)" ] || { \
++		sed -i 's/^requires_weak = \[$$/&\n    "40_dwc2d.service",/' "$(DESTDIR)/usr/lib/init.d/10_smolnetd.service"; \
++		sed -i 's/^requires_weak = \[$$/&\n    "41_bcm2835-pwmaudiod.service",/' "$(DESTDIR)/usr/lib/init.d/20_audiod.service"; \
++	}
+ # Build initfs
+ 	$(CARGO_HOST) run --manifest-path "$(SRC_DIR)/initfs/tools/Cargo.toml" --bin redox-initfs-ar -- \
+ 		"$(BUILD_DIR)/initfs" "$(TARGET_DIR)/bootstrap" -o "$(BUILD_DIR)/initfs.img"
+-- 
+2.53.0
+
