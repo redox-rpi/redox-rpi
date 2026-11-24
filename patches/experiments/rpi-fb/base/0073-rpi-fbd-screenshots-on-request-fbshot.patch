@@ -1,0 +1,242 @@
+From: stephan-xyz <stephan@zehrer.net>
+Subject: [PATCH] rpi-fbd: screenshots on request (fbshot)
+
+`rpi-fbd shot <file>` (and `fbshot`) asks the running rpi-fbd for the
+buffer on screen as a PPM file and prints its size, top-colour share and
+number of colours, for tests without a person on boards without network
+(Pi 400, QEMU raspi4b). rpi-fbd looks for the request every 500 ms; the
+EDID is still read every 5 s.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+diff -ruN a/drivers/graphics/rpi-fbd/src/main.rs b/drivers/graphics/rpi-fbd/src/main.rs
+--- a/drivers/graphics/rpi-fbd/src/main.rs	2026-11-18 03:44:51.657195135 +0000
++++ b/drivers/graphics/rpi-fbd/src/main.rs	2026-11-18 03:44:51.665996397 +0000
+@@ -27,6 +27,12 @@
+ //!
+ //! With two buffers it waits for the vertical blank after a flip before
+ //! drawing into the buffer that was shown, unless `RPI_FB_VSYNC=off`.
++//!
++//! `rpi-fbd shot [file.ppm]` (installed as `fbshot` too) is a screenshot
++//! for tests without a person: it asks the running `rpi-fbd` for the
++//! buffer on screen as a PPM file (`shot.rs`) and prints its size, the
++//! share of the most common colour and the number of colours, since the
++//! Pi 400 and QEMU's raspi4b have no network to fetch the file over.
+ 
+ use std::env;
+ use std::fs::{File, OpenOptions};
+@@ -47,16 +53,25 @@
+ mod dma;
+ mod firmware;
+ mod scheme;
++mod shot;
+ 
+ /// When the firmware reports no display size.
+ const DEFAULT_SIZE: (u32, u32) = (1024, 768);
+ /// How often the EDID is read again, for a monitor turned on later.
+ const EDID_POLL: Duration = Duration::from_secs(5);
++/// How often a screenshot request (`shot.rs`) is looked for.
++const TICK: Duration = Duration::from_millis(500);
+ /// Double buffering at start only when both screens take at most this part
+ /// of the GPU memory; the firmware needs the rest.
+ const DOUBLE_SHARE: usize = 2;
+ 
+ fn main() {
++    let args: Vec<String> = env::args().collect();
++    let tool = args.first().is_some_and(|a| a.ends_with("fbshot"));
++    if tool || args.get(1).is_some_and(|a| a == "shot") {
++        let path = args.get(if tool { 1 } else { 2 }).map_or(shot::DEFAULT_PATH, String::as_str);
++        std::process::exit(shot::request(path));
++    }
+     common::init();
+     daemon::Daemon::new(daemon);
+ }
+@@ -132,13 +147,15 @@
+     }
+ }
+ 
+-/// Arms the timer `EDID_POLL` from now.
++/// Arms the timer `TICK` from now.
+ fn arm(time: &mut File) {
+     let mut now = syscall::TimeSpec::default();
+     if time.read(&mut now).is_err() {
+         return;
+     }
+-    now.tv_sec += EDID_POLL.as_secs() as i64;
++    let nanos = now.tv_nsec as i64 + TICK.as_nanos() as i64;
++    now.tv_sec += nanos / 1_000_000_000;
++    now.tv_nsec = (nanos % 1_000_000_000) as i32;
+     let _ = time.write(&now);
+ }
+ 
+@@ -245,6 +262,8 @@
+         .subscribe(time.as_raw_fd() as usize, Source::Time, event::EventFlags::READ)
+         .unwrap();
+     arm(&mut time);
++    let mut ticks = 0u32;
++    let edid_ticks = (EDID_POLL.as_millis() / TICK.as_millis()) as u32;
+ 
+     daemon.ready();
+ 
+@@ -265,6 +284,12 @@
+                     .expect("rpi-fbd: failed to handle scheme events");
+             }
+             Source::Time => {
++                scheme.adapter_mut().serve_shot();
++                ticks = ticks.wrapping_add(1);
++                if ticks % edid_ticks != 0 {
++                    arm(&mut time);
++                    continue;
++                }
+                 if bench {
+                     scheme.adapter_mut().report();
+                 }
+diff -ruN a/drivers/graphics/rpi-fbd/src/scheme.rs b/drivers/graphics/rpi-fbd/src/scheme.rs
+--- a/drivers/graphics/rpi-fbd/src/scheme.rs	2026-11-18 03:44:51.657247164 +0000
++++ b/drivers/graphics/rpi-fbd/src/scheme.rs	2026-11-18 03:44:51.666074486 +0000
+@@ -139,6 +139,19 @@
+         if self.mode.buffers == 2 { 1 - self.front } else { 0 }
+     }
+ 
++    /// The buffer on screen, one row after the other without the padding
++    /// of the stride, 0x00RRGGBB pixels.
++    pub fn front_pixels(&self) -> Vec<u32> {
++        let (width, stride) = (self.mode.width as usize, self.mode.stride as usize);
++        let mut out = Vec::with_capacity(width * self.mode.height as usize);
++        let base = self.pixels(if self.mode.buffers == 2 { self.front } else { 0 });
++        for row in 0..self.mode.height as usize {
++            let line = unsafe { std::slice::from_raw_parts(base.add(row * stride), width) };
++            out.extend_from_slice(line);
++        }
++        out
++    }
++
+     fn clear(&mut self) {
+         let len = self.mode.stride as usize * self.mode.height as usize * self.mode.buffers as usize;
+         unsafe { ptr::write_bytes(self.pixels(0), 0, len) };
+diff -ruN a/drivers/graphics/rpi-fbd/src/shot.rs b/drivers/graphics/rpi-fbd/src/shot.rs
+--- a/drivers/graphics/rpi-fbd/src/shot.rs	1970-01-01 00:00:00.000000000 +0000
++++ b/drivers/graphics/rpi-fbd/src/shot.rs	2026-11-18 03:44:51.666098425 +0000
+@@ -0,0 +1,122 @@
++//! Screenshots for tests without a person (fbshot).
++//!
++//! `rpi-fbd shot <file>` (or `fbshot <file>`) writes the file name into
++//! `REQUEST` and waits. The running `rpi-fbd` looks for the request every
++//! half second, writes the buffer on screen there as a binary PPM file and
++//! removes the request. The tool then reads the file back and prints one
++//! line: size, the share of the most common colour, the number of colours
++//! (every 7th pixel, as `desktop-check.py` counts them for `vc4shot`).
++
++use std::collections::HashMap;
++use std::fs;
++use std::io::{self, Write};
++use std::thread;
++use std::time::{Duration, Instant};
++
++use crate::scheme::RpiAdapter;
++
++pub const DEFAULT_PATH: &str = "/tmp/fbshot.ppm";
++const REQUEST: &str = "/tmp/fbshot.request";
++/// The request file is written here first and renamed, so `rpi-fbd`
++/// never reads half a name.
++const REQUEST_NEW: &str = "/tmp/fbshot.request.new";
++const WAIT: Duration = Duration::from_secs(20);
++
++/// The tool: asks for a screenshot into `path` and prints its summary.
++/// Returns the exit code.
++pub fn request(path: &str) -> i32 {
++    let _ = fs::remove_file(path);
++    if let Err(err) = fs::write(REQUEST_NEW, path).and_then(|()| fs::rename(REQUEST_NEW, REQUEST)) {
++        eprintln!("fbshot: cannot write {REQUEST}: {err}");
++        return 1;
++    }
++    let started = Instant::now();
++    while fs::metadata(REQUEST).is_ok() {
++        if started.elapsed() > WAIT {
++            let _ = fs::remove_file(REQUEST);
++            eprintln!("fbshot: no answer from rpi-fbd within {} s (is it the display?)", WAIT.as_secs());
++            return 1;
++        }
++        thread::sleep(Duration::from_millis(100));
++    }
++    let data = match fs::read(path) {
++        Ok(data) => data,
++        Err(err) => {
++            eprintln!("fbshot: rpi-fbd wrote no {path}: {err}");
++            return 1;
++        }
++    };
++    match stats(&data) {
++        Some((w, h, top, colours)) => {
++            println!(
++                "fbshot: {w}x{h}, top colour {}%, {colours} colours, {} bytes in {path}",
++                (top * 100.0).round(),
++                data.len()
++            );
++            0
++        }
++        None => {
++            eprintln!("fbshot: {path} is not a PPM picture ({} bytes)", data.len());
++            1
++        }
++    }
++}
++
++/// Width, height, share of the most common colour and number of colours
++/// (every 7th pixel) of a binary PPM file.
++fn stats(data: &[u8]) -> Option<(usize, usize, f64, usize)> {
++    let mut fields = Vec::new();
++    let mut pos = 0;
++    while fields.len() < 4 {
++        while data.get(pos)?.is_ascii_whitespace() {
++            pos += 1;
++        }
++        let start = pos;
++        while !data.get(pos)?.is_ascii_whitespace() {
++            pos += 1;
++        }
++        fields.push(std::str::from_utf8(&data[start..pos]).ok()?);
++    }
++    if fields[0] != "P6" {
++        return None;
++    }
++    let (w, h): (usize, usize) = (fields[1].parse().ok()?, fields[2].parse().ok()?);
++    let px = data.get(pos + 1..pos + 1 + w * h * 3)?;
++    let mut counts: HashMap<&[u8], usize> = HashMap::new();
++    for i in (0..px.len()).step_by(3 * 7) {
++        *counts.entry(&px[i..i + 3]).or_default() += 1;
++    }
++    let total: usize = counts.values().sum();
++    let top = *counts.values().max()?;
++    Some((w, h, top as f64 / total as f64, counts.len()))
++}
++
++impl RpiAdapter {
++    /// Writes the screenshot a tool asked for, if any.
++    pub fn serve_shot(&mut self) {
++        let Ok(path) = fs::read_to_string(REQUEST) else {
++            return;
++        };
++        let path = path.trim();
++        let result = self.write_ppm(path);
++        match &result {
++            Ok(()) => println!(
++                "rpi-fbd: screenshot {}x{} to {path}",
++                self.screen.mode.width, self.screen.mode.height
++            ),
++            Err(err) => println!("rpi-fbd: screenshot to {path} failed: {err}"),
++        }
++        let _ = fs::remove_file(REQUEST);
++    }
++
++    fn write_ppm(&self, path: &str) -> io::Result<()> {
++        let (width, height) = (self.screen.mode.width, self.screen.mode.height);
++        let pixels = self.screen.front_pixels();
++        let mut out = Vec::with_capacity(pixels.len() * 3 + 32);
++        write!(out, "P6\n{width} {height}\n255\n")?;
++        for p in pixels {
++            out.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
++        }
++        fs::write(path, out)
++    }
++}

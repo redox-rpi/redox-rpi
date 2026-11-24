@@ -1,0 +1,254 @@
+From ed843947ca14f7d558759d9fc444b1eaf97b6796 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Thu, 19 Nov 2026 15:58:34 +0000
+Subject: [PATCH] Interrupt and timer wake-up counters in /scheme/sys/irqstat
+ (redox-rpi #564)
+
+aarch64 counts each interrupt by kind (IPI, timer tick, device line,
+nothing pending, unexpected) on each CPU, each device line on each CPU,
+and the longest time a line's handler took. The scheduler counts how
+late sleeping contexts wake after their wake-up time, as a histogram
+with its maximum. Relaxed atomics only, so it is safe in interrupt
+context. The existing /scheme/sys/irq stays as it is.
+---
+ src/arch/aarch64/interrupt/irq.rs |  22 +++++++
+ src/context/switch.rs             |   2 +
+ src/irq_stats.rs                  | 101 ++++++++++++++++++++++++++++++
+ src/main.rs                       |   3 +
+ src/scheme/sys/irqstat.rs         |   7 +++
+ src/scheme/sys/mod.rs             |   2 +
+ 6 files changed, 137 insertions(+)
+ create mode 100644 src/irq_stats.rs
+ create mode 100644 src/scheme/sys/irqstat.rs
+
+diff --git a/src/arch/aarch64/interrupt/irq.rs b/src/arch/aarch64/interrupt/irq.rs
+index 1331ab48..8b4b4353 100644
+--- a/src/arch/aarch64/interrupt/irq.rs
++++ b/src/arch/aarch64/interrupt/irq.rs
+@@ -7,27 +7,49 @@ use crate::{
+     sync::CleanLockToken,
+ };
+ 
++use crate::irq_stats::{self, Kind};
++
+ // use crate::percpu::PercpuBlock;
+ 
++/// The generic timer's counter, for handler times.
++fn counter() -> u64 {
++    let ticks: u64;
++    unsafe { core::arch::asm!("mrs {}, cntpct_el0", out(reg) ticks) };
++    ticks
++}
++
++fn ticks_to_ns(ticks: u64) -> u64 {
++    let freq: u64;
++    unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq) };
++    if freq == 0 { 0 } else { (ticks as u128 * 1_000_000_000 / freq as u128) as u64 }
++}
++
+ unsafe fn dispatch() {
+     let (raw_iar, hwirq, virq) = irqchip::acknowledge_root();
+     if ipi::handle(hwirq, raw_iar) {
++        irq_stats::kind(Kind::Ipi);
+         return;
+     }
+ 
+     let mut token = unsafe { CleanLockToken::new() };
+     if generic_timer::handle(hwirq, raw_iar, &mut token) {
++        irq_stats::kind(Kind::Timer);
+         return;
+     }
+ 
+     if let Some(virq) = virq
+         && virq < 1024
+     {
++        let start = counter();
+         unsafe { IRQ_CHIP.trigger_virq(virq as u32, &mut token) };
++        irq_stats::line(virq as u32, ticks_to_ns(counter().wrapping_sub(start)));
++        irq_stats::kind(Kind::Line);
+     } else if hwirq == u32::MAX {
++        irq_stats::kind(Kind::Empty);
+         // The BCM2836 local controller found nothing pending: the source,
+         // a user space driver's device, was cleared on another CPU.
+     } else {
++        irq_stats::kind(Kind::Unexpected);
+         println!("unexpected irq num {}", hwirq);
+         // IDs 1020..1023 are special/spurious GIC values and must not be
+         // written to EOIR because no interrupt was acknowledged.
+diff --git a/src/context/switch.rs b/src/context/switch.rs
+index 5f99123a..a8469fe8 100644
+--- a/src/context/switch.rs
++++ b/src/context/switch.rs
+@@ -90,6 +90,7 @@ fn update_runnable(
+         && let Some(wake) = context.wake
+         && schedule_time >= wake
+     {
++        crate::irq_stats::wake_late(schedule_time - wake);
+         context.wake = None;
+         context.unblock_no_ipi();
+     }
+@@ -368,6 +369,7 @@ fn schedule(
+                     && guard.status.is_soft_blocked()
+                     && guard.wake == Some(wake)
+                 {
++                    crate::irq_stats::wake_late(schedule_time.saturating_sub(wake));
+                     guard.wake = None;
+                     guard.unblock_no_ipi();
+                 }
+diff --git a/src/irq_stats.rs b/src/irq_stats.rs
+new file mode 100644
+index 00000000..7f53043a
+--- /dev/null
++++ b/src/irq_stats.rs
+@@ -0,0 +1,101 @@
++//! Interrupt and timer wake-up counters, shown in `/scheme/sys/irqstat`
++//! (redox-rpi #564). Lock-free: relaxed atomics, safe in interrupt context.
++
++use alloc::string::String;
++use core::fmt::Write;
++use core::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
++
++const CPUS: usize = 8;
++const LINES: usize = 256;
++
++/// What an interrupt turned out to be.
++#[derive(Clone, Copy)]
++pub enum Kind {
++    /// Inter-processor interrupt.
++    Ipi = 0,
++    /// The per-CPU timer (scheduler tick).
++    Timer = 1,
++    /// A device line, handed to its driver.
++    Line = 2,
++    /// The controller had nothing pending (already cleared elsewhere).
++    Empty = 3,
++    /// A number no handler knows.
++    Unexpected = 4,
++}
++const KIND_NAMES: [&str; 5] = ["ipi", "timer", "line", "empty", "unexpected"];
++
++static KINDS: [[AtomicU64; 5]; CPUS] = [const { [const { AtomicU64::new(0) }; 5] }; CPUS];
++static LINE_COUNT: [[AtomicU32; LINES]; CPUS] =
++    [const { [const { AtomicU32::new(0) }; LINES] }; CPUS];
++static LINE_MAX_NS: [AtomicU32; LINES] = [const { AtomicU32::new(0) }; LINES];
++
++/// Upper bounds of the wake-up lateness buckets, in ns; the last is open.
++const WAKE_BOUNDS: [u128; 5] = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000];
++const WAKE_NAMES: [&str; 6] = ["<10us", "<100us", "<1ms", "<10ms", "<100ms", ">=100ms"];
++static WAKE: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
++static WAKE_MAX_NS: AtomicU64 = AtomicU64::new(0);
++
++fn cpu() -> usize {
++    (crate::cpu_id().get() as usize).min(CPUS - 1)
++}
++
++/// Count an interrupt of this kind on the current CPU.
++pub fn kind(kind: Kind) {
++    KINDS[cpu()][kind as usize].fetch_add(1, Relaxed);
++}
++
++/// Count a device line and the time its handler took.
++pub fn line(virq: u32, handler_ns: u64) {
++    let virq = virq as usize;
++    if virq < LINES {
++        LINE_COUNT[cpu()][virq].fetch_add(1, Relaxed);
++        LINE_MAX_NS[virq].fetch_max(handler_ns.min(u32::MAX as u64) as u32, Relaxed);
++    }
++}
++
++/// A sleeping context (nanosleep, a timed wait) woke this late after its
++/// wake-up time.
++pub fn wake_late(late_ns: u128) {
++    let bucket = WAKE_BOUNDS.iter().position(|&b| late_ns < b).unwrap_or(5);
++    WAKE[bucket].fetch_add(1, Relaxed);
++    WAKE_MAX_NS.fetch_max(late_ns.min(u64::MAX as u128) as u64, Relaxed);
++}
++
++pub fn report() -> String {
++    let cpus = (crate::cpu_count() as usize).clamp(1, CPUS);
++    let mut s = String::new();
++    let _ = write!(s, "kind");
++    for c in 0..cpus {
++        let _ = write!(s, " cpu{c}");
++    }
++    let _ = writeln!(s);
++    for (k, name) in KIND_NAMES.iter().enumerate() {
++        let _ = write!(s, "{name}");
++        for c in 0..cpus {
++            let _ = write!(s, " {}", KINDS[c][k].load(Relaxed));
++        }
++        let _ = writeln!(s);
++    }
++    let _ = write!(s, "\nline");
++    for c in 0..cpus {
++        let _ = write!(s, " cpu{c}");
++    }
++    let _ = writeln!(s, " max_handler_us");
++    for l in 0..LINES {
++        let counts: [u32; CPUS] = core::array::from_fn(|c| LINE_COUNT[c][l].load(Relaxed));
++        if counts.iter().all(|&n| n == 0) {
++            continue;
++        }
++        let _ = write!(s, "{l}");
++        for n in &counts[..cpus] {
++            let _ = write!(s, " {n}");
++        }
++        let _ = writeln!(s, " {}", LINE_MAX_NS[l].load(Relaxed) / 1000);
++    }
++    let _ = write!(s, "\nwake_late");
++    for (b, name) in WAKE_NAMES.iter().enumerate() {
++        let _ = write!(s, " {name}:{}", WAKE[b].load(Relaxed));
++    }
++    let _ = writeln!(s, " max_us:{}", WAKE_MAX_NS.load(Relaxed) / 1000);
++    s
++}
+diff --git a/src/main.rs b/src/main.rs
+index a29621fa..fa0e23ca 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -79,6 +79,9 @@ mod percpu;
+ /// Process tracing
+ mod ptrace;
+ 
++/// Interrupt and timer counters (/scheme/sys/irqstat)
++mod irq_stats;
++
+ /// Performance profiling of the kernel
+ mod profiling;
+ 
+diff --git a/src/scheme/sys/irqstat.rs b/src/scheme/sys/irqstat.rs
+new file mode 100644
+index 00000000..06b96993
+--- /dev/null
++++ b/src/scheme/sys/irqstat.rs
+@@ -0,0 +1,7 @@
++use alloc::vec::Vec;
++
++use crate::{sync::CleanLockToken, syscall::error::Result};
++
++pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
++    Ok(crate::irq_stats::report().into_bytes())
++}
+diff --git a/src/scheme/sys/mod.rs b/src/scheme/sys/mod.rs
+index f4c0dba6..425e17d4 100644
+--- a/src/scheme/sys/mod.rs
++++ b/src/scheme/sys/mod.rs
+@@ -32,6 +32,7 @@ mod exe;
+ mod fdstat;
+ mod iostat;
+ mod irq;
++mod irqstat;
+ mod log;
+ #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+ mod numa;
+@@ -77,6 +78,7 @@ const FILES: &[(&str, Kind)] = &[
+     ("exe", Rd(exe::resource)),
+     ("iostat", Rd(iostat::resource)),
+     ("irq", Rd(irq::resource)),
++    ("irqstat", Rd(irqstat::resource)),
+     ("log", Rd(log::resource)),
+     #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+     ("numa", Rd(numa::resource)),
+-- 
+2.53.0
+

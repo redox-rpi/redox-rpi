@@ -35,12 +35,30 @@ Rules:
 - Before every pkg run the data partition gets the image's `/etc/pkg.d`
   and `/etc/pkg/hold`, so the same repositories and holds apply.
 - Plain `pkg install` still installs into `/` only, as before.
+- The copies must fit into `/`, which is small on network boot (it is in
+  RAM). pkg-persist adds up what it would copy first; if that and 4 MB for
+  the system do not fit, it copies nothing and says how much is needed and
+  free. The packages stay on the data partition. install and update then
+  exit with 1; the boot copy only warns and exits with 0, so init does not
+  report a failed service.
 
 Also in this experiment:
 
-- redoxfs patch 0001: rename failed with "No such file or directory" on any
-  RedoxFS mounted below `/scheme/<name>` (only the root filesystem worked),
-  and pkg renames every file it installs. Built from source and held.
+- pkgutils patch 0003: pkg downloaded into `/tmp/pkg_download` even with
+  `--root` and never removed the files, so a large install filled the RAM
+  root and `/` stayed full after the rollback (Test 586). Now pkg downloads
+  into `<root>/tmp/pkg_download` (for `/` the same place as before) and
+  removes it when the command ends, after a commit or a rollback.
+  pkg-persist also empties it before and after every pkg run.
+
+- redoxfs is built from source at the pinned commit and held. Our old
+  redoxfs patch 0001 (rename on a RedoxFS mounted below `/scheme/<name>`,
+  2026-10-30) is gone: upstream redoxfs (db847d8) handles those paths
+  itself, and on top of it the patch stripped `/scheme/data` first, so a
+  rename into a subdirectory fell back to the scheme `file` and failed with
+  "Cross-device link" (Test 588: pkg's rename of a download).
+- pkgutils patch 0004: pkg exits with 1 when the command fails (it exited
+  with 0), so pkg-persist stops instead of copying and reporting success.
 - pkgutils patch 0002: when a download fails because the certificate is
   "not valid yet" (or expired), pkg says what year the clock is at and to
   set the clock first, instead of only the TLS error (seen in QEMU at 1970,

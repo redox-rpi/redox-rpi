@@ -71,6 +71,15 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (`0xc0000000` alias) and the row count (`height - 1` in YLENGTH) were
   already the same as in Linux. QEMU does not model bus priority, so only
   the Pi can show it; QEMU still passes the DMA test and the bench.
+- [`0073`](base/0073-rpi-fbd-screenshots-on-request-fbshot.patch)
+  (branch `pi400-fbshot`): screenshots on request. `fbshot [file.ppm]`
+  (`config.toml`; it runs `/scheme/initfs/bin/rpi-fbd shot`) asks the
+  running `rpi-fbd` for the buffer on screen as a PPM file (default
+  `/tmp/fbshot.ppm`) and prints one line: size, the share of the most
+  common colour and the number of colours. The Pi 400 and QEMU's `raspi4b`
+  have no network to fetch the file over, so a test reads the line on the
+  serial console. `rpi-fbd` looks for `/tmp/fbshot.request` every 500 ms;
+  the EDID is still read every 5 s.
 - [`kernel/0049`](kernel/0049-memory-blocks-of-up-to-16-MiB.patch)
   (branch `graphics-dma-order`): the kernel hands out physically
   contiguous blocks of up to 16 MiB instead of 4 MiB (13 orders in its
@@ -78,6 +87,11 @@ scripts/build-image.sh --experiment timesync --experiment rtl8152 --experiment r
   (1824x984 is 7 MiB, 1920x1200 9 MiB) never get DMA memory, however much
   is free, and fall back to CPU blits (`dumb buffer … in normal memory:
   Out of memory`).
+- [`0074`](base/0074-rpi-fbd-under-QUIET-keep-the-firmware-s-picture-unti.patch)
+  (quiet boot I5, #517): with `QUIET` set, a new framebuffer is not
+  cleared when the console sets its mode, and the first frame covers the
+  whole screen, so the login replaces the firmware picture without a black
+  frame. See [experiment `quiet-boot`](../quiet-boot/README.md).
 
 ## What `rpi-fbd` does
 

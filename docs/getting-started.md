@@ -16,12 +16,15 @@ the Pi.
 - A **microSD card** of at least 2 GB. Everything on it is erased.
 - A **5 V power supply** for the Pi (a weak one causes odd crashes).
 - One way to see and type:
-  - **HDMI screen and a USB keyboard** (Pi 3B+), or
+  - **HDMI screen and a USB keyboard**, or
   - a **serial cable**: a 3.3 V USB-to-UART adapter (CP2102, FT232 or
     CH340). Not a 5 V one, that damages the Pi.
 - An **Ethernet cable** to your router, for the network and the clock.
   Wi-Fi does not work yet. The Zero 2 W has no Ethernet port: it needs a
   USB Ethernet adapter or hub with an RTL8152/RTL8153 chip.
+- For **sound**: a monitor or TV **with speakers** on HDMI. The 3.5 mm
+  jack of the Pi 3B+ is silent in v0.6.0
+  ([#617](https://github.com/redox-rpi/redox-rpi/issues/617)).
 
 **No Pi?** You can try the same image in QEMU, see
 [At the end: QEMU](#no-pi-try-it-in-qemu).
@@ -29,12 +32,15 @@ the Pi.
 ## 1. Download the image
 
 Open the [releases page](https://github.com/redox-rpi/redox-rpi/releases)
-and download from the newest release (now v0.2.0):
+and download from the newest release (now v0.6.0):
 
-- `redox-rpi-v0.2.0-pi3bplus.img.xz`, the SD card image (about 24 MB), and
+- `redox-rpi-v0.6.0-pi3bplus.img.xz`, the SD card image (about 50 MB,
+  1.3 GB unpacked), and
 - `SHA256SUMS`, to check the download.
 
-The same image works on the Pi 3B+ and the Zero 2 W.
+The same card works in the Pi 3B+ and the Zero 2 W. On the project's test
+network the cards are also on the image server; with SwiftFlash run
+`sudo swiftflash redox:redox-rpi` and pick the version.
 
 Check it (optional, but it catches broken downloads), in the download
 folder:
@@ -44,7 +50,7 @@ sha256sum -c --ignore-missing SHA256SUMS      # Linux
 shasum -a 256 -c --ignore-missing SHA256SUMS  # macOS
 ```
 
-It should print `redox-rpi-v0.2.0-pi3bplus.img.xz: OK`.
+It should print `redox-rpi-v0.6.0-pi3bplus.img.xz: OK`.
 
 ## 2. Write it to the SD card
 
@@ -57,7 +63,7 @@ Raspberry Pi OS and do nothing here. balenaEtcher works the same way.
 card. Writing to the wrong device erases that disk:
 
 ```sh
-xz -dc redox-rpi-v0.2.0-pi3bplus.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync
+xz -dc redox-rpi-v0.6.0-pi3bplus.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync
 ```
 
 On macOS the card is `/dev/rdiskN` (see `diskutil list`; unmount it first
@@ -96,26 +102,25 @@ With the power **off**:
 
 Switch the power on. What you see, on the screen or the serial console:
 
-1. The Raspberry Pi firmware and **U-Boot** (a few lines, a short
-   countdown). Do not press a key during the countdown; if you did and
-   see `U-Boot>`, type `boot` and Enter.
-2. The **Redox bootloader** asks for a screen resolution. Press **Enter**
-   to take the default.
+1. The Raspberry Pi firmware's **colour square**, then a black screen for
+   a few seconds: the firmware loads the whole system from the card into
+   memory. There is no boot menu and nothing to press.
+2. Many lines of boot messages: the kernel, the four CPU cores, drivers,
+   the network. A message about `pcid` is harmless (the Pi has no PCI bus).
+3. A box with the login details, the image's version (the line with
+   `(direct, …)`), and `redox login:`. With speakers on HDMI you hear a
+   short startup sound.
 
-   Other keys do other things here: `e` opens an editor for boot settings
-   (an empty line and Enter boots normally), `l` switches "live mode".
-   If you see something unexpected, power off and on again.
-3. Many lines of boot messages: the kernel, the four CPU cores, drivers,
-   the network. Messages about `pcid` or `audiod` are harmless (the Pi has
-   no PCI bus and no sound driver).
-4. A box with the login details, the image's version, and
-   `redox login:`.
-
-The first boot can take a minute or more: be patient until the login
-prompt appears.
+From power-on to the login prompt takes about half a minute.
 
 On the HDMI screen, `Super` + `F1` (the Windows key) shows the boot
 messages and `Super` + `F2` goes back to the login.
+
+**The system runs from memory.** The card is read once at power-on.
+Changes to the system (a new password, files in `/home`, installed
+packages) are gone after a reboot. Files you want to keep go to the
+card's data partition, `/scheme/data`. On the Zero 2 W (512 MB) the system
+takes 256 MiB, so less memory is left for programs.
 
 ## 5. Log in
 
@@ -138,6 +143,7 @@ cat /etc/redox-rpi-release           # which image is this?
 uname -a
 ls /                                 # looks like Unix
 cat /scheme/rpi-firmware/temperature # CPU temperature in m°C (47236 = 47.2 °C)
+tone -s 3 > /scheme/audio            # a 3 s tone on the HDMI speakers
 free -h                              # memory
 ifconfig                             # the Pi's network address
 ping -c 3 1.1.1.1                    # the internet
@@ -174,11 +180,17 @@ Pi (bash, nano, vim, curl) do not start yet
 
 ```sh
 reboot                              # as root: restart
+poweroff                            # as root: stop and halt the Pi
 ```
 
-There is no real power-off yet: run `reboot`, and pull the power once the
-screen goes dark or the firmware messages appear again. Pulling the power
-while the Pi writes to the card can damage files.
+`poweroff` stops Redox and halts the Pi: the screen loses its signal and
+the board draws very little power. The red power LED stays on, because
+the Pi has no switch of its own and stays powered. To cut the power,
+unplug it (or switch the plug off); this is safe once the screen has gone
+dark. To start it again, plug it back in.
+
+The system itself runs from memory, so only files being written to
+`/scheme/data` can be damaged if you pull the power without `poweroff`.
 
 ## Logging in over the network
 
@@ -192,8 +204,9 @@ network. Setting that up needs your own build machine:
 
 | What you see | What to do |
 |---|---|
-| Nothing at all on the screen | Check the card was written completely; try the serial console, which shows the earliest messages. Rainbow square and nothing else: the card has no boot files, write it again. |
-| Stops at `U-Boot>` | Type `boot` and Enter. |
+| Nothing at all on the screen | Check the card was written completely; try the serial console, which shows the earliest messages. Colour square and nothing else: the card has no boot files, write it again. |
+| A setting or file is gone after a reboot | Expected: the system runs from memory. Keep files in `/scheme/data`. |
+| No sound | Sound goes only to HDMI, so the screen needs speakers; the jack is silent ([#617](https://github.com/redox-rpi/redox-rpi/issues/617)). |
 | The keyboard does nothing | Plug it in before power-on, then power off and on again. Or log in on the serial console. |
 | The serial console shows nothing or garbage | Swap TX and RX; check 115200 baud and that GND is connected. |
 | A command stops with no output | A known rare start crash ([#1](https://github.com/redox-rpi/redox-rpi/issues/1)); run it again. |
@@ -218,22 +231,23 @@ A good report says:
 
 ## No Pi? Try it in QEMU
 
-QEMU emulates a Raspberry Pi 3 well enough to boot the same image (without
-Ethernet). On Linux or macOS, with `qemu-system-aarch64`, `curl` and `zstd`
-installed:
+QEMU emulates a Raspberry Pi 3 well enough to boot the same card. On Linux
+or macOS, with `qemu-system-aarch64` and `mtools` installed:
 
 ```sh
 git clone https://github.com/redox-rpi/redox-rpi.git && cd redox-rpi
-xz -dk ~/Downloads/redox-rpi-v0.2.0-pi3bplus.img.xz
-scripts/qemu-raspi3b.sh --image ~/Downloads/redox-rpi-v0.2.0-pi3bplus.img
+xz -dk ~/Downloads/redox-rpi-v0.6.0-pi3bplus.img.xz
+mkdir fw && mcopy -i ~/Downloads/redox-rpi-v0.6.0-pi3bplus.img@@1M ::kernel8.img ::initramfs fw/
+scripts/qemu-raspi3b.sh --direct fw --image ~/Downloads/redox-rpi-v0.6.0-pi3bplus.img
 ```
 
-The unpacked image is about 1.1 GB. The script downloads a U-Boot for
-QEMU the first time. Checked with the v0.2.0 image on Linux: the login
-prompt came after about 50 seconds.
+The `mcopy` line takes the kernel and the system from the card's first
+partition, as the Pi firmware does. Add `--usb-net` for a network. Checked
+with the v0.6.0 card on Linux: the login prompt came after about
+6 seconds.
 
-Press Enter at the resolution menu, log in as above, and quit QEMU with
-**Ctrl-A**, then **X**. More in [testing.md](testing.md).
+Log in as above, and quit QEMU with **Ctrl-A**, then **X**. More in
+[testing.md](testing.md).
 
 ## Next
 

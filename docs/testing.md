@@ -14,14 +14,24 @@ Latest daily Redox image, with our kernel:
 
 ```sh
 scripts/build-kernel.sh
-scripts/qemu-raspi3b.sh --kernel upstream/kernel/build/aarch64/kernel
+scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel
 ```
 
-Self-built image (after `scripts/build-image.sh` on the Linux host):
+`--daily` is needed: the daily image's own kernel panics on `raspi3b`
+([#550](https://github.com/redox-rpi/redox-rpi/issues/550)), so always
+boot it with `--kernel`.
+
+Self-built image (after `scripts/build-image.sh` on the Linux host). Without
+`--image` or `--daily` the script boots exactly this file and stops if it is
+missing:
 
 ```sh
-scripts/qemu-raspi3b.sh --image upstream/redox/build/aarch64/minimal/harddrive.img
+scripts/qemu-raspi3b.sh
+scripts/qemu-raspi3b.sh --image upstream/redox/build/aarch64/minimal/harddrive.img   # the same
 ```
+
+The script prints `image: …` before it boots, and `--test` names the image in
+its `PASS`/`FAIL` line.
 
 What happens:
 
@@ -40,7 +50,7 @@ on the Linux build host.
 ## Automated boot test
 
 ```sh
-scripts/qemu-raspi3b.sh --test --kernel upstream/kernel/build/aarch64/kernel \
+scripts/qemu-raspi3b.sh --daily --test --kernel upstream/kernel/build/aarch64/kernel \
     --expect "CPU activation complete: 4 CPUs online" --expect "redox login:"
 ```
 
@@ -133,16 +143,35 @@ failed: fix it before the row. The checks:
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
 | kill-time | #405 | SIGTERM and SIGKILL end a process within 1 s whether it sleeps, loops, is blocked in `read()` or in a write to `/scheme/audio`, or has an SDL-style worker thread with SIGTERM blocked (experiments kill-time and tcc) |
-| dns | #358, #374 | name server from DHCP; unknown name: "Name does not resolve" within 5 s; dead name server: "Try again" within 15 s; works again after it is set back |
+| tcc | REQ-TCC-1 crit. 5, #247 | `/usr/share/tcc-tests/run.ion` reaches `TCC-TEST done`; hello dynamic, `tcc -run`, the `hallo.c` shebang script (exit status 42), bench, self-hosting give their output; `-static` and bench-gcc not judged (experiment tcc) |
+| dns | #358, #374, REQ-NET-7 crit. 3 | name server from DHCP; unknown name, fully qualified and short: "Name does not resolve" within 1 s (ion's `time` on the guest) |
+| dns-lan | REQ-NET-7 crit. 1 | with `--lan-name`: a LAN host's full name (with a host part, not the bare domain) and its short form each resolve within 2 s |
+| dns-outside | REQ-NET-7 crit. 2 | with `--outside-name`: a name outside the LAN resolves (QEMU: `static.redox-os.org`) |
+| dns-silent | REQ-NET-7 crit. 4, #374 | with `--dead-dns` as name server: "Try again" within 10 s (full name) and 15 s (short name, local domain set); unknown name resolves to "Name does not resolve" again after it is set back |
+| launcher-sopwith | #335, REQ-GFX-2 | launcher entry `70_sopwith` names `/usr/bin/sopwith` and its icon; both exist (experiment orbital-apps) |
+| ifconfig-mac | #444, #171 | `ifconfig eth0` shows the MAC address from `netcfg`, not zeros (skipped while ifconfig prints the netmask as a prefix length: netutils 0002, #446) |
+| gamepad-console | #320 | `gamepad-test --console` prints every event `gamepad-test --send` sends; the last line holds A with X, Y and RZ set (skipped without `gamepad-test`, experiment gamepad-test, or while it reports no controllers handle or no `--console`: #455) |
 | tcp | #364, #92 | 1 MiB (QEMU) or 4 MiB (Pi) from the host with `nc`, same SHA-256 |
+| sopwith | #335, #33, REQ-GFX-2 | only with `--desktop`, last: starts the desktop and Sopwith; an Orbital window, SDL's Redox audio driver, still running after 15 s, `loud_chunks` higher than before it started; then SIGTERM (SIGKILL if needed; reported only until #460, #405). Orbital keeps running, so the caller reboots afterwards |
 | serial | #92, #151, base 0030 | no panic, `RELIBC PANIC`, `UNHANDLED EXCEPTION` or `main loop stuck` in the console log; no pcid or rtcd |
+| tcp-reset | #141 | own QEMU boot after the set (socket netdev): a read after a TCP reset returns all data that came before it (`scripts/test-tcp-reset-read.sh`, skipped until #454 brings it); QEMU only |
 
-A check whose experiment is not in the image is skipped, not failed. On the
-Pi the same script runs against devshd (`scripts/regression-set.py <pi>
---serial-log ~/redox-rpi/logs/serial.log --dead-dns <unused address>`).
+A check whose experiment or fix is not in the image is skipped, not failed.
+`sopwith` leaves Orbital running until the next reboot, so it runs only with
+`--desktop` (`scripts/regression-qemu.sh --desktop`), after all other devsh
+checks; on the Pi, reboot after it. Keys and audible sound stay a person step
+in the rc test. On the Pi the same script runs against devshd (`scripts/regression-set.py <pi>
+--serial-log ~/redox-rpi/logs/serial.log --dead-dns 192.0.2.1
+--lan-name <LAN host> --outside-name <outside name>`).
 QEMU does not see hardware: the audio rate, real USB and the 3B+ external
 abort stay with `pi-test.py --extended` and the Pi rows. A new regression
 gets a check here at the cheapest level that sees it.
+
+[`scripts/tcp-churn-check.py`](../scripts/tcp-churn-check.py) checks REQ-NET-4
+criterion 2 (#494): 1000 short TCP connections out of Redox and 1000 into
+devshd leave no growing `sockets_tcp` in `/scheme/netcfg/stats` (needs the
+experiment `netdiag`). QEMU: `scripts/tcp-churn-check.py 127.0.0.1
+--devsh-port <DEVSH_PORT> --host-ip 10.0.2.2`; Pi: `scripts/tcp-churn-check.py <pi>`.
 
 ### Building on the build host
 
