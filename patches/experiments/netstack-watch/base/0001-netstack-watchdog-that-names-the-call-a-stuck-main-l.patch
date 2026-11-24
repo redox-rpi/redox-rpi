@@ -1,4 +1,4 @@
-From 61aaf207f89f9bfb41c3e4b7185a1c6d3ffa1b1b Mon Sep 17 00:00:00 2001
+From f41543528d590707a1ec328e04d39f0d775334e0 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 9 Nov 2026 07:28:03 +0000
 Subject: [PATCH] netstack: watchdog that names the call a stuck main loop is
@@ -17,17 +17,17 @@ as well, since then the loop waits for events that do not come. Every
 10 min it writes a heartbeat with the stage and counts of events and
 received frames, so a watchdog that does not run shows too.
 ---
- netstack/src/link/ethernet.rs |  13 ++-
+ netstack/src/link/ethernet.rs |  13 +-
  netstack/src/main.rs          |  23 +++-
- netstack/src/watch.rs         | 214 ++++++++++++++++++++++++++++++++++
- 3 files changed, 247 insertions(+), 3 deletions(-)
+ netstack/src/watch.rs         | 218 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 251 insertions(+), 3 deletions(-)
  create mode 100644 netstack/src/watch.rs
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 93d9829..86be1c1 100644
+index 5927d76..52c81e1 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
-@@ -101,7 +101,11 @@ impl EthernetLink {
+@@ -109,7 +109,11 @@ impl EthernetLink {
  
          f(frame.payload_mut());
  
@@ -40,7 +40,7 @@ index 93d9829..86be1c1 100644
              error!(
                  "Dropped outboud packet on {} (failed to write to network file)",
                  self.name
-@@ -368,7 +372,11 @@ impl LinkDevice for EthernetLink {
+@@ -376,7 +380,11 @@ impl LinkDevice for EthernetLink {
  
          let mut input_buffer = std::mem::take(&mut self.input_buffer);
          loop {
@@ -53,7 +53,7 @@ index 93d9829..86be1c1 100644
                  if e.kind() != ErrorKind::WouldBlock {
                      error!("Failed to read ethernet device on link {}", self.name);
                  } else {
-@@ -378,6 +386,7 @@ impl LinkDevice for EthernetLink {
+@@ -386,6 +394,7 @@ impl LinkDevice for EthernetLink {
                  self.input_buffer = input_buffer;
                  return None;
              }
@@ -118,10 +118,10 @@ index 6926f10..bf76b34 100644
  }
 diff --git a/netstack/src/watch.rs b/netstack/src/watch.rs
 new file mode 100644
-index 0000000..9192bb7
+index 0000000..e2abd7a
 --- /dev/null
 +++ b/netstack/src/watch.rs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,218 @@
 +//! Watchdog for a main loop that stops (redox-rpi #92).
 +//!
 +//! netstack runs on one thread, so one call that never returns stops the
@@ -202,7 +202,11 @@ index 0000000..9192bb7
 +// Milliseconds since START of the last timer event.
 +static LAST_TIMER: AtomicU64 = AtomicU64::new(0);
 +
-+const HEARTBEAT_MS: u64 = 600_000;
++// A heartbeat every minute: no heartbeat and no devsh answer for 2 min
++// marks a halted Pi (redox-rpi #680).
++const HEARTBEAT_MS: u64 = 60_000;
++// A missing timer is reported again every 10 min.
++const NO_TIMER_REPEAT_MS: u64 = 600_000;
 +const NO_TIMER_MS: u64 = 10_000;
 +
 +fn now_ms() -> u64 {
@@ -301,7 +305,7 @@ index 0000000..9192bb7
 +            if reported.is_none() && gap >= NO_TIMER_MS {
 +                let due = match no_timer {
 +                    None => true,
-+                    Some((_, last)) => now.saturating_sub(last) >= HEARTBEAT_MS,
++                    Some((_, last)) => now.saturating_sub(last) >= NO_TIMER_REPEAT_MS,
 +                };
 +                if due {
 +                    let _ = writeln!(
