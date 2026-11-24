@@ -25,7 +25,9 @@ change ([CONTRIBUTING.md](../../CONTRIBUTING.md#topics-and-issues)).
 | Assistant, local language model (effort analysis) | [assistant.md](assistant.md) | [topic:assistant](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aassistant) |
 | Native C compilers (TinyCC, QBE) | [tcc.md](tcc.md) | [topic:tcc](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Atcc) |
 | Audio (plan) | [audio.md](audio.md) | [#250](https://github.com/redox-rpi/redox-rpi/issues/250), [topic:audio](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aaudio) |
+| Quality: test coverage, regressions, known issues | [quality.md](quality.md) | [topic:quality](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aquality) |
 | DMA | [dma.md](dma.md) | [#21](https://github.com/redox-rpi/redox-rpi/issues/21) |
+| Applications and ported software (own repository, packages) | [apps.md](apps.md) | [redox-rpi/apps](https://github.com/redox-rpi/apps/issues) |
 | Open-source VPU firmware (experiment, own repository) | [open-firmware.md](open-firmware.md) | [topic:boot](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Atopic%3Aboot) |
 
 Each page has the same sections: **State** (on `main` and tested on a real

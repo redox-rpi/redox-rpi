@@ -1,0 +1,310 @@
+From 7c018886d3a9434bfba03ea78740463b0e6fb129 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 20 Nov 2026 08:24:40 +0000
+Subject: [PATCH] netstack: counters in /scheme/netcfg/stats
+
+For diagnosis (redox-rpi #566, netdiag): frames read from and written to
+the drivers and where they went (IPv4 for this host, ARP, another MAC,
+malformed, another protocol), driver read and write errors, ARP
+requests, expired entries and packets dropped waiting for ARP, the times
+the router queues were full, packets without a route, the number of
+sockets of each kind and of TCP sockets in each state (a socket that is
+never freed shows as a growing count, REQ-NET-4), and one line per TCP
+connection with its state and queue fill. The socket part is refreshed by
+the main loop at most twice a second.
+---
+ netstack/src/link/ethernet.rs     |  23 +++++-
+ netstack/src/main.rs              |   1 +
+ netstack/src/router/mod.rs        |   3 +
+ netstack/src/scheme/mod.rs        |   1 +
+ netstack/src/scheme/netcfg/mod.rs |   7 ++
+ netstack/src/stats.rs             | 113 ++++++++++++++++++++++++++++++
+ 6 files changed, 146 insertions(+), 2 deletions(-)
+ create mode 100644 netstack/src/stats.rs
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 737cf24..6236438 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -118,7 +118,11 @@ impl EthernetLink {
+             let _watch = crate::watch::Guard::new(crate::watch::Stage::DeviceWrite);
+             self.network_file.write_all(&self.output_buffer)
+         };
++        if written.is_ok() {
++            crate::stats::inc(&crate::stats::FRAMES_OUT);
++        }
+         if let Err(_) = written {
++            crate::stats::inc(&crate::stats::WRITE_ERRORS);
+             error!(
+                 "Dropped outboud packet on {} (failed to write to network file)",
+                 self.name
+@@ -258,6 +262,7 @@ impl EthernetLink {
+             }
+ 
+             let _ = self.waiting_packets.dequeue();
++            crate::stats::inc(&crate::stats::ARP_UNRESOLVED);
+             debug!(
+                 "Dropped packet on {} because neighbor was not found",
+                 self.name
+@@ -267,6 +272,7 @@ impl EthernetLink {
+ 
+     fn handle_missing_neighbor(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
+         let Ok(buf) = self.waiting_packets.enqueue(packet.len(), next_hop) else {
++            crate::stats::inc(&crate::stats::ARP_QUEUE_FULL);
+             warn!(
+                 "Dropped packet on {} because waiting queue was full",
+                 self.name
+@@ -330,6 +336,7 @@ impl EthernetLink {
+ 
+                 *tries += 1;
+                 *silent_until = now + Self::ARP_SILENCE_TIME;
++                crate::stats::inc(&crate::stats::ARP_REQUESTS);
+ 
+                 self.send_to(
+                     EthernetAddress::BROADCAST,
+@@ -377,6 +384,7 @@ impl LinkDevice for EthernetLink {
+             Entry::Vacant(_) => self.handle_missing_neighbor(next_hop, packet, now),
+             Entry::Occupied(e) => {
+                 if e.get().expires_at + Self::NEIGHBOR_STALE_TIME < now {
++                    crate::stats::inc(&crate::stats::ARP_EXPIRED);
+                     e.remove();
+                     self.handle_missing_neighbor(next_hop, packet, now)
+                 } else {
+@@ -409,6 +417,7 @@ impl LinkDevice for EthernetLink {
+             };
+             if let Err(e) = read {
+                 if e.kind() != ErrorKind::WouldBlock {
++                    crate::stats::inc(&crate::stats::READ_ERRORS);
+                     error!("Failed to read ethernet device on link {}", self.name);
+                 } else {
+                     // No packet to read but we check if we have arp to send
+@@ -418,8 +427,10 @@ impl LinkDevice for EthernetLink {
+                 return None;
+             }
+             crate::watch::frame_in();
++            crate::stats::inc(&crate::stats::FRAMES_IN);
+             let packet = EthernetFrame::new_unchecked(&input_buffer[..]);
+             let Ok(repr) = EthernetRepr::parse(&packet) else {
++                crate::stats::inc(&crate::stats::FRAMES_IN_MALFORMED);
+                 debug!("Dropped incomming frame on {} (Malformed)", self.name);
+                 continue;
+             };
+@@ -432,16 +443,24 @@ impl LinkDevice for EthernetLink {
+                 && repr.dst_addr != hardware_address
+             {
+                 // Drop packets which are not for us
++                crate::stats::inc(&crate::stats::FRAMES_IN_NOT_OURS);
+                 continue;
+             }
+ 
+             match repr.ethertype {
+                 EthernetProtocol::Ipv4 => {
++                    crate::stats::inc(&crate::stats::FRAMES_IN_IPV4);
+                     self.input_buffer = input_buffer;
+                     return Some(EthernetFrame::new_unchecked(&self.input_buffer[..]).payload());
+                 }
+-                EthernetProtocol::Arp => self.process_arp(packet.payload(), now),
+-                _ => continue,
++                EthernetProtocol::Arp => {
++                    crate::stats::inc(&crate::stats::FRAMES_IN_ARP);
++                    self.process_arp(packet.payload(), now)
++                }
++                _ => {
++                    crate::stats::inc(&crate::stats::FRAMES_IN_OTHER);
++                    continue;
++                }
+             }
+         }
+     }
+diff --git a/netstack/src/main.rs b/netstack/src/main.rs
+index 60583d3..f009b44 100644
+--- a/netstack/src/main.rs
++++ b/netstack/src/main.rs
+@@ -18,6 +18,7 @@ mod logger;
+ mod port_set;
+ mod router;
+ mod scheme;
++mod stats;
+ mod watch;
+ 
+ /// How often netstack looks for adapters that came up after it started.
+diff --git a/netstack/src/router/mod.rs b/netstack/src/router/mod.rs
+index abd7f5c..a1c59f3 100644
+--- a/netstack/src/router/mod.rs
++++ b/netstack/src/router/mod.rs
+@@ -59,6 +59,7 @@ impl Router {
+ 
+             loop {
+                 if self.rx_buffer.is_full() {
++                    crate::stats::inc(&crate::stats::ROUTER_RX_FULL);
+                     break;
+                 }
+ 
+@@ -97,6 +98,7 @@ impl Router {
+                 } else {
+                     let route_table = self.route_table.borrow();
+                     let Some(rule) = route_table.lookup_rule(&dst_addr) else {
++                        crate::stats::inc(&crate::stats::NO_ROUTE);
+                         warn!("No route found for destination: {}", dst_addr);
+                         continue;
+                     };
+@@ -208,6 +210,7 @@ impl Device for Router {
+ 
+     fn transmit(&mut self, _timestamp: smoltcp::time::Instant) -> Option<Self::TxToken<'_>> {
+         if self.tx_buffer.is_full() {
++            crate::stats::inc(&crate::stats::ROUTER_TX_FULL);
+             None
+         } else {
+             Some(TxToken {
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index 031f1e2..a614a96 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -260,6 +260,7 @@ impl Smolnetd {
+                 iface.poll(timestamp, &mut self.router_device, &mut socket_set);
+ 
+                 self.router_device.get_mut().dispatch(timestamp);
++                crate::stats::refresh_tcp(&socket_set);
+ 
+                 if !self.router_device.get_ref().can_recv() {
+                     match iface.poll_delay(timestamp, &socket_set) {
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index 9b99670..e367a7c 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -136,6 +136,13 @@ fn mk_root_node(
+                 }
+             }
+         },
++        // Counters for diagnosis (redox-rpi #566, netdiag).
++        "stats" => {
++            ro [iface] || {
++                let _ = &iface;
++                crate::stats::text()
++            }
++        },
+         "route" => {
+             "list" => {
+                 ro [route_table] || {
+diff --git a/netstack/src/stats.rs b/netstack/src/stats.rs
+new file mode 100644
+index 0000000..158ac67
+--- /dev/null
++++ b/netstack/src/stats.rs
+@@ -0,0 +1,113 @@
++//! Counters for diagnosis (redox-rpi #566), read from
++//! `/scheme/netcfg/stats` (`netdiag`): one `name value` per line.
++//!
++//! They count where frames go between the network drivers and the sockets:
++//! frames read and written, frames dropped and why, ARP, the router's
++//! queues, and a summary of the TCP connections, refreshed by the main loop
++//! at most twice a second.
++
++use std::collections::BTreeMap;
++use std::fmt::Write;
++use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
++use std::sync::Mutex;
++use std::time::{Duration, Instant};
++
++use smoltcp::iface::SocketSet;
++use smoltcp::socket::Socket;
++
++macro_rules! counters {
++    ($($name:ident: $doc:literal),* $(,)?) => {
++        $(#[doc = $doc] pub static $name: AtomicU64 = AtomicU64::new(0);)*
++        const ALL: &[(&str, &AtomicU64)] = &[$((stringify!($name), &$name)),*];
++    };
++}
++
++counters! {
++    FRAMES_IN: "Frames read from network drivers",
++    FRAMES_IN_IPV4: "Of them, IPv4 for this host, passed on",
++    FRAMES_IN_ARP: "Of them, ARP",
++    FRAMES_IN_NOT_OURS: "Of them, for another MAC address, dropped",
++    FRAMES_IN_MALFORMED: "Of them, not a valid Ethernet frame, dropped",
++    FRAMES_IN_OTHER: "Of them, another protocol (IPv6 ...), dropped",
++    READ_ERRORS: "Reads from a driver that failed (not counting would-block)",
++    FRAMES_OUT: "Frames written to network drivers",
++    WRITE_ERRORS: "Writes to a driver that failed, frame dropped",
++    ARP_REQUESTS: "ARP requests sent",
++    ARP_EXPIRED: "Neighbor entries found expired when sending",
++    ARP_QUEUE_FULL: "Packets dropped: the queue waiting for ARP was full",
++    ARP_UNRESOLVED: "Packets dropped: no ARP answer after 3 tries",
++    ROUTER_RX_FULL: "Times the router's receive queue was full (frames wait in the driver)",
++    ROUTER_TX_FULL: "Times smoltcp found the router's transmit queue full",
++    NO_ROUTE: "Packets dropped: no route",
++}
++
++pub fn inc(counter: &AtomicU64) {
++    counter.fetch_add(1, Relaxed);
++}
++
++/// TCP summary lines and when they were made.
++static TCP: Mutex<Option<(Instant, String)>> = Mutex::new(None);
++
++/// Refresh the socket summary if it is older than half a second: the
++/// number of sockets of each kind and of TCP sockets in each state (a
++/// socket that is never freed shows as a growing count, REQ-NET-4), and one
++/// line per TCP connection.
++pub fn refresh_tcp(sockets: &SocketSet) {
++    let Ok(mut tcp) = TCP.lock() else { return };
++    if tcp.as_ref().is_some_and(|(at, _)| at.elapsed() < Duration::from_millis(500)) {
++        return;
++    }
++    let mut lines = String::new();
++    let mut kinds: BTreeMap<&'static str, u64> = BTreeMap::new();
++    let mut states: BTreeMap<String, u64> = BTreeMap::new();
++    for (_, socket) in sockets.iter() {
++        let kind = match socket {
++            Socket::Tcp(_) => "tcp",
++            Socket::Udp(_) => "udp",
++            Socket::Icmp(_) => "icmp",
++            #[allow(unreachable_patterns)]
++            _ => "other",
++        };
++        *kinds.entry(kind).or_default() += 1;
++        let Socket::Tcp(socket) = socket else { continue };
++        let state = socket.state().to_string().to_ascii_lowercase().replace('-', "_");
++        *states.entry(state).or_default() += 1;
++        let (Some(local), Some(remote)) = (socket.local_endpoint(), socket.remote_endpoint()) else {
++            continue;
++        };
++        let _ = writeln!(
++            lines,
++            "tcp_{}_{}_{} {} rx_queue {}/{} tx_queue {}/{}",
++            local.port,
++            remote.addr,
++            remote.port,
++            socket.state(),
++            socket.recv_queue(),
++            socket.recv_capacity(),
++            socket.send_queue(),
++            socket.send_capacity()
++        );
++    }
++    let mut s = String::new();
++    for kind in ["tcp", "udp", "icmp", "other"] {
++        let _ = writeln!(s, "sockets_{kind} {}", kinds.get(kind).copied().unwrap_or(0));
++    }
++    for (state, n) in &states {
++        let _ = writeln!(s, "tcp_state_{state} {n}");
++    }
++    s.push_str(&lines);
++    *tcp = Some((Instant::now(), s));
++}
++
++pub fn text() -> String {
++    let mut s = String::new();
++    for (name, value) in ALL {
++        let _ = writeln!(s, "{} {}", name.to_ascii_lowercase(), value.load(Relaxed));
++    }
++    if let Ok(tcp) = TCP.lock() {
++        if let Some((_, lines)) = tcp.as_ref() {
++            s.push_str(lines);
++        }
++    }
++    s
++}
+-- 
+2.53.0
+

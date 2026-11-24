@@ -511,8 +511,16 @@ unsafe fn boot(dtb_addr: u64) -> ! {
     // is in /chosen bootargs. Words of the form NAME=value with an upper-case
     // NAME are Redox environment variables, as with the bootloader's
     // environment editor; the firmware's lower-case Linux options are left out.
+    // The one exception is "quiet", as in Linux: it becomes QUIET=1, and Redox
+    // keeps its boot messages off the screen (issue #518). The serial console
+    // still gets everything, and the stub itself prints only there.
     if let Some(bootargs) = bootargs {
         for word in bootargs.split_ascii_whitespace() {
+            if word == "quiet" {
+                println!("rpi-boot-stub: from the command line: quiet, QUIET=1");
+                let _ = writeln!(env, "QUIET=1");
+                continue;
+            }
             if let Some((name, _)) = word.split_once('=') {
                 if !name.is_empty()
                     && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')

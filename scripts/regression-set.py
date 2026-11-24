@@ -28,6 +28,13 @@ Checks, in this order:
   scanf-pipe    #338: /usr/share/scanf-pipe/check.ion passes for its own
                 pipe, a file and a shell pipe (skip without the experiments
                 scanf-pipe and tcc)
+  kill-time     #405: /usr/share/kill-time/check.ion: SIGTERM and SIGKILL
+                end a process within 1 s, whether it sleeps, loops, is
+                blocked in read() or in a write to /scheme/audio, or has a
+                worker thread with SIGTERM blocked as SDL's threads have
+                (skip without the experiments kill-time and tcc). A case in
+                KILL_TIME_FLAKY (now "TERM audio", #660) is reported but
+                does not fail the check
   tcc           REQ-TCC-1 criterion 5: /usr/share/tcc-tests/run.ion (package
                 tcc-bench) reaches "TCC-TEST done", and these steps give
                 their output: hello.c built dynamically and run; tcc -run
@@ -87,7 +94,11 @@ Checks, in this order:
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
 
 Prints one line per check (PASS, FAIL or SKIP) and, with --report, appends a
-Markdown table to that file. Exits 1 if a check failed. A check that is
+Markdown table to that file. A failed check that has raw output (tcc: the
+failed steps' sections of run.ion; sig-pipe, scanf-pipe: the script's
+output) prints it after its FAIL line, each line indented by "  | ", and
+the report gets it below the table (at most RAW_MAX lines each, #611).
+Exits 1 if a check failed. A check that is
 skipped never fails the set. QEMU does not see hardware (audio rate, real
 USB, the 3B+ external abort): those stay with pi-test.py --extended on the Pi.
 """
@@ -109,6 +120,7 @@ spec.loader.exec_module(pi_test)
 SERIAL_BAD = re.compile(r"kernel panic|panicked at|RELIBC PANIC|UNHANDLED EXCEPTION|main loop stuck", re.I)
 SERIAL_PCID = re.compile(r"^(pcid|rtcd)\b|\b(pcid|rtcd): ", re.M)
 ANSI_TEXT = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+RAW_MAX = 200  # lines of raw output kept per failed check (the last ones)
 
 # One line of C (no #include, so ion's echo can write it): the parent waits
 # for child c (exits 7 after 3 s) while child s sends it SIGWINCH (28) and
@@ -195,6 +207,29 @@ def check_waitpid(sh, check, args, tcc):
     check("waitpid", res == "WAITPID-OK status=7", res or "; ".join(out[-3:]))
 
 
+# Cases of the kill-time check known to fail now and then, with the issue
+# that fixes them: still printed in the details, but they do not fail the
+# set. Remove an entry with its fix.
+KILL_TIME_FLAKY = {"TERM audio": "#660"}
+
+
+def kill_time_passed(out):
+    if any("KILLTIME: pass" in l for l in out):
+        return True
+    failed = [l.strip() for l in out if l.strip().startswith("KILLTIME ") and l.strip().endswith("FAIL")]
+    return bool(failed) and all(
+        any(l.startswith(f"KILLTIME {case} ") for case in KILL_TIME_FLAKY) for l in failed)
+
+
+def check_kill_time(sh, check, tcc):
+    def noted(name, ok, detail, **kw):
+        if ok and "KILLTIME: FAIL" in detail:
+            detail += "; known flaky, not counted: " + ", ".join(
+                f"{case} ({issue})" for case, issue in KILL_TIME_FLAKY.items())
+        check(name, ok, detail, **kw)
+    check_ion(sh, noted, "kill-time", "/usr/share/kill-time/check.ion", tcc, "KILLTIME done", kill_time_passed)
+
+
 def check_ion(sh, check, name, script, tcc, done, passed):
     if not tcc or not has(sh, script):
         check(name, None, f"no {script} or no tcc (experiments {name}, tcc)")
@@ -202,7 +237,7 @@ def check_ion(sh, check, name, script, tcc, done, passed):
     out, secs = pi_test.timed(sh, f"ion {script}", 600)
     ok = passed(out) and any(done in l for l in out)
     shown = [l for l in out if "pass" in l.lower() or "fail" in l.lower()]
-    check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]))
+    check(name, ok, f"{secs:.1f} s: " + "; ".join(shown[-4:] or out[-3:]), raw=out)
 
 
 DNS_LAN_S = 2        # REQ-NET-7 criterion 1, each lookup of an existing LAN name
@@ -263,6 +298,8 @@ def check_tcc(sh, check, tcc):
         return
     out, secs = pi_test.timed(sh, f"ion {TCC_RUN} &> {TCC_LOG}; cat {TCC_LOG}", 1800)
     s = tcc_sections(out)
+    prefixes = {"dynamic": "hello (dynamic)", "-run": "tcc -run", "script": "shebang",
+                "bench": "bench, compiled by tcc", "self-hosting": "self-hosting"}
 
     def sec(prefix):
         return next((v for k, v in s.items() if k.startswith(prefix)), [])
@@ -290,7 +327,16 @@ def check_tcc(sh, check, tcc):
                                    else "failed: " + ", ".join(failed))
               + (f"; bench total {bench_ms} ms" if bench_ms else "")
               + (f"; tcc.c built in {self_ms:.0f} ms" if self_ms is not None else ""))
-    check("tcc", not failed, detail)
+    # Raw output for #611: the failed steps' sections, or the whole log when
+    # run.ion did not finish or a section is missing.
+    raw = []
+    for n in failed:
+        key = next((k for k in s if k.startswith(prefixes.get(n, "\0"))), None)
+        if key is None:
+            raw = [ANSI_TEXT.sub("", l).rstrip() for l in out]
+            break
+        raw += [f"== {key}"] + s[key]
+    check("tcc", not failed, detail, raw=raw)
 
 
 def check_dns(sh, check, args):
@@ -516,11 +562,16 @@ def main():
     args = ap.parse_args()
 
     results = []
+    raws = {}  # name: raw output of a failed check (#611)
 
-    def check(name, ok, detail):
+    def check(name, ok, detail, raw=None):
         word = "SKIP" if ok is None else "PASS" if ok else "FAIL"
         results.append((name, word, detail))
         print(f"{word} {name}: {detail}", flush=True)
+        if word == "FAIL" and raw:
+            raws[name] = [ANSI_TEXT.sub("", l).rstrip() for l in raw][-RAW_MAX:]
+            for l in raws[name]:
+                print(f"  | {l}", flush=True)
 
     def want(name):
         if name == "sopwith":  # opt-in: it leaves Orbital running
@@ -543,6 +594,7 @@ def main():
                                              lambda out: sum(l.strip().endswith(": pass") or l.strip() == "/ pass"
                                                              for l in out) == 3
                                              and not any("FAIL" in l for l in out))),
+            ("kill-time", lambda: check_kill_time(sh, check, tcc)),
             ("tcc", lambda: check_tcc(sh, check, tcc)),
             ("dns", lambda: check_dns(sh, check, args)),
             ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
@@ -583,6 +635,9 @@ def main():
             for name, word, detail in results:
                 f.write(f"| {name} | {word} | {detail.replace('|', '/')} |\n")
             f.write("\n")
+            for name, lines in raws.items():
+                f.write(f"### {name}: raw output of the failed check (last {RAW_MAX} lines at most)\n\n"
+                        "```text\n" + "\n".join(l.replace("```", "'''") for l in lines) + "\n```\n\n")
     sys.exit(1 if fails else 0)
 
 

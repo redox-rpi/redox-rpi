@@ -4,12 +4,13 @@ pkg-persist = "source"
 # and the clock hint). Without this line the image takes upstream's binary
 # unless pkg-hold is in the same build.
 pkgutils = "source"
-# Built from source with patches/experiments/pkg-persist/redoxfs/: rename
-# fails on /scheme/data without it, and pkg renames every file it installs.
+# Built from source at the pinned commit (upstream.lock), which renames
+# correctly on /scheme/data; pkg renames every file it installs. Held, so
+# pkg does not replace it with an older upstream binary.
 redoxfs = "source"
 
 # Replaces the hold list of pkg-repo (list pkg-persist after pkg-repo):
-# the same, plus redoxfs, so an update keeps the patched one.
+# the same, plus redoxfs, so an update keeps the one built here.
 # @BUILD_SERVER@: see patches/experiments/pkg-repo/config.toml.
 [[files]]
 path = "/etc/pkg/hold"

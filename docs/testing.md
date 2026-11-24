@@ -142,6 +142,7 @@ failed: fix it before the row. The checks:
 | waitpid | #386 | `waitpid` while only default-action signals arrive returns the child, never EINTR (needs the experiment tcc) |
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
+| kill-time | #405 | SIGTERM and SIGKILL end a process within 1 s whether it sleeps, loops, is blocked in `read()` or in a write to `/scheme/audio`, or has an SDL-style worker thread with SIGTERM blocked (experiments kill-time and tcc); the case `TERM audio` is reported but does not fail the check until #660 is fixed |
 | tcc | REQ-TCC-1 crit. 5, #247 | `/usr/share/tcc-tests/run.ion` reaches `TCC-TEST done`; hello dynamic, `tcc -run`, the `hallo.c` shebang script (exit status 42), bench, self-hosting give their output; `-static` and bench-gcc not judged (experiment tcc) |
 | dns | #358, #374, REQ-NET-7 crit. 3 | name server from DHCP; unknown name, fully qualified and short: "Name does not resolve" within 1 s (ion's `time` on the guest) |
 | dns-lan | REQ-NET-7 crit. 1 | with `--lan-name`: a LAN host's full name (with a host part, not the bare domain) and its short form each resolve within 2 s |
@@ -165,6 +166,12 @@ in the rc test. On the Pi the same script runs against devshd (`scripts/regressi
 QEMU does not see hardware: the audio rate, real USB and the 3B+ external
 abort stay with `pi-test.py --extended` and the Pi rows. A new regression
 gets a check here at the cheapest level that sees it.
+
+[`scripts/tcp-churn-check.py`](../scripts/tcp-churn-check.py) checks REQ-NET-4
+criterion 2 (#494): 1000 short TCP connections out of Redox and 1000 into
+devshd leave no growing `sockets_tcp` in `/scheme/netcfg/stats` (needs the
+experiment `netdiag`). QEMU: `scripts/tcp-churn-check.py 127.0.0.1
+--devsh-port <DEVSH_PORT> --host-ip 10.0.2.2`; Pi: `scripts/tcp-churn-check.py <pi>`.
 
 ### Building on the build host
 

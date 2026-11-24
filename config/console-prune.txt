@@ -1,0 +1,100 @@
+# What scripts/console-image.sh removes from the root filesystem of the
+# console image: a small direct-boot image for console work and boot-time
+# tests (open firmware's quiet-boot rows 466/467). One path or glob per
+# line, relative to the root; # starts a comment. The image keeps the
+# shell, coreutils, the network (netstack, dhcpd, ifconfig, devshd), login
+# and getty, timesync and the drivers the Pi uses.
+
+# Documentation, headers, build files
+usr/share/man
+usr/share/info
+usr/share/doc
+usr/include
+usr/lib/pkgconfig
+usr/lib/cmake
+usr/lib/*.a
+
+# Boot files: a direct boot takes the kernel from kernel8.img and the
+# initfs from the initramfs, not from the root filesystem
+usr/lib/boot/kernel
+usr/lib/boot/kernel.all
+usr/lib/boot/kernel.sym
+usr/lib/boot/initfs
+
+# TLS, HTTP, compression and C++ (curl, openssl, pkg, zstd)
+etc/ssl
+usr/lib/engines-3
+usr/lib/ossl-modules
+usr/lib/libcrypto.so*
+usr/lib/libssl.so*
+usr/lib/libcurl.so*
+usr/lib/libnghttp2.so*
+usr/lib/libstdc++.so*
+usr/lib/libzstd.so*
+usr/bin/curl
+usr/bin/curl-config
+usr/bin/wcurl
+usr/bin/openssl
+usr/bin/c_rehash
+usr/bin/pkg
+usr/bin/zstd
+usr/bin/zstdcat
+usr/bin/zstdgrep
+usr/bin/zstdless
+usr/bin/zstdmt
+usr/bin/unzstd
+usr/bin/gzip
+usr/bin/gunzip
+usr/bin/tar
+usr/bin/unzip
+
+# Drivers for hardware the Pi does not have
+usr/lib/drivers/e1000d
+usr/lib/drivers/ihdad
+usr/lib/drivers/ihdgd
+usr/lib/drivers/ixgbed
+usr/lib/drivers/rtl8139d
+usr/lib/drivers/rtl8168d
+usr/lib/drivers/testnetd
+usr/lib/drivers/virtio-netd
+usr/lib/drivers/xhcid
+usr/bin/pcid
+usr/bin/pcid-spawner
+
+# Tools a console test does not need
+usr/share/kibi
+usr/bin/kibi
+usr/bin/calc
+usr/bin/cur
+usr/bin/diff
+usr/bin/rem
+usr/bin/info
+usr/bin/man
+usr/bin/mdless
+usr/bin/mtxt
+usr/bin/screenfetch
+usr/bin/socdump
+usr/bin/nbdd
+usr/bin/redoxerd
+usr/bin/redoxfs-ar
+usr/bin/redoxfs-clone
+usr/bin/redoxfs-mkfs
+usr/bin/redoxfs-resize
+usr/bin/groupadd
+usr/bin/groupdel
+usr/bin/groupmod
+usr/bin/useradd
+usr/bin/userdel
+usr/bin/usermod
+usr/bin/passwd
+usr/bin/su
+usr/bin/id
+usr/bin/keymap
+usr/bin/resize
+usr/bin/procps
+usr/bin/i2c
+usr/bin/spi
+usr/bin/tone
+usr/bin/volume
+usr/bin/nc
+usr/bin/ping

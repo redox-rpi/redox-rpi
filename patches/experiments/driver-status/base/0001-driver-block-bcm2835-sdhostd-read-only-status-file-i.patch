@@ -1,0 +1,358 @@
+From bdca86403f81da6719cc12fdbacabe88ab1e1126 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 08:27:43 +0000
+Subject: [PATCH] driver-block, bcm2835-sdhostd: read-only status file in the
+ disk scheme (redox-rpi #571)
+
+The Disk trait gets status(), None by default. DiskScheme serves the
+text as /scheme/<scheme>/status, left out of the directory list.
+bcm2835-sdhostd reports card, clocks, registers and counters since start.
+---
+ drivers/storage/bcm2835-sdhostd/src/host.rs | 150 ++++++++++++++++++++
+ drivers/storage/driver-block/src/lib.rs     |  37 ++++-
+ 2 files changed, 184 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
+index 1b5b27d8..4f74105d 100644
+--- a/drivers/storage/bcm2835-sdhostd/src/host.rs
++++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
+@@ -6,6 +6,7 @@
+ //! limit, so a card that stops answering gives an error instead of a hang.
+ 
+ use std::fmt;
++use std::fmt::Write as _;
+ use std::thread;
+ use std::time::{Duration, Instant};
+ 
+@@ -155,7 +156,88 @@ pub struct SdHost {
+     core_clock: u32,
+     /// The SD clock aimed at, at that core clock.
+     clock: u32,
++    high_speed: bool,
+     stats: Option<Stats>,
++    /// Counters since start, for the status file.
++    totals: Totals,
++}
++
++/// Counters since start, shown in `/scheme/disk.mmc/status`.
++struct Totals {
++    since: Instant,
++    read: Counter,
++    write: Counter,
++    errors_command: u64,
++    errors_data: u64,
++    errors_timeout: u64,
++    errors_card: u64,
++    hsts_crc7: u64,
++    hsts_crc16: u64,
++    hsts_fifo: u64,
++    hsts_rew_timeout: u64,
++    hsts_cmd_timeout: u64,
++    retries: u64,
++    recoveries: u64,
++    reinits: u64,
++    failed_requests: u64,
++    last_error: Option<(String, Instant)>,
++}
++
++impl Totals {
++    fn new() -> Self {
++        Totals {
++            since: Instant::now(),
++            read: Counter::default(),
++            write: Counter::default(),
++            errors_command: 0,
++            errors_data: 0,
++            errors_timeout: 0,
++            errors_card: 0,
++            hsts_crc7: 0,
++            hsts_crc16: 0,
++            hsts_fifo: 0,
++            hsts_rew_timeout: 0,
++            hsts_cmd_timeout: 0,
++            retries: 0,
++            recoveries: 0,
++            reinits: 0,
++            failed_requests: 0,
++            last_error: None,
++        }
++    }
++
++    fn error(&mut self, what: &str, lba: u64, err: &SdError) {
++        let hsts = match *err {
++            SdError::Command { hsts, .. } => {
++                self.errors_command += 1;
++                hsts
++            }
++            SdError::Data { hsts } => {
++                self.errors_data += 1;
++                hsts
++            }
++            SdError::Timeout(_) => {
++                self.errors_timeout += 1;
++                0
++            }
++            SdError::Card(_) => {
++                self.errors_card += 1;
++                0
++            }
++        };
++        for (bit, counter) in [
++            (HSTS_CRC7, &mut self.hsts_crc7),
++            (HSTS_CRC16, &mut self.hsts_crc16),
++            (HSTS_FIFO, &mut self.hsts_fifo),
++            (HSTS_REW_TIMEOUT, &mut self.hsts_rew_timeout),
++            (HSTS_CMD_TIMEOUT, &mut self.hsts_cmd_timeout),
++        ] {
++            if hsts & bit != 0 {
++                *counter += 1;
++            }
++        }
++        self.last_error = Some((format!("{what} of block {lba}: {err}"), Instant::now()));
++    }
+ }
+ 
+ /// Transfer counts and times, printed every few seconds when the driver
+@@ -229,7 +311,9 @@ impl SdHost {
+             high_capacity: false,
+             size: 0,
+             clock: 0,
++            high_speed: false,
+             stats: None,
++            totals: Totals::new(),
+         }
+     }
+ 
+@@ -457,6 +541,7 @@ impl SdHost {
+         if high_speed {
+             self.set_clock(HIGH_SPEED_CLOCK);
+         }
++        self.high_speed = high_speed;
+ 
+         println!(
+             "bcm2835-sdhostd: {} card, {} MiB, 4-bit bus, {} speed, up to {} MHz",
+@@ -586,6 +671,7 @@ impl SdHost {
+             self.command(12, 0, Response::ShortBusy, Data::None)?;
+         }
+         self.wait_card_ready()?;
++        self.totals.write.busy += busy.elapsed();
+         if let Some(stats) = &mut self.stats {
+             stats.write.busy += busy.elapsed();
+         }
+@@ -596,6 +682,7 @@ impl SdHost {
+     /// and get controller and card back into data and transfer state. If
+     /// that fails too, set everything up again.
+     fn recover(&mut self) {
++        self.totals.recoveries += 1;
+         self.set_reg(SDHSTS, HSTS_CLEAR);
+         let edm = self.reg(SDEDM);
+         if !matches!(edm & EDM_FSM_MASK, FSM_IDENTMODE | FSM_DATAMODE) {
+@@ -604,6 +691,7 @@ impl SdHost {
+         let _ = self.command(12, 0, Response::ShortBusy, Data::None);
+         if self.wait_card_ready().is_err() {
+             println!("bcm2835-sdhostd: card not ready, initializing it again");
++            self.totals.reinits += 1;
+             if let Err(err) = self.init_card() {
+                 println!("bcm2835-sdhostd: initialization failed: {err}");
+             }
+@@ -633,10 +721,13 @@ impl SdHost {
+                     Ok(()) => break,
+                     Err(err) => {
+                         println!("bcm2835-sdhostd: {what} of block {lba}: {err}");
++                        self.totals.error(what, lba, &err);
+                         self.recover();
+                         if attempt >= TRANSFER_ATTEMPTS {
++                            self.totals.failed_requests += 1;
+                             return Err(Error::new(EIO));
+                         }
++                        self.totals.retries += 1;
+                         attempt += 1;
+                     }
+                 }
+@@ -681,6 +772,63 @@ impl Disk for SdHost {
+         self.size
+     }
+ 
++    fn status(&self) -> Option<String> {
++        let t = &self.totals;
++        let edm = self.reg(SDEDM);
++        let us = |d: Duration| d.as_micros();
++        let mut s = String::new();
++        let _ = writeln!(s, "## card");
++        let _ = writeln!(s, "type: {}", if self.high_capacity { "SDHC/SDXC" } else { "SDSC" });
++        let _ = writeln!(s, "size_bytes: {}", self.size);
++        let _ = writeln!(s, "bus_width: {}", if self.hcfg & HCFG_WIDE_EXT_BUS != 0 { 4 } else { 1 });
++        let _ = writeln!(s, "high_speed: {}", self.high_speed);
++        let _ = writeln!(s, "## clocks");
++        let _ = writeln!(s, "sd_clock_hz: {}", self.clock);
++        let _ = writeln!(s, "core_clock_max_hz: {}", self.core_clock);
++        let _ = writeln!(s, "## registers");
++        let _ = writeln!(s, "SDCMD: 0x{:04x}", self.reg(SDCMD));
++        let _ = writeln!(s, "SDCDIV: 0x{:03x}", self.reg(SDCDIV));
++        let _ = writeln!(s, "SDHSTS: 0x{:03x}", self.reg(SDHSTS));
++        let _ = writeln!(s, "SDHCFG: 0x{:03x}", self.reg(SDHCFG));
++        let _ = writeln!(
++            s,
++            "SDEDM: 0x{edm:08x} (fsm {}, fifo_fill {})",
++            edm & EDM_FSM_MASK,
++            edm >> EDM_FIFO_FILL_SHIFT & EDM_FIFO_FILL_MASK
++        );
++        let _ = writeln!(s, "## counters");
++        let _ = writeln!(s, "uptime_s: {}", t.since.elapsed().as_secs());
++        let _ = writeln!(s, "read_requests: {}", t.read.requests);
++        let _ = writeln!(s, "read_blocks: {}", t.read.blocks);
++        let _ = writeln!(s, "read_time_us: {}", us(t.read.time));
++        let _ = writeln!(s, "write_requests: {}", t.write.requests);
++        let _ = writeln!(s, "write_blocks: {}", t.write.blocks);
++        let _ = writeln!(s, "write_time_us: {}", us(t.write.time));
++        let _ = writeln!(s, "write_busy_us: {}", us(t.write.busy));
++        let _ = writeln!(s, "errors_command: {}", t.errors_command);
++        let _ = writeln!(s, "errors_data: {}", t.errors_data);
++        let _ = writeln!(s, "errors_timeout: {}", t.errors_timeout);
++        let _ = writeln!(s, "errors_card: {}", t.errors_card);
++        let _ = writeln!(s, "hsts_crc7: {}", t.hsts_crc7);
++        let _ = writeln!(s, "hsts_crc16: {}", t.hsts_crc16);
++        let _ = writeln!(s, "hsts_fifo: {}", t.hsts_fifo);
++        let _ = writeln!(s, "hsts_rew_timeout: {}", t.hsts_rew_timeout);
++        let _ = writeln!(s, "hsts_cmd_timeout: {}", t.hsts_cmd_timeout);
++        let _ = writeln!(s, "retries: {}", t.retries);
++        let _ = writeln!(s, "recoveries: {}", t.recoveries);
++        let _ = writeln!(s, "reinits: {}", t.reinits);
++        let _ = writeln!(s, "failed_requests: {}", t.failed_requests);
++        match &t.last_error {
++            Some((err, at)) => {
++                let _ = writeln!(s, "last_error: {err} ({} s ago)", at.elapsed().as_secs());
++            }
++            None => {
++                let _ = writeln!(s, "last_error: none");
++            }
++        }
++        Some(s)
++    }
++
+     async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+         let (len, start) = (buffer.len(), Instant::now());
+         let result = self.chunked(
+@@ -690,6 +838,7 @@ impl Disk for SdHost {
+             |host, lba, buffer, range| host.read_blocks(lba, &mut buffer[range]),
+             "read",
+         );
++        self.totals.read.count(len, start);
+         if let Some(stats) = &mut self.stats {
+             stats.read.count(len, start);
+             stats.print_due();
+@@ -706,6 +855,7 @@ impl Disk for SdHost {
+             |host, lba, buffer, range| host.write_blocks(lba, &buffer[range]),
+             "write",
+         );
++        self.totals.write.count(len, start);
+         if let Some(stats) = &mut self.stats {
+             stats.write.count(len, start);
+             stats.print_due();
+diff --git a/drivers/storage/driver-block/src/lib.rs b/drivers/storage/driver-block/src/lib.rs
+index d6162ecc..f268315c 100644
+--- a/drivers/storage/driver-block/src/lib.rs
++++ b/drivers/storage/driver-block/src/lib.rs
+@@ -90,6 +90,13 @@ pub trait Disk {
+     async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize>;
+     async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize>;
+ 
++    /// Text for the scheme's read-only `status` file: registers, clocks
++    /// and counters, one `name: value` per line. Reading it must not change
++    /// the hardware state. `None`: the driver has no status file.
++    fn status(&self) -> Option<String> {
++        None
++    }
++
+     #[allow(unused_variables)]
+     async unsafe fn read_dma(
+         &mut self,
+@@ -127,6 +134,10 @@ impl<T: Disk + ?Sized> Disk for Box<T> {
+     async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+         (**self).write(block, buffer).await
+     }
++
++    fn status(&self) -> Option<String> {
++        (**self).status()
++    }
+ }
+ 
+ pub struct DiskWrapper<T> {
+@@ -387,6 +398,7 @@ enum Handle {
+     List(Vec<u8>),       // entries
+     Disk(u32),           // disk num
+     Partition(u32, u32), // disk num, part num
++    Status(Vec<u8>),     // text of the status file
+     SchemeRoot,
+ }
+ 
+@@ -512,6 +524,19 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+             } else {
+                 return Err(Error::new(EISDIR));
+             }
++        } else if path_str == "status" {
++            // Not in the directory list: tools that list the scheme open
++            // every entry as a disk.
++            let mut text = String::new();
++            for (nsid, disk) in self.disks.iter() {
++                if let Some(status) = disk.disk().status() {
++                    write!(text, "# disk {nsid}\n{status}").unwrap();
++                }
++            }
++            if text.is_empty() {
++                return Err(Error::new(ENOENT));
++            }
++            Handle::Status(text.into_bytes())
+         } else if let Some(p_pos) = path_str.chars().position(|c| c == 'p') {
+             let nsid_str = &path_str[..p_pos];
+ 
+@@ -574,6 +599,11 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+                 stat.st_size = data.len() as u64;
+                 Ok(())
+             }
++            Handle::Status(ref data) => {
++                stat.st_mode = MODE_FILE;
++                stat.st_size = data.len() as u64;
++                Ok(())
++            }
+             Handle::Disk(number) => {
+                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                 stat.st_mode = MODE_FILE;
+@@ -605,6 +635,7 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+         FpathWriter::with(buf, &self.scheme_name, |w| {
+             match *self.handles.get(id)? {
+                 Handle::List(_) => (),
++                Handle::Status(_) => write!(w, "status").unwrap(),
+                 Handle::Disk(number) => {
+                     write!(w, "{number}").unwrap();
+                 }
+@@ -626,7 +657,7 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+         _ctx: &CallerCtx,
+     ) -> Result<usize> {
+         match *self.handles.get_mut(id)? {
+-            Handle::List(ref handle) => {
++            Handle::List(ref handle) | Handle::Status(ref handle) => {
+                 let src = usize::try_from(offset)
+                     .ok()
+                     .and_then(|o| handle.get(o..))
+@@ -658,7 +689,7 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+         _ctx: &CallerCtx,
+     ) -> Result<usize> {
+         match *self.handles.get_mut(id)? {
+-            Handle::List(_) => Err(Error::new(EBADF)),
++            Handle::List(_) | Handle::Status(_) => Err(Error::new(EBADF)),
+             Handle::Disk(number) => {
+                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                 let block = offset / u64::from(disk.block_size());
+@@ -675,7 +706,7 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {
+ 
+     async fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
+         Ok(match *self.handles.get_mut(id)? {
+-            Handle::List(ref handle) => handle.len() as u64,
++            Handle::List(ref handle) | Handle::Status(ref handle) => handle.len() as u64,
+             Handle::Disk(number) => {
+                 let disk = self.disks.get_mut(&number).ok_or(Error::new(EBADF))?;
+                 disk.size()
+-- 
+2.53.0
+

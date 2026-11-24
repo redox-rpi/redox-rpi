@@ -92,12 +92,15 @@ nothing changes. Only the build agent passes it
 
 ## Development tags
 
-Right after a release `vX.Y.Z` is tagged, the next commit on `main` gets the
-annotated tag `vX.Y.(Z+1)-dev`, for example `v0.4.1-dev` after v0.4.0
-(until v0.3.0 it was `vX.(Y+1).0-dev`, for example `v0.3.0-dev` after
-v0.2.0). The `-dev` tag assumes a fix release; if the next release brings
-a feature and raises the minor number instead, its candidates still show
-the right name through `--release`. The
+Right after a release `vX.Y.Z` is tagged, the newest commit on `main` gets
+the annotated tag `vX.(Y+1).0-dev`, for example `v0.7.0-dev` after v0.6.0:
+the next release is planned with features, and no patch release is planned
+(the maintainer, 2026-11-22). Only when a patch release is planned does it
+get `vX.Y.(Z+1)-dev` instead, as `v0.4.1-dev` after v0.4.0 and `v0.5.1-dev`
+after v0.5.0. If the plan changes, the release's candidates still show the
+right name through `--release`, and a new `-dev` tag can follow (as
+`v0.5.0-dev` after `v0.4.1-dev`). Like every tag, it needs the
+maintainer's OK on the exact commit. The
 build ID of a development build then names the release it works towards:
 `v0.3.0-dev-12-g1a2b3c4` instead of `v0.2.0-12-g1a2b3c4`.
 

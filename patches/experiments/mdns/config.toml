@@ -1,0 +1,12 @@
+# mdnsd is a package for the redox-rpi package repository (pkg install
+# mdnsd), not part of the release images. The package brings its own
+# service file. This experiment only puts it on an image, for tests and to
+# build it before scripts/publish-pkg-repo.sh.
+[packages]
+mdnsd = "source"
+
+# Test images answer as redox-rpi.local (the Pi test steps use that name).
+# Installed as a package, mdnsd takes the system's /etc/hostname.
+[[files]]
+path = "/etc/hostname"
+data = "redox-rpi"
