@@ -35,6 +35,12 @@ if grep -q "sysinfo(&si)" "$V3DS"; then sed -i \\
     -e 's|sysinfo(&si);|os_get_total_physical_memory(\\&totalram);|' \\
     -e 's|{ si.totalram }|{ totalram }|' "$V3DS"; fi
 
+# Spike (#669): with -Dshader-cache=disabled, v3d_screen.c still reads
+# screen->disk_cache, which only exists with ENABLE_SHADER_CACHE (an
+# upstream slip in Mesa 24.0).
+if grep -q "^        return screen->disk_cache;" "$V3DS"; then sed -i \\
+    "s|^        return screen->disk_cache;|#ifdef ENABLE_SHADER_CACHE\\n        return screen->disk_cache;\\n#else\\n        return NULL;\\n#endif|" "$V3DS"; fi
+
 # Spike (#669): keep building after errors, so one run lists every file
 # that does not compile.
 printf '#!/bin/sh\\nexec "%s" -k 0 "$@"\\n' "${COOKBOOK_NINJA}" > ninja-k0
