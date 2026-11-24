@@ -14,6 +14,7 @@ cannot be read.
 """
 
 import argparse
+import importlib.util
 import datetime
 import json
 import os
@@ -386,6 +387,21 @@ def collect(args):
     return k
 
 
+def code_metrics(pairs):
+    """{label: metrics} from scripts/code-metrics.py for LABEL=DIR pairs."""
+    spec = importlib.util.spec_from_file_location("code_metrics", os.path.join(ROOT, "scripts", "code-metrics.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out = {}
+    for pair in pairs:
+        label, _, path = pair.partition("=")
+        if os.path.isdir(path):
+            out[label] = mod.measure(path)
+        else:
+            print(f"--code {pair}: no such directory", file=sys.stderr)
+    return out
+
+
 def boot_times(repo, ref):
     """Firmware KPI (rof #44): power-on to `redox login:` per board, from the
     "Values so far" table in rof docs/boot-time.md, where every firmware Pi
@@ -430,6 +446,34 @@ def links(repo, ns, kind="issues", most=12):
 
 def pct(a, b):
     return f"{100 * a / b:.0f} %" if b else "–"
+
+
+def code_rows(row, code):
+    """The code KPIs (coding-standards.md, Code rules): one row each, the
+    value per area. Target: does not get worse; the limits below mark a check."""
+    if not code:
+        return
+    areas = sorted(code)
+
+    def per_area(fn):
+        return "; ".join(f"{a}: {fn(code[a])}" for a in areas)
+
+    rules = "[rules](https://github.com/redox-rpi/redox-rpi/blob/main/docs/process/coding-standards.md#code-rules)"
+    row("code_lines", "Code lines (no blank or comment lines)", per_area(lambda m: m["code"]), True,
+        "growth shows here; " + rules)
+    row("code_duplicated", "Duplicated code (6-line blocks)", per_area(lambda m: f"{m['duplicated_pct']} %"),
+        all(m["duplicated_pct"] <= 3 for m in code.values()), "check above 3 % in an area")
+    big = [f"{a}/{f} {n}" for a in areas for f, n in code[a]["over_limit"]]
+    row("code_over_limit", "Files over the size limit (600 Rust/C, 400 script)", len(big), not big,
+        ", ".join(big[:8]) + (" …" if len(big) > 8 else ""))
+    row("code_long_functions", "Functions over 60 lines", per_area(lambda m: m["long_functions"]), True,
+        "target: down")
+    row("code_tests", "Unit tests (Rust #[test], Python test_)", per_area(lambda m: m["tests"]), True,
+        "target: up; coverage not measured yet (#656)")
+    row("code_req_refs", "REQ- references in code", per_area(lambda m: m["req_refs"]),
+        any(m["req_refs"] for m in code.values()), "criteria named where they are implemented")
+    row("code_unsafe", "`unsafe` in Rust", per_area(lambda m: m["unsafe"]), True,
+        "each needs a SAFETY line; see the clippy row for undocumented ones")
 
 
 def render(k, repo):
@@ -543,6 +587,8 @@ def render(k, repo):
             + "; goal: down ([rof #44](https://github.com/redox-rpi/rpi-open-firmware/issues/44), "
             "[how measured](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-time.md))")
 
+    code_rows(row, k.get("code", {}))
+
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
              for i, s in k["sightings"].items()]
     return table, "\n".join([
@@ -581,8 +627,12 @@ def main():
     ap.add_argument("--summary", action="store_true",
                     help="print a short Markdown block (at most 12 lines) for the nightly report")
     ap.add_argument("--clippy", help="JSON from the nightly's clippy run: {crate: {warnings, undocumented_unsafe}}")
+    ap.add_argument("--code", action="append", metavar="LABEL=DIR",
+                    help="code metrics of a checkout (scripts/code-metrics.py), e.g. vc4d=../vc4d; "
+                         "repeat per area. Without it: tools/ and scripts/ of this clone")
     args = ap.parse_args()
     k = collect(args)
+    k["code"] = code_metrics(args.code or [f"tools={ROOT}/tools", f"scripts={ROOT}/scripts"])
     if args.clippy:
         try:
             with open(args.clippy) as f:
