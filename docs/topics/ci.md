@@ -77,6 +77,20 @@ tests are built every night.
   `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
   `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
   `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
+- **Desktop smoke test** ([#261](https://github.com/redox-rpi/redox-rpi/issues/261)),
+  for an image with `check=desktop` (today `desktop`): after its network-boot
+  build, [`scripts/qemu-desktop-check.sh`](../../scripts/qemu-desktop-check.sh)
+  boots it in QEMU raspi3b, runs `desktop` on the serial console, presses
+  Enter at Orbital's login window through the QEMU monitor and checks: no
+  panic, `orbital` and the launcher still running a minute later, and a
+  screenshot that shows the launcher bar (many colours, not the dark text
+  console). Report-only: the image counts as built whatever it says. The
+  result is the `desktop-check =` line in `visit.txt`; `report.md`, `run.log`,
+  `desktop.png` and `console.png` are in
+  `/srv/tftp/visit/<name>/<build ID>/desktop-check/`. QEMU's framebuffer is
+  the firmware mailbox model, so it checks Orbital, `rpi-fbd`, the launcher
+  and the session, not HDMI. It also runs by hand on any desktop image:
+  `scripts/qemu-desktop-check.sh --image <harddrive.img>`.
 - **For a tester:** `/visit/` on the image server (`index.html` and
   `README.txt`, from `scripts/visit-index.py` after each image): per image
   OK or FAILED, build ID, date, the command to stage it, the SD image with
@@ -107,12 +121,27 @@ swiftflash source add redox http://<server>:8080/sdcard/
 sudo swiftflash redox:redox-rpi-openfw-3bp
 ```
 
+**Who owns it:** Release & CI owns what is in the directory and the one
+script that writes it ([#625](https://github.com/redox-rpi/redox-rpi/issues/625)).
+The HTTP server itself (its setup, the `redox-sdcard-index.path` unit) stays
+with the admin session for the build host; its config is not in this
+repository.
+
 **How to publish:** every SD image goes in with
 `scripts/publish-sdcard.sh <card.img or card.img.xz> --family <family>
-[--manifest build/manifests/<image>.toml] [--owner <topic>]`, never by
-copying into the directory. It takes a card from `scripts/make-sdcard.sh` or
-any finished card image (firmware-only cards too), and prints the URL, the
-sha256 and the SwiftFlash command for the test row.
+[--manifest build/manifests/<image>.toml] [--owner <topic>] [--latest]`,
+never by copying into the directory, from any session or script (release
+cards, visit images, the Open firmware card). It takes a card from
+`scripts/make-sdcard.sh` or any finished card image (firmware-only cards
+too), and prints the URL, the sha256 and the SwiftFlash command for the
+test row. At the end it checks what `swiftflash redox:<family>` reads
+(`scripts/sdcard-check.py`): the `index.json` entry, that the new image is
+the family's newest (the one SwiftFlash takes), the checksum against the
+file, and the manifest; with the image server's URL in `lab.env`, also
+`index.json`, the image and the `.sha256` over HTTP. A failed check stops
+with an error: fix it before you send anyone the command.
+`scripts/publish-sdcard.sh --check <family>` runs the same check on what is
+published, without publishing.
 
 The rules it keeps:
 
@@ -124,6 +153,10 @@ The rules it keeps:
 - **Never overwrite:** a name that is published already is refused; a new
   build gets a new name. Deleting old builds is fine.
 - **Checksum** `<image>.sha256` in `sha256sum` format, of the `.xz`.
+- **Manifest** `<image>.manifest.toml` for every image: the build manifest
+  from `--manifest` (it must be TOML, `build/manifests/*.toml`), else a
+  short one the script writes (family, version, build time, commit, owner,
+  sha256).
 - **`/.uuid`** on the card's FAT partition: `schemaVersion` 1 and only the
   image block (`id` = family, `version` = the version in the file name,
   `build`, `commit`), never a device or flash UUID. Cards without a FAT

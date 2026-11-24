@@ -13,6 +13,10 @@
 
 ## Next
 
+- [#622](https://github.com/redox-rpi/redox-rpi/issues/622) one network
+  config file, `/etc/net/config.toml` ([network-config.md](../network-config.md)):
+  step 1 decides which interfaces get DHCP (base `0116`); fixed address and
+  IPv6 later. The minimal card has no file and starts no network.
 - [#171](https://github.com/redox-rpi/redox-rpi/issues/171) `ifconfig`
   showed `00:00:00:00:00:00` as the MAC address (a placeholder in upstream
   `netutils`) and the prefix length as the netmask. Experiment

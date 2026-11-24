@@ -1,0 +1,9 @@
+[package]
+name = "oomtest"
+description = "Use up all memory and check that only this process ends, not the kernel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

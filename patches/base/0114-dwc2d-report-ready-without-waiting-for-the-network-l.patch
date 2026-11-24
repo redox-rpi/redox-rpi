@@ -1,0 +1,69 @@
+From 140fa08f32d8208723280c47fe9bec605e395177 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 16:52:39 +0000
+Subject: [PATCH] dwc2d: report ready without waiting for the network link
+
+dhcpd starts when the adapter link file says up (redox-rpi #560), so the
+boot no longer waits for autonegotiation: 1.7 to 3 s on the Pi 3B+ with a
+cable, 10 s without one, also on images without a network stack
+(redox-rpi #536). Without an adapter, the 1 s look for late devices stays.
+---
+ drivers/usb/dwc2d/src/main.rs | 30 ++++++++----------------------
+ 1 file changed, 8 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 8b51a71..a865ba0 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -456,11 +456,6 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ /// While this file exists, mouse events are printed too (tests without a
+ /// person); looked at with every rescan.
+ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+-/// How long a network adapter found at boot may wait for its link, so DHCP
+-/// does not start into a dead cable. Gigabit autonegotiation on the RTL8153
+-/// can take longer than 5 s. Adapters plugged in later do not wait: their
+-/// link is looked at with every rescan.
+-const BOOT_LINK_WAIT: Duration = Duration::from_secs(10);
+ /// How long to look for devices at boot when there is no network adapter.
+ const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
+ 
+@@ -546,28 +541,19 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     };
+     let addresses = bus.devices.iter().map(|d| d.address).collect();
+     boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, addresses);
+-    // Wait for a network adapter's link, so DHCP does not start into a dead
+-    // cable, or, without an adapter, a moment for devices that connect late
+-    // after power-on. Rescans meanwhile take devices that connect now, so
+-    // waiting for the link and for the hub ports overlaps (on the Pi 3B+,
+-    // the LAN7800's autonegotiation takes 1.7 s).
++    // Without a network adapter yet, a moment for devices that connect late
++    // after power-on (on the 3B+, the LAN7800 appears about 0.4 s after the
++    // hub). No wait for the link: dhcpd starts when the adapter's `link` file
++    // says up (#560), so the boot does not wait for autonegotiation, 1.7 to
++    // 3 s on the 3B+ with a cable and 10 s without one (#536). The link is
++    // followed with every rescan from here on.
+     let start = Instant::now();
+-    loop {
+-        net.refresh_links(&mut bus);
+-        if net.adapters.iter().any(|(_, link)| *link) {
+-            break;
+-        }
+-        let wait = if net.adapters.is_empty() { BOOT_CONNECT_WAIT } else { BOOT_LINK_WAIT };
+-        if start.elapsed() >= wait {
+-            if !net.adapters.is_empty() {
+-                println!("dwc2d: no link yet");
+-            }
+-            break;
+-        }
++    while net.adapters.is_empty() && start.elapsed() < BOOT_CONNECT_WAIT {
+         dwc2::delay(Duration::from_millis(50));
+         let changes = bus.scan();
+         boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
+     }
++    net.refresh_links(&mut bus);
+     println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
+     // The network stack keeps the address of the adapter it starts with.
+     if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
+-- 
+2.53.0
+

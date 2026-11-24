@@ -8,7 +8,7 @@ when a line has a known harmless cause, fix the cause or design around it.
 | # | Line in the boot log | Cause | Patch |
 |---|---|---|---|
 | 1 | `[ERROR redoxfs] failed to open filesystem /scheme/disk.mmc/0: …` and `…/0p0` (live-disk boot) | With `--uuid`, redoxfs tries every disk and logs each one that has no matching RedoxFS. That is normal while searching. | redoxfs `0001`: no error line during the UUID search; `not able to mount uuid` still reports when no disk has it |
-| 2 | `randd: Seeding failed, no entropy source.  Random numbers on this platform are NOT SECURE` | The Cortex-A53 has no RNDR register, and randd knew no other source. | base `0002`: randd seeds from the SoC's hardware RNG (`brcm,bcm2835-rng`, from the devicetree) when RNDR gives nothing |
+| 2 | `randd: Seeding failed, no entropy source.  Random numbers on this platform are NOT SECURE` | The Cortex-A53 has no RNDR register, and randd knew no other source. | now in every image: base patch `0115` (#618, PR #620), so the experiment no longer carries it |
 | 3 | `dwc2d: request [21, 0a, …] … failed: Stall` | HID SET_IDLE; the HID spec lets a device stall it, and the callers ignore the result. | base `0001`: a stalled SET_IDLE returns at once, with no retry and no line |
 | 4 | `kernel::acpi:ERROR -- NO RSDP FOUND`, `kernel::scheme::acpi:WARN -- expected RXSDT_ENUM …` | The kernel looks for ACPI tables on a devicetree board. | kernel `0001`: no ACPI search when the bootloader gave no RSDP and there is a devicetree; an empty ACPI scheme is a debug line |
 | 5 | `…rtc:WARN -- No PL031 RTC found`, `…irqchip:WARN -- no driver for interrupt controller "brcm,bcm2835-gpio"` | The Pi has no RTC; no kernel device uses GPIO interrupts. | kernel `0001`: both are `INFO` lines |
