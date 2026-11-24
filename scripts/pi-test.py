@@ -24,7 +24,9 @@ Checks, in this order:
             last "Redox OS starting" before the run) to the end of the
             checks has no kernel panic, relibc panic, out of memory, stuck
             main loop or crash of a program other than ls and pwd (those
-            are the starts check's), and the kernel did not start again
+            are the starts check's), no out of memory except the kernel
+            ending oomtest (the regression set's oom check, #676), and the
+            kernel did not start again
             during the run, which would be an unexpected reset (#674)
 
 With --extended (the nightly, #258), also:
@@ -211,6 +213,8 @@ UNHANDLED = re.compile(r"UNHANDLED EXCEPTION, CPU #(\d+), PID (\d+), NAME (\S+?)
 SERIAL_BAD = re.compile(r"KERNEL PANIC|RELIBC PANIC|OUT OF MEMORY|main loop stuck")
 BOOT_START = "Redox OS starting"
 START_PROGRAMS = ("/usr/bin/ls", "/usr/bin/pwd", "/bin/ls", "/bin/pwd")
+# The kernel ending oomtest on purpose (regression-set.py's oom check, #676).
+OOM_TEST_KILL = re.compile(r"OUT OF MEMORY: killing PID \d+ NAME \S*/oomtest\b")
 
 
 def boot_offset(path, before):
@@ -229,7 +233,7 @@ def check_serial(check, path, run_start):
     """The serial check (see the module doc): this boot's log, from its
     kernel start to now."""
     lines = serial_lines(path, boot_offset(path, run_start))
-    bad = [l for l in lines if SERIAL_BAD.search(l)]
+    bad = [l for l in lines if SERIAL_BAD.search(l) and not OOM_TEST_KILL.search(l)]
     bad += [l for l in lines if (m := UNHANDLED.search(l)) and m.group(3) not in START_PROGRAMS]
     after = serial_lines(path, run_start)
     resets = sum(BOOT_START in l for l in after)
