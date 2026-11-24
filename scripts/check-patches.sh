@@ -12,8 +12,7 @@
 #   --base <rev>  also check the patches and pins of commit <rev> (a pull
 #                 request's base) and fail on what this tree breaks there:
 #                 an experiment that applies at <rev> but not here, a new
-#                 experiment that does not apply, a new duplicate patch
-#                 number (#672)
+#                 experiment that does not apply (#672)
 #   --report <f>  write the experiments that do not apply and are not
 #                 parked to <f> as a Markdown list (the nightly's report)
 #
@@ -26,10 +25,11 @@
 # patches/experiments/parked.txt, one per line: the name, then the reason.
 # They never fail the check.
 #
-# Exit status 1 if a default patch set does not apply, or with --base if
-# this tree breaks an experiment or adds a duplicate patch number; 0
-# otherwise. Without --base, experiments that do not apply and duplicate
-# numbers are reported as warnings.
+# Exit status 1 if a default patch set does not apply, if a directory uses
+# a patch number twice, or with --base if this tree breaks an experiment;
+# 0 otherwise. Without --base, experiments that do not apply are reported
+# as warnings. With --base, a duplicate number the base has too is a
+# warning: it is not the pull request's doing.
 
 set -euo pipefail
 
@@ -231,7 +231,8 @@ while read -r name exp status rev info; do
     fi
 done < "$head_results"
 
-# Duplicate patch numbers: new ones fail with --base, the rest warn.
+# Duplicate patch numbers fail; with --base, only those the base does not
+# have.
 dups=()
 declare -A base_dups=()
 if [ -n "$base_root" ]; then
@@ -239,14 +240,14 @@ if [ -n "$base_root" ]; then
 fi
 while read -r d; do
     [ -n "$d" ] || continue
-    if [ -n "$base_root" ] && [ -z "${base_dups[$d]:-}" ]; then
-        echo "FAIL  duplicate patch number ${d#* } in ${d%% *} (new here)"
-        dups+=("- **${d%% *}: ${d#* } twice (new here)**")
+    if [ -z "$base_root" ] || [ -z "${base_dups[$d]:-}" ]; then
+        echo "FAIL  duplicate patch number ${d#* } in ${d%% *}"
+        dups+=("- **${d%% *}: ${d#* } twice**")
         breaks+=("- duplicate patch number ${d#* } in ${d%% *}")
         failed=1
     else
-        echo "warn  duplicate patch number ${d#* } in ${d%% *}"
-        dups+=("- ${d%% *}: ${d#* } twice")
+        echo "warn  duplicate patch number ${d#* } in ${d%% *} (the base has it too)"
+        dups+=("- ${d%% *}: ${d#* } twice (the base has it too)")
     fi
 done < <(duplicates "$ROOT")
 
