@@ -43,6 +43,21 @@ rule: every renderer must give 2080 red pixels and the same hash.
 `LIBGL_ALWAYS_SOFTWARE=1 gles-probe` gives the software renderer's hash
 for comparison.
 
+`gles-demo` draws a rotating cube the same way and copies each frame into
+an Orbital window (liborbital): the picture comes from the V3D, Orbital
+only shows it. The angle depends only on the frame number, so a frame is
+the same on every renderer apart from edge pixels and shading rounding:
+
+```bash
+gles-demo --window                     # until the window is closed
+gles-demo --frames 100 --dump /tmp/v3d
+LIBGL_ALWAYS_SOFTWARE=1 gles-demo --frames 100 --dump /tmp/sw
+gles-demo --compare /tmp/sw-first.ppm /tmp/v3d-first.ppm
+```
+
+`--compare` passes when at most 1 % of the pixels differ by more than 8 in
+a channel.
+
 ```bash
 scripts/build-image.sh --experiment pi400 --experiment v3d-power --experiment vc4d --experiment v3dd --experiment v3d-ioctl --experiment scanf-pipe --experiment mesa-v3d ...
 ```
