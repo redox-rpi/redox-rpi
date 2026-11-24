@@ -1,4 +1,4 @@
-From 7b1f5cad2979718f48cb6de1f1a9888927d10405 Mon Sep 17 00:00:00 2001
+From 8e187539052feb0842e77793c2c10599ec86d971 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 08:58:46 +0000
 Subject: [PATCH] driver-block: leave the status text out of the close log
@@ -11,7 +11,7 @@ handle put the whole text as decimal bytes on the console (Test 521).
  1 file changed, 4 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/storage/driver-block/src/lib.rs b/drivers/storage/driver-block/src/lib.rs
-index f268315c..b98551cc 100644
+index f268315..b98551c 100644
 --- a/drivers/storage/driver-block/src/lib.rs
 +++ b/drivers/storage/driver-block/src/lib.rs
 @@ -731,6 +731,9 @@ impl<T: Disk> SchemeAsync for DiskSchemeInner<T> {

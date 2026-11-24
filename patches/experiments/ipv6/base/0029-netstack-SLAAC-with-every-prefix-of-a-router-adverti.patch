@@ -1,4 +1,4 @@
-From d1dbcb6bdad32993fdcf3831b927e54306b55536 Mon Sep 17 00:00:00 2001
+From c68d2b6382fb406d427a3a13de30efbf15b7c545 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:58:53 +0000
 Subject: [PATCH] netstack: SLAAC with every prefix of a router advertisement

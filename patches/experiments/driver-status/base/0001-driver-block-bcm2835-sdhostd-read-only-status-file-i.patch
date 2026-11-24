@@ -1,4 +1,4 @@
-From bdca86403f81da6719cc12fdbacabe88ab1e1126 Mon Sep 17 00:00:00 2001
+From 41845081b76c78d836343d4d470a51aea0199ac0 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 08:27:43 +0000
 Subject: [PATCH] driver-block, bcm2835-sdhostd: read-only status file in the
@@ -13,7 +13,7 @@ bcm2835-sdhostd reports card, clocks, registers and counters since start.
  2 files changed, 184 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/storage/bcm2835-sdhostd/src/host.rs b/drivers/storage/bcm2835-sdhostd/src/host.rs
-index 1b5b27d8..4f74105d 100644
+index 1b5b27d..4f74105 100644
 --- a/drivers/storage/bcm2835-sdhostd/src/host.rs
 +++ b/drivers/storage/bcm2835-sdhostd/src/host.rs
 @@ -6,6 +6,7 @@
@@ -250,7 +250,7 @@ index 1b5b27d8..4f74105d 100644
              stats.write.count(len, start);
              stats.print_due();
 diff --git a/drivers/storage/driver-block/src/lib.rs b/drivers/storage/driver-block/src/lib.rs
-index d6162ecc..f268315c 100644
+index d6162ec..f268315 100644
 --- a/drivers/storage/driver-block/src/lib.rs
 +++ b/drivers/storage/driver-block/src/lib.rs
 @@ -90,6 +90,13 @@ pub trait Disk {

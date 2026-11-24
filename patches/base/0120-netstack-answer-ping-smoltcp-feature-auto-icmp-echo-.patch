@@ -1,4 +1,4 @@
-From 9a6a2990086211849e34a08a7376b8b83cf2753f Mon Sep 17 00:00:00 2001
+From d9a17004be4b18109224dad1aa61cde1bd041ef8 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 5 Nov 2026 11:00:47 +0000
 Subject: [PATCH] netstack: answer ping (smoltcp feature auto-icmp-echo-reply)
@@ -12,7 +12,7 @@ other hosts.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
-index f965d191..967490c1 100644
+index 05597b7..041b403 100644
 --- a/netstack/Cargo.toml
 +++ b/netstack/Cargo.toml
 @@ -27,7 +27,7 @@ default-features = false

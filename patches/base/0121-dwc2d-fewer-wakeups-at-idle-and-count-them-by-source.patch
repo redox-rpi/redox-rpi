@@ -1,4 +1,4 @@
-From f1035629cde39c830d7f103f998fe5acb615c8a2 Mon Sep 17 00:00:00 2001
+From d0d424546bae6ffe0c1edb0d41461a387fd5a90e Mon Sep 17 00:00:00 2001
 From: dwc2d <dwc2d@localhost>
 Date: Thu, 5 Nov 2026 02:51:02 +0000
 Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
@@ -13,27 +13,37 @@ Subject: [PATCH] dwc2d: fewer wakeups at idle, and count them by source (#126)
   (irq, scheme, time, hotplug), the time spent on each, and the parts of
   a hotplug rescan.
 ---
- drivers/usb/dwc2d/src/main.rs    | 39 +++++++++++++++++++--
+ drivers/usb/dwc2d/src/main.rs    | 25 +++++++++++++-
  drivers/usb/dwc2d/src/wakeups.rs | 58 ++++++++++++++++++++++++++++++++
- 2 files changed, 95 insertions(+), 2 deletions(-)
+ 2 files changed, 82 insertions(+), 1 deletion(-)
  create mode 100644 drivers/usb/dwc2d/src/wakeups.rs
 
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 12be94ad..9eee9ac4 100644
+index 1095983..abf965a 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -18,2 +18,3 @@ use fdt::Fdt;
+@@ -17,6 +17,7 @@ use fdt::Fdt;
+ 
+ mod aside;
  mod dwc2;
 +mod wakeups;
  mod ecm;
-@@ -388,2 +389,6 @@ impl Timer {
+ mod enumerate;
+ mod hid;
+@@ -456,6 +457,10 @@ impl Timer {
+     }
+ }
  
 +/// How often to ask the network adapters for their link: two PHY register
 +/// reads on the LAN7800, a few control transfers each (#126).
 +const LINK_INTERVAL: Duration = Duration::from_secs(5);
 +
  /// How often to look for devices plugged in or removed.
-@@ -550,3 +560,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
+ /// A test without a person writes a port to this file; the next rescan
+@@ -628,7 +633,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+         .expect("dwc2d: failed to subscribe to the scheme");
+ 
      scheme.tick().expect("dwc2d: network scheme failed");
 +    let mut wake = wakeups::Wakeups::new();
 +    let mut last_links = Instant::now();
@@ -41,19 +51,30 @@ index 12be94ad..9eee9ac4 100644
 +        let source = event.user_data;
 +        let woke = Instant::now();
          match event.user_data {
-@@ -581,3 +596,4 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Irq => {
+                 let file = irq_file.as_mut().unwrap();
+@@ -667,6 +676,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Hotplug => {
+                 hotplug.fired();
                  let mut cycled = Vec::new();
 +                let t = Instant::now();
                  if let Ok(request) = aside::cycle_request() {
                      let net = scheme.adapter_mut();
-@@ -610,3 +632,6 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                     let request = request.trim();
+@@ -696,7 +706,10 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                         None => println!("dwc2d: cycle: no port for {request:?}"),
+                     }
                  }
 +                wake.part(0, t.elapsed());
 +                let t = Instant::now();
                  let mut changes = bus.scan();
 +                wake.part(1, t.elapsed());
                  changes.removed.extend(cycled);
-@@ -633,5 +658,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 let net = scheme.adapter_mut();
+                 for &address in &changes.removed {
+@@ -731,12 +744,22 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 if let Some(m) = mouse.as_mut() {
+                     m.log = aside::input_log();
                  }
 -                net.refresh_links(&mut bus);
 +                // New adapters bring their link with them; the others are
@@ -69,13 +90,15 @@ index 12be94ad..9eee9ac4 100644
                  scheme.tick().expect("dwc2d: network scheme failed");
 +                wake.part(3, t.elapsed());
                  hotplug.arm(HOTPLUG_INTERVAL);
-@@ -639,2 +673,3 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             }
          }
 +        wake.count(source as usize, woke.elapsed());
      }
+     unreachable!()
+ }
 diff --git a/drivers/usb/dwc2d/src/wakeups.rs b/drivers/usb/dwc2d/src/wakeups.rs
 new file mode 100644
-index 00000000..2841d11d
+index 0000000..2841d11
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/wakeups.rs
 @@ -0,0 +1,58 @@

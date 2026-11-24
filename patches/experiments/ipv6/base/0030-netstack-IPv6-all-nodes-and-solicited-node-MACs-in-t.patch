@@ -1,4 +1,4 @@
-From 26c293f229c7b5f52f81d09db8f03055ea5cb980 Mon Sep 17 00:00:00 2001
+From c116b263e45bd26390e0a64e00ed06f5f5474477 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:59:44 +0000
 Subject: [PATCH] netstack: IPv6 all-nodes and solicited-node MACs in the

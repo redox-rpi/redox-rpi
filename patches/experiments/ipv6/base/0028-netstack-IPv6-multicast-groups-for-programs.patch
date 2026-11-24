@@ -1,4 +1,4 @@
-From ca64a595113a4c9578d1f559079ca43878506d0f Mon Sep 17 00:00:00 2001
+From 167468eb17655a61009ae762e3c52374e8a1a73f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:14:19 +0100
 Subject: [PATCH] netstack: IPv6 multicast groups for programs

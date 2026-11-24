@@ -1,4 +1,4 @@
-From 24c189f3c216c4cca30ac25d00f8f7f2dd5726e5 Mon Sep 17 00:00:00 2001
+From c9097e28024c8e2325e1acf955c19d223c3bdca4 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:58:42 +0000
 Subject: [PATCH] netstack: IPv6 endpoints in socket paths, DNS server from

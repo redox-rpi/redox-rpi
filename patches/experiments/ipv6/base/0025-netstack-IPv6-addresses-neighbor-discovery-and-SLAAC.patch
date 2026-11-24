@@ -1,4 +1,4 @@
-From 9007c74a0cb14dc561646ab3b28f2b9a4b048b67 Mon Sep 17 00:00:00 2001
+From bb530ac460dc18de14a2541d7e945fd4eae836fe Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:58:20 +0000
 Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
@@ -19,30 +19,27 @@ Ported to base 20f7573b (several adapters, multicast filter).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- netstack/Cargo.toml               |   3 +-
+ netstack/Cargo.toml               |   2 +-
  netstack/src/link/ethernet.rs     | 435 +++++++++++++++++++++++++-----
  netstack/src/link/mod.rs          |  16 +-
  netstack/src/router/mod.rs        |  47 +++-
  netstack/src/scheme/mod.rs        |  86 +++++-
  netstack/src/scheme/netcfg/mod.rs |  24 +-
- 6 files changed, 531 insertions(+), 80 deletions(-)
+ 6 files changed, 530 insertions(+), 80 deletions(-)
 
 diff --git a/netstack/Cargo.toml b/netstack/Cargo.toml
-index 05597b7..8d07cbd 100644
+index 041b403..3b1a6c2 100644
 --- a/netstack/Cargo.toml
 +++ b/netstack/Cargo.toml
-@@ -27,9 +27,10 @@ default-features = false
+@@ -27,7 +27,7 @@ default-features = false
  features = [
      "std",
      "medium-ethernet", "medium-ip",
--    "proto-ipv4", "multicast",
-+    "proto-ipv4", "proto-ipv6", "multicast",
+-    "proto-ipv4", "multicast", "auto-icmp-echo-reply",
++    "proto-ipv4", "proto-ipv6", "multicast", "auto-icmp-echo-reply",
      "socket-raw", "socket-icmp", "socket-udp", "socket-tcp", "socket-tcp-cubic",
      "iface-max-addr-count-8",
-+    "auto-icmp-echo-reply",
      "log"
- ]
- #For debugging: "log", "verbose"
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
 index 5927d76..064b84f 100644
 --- a/netstack/src/link/ethernet.rs

@@ -72,7 +72,7 @@
   main sends no FIN (Redox nc out and `nc -l` in), `0089` sends it at once.
 - [#177](https://github.com/redox-rpi/redox-rpi/issues/177) the Pi didn't
   answer ping (test 164): netstack left out smoltcp's feature
-  `auto-icmp-echo-reply`. Experiment `icmp-echo` (base `0001`, one line,
+  `auto-icmp-echo-reply`. Base `0120` (from experiment `icmp-echo`, #693; one line,
   PR [#178](https://github.com/redox-rpi/redox-rpi/pull/178)); QEMU 10 of
   10 answered, **Pi test 196 passed** (20 of 20).
 - [#45](https://github.com/redox-rpi/redox-rpi/issues/45) SSH server instead of devshd (experiment `sshd`, branch `sshd`):

@@ -1,4 +1,4 @@
-From 597110180a02ba3a6afb80c4d32964c2c444a306 Mon Sep 17 00:00:00 2001
+From c10a384d1712b6033f503d7b60dd9af95cc18dcb Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 08:39:09 +0000
 Subject: [PATCH] driver-network, dwc2d: read-only status file in the network
@@ -201,7 +201,7 @@ index 4e26ae5..73bf535 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1095983..7cd6f13 100644
+index abf965a..dbe5f3d 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -10,7 +10,10 @@ use std::fs::{File, OpenOptions};
@@ -215,7 +215,7 @@ index 1095983..7cd6f13 100644
  use std::time::{Duration, Instant};
  
  use fdt::Fdt;
-@@ -89,6 +92,42 @@ impl Adapter {
+@@ -90,6 +93,42 @@ impl Adapter {
      }
  }
  
@@ -258,7 +258,7 @@ index 1095983..7cd6f13 100644
  /// The network adapters on the bus. The network stack sees one of them, the
  /// best by [`Adapter::rank`], and is moved to another when adapters are
  /// plugged in or removed or a link comes up or goes down.
-@@ -229,17 +268,32 @@ impl NetworkAdapter for UsbNet {
+@@ -230,17 +269,32 @@ impl NetworkAdapter for UsbNet {
      }
  
      fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
@@ -294,7 +294,7 @@ index 1095983..7cd6f13 100644
          }
      }
  
-@@ -255,6 +309,94 @@ impl NetworkAdapter for UsbNet {
+@@ -256,6 +310,94 @@ impl NetworkAdapter for UsbNet {
              .is_some_and(|(a, link)| *link || matches!(a, Adapter::Ecm(_)))
      }
  
@@ -389,7 +389,7 @@ index 1095983..7cd6f13 100644
      /// Kept for the event loop, which has the bus to program the adapter.
      fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
          self.multicast = addrs.map(<[_]>::to_vec);
-@@ -564,6 +706,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -569,6 +711,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      }
      net.refresh_links(&mut bus);
      println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
@@ -397,7 +397,7 @@ index 1095983..7cd6f13 100644
      // The network stack keeps the address of the adapter it starts with.
      if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
          if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
-@@ -634,6 +777,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -643,6 +786,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  let file = irq_file.as_mut().unwrap();
                  let mut irq = [0; 8];
                  if file.read(&mut irq).unwrap_or(0) == irq.len() {
@@ -405,16 +405,16 @@ index 1095983..7cd6f13 100644
                      // tick() takes the received frame and clears the
                      // channel's interrupt; only then unmask the line.
                      scheme.tick().expect("dwc2d: network scheme failed");
-@@ -731,6 +875,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -744,6 +888,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  if let Some(m) = mouse.as_mut() {
                      m.log = aside::input_log();
                  }
 +                if !changes.added.is_empty() || !changes.removed.is_empty() {
 +                    update_devices(&bus);
 +                }
-                 net.refresh_links(&mut bus);
-                 net.select(&mut bus);
-                 scheme.tick().expect("dwc2d: network scheme failed");
+                 // New adapters bring their link with them; the others are
+                 // asked now and then.
+                 let t = Instant::now();
 -- 
 2.53.0
 
