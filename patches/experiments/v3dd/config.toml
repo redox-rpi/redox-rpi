@@ -1,0 +1,16 @@
+# Experiment v3dd (#598, step 3, test only): starts vc4d's v3dd at boot, the
+# V3D daemon (power, MMU, BOs, CSD jobs) behind /scheme/v3d. Pi 4/400 only;
+# v3dd leaves V3D alone on other boards. Needs v3d-power and vc4d-flip (rev
+# with v3dd).
+
+[[files]]
+path = "/usr/lib/init.d/16_v3dd.service"
+data = """
+[unit]
+description = "V3D 4.2 daemon (v3dd): power, MMU, buffer objects, compute jobs"
+condition_architecture = ["aarch64"]
+
+[service]
+cmd = "v3dd"
+type = { scheme = "v3d" }
+"""
