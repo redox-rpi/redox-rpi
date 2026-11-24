@@ -9,9 +9,15 @@ left for a user page (redox-rpi#644). Now it marks every thread of the
 faulting process as SIGKILLed, the way a kill through the proc scheme
 does, and ends the current thread. A usercopy inside a syscall fails
 with EFAULT and the thread exits when the syscall returns.
+
+A thread that is being SIGKILLed no longer blocks in a WaitCondition: a
+kill that came while the thread was running (e.g. spinning on the pipe
+lock the faulting thread held) left it blocked for good, so its process
+never ended and its memory stayed in use.
 ---
- src/memory/mod.rs | 57 ++++++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 56 insertions(+), 1 deletion(-)
+ src/memory/mod.rs          | 57 +++++++++++++++++++++++++++++++++++++-
+ src/sync/wait_condition.rs | 10 +++++++
+ 2 files changed, 66 insertions(+), 1 deletion(-)
 
 diff --git a/src/memory/mod.rs b/src/memory/mod.rs
 index 47a9a0a1..65073050 100644
@@ -95,6 +101,27 @@ index 47a9a0a1..65073050 100644
  static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> =
      SyncUnsafeCell::new(None);
  
+diff --git a/src/sync/wait_condition.rs b/src/sync/wait_condition.rs
+index f1f889ca..10eb83a2 100644
+--- a/src/sync/wait_condition.rs
++++ b/src/sync/wait_condition.rs
+@@ -80,6 +80,16 @@ impl WaitCondition {
+             let mut token = token.token();
+             {
+                 let context = current_context_ref.upgradeable_read(token.token());
++                // A thread that is being SIGKILLed (by the OOM killer, or a kill
++                // that came while it was not blocked) must not block again: it
++                // would never wake, and its process never ends (redox-rpi#644).
++                if context.being_sigkilled {
++                    crate::percpu::PercpuBlock::current()
++                        .switch_internals
++                        .being_sigkilled
++                        .set(true);
++                    return false;
++                }
+                 if let Some((control, pctl, _)) = context.sigcontrol()
+                     && control.currently_pending_unblocked(pctl) != 0
+                 {
 -- 
 2.53.0
 
