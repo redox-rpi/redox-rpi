@@ -22,12 +22,15 @@ Two relibc patches:
 and `SIGNAL` (0xBF, 0xC0, 0xC3 to 0xC5). Mesa's v3d driver fences its
 jobs with them (libdrm `drmSyncobj*`); v3dd keeps them per file.
 
+`config.toml` links the render node `/dev/dri/renderD128` to
+`/scheme/v3d`, where libdrm and Mesa look for DRM devices.
+
 The numbers start at 0024, after the default relibc patches 0020 to 0023 of
 open pull requests; the `exp-v3d-ioctl-` prefix keeps them apart in any case.
 
 Test: `v3dprobe --via-v3dd --ioctl --libc` (vc4d) runs v3dd's binary
 interface check through relibc's `ioctl()` with Linux's request numbers
-and structs, the path libdrm takes. Without this experiment every call
+and structs on `/dev/dri/renderD128`, the path libdrm takes. Without this experiment every call
 there answers EINVAL.
 
 ```
