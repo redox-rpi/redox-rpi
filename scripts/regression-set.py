@@ -136,7 +136,7 @@ RAW_MAX = 200  # lines of raw output kept per failed check (the last ones)
 OOM_MODES = ("", "-t 4", "pipe")
 OOM_TIMEOUT = 300  # s per oomtest mode (5-10 s on the 3B+)
 OOM_USED_KB = 2048  # more used memory after the oomtest runs than before (Test 598: 148 KB)
-FREE_RE = re.compile(r"Mem:\s+(\d+) total, (\d+) used, (\d+) free")
+FREE_RE = re.compile(r"^Mem:\s+(\d+)\s+(\d+)\s+(\d+)", re.M)  # total, used, free (KB)
 
 # One line of C (no #include, so ion's echo can write it): the parent waits
 # for child c (exits 7 after 3 s) while child s sends it SIGWINCH (28) and
