@@ -191,6 +191,15 @@ per week and one release per sprint:
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
 
+**When a bug or feature issue closes.** An issue closes only when its fix
+or feature is in the default build (the default patches, recipes and
+config on `main`) or in a release. A fix that lives only in an experiment
+(`patches/experiments/`) does not close it: the PR that adds the
+experiment says `Refs #N`, not `Fixes #N`, and the issue stays open until
+a PR moves the fix into the default build. The only exception: the issue
+says explicitly that the fix stays an experiment, and why; then it may be
+closed as "not planned" with that reason.
+
 ### Issue types and epics
 
 Every issue in the organisation has one issue type:

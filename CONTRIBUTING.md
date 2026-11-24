@@ -81,7 +81,9 @@ Release candidates and releases are built by one build agent only; see
   `needs:zero2w` or `needs:nothing` for the hardware, `in-progress` while
   someone works on it. Release plans are milestones, for example
   [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
-- **Pull requests** name their issue (`Fixes #12`), so it closes on merge.
+- **Pull requests** name their issue: `Fixes #12` when the change goes into
+  the default build, `Refs #12` when it only adds or changes an experiment
+  ([when an issue closes](docs/process/pmp.md#workflow)).
 
 ## Merging
 
