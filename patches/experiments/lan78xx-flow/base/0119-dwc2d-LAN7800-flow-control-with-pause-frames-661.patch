@@ -1,0 +1,43 @@
+From 5631897604557fc7f6e54540ed0771ec799f9f23 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 09:30:16 +0000
+Subject: [PATCH] dwc2d: LAN7800 flow control with pause frames (#661)
+
+The LAN7800 drops frames when its receive FIFO is full, which TCP sees
+as retransmits. With flow control the MAC sends a pause frame at 8.5 KiB
+in the FIFO and obeys the link partner's pause frames; the PHY already
+advertises pause.
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index fd3f533..8faed4a 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -83,6 +83,8 @@ const MAC_RX_MAX_SIZE_SHIFT: u32 = 16;
+ const MAC_RX_MAX_SIZE_MASK: u32 = 0x3FFF_0000;
+ const MAC_TX_EN: u32 = 1 << 0;
+ const MAF_HI_VALID: u32 = 1 << 31;
++const FLOW_TX_FCEN: u32 = 1 << 30;
++const FLOW_RX_FCEN: u32 = 1 << 29;
+ const MII_ACC_BUSY: u32 = 1 << 0;
+ const MII_ACC_WRITE: u32 = 1 << 1;
+ 
+@@ -298,8 +300,11 @@ pub fn init(
+     r.write(FCT_RX_FIFO_END, (FIFO_SIZE - 512) / 512)?;
+     r.write(FCT_TX_FIFO_END, (FIFO_SIZE - 512) / 512)?;
+     r.write(INT_STS, u32::MAX)?;
+-    r.write(FLOW, 0)?;
+-    r.write(FCT_FLOW, 0)?;
++    // Flow control (#661): send a pause frame when the receive FIFO holds
++    // 8.5 KiB (17 x 512 bytes), release it below 1 KiB, as Linux does for a
++    // high-speed USB link; obey pause frames from the link partner.
++    r.write(FCT_FLOW, 17 | (2 << 8))?;
++    r.write(FLOW, FLOW_TX_FCEN | FLOW_RX_FCEN | 0xFFFF)?;
+     // Own address, broadcast and all multicast: mDNS (01:00:5e:00:00:fb,
+     // 33:33:00:00:00:fb) and IPv6 neighbor discovery (33:33:ff:…) need it,
+     // and the network stack does not tell the driver its groups.
+-- 
+2.53.0
+
