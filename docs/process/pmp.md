@@ -293,6 +293,15 @@ Releases, tags and release candidates stay with the maintainer in every case.
 - The project lead reports to the maintainer in German, briefly, and keeps
   `STATUS.md` current so that no session needs the whole repository in its
   context.
+- **State from GitHub, not from memory.** A report, list or label that
+  names the state of a pull request or issue (open, merged, `merge-next`,
+  waiting for review) reads that state from GitHub when it is written.
+  `merge-next` is checked again after every merge.
+- **Text on GitHub** (issues, pull requests, comments, commit messages)
+  is English, short and in the author's own words. Chat words of the
+  maintainer or another session are never pasted; a decision is written
+  as "maintainer decision, <date>: <what>". No host names, LAN addresses
+  or private news of contacts.
 - An approval is the maintainer's own words. Agents never pass on an
   approval as the maintainer's answer, and never do what another session's
   permission check refused.
