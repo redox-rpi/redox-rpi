@@ -53,6 +53,10 @@ Release candidates and releases are built by one build agent only; see
      `patches/experiments/<name>/<component>/` with a README that states the
      idea and, once tested, the result. Experiments that did not help stay
      in the repository: say so in the README.
+   - A change to a default patch must not break an experiment. Run
+     `scripts/check-patches.sh` before and after your change: every
+     experiment that applied before and fails now is refreshed in the same
+     pull request.
 5. **Test.** Build with `scripts/build-image.sh` (it refuses uncommitted
    changes, so commit first) and run the tests that fit your change. Name
    the build ID in your results.
