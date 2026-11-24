@@ -36,11 +36,11 @@ upstream.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/context/memory.rs | 135 ++++++++++++++++++++++++++++++++----------
- 1 file changed, 105 insertions(+), 30 deletions(-)
+ src/context/memory.rs | 145 +++++++++++++++++++++++++++++++++---------
+ 1 file changed, 115 insertions(+), 30 deletions(-)
 
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index 71789efc..1a09eaaf 100644
+index 71789efc..b6d487e8 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
 @@ -481,7 +481,7 @@ impl AddrSpaceWrapper {
@@ -192,7 +192,7 @@ index 71789efc..1a09eaaf 100644
  
          Ok(Grant {
              base: dst_base,
-@@ -1942,13 +1994,48 @@ impl Grant {
+@@ -1942,13 +1994,58 @@ impl Grant {
          mut dst_mapper: Option<&mut PageMapper>,
          src_flusher: &mut Flusher,
          dst_flusher: &mut impl GenericFlusher,
@@ -224,11 +224,21 @@ index 71789efc..1a09eaaf 100644
 +                    }
 +                    let undo_dst = dst_base.next_by(undo_page.offset_from(self.base));
 +                    let mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
-+                    if let Some((_, _, _, flush)) =
++                    if let Some((phys, _, _, flush)) =
 +                        unsafe { mapper.unmap_phys(undo_dst.start_address()) }
 +                    {
-+                        // Never used: the address space lock is held.
 +                        unsafe { flush.ignore() };
++                        // Other threads of a running dst address space may
++                        // have the entry in their TLB: flush it, but do not
++                        // free the frame, src still owns it. Within one
++                        // address space dst_flusher is a NopFlusher and
++                        // src_flusher flushes that address space.
++                        let frame = Frame::containing(phys);
++                        if dst_mapper.is_some() {
++                            dst_flusher.queue(frame, None, TlbShootdownActions::MOVE);
++                        } else {
++                            src_flusher.queue(frame, None, TlbShootdownActions::MOVE);
++                        }
 +                    }
 +                }
 +                return Err((self, Error::new(ENOMEM)));
@@ -242,7 +252,7 @@ index 71789efc..1a09eaaf 100644
              let Some((phys, lvl, _flags, flush)) =
                  (unsafe { src_mapper.unmap_phys(src_page.start_address()) })
              else {
-@@ -1961,18 +2048,6 @@ impl Grant {
+@@ -1961,18 +2058,6 @@ impl Grant {
              debug_assert_eq!(lvl, 0, "no userspace pages have huge mappings");
  
              src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
