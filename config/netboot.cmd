@@ -14,6 +14,14 @@
 #   redox_dir      directory on the TFTP server, with a trailing slash
 #   redox_img_addr RAM address for the disk image
 #   redox_gz_addr  RAM address for the compressed image, after the disk image
+#   redox_netdiag  optional command run after each failed load, e.g. a dump of
+#                  the network controller's counters (set for the Pi 4 and
+#                  400 by scripts/netboot.sh)
+#
+# DHCP is tried three times. Each file is tried three times over HTTP, then
+# three times over TFTP, with a 2 s pause after each failure: on the Pi 400
+# the first loads after a reboot fail at random over GENET (slow DHCP, then
+# HTTP timeouts), and a try a few seconds later succeeds (#394).
 
 echo "redox-rpi: network boot from ${redox_server}"
 
@@ -23,18 +31,49 @@ echo "redox-rpi: network boot from ${redox_server}"
 if test -z "${ipaddr}"; then
     usb start
     setenv autoload no
-    dhcp || exit
+    setenv redox_dhcp no
+    for try in 1 2 3; do
+        if test "${redox_dhcp}" = no; then
+            if dhcp; then
+                setenv redox_dhcp yes
+            else
+                echo "redox-rpi: DHCP failed, try ${try} of 3"
+                sleep 2
+            fi
+        fi
+    done
+    if test "${redox_dhcp}" = no; then exit; fi
 fi
 # DHCP may set serverip from the router; ours wins.
 setenv serverip ${redox_server}
 
 # The image is mostly empty space; compressed it is about a sixth.
-if test "${redox_http}" != none && wget ${redox_gz_addr} ${redox_http}${redox_dir}harddrive.img.gz; then
-    echo "redox-rpi: image loaded over HTTP"
-else
-    setenv serverip ${redox_server}
-    tftpboot ${redox_gz_addr} ${redox_dir}harddrive.img.gz || exit
-fi
+setenv redox_loaded no
+for try in 1 2 3; do
+    if test "${redox_loaded}" = no && test "${redox_http}" != none; then
+        if wget ${redox_gz_addr} ${redox_http}${redox_dir}harddrive.img.gz; then
+            setenv redox_loaded yes
+            echo "redox-rpi: image loaded over HTTP"
+        else
+            echo "redox-rpi: HTTP load of harddrive.img.gz failed, try ${try} of 3"
+            if test -n "${redox_netdiag}"; then run redox_netdiag; fi
+            sleep 2
+        fi
+    fi
+done
+for try in 1 2 3; do
+    if test "${redox_loaded}" = no; then
+        setenv serverip ${redox_server}
+        if tftpboot ${redox_gz_addr} ${redox_dir}harddrive.img.gz; then
+            setenv redox_loaded yes
+        else
+            echo "redox-rpi: TFTP load of harddrive.img.gz failed, try ${try} of 3"
+            if test -n "${redox_netdiag}"; then run redox_netdiag; fi
+            sleep 2
+        fi
+    fi
+done
+if test "${redox_loaded}" = no; then exit; fi
 unzip ${redox_gz_addr} ${redox_img_addr} || exit
 setexpr redox_blocks ${filesize} / 0x200
 blkmap create redox
@@ -43,10 +82,29 @@ blkmap map redox 0 ${redox_blocks} mem ${redox_img_addr}
 # it and its partitions as UEFI block devices for the Redox bootloader.
 part list blkmap 0
 
-if test "${redox_http}" != none && wget ${kernel_addr_r} ${redox_http}${redox_dir}bootloader-live.efi; then
-    true
-else
-    setenv serverip ${redox_server}
-    tftpboot ${kernel_addr_r} ${redox_dir}bootloader-live.efi || exit
-fi
+setenv redox_loaded no
+for try in 1 2 3; do
+    if test "${redox_loaded}" = no && test "${redox_http}" != none; then
+        if wget ${kernel_addr_r} ${redox_http}${redox_dir}bootloader-live.efi; then
+            setenv redox_loaded yes
+        else
+            echo "redox-rpi: HTTP load of bootloader-live.efi failed, try ${try} of 3"
+            if test -n "${redox_netdiag}"; then run redox_netdiag; fi
+            sleep 2
+        fi
+    fi
+done
+for try in 1 2 3; do
+    if test "${redox_loaded}" = no; then
+        setenv serverip ${redox_server}
+        if tftpboot ${kernel_addr_r} ${redox_dir}bootloader-live.efi; then
+            setenv redox_loaded yes
+        else
+            echo "redox-rpi: TFTP load of bootloader-live.efi failed, try ${try} of 3"
+            if test -n "${redox_netdiag}"; then run redox_netdiag; fi
+            sleep 2
+        fi
+    fi
+done
+if test "${redox_loaded}" = no; then exit; fi
 bootefi ${kernel_addr_r} ${fdtcontroladdr}

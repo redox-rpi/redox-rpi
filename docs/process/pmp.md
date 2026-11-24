@@ -1,8 +1,10 @@
 # Project management plan
 
 How the redox-rpi project is organised: who does what, which documents
-exist, and how work moves from an idea to a release. This plan is owned by
-the project lead and changed by pull request; the maintainer approves it.
+exist, and how work moves from an idea to a release. Its process rules are
+owned by the Process session, the planning parts (sprints, work packages,
+status) by the project lead. It is changed by pull request; the maintainer
+approves it.
 
 Status: draft, 2026-11-08.
 
@@ -27,9 +29,10 @@ Every role below can also be held, or shared, by a contributor who joins.
 
 | Role | Who | Owns |
 |---|---|---|
-| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
-| Project lead | coordinator session | this plan, the coarse work packages and who owns them, overall status (`STATUS.md`), merge readiness (`merge-next`), docs-only merges, reporting to the maintainer |
-| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard. Quality does not test |
+| Maintainer | the maintainer (today one person) | goals and priorities, merging code PRs that change the image, releases and tags, RFC decisions, posts to the Redox community, tests that need a person at the Pi |
+| Project lead | coordinator session | the planning parts of this plan (sprints, work packages, status), the coarse work packages and who owns them, overall status (`STATUS.md`), merge readiness (`merge-next`), docs-only merges, reporting to the maintainer |
+| Process | Process session | the process rules: the process parts of this plan and its sub-plans (including the [firmware PMP](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md)), [CONTRIBUTING.md](../../CONTRIBUTING.md), issue and PR templates, labels, rulesets, new-repository setup, the RFC procedure, process improvements from the sprint reviews. Process writes the rules; Quality checks them |
+| Quality | Quality session | the [QMP](qmp.md): process compliance, bug analysis, KPIs and the KPI dashboard; merging build and test system PRs (see [Merge rights](#merge-rights), never its own). Quality does not test |
 | Verification and validation (V&V) | Pi test agent, extended | test standards, test plan and reports, automated and special tests on QEMU and the real Pi, the regression set, preparing person tests |
 | Requirements | Requirements session | the requirements, their IDs and their trace to issues, code and tests |
 | Architect | Architect session | architecture, coding standards and coding rules, RFC drafts, cross-topic technical decisions |
@@ -51,7 +54,9 @@ Every role below can also be held, or shared, by a contributor who joins.
 | tcc | TCC |
 | assistant | Log triage (local language model) |
 | quality | Quality |
+| process (no label yet) | Process |
 | open firmware (`topic:boot`, own repository) | Open firmware |
+| VC4 tools (tinycc VC4 backend, resim, vc4-toolchain; own repositories) | VC4 Tools |
 | boards (Pi 4, Pi 5, test lab), dma | no owner yet (project lead) |
 
 A topic without an active owner falls back to the project lead, who hands
@@ -67,9 +72,10 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 
 | Document | Path | Owner | Status |
 |---|---|---|---|
-| Project management plan | `docs/process/pmp.md` | project lead | this draft |
+| Project management plan | `docs/process/pmp.md` | Process (process rules), project lead (planning) | this draft |
+| Firmware project management plan | [rpi-open-firmware `docs/pmp.md`](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md) | Process (process rules), project lead (status) | draft ([rof PR #64](https://github.com/redox-rpi/rpi-open-firmware/pull/64)) |
 | Product breakdown structure (PBS) | [`docs/process/pbs.md`](pbs.md) | project lead, Architect | draft |
-| Work breakdown structure (WBS) | [`docs/process/wbs.md`](wbs.md) | project lead | draft |
+| Work breakdown structure (WBS) | [`docs/process/wbs.md`](wbs.md) | project lead; process rules in it: Process | draft |
 | Risks and opportunities | issues labelled [`risk`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Arisk) and [`opportunity`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Aopportunity) | project lead | live |
 | Join page | [`docs/join.md`](../join.md) | project lead | draft |
 | Quality management plan | `docs/process/qmp.md` | Quality | to write |
@@ -81,7 +87,7 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 | Test plan and reports | [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests) (`queue.md`, `reports/`, `lab.md`, `releases/`); `docs/test-plan.md` and `docs/test-reports.md` point there | V&V | moved (RFC 0002 phase 2) |
 | Release process and checklists | `docs/release-process.md`, `docs/releases/` | Release and CI | exist |
 | Topic pages | `docs/topics/` | topic owners | exist |
-| Contribution rules | `CONTRIBUTING.md` | project lead | exists; links the documents above |
+| Contribution rules | `CONTRIBUTING.md` | Process | exists; links the documents above |
 | Overall status | `STATUS.md` | project lead | to write (RFC 0002) |
 
 ### What the standards must cover
@@ -135,7 +141,7 @@ per week and one release per sprint:
 | Friday evening | Cut-off: what the maintainer has merged by then is in | maintainer |
 | Saturday | Release candidate built from `main`, candidate checks, Pi tests and the regression set | Release and CI, V&V |
 | Sunday evening | Person test if one is due; the maintainer approves the tag on the exact commit; release notes and known issues. **Monday evening** is the fallback | maintainer, Release and CI |
-| After the release | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review | project lead, Quality |
+| After the release | Sprint review: short report with what shipped, what moved, KPIs, and the risks and opportunities review; process changes that follow from it | project lead, Quality, Process |
 
 - **The maintainer's OK ends the sprint.** When the maintainer approves the
   release on the exact commit, the release is done and the next sprint
@@ -166,13 +172,118 @@ per week and one release per sprint:
 2. The owner splits it into issues, works on a branch, and tests in QEMU.
 3. V&V runs the Pi test for the exact build and files the report.
 4. The owner opens a pull request (draft until the Pi test passes) with the
-   report linked and the topic page updated.
+   report linked and the topic page updated. The description says what the
+   PR changes, why, and what has to be tested (test plan); it carries no
+   test status. Test results, Pi rows and reports go into comments, one
+   per run with date, image and report, so the history stays readable.
 5. The project lead checks base, CI and Pi test and sets `merge-next`;
    Quality may audit the PR against the process.
-6. The maintainer merges code PRs; the project lead may merge docs-only
-   PRs. RFCs (`docs/rfcs/`) are always the maintainer's.
+6. The PR is merged by whoever holds the merge right for it (see
+   [Merge rights](#merge-rights) below).
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
+
+### Issue types and epics
+
+Every issue in the organisation has one issue type:
+
+| Type | For | Milestone |
+|---|---|---|
+| Epic | a feature area: all present and future Features of one area, for example "Boot picture" | none |
+| Feature | something new the system shall do; requirements (`REQ-…`) are Features ([RMP](rmp.md#issue-format)) | the release it first ships in |
+| Task | a piece of work, including work package parents (`wp`) and risks | the sprint or release it is planned for |
+| Bug | something that does not work as it should | the release that fixes it |
+
+- An **epic is a feature area**, for example "Boot picture" (from a
+  static picture to an animation and ideas nobody has had yet) or "HDMI
+  and display". It collects all present and future Features of that area:
+  a new idea becomes a sub-issue of the matching epic. Tasks and Bugs of
+  the area may hang there too.
+- No epic for a whole component or repository; that is the project
+  board. Epics are never nested: an epic never has an epic as a
+  sub-issue. An area that grows too big becomes two epics side by side.
+- **Boards are not epics.** Which board an issue is about is the
+  single-select field **Board** in the project (Pi 3B+, Pi Zero 2 W,
+  Pi 400, Pi 3, Pi 4, Pi 5/CM5, all). A Feature stays under its area
+  epic and gets the Board field, so one issue never needs two parents.
+  The field is empty when the issue is not about one board.
+- An epic holds no code and has no milestone. Its sub-issues keep their
+  own milestones, so the milestones still show what each release brings.
+  The epic says what the area covers, what is out of scope, and links its
+  decision record if there is one.
+- **Docs and wikis link the epic**, not single Feature issues, so a new
+  idea needs no doc edit. Feature tables have an "Epic" column.
+- An epic stays open while the area is alive. It is closed when the
+  project decides the area is complete, or when the maintainer drops it.
+  The owner of the product proposes an epic; the maintainer approves it.
+- An epic is about the product (what we build, see the [PBS](pbs.md)); a
+  work package parent (`wp`) is about the work (who does it, see the
+  [WBS](wbs.md)). GitHub allows one parent per issue, so a Feature hangs
+  under its epic, and the work package parent links the epic instead.
+
+### Merge rights
+
+In force since 2026-11-13, decided by the maintainer. This is the only
+place these rules are written down; other pages link here.
+
+| Who | Merges | Never |
+|---|---|---|
+| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code), PRs by the Quality session, RFCs | — |
+| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
+| Project lead | docs-only PRs | code PRs |
+
+Docs need no pull request: anyone on the team may push changes to docs
+(`README.md`, `docs/`, topic pages) straight to the default branch, as a
+draft that the owner of the page reviews later. A doc that describes code
+from an open PR goes into that PR instead.
+
+### All repositories
+
+Since 2026-11-14 (maintainer): this plan, the merge rights above and
+[CONTRIBUTING.md](../../CONTRIBUTING.md) apply to **every repository of the
+organisation** ([redox-rpi](https://github.com/redox-rpi)), not only to
+redox-rpi/redox-rpi. Code goes through a branch and a pull request, docs
+straight to the default branch. A repository writes down only what differs
+(for example its licence or build), and links here for the rest.
+
+When the maintainer creates a new repository, the Process session:
+1. adds the ruleset `protect-main` (no force push, no deletion of the
+   default branch)
+2. adds a `CLAUDE.md` that links to this plan and names the owning session,
+   and a README with the licence
+3. adds the repository to the table in the organisation profile
+   ([.github](https://github.com/redox-rpi/.github), `profile/README.md`)
+   and its owner to [Topic owners](#topic-owners)
+
+A new agent session gets this plan as the first link in its brief and
+keeps its rules in its own memory.
+
+**Where docs live** (maintainer, 2026-11-15):
+- Hardware reference (boards, SoC, clocks, GPIO, memory map, peripherals),
+  used by several repositories: the
+  [wiki of redox-rpi/redox-rpi](https://github.com/redox-rpi/redox-rpi/wiki).
+  Edit it like docs, straight away (it is the git repository
+  `redox-rpi.wiki.git`); repositories link to its pages instead of keeping
+  copies.
+- Docs that belong to code (decisions, design, how to build and test): in
+  the repository of that code, under `docs/`.
+
+Pull requests in [redox-rpi/tinycc](https://github.com/redox-rpi/tinycc)
+(WBS 2.15): after a review by the project lead or Quality, the reviewer sets
+`merge-next`; the PR need not stay a draft, since the fork is not used by
+any build yet. The maintainer merges. The quality track (GCC ships, TCC runs in the
+nightly) is in [WBS 2.15](wbs.md#215-tinycc-vc4-quality-track).
+
+Quality merges only when all of these hold:
+1. CI is green and `merge-set-check` passes.
+2. The base is `main`, not a stacked branch.
+3. If the change affects how images are built or tested, a QEMU run or a
+   Pi row passed on that head commit.
+4. A short merge comment names the criterion it merged under.
+
+If `main` or the nightly goes red after such a merge, Quality reverts it at
+once (a revert PR, merged under the same rule) and tells the project lead.
+Releases, tags and release candidates stay with the maintainer in every case.
 
 ## Communication
 

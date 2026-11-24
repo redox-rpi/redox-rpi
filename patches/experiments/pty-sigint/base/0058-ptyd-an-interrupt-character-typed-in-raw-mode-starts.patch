@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 4 Nov 2026 14:01:16 +0000
+Subject: [PATCH] ptyd: an interrupt character typed in raw mode starts its own
+ packet
+
+In raw mode ptyd hands a reader one packet per read, and the bytes of one
+input write form one packet. On the Pi's serial console getty is often
+still writing the line editor's output when Enter and a Ctrl-C right after
+it arrive, so it forwards both in one write. Ion's line editor (liner,
+through the buffered stdin) then reads them in one read: the Ctrl-C stays
+in its buffer, never becomes SIGINT, and the program runs on. Pi test 219:
+3 of 10 Ctrl-Cs 0.01-0.03 s after Enter were lost.
+
+With ISIG off, an interrupt character now starts a new packet. The read
+that ends the line leaves it in ptyd, and isig_enabled() turns it into
+SIGINT once the editor switches ISIG back on.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ ptyd/src/pty.rs | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/ptyd/src/pty.rs b/ptyd/src/pty.rs
+index 4695cca..2a1cf20 100644
+--- a/ptyd/src/pty.rs
++++ b/ptyd/src/pty.rs
+@@ -211,6 +211,23 @@ impl Pty {
+                 }
+             }
+ 
++            // ISIG off, raw mode (a line editor): an interrupt character
++            // starts a packet of its own, so the read that takes the line
++            // before it does not take it too. isig_enabled() turns it into
++            // SIGINT when the line editor switches ISIG back on. Without
++            // this, an Enter and a Ctrl-C forwarded in one write (getty on a
++            // busy serial console) end up in the editor's buffer together.
++            if !isig
++                && !icanon
++                && usize::from(cc[VMIN]) <= 1
++                && is_cc(b, VINTR)
++                && !is_vdisable(VINTR)
++                && !self.cooked.is_empty()
++            {
++                self.mosi.push_back(self.cooked.clone());
++                self.cooked.clear();
++            }
++
+             if ixon {
+                 if is_cc(b, VSTART) {
+                     println!("VSTART");
+-- 
+2.53.0
+

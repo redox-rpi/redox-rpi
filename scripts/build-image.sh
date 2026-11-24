@@ -7,9 +7,10 @@
 # config/upstream.lock. See docs/versioning.md for how a build is identified.
 #
 # Usage:
-#   scripts/build-image.sh [--sdcard | --zero2w] [--experiment <name>]...
+#   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
+#                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
-#                          [--allow-dirty]
+#                          [--allow-dirty] [--recipes-only]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
@@ -17,6 +18,10 @@
 #                 image (config/raspi3bp.toml)
 #   --zero2w      the smaller network-boot image for the Pi Zero 2 W
 #                 (config/raspizero2w.toml)
+#   --release-netboot
+#                 the network-boot variant of the SD card image
+#                 (config/raspi3bp-release-netboot.toml): its packages, no
+#                 devshd; for automated rows on a release (T-SEC-1, T-SEC-2)
 #   --experiment  also apply patches/experiments/<name>/ (repeatable): its
 #                 patches (recipes/<category>/<recipe>/*.patch for recipes
 #                 outside core), its config.toml (packages, files) if it has
@@ -35,10 +40,16 @@
 #                 scripts/ or tools/, or with recipe sources that differ from
 #                 their pinned commit plus patches; the differences are saved
 #                 next to the manifest and the build ID gets "-dirty"
+#   --recipes-only
+#                 pin the recipes and add the patches as a build does, print
+#                 the pinned recipes and stop: no cooking, no image. CI runs
+#                 it, since the QEMU boot test builds only the kernel (#394)
 #
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
 #         upstream/redox/build/aarch64/zero2w/harddrive.img (--zero2w),
+#         upstream/redox/build/aarch64/release-netboot/harddrive.img
+#         (--release-netboot),
 #         and its manifest in build/manifests/
 
 set -euo pipefail
@@ -59,6 +70,7 @@ experiments=()
 allow_dirty=0
 release=""
 test_experiments=1
+recipes_only=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --sdcard)
@@ -68,6 +80,10 @@ while [ $# -gt 0 ]; do
         --zero2w)
             CONFIG_NAME=zero2w
             CONFIG="$ROOT/config/raspizero2w.toml"
+            shift ;;
+        --release-netboot)
+            CONFIG_NAME=release-netboot
+            CONFIG="$ROOT/config/raspi3bp-release-netboot.toml"
             shift ;;
         --experiment)
             [ -d "$ROOT/patches/experiments/$2" ] || { echo "no patches/experiments/$2" >&2; exit 1; }
@@ -79,6 +95,7 @@ while [ $# -gt 0 ]; do
             shift 2 ;;
         --no-test-experiments) test_experiments=0; shift ;;
         --allow-dirty) allow_dirty=1; shift ;;
+        --recipes-only) recipes_only=1; shift ;;
         -*) echo "unknown argument: $1" >&2; exit 1 ;;
         *) break ;;
     esac
@@ -242,6 +259,23 @@ fi
 }
 check_drift fdt "$FDT" "${fdt_patches[@]}"
 
+# A recipe whose target/ is gone (removed by hand, by `repo clean-target` or
+# `make c.<name>`) has no source_info.toml: cook then resets its source with
+# `git reset --hard` and applies the patches again. That keeps untracked
+# files, so a file one of our patches created is still there and the patch
+# fails with "file already exists" (#447). Reset such a source to its commit
+# here, untracked files included (ignored ones such as target/ stay); cook
+# checks out the pinned commit and patches it, so there is nothing to compare.
+# Returns 1 when it reset the source, 0 when cook keeps the source as it is.
+reset_source() {
+    local recipe="$1"
+    [ -d "$recipe/source/.git" ] || return 0
+    [ -f "$recipe/target/aarch64-unknown-redox/source_info.toml" ] && return 0
+    git -C "$recipe/source" reset -q --hard
+    git -C "$recipe/source" clean -fdq
+    return 1
+}
+
 # Pin a core recipe, copy its patches next to it and check its source.
 # The cookbook does not notice changed patches in an already fetched recipe:
 # drop its source and build when the patch set changed.
@@ -255,7 +289,9 @@ prepare_recipe() {
         rm -rf "$recipe/source" "$recipe/target"
         echo "$sum" > "$stamp"
     fi
-    check_drift "$name" "$recipe/source" "${files[@]}"
+    if reset_source "$recipe"; then
+        check_drift "$name" "$recipe/source" "${files[@]}"
+    fi
     recipe_patches=""
     for patch in "${files[@]}"; do
         cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
@@ -292,12 +328,13 @@ EOF
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
 # keep their old order (it decides the order in the manifest). pkgutils
-# only when an experiment patches it (pkg-hold); otherwise the image takes
-# the upstream binary.
+# and netutils only when patches/<recipe>/ or an experiment has patches for
+# them (netutils, pkg-hold); otherwise the image takes the upstream binary.
+# patches/u-boot/ is for scripts/build-uboot.sh, not a Redox recipe (#394).
 recipes=(bootloader base relibc)
 while read -r name; do
-    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
-    [ "$name" = pkgutils ] && [ -z "$(patch_files pkgutils)" ] && continue
+    case " ${recipes[*]} redox kernel fdt experiments recipes u-boot " in *" $name "*) continue ;; esac
+    case "$name" in pkgutils|netutils) [ -z "$(patch_files "$name")" ] && continue ;; esac
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
 done < <(
@@ -358,6 +395,7 @@ while read -r rel; do
         rm -rf "$recipe/source" "$recipe/target"
         echo "$sum" > "$stamp"
     fi
+    reset_source "$recipe" || true
     names=""
     for patch in "${files[@]}"; do
         cp "$patch" "$recipe/$(recipe_patch_name "$patch")"
@@ -374,6 +412,12 @@ while read -r rel; do
         sed -i "0,/^\[source\]/s//[source]\npatches = [ $names]/" "$recipe/recipe.toml"
     fi
 done < <(recipe_dirs)
+
+if [ "$recipes_only" = 1 ]; then
+    echo "recipes: kernel ${recipes[*]}"
+    [ ! -s "$extra_list" ] || echo "patched by experiments: $(paste -sd' ' "$extra_list")"
+    exit 0
+fi
 
 # Our own packages, built from this repository: every tools/<name>/ with a
 # recipe.toml, which holds the [build] part of its recipe. Host tools
@@ -417,6 +461,7 @@ for exp in "${experiments[@]}"; do
         done
         if [ -x "$REDOX/target/release/repo" ]; then
             (cd "$REDOX" && ./target/release/repo clean-target "$(basename "$(dirname "$rel")")")
+            reset_source "$(dirname "$REDOX/recipes/$rel")" || true
         fi
     done
 done
@@ -443,7 +488,7 @@ fi
 # the build has unrecorded changes. Shown above the login prompt and in
 # /etc/redox-rpi-release. The same set of experiments, in any order, gives the
 # same hash; their names are in the manifest and on the line below the ID.
-version="${VERSION:-$(git -C "$ROOT" describe --tags --always)}"
+version="${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always)}"
 build_id="$version"
 exp_list=""
 if [ "${#experiments[@]}" -gt 0 ]; then
@@ -460,6 +505,23 @@ build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 title="$build_id"
 [ -n "$release" ] && title="$release ($build_id)"
 
+# Experiment configs may name the build server as @BUILD_SERVER@ (pkg-repo,
+# pkg-persist): filled in from REDOX_BUILD_SERVER (scripts/lab-env.sh, the
+# admins' lab.env on the build server) and recorded in the manifest, so the
+# build stays reproducible. No value, no build: never a guessed address.
+build_server=""
+for exp in "${experiments[@]}"; do
+    conf="$ROOT/patches/experiments/$exp/config.toml"
+    if [ -f "$conf" ] && grep -q '@BUILD_SERVER@' "$conf"; then
+        . "$ROOT/scripts/lab-env.sh"
+        lab_need REDOX_BUILD_SERVER
+        build_server="$REDOX_BUILD_SERVER"
+        [[ "$build_server" =~ ^[A-Za-z0-9.:-]+$ ]] ||
+            { echo "REDOX_BUILD_SERVER is not an address or host name: $build_server" >&2; exit 1; }
+        break
+    fi
+done
+
 # Manifest: everything that decides what is in the image.
 manifest_head="$(mktemp)"
 {
@@ -471,6 +533,7 @@ manifest_head="$(mktemp)"
     echo "built = \"$build_date\""
     echo "commit = \"$(git -C "$ROOT" rev-parse HEAD)\""
     echo "dirty = \"${dirty_sum:-no}\""
+    [ -n "$build_server" ] && echo "build_server = \"$build_server\""
     printf 'experiments = ['
     for exp in "${experiments[@]}"; do printf ' "%s",' "$exp"; done
     echo ' ]'
@@ -537,12 +600,21 @@ ${exp_list:+experiments: $exp_list
 EOF
 
 # Experiments may add packages and files with a config.toml. A generated
-# config includes them after the image's own config, so they win.
+# config includes them after the image's own config, so they win. Every
+# image but the Zero 2 W's also gets curl (config/raspi3bp-http-client.toml
+# says why it is not in the image configs).
 fs_config="$CONFIG"
 exp_configs=()
+[ "$CONFIG_NAME" = zero2w ] || exp_configs+=("$ROOT/config/raspi3bp-http-client.toml")
 for exp in "${experiments[@]}"; do
     conf="$ROOT/patches/experiments/$exp/config.toml"
-    [ -f "$conf" ] && exp_configs+=("$conf")
+    [ -f "$conf" ] || continue
+    if grep -q '@BUILD_SERVER@' "$conf"; then
+        mkdir -p "$ROOT/build/experiments"
+        sed "s/@BUILD_SERVER@/$build_server/g" "$conf" > "$ROOT/build/experiments/$exp.toml"
+        conf="$ROOT/build/experiments/$exp.toml"
+    fi
+    exp_configs+=("$conf")
 done
 if [ ${#exp_configs[@]} -gt 0 ]; then
     fs_config="$ROOT/build/experiments-$CONFIG_NAME.toml"
@@ -555,18 +627,93 @@ if [ ${#exp_configs[@]} -gt 0 ]; then
 fi
 
 cd "$REDOX"
+make_vars=(
+    PODMAN_BUILD=0
+    ARCH=aarch64
+    BOARD=raspi3bp
+    CONFIG_NAME="$CONFIG_NAME"
+    REPO_BINARY=1
+    FILESYSTEM_CONFIG="$fs_config"
+)
+
+# The prefix's sysroot gets a copy of relibc (libc.a, crt*.o, headers) when
+# it is first built, and make never builds it again. Statically linked
+# programs (base with the initfs drivers, redoxfs, extrautils, ...) link
+# against that copy, so in a clone that built before they kept the relibc
+# of its first build while /usr/lib/libc.so was current: the same build ID,
+# another image (#447). When relibc's commit or patches differ from the ones
+# the sysroot was built with, upstream's static_clean removes the sysroot
+# and the static recipes, and make builds them again with this relibc.
+sysroot="prefix/aarch64-unknown-redox/sysroot"
+sysroot_stamp="prefix/aarch64-unknown-redox/.redox-rpi-sysroot-relibc"
+sysroot_relibc="$(pin relibc) $(cat recipes/core/relibc/.redox-rpi-patches)"
+if [ -d "$sysroot" ] && [ "$(cat "$sysroot_stamp" 2>/dev/null)" != "$sysroot_relibc" ]; then
+    echo "relibc differs from the prefix sysroot's: rebuilding the sysroot and static recipes" >&2
+    CI="${CI:-1}" make static_clean "${make_vars[@]}"
+    # static_clean removed their target/: reset the sources we patch, as
+    # above, or cook trips over the files our patches created.
+    for name in kernel "${recipes[@]}"; do
+        reset_source "recipes/core/$name" || true
+    done
+    while read -r rel; do
+        [ -n "$rel" ] && { reset_source "recipes/$rel" || true; }
+    done < "$extra_list"
+fi
+mkdir -p "$(dirname "$sysroot_stamp")"
+echo "$sysroot_relibc" > "$sysroot_stamp"
+
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged
 # recipes, so letting it check every time is cheap.
-rm -f "build/aarch64/$CONFIG_NAME/repo.tag"
+repo_tag="build/aarch64/$CONFIG_NAME/repo.tag"
+rm -f "$repo_tag"
 # CI disables the cookbook's terminal UI, which needs a real terminal.
-CI="${CI:-1}" make "${1:-all}" \
-    PODMAN_BUILD=0 \
-    ARCH=aarch64 \
-    BOARD=raspi3bp \
-    CONFIG_NAME="$CONFIG_NAME" \
-    REPO_BINARY=1 \
-    FILESYSTEM_CONFIG="$fs_config"
+export CI="${CI:-1}"
+
+# A package from upstream's binary repository can depend on packages its
+# recipe does not name: cook --with-package-deps follows only the recipe,
+# so they never reach the local repository and the installer stops with
+# "Package ... not found" (#519: extrautils of 2026-11-16 needs bzip2).
+# Cook first, then fetch what the configured packages need, as often as new
+# dependencies come in, then build the image (make does not cook again
+# while repo.tag is newer than what it tracks).
+fetch_package_deps() {
+    local repo="repo/aarch64-unknown-redox" round missing
+    for round in 1 2 3 4 5; do
+        missing="$(
+            build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null |
+            awk -v repo="$repo" '
+                function visit(name,   file, line, deps, n, i) {
+                    if (name in seen) return
+                    seen[name] = 1
+                    file = repo "/" name ".toml"
+                    if ((getline line < file) < 0) { missing[name] = 1; return }
+                    close(file)
+                    while ((getline line < file) > 0) {
+                        if (line !~ /^depends = \[/) continue
+                        gsub(/^depends = \[|\]|"| /, "", line)
+                        n = split(line, deps, ",")
+                        for (i = 1; i <= n; i++) if (deps[i] != "") visit(deps[i])
+                    }
+                    close(file)
+                }
+                { visit($1) }
+                END { for (name in missing) print name }' | sort | paste -sd, -
+        )"
+        [ -n "$missing" ] || return 0
+        echo "packages the binary packages need, not in the local repository: $missing" >&2
+        make "r.$missing" "${make_vars[@]}"
+    done
+    echo "still missing after 5 rounds: $missing" >&2
+    return 1
+}
+if [ "${1:-all}" = all ]; then
+    make "$repo_tag" "${make_vars[@]}"
+    fetch_package_deps
+    # r.<name> republished the repository after repo.tag was written.
+    touch "$repo_tag"
+fi
+make "${1:-all}" "${make_vars[@]}"
 
 # The full manifest next to the image: the build inputs, hashes of the main
 # outputs and the packages the image was installed from.
@@ -575,6 +722,52 @@ image="$REDOX/build/aarch64/$CONFIG_NAME/harddrive.img"
 stage_file() {
     find "$REDOX/recipes/core/$1/target" -path "*/stage/$2" 2>/dev/null | head -1
 }
+# The packages installed in the image: the installer records each one as
+# /var/lib/packages/<name>.pkgar_head. Read them from a copy of the image
+# through the RedoxFS FUSE tool; without FUSE, fall back to the installer's
+# own list (the configured packages, without runtime dependencies).
+# (Until 2026-11-11 the manifest listed every package in the cookbook's
+# repository, which also has packages of other builds: row 326.)
+installed_packages() {
+    local mnt copy
+    packages=""
+    if command -v fusermount > /dev/null && [ -x build/fstools/bin/redoxfs ]; then
+        mnt="$(mktemp -d)"
+        copy="$(mktemp)"
+        cp "$image" "$copy"
+        build/fstools/bin/redoxfs -d "$copy" "$mnt" > /dev/null 2>&1 &
+        fuse_pid=$!
+        for _ in $(seq 1 20); do
+            [ -d "$mnt/var/lib/packages" ] && break
+            sleep 0.5
+        done
+        [ -d "$mnt/var/lib/packages" ] &&
+            packages="$(ls "$mnt/var/lib/packages" | sed -n 's/\.pkgar_head$//p')"
+        fusermount -u "$mnt" 2> /dev/null
+        wait "$fuse_pid" 2> /dev/null
+        rm -rf "$mnt" "$copy"
+    fi
+    packages_source="installed in the image (/var/lib/packages)"
+    if [ -z "$packages" ]; then
+        packages="$(build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null)"
+        packages_source="configured (redox_installer --list-packages, without runtime dependencies; no FUSE to read the image)"
+    fi
+}
+installed_packages
+[ -n "$packages" ] || { echo "cannot tell the packages in $image" >&2; exit 1; }
+# Every configured package must be in the image. The installer can list a
+# package and still install nothing for it, when its entry in the local
+# repository has no hash (#365: curl = "ignore" in another config).
+if [ "$packages_source" = "installed in the image (/var/lib/packages)" ]; then
+    missing="$(comm -23 <(build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null | sort) \
+        <(sort <<< "$packages") | tr '\n' ' ')"
+    if [ -n "${missing// }" ]; then
+        echo "configured but not installed in $image: $missing" >&2
+        echo "(check their entries in $REDOX/repo/aarch64-unknown-redox/repo.toml)" >&2
+        exit 1
+    fi
+fi
+
 mkdir -p "$MANIFESTS"
 manifest="$MANIFESTS/$image_name-$build_id.toml"
 {
@@ -589,13 +782,21 @@ manifest="$MANIFESTS/$image_name-$build_id.toml"
     done
     libc="$(stage_file relibc usr/lib/libc.so)"
     [ -n "$libc" ] && echo "libc_build_id = \"$(readelf -n "$libc" | awk '/Build ID/ { print $3 }')\""
+    # The relibc the static programs were linked with (see static_clean above).
+    echo "sysroot_relibc = \"$sysroot_relibc\""
+    sysroot_libc="$REDOX/$sysroot/aarch64-unknown-redox/lib/libc.a"
+    [ -f "$sysroot_libc" ] && echo "\"sysroot libc.a\" = \"$(sha256sum < "$sysroot_libc" | cut -d' ' -f1)\""
     echo
-    echo "# Packages of the repository the image was installed from:"
+    echo "# Packages in the image, $packages_source:"
     echo "# version, upstream source commit, package hash."
     echo "[packages]"
-    for toml in "$REDOX"/repo/aarch64-unknown-redox/*.toml; do
-        [ "$(basename "$toml")" = repo.toml ] && continue
-        awk -v name="$(basename "$toml" .toml)" -F' = ' '
+    for name in $(sort <<< "$packages"); do
+        toml="$REDOX/repo/aarch64-unknown-redox/$name.toml"
+        if [ ! -f "$toml" ]; then
+            echo "$name = \"? (not in the local repository)\""
+            continue
+        fi
+        awk -v name="$name" -F' = ' '
             $1 == "version" { gsub(/"/, "", $2); v = $2 }
             $1 == "source_identifier" { gsub(/"/, "", $2); s = substr($2, 1, 12) }
             $1 == "blake3" { gsub(/"/, "", $2); b = substr($2, 1, 16) }

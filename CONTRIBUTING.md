@@ -15,8 +15,9 @@ Report problems with this fork here, not to the Redox OS project.
 New features and experiments are developed on a branch (`<topic>`, for
 example `dwc2-interrupts`). They go to `main` only after a detailed test on
 a real Pi, with the results in [pi-tests reports/](https://github.com/redox-rpi/pi-tests/tree/main/reports)
-or the experiment's README. QEMU results alone are not enough. Fixes to
-documentation and scripts may go to `main` directly.
+or the experiment's README. QEMU results alone are not enough. Docs may
+go to `main` directly; everything else, scripts included, goes through a
+pull request (see [Merging](#merging)).
 
 On the shared build host, do not switch the branch of the shared clone:
 build a branch in a clone of your own.
@@ -55,12 +56,12 @@ Release candidates and releases are built by one build agent only; see
 5. **Test.** Build with `scripts/build-image.sh` (it refuses uncommitted
    changes, so commit first) and run the tests that fit your change. Name
    the build ID in your results.
-6. **Open a pull request**, one topic per pull request. Include:
-   - what changed and why, and what you ruled out on the way;
-   - the build ID and the test results (paste the `scripts/pi-test.py`
-     output, or the QEMU log lines);
-   - the agent and model you used, and what a human did (directions,
-     manual edits, hardware handling).
+6. **Open a pull request**, one topic per pull request, as the
+   [project management plan](docs/process/pmp.md#workflow) describes. The
+   description says what changed and why (and what you ruled out), the
+   test plan, the agent and model you used, and what a human did. Test
+   results with the build ID (the `scripts/pi-test.py` output or the QEMU
+   log lines) go into a comment, one per run, not into the description.
 
 ## Topics and issues
 
@@ -80,10 +81,10 @@ Release candidates and releases are built by one build agent only; see
 
 ## Merging
 
-Only maintainers merge pull requests and push to `main`
-([CODEOWNERS](.github/CODEOWNERS)). Everyone else, people and agents,
-works in a fork or a branch and opens a pull request. A maintainer merges a
-feature only after its test on a real Pi (see [Branches](#branches)).
+Who may merge which pull request is set in the
+[project management plan](docs/process/pmp.md#merge-rights) and nowhere
+else. Everyone else, people and agents, works in a fork or a branch and
+opens a pull request.
 
 ## Rules
 
@@ -101,7 +102,7 @@ feature only after its test on a real Pi (see [Branches](#branches)).
 
 | Level | Needs | Command | Details |
 |---|---|---|---|
-| Kernel boot in QEMU | macOS or Linux, QEMU | `scripts/qemu-raspi3b.sh --test --kernel <kernel>` | [testing.md](docs/testing.md#automated-boot-test) |
+| Kernel boot in QEMU | macOS or Linux, QEMU | `scripts/qemu-raspi3b.sh --daily --test --kernel <kernel>` | [testing.md](docs/testing.md#automated-boot-test) |
 | Own image in QEMU, commands in the guest | Linux build host | `scripts/qemu-raspi3b.sh --image <harddrive.img> --run '<command>'` | [testing.md](docs/testing.md) |
 | Program start loop in QEMU (start crashes) | Linux build host | `scripts/qemu-run.sh 'for i in 1..=40; ls /; pwd; end'` | [debugging-random-crashes.md](docs/debugging-random-crashes.md) |
 | Real Pi 3B+ | Pi netbooted from your build host | `scripts/pi-test.py <pi-address> --manifest build/manifests/netboot-latest.toml --report report.md` | [netboot.md](docs/netboot.md), [pi-tests](https://github.com/redox-rpi/pi-tests/tree/main/reports) |
@@ -110,5 +111,5 @@ feature only after its test on a real Pi (see [Branches](#branches)).
 Without a Pi, QEMU is enough for most tasks: it emulates the Pi 3 closely
 enough to boot our images, but not the Ethernet chip, the USB keyboard path
 or the exact timing of the real Cortex-A53. Results from a real Pi are
-welcome for every change; paste them into the pull request (V&V files them
+welcome for every change; add them as a pull request comment (V&V files them
 in [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests)).

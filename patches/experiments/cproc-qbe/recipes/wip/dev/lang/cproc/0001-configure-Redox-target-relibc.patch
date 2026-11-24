@@ -1,0 +1,157 @@
+From f0a2bbf0118c8d7c0b1f42bf3424e49e6c238d17 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 10 Nov 2026 15:23:52 +0000
+Subject: [PATCH] configure: Redox target (relibc)
+
+crt0.o/crti.o/crtn.o and /lib/ld.so.1 as with gcc for Redox, and gcc's
+integer type macros: relibc's stdint.h is gcc's stdint-gcc.h, and
+-undef removes them.
+---
+ configure | 131 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 131 insertions(+)
+
+diff --git a/configure b/configure
+index f66f594..522abd2 100755
+--- a/configure
++++ b/configure
+@@ -249,6 +249,137 @@ case "$target" in
+ 	"-D", "__PTRDIFF_TYPE__=long",
+ '
+ 	;;
++*-*redox*)
++	: ${DEFAULT_LDSO:=/lib/ld.so.1}
++	# relibc: crt0.o starts the program (as with gcc for Redox); no
++	# crtbegin.o/crtend.o, those are gcc's.
++	startfiles='"-l", ":crt0.o", "-l", ":crti.o"'
++	endfiles='"-l", "c", "-l", ":crtn.o"'
++	linkflags='"-L", "/usr/lib",'
++	# relibc's stdint.h is gcc's stdint-gcc.h, which needs gcc's type
++	# macros; -undef removes them, so they are defined here (values from
++	# aarch64-unknown-redox-gcc 13 -dM -E).
++	defines=$defines'
++	"-D", "__redox__",
++	"-D", "__unix__",
++	"-D", "__ELF__",
++	"-D", "__CHAR16_TYPE__=short unsigned int",
++	"-D", "__CHAR32_TYPE__=unsigned int",
++	"-D", "__CHAR_BIT__=8",
++	"-D", "__CHAR_UNSIGNED__=1",
++	"-D", "__INT16_C(c)=c",
++	"-D", "__INT16_MAX__=0x7fff",
++	"-D", "__INT16_TYPE__=short int",
++	"-D", "__INT32_C(c)=c",
++	"-D", "__INT32_MAX__=0x7fffffff",
++	"-D", "__INT32_TYPE__=int",
++	"-D", "__INT64_C(c)=c ## L",
++	"-D", "__INT64_MAX__=0x7fffffffffffffffL",
++	"-D", "__INT64_TYPE__=long int",
++	"-D", "__INT8_C(c)=c",
++	"-D", "__INT8_MAX__=0x7f",
++	"-D", "__INT8_TYPE__=signed char",
++	"-D", "__INTMAX_C(c)=c ## L",
++	"-D", "__INTMAX_MAX__=0x7fffffffffffffffL",
++	"-D", "__INTMAX_TYPE__=long int",
++	"-D", "__INTMAX_WIDTH__=64",
++	"-D", "__INTPTR_MAX__=0x7fffffffffffffffL",
++	"-D", "__INTPTR_TYPE__=long int",
++	"-D", "__INTPTR_WIDTH__=64",
++	"-D", "__INT_FAST16_MAX__=0x7fffffff",
++	"-D", "__INT_FAST16_TYPE__=int",
++	"-D", "__INT_FAST16_WIDTH__=32",
++	"-D", "__INT_FAST32_MAX__=0x7fffffff",
++	"-D", "__INT_FAST32_TYPE__=int",
++	"-D", "__INT_FAST32_WIDTH__=32",
++	"-D", "__INT_FAST64_MAX__=0x7fffffffffffffffL",
++	"-D", "__INT_FAST64_TYPE__=long int",
++	"-D", "__INT_FAST64_WIDTH__=64",
++	"-D", "__INT_FAST8_MAX__=0x7fffffff",
++	"-D", "__INT_FAST8_TYPE__=int",
++	"-D", "__INT_FAST8_WIDTH__=32",
++	"-D", "__INT_LEAST16_MAX__=0x7fff",
++	"-D", "__INT_LEAST16_TYPE__=short int",
++	"-D", "__INT_LEAST16_WIDTH__=16",
++	"-D", "__INT_LEAST32_MAX__=0x7fffffff",
++	"-D", "__INT_LEAST32_TYPE__=int",
++	"-D", "__INT_LEAST32_WIDTH__=32",
++	"-D", "__INT_LEAST64_MAX__=0x7fffffffffffffffL",
++	"-D", "__INT_LEAST64_TYPE__=long int",
++	"-D", "__INT_LEAST64_WIDTH__=64",
++	"-D", "__INT_LEAST8_MAX__=0x7f",
++	"-D", "__INT_LEAST8_TYPE__=signed char",
++	"-D", "__INT_LEAST8_WIDTH__=8",
++	"-D", "__INT_MAX__=0x7fffffff",
++	"-D", "__INT_WIDTH__=32",
++	"-D", "__LONG_LONG_MAX__=0x7fffffffffffffffLL",
++	"-D", "__LONG_LONG_WIDTH__=64",
++	"-D", "__LONG_MAX__=0x7fffffffffffffffL",
++	"-D", "__LONG_WIDTH__=64",
++	"-D", "__PTRDIFF_MAX__=0x7fffffffffffffffL",
++	"-D", "__PTRDIFF_TYPE__=long int",
++	"-D", "__PTRDIFF_WIDTH__=64",
++	"-D", "__SCHAR_MAX__=0x7f",
++	"-D", "__SCHAR_WIDTH__=8",
++	"-D", "__SHRT_MAX__=0x7fff",
++	"-D", "__SHRT_WIDTH__=16",
++	"-D", "__SIG_ATOMIC_MAX__=0x7fffffff",
++	"-D", "__SIG_ATOMIC_MIN__=(-__SIG_ATOMIC_MAX__ - 1)",
++	"-D", "__SIG_ATOMIC_TYPE__=int",
++	"-D", "__SIG_ATOMIC_WIDTH__=32",
++	"-D", "__SIZEOF_DOUBLE__=8",
++	"-D", "__SIZEOF_FLOAT__=4",
++	"-D", "__SIZEOF_INT__=4",
++	"-D", "__SIZEOF_LONG_LONG__=8",
++	"-D", "__SIZEOF_SHORT__=2",
++	"-D", "__SIZEOF_WCHAR_T__=4",
++	"-D", "__SIZEOF_WINT_T__=4",
++	"-D", "__SIZE_MAX__=0xffffffffffffffffUL",
++	"-D", "__SIZE_TYPE__=long unsigned int",
++	"-D", "__SIZE_WIDTH__=64",
++	"-D", "__UINT16_C(c)=c",
++	"-D", "__UINT16_MAX__=0xffff",
++	"-D", "__UINT16_TYPE__=short unsigned int",
++	"-D", "__UINT32_C(c)=c ## U",
++	"-D", "__UINT32_MAX__=0xffffffffU",
++	"-D", "__UINT32_TYPE__=unsigned int",
++	"-D", "__UINT64_C(c)=c ## UL",
++	"-D", "__UINT64_MAX__=0xffffffffffffffffUL",
++	"-D", "__UINT64_TYPE__=long unsigned int",
++	"-D", "__UINT8_C(c)=c",
++	"-D", "__UINT8_MAX__=0xff",
++	"-D", "__UINT8_TYPE__=unsigned char",
++	"-D", "__UINTMAX_C(c)=c ## UL",
++	"-D", "__UINTMAX_MAX__=0xffffffffffffffffUL",
++	"-D", "__UINTMAX_TYPE__=long unsigned int",
++	"-D", "__UINTPTR_MAX__=0xffffffffffffffffUL",
++	"-D", "__UINTPTR_TYPE__=long unsigned int",
++	"-D", "__UINT_FAST16_MAX__=0xffffffffU",
++	"-D", "__UINT_FAST16_TYPE__=unsigned int",
++	"-D", "__UINT_FAST32_MAX__=0xffffffffU",
++	"-D", "__UINT_FAST32_TYPE__=unsigned int",
++	"-D", "__UINT_FAST64_MAX__=0xffffffffffffffffUL",
++	"-D", "__UINT_FAST64_TYPE__=long unsigned int",
++	"-D", "__UINT_FAST8_MAX__=0xffffffffU",
++	"-D", "__UINT_FAST8_TYPE__=unsigned int",
++	"-D", "__UINT_LEAST16_MAX__=0xffff",
++	"-D", "__UINT_LEAST16_TYPE__=short unsigned int",
++	"-D", "__UINT_LEAST32_MAX__=0xffffffffU",
++	"-D", "__UINT_LEAST32_TYPE__=unsigned int",
++	"-D", "__UINT_LEAST64_MAX__=0xffffffffffffffffUL",
++	"-D", "__UINT_LEAST64_TYPE__=long unsigned int",
++	"-D", "__UINT_LEAST8_MAX__=0xff",
++	"-D", "__UINT_LEAST8_TYPE__=unsigned char",
++	"-D", "__WCHAR_MAX__=0xffffffffU",
++	"-D", "__WCHAR_MIN__=0U",
++	"-D", "__WCHAR_TYPE__=unsigned int",
++	"-D", "__WCHAR_WIDTH__=32",
++	"-D", "__WINT_MAX__=0xffffffffU",
++	"-D", "__WINT_MIN__=0U",
++	"-D", "__WINT_TYPE__=unsigned int",
++	"-D", "__WINT_WIDTH__=32",
++'
++	;;
+ *-apple-darwin*)
+ 	: ${DEFAULT_CPP:=clang -E}
+ 	startfiles='0'
+-- 
+2.53.0
+

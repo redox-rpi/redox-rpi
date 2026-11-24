@@ -2,7 +2,9 @@
 
 **Default patch since branch `multicast-default`:** base `0084` (was
 `0024` here, on the `mdns` branch). `--experiment lan78xx-multicast` still
-works and does nothing.
+works and does nothing. Since base `0095` (#216) the LAN7800 uses a
+multicast hash filter with the groups netstack joined (base `0085`)
+instead of all multicast.
 
 `dwc2d` sets the LAN7800's `RFE_CTL_MCAST_EN`, as Linux does for
 all-multicast. Before, the chip took only its own address and broadcast,

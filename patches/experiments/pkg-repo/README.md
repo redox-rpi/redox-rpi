@@ -9,8 +9,8 @@ builds. Our builds of `kernel`, `relibc`, `base`, `bootloader` and
 `scripts/publish-pkg-repo.sh` publishes them from the last
 `scripts/build-image.sh` run on the build host:
 
-- `http://homenodellm:8080/pkg/id_ed25519.pub.toml`: the public key.
-- `http://homenodellm:8080/pkg/aarch64-unknown-redox/`: `repo.toml`,
+- `http://<build-server>:8080/pkg/id_ed25519.pub.toml`: the public key.
+- `http://<build-server>:8080/pkg/aarch64-unknown-redox/`: `repo.toml`,
   `<name>.pkgar`, `<name>.toml`.
 
 The packages are signed again with a fixed key (the cookbook's key differs
@@ -18,7 +18,7 @@ in every clone). The secret key is in `~/.config/redox-rpi/pkg-key/` on
 the build host. `devshd` is never published.
 
 This experiment adds `/etc/pkg.d/40_redox-rpi` with
-`http://192.168.178.120:8080/pkg`. `pkg` reads the files in
+`http://<build-server>:8080/pkg`. `pkg` reads the files in
 `/etc/pkg.d` in name order, so it asks our repository before
 `50_redox`:
 
@@ -30,7 +30,7 @@ This experiment adds `/etc/pkg.d/40_redox-rpi` with
   everything else against `static.redox-os.org`.
 
 It also replaces the hold list of `pkg-hold` with entries like
-`kernel 192.168.178.120`: our patched packages are updated from our
+`kernel <build-server>`: our patched packages are updated from our
 repository and never from `static.redox-os.org`.
 
 Use it together with `pkg-hold`, listed after it:
@@ -54,7 +54,7 @@ Image E `v0.3.0-dev-195-gb17a05f+xb43c` (`timesync`, `pkg-hold` with
 - `pkg update --yes` updates 17 packages: the 15 upstream ones that differ
   from our pin (coreutils, ion, redoxfs, uutils, …) from
   `static.redox-os.org`, and `base` and `pkgutils` from our repository,
-  which allows them (`base 192.168.178.120` in the hold list). Nothing is
+  which allows them (`base <build-server>` in the hold list). Nothing is
   ignored, no "already exists".
 - Kernel and `libc.so` unchanged, `reboot` stays 0.1.2 (same in both).
   `/usr/bin/pkg` changed to build D's, which lacks 0004: the older
