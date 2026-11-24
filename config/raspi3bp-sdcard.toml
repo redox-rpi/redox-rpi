@@ -54,6 +54,19 @@ tone = "source"
 volume = "source"
 # `audiotop`: live view of the audio driver counters (tools/audiotop, #565).
 audiotop = "source"
+# Time zone files for /etc/localtime below (tools/zoneinfo, #46).
+zoneinfo = "source"
+
+# The system's time zone, Europe/Berlin with summer time (#46; maintainer
+# decision 2026-11-24, before that experiment `timezone`). As on Linux,
+# /etc/localtime points to the zone file: relibc (C programs, timerd) takes
+# the zone's name from the link, Rust programs (chrono, `date`) read the
+# file. `env TZ=UTC date` gives UTC for one command. To change the zone,
+# add its file to tools/zoneinfo and change the link (docs/time.md).
+[[files]]
+path = "/etc/localtime"
+data = "/usr/share/zoneinfo/Europe/Berlin"
+symlink = true
 
 # Startup sound (#292): `tone chime`, our own chord, plays once when audiod
 # is up, in the background (oneshot_async), so the boot does not wait for
