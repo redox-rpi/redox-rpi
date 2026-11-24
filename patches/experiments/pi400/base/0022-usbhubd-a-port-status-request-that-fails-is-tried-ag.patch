@@ -1,8 +1,8 @@
-From bdfcea1579e4b2b6b454d5349d9e0ee15e926d65 Mon Sep 17 00:00:00 2001
+From f12332ab89257a185d1c7b3eec478bd146bb5102 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 24 Nov 2026 20:19:27 +0000
-Subject: [PATCH] usbhubd: a port status request that fails is tried again, not
- fatal (#710)
+Subject: [PATCH 22/22] usbhubd: a port status request that fails is tried
+ again, not fatal (#710)
 
 usbhubd ended with "Failed to retrieve port status" when one GetStatus
 request failed, here with ETIMEDOUT from xhcid (pi-tests row 623). Then

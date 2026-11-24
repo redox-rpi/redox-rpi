@@ -1,8 +1,8 @@
-From 5b873f77fed835b04258787dedd221a94f1489b3 Mon Sep 17 00:00:00 2001
+From 569a26a60f748cf1ad9101c390f528718b346cdf Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 24 Nov 2026 19:42:27 +0000
-Subject: [PATCH] xhcid: a control transfer times out after 5 s instead of
- holding up every device (#710)
+Subject: [PATCH 21/22] xhcid: a control transfer times out after 5 s instead
+ of holding up every device (#710)
 
 xhcid serves control transfers in its request loop, one after the other.
 On the Pi 400, a mouse whose report descriptor request never completed
@@ -15,9 +15,10 @@ default control endpoint, wait briefly for the Stopped event, move its
 dequeue pointer past the transfer and return ETIMEDOUT to the driver.
 The dequeue move is shared with the stall recovery.
 
-The deadline is a sleeping thread that wakes block_on's thread waker;
-it must not wake after it is dropped, or the next future on that thread
-gets a spurious poll. An EventTrbFuture polled again before its event
+One timer thread serves all deadlines (a thread per transfer kept about
+20 sleeping threads alive). It holds them weakly: a dropped deadline must
+not wake block_on's thread waker, or the next future on that thread gets
+a spurious poll. An EventTrbFuture polled again before its event
 now waits instead of registering a second state with the IRQ reactor:
 the stale second state took the event of a later transfer on the same
 TRB, and that transfer's waiter never finished (pi-tests row 623, the
@@ -26,8 +27,8 @@ hub's port status request).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/usb/xhcid/src/xhci/irq_reactor.rs |  10 ++
- drivers/usb/xhcid/src/xhci/scheme.rs      | 132 +++++++++++++++++++++-
- 2 files changed, 140 insertions(+), 2 deletions(-)
+ drivers/usb/xhcid/src/xhci/scheme.rs      | 139 +++++++++++++++++++++-
+ 2 files changed, 147 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
 index 4214d1f1..e2be0c93 100644
@@ -51,7 +52,7 @@ index 4214d1f1..e2be0c93 100644
                      // Register state with IRQ reactor
                      trace!("Send state {:X?}", state.state_kind);
 diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
-index 77e03036..b68f20d5 100644
+index 77e03036..93c7fb67 100644
 --- a/drivers/usb/xhcid/src/xhci/scheme.rs
 +++ b/drivers/usb/xhcid/src/xhci/scheme.rs
 @@ -25,6 +25,11 @@ use std::{cmp, fmt, io, str};
@@ -146,7 +147,7 @@ index 77e03036..b68f20d5 100644
          // `restart_endpoint` and `set_tr_deque_ptr` look the endpoint up in
          // the configuration, where endpoint 0 is not; DCI 1 is its index.
          let deque_ptr_and_cycle = {
-@@ -2993,3 +3053,71 @@ where
+@@ -2993,3 +3053,78 @@ where
          a / b
      }
  }
@@ -156,32 +157,54 @@ index 77e03036..b68f20d5 100644
 +/// How long to wait for the event of a transfer stopped after its timeout.
 +const STOP_WAIT: Duration = Duration::from_secs(1);
 +
-+/// A future that is ready once `duration` has passed. A thread sleeps and
-+/// wakes the task; xhcid's executor (block_on) has no timer of its own.
++/// A future that is ready once `duration` has passed. One timer thread
++/// serves all deadlines; xhcid's executor (block_on) has no timer of its
++/// own, and a thread per control transfer kept about 20 sleeping threads
++/// alive while usbhubd polled its ports (pi-tests row 623).
 +struct Deadline {
-+    duration: Duration,
++    at: std::time::Instant,
 +    shared: Arc<Mutex<(bool, Option<Waker>)>>,
-+    started: bool,
++    registered: bool,
 +}
++
++/// Deadlines waiting for the timer thread. Weak: a dropped deadline just
++/// disappears and wakes nobody (a late wake-up would poll whatever future
++/// block_on's thread waits on next).
++static TIMERS: LazyLock<Mutex<Vec<(std::time::Instant, std::sync::Weak<Mutex<(bool, Option<Waker>)>>)>>> =
++    LazyLock::new(|| {
++        std::thread::spawn(|| loop {
++            std::thread::sleep(Duration::from_millis(100));
++            let now = std::time::Instant::now();
++            let mut due = Vec::new();
++            TIMERS.lock().unwrap().retain(|(at, weak)| match weak.upgrade() {
++                None => false,
++                Some(shared) if *at <= now => {
++                    due.push(shared);
++                    false
++                }
++                Some(_) => true,
++            });
++            for shared in due {
++                let waker = {
++                    let mut shared = shared.lock().unwrap();
++                    shared.0 = true;
++                    shared.1.take()
++                };
++                if let Some(waker) = waker {
++                    waker.wake();
++                }
++            }
++        });
++        Mutex::new(Vec::new())
++    });
 +
 +impl Deadline {
 +    fn new(duration: Duration) -> Self {
 +        Deadline {
-+            duration,
++            at: std::time::Instant::now() + duration,
 +            shared: Arc::new(Mutex::new((false, None))),
-+            started: false,
++            registered: false,
 +        }
-+    }
-+}
-+
-+impl Drop for Deadline {
-+    // The sleeping thread must not wake the task after this deadline is
-+    // gone: the waker is block_on's thread waker, and a late wake-up would
-+    // poll whatever future that thread waits on next (a spurious poll).
-+    fn drop(&mut self) {
-+        let mut shared = self.shared.lock().unwrap();
-+        shared.0 = true;
-+        shared.1 = None;
 +    }
 +}
 +
@@ -190,30 +213,15 @@ index 77e03036..b68f20d5 100644
 +    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
 +        {
 +            let mut shared = self.shared.lock().unwrap();
-+            if shared.0 {
++            if shared.0 || std::time::Instant::now() >= self.at {
 +                return Poll::Ready(());
 +            }
 +            shared.1 = Some(cx.waker().clone());
 +        }
-+        if !self.started {
-+            self.started = true;
-+            let shared = Arc::clone(&self.shared);
-+            let duration = self.duration;
-+            std::thread::spawn(move || {
-+                std::thread::sleep(duration);
-+                let waker = {
-+                    let mut shared = shared.lock().unwrap();
-+                    if shared.0 {
-+                        // Dropped already (see Drop).
-+                        return;
-+                    }
-+                    shared.0 = true;
-+                    shared.1.take()
-+                };
-+                if let Some(waker) = waker {
-+                    waker.wake();
-+                }
-+            });
++        if !self.registered {
++            self.registered = true;
++            let weak = Arc::downgrade(&self.shared);
++            TIMERS.lock().unwrap().push((self.at, weak));
 +        }
 +        Poll::Pending
 +    }
