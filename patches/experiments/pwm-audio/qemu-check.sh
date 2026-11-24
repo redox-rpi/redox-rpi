@@ -3,7 +3,7 @@
 # emulate the PWM block, so bcm2835-pwmaudiod plays its ring to the clock:
 # this checks the start-up, audiod on top of it, the audiohw contract, the
 # stats file, the startup sound (#292), the stop file and the volume
-# command (#336), not the sound.
+# command (#336), and that silence lets the PWM sleep (A3), not the sound.
 #
 # Usage: patches/experiments/pwm-audio/qemu-check.sh [image]
 
@@ -25,6 +25,8 @@ H=/scheme/audiohw
     --run "tone chime -o /tmp/c.raw; ls -l /tmp/c.raw" \
     --run "poweroff --version" \
     --run "volume 70; volume -20; volume; cat /scheme/data/audio-volume" \
+    --run "sleep 4; echo IDLE-A \$(grep idle $H/stats)" \
+    --run "tone -s 1 > /scheme/audio; echo IDLE-B \$(grep idle $H/stats)" \
     --run "echo 1 > $H/stop; echo STOP \$?" \
     --run "tone -s 1 > /scheme/audio; echo AFTER \$?" \
     --run "cat $H/stats" > /dev/null 2>&1
@@ -60,6 +62,9 @@ refute "startup script without shell errors" "integer expression expected|^ion: 
 check "chime file 317520 bytes" "317520 .*/tmp/c.raw"
 check "volume set, changed and saved" "^50$"
 check "poweroff in the image" "^poweroff 0\.2\.0$"
+check "idle after 3 s of silence" "^IDLE-A idle yes"
+check "sound wakes it" "^IDLE-B idle no"
+check "slept at least once" "^sleeps [1-9]"
 check "stop accepted" "^STOP 0$"
 check "driver stopped" "bcm2835-pwmaudiod: stopped"
 check "stats: stopped" "^stopped$"
