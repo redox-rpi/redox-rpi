@@ -1,4 +1,4 @@
-From 65f448dcdf240e6e861dd449cc6b40c5797fac7f Mon Sep 17 00:00:00 2001
+From 089436174fc05e12472db4df87f4ab8f42382de2 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 09:37:48 +0000
 Subject: [PATCH] rpi-firmwared: raw property file for other drivers
@@ -7,12 +7,12 @@ Other drivers (rpi-fbd) send whole property messages through
 /scheme/rpi-firmware/property, so only rpi-firmwared uses the mailbox.
 Root only. The message buffer grows to 256 words for EDID blocks.
 ---
- drivers/rpi-firmwared/src/main.rs | 35 ++++++++++++++++++++--
- drivers/rpi-firmwared/src/mbox.rs | 50 ++++++++++++++++++++++---------
- 2 files changed, 68 insertions(+), 17 deletions(-)
+ drivers/rpi-firmwared/src/main.rs | 35 +++++++++++++++++++--
+ drivers/rpi-firmwared/src/mbox.rs | 52 ++++++++++++++++++++++---------
+ 2 files changed, 69 insertions(+), 18 deletions(-)
 
 diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
-index 58758304..fa7d89d7 100644
+index 58758304..1d2ea9d0 100644
 --- a/drivers/rpi-firmwared/src/main.rs
 +++ b/drivers/rpi-firmwared/src/main.rs
 @@ -19,6 +19,10 @@
@@ -107,7 +107,7 @@ index 58758304..fa7d89d7 100644
          }
      }
 diff --git a/drivers/rpi-firmwared/src/mbox.rs b/drivers/rpi-firmwared/src/mbox.rs
-index 39ad30e7..e3f8b486 100644
+index 4c912fa5..0dea3950 100644
 --- a/drivers/rpi-firmwared/src/mbox.rs
 +++ b/drivers/rpi-firmwared/src/mbox.rs
 @@ -27,8 +27,8 @@ const RESPONSE_OK: u32 = 0x8000_0000;
@@ -121,7 +121,7 @@ index 39ad30e7..e3f8b486 100644
  
  // Property tags.
  pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
-@@ -127,6 +127,25 @@ impl Mailbox {
+@@ -127,6 +127,26 @@ impl Mailbox {
          buf[5..5 + request.len()].copy_from_slice(request);
          // buf[5 + value_words] stays 0: the end tag.
  
@@ -137,7 +137,8 @@ index 39ad30e7..e3f8b486 100644
 +            }
 +            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
 +        }
-+        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
++        // In bytes; round up to whole words (the board MAC is 6 bytes).
++        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
 +        Ok(buf[5..5 + len.min(value_words)].to_vec())
 +    }
 +
@@ -147,7 +148,7 @@ index 39ad30e7..e3f8b486 100644
          let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
          // The buffer is uncached; make sure it is written before the
          // firmware hears about it.
-@@ -142,7 +161,7 @@ impl Mailbox {
+@@ -142,7 +162,7 @@ impl Mailbox {
          loop {
              while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
                  if Instant::now() > deadline {
@@ -156,7 +157,7 @@ index 39ad30e7..e3f8b486 100644
                  }
                  std::hint::spin_loop();
              }
-@@ -152,19 +171,22 @@ impl Mailbox {
+@@ -152,20 +172,22 @@ impl Mailbox {
              }
          }
          fence(Ordering::SeqCst);
@@ -166,12 +167,6 @@ index 39ad30e7..e3f8b486 100644
 -        let buf = &*self.buf;
 -        if buf[1] != RESPONSE_OK {
 -            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
--        }
--        if buf[4] & TAG_RESPONSE == 0 {
--            if !need_answer {
--                return Ok(Vec::new());
--            }
--            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
 +    /// A whole property message as other drivers build it (the `property`
 +    /// file): size word, request code, tags, end tag. The firmware's answer
 +    /// replaces `msg`; the caller checks the response codes.
@@ -179,7 +174,14 @@ index 39ad30e7..e3f8b486 100644
 +        if msg.len() < 3 || msg.len() > BUF_WORDS || msg[0] as usize != msg.len() * 4 || msg[1] != REQUEST {
 +            return Err("malformed property message".into());
          }
--        let len = (buf[4] & !TAG_RESPONSE) as usize / 4;
+-        if buf[4] & TAG_RESPONSE == 0 {
+-            if !need_answer {
+-                return Ok(Vec::new());
+-            }
+-            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
+-        }
+-        // In bytes; round up to whole words (the board MAC is 6 bytes).
+-        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
 -        Ok(buf[5..5 + len.min(value_words)].to_vec())
 +        let buf = &mut *self.buf;
 +        buf.fill(0);
