@@ -1,4 +1,4 @@
-From 7ff34344a1709b68e0b59004858bfff2726c04fa Mon Sep 17 00:00:00 2001
+From bdfcea1579e4b2b6b454d5349d9e0ee15e926d65 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Tue, 24 Nov 2026 20:19:27 +0000
 Subject: [PATCH] usbhubd: a port status request that fails is tried again, not
@@ -15,7 +15,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 28 insertions(+), 20 deletions(-)
 
 diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
-index f213966f..40b74afd 100644
+index f213966f..71ccf936 100644
 --- a/drivers/usb/usbhubd/src/main.rs
 +++ b/drivers/usb/usbhubd/src/main.rs
 @@ -209,29 +209,37 @@ fn main() {
@@ -43,7 +43,7 @@ index f213966f..40b74afd 100644
 +                    // One failed or timed-out request must not end the hub
 +                    // driver: without it nothing on this hub attaches any
 +                    // more (pi-tests row 623). Try again on the next pass.
-+                    log::warn!("port {}: status not read: {:?}, trying again", port);
++                    log::warn!("port {}: status not read: {:?}, trying again", port, err);
 +                    continue;
 +                }
                  usb::HubPortStatus::V3(port_sts)
@@ -70,7 +70,7 @@ index f213966f..40b74afd 100644
 +                    // One failed or timed-out request must not end the hub
 +                    // driver: without it nothing on this hub attaches any
 +                    // more (pi-tests row 623). Try again on the next pass.
-+                    log::warn!("port {}: status not read: {:?}, trying again", port);
++                    log::warn!("port {}: status not read: {:?}, trying again", port, err);
 +                    continue;
 +                }
                  usb::HubPortStatus::V2(port_sts)
