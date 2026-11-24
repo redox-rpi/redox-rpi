@@ -1,0 +1,11 @@
+# Experiment rpi-fb: files for the image.
+
+# The screenshot tool (patch 0073): rpi-fbd lives in the initfs, outside
+# PATH.
+[[files]]
+path = "/usr/bin/fbshot"
+mode = 0o755
+data = """
+#!/usr/bin/env ion
+/scheme/initfs/bin/rpi-fbd shot @args[1..]
+"""

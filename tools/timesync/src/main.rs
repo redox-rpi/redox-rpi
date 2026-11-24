@@ -334,11 +334,18 @@ fn main() {
         restore();
     }
     let mut result = sync(&servers, dry_run);
-    if let Err(err) = &result {
-        eprintln!("timesync: {err}");
+    // Without a network (no adapter, no cable: dhcpd waits silently, #560)
+    // the daemon waits silently too; it says something only when the
+    // network is up and no server answers.
+    let quiet = daemon && !network_up();
+    match &result {
+        Err(err) if !quiet => eprintln!("timesync: {err}"),
+        _ => {}
     }
     if daemon && result.is_err() {
-        eprintln!("timesync: trying again every {} s", RETRY_EVERY.as_secs());
+        if !quiet {
+            eprintln!("timesync: trying again every {} s", RETRY_EVERY.as_secs());
+        }
         save_time();
         while result.is_err() {
             sleep(RETRY_EVERY);
@@ -360,7 +367,9 @@ fn main() {
         save_time();
         sleep(RESYNC_EVERY);
         if let Err(err) = sync(&servers, false) {
-            eprintln!("timesync: {err}");
+            if network_up() {
+                eprintln!("timesync: {err}");
+            }
         }
     }
 }

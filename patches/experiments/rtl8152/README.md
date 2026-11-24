@@ -31,8 +31,11 @@ uses no interrupt endpoint.
   has a link** (base `0023`). Without a cable on the adapter, the LAN7800
   is used, so a hub left plugged in does not cut a Pi 3B+ off the network
   (seen in Pi test #5). The network scheme is then `network.usb_rtl8152`;
-  the other adapter stays initialized but unused. `dhcpd` does not retry
-  when a link comes up after boot.
+  the other adapter stays initialized but unused. `dhcpd` used to give up
+  after its first attempts; it now keeps trying (three attempts about
+  every 35 s, seen in Zero 2 W serial logs of 2026-11-16), so a cable
+  plugged in after boot should get an address on the next round (not
+  tested with an RTL adapter yet, #492).
 
 Patch `0020` applies after the default patches (including `rpi-firmwared`,
 base `0018`) and after `sdhost-driver`, so `--experiment sdhost-driver

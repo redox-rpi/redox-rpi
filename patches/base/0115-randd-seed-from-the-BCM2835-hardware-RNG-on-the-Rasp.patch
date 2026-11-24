@@ -1,0 +1,165 @@
+From 38c3f5593c76d02a5275dac078715d05b5f5923f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 22 Nov 2026 18:35:16 +0000
+Subject: [PATCH] randd: seed from the BCM2835 hardware RNG on the Raspberry Pi
+
+Where the CPU has no RNDRRS, randd looks for brcm,bcm2835-rng in the
+devicetree, starts the generator if the firmware has not (warm-up and
+interrupt mask as in Linux bcm2835-rng), and reads the 32-byte seed from
+it. One line on success; the old NOT SECURE line only without a usable
+generator (redox-rpi #618).
+---
+ Cargo.lock        |  2 +
+ randd/Cargo.toml  |  5 +++
+ randd/src/main.rs | 99 +++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 106 insertions(+)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index acc3751..ef62d55 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2062,7 +2062,9 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+ name = "randd"
+ version = "0.1.0"
+ dependencies = [
++ "common",
+  "daemon",
++ "fdt 0.2.0-alpha1",
+  "libredox",
+  "rand_chacha 0.2.2",
+  "rand_core 0.5.1",
+diff --git a/randd/Cargo.toml b/randd/Cargo.toml
+index 6ff2d7e..47e52c7 100644
+--- a/randd/Cargo.toml
++++ b/randd/Cargo.toml
+@@ -17,5 +17,10 @@ scheme-utils = { path = "../scheme-utils" }
+ [target.'cfg(target_arch = "x86_64")'.dependencies]
+ raw-cpuid = "11.0.1"
+ 
++[target.'cfg(target_arch = "aarch64")'.dependencies]
++# The BCM2835 hardware RNG on the Raspberry Pi (redox-rpi #618).
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
++common = { path = "../drivers/common" }
++
+ [lints]
+ workspace = true
+diff --git a/randd/src/main.rs b/randd/src/main.rs
+index e286525..057f46d 100644
+--- a/randd/src/main.rs
++++ b/randd/src/main.rs
+@@ -73,6 +73,9 @@ fn create_rdrand_seed() -> [u8; SEED_BYTES] {
+             }
+             have_seeded = !failure;
+         }
++        if !have_seeded {
++            have_seeded = bcm2835_rng::fill(&mut rng);
++        }
+     } // TODO integrate alternative entropy sources
+     if !have_seeded {
+         println!("randd: Seeding failed, no entropy source.  Random numbers on this platform are NOT SECURE");
+@@ -80,6 +83,102 @@ fn create_rdrand_seed() -> [u8; SEED_BYTES] {
+     rng
+ }
+ 
++/// The hardware random number generator of the BCM2835 family (Raspberry Pi
++/// 1 to 3, Zero 2 W), `brcm,bcm2835-rng` in the devicetree. The registers
++/// and the start sequence are those of Linux's bcm2835-rng driver.
++#[cfg(target_arch = "aarch64")]
++mod bcm2835_rng {
++    use std::ptr::{read_volatile, write_volatile};
++    use std::time::{Duration, Instant};
++
++    use fdt::Fdt;
++
++    const CTRL: usize = 0x00;
++    const STATUS: usize = 0x04;
++    const DATA: usize = 0x08;
++    const INT_MASK: usize = 0x10;
++    /// CTRL: the generator runs.
++    const CTRL_RBGEN: u32 = 0x1;
++    /// STATUS on start: the first numbers the generator throws away.
++    const WARMUP_COUNT: u32 = 0x40000;
++    /// INT_MASK: no interrupt; randd polls.
++    const INT_OFF: u32 = 0x1;
++    /// How long to wait for the seed, warm-up included.
++    const TIMEOUT: Duration = Duration::from_secs(2);
++
++    /// The CPU physical address of the generator, if the devicetree has one.
++    fn phys(fdt: &Fdt) -> Option<usize> {
++        let bus = fdt
++            .find_compatible(&["brcm,bcm2835-rng"])?
++            .reg()?
++            .next()?
++            .starting_address as usize;
++        let cpu = fdt
++            .find_node("/soc")
++            .and_then(|soc| soc.ranges())
++            .and_then(|mut ranges| {
++                ranges.find(|r| r.child_bus_address <= bus && bus - r.child_bus_address < r.size)
++            })
++            .map_or(bus, |r| r.parent_bus_address + (bus - r.child_bus_address));
++        Some(cpu)
++    }
++
++    /// Fills `seed` from the generator. False where there is none or it
++    /// gives nothing usable.
++    pub fn fill(seed: &mut [u8]) -> bool {
++        let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++        let Some(phys) = Fdt::new(&dtb).ok().and_then(|fdt| phys(&fdt)) else {
++            return false;
++        };
++        common::init();
++        let regs = match unsafe {
++            common::physmap(phys, 4096, common::Prot::RW, common::MemoryType::DeviceMemory)
++        } {
++            Ok(regs) => regs as *mut u32,
++            Err(err) => {
++                println!("randd: cannot map the hardware RNG at {phys:#x}: {err}");
++                return false;
++            }
++        };
++        let reg = |offset: usize| unsafe { regs.add(offset / 4) };
++        unsafe {
++            write_volatile(reg(INT_MASK), read_volatile(reg(INT_MASK)) | INT_OFF);
++            // The firmware may have started it already.
++            if read_volatile(reg(CTRL)) & CTRL_RBGEN == 0 {
++                write_volatile(reg(STATUS), WARMUP_COUNT);
++                write_volatile(reg(CTRL), CTRL_RBGEN);
++            }
++        }
++        let start = Instant::now();
++        let mut words = Vec::with_capacity(seed.len() / 4);
++        while words.len() < seed.len() / 4 {
++            // The top byte of STATUS: words ready in the FIFO.
++            if unsafe { read_volatile(reg(STATUS)) } >> 24 == 0 {
++                if start.elapsed() > TIMEOUT {
++                    println!("randd: the hardware RNG at {phys:#x} gave no numbers");
++                    return false;
++                }
++                std::thread::sleep(Duration::from_millis(1));
++                continue;
++            }
++            words.push(unsafe { read_volatile(reg(DATA)) });
++        }
++        // A stuck generator repeats itself.
++        if words.windows(2).all(|w| w[0] == w[1]) {
++            println!("randd: the hardware RNG at {phys:#x} repeats {:#x}", words[0]);
++            return false;
++        }
++        for (chunk, word) in seed.chunks_exact_mut(4).zip(&words) {
++            chunk.copy_from_slice(&word.to_le_bytes());
++        }
++        println!(
++            "randd: seeded from the hardware RNG at {phys:#x} ({} ms)",
++            start.elapsed().as_millis()
++        );
++        true
++    }
++}
++
+ /// Contains information about an open file
+ struct OpenFileInfo {
+     o_flags: usize,
+-- 
+2.53.0
+
