@@ -4,7 +4,7 @@
 #
 # name        commit
 redox         e079d707b82e3581ad910843c26d5b2d595f2de8
-kernel        e7f1d4231d0f4b55fbef229d9cd9459302c101f4
+kernel        73e92b4a7b6d19c68e97355e882ae66c0ca10e08
 relibc        74b5e7e315043a21b599f271d5692727aa54f64d
 base          20f7573b4dc011ea5267189185edc0b2f12bab0f
 bootloader    f3d9261b5fc81418c259c5059f46ee7087e86ed8

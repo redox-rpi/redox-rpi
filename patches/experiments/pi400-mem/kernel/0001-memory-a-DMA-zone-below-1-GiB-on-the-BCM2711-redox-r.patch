@@ -1,4 +1,4 @@
-From 85242fa5f76d3690d9dfc6de8ff7bdecb7e902f7 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 10:18:43 +0000
 Subject: [PATCH] memory: a DMA zone below 1 GiB on the BCM2711 (redox-rpi
@@ -17,7 +17,7 @@ it, so the Pi 4 and 400 can run without total_mem=1024.
  create mode 100644 src/memory/dma_zone.rs
 
 diff --git a/src/arch/aarch64/start.rs b/src/arch/aarch64/start.rs
-index 6c942f12..35da011b 100644
+index ee6f9cf..f7df68c 100644
 --- a/src/arch/aarch64/start.rs
 +++ b/src/arch/aarch64/start.rs
 @@ -111,6 +111,15 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
@@ -37,10 +37,10 @@ index 6c942f12..35da011b 100644
              crate::log::init();
  
 diff --git a/src/context/memory.rs b/src/context/memory.rs
-index c404a40f..35a416e0 100644
+index 4d3b97e..b43cb08 100644
 --- a/src/context/memory.rs
 +++ b/src/context/memory.rs
-@@ -1350,12 +1350,17 @@ impl Grant {
+@@ -1394,12 +1394,17 @@ impl Grant {
          flusher: &mut Flusher,
          mem_policy: NumaMemoryPolicy,
      ) -> Result<Grant, Enomem> {
@@ -66,7 +66,7 @@ index c404a40f..35a416e0 100644
          // back to RAM and drop the lines now: else the CPU and the device
 diff --git a/src/memory/dma_zone.rs b/src/memory/dma_zone.rs
 new file mode 100644
-index 00000000..1b552488
+index 0000000..1b55248
 --- /dev/null
 +++ b/src/memory/dma_zone.rs
 @@ -0,0 +1,190 @@
@@ -261,18 +261,18 @@ index 00000000..1b552488
 +    Some((zone.blocks.len() * BLOCK_PAGES, zone.used_pages, zone.limit))
 +}
 diff --git a/src/memory/mod.rs b/src/memory/mod.rs
-index 47a9a0a1..b04b124b 100644
+index e047bc5..218837b 100644
 --- a/src/memory/mod.rs
 +++ b/src/memory/mod.rs
-@@ -27,6 +27,7 @@ use crate::{
- pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
- use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea};
+@@ -33,6 +33,7 @@ use rmm::{
+     MAX_MEMORY_AREA_COUNT,
+ };
  
 +pub mod dma_zone;
  mod kernel_mapper;
  pub mod page;
  pub use page::*;
-@@ -65,6 +66,14 @@ pub fn used_frames() -> usize {
+@@ -72,6 +73,14 @@ pub fn used_frames() -> usize {
          .map(|e| e.free_list_inner.lock().used_frames)
          .sum()
  }
@@ -287,7 +287,7 @@ index 47a9a0a1..b04b124b 100644
  pub fn total_frames() -> usize {
      // TODO: Include bump allocator static pages?
      sections().iter().map(|section| section.frames.len()).sum()
-@@ -236,6 +245,9 @@ fn get_index_for_deallocation(addr: usize) -> Option<usize> {
+@@ -243,6 +252,9 @@ fn get_index_for_deallocation(addr: usize) -> Option<usize> {
  }
  
  pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {

@@ -20,10 +20,10 @@ needs no readers never gets its compare-and-swap through.
  1 file changed, 57 insertions(+), 8 deletions(-)
 
 diff --git a/src/sync/ordered.rs b/src/sync/ordered.rs
-index 91d00e3..b5c3535 100644
+index 9c99e54..531bb76 100644
 --- a/src/sync/ordered.rs
 +++ b/src/sync/ordered.rs
-@@ -230,13 +230,14 @@ impl<L: Level, T> Mutex<L, T> {
+@@ -232,13 +232,14 @@ impl<L: Level, T> Mutex<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -39,7 +39,7 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -377,12 +378,13 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -379,12 +380,13 @@ impl<L: Level, T> RwLock<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -54,7 +54,7 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -417,12 +419,13 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -419,12 +421,13 @@ impl<L: Level, T> RwLock<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -69,7 +69,7 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -448,12 +451,13 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -450,12 +453,13 @@ impl<L: Level, T> RwLock<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -84,7 +84,7 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -504,12 +508,13 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -506,12 +510,13 @@ impl<L: Level, T> RwLock<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -99,7 +99,7 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -534,12 +539,13 @@ impl<L: Level, T> RwLock<L, T> {
+@@ -536,12 +541,13 @@ impl<L: Level, T> RwLock<L, T> {
              #[cfg(feature = "busy_panic")]
              let mut i = DEADLOCK_SPIN_CAP;
              let my_percpu = PercpuBlock::current();
@@ -114,22 +114,24 @@ index 91d00e3..b5c3535 100644
                          #[cfg(feature = "busy_panic")]
                          {
                              i -= 1;
-@@ -561,12 +567,13 @@ impl<L: Level, T> RwLock<L, T> {
-         // acknowledgement, so handle shootdowns while waiting, like the
-         // other lock loops in this file (issue #207).
+@@ -561,6 +567,7 @@ impl<L: Level, T> RwLock<L, T> {
+         #[cfg(feature = "busy_panic")]
+         let mut i = DEADLOCK_SPIN_CAP;
          let my_percpu = PercpuBlock::current();
-+            let mut backoff = Backoff::new();
-         let guard = loop {
++        let mut backoff = Backoff::new();
+         loop {
              match self.inner.try_write() {
-                 Some(guard) => break guard,
+                 Some(guard) => {
+@@ -571,7 +578,7 @@ impl<L: Level, T> RwLock<L, T> {
+                 }
                  None => {
                      my_percpu.maybe_handle_tlb_shootdown();
 -                    core::hint::spin_loop();
 +                    backoff.spin();
-                 }
-             }
-         };
-@@ -668,8 +675,23 @@ impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
+                     #[cfg(feature = "busy_panic")]
+                     {
+                         i -= 1;
+@@ -676,8 +683,23 @@ impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
  
      /// Upgrade to RW lock
      pub fn upgrade(self) -> RwLockWriteGuard<'a, L, T> {
@@ -154,7 +156,7 @@ index 91d00e3..b5c3535 100644
              lock_token: self.lock_token,
          }
      }
-@@ -764,3 +786,30 @@ impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
+@@ -772,3 +794,30 @@ impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
  /// This function can only be called if no lock is held by the calling thread/task
  #[inline]
  pub fn check_no_locks(_: LockToken<'_, L0>) {}
