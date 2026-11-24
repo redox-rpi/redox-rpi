@@ -22,8 +22,10 @@ for contributors in the wish list in [ROADMAP.md](../ROADMAP.md).
 
 ## Annoying
 
-- **No `poweroff`.** `echo shutdown > /scheme/sys/kstop` only halts one CPU
-  core. Use `reboot` (as root), then pull the power.
+- **`poweroff` halts, it does not cut the power.** The Pi has no power
+  switch: `poweroff` halts it (ARM off, little power drawn, power LED still
+  on). Pin 5 to ground or replugging the power starts it again
+  ([getting started](getting-started.md#8-shutting-down), #418).
 - **A USB device plugged in after boot is not detected** (T17). Plug the
   keyboard in before you power on.
 - **The clock needs the network.** The Pi has no battery-backed clock.

@@ -1,0 +1,10 @@
+[unit]
+description = "Multicast DNS responder (redox-rpi.local)"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "mdnsd"
+# Each service only while its program is on the image (devshd on
+# development images, sshd with the sshd experiment).
+args = ["_devsh._tcp:2323:/usr/bin/devshd", "_ssh._tcp:22:/usr/bin/sshd"]
+type = "oneshot_async"

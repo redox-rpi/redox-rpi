@@ -5,6 +5,11 @@
 # desktop again. Build after rpi-fb, orbital, orbital-apps and
 # cosmic-apps-source.
 
+# `desktop` looks for Orbital with grep. Upstream extrautils dropped grep
+# (its build of 2026-11-18, source f5e8626a); uutils-grep has it now.
+[packages]
+uutils-grep = {}
+
 # Experiment orbital starts Orbital at boot and stays on its VT: undo both.
 [[files]]
 path = "/usr/lib/init.d/20_orbital"
@@ -50,11 +55,11 @@ if test "$USER" != root
     echo "desktop: run it as root (sudo desktop)"
     exit 1
 end
-# Whether Orbital runs, from ps (test -e cannot stat its scheme, and ion
-# gives a pipeline the status of its first command, so no pipe here).
+# Whether Orbital runs, from ps (test -e cannot stat its scheme). ion's
+# own $find looks for it in ps's output, so the image needs no grep.
 fn orbital_runs
-    ps > /tmp/desktop.ps
-    grep /usr/bin/orbital /tmp/desktop.ps > /dev/null
+    let list = $(ps)
+    test $find($list, /usr/bin/orbital) -ge 0
 end
 if not orbital_runs
     cat /usr/share/desktop/info.txt

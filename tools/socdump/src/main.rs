@@ -21,6 +21,7 @@
 
 mod chip;
 mod display;
+mod vc5;
 
 use chip::{Chip, Parents, CHIPS, CM_BASE, CM_LEN, CM_LOCK, GPIO_BASE, GPIO_LEN};
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: socdump [plls|clocks|gpio|display|all|check|regs] | socdump diff A B";
+const USAGE: &str = "usage: socdump [plls|clocks|gpio|display|hdmi|all|check|regs] | socdump diff A B";
 const FIRMWARE_CLOCKS: &str = "/scheme/rpi-firmware/clocks";
 const FIRMWARE_BOARD: &str = "/scheme/rpi-firmware/board";
 
@@ -44,7 +45,12 @@ const MEMORY: &str = "/dev/mem";
 
 /// A read-only mapping of a register block.
 struct Window {
-    ptr: *const u8,
+    /// Start of the mapping, which begins on a page boundary.
+    base: *const u8,
+    /// Offset of the block inside the mapping (its address minus the page start).
+    offset: usize,
+    /// Length of the mapping.
+    map_len: usize,
     len: usize,
     /// Bus address of the first byte.
     bus: u32,
@@ -58,32 +64,44 @@ impl Window {
         #[cfg(target_os = "linux")]
         std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_SYNC);
         let file = options.open(MEMORY).map_err(|err| format!("{MEMORY}: {err} (root needed)"))?;
+        // mmap takes only page-aligned offsets; vc5 HDMI blocks such as 0x7ef00700 are not.
+        let (start, offset, map_len) = page_span(phys, len);
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                len,
+                map_len,
                 libc::PROT_READ,
                 libc::MAP_SHARED,
                 file.as_raw_fd(),
-                phys as libc::off_t,
+                start as libc::off_t,
             )
         };
         if ptr == libc::MAP_FAILED {
             return Err(format!("map 0x{phys:x}: {}", std::io::Error::last_os_error()));
         }
-        Ok(Window { ptr: ptr as *const u8, len, bus, _file: file })
+        Ok(Window { base: ptr as *const u8, offset, map_len, len, bus, _file: file })
     }
 
     fn read(&self, offset: u32) -> u32 {
         assert!(offset % 4 == 0 && offset as usize + 4 <= self.len, "offset 0x{offset:x} outside the window");
-        unsafe { std::ptr::read_volatile(self.ptr.add(offset as usize) as *const u32) }
+        unsafe { std::ptr::read_volatile(self.base.add(self.offset + offset as usize) as *const u32) }
     }
 }
 
 impl Drop for Window {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+        unsafe { libc::munmap(self.base as *mut libc::c_void, self.map_len) };
     }
+}
+
+const PAGE: u64 = 4096;
+
+/// The page-aligned start, the block's offset in it, and the mapping length for `len` bytes at `phys`.
+fn page_span(phys: u64, len: usize) -> (u64, usize, usize) {
+    let start = phys & !(PAGE - 1);
+    let offset = (phys - start) as usize;
+    let map_len = (offset + len).div_ceil(PAGE as usize) * PAGE as usize;
+    (start, offset, map_len)
 }
 
 /// What the devicetree (and the firmware) say about the board.
@@ -457,6 +475,97 @@ fn print_display(board: &Board, cm: &Window) -> Result<(), String> {
     Ok(())
 }
 
+/// The BCM2711 (Pi 4 family) has its own HDMI blocks (src/vc5.rs).
+fn is_vc5(board: &Board) -> bool {
+    board.chip.name == "BCM2711"
+}
+
+/// DVP reset and clock gate words, read before any HDMI port block.
+fn vc5_dvp(board: &Board) -> Result<(u32, u32), String> {
+    let dvp = board.map(vc5::DVP.bus, vc5::DVP.len)?;
+    Ok((dvp.read(vc5::DVP_SW_INIT), dvp.read(vc5::DVP_MISC_CONFIG)))
+}
+
+/// Both HDMI ports of the BCM2711, decoded; a port is read only while it
+/// is out of reset and its 108 MHz clock runs.
+fn print_hdmi_vc5(board: &Board) -> Result<(), String> {
+    use vc5::*;
+    let (sw_init, misc) = vc5_dvp(board)?;
+    println!("HDMI (BCM2711): DVP sw_init 0x{sw_init:08x}, misc_config 0x{misc:08x}; audio clock {} MHz", mhz(f64::from(AUDIO_CLOCK_HZ)));
+    for port in &PORTS {
+        if let Err(why) = port_clocked(port, sw_init, misc) {
+            println!("  {}: not read ({why})", port.name);
+            continue;
+        }
+        let core = board.map(port.core.bus, port.core.len)?;
+        let hd = board.map(port.hd.bus, port.hd.len)?;
+        let phy = board.map(port.phy.bus, port.phy.len)?;
+        let rm = board.map(port.rm.bus, port.rm.len)?;
+        let r = &port.hd_regs;
+        let hotplug = core.read(0x1a8);
+        let sched = core.read(0x0e0);
+        let horza = core.read(0x0e4);
+        let t = timing(horza, core.read(0x0e8), core.read(0x0ec), core.read(0x0f0));
+        let (hpos, vpos) = polarity(horza);
+        let vid = hd.read(r.vid_ctl);
+        println!(
+            "  {} (DREQ {}): hotplug 0x{hotplug:08x} (connected {}), scheduler 0x{sched:08x} (hdmi mode {}), video {}",
+            port.name, port.dreq, u32::from(hotplug & 1 != 0), u32::from(sched & 1 != 0), u32::from(vid & (1 << 31) != 0)
+        );
+        println!("    {}, hsync {}, vsync {}", t.describe(), if hpos { "+" } else { "-" }, if vpos { "+" } else { "-" });
+        let (rm_offset, clk_div) = (rm.read(0x18), phy.read(0x28));
+        let count0 = hd.read(r.frame_count);
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let count1 = hd.read(r.frame_count);
+        let from_frames = pixel_from_frames(count0, count1, 1.0, &t);
+        println!(
+            "    pixel clock: {} MHz from the PHY PLL (rm_offset 0x{rm_offset:08x}, clk_div 0x{clk_div:08x}), {} MHz from {} frames in 1 s",
+            tmds_from_phy(rm_offset, clk_div).map_or("?".into(), mhz), mhz(from_frames), count1.wrapping_sub(count0)
+        );
+        println!(
+            "    phy: reset_ctl 0x{:08x}, powerdown 0x{:08x}, pll_cfg 0x{:08x}; rm control 0x{:08x} format 0x{:08x}; misc_control 0x{:08x}, scrambler 0x{:08x}",
+            phy.read(0x00), phy.read(0x04), phy.read(0x34), rm.read(0x00), rm.read(0x1c), core.read(0x100), core.read(0x1c4)
+        );
+        let ctl = hd.read(r.mai_ctl);
+        let (enabled, channels, full, empty, dlate) = mai_ctl(ctl);
+        let smp = hd.read(r.mai_smp);
+        println!(
+            "    mai: ctl 0x{ctl:08x} (enabled {}, channels {channels}, full {}, empty {}, dlate {}), thr 0x{:08x}, fmt 0x{:08x}, smp 0x{smp:08x} ({} Hz at the audio clock)",
+            u32::from(enabled), u32::from(full), u32::from(empty), u32::from(dlate), hd.read(r.mai_thr), hd.read(r.mai_fmt),
+            mai_rate(smp, AUDIO_CLOCK_HZ).map_or("-".into(), |hz| format!("{hz:.1}"))
+        );
+        let (n, external, cts) = n_cts(core.read(0x0c8), core.read(0x0cc));
+        let ram = core.read(0x0bc);
+        println!(
+            "    audio: crp N {n} (external CTS {}), cts_0 {cts}, cts_1 {}, packet_config 0x{:08x}, mai_config 0x{:08x}, channel_map 0x{:08x}, ram_packet_config 0x{ram:08x} (enable {}, audio info frame {})",
+            u32::from(external), core.read(0x0d0) & 0xf_ffff, core.read(0x0b8), core.read(0x0a0), core.read(0x09c),
+            u32::from(ram & (1 << 16) != 0), u32::from(ram & (1 << 4) != 0)
+        );
+        println!("    hd dvp_ctl 0x{:08x}, fifo_ctl 0x{:08x}", hd.read(r.dvp_ctl), core.read(0x074));
+    }
+    if let Ok(text) = std::fs::read_to_string(FIRMWARE_CLOCKS) {
+        println!("  firmware clocks: {}", text.lines().collect::<Vec<_>>().join("; "));
+    }
+    println!();
+    Ok(())
+}
+
+fn print_hdmi_vc5_regs(board: &Board) -> Result<(), String> {
+    print_block(board, &vc5::DVP)?;
+    let (sw_init, misc) = vc5_dvp(board)?;
+    for port in &vc5::PORTS {
+        match vc5::port_clocked(port, sw_init, misc) {
+            Ok(()) => {
+                for block in [&port.core, &port.hd, &port.phy, &port.rm] {
+                    print_block(board, block)?;
+                }
+            }
+            Err(why) => println!("# {} not read: {why}", port.name),
+        }
+    }
+    Ok(())
+}
+
 fn print_block(board: &Board, block: &display::Block) -> Result<(), String> {
     let w = board.map(block.bus, block.len)?;
     for &(offset, name) in block.regs {
@@ -573,6 +682,10 @@ fn run(what: &str) -> Result<bool, String> {
         "plls" => print_plls(&board, &cm),
         "clocks" => print_clocks(&board, &cm),
         "gpio" => print_gpio(&board, &board.map(GPIO_BASE, GPIO_LEN)?),
+        "all" if is_vc5(&board) => {
+            print_gpio(&board, &board.map(GPIO_BASE, GPIO_LEN)?);
+            print_hdmi_vc5(&board)?;
+        }
         "all" => {
             print_plls(&board, &cm);
             print_clocks(&board, &cm);
@@ -580,7 +693,13 @@ fn run(what: &str) -> Result<bool, String> {
             print_display(&board, &cm)?;
         }
         "check" => return check(&board, &cm),
+        "display" | "hdmi" if is_vc5(&board) => print_hdmi_vc5(&board)?,
         "display" => print_display(&board, &cm)?,
+        "hdmi" => return Err("socdump hdmi: only for the BCM2711 so far; use socdump display".into()),
+        "regs" if is_vc5(&board) => {
+            print_regs(&board, &cm, &board.map(GPIO_BASE, GPIO_LEN)?);
+            print_hdmi_vc5_regs(&board)?;
+        }
         "regs" => {
             print_regs(&board, &cm, &board.map(GPIO_BASE, GPIO_LEN)?);
             print_display_regs(&board, &cm)?;
@@ -625,6 +744,18 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_span_of_unaligned_blocks() {
+        // HDMI0 core of the Pi 400 at 0xfef00700, 0x100 bytes: one page from 0xfef00000.
+        assert_eq!(page_span(0xfef0_0700, 0x100), (0xfef0_0000, 0x700, 0x1000));
+        // The phy block at +0xf00 with 0x100 bytes still ends inside the page.
+        assert_eq!(page_span(0xfef0_0f00, 0x100), (0xfef0_0000, 0xf00, 0x1000));
+        // A block that crosses a page boundary gets two pages.
+        assert_eq!(page_span(0xfef0_0f80, 0x100), (0xfef0_0000, 0xf80, 0x2000));
+        // Aligned blocks map as before.
+        assert_eq!(page_span(0x3f10_1000, 0x2000), (0x3f10_1000, 0, 0x2000));
+    }
 
     #[test]
     fn ranges_of_the_3bp() {

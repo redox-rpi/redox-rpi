@@ -91,7 +91,7 @@ RUST_TARGET_PATH=$PWD/targets cargo rustc --bin kernel \
 ```
 
 The toolchain version comes from the kernel's `rust-toolchain.toml`. Then
-boot it with `scripts/qemu-raspi3b.sh --kernel upstream/kernel/build/aarch64/kernel`.
+boot it with `scripts/qemu-raspi3b.sh --daily --kernel upstream/kernel/build/aarch64/kernel`.
 
 ## CI image mirror
 

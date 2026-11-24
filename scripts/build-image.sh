@@ -10,7 +10,7 @@
 #   scripts/build-image.sh [--sdcard | --zero2w | --release-netboot]
 #                          [--experiment <name>]...
 #                          [--release <name>] [--no-test-experiments]
-#                          [--allow-dirty]
+#                          [--allow-dirty] [--recipes-only]
 #                          [make target]   (default: all)
 #
 #   --sdcard      the image that boots from the SD card
@@ -40,6 +40,10 @@
 #                 scripts/ or tools/, or with recipe sources that differ from
 #                 their pinned commit plus patches; the differences are saved
 #                 next to the manifest and the build ID gets "-dirty"
+#   --recipes-only
+#                 pin the recipes and add the patches as a build does, print
+#                 the pinned recipes and stop: no cooking, no image. CI runs
+#                 it, since the QEMU boot test builds only the kernel (#394)
 #
 # Result: upstream/redox/build/aarch64/minimal/harddrive.img (network boot) or
 #         upstream/redox/build/aarch64/sdcard/harddrive.img (--sdcard),
@@ -66,6 +70,7 @@ experiments=()
 allow_dirty=0
 release=""
 test_experiments=1
+recipes_only=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --sdcard)
@@ -90,6 +95,7 @@ while [ $# -gt 0 ]; do
             shift 2 ;;
         --no-test-experiments) test_experiments=0; shift ;;
         --allow-dirty) allow_dirty=1; shift ;;
+        --recipes-only) recipes_only=1; shift ;;
         -*) echo "unknown argument: $1" >&2; exit 1 ;;
         *) break ;;
     esac
@@ -322,11 +328,12 @@ EOF
 # patches/experiments/<name>/<recipe>/ of a selected experiment, which must
 # then have a lock line. A new one needs no change here. The first three
 # keep their old order (it decides the order in the manifest). pkgutils
-# and netutils only when an experiment patches them (pkg-hold,
-# ifconfig-mac); otherwise the image takes the upstream binary.
+# and netutils only when patches/<recipe>/ or an experiment has patches for
+# them (netutils, pkg-hold); otherwise the image takes the upstream binary.
+# patches/u-boot/ is for scripts/build-uboot.sh, not a Redox recipe (#394).
 recipes=(bootloader base relibc)
 while read -r name; do
-    case " ${recipes[*]} redox kernel fdt experiments recipes " in *" $name "*) continue ;; esac
+    case " ${recipes[*]} redox kernel fdt experiments recipes u-boot " in *" $name "*) continue ;; esac
     case "$name" in pkgutils|netutils) [ -z "$(patch_files "$name")" ] && continue ;; esac
     [ -d "$REDOX/recipes/core/$name" ] || { echo "$name: no recipe recipes/core/$name" >&2; exit 1; }
     recipes+=("$name")
@@ -405,6 +412,12 @@ while read -r rel; do
         sed -i "0,/^\[source\]/s//[source]\npatches = [ $names]/" "$recipe/recipe.toml"
     fi
 done < <(recipe_dirs)
+
+if [ "$recipes_only" = 1 ]; then
+    echo "recipes: kernel ${recipes[*]}"
+    [ ! -s "$extra_list" ] || echo "patched by experiments: $(paste -sd' ' "$extra_list")"
+    exit 0
+fi
 
 # Our own packages, built from this repository: every tools/<name>/ with a
 # recipe.toml, which holds the [build] part of its recipe. Host tools
@@ -652,9 +665,55 @@ echo "$sysroot_relibc" > "$sysroot_stamp"
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged
 # recipes, so letting it check every time is cheap.
-rm -f "build/aarch64/$CONFIG_NAME/repo.tag"
+repo_tag="build/aarch64/$CONFIG_NAME/repo.tag"
+rm -f "$repo_tag"
 # CI disables the cookbook's terminal UI, which needs a real terminal.
-CI="${CI:-1}" make "${1:-all}" "${make_vars[@]}"
+export CI="${CI:-1}"
+
+# A package from upstream's binary repository can depend on packages its
+# recipe does not name: cook --with-package-deps follows only the recipe,
+# so they never reach the local repository and the installer stops with
+# "Package ... not found" (#519: extrautils of 2026-11-16 needs bzip2).
+# Cook first, then fetch what the configured packages need, as often as new
+# dependencies come in, then build the image (make does not cook again
+# while repo.tag is newer than what it tracks).
+fetch_package_deps() {
+    local repo="repo/aarch64-unknown-redox" round missing
+    for round in 1 2 3 4 5; do
+        missing="$(
+            build/fstools/bin/redox_installer --config="$fs_config" --list-packages 2> /dev/null |
+            awk -v repo="$repo" '
+                function visit(name,   file, line, deps, n, i) {
+                    if (name in seen) return
+                    seen[name] = 1
+                    file = repo "/" name ".toml"
+                    if ((getline line < file) < 0) { missing[name] = 1; return }
+                    close(file)
+                    while ((getline line < file) > 0) {
+                        if (line !~ /^depends = \[/) continue
+                        gsub(/^depends = \[|\]|"| /, "", line)
+                        n = split(line, deps, ",")
+                        for (i = 1; i <= n; i++) if (deps[i] != "") visit(deps[i])
+                    }
+                    close(file)
+                }
+                { visit($1) }
+                END { for (name in missing) print name }' | sort | paste -sd, -
+        )"
+        [ -n "$missing" ] || return 0
+        echo "packages the binary packages need, not in the local repository: $missing" >&2
+        make "r.$missing" "${make_vars[@]}"
+    done
+    echo "still missing after 5 rounds: $missing" >&2
+    return 1
+}
+if [ "${1:-all}" = all ]; then
+    make "$repo_tag" "${make_vars[@]}"
+    fetch_package_deps
+    # r.<name> republished the repository after repo.tag was written.
+    touch "$repo_tag"
+fi
+make "${1:-all}" "${make_vars[@]}"
 
 # The full manifest next to the image: the build inputs, hashes of the main
 # outputs and the packages the image was installed from.
