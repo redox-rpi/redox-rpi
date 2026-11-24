@@ -287,10 +287,10 @@ Releases, tags and release candidates stay with the maintainer in every case.
 
 ### Pull requests from outside
 
-Status: proposal, 2026-11-13, for the maintainer's decision.
+Status: proposal, 2026-11-13, updated 2026-11-24, for the maintainer's decision.
 
 A pull request from someone outside the organisation (from a fork):
-1. Is marked automatically with the label `external`.
+1. Gets the label `external`; the project lead sets it when the PR comes in.
 2. Runs no CI on its own. GitHub waits until someone from the
    organisation clicks "Approve and run" (organisation setting: approval
    for all outside collaborators). It never runs on the self-hosted
