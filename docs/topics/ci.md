@@ -31,6 +31,14 @@
 
 ## In progress
 
+- [#410](https://github.com/redox-rpi/redox-rpi/issues/410) nightly TinyCC VC4 track (WBS 2.15 point 3, branch
+  `tcc-track`): `scripts/tcc-track.sh` builds the fat-boot bootcode with
+  GCC (G) and TCC (T) from `config/tcc-track.lock` and runs the resim tests
+  (20 s on the build host); `scripts/tcc-track-pi.py` loads both over
+  serial into the card's monitor after a watchdog reset (no power cycle, no
+  card writes) and compares their replies; the record goes to `tcc.jsonl`
+  in pi-tests. Not gating; first Pi run by hand through the queue.
+
 - [#265](https://github.com/redox-rpi/redox-rpi/issues/265) regression set before a Pi row:
   `scripts/regression-set.py` and `scripts/regression-qemu.sh` (PR #396),
   8 checks in QEMU in under 3 minutes with the boot; `merge-set-check.sh`
