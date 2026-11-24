@@ -40,7 +40,10 @@ someone works on them for another reason, or when a fault needs it.
 These rules apply to our own code: `tools/`, `scripts/`, our patches,
 vc4d, rpi-open-firmware's own files and tinycc's VC4 parts. They do not
 apply to upstream or vendor code that we only carry (for example the
-Broadcom headers in rpi-open-firmware, or `Cargo.lock`). The KPIs that
+Broadcom headers in rpi-open-firmware, or `Cargo.lock`). In a patch
+against upstream, the rules apply to the lines the patch adds, not to the
+upstream file around them (for example the kernel's `memory/mod.rs` of
+about 1,500 lines). The KPIs that
 measure them are in the QMP and the KPI dashboard (#648), and the checks that run in CI are
 listed in #656. Reviewers check the rules marked *(review)*. A PR that
 breaks a limit says why in its body.
@@ -108,6 +111,9 @@ breaks a limit says why in its body.
 - **No `unwrap()` or `expect()` on outside input** (files, network,
   hardware, user input) in daemons, drivers and tools. Return or print the
   error instead.
+- **No `todo!()`, `unimplemented!()` or `panic!()` on a runtime path** in
+  kernel or driver code that we add or patch (#644). Return an error, or
+  log one line and carry on with a safe default.
 - **A daemon that cannot continue** prints one line (what failed and why)
   and exits. Retries are quiet after the first line; no line per attempt.
 - **Boot output:** one line per event; no harmless error or warning
@@ -125,9 +131,10 @@ breaks a limit says why in its body.
 
 ### Formatting
 
-Automatic, so reviews do not discuss it: rustfmt for Rust, `ruff format`
-for Python, the file's existing style for C and shell. Lines up to 100
-columns.
+Automatic, so reviews do not discuss it: rustfmt for Rust (in patches
+against upstream, with upstream's `rustfmt.toml`), `ruff format` for
+Python, the file's existing style for C and shell. Lines up to 100 columns
+in our own files.
 
 ## Still to write
 
