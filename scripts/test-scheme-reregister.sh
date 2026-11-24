@@ -53,7 +53,8 @@ qemu=$!
 trap 'kill $qemu 2>/dev/null; sleep 1; pkill -P $qemu 2>/dev/null' EXIT
 
 for _ in $(seq 60); do
-    devsh "echo ready" | grep -q ready && break
+    # devshd may answer before bcm2835-sdhostd lists the card's partitions.
+    devsh "ls /scheme/disk.mmc" | grep -aqx "0p1" && break
     sleep 3
 done
 
