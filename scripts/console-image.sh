@@ -33,6 +33,8 @@
 # words for cmdline.txt that name the partition (REDOXFS_UUID,
 # REDOXFS_BLOCK); 50_rootfs mounts it through bcm2835-sdhostd, as on the
 # U-Boot cards. Changes on the card are kept.
+# The initfs then also leaves out what config/console-prune-initfs-card.txt
+# lists (lived: there is no live disk).
 #
 # Writes <out>/kernel8.img, <out>/initramfs (initfs, then the RedoxFS),
 # <out>/console.fs and <out>/manifest.txt (source build, prune lists, the
@@ -120,10 +122,10 @@ cmp -s "$work/initfs.rebuilt" "$work/initfs.image" || {
     echo "redox-initfs-ar does not rebuild the image's initfs from base's build folder" >&2
     exit 1
 }
-# --minimal: no drivers for hardware the Pi does not have. A removed service
-# also leaves the targets that list it, so init does not look for it.
-initfs_prune="$ROOT/config/console-prune-initfs.txt"
-if [ "$minimal" = yes ]; then
+# Leaves out of the initfs what a list names. A removed service also leaves
+# every unit that names it (targets and requires_weak), so init does not
+# look for it.
+prune_initfs() {
     while read -r pattern; do
         pattern="${pattern%%#*}"
         pattern="${pattern%"${pattern##*[![:space:]]}"}"
@@ -134,11 +136,19 @@ if [ "$minimal" = yes ]; then
             rm -rf -- "${work:?}/initfs/$path"
             case "$path" in
                 lib/init.d/*.service)
-                    sed -i "/\"$(basename "$path")\"/d" "$work/initfs"/lib/init.d/*.target ;;
+                    unit="\"$(basename "$path")\""
+                    sed -i -e "/^ *$unit,\?$/d" -e "s/$unit, *//; s/, *$unit//; s/$unit//" \
+                        "$work/initfs"/lib/init.d/* ;;
             esac
         done
-    done < "$initfs_prune"
-fi
+    done < "$1"
+}
+# --minimal: no drivers for hardware the Pi does not have.
+initfs_prune="$ROOT/config/console-prune-initfs.txt"
+[ "$minimal" = no ] || prune_initfs "$initfs_prune"
+# --root-on-card: no live disk, so no lived.
+card_prune="$ROOT/config/console-prune-initfs-card.txt"
+[ "$root_on_card" = no ] || prune_initfs "$card_prune"
 find "$work/initfs" -type f -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
     -exec "$strip" --strip-unneeded {} \;
 "$initfs_ar" "$work/initfs" "$bootstrap" -o "$work/initfs.small" > /dev/null
@@ -209,6 +219,7 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
     echo "$release" | sed 's/^/release /'
     for f in "${prune[@]}"; do echo "prune ${f#"$ROOT"/} $(sha "$f")"; done
     [ "$minimal" = no ] || echo "prune_initfs ${initfs_prune#"$ROOT"/} $(sha "$initfs_prune")"
+    [ "$root_on_card" = no ] || echo "prune_initfs ${card_prune#"$ROOT"/} $(sha "$card_prune")"
     [ "$root_on_card" = no ] || echo "root_on_card console.fs $(sha "$out/console.fs") $(cat "$out/cmdline-root.txt")"
     echo "kernel8.img $(wc -c < "$out/kernel8.img") $(sha "$out/kernel8.img")"
     echo "initramfs $(wc -c < "$out/initramfs") $(sha "$out/initramfs")"

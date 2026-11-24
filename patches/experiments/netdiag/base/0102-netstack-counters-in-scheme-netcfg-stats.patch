@@ -1,4 +1,4 @@
-From e3c17de06bce0ddc9de9fc560f7d3aa252a86047 Mon Sep 17 00:00:00 2001
+From 7c018886d3a9434bfba03ea78740463b0e6fb129 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 08:24:40 +0000
 Subject: [PATCH] netstack: counters in /scheme/netcfg/stats
@@ -23,10 +23,10 @@ the main loop at most twice a second.
  create mode 100644 netstack/src/stats.rs
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index ae9ad8c..846916f 100644
+index 737cf24..6236438 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
-@@ -105,7 +105,11 @@ impl EthernetLink {
+@@ -118,7 +118,11 @@ impl EthernetLink {
              let _watch = crate::watch::Guard::new(crate::watch::Stage::DeviceWrite);
              self.network_file.write_all(&self.output_buffer)
          };
@@ -38,7 +38,7 @@ index ae9ad8c..846916f 100644
              error!(
                  "Dropped outboud packet on {} (failed to write to network file)",
                  self.name
-@@ -245,6 +249,7 @@ impl EthernetLink {
+@@ -258,6 +262,7 @@ impl EthernetLink {
              }
  
              let _ = self.waiting_packets.dequeue();
@@ -46,7 +46,7 @@ index ae9ad8c..846916f 100644
              debug!(
                  "Dropped packet on {} because neighbor was not found",
                  self.name
-@@ -254,6 +259,7 @@ impl EthernetLink {
+@@ -267,6 +272,7 @@ impl EthernetLink {
  
      fn handle_missing_neighbor(&mut self, next_hop: IpAddress, packet: &[u8], now: Instant) {
          let Ok(buf) = self.waiting_packets.enqueue(packet.len(), next_hop) else {
@@ -54,7 +54,7 @@ index ae9ad8c..846916f 100644
              warn!(
                  "Dropped packet on {} because waiting queue was full",
                  self.name
-@@ -304,6 +310,7 @@ impl EthernetLink {
+@@ -330,6 +336,7 @@ impl EthernetLink {
  
                  *tries += 1;
                  *silent_until = now + Self::ARP_SILENCE_TIME;
@@ -62,15 +62,15 @@ index ae9ad8c..846916f 100644
  
                  self.send_to(
                      EthernetAddress::BROADCAST,
-@@ -351,6 +358,7 @@ impl LinkDevice for EthernetLink {
+@@ -377,6 +384,7 @@ impl LinkDevice for EthernetLink {
              Entry::Vacant(_) => self.handle_missing_neighbor(next_hop, packet, now),
              Entry::Occupied(e) => {
-                 if e.get().expires_at < now {
+                 if e.get().expires_at + Self::NEIGHBOR_STALE_TIME < now {
 +                    crate::stats::inc(&crate::stats::ARP_EXPIRED);
                      e.remove();
                      self.handle_missing_neighbor(next_hop, packet, now)
                  } else {
-@@ -379,6 +387,7 @@ impl LinkDevice for EthernetLink {
+@@ -409,6 +417,7 @@ impl LinkDevice for EthernetLink {
              };
              if let Err(e) = read {
                  if e.kind() != ErrorKind::WouldBlock {
@@ -78,7 +78,7 @@ index ae9ad8c..846916f 100644
                      error!("Failed to read ethernet device on link {}", self.name);
                  } else {
                      // No packet to read but we check if we have arp to send
-@@ -388,8 +397,10 @@ impl LinkDevice for EthernetLink {
+@@ -418,8 +427,10 @@ impl LinkDevice for EthernetLink {
                  return None;
              }
              crate::watch::frame_in();
@@ -89,7 +89,7 @@ index ae9ad8c..846916f 100644
                  debug!("Dropped incomming frame on {} (Malformed)", self.name);
                  continue;
              };
-@@ -402,16 +413,24 @@ impl LinkDevice for EthernetLink {
+@@ -432,16 +443,24 @@ impl LinkDevice for EthernetLink {
                  && repr.dst_addr != hardware_address
              {
                  // Drop packets which are not for us
@@ -157,7 +157,7 @@ index abd7f5c..a1c59f3 100644
          } else {
              Some(TxToken {
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index 0306324..942414a 100644
+index 031f1e2..a614a96 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
 @@ -260,6 +260,7 @@ impl Smolnetd {
@@ -169,7 +169,7 @@ index 0306324..942414a 100644
                  if !self.router_device.get_ref().can_recv() {
                      match iface.poll_delay(timestamp, &socket_set) {
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index dae64a9..a06404f 100644
+index 9b99670..e367a7c 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -136,6 +136,13 @@ fn mk_root_node(

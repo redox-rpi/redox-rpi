@@ -6,7 +6,7 @@ owned by the Process session, the planning parts (sprints, work packages,
 status) by the project lead. It is changed by pull request; the maintainer
 approves it.
 
-Status: draft, 2026-11-08.
+Status: in force; first draft 2026-11-08, last changed 2026-11-24.
 
 ## Goal
 
@@ -72,23 +72,27 @@ driver `vc4d` and splits it into packages, and keeps the framebuffer driver
 
 | Document | Path | Owner | Status |
 |---|---|---|---|
-| Project management plan | `docs/process/pmp.md` | Process (process rules), project lead (planning) | this draft |
-| Firmware project management plan | [rpi-open-firmware `docs/pmp.md`](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md) | Process (process rules), project lead (status) | draft ([rof PR #64](https://github.com/redox-rpi/rpi-open-firmware/pull/64)) |
+| Project management plan | `docs/process/pmp.md` | Process (process rules), project lead (planning) | in force |
+| Firmware project management plan | [rpi-open-firmware `docs/pmp.md`](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md) | Process (process rules), project lead (status) | draft |
 | Product breakdown structure (PBS) | [`docs/process/pbs.md`](pbs.md) | project lead, Architect | draft |
 | Work breakdown structure (WBS) | [`docs/process/wbs.md`](wbs.md) | project lead; process rules in it: Process | draft |
 | Risks and opportunities | issues labelled [`risk`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Arisk) and [`opportunity`](https://github.com/redox-rpi/redox-rpi/issues?q=is%3Aopen+label%3Aopportunity) | project lead | live |
 | Join page | [`docs/join.md`](../join.md) | project lead | draft |
-| Quality management plan | `docs/process/qmp.md` | Quality | to write |
-| Requirements management plan (part of this plan) | `docs/process/rmp.md` | Requirements | to write |
-| Requirements | `docs/requirements/` | Requirements | to write |
-| Architecture | `docs/architecture.md` | Architect | exists |
-| Coding standards and rules | `docs/process/coding-standards.md` | Architect | to write |
-| Test standards | `docs/process/test-standards.md` | V&V | to write |
+| Quality management plan and KPI dashboard | `docs/process/qmp.md` | Quality | to write ([#648](https://github.com/redox-rpi/redox-rpi/issues/648)) |
+| Requirements management plan (part of this plan) | [`docs/process/rmp.md`](rmp.md) | Requirements | draft |
+| Requirements | Feature issues `REQ-…` ([RMP](rmp.md#storage)); traces in [`docs/requirements/`](../requirements/) | Requirements | live |
+| Architecture | [`docs/architecture.md`](../architecture.md) | Architect | exists |
+| Coding standards and rules | [`docs/process/coding-standards.md`](coding-standards.md) | Architect | draft, grows by section |
+| Test standards | `docs/process/test-standards.md` | V&V | to write ([#264](https://github.com/redox-rpi/redox-rpi/issues/264)) |
 | Test plan and reports | [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests) (`queue.md`, `reports/`, `lab.md`, `releases/`); `docs/test-plan.md` and `docs/test-reports.md` point there | V&V | moved (RFC 0002 phase 2) |
 | Release process and checklists | `docs/release-process.md`, `docs/releases/` | Release and CI | exist |
 | Topic pages | `docs/topics/` | topic owners | exist |
 | Contribution rules | `CONTRIBUTING.md` | Process | exists; links the documents above |
-| Overall status | `STATUS.md` | project lead | to write (RFC 0002) |
+| Overall status | `STATUS.md` | project lead | to write ([#649](https://github.com/redox-rpi/redox-rpi/issues/649)) |
+
+Every document marked "to write" links its issue. When a document is
+written or its status changes, its author updates this table in the same
+change.
 
 ### What the standards must cover
 
@@ -176,12 +180,54 @@ per week and one release per sprint:
    PR changes, why, and what has to be tested (test plan); it carries no
    test status. Test results, Pi rows and reports go into comments, one
    per run with date, image and report, so the history stays readable.
-5. The project lead checks base, CI and Pi test and sets `merge-next`;
-   Quality may audit the PR against the process.
+   **Docs move with the code:** a PR that changes what a repository does
+   updates its README and the docs that describe it (topic page, `docs/`,
+   wiki) in the same PR. Only if that is not possible, its author updates
+   them right after the merge. The PR template has a checkbox for this.
+5. The project lead checks base, CI, Pi test and the docs checkbox and sets
+   `merge-next`; Quality may audit the PR against the process.
 6. The PR is merged by whoever holds the merge right for it (see
    [Merge rights](#merge-rights) below).
 7. Release and CI builds the weekly release candidate; V&V tests it; the
    maintainer approves the tag.
+
+### Issue types and epics
+
+Every issue in the organisation has one issue type:
+
+| Type | For | Milestone |
+|---|---|---|
+| Epic | a feature area: all present and future Features of one area, for example "Boot picture" | none |
+| Feature | something new the system shall do; requirements (`REQ-…`) are Features ([RMP](rmp.md#issue-format)) | the release it first ships in |
+| Task | a piece of work, including work package parents (`wp`) and risks | the sprint or release it is planned for |
+| Bug | something that does not work as it should | the release that fixes it |
+
+- An **epic is a feature area**, for example "Boot picture" (from a
+  static picture to an animation and ideas nobody has had yet) or "HDMI
+  and display". It collects all present and future Features of that area:
+  a new idea becomes a sub-issue of the matching epic. Tasks and Bugs of
+  the area may hang there too.
+- No epic for a whole component or repository; that is the project
+  board. Epics are never nested: an epic never has an epic as a
+  sub-issue. An area that grows too big becomes two epics side by side.
+- **Boards are not epics.** Which board an issue is about is the
+  single-select field **Board** in the project (Pi 3B+, Pi Zero 2 W,
+  Pi 400, Pi 3, Pi 4, Pi 5/CM5, all). A Feature stays under its area
+  epic and gets the Board field, so one issue never needs two parents.
+  The field is empty when the issue is not about one board.
+- An epic holds no code and has no milestone. Its sub-issues keep their
+  own milestones, so the milestones still show what each release brings.
+  The epic says what the area covers, what is out of scope, and links its
+  decision record if there is one.
+- **Docs and wikis link the epic**, not single Feature issues, so a new
+  idea needs no doc edit. Feature tables have an "Epic" column.
+- An epic stays open while the area is alive. It is closed when the
+  project decides the area is complete, or when the maintainer drops it.
+  The owner of the product proposes an epic; the maintainer approves it.
+- An epic is about the product (what we build, see the [PBS](pbs.md)); a
+  work package parent (`wp`) is about the work (who does it, see the
+  [WBS](wbs.md)). GitHub allows one parent per issue, so a Feature hangs
+  under its epic, and the work package parent links the epic instead.
 
 ### Merge rights
 
@@ -190,8 +236,8 @@ place these rules are written down; other pages link here.
 
 | Who | Merges | Never |
 |---|---|---|
-| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code), PRs by the Quality session, RFCs | — |
-| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
+| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code); in [apps](https://github.com/redox-rpi/apps), every PR that changes what users get (recipes and their patches, `os-release`); PRs by the Quality session, RFCs | — |
+| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs; in apps, build scripts and CI that change no package content | its own PRs (it wrote or pushed to them); a PR that also touches image content or package content |
 | Project lead | docs-only PRs | code PRs |
 
 Docs need no pull request: anyone on the team may push changes to docs
@@ -208,14 +254,30 @@ redox-rpi/redox-rpi. Code goes through a branch and a pull request, docs
 straight to the default branch. A repository writes down only what differs
 (for example its licence or build), and links here for the rest.
 
+The repositories (this table is the one list; the organisation profile
+links here):
+
+| Repository | What | Owner session |
+|---|---|---|
+| [redox-rpi](https://github.com/redox-rpi/redox-rpi) | the OS: patches, drivers, init, images, firmware glue, package manager side, driver test tools; process docs | project lead; topics as in [Topic owners](#topic-owners) |
+| [apps](https://github.com/redox-rpi/apps) | ported software and our own applications as packages, built against a pinned redox-rpi release (maintainer decision, 2026-11-24) | Release and CI; each application's topic owner owns its recipe |
+| [pi-tests](https://github.com/redox-rpi/pi-tests) | Pi test queue, reports, lab | V&V |
+| [relibc](https://github.com/redox-rpi/relibc) | relibc with our patches, for analysis and tests | Release and CI |
+| [drivers](https://github.com/redox-rpi/drivers) | drivers | no owner yet (project lead) |
+| [rpi-open-firmware](https://github.com/redox-rpi/rpi-open-firmware) | open VPU boot firmware ([firmware PMP](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/pmp.md)) | Open firmware |
+| [vc4d](https://github.com/redox-rpi/vc4d) | VideoCore IV display and 3D driver | Graphics |
+| [tinycc](https://github.com/redox-rpi/tinycc) | TinyCC fork: Redox on the Pi and the VC4 backend | VC4 Tools (VC4 backend), TCC (TinyCC on Redox) |
+| [resim](https://github.com/redox-rpi/resim) | VC4 simulator | VC4 Tools |
+| [vc4-toolchain](https://github.com/redox-rpi/vc4-toolchain) | GCC toolchain for the VPU | VC4 Tools |
+| [.github](https://github.com/redox-rpi/.github) | organisation profile, shared issue and PR templates | Process |
+
 When the maintainer creates a new repository, the Process session:
-1. adds the ruleset `protect-main` (no force push, no deletion of the
-   default branch)
+1. asks the maintainer to add the ruleset `protect-main` (a repository
+   setting): target the default branch (`~DEFAULT_BRANCH`), rules "Restrict
+   deletions" and "Block force pushes", enforcement active, no bypass
 2. adds a `CLAUDE.md` that links to this plan and names the owning session,
    and a README with the licence
-3. adds the repository to the table in the organisation profile
-   ([.github](https://github.com/redox-rpi/.github), `profile/README.md`)
-   and its owner to [Topic owners](#topic-owners)
+3. adds the repository to the table above
 
 A new agent session gets this plan as the first link in its brief and
 keeps its rules in its own memory.
@@ -255,6 +317,15 @@ Releases, tags and release candidates stay with the maintainer in every case.
 - The project lead reports to the maintainer in German, briefly, and keeps
   `STATUS.md` current so that no session needs the whole repository in its
   context.
+- **State from GitHub, not from memory.** A report, list or label that
+  names the state of a pull request or issue (open, merged, `merge-next`,
+  waiting for review) reads that state from GitHub when it is written.
+  `merge-next` is checked again after every merge.
+- **Text on GitHub** (issues, pull requests, comments, commit messages)
+  is English, short and in the author's own words. Chat words of the
+  maintainer or another session are never pasted; a decision is written
+  as "maintainer decision, <date>: <what>". No host names, LAN addresses
+  or private news of contacts.
 - An approval is the maintainer's own words. Agents never pass on an
   approval as the maintainer's answer, and never do what another session's
   permission check refused.
@@ -278,15 +349,3 @@ they stay current and anyone can raise one:
   and at every release candidate: updates likelihood and handling, closes
   what no longer applies, and turns handling steps into normal issues.
 - Quality shows the open risks on the KPI dashboard.
-
-## Next steps
-
-1. The maintainer reviews the PBS and the WBS; the project lead then opens
-   one parent issue per work package and owners attach their issues as
-   sub-issues.
-2. Quality writes the QMP and the first KPI dashboard.
-3. The Pi test agent takes the V&V role and writes the test standards.
-4. The Architect writes the coding standards and rules.
-5. The Requirements agent writes the requirements management plan, then
-   the first requirements for v0.4.
-6. RFC 0002 (project structure) decided and migrated in small PRs.
