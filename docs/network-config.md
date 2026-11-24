@@ -34,8 +34,8 @@ matches either a short name or any root `compatible` string:
 
 | Short name | Board | devicetree |
 |---|---|---|
-| `raspi3bp` | Pi 3 Model B+ | `raspberrypi,3-model-b-plus` |
-| `raspi3b` | Pi 3 Model B (and QEMU raspi3b) | `raspberrypi,3-model-b` |
+| `raspi3bp` | Pi 3 Model B+ (also QEMU raspi3b with our scripts, which pass the 3B+ devicetree) | `raspberrypi,3-model-b-plus` |
+| `raspi3b` | Pi 3 Model B | `raspberrypi,3-model-b` |
 | `zero2w` | Pi Zero 2 W | `raspberrypi,model-zero-2-w` |
 | `raspi4b` | Pi 4 Model B | `raspberrypi,4-model-b` |
 | `pi400` | Pi 400 | `raspberrypi,400` |
