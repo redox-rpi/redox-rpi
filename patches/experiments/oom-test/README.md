@@ -1,7 +1,9 @@
 # Experiment: oom-test, use up all memory
 
 Adds [`tools/oomtest`](../../../tools/oomtest) to the image. It uses up all
-memory, so the kernel must end it. With kernel patch `0056` only the
+memory, so the kernel must end it. It is a test experiment
+(`config/test-experiments.conf`, `test-only`): every test image has it for
+the `oom` check of `scripts/regression-set.py` (#676); releases never do. With kernel patch `0056` only the
 process ends (SIGKILL); before, the kernel panicked with
 `not yet implemented: oom` (issue #644).
 
