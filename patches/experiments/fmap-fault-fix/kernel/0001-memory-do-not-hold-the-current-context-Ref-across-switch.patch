@@ -1,0 +1,20 @@
+Subject: [PATCH] memory: do not hold the current context Ref across switch
+
+The FmapBorrowed arm of correct_inner kept context::current() (a Ref on
+the per-CPU current context RefCell) while it called switch(). switch_to
+then panicked with "RefCell already borrowed". Any write to a MAP_PRIVATE
+writable mmap of a user scheme file reached it (redox-rpi#678).
+---
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -2840,7 +2840,9 @@
+                 .request_fmap(scheme_number, offset, 1, flags, &mut token)
+                 .unwrap();
+ 
+-            let context_lock = crate::context::current();
++            // Clone the Arc: a Ref of the current context held across
++            // switch() makes switch_to panic (RefCell already borrowed).
++            let context_lock = Arc::clone(&crate::context::current());
+             context_lock
+                 .write(token.token())
+                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
