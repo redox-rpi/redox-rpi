@@ -26,6 +26,15 @@ DYNAMIC_INIT
 grep -q "sys/ioctl.h" "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h" || \\
     sed -i '0,/^#include <stdint.h>/s//#include <stdint.h>\\n#include <sys\\/ioctl.h>/' "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h"
 
+# Spike (#669): relibc has no sys/sysinfo.h; the v3d driver only takes the
+# RAM size from it, which Mesa's os_get_total_physical_memory() also gives.
+V3DS="${COOKBOOK_SOURCE}/src/gallium/drivers/v3d/v3d_screen.c"
+grep -q "sysinfo(&si)" "$V3DS" && sed -i \\
+    -e 's|^#include <sys/sysinfo.h>|/* sys/sysinfo.h: not on Redox */|' \\
+    -e 's|struct sysinfo si;|uint64_t totalram = 0;|' \\
+    -e 's|sysinfo(&si);|os_get_total_physical_memory(\\&totalram);|' \\
+    -e 's|{ si.totalram }|{ totalram }|' "$V3DS"
+
 # Spike (#669): keep building after errors, so one run lists every file
 # that does not compile.
 printf '#!/bin/sh\\nexec "%s" -k 0 "$@"\\n' "${COOKBOOK_NINJA}" > ninja-k0
