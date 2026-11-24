@@ -1,0 +1,21 @@
+From: redox-rpi
+Subject: [PATCH] Quit on SDL_QUIT, so that SIGTERM and SIGINT end the game
+
+SDL turns SIGINT and SIGTERM into an SDL_QUIT event. Sopwith never
+handled it, so `kill <pid>` left the game running (redox-rpi #405).
+---
+--- a/src/sdl/video.c	2026-11-15 23:58:59
++++ b/src/sdl/video.c	2026-11-15 23:58:59
+@@ -819,6 +819,12 @@
+ 
+ 	while (SDL_PollEvent(&event)) {
+ 		switch (event.type) {
++		case SDL_QUIT:
++			// SDL turns SIGINT and SIGTERM into this event, so
++			// without it `kill` could not end the game.
++			exit(0);
++			break;
++
+ 		case SDL_KEYDOWN:
+ 			KeyDown(&event.key);
+ 			break;

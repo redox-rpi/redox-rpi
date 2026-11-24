@@ -1,0 +1,222 @@
+From 17e1c69dfb508231ab32ea08064cbed9f4b843c6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Thu, 29 Oct 2026 14:40:32 +0000
+Subject: [PATCH] inputd: dead keys for the German layout, keymap from a file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+´, ` and ^ wait for the next key: with a vowel they make á, à, â and so
+on; with space they type themselves; with any other key they type
+themselves and then that key. inputd --keymap-file /etc/keymap sets the
+layout named in the file and does nothing if the file is missing, so a
+boot unit can read the setting (#36).
+---
+ drivers/inputd/src/keymap.rs | 24 +++++++++++++
+ drivers/inputd/src/main.rs   | 68 ++++++++++++++++++++++++++++++++----
+ 2 files changed, 86 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/inputd/src/keymap.rs b/drivers/inputd/src/keymap.rs
+index b3eb5a85..17fc130b 100644
+--- a/drivers/inputd/src/keymap.rs
++++ b/drivers/inputd/src/keymap.rs
+@@ -484,9 +484,23 @@ pub struct KeymapData {
+     pub keymap_hash: HashMap<u8, [char; 2]>,
+     /// Characters with AltGr; empty for layouts that ignore AltGr
+     pub altgr_hash: HashMap<u8, char>,
++    /// Dead keys: their character combines with the next key
++    pub dead: &'static [char],
+     pub kind: KeymapKind,
+ }
+ 
++/// The character a dead key and the next character make, like ´ and e to é
++pub fn compose(dead: char, c: char) -> Option<char> {
++    const TABLE: &[(char, &str, &str)] = &[
++        ('´', "aeiouyAEIOUY", "áéíóúýÁÉÍÓÚÝ"),
++        ('`', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
++        ('^', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
++    ];
++    let (_, from, to) = TABLE.iter().find(|(d, _, _)| *d == dead)?;
++    let i = from.chars().position(|f| f == c)?;
++    to.chars().nth(i)
++}
++
+ impl KeymapData {
+     pub fn new(kind: KeymapKind) -> Self {
+         let keymap_hash = match kind {
+@@ -503,13 +517,23 @@ impl KeymapData {
+             _ => HashMap::new(),
+         };
+ 
++        let dead: &'static [char] = match kind {
++            KeymapKind::DE => &['´', '`', '^'],
++            _ => &[],
++        };
++
+         Self {
+             keymap_hash,
+             altgr_hash,
++            dead,
+             kind,
+         }
+     }
+ 
++    pub fn is_dead(&self, c: char) -> bool {
++        self.dead.contains(&c)
++    }
++
+     pub fn get_kind(&self) -> KeymapKind {
+         self.kind
+     }
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 64c17de3..31bec666 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -20,7 +20,7 @@ use std::os::fd::IntoRawFd;
+ use inputd::{ControlEvent, VtEvent, VtEventKind};
+ use libredox::errno::ESTALE;
+ use libredox::Fd;
+-use orbclient::{Event, EventOption};
++use orbclient::{Event, EventOption, KeyEvent};
+ use redox_scheme::scheme::SchemeSync;
+ use redox_scheme::{CallerCtx, OpenResult, Response, SignalBehavior, Socket};
+ use scheme_utils::{Blocking, FpathWriter, HandleMap};
+@@ -85,6 +85,8 @@ struct InputScheme<'a> {
+     lshift: bool,
+     rshift: bool,
+     altgr: bool,
++    /// A dead key waiting for the next key
++    dead_key: Option<char>,
+ 
+     has_new_events: bool,
+     pending_activate: Option<usize>,
+@@ -107,6 +109,7 @@ impl<'a> InputScheme<'a> {
+             lshift: false,
+             rshift: false,
+             altgr: false,
++            dead_key: None,
+             has_new_events: false,
+             pending_activate: None,
+         }
+@@ -171,6 +174,7 @@ impl<'a> InputScheme<'a> {
+         );
+ 
+         self.active_keymap = KeymapData::new(new_active.into());
++        self.dead_key = None;
+     }
+ }
+ 
+@@ -407,6 +411,10 @@ impl SchemeSync for InputScheme<'_> {
+                 buf.len() / size_of::<Event>(),
+             )
+         });
++        let written = buf.len();
++        // A dead key followed by a key it does not combine with types both
++        // characters: (index, event) to insert before that key
++        let mut inserts: Vec<(usize, Event)> = Vec::new();
+ 
+         for i in 0..events.len() {
+             let mut new_active_opt = None;
+@@ -436,7 +444,31 @@ impl SchemeSync for InputScheme<'_> {
+ 
+                     key => {
+                         let shift = self.lshift | self.rshift;
+-                        let ev = self.active_keymap.get_char(key, shift, self.altgr);
++                        let mut ev = self.active_keymap.get_char(key, shift, self.altgr);
++                        if !key_event.pressed {
++                            if self.active_keymap.is_dead(ev) {
++                                ev = '\0';
++                            }
++                        } else if ev != '\0' {
++                            if let Some(dead) = self.dead_key.take() {
++                                match keymap::compose(dead, ev) {
++                                    Some(composed) => ev = composed,
++                                    None if ev == ' ' => ev = dead,
++                                    None => inserts.push((
++                                        i,
++                                        KeyEvent {
++                                            character: dead,
++                                            scancode: 0,
++                                            pressed: true,
++                                        }
++                                        .to_event(),
++                                    )),
++                                }
++                            } else if self.active_keymap.is_dead(ev) {
++                                self.dead_key = Some(ev);
++                                ev = '\0';
++                            }
++                        }
+                         key_event.character = ev;
+                         events.to_mut()[i] = key_event.to_event();
+                     }
+@@ -462,6 +494,10 @@ impl SchemeSync for InputScheme<'_> {
+             }
+         }
+ 
++        for (i, event) in inserts.into_iter().rev() {
++            events.to_mut().insert(i, event);
++        }
++
+         let handle = self.handles.get_mut(id)?;
+         assert!(matches!(handle, Handle::Producer));
+ 
+@@ -493,7 +529,7 @@ impl SchemeSync for InputScheme<'_> {
+             }
+         }
+ 
+-        Ok(buf.len())
++        Ok(written)
+     }
+ 
+     fn on_sendfd(
+@@ -667,9 +703,12 @@ fn daemon_runner(redox_daemon: daemon::SchemeDaemon) -> ! {
+ }
+ 
+ const HELP: &str = r#"
+-inputd [-K keymap|-A vt|--keymaps]
++inputd [-K keymap|--keymap-file file|-A vt|--keymaps]
+    -A vt       : set current virtual display
+    -K keymap   : set keyboard mapping
++   --keymap-file file
++               : set the keyboard mapping named in file (e.g. /etc/keymap);
++                 nothing if the file does not exist
+    --keymaps   : list available keyboard mappings
+ "#;
+ 
+@@ -690,13 +729,30 @@ fn main() {
+                     .expect("inputd: failed to activate VT");
+             }
+             // Activates a keymap.
+-            "-K" => {
++            "-K" | "--keymap-file" => {
+                 let arg = if let Some(a) = args.next() {
+                     a
+                 } else {
+-                    eprintln!("Error: Option -K requires a layout argument.");
++                    eprintln!("Error: Option {val} requires an argument.");
+                     std::process::exit(1);
+                 };
++                // The file holds the layout's name, e.g. "de"; lines with #
++                // are comments
++                let arg = if val == "--keymap-file" {
++                    let Ok(text) = std::fs::read_to_string(&arg) else {
++                        std::process::exit(0);
++                    };
++                    let Some(name) = text
++                        .lines()
++                        .map(str::trim)
++                        .find(|line| !line.is_empty() && !line.starts_with('#'))
++                    else {
++                        std::process::exit(0);
++                    };
++                    name.to_owned()
++                } else {
++                    arg
++                };
+ 
+                 let vt: KeymapKind = arg.to_ascii_lowercase().parse().unwrap_or_else(|_| {
+                     eprintln!("inputd: unrecognized keymap code (see: inputd --keymaps)");
+-- 
+2.53.0
+

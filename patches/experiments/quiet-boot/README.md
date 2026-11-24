@@ -31,12 +31,12 @@ With our firmware ([rpi-open-firmware](https://github.com/redox-rpi/rpi-open-fir
 | drivers | 25 % | initfs drivers up (`45_bootstep-drivers`) |
 | file system | 50 % | root file system mounted (`55_bootstep-rootfs`) |
 | services | 75 % | `00_base.target` (`01_bootstep-base`) |
-| network | 90 % | `10_net.target`, after the services step, only if it comes before the login (`15_bootstep-net`) |
 | login (last) | 100 % | before the first console; `fbcond@` waits for it (`29_bootstep-login`) |
 
 - **The interface:** `rpi-firmwared` sends the tag. A line `PCT [fail] [last] TEXT` written to `/scheme/rpi-firmware/bootstep` is one step, and `rpi-firmwared step …` does the same for init. It only sends with `QUIET` set.
 - **Other firmware:** Broadcom's `start.elf`, QEMU and a firmware without HDMI do not draw the step. `rpi-firmwared` then logs one line and sends nothing more in this boot. The boot looks as without the steps.
 - **A boot that hangs:** inputd's fallback sends a last step `boot stopped` (red) first, then shows the log.
+- **No network step:** patch `0004` (#622) removed it. The network starts in the background after the boot (dhcpd on link-up), and the step showed on cards without network (rpi-open-firmware #56).
 - **Boards:** the 3B+ only, like `rpi-firmwared` today.
 
 ## The full log

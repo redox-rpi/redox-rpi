@@ -6,6 +6,7 @@
 #   scripts/build-image.sh --experiment timesync --experiment rpi-fb \
 #     --experiment orbital --experiment orbital-apps \
 #     --experiment cosmic-apps-source --experiment desktop
+# Then kill -TERM must end Sopwith within 2 s (#405).
 #
 # Usage: patches/experiments/pwm-audio/qemu-sdl-check.sh [image]
 
@@ -21,7 +22,10 @@ H=/scheme/audiohw
     --run "sleep 15" \
     --run "cat /tmp/sop.log" \
     --run "ps | grep sopwith" \
-    --run "grep loud_chunks $H/stats; grep peak $H/stats" > /dev/null 2>&1
+    --run "grep loud_chunks $H/stats; grep peak $H/stats" \
+    --run "kill -TERM \$(ps | grep /usr/bin/sopwith | head -1 | cut -d ' ' -f1)" \
+    --run "sleep 2" \
+    --run "echo after-term; ps | grep /usr/bin/sopwith; echo end-term" > /dev/null 2>&1
 status=$?
 log="$(tr -d '\r' < "$ROOT/images/qemu-test.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
 failed=0
@@ -39,5 +43,12 @@ if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then
     echo "PASS: the title tune reached the driver"
 else
     echo "FAIL: the title tune reached the driver"; failed=1
+fi
+# #405: SDL turns SIGTERM into SDL_QUIT; Sopwith must quit on it.
+after_term="$(sed -n '/^after-term$/,/^end-term$/p' <<< "$log")"
+if [ -n "$after_term" ] && ! grep -q "/usr/bin/sopwith" <<< "$after_term"; then
+    echo "PASS: kill -TERM ended Sopwith within 2 s"
+else
+    echo "FAIL: kill -TERM ended Sopwith within 2 s (#405)"; failed=1
 fi
 exit $failed

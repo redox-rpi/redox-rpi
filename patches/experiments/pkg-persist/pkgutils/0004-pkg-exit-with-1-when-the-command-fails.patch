@@ -1,0 +1,30 @@
+From 84c9ede88d61a70e86cb4dc9f411f88c6746aa46 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Mon, 23 Nov 2026 20:25:53 +0000
+Subject: [PATCH] pkg: exit with 1 when the command fails
+
+pkg printed the error but exited with 0, so a caller could not tell. pkg-persist then copied nothing and reported success (redox-rpi Test 588).
+---
+ pkg-cli/src/main.rs | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/pkg-cli/src/main.rs b/pkg-cli/src/main.rs
+index c5fd2da..a4c9966 100644
+--- a/pkg-cli/src/main.rs
++++ b/pkg-cli/src/main.rs
+@@ -186,8 +186,10 @@ fn main() {
+                  Set the clock (e.g. wait for the time service after boot, then check `date`) and try again."
+             );
+         }
+-        // TODO: this hanging the terminal
+-        // process::exit(1);
++        // Callers such as scripts and pkg-persist need to see the failure.
++        // (Upstream left this out because it hung the terminal; the
++        // progress bars are finished by now.)
++        process::exit(1);
+     }
+ }
+ 
+-- 
+2.53.0
+

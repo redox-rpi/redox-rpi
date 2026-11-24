@@ -1,0 +1,127 @@
+From 03791518dbbd337f6087e17d2fa1ebd024e5caa1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 10:20:06 +0000
+Subject: [PATCH 119/119] dwc2d: LAN7800 flow control with pause frames (#661)
+
+Flow control was off, so the LAN7800 dropped frames when its 12 KiB
+receive FIFO was full: about 1.4 % TCP retransmits at 100 Mbit/s. Now it
+is set from what both link partners advertise, at every link-up: the MAC
+sends a pause frame when the FIFO holds 8.5 KiB and obeys the partner's.
+The link-up line says which.
+---
+ drivers/usb/dwc2d/src/lan78xx.rs | 48 +++++++++++++++++++++++++++++++-
+ drivers/usb/dwc2d/src/main.rs    | 11 +++++++-
+ 2 files changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/lan78xx.rs b/drivers/usb/dwc2d/src/lan78xx.rs
+index fd3f533..3968cdb 100644
+--- a/drivers/usb/dwc2d/src/lan78xx.rs
++++ b/drivers/usb/dwc2d/src/lan78xx.rs
+@@ -83,6 +83,13 @@ const MAC_RX_MAX_SIZE_SHIFT: u32 = 16;
+ const MAC_RX_MAX_SIZE_MASK: u32 = 0x3FFF_0000;
+ const MAC_TX_EN: u32 = 1 << 0;
+ const MAF_HI_VALID: u32 = 1 << 31;
++const FLOW_TX_FCEN: u32 = 1 << 30;
++const FLOW_RX_FCEN: u32 = 1 << 29;
++/// Pause time in a sent pause frame, in 512-bit times (Linux uses the most).
++const FLOW_PAUSE_TIME: u32 = 0xFFFF;
++/// Send a pause frame when the receive FIFO holds 17 x 512 bytes (8.5 KiB),
++/// release it below 2 x 512: Linux's thresholds for a high-speed USB link.
++const FCT_FLOW_HS: u32 = 17 | (2 << 8);
+ const MII_ACC_BUSY: u32 = 1 << 0;
+ const MII_ACC_WRITE: u32 = 1 << 1;
+ 
+@@ -94,6 +101,9 @@ const PHY_ADDR: u32 = 1;
+ const MII_BMCR: u32 = 0;
+ const MII_BMSR: u32 = 1;
+ const MII_ANAR: u32 = 4;
++const MII_ANLPAR: u32 = 5;
++const ADVERTISE_PAUSE: u16 = 1 << 10;
++const ADVERTISE_ASYM: u16 = 1 << 11;
+ /// Vendor register: one 4-bit mode per LED.
+ const PHY_LED_MODE: u32 = 29;
+ const BMCR_AUTOEN: u16 = 1 << 12;
+@@ -176,6 +186,36 @@ impl Regs<'_> {
+         Ok(self.mii_read(MII_BMSR)? & BMSR_LINK != 0)
+     }
+ 
++    /// Flow control from what both link partners advertise (IEEE 802.3
++    /// annex 28B, Linux `mii_resolve_flowctrl_fdx`): pause frames are sent
++    /// when the receive FIFO fills, and the partner's are obeyed (#661).
++    fn update_flow(&mut self) -> Result<&'static str, Error> {
++        let local = self.mii_read(MII_ANAR)?;
++        let remote = self.mii_read(MII_ANLPAR)?;
++        let (tx, rx) = if local & remote & ADVERTISE_PAUSE != 0 {
++            (true, true)
++        } else if local & remote & ADVERTISE_ASYM != 0 {
++            (remote & ADVERTISE_PAUSE != 0, local & ADVERTISE_PAUSE != 0)
++        } else {
++            (false, false)
++        };
++        let mut flow = 0;
++        if tx {
++            flow |= FLOW_TX_FCEN | FLOW_PAUSE_TIME;
++        }
++        if rx {
++            flow |= FLOW_RX_FCEN;
++        }
++        self.write(FCT_FLOW, if tx { FCT_FLOW_HS } else { 0 })?;
++        self.write(FLOW, flow)?;
++        Ok(match (tx, rx) {
++            (true, true) => "on",
++            (true, false) => "send only",
++            (false, true) => "obey only",
++            (false, false) => "off",
++        })
++    }
++
+     fn read(&mut self, reg: u16) -> Result<u32, Error> {
+         let d = self.bus.request(self.f.address, self.f.max_packet0, self.f.speed, 0xC0, REQ_READ_REG, 0, reg, 4)?;
+         Ok(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
+@@ -349,7 +389,8 @@ pub fn init(
+     let start = Instant::now();
+     let link = loop {
+         if r.link()? {
+-            println!("dwc2d: LAN78xx link up after {} ms", start.elapsed().as_millis());
++            let flow = r.update_flow()?;
++            println!("dwc2d: LAN78xx link up after {} ms, flow control {flow}", start.elapsed().as_millis());
+             break true;
+         }
+         if start.elapsed() >= link_wait {
+@@ -368,6 +409,11 @@ pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
+     Regs { bus, f }.link()
+ }
+ 
++/// Set flow control from the negotiated result, after a link came up.
++pub fn update_flow(bus: &mut Bus, f: &Lan78xxFunction) -> Result<&'static str, Error> {
++    Regs { bus, f }.update_flow()
++}
++
+ /// Receive frames for `mac`: the address the network stack uses, when the
+ /// adapter takes over from another one.
+ pub fn set_mac(bus: &mut Bus, f: &Lan78xxFunction, mac: [u8; 6]) -> Result<(), Error> {
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index a865ba0..1095983 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -144,7 +144,16 @@ impl UsbNet {
+             if let Ok(now) = now {
+                 if now != *link {
+                     let state = if now { "up" } else { "down" };
+-                    println!("dwc2d: link {state} on the {name} at address {address}");
++                    // The LAN7800 sets flow control from what the link
++                    // partner advertised this time (#661).
++                    let flow = match adapter {
++                        Adapter::Lan78xx(a) if now => match lan78xx::update_flow(bus, a.function()) {
++                            Ok(flow) => format!(", flow control {flow}"),
++                            Err(err) => format!(", flow control: {err:?}"),
++                        },
++                        _ => String::new(),
++                    };
++                    println!("dwc2d: link {state} on the {name} at address {address}{flow}");
+                     *link = now;
+                 }
+             }
+-- 
+2.53.0
+
