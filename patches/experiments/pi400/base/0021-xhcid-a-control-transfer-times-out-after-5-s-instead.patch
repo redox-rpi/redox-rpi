@@ -1,0 +1,178 @@
+From f664158fd71a89ff84a9f124684bf460c240b38a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 19:42:27 +0000
+Subject: [PATCH] xhcid: a control transfer times out after 5 s instead of
+ holding up every device (#710)
+
+xhcid serves control transfers in its request loop, one after the other.
+On the Pi 400, a mouse whose report descriptor request never completed
+after a stalled SET_IDLE held up every other USB device, the built-in
+keyboard included, until the hub reported the mouse gone 60 s later
+(pi-tests row 620).
+
+Wait at most 5 s, as Linux does (USB_CTRL_GET_TIMEOUT). Then stop the
+default control endpoint, wait briefly for the Stopped event, move its
+dequeue pointer past the transfer and return ETIMEDOUT to the driver.
+The dequeue move is shared with the stall recovery.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme.rs | 117 ++++++++++++++++++++++++++-
+ 1 file changed, 115 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 77e03036..5aeed9b1 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -25,6 +25,11 @@ use std::{cmp, fmt, io, str};
+ use common::dma::Dma;
+ use common::io::Io;
+ use futures::executor::block_on;
++use std::future::Future;
++use std::pin::Pin;
++use std::sync::{Arc, Mutex};
++use std::task::{Context, Poll, Waker};
++use std::time::Duration;
+ use log::{debug, error, info, trace, warn};
+ use redox_scheme::scheme::SchemeSync;
+ use redox_scheme::{CallerCtx, OpenResult};
+@@ -34,7 +39,7 @@ use smallvec::SmallVec;
+ use syscall::schemev2::NewFdFlags;
+ use syscall::{
+     Error, Result, Stat, EACCES, EBADF, EBADFD, EBADMSG, EINVAL, EIO, EISDIR, ENOENT, ENOSYS,
+-    ENOTDIR, EOPNOTSUPP, EPROTO, ESPIPE, MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_RDWR,
++    ENOTDIR, EOPNOTSUPP, EPROTO, ESPIPE, ETIMEDOUT, MODE_CHR, MODE_DIR, MODE_FILE, O_DIRECTORY, O_RDWR,
+     O_STAT, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
+ };
+ 
+@@ -683,7 +688,36 @@ impl<const N: usize> Xhci<N> {
+             )
+         };
+ 
+-        let trbs = future.await;
++        // xhcid serves control transfers in its request loop, one after the
++        // other: a transfer that never completes would hold up every other
++        // USB device (#710). Give up after CONTROL_TIMEOUT, as Linux does
++        // (USB_CTRL_GET_TIMEOUT), stop the endpoint and skip the transfer.
++        let mut future = Box::pin(future);
++        let trbs = match futures::future::select(future.as_mut(), Deadline::new(CONTROL_TIMEOUT)).await {
++            futures::future::Either::Left((trbs, _)) => trbs,
++            futures::future::Either::Right(((), _)) => {
++                warn!(
++                    "port {}: {} timed out after {} s, stopping endpoint 0",
++                    port_num,
++                    name,
++                    CONTROL_TIMEOUT.as_secs()
++                );
++                if let Err(err) = self.stop_default_control_endpoint(port_num).await {
++                    warn!("port {}: endpoint 0 not stopped: {}", port_num, err);
++                }
++                // The stopped transfer ends with a Stopped event; wait for it
++                // briefly so that its waiter is not left behind.
++                let stopped =
++                    futures::future::select(future.as_mut(), Deadline::new(STOP_WAIT)).await;
++                if let futures::future::Either::Right(_) = stopped {
++                    warn!("port {}: no event for the stopped {}", port_num, name);
++                }
++                if let Err(err) = self.skip_default_control_transfer(port_num).await {
++                    warn!("port {}: endpoint 0 dequeue not moved: {}", port_num, err);
++                }
++                return Err(Error::new(ETIMEDOUT));
++            }
++        };
+         let event_trb = trbs.event_trb;
+         let status_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
+ 
+@@ -2548,6 +2582,32 @@ impl<const N: usize> Xhci<N> {
+             })
+             .await;
+         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)?;
++        self.skip_default_control_transfer(port_num).await
++    }
++    /// Stop Endpoint on the default control endpoint (DCI 1), for a control
++    /// transfer that did not complete in time.
++    async fn stop_default_control_endpoint(&self, port_num: PortId) -> Result<()> {
++        let slot = self
++            .port_states
++            .get(&port_num)
++            .ok_or(Error::new(EBADFD))?
++            .slot;
++        let (event_trb, command_trb) = self
++            .execute_command(|trb, cycle| {
++                trb.stop_endpoint(slot, 1, false, cycle);
++            })
++            .await;
++        handle_event_trb("STOP_ENDPOINT", &event_trb, &command_trb)
++    }
++    /// Set the dequeue pointer of the halted or stopped default control
++    /// endpoint to the enqueue pointer: past the transfer that stalled or
++    /// timed out, so the next request starts on a clean ring.
++    async fn skip_default_control_transfer(&self, port_num: PortId) -> Result<()> {
++        let slot = self
++            .port_states
++            .get(&port_num)
++            .ok_or(Error::new(EBADFD))?
++            .slot;
+         // `restart_endpoint` and `set_tr_deque_ptr` look the endpoint up in
+         // the configuration, where endpoint 0 is not; DCI 1 is its index.
+         let deque_ptr_and_cycle = {
+@@ -2993,3 +3053,56 @@ where
+         a / b
+     }
+ }
++
++/// How long a control transfer may take (Linux: USB_CTRL_GET_TIMEOUT).
++const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
++/// How long to wait for the event of a transfer stopped after its timeout.
++const STOP_WAIT: Duration = Duration::from_secs(1);
++
++/// A future that is ready once `duration` has passed. A thread sleeps and
++/// wakes the task; xhcid's executor (block_on) has no timer of its own.
++struct Deadline {
++    duration: Duration,
++    shared: Arc<Mutex<(bool, Option<Waker>)>>,
++    started: bool,
++}
++
++impl Deadline {
++    fn new(duration: Duration) -> Self {
++        Deadline {
++            duration,
++            shared: Arc::new(Mutex::new((false, None))),
++            started: false,
++        }
++    }
++}
++
++impl Future for Deadline {
++    type Output = ();
++    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
++        {
++            let mut shared = self.shared.lock().unwrap();
++            if shared.0 {
++                return Poll::Ready(());
++            }
++            shared.1 = Some(cx.waker().clone());
++        }
++        if !self.started {
++            self.started = true;
++            let shared = Arc::clone(&self.shared);
++            let duration = self.duration;
++            std::thread::spawn(move || {
++                std::thread::sleep(duration);
++                let waker = {
++                    let mut shared = shared.lock().unwrap();
++                    shared.0 = true;
++                    shared.1.take()
++                };
++                if let Some(waker) = waker {
++                    waker.wake();
++                }
++            });
++        }
++        Poll::Pending
++    }
++}
+-- 
+2.53.0
+
