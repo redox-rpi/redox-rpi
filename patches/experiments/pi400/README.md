@@ -15,6 +15,8 @@ Ran on a real Pi 400 on 2026-11-10: network boot to the login prompt.
   keyboard included, because `xhcid` serves control transfers one after
   the other (#710, pi-tests row 620). The trigger, `SET_IDLE` sent to a
   mouse that stalls it, is gone in `patches/base/0124`.
+- `base/0022`: `usbhubd` tries a port status request again on the next
+  pass instead of ending when one fails (pi-tests row 623).
 - The external-abort fix (#311) is on main as `patches/kernel/0051`.
 
 The root filesystem runs from RAM (`bootloader-live.efi`), as with network
