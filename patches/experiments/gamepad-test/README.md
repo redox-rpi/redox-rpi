@@ -46,7 +46,7 @@ gamepad-test: controller 4: axis X = -32767          | held START | axes X -3276
 ```
 
 Ctrl-C quits. It reads inputd's `controllers` handle
-(`/scheme/input/controllers`, base patch `0098`), which gets the
+(`/scheme/input/controllers`, base patch `0117`), which gets the
 controller events of all devices whichever VT is in front, and no keys.
 Without that patch it says so and exits.
 
