@@ -228,8 +228,8 @@ place these rules are written down; other pages link here.
 
 | Who | Merges | Never |
 |---|---|---|
-| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code), PRs by the Quality session, RFCs | — |
-| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs | its own PRs (it wrote or pushed to them); a PR that also touches image content |
+| Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code); in [apps](https://github.com/redox-rpi/apps), every PR that changes what users get (recipes and their patches, `os-release`); PRs by the Quality session, RFCs | — |
+| Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs; in apps, build scripts and CI that change no package content | its own PRs (it wrote or pushed to them); a PR that also touches image content or package content |
 | Project lead | docs-only PRs | code PRs |
 
 Docs need no pull request: anyone on the team may push changes to docs
