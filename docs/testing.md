@@ -142,7 +142,7 @@ failed: fix it before the row. The checks:
 | waitpid | #386 | `waitpid` while only default-action signals arrive returns the child, never EINTR (needs the experiment tcc) |
 | sig-pipe | #205 | `check.ion` prints `SIGREPRO: pass` (experiments sig-pipe and tcc) |
 | scanf-pipe | #338 | `check.ion` passes for its own pipe, a file and a shell pipe (experiments scanf-pipe and tcc) |
-| kill-time | #405 | SIGTERM and SIGKILL end a process within 1 s whether it sleeps, loops, is blocked in `read()` or in a write to `/scheme/audio`, or has an SDL-style worker thread with SIGTERM blocked (experiments kill-time and tcc) |
+| kill-time | #405 | SIGTERM and SIGKILL end a process within 1 s whether it sleeps, loops, is blocked in `read()` or in a write to `/scheme/audio`, or has an SDL-style worker thread with SIGTERM blocked (experiments kill-time and tcc); the case `TERM audio` is reported but does not fail the check until #660 is fixed |
 | tcc | REQ-TCC-1 crit. 5, #247 | `/usr/share/tcc-tests/run.ion` reaches `TCC-TEST done`; hello dynamic, `tcc -run`, the `hallo.c` shebang script (exit status 42), bench, self-hosting give their output; `-static` and bench-gcc not judged (experiment tcc) |
 | dns | #358, #374, REQ-NET-7 crit. 3 | name server from DHCP; unknown name, fully qualified and short: "Name does not resolve" within 1 s (ion's `time` on the guest) |
 | dns-lan | REQ-NET-7 crit. 1 | with `--lan-name`: a LAN host's full name (with a host part, not the bare domain) and its short form each resolve within 2 s |
