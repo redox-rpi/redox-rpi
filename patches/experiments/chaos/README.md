@@ -1,7 +1,9 @@
 # Experiment: chaos, fault injection and recovery checks
 
 Issue [#196](https://github.com/redox-rpi/redox-rpi/issues/196). Adds
-[`tools/chaos`](../../../tools/chaos) to the image: a stressor in C, built
+[`tools/chaos`](../../../tools/chaos) to the image (a test experiment, `config/test-experiments.conf`: every
+test image has it for the `chaos` check of `scripts/regression-set.py`, #677;
+releases never do): a stressor in C, built
 statically against our relibc, so it also exercises relibc's C side. The
 host side is [`scripts/chaos-host.py`](../../../scripts/chaos-host.py).
 

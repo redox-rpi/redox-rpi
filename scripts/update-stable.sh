@@ -77,6 +77,8 @@ PI="$REDOX_PI"
 SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
+# Minutes of chaos in QEMU before the Pi test (#677); 0 leaves it out.
+CHAOS_MINUTES="${CHAOS_MINUTES:-15}"
 ISSUE_TITLE="Nightly: main fails on the Pi"
 # Seconds from the reset to "redox-rpi: network boot", and to the login prompt
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
@@ -314,6 +316,23 @@ report="$(mktemp)"
 output="$(mktemp)"
 netrec="$(mktemp)"
 trap 'rm -f "$report" "$output" "$netrec" "$0"' EXIT
+# Chaos in QEMU (#677): the new image under chaos with no memory reserve,
+# CHAOS_MINUTES minutes, before the Pi test. Reported, never fails the night
+# (QEMU first; the 3B+ follows through a pi-tests row once it is stable).
+if [ "$CHAOS_MINUTES" -gt 0 ] && grep -q '"chaos"' "$manifest"; then
+    log "chaos in QEMU, $CHAOS_MINUTES min"
+    chaos_out="build/regression/chaos-$(date -u +%Y%m%dT%H%M%S)"
+    mkdir -p build/regression
+    DEVSH_PORT=12731 SSH_PORT=12732 timeout $((CHAOS_MINUTES * 60 + 900)) scripts/regression-qemu.sh \
+        --image "$image" --manifest "$manifest" --out "$chaos_out" --only chaos \
+        --chaos-minutes "$CHAOS_MINUTES" > "$chaos_out.log" 2>&1 || true
+    if [ -s "$chaos_out/report.md" ]; then
+        sed 's/^## Regression set/## Chaos in QEMU, regression set/' "$chaos_out/report.md" >> "$report"
+        log "chaos in QEMU: $(grep -E '^(PASS|FAIL|SKIP) chaos' "$chaos_out.log" | cut -c1-200)"
+    else
+        log "chaos in QEMU gave no report, see $chaos_out.log"
+    fi
+fi
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0

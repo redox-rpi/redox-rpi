@@ -7,6 +7,7 @@ Usage:
                               [--tcp-host <ip>] [--tcp-mib 4]
                               [--dead-dns <ip>] [--lan-name <name>]
                               [--outside-name <name>] [--desktop]
+                              [--chaos-minutes N] [--chaos-seed S]
                               [--report <file>] [--only <check>]...
 
 Runs, through devshd, checks for regressions we already had, each named
@@ -89,6 +90,16 @@ Checks, in this order:
                 caller reboots before anything else (regression-qemu.sh
                 ends QEMU; a Pi row reboots). Keys and audible sound stay a
                 person step (rc test)
+  chaos         #677, #673, only with --chaos-minutes N (or --only chaos,
+                then 15), after tcp in a new devsh session: tools/chaos
+                (experiment chaos, a test experiment) with --mem-reserve 0
+                and the kinds CHAOS_KINDS, in batches of CHAOS_BATCH rounds
+                until N minutes are used. Pass: every round ok and devsh
+                answers after every batch. A memory round that the kernel
+                ends with SIGKILL (its out-of-memory kill, kernel 0056) is
+                ok: that is the expected end without a reserve. Each failed
+                round's repeat command is in the detail. Skip without
+                /usr/bin/chaos
   serial        with --serial-log: no kernel panic, "panicked at",
                 "RELIBC PANIC", "UNHANDLED EXCEPTION" or "main loop stuck"
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
@@ -121,6 +132,9 @@ SERIAL_BAD = re.compile(r"kernel panic|panicked at|RELIBC PANIC|UNHANDLED EXCEPT
 SERIAL_PCID = re.compile(r"^(pcid|rtcd)\b|\b(pcid|rtcd): ", re.M)
 ANSI_TEXT = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 RAW_MAX = 200  # lines of raw output kept per failed check (the last ones)
+CHAOS_KINDS = "memory,procs,threads,fds,signals"
+CHAOS_BATCH = 5  # rounds per chaos run; each round has chaos's 60 s deadline
+CHAOS_ROUND = re.compile(r"round (\d+) (ok|FAIL kind=(\S+): ([^;]*?)(?:, health check failed)? \(\d+ ms\); repeat: (.*))")
 
 # One line of C (no #include, so ion's echo can write it): the parent waits
 # for child c (exits 7 after 3 s) while child s sends it SIGWINCH (28) and
@@ -532,6 +546,61 @@ def check_gamepad_console(sh, check, args):
     check("gamepad-console", ok, detail)
 
 
+def chaos_batch(sh, seed):
+    """(rounds, failed round lines) of one chaos run, or None when devsh
+    gave no end of the run."""
+    out = sh.run(f"chaos --mem-reserve 0 --kind {CHAOS_KINDS} --rounds {CHAOS_BATCH} --seed {seed} --quiet; "
+                 "echo CHAOS-RC $?", timeout=CHAOS_BATCH * 75 + 60)
+    if not any(l.startswith("CHAOS-RC ") for l in out):
+        return None
+    rounds, failed = 0, []
+    for line in out:
+        m = CHAOS_ROUND.search(line)
+        if not m:
+            if "health check fails before the first round" in line:
+                failed.append(f"seed {seed}: health check failed before the first round")
+            continue
+        rounds += 1
+        if m.group(2) == "ok":
+            continue
+        kind, why, repeat = m.group(3), m.group(4), m.group(5)
+        health = "health check failed" in line
+        if kind == "memory" and why == "killed by signal 9" and not health:
+            continue  # the kernel's out-of-memory kill: expected without a reserve
+        failed.append(f"{kind}: {why}" + (", health check failed" if health else "") + f" ({repeat.strip()})")
+    return rounds, failed
+
+
+def check_chaos(check, args):
+    sh = pi_test.Shell(args.host, args.port)
+    try:
+        if not has(sh, "/usr/bin/chaos"):
+            check("chaos", None, "no /usr/bin/chaos (experiment chaos)")
+            return
+        minutes = args.chaos_minutes or 15
+        seed = args.chaos_seed if args.chaos_seed is not None else int(time.time()) & 0xFFFFFFFF
+        deadline, batch, rounds, failed, lost = time.time() + 60 * minutes, 0, 0, [], False
+        while time.time() < deadline:
+            res = chaos_batch(sh, seed + batch)
+            batch += 1
+            if res is None:
+                lost = True
+                break
+            rounds += res[0]
+            failed += res[1]
+            if not any(l.strip() == "CHAOS-ALIVE" for l in sh.run("echo CHAOS-ALIVE", timeout=60)):
+                lost = True
+                break
+    finally:
+        sh.close()
+    detail = (f"{rounds} rounds in {batch} runs of {CHAOS_BATCH} ({CHAOS_KINDS}, --mem-reserve 0), "
+              f"seeds {seed:#x} to {seed + batch - 1:#x}; ")
+    if lost:
+        detail += f"devsh lost in the run with seed {seed + batch - 1:#x}; "
+    detail += (f"{len(failed)} failed: " + "; ".join(failed[:4])) if failed else "no round failed"
+    check("chaos", not failed and not lost and rounds > 0, detail, raw=failed)
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -557,6 +626,8 @@ def main():
     ap.add_argument("--outside-name", help="a name outside the LAN for REQ-NET-7 criterion 2")
     ap.add_argument("--desktop", action="store_true",
                     help="also run sopwith: starts the desktop, which then runs until the next reboot")
+    ap.add_argument("--chaos-minutes", type=int, help="run the chaos check for this many minutes (#677)")
+    ap.add_argument("--chaos-seed", type=lambda s: int(s, 0), help="first chaos seed (default: the time)")
     ap.add_argument("--report")
     ap.add_argument("--only", action="append", help="run only these checks")
     args = ap.parse_args()
@@ -576,6 +647,8 @@ def main():
     def want(name):
         if name == "sopwith":  # opt-in: it leaves Orbital running
             return args.desktop or bool(args.only and name in args.only)
+        if name == "chaos":  # opt-in: it takes minutes
+            return bool(args.chaos_minutes) or bool(args.only and name in args.only)
         return not args.only or name in args.only
 
     t0 = time.time()
@@ -612,6 +685,12 @@ def main():
                     check(name, False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
     finally:
         sh.close()
+    # In its own session (nothing follows tcp in one), before sopwith.
+    if want("chaos"):
+        try:
+            check_chaos(check, args)
+        except Exception as e:
+            check("chaos", False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
     # Last, in its own session (nothing follows tcp in one): it leaves
     # Orbital running, so the caller reboots afterwards.
     if want("sopwith"):
