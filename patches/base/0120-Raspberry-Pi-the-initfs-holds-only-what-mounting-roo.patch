@@ -3,21 +3,24 @@ From: stephan-xyz <stephan@zehrer.xyz>
 Date: Tue, 24 Nov 2026 11:59:37 +0000
 Subject: [PATCH] Raspberry Pi: the initfs holds only what mounting root needs
 
-The initfs stays in memory until power-off (redox-rpi#642). On the Pi
-(BOARD=raspi3bp) it no longer holds ACPI, PCI, NVMe, virtio, rtcd, hwd,
-the Arasan SD driver or PS/2, none of which start there. GPIO, I2C, SPI,
-sound and the DWC2 USB driver start from the root filesystem: their
-programs go to /usr/bin, their units to /usr/lib/init.d, and netstack
-and audiod wait for them.
+The initfs stays in memory until power-off (redox-rpi#642).
+
+- Its programs are stripped (cookbook strips the package's programs, but
+  the initfs is packed before that): about 25 -> 16 MiB.
+- On the Pi (BOARD=raspi3bp) it no longer holds ACPI, PCI, NVMe, virtio,
+  rtcd, hwd, the Arasan SD driver or PS/2, none of which start there.
+- GPIO, I2C, SPI, sound and the DWC2 USB driver start from the root
+  filesystem: their programs go to /usr/bin, their units to
+  /usr/lib/init.d, and netstack and audiod wait for them.
 ---
- Makefile | 33 +++++++++++++++++++++++++++++++++
- 1 file changed, 33 insertions(+)
+ Makefile | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
 
 diff --git a/Makefile b/Makefile
-index 29a06463..7bba5775 100644
+index 29a06463..664d29f8 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -34,6 +34,25 @@ ifeq ($(TARGET),aarch64-unknown-redox)
+@@ -34,6 +34,27 @@ ifeq ($(TARGET),aarch64-unknown-redox)
  	INITFS_BINS += bcm2835-sdhcid bcm2835-sdhostd dwc2d
  endif
  
@@ -40,10 +43,22 @@ index 29a06463..7bba5775 100644
 +	BASE_BINS += bcm2835-sdhcid $(PI_ROOT_BINS)
 +endif
 +
++INITFS_STRIP ?= $(TARGET)-strip
++
  # For testing/benchmarking only
  # BASE_BINS += drawbench
  
-@@ -120,6 +139,20 @@ install-base: base $(SYSROOT)/bin/redoxfs
+@@ -116,10 +137,30 @@ install-base: base $(SYSROOT)/bin/redoxfs
+ 		cp -v "$(TARGET_DIR)/$$bin" "$(BUILD_DIR)/initfs/lib/drivers"; \
+ 	done
+ 	cp "$(SYSROOT)/bin/redoxfs" "$(BUILD_DIR)/initfs/bin"
++# redox-rpi#642: cookbook strips the programs of the package, but the initfs
++# is packed before that; strip its programs here (about 25 -> 16 MiB)
++ifeq ($(COOKBOOK_NOSTRIP),)
++	find "$(BUILD_DIR)/initfs/bin" "$(BUILD_DIR)/initfs/lib/drivers" -type f \
++		-exec $(INITFS_STRIP) --strip-unneeded {} +
++endif
+ # Copy initfs config files
  	@mkdir -p "$(BUILD_DIR)/initfs/lib/init.d" "$(BUILD_DIR)/initfs/lib/pcid.d"
  	cp "$(SRC_DIR)/init.initfs.d"/* "$(BUILD_DIR)/initfs/lib/init.d/"
  	cp "$(SRC_DIR)/drivers/initfs.toml" "$(BUILD_DIR)/initfs/lib/pcid.d/initfs.toml"
