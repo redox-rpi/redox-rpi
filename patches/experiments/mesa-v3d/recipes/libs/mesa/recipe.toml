@@ -26,6 +26,12 @@ DYNAMIC_INIT
 grep -q "sys/ioctl.h" "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h" || \\
     sed -i '0,/^#include <stdint.h>/s//#include <stdint.h>\\n#include <sys\\/ioctl.h>/' "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h"
 
+# Spike (#669): keep building after errors, so one run lists every file
+# that does not compile.
+printf '#!/bin/sh\\nexec "%s" -k 0 "$@"\\n' "${COOKBOOK_NINJA}" > ninja-k0
+chmod +x ninja-k0
+COOKBOOK_NINJA="$(pwd)/ninja-k0"
+
 #TODO: Should be CPPFLAGS but cookbook_meson isn't reading it
 export CFLAGS+=" -DHAVE_PTHREAD=1 -I${COOKBOOK_SYSROOT}/include/libdrm"
 export LLVM_CONFIG="${TARGET}-llvm-config"
