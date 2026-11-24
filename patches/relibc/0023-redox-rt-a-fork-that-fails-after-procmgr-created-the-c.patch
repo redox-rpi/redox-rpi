@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 24 Nov 2026 16:34:35 +0000
+Subject: [PATCH] redox-rt: a fork that fails after procmgr created the child
+ ends the child
+
+fork_inner creates the child through procmgr first (fork, thread-0),
+then copies the file table and clones the address space. An error in
+those steps (ENOMEM from the address space clone, EMFILE, ...) returned
+with ? and left the never-started child in the process list for good;
+a later waitpid(-1) of the caller would have got it (redox-rpi#707).
+Now fork_inner kills that child with SIGKILL and reaps it before it
+returns the error.
+---
+ redox-rt/src/proc.rs | 29 ++++++++++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/redox-rt/src/proc.rs b/redox-rt/src/proc.rs
+index 9119fc62..37e75b31 100644
+--- a/redox-rt/src/proc.rs
++++ b/redox-rt/src/proc.rs
+@@ -7,7 +7,7 @@ use crate::{
+     read_proc_meta,
+     sys::{fstat, open, sys_call, sys_call_wo},
+ };
+-use redox_protocols::protocol::{O_CLOEXEC, ProcCall, ThreadCall};
++use redox_protocols::protocol::{O_CLOEXEC, ProcCall, ThreadCall, WaitFlags};
+ 
+ use alloc::{boxed::Box, vec};
+ 
+@@ -984,6 +984,32 @@ pub enum ForkArgs<'a> {
+ }
+ 
+ pub fn fork_inner(initial_rsp: *mut usize, args: &ForkArgs) -> Result<usize> {
++    let mut child = None;
++    let result = fork_inner_steps(initial_rsp, args, &mut child);
++    // procmgr created the child before the steps that can fail (file table copy, address
++    // space clone: ENOMEM, EMFILE). It never started; end it and reap it here, or it stays
++    // in the process list for good and a later waitpid(-1) of the caller would get it
++    // (redox-rpi#707). kill() through procmgr refuses a process whose signal handler is not
++    // set up yet, so the child's only thread is killed through its status handle; procmgr
++    // then sees the thread die and the process exit.
++    if let (Err(_), Some((pid, status_fd)), ForkArgs::Managed) = (&result, child, args) {
++        if write_usizes(&status_fd, [syscall::flag::ContextVerb::ForceKill as usize]).is_ok() {
++            let mut status = 0;
++            let _ = crate::sys::sys_waitpid(
++                crate::sys::WaitpidTarget::SingleProc { pid },
++                &mut status,
++                WaitFlags::empty(),
++            );
++        }
++    }
++    result
++}
++
++fn fork_inner_steps(
++    initial_rsp: *mut usize,
++    args: &ForkArgs,
++    child: &mut Option<(usize, FdGuardUpper)>,
++) -> Result<usize> {
+     let (cur_filetable_fd, new_filetable_fd, new_proc_fd, new_thr_fd, new_pid);
+ 
+     {
+@@ -999,6 +1025,7 @@ pub fn fork_inner(initial_rsp: *mut usize, args: &ForkArgs) -> Result<usize> {
+         new_proc_fd = proc_fd;
+         new_thr_fd = thr_fd;
+         new_pid = pid;
++        *child = Some((pid, new_thr_fd.dup_into_upper(b"status")?));
+ 
+         // Copy existing files into new file table, but do not reuse the same file table (i.e. new
+         // parent FDs will not show up for the child).
+-- 
+2.53.0
+

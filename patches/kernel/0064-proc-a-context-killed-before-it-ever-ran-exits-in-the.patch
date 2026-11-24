@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 24 Nov 2026 17:21:34 +0000
+Subject: [PATCH] proc: a context killed before it ever ran exits in the kernel
+
+A context made through "new-context" starts with an empty kernel
+function and then enters user space with the registers user space set.
+When it was force-killed before anyone set them up, it entered user
+space with all registers zero and died of an unhandled exception at
+PC 0, with a register dump in the log, and procmgr saw an exception
+exit instead of SIGKILL.
+
+redox-rt does this on purpose since redox-rpi#707: when a fork fails
+after procmgr created the child, it force-kills the child's thread.
+The first kernel function now checks being_sigkilled and exits the
+context there.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/scheme/proc.rs | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index 1b817110..7f9acf7f 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -309,7 +309,20 @@ impl ProcScheme {
+                 }
+             },
+             OpenTy::Auth => {
+-                extern "C" fn ret() {}
++                // First kernel code of a new context, run before it enters user space. A
++                // context that was force-killed before it ever ran (redox-rt kills the child
++                // of a fork that failed half-way, redox-rpi#707) exits here, instead of
++                // entering user space with zeroed registers and dying of an exception at PC 0.
++                extern "C" fn ret() {
++                    if crate::percpu::PercpuBlock::current()
++                        .switch_internals
++                        .being_sigkilled
++                        .get()
++                    {
++                        let mut token = unsafe { CleanLockToken::new() };
++                        crate::syscall::process::exit_this_context(None, &mut token);
++                    }
++                }
+                 let context = match operation_str.ok_or(Error::new(ENOENT))? {
+                     "new-context" => {
+                         let id = NonZeroUsize::new(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+-- 
+2.53.0
+
