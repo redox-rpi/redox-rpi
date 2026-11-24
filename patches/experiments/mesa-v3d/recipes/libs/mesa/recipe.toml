@@ -20,10 +20,11 @@ dev-dependencies = [
 script = """
 DYNAMIC_INIT
 
-# Spike (#669): Mesa's own DRM uapi header takes the BSD path on Redox and
-# misses _IOWR; relibc has it in sys/ioctl.h, as the libdrm port uses.
-grep -q "__redox__" "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h" || \\
-    sed -i 's|#include <sys/ioccom.h>|#if defined(__redox__)\\n#include <sys/ioctl.h>\\n#else\\n#include <sys/ioccom.h>\\n#endif|' "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h"
+# Spike (#669): Mesa's own DRM uapi header leaves out sys/ioccom.h on
+# Redox but includes nothing instead, so _IOWR is missing; relibc has it in
+# sys/ioctl.h, which the libdrm port includes.
+grep -q "sys/ioctl.h" "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h" || \\
+    sed -i '0,/^#include <stdint.h>/s//#include <stdint.h>\\n#include <sys\\/ioctl.h>/' "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h"
 
 #TODO: Should be CPPFLAGS but cookbook_meson isn't reading it
 export CFLAGS+=" -DHAVE_PTHREAD=1 -I${COOKBOOK_SYSROOT}/include/libdrm"
