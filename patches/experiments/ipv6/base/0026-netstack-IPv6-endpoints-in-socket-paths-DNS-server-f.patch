@@ -1,8 +1,8 @@
-From a808209b46d3dd7cb81e0a42531afcf7ce6ad335 Mon Sep 17 00:00:00 2001
+From 24c189f3c216c4cca30ac25d00f8f7f2dd5726e5 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:58:42 +0000
-Subject: [PATCH 26/30] netstack: IPv6 endpoints in socket paths, DNS server
- from  router advertisements
+Subject: [PATCH] netstack: IPv6 endpoints in socket paths, DNS server from
+ router advertisements
 
 Socket paths take and show IPv6 endpoints in brackets ([fe80::1]:5353),
 so programs can open IPv6 UDP and TCP sockets. The RDNSS option of a
@@ -18,10 +18,10 @@ router advertisement (RFC 8106) gives an IPv6 name server, shown in
  6 files changed, 91 insertions(+), 43 deletions(-)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 1874842..112982f 100644
+index 064b84f..b60c8cd 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
-@@ -44,6 +44,7 @@ struct Ipv6State {
+@@ -45,6 +45,7 @@ struct Ipv6State {
      link_local: Option<Ipv6Address>,
      global: Option<Ipv6Cidr>,
      router: Option<Ipv6Address>,
@@ -29,7 +29,7 @@ index 1874842..112982f 100644
      solicitations: u32,
      next_solicitation: Instant,
  }
-@@ -54,6 +55,7 @@ impl Default for Ipv6State {
+@@ -55,6 +56,7 @@ impl Default for Ipv6State {
              link_local: None,
              global: None,
              router: None,
@@ -37,7 +37,7 @@ index 1874842..112982f 100644
              solicitations: 0,
              next_solicitation: Instant::ZERO,
          }
-@@ -85,6 +87,27 @@ fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
+@@ -87,6 +89,27 @@ fn eui64_address(prefix: Ipv6Address, mac: EthernetAddress) -> Ipv6Address {
  }
  
  /// ff02::1:ffXX:XXXX, where NDP asks for the owner of `addr`.
@@ -65,7 +65,7 @@ index 1874842..112982f 100644
  fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
      let a = addr.octets();
      Ipv6Address::from([
-@@ -384,9 +407,12 @@ impl EthernetLink {
+@@ -392,9 +415,12 @@ impl EthernetLink {
                          });
                      }
                  }
@@ -80,7 +80,7 @@ index 1874842..112982f 100644
                  );
              }
              _ => {}
-@@ -749,6 +775,7 @@ impl LinkDevice for EthernetLink {
+@@ -766,6 +792,7 @@ impl LinkDevice for EthernetLink {
              link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
              global: self.ipv6.global,
              router: self.ipv6.router,
@@ -89,7 +89,7 @@ index 1874842..112982f 100644
      }
  }
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index c91c2d4..a1c27be 100644
+index 96b30f2..d89264f 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
 @@ -13,6 +13,8 @@ pub struct Ipv6Config {
@@ -102,7 +102,7 @@ index c91c2d4..a1c27be 100644
  
  /// Represent a link layer device (eth0, loopback...)
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index 60d75fa..4f15528 100644
+index 3a1ac03..26dd7b9 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
 @@ -15,7 +15,8 @@ use smoltcp::phy::Tracer;
@@ -115,7 +115,7 @@ index 60d75fa..4f15528 100644
  };
  use syscall::data::TimeSpec;
  use syscall::{self, Error as SyscallError};
-@@ -413,20 +414,48 @@ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Resu
+@@ -416,20 +417,48 @@ fn post_fevent(socket: &Socket, id: usize, flags: usize) -> syscall::error::Resu
  }
  
  fn parse_endpoint(socket: &str) -> IpListenEndpoint {
@@ -176,7 +176,7 @@ index 60d75fa..4f15528 100644
      until: Option<TimeSpec>,
      cancelling: bool,
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index dce9fa2..a6655aa 100644
+index d0c863f..043c766 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
 @@ -78,6 +78,16 @@ fn mk_root_node(

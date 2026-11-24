@@ -1,7 +1,7 @@
-From b6fd3b40e800ac1bb212c647fa0299d1fd25e76a Mon Sep 17 00:00:00 2001
+From 26c293f229c7b5f52f81d09db8f03055ea5cb980 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Fri, 20 Nov 2026 21:59:44 +0000
-Subject: [PATCH 30/30] netstack: IPv6 all-nodes and solicited-node MACs in the
+Subject: [PATCH] netstack: IPv6 all-nodes and solicited-node MACs in the
  multicast filter
 
 Since base 0095 the LAN7800 filters multicast in hardware with the list
@@ -18,10 +18,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 9 insertions(+)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index f5b42be..76ede30 100644
+index f751f75..866f63b 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
-@@ -802,6 +802,15 @@ impl LinkDevice for EthernetLink {
+@@ -819,6 +819,15 @@ impl LinkDevice for EthernetLink {
              let [_, b1, b2, b3] = group.octets();
              list.extend_from_slice(&[0x01, 0x00, 0x5e, b1 & 0x7f, b2, b3]);
          }

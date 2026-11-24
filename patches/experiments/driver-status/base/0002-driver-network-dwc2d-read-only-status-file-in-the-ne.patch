@@ -1,4 +1,4 @@
-From a973a154d1737386f9894871ab8549964dee4bba Mon Sep 17 00:00:00 2001
+From 597110180a02ba3a6afb80c4d32964c2c444a306 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 20 Nov 2026 08:39:09 +0000
 Subject: [PATCH] driver-network, dwc2d: read-only status file in the network
@@ -15,12 +15,12 @@ on the bus.
  3 files changed, 262 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/net/driver-network/src/lib.rs b/drivers/net/driver-network/src/lib.rs
-index 685b0358..a6de597c 100644
+index cf214d4..930b812 100644
 --- a/drivers/net/driver-network/src/lib.rs
 +++ b/drivers/net/driver-network/src/lib.rs
-@@ -36,6 +36,13 @@ pub trait NetworkAdapter {
-     fn set_multicast(&mut self, _addrs: Option<&[[u8; 6]]>) -> Result<()> {
-         Ok(())
+@@ -43,6 +43,13 @@ pub trait NetworkAdapter {
+     fn link_up(&mut self) -> bool {
+         true
      }
 +
 +    /// Text for the scheme's read-only `status` file: registers, link and
@@ -32,15 +32,15 @@ index 685b0358..a6de597c 100644
  }
  
  pub struct NetworkScheme<T: NetworkAdapter> {
-@@ -132,6 +139,7 @@ resource_scheme! {
-         Data(Data<T>),
+@@ -140,6 +147,7 @@ resource_scheme! {
          Mac(Mac<T>),
          Multicast(Multicast<T>),
+         Link(Link<T>),
 +        Status(Status<T>),
      }
  }
  
-@@ -159,7 +167,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+@@ -167,7 +175,7 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
  
      fn openat<'a>(
          &mut self,
@@ -49,9 +49,9 @@ index 685b0358..a6de597c 100644
          path: &str,
          _flags: usize,
          _fcntl_flags: u32,
-@@ -182,6 +190,13 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
-                 NetworkResource::Multicast(Multicast(PhantomData)),
-                 NewFdFlags::empty(),
+@@ -194,6 +202,13 @@ impl<T: NetworkAdapter> ResourceSync for SchemeRoot<T> {
+                 NetworkResource::Link(Link(PhantomData)),
+                 NewFdFlags::POSITIONED,
              ),
 +            "status" => match scheme_data.adapter.status() {
 +                Some(text) => (
@@ -63,7 +63,7 @@ index 685b0358..a6de597c 100644
              _ => return Err(Error::new(EINVAL)),
          };
  
-@@ -355,3 +370,54 @@ impl<T: NetworkAdapter> ResourceSync for Multicast<T> {
+@@ -416,3 +431,54 @@ impl<T: NetworkAdapter> ResourceSync for Link<T> {
          Ok(())
      }
  }
@@ -119,7 +119,7 @@ index 685b0358..a6de597c 100644
 +    }
 +}
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 4e26ae53..73bf5358 100644
+index 4e26ae5..73bf535 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -25,6 +25,47 @@ pub fn delay(d: Duration) {
@@ -201,7 +201,7 @@ index 4e26ae53..73bf5358 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 402a7a35..ebbe96b1 100644
+index 1095983..7cd6f13 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
 @@ -10,7 +10,10 @@ use std::fs::{File, OpenOptions};
@@ -258,7 +258,7 @@ index 402a7a35..ebbe96b1 100644
  /// The network adapters on the bus. The network stack sees one of them, the
  /// best by [`Adapter::rank`], and is moved to another when adapters are
  /// plugged in or removed or a link comes up or goes down.
-@@ -219,20 +258,123 @@ impl NetworkAdapter for UsbNet {
+@@ -229,17 +268,32 @@ impl NetworkAdapter for UsbNet {
      }
  
      fn read_packet(&mut self, buf: &mut [u8]) -> syscall::Result<Option<usize>> {
@@ -292,6 +292,10 @@ index 402a7a35..ebbe96b1 100644
 +                Ok(buf.len())
 +            }
          }
+     }
+ 
+@@ -255,6 +309,94 @@ impl NetworkAdapter for UsbNet {
+             .is_some_and(|(a, link)| *link || matches!(a, Adapter::Ecm(_)))
      }
  
 +    fn status(&mut self) -> Option<String> {
@@ -385,15 +389,15 @@ index 402a7a35..ebbe96b1 100644
      /// Kept for the event loop, which has the bus to program the adapter.
      fn set_multicast(&mut self, addrs: Option<&[[u8; 6]]>) -> syscall::Result<()> {
          self.multicast = addrs.map(<[_]>::to_vec);
-@@ -556,6 +698,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-         boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
+@@ -564,6 +706,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      }
+     net.refresh_links(&mut bus);
      println!("dwc2d: devices ready after {} ms", boot_start.elapsed().as_millis());
 +    update_devices(&bus);
      // The network stack keeps the address of the adapter it starts with.
      if let Some((adapter, _)) = net.adapters.iter().min_by_key(|(a, link)| a.rank(*link)) {
          if let Some(&(_, mac)) = macs.iter().find(|(a, _)| *a == adapter.address()) {
-@@ -626,6 +769,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -634,6 +777,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  let file = irq_file.as_mut().unwrap();
                  let mut irq = [0; 8];
                  if file.read(&mut irq).unwrap_or(0) == irq.len() {
@@ -401,7 +405,7 @@ index 402a7a35..ebbe96b1 100644
                      // tick() takes the received frame and clears the
                      // channel's interrupt; only then unmask the line.
                      scheme.tick().expect("dwc2d: network scheme failed");
-@@ -723,6 +867,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -731,6 +875,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  if let Some(m) = mouse.as_mut() {
                      m.log = aside::input_log();
                  }
