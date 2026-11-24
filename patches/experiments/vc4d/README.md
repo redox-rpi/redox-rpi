@@ -22,14 +22,18 @@ Not together with `--experiment rpi-fb` (`conflicts`): `rpi-fbd` would take
 the display first. Without it, `vesad` shows the boot framebuffer until
 `vc4d` starts (`/usr/lib/init.d/15_vc4d.service`, before Orbital).
 
-On the Pi 4 and 400 the log has `vc4d: irq probe:` lines: which display
-interrupts the firmware uses, read only (G1 step 1, before vc4d waits for the
-vertical blank on an interrupt). They need the pi400 kernel patch that ends a
-GIC interrupt for user space on the CPU that took it (PR #382).
+On the Pi 4 and 400, vc4d shows a waiting flip on pixel valve 2's vertical
+blank interrupt instead of a 4 ms timer (`vc4d: vblank:` lines count them),
+and `vc4d: irq probe:` lines show which display interrupts the firmware
+uses. Both need the pi400 kernel patch that ends a GIC interrupt for user
+space on the CPU that took it (PR #382). The Pi 400 needs a screen or
+`hdmi_force_hotplug=1` in `config.txt`; without HDMI the firmware sets up
+no HVS channel and vc4d leaves the display alone.
 
 Settings (environment from the bootloader): `VC4D=off` (vc4d does not
 start), `VC4D_FLIP=off` (no flips, direct scanout), `VC4D_CHECK=off` (no
-check before the handover), `VC4D_IRQ_PROBE=off`, `VC4D_LOG=1` (every
+check before the handover), `VC4D_IRQ_PROBE=off`, `VC4D_VBLANK=off`
+(the timer instead of the vertical blank), `VC4D_LOG=1` (every
 display list in the log).
 
 `desktop-check.py` checks the console and Orbital on vc4d without a person,
