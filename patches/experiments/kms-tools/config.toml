@@ -1,0 +1,11 @@
+# Experiment kms-tools (#728, test only): libdrm's test programs and
+# drm_info, with the primary node on vc4d's VT 7.
+
+[packages]
+"libdrm.tests" = {}
+drm-info = {}
+
+[[files]]
+path = "/dev/dri/card0"
+data = "/scheme/display.vc4/7"
+symlink = true
