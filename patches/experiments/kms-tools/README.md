@@ -6,6 +6,15 @@ libdrm against vc4d's KMS ioctls. Test only (`test-only`).
 - Packages `libdrm.tests` (libdrm's test programs: `modetest`, `modeprint`,
   `proptest`, `vbltest`, `drmdevice`) and `drm-info`, both upstream
   recipes as they are.
+- `redox-open.patch` for libdrm:
+  - `drmOpenDevice` opens the node and nothing else on Redox. Upstream
+    libdrm creates or replaces a node it cannot open or stat with
+    `mknod`, which made empty regular files `card1`–`card63` in
+    `/dev/dri` and, while vc4d was not up, replaced the `card0` link
+    (Test 652).
+  - The test programs' `-D` takes a device path (`/dev/dri/card0`) and
+    opens it directly. Upstream treats `-D` as a bus id for `drmOpen`,
+    which needs bus ids that Redox drivers do not have.
 - `/dev/dri/card0` links to `/scheme/display.vc4/7`, where libdrm looks
   for the primary node. driver-graphics serves one set of KMS state per
   virtual terminal, named by the path; 7 is a VT nothing else uses (the

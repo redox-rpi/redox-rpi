@@ -1,0 +1,39 @@
+--- source-old/xf86drm.c	2026-11-08 14:52:04.336399647 +0000
++++ source/xf86drm.c	2026-11-25 08:48:17.944816264 +0000
+@@ -885,6 +885,15 @@
+         devmode &= ~(S_IXUSR|S_IXGRP|S_IXOTH);
+     }
+ 
++#if defined(__redox__)
++    /* Device nodes are links to a driver's scheme: never create or replace
++     * them (mknod makes an empty file there). */
++    (void)st; (void)devmode;
++    fd = open(buf, O_RDWR | O_CLOEXEC);
++    drmMsg("drmOpenDevice: open result is %d, (%s)\n",
++           fd, fd < 0 ? strerror(errno) : "OK");
++    return fd >= 0 ? fd : -errno;
++#endif
+ #if !UDEV
+     if (stat(DRM_DIR_NAME, &st)) {
+         if (!isroot)
+--- source-old/tests/util/kms.c	2025-06-08 12:27:53.000000000 +0000
++++ source/tests/util/kms.c	2026-11-25 08:48:17.944914163 +0000
+@@ -103,7 +103,17 @@
+ 	int fd = -1;
+ 	drmVersionPtr version;
+ 
+-	if (module || device) {
++	if (device && device[0] == '/') {
++		/* A device path (Redox has no bus ids): open it directly. */
++		fd = open(device, O_RDWR | O_CLOEXEC);
++		if (fd < 0 || !drmIsKMS(fd)) {
++			fprintf(stderr, "failed to open KMS device '%s': %s\n",
++				device, fd < 0 ? strerror(errno) : "not a KMS device");
++			if (fd >= 0)
++				close(fd);
++			return -ENODEV;
++		}
++	} else if (module || device) {
+ 		fd = drmOpen(module, device);
+ 		if (fd < 0) {
+ 			fprintf(stderr, "failed to open device '%s' with busid '%s': %s\n",
