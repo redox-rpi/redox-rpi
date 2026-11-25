@@ -1,5 +1,5 @@
 # The [build] part of the recipe; scripts/build-image.sh adds [source].
-# prime-probe (#670, G4 step 2 spike): the V3D renders through EGL dma-buf
+# prime-probe (#670, G4 step 2): the V3D renders through EGL dma-buf
 # import straight into vc4d's dumb buffers, which SET_CRTC shows. Needs the
 # experiment v3d-prime (vc4d and v3dd with PRIME, relibc 0027).
 [build]

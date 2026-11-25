@@ -1,5 +1,5 @@
-# Experiment v3d-prime (#670, G4 step 2 spike, test only, do not merge until
-# the RFC decision): the V3D renders into vc4d's buffers. vc4d's buffers are
+# Experiment v3d-prime (#670, G4 step 2, test only): the V3D renders into
+# vc4d's buffers. vc4d's buffers are
 # exported as dma-buf fds and v3dd imports them. List it after vc4d,
 # v3dd, v3d-ioctl and mesa-v3d: its vc4d recipe replaces vc4d's.
 
