@@ -34,10 +34,10 @@ client too.
   - Dates are UTC. Without `timesync` the clock starts in 1970, so the
     folder names are only in order, not real dates.
   - Keys and passwords never go on the command line.
-- relibc `0044`: `getsockname` on a socket that is not bound or connected
-  yet returns `0.0.0.0:0`. netstack gives such a socket only its base path
-  (`/scheme/tcp/`), and relibc panicked with "missing address"; OpenSSH's
-  `ssh` client calls it before it connects, so every connection died.
+- Needs the default relibc patch `0028`: `getsockname` on a socket
+  that is not bound or connected yet returns `0.0.0.0:0`. Without it
+  relibc panics with "missing address", because OpenSSH's `ssh` client
+  calls it before it connects.
 
 ## Test
 
