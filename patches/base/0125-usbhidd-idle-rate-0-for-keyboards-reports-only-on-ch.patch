@@ -1,0 +1,54 @@
+From 48a45d39cf5c5a100a454dcf348f8fd61cdd263e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 03:19:02 +0000
+Subject: [PATCH] usbhidd: idle rate 0 for keyboards, reports only on change
+ (#721)
+
+SET_IDLE with duration 1 asked the keyboard to repeat its report every
+4 ms even when nothing changed: 250 transfers a second through xhcid per
+keyboard interface, and a pass of usbhidd's report loop for each. The
+report handler (rehid) drops values that did not change, so these
+reports never produced events; key repeat did not come from them. On a
+Pi 400 at idle, usbhidd and xhcid used 9 to 15 % of a core (pi-tests
+Test 637).
+
+Duration 0 (indefinite) is what Linux's usbhid and FreeBSD's ukbd set.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/usbhidd/src/main.rs | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
+index 86b8f63f..7ac4ffc4 100644
+--- a/drivers/input/usbhidd/src/main.rs
++++ b/drivers/input/usbhidd/src/main.rs
+@@ -320,15 +320,17 @@ fn main() -> Result<()> {
+ 
+     //TODO: do we need to set protocol to report? It fails for mice.
+ 
+-    //TODO: dynamically create good values, fix xhcid so it does not block on each request
+-    // This sets all reports to a duration of 4ms. Only boot keyboards
+-    // (interface protocol 1) get it: the idle rate matters for key repeat
+-    // reports, and many mice stall SET_IDLE (the HID spec allows that).
+-    // FreeBSD's ums does not send it to mice either. A stalled request
+-    // used to leave the mouse's next control transfer hanging in xhcid,
+-    // which held up every other USB device (#710).
++    // Idle rate 0: the keyboard reports only when something changes, as
++    // Linux's usbhid and FreeBSD's ukbd ask for. A rate of 1 (4 ms) made it
++    // repeat an unchanged report 250 times a second, each one a transfer
++    // through xhcid and a pass of the loop below, for nothing: the report
++    // handler drops values that did not change, so key repeat never came
++    // from those reports. Only boot keyboards (interface protocol 1) get
++    // the request: many mice stall SET_IDLE (the HID spec allows that), and
++    // a stalled request used to leave the mouse's next control transfer
++    // hanging in xhcid, which held up every other USB device (#710).
+     if if_desc.protocol == 1 {
+-        if let Err(err) = reqs::set_idle(&handle, 1, 0, interface_num as u16) {
++        if let Err(err) = reqs::set_idle(&handle, 0, 0, interface_num as u16) {
+             log::warn!("failed to set idle: {}", err);
+         }
+     }
+-- 
+2.53.0
+
