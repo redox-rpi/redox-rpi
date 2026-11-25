@@ -26,7 +26,8 @@ User docs, with examples: [docs/time.md](../time.md).
 - [#46](https://github.com/redox-rpi/redox-rpi/issues/46) time zones:
   `/etc/localtime` and zone files (package `zoneinfo`, Europe/Berlin and
   UTC), relibc patch `0012` (`tm_zone` is CET/CEST), `timerd` in local
-  time and `timerd -t`. Branch `timezone`, experiment
+  time and `timerd -t`. In every image since the maintainer decision of
+  2026-11-24 (v0.7.0); before that experiment
   `timezone` ([README](../../patches/experiments/timezone/README.md)).
   **Pi test 95 passed** (CET/CEST at both 2026 switches, no freeze in 20
   minutes); pull request #102 (v0.5.0).
@@ -74,7 +75,7 @@ args = ["-c", "df >> /scheme/data/df.log"]
 Things to know:
 
 - **Local time:** schedules are in the system's local time if a zone is
-  set (`/etc/localtime`, experiment `timezone`,
+  set (`/etc/localtime`, in every image,
   [#46](https://github.com/redox-rpi/redox-rpi/issues/46)), else UTC.
   `utc = true` in `[timer]` keeps a timer in UTC. When the clocks go
   forward, times in the skipped hour do not run; when they go back, a time

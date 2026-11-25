@@ -32,8 +32,8 @@ envs = { LANG = "C" }
 - **Schedule:** the five cron fields with `*`, numbers, ranges `1-5`,
   steps `*/10` and lists `0,30`, or `@hourly`, `@daily`, `@weekly`,
   `@monthly`, `@yearly`. When both day fields are set, either one is enough,
-  as in cron. Times are in local time if the image has a time zone
-  (experiment [`timezone`](../timezone/README.md)), else UTC; `utc = true`
+  as in cron. Times are in local time (the image's time zone, Europe/Berlin
+  since [#46](https://github.com/redox-rpi/redox-rpi/issues/46)); `utc = true`
   in `[timer]` keeps a timer in UTC. When the clocks go forward, times in
   the skipped hour do not run; when they go back, a time in the repeated
   hour runs once.
