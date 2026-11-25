@@ -1,0 +1,87 @@
+From 558c1cb576d5fcc84bb8eb0db8b98e3171f9a192 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:36:38 +0000
+Subject: [PATCH] xhcid: usb-trace, a trigger that sends N No Op commands (test
+ only, #749)
+
+`echo 1000 > /tmp/xhcid-noop` makes xhcid send 1000 No Op commands one
+after the other and log the progress every 100, with the command ring
+index. It wraps the command ring several times with no device involved,
+so the ring's wrap can be tested on its own (pi-tests Tests 663 and 665
+hung at the first wrap, while the hub had also stopped answering).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/main.rs     |  1 +
+ drivers/usb/xhcid/src/xhci/mod.rs | 43 +++++++++++++++++++++++++++++++
+ 2 files changed, 44 insertions(+)
+
+diff --git a/drivers/usb/xhcid/src/main.rs b/drivers/usb/xhcid/src/main.rs
+index ea029cac..b4c387b6 100644
+--- a/drivers/usb/xhcid/src/main.rs
++++ b/drivers/usb/xhcid/src/main.rs
+@@ -111,6 +111,7 @@ fn daemon_with_context_size<const N: usize>(
+ 
+     xhci::start_irq_reactor(&hci, irq_file);
+     xhci::start_device_enumerator(&hci);
++    xhci::start_noop_trigger(&hci);
+ 
+     hci.poll();
+ 
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 5bc5f43e..00bb3cd3 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -1597,6 +1597,49 @@ pub fn start_irq_reactor<const N: usize>(hci: &Arc<Xhci<N>>, irq_file: Option<In
+     }));
+ }
+ 
++/// Test only (experiment usb-trace, redox-rpi#749): `echo 1000 >
++/// /tmp/xhcid-noop` sends that many No Op commands, one after the other.
++/// It wraps the command ring several times with no device involved, to
++/// test the ring's wrap on its own. If a command never completes, the
++/// progress lines stop.
++pub fn start_noop_trigger<const N: usize>(hci: &Arc<Xhci<N>>) {
++    let hci = Arc::clone(hci);
++    thread::spawn(move || loop {
++        thread::sleep(std::time::Duration::from_secs(1));
++        let Ok(text) = fs::read_to_string("/tmp/xhcid-noop") else {
++            continue;
++        };
++        let _ = fs::remove_file("/tmp/xhcid-noop");
++        let count: usize = text.trim().parse().unwrap_or(0);
++        info!("usb-trace: sending {} no-op commands", count);
++        let start = std::time::Instant::now();
++        let mut failed = 0usize;
++        for n in 0..count {
++            let (event, _command) =
++                futures::executor::block_on(hci.execute_command(|trb, cycle| trb.no_op_cmd(cycle)));
++            if event.completion_code() != trb::TrbCompletionCode::Success as u8 {
++                failed += 1;
++                if failed <= 5 {
++                    warn!("usb-trace: no-op {} completed with code {}", n, event.completion_code());
++                }
++            }
++            if n % 100 == 99 {
++                let (i, cycle) = {
++                    let ring = hci.cmd.lock().unwrap();
++                    (ring.i, ring.cycle)
++                };
++                info!("usb-trace: no-op {} done, cmd_ring {} cycle {}", n + 1, i, cycle as u8);
++            }
++        }
++        info!(
++            "usb-trace: {} no-op commands in {} ms, {} failed",
++            count,
++            start.elapsed().as_millis(),
++            failed
++        );
++    });
++}
++
+ pub fn start_device_enumerator<const N: usize>(hci: &Arc<Xhci<N>>) {
+     let hci_clone = Arc::clone(&hci);
+ 
+-- 
+2.53.0
+
