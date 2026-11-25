@@ -140,6 +140,37 @@ struct buf {
 	GLuint color, depth, fbo;
 };
 
+/* Where a buffer holds pixels the GPU did not draw: the pattern the CPU
+ * wrote, or zero (never written). Prints counts, the rows and the number
+ * of 4 KiB pages concerned, to tell cache lines from whole pages. */
+static void stale_report(const char *what, const uint32_t *px, uint32_t pitch, int w, int h)
+{
+	uint32_t stride = pitch / 4;
+	int pattern = 0, zero = 0, bg = 0, first = -1, last = -1, pages = 0;
+	size_t last_page = (size_t)-1;
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++) {
+			uint32_t v = px[y * stride + x];
+			int stale = v == PATTERN || v == 0;
+			pattern += v == PATTERN;
+			zero += v == 0;
+			bg += (v & 0xffffff) == BG_XRGB;
+			if (stale) {
+				size_t page = ((size_t)y * pitch + (size_t)x * 4) / 4096;
+				if (page != last_page) {
+					pages++;
+					last_page = page;
+				}
+				if (first < 0)
+					first = y;
+				last = y;
+			}
+		}
+	printf("prime-probe: %s: %d pattern, %d zero, %d background pixels of %d; stale rows %d to %d, in %d pages of %llu\n",
+	       what, pattern, zero, bg, w * h, first, last, pages,
+	       (unsigned long long)(((size_t)pitch * h + 4095) / 4096));
+}
+
 /* The VT number is the last number in the consumer handle's path. */
 static int path_number(int fd)
 {
@@ -435,6 +466,7 @@ int main(int argc, char **argv)
 			corners &= (c[k] & 0xffffff) == BG_XRGB;
 		int centre = (px[(h / 2) * stride + w / 2] & 0xffffff) != BG_XRGB;
 		if (!corners || !centre) {
+			stale_report("stale", px, cur->pitch, w, h);
 			printf("prime-probe: FAIL: frame %d: corners %s (%08x %08x %08x %08x), centre %s\n", fr,
 			       corners ? "right" : "wrong", c[0], c[1], c[2], c[3], centre ? "right" : "wrong");
 			return 1;
