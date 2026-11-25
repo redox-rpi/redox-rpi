@@ -1,4 +1,4 @@
-From 70150671aff84c5eb3bde0f8147edb116622af2e Mon Sep 17 00:00:00 2001
+From 737a02d5a55f615aadda0edb7bd9819028e8a8ff Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 13:26:01 +0100
 Subject: [PATCH] netstack: IPv6 endpoints in socket paths, DNS server from
@@ -18,7 +18,7 @@ router advertisement (RFC 8106) gives an IPv6 name server, shown in
  6 files changed, 91 insertions(+), 43 deletions(-)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 2a6c9b3..90eb84b 100644
+index cf04911..7be1966 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -45,6 +45,7 @@ struct Ipv6State {

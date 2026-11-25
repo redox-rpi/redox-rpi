@@ -1,4 +1,4 @@
-From 20e90d1f6c383bb8198d1a977af793bc33a0f846 Mon Sep 17 00:00:00 2001
+From 064108ab221544a63727c47ba17b7a7a08780c0d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 11:15:05 +0100
 Subject: [PATCH] netstack: IPv6 addresses, neighbor discovery and SLAAC
@@ -41,7 +41,7 @@ index f965d19..06ee2dc 100644
  ]
  #For debugging: "log", "verbose"
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 78dcde0..2a6c9b3 100644
+index 78dcde0..cf04911 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -5,26 +5,30 @@ use std::io::{ErrorKind, Read, Write};
@@ -54,7 +54,7 @@ index 78dcde0..2a6c9b3 100644
  use smoltcp::wire::{
      ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
 -    EthernetRepr, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr,
-+    EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
++    EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Cidr,
 +    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags, NdiscPrefixInfoFlags,
 +    NdiscRepr, RawHardwareAddress,
  };

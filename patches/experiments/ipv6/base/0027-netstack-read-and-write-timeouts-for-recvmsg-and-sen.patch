@@ -1,4 +1,4 @@
-From 61bb83e04ceb70364488b6863b0c015f28d4b8cc Mon Sep 17 00:00:00 2001
+From a7c9f0496edde91dd012cdd7a5d60d0bdd85233f Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Thu, 29 Oct 2026 14:02:15 +0100
 Subject: [PATCH] netstack: read and write timeouts for recvmsg and sendmsg

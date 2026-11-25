@@ -1,4 +1,4 @@
-From dc1841c5bb00f5fb0963e0aebdfab2af61f16e14 Mon Sep 17 00:00:00 2001
+From 46ffb6abc5705c509beb8168fbabef4c63821047 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 07:29:52 +0100
 Subject: [PATCH] netstack: SLAAC with every prefix of a router advertisement
@@ -20,13 +20,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  4 files changed, 184 insertions(+), 37 deletions(-)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 90eb84b..b8d9a52 100644
+index 84a183f..3378681 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
 @@ -11,7 +11,7 @@ use smoltcp::time::{Duration, Instant};
  use smoltcp::wire::{
      ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
-     EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
+     EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Address, Ipv4Cidr,
 -    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags, NdiscPrefixInfoFlags,
 +    Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, NdiscNeighborFlags,
      NdiscRepr, RawHardwareAddress,
@@ -187,7 +187,7 @@ index 90eb84b..b8d9a52 100644
                              .map(|cidr| cidr.address());
                          let Some(src) = on_link_global.or(self.ipv6.link_local) else {
                              return;
-@@ -812,9 +876,87 @@ impl LinkDevice for EthernetLink {
+@@ -818,9 +882,87 @@ impl LinkDevice for EthernetLink {
      fn ipv6_config(&self) -> Option<Ipv6Config> {
          Some(Ipv6Config {
              link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
@@ -277,10 +277,10 @@ index 90eb84b..b8d9a52 100644
 +    }
 +}
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index 85dab78..081b7a0 100644
+index f69ccf9..566d2fc 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
-@@ -8,10 +8,12 @@ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv6Address
+@@ -8,10 +8,12 @@ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv6Address, Ipv6Cidr};
  
  /// IPv6 addresses of a link: its link-local address and what stateless
  /// autoconfiguration learned from router advertisements
@@ -296,7 +296,7 @@ index 85dab78..081b7a0 100644
      /// Name server from the router advertisement (RDNSS)
      pub dns: Option<Ipv6Address>,
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index 67aca58..95057c6 100644
+index 8b998c7..cd6d063 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
 @@ -265,7 +265,7 @@ impl Smolnetd {
