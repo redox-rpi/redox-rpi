@@ -55,8 +55,12 @@ extern ssize_t redox_fpath(int fd, void *buf, size_t count);
 
 static int fail(const char *what)
 {
-	printf("prime-probe: FAIL: %s (errno %d, EGL error 0x%x, GL error 0x%x)\n", what, errno,
-	       eglGetError(), glGetError());
+	int err = errno;
+	/* glGetError only with a current context: without one the call can
+	 * go through an empty dispatch table. */
+	GLenum gl = eglGetCurrentContext() != EGL_NO_CONTEXT ? glGetError() : 0;
+	printf("prime-probe: FAIL: %s (errno %d, EGL error 0x%x, GL error 0x%x)\n", what, err,
+	       eglGetError(), gl);
 	return 1;
 }
 
