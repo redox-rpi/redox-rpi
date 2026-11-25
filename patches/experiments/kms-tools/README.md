@@ -15,6 +15,13 @@ libdrm against vc4d's KMS ioctls. Test only (`test-only`).
   - The test programs' `-D` takes a device path (`/dev/dri/card0`) and
     opens it directly. Upstream treats `-D` as a bus id for `drmOpen`,
     which needs bus ids that Redox drivers do not have.
+- `vtrun` (`tools/vtrun`): runs a program on a VT of its own. It opens
+  `/scheme/input/consumer`, which makes inputd create a VT, activates it
+  and passes the VT's display node (`/scheme/display.vc4/N`) to the
+  program in place of `{}` and as `DRM_DISPLAY`. When the program ends,
+  or vtrun dies, the handle closes and inputd switches back to another VT.
+  Test 653: a modeset on a VT inputd does not know (`inputd -A 7`) never
+  shows. Example: `vtrun modetest -D {} -s 27:640x480`.
 - `/dev/dri/card0` links to `/scheme/display.vc4/7`, where libdrm looks
   for the primary node. driver-graphics serves one set of KMS state per
   virtual terminal, named by the path; 7 is a VT nothing else uses (the
@@ -24,6 +31,6 @@ libdrm against vc4d's KMS ioctls. Test only (`test-only`).
 
 Build with `--experiment pi400 --experiment vc4d --experiment kms-tools (vc4d is not on main yet: it comes with the G3/G4 branches)`.
 
-Test: `drm_info`, `modetest -D /dev/dri/card0` (lists connectors, CRTCs,
+Test: `vtrun modetest -D {} -s <connector>:<mode>`, `drm_info`, `modetest -D /dev/dri/card0` (lists connectors, CRTCs,
 planes and properties), and `modetest -D /dev/dri/card0 -s <connector>:<mode>`
 (modeset with a dumb buffer test pattern) while VT 7 is active.

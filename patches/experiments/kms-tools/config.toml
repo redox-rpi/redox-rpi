@@ -4,6 +4,7 @@
 [packages]
 "libdrm.tests" = {}
 drm-info = {}
+vtrun = "source"
 
 [[files]]
 path = "/dev/dri/card0"
