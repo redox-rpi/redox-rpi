@@ -238,7 +238,14 @@ place these rules are written down; other pages link here.
 |---|---|---|
 | Maintainer | every PR that changes what ends up in an image (kernel, relibc, driver and recipe patches, recipes, `upstream.lock`, experiments' code); in [apps](https://github.com/redox-rpi/apps), every PR that changes what users get (recipes and their patches, `os-release`); PRs by the Quality session, RFCs | — |
 | Quality | PRs that change only the build and test system: CI workflows (`.github/`), build, staging and test scripts (`scripts/`, `build-image.sh`), the regression set and test definitions, the test plan, docs; in apps, build scripts and CI that change no package content | its own PRs (it wrote or pushed to them); a PR that also touches image content or package content |
-| Project lead | docs-only PRs | code PRs |
+| Project lead | docs-only PRs; stacked PRs (see below) | code PRs into `main` |
+
+**Stacked PRs** (maintainer decision, 2026-11-25): a PR whose base is not
+`main` (stacked into a feature branch) may be merged by Quality or the
+project lead when CI is green, it is mergeable, it is not a draft, and its
+content is part of a tested stack. Neither merges a stacked PR it wrote
+or pushed to. The feature branch itself reaches `main` only by a PR under
+the rows above.
 
 Docs need no pull request: anyone on the team may push changes to docs
 (`README.md`, `docs/`, topic pages) straight to the default branch, as a
