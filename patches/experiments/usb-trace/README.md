@@ -33,4 +33,10 @@ PORT_POWER for 3 s instead, which is closer to an unplug but cuts every
 port if the hub switches power ganged. At start usbhubd logs
 `usb-trace: hub characteristics … (power switching ganged|per port|none)`.
 
+`base/0003` (needs PR #750's pi400 base 0026): a second line every 10 s,
+`usb-trace: resources commands N cmd_ring I/LEN cycle C workers W handles H
+ports P`: commands sent, the command ring's enqueue index and cycle state,
+blocking-read workers started, open scheme handles and attached ports. A
+resource used up per replug shows as a count that grows each round.
+
 Build with `--experiment pi400 ... --experiment usb-trace` (after pi400).
