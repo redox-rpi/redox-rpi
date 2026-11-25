@@ -20,7 +20,8 @@
  *       back. --lifetime destroys the dumb buffers and their framebuffers
  *       while the GPU still has them imported and draws one more frame into
  *       each (the export must keep the memory alive). --foreign offers v3dd
- *       an fd of a regular file and reports whether it is refused.
+ *       two fds that are no display buffers, a regular file's and the
+ *       display handle's own; v3dd must refuse both (FAIL otherwise).
  *
  * Prints "prime-probe: PASS: ..." or "prime-probe: FAIL: ..." and exits 0
  * or 1.
@@ -185,7 +186,21 @@ static int path_number(int fd)
 	return *p ? atoi(p) : -1;
 }
 
-static int foreign_test(void)
+/* Offers v3dd an fd that is no display buffer; 0 if v3dd refuses it. */
+static int foreign_refused(int render, int fd, const char *what)
+{
+	uint32_t handle = 0;
+	if (drmPrimeFDToHandle(render, fd, &handle) == 0) {
+		printf("prime-probe: foreign: v3dd ACCEPTED %s as BO %u\n", what, handle);
+		struct drm_gem_close gc = { .handle = handle };
+		drmIoctl(render, DRM_IOCTL_GEM_CLOSE, &gc);
+		return -1;
+	}
+	printf("prime-probe: foreign: v3dd refused %s (errno %d)\n", what, errno);
+	return 0;
+}
+
+static int foreign_test(int dfd)
 {
 	char path[] = "/tmp/prime-probe-XXXXXX";
 	int f = mkstemp(path);
@@ -199,15 +214,14 @@ static int foreign_test(void)
 	int render = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
 	if (render < 0)
 		return fail("--foreign: open renderD128");
-	uint32_t handle = 0;
-	int r = drmPrimeFDToHandle(render, f, &handle);
-	if (r == 0)
-		printf("prime-probe: foreign: v3dd ACCEPTED a regular file's fd as BO %u (needs a check before merge)\n",
-		       handle);
-	else
-		printf("prime-probe: foreign: v3dd refused a regular file's fd (errno %d)\n", errno);
+	int bad = foreign_refused(render, f, "a regular file's fd");
+	bad |= foreign_refused(render, dfd, "the display handle (no buffer)");
 	close(render);
 	close(f);
+	if (bad) {
+		printf("prime-probe: FAIL: v3dd imported an fd that is no display buffer\n");
+		return 1;
+	}
 	return 0;
 }
 
@@ -552,7 +566,7 @@ int main(int argc, char **argv)
 	eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 	eglDestroyContext(dpy, ctx);
 	eglTerminate(dpy);
-	if (foreign && foreign_test())
+	if (foreign && foreign_test(dfd))
 		return 1;
 	printf("prime-probe: PASS: %s, %dx%d, %d frames into display buffers, frame 0 hash %08x, %.2f ms per frame\n",
 	       renderer, w, h, done, hash_first, ms / done);
