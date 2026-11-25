@@ -1,16 +1,22 @@
 //! serverfs: a directory on a home server as a Redox scheme, read-only
 //! (spike for redox-rpi#713, design in docs/home-server-storage.md).
 //!
-//!     serverfs [-d] [--auth <file>] <url> <scheme>
-//!     serverfs http://192.0.2.10:8080/files/ server &
+//!     serverfs [-d] [--auth <file>] [--ca <file>] <url> <scheme>
+//!     serverfs -d --auth ~/.config/serverfs/auth https://nas.example:8443/files/ server
 //!     ls /scheme/server
 //!
-//! It speaks WebDAV over HTTP/1.1: `PROPFIND` (Depth 0 and 1) for stat and
-//! directory listings, `GET` for file contents. Nothing else of the design
-//! note's subset yet: no writes, no cache on disk, no TLS. A listing is kept
-//! for a few seconds; a file is fetched whole at its first read and kept
-//! while it is open. `--auth` names a file with one line `user:password`
-//! for HTTP Basic authentication (only over a trusted network until TLS).
+//! It speaks WebDAV over HTTP/1.1, plain (`http://`) or over TLS
+//! (`https://`, rustls): `PROPFIND` (Depth 0 and 1) for stat and directory
+//! listings, `GET` for file contents. Nothing else of the design note's
+//! subset yet: no writes, no cache on disk. A listing is kept for a few
+//! seconds; a file is fetched whole at its first read and kept while it is
+//! open. `--auth` names a file with one line `user:password` for HTTP Basic
+//! authentication; use it over `https://` only, unless the network is
+//! trusted. `--ca` names a PEM file with the CA (or the server's own)
+//! certificates to trust; without it serverfs trusts
+//! `/etc/ssl/certs/ca-certificates.crt` if it exists, else the Mozilla roots
+//! built into the program. The clock must be right for the certificate
+//! check.
 //! With `-d` serverfs goes to the background once the scheme is registered
 //! (as Redox drivers do), so the next command can use it at once; without
 //! it serverfs stays in the foreground.
@@ -39,10 +45,13 @@ const FRESH: Duration = Duration::from_secs(5);
 /// `GET` with `Range` exists.
 const MAX_FILE: u64 = 128 << 20;
 const TIMEOUT: Duration = Duration::from_secs(15);
+const SYSTEM_CA_FILE: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 // ---------------------------------------------------------------- HTTP
 
 struct Server {
+    /// TLS settings for `https://`, None for plain HTTP.
+    tls: Option<Arc<rustls::ClientConfig>>,
     host: String,
     port: u16,
     /// Path of the shared directory on the server, starting and ending with '/'.
@@ -63,13 +72,14 @@ impl HttpResponse {
     }
 }
 
-fn parse_url(url: &str) -> std::result::Result<(String, u16, String), String> {
-    let rest = if let Some(rest) = url.strip_prefix("http://") {
-        rest
-    } else if url.starts_with("https://") {
-        return Err("https comes with the TLS step of #713; use http:// on a trusted network".into());
+/// Splits a URL into (TLS or not, host, port, base path).
+fn parse_url(url: &str) -> std::result::Result<(bool, String, u16, String), String> {
+    let (tls, rest) = if let Some(rest) = url.strip_prefix("http://") {
+        (false, rest)
+    } else if let Some(rest) = url.strip_prefix("https://") {
+        (true, rest)
     } else {
-        return Err("the URL must start with http://".into());
+        return Err("the URL must start with https:// or http://".into());
     };
     let (hostport, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -79,7 +89,7 @@ fn parse_url(url: &str) -> std::result::Result<(String, u16, String), String> {
         Some((h, p)) if !h.ends_with(']') || hostport.starts_with('[') => {
             (h.trim_matches(|c| c == '[' || c == ']').to_string(), p.parse().map_err(|_| "bad port")?)
         }
-        _ => (hostport.to_string(), 80),
+        _ => (hostport.to_string(), if tls { 443 } else { 80 }),
     };
     if host.is_empty() {
         return Err("no host in the URL".into());
@@ -88,8 +98,56 @@ fn parse_url(url: &str) -> std::result::Result<(String, u16, String), String> {
     if !base.ends_with('/') {
         base.push('/');
     }
-    Ok((host, port, base))
+    Ok((tls, host, port, base))
 }
+
+/// The client settings for `https://`: the certificates in `ca_file`, or
+/// the system's CA file, or the built-in Mozilla roots.
+fn tls_config(ca_file: Option<&str>) -> std::result::Result<Arc<rustls::ClientConfig>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::CertificateDer;
+
+    let mut roots = rustls::RootCertStore::empty();
+    let file = ca_file.or_else(|| std::path::Path::new(SYSTEM_CA_FILE).exists().then_some(SYSTEM_CA_FILE));
+    match file {
+        Some(file) => {
+            let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(file)
+                .map_err(|err| format!("{file}: {err}"))?
+                .collect::<std::result::Result<_, _>>()
+                .map_err(|err| format!("{file}: {err}"))?;
+            let (added, _) = roots.add_parsable_certificates(certs);
+            if added == 0 {
+                return Err(format!("{file}: no certificates"));
+            }
+        }
+        None => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|err| err.to_string())?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// A TLS error as an `io::Error`, with a hint where the cause is likely
+/// on this side.
+fn tls_error(err: rustls::Error) -> io::Error {
+    use rustls::{CertificateError, Error as E};
+    let hint = match &err {
+        E::InvalidCertificate(CertificateError::NotValidYet | CertificateError::Expired)
+        | E::InvalidCertificate(CertificateError::NotValidYetContext { .. })
+        | E::InvalidCertificate(CertificateError::ExpiredContext { .. }) => " (is the clock right? check with date -u)",
+        E::InvalidCertificate(CertificateError::UnknownIssuer) => " (give the server's CA certificate with --ca)",
+        _ => "",
+    };
+    io::Error::new(io::ErrorKind::InvalidData, format!("TLS: {err}{hint}"))
+}
+
+/// A plain or TLS connection.
+trait Stream: Read + Write {}
+impl<T: Read + Write> Stream for T {}
 
 /// Percent-encodes a path for the request line; '/' stays.
 fn encode_path(path: &str) -> String {
@@ -166,9 +224,27 @@ impl Server {
             .to_socket_addrs()?
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address for the host"))?;
-        let mut stream = TcpStream::connect_timeout(&addr, TIMEOUT)?;
-        let _ = stream.set_read_timeout(Some(TIMEOUT));
-        let _ = stream.set_write_timeout(Some(TIMEOUT));
+        let sock = TcpStream::connect_timeout(&addr, TIMEOUT)?;
+        let _ = sock.set_read_timeout(Some(TIMEOUT));
+        let _ = sock.set_write_timeout(Some(TIMEOUT));
+        let mut stream: Box<dyn Stream> = match &self.tls {
+            None => Box::new(sock),
+            Some(config) => {
+                let name = rustls::pki_types::ServerName::try_from(self.host.clone())
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad TLS server name"))?;
+                let mut conn = rustls::ClientConnection::new(config.clone(), name).map_err(tls_error)?;
+                let mut sock = sock;
+                while conn.is_handshaking() {
+                    conn.complete_io(&mut sock).map_err(|err| {
+                        match err.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()) {
+                            Some(tls) => tls_error(tls.clone()),
+                            None => err,
+                        }
+                    })?;
+                }
+                Box::new(rustls::StreamOwned::new(conn, sock))
+            }
+        };
 
         let mut req = format!(
             "{method} {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: serverfs/0.1 (Redox)\r\nConnection: close\r\nContent-Length: {}\r\n",
@@ -188,7 +264,13 @@ impl Server {
         stream.write_all(body)?;
 
         let mut raw = Vec::new();
-        stream.read_to_end(&mut raw)?;
+        match stream.read_to_end(&mut raw) {
+            Ok(_) => {}
+            // Many servers close a TLS connection without close_notify; the
+            // Content-Length or chunk check below catches a cut response.
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof && self.tls.is_some() => {}
+            Err(err) => return Err(err),
+        }
         let bad = |what: &str| io::Error::new(io::ErrorKind::InvalidData, format!("bad HTTP response: {what}"));
         let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| bad("no header end"))?;
         let head = std::str::from_utf8(&raw[..head_end]).map_err(|_| bad("header not UTF-8"))?;
@@ -281,7 +363,7 @@ impl Server {
 }
 
 fn net_err(err: io::Error) -> Error {
-    eprintln!("serverfs: server not reachable: {err}");
+    eprintln!("serverfs: connection failed: {err}");
     Error::new(match err.kind() {
         io::ErrorKind::InvalidData => EIO,
         _ => EHOSTUNREACH,
@@ -682,7 +764,13 @@ fn daemonize() -> Option<libc::c_int> {
 
 fn run(server: Server, name: &str, ready: Option<libc::c_int>) -> io::Result<()> {
     let socket = Socket::create()?;
-    let label = format!("http://{}:{}{}", server.host, server.port, server.base);
+    let label = format!(
+        "{}://{}:{}{}",
+        if server.tls.is_some() { "https" } else { "http" },
+        server.host,
+        server.port,
+        server.base
+    );
     let mut scheme = ServerScheme {
         server,
         name: name.to_string(),
@@ -727,44 +815,64 @@ fn run(server: Server, name: &str, ready: Option<libc::c_int>) -> io::Result<()>
 }
 
 fn usage() -> ! {
-    eprintln!("usage: serverfs [-d] [--auth <file>] <url> <scheme>   e.g. serverfs -d http://192.0.2.10:8080/files/ server");
+    eprintln!("usage: serverfs [-d] [--auth <file>] [--ca <file>] <url> <scheme>");
+    eprintln!("       e.g. serverfs -d --auth auth.txt --ca home-ca.pem https://192.0.2.10:8443/files/ server");
     process::exit(1);
 }
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut auth = None;
+    let mut ca_file = None;
     let mut background = false;
-    if args.first().map(String::as_str) == Some("-d") {
-        background = true;
+    while let Some(opt) = args.first().filter(|a| a.starts_with('-')).cloned() {
         args.remove(0);
-    }
-    if args.first().map(String::as_str) == Some("--auth") {
-        if args.len() < 2 {
-            usage();
-        }
-        let file = args.remove(1);
-        args.remove(0);
-        match std::fs::read_to_string(&file) {
-            Ok(s) => auth = Some(format!("Basic {}", base64(s.trim_end_matches(['\r', '\n']).as_bytes()))),
-            Err(err) => {
-                eprintln!("serverfs: {file}: {err}");
-                process::exit(1);
+        match opt.as_str() {
+            "-d" => background = true,
+            "--auth" | "--ca" if !args.is_empty() => {
+                let file = args.remove(0);
+                if opt == "--ca" {
+                    ca_file = Some(file);
+                    continue;
+                }
+                match std::fs::read_to_string(&file) {
+                    Ok(s) => auth = Some(format!("Basic {}", base64(s.trim_end_matches(['\r', '\n']).as_bytes()))),
+                    Err(err) => {
+                        eprintln!("serverfs: {file}: {err}");
+                        process::exit(1);
+                    }
+                }
             }
+            _ => usage(),
         }
     }
     if args.len() != 2 {
         usage();
     }
-    let (host, port, base) = match parse_url(&args[0]) {
+    let (https, host, port, base) = match parse_url(&args[0]) {
         Ok(v) => v,
         Err(err) => {
             eprintln!("serverfs: {}: {err}", args[0]);
             process::exit(1);
         }
     };
+    let tls = if https {
+        match tls_config(ca_file.as_deref()) {
+            Ok(config) => Some(config),
+            Err(err) => {
+                eprintln!("serverfs: {err}");
+                process::exit(1);
+            }
+        }
+    } else {
+        if ca_file.is_some() {
+            eprintln!("serverfs: --ca is for https:// URLs");
+            process::exit(1);
+        }
+        None
+    };
     let ready = if background { daemonize() } else { None };
-    if let Err(err) = run(Server { host, port, base, auth }, &args[1], ready) {
+    if let Err(err) = run(Server { tls, host, port, base, auth }, &args[1], ready) {
         eprintln!("serverfs: {err}");
         process::exit(1);
     }
@@ -783,7 +891,7 @@ mod tests {
 <d:response><d:href>/files/a%20b%C3%A4.txt</d:href><d:propstat><d:prop><d:resourcetype/>
 <d:getcontentlength>12</d:getcontentlength><d:getetag>"x&amp;y"</d:getetag></d:prop></d:propstat></d:response>
 </d:multistatus>"#;
-        let s = Server { host: "h".into(), port: 80, base: "/files/".into(), auth: None };
+        let s = Server { tls: None, host: "h".into(), port: 80, base: "/files/".into(), auth: None };
         let e: Vec<Entry> = parse_multistatus(xml)
             .into_iter()
             .map(|mut e| {
@@ -802,9 +910,10 @@ mod tests {
 
     #[test]
     fn url_and_base64() {
-        assert_eq!(parse_url("http://10.0.2.2:8080/f").unwrap(), ("10.0.2.2".into(), 8080, "/f/".into()));
-        assert_eq!(parse_url("http://nas").unwrap(), ("nas".into(), 80, "/".into()));
-        assert!(parse_url("https://nas/").is_err());
+        assert_eq!(parse_url("http://10.0.2.2:8080/f").unwrap(), (false, "10.0.2.2".into(), 8080, "/f/".into()));
+        assert_eq!(parse_url("http://nas").unwrap(), (false, "nas".into(), 80, "/".into()));
+        assert_eq!(parse_url("https://nas/d").unwrap(), (true, "nas".into(), 443, "/d/".into()));
+        assert!(parse_url("ftp://nas/").is_err());
         assert_eq!(base64(b"user:pass"), "dXNlcjpwYXNz");
         assert_eq!(encode_path("/a b/ä"), "/a%20b/%C3%A4");
         assert_eq!(decode_percent("/a%20b/%C3%A4"), "/a b/ä");

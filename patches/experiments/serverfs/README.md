@@ -10,18 +10,28 @@ scripts/build-image.sh --experiment serverfs
 ```
 
 On the target, with a WebDAV server in the home network (for example
-`rclone serve webdav <dir> --addr :8080` on any machine):
+`rclone serve webdav <dir> --addr :8443 --cert server.pem --key server.key
+--htpasswd users`):
 
 ```text
-serverfs -d http://<server>:8080/ server
+serverfs -d --auth ~/.serverfs-auth --ca /etc/home-ca.pem https://<server>:8443/ server
 ls /scheme/server
 cat /scheme/server/notes.txt
 ```
 
-`--auth <file>` reads `user:password` for HTTP Basic login. There is no TLS
-yet, so the password goes over the network in plain text: only in a
-trusted home network. Writes give `EROFS`; a server that does not answer
-gives `EHOSTUNREACH`, a refused login `EACCES`.
+- `--auth <file>`: one line `user:password` for HTTP Basic login. Over
+  `http://` the password goes over the network in plain text, so use
+  `https://` (or `http://` only in a trusted network).
+- `--ca <file>`: PEM file with the certificates to trust (a home CA or the
+  server's own certificate). Without it serverfs trusts
+  `/etc/ssl/certs/ca-certificates.crt` if the image has it, else the
+  Mozilla roots built into the program.
+- The clock must be right for the certificate check (experiment
+  `timesync`); a certificate that is not valid yet gives a hint to check
+  `date -u`.
 
-Test in QEMU: `scripts/test-serverfs.sh` (a throwaway WebDAV server on the
-build host's loopback, nothing installed).
+Writes give `EROFS`; a server that does not answer gives `EHOSTUNREACH`, a
+refused login `EACCES`, a TLS failure `EIO` with the reason on stderr.
+
+Test in QEMU: `scripts/test-serverfs.sh` (throwaway WebDAV servers, HTTP and
+HTTPS with a throwaway CA, on the build host's loopback; nothing installed).

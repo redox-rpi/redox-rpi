@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """A throwaway, read-only WebDAV server for the serverfs tests (#713).
 
-    davserver.py <dir> <port> [--auth user:password]
+    davserver.py <dir> <port> [--auth user:password] [--tls cert.pem key.pem]
 
 Serves <dir> on 127.0.0.1 only (QEMU's user network reaches it as
 10.0.2.2), and answers just the requests serverfs uses: PROPFIND with
-Depth 0 or 1, GET and HEAD. Anything else is 405. Not for real use: no TLS,
-no locking, no writes. Each request is logged to stderr.
+Depth 0 or 1, GET and HEAD. Anything else is 405. With --tls it speaks
+HTTPS with the given certificate. Not for real use: no locking, no writes.
+Each request is logged to stderr.
 """
 import base64
 import email.utils
 import html
 import os
+import ssl
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,8 +21,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = os.path.realpath(sys.argv[1])
 PORT = int(sys.argv[2])
 AUTH = None
-if len(sys.argv) > 4 and sys.argv[3] == "--auth":
-    AUTH = "Basic " + base64.b64encode(sys.argv[4].encode()).decode()
+TLS = None
+args = sys.argv[3:]
+while args:
+    if args[0] == "--auth" and len(args) > 1:
+        AUTH = "Basic " + base64.b64encode(args[1].encode()).decode()
+        args = args[2:]
+    elif args[0] == "--tls" and len(args) > 2:
+        TLS = (args[1], args[2])
+        args = args[3:]
+    else:
+        sys.exit(__doc__)
 
 
 def local_path(url_path):
@@ -132,4 +143,9 @@ class Handler(BaseHTTPRequestHandler):
     do_PUT = do_DELETE = do_MKCOL = do_MOVE = do_COPY = do_PROPPATCH = do_LOCK = do_POST = unsupported
 
 
-ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+if TLS:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(*TLS)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
