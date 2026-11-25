@@ -1,4 +1,4 @@
-/* prime-probe (#670, G4 step 2 spike): the GPU renders straight into a
+/* prime-probe (#670, G4 step 2): the GPU renders straight into a
  * buffer of the display driver, with no copy by the CPU.
  *
  * The program opens a VT of its own on the display (through inputd, as

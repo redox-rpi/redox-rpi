@@ -1,9 +1,8 @@
 # Experiment v3d-prime
 
-Pi 400 graphics G4 step 2 (#670), a spike: the V3D renders straight into a
-buffer of the display driver, with no copy by the CPU. Test only. **Do not
-merge until the RFC decision**: buffer sharing between two drivers is a
-design question for the maintainer (design note in #670).
+Pi 400 graphics G4 step 2 (#670): the V3D renders straight into a buffer of
+the display driver, with no copy by the CPU. Test only (`test-only`), like
+experiment v3dd, which it needs.
 
 How a frame travels:
 
@@ -45,6 +44,18 @@ kernel refuses a call on fds of two schemes (`EXDEV`), and driver-graphics
 refuses an fd that is not one of its exported buffers (`EINVAL`). Only
 then does v3dd map the fd; anything else answers `EINVAL`. The handle
 vc4d gives back goes when v3dd closes its own fd right after.
+
+Design choices (also in v3dd's header comment):
+
+- Memory: vc4d's screen-sized buffers stay normal, cached memory, because
+  the CPU draws into them too (fbcond, Orbital). v3dd cleans and
+  invalidates the caches over a job's imported buffers before and after
+  the job.
+- Sync: Redox has no sync files. Jobs run in order, Mesa waits on the
+  job's syncobj in `glFinish` (experiment mesa-v3d), and a client finishes
+  its frame before it shows the buffer.
+- Lifetime: v3dd keeps the fd and its mapping until the BO is freed, so
+  the pages stay when the client destroys the buffer or vc4d restarts.
 
 Build with `--experiment vc4d --experiment v3dd --experiment v3d-ioctl
 --experiment mesa-v3d ... --experiment v3d-prime`.
