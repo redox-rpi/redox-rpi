@@ -1,0 +1,21 @@
+# Experiment vc4d (#188): the VideoCore IV display driver, stage 1 (HVS
+# planes), instead of rpi-fbd. Build without --experiment rpi-fb, so
+# rpi-fbd does not take the display first; vesad has it until vc4d starts.
+# With --experiment orbital for the desktop.
+
+[packages]
+vc4d = "source"
+
+# Before Orbital (20_orbital), so Orbital opens vc4d's display.
+[[files]]
+path = "/usr/lib/init.d/15_vc4d.service"
+data = """
+[unit]
+description = "VideoCore IV display: HVS planes (vc4d)"
+condition_architecture = ["aarch64"]
+
+[service]
+cmd = "vc4d"
+inherit_envs = ["VC4D", "VC4D_FAKE", "VC4D_LOG"]
+type = "notify"
+"""

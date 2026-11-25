@@ -1,0 +1,17 @@
+# Experiment orbital-planes (redox-rpi#563): Orbital built from source with
+# drag-plane.patch. A window being moved is drawn once into its own buffer
+# and shown on a KMS overlay plane; each move then only changes the plane's
+# position instead of compositing and copying the screen. Drivers without
+# overlay planes, or that refuse the buffer, keep the old path.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/orbital.git"
+rev = "56620bba7dfd2652bd6b4e97909faecfcde2e27d"
+patches = ["drag-plane.patch"]
+
+[build]
+template = "cargo"
+
+[package]
+dependencies = [
+    "orbdata"
+]

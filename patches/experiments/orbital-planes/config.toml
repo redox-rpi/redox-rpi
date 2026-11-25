@@ -1,0 +1,6 @@
+# Experiment orbital-planes: Orbital from source (recipes/gui/orbital).
+# Build together with --experiment orbital and a driver with overlay
+# planes (--experiment vc4d-flip from vc4d's overlay branch).
+
+[packages]
+orbital = "source"

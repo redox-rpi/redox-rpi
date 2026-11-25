@@ -1,0 +1,9 @@
+# vc4d (#188) is GPL-2.0-only and lives in its own repository; this recipe
+# only builds a pinned commit of it. No vc4d source in redox-rpi.
+# Experiment vc4d-edid: branch edid of redox-rpi/vc4d.
+[source]
+git = "https://github.com/redox-rpi/vc4d.git"
+rev = "c95249f6d9333182fcdfb707f1b9e44838b07b9c"
+
+[build]
+template = "cargo"
