@@ -37,6 +37,14 @@ if grep -q "sysinfo(&si)" "$V3DS"; then sed -i \\
 if grep -q "^        return screen->disk_cache;" "$V3DS"; then sed -i \\
     "s|^        return screen->disk_cache;|#ifdef ENABLE_SHADER_CACHE\\n        return screen->disk_cache;\\n#else\\n        return NULL;\\n#endif|" "$V3DS"; fi
 
+# G4 spike (#670): PIPE_CAP_DMABUF asks the DRM driver for PRIME support
+# (DRM_CAP_PRIME) only on Linux, the BSDs and Managarm and answers 0
+# elsewhere, so EGL never offered dma-buf import on Redox. With a v3dd
+# without PRIME the query fails and the answer stays 0, as before.
+US="${COOKBOOK_SOURCE}/src/gallium/auxiliary/util/u_screen.c"
+grep -q "DETECT_OS_MANAGARM || DETECT_OS_REDOX" "$US" || \\
+    sed -i 's/DETECT_OS_BSD || DETECT_OS_MANAGARM)/DETECT_OS_BSD || DETECT_OS_MANAGARM || DETECT_OS_REDOX)/' "$US"
+
 #TODO: Should be CPPFLAGS but cookbook_meson isn't reading it
 export CFLAGS+=" -DHAVE_PTHREAD=1 -I${COOKBOOK_SYSROOT}/include/libdrm"
 export LDFLAGS+=" -lorbital"
