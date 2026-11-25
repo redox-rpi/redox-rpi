@@ -1,0 +1,107 @@
+From 6ed90235a4a9f9e8cffc8f7bcfc1c1d7d72309e6 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 25 Nov 2026 14:38:42 +0000
+Subject: [PATCH] tests: time/tz_iana, gmtime is UTC and tzset names the summer
+ time (#744)
+
+Status-only test with TZ=Europe/Berlin: tzname CET/CEST, daylight 1,
+timezone -3600; gmtime gives UTC; localtime gives CET in winter and
+CEST in summer.
+---
+ tests/Makefile.tests.mk |  1 +
+ tests/time/tz_iana.c    | 71 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 72 insertions(+)
+ create mode 100644 tests/time/tz_iana.c
+
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index 7a85ce6..875aef0 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -313,6 +313,7 @@ VARIED_NAMES=\
+ 	sys_time/utimes \
+ 	sys_utsname/uname \
+ 	time/gettimeofday \
++	time/tz_iana \
+ 	unistd/chdir \
+ 	unistd/getcwd \
+ 	unistd/gethostname \
+diff --git a/tests/time/tz_iana.c b/tests/time/tz_iana.c
+new file mode 100644
+index 0000000..6d6fcbd
+--- /dev/null
++++ b/tests/time/tz_iana.c
+@@ -0,0 +1,71 @@
++/* gmtime is UTC and tzset/localtime name the summer time, whatever the
++ * system zone is. Uses TZ=Europe/Berlin (CET, CEST). Status-only test: exits 1 on a
++ * mismatch and prints what it saw. */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++
++static int fails = 0;
++
++#define CHECK(cond)                                                     \
++    do {                                                                \
++        if (!(cond)) {                                                  \
++            printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);      \
++            fails++;                                                    \
++        }                                                               \
++    } while (0)
++
++static void show(const char *what, const struct tm *t) {
++    printf("%s: %04d-%02d-%02d %02d:%02d:%02d isdst %d gmtoff %ld zone %s\n", what,
++           t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec,
++           t->tm_isdst, (long)t->tm_gmtoff, t->tm_zone ? t->tm_zone : "(null)");
++}
++
++int main(void) {
++    setenv("TZ", "Europe/Berlin", 1);
++    tzset();
++    printf("tzset: tzname %s %s daylight %d timezone %ld\n",
++           tzname[0], tzname[1], daylight, (long)timezone);
++    CHECK(strcmp(tzname[0], "CET") == 0);
++    CHECK(timezone == -3600);
++    /* tzset() looks at the current year. Germany has had summer time since
++     * 1980; a machine without a clock (QEMU's raspi3b) is in 1970. */
++    time_t now = time(NULL);
++    struct tm now_utc;
++    gmtime_r(&now, &now_utc);
++    if (now_utc.tm_year + 1900 >= 1980) {
++        CHECK(strcmp(tzname[1], "CEST") == 0);
++        CHECK(daylight == 1);
++    } else {
++        printf("tzset: clock at %d, no summer time check\n", now_utc.tm_year + 1900);
++    }
++
++    time_t epoch = 0;
++    time_t summer = 1720000000; /* 2024-07-03 09:46:40 UTC */
++    struct tm t;
++
++    CHECK(gmtime_r(&epoch, &t) == &t);
++    show("gmtime_r(0)", &t);
++    CHECK(t.tm_year == 70 && t.tm_hour == 0 && t.tm_min == 0);
++    CHECK(t.tm_isdst == 0 && t.tm_gmtoff == 0);
++    CHECK(t.tm_zone != NULL && strcmp(t.tm_zone, "UTC") == 0);
++
++    struct tm *g = gmtime(&summer);
++    show("gmtime(summer)", g);
++    CHECK(g->tm_hour == 9 && g->tm_min == 46 && g->tm_isdst == 0 && g->tm_gmtoff == 0);
++
++    localtime_r(&epoch, &t);
++    show("localtime_r(0)", &t);
++    CHECK(t.tm_hour == 1 && t.tm_gmtoff == 3600 && t.tm_isdst == 0);
++    CHECK(t.tm_zone != NULL && strcmp(t.tm_zone, "CET") == 0);
++
++    localtime_r(&summer, &t);
++    show("localtime_r(summer)", &t);
++    CHECK(t.tm_hour == 11 && t.tm_gmtoff == 7200 && t.tm_isdst == 1);
++    CHECK(t.tm_zone != NULL && strcmp(t.tm_zone, "CEST") == 0);
++    CHECK(daylight == 1 && strcmp(tzname[1], "CEST") == 0);
++
++    puts(fails ? "tz_iana: FAIL" : "tz_iana: ok");
++    return fails ? 1 : 0;
++}
+-- 
+2.53.0
+
