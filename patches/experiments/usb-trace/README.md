@@ -39,4 +39,10 @@ ports P`: commands sent, the command ring's enqueue index and cycle state,
 blocking-read workers started, open scheme handles and attached ports. A
 resource used up per replug shows as a count that grows each round.
 
+`base/0004`: `echo 1000 > /tmp/xhcid-noop` makes xhcid send 1000 No Op
+commands one after the other, with a progress line every 100
+(`usb-trace: no-op N done, cmd_ring I cycle C`). It wraps the command
+ring several times with no device involved. If the progress lines stop,
+a command did not complete.
+
 Build with `--experiment pi400 ... --experiment usb-trace` (after pi400).
