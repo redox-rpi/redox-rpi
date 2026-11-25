@@ -1,4 +1,4 @@
-From 5db31996da5cc7e9307efc928383f646a820d77c Mon Sep 17 00:00:00 2001
+From dc1841c5bb00f5fb0963e0aebdfab2af61f16e14 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 07:29:52 +0100
 Subject: [PATCH] netstack: SLAAC with every prefix of a router advertisement
@@ -20,10 +20,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  4 files changed, 184 insertions(+), 37 deletions(-)
 
 diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
-index 539847f..dd2ae06 100644
+index 90eb84b..b8d9a52 100644
 --- a/netstack/src/link/ethernet.rs
 +++ b/netstack/src/link/ethernet.rs
-@@ -10,7 +10,7 @@ use smoltcp::time::{Duration, Instant};
+@@ -11,7 +11,7 @@ use smoltcp::time::{Duration, Instant};
  use smoltcp::wire::{
      ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
      EthernetRepr, Icmpv6Packet, Icmpv6Repr, IpAddress, IpCidr, IpProtocol, Ipv4Cidr,
@@ -32,7 +32,7 @@ index 539847f..dd2ae06 100644
      NdiscRepr, RawHardwareAddress,
  };
  
-@@ -42,7 +42,8 @@ const EMPTY_MAC: EthernetAddress = EthernetAddress([0; 6]);
+@@ -43,7 +43,8 @@ const EMPTY_MAC: EthernetAddress = EthernetAddress([0; 6]);
  /// advertisements.
  struct Ipv6State {
      link_local: Option<Ipv6Address>,
@@ -42,7 +42,7 @@ index 539847f..dd2ae06 100644
      router: Option<Ipv6Address>,
      dns: Option<Ipv6Address>,
      solicitations: u32,
-@@ -53,7 +54,7 @@ impl Default for Ipv6State {
+@@ -54,7 +55,7 @@ impl Default for Ipv6State {
      fn default() -> Self {
          Self {
              link_local: None,
@@ -51,7 +51,7 @@ index 539847f..dd2ae06 100644
              router: None,
              dns: None,
              solicitations: 0,
-@@ -107,6 +108,77 @@ fn rdnss_server(icmp: &[u8]) -> Option<Option<Ipv6Address>> {
+@@ -110,6 +111,77 @@ fn rdnss_server(icmp: &[u8]) -> Option<Option<Ipv6Address>> {
      None
  }
  
@@ -129,7 +129,7 @@ index 539847f..dd2ae06 100644
  fn solicited_node(addr: Ipv6Address) -> Ipv6Address {
      let a = addr.octets();
      Ipv6Address::from([
-@@ -223,7 +295,7 @@ impl EthernetLink {
+@@ -243,7 +315,7 @@ impl EthernetLink {
      }
  
      fn is_own_ipv6(&self, addr: Ipv6Address) -> bool {
@@ -138,7 +138,7 @@ index 539847f..dd2ae06 100644
      }
  
      fn process_arp(&mut self, packet: &[u8], now: Instant) {
-@@ -379,7 +451,6 @@ impl EthernetLink {
+@@ -399,7 +471,6 @@ impl EthernetLink {
              NdiscRepr::RouterAdvert {
                  router_lifetime,
                  lladdr,
@@ -146,7 +146,7 @@ index 539847f..dd2ae06 100644
                  ..
              } => {
                  if src.segments()[0] & 0xffc0 != 0xfe80 {
-@@ -388,23 +459,15 @@ impl EthernetLink {
+@@ -408,23 +479,15 @@ impl EthernetLink {
                  if let Some(mac) = mac_of(lladdr) {
                      self.learn_neighbor(IpAddress::Ipv6(src), mac, now);
                  }
@@ -175,7 +175,7 @@ index 539847f..dd2ae06 100644
                  );
              }
              _ => {}
-@@ -577,8 +640,9 @@ impl EthernetLink {
+@@ -609,8 +672,9 @@ impl EthernetLink {
                      IpAddress::Ipv6(target) => {
                          let on_link_global = self
                              .ipv6
@@ -187,7 +187,7 @@ index 539847f..dd2ae06 100644
                              .map(|cidr| cidr.address());
                          let Some(src) = on_link_global.or(self.ipv6.link_local) else {
                              return;
-@@ -752,9 +816,87 @@ impl LinkDevice for EthernetLink {
+@@ -812,9 +876,87 @@ impl LinkDevice for EthernetLink {
      fn ipv6_config(&self) -> Option<Ipv6Config> {
          Some(Ipv6Config {
              link_local: Ipv6Cidr::new(self.ipv6.link_local?, 64),
@@ -277,10 +277,10 @@ index 539847f..dd2ae06 100644
 +    }
 +}
 diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
-index 7a8fda8..857cba2 100644
+index 85dab78..081b7a0 100644
 --- a/netstack/src/link/mod.rs
 +++ b/netstack/src/link/mod.rs
-@@ -8,10 +8,12 @@ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv6Address, Ipv6Cidr};
+@@ -8,10 +8,12 @@ use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv6Address
  
  /// IPv6 addresses of a link: its link-local address and what stateless
  /// autoconfiguration learned from router advertisements
@@ -296,10 +296,10 @@ index 7a8fda8..857cba2 100644
      /// Name server from the router advertisement (RDNSS)
      pub dns: Option<Ipv6Address>,
 diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
-index b6295c8..6c98500 100644
+index 67aca58..95057c6 100644
 --- a/netstack/src/scheme/mod.rs
 +++ b/netstack/src/scheme/mod.rs
-@@ -255,7 +255,7 @@ impl Smolnetd {
+@@ -265,7 +265,7 @@ impl Smolnetd {
          if current == self.ipv6_applied {
              return;
          }
@@ -308,7 +308,7 @@ index b6295c8..6c98500 100644
          let mut iface = self.iface.borrow_mut();
          let mut route_table = self.route_table.borrow_mut();
  
-@@ -268,9 +268,9 @@ impl Smolnetd {
+@@ -278,9 +278,9 @@ impl Smolnetd {
              IpCidr::Ipv6(Ipv6Cidr::new(Ipv6Address::from(octets), cidr.prefix_len()))
          };
  
@@ -320,7 +320,7 @@ index b6295c8..6c98500 100644
              iface.update_ip_addrs(|addrs| addrs.retain(|addr| !cidrs.contains(addr)));
              iface
                  .routes_mut()
-@@ -278,27 +278,30 @@ impl Smolnetd {
+@@ -288,27 +288,30 @@ impl Smolnetd {
              route_table.remove_rule(link_local_net);
              route_table.remove_rule(multicast_net);
              route_table.remove_rule(default_net);
@@ -361,10 +361,10 @@ index b6295c8..6c98500 100644
              if let Some(router) = new.router {
                  route_table.insert_rule(Rule::new(
 diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
-index 6a733e7..60cb8c9 100644
+index 98b7822..12afff6 100644
 --- a/netstack/src/scheme/netcfg/mod.rs
 +++ b/netstack/src/scheme/netcfg/mod.rs
-@@ -217,8 +217,8 @@ fn mk_root_node(
+@@ -275,8 +275,8 @@ fn mk_iface_node(
                                      };
                                      if let Some(v6) = dev.ipv6_config() {
                                          res += &format!("{}\n", v6.link_local);
@@ -376,5 +376,5 @@ index 6a733e7..60cb8c9 100644
                                      }
                                      res
 -- 
-2.54.0 (Apple Git-157)
+2.53.0
 
