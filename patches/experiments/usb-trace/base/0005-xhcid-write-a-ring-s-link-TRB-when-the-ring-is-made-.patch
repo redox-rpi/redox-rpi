@@ -1,0 +1,45 @@
+From fde743385e0cb9a6bae36d1977f2ba7ff9b804f5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:54:18 +0000
+Subject: [PATCH 5/6] xhcid: write a ring's link TRB when the ring is made
+ (test, #749)
+
+As Linux does: the link TRB is in place from the start, owned by
+software, and only its cycle bit changes when the producer reaches it.
+Candidate fix for the command ring wrap that hangs the VL805 (pi-tests
+Test 666).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/ring.rs | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/ring.rs b/drivers/usb/xhcid/src/xhci/ring.rs
+index aca5eb4f..2f504e30 100644
+--- a/drivers/usb/xhcid/src/xhci/ring.rs
++++ b/drivers/usb/xhcid/src/xhci/ring.rs
+@@ -15,9 +15,20 @@ pub struct Ring {
+ 
+ impl Ring {
+     pub fn new<const N: usize>(ac64: bool, length: usize, link: bool) -> Result<Ring> {
++        let mut trbs: Dma<[Trb]> = unsafe { Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, length)? };
++        if link {
++            // Write the link TRB now, still owned by software (its cycle bit
++            // is not the producer's), as Linux does when it links a ring's
++            // segments: when the producer reaches it, only its cycle bit
++            // changes. An empty last entry until then was the difference
++            // to Linux at the command ring wrap that hangs the VIA VL805
++            // (pi-tests Test 666).
++            let address = trbs.physical();
++            trbs[length - 1].link(address, true, !link);
++        }
+         Ok(Ring {
+             link,
+-            trbs: unsafe { Xhci::<N>::alloc_dma_zeroed_unsized_raw(ac64, length)? },
++            trbs,
+             i: 0,
+             cycle: link,
+         })
+-- 
+2.53.0
+

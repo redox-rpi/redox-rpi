@@ -1,0 +1,91 @@
+From 4bbec47908c041bf1174a91ce674cda935cc6f87 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:54:19 +0000
+Subject: [PATCH 6/6] xhcid: usb-trace, wrap the command ring by a CRCR restart
+ on request (test only, #749)
+
+`echo "1000 reset" > /tmp/xhcid-noop` sends the no-op commands with the
+command ring wrapped by stopping it and writing CRCR again, with the
+other cycle state, instead of through its link TRB. To tell whether the
+VL805 hangs on the link TRB or on something else at the wrap.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/mod.rs    |  9 ++++++++-
+ drivers/usb/xhcid/src/xhci/scheme.rs | 26 +++++++++++++++++++++++++-
+ 2 files changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 00bb3cd3..1adbc955 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -34,6 +34,9 @@ use crate::usb;
+ /// xHC and blocking-read workers started, for the usb-trace line.
+ pub static TRACE_COMMANDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+ pub static TRACE_WORKERS: AtomicUsize = AtomicUsize::new(0);
++/// Test only (experiment usb-trace): wrap the command ring by stopping it
++/// and writing CRCR again, instead of through its link TRB.
++pub static TRACE_RESET_WRAP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+ 
+ mod capability;
+ mod context;
+@@ -1610,7 +1613,11 @@ pub fn start_noop_trigger<const N: usize>(hci: &Arc<Xhci<N>>) {
+             continue;
+         };
+         let _ = fs::remove_file("/tmp/xhcid-noop");
+-        let count: usize = text.trim().parse().unwrap_or(0);
++        let mut words = text.split_whitespace();
++        let count: usize = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
++        let reset = words.next() == Some("reset");
++        TRACE_RESET_WRAP.store(reset, std::sync::atomic::Ordering::Relaxed);
++        info!("usb-trace: command ring wrap by {}", if reset { "CRCR reset" } else { "link TRB" });
+         info!("usb-trace: sending {} no-op commands", count);
+         let start = std::time::Instant::now();
+         let mut failed = 0usize;
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 27e83d40..444e183f 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -602,6 +602,28 @@ impl<const N: usize> Xhci<N> {
+ 
+         let next_event = {
+             let mut command_ring = self.cmd.lock().unwrap();
++            let reset_wrap = super::TRACE_RESET_WRAP.load(std::sync::atomic::Ordering::Relaxed);
++            if reset_wrap && command_ring.i == command_ring.trbs.len() - 1 {
++                // Test only: the entry before the link TRB is used, and the
++                // last command has completed (the no-op trigger sends one at
++                // a time). Stop the ring, then point CRCR at its start with
++                // the other cycle state, so the old entries are not owned.
++                let mut op = self.op.lock().unwrap();
++                op.crcr_low.write(1 << 1); // Command Stop
++                let start = std::time::Instant::now();
++                while op.crcr_low.read() & (1 << 3) != 0 {
++                    if start.elapsed() > std::time::Duration::from_millis(100) {
++                        warn!("usb-trace: command ring did not stop");
++                        break;
++                    }
++                }
++                command_ring.cycle = !command_ring.cycle;
++                command_ring.i = 0;
++                let crcr = command_ring.register();
++                op.crcr_low.write(crcr as u32);
++                op.crcr_high.write((crcr >> 32) as u32);
++                info!("usb-trace: command ring restarted at {:X} in {} us", crcr, start.elapsed().as_micros());
++            }
+             let (cmd_index, cycle) = (command_ring.next_index(), command_ring.cycle);
+ 
+             debug!("Sending command with cycle bit {}", cycle as u8);
+@@ -610,7 +632,9 @@ impl<const N: usize> Xhci<N> {
+                 let command_trb = &mut command_ring.trbs[cmd_index];
+                 f(command_trb, cycle);
+             }
+-            command_ring.hand_over_link();
++            if !reset_wrap {
++                command_ring.hand_over_link();
++            }
+             super::TRACE_COMMANDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+ 
+             // get the future here before awaiting, to destroy the lock before deadlock
+-- 
+2.53.0
+
