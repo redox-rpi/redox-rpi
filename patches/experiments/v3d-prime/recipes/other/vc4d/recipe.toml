@@ -1,0 +1,10 @@
+# vc4d (#667) is GPL-2.0-only and lives in its own repository; this recipe
+# only builds a pinned commit of it. No vc4d source in redox-rpi.
+# Branch g4-prime (#670): driver-graphics with PRIME export, v3dd
+# imports dma-buf fds (DRM_CAP_PRIME import).
+[source]
+git = "https://github.com/redox-rpi/vc4d.git"
+rev = "c4c5a12ebf136e448dd2c8a164347a29d4fa00bd"
+
+[build]
+template = "cargo"
