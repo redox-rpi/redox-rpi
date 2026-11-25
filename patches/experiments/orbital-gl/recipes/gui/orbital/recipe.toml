@@ -1,0 +1,23 @@
+# Experiment orbital-gl (#670, G4 step 3, test only): Orbital composites on
+# the GPU. orbital-gl.patch adds src/compositor/gl.rs: EGL surfaceless,
+# Orbital's display buffers imported as dma-buf render targets, window
+# contents, titles and icons as textures uploaded where they change. If any
+# GL step fails, Orbital draws with the CPU as before; ORBITAL_GL=0 forces
+# that.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/orbital.git"
+rev = "56620bba7dfd2652bd6b4e97909faecfcde2e27d"
+patches = ["orbital-gl.patch"]
+
+[build]
+template = "cargo"
+dependencies = [
+    "libdrm",
+    "mesa",
+]
+
+[package]
+dependencies = [
+    "mesa",
+    "orbdata",
+]

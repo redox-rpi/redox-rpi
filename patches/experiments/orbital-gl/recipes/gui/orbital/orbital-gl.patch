@@ -1,0 +1,1097 @@
+diff --git a/src/compositor/display.rs b/src/compositor/display.rs
+index 7d17ba4..026c25c 100644
+--- a/src/compositor/display.rs
++++ b/src/compositor/display.rs
+@@ -7,10 +7,14 @@ use drm_ffi::DRM_PLANE_TYPE_CURSOR;
+ use graphics_ipc::redox_uapi_exts::REDOX_DRM_CLIENT_CAP_HOTPLUG_EVENTS;
+ use graphics_ipc::{CpuBackedBuffer, DrmHandle, RedoxDrmEvent};
+ use log::error;
+-use orbclient::image::{Image, ImageRef, ImageRoiMut};
++use orbclient::image::{Image, ImageRef, ImageRoi, ImageRoiMut};
+ use orbclient::rect::{Rect, RectEdge};
+ use orbclient::{Color, Renderer};
++use std::cell::RefCell;
+ use std::mem;
++use std::rc::Rc;
++
++use super::gl;
+ use std::os::fd::{AsFd, BorrowedFd};
+ use std::{convert::TryInto, io, slice};
+ 
+@@ -184,6 +188,8 @@ impl Displays {
+             None
+         };
+ 
++        let gl = gl::Renderer::new().map(|r| Rc::new(RefCell::new(r)));
++
+         let mut displays: Vec<Display> = vec![];
+         for &connector in display_handle
+             .resource_handles()
+@@ -207,6 +213,7 @@ impl Displays {
+                     connector,
+                     connector_info,
+                     hw_cursor,
++                    gl.clone(),
+                 )?);
+             }
+         }
+@@ -258,6 +265,41 @@ pub struct Display {
+     factored_scale: u32,
+     map: V2DisplayMap,
+     cursor_map: Option<CursorMap>,
++    /// The GL renderer and this display's buffer as its target; None when
++    /// the CPU draws.
++    gl: Option<(Rc<RefCell<gl::Renderer>>, gl::Target)>,
++}
++
++/// The display buffer as a GL target: its PRIME fd, imported through EGL.
++/// None (logged) if the buffer has a shadow copy (the GPU must draw into
++/// the buffer the display shows) or the import fails.
++fn gl_target(
++    renderer: &Rc<RefCell<gl::Renderer>>,
++    display_handle: &DrmHandle,
++    map: &V2DisplayMap,
++) -> Option<(Rc<RefCell<gl::Renderer>>, gl::Target)> {
++    if map.buffer.has_shadow_buf() {
++        error!("display buffer has a shadow copy, drawing with the CPU");
++        return None;
++    }
++    let buffer = map.buffer.buffer();
++    let (width, height) = buffer.size();
++    // relibc takes O_RDWR for a writable buffer and FD_CLOEXEC (1).
++    let flags = syscall::flag::O_RDWR as u32 | 1;
++    let fd = match display_handle.buffer_to_prime_fd(buffer.handle(), flags) {
++        Ok(fd) => fd,
++        Err(err) => {
++            error!("PRIME export of the display buffer failed, drawing with the CPU: {err}");
++            return None;
++        }
++    };
++    match renderer.borrow_mut().target(fd, width, height, buffer.pitch()) {
++        Ok(target) => Some((renderer.clone(), target)),
++        Err(err) => {
++            error!("GL import of the display buffer failed, drawing with the CPU: {err}");
++            None
++        }
++    }
+ }
+ 
+ impl Display {
+@@ -268,8 +310,10 @@ impl Display {
+         connector: connector::Handle,
+         connector_info: connector::Info,
+         hw_cursor: Option<(u64, u64)>,
++        renderer: Option<Rc<RefCell<gl::Renderer>>>,
+     ) -> io::Result<Self> {
+         let map = V2DisplayMap::new(display_handle, connector, connector_info)?;
++        let gl = renderer.and_then(|r| gl_target(&r, display_handle, &map));
+         let (width, height) = map.buffer.buffer().size();
+         let cursor_map = hw_cursor
+             .map(|(width, height)| CursorMap::new(&display_handle, width as u32, height as u32))
+@@ -286,9 +330,11 @@ impl Display {
+             factored_scale,
+             map,
+             cursor_map,
++            gl,
+         })
+     }
+ 
++
+     pub fn scale(&self) -> u32 {
+         self.scale
+     }
+@@ -316,6 +362,11 @@ impl Display {
+     pub fn rect(&mut self, rect: &Rect, color: Color) {
+         let x = self.x;
+         let y = self.y;
++        if let Some((renderer, target)) = &self.gl {
++            let local = rect.intersection(&self.screen_rect()).translate(-x, -y);
++            renderer.borrow_mut().fill(target, &local, color);
++            return;
++        }
+         self.map.image_mut().rect(
+             rect.left() - x,
+             rect.top() - y,
+@@ -332,10 +383,48 @@ impl Display {
+         self.rect(&rect.edge(thickness, 0, RectEdge::Right), color);
+     }
+ 
++    /// Draws `src` of `image` at `dst` (screen coordinates, the same size
++    /// as `src`), blended or copied. `cached`: on the GPU the image keeps a
++    /// texture, which gl::invalidate() marks where the image changed;
++    /// otherwise it is uploaded each time.
++    pub fn image(
++        &mut self,
++        dst: &Rect,
++        image: &impl Renderer,
++        src: &Rect,
++        blend: bool,
++        cached: bool,
++    ) {
++        if let Some((renderer, target)) = &self.gl {
++            let local = dst.translate(-self.x, -self.y);
++            renderer.borrow_mut().image(
++                target,
++                &local,
++                image.data(),
++                image.width(),
++                image.height(),
++                src,
++                blend,
++                cached,
++            );
++            return;
++        }
++        let roi = ImageRoi::from_renderer(image, src);
++        if blend {
++            self.roi_mut(dst).blend(&roi);
++        } else {
++            self.roi_mut(dst).blit(&roi);
++        }
++    }
++
+     pub(super) fn resize_if_necessary(&mut self, display_handle: &DrmHandle) -> bool {
+         match self.map.resize_if_necessary(display_handle) {
+             Ok(resized) => {
+                 if resized {
++                    if let Some((renderer, target)) = self.gl.take() {
++                        renderer.borrow_mut().drop_target(target);
++                        self.gl = gl_target(&renderer, display_handle, &self.map);
++                    }
+                     let (_, height) = self.map.buffer.buffer().size();
+                     self.scale = Self::calculate_scale(height);
+                 }
+@@ -407,6 +496,9 @@ impl Display {
+     }
+ 
+     pub(super) fn sync_rect(&mut self, display_handle: &DrmHandle, rect: Rect) -> io::Result<()> {
++        if let Some((renderer, _)) = &self.gl {
++            renderer.borrow_mut().finish();
++        }
+         let x1 = (rect.left() - self.x) as usize;
+         let y1 = (rect.top() - self.y) as usize;
+         let x2 = (rect.right() - self.x) as usize;
+diff --git a/src/compositor/gl.rs b/src/compositor/gl.rs
+new file mode 100644
+index 0000000..71ebcde
+--- /dev/null
++++ b/src/compositor/gl.rs
+@@ -0,0 +1,683 @@
++//! GL compositing (redox-rpi experiment orbital-gl, G4 step 3, redox-rpi#670).
++//!
++//! Orbital draws its screen with GLES on the GPU instead of the CPU: each
++//! display's dumb buffer is exported as a dma-buf (PRIME) and imported
++//! through EGL as a render target, so the GPU draws straight into memory
++//! the display shows. Window contents, titles and icons live in textures
++//! that are uploaded once and then only where they change (the damage a
++//! window reports on sync, a new title, a resize); images without a cached
++//! texture (popups, the FPS overlay) are streamed through a scratch
++//! texture. If any step fails, Orbital keeps its CPU renderer.
++//!
++//! Set ORBITAL_GL=0 to use the CPU renderer.
++
++use std::cell::{Cell, RefCell};
++use std::collections::HashMap;
++use std::ffi::{CStr, c_char, c_void};
++use std::os::fd::{AsRawFd, OwnedFd};
++use std::ptr;
++
++use log::{error, info};
++use orbclient::Color;
++use orbclient::rect::Rect;
++
++type EGLDisplay = *mut c_void;
++type EGLContext = *mut c_void;
++type EGLImage = *mut c_void;
++type EGLint = i32;
++type EGLBoolean = u32;
++type GLuint = u32;
++type GLint = i32;
++type GLenum = u32;
++type GLsizei = i32;
++type GLfloat = f32;
++
++const EGL_NONE: EGLint = 0x3038;
++const EGL_PLATFORM_SURFACELESS_MESA: u32 = 0x31DD;
++const EGL_OPENGL_ES_API: u32 = 0x30A0;
++const EGL_CONTEXT_MAJOR_VERSION: EGLint = 0x3098;
++const EGL_EXTENSIONS: EGLint = 0x3055;
++const EGL_LINUX_DMA_BUF_EXT: u32 = 0x3270;
++const EGL_WIDTH: EGLint = 0x3057;
++const EGL_HEIGHT: EGLint = 0x3056;
++const EGL_LINUX_DRM_FOURCC_EXT: EGLint = 0x3271;
++const EGL_DMA_BUF_PLANE0_FD_EXT: EGLint = 0x3272;
++const EGL_DMA_BUF_PLANE0_OFFSET_EXT: EGLint = 0x3273;
++const EGL_DMA_BUF_PLANE0_PITCH_EXT: EGLint = 0x3274;
++const EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT: EGLint = 0x3443;
++const EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT: EGLint = 0x3444;
++/// DRM_FORMAT_ARGB8888, the format of Orbital's dumb buffers.
++const DRM_FORMAT_ARGB8888: EGLint = 0x3432_5241;
++
++const GL_TEXTURE_2D: GLenum = 0x0DE1;
++const GL_RGBA: GLenum = 0x1908;
++const GL_UNSIGNED_BYTE: GLenum = 0x1401;
++const GL_TEXTURE_MIN_FILTER: GLenum = 0x2801;
++const GL_TEXTURE_MAG_FILTER: GLenum = 0x2800;
++const GL_TEXTURE_WRAP_S: GLenum = 0x2802;
++const GL_TEXTURE_WRAP_T: GLenum = 0x2803;
++const GL_NEAREST: GLint = 0x2600;
++const GL_CLAMP_TO_EDGE: GLint = 0x812F;
++const GL_UNPACK_ALIGNMENT: GLenum = 0x0CF5;
++const GL_UNPACK_ROW_LENGTH: GLenum = 0x0CF2;
++const GL_UNPACK_SKIP_ROWS: GLenum = 0x0CF3;
++const GL_UNPACK_SKIP_PIXELS: GLenum = 0x0CF4;
++const GL_FRAMEBUFFER: GLenum = 0x8D40;
++const GL_RENDERBUFFER: GLenum = 0x8D41;
++const GL_COLOR_ATTACHMENT0: GLenum = 0x8CE0;
++const GL_FRAMEBUFFER_COMPLETE: GLenum = 0x8CD5;
++const GL_BLEND: GLenum = 0x0BE2;
++const GL_SRC_ALPHA: GLenum = 0x0302;
++const GL_ONE_MINUS_SRC_ALPHA: GLenum = 0x0303;
++const GL_ONE: GLenum = 1;
++const GL_TRIANGLE_STRIP: GLenum = 0x0005;
++const GL_FLOAT: GLenum = 0x1406;
++const GL_VERTEX_SHADER: GLenum = 0x8B31;
++const GL_FRAGMENT_SHADER: GLenum = 0x8B30;
++const GL_COMPILE_STATUS: GLenum = 0x8B81;
++const GL_LINK_STATUS: GLenum = 0x8B82;
++const GL_NO_ERROR: GLenum = 0;
++
++#[link(name = "EGL")]
++unsafe extern "C" {
++    fn eglGetProcAddress(name: *const c_char) -> *mut c_void;
++    fn eglInitialize(dpy: EGLDisplay, major: *mut EGLint, minor: *mut EGLint) -> EGLBoolean;
++    fn eglQueryString(dpy: EGLDisplay, name: EGLint) -> *const c_char;
++    fn eglBindAPI(api: u32) -> EGLBoolean;
++    fn eglCreateContext(
++        dpy: EGLDisplay,
++        config: *mut c_void,
++        share: EGLContext,
++        attribs: *const EGLint,
++    ) -> EGLContext;
++    fn eglMakeCurrent(
++        dpy: EGLDisplay,
++        draw: *mut c_void,
++        read: *mut c_void,
++        ctx: EGLContext,
++    ) -> EGLBoolean;
++    fn eglGetError() -> EGLint;
++}
++
++#[link(name = "GLESv2")]
++unsafe extern "C" {
++    fn glGetError() -> GLenum;
++    fn glGenTextures(n: GLsizei, textures: *mut GLuint);
++    fn glDeleteTextures(n: GLsizei, textures: *const GLuint);
++    fn glBindTexture(target: GLenum, texture: GLuint);
++    fn glTexParameteri(target: GLenum, pname: GLenum, param: GLint);
++    fn glTexImage2D(
++        target: GLenum,
++        level: GLint,
++        internal: GLint,
++        w: GLsizei,
++        h: GLsizei,
++        border: GLint,
++        format: GLenum,
++        ty: GLenum,
++        data: *const c_void,
++    );
++    fn glTexSubImage2D(
++        target: GLenum,
++        level: GLint,
++        x: GLint,
++        y: GLint,
++        w: GLsizei,
++        h: GLsizei,
++        format: GLenum,
++        ty: GLenum,
++        data: *const c_void,
++    );
++    fn glPixelStorei(pname: GLenum, param: GLint);
++    fn glGenRenderbuffers(n: GLsizei, rb: *mut GLuint);
++    fn glBindRenderbuffer(target: GLenum, rb: GLuint);
++    fn glDeleteRenderbuffers(n: GLsizei, rb: *const GLuint);
++    fn glGenFramebuffers(n: GLsizei, fb: *mut GLuint);
++    fn glBindFramebuffer(target: GLenum, fb: GLuint);
++    fn glDeleteFramebuffers(n: GLsizei, fb: *const GLuint);
++    fn glFramebufferRenderbuffer(target: GLenum, att: GLenum, rbtarget: GLenum, rb: GLuint);
++    fn glCheckFramebufferStatus(target: GLenum) -> GLenum;
++    fn glViewport(x: GLint, y: GLint, w: GLsizei, h: GLsizei);
++    fn glEnable(cap: GLenum);
++    fn glDisable(cap: GLenum);
++    fn glBlendFuncSeparate(src: GLenum, dst: GLenum, src_a: GLenum, dst_a: GLenum);
++    fn glCreateShader(ty: GLenum) -> GLuint;
++    fn glShaderSource(s: GLuint, n: GLsizei, src: *const *const c_char, len: *const GLint);
++    fn glCompileShader(s: GLuint);
++    fn glGetShaderiv(s: GLuint, pname: GLenum, out: *mut GLint);
++    fn glGetShaderInfoLog(s: GLuint, max: GLsizei, len: *mut GLsizei, log: *mut c_char);
++    fn glCreateProgram() -> GLuint;
++    fn glAttachShader(p: GLuint, s: GLuint);
++    fn glBindAttribLocation(p: GLuint, index: GLuint, name: *const c_char);
++    fn glLinkProgram(p: GLuint);
++    fn glGetProgramiv(p: GLuint, pname: GLenum, out: *mut GLint);
++    fn glUseProgram(p: GLuint);
++    fn glGetUniformLocation(p: GLuint, name: *const c_char) -> GLint;
++    fn glUniform4f(loc: GLint, a: GLfloat, b: GLfloat, c: GLfloat, d: GLfloat);
++    fn glUniform1i(loc: GLint, v: GLint);
++    fn glVertexAttribPointer(
++        index: GLuint,
++        size: GLint,
++        ty: GLenum,
++        norm: u8,
++        stride: GLsizei,
++        ptr: *const c_void,
++    );
++    fn glEnableVertexAttribArray(index: GLuint);
++    fn glDrawArrays(mode: GLenum, first: GLint, count: GLsizei);
++    fn glFinish();
++}
++
++type GetPlatformDisplay = unsafe extern "C" fn(u32, *mut c_void, *const EGLint) -> EGLDisplay;
++type CreateImage =
++    unsafe extern "C" fn(EGLDisplay, EGLContext, u32, *mut c_void, *const EGLint) -> EGLImage;
++type DestroyImage = unsafe extern "C" fn(EGLDisplay, EGLImage) -> EGLBoolean;
++type ImageTargetRenderbuffer = unsafe extern "C" fn(GLenum, EGLImage);
++
++thread_local! {
++    /// Whether a GL renderer runs; the bookkeeping below is skipped otherwise.
++    static ACTIVE: Cell<bool> = const { Cell::new(false) };
++    /// Changes to cached images since their last upload, by data address.
++    static DIRTY: RefCell<HashMap<usize, Dirty>> = RefCell::new(HashMap::new());
++    /// Images that went away: their textures are deleted at the next draw.
++    static FORGOTTEN: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
++}
++
++enum Dirty {
++    All,
++    Rects(Vec<Rect>),
++}
++
++/// The texture of the image at `data` must be uploaded again: all of it
++/// (`None`) or the given rects (image coordinates). Call after the image's
++/// pixels change (a window's sync, a new title) and after a new image is
++/// made where an old one was.
++pub fn invalidate(data: *const Color, rects: Option<&[Rect]>) {
++    if !ACTIVE.with(Cell::get) {
++        return;
++    }
++    DIRTY.with(|dirty| {
++        let mut dirty = dirty.borrow_mut();
++        let entry = dirty.entry(data as usize).or_insert(Dirty::Rects(Vec::new()));
++        match (rects, &mut *entry) {
++            (None, _) => *entry = Dirty::All,
++            (Some(_), Dirty::All) => {}
++            (Some(new), Dirty::Rects(old)) => old.extend_from_slice(new),
++        }
++    });
++}
++
++/// The image at `data` is gone; its texture goes.
++pub fn forget(data: *const Color) {
++    if !ACTIVE.with(Cell::get) {
++        return;
++    }
++    DIRTY.with(|dirty| dirty.borrow_mut().remove(&(data as usize)));
++    FORGOTTEN.with(|f| f.borrow_mut().push(data as usize));
++}
++
++struct Texture {
++    id: GLuint,
++    w: u32,
++    h: u32,
++}
++
++/// One display's buffer as a GL render target.
++pub struct Target {
++    image: EGLImage,
++    rb: GLuint,
++    fb: GLuint,
++    w: u32,
++    h: u32,
++    /// Held until the target goes: the dma-buf of the display's buffer.
++    _fd: OwnedFd,
++}
++
++pub struct Renderer {
++    dpy: EGLDisplay,
++    create_image: CreateImage,
++    destroy_image: DestroyImage,
++    image_target_rb: ImageTargetRenderbuffer,
++    tex_prog: GLuint,
++    tex_rect: GLint,
++    tex_uv: GLint,
++    fill_prog: GLuint,
++    fill_rect: GLint,
++    fill_color: GLint,
++    textures: HashMap<usize, Texture>,
++    scratch: Option<Texture>,
++    /// The target the last draw went to, with its viewport.
++    current: Option<(GLuint, u32, u32)>,
++    blend: Option<bool>,
++}
++
++fn proc<T>(name: &CStr) -> Option<T> {
++    let p = unsafe { eglGetProcAddress(name.as_ptr()) };
++    if p.is_null() {
++        None
++    } else {
++        Some(unsafe { std::mem::transmute_copy::<*mut c_void, T>(&p) })
++    }
++}
++
++fn shader(ty: GLenum, src: &CStr) -> Result<GLuint, String> {
++    unsafe {
++        let s = glCreateShader(ty);
++        let p = src.as_ptr();
++        glShaderSource(s, 1, &p, ptr::null());
++        glCompileShader(s);
++        let mut ok = 0;
++        glGetShaderiv(s, GL_COMPILE_STATUS, &mut ok);
++        if ok == 0 {
++            let mut log = [0 as c_char; 512];
++            glGetShaderInfoLog(s, log.len() as GLsizei, ptr::null_mut(), log.as_mut_ptr());
++            return Err(CStr::from_ptr(log.as_ptr()).to_string_lossy().into_owned());
++        }
++        Ok(s)
++    }
++}
++
++fn program(vs: &CStr, fs: &CStr) -> Result<GLuint, String> {
++    unsafe {
++        let p = glCreateProgram();
++        glAttachShader(p, shader(GL_VERTEX_SHADER, vs)?);
++        glAttachShader(p, shader(GL_FRAGMENT_SHADER, fs)?);
++        glBindAttribLocation(p, 0, c"corner".as_ptr());
++        glLinkProgram(p);
++        let mut ok = 0;
++        glGetProgramiv(p, GL_LINK_STATUS, &mut ok);
++        if ok == 0 {
++            return Err("link failed".into());
++        }
++        Ok(p)
++    }
++}
++
++/// Pixel rect (x, y, w, h) of the target to clip space; row 0 of the
++/// buffer is the top of the screen and GL's y = -1.
++const VERTEX: &CStr = c"uniform vec4 rect;
++attribute vec2 corner;
++varying vec2 uv;
++uniform vec4 uvrect;
++void main() {
++  uv = uvrect.xy + corner * uvrect.zw;
++  gl_Position = vec4(rect.xy + corner * rect.zw, 0.0, 1.0);
++}
++";
++
++/// Orbital's pixels are 0xAARRGGBB words, so B, G, R, A in memory; they
++/// are uploaded as RGBA bytes and swapped back here.
++const TEX_FRAGMENT: &CStr = c"precision highp float;
++uniform sampler2D tex;
++varying vec2 uv;
++void main() { gl_FragColor = texture2D(tex, uv).bgra; }
++";
++
++const FILL_FRAGMENT: &CStr = c"precision highp float;
++uniform vec4 color;
++varying vec2 uv;
++void main() { gl_FragColor = color; }
++";
++
++static CORNERS: [GLfloat; 8] = [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
++
++impl Renderer {
++    /// EGL on the surfaceless platform with an OpenGL ES 3 context (for
++    /// GL_UNPACK_ROW_LENGTH), and the programs. None (logged) if GL is
++    /// switched off or any step fails.
++    pub fn new() -> Option<Renderer> {
++        if std::env::var("ORBITAL_GL").as_deref() == Ok("0") {
++            info!("GL compositing switched off (ORBITAL_GL=0)");
++            return None;
++        }
++        match unsafe { Self::init() } {
++            Ok(renderer) => {
++                ACTIVE.with(|a| a.set(true));
++                info!("GL compositing on the GPU");
++                Some(renderer)
++            }
++            Err(err) => {
++                error!("GL compositing not available, using the CPU: {err}");
++                None
++            }
++        }
++    }
++
++    unsafe fn init() -> Result<Renderer, String> {
++        let get_display: GetPlatformDisplay =
++            proc(c"eglGetPlatformDisplayEXT").ok_or("no eglGetPlatformDisplayEXT")?;
++        let dpy = unsafe { get_display(EGL_PLATFORM_SURFACELESS_MESA, ptr::null_mut(), ptr::null()) };
++        if dpy.is_null() || unsafe { eglInitialize(dpy, ptr::null_mut(), ptr::null_mut()) } == 0 {
++            return Err(format!("eglInitialize: EGL error {:#x}", unsafe { eglGetError() }));
++        }
++        let exts = unsafe { eglQueryString(dpy, EGL_EXTENSIONS) };
++        let exts = if exts.is_null() {
++            String::new()
++        } else {
++            unsafe { CStr::from_ptr(exts) }.to_string_lossy().into_owned()
++        };
++        for ext in [
++            "EGL_EXT_image_dma_buf_import",
++            "EGL_EXT_image_dma_buf_import_modifiers",
++            "EGL_KHR_surfaceless_context",
++        ] {
++            if !exts.split(' ').any(|e| e == ext) {
++                return Err(format!("no {ext}"));
++            }
++        }
++        if unsafe { eglBindAPI(EGL_OPENGL_ES_API) } == 0 {
++            return Err("eglBindAPI".into());
++        }
++        let attribs = [EGL_CONTEXT_MAJOR_VERSION, 3, EGL_NONE];
++        let ctx = unsafe { eglCreateContext(dpy, ptr::null_mut(), ptr::null_mut(), attribs.as_ptr()) };
++        if ctx.is_null() {
++            return Err(format!("eglCreateContext: EGL error {:#x}", unsafe { eglGetError() }));
++        }
++        if unsafe { eglMakeCurrent(dpy, ptr::null_mut(), ptr::null_mut(), ctx) } == 0 {
++            return Err("eglMakeCurrent".into());
++        }
++        let create_image: CreateImage = proc(c"eglCreateImageKHR").ok_or("no eglCreateImageKHR")?;
++        let destroy_image: DestroyImage = proc(c"eglDestroyImageKHR").ok_or("no eglDestroyImageKHR")?;
++        let image_target_rb: ImageTargetRenderbuffer = proc(c"glEGLImageTargetRenderbufferStorageOES")
++            .ok_or("no glEGLImageTargetRenderbufferStorageOES")?;
++        let tex_prog = program(VERTEX, TEX_FRAGMENT)?;
++        let fill_prog = program(VERTEX, FILL_FRAGMENT)?;
++        unsafe {
++            glUseProgram(tex_prog);
++            glUniform1i(glGetUniformLocation(tex_prog, c"tex".as_ptr()), 0);
++            glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, CORNERS.as_ptr().cast());
++            glEnableVertexAttribArray(0);
++            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++        }
++        Ok(Renderer {
++            dpy,
++            create_image,
++            destroy_image,
++            image_target_rb,
++            tex_rect: unsafe { glGetUniformLocation(tex_prog, c"rect".as_ptr()) },
++            tex_uv: unsafe { glGetUniformLocation(tex_prog, c"uvrect".as_ptr()) },
++            tex_prog,
++            fill_rect: unsafe { glGetUniformLocation(fill_prog, c"rect".as_ptr()) },
++            fill_color: unsafe { glGetUniformLocation(fill_prog, c"color".as_ptr()) },
++            fill_prog,
++            textures: HashMap::new(),
++            scratch: None,
++            current: None,
++            blend: None,
++        })
++    }
++
++    /// A display's buffer (its PRIME fd, linear ARGB8888) as a target.
++    pub fn target(&mut self, fd: OwnedFd, w: u32, h: u32, pitch: u32) -> Result<Target, String> {
++        let attribs = [
++            EGL_WIDTH,
++            w as EGLint,
++            EGL_HEIGHT,
++            h as EGLint,
++            EGL_LINUX_DRM_FOURCC_EXT,
++            DRM_FORMAT_ARGB8888,
++            EGL_DMA_BUF_PLANE0_FD_EXT,
++            fd.as_raw_fd(),
++            EGL_DMA_BUF_PLANE0_OFFSET_EXT,
++            0,
++            EGL_DMA_BUF_PLANE0_PITCH_EXT,
++            pitch as EGLint,
++            EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
++            0,
++            EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
++            0,
++            EGL_NONE,
++        ];
++        unsafe {
++            let image = (self.create_image)(
++                self.dpy,
++                ptr::null_mut(),
++                EGL_LINUX_DMA_BUF_EXT,
++                ptr::null_mut(),
++                attribs.as_ptr(),
++            );
++            if image.is_null() {
++                return Err(format!("eglCreateImageKHR: EGL error {:#x}", eglGetError()));
++            }
++            let mut rb = 0;
++            glGenRenderbuffers(1, &mut rb);
++            glBindRenderbuffer(GL_RENDERBUFFER, rb);
++            (self.image_target_rb)(GL_RENDERBUFFER, image);
++            let mut fb = 0;
++            glGenFramebuffers(1, &mut fb);
++            glBindFramebuffer(GL_FRAMEBUFFER, fb);
++            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb);
++            let status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++            self.current = None;
++            let target = Target { image, rb, fb, w, h, _fd: fd };
++            if status != GL_FRAMEBUFFER_COMPLETE {
++                self.drop_target(target);
++                return Err(format!("framebuffer incomplete ({status:#x})"));
++            }
++            Ok(target)
++        }
++    }
++
++    pub fn drop_target(&mut self, target: Target) {
++        unsafe {
++            glDeleteFramebuffers(1, &target.fb);
++            glDeleteRenderbuffers(1, &target.rb);
++            (self.destroy_image)(self.dpy, target.image);
++        }
++        self.current = None;
++    }
++
++    fn bind(&mut self, target: &Target) {
++        if self.current != Some((target.fb, target.w, target.h)) {
++            unsafe {
++                glBindFramebuffer(GL_FRAMEBUFFER, target.fb);
++                glViewport(0, 0, target.w as GLsizei, target.h as GLsizei);
++            }
++            self.current = Some((target.fb, target.w, target.h));
++        }
++    }
++
++    fn set_blend(&mut self, blend: bool) {
++        if self.blend != Some(blend) {
++            unsafe {
++                if blend {
++                    glEnable(GL_BLEND);
++                    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
++                } else {
++                    glDisable(GL_BLEND);
++                }
++            }
++            self.blend = Some(blend);
++        }
++    }
++
++    /// `rect` (target pixels) as the clip-space rect uniform.
++    fn clip(target: &Target, rect: &Rect) -> [GLfloat; 4] {
++        let (tw, th) = (target.w as GLfloat, target.h as GLfloat);
++        [
++            rect.left() as GLfloat / tw * 2.0 - 1.0,
++            rect.top() as GLfloat / th * 2.0 - 1.0,
++            rect.width() as GLfloat / tw * 2.0,
++            rect.height() as GLfloat / th * 2.0,
++        ]
++    }
++
++    /// Fills `rect` (target pixels) with `color`, blended if it is not
++    /// opaque, as orbclient's rect.
++    pub fn fill(&mut self, target: &Target, rect: &Rect, color: Color) {
++        if rect.is_empty() {
++            return;
++        }
++        self.bind(target);
++        self.set_blend(color.a() != 255);
++        let c = Self::clip(target, rect);
++        unsafe {
++            glUseProgram(self.fill_prog);
++            glUniform4f(self.fill_rect, c[0], c[1], c[2], c[3]);
++            glUniform4f(
++                self.fill_color,
++                color.r() as GLfloat / 255.0,
++                color.g() as GLfloat / 255.0,
++                color.b() as GLfloat / 255.0,
++                color.a() as GLfloat / 255.0,
++            );
++            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++        }
++    }
++
++    /// Deletes the textures of images that went away.
++    fn collect(&mut self) {
++        FORGOTTEN.with(|f| {
++            for key in f.borrow_mut().drain(..) {
++                if let Some(tex) = self.textures.remove(&key) {
++                    unsafe { glDeleteTextures(1, &tex.id) };
++                }
++            }
++        });
++    }
++
++    fn new_texture(w: u32, h: u32, data: *const c_void) -> Texture {
++        let mut id = 0;
++        unsafe {
++            glGenTextures(1, &mut id);
++            glBindTexture(GL_TEXTURE_2D, id);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
++            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
++            glTexImage2D(
++                GL_TEXTURE_2D,
++                0,
++                GL_RGBA as GLint,
++                w as GLsizei,
++                h as GLsizei,
++                0,
++                GL_RGBA,
++                GL_UNSIGNED_BYTE,
++                data,
++            );
++        }
++        Texture { id, w, h }
++    }
++
++    /// Uploads `rect` of an image (`data`, `w` pixels a row) into the
++    /// bound texture at the rect's own place, or at 0, 0 (`at_origin`).
++    fn upload(data: &[Color], w: u32, rect: &Rect, at_origin: bool) {
++        if rect.is_empty() {
++            return;
++        }
++        let (x, y) = if at_origin { (0, 0) } else { (rect.left(), rect.top()) };
++        unsafe {
++            glPixelStorei(GL_UNPACK_ROW_LENGTH, w as GLint);
++            glPixelStorei(GL_UNPACK_SKIP_PIXELS, rect.left());
++            glPixelStorei(GL_UNPACK_SKIP_ROWS, rect.top());
++            glTexSubImage2D(
++                GL_TEXTURE_2D,
++                0,
++                x,
++                y,
++                rect.width() as GLsizei,
++                rect.height() as GLsizei,
++                GL_RGBA,
++                GL_UNSIGNED_BYTE,
++                data.as_ptr().cast(),
++            );
++        }
++    }
++
++    /// Draws `src` of an image (`data`, `w` x `h`) at `dst` (target pixels,
++    /// the same size), blended or copied. `cached`: the image keeps a
++    /// texture, uploaded where it changed (invalidate()); otherwise `src`
++    /// goes through the scratch texture.
++    pub fn image(
++        &mut self,
++        target: &Target,
++        dst: &Rect,
++        data: &[Color],
++        w: u32,
++        h: u32,
++        src: &Rect,
++        blend: bool,
++        cached: bool,
++    ) {
++        let src = src.intersection(&Rect::new(0, 0, w, h));
++        if src.is_empty() || dst.is_empty() || data.len() < (w * h) as usize {
++            return;
++        }
++        self.collect();
++        let (tex_id, tw, th, sx, sy) = if cached {
++            let key = data.as_ptr() as usize;
++            let dirty = DIRTY.with(|d| d.borrow_mut().remove(&key));
++            let fresh = !matches!(self.textures.get(&key), Some(t) if t.w == w && t.h == h);
++            if fresh {
++                if let Some(old) = self.textures.remove(&key) {
++                    unsafe { glDeleteTextures(1, &old.id) };
++                }
++                let tex = Self::new_texture(w, h, data.as_ptr().cast());
++                self.textures.insert(key, tex);
++            } else {
++                let tex = &self.textures[&key];
++                unsafe { glBindTexture(GL_TEXTURE_2D, tex.id) };
++                match dirty {
++                    Some(Dirty::All) => Self::upload(data, w, &Rect::new(0, 0, w, h), false),
++                    Some(Dirty::Rects(rects)) => {
++                        for rect in rects {
++                            Self::upload(data, w, &rect.intersection(&Rect::new(0, 0, w, h)), false);
++                        }
++                    }
++                    None => {}
++                }
++            }
++            let tex = &self.textures[&key];
++            (tex.id, tex.w, tex.h, src.left(), src.top())
++        } else {
++            let (sw, sh) = (src.width(), src.height());
++            let fits = matches!(&self.scratch, Some(t) if t.w >= sw && t.h >= sh);
++            if !fits {
++                let (nw, nh) = match &self.scratch {
++                    Some(t) => (t.w.max(sw), t.h.max(sh)),
++                    None => (sw.max(256), sh.max(256)),
++                };
++                if let Some(old) = self.scratch.take() {
++                    unsafe { glDeleteTextures(1, &old.id) };
++                }
++                self.scratch = Some(Self::new_texture(nw, nh, ptr::null()));
++            }
++            let tex = self.scratch.as_ref().unwrap();
++            unsafe { glBindTexture(GL_TEXTURE_2D, tex.id) };
++            Self::upload(data, w, &src, true);
++            (tex.id, tex.w, tex.h, 0, 0)
++        };
++        self.bind(target);
++        self.set_blend(blend);
++        let c = Self::clip(target, dst);
++        unsafe {
++            glUseProgram(self.tex_prog);
++            glBindTexture(GL_TEXTURE_2D, tex_id);
++            glUniform4f(self.tex_rect, c[0], c[1], c[2], c[3]);
++            glUniform4f(
++                self.tex_uv,
++                sx as GLfloat / tw as GLfloat,
++                sy as GLfloat / th as GLfloat,
++                src.width() as GLfloat / tw as GLfloat,
++                src.height() as GLfloat / th as GLfloat,
++            );
++            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++        }
++    }
++
++    /// Waits until the GPU has drawn everything, before the display is
++    /// told to show it. Logs a GL error if there was one.
++    pub fn finish(&mut self) {
++        unsafe {
++            glFinish();
++            let err = glGetError();
++            if err != GL_NO_ERROR {
++                error!("GL error {err:#x}");
++            }
++        }
++    }
++}
+diff --git a/src/compositor/mod.rs b/src/compositor/mod.rs
+index 140baf8..3c1f841 100644
+--- a/src/compositor/mod.rs
++++ b/src/compositor/mod.rs
+@@ -9,6 +9,7 @@ use orbclient::rect::Rect;
+ use orbclient::{Color, image::Image};
+ 
+ mod display;
++pub(crate) mod gl;
+ 
+ use self::display::Displays;
+ 
+@@ -334,10 +335,12 @@ impl Compositor {
+             if !rect.is_empty() {
+                 let cursor_intersect = rect.intersection(&cursor_rect);
+                 if !cursor_intersect.is_empty() {
+-                    display.roi_mut(&cursor_intersect).blend(
+-                        &self.cursor.roi(
+-                            &cursor_intersect.translate(-cursor_rect.left(), -cursor_rect.top()),
+-                        ),
++                    display.image(
++                        &cursor_intersect,
++                        &*self.cursor,
++                        &cursor_intersect.translate(-cursor_rect.left(), -cursor_rect.top()),
++                        true,
++                        false,
+                     );
+                 }
+             }
+diff --git a/src/scheme.rs b/src/scheme.rs
+index c167a0e..543083c 100644
+--- a/src/scheme.rs
++++ b/src/scheme.rs
+@@ -467,6 +467,8 @@ impl OrbitalScheme {
+         if create_new {
+             window.maps += 1;
+         }
++        // The client writes from now on; its syncs say where.
++        window.gl_invalidate();
+         Ok(window.map())
+     }
+ 
+@@ -656,18 +658,23 @@ impl OrbitalScheme {
+             }
+ 
+             if let Some(popup) = &popup {
+-                display
+-                    .roi_mut(popup_rect.as_ref().unwrap())
+-                    .blend(&popup.roi(&Rect::new(0, 0, popup.width(), popup.height())));
++                display.image(
++                    popup_rect.as_ref().unwrap(),
++                    *popup,
++                    &Rect::new(0, 0, popup.width(), popup.height()),
++                    true,
++                    false,
++                );
+             }
+ 
+             if let Some((image, rect)) = self.fps_widget.get_rendered_osd() {
+-                display.roi_mut(rect).blend(&image.roi(&Rect::new(
+-                    0,
+-                    0,
+-                    image.width(),
+-                    image.height(),
+-                )));
++                display.image(
++                    rect,
++                    image,
++                    &Rect::new(0, 0, image.width(), image.height()),
++                    true,
++                    false,
++                );
+             }
+         });
+ 
+diff --git a/src/window.rs b/src/window.rs
+index bbf524e..62048c4 100644
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -1,5 +1,5 @@
+ use crate::{
+-    compositor::{Display, SCALE_BASELINE},
++    compositor::{Display, SCALE_BASELINE, gl},
+     core::Properties,
+     scheme::TilePosition,
+     window_order::WindowZOrder,
+@@ -62,7 +62,7 @@ impl Window {
+     // TODO Consider creating Rect for the title area, max and close areas and removing a lot
+     // of the inline size calculations below
+     pub fn new(x: i32, y: i32, w: u32, h: u32, scale: u32, config: Rc<Config>) -> Window {
+-        Window {
++        let window = Window {
+             x,
+             y,
+             w,
+@@ -92,7 +92,9 @@ impl Window {
+             mouse_relative: false,
+             maps: 0,
+             config,
+-        }
++        };
++        window.gl_invalidate();
++        window
+     }
+ 
+     pub fn width(&self) -> u32 {
+@@ -233,11 +235,13 @@ impl Window {
+                 );
+                 let image_intersect = rect.intersection(&image_rect);
+                 if !image_intersect.is_empty() {
+-                    display
+-                        .roi_mut(&image_intersect)
+-                        .blend(&title_image.roi(
+-                            &image_intersect.translate(-image_rect.left(), -image_rect.top()),
+-                        ));
++                    display.image(
++                        &image_intersect,
++                        title_image,
++                        &image_intersect.translate(-image_rect.left(), -image_rect.top()),
++                        true,
++                        true,
++                    );
+                 }
+             }
+ 
+@@ -252,9 +256,13 @@ impl Window {
+                     );
+                     let image_intersect = rect.intersection(&image_rect);
+                     if !image_intersect.is_empty() {
+-                        display.roi_mut(&image_intersect).blend(&window_max.roi(
++                        display.image(
++                            &image_intersect,
++                            window_max,
+                             &image_intersect.translate(-image_rect.left(), -image_rect.top()),
+-                        ));
++                            true,
++                            true,
++                        );
+                     }
+                 }
+             }
+@@ -270,9 +278,13 @@ impl Window {
+                     );
+                     let image_intersect = rect.intersection(&image_rect);
+                     if !image_intersect.is_empty() {
+-                        display.roi_mut(&image_intersect).blend(&window_close.roi(
++                        display.image(
++                            &image_intersect,
++                            window_close,
+                             &image_intersect.translate(-image_rect.left(), -image_rect.top()),
+-                        ));
++                            true,
++                            true,
++                        );
+                     }
+                 }
+             }
+@@ -304,19 +316,19 @@ impl Window {
+             }
+             if self.transparent {
+                 // using "image_shadow" which is copied from "handle_window_sync"
+-                display
+-                    .roi_mut(&intersect)
+-                    .blend(&self.image_shadow.roi(&image_rect));
++                display.image(&intersect, &self.image_shadow, &image_rect, true, true);
+             } else {
+-                display
+-                    .roi_mut(&intersect)
+-                    .blit(&self.image.roi(&image_rect));
++                display.image(&intersect, &self.image, &image_rect, false, true);
+             }
+         }
+     }
+ 
+     /// Copies window public image into backbuffer to avoid flickering without V-Sync
+     pub fn handle_window_sync(&mut self, damages: &Option<Vec<Rect>>) {
++        // The GPU's copy of the window changed where the client says.
++        gl::invalidate(self.image.data().as_ptr(), damages.as_deref());
++        gl::invalidate(self.image_shadow.data().as_ptr(), damages.as_deref());
++
+         // TODO: Avoid us having us to copy into backbuffer by introducing new flags:
+         // - ORBITAL_DOUBLE_BUFFER: use bit flip between using image_shadow and image buffer.
+         // - ORBITAL_LIVE_BUFFER: the window promised to us to directly use its image buffer.
+@@ -462,6 +474,21 @@ impl Window {
+             .mode()
+             .set(orbclient::Mode::Overwrite);
+         title_render.draw(&mut self.title_image_unfocused, 0, 0, text_color.into());
++        gl::invalidate(self.title_image.data().as_ptr(), None);
++        gl::invalidate(self.title_image_unfocused.data().as_ptr(), None);
++    }
++
++    /// The GPU's copies of all of this window's images must be uploaded
++    /// again (a new image can reuse an old one's memory).
++    pub fn gl_invalidate(&self) {
++        for data in [
++            self.image.data().as_ptr(),
++            self.image_shadow.data().as_ptr(),
++            self.title_image.data().as_ptr(),
++            self.title_image_unfocused.data().as_ptr(),
++        ] {
++            gl::invalidate(data, None);
++        }
+     }
+ 
+     pub fn set_flag(&mut self, flag: WindowFlag, value: bool) {
+@@ -514,8 +541,11 @@ impl Window {
+                 .blit(&self.image_shadow.roi(&intersect));
+         }
+ 
++        gl::forget(self.image.data().as_ptr());
++        gl::forget(self.image_shadow.data().as_ptr());
+         self.image = new_image;
+         self.image_shadow = new_image_shadow;
++        self.gl_invalidate();
+ 
+         // if window is resizing, caller must send resize event to avoid
+         // this being conflicted with user manually resizing the window
+@@ -655,3 +685,17 @@ mod test {
+         );
+     }
+ }
++
++impl Drop for Window {
++    /// The GPU's copies of the window's images go with it.
++    fn drop(&mut self) {
++        for data in [
++            self.image.data().as_ptr(),
++            self.image_shadow.data().as_ptr(),
++            self.title_image.data().as_ptr(),
++            self.title_image_unfocused.data().as_ptr(),
++        ] {
++            gl::forget(data);
++        }
++    }
++}
