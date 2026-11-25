@@ -16,7 +16,7 @@ Per `[interface.<name>]` section:
 
 | Key | Values | Now |
 |---|---|---|
-| `boards` | list of board names, e.g. `["raspi3bp"]` | used: the section applies only on these boards; missing means every board |
+| `boards` | list of board names, e.g. `["raspi3bp"]` | **do not use yet** ([#653](https://github.com/redox-rpi/redox-rpi/issues/653)): the board name is fixed at build time and is `raspi3bp` on every image, so `["raspi3bp"]` matches on every board and any other name never matches; missing means every board. Matching by the running board comes with PR [#659](https://github.com/redox-rpi/redox-rpi/pull/659) |
 | `ipv4` | `"dhcp"`, `"static"`, `"off"` (default `"off"`) | `"dhcp"` and `"off"`; `"static"` gives one line "not supported yet" |
 | `ipv6` | `"slaac"`, `"static"`, `"off"` (default `"off"`) | accepted, not used yet |
 | `address` | `"192.168.1.20/24"` | later, with `ipv4 = "static"` |
