@@ -1,0 +1,46 @@
+From d7cd6331140e3b4685d13dbc06005d0a34c7c559 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 18:01:38 +0000
+Subject: [PATCH 28/29] xhcid: a done command TRB keeps its cycle bit (#749)
+
+The IRQ reactor overwrote each completed command TRB with a Reserved
+TRB with cycle bit 0. On the first lap of the command ring (producer
+cycle 1) such an entry is not owned by the xHC, but after the ring
+wraps the consumer cycle is 0, and every done entry ahead of the new
+commands was owned: the xHC ran them as invalid TRBs, completed each
+with TRB Error, and the commands queued after the wrap never completed,
+so xhcid hung. On the Pi 400 this happened after 255 commands, with a
+replugged USB device or with No Op commands alone (pi-tests Tests 663,
+665, 666). Transfer rings were not affected: their TRBs are not cleared.
+
+Keep the TRB's own cycle bit when marking it done, so it is not owned
+on the next lap.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index e2be0c93..13a97e1e 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -451,7 +451,14 @@ impl<const N: usize> IrqReactor<N> {
+                         {
+                             Some(command_trb) => {
+                                 let t = command_trb.clone();
+-                                command_trb.reserved(false);
++                                // Mark it done, but keep its cycle bit. With
++                                // cycle 0 a done entry was owned by the xHC on
++                                // every second lap of the ring: after the first
++                                // wrap (consumer cycle 0) the xHC ran all of
++                                // them as invalid TRBs, one TRB Error each,
++                                // and the commands queued after the wrap never
++                                // completed (pi-tests Tests 663, 665, 666).
++                                command_trb.reserved(t.cycle());
+                                 t
+                             }
+                             None => {
+-- 
+2.53.0
+
