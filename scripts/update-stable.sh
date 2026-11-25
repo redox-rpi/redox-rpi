@@ -23,7 +23,9 @@
 #      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py. Network records (#259,
+#      serial console and run the regression set's oom and end checks
+#      (#676), then scripts/pi-test.py with the serial check (#674); both
+#      must pass. Network records (#259,
 #      scripts/network-record.py): the boot (seconds from the login prompt to
 #      the first devsh login), then a 15-minute soak after pi-test.py, pass
 #      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
@@ -409,9 +411,19 @@ stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
 if reset_pi record; then
+    # Out of memory (#676, #644): oomtest in its three modes must end by
+    # SIGKILL, devsh must answer afterwards. pi-test.py follows, so its serial
+    # check (#674) sees any panic of this boot and its checks show that the
+    # system still works.
+    log "running the regression set's oom and end checks"
+    oom_ok=1
+    python3 scripts/regression-set.py "$PI" --only oom --only end --report "$report" 2>&1 | tee "$output" ||
+        oom_ok=0
     log "running scripts/pi-test.py"
     if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
-        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
+        --serial-log "$SERIAL_LOG" \
+        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee -a "$output" &&
+        [ "$oom_ok" = 1 ]; then
         passed=1
     fi
     # Soak on the tested build, pass or fail (#259, #92).
