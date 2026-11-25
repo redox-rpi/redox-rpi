@@ -1,0 +1,96 @@
+From ed84afa4f4bd7e6cced07fefcc31271f95587c2f Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 15:51:15 +0000
+Subject: [PATCH] usbhubd: a test trigger that disables or powers off a hub
+ port (test only, #749)
+
+Writing "<port> disable" or "<port> power" to /tmp/usbhubd-cycle makes
+the hub driver clear PORT_ENABLE or PORT_POWER on that port once. The
+normal poll loop then resets the port, detaches the device and attaches
+it again, which simulates an unplug without a person. The hub's power
+switching mode (ganged, per port, none) is logged at start.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/usbhubd/src/main.rs | 44 +++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
+index 71ccf936..eb0be9a6 100644
+--- a/drivers/usb/usbhubd/src/main.rs
++++ b/drivers/usb/usbhubd/src/main.rs
+@@ -5,6 +5,15 @@ use xhcid_interface::{
+     XhciClientHandle,
+ };
+ 
++/// Test only (experiment usb-trace): wHubCharacteristics bits 1:0.
++fn power_switching(characteristics: u16) -> &'static str {
++    match characteristics & 0b11 {
++        0b00 => "ganged",
++        0b01 => "per port",
++        _ => "none",
++    }
++}
++
+ fn main() {
+     common::init();
+     let mut args = env::args().skip(1);
+@@ -74,6 +83,7 @@ fn main() {
+                 DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
+             )
+             .expect("Failed to read hub descriptor");
++        log::info!("usb-trace: hub characteristics {:#06x} (power switching {})", { hub_desc.characteristics }, power_switching({ hub_desc.characteristics }));
+         (hub_desc.ports, true)
+     } else {
+         // USB 2.0 and earlier hubs
+@@ -88,6 +98,7 @@ fn main() {
+                 DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut hub_desc) }),
+             )
+             .expect("Failed to read hub descriptor");
++        log::info!("usb-trace: hub characteristics {:#06x} (power switching {})", { hub_desc.characteristics }, power_switching({ hub_desc.characteristics }));
+         (hub_desc.ports, false)
+     };
+ 
+@@ -247,6 +258,39 @@ fn main() {
+                 log::info!("port {} status {:X?}", port, port_sts);
+             }
+ 
++            // Test only (experiment usb-trace, #749): simulate an unplug.
++            // `echo "1.1 disable" > /tmp/usbhubd-cycle` disables the port; the
++            // pass below resets it, detaches the device (its driver ends) and
++            // attaches it again, as after a replug. `echo "1.1 power"` switches
++            // the port power off for 3 s instead; the check below powers it on.
++            if let Ok(want) = std::fs::read_to_string("/tmp/usbhubd-cycle") {
++                let mut words = want.split_whitespace();
++                if words.next() == Some(state.port_id.to_string().as_str()) {
++                    let mode = words.next().unwrap_or("disable").to_string();
++                    let _ = std::fs::remove_file("/tmp/usbhubd-cycle");
++                    let feature = if mode == "power" {
++                        usb::HubPortFeature::PortPower
++                    } else {
++                        usb::HubPortFeature::PortEnable
++                    };
++                    log::info!("usb-trace: port {} {} off (test)", state.port_id, mode);
++                    if let Err(err) = handle.device_request(
++                        PortReqTy::Class,
++                        PortReqRecipient::Other,
++                        usb::SetupReq::ClearFeature as u8,
++                        feature as u16,
++                        port as u16,
++                        DeviceReqData::NoData,
++                    ) {
++                        log::warn!("usb-trace: port {}: {} off failed: {:?}", state.port_id, mode, err);
++                    }
++                    if mode == "power" {
++                        thread::sleep(time::Duration::from_secs(3));
++                    }
++                    continue;
++                }
++            }
++
+             // Ensure port is powered on
+             if !port_sts.is_powered() {
+                 log::info!("power on port {port}");
+-- 
+2.53.0
+
