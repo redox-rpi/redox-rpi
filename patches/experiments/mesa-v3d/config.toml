@@ -1,6 +1,8 @@
 # Experiment mesa-v3d (#669, test only): Mesa with the v3d Gallium driver
-# and gles-probe, an OpenGL ES test through EGL surfaceless.
+# with gles-probe, an OpenGL ES test through EGL surfaceless, and
+# gles-demo, a rotating cube in an Orbital window.
 
 [packages]
 mesa = "source"
 gles-probe = "source"
+gles-demo = "source"
