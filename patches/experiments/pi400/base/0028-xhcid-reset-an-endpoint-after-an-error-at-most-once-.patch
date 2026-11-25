@@ -1,0 +1,77 @@
+From 90936979effda5729740af860e292b86d789f1cc Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:34:52 +0000
+Subject: [PATCH 28/28] xhcid: reset an endpoint after an error at most once a
+ second (#749)
+
+A device that answers nothing any more fails every transfer at once,
+and its driver retries several times a second. On the Pi 400 a hub
+whose endpoint 0 stopped answering after several replugs on one of its
+ports got about six Reset Endpoint and Set TR Dequeue Pointer commands
+a second, which filled the command ring (pi-tests Test 665). Reset each
+endpoint at most once a second; in between its transfers fail or time
+out as they would without a reset.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme.rs | 30 ++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 635d6ccc..032804eb 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -2599,6 +2599,9 @@ impl<const N: usize> Xhci<N> {
+     /// Reset Endpoint on the default control endpoint (DCI 1) after a
+     /// stall, then set its dequeue pointer past the stalled transfer.
+     async fn recover_default_control_endpoint(&self, port_num: PortId) -> Result<()> {
++        if !reset_allowed(port_num, 0) {
++            return Ok(());
++        }
+         let slot = self
+             .port_states
+             .get(&port_num)
+@@ -2615,6 +2618,9 @@ impl<const N: usize> Xhci<N> {
+     /// Reset Endpoint on a halted endpoint other than endpoint 0, then set
+     /// its dequeue pointer to the enqueue pointer, past the failed transfer.
+     async fn recover_endpoint(&self, port_num: PortId, endp_num: EndpNum) -> Result<()> {
++        if !reset_allowed(port_num, endp_num.get()) {
++            return Ok(());
++        }
+         self.reset_endpoint(port_num, endp_num, false).await?;
+         let deque_ptr_and_cycle = {
+             let mut port_state = self
+@@ -3085,6 +3091,30 @@ pub fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Resul
+         Err(Error::new(EIO))
+     }
+ }
++/// Whether an endpoint may be reset after an error now: at most once a
++/// second per endpoint. A device that no longer answers at all fails every
++/// transfer at once, and its driver retries several times a second: a hub
++/// on the Pi 400 after several replugs on one of its ports got about six
++/// Reset Endpoint and Set TR Dequeue Pointer commands a second, which
++/// filled the command ring (pi-tests Test 665). Until the next reset its
++/// transfers fail or time out, as without a reset.
++fn reset_allowed(port_num: PortId, endp: u8) -> bool {
++    static LAST: Mutex<Vec<(PortId, u8, std::time::Instant)>> = Mutex::new(Vec::new());
++    let now = std::time::Instant::now();
++    let mut last = LAST.lock().unwrap();
++    match last.iter_mut().find(|(p, e, _)| *p == port_num && *e == endp) {
++        Some((_, _, at)) if now.duration_since(*at) < Duration::from_secs(1) => false,
++        Some((_, _, at)) => {
++            *at = now;
++            true
++        }
++        None => {
++            last.push((port_num, endp, now));
++            true
++        }
++    }
++}
++
+ /// Completion codes after which the xHC halts the endpoint (xHCI 1.2
+ /// section 4.10.2): it then needs a Reset Endpoint command.
+ fn halts_endpoint(completion_code: u8) -> bool {
+-- 
+2.53.0
+

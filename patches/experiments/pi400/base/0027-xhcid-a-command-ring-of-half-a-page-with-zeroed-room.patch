@@ -1,0 +1,49 @@
+From 9fe7cd2a877fc4763dc751f93b5300706354f826 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:34:52 +0000
+Subject: [PATCH 27/28] xhcid: a command ring of half a page, with zeroed room
+ behind it (#749)
+
+The command ring filled its whole DMA page. The VIA VL805 of the Pi 4
+and 400 fetches TRBs past the end of a ring, so it read whatever memory
+came after the page. After the ring wrapped the first time it ran the
+stale entries of the last lap (255 command completions with TRB Error,
+pi-tests Tests 663 and 665), and xhcid hung waiting for its command.
+Linux gives such hosts spare room behind every ring segment
+(XHCI_ZHAOXIN_TRB_FETCH, set for the VL805). Transfer rings, 16 entries
+at the start of their own page, already have it; the command ring now
+uses 128 entries, half of its page.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/mod.rs | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index bfd7f05a..ea35e88c 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -455,10 +455,17 @@ impl<const N: usize> Xhci<N> {
+         let run = unsafe { &mut *(run_base as *mut RuntimeRegs) };
+         debug!("RUNTIME REGS BASE {:X}", run_base);
+ 
+-        // Create the command ring with 4096 / 16 (TRB size) entries, so that it uses all of the
+-        // DMA allocation (which is at least a 4k page).
++        // Create the command ring with half a page of entries (4096 / 16 / 2), so
++        // that zeroed memory of the same DMA allocation follows its link TRB.
++        // The VIA VL805 (Raspberry Pi 4 and 400) fetches TRBs past the end of
++        // a ring; with a ring that filled its page it read whatever memory came
++        // next, and after the first wrap it ran stale entries (255 command
++        // completions with TRB Error, pi-tests Tests 663 and 665) and xhcid
++        // hung. Linux gives such hosts (XHCI_ZHAOXIN_TRB_FETCH, set for the
++        // VL805) spare room behind every ring segment. Transfer rings (16
++        // entries) already have it: they use the start of their own page.
+         let entries_per_page = PAGE_SIZE / size_of::<Trb>();
+-        let cmd = Ring::new::<N>(cap.ac64(), entries_per_page, true)?;
++        let cmd = Ring::new::<N>(cap.ac64(), entries_per_page / 2, true)?;
+ 
+         let (irq_reactor_sender, irq_reactor_receiver) = crossbeam_channel::unbounded();
+ 
+-- 
+2.53.0
+
