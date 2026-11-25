@@ -12,15 +12,25 @@ name: Latest upstream
 on:
   schedule:
     - cron: "0 5 * * 1"
-  # Also when a pull request changes what this checks.
+  # Also when a pull request changes the kernel side: the pins, the kernel
+  # and fdt patches or the build. Other patch changes get the "patches on
+  # the latest upstream" report in qemu-boot.yml instead (#730).
   pull_request:
     paths:
       - config/upstream.lock
-      - patches/**
+      - patches/kernel/**
+      - patches/fdt/**
       - scripts/check-patches.sh
       - scripts/build-kernel.sh
+      - scripts/qemu-raspi3b.sh
       - .github/workflows/upstream-weekly.yml
   workflow_dispatch:
+
+# A newer push to a pull request cancels its run before; the weekly and
+# manual runs each get their own group.
+concurrency:
+  group: upstream-weekly-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   raspi3b:
