@@ -1,0 +1,10 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# vtrun (#728): runs a program on a virtual terminal of its own, which
+# inputd gives back when the program ends.
+[build]
+template = "custom"
+script = """
+"${CC}" ${CFLAGS} ${CPPFLAGS} -O2 -Wall -o vtrun "${COOKBOOK_SOURCE}/vtrun.c" ${LDFLAGS}
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp vtrun "${COOKBOOK_STAGE}/usr/bin/vtrun"
+"""
