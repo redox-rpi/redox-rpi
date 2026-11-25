@@ -1,7 +1,7 @@
-From da1de94982119eb8c6575b1effd80c55bfb05e1d Mon Sep 17 00:00:00 2001
+From 1b554a0c59cb8a93d1447f83c96d9cfee7f1ca16 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 25 Nov 2026 16:36:49 +0000
-Subject: [PATCH 24/25] xhcid: reset an endpoint that a transfer error halted
+Subject: [PATCH 24/26] xhcid: reset an endpoint that a transfer error halted
  (#749)
 
 A transaction, split transaction or babble error halts the endpoint

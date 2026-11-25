@@ -1,7 +1,8 @@
-From d0f95159e379608881be35fafa71bd6750bb970a Mon Sep 17 00:00:00 2001
+From a0caae0aac96fa79d6fcdcb454d0218d32dc2ddf Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 25 Nov 2026 16:20:17 +0000
-Subject: [PATCH] xhcid: hand each blocking read to a worker of its own (#749)
+Subject: [PATCH 23/26] xhcid: hand each blocking read to a worker of its own
+ (#749)
 
 The request loop counted idle workers and started a new one only when
 the count was 0. A worker took itself out of the count after `recv`
@@ -23,7 +24,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/usb/xhcid/src/main.rs b/drivers/usb/xhcid/src/main.rs
-index ef3bce08..dafeb34a 100644
+index ef3bce08..84fcbcb3 100644
 --- a/drivers/usb/xhcid/src/main.rs
 +++ b/drivers/usb/xhcid/src/main.rs
 @@ -152,7 +152,19 @@ fn serve_requests<const N: usize>(socket: &Arc<Socket>, hci: &Arc<Xhci<N>>) -> !

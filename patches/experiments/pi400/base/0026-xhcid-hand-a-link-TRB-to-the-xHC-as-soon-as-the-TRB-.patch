@@ -1,0 +1,136 @@
+From abc9306c57ffb58062e7b64b97d153f44a2669a9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 16:58:31 +0000
+Subject: [PATCH 26/26] xhcid: hand a link TRB to the xHC as soon as the TRB
+ before it is queued (#749)
+
+A ring wrote its link TRB only when the next TRB was queued. Until then
+the xHC stopped on the empty link entry, and a Set TR Dequeue Pointer
+after an endpoint reset could point at it. The VIA VL805 of the Pi 4
+and 400 does not parse a link TRB right when its dequeue pointer is on
+one (Linux: XHCI_AVOID_DQ_ON_LINK). In pi-tests Test 663, after the
+command ring wrapped the first time, the xHC ran the 254 stale commands
+of the last lap (254 command completions with TRB Error, no waiter) and
+xhcid stopped answering; the hub's endpoint 0, reset after a transaction
+error, failed every transfer from then on.
+
+Ring::hand_over_link writes the link TRB, toggles the cycle state and
+goes on at the start of the ring once the entry before the link is used.
+It is called after a command or transfer is written, before the
+doorbell, and before a dequeue pointer is taken for Set TR Dequeue
+Pointer, as Linux does in inc_enq.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/mod.rs    |  1 +
+ drivers/usb/xhcid/src/xhci/ring.rs   | 22 ++++++++++++++++++++++
+ drivers/usb/xhcid/src/xhci/scheme.rs | 13 +++++++++++--
+ 3 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index 7c05e7c2..bfd7f05a 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -151,6 +151,7 @@ impl<const N: usize> Xhci<N> {
+             let ch = false;
+             let ent = false;
+             cmd.status(interrupter, input, ioc, ch, ent, cycle);
++            ring.hand_over_link();
+ 
+             self.next_transfer_event_trb(
+                 RingId::default_control_pipe(port),
+diff --git a/drivers/usb/xhcid/src/xhci/ring.rs b/drivers/usb/xhcid/src/xhci/ring.rs
+index 301f22f6..aca5eb4f 100644
+--- a/drivers/usb/xhcid/src/xhci/ring.rs
++++ b/drivers/usb/xhcid/src/xhci/ring.rs
+@@ -51,6 +51,28 @@ impl Ring {
+         i
+     }
+ 
++    /// When the next free entry is the link TRB, write it now, hand it to
++    /// the xHC and go on at the start of the ring, instead of when the next
++    /// TRB is queued. Call it once the TRBs just queued are written, before
++    /// the doorbell, and before a dequeue pointer is taken with `register`.
++    ///
++    /// Otherwise the xHC stops on the not yet written link entry, and a Set
++    /// TR Dequeue Pointer can point at it. The VIA VL805 (Raspberry Pi 4 and
++    /// 400) does not parse a link TRB right when its dequeue pointer is on
++    /// one (Linux: XHCI_AVOID_DQ_ON_LINK): after the command ring wrapped it
++    /// ran the 254 stale commands of the last lap (pi-tests Test 663), and a
++    /// hub's endpoint 0 reset onto its link entry failed every transfer.
++    /// Linux hands a link TRB over as soon as the TRB before it is queued.
++    pub fn hand_over_link(&mut self) {
++        if self.link && self.i == self.trbs.len() - 1 {
++            let address = self.trbs.physical();
++            let i = self.i;
++            self.trbs[i].link(address, true, self.cycle);
++            self.cycle = !self.cycle;
++            self.i = 0;
++        }
++    }
++
+     pub fn next(&mut self) -> (&mut Trb, bool) {
+         let i = self.next_index();
+         (&mut self.trbs[i], self.cycle)
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 48c2a7fa..635d6ccc 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -610,6 +610,7 @@ impl<const N: usize> Xhci<N> {
+                 let command_trb = &mut command_ring.trbs[cmd_index];
+                 f(command_trb, cycle);
+             }
++            command_ring.hand_over_link();
+ 
+             // get the future here before awaiting, to destroy the lock before deadlock
+             let command_trb = &command_ring.trbs[cmd_index];
+@@ -678,6 +679,7 @@ impl<const N: usize> Xhci<N> {
+             let ch = false;
+             let ent = false;
+             cmd.status(interrupter, input, ioc, ch, ent, cycle);
++            ring.hand_over_link();
+ 
+             self.next_transfer_event_trb(
+                 RingId::default_control_pipe(port_num),
+@@ -809,6 +811,7 @@ impl<const N: usize> Xhci<N> {
+ 
+             match d(trb, cycle) {
+                 ControlFlow::Break => {
++                    ring.hand_over_link();
+                     break self.next_transfer_event_trb(
+                         super::irq_reactor::RingId {
+                             port: port_num,
+@@ -2623,7 +2626,10 @@ impl<const N: usize> Xhci<N> {
+                 .get_mut(&endp_num)
+                 .ok_or(Error::new(EBADFD))?;
+             match &mut endpoint_state.transfer {
+-                super::RingOrStreams::Ring(ring) => ring.register(),
++                super::RingOrStreams::Ring(ring) => {
++                    ring.hand_over_link();
++                    ring.register()
++                }
+                 // No streams on the endpoints this is for (interrupt, bulk).
+                 super::RingOrStreams::Streams(_) => return Err(Error::new(EOPNOTSUPP)),
+             }
+@@ -2666,7 +2672,9 @@ impl<const N: usize> Xhci<N> {
+                 .endpoint_states
+                 .get_mut(&EndpNum::new(0))
+                 .ok_or(Error::new(EIO))?;
+-            endpoint_state.ring().ok_or(Error::new(EIO))?.register()
++            let ring = endpoint_state.ring().ok_or(Error::new(EIO))?;
++            ring.hand_over_link();
++            ring.register()
+         };
+         let (event_trb, command_trb) = self
+             .execute_command(|trb, cycle| {
+@@ -2704,6 +2712,7 @@ impl<const N: usize> Xhci<N> {
+ 
+         let (cmd, cycle) = ring.next();
+         cmd.transfer_no_op(0, false, false, false, cycle);
++        ring.hand_over_link();
+ 
+         let deque_ptr_and_cycle = ring.register();
+ 
+-- 
+2.53.0
+
