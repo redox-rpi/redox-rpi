@@ -23,7 +23,9 @@
 #      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py. Network records (#259,
+#      serial console and run the regression set's oom and end checks
+#      (#676), then scripts/pi-test.py with the serial check (#674); both
+#      must pass. Network records (#259,
 #      scripts/network-record.py): the boot (seconds from the login prompt to
 #      the first devsh login), then a 15-minute soak after pi-test.py, pass
 #      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
@@ -83,6 +85,8 @@ PI="$REDOX_PI"
 SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
+# Serial logs of the lab Pis, read for the panic KPI (#675).
+SERIAL_LOGS="${SERIAL_LOGS:-$HOME/redox-rpi/logs}"
 ISSUE_TITLE="Nightly: main fails on the Pi"
 # Seconds from the reset to "redox-rpi: network boot", and to the login prompt
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
@@ -164,8 +168,12 @@ run_kpis() {
     kpis_dir="$(mktemp -d)"
     local clippy=()
     [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    # Panic KPI (#675): the kernel source of the last build and the serial logs.
+    local panic=()
+    [ -d upstream/redox/recipes/core/kernel/source/src ] && panic+=(--kernel upstream/redox/recipes/core/kernel/source)
+    [ -d "$SERIAL_LOGS" ] && panic+=(--serial-logs "$SERIAL_LOGS")
     if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
-        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" "${panic[@]}" \
         > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
         log "quality KPIs collected"
     else
@@ -409,9 +417,19 @@ stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
 if reset_pi record; then
+    # Out of memory (#676, #644): oomtest in its three modes must end by
+    # SIGKILL, devsh must answer afterwards. pi-test.py follows, so its serial
+    # check (#674) sees any panic of this boot and its checks show that the
+    # system still works.
+    log "running the regression set's oom and end checks"
+    oom_ok=1
+    python3 scripts/regression-set.py "$PI" --only oom --only end --report "$report" 2>&1 | tee "$output" ||
+        oom_ok=0
     log "running scripts/pi-test.py"
     if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
-        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
+        --serial-log "$SERIAL_LOG" \
+        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee -a "$output" &&
+        [ "$oom_ok" = 1 ]; then
         passed=1
     fi
     # Soak on the tested build, pass or fail (#259, #92).

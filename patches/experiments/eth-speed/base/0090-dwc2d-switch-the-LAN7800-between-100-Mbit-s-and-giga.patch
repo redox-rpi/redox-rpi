@@ -1,4 +1,4 @@
-From 7d3abc5d58381dfb360d773fc75d32dfccdb6220 Mon Sep 17 00:00:00 2001
+From aca9e6d81444e16a3c86e7030d2dbdf8819f3a37 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 4 Nov 2026 17:59:09 +0100
 Subject: [PATCH] dwc2d: switch the LAN7800 between 100 Mbit/s and gigabit at
@@ -98,10 +98,10 @@ index 3968cdb..e405d55 100644
  pub fn update_flow(bus: &mut Bus, f: &Lan78xxFunction) -> Result<&'static str, Error> {
      Regs { bus, f }.update_flow()
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1095983..7f154f4 100644
+index abf965a..545b918 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -147,10 +147,16 @@ impl UsbNet {
+@@ -148,10 +148,16 @@ impl UsbNet {
                      // The LAN7800 sets flow control from what the link
                      // partner advertised this time (#661).
                      let flow = match adapter {
@@ -122,7 +122,7 @@ index 1095983..7f154f4 100644
                          _ => String::new(),
                      };
                      println!("dwc2d: link {state} on the {name} at address {address}{flow}");
-@@ -465,6 +471,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+@@ -470,6 +476,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
  /// While this file exists, mouse events are printed too (tests without a
  /// person); looked at with every rescan.
  const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
@@ -143,7 +143,7 @@ index 1095983..7f154f4 100644
  /// How long to look for devices at boot when there is no network adapter.
  const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
  
-@@ -666,6 +686,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -675,6 +695,25 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
@@ -167,8 +167,8 @@ index 1095983..7f154f4 100644
 +                    }
 +                }
                  let mut cycled = Vec::new();
+                 let t = Instant::now();
                  if let Ok(request) = aside::cycle_request() {
-                     let net = scheme.adapter_mut();
 -- 
 2.53.0
 

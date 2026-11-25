@@ -1,5 +1,8 @@
 # A scheme name can be registered again after its scheme ended (experiment `scheme-reregister`)
 
+**Now default:** base patch [`0123`](../../base/0123-initnsmgr-register-a-scheme-name-again-after-its-sch.patch)
+since #693, after Pi test 146. This page keeps the history; `--experiment scheme-reregister` adds nothing any more.
+
 Issue [#117](https://github.com/redox-rpi/redox-rpi/issues/117). When a
 scheme daemon ends, its name stays in `/scheme`. Opening it gives
 `No such device`, and registering the name again fails with `File exists`.
@@ -25,7 +28,7 @@ but not after a crash or SIGKILL.
 
 ## Fix
 
-`base/0001`: when the name is taken, `register` checks the old capability
+base `0123`: when the name is taken, `register` checks the old capability
 with the `fcntl` syscall, `F_GETFD`. For that the kernel looks up the
 scheme without sending it a request, and answers `ENODEV` when the scheme
 is gone; then the new scheme takes the name (`nsmgr: scheme <name> ended,

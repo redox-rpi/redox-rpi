@@ -1,5 +1,8 @@
 # No Rust backtrace on the console (#291, experiment `no-backtrace`)
 
+**Now default:** base patch [`0122`](../../base/0122-init-no-RUST_BACKTRACE-1-for-the-services-and-the-lo.patch)
+since #693, after pi-tests row 354. This page keeps the history; `--experiment no-backtrace` adds nothing any more.
+
 Upstream `init` started every service with `RUST_BACKTRACE=1`
 (`init/src/main.rs`, `InitConfig::new`). init clears the environment of
 each service and gives it only its own list, so the variable reached
@@ -23,7 +26,7 @@ its message.
 ## Fix
 
 Base patch
-[`0001`](base/0001-init-no-RUST_BACKTRACE-1-for-the-services-and-the-lo.patch):
+[`0122`](../../base/0122-init-no-RUST_BACKTRACE-1-for-the-services-and-the-lo.patch):
 init starts with an empty environment list instead of
 `RUST_BACKTRACE=1`. `PATH` and `LD_LIBRARY_PATH` are added at the switch
 to the root filesystem as before.
