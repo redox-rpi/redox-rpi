@@ -56,11 +56,12 @@ extern ssize_t redox_fpath(int fd, void *buf, size_t count);
 static int fail(const char *what)
 {
 	int err = errno;
-	/* glGetError only with a current context: without one the call can
-	 * go through an empty dispatch table. */
+	/* eglGetError first: every EGL call resets it. glGetError only with a
+	 * current context: without one the call can go through an empty
+	 * dispatch table. */
+	EGLint egl = eglGetError();
 	GLenum gl = eglGetCurrentContext() != EGL_NO_CONTEXT ? glGetError() : 0;
-	printf("prime-probe: FAIL: %s (errno %d, EGL error 0x%x, GL error 0x%x)\n", what, err,
-	       eglGetError(), gl);
+	printf("prime-probe: FAIL: %s (errno %d, EGL error 0x%x, GL error 0x%x)\n", what, err, egl, gl);
 	return 1;
 }
 
@@ -298,6 +299,19 @@ int main(int argc, char **argv)
 			return fail("mmap of the dumb buffer");
 		if (drmPrimeHandleToFD(dfd, cd.handle, DRM_CLOEXEC | DRM_RDWR, &b[i].dmafd))
 			return fail("PRIME_HANDLE_TO_FD");
+		if (i == 0) {
+			/* The import Mesa does, by hand first, for a clear errno. */
+			int render = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+			uint32_t h = 0;
+			if (render < 0)
+				return fail("open /dev/dri/renderD128");
+			if (drmPrimeFDToHandle(render, b[i].dmafd, &h))
+				return fail("PRIME_FD_TO_HANDLE of vc4d's buffer on the render node");
+			printf("prime-probe: direct import: vc4d's buffer is BO %u on the render node\n", h);
+			struct drm_gem_close gc = { .handle = h };
+			drmIoctl(render, DRM_IOCTL_GEM_CLOSE, &gc);
+			close(render);
+		}
 		EGLint attrs[] = {
 			EGL_WIDTH, w,
 			EGL_HEIGHT, h,
