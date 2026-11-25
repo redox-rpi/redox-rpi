@@ -1,0 +1,97 @@
+From 7b8e6a09446b511cdaa505b37c70d5cc42a855a2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 22:01:30 +0000
+Subject: [PATCH] ioctl: DRM sync objects (create, destroy, wait, reset,
+ signal)
+
+DRM_IOCTL_SYNCOBJ_CREATE, DESTROY, WAIT, RESET and SIGNAL become scheme
+calls like the other DRM ioctls; the handle arrays of WAIT, RESET and
+SIGNAL travel inline after the fixed part. Mesa's v3d driver fences
+its jobs with them (libdrm drmSyncobj*); v3dd serves them.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ redox-ioctl/src/drm.rs            | 43 +++++++++++++++++++++++++++++--
+ src/header/sys_ioctl/redox/drm.rs |  5 ++++
+ 2 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/redox-ioctl/src/drm.rs b/redox-ioctl/src/drm.rs
+index a5360102..3c62eace 100644
+--- a/redox-ioctl/src/drm.rs
++++ b/redox-ioctl/src/drm.rs
+@@ -13,8 +13,8 @@ pub use drm_sys::{
+     drm_mode_fb_dirty_cmd, drm_mode_get_blob, drm_mode_get_connector, drm_mode_get_encoder,
+     drm_mode_get_plane, drm_mode_get_plane_res, drm_mode_get_property, drm_mode_map_dumb,
+     drm_mode_modeinfo, drm_mode_obj_get_properties, drm_mode_property_enum, drm_mode_set_plane,
+-    drm_prime_handle, drm_set_client_cap, drm_set_client_name, drm_set_version, drm_unique,
+-    drm_version,
++    drm_prime_handle, drm_set_client_cap, drm_set_client_name, drm_set_version, drm_syncobj_array,
++    drm_syncobj_create, drm_syncobj_destroy, drm_syncobj_wait, drm_unique, drm_version,
+ };
+ 
+ pub const VERSION: u64 = 0;
+@@ -354,6 +354,45 @@ define_ioctl_data! {
+     }
+ }
+ 
++pub const SYNCOBJ_CREATE: u64 = 0xBF;
++define_ioctl_data! {
++    struct drm_syncobj_create, DrmSyncobjCreate {
++        handle: u32,
++        flags: u32,
++    }
++}
++
++pub const SYNCOBJ_DESTROY: u64 = 0xC0;
++define_ioctl_data! {
++    struct drm_syncobj_destroy, DrmSyncobjDestroy {
++        handle: u32,
++        pad: u32,
++    }
++}
++
++pub const SYNCOBJ_WAIT: u64 = 0xC3;
++define_ioctl_data! {
++    struct drm_syncobj_wait, DrmSyncobjWait {
++        handles: u64 [array<u32, count_handles>],
++        timeout_nsec: i64,
++        count_handles: u32,
++        flags: u32,
++        first_signaled: u32,
++        pad: u32,
++        deadline_nsec: u64,
++    }
++}
++
++pub const SYNCOBJ_RESET: u64 = 0xC4;
++pub const SYNCOBJ_SIGNAL: u64 = 0xC5;
++define_ioctl_data! {
++    struct drm_syncobj_array, DrmSyncobjArray {
++        handles: u64 [array<u32, count_handles>],
++        count_handles: u32,
++        pad: u32,
++    }
++}
++
+ pub const MODE_GET_FB2: u64 = 0xCE;
+ define_ioctl_data! {
+     struct drm_mode_fb_cmd2, DrmModeFbCmd2 {
+diff --git a/src/header/sys_ioctl/redox/drm.rs b/src/header/sys_ioctl/redox/drm.rs
+index 1114f91c..39765b52 100644
+--- a/src/header/sys_ioctl/redox/drm.rs
++++ b/src/header/sys_ioctl/redox/drm.rs
+@@ -170,6 +170,11 @@ pub(super) unsafe fn ioctl(fd: c_int, func: u8, buf: IoctlBuffer) -> Result<c_in
+             dev.read_write_ioctl::<drm_mode_obj_get_properties>(buf, MODE_OBJ_GET_PROPERTIES)
+         },
+         0xBB => unsafe { dev.write_ioctl::<drm_mode_cursor2>(buf, MODE_CURSOR2) },
++        0xBF => unsafe { dev.read_write_ioctl::<drm_syncobj_create>(buf, SYNCOBJ_CREATE) },
++        0xC0 => unsafe { dev.read_write_ioctl::<drm_syncobj_destroy>(buf, SYNCOBJ_DESTROY) },
++        0xC3 => unsafe { dev.read_write_ioctl::<drm_syncobj_wait>(buf, SYNCOBJ_WAIT) },
++        0xC4 => unsafe { dev.read_write_ioctl::<drm_syncobj_array>(buf, SYNCOBJ_RESET) },
++        0xC5 => unsafe { dev.read_write_ioctl::<drm_syncobj_array>(buf, SYNCOBJ_SIGNAL) },
+         0xCE => unsafe { dev.read_write_ioctl::<drm_mode_fb_cmd2>(buf, MODE_GET_FB2) },
+         0xD0 => unsafe { dev.read_write_ioctl::<drm_mode_closefb>(buf, MODE_CLOSE_FB) },
+         0xD1 => unsafe { dev.write_ioctl::<drm_set_client_name>(buf, SET_CLIENT_NAME) },
+-- 
+2.53.0
+

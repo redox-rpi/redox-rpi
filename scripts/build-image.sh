@@ -403,9 +403,18 @@ while read -r rel; do
     done
     if grep -q '^patches = \[' "$recipe/recipe.toml"; then
         # Append to a one-line list, or before the "]" of a multi-line one.
+        # The list's last entry gets a comma if it has none (libdrm's
+        # patches = ["redox.patch"]).
         awk -v add="$names" '
-            open && /^]/ { print "    " add; open = 0 }
-            /^patches = \[/ { if (/]/) sub(/]/, add "]"); else open = 1 }
+            open && /^]/ {
+                if (held) { if (prev ~ /"[ \t]*$/) prev = prev ","; print prev }
+                print "    " add; print; open = 0; held = 0; next
+            }
+            open { if (held) print prev; prev = $0; held = 1; next }
+            /^patches = \[/ {
+                if (/]/) { if (/"[ \t]*]/) sub(/"[ \t]*]/, "\", " add "]"); else sub(/]/, add "]") }
+                else open = 1
+            }
             { print }' "$recipe/recipe.toml" > "$recipe/recipe.toml.new"
         mv "$recipe/recipe.toml.new" "$recipe/recipe.toml"
     else
@@ -661,6 +670,53 @@ if [ -d "$sysroot" ] && [ "$(cat "$sysroot_stamp" 2>/dev/null)" != "$sysroot_rel
 fi
 mkdir -p "$(dirname "$sysroot_stamp")"
 echo "$sysroot_relibc" > "$sysroot_stamp"
+
+# When a recipe's patch set changes, the cookbook resets its source with
+# `git reset --hard` and applies the new patches. That keeps untracked files,
+# so a file the old patches created (Orbital's src/compositor/gl.rs) makes
+# the new patch fail with "already exists" (#734). reset_source above covers
+# only recipes whose target/ is gone. Here every recipe with a git source
+# gets a stamp of its patch list (names, contents, script) as the cookbook
+# sees it; when the stamp changed since the last build, its source goes back
+# to its commit without untracked files and its source_info.toml goes, so
+# the cookbook applies the patches again to a clean tree. A recipe without a
+# stamp yet (the first build with this check) only gets its stamp: its
+# untracked files may be the ones its current patches made.
+python3 - <<'PY'
+import glob, hashlib, json, os, subprocess, tomllib
+for toml in glob.glob("recipes/**/recipe.toml", recursive=True):
+    recipe = os.path.dirname(toml)
+    source = os.path.join(recipe, "source")
+    if not os.path.isdir(os.path.join(source, ".git")):
+        continue
+    try:
+        src = tomllib.load(open(toml, "rb")).get("source", {})
+    except (OSError, tomllib.TOMLDecodeError):
+        continue
+    parts = []
+    for patch in src.get("patches", []):
+        try:
+            data = open(os.path.join(recipe, patch), "rb").read()
+        except OSError:
+            data = b"missing"
+        parts.append([patch, hashlib.sha256(data).hexdigest()])
+    ident = hashlib.sha256(json.dumps([parts, src.get("script", "")]).encode()).hexdigest()
+    stamp = os.path.join(recipe, ".redox-rpi-cook-patches")
+    try:
+        old = open(stamp).read().strip()
+    except OSError:
+        old = None
+    if old is not None and old != ident:
+        subprocess.run(["git", "-C", source, "reset", "-q", "--hard"], check=False)
+        subprocess.run(["git", "-C", source, "clean", "-fdq"], check=False)
+        try:
+            os.remove(os.path.join(recipe, "target/aarch64-unknown-redox/source_info.toml"))
+        except OSError:
+            pass
+        print(f"{recipe}: patch set changed since the last build, source reset for a clean patch")
+    with open(stamp, "w") as f:
+        f.write(ident + "\n")
+PY
 
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged

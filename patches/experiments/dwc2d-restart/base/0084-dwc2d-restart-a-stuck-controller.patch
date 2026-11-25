@@ -1,4 +1,4 @@
-From 7d274fcea385bc2a1380c924d3bd0b839fb60452 Mon Sep 17 00:00:00 2001
+From a5da303e60d4f0718a08c25c082ca75796ff3cf7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 10:25:06 +0000
 Subject: [PATCH] dwc2d: restart a stuck controller (#151)
@@ -12,18 +12,18 @@ forgets every device, resets and sets up the controller again, and the
 next rescan enumerates the devices anew. "restart" in
 /tmp/dwc2d-cycle does the same, for tests.
 ---
- drivers/usb/dwc2d/src/dwc2.rs      | 85 +++++++++++++++++++++++++++---
+ drivers/usb/dwc2d/src/dwc2.rs      | 88 +++++++++++++++++++++++++++---
  drivers/usb/dwc2d/src/enumerate.rs | 49 ++++++++++++++++-
- drivers/usb/dwc2d/src/main.rs      | 45 +++++++++++++++-
- drivers/usb/dwc2d/src/regs.rs      |  6 +++
- drivers/usb/dwc2d/src/usbdiag.rs   |  6 +++
- 5 files changed, 182 insertions(+), 9 deletions(-)
+ drivers/usb/dwc2d/src/main.rs      | 45 ++++++++++++++-
+ drivers/usb/dwc2d/src/regs.rs      |  6 ++
+ drivers/usb/dwc2d/src/usbdiag.rs   |  6 ++
+ 5 files changed, 184 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 959bba87..43b6c3ed 100644
+index 2ef1434..cfd0a09 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
-@@ -94,18 +94,33 @@ impl Dwc2 {
+@@ -96,6 +96,14 @@ impl Dwc2 {
  
      /// Reset the core and bring it up in host mode with DMA enabled.
      pub fn init_host(&mut self) -> Result<(), Error> {
@@ -32,34 +32,46 @@ index 959bba87..43b6c3ed 100644
 +
 +    /// [`Dwc2::init_host`]; with `force`, the core is reset even when its
 +    /// AHB master does not get idle (a DMA request stuck, Pi test 190), and
-+    /// then waited for, as Linux does.
++    /// then waited for, as Linux does. A forced restart always resets the
++    /// core, also with a working root port.
 +    fn init_host_with(&mut self, force: bool) -> Result<(), Error> {
          let hwcfg2 = self.read(GHWCFG2);
          self.channels =
              ((hwcfg2 >> GHWCFG2_NUM_HOST_CHAN_SHIFT) & GHWCFG2_NUM_HOST_CHAN_MASK) as usize + 1;
+@@ -112,7 +120,7 @@ impl Dwc2 {
+         println!("dwc2d: at start HPRT0 {hprt0:#x} PCGCCTL {pcgcctl:#x}");
+         self.write(PCGCCTL, 0);
+         let working = HPRT0_CONN_STS | HPRT0_ENA | HPRT0_PWR;
+-        if hprt0 & working == working && hprt0 & HPRT0_RST == 0 {
++        if !force && hprt0 & working == working && hprt0 & HPRT0_RST == 0 {
+             println!("dwc2d: root port working at start, no core reset");
+             for ch in 0..self.channels {
+                 self.halt(ch);
+@@ -123,13 +131,21 @@ impl Dwc2 {
+                 delay(Duration::from_millis(20));
+             }
+             // Core soft reset, after the AHB master is idle.
+-            self.wait("AHB idle", Duration::from_millis(100), |s| {
++            let idle = self.wait("AHB idle", Duration::from_millis(100), |s| {
+                 s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
+-            })?;
++            });
++            if !force {
++                idle?;
++            }
+             self.write(GRSTCTL, GRSTCTL_CSFT_RST);
+             self.wait("core reset", Duration::from_millis(100), |s| {
+                 s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
+             })?;
++            if force {
++                self.wait("AHB idle after reset", Duration::from_millis(100), |s| {
++                    s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
++                })?;
++            }
+             delay(Duration::from_millis(1));
+         }
  
-         // Core soft reset, after the AHB master is idle.
--        self.wait("AHB idle", Duration::from_millis(100), |s| {
-+        let idle = self.wait("AHB idle", Duration::from_millis(100), |s| {
-             s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
--        })?;
-+        });
-+        if !force {
-+            idle?;
-+        }
-         self.write(GRSTCTL, GRSTCTL_CSFT_RST);
-         self.wait("core reset", Duration::from_millis(100), |s| {
-             s.read(GRSTCTL) & GRSTCTL_CSFT_RST == 0
-         })?;
-+        if force {
-+            self.wait("AHB idle after reset", Duration::from_millis(100), |s| {
-+                s.read(GRSTCTL) & GRSTCTL_AHB_IDLE != 0
-+            })?;
-+        }
-         delay(Duration::from_millis(1));
- 
-         // Force host mode; the switch takes up to 25 ms.
-@@ -341,15 +356,74 @@ impl Dwc2 {
+@@ -400,15 +416,74 @@ impl Dwc2 {
                  return Ok(status);
              }
              if start.elapsed() > timeout {
@@ -136,7 +148,7 @@ index 959bba87..43b6c3ed 100644
      /// Bytes moved by the last transfer on a channel and the data PID for
      /// the next one.
      fn moved(&self, ch: usize, len: usize) -> (usize, u32) {
-@@ -512,9 +586,8 @@ impl Dwc2 {
+@@ -571,9 +646,8 @@ impl Dwc2 {
              }
              if start.elapsed() > timeout {
                  // Halt the channel so it can be reused.
@@ -148,7 +160,7 @@ index 959bba87..43b6c3ed 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 495f0848..fe8cfd3e 100644
+index 495f084..fe8cfd3 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -116,8 +116,14 @@ pub struct Bus {
@@ -246,10 +258,10 @@ index 495f0848..fe8cfd3e 100644
                  }
                  if let Err(err) = self.scan_port(hub, port, &mut changes.removed) {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 266c2271..cac88fd5 100644
+index dc89cd0..de9ec43 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -402,6 +402,11 @@ impl Timer {
+@@ -460,6 +460,11 @@ impl Timer {
      }
  }
  
@@ -261,7 +273,7 @@ index 266c2271..cac88fd5 100644
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
-@@ -569,6 +574,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -620,6 +625,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      if keyboard.is_some() || mouse.is_some() || irq_file.is_none() {
          timer.arm(Duration::ZERO);
      }
@@ -270,7 +282,7 @@ index 266c2271..cac88fd5 100644
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
      events
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
-@@ -636,10 +643,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -690,10 +697,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  hotplug.fired();
                  usbdiag::step("scan");
                  let mut cycled = Vec::new();
@@ -285,7 +297,7 @@ index 266c2271..cac88fd5 100644
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
                          "mouse" => mouse.as_ref().and_then(|m| bus.port_of(m.address())),
-@@ -663,11 +674,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -716,11 +727,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                                  println!("dwc2d: cycle: {err:?}");
                              }
                          }
@@ -331,10 +343,10 @@ index 266c2271..cac88fd5 100644
                  for &address in &changes.removed {
                      net.remove(address);
 diff --git a/drivers/usb/dwc2d/src/regs.rs b/drivers/usb/dwc2d/src/regs.rs
-index afca2ca5..a68d6149 100644
+index 5482565..517a907 100644
 --- a/drivers/usb/dwc2d/src/regs.rs
 +++ b/drivers/usb/dwc2d/src/regs.rs
-@@ -37,6 +37,12 @@ pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
+@@ -40,6 +40,12 @@ pub const GHWCFG2_NUM_HOST_CHAN_MASK: u32 = 0xF;
  pub const HCFG: usize = 0x400;
  pub const HFIR: usize = 0x404;
  pub const HFNUM: usize = 0x408;
@@ -348,7 +360,7 @@ index afca2ca5..a68d6149 100644
  pub const HPRT0: usize = 0x440;
  
 diff --git a/drivers/usb/dwc2d/src/usbdiag.rs b/drivers/usb/dwc2d/src/usbdiag.rs
-index a4c39792..7ad56d2c 100644
+index a4c3979..7ad56d2 100644
 --- a/drivers/usb/dwc2d/src/usbdiag.rs
 +++ b/drivers/usb/dwc2d/src/usbdiag.rs
 @@ -31,6 +31,10 @@ static LAST_PORT_MS: AtomicU64 = AtomicU64::new(0);
