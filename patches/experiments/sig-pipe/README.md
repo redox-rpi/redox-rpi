@@ -1,4 +1,10 @@
-# Experiment: sig-pipe, a forked child gets its signals
+# Experiment: sig-pipe, check that a forked child gets its signals
+
+The fix is a default patch since #690:
+[`patches/relibc/0020`](../../relibc/0020-redox-rt-a-forked-child-gets-its-signals-again.patch).
+This experiment now only adds the check (`sigrepro.c` and `check.ion`,
+which need experiment tcc). `scripts/regression-set.py` runs it as check
+`sig-pipe` when both experiments are in the image.
 
 For [#205](https://github.com/redox-rpi/redox-rpi/issues/205) (topics
 relibc, stability), found by the chaos test (`chaos --kind signals`): a
@@ -23,7 +29,7 @@ relibc issue
 (2026-09-05, open) describes the effect: signals inhibited outside relibc
 code with the counter at 1. This is probably its cause.
 
-**The fix** (`relibc/0001`): `fork_impl` notes the caller's
+**The fix** (`patches/relibc/0020`, until #690 this experiment's `relibc/0001`): `fork_impl` notes the caller's
 `tmp_disable_signals` depth before forking. The child sets the depth and
 `INHIBIT_DELIVERY` back to it before it restores its signal mask, and the
 mask restore delivers anything already pending.
@@ -50,7 +56,7 @@ seed from #205) must report more than 0 signals.
   `v0.5.0-dev-102-g3d9b5bda+x800c`: forked receivers got 0 signals in user
   code, getpid and pipe I/O, and 1746 in usleep. Exec'd receivers got
   30/24/61/8.
-- **QEMU raspi3b, 2026-11-12, with `0001`**,
+- **QEMU raspi3b, 2026-11-12, with the fix (then `relibc/0001`)**,
   `v0.5.0-dev-103-g08bc7239+xb4a3` (timesync, tcc, sig-pipe, chaos): forked
   receivers got 29/27/1119/7 and exec'd 28/31/4568/8, so `SIGREPRO: pass`.
   `chaos --kind signals` with the #205 seed: 13 signals (before: 0); seeds
