@@ -1,0 +1,181 @@
+From 2a2af60ebcf6c99268cd6e59689d92ac7a544764 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 15:44:47 +0000
+Subject: [PATCH] xhcid: usb-trace, per-endpoint counts of transfer waiters and
+ events (test only, #749)
+
+Every 10 s, while events come, one log line with the transfer events by
+slot, endpoint ID and completion code, the waiters registered, answered
+and still pending per ring, and the events without a waiter. For the
+keyboard that stops after a USB mouse is replugged on the Pi 400.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs | 83 +++++++++++++++++++++++
+ 1 file changed, 83 insertions(+)
+
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index e2be0c93..900ba7a9 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -103,12 +103,47 @@ pub struct IrqReactor<const N: usize> {
+     early_events: Vec<(Trb, std::time::Instant)>,
+     /// How many early events were matched, for the log.
+     early_matched: u64,
++    /// Test only (experiment usb-trace, redox-rpi#749): per-endpoint counts
++    /// of transfer waiters and events, logged every 10 s.
++    trace: Trace,
+     // TODO: Since the IRQ reactor is the only part of this driver that gets event TRBs, perhaps
+     // the event ring should be owned here?
+ }
+ 
+ pub type NewPendingTrb = State;
+ 
++/// Counts for the usb-trace log line, cleared after each line.
++struct Trace {
++    since: std::time::Instant,
++    /// Transfer events by slot, endpoint ID and completion code.
++    events: std::collections::BTreeMap<(u8, u8, u8), u64>,
++    /// Transfer waiters registered, by ring.
++    registered: std::collections::BTreeMap<String, u64>,
++    /// Waiters answered by an event, by ring.
++    matched: std::collections::BTreeMap<String, u64>,
++    /// Waiters on a dead ring answered with an unrelated event, by ring.
++    dead: std::collections::BTreeMap<String, u64>,
++    /// Transfer events kept for a later waiter or lost.
++    unmatched: u64,
++}
++
++impl Trace {
++    fn new() -> Self {
++        Trace {
++            since: std::time::Instant::now(),
++            events: Default::default(),
++            registered: Default::default(),
++            matched: Default::default(),
++            dead: Default::default(),
++            unmatched: 0,
++        }
++    }
++}
++
++fn ring_key(id: &RingId) -> String {
++    format!("{} ep{:?}", id.port, id.endpoint_num)
++}
++
+ enum EventProcessResult {
+     NoEvent,
+     EventRingFull,
+@@ -128,6 +163,7 @@ impl<const N: usize> IrqReactor<N> {
+             states: Vec::new(),
+             early_events: Vec::new(),
+             early_matched: 0,
++            trace: Trace::new(),
+         }
+     }
+     // TODO: Configure the amount of time wait when no more work can be done (for IRQ-less polling).
+@@ -320,6 +356,7 @@ impl<const N: usize> IrqReactor<N> {
+         }
+ 
+         event_trb.reserved(false);
++        self.log_trace();
+ 
+         self.update_erdp(&*event_ring);
+         self.hci.event_handler_finished();
+@@ -399,12 +436,14 @@ impl<const N: usize> IrqReactor<N> {
+                 ring_id,
+             } = state.kind
+             {
++                *self.trace.registered.entry(ring_key(&ring_id)).or_default() += 1;
+                 let found = self.early_events.iter().position(|(trb, _)| {
+                     trb.transfer_event_trb_pointer()
+                         .is_some_and(|ptr| ptr_in_range(ptr, first_phys_ptr, last_phys_ptr))
+                 });
+                 if let Some(index) = found {
+                     let (trb, _) = self.early_events.remove(index);
++                    *self.trace.matched.entry(ring_key(&ring_id)).or_default() += 1;
+                     self.early_matched += 1;
+                     let n = self.early_matched;
+                     if n <= 10 || n % 1000 == 0 {
+@@ -427,6 +466,13 @@ impl<const N: usize> IrqReactor<N> {
+         //TODO: handle TRBs without an attached state
+ 
+         trace!("ACK TRB {:X?}", trb);
++        if trb.trb_type() == TrbType::Transfer as u8 {
++            *self
++                .trace
++                .events
++                .entry((trb.event_slot(), trb.endpoint_id(), trb.completion_code()))
++                .or_default() += 1;
++        }
+ 
+         let mut index = 0;
+         while index < self.states.len() {
+@@ -484,6 +530,7 @@ impl<const N: usize> IrqReactor<N> {
+                                 let matches =
+                                     ptr_in_range(phys_ptr, first_phys_ptr, last_phys_ptr);
+                                 if matches {
++                                    *self.trace.matched.entry(ring_key(&ring_id)).or_default() += 1;
+                                     let src_trb = self.hci.get_transfer_trb(phys_ptr, ring_id);
+                                     // Give the source transfer TRB together with the event TRB, to the future.
+                                     let state = self.states.remove(index);
+@@ -515,6 +562,7 @@ impl<const N: usize> IrqReactor<N> {
+                     // Also check if the transfer is on a dead ring
+                     if self.hci.with_ring(ring_id, |_ring| ()).is_none() {
+                         log::debug!("State {} is a dead transfer", index);
++                        *self.trace.dead.entry(ring_key(&ring_id)).or_default() += 1;
+                         let state = self.states.remove(index);
+                         state.finish(Some(NextEventTrb {
+                             src_trb: None,
+@@ -538,6 +586,9 @@ impl<const N: usize> IrqReactor<N> {
+         }
+         // A transfer event whose waiter is not registered yet: keep it for
+         // a second, handle_requests matches it when the state comes.
++        if trb.trb_type() == TrbType::Transfer as u8 {
++            self.trace.unmatched += 1;
++        }
+         if trb.trb_type() == TrbType::Transfer as u8 && trb.transfer_event_trb_pointer().is_some() {
+             let now = std::time::Instant::now();
+             self.early_events
+@@ -554,6 +605,38 @@ impl<const N: usize> IrqReactor<N> {
+             trb
+         );
+     }
++    /// The usb-trace line, every 10 s: transfer events (slot, endpoint
++    /// ID, completion code: count), waiters registered and answered per
++    /// ring, and the waiters still pending per ring.
++    fn log_trace(&mut self) {
++        let now = std::time::Instant::now();
++        if now.duration_since(self.trace.since) < std::time::Duration::from_secs(10) {
++            return;
++        }
++        let mut pending: std::collections::BTreeMap<String, u64> = Default::default();
++        for state in &self.states {
++            if let StateKind::Transfer { ring_id, .. } = state.kind {
++                *pending.entry(ring_key(&ring_id)).or_default() += 1;
++            }
++        }
++        let events: Vec<String> = self
++            .trace
++            .events
++            .iter()
++            .map(|((slot, ep, cc), n)| format!("s{slot}e{ep}c{cc}:{n}"))
++            .collect();
++        info!(
++            "usb-trace: events [{}] registered {:?} matched {:?} dead {:?} unmatched {} pending {:?} early {}",
++            events.join(" "),
++            self.trace.registered,
++            self.trace.matched,
++            self.trace.dead,
++            self.trace.unmatched,
++            pending,
++            self.early_events.len()
++        );
++        self.trace = Trace::new();
++    }
+     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
+         let mut index = 0;
+ 
+-- 
+2.53.0
+
