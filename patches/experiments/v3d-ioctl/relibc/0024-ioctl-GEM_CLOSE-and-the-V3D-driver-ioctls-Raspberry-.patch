@@ -1,0 +1,355 @@
+From 18dd74422862e75acf895b577f1772a742f10da9 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 21:51:29 +0000
+Subject: [PATCH] ioctl: GEM_CLOSE and the V3D driver ioctls (Raspberry Pi 4)
+
+DRM_IOCTL_GEM_CLOSE and Linux's V3D ioctls (SUBMIT_CL, WAIT_BO,
+CREATE_BO, MMAP_BO, GET_PARAM, GET_BO_OFFSET, SUBMIT_CSD) become scheme
+calls with the function number as metadata, like the other DRM ioctls.
+The structs follow include/uapi/drm/v3d_drm.h; the BO handle arrays of
+the submits travel inline after the fixed part. SUBMIT_CSD is
+serialised by hand because its wire form has an alignment gap.
+
+A V3D daemon (v3dd) serves them, so Mesa's v3d driver can talk to it
+through libdrm.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ redox-ioctl/src/drm.rs            |  25 +++-
+ redox-ioctl/src/lib.rs            |   1 +
+ redox-ioctl/src/v3d.rs            | 236 ++++++++++++++++++++++++++++++
+ src/header/sys_ioctl/redox/drm.rs |  13 +-
+ 4 files changed, 266 insertions(+), 9 deletions(-)
+ create mode 100644 redox-ioctl/src/v3d.rs
+
+diff --git a/redox-ioctl/src/drm.rs b/redox-ioctl/src/drm.rs
+index b86eb0db..a5360102 100644
+--- a/redox-ioctl/src/drm.rs
++++ b/redox-ioctl/src/drm.rs
+@@ -6,14 +6,15 @@ use core::{
+ };
+ 
+ pub use drm_sys::{
+-    __kernel_size_t, DRM_PROP_NAME_LEN, drm_clip_rect, drm_get_cap, drm_mode_card_res,
+-    drm_mode_closefb, drm_mode_connector_set_property, drm_mode_create_dumb, drm_mode_crtc,
+-    drm_mode_crtc_lut, drm_mode_crtc_page_flip_target, drm_mode_cursor, drm_mode_cursor2,
+-    drm_mode_destroy_dumb, drm_mode_fb_cmd, drm_mode_fb_cmd2, drm_mode_fb_dirty_cmd,
+-    drm_mode_get_blob, drm_mode_get_connector, drm_mode_get_encoder, drm_mode_get_plane,
+-    drm_mode_get_plane_res, drm_mode_get_property, drm_mode_map_dumb, drm_mode_modeinfo,
+-    drm_mode_obj_get_properties, drm_mode_property_enum, drm_mode_set_plane, drm_prime_handle,
+-    drm_set_client_cap, drm_set_client_name, drm_set_version, drm_unique, drm_version,
++    __kernel_size_t, DRM_PROP_NAME_LEN, drm_clip_rect, drm_gem_close, drm_get_cap,
++    drm_mode_card_res, drm_mode_closefb, drm_mode_connector_set_property, drm_mode_create_dumb,
++    drm_mode_crtc, drm_mode_crtc_lut, drm_mode_crtc_page_flip_target, drm_mode_cursor,
++    drm_mode_cursor2, drm_mode_destroy_dumb, drm_mode_fb_cmd, drm_mode_fb_cmd2,
++    drm_mode_fb_dirty_cmd, drm_mode_get_blob, drm_mode_get_connector, drm_mode_get_encoder,
++    drm_mode_get_plane, drm_mode_get_plane_res, drm_mode_get_property, drm_mode_map_dumb,
++    drm_mode_modeinfo, drm_mode_obj_get_properties, drm_mode_property_enum, drm_mode_set_plane,
++    drm_prime_handle, drm_set_client_cap, drm_set_client_name, drm_set_version, drm_unique,
++    drm_version,
+ };
+ 
+ pub const VERSION: u64 = 0;
+@@ -67,6 +68,14 @@ define_ioctl_data! {
+     }
+ }
+ 
++pub const GEM_CLOSE: u64 = 0x09;
++define_ioctl_data! {
++    struct drm_gem_close, DrmGemClose {
++        handle: u32,
++        pad: u32,
++    }
++}
++
+ pub const PRIME_HANDLE_TO_FD: u64 = 0x2D;
+ pub const PRIME_FD_TO_HANDLE: u64 = 0x2E;
+ define_ioctl_data! {
+diff --git a/redox-ioctl/src/lib.rs b/redox-ioctl/src/lib.rs
+index 0746aba7..e2811925 100644
+--- a/redox-ioctl/src/lib.rs
++++ b/redox-ioctl/src/lib.rs
+@@ -9,3 +9,4 @@ mod ioctl_data;
+ pub use ioctl_data::IoctlData;
+ 
+ pub mod drm;
++pub mod v3d;
+diff --git a/redox-ioctl/src/v3d.rs b/redox-ioctl/src/v3d.rs
+new file mode 100644
+index 00000000..cfcae94a
+--- /dev/null
++++ b/redox-ioctl/src/v3d.rs
+@@ -0,0 +1,236 @@
++//! The V3D (Broadcom VideoCore VI, Raspberry Pi 4) driver ioctls of
++//! Linux's `include/uapi/drm/v3d_drm.h`, as far as a Redox V3D daemon
++//! implements them. The function numbers are DRM_COMMAND_BASE (0x40) plus
++//! the driver's number, as in the ioctl request.
++
++use alloc::vec::Vec;
++use core::{cmp, iter, mem, slice};
++
++pub const SUBMIT_CL: u64 = 0x40;
++pub const WAIT_BO: u64 = 0x41;
++pub const CREATE_BO: u64 = 0x42;
++pub const MMAP_BO: u64 = 0x43;
++pub const GET_PARAM: u64 = 0x44;
++pub const GET_BO_OFFSET: u64 = 0x45;
++pub const SUBMIT_CSD: u64 = 0x47;
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_submit_cl {
++    pub bcl_start: u32,
++    pub bcl_end: u32,
++    pub rcl_start: u32,
++    pub rcl_end: u32,
++    pub in_sync_bcl: u32,
++    pub in_sync_rcl: u32,
++    pub out_sync: u32,
++    pub qma: u32,
++    pub qms: u32,
++    pub qts: u32,
++    pub bo_handles: u64,
++    pub bo_handle_count: u32,
++    pub flags: u32,
++    pub perfmon_id: u32,
++    pub pad: u32,
++    pub extensions: u64,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_submit_cl, DrmV3dSubmitCl {
++        bcl_start: u32,
++        bcl_end: u32,
++        rcl_start: u32,
++        rcl_end: u32,
++        in_sync_bcl: u32,
++        in_sync_rcl: u32,
++        out_sync: u32,
++        qma: u32,
++        qms: u32,
++        qts: u32,
++        bo_handles: u64 [array<u32, bo_handle_count>],
++        bo_handle_count: u32,
++        flags: u32,
++        perfmon_id: u32,
++        pad: u32,
++        extensions: u64,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_wait_bo {
++    pub handle: u32,
++    pub pad: u32,
++    pub timeout_ns: u64,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_wait_bo, DrmV3dWaitBo {
++        handle: u32,
++        pad: u32,
++        timeout_ns: u64,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_create_bo {
++    pub size: u32,
++    pub flags: u32,
++    pub handle: u32,
++    pub offset: u32,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_create_bo, DrmV3dCreateBo {
++        size: u32,
++        flags: u32,
++        handle: u32,
++        offset: u32,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_mmap_bo {
++    pub handle: u32,
++    pub flags: u32,
++    pub offset: u64,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_mmap_bo, DrmV3dMmapBo {
++        handle: u32,
++        flags: u32,
++        offset: u64,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_get_param {
++    pub param: u32,
++    pub pad: u32,
++    pub value: u64,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_get_param, DrmV3dGetParam {
++        param: u32,
++        pad: u32,
++        value: u64,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_get_bo_offset {
++    pub handle: u32,
++    pub offset: u32,
++}
++
++define_ioctl_data! {
++    struct drm_v3d_get_bo_offset, DrmV3dGetBoOffset {
++        handle: u32,
++        offset: u32,
++    }
++}
++
++/// The C struct has padding after `coef` (before the u64 `bo_handles`),
++/// and its wire form without `bo_handles` has padding before
++/// `extensions`, so it is (de)serialised by hand: the wire form is
++/// `SubmitCsdWire` with zeroed padding, then the handles.
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct drm_v3d_submit_csd {
++    pub cfg: [u32; 7],
++    pub coef: [u32; 4],
++    pub bo_handles: u64,
++    pub bo_handle_count: u32,
++    pub in_sync: u32,
++    pub out_sync: u32,
++    pub perfmon_id: u32,
++    pub extensions: u64,
++    pub flags: u32,
++    pub pad: u32,
++}
++
++/// The fixed part of SUBMIT_CSD on the wire; `pad0` stands for the
++/// alignment gap before `extensions` and is always zero.
++#[repr(C)]
++#[derive(Debug, Default, Copy, Clone)]
++pub struct SubmitCsdWire {
++    pub cfg: [u32; 7],
++    pub coef: [u32; 4],
++    pub bo_handle_count: u32,
++    pub in_sync: u32,
++    pub out_sync: u32,
++    pub perfmon_id: u32,
++    pub pad0: u32,
++    pub extensions: u64,
++    pub flags: u32,
++    pub pad: u32,
++}
++
++impl SubmitCsdWire {
++    fn bytes(&self) -> [u8; size_of::<SubmitCsdWire>()] {
++        // No implicit padding: every byte belongs to a field.
++        unsafe { mem::transmute::<SubmitCsdWire, [u8; size_of::<SubmitCsdWire>()]>(*self) }
++    }
++}
++
++impl crate::ioctl_data::IoctlData for drm_v3d_submit_csd {
++    unsafe fn write(&self) -> Vec<u8> {
++        let fixed = SubmitCsdWire {
++            cfg: self.cfg,
++            coef: self.coef,
++            bo_handle_count: self.bo_handle_count,
++            in_sync: self.in_sync,
++            out_sync: self.out_sync,
++            perfmon_id: self.perfmon_id,
++            pad0: 0,
++            extensions: self.extensions,
++            flags: self.flags,
++            pad: self.pad,
++        };
++        let size = self.bo_handle_count as usize * size_of::<u32>();
++        let mut data = Vec::with_capacity(size_of::<SubmitCsdWire>() + size);
++        data.extend_from_slice(&fixed.bytes());
++        if self.bo_handles != 0 {
++            data.extend_from_slice(unsafe {
++                slice::from_raw_parts(self.bo_handles as usize as *const u8, size)
++            });
++        } else {
++            data.extend(iter::repeat(0u8).take(size));
++        }
++        data
++    }
++
++    unsafe fn read_from(&mut self, buf: &[u8]) {
++        // SUBMIT_CSD sends only; nothing comes back but the fixed part.
++        let n = cmp::min(buf.len(), size_of::<SubmitCsdWire>());
++        let mut fixed = SubmitCsdWire::default();
++        unsafe {
++            slice::from_raw_parts_mut(core::ptr::from_mut(&mut fixed).cast::<u8>(), n)
++                .copy_from_slice(&buf[..n]);
++        }
++        self.cfg = fixed.cfg;
++        self.coef = fixed.coef;
++        self.in_sync = fixed.in_sync;
++        self.out_sync = fixed.out_sync;
++        self.perfmon_id = fixed.perfmon_id;
++        self.extensions = fixed.extensions;
++        self.flags = fixed.flags;
++        self.pad = fixed.pad;
++    }
++}
++
++// The sizes of Linux's structs, which are part of the ioctl requests.
++const _: () = assert!(size_of::<drm_v3d_submit_cl>() == 72);
++const _: () = assert!(size_of::<drm_v3d_wait_bo>() == 16);
++const _: () = assert!(size_of::<drm_v3d_create_bo>() == 16);
++const _: () = assert!(size_of::<drm_v3d_mmap_bo>() == 16);
++const _: () = assert!(size_of::<drm_v3d_get_param>() == 16);
++const _: () = assert!(size_of::<drm_v3d_get_bo_offset>() == 8);
++const _: () = assert!(size_of::<drm_v3d_submit_csd>() == 88);
++const _: () = assert!(size_of::<SubmitCsdWire>() == 80);
+diff --git a/src/header/sys_ioctl/redox/drm.rs b/src/header/sys_ioctl/redox/drm.rs
+index 7d22e691..1114f91c 100644
+--- a/src/header/sys_ioctl/redox/drm.rs
++++ b/src/header/sys_ioctl/redox/drm.rs
+@@ -1,6 +1,6 @@
+ use core::slice;
+ 
+-use redox_ioctl::{IoctlData, drm::*};
++use redox_ioctl::{IoctlData, drm::*, v3d};
+ use syscall::flag::{F_SETFD, O_RDWR};
+ 
+ use crate::{
+@@ -124,10 +124,21 @@ pub(super) unsafe fn ioctl(fd: c_int, func: u8, buf: IoctlBuffer) -> Result<c_in
+         0x00 => unsafe { dev.read_write_ioctl::<drm_version>(buf, VERSION) },
+         0x01 => unsafe { dev.read_write_ioctl::<drm_unique>(buf, GET_UNIQUE) },
+         0x07 => unsafe { dev.read_write_ioctl::<drm_set_version>(buf, SET_VERSION) },
++        0x09 => unsafe { dev.write_ioctl::<drm_gem_close>(buf, GEM_CLOSE) },
+         0x0C => unsafe { dev.read_write_ioctl::<drm_get_cap>(buf, GET_CAP) },
+         0x0D => unsafe { dev.write_ioctl::<drm_set_client_cap>(buf, SET_CLIENT_CAP) },
+         0x2D => unsafe { dev.prime_handle_to_fd(buf) },
+         0x2E => unsafe { dev.prime_fd_to_handle(buf) },
++        // Driver ioctls (DRM_COMMAND_BASE and up): V3D, served by v3dd.
++        0x40 => unsafe { dev.read_write_ioctl::<v3d::drm_v3d_submit_cl>(buf, v3d::SUBMIT_CL) },
++        0x41 => unsafe { dev.read_write_ioctl::<v3d::drm_v3d_wait_bo>(buf, v3d::WAIT_BO) },
++        0x42 => unsafe { dev.read_write_ioctl::<v3d::drm_v3d_create_bo>(buf, v3d::CREATE_BO) },
++        0x43 => unsafe { dev.read_write_ioctl::<v3d::drm_v3d_mmap_bo>(buf, v3d::MMAP_BO) },
++        0x44 => unsafe { dev.read_write_ioctl::<v3d::drm_v3d_get_param>(buf, v3d::GET_PARAM) },
++        0x45 => unsafe {
++            dev.read_write_ioctl::<v3d::drm_v3d_get_bo_offset>(buf, v3d::GET_BO_OFFSET)
++        },
++        0x47 => unsafe { dev.write_ioctl::<v3d::drm_v3d_submit_csd>(buf, v3d::SUBMIT_CSD) },
+         0xA0 => unsafe { dev.read_write_ioctl::<drm_mode_card_res>(buf, MODE_CARD_RES) },
+         0xA1 => unsafe { dev.read_write_ioctl::<drm_mode_crtc>(buf, MODE_GET_CRTC) },
+         0xA2 => unsafe { dev.read_write_ioctl::<drm_mode_crtc>(buf, MODE_SET_CRTC) },
+-- 
+2.53.0
+

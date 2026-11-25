@@ -1,7 +1,7 @@
 # zoneinfo
 
 Time zone files (TZif) for `/usr/share/zoneinfo`, as a package for the
-image (experiment `timezone`, issue
+image, in every image through `config/raspi3bp-sdcard.toml` (issue
 [#46](https://github.com/redox-rpi/redox-rpi/issues/46)). Rust programs
 such as uutils `date` read them through `/etc/localtime` or `TZ`; relibc
 has the tz database built in and only needs the zone's name.

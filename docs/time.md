@@ -19,7 +19,7 @@ branch until they passed a test on a real Pi.
 | Time from the network at boot (`timesync`) | stable image (experiment `timesync`) | in use since v0.2.0 |
 | `timesync` waits for the network, retries | branch `timerd` | Pi tests #27, #41 passed; pull request [#59](https://github.com/redox-rpi/redox-rpi/pull/59), planned for v0.4.0 |
 | Timers (`timerd`) | branch `timerd`, experiment `timerd` | Pi test #27 passed; pull request [#59](https://github.com/redox-rpi/redox-rpi/pull/59), planned for v0.4.0 ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)) |
-| Time zones | branch `timezone`, experiment `timezone` | QEMU only; planned for v0.5.0 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46)) |
+| Time zones | every image (`config/raspi3bp-sdcard.toml`) | default since v0.7.0 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46)) |
 | Setting the clock by hand (`timesync -s`) | branch `clock-settime` | Pi test #66 passed; planned for v0.9.0 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)) |
 | DS3231 clock module | branch `ds3231` | QEMU only; planned for v0.8.0 ([#39](https://github.com/redox-rpi/redox-rpi/issues/39)) |
 
@@ -101,8 +101,8 @@ root may.
 
 ## Time zones
 
-On branch `timezone` (experiment `timezone`) the image is set to
-**Europe/Berlin**, with summer time:
+Every image is set to **Europe/Berlin**, with summer time
+([#46](https://github.com/redox-rpi/redox-rpi/issues/46)):
 
 ```sh
 date                         # Thu Oct 29 13:25:26 CET 2026
@@ -142,8 +142,7 @@ and takes only the name from the link. The logs of `timesync` stay in UTC.
 
 **Another zone in the image:** add its file to
 [`tools/zoneinfo`](../tools/zoneinfo) and change the link in
-[`patches/experiments/timezone/config.toml`](../patches/experiments/timezone/config.toml).
-The stable image has no time zone and shows UTC.
+[`config/raspi3bp-sdcard.toml`](../config/raspi3bp-sdcard.toml).
 
 ## Timers: running commands at set times
 
@@ -167,7 +166,7 @@ envs = { LANG = "C" }
 |---|---|
 | `schedule` | Five cron fields: minute (0-59), hour (0-23), day of month (1-31), month (1-12), weekday (0-7, 0 and 7 = Sunday). Each with `*`, a number, a range `1-5`, a step `*/10` or a list `0,30`. Or `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`. |
 | `persistent` | `true`: a run missed while the Pi was off runs once after the next boot. Default `false`. |
-| `utc` | `true`: the schedule is in UTC even if the image has a time zone (branch `timezone`). |
+| `utc` | `true`: the schedule is in UTC, not in the image's time zone. |
 | `description` | Shown by `timerd -l`. |
 | `cmd`, `args`, `envs` | The program, its arguments and extra environment variables. |
 
@@ -268,4 +267,4 @@ it. This has been tested in QEMU, not yet with a real module.
 | `no default route (DHCP not done)` | DHCP has not finished; `timesync` keeps trying every 30 s (branch `timerd`). |
 | `timesync: cannot set the clock …` | Not root. |
 | Timers do not run right after boot | `timerd` waits up to five minutes for `timesync`. `timerd -l` shows the next run. |
-| `date` shows UTC | The image has no time zone (stable image), or `/etc/localtime` is missing. |
+| `date` shows UTC | `/etc/localtime` is missing or points to `Etc/UTC`, or `TZ` is set (images before v0.7.0 had no time zone). |

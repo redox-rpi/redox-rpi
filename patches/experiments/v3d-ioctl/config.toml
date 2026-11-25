@@ -1,0 +1,7 @@
+# Experiment v3d-ioctl (#669, test only): the V3D render node. libdrm and
+# Mesa look for DRM devices in /dev/dri; v3dd serves /scheme/v3d.
+
+[[files]]
+path = "/dev/dri/renderD128"
+data = "/scheme/v3d"
+symlink = true

@@ -31,6 +31,14 @@
 
 ## In progress
 
+- [#410](https://github.com/redox-rpi/redox-rpi/issues/410) nightly TinyCC VC4 track (WBS 2.15 point 3, branch
+  `tcc-track`): `scripts/tcc-track.sh` builds the fat-boot bootcode with
+  GCC (G) and TCC (T) from `config/tcc-track.lock` and runs the resim tests
+  (20 s on the build host); `scripts/tcc-track-pi.py` loads both over
+  serial into the card's monitor after a watchdog reset (no power cycle, no
+  card writes) and compares their replies; the record goes to `tcc.jsonl`
+  in pi-tests. Not gating; first Pi run by hand through the queue.
+
 - [#265](https://github.com/redox-rpi/redox-rpi/issues/265) regression set before a Pi row:
   `scripts/regression-set.py` and `scripts/regression-qemu.sh` (PR #396),
   8 checks in QEMU in under 3 minutes with the boot; `merge-set-check.sh`
@@ -77,6 +85,20 @@ tests are built every night.
   `/srv/tftp/visit/<name>/latest`, for `--sdcard` also
   `/srv/tftp/sdcard/redox-rpi-visit-<name>-<build ID>.img.xz` with
   `.sha256`, `.manifest.toml` and `-latest` links. The last 3 stay.
+- **Desktop smoke test** ([#261](https://github.com/redox-rpi/redox-rpi/issues/261)),
+  for an image with `check=desktop` (today `desktop`): after its network-boot
+  build, [`scripts/qemu-desktop-check.sh`](../../scripts/qemu-desktop-check.sh)
+  boots it in QEMU raspi3b, runs `desktop` on the serial console, presses
+  Enter at Orbital's login window through the QEMU monitor and checks: no
+  panic, `orbital` and the launcher still running a minute later, and a
+  screenshot that shows the launcher bar (many colours, not the dark text
+  console). Report-only: the image counts as built whatever it says. The
+  result is the `desktop-check =` line in `visit.txt`; `report.md`, `run.log`,
+  `desktop.png` and `console.png` are in
+  `/srv/tftp/visit/<name>/<build ID>/desktop-check/`. QEMU's framebuffer is
+  the firmware mailbox model, so it checks Orbital, `rpi-fbd`, the launcher
+  and the session, not HDMI. It also runs by hand on any desktop image:
+  `scripts/qemu-desktop-check.sh --image <harddrive.img>`.
 - **For a tester:** `/visit/` on the image server (`index.html` and
   `README.txt`, from `scripts/visit-index.py` after each image): per image
   OK or FAILED, build ID, date, the command to stage it, the SD image with
