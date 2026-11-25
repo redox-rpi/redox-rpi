@@ -20,6 +20,14 @@ Checks, in this order:
             exit status, what it printed, and the crash dump lines the
             serial console logged meanwhile (with --serial-log, e.g.
             ~/redox-rpi/logs/serial.log, or images/qrun.log under QEMU)
+  serial    with --serial-log: the log from the start of this boot (the
+            last "Redox OS starting" before the run) to the end of the
+            checks has no kernel panic, relibc panic, out of memory, stuck
+            main loop or crash of a program other than ls and pwd (those
+            are the starts check's), no out of memory except the kernel
+            ending oomtest (the regression set's oom check, #676), and the
+            kernel did not start again
+            during the run, which would be an unexpected reset (#674)
 
 With --extended (the nightly, #258), also:
   audio     /scheme/audiohw/stats: measured_rate_hz within 2 % of 44 100,
@@ -197,6 +205,44 @@ FRAME = re.compile(r"\bFP ([0-9A-Fa-f]+): PC ([0-9A-Fa-f]+)")
 USER_END = 0x8000_0000_0000
 TRACE_FRAMES = 8
 UNHANDLED = re.compile(r"UNHANDLED EXCEPTION, CPU #(\d+), PID (\d+), NAME (\S+?),?(?:\s|$)")
+
+# What the serial check counts as a crash of the system or of a program
+# (#674, tracking #673). "Not an SVC induced" is the kernel's line for the
+# same program crash that UNHANDLED EXCEPTION names, so only the latter is
+# counted.
+SERIAL_BAD = re.compile(r"KERNEL PANIC|RELIBC PANIC|OUT OF MEMORY|main loop stuck")
+BOOT_START = "Redox OS starting"
+START_PROGRAMS = ("/usr/bin/ls", "/usr/bin/pwd", "/bin/ls", "/bin/pwd")
+# The kernel ending oomtest on purpose (regression-set.py's oom check, #676).
+OOM_TEST_KILL = re.compile(r"OUT OF MEMORY: killing PID \d+ NAME \S*/oomtest\b")
+
+
+def boot_offset(path, before):
+    """Offset of the last kernel start in the serial log before offset
+    `before` (the start of this boot), or 0."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(before)
+    except (OSError, TypeError):
+        return 0
+    i = data.rfind(BOOT_START.encode())
+    return i if i >= 0 else 0
+
+
+def check_serial(check, path, run_start):
+    """The serial check (see the module doc): this boot's log, from its
+    kernel start to now."""
+    lines = serial_lines(path, boot_offset(path, run_start))
+    bad = [l for l in lines if SERIAL_BAD.search(l) and not OOM_TEST_KILL.search(l)]
+    bad += [l for l in lines if (m := UNHANDLED.search(l)) and m.group(3) not in START_PROGRAMS]
+    after = serial_lines(path, run_start)
+    resets = sum(BOOT_START in l for l in after)
+    detail = f"{len(lines)} lines of this boot: " + (
+        "no panic, out of memory or program crash" if not bad else
+        f"{len(bad)} bad line(s): " + "; ".join(l[:120] for l in bad[:3]))
+    if resets:
+        detail += f"; the kernel started {resets} time(s) during the run (unexpected reset)"
+    check("serial", not bad and not resets, detail)
 
 
 def split_dumps(lines):
@@ -475,6 +521,7 @@ def main():
         results.append((name, ok, detail))
         print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}", flush=True)
 
+    run_start = serial_size(args.serial_log)
     sh = Shell(args.host, args.port)
     try:
         release = dict(
@@ -590,6 +637,8 @@ def main():
             for l in c["serial"] if i < 3 else []:
                 print(f"    serial: {l}", flush=True)
         info["starts"] = (len(crashes), done)
+        if args.serial_log:
+            check_serial(check, args.serial_log, run_start)
         if args.extended:
             try:
                 check_cpu(sh, check)

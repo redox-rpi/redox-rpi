@@ -1,4 +1,4 @@
-From 5a7e92a336d693ef6b730d52c33afa814c96a2b3 Mon Sep 17 00:00:00 2001
+From d1acbddcd879fa4c5e50a5e91fd1d9d8e1d53a93 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Fri, 30 Oct 2026 21:30:10 +0100
 Subject: [PATCH] dwc2d: counters of the network adapter in
@@ -112,10 +112,10 @@ index 3968cdb..da01252 100644
      }
  }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 1095983..92dc6a1 100644
+index abf965a..5353017 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -24,6 +24,7 @@ mod lan78xx;
+@@ -25,6 +25,7 @@ mod lan78xx;
  mod mouse;
  mod regs;
  mod rtl8152;
@@ -123,7 +123,7 @@ index 1095983..92dc6a1 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -341,6 +342,8 @@ fn probe(
+@@ -342,6 +343,8 @@ fn probe(
  const RX_CHANNEL: usize = 1;
  /// How often to look for received frames without an interrupt.
  const POLL_FALLBACK: Duration = Duration::from_millis(10);
@@ -132,7 +132,7 @@ index 1095983..92dc6a1 100644
  
  fn get_dtb() -> Vec<u8> {
      std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
-@@ -472,6 +475,7 @@ user_data! {
+@@ -477,6 +480,7 @@ user_data! {
      enum Source {
          Irq,
          Scheme,
@@ -140,7 +140,7 @@ index 1095983..92dc6a1 100644
          Time,
          Hotplug,
      }
-@@ -626,6 +630,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -631,6 +635,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      events
          .subscribe(scheme.event_handle().raw(), Source::Scheme, event::EventFlags::READ)
          .expect("dwc2d: failed to subscribe to the scheme");
@@ -155,8 +155,8 @@ index 1095983..92dc6a1 100644
 +    }
  
      scheme.tick().expect("dwc2d: network scheme failed");
-     for event in events.map(|e| e.expect("dwc2d: failed to get event")) {
-@@ -633,6 +646,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     let mut wake = wakeups::Wakeups::new();
+@@ -642,6 +655,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              Source::Irq => {
                  let file = irq_file.as_mut().unwrap();
                  let mut irq = [0; 8];
@@ -164,7 +164,7 @@ index 1095983..92dc6a1 100644
                  if file.read(&mut irq).unwrap_or(0) == irq.len() {
                      // tick() takes the received frame and clears the
                      // channel's interrupt; only then unmask the line.
-@@ -641,9 +655,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -650,9 +664,16 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  }
              }
              Source::Scheme => {

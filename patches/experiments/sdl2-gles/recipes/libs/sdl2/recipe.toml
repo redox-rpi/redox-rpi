@@ -1,0 +1,622 @@
+# Experiment sdl2-gles (#669): experiment orbital-apps' sdl2 (the
+# framebuffer backend for windows without OpenGL) plus OpenGL ES through
+# EGL on Mesa: the Orbital driver's OpenGL part is rewritten for EGL's
+# surfaceless platform (pbuffer, copied into the window on swap), see
+# README.md. The first patch is orbital-apps' own, unchanged.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/sdl2.git"
+branch = "redox-2.0.33"
+shallow_clone = true
+script = '''
+if ! grep -q "SDL draws into a buffer of its own window size" src/video/orbital/SDL_orbitalframebuffer.c; then
+patch -p1 <<'PATCH'
+--- a/src/video/orbital/SDL_orbitalframebuffer.c
++++ b/src/video/orbital/SDL_orbitalframebuffer.c
+@@ -1,16 +1,50 @@
+ #include "SDL_orbitalframebuffer.h"
++#include "SDL_orbitalvideo.h"
++#include <orbital.h>
+ 
+ int ORBITAL_CreateWindowFramebuffer(_THIS, SDL_Window * window,
+                                        Uint32 * format,
+                                        void ** pixels, int *pitch) {
++    // SDL draws into a buffer of its own window size. Orbital may give the
++    // window a different size (clamped to the screen), so the window's own
++    // pixels are written only in UpdateWindowFramebuffer, as far as they fit.
++    SDL_VideoData* video_data = _this->driverdata;
++    SDL_free(video_data->fb_pixels);
++    video_data->fb_w = window->w;
++    video_data->fb_h = window->h;
++    video_data->fb_pixels = SDL_calloc((size_t)window->w * window->h, 4);
++    if (video_data->fb_pixels == NULL) {
++        return SDL_OutOfMemory();
++    }
++    *format = SDL_PIXELFORMAT_ARGB8888;
++    *pixels = video_data->fb_pixels;
++    *pitch = window->w * 4;
+     return 0;
+ }
+ 
+ int ORBITAL_UpdateWindowFramebuffer(_THIS, SDL_Window* window,
+                                       const SDL_Rect* rects, int numrects) {
++    SDL_VideoData* video_data = _this->driverdata;
++    Uint32* dst = orb_window_data(video_data->orb_window);
++    int dst_w = orb_window_width(video_data->orb_window);
++    int dst_h = orb_window_height(video_data->orb_window);
++    int w = SDL_min(video_data->fb_w, dst_w);
++    int h = SDL_min(video_data->fb_h, dst_h);
++    int y;
++    if (dst == NULL || video_data->fb_pixels == NULL) {
++        return 0;
++    }
++    for (y = 0; y < h; y++) {
++        SDL_memcpy(dst + (size_t)y * dst_w,
++                   video_data->fb_pixels + (size_t)y * video_data->fb_w,
++                   (size_t)w * 4);
++    }
++    orb_window_sync(video_data->orb_window);
+     return 0;
+ }
+ 
+ void ORBITAL_DestroyWindowFramebuffer(_THIS, SDL_Window* window) {
+-
++    SDL_VideoData* video_data = _this->driverdata;
++    SDL_free(video_data->fb_pixels);
++    video_data->fb_pixels = NULL;
+ }
+\ No newline at end of file
+--- a/src/video/orbital/SDL_orbitalopengl.c
++++ b/src/video/orbital/SDL_orbitalopengl.c
+@@ -20,6 +20,8 @@
+ */
+ #include "../../SDL_internal.h"
+ 
++#if SDL_VIDEO_OPENGL
++
+ #include "SDL_orbitalopengl.h"
+ #include "SDL_orbitalvideo.h"
+ 
+@@ -144,3 +146,5 @@
+ 
+     video_data->mesa_buffer = buffer;
+ }
++
++#endif /* SDL_VIDEO_OPENGL */
+--- a/src/video/orbital/SDL_orbitalopengl.h
++++ b/src/video/orbital/SDL_orbitalopengl.h
+@@ -29,6 +29,8 @@
+ 
+ #include "../SDL_sysvideo.h"
+ 
++#if SDL_VIDEO_OPENGL
++
+ extern int ORBITAL_GL_LoadLibrary(_THIS, const char *path);      /* FIXME */
+ extern void *ORBITAL_GL_GetProcAddress(_THIS, const char *proc); /* FIXME */
+ extern void ORBITAL_GL_UnloadLibrary(_THIS);                     /* TODO */
+@@ -41,6 +43,10 @@
+ extern void ORBITAL_GL_DeleteContext(_THIS, SDL_GLContext context);
+ 
+ extern void ORBITAL_GL_SetSize(_THIS, int width, int height);
++#else
++#define ORBITAL_GL_SetSize(_this, width, height) ((void)0)
++#define ORBITAL_GL_DeleteContext(_this, context) ((void)0)
++#endif
+ 
+ #ifdef __cplusplus
+ }
+--- a/src/video/orbital/SDL_orbitalvideo.c
++++ b/src/video/orbital/SDL_orbitalvideo.c
+@@ -135,6 +135,7 @@
+     device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
+     device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;*/
+ 
++#if SDL_VIDEO_OPENGL
+     device->GL_LoadLibrary = ORBITAL_GL_LoadLibrary;
+     device->GL_GetProcAddress = ORBITAL_GL_GetProcAddress;
+     device->GL_UnloadLibrary = ORBITAL_GL_UnloadLibrary;
+@@ -144,6 +145,11 @@
+     device->GL_GetSwapInterval = ORBITAL_GL_GetSwapInterval;
+     device->GL_SwapWindow = ORBITAL_GL_SwapWindow;
+     device->GL_DeleteContext = ORBITAL_GL_DeleteContext;
++#else
++    device->CreateWindowFramebuffer = ORBITAL_CreateWindowFramebuffer;
++    device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
++    device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;
++#endif
+ 
+ 	device->free = ORBITAL_DeleteDevice;
+ 
+--- a/src/video/orbital/SDL_orbitalvideo.h
++++ b/src/video/orbital/SDL_orbitalvideo.h
+@@ -30,7 +30,9 @@
+ #endif
+ 
+ #include "../SDL_sysvideo.h"
++#if SDL_VIDEO_OPENGL
+ #include <GL/osmesa.h>
++#endif
+ 
+ /* Private display data */
+ 
+@@ -42,7 +44,11 @@
+     // Color buffer for mesa context
+     void* mesa_buffer;
+     // Mesa context
+-    OSMesaContext mesa_context;
++    void* mesa_context;
++    // Framebuffer without OpenGL: SDL draws here, sized as SDL's window
++    Uint32* fb_pixels;
++    int fb_w;
++    int fb_h;
+ } SDL_VideoData;
+ 
+ #ifdef __cplusplus
+PATCH
+# Link OSMesa only with OpenGL.
+sed -i "s/list(APPEND EXTRA_LIBS orbital OSMesa)/list(APPEND EXTRA_LIBS orbital)\n      if(SDL_OPENGL)\n        list(APPEND EXTRA_LIBS OSMesa)\n      endif()/" cmake/sdlchecks.cmake
+fi
+if ! grep -q "Altered for redox-rpi (#669)" src/video/orbital/SDL_orbitalopengl.c; then
+patch -p1 <<'PATCH'
+diff --git a/cmake/sdlchecks.cmake b/cmake/sdlchecks.cmake
+index 5918632..e0303d3 100644
+--- a/cmake/sdlchecks.cmake
++++ b/cmake/sdlchecks.cmake
+@@ -941,8 +941,8 @@ macro(CheckOrbital)
+         file(GLOB ORBITAL_VIDEO_SOURCES ${SDL2_SOURCE_DIR}/src/video/orbital/*.c)
+         list(APPEND SOURCE_FILES ${ORBITAL_VIDEO_SOURCES})
+       list(APPEND EXTRA_LIBS orbital)
+-      if(SDL_OPENGL)
+-        list(APPEND EXTRA_LIBS OSMesa)
++      if(SDL_OPENGLES)
++        list(APPEND EXTRA_LIBS EGL)
+       endif()
+     endif()
+   endif()
+diff --git a/src/video/orbital/SDL_orbitalopengl.c b/src/video/orbital/SDL_orbitalopengl.c
+index 593cfc6..aed6ac6 100644
+--- a/src/video/orbital/SDL_orbitalopengl.c
++++ b/src/video/orbital/SDL_orbitalopengl.c
+@@ -18,133 +18,277 @@
+      misrepresented as being the original software.
+   3. This notice may not be removed or altered from any source distribution.
+ */
++/* Altered for redox-rpi (#669): OpenGL and OpenGL ES through EGL's
++ * surfaceless platform instead of OSMesa, so Mesa's hardware drivers (v3d
++ * on the Pi 4/400) render. Each context draws into an EGL pbuffer of the
++ * window's size; SDL_GL_SwapWindow reads it back and copies it into the
++ * Orbital window. */
+ #include "../../SDL_internal.h"
+ 
+-#if SDL_VIDEO_OPENGL
++#if SDL_VIDEO_OPENGL_ES2 && SDL_VIDEO_OPENGL_EGL
+ 
+ #include "SDL_orbitalopengl.h"
+ #include "SDL_orbitalvideo.h"
+ 
+-#include <GL/osmesa.h>
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
+ #include <orbital.h>
+-#include <assert.h>
++#include <stdio.h>
++
++#ifndef EGL_OPENGL_ES3_BIT_KHR
++#define EGL_OPENGL_ES3_BIT_KHR 0x40
++#endif
++
++#define GL_RGBA_ 0x1908
++#define GL_UNSIGNED_BYTE_ 0x1401
++#define GL_FRAMEBUFFER_ 0x8D40
++#define GL_FRAMEBUFFER_BINDING_ 0x8CA6
++#define GL_PACK_ALIGNMENT_ 0x0D05
++
++typedef struct {
++    EGLContext context;
++    EGLSurface surface;
++    EGLConfig config;
++    int w, h;
++} ORBITAL_GLContext;
++
++static EGLDisplay egl_display = EGL_NO_DISPLAY;
++static ORBITAL_GLContext *current;
++static Uint8 *readback;
++static size_t readback_size;
++static int swap_interval;
++
++static void (*p_glReadPixels)(int, int, int, int, unsigned, unsigned, void *);
++static void (*p_glGetIntegerv)(unsigned, int *);
++static void (*p_glBindFramebuffer)(unsigned, unsigned);
++static void (*p_glPixelStorei)(unsigned, int);
+ 
+-/* Passing a NULL path means load pointers from the application */
+ int ORBITAL_GL_LoadLibrary(_THIS, const char *path)
+ {
++    PFNEGLGETPLATFORMDISPLAYEXTPROC get_display;
++    (void)path;
++    if (egl_display != EGL_NO_DISPLAY) {
++        return 0;
++    }
++    get_display = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
++    if (!get_display) {
++        return SDL_SetError("EGL: no eglGetPlatformDisplayEXT");
++    }
++    egl_display = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
++    if (egl_display == EGL_NO_DISPLAY || !eglInitialize(egl_display, NULL, NULL)) {
++        egl_display = EGL_NO_DISPLAY;
++        return SDL_SetError("EGL: eglInitialize on the surfaceless platform failed (0x%x)", eglGetError());
++    }
++    p_glReadPixels = (void *)eglGetProcAddress("glReadPixels");
++    p_glGetIntegerv = (void *)eglGetProcAddress("glGetIntegerv");
++    p_glBindFramebuffer = (void *)eglGetProcAddress("glBindFramebuffer");
++    p_glPixelStorei = (void *)eglGetProcAddress("glPixelStorei");
++    if (!p_glReadPixels || !p_glGetIntegerv || !p_glBindFramebuffer || !p_glPixelStorei) {
++        return SDL_SetError("EGL: GL entry points missing");
++    }
+     return 0;
+ }
+ 
+-void* ORBITAL_GL_GetProcAddress(_THIS, const char *proc)
++void *ORBITAL_GL_GetProcAddress(_THIS, const char *proc)
+ {
+-    return OSMesaGetProcAddress(proc);
++    return (void *)eglGetProcAddress(proc);
+ }
+ 
+-int ORBITAL_GL_SwapWindow(_THIS, SDL_Window* window) {
+-    SDL_VideoData* video_data = _this->driverdata;
+-
+-    // It is currently required to flush for video data to be updated
+-    glFlush();
+-
+-    orb_window_sync(video_data->orb_window);
+-    return 0;
++void ORBITAL_GL_UnloadLibrary(_THIS)
++{
++    /* The display stays: Mesa's drivers are not unloaded either. */
+ }
+ 
+-int ORBITAL_GL_MakeCurrent(_THIS, SDL_Window* window, SDL_GLContext ctx) {
+-    SDL_VideoData* video_data = _this->driverdata;
+-    OSMesaContext context = ctx;
+-
+-
+-    if (ctx == NULL)
+-        return -1;
+-
+-    assert(video_data != NULL);
+-
+-    if (video_data->mesa_context == context && video_data->mesa_buffer != NULL) {
+-        return 0; // no-op
+-    }
+-
+-    Uint32 width = orb_window_width(video_data->orb_window);
+-    Uint32 height = orb_window_height(video_data->orb_window);
+-    void* buffer = orb_window_data(video_data->orb_window);
+-
+-    if (!OSMesaMakeCurrent(context, buffer, GL_UNSIGNED_BYTE, width, height)) {
+-        fprintf(stderr, "OSMesaMakeCurrent failed\n");
+-        OSMesaDestroyContext(context);
+-        return -1;
++static EGLSurface make_surface(ORBITAL_GLContext *ctx, int w, int h)
++{
++    EGLint attribs[] = { EGL_WIDTH, w > 0 ? w : 1, EGL_HEIGHT, h > 0 ? h : 1, EGL_NONE };
++    EGLSurface surface = eglCreatePbufferSurface(egl_display, ctx->config, attribs);
++    if (surface != EGL_NO_SURFACE) {
++        ctx->w = attribs[1];
++        ctx->h = attribs[3];
+     }
+-
+-    //fprintf(stderr, "OSMesaMakeCurrent done\n");
+-
+-    OSMesaPixelStore(OSMESA_Y_UP, 0);
+-    OSMesaColorClamp(GL_TRUE);
+-
+-    video_data->mesa_buffer = buffer;
+-    video_data->mesa_context = context;
+-
+-    fprintf(stderr, "SDL orbital OSMesa buffer binded to context\n");
+-
+-    return 0;
++    return surface;
+ }
+ 
+-
+-SDL_GLContext ORBITAL_GL_CreateContext(_THIS, SDL_Window* window) {
+-    // Fixme: verify _this->gl_config.double_buffer
+-    OSMesaContext ctx = OSMesaCreateContextExt(OSMESA_BGRA, _this->gl_config.depth_size, _this->gl_config.stencil_size, 0, NULL);
+-    if (ctx == NULL) {
+-        fprintf(stderr, "OSMesaCreateContextExt failed\n");
++SDL_GLContext ORBITAL_GL_CreateContext(_THIS, SDL_Window *window)
++{
++    SDL_VideoData *video_data = _this->driverdata;
++    int es = (_this->gl_config.profile_mask & SDL_GL_CONTEXT_PROFILE_ES) != 0;
++    int major = _this->gl_config.major_version, minor = _this->gl_config.minor_version;
++    EGLint renderable = es ? (major >= 3 ? EGL_OPENGL_ES3_BIT_KHR : EGL_OPENGL_ES2_BIT) : EGL_OPENGL_BIT;
++    EGLint config_attribs[] = {
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, renderable,
++        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
++        EGL_ALPHA_SIZE, _this->gl_config.alpha_size,
++        EGL_DEPTH_SIZE, _this->gl_config.depth_size,
++        EGL_STENCIL_SIZE, _this->gl_config.stencil_size,
++        EGL_NONE,
++    };
++    EGLint context_attribs[] = {
++        EGL_CONTEXT_MAJOR_VERSION, major > 0 ? major : 2,
++        EGL_CONTEXT_MINOR_VERSION, minor,
++        EGL_NONE,
++    };
++    ORBITAL_GLContext *ctx;
++    EGLint n = 0;
++    EGLContext share = EGL_NO_CONTEXT;
++
++    if (egl_display == EGL_NO_DISPLAY && ORBITAL_GL_LoadLibrary(_this, NULL) < 0) {
+         return NULL;
+     }
+-
+-    fprintf(stderr, "SDL orbital OSMesa context created successfully\n");
+-
+-    return ORBITAL_GL_MakeCurrent(_this, window, ctx) >= 0 ? ctx : NULL;
++    if (!eglBindAPI(es ? EGL_OPENGL_ES_API : EGL_OPENGL_API)) {
++        SDL_SetError("EGL: eglBindAPI failed (0x%x)", eglGetError());
++        return NULL;
++    }
++    ctx = SDL_calloc(1, sizeof(*ctx));
++    if (!ctx) {
++        SDL_OutOfMemory();
++        return NULL;
++    }
++    if (!eglChooseConfig(egl_display, config_attribs, &ctx->config, 1, &n) || n < 1) {
++        SDL_SetError("EGL: no config for %s %d.%d with depth %d, stencil %d", es ? "OpenGL ES" : "OpenGL",
++                     major, minor, _this->gl_config.depth_size, _this->gl_config.stencil_size);
++        SDL_free(ctx);
++        return NULL;
++    }
++    if (_this->gl_config.share_with_current_context && current) {
++        share = current->context;
++    }
++    ctx->context = eglCreateContext(egl_display, ctx->config, share, context_attribs);
++    if (ctx->context == EGL_NO_CONTEXT) {
++        SDL_SetError("EGL: eglCreateContext for %s %d.%d failed (0x%x)", es ? "OpenGL ES" : "OpenGL",
++                     major, minor, eglGetError());
++        SDL_free(ctx);
++        return NULL;
++    }
++    ctx->surface = make_surface(ctx, orb_window_width(video_data->orb_window),
++                                orb_window_height(video_data->orb_window));
++    if (ctx->surface == EGL_NO_SURFACE) {
++        SDL_SetError("EGL: eglCreatePbufferSurface failed (0x%x)", eglGetError());
++        eglDestroyContext(egl_display, ctx->context);
++        SDL_free(ctx);
++        return NULL;
++    }
++    if (ORBITAL_GL_MakeCurrent(_this, window, ctx) < 0) {
++        ORBITAL_GL_DeleteContext(_this, ctx);
++        return NULL;
++    }
++    return ctx;
+ }
+ 
+-void ORBITAL_GL_DeleteContext(_THIS, SDL_GLContext context) {
+-    SDL_VideoData* video_data = _this->driverdata;
+-    assert(video_data != NULL);
++int ORBITAL_GL_MakeCurrent(_THIS, SDL_Window *window, SDL_GLContext context)
++{
++    SDL_VideoData *video_data = _this->driverdata;
++    ORBITAL_GLContext *ctx = context;
++    if (!ctx) {
++        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++        current = NULL;
++        return 0;
++    }
++    if (!eglMakeCurrent(egl_display, ctx->surface, ctx->surface, ctx->context)) {
++        return SDL_SetError("EGL: eglMakeCurrent failed (0x%x)", eglGetError());
++    }
++    current = ctx;
++    video_data->mesa_context = ctx; /* SDL_orbitalwindow.c resizes and frees it */
++    return 0;
++}
+ 
+-    if (video_data->mesa_context == context) {
+-        OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
++void ORBITAL_GL_DeleteContext(_THIS, SDL_GLContext context)
++{
++    SDL_VideoData *video_data = _this->driverdata;
++    ORBITAL_GLContext *ctx = context;
++    if (!ctx) {
++        return;
++    }
++    if (current == ctx) {
++        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++        current = NULL;
++    }
++    if (video_data->mesa_context == ctx) {
+         video_data->mesa_context = NULL;
+     }
+-    video_data->mesa_buffer = NULL;
+-    OSMesaDestroyContext(context);
++    eglDestroySurface(egl_display, ctx->surface);
++    eglDestroyContext(egl_display, ctx->context);
++    SDL_free(ctx);
+ }
+ 
+-
+-int ORBITAL_GL_SetSwapInterval(_THIS, int interval) {
+-    // TODO: Implement this, if necessary?
++int ORBITAL_GL_SwapWindow(_THIS, SDL_Window *window)
++{
++    SDL_VideoData *video_data = _this->driverdata;
++    Uint32 *dst = orb_window_data(video_data->orb_window);
++    int dst_w = orb_window_width(video_data->orb_window);
++    int dst_h = orb_window_height(video_data->orb_window);
++    int fbo = 0, w, h, x, y;
++    size_t need;
++
++    if (!current || !dst) {
++        return 0;
++    }
++    w = SDL_min(current->w, dst_w);
++    h = SDL_min(current->h, dst_h);
++    need = (size_t)current->w * current->h * 4;
++    if (need > readback_size) {
++        Uint8 *p = SDL_realloc(readback, need);
++        if (!p) {
++            return SDL_OutOfMemory();
++        }
++        readback = p;
++        readback_size = need;
++    }
++    /* Read the pbuffer (framebuffer 0), whatever the program has bound. */
++    p_glGetIntegerv(GL_FRAMEBUFFER_BINDING_, &fbo);
++    if (fbo) {
++        p_glBindFramebuffer(GL_FRAMEBUFFER_, 0);
++    }
++    p_glPixelStorei(GL_PACK_ALIGNMENT_, 4);
++    p_glReadPixels(0, 0, current->w, current->h, GL_RGBA_, GL_UNSIGNED_BYTE_, readback);
++    if (fbo) {
++        p_glBindFramebuffer(GL_FRAMEBUFFER_, fbo);
++    }
++    /* GL's row 0 is the bottom; Orbital's pixels are 0xAARRGGBB. */
++    for (y = 0; y < h; y++) {
++        const Uint8 *s = readback + (size_t)(current->h - 1 - y) * current->w * 4;
++        Uint32 *d = dst + (size_t)y * dst_w;
++        for (x = 0; x < w; x++, s += 4) {
++            d[x] = 0xFF000000u | (Uint32)s[0] << 16 | (Uint32)s[1] << 8 | s[2];
++        }
++    }
++    orb_window_sync(video_data->orb_window);
+     return 0;
+ }
+ 
+-int ORBITAL_GL_GetSwapInterval(_THIS) {
+-    // TODO: Implement this, if necessary?
++int ORBITAL_GL_SetSwapInterval(_THIS, int interval)
++{
++    /* Orbital shows the window's pixels when it composes; no vsync here. */
++    swap_interval = interval;
+     return 0;
+ }
+ 
+-
+-void ORBITAL_GL_UnloadLibrary(_THIS) {
+-    // TODO: Implement this, if necessary?
++int ORBITAL_GL_GetSwapInterval(_THIS)
++{
++    return swap_interval;
+ }
+ 
+-void ORBITAL_GL_SetSize(_THIS, int width, int height) {
+-    SDL_VideoData* video_data = _this->driverdata;
+-    assert(video_data != NULL);
+-
+-    if (video_data->mesa_context == NULL) {
++void ORBITAL_GL_SetSize(_THIS, int width, int height)
++{
++    SDL_VideoData *video_data = _this->driverdata;
++    ORBITAL_GLContext *ctx = video_data->mesa_context;
++    EGLSurface surface;
++    if (!ctx || (ctx->w == width && ctx->h == height)) {
+         return;
+     }
+-
+-    void* buffer = orb_window_data(video_data->orb_window);
+-
+-    if (!OSMesaMakeCurrent(video_data->mesa_context, buffer, GL_UNSIGNED_BYTE, width, height)) {
+-        fprintf(stderr, "ORBITAL_GL_SetSize: OSMesaMakeCurrent failed\n");
++    surface = make_surface(ctx, width, height);
++    if (surface == EGL_NO_SURFACE) {
++        fprintf(stderr, "ORBITAL_GL_SetSize: eglCreatePbufferSurface %dx%d failed (0x%x)\n", width, height,
++                eglGetError());
+         return;
+     }
+-
+-    video_data->mesa_buffer = buffer;
++    if (current == ctx) {
++        eglMakeCurrent(egl_display, surface, surface, ctx->context);
++    }
++    eglDestroySurface(egl_display, ctx->surface);
++    ctx->surface = surface;
+ }
+ 
+-#endif /* SDL_VIDEO_OPENGL */
++#endif /* SDL_VIDEO_OPENGL_ES2 && SDL_VIDEO_OPENGL_EGL */
+diff --git a/src/video/orbital/SDL_orbitalopengl.h b/src/video/orbital/SDL_orbitalopengl.h
+index 91119e5..34c390d 100644
+--- a/src/video/orbital/SDL_orbitalopengl.h
++++ b/src/video/orbital/SDL_orbitalopengl.h
+@@ -29,7 +29,7 @@ extern "C"
+ 
+ #include "../SDL_sysvideo.h"
+ 
+-#if SDL_VIDEO_OPENGL
++#if SDL_VIDEO_OPENGL_ES2 && SDL_VIDEO_OPENGL_EGL
+ 
+ extern int ORBITAL_GL_LoadLibrary(_THIS, const char *path);      /* FIXME */
+ extern void *ORBITAL_GL_GetProcAddress(_THIS, const char *proc); /* FIXME */
+diff --git a/src/video/orbital/SDL_orbitalvideo.c b/src/video/orbital/SDL_orbitalvideo.c
+index 879aabe..a0d4760 100644
+--- a/src/video/orbital/SDL_orbitalvideo.c
++++ b/src/video/orbital/SDL_orbitalvideo.c
+@@ -135,7 +135,7 @@ static SDL_VideoDevice* ORBITAL_CreateDevice(void)
+     device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
+     device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;*/
+ 
+-#if SDL_VIDEO_OPENGL
++#if SDL_VIDEO_OPENGL_ES2 && SDL_VIDEO_OPENGL_EGL
+     device->GL_LoadLibrary = ORBITAL_GL_LoadLibrary;
+     device->GL_GetProcAddress = ORBITAL_GL_GetProcAddress;
+     device->GL_UnloadLibrary = ORBITAL_GL_UnloadLibrary;
+@@ -145,11 +145,11 @@ static SDL_VideoDevice* ORBITAL_CreateDevice(void)
+     device->GL_GetSwapInterval = ORBITAL_GL_GetSwapInterval;
+     device->GL_SwapWindow = ORBITAL_GL_SwapWindow;
+     device->GL_DeleteContext = ORBITAL_GL_DeleteContext;
+-#else
++#endif
++    // Windows without OpenGL draw through the framebuffer.
+     device->CreateWindowFramebuffer = ORBITAL_CreateWindowFramebuffer;
+     device->UpdateWindowFramebuffer = ORBITAL_UpdateWindowFramebuffer;
+     device->DestroyWindowFramebuffer = ORBITAL_DestroyWindowFramebuffer;
+-#endif
+ 
+ 	device->free = ORBITAL_DeleteDevice;
+ 
+diff --git a/src/video/orbital/SDL_orbitalwindow.c b/src/video/orbital/SDL_orbitalwindow.c
+index 449f395..c30bca5 100644
+--- a/src/video/orbital/SDL_orbitalwindow.c
++++ b/src/video/orbital/SDL_orbitalwindow.c
+@@ -172,10 +172,9 @@ void ORBITAL_DestroyWindow(_THIS, SDL_Window* window) {
+         orb_window_destroy(video_data->orb_window);
+         video_data->orb_window = NULL;
+     }
+-    if (video_data->mesa_context != NULL) {
+-        ORBITAL_GL_DeleteContext(_this, video_data->mesa_context);
+-        video_data->mesa_context = NULL;
+-    }
++    // The program deletes its OpenGL context (SDL_GL_DeleteContext), also
++    // after the window; freeing it here too would free it twice.
++    video_data->mesa_context = NULL;
+     video_data->window = NULL;
+ }
+ 
+
+PATCH
+fi
+'''
+
+[build]
+template = "cmake"
+dependencies = [
+    "liborbital",
+    "mesa",
+    "zlib",
+]
+cmakeflags = [
+    "-DSDL_VIDEO=1",
+    "-DSDL_ORBITAL=1",
+    "-DREDOX=1",
+    "-DSDL_OPENGL=OFF",
+    "-DSDL_OPENGLES=ON",
+    "-DSDL_KMSDRM=OFF",
+    "-DSDL_X11=OFF",
+    "-DSDL_WAYLAND=OFF",
+]

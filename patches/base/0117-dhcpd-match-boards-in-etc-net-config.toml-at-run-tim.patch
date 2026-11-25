@@ -1,0 +1,139 @@
+From b9b270c581d5ba1cc7b6097c724b2c8d8acf22e5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 08:16:26 +0000
+Subject: [PATCH] dhcpd: match boards in /etc/net/config.toml at run time
+
+The build-time BOARD is raspi3bp on every image, so boards = ["zero2w"]
+never matched and ["raspi3bp"] matched everywhere. dhcpd now reads the
+devicetree root compatible: a section applies when one of its boards is a
+short name for this board (raspi3bp, raspi3b, zero2w, raspi4b, pi400) or
+one of its compatible strings (redox-rpi #653).
+---
+ Cargo.lock        |  1 +
+ dhcpd/Cargo.toml  |  2 ++
+ dhcpd/src/main.rs | 61 ++++++++++++++++++++++++++++++++++++++++-------
+ 3 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index c91c910..adc557f 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -680,6 +680,7 @@ dependencies = [
+ name = "dhcpd"
+ version = "0.0.0"
+ dependencies = [
++ "fdt 0.2.0-alpha1",
+  "serde",
+  "toml",
+ ]
+diff --git a/dhcpd/Cargo.toml b/dhcpd/Cargo.toml
+index 05b9a8c..a7b1b23 100644
+--- a/dhcpd/Cargo.toml
++++ b/dhcpd/Cargo.toml
+@@ -7,6 +7,8 @@ authors = ["Jeremy Soller <jackpot51@gmail.com>"]
+ [dependencies]
+ serde.workspace = true
+ toml.workspace = true
++# The board, from the devicetree's root compatible (redox-rpi #653).
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ 
+ [lints]
+ workspace = true
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index b66022f..fcf23e1 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -444,7 +444,7 @@ struct NetConfig {
+ #[serde(deny_unknown_fields)]
+ #[allow(dead_code)]
+ struct IfaceConfig {
+-    /// Only on these boards (init's board names); none: every board.
++    /// Only on these boards (see [`board_names`]); none: every board.
+     boards: Option<Vec<String>>,
+     /// `dhcp`, `static` or `off`.
+     #[serde(default = "off")]
+@@ -472,10 +472,43 @@ fn dhcp_ifaces() -> BTreeSet<String> {
+             return BTreeSet::new();
+         }
+     };
+-    parse_dhcp_ifaces(&text, option_env!("BOARD"))
++    parse_dhcp_ifaces(&text, &board_names())
++}
++
++/// Short names for the boards in `boards`, by the devicetree's root
++/// `compatible`.
++const BOARDS: &[(&str, &str)] = &[
++    ("raspberrypi,3-model-b-plus", "raspi3bp"),
++    ("raspberrypi,3-model-b", "raspi3b"),
++    ("raspberrypi,model-zero-2-w", "zero2w"),
++    ("raspberrypi,4-model-b", "raspi4b"),
++    ("raspberrypi,400", "pi400"),
++];
++
++/// The names this board answers to in `boards`: the short names above and
++/// every root `compatible` string of the devicetree. Read at run time, so
++/// one build serves all boards (redox-rpi #653: the build-time BOARD is
++/// raspi3bp on every image).
++fn board_names() -> Vec<String> {
++    let dtb = std::fs::read("/scheme/kernel.dtb").unwrap_or_default();
++    let Ok(fdt) = fdt::Fdt::new(&dtb) else {
++        return Vec::new();
++    };
++    names_for(fdt.root().compatible().all())
++}
++
++fn names_for<'a>(compatible: impl Iterator<Item = &'a str>) -> Vec<String> {
++    let mut names = Vec::new();
++    for compat in compatible {
++        if let Some((_, short)) = BOARDS.iter().find(|(c, _)| *c == compat) {
++            names.push(short.to_string());
++        }
++        names.push(compat.to_string());
++    }
++    names
+ }
+ 
+-fn parse_dhcp_ifaces(text: &str, board: Option<&str>) -> BTreeSet<String> {
++fn parse_dhcp_ifaces(text: &str, board: &[String]) -> BTreeSet<String> {
+     let config: NetConfig = match toml::from_str(text) {
+         Ok(config) => config,
+         Err(err) => {
+@@ -489,7 +522,7 @@ fn parse_dhcp_ifaces(text: &str, board: Option<&str>) -> BTreeSet<String> {
+         .filter(|(_, cfg)| {
+             cfg.boards
+                 .as_ref()
+-                .is_none_or(|boards| boards.iter().any(|b| Some(b.as_str()) == board))
++                .is_none_or(|boards| boards.iter().any(|b| board.contains(b)))
+         })
+         .filter_map(|(name, cfg)| match cfg.ipv4.as_str() {
+             "dhcp" => Some(name),
+@@ -674,11 +707,21 @@ ipv4 = "dhcp"
+ ipv4 = "off"
+ ipv6 = "slaac"
+ "#;
+-        assert_eq!(parse_dhcp_ifaces(text, Some("raspi3bp")), names(&["eth0"]));
+-        assert_eq!(parse_dhcp_ifaces(text, Some("raspi4b")), names(&["eth0", "eth1"]));
+-        assert_eq!(parse_dhcp_ifaces("", Some("raspi3bp")), names(&[]));
+-        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"static\"\naddress = \"10.0.0.2/24\"\n", None), names(&[]));
+-        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"dhcp\"\nfoo = 1\n", None), names(&[]));
++        let b3 = super::names_for(["raspberrypi,3-model-b-plus", "brcm,bcm2837"].into_iter());
++        let b4 = super::names_for(["raspberrypi,4-model-b", "brcm,bcm2711"].into_iter());
++        let zero = super::names_for(["raspberrypi,model-zero-2-w", "brcm,bcm2837"].into_iter());
++        assert_eq!(parse_dhcp_ifaces(text, &b3), names(&["eth0"]));
++        assert_eq!(parse_dhcp_ifaces(text, &b4), names(&["eth0", "eth1"]));
++        assert_eq!(parse_dhcp_ifaces("", &b3), names(&[]));
++        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"static\"\naddress = \"10.0.0.2/24\"\n", &[]), names(&[]));
++        assert_eq!(parse_dhcp_ifaces("[interface.eth0]\nipv4 = \"dhcp\"\nfoo = 1\n", &[]), names(&[]));
++        // A section for the Zero only, and one by a compatible string.
++        let only = "[interface.eth0]\nboards = [\"zero2w\"]\nipv4 = \"dhcp\"\n";
++        assert_eq!(parse_dhcp_ifaces(only, &zero), names(&["eth0"]));
++        assert_eq!(parse_dhcp_ifaces(only, &b3), names(&[]));
++        let soc = "[interface.eth0]\nboards = [\"brcm,bcm2711\"]\nipv4 = \"dhcp\"\n";
++        assert_eq!(parse_dhcp_ifaces(soc, &b4), names(&["eth0"]));
++        assert_eq!(parse_dhcp_ifaces(soc, &zero), names(&[]));
+     }
+ 
+     use super::*;
+-- 
+2.53.0
+

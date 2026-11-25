@@ -9,6 +9,12 @@
 
 set -euo pipefail
 
+# Inside another with-build-lock.sh or build-image.sh the lock is held
+# already: a second open of the lock file would wait for it forever (#740).
+if [ -n "${REDOX_RPI_BUILD_LOCK:-}" ]; then
+    exec "$@"
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/build"
 exec 9> "$ROOT/build/.build-image.lock"

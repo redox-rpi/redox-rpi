@@ -37,7 +37,7 @@ TRACKED = {
     207: "chaos test froze the Pi",
 }
 # KPIs in the nightly report's short block (--summary), by stable key.
-SUMMARY = ["open_bugs", "no_type", "no_topic", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
+SUMMARY = ["open_bugs", "panic_runtime", "no_type", "main_red_hours", "stale_ci_merges", "nightly_pass_rate",
            "pi_pass_rate", "flaky_rate", "req_coverage", "dirty_results", "clippy_redox"]
 PR_RULE_SINCE = datetime.datetime(2026, 10, 29, tzinfo=datetime.timezone.utc)
 NIGHTLY_ISSUE = "Nightly: main fails on the Pi"
@@ -387,11 +387,32 @@ def collect(args):
     return k
 
 
-def code_metrics(pairs):
-    """{label: metrics} from scripts/code-metrics.py for LABEL=DIR pairs."""
-    spec = importlib.util.spec_from_file_location("code_metrics", os.path.join(ROOT, "scripts", "code-metrics.py"))
+def script_module(name):
+    """A module from scripts/<name>.py (the file names have dashes)."""
+    spec = importlib.util.spec_from_file_location(name.replace("-", "_"), os.path.join(ROOT, "scripts", name + ".py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+def panic_counts(args):
+    """Panic KPI (#675) from scripts/panic-count.py: patches at --rev always,
+    the kernel source and the serial logs when given."""
+    mod = script_module("panic-count")
+    out = {"patches": mod.measure_patches(args.rev)}
+    if args.kernel and os.path.isdir(os.path.join(args.kernel, "src")):
+        out["kernel"] = mod.measure_kernel(args.kernel)
+    elif args.kernel:
+        print(f"--kernel {args.kernel}: no src/ there", file=sys.stderr)
+    if args.serial_logs:
+        out["runtime"] = mod.measure_logs(args.serial_logs, args.days)
+    out["over_limits"] = mod.over_limits(out.get("kernel"), out["patches"])
+    return out
+
+
+def code_metrics(pairs):
+    """{label: metrics} from scripts/code-metrics.py for LABEL=DIR pairs."""
+    mod = script_module("code-metrics")
     out = {}
     for pair in pairs:
         label, _, path = pair.partition("=")
@@ -474,6 +495,30 @@ def code_rows(row, code):
         any(m["req_refs"] for m in code.values()), "criteria named where they are implemented")
     row("code_unsafe", "`unsafe` in Rust", per_area(lambda m: m["unsafe"]), True,
         "each needs a SAFETY line; see the clippy row for undocumented ones")
+
+
+def panic_rows(row, p):
+    """The panic KPI (qmp.md, #675): panic paths in the kernel, and kernel
+    panics in the serial logs."""
+    if not p:
+        return
+    short = {"todo": "todo!", "unimplemented": "unimplemented!", "expect_todo": 'expect("TODO',
+             "panic": "panic!", "unreachable": "unreachable!", "unwrap": "unwrap", "expect": "expect"}
+    fmt = lambda c: ", ".join(f"{short[key]} {n}" for key, n in c.items() if n)
+    kernel = p.get("kernel")
+    value = fmt(kernel) if kernel else "kernel source not given"
+    row("panic_static", "Panic paths in the kernel (aarch64 and generic)", value, not p["over_limits"],
+        "; ".join([f"lines our {d} patches add: {fmt(c) or 'none'}" for d, c in p["patches"].items()]
+                  + [("**over the limit:** " + ", ".join(p["over_limits"])) if p["over_limits"]
+                     else "check: todo!, unimplemented! or TODO expects rise, or a panic path in our kernel patches"]))
+    rt = p.get("runtime")
+    if rt is None:
+        return
+    seen = rt["panics"]
+    row("panic_runtime", "Kernel panics in the serial logs", sum(x["panics"] for x in seen), not seen,
+        "; ".join(f"{x['board']} {x['day']}: {x['panics']} ({', '.join(x['builds'])})" for x in seen)
+        + ("; " if seen else "") + f"since {rt['since']}, logs read: "
+        + ", ".join(f"{b} {n}" for b, n in sorted(rt["logs_read"].items())) + "; check: any panic, each needs an issue")
 
 
 def render(k, repo):
@@ -587,6 +632,7 @@ def render(k, repo):
             + "; goal: down ([rof #44](https://github.com/redox-rpi/rpi-open-firmware/issues/44), "
             "[how measured](https://github.com/redox-rpi/rpi-open-firmware/blob/redox-rpi/docs/boot-time.md))")
 
+    panic_rows(row, k.get("panic"))
     code_rows(row, k.get("code", {}))
 
     sight = [f"| {link(repo, int(i))} {TRACKED[int(i)]} | {len(s)} | {', '.join(s[:8])} |"
@@ -630,8 +676,12 @@ def main():
     ap.add_argument("--code", action="append", metavar="LABEL=DIR",
                     help="code metrics of a checkout (scripts/code-metrics.py), e.g. vc4d=../vc4d; "
                          "repeat per area. Without it: tools/ and scripts/ of this clone")
+    ap.add_argument("--kernel", help="kernel source with our patches applied, for the panic KPI (scripts/panic-count.py)")
+    ap.add_argument("--serial-logs", metavar="DIR",
+                    help="the build host's serial log directory, for the kernel panics seen (panic KPI)")
     args = ap.parse_args()
     k = collect(args)
+    k["panic"] = panic_counts(args)
     k["code"] = code_metrics(args.code or [f"tools={ROOT}/tools", f"scripts={ROOT}/scripts"])
     if args.clippy:
         try:
