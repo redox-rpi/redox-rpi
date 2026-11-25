@@ -213,7 +213,7 @@ static int foreign_test(void)
 
 int main(int argc, char **argv)
 {
-	int frames = 300, show = 0, lifetime = 0, foreign = 0;
+	int frames = 300, show = 0, lifetime = 0, foreign = 0, pattern_fill = 1;
 	setvbuf(stdout, NULL, _IONBF, 0);
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc)
@@ -224,8 +224,10 @@ int main(int argc, char **argv)
 			lifetime = 1;
 		else if (!strcmp(argv[i], "--foreign"))
 			foreign = 1;
+		else if (!strcmp(argv[i], "--no-pattern"))
+			pattern_fill = 0;
 		else {
-			printf("usage: prime-probe [--frames N] [--show] [--lifetime] [--foreign]\n");
+			printf("usage: prime-probe [--frames N] [--show] [--lifetime] [--foreign] [--no-pattern]\n");
 			return 2;
 		}
 	}
@@ -433,8 +435,11 @@ int main(int argc, char **argv)
 	}
 
 	/* Frame 0 into buffer 0: the CPU's view must match GL's. */
-	for (uint64_t i = 0; i < b[0].size / 4; i++)
-		b[0].cpu[i] = PATTERN;
+	/* --no-pattern: the CPU does not write the buffer before the GPU (a
+	 * never-written pixel then reads as zero). */
+	if (pattern_fill)
+		for (uint64_t i = 0; i < b[0].size / 4; i++)
+			b[0].cpu[i] = PATTERN;
 	double t_render = 0, t_flip = 0, start = now_ms();
 	int done = 0;
 	uint32_t hash_first = 0;
@@ -467,6 +472,13 @@ int main(int argc, char **argv)
 		int centre = (px[(h / 2) * stride + w / 2] & 0xffffff) != BG_XRGB;
 		if (!corners || !centre) {
 			stale_report("stale", px, cur->pitch, w, h);
+			/* Late GPU writes or lost ones: look again later. */
+			usleep(200000);
+			stale_report("stale after 200 ms", px, cur->pitch, w, h);
+			uint8_t g[4] = { 0 };
+			glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, g);
+			printf("prime-probe: glReadPixels of the first pixel: %02x%02x%02x%02x, CPU now %08x\n", g[0],
+			       g[1], g[2], g[3], px[0]);
 			printf("prime-probe: FAIL: frame %d: corners %s (%08x %08x %08x %08x), centre %s\n", fr,
 			       corners ? "right" : "wrong", c[0], c[1], c[2], c[3], centre ? "right" : "wrong");
 			return 1;
@@ -495,7 +507,7 @@ int main(int argc, char **argv)
 			hash_first = hsh;
 			printf("prime-probe: frame 0: %d pattern pixels left, %d pixels differ from glReadPixels, cube %d of %d pixels, hash %08x\n",
 			       pattern, differ, cube_px, w * h, hsh);
-			if (pattern || differ)
+			if (pattern || differ || (!pattern_fill && cube_px == w * h))
 				return fail("the display buffer does not hold what the GPU drew");
 			if (cube_px * 100 < 2 * w * h || cube_px * 100 > 60 * w * h)
 				return fail("the cube covers less than 2 % or more than 60 % of the screen");
