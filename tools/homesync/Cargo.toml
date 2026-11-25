@@ -1,0 +1,8 @@
+[package]
+name = "homesync"
+description = "Back up the home directory to a home server with rsync over SSH (redox-rpi #712)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]

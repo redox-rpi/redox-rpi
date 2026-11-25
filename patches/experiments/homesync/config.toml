@@ -1,0 +1,6 @@
+# homesync (#712): back up the home directory to a home server with rsync
+# over SSH. The ssh client and ssh-keygen come from the sshd experiment's
+# OpenSSH build (needs file).
+[packages]
+rsync = "source"
+homesync = "source"

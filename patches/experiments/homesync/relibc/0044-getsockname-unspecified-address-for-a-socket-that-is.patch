@@ -1,0 +1,36 @@
+From 68a3aed0f2863333ca43a2226216ff72c3907b1e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 10:51:30 +0000
+Subject: [PATCH] getsockname: unspecified address for a socket that is not
+ bound or connected
+
+A socket that is not bound or connected yet has only the scheme base
+path as its fpath (netstack Handle::Null, "/scheme/tcp/"), and
+inner_af_inet panicked with "missing address". OpenSSH's ssh calls
+getsockname on such a socket, so the client died before it connected
+(redox-rpi #712). Return 0.0.0.0:0 instead, as other systems do.
+---
+ src/platform/redox/socket.rs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index b3d0834..0887fd0 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -129,7 +129,12 @@ fn inner_af_inet(local: bool, buf: &[u8], address_dst: &mut [u8]) -> socklen_t {
+         // Skip the remote part
+         parts.next();
+     }
+-    let mut unparsed_addr = Vec::from(parts.next().expect("missing address"));
++    // A socket that is not bound or connected yet has only the scheme's
++    // base path (netstack's Handle::Null, e.g. "/scheme/tcp/"): its name is
++    // the unspecified address, as on other systems (OpenSSH's ssh calls
++    // getsockname on such a socket and panicked here).
++    let part = parts.next().filter(|p| p.contains(&b':')).unwrap_or(&b"0.0.0.0:0"[..]);
++    let mut unparsed_addr = Vec::from(part);
+ 
+     let sep = memchr::memchr(b':', &unparsed_addr).expect("missing port");
+     let (raw_addr, rest) = unparsed_addr.split_at_mut(sep);
+-- 
+2.53.0
+
