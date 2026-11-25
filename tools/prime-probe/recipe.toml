@@ -1,0 +1,15 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# prime-probe (#670, G4 step 2 spike): the V3D renders through EGL dma-buf
+# import straight into vc4d's dumb buffers, which SET_CRTC shows. Needs the
+# experiment v3d-prime (vc4d and v3dd with PRIME, relibc 0027).
+[build]
+template = "custom"
+dependencies = ["mesa", "libdrm"]
+script = """
+DYNAMIC_INIT
+"${CC}" ${CFLAGS} ${CPPFLAGS} "-I${COOKBOOK_SYSROOT}/include" "-I${COOKBOOK_SYSROOT}/include/libdrm" \\
+    "-I${COOKBOOK_SYSROOT}/usr/include" "-I${COOKBOOK_SYSROOT}/usr/include/libdrm" -O2 -Wall \\
+    -o prime-probe "${COOKBOOK_SOURCE}/prime-probe.c" ${LDFLAGS} -lEGL -lGLESv2 -ldrm -lm
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp prime-probe "${COOKBOOK_STAGE}/usr/bin/prime-probe"
+"""
