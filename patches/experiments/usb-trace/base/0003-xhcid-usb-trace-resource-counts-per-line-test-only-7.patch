@@ -1,0 +1,92 @@
+From c569e8aa1161056838f3880d40a2408c596b52e8 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 17:00:35 +0000
+Subject: [PATCH] xhcid: usb-trace, resource counts per line (test only, #749)
+
+A second usb-trace line every 10 s: commands sent, the command ring's
+enqueue index and cycle state, blocking-read workers started, open
+scheme handles and attached ports. For the simulated replug runs that
+stopped in round 5 (pi-tests Tests 662 and 663): a resource used up per
+replug shows as a count that grows each round.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/main.rs             |  1 +
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs | 19 +++++++++++++++++++
+ drivers/usb/xhcid/src/xhci/mod.rs         |  5 +++++
+ drivers/usb/xhcid/src/xhci/scheme.rs      |  1 +
+ 4 files changed, 26 insertions(+)
+
+diff --git a/drivers/usb/xhcid/src/main.rs b/drivers/usb/xhcid/src/main.rs
+index 84fcbcb3..ea029cac 100644
+--- a/drivers/usb/xhcid/src/main.rs
++++ b/drivers/usb/xhcid/src/main.rs
+@@ -221,6 +221,7 @@ fn spawn_worker<const N: usize>(
+     let socket = Arc::clone(socket);
+     let hci = Arc::clone(hci);
+     let idle_workers = Arc::clone(idle_workers);
++    xhci::TRACE_WORKERS.fetch_add(1, Ordering::Relaxed);
+     std::thread::spawn(move || {
+         let mut state = SchemeState::new();
+         loop {
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index 900ba7a9..22bac23a 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -635,6 +635,25 @@ impl<const N: usize> IrqReactor<N> {
+             pending,
+             self.early_events.len()
+         );
++        {
++            // Resources that a replug may leak: command ring position and
++            // laps, workers, scheme handles, attached ports (devices).
++            let (cmd_i, cmd_cycle, cmd_len) = {
++                let ring = self.hci.cmd.lock().unwrap();
++                (ring.i, ring.cycle, ring.trbs.len())
++            };
++            let commands = super::TRACE_COMMANDS.load(std::sync::atomic::Ordering::Relaxed);
++            info!(
++                "usb-trace: resources commands {} cmd_ring {}/{} cycle {} workers {} handles {} ports {}",
++                commands,
++                cmd_i,
++                cmd_len,
++                cmd_cycle as u8,
++                super::TRACE_WORKERS.load(std::sync::atomic::Ordering::Relaxed),
++                self.hci.handles.len(),
++                self.hci.port_states.len(),
++            );
++        }
+         self.trace = Trace::new();
+     }
+     fn acknowledge_failed_transfer_trbs(&mut self, trb: Trb) {
+diff --git a/drivers/usb/xhcid/src/xhci/mod.rs b/drivers/usb/xhcid/src/xhci/mod.rs
+index bfd7f05a..d11cd8ea 100644
+--- a/drivers/usb/xhcid/src/xhci/mod.rs
++++ b/drivers/usb/xhcid/src/xhci/mod.rs
+@@ -30,6 +30,11 @@ use syscall::{EAGAIN, PAGE_SIZE};
+ 
+ use crate::usb;
+ 
++/// Test only (experiment usb-trace, redox-rpi#749): commands sent to the
++/// xHC and blocking-read workers started, for the usb-trace line.
++pub static TRACE_COMMANDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++pub static TRACE_WORKERS: AtomicUsize = AtomicUsize::new(0);
++
+ mod capability;
+ mod context;
+ mod device_enumerator;
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 635d6ccc..65f6cf6d 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -611,6 +611,7 @@ impl<const N: usize> Xhci<N> {
+                 f(command_trb, cycle);
+             }
+             command_ring.hand_over_link();
++            super::TRACE_COMMANDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+ 
+             // get the future here before awaiting, to destroy the lock before deadlock
+             let command_trb = &command_ring.trbs[cmd_index];
+-- 
+2.53.0
+
