@@ -1,4 +1,4 @@
-From aacf8fb314f6005d760af4d488de0490f5c80f00 Mon Sep 17 00:00:00 2001
+From 822e9c6f1fd9e9a43d29911c8a2fd3eabc954fe9 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sat, 31 Oct 2026 21:44:29 +0000
 Subject: [PATCH] dwc2d: hub drop diagnosis and recovery, no sleep (#151)
@@ -20,9 +20,10 @@ test 168). delay() yields until the time has passed.
  drivers/usb/dwc2d/src/main.rs      |   5 ++
  drivers/usb/dwc2d/src/usbdiag.rs   | 135 +++++++++++++++++++++++++++++
  4 files changed, 277 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/usb/dwc2d/src/usbdiag.rs
 
 diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
-index 4e26ae53..df80181c 100644
+index 4e26ae5..df80181 100644
 --- a/drivers/usb/dwc2d/src/dwc2.rs
 +++ b/drivers/usb/dwc2d/src/dwc2.rs
 @@ -208,6 +208,42 @@ impl Dwc2 {
@@ -107,7 +108,7 @@ index 4e26ae53..df80181c 100644
              }
              std::hint::spin_loop();
 diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
-index 5574e170..495f0848 100644
+index 5574e17..495f084 100644
 --- a/drivers/usb/dwc2d/src/enumerate.rs
 +++ b/drivers/usb/dwc2d/src/enumerate.rs
 @@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
@@ -289,10 +290,10 @@ index 5574e170..495f0848 100644
          Ok(())
      }
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 34cf308c..d87cd1b3 100644
+index 5353017..88a7b8a 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -25,6 +25,7 @@ mod mouse;
+@@ -26,6 +26,7 @@ mod mouse;
  mod regs;
  mod rtl8152;
  mod stats;
@@ -300,15 +301,15 @@ index 34cf308c..d87cd1b3 100644
  
  use driver_network::{NetworkAdapter, NetworkScheme};
  use dwc2::Dwc2;
-@@ -635,6 +636,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -696,6 +697,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
              }
              Source::Hotplug => {
                  hotplug.fired();
 +                usbdiag::step("scan");
                  let mut cycled = Vec::new();
+                 let t = Instant::now();
                  if let Ok(request) = aside::cycle_request() {
-                     let net = scheme.adapter_mut();
-@@ -683,6 +685,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -748,6 +750,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                      let Some(device) = bus.devices.iter().find(|d| d.address == address).cloned() else {
                          continue;
                      };
@@ -316,10 +317,10 @@ index 34cf308c..d87cd1b3 100644
                      match probe(&mut bus, &hc, &device, dt_mac, &led_modes, Duration::ZERO) {
                          Some(Found::Net(adapter, _, link)) => net.adapters.push((adapter, link)),
                          Some(Found::Input(k, m)) => {
-@@ -703,6 +706,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
-                 net.refresh_links(&mut bus);
+@@ -777,6 +780,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  net.select(&mut bus);
                  scheme.tick().expect("dwc2d: network scheme failed");
+                 wake.part(3, t.elapsed());
 +                usbdiag::write(hc.root_port_status(), hc.gintsts());
 +                usbdiag::step("idle");
                  hotplug.arm(HOTPLUG_INTERVAL);
@@ -327,7 +328,7 @@ index 34cf308c..d87cd1b3 100644
          }
 diff --git a/drivers/usb/dwc2d/src/usbdiag.rs b/drivers/usb/dwc2d/src/usbdiag.rs
 new file mode 100644
-index 00000000..a4c39792
+index 0000000..a4c3979
 --- /dev/null
 +++ b/drivers/usb/dwc2d/src/usbdiag.rs
 @@ -0,0 +1,135 @@
