@@ -173,10 +173,10 @@ index 7d17ba4..026c25c 100644
          let x2 = (rect.right() - self.x) as usize;
 diff --git a/src/compositor/gl.rs b/src/compositor/gl.rs
 new file mode 100644
-index 0000000..71ebcde
+index 0000000..e118c00
 --- /dev/null
 +++ b/src/compositor/gl.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,684 @@
 +//! GL compositing (redox-rpi experiment orbital-gl, G4 step 3, redox-rpi#670).
 +//!
 +//! Orbital draws its screen with GLES on the GPU instead of the CPU: each
@@ -196,7 +196,7 @@ index 0000000..71ebcde
 +use std::os::fd::{AsRawFd, OwnedFd};
 +use std::ptr;
 +
-+use log::{error, info};
++use log::{error, warn};
 +use orbclient::Color;
 +use orbclient::rect::Rect;
 +
@@ -506,13 +506,14 @@ index 0000000..71ebcde
 +    /// switched off or any step fails.
 +    pub fn new() -> Option<Renderer> {
 +        if std::env::var("ORBITAL_GL").as_deref() == Ok("0") {
-+            info!("GL compositing switched off (ORBITAL_GL=0)");
++            // warn: Orbital's stdout logger drops info, and tests look for this line.
++            warn!("GL compositing switched off (ORBITAL_GL=0)");
 +            return None;
 +        }
 +        match unsafe { Self::init() } {
 +            Ok(renderer) => {
 +                ACTIVE.with(|a| a.set(true));
-+                info!("GL compositing on the GPU");
++                warn!("GL compositing on the GPU");
 +                Some(renderer)
 +            }
 +            Err(err) => {
