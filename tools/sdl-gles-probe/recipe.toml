@@ -1,0 +1,14 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# sdl-gles-probe (#669): OpenGL ES 2.0 through SDL2 in an Orbital window,
+# with experiment sdl2-gles (SDL2 with EGL on Mesa).
+[build]
+template = "custom"
+dependencies = ["sdl2", "mesa", "liborbital"]
+script = """
+DYNAMIC_INIT
+"${CC}" ${CFLAGS} ${CPPFLAGS} "-I${COOKBOOK_SYSROOT}/include" "-I${COOKBOOK_SYSROOT}/include/SDL2" \\
+    "-I${COOKBOOK_SYSROOT}/usr/include" -O2 -Wall \\
+    -o sdl-gles-probe "${COOKBOOK_SOURCE}/sdl-gles-probe.c" ${LDFLAGS} -lSDL2 -lorbital -lEGL -lGLESv2 -lm
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp sdl-gles-probe "${COOKBOOK_STAGE}/usr/bin/sdl-gles-probe"
+"""
