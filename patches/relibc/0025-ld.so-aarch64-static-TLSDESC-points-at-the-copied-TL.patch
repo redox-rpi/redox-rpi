@@ -1,7 +1,8 @@
-From 9d2d865c7807b50b98085b03ba79bcc85b082975 Mon Sep 17 00:00:00 2001
+From c23935623ae0cd9d3478524d244b22ce373a9a7a Mon Sep 17 00:00:00 2001
 From: stephan-xyz <noreply@anthropic.com>
 Date: Wed, 11 Nov 2026 15:54:27 +0000
-Subject: [PATCH] ld.so: aarch64 static TLSDESC points at the copied TLS data
+Subject: [PATCH 25/26] ld.so: aarch64 static TLSDESC points at the copied TLS
+ data
 
 On aarch64 the thread pointer is 16 bytes (the TCB) below the static
 TLS block. copy_masters and the DTV place a module block at
