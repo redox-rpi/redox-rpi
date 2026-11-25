@@ -107,15 +107,27 @@ Known limits:
 
 """
 
-# The session orblogin starts after the login: the info window, then the
-# launcher (the session ends when the launcher does).
+# The session orblogin starts after the login: the launcher, and the info
+# window a little later (the session ends when the launcher does). Orbital
+# sends Super+key to its oldest window; when the info window opened first,
+# it took Super+T and the launcher never opened a terminal (Pi test 416).
 [[files]]
 path = "/usr/bin/desktop-session"
 mode = 0o755
 data = """
 #!/usr/bin/ion
-orbterm /usr/bin/desktop-welcome &!
+desktop-welcome-window &!
 launcher
+"""
+
+[[files]]
+path = "/usr/bin/desktop-welcome-window"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# Give the launcher time to open its bar, the oldest window.
+sleep 3
+orbterm /usr/bin/desktop-welcome
 """
 
 [[files]]
