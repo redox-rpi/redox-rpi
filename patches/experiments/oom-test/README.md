@@ -16,6 +16,8 @@ oomtest; echo $?          # page faults in user mode, 137 expected
 oomtest -t 4; echo $?     # also with 4 idle threads
 oomtest pipe; echo $?     # memory runs out while the kernel copies pipe data
 free                      # memory is back
+oomtest fork-shared 1     # fork with a shared mapping works, 0 expected
+oomtest fork-shared       # fork of 2 GiB untouched shared memory (#679)
 ```
 
 Expected: the kernel log shows `OUT OF MEMORY: killing PID ...`, the shell
