@@ -21,4 +21,16 @@ If the keyboard's ring shows `pending 1` and no events, the device or hub
 stopped answering; if it shows no `registered`, usbhidd or xhcid's worker
 stopped reading.
 
+`base/0002`: a usbhubd trigger that simulates an unplug, so a replug test
+needs no person:
+
+    echo "1.1 disable" > /tmp/usbhubd-cycle
+
+clears PORT_ENABLE on hub port 1.1 once; the poll loop then resets the
+port, detaches the device (its driver process ends) and attaches it again,
+as after a replug. `echo "1.1 power" > /tmp/usbhubd-cycle` clears
+PORT_POWER for 3 s instead, which is closer to an unplug but cuts every
+port if the hub switches power ganged. At start usbhubd logs
+`usb-trace: hub characteristics … (power switching ganged|per port|none)`.
+
 Build with `--experiment pi400 ... --experiment usb-trace` (after pi400).
