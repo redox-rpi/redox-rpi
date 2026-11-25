@@ -1,0 +1,138 @@
+From da1de94982119eb8c6575b1effd80c55bfb05e1d Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 16:36:49 +0000
+Subject: [PATCH 24/25] xhcid: reset an endpoint that a transfer error halted
+ (#749)
+
+A transaction, split transaction or babble error halts the endpoint
+just as a stall does (xHCI 1.2 section 4.10.2). xhcid reset endpoint 0
+only after a stall and other endpoints never, so a halted endpoint took
+no more transfers. On the Pi 400, replugging the mouse (simulated with
+a hub port disable, pi-tests Test 662) once gave split transaction
+errors on both keyboard endpoints and a transaction error on the hub's
+endpoint 0: the keyboard got no more reports and usbhubd's control
+transfers timed out from then on, so no device on the hub attached any
+more.
+
+Now any of these errors resets the endpoint and moves its dequeue
+pointer past the failed transfer, for endpoint 0 and for the others.
+When a control transfer times out on an endpoint 0 that is already
+halted, Stop Endpoint fails with a Context State Error; it is then
+reset instead.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/scheme.rs | 64 ++++++++++++++++++++++++++--
+ 1 file changed, 60 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/xhci/scheme.rs b/drivers/usb/xhcid/src/xhci/scheme.rs
+index 93c7fb67..48c2a7fa 100644
+--- a/drivers/usb/xhcid/src/xhci/scheme.rs
++++ b/drivers/usb/xhcid/src/xhci/scheme.rs
+@@ -703,7 +703,16 @@ impl<const N: usize> Xhci<N> {
+                     CONTROL_TIMEOUT.as_secs()
+                 );
+                 if let Err(err) = self.stop_default_control_endpoint(port_num).await {
+-                    warn!("port {}: endpoint 0 not stopped: {}", port_num, err);
++                    // Stop Endpoint fails with a Context State Error on a
++                    // halted endpoint: one that an earlier error halted and
++                    // nothing reset (pi-tests Test 662, the hub after a
++                    // transaction error). Reset it, which also moves the
++                    // dequeue pointer past this transfer.
++                    warn!("port {}: endpoint 0 not stopped ({}), resetting it", port_num, err);
++                    if let Err(err) = self.recover_default_control_endpoint(port_num).await {
++                        warn!("port {}: endpoint 0 not reset: {}", port_num, err);
++                    }
++                    return Err(Error::new(ETIMEDOUT));
+                 }
+                 // The stopped transfer ends with a Stopped event; wait for it
+                 // briefly so that its waiter is not left behind.
+@@ -721,14 +730,17 @@ impl<const N: usize> Xhci<N> {
+         let event_trb = trbs.event_trb;
+         let status_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
+ 
+-        if event_trb.completion_code() == TrbCompletionCode::Stall as u8 {
++        if halts_endpoint(event_trb.completion_code()) {
+             // A STALL halts the default control endpoint (xHCI 1.2 section
+             // 4.8.3), and every later request on it would fail. A device
+             // stalls a request it does not support (a single alternate
+             // setting's SET_INTERFACE, SET_IDLE); the next one must still
+-            // work. Reset and restart it, as Linux does.
++            // work. Reset and restart it, as Linux does. A transaction,
++            // split transaction or babble error halts it too (section
++            // 4.10.2): a hub whose endpoint 0 got one was lost for good
++            // (pi-tests Test 662).
+             if let Err(err) = self.recover_default_control_endpoint(port_num).await {
+-                warn!("port {}: endpoint 0 not recovered after a stall: {}", port_num, err);
++                warn!("port {}: endpoint 0 not recovered after an error: {}", port_num, err);
+             }
+         }
+ 
+@@ -828,6 +840,19 @@ impl<const N: usize> Xhci<N> {
+         let event_trb = trbs.event_trb;
+         let transfer_trb = trbs.src_trb.ok_or(Error::new(EIO))?;
+ 
++        if halts_endpoint(event_trb.completion_code()) {
++            // The error halted the endpoint (xHCI 1.2 section 4.10.2): later
++            // transfers on it never complete, and the driver reading it gets
++            // nothing more. A split transaction error on a device behind a
++            // hub comes when another device on that hub is unplugged or reset
++            // (the Pi 400 keyboard after a mouse replug, pi-tests Test 662).
++            // Reset the endpoint and move its dequeue pointer past this
++            // transfer, so the driver's next read works.
++            if let Err(err) = self.recover_endpoint(port_num, endp_num).await {
++                warn!("port {}: endpoint {:?} not recovered after an error: {}", port_num, endp_num, err);
++            }
++        }
++
+         handle_transfer_event_trb("EXECUTE_TRANSFER", &event_trb, &transfer_trb)?;
+ 
+         // FIXME: EDTLA if event data was set
+@@ -2584,6 +2609,28 @@ impl<const N: usize> Xhci<N> {
+         handle_event_trb("RESET_ENDPOINT", &event_trb, &command_trb)?;
+         self.skip_default_control_transfer(port_num).await
+     }
++    /// Reset Endpoint on a halted endpoint other than endpoint 0, then set
++    /// its dequeue pointer to the enqueue pointer, past the failed transfer.
++    async fn recover_endpoint(&self, port_num: PortId, endp_num: EndpNum) -> Result<()> {
++        self.reset_endpoint(port_num, endp_num, false).await?;
++        let deque_ptr_and_cycle = {
++            let mut port_state = self
++                .port_states
++                .get_mut(&port_num)
++                .ok_or(Error::new(EBADFD))?;
++            let endpoint_state = port_state
++                .endpoint_states
++                .get_mut(&endp_num)
++                .ok_or(Error::new(EBADFD))?;
++            match &mut endpoint_state.transfer {
++                super::RingOrStreams::Ring(ring) => ring.register(),
++                // No streams on the endpoints this is for (interrupt, bulk).
++                super::RingOrStreams::Streams(_) => return Err(Error::new(EOPNOTSUPP)),
++            }
++        };
++        self.set_tr_deque_ptr(port_num, endp_num, deque_ptr_and_cycle)
++            .await
++    }
+     /// Stop Endpoint on the default control endpoint (DCI 1), for a control
+     /// transfer that did not complete in time.
+     async fn stop_default_control_endpoint(&self, port_num: PortId) -> Result<()> {
+@@ -3029,6 +3076,15 @@ pub fn handle_event_trb(name: &str, event_trb: &Trb, command_trb: &Trb) -> Resul
+         Err(Error::new(EIO))
+     }
+ }
++/// Completion codes after which the xHC halts the endpoint (xHCI 1.2
++/// section 4.10.2): it then needs a Reset Endpoint command.
++fn halts_endpoint(completion_code: u8) -> bool {
++    completion_code == TrbCompletionCode::Stall as u8
++        || completion_code == TrbCompletionCode::UsbTransaction as u8
++        || completion_code == TrbCompletionCode::SplitTransaction as u8
++        || completion_code == TrbCompletionCode::BabbleDetected as u8
++}
++
+ pub fn handle_transfer_event_trb(name: &str, event_trb: &Trb, transfer_trb: &Trb) -> Result<()> {
+     if event_trb.completion_code() == TrbCompletionCode::Success as u8
+         || event_trb.completion_code() == TrbCompletionCode::ShortPacket as u8
+-- 
+2.53.0
+
