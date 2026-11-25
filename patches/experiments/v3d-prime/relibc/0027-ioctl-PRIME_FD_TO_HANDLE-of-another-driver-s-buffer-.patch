@@ -1,24 +1,26 @@
-From 1e7b1d95cdf3017f33a21eb12829dbf1d0dd32e6 Mon Sep 17 00:00:00 2001
+From ff6515fd13cd4d9b4d29d0b8de676c1f975a7ab7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 25 Nov 2026 00:25:09 +0000
 Subject: [PATCH] ioctl: PRIME_FD_TO_HANDLE of another driver's buffer sends
  the fd to the device
 
-The two-fd call reaches one scheme only; the kernel answers EXDEV when
-the PRIME fd belongs to another driver. Then send a clone of the PRIME fd
-to the device's scheme (CallFlags::FD), which imports the buffer and
-answers with its handle: v3dd importing a display's scanout buffer.
+The kernel takes a call with two fds only when both belong to one scheme
+(EXDEV otherwise). For a buffer of another driver (a display's scanout
+buffer for the GPU), send a clone of the fd to the device's scheme, which
+imports it. The kernel answers an fd-passing call with the number of fds
+sent, so a second PRIME_FD_TO_HANDLE call without a payload asks the
+device for the imported buffer's handle.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/header/sys_ioctl/redox/drm.rs | 17 +++++++++++++++--
- 1 file changed, 15 insertions(+), 2 deletions(-)
+ src/header/sys_ioctl/redox/drm.rs | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
 
 diff --git a/src/header/sys_ioctl/redox/drm.rs b/src/header/sys_ioctl/redox/drm.rs
-index 39765b52..666a58cb 100644
+index 39765b52..d9f305a1 100644
 --- a/src/header/sys_ioctl/redox/drm.rs
 +++ b/src/header/sys_ioctl/redox/drm.rs
-@@ -106,12 +106,25 @@ impl Dev {
+@@ -106,12 +106,35 @@ impl Dev {
      unsafe fn prime_fd_to_handle(&self, mut buf: IoctlBuffer) -> Result<c_int> {
          let mut data = unsafe { buf.read::<drm_prime_handle>() }?;
          let metadata = [PRIME_FD_TO_HANDLE];
@@ -33,14 +35,24 @@ index 39765b52..666a58cb 100644
 +            Ok(handle) => handle,
 +            // The PRIME fd is another driver's (another scheme; the kernel
 +            // takes one call to one scheme only): send a clone of it to this
-+            // device's scheme, which imports the buffer and answers with its
-+            // handle (v3dd importing a display's scanout buffer).
-+            Err(err) if err.errno == syscall::error::EXDEV => redox_rt::sys::sys_call_wo(
-+                self.fd as usize,
-+                &(data.fd as usize).to_ne_bytes(),
-+                syscall::CallFlags::FD | syscall::CallFlags::FD_CLONE,
-+                &[],
-+            )?,
++            // device's scheme, which imports the buffer (v3dd importing a
++            // display's scanout buffer). The kernel answers an fd-passing
++            // call with the number of fds sent, so a second call without a
++            // payload asks for the imported buffer's handle.
++            Err(err) if err.errno == syscall::error::EXDEV => {
++                redox_rt::sys::sys_call_wo(
++                    self.fd as usize,
++                    &(data.fd as usize).to_ne_bytes(),
++                    syscall::CallFlags::FD | syscall::CallFlags::FD_CLONE,
++                    &[],
++                )?;
++                redox_rt::sys::sys_call_wo(
++                    self.fd as usize,
++                    &[],
++                    syscall::CallFlags::empty(),
++                    &metadata,
++                )?
++            }
 +            Err(err) => return Err(err.into()),
 +        };
          data.handle = handle as u32;
