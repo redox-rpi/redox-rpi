@@ -1,0 +1,38 @@
+From 00ccdec8ccaad0197c7d6afff1a36cfdd1b3017b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 22:54:47 +0000
+Subject: [PATCH] dlfcn: dlclose keeps the object loaded, as musl does
+
+relibc runs neither the object's fini_array nor __cxa_finalize for it
+when dlclose unmaps it, and atexit() handlers carry no object at all.
+Mesa's DRI drivers register such handlers; after eglTerminate closed the
+driver, exit jumped into unmapped code (pi-tests 632). Keeping the
+object, like musl, avoids that; its memory stays until exit.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/header/dlfcn/mod.rs | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/header/dlfcn/mod.rs b/src/header/dlfcn/mod.rs
+index 7968202d..194292db 100644
+--- a/src/header/dlfcn/mod.rs
++++ b/src/header/dlfcn/mod.rs
+@@ -206,9 +206,11 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
+         return -1;
+     }
+ 
+-    let mut linker = unsafe { (*tcb.linker_ptr).lock() };
+-    let obj = unsafe { Arc::from_raw(handle.cast::<DSO>()) };
+-    linker.unload(obj);
++    // Like musl, keep the object loaded: an atexit() handler or a
++    // thread-local destructor that the object registered would otherwise
++    // jump into unmapped code at exit, because relibc cannot tell which
++    // object registered it (Mesa's drivers do this after eglTerminate).
++    // The handle stays valid, so a later dlsym or dlclose still works.
+     0
+ }
+ 
+-- 
+2.53.0
+
