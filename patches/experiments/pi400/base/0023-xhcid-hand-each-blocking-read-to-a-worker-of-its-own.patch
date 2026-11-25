@@ -1,0 +1,80 @@
+From d0f95159e379608881be35fafa71bd6750bb970a Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 16:20:17 +0000
+Subject: [PATCH] xhcid: hand each blocking read to a worker of its own (#749)
+
+The request loop counted idle workers and started a new one only when
+the count was 0. A worker took itself out of the count after `recv`
+returned, so between `recv` and its decrement it counted as idle while
+already holding a read. A second blocking read that came in then went
+into the channel without a new worker, and waited behind the first one.
+
+After a USB mouse replug on the Pi 400 the first read was the new
+mouse's interrupt read, which blocks while the mouse lies still, and the
+second was the built-in keyboard's: the keyboard driver got no more
+reports, and xhcid had no waiter for its endpoint (pi-tests Test 660,
+usb-trace). Now the request loop takes a worker out of the count when it
+hands a read on, so every read in the channel has a free worker, and a
+new worker starts busy with the read that made it start.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/main.rs | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/usb/xhcid/src/main.rs b/drivers/usb/xhcid/src/main.rs
+index ef3bce08..dafeb34a 100644
+--- a/drivers/usb/xhcid/src/main.rs
++++ b/drivers/usb/xhcid/src/main.rs
+@@ -152,7 +152,19 @@ fn serve_requests<const N: usize>(socket: &Arc<Socket>, hci: &Arc<Xhci<N>>) -> !
+                     Ok(op) => {
+                         let blocking = matches!(&op, Op::Read(read) if hci.is_blocking_data_handle(read.fd));
+                         if blocking {
+-                            if idle_workers.load(Ordering::Acquire) == 0 {
++                            // Take one idle worker for this read, or start a
++                            // new one. The count goes down here, not when the
++                            // worker picks the read up: otherwise a worker that
++                            // has taken a read but not yet counted itself out
++                            // still looks idle, a second read waits in the
++                            // channel behind a read that blocks (a mouse lying
++                            // still), and its device gets no more reports (#749).
++                            let reserved = idle_workers
++                                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
++                                    n.checked_sub(1)
++                                })
++                                .is_ok();
++                            if !reserved {
+                                 spawn_worker(&receiver, socket, hci, &idle_workers);
+                             }
+                             sender
+@@ -193,7 +205,10 @@ fn serve_requests<const N: usize>(socket: &Arc<Socket>, hci: &Arc<Xhci<N>>) -> !
+ }
+ 
+ /// One more worker for blocking reads. Workers stay; a new one starts only
+-/// when a read comes in while all of them wait for their devices.
++/// when a read comes in while all of them wait for their devices. It starts
++/// busy: the read that made it start is its first one. A worker counts as
++/// idle again once it has answered its read; the request loop takes it out
++/// of the count when it hands a read on.
+ fn spawn_worker<const N: usize>(
+     receiver: &crossbeam_channel::Receiver<BlockingRead>,
+     socket: &Arc<Socket>,
+@@ -206,7 +221,6 @@ fn spawn_worker<const N: usize>(
+     let socket = Arc::clone(socket);
+     let hci = Arc::clone(hci);
+     let idle_workers = Arc::clone(idle_workers);
+-    idle_workers.fetch_add(1, Ordering::AcqRel);
+     std::thread::spawn(move || {
+         let mut state = SchemeState::new();
+         loop {
+@@ -214,7 +228,6 @@ fn spawn_worker<const N: usize>(
+                 Ok(read) => read,
+                 Err(_) => return,
+             };
+-            idle_workers.fetch_sub(1, Ordering::AcqRel);
+             let response = op.handle_sync(caller, &mut &*hci, &mut state);
+             socket
+                 .write_response(response, SignalBehavior::Restart)
+-- 
+2.53.0
+
