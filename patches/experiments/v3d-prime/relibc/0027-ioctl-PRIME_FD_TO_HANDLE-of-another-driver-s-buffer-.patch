@@ -1,8 +1,14 @@
-From ff6515fd13cd4d9b4d29d0b8de676c1f975a7ab7 Mon Sep 17 00:00:00 2001
+From 9460da217953f086cf53322a35794866d10b6b63 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 25 Nov 2026 00:25:09 +0000
 Subject: [PATCH] ioctl: PRIME_FD_TO_HANDLE of another driver's buffer sends
  the fd to the device
+
+redox-rt's sys_call_ro/wo/rw passed the caller's flags without the fd
+type's extra flags, so a call on two fds (&[usize], MULTIPLE_FDS2) reached
+the kernel as a call on one fd numbered by the array's address, and failed
+with EBADF. PRIME_FD_TO_HANDLE uses such a call. Add fd.extra_flags() as
+redox_syscall's own call_ro/wo/rw do.
 
 The kernel takes a call with two fds only when both belong to one scheme
 (EXDEV otherwise). For a buffer of another driver (a display's scanout
@@ -13,9 +19,59 @@ device for the imported buffer's handle.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
+ redox-rt/src/sys.rs               | 10 +++++-----
  src/header/sys_ioctl/redox/drm.rs | 27 +++++++++++++++++++++++++--
- 1 file changed, 25 insertions(+), 2 deletions(-)
+ 2 files changed, 30 insertions(+), 7 deletions(-)
 
+diff --git a/redox-rt/src/sys.rs b/redox-rt/src/sys.rs
+index 237c4a32..8512c5c4 100644
+--- a/redox-rt/src/sys.rs
++++ b/redox-rt/src/sys.rs
+@@ -185,7 +185,7 @@ pub fn sys_call_ro<T: Call>(
+             fd.raw_call(
+                 payload.as_mut_ptr(),
+                 payload.len(),
+-                flags | CallFlags::READ,
++                flags | fd.extra_flags() | CallFlags::READ,
+                 metadata,
+             )
+         };
+@@ -236,7 +236,7 @@ pub fn sys_call_ro<T: Call>(
+         fd.raw_call(
+             payload.as_mut_ptr(),
+             payload.len(),
+-            flags | CallFlags::READ,
++            flags | fd.extra_flags() | CallFlags::READ,
+             metadata,
+         )
+     };
+@@ -263,7 +263,7 @@ pub fn sys_call_wo<T: Call>(
+             fd.raw_call(
+                 payload.as_ptr(),
+                 payload.len(),
+-                flags | CallFlags::WRITE,
++                flags | fd.extra_flags() | CallFlags::WRITE,
+                 metadata,
+             )
+         };
+@@ -284,7 +284,7 @@ pub fn sys_call_wo<T: Call>(
+         fd.raw_call(
+             payload.as_ptr(),
+             payload.len(),
+-            flags | CallFlags::WRITE,
++            flags | fd.extra_flags() | CallFlags::WRITE,
+             metadata,
+         )
+     };
+@@ -308,7 +308,7 @@ pub fn sys_call_rw<T: Call>(
+         fd.raw_call(
+             payload.as_mut_ptr(),
+             payload.len(),
+-            flags | CallFlags::READ | CallFlags::WRITE,
++            flags | fd.extra_flags() | CallFlags::READ | CallFlags::WRITE,
+             metadata,
+         )
+     }
 diff --git a/src/header/sys_ioctl/redox/drm.rs b/src/header/sys_ioctl/redox/drm.rs
 index 39765b52..d9f305a1 100644
 --- a/src/header/sys_ioctl/redox/drm.rs
