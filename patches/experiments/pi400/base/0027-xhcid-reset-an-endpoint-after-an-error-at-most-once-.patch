@@ -1,7 +1,7 @@
-From 90936979effda5729740af860e292b86d789f1cc Mon Sep 17 00:00:00 2001
+From 2ec8c4284f17930db70060345a363b9fd620ae23 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 25 Nov 2026 17:34:52 +0000
-Subject: [PATCH 28/28] xhcid: reset an endpoint after an error at most once a
+Subject: [PATCH 27/29] xhcid: reset an endpoint after an error at most once a
  second (#749)
 
 A device that answers nothing any more fails every transfer at once,
