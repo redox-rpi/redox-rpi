@@ -150,9 +150,26 @@ fn run(cmd: &mut Command) -> Result<(ExitStatus, String), String> {
     Ok((out.status, String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-/// rsync and ssh exit with 255 when the connection fails.
+/// ssh exits with 255 when the connection fails.
 fn unreachable(status: ExitStatus) -> bool {
     status.code() == Some(255)
+}
+
+/// rsync gives 255 when its ssh cannot connect, but sometimes 12 (protocol
+/// stream error) if it notices the closed pipe before ssh's exit status: then
+/// a plain ssh login decides.
+fn server_away(server: &Server, status: ExitStatus) -> bool {
+    match status.code() {
+        Some(255) => true,
+        Some(12) => server
+            .ssh("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_or(false, unreachable),
+        _ => false,
+    }
 }
 
 /// A number from rsync's `--stats` output, e.g. "Number of regular files
@@ -215,7 +232,7 @@ fn push() -> Result<(), String> {
         let files = stat(&out, "Number of regular files transferred");
         let bytes = stat(&out, "Total transferred file size");
         format!("pushed {files} files ({bytes} bytes) to {}", server.remote("current"))
-    } else if unreachable(status) {
+    } else if server_away(&server, status) {
         format!("server {} port {} not reachable, nothing changed", server.host, server.port)
     } else {
         format!("rsync failed ({status})")
@@ -249,7 +266,7 @@ fn pull(path: Option<&str>) -> Result<(), String> {
             target.display()
         );
         Ok(())
-    } else if unreachable(status) {
+    } else if server_away(&server, status) {
         let _ = fs::remove_dir(&target);
         Err(format!("server {} port {} not reachable", server.host, server.port))
     } else {
@@ -276,7 +293,7 @@ fn status() -> Result<(), String> {
         let changes = out.lines().filter(|l| !l.starts_with(".d")).count();
         println!("reachable: yes\nwould change: {changes}");
         Ok(())
-    } else if unreachable(st) {
+    } else if server_away(&server, st) {
         println!("reachable: no");
         Err("server not reachable".into())
     } else {
