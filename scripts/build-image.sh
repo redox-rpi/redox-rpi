@@ -403,9 +403,18 @@ while read -r rel; do
     done
     if grep -q '^patches = \[' "$recipe/recipe.toml"; then
         # Append to a one-line list, or before the "]" of a multi-line one.
+        # The list's last entry gets a comma if it has none (libdrm's
+        # patches = ["redox.patch"]).
         awk -v add="$names" '
-            open && /^]/ { print "    " add; open = 0 }
-            /^patches = \[/ { if (/]/) sub(/]/, add "]"); else open = 1 }
+            open && /^]/ {
+                if (held) { if (prev ~ /"[ \t]*$/) prev = prev ","; print prev }
+                print "    " add; print; open = 0; held = 0; next
+            }
+            open { if (held) print prev; prev = $0; held = 1; next }
+            /^patches = \[/ {
+                if (/]/) { if (/"[ \t]*]/) sub(/"[ \t]*]/, "\", " add "]"); else sub(/]/, add "]") }
+                else open = 1
+            }
             { print }' "$recipe/recipe.toml" > "$recipe/recipe.toml.new"
         mv "$recipe/recipe.toml.new" "$recipe/recipe.toml"
     else
