@@ -28,6 +28,13 @@
   network link overlaps with rescans for late devices. On the Pi 3B+ dwc2d
   is ready after 3.3 s instead of 6.2 s (2.1 s of it is the LAN7800's
   link), kernel to login 7.4 s instead of 10.3 s (test #67).
+- Warm reboot keeps USB (#576, base `0122`, was experiment
+  `usb-port-power`): U-Boot hands over a working root port, and dwc2d's
+  core soft reset lost the onboard hub in about one of three reboots of a
+  Pi 3B+ (no USB, no network). dwc2d now skips the core reset when the
+  port is connected, enabled and powered, and halts the channels instead.
+  An empty port gets a port reset, then a power cycle. Pi test 568: 30 of
+  30 reboots with USB (18 of 30 without).
 
 ## In progress
 
