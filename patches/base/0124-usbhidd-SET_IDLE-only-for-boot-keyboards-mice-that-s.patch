@@ -1,0 +1,46 @@
+From b69478b31335b6bc7fa975f5f6c0996ca5eee3d3 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 19:41:16 +0000
+Subject: [PATCH] usbhidd: SET_IDLE only for boot keyboards; mice that stall it
+ hung xhcid (#710)
+
+Many mice stall HID SET_IDLE, which the HID specification allows. After
+the stall, the mouse's next control transfer (the report descriptor)
+never completed on the Pi 400's VL805, and xhcid serves control
+transfers in its request loop, so every other USB device, the built-in
+keyboard included, stopped (pi-tests row 620). The idle rate only
+matters for keyboards; FreeBSD's ums does not send SET_IDLE to mice
+either.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/usbhidd/src/main.rs | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
+index 7aaf479c..86b8f63f 100644
+--- a/drivers/input/usbhidd/src/main.rs
++++ b/drivers/input/usbhidd/src/main.rs
+@@ -321,9 +321,16 @@ fn main() -> Result<()> {
+     //TODO: do we need to set protocol to report? It fails for mice.
+ 
+     //TODO: dynamically create good values, fix xhcid so it does not block on each request
+-    // This sets all reports to a duration of 4ms
+-    if let Err(err) = reqs::set_idle(&handle, 1, 0, interface_num as u16) {
+-        log::warn!("failed to set idle: {}", err);
++    // This sets all reports to a duration of 4ms. Only boot keyboards
++    // (interface protocol 1) get it: the idle rate matters for key repeat
++    // reports, and many mice stall SET_IDLE (the HID spec allows that).
++    // FreeBSD's ums does not send it to mice either. A stalled request
++    // used to leave the mouse's next control transfer hanging in xhcid,
++    // which held up every other USB device (#710).
++    if if_desc.protocol == 1 {
++        if let Err(err) = reqs::set_idle(&handle, 1, 0, interface_num as u16) {
++            log::warn!("failed to set idle: {}", err);
++        }
+     }
+ 
+     let report_desc_bytes = if let Some(hid_desc) = hid_desc_opt {
+-- 
+2.53.0
+

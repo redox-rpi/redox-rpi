@@ -1,0 +1,66 @@
+From 574ed917939d3206b197a53d3af2b404dcaf518c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 18:00:12 +0000
+Subject: [PATCH 29/29] xhcid: a write barrier before a TRB's cycle bit and
+ before a doorbell (#749)
+
+DMA memory is normal non-cacheable memory on aarch64, where stores can
+become visible out of order. A TRB's control word, which holds the
+cycle bit that gives the TRB to the xHC, could be seen before its other
+words, and a doorbell before the TRBs it announces. Linux puts wmb()
+(dsb st on arm64) before both.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/xhcid/src/xhci/irq_reactor.rs |  2 ++
+ drivers/usb/xhcid/src/xhci/trb.rs         | 17 +++++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/drivers/usb/xhcid/src/xhci/irq_reactor.rs b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+index 13a97e1e..c11e8b63 100644
+--- a/drivers/usb/xhcid/src/xhci/irq_reactor.rs
++++ b/drivers/usb/xhcid/src/xhci/irq_reactor.rs
+@@ -630,6 +630,8 @@ impl EventDoorbell {
+ 
+     pub fn ring(self) {
+         trace!("Ring doorbell {} with data {}", self.index, self.data);
++        // The TRBs must be in memory before the xHC is told to fetch them.
++        super::trb::write_barrier();
+         self.dbs.lock().unwrap()[self.index].write(self.data);
+         trace!("Doorbell was rung.");
+     }
+diff --git a/drivers/usb/xhcid/src/xhci/trb.rs b/drivers/usb/xhcid/src/xhci/trb.rs
+index 8069b1ea..82b8616e 100644
+--- a/drivers/usb/xhcid/src/xhci/trb.rs
++++ b/drivers/usb/xhcid/src/xhci/trb.rs
+@@ -151,6 +151,11 @@ impl Trb {
+         self.data_low.write(data as u32);
+         self.data_high.write((data >> 32) as u32);
+         self.status.write(status);
++        // The control word holds the cycle bit, which gives the TRB to the
++        // xHC: the other words must be visible to it first. DMA memory is
++        // normal non-cacheable memory on aarch64, where stores may be seen
++        // out of order (Linux: wmb() before handing a TRB over).
++        write_barrier();
+         self.control.write(control);
+     }
+ 
+@@ -510,3 +515,15 @@ impl fmt::Display for Trb {
+         )
+     }
+ }
++
++/// Orders the stores before it before the stores after it, for a device
++/// reading memory (Linux wmb(): dsb st on arm64).
++#[inline(always)]
++pub fn write_barrier() {
++    #[cfg(target_arch = "aarch64")]
++    unsafe {
++        core::arch::asm!("dsb st", options(nostack, preserves_flags));
++    }
++    #[cfg(not(target_arch = "aarch64"))]
++    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
++}
+-- 
+2.53.0
+
