@@ -1,6 +1,7 @@
 # Experiment sigcont-restart (#386): a signal the program does not catch
 # (SIGCONT with its default action) must not make a blocking call return
-# EINTR (patch relibc/0001). The check needs tcc in the image (experiment tcc):
+# EINTR (default patch patches/relibc/0021 since #690). The check needs tcc
+# in the image (experiment tcc):
 # `ion /usr/share/sigcont-restart/check.ion`.
 
 [[files]]

@@ -11,20 +11,60 @@ name: QEMU boot test
 # only touches Markdown or docs/ starts no run (the runner takes one job at a
 # time, and release days push many docs commits). No status check is required
 # on main, so a skipped pull request is not blocked.
+#
+# Only changes to what this job checks start a run (#730): patches,
+# configs, our tools and recipes, and the scripts the job calls. Host-only
+# scripts (pi-test.py, update-stable.sh, the nightly and report tools) and
+# Markdown start none.
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**"]
+    paths:
+      - "patches/**"
+      - "config/**"
+      - "tools/**"
+      - "scripts/build-image.sh"
+      - "scripts/build-kernel.sh"
+      - "scripts/build-uboot.sh"
+      - "scripts/check-patches.sh"
+      - "scripts/qemu-raspi3b.sh"
+      - "scripts/fw-direct-boot.sh"
+      - "scripts/make-sdcard.sh"
+      - "scripts/netboot.sh"
+      - "scripts/netboot-firmware.sh"
+      - "scripts/lab-env.sh"
+      - "scripts/with-build-lock.sh"
+      - "scripts/kconfig/**"
+      - ".github/workflows/qemu-boot.yml"
+      - "!**.md"
   pull_request:
-    paths-ignore: ["**.md", "docs/**"]
+    paths:
+      - "patches/**"
+      - "config/**"
+      - "tools/**"
+      - "scripts/build-image.sh"
+      - "scripts/build-kernel.sh"
+      - "scripts/build-uboot.sh"
+      - "scripts/check-patches.sh"
+      - "scripts/qemu-raspi3b.sh"
+      - "scripts/fw-direct-boot.sh"
+      - "scripts/make-sdcard.sh"
+      - "scripts/netboot.sh"
+      - "scripts/netboot-firmware.sh"
+      - "scripts/lab-env.sh"
+      - "scripts/with-build-lock.sh"
+      - "scripts/kconfig/**"
+      - ".github/workflows/qemu-boot.yml"
+      - "!**.md"
   workflow_dispatch:
 
-# Pushes to main: only the newest commit is tested, a newer push cancels the
-# run before it (ci-main-red.yml ignores cancelled runs). Pull requests and
-# manual runs each get their own group and are never cancelled.
+# A newer push cancels the run before it: on main only the newest commit is
+# tested, in a pull request only its newest head (#730; ci-main-red.yml
+# ignores cancelled runs). Manual runs each get their own group and are
+# never cancelled.
 concurrency:
-  group: qemu-boot-${{ github.event_name == 'push' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: qemu-boot-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   raspi3b:
@@ -57,6 +97,17 @@ jobs:
             scripts/build-image.sh --recipes-only --no-test-experiments \
               --experiment "$(basename "$exp")" > /dev/null
           done
+
+      # Pull requests: whether the patches still apply to the newest upstream,
+      # report only (a few seconds). The kernel build and boot on the newest
+      # upstream run weekly and on pull requests that change the kernel side
+      # (upstream-weekly.yml, #730).
+      - name: Patches on the latest upstream (report only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          scripts/check-patches.sh --latest --work build/check-patches-latest ||
+            echo "::warning title=Latest upstream::patches do not apply to the newest upstream (see the job summary); the pinned check decides"
 
       - name: Build kernel (pinned commit)
         run: scripts/build-kernel.sh

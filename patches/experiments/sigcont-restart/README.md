@@ -1,5 +1,9 @@
 # A signal the program does not catch gives no EINTR (#386, experiment `sigcont-restart`)
 
+The fix is a default patch since #690:
+[`patches/relibc/0021`](../../relibc/0021-redox-rt-a-signal-without-a-handler-restarts-the-int.patch).
+This experiment now only adds the check, which needs experiment tcc.
+
 `timeit` (fork, exec, `waitpid`) printed `timeit: Interrupted system
 call` twice in one Pi run (pi-tests row 359) and left its child running,
 although it catches no signal. POSIX allows `EINTR` only when a caught
@@ -27,7 +31,7 @@ although no handler without `SA_RESTART` ran:
 ## Fix
 
 relibc patch
-[`0001`](relibc/0001-redox-rt-a-signal-without-a-handler-restarts-the-int.patch):
+[`patches/relibc/0021`](../../relibc/0021-redox-rt-a-signal-without-a-handler-restarts-the-int.patch):
 - `wrapper()` sets `last_sig_was_restart = true` before it enters the
   trampoline, so only a handler without `SA_RESTART` clears it;
 - the trampoline treats default SIGCONT as restarting.

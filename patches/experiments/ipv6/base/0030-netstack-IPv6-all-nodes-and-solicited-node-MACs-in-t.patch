@@ -1,0 +1,40 @@
+From 2dcdbb6a5d3f8045ad2c4580fa4ef439646dfba1 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 25 Nov 2026 13:57:51 +0000
+Subject: [PATCH] netstack: IPv6 all-nodes and solicited-node MACs in the
+ adapter filter
+
+Since the LAN7800 multicast hash filter (base 0095) the adapter takes
+only the groups netstack lists, so all IPv6 multicast was dropped: no
+router advertisements, no neighbor solicitations, hence no SLAAC and no
+IPv6 neighbors on the Pi 3B+. The list now also has 33:33:00:00:00:01
+(ff02::1) and the solicited-node MAC of the link-local address; the
+SLAAC addresses are EUI-64 from the same MAC, so they share it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ netstack/src/link/ethernet.rs | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 3378681..d4d4975 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -847,6 +847,14 @@ impl LinkDevice for EthernetLink {
+                 IpAddress::Ipv6(group) => list.extend_from_slice(&ipv6_multicast_mac(*group).0),
+             }
+         }
++        // IPv6 needs all-nodes (ff02::1: router advertisements) and the
++        // solicited-node group of its addresses (neighbor solicitations).
++        // Every address here is EUI-64 from the MAC address, so the
++        // link-local one stands for all of them.
++        if let Some(link_local) = self.ipv6.link_local {
++            list.extend_from_slice(&ipv6_multicast_mac(Ipv6Address::new(0xff02, 0, 0, 0, 0, 0, 0, 1)).0);
++            list.extend_from_slice(&ipv6_multicast_mac(solicited_node(link_local)).0);
++        }
+         if let Err(err) = file.write(&list) {
+             warn!("Failed to set the multicast list on link {}: {}", self.name, err);
+         }
+-- 
+2.53.0
+

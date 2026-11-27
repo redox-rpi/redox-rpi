@@ -55,7 +55,7 @@
   which firmware clocks run (Pi tests #231, #232, #234; PR
   [#203](https://github.com/redox-rpi/redox-rpi/pull/203)). `dwc2d` idle
   wakeups: [#211](https://github.com/redox-rpi/redox-rpi/issues/211), USB
-  session, experiment `dwc2d-idle`, draft PR
+  session, base `0121` (from experiment `dwc2d-idle`, #693), draft PR
   [#212](https://github.com/redox-rpi/redox-rpi/pull/212). What wakes it:
   the 1 s hotplug rescan, the 10 ms keyboard poll, netstack's reads on each
   tick, and LAN7800 interrupts (SOF is already masked). The change rescans
