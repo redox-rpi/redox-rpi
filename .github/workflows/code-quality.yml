@@ -23,6 +23,25 @@ permissions:
   contents: read
 
 jobs:
+  # Report only (#693): an experiment-only pull request that would close an
+  # issue gets a warning.
+  pr-refs:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: experiment-only change says Fixes
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s\n' "$BODY" > "$RUNNER_TEMP/body.md"
+          scripts/check-pr-refs.sh "$BASE_SHA" "$HEAD_SHA" "$RUNNER_TEMP/body.md"
+
   gating:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04

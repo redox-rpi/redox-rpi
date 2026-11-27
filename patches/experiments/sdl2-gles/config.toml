@@ -1,0 +1,8 @@
+# Experiment sdl2-gles (#669, test only): SDL2 with OpenGL ES through EGL
+# on Mesa (the V3D with experiments v3dd, v3d-ioctl, mesa-v3d), and
+# sdl-gles-probe. List it after orbital-apps: both replace the sdl2 recipe,
+# and the last one listed wins.
+
+[packages]
+sdl2 = "source"
+sdl-gles-probe = "source"

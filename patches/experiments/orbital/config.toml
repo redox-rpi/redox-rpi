@@ -7,7 +7,9 @@ orbdata = {}
 orbital = {}
 # Built from source: opaque window (recipes/gui/orbterm/recipe.toml).
 orbterm = "source"
-orbutils = {}
+# Built from source: orblogin keeps its picture at window size only (#616,
+# recipes/gui/orbutils/).
+orbutils = "source"
 
 # Orbital on VT 3, with the login window and then the launcher.
 [[files]]

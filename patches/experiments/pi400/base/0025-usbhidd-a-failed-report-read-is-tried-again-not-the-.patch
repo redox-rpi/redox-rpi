@@ -1,0 +1,54 @@
+From f8baced454a8c2264f74c74f37d0aba6dad91d6b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 16:36:49 +0000
+Subject: [PATCH 25/26] usbhidd: a failed report read is tried again, not the
+ end of the driver (#749)
+
+usbhidd ended its report loop on the first failed interrupt read. A
+split transaction error while another device on the same hub is
+replugged then left the keyboard without a reader until it was
+replugged itself. Log the error and read again after 100 ms; xhcid now
+resets the halted endpoint. Only EIO is tried again; any other error
+(EBADF once the device is detached) ends the driver as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/usbhidd/src/main.rs | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/input/usbhidd/src/main.rs b/drivers/input/usbhidd/src/main.rs
+index 86b8f63f..e7b60442 100644
+--- a/drivers/input/usbhidd/src/main.rs
++++ b/drivers/input/usbhidd/src/main.rs
+@@ -441,9 +441,25 @@ fn main() -> Result<()> {
+ 
+         if let Some(endpoint) = &mut endpoint_opt {
+             // interrupt transfer
+-            endpoint
+-                .transfer_read(&mut report_buffer)
+-                .context("failed to get report")?;
++            if let Err(err) = endpoint.transfer_read(&mut report_buffer) {
++                // One failed read (a split transaction error while another
++                // device on the same hub is replugged; xhcid resets the
++                // endpoint) must not end the driver: it would leave the
++                // device without a reader until the next replug (#749).
++                // Only EIO is tried again: any other error (EBADF once the
++                // device is detached) ends the driver as before.
++                let transient = matches!(
++                    &err,
++                    xhcid_interface::XhciClientHandleError::IoError(io)
++                        if io.raw_os_error() == Some(syscall::EIO)
++                );
++                if !transient {
++                    return Err(err).context("failed to get report");
++                }
++                log::warn!("failed to get report: {}, trying again", err);
++                thread::sleep(time::Duration::from_millis(100));
++                continue;
++            }
+         } else {
+             // control transfer
+             reqs::get_report(
+-- 
+2.53.0
+

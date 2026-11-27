@@ -1,0 +1,81 @@
+From f12332ab89257a185d1c7b3eec478bd146bb5102 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Tue, 24 Nov 2026 20:19:27 +0000
+Subject: [PATCH 22/22] usbhubd: a port status request that fails is tried
+ again, not fatal (#710)
+
+usbhubd ended with "Failed to retrieve port status" when one GetStatus
+request failed, here with ETIMEDOUT from xhcid (pi-tests row 623). Then
+no device on that hub attached any more. Log it and try again on the
+next pass of the poll loop.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/usbhubd/src/main.rs | 48 +++++++++++++++++++--------------
+ 1 file changed, 28 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/usb/usbhubd/src/main.rs b/drivers/usb/usbhubd/src/main.rs
+index f213966f..71ccf936 100644
+--- a/drivers/usb/usbhubd/src/main.rs
++++ b/drivers/usb/usbhubd/src/main.rs
+@@ -209,29 +209,37 @@ fn main() {
+ 
+             let port_sts = if usb_3 {
+                 let mut port_sts = usb::HubPortStatusV3::default();
+-                handle
+-                    .device_request(
+-                        PortReqTy::Class,
+-                        PortReqRecipient::Other,
+-                        usb::SetupReq::GetStatus as u8,
+-                        0,
+-                        port as u16,
+-                        DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
+-                    )
+-                    .expect("Failed to retrieve port status");
++                if let Err(err) = handle.device_request(
++                    PortReqTy::Class,
++                    PortReqRecipient::Other,
++                    usb::SetupReq::GetStatus as u8,
++                    0,
++                    port as u16,
++                    DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
++                ) {
++                    // One failed or timed-out request must not end the hub
++                    // driver: without it nothing on this hub attaches any
++                    // more (pi-tests row 623). Try again on the next pass.
++                    log::warn!("port {}: status not read: {:?}, trying again", port, err);
++                    continue;
++                }
+                 usb::HubPortStatus::V3(port_sts)
+             } else {
+                 let mut port_sts = usb::HubPortStatusV2::default();
+-                handle
+-                    .device_request(
+-                        PortReqTy::Class,
+-                        PortReqRecipient::Other,
+-                        usb::SetupReq::GetStatus as u8,
+-                        0,
+-                        port as u16,
+-                        DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
+-                    )
+-                    .expect("Failed to retrieve port status");
++                if let Err(err) = handle.device_request(
++                    PortReqTy::Class,
++                    PortReqRecipient::Other,
++                    usb::SetupReq::GetStatus as u8,
++                    0,
++                    port as u16,
++                    DeviceReqData::In(unsafe { plain::as_mut_bytes(&mut port_sts) }),
++                ) {
++                    // One failed or timed-out request must not end the hub
++                    // driver: without it nothing on this hub attaches any
++                    // more (pi-tests row 623). Try again on the next pass.
++                    log::warn!("port {}: status not read: {:?}, trying again", port, err);
++                    continue;
++                }
+                 usb::HubPortStatus::V2(port_sts)
+             };
+             if state.port_sts != port_sts {
+-- 
+2.53.0
+

@@ -1,5 +1,5 @@
-# Experiment quiet-boot: the hint on the login screen (#517, I5). getty
-# prints /etc/issue above the login prompt (base/0002).
+# Experiment quiet-boot: the hint on the login screen (#517, I5). login
+# prints /etc/issue above its prompt.
 
 [[files]]
 path = "/etc/issue"
