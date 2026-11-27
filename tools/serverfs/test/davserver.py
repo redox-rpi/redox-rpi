@@ -2,9 +2,11 @@
 """A throwaway, read-only WebDAV server for the serverfs tests (#713).
 
     davserver.py <dir> <port> [--auth user:password] [--tls cert.pem key.pem]
+                 [--bind <address>]
 
-Serves <dir> on 127.0.0.1 only (QEMU's user network reaches it as
-10.0.2.2), and answers just the requests serverfs uses: PROPFIND with
+Serves <dir> on 127.0.0.1 (QEMU's user network reaches it as 10.0.2.2),
+or with --bind on that one address of this host (the Pi row,
+run-serverfs-pi.sh), and answers just the requests serverfs uses: PROPFIND with
 Depth 0 or 1, GET and HEAD. Anything else is 405. With --tls it speaks
 HTTPS with the given certificate. Not for real use: no locking, no writes.
 Each request is logged to stderr.
@@ -22,10 +24,14 @@ ROOT = os.path.realpath(sys.argv[1])
 PORT = int(sys.argv[2])
 AUTH = None
 TLS = None
+BIND = "127.0.0.1"
 args = sys.argv[3:]
 while args:
     if args[0] == "--auth" and len(args) > 1:
         AUTH = "Basic " + base64.b64encode(args[1].encode()).decode()
+        args = args[2:]
+    elif args[0] == "--bind" and len(args) > 1:
+        BIND = args[1]
         args = args[2:]
     elif args[0] == "--tls" and len(args) > 2:
         TLS = (args[1], args[2])
@@ -143,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
     do_PUT = do_DELETE = do_MKCOL = do_MOVE = do_COPY = do_PROPPATCH = do_LOCK = do_POST = unsupported
 
 
-server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+server = ThreadingHTTPServer((BIND, PORT), Handler)
 if TLS:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(*TLS)
