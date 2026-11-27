@@ -19,6 +19,16 @@ whole core on polling the keyboard.
   packages from `static.redox-os.org` like the rest of the image. Orbital
   runs on VT 3 with `orblogin` and then the launcher; the switch to the
   text console on VT 2 is turned off. The serial console keeps its login.
+- [`recipes/gui/orbutils/`](recipes/gui/orbutils/) (#616): `orbutils`
+  (`orblogin`, the launcher) built from source, pinned, with
+  [`0001`](recipes/gui/orbutils/0001-orblogin-keep-the-login-picture-only-at-window-size.patch):
+  upstream's `orblogin` kept its login picture (1024x768) decoded at full
+  size, a clone of it and the copy scaled to cover the window (1920x1440
+  at 1920x1080 in zoom mode) for as long as the login window was open.
+  It now decodes the picture when the window size changes, scales and
+  crops it to the window and drops the other copies: one 8 MB image at
+  1920x1080 instead of 3 + 3 + 11 MB. This matters on the Zero 2 W (250
+  MB for Redox).
 - Two `rpi-fbd` patches it needs, in experiment `rpi-fb` (branch
   `graphics-gui`):
   - [`0064`](../rpi-fb/base/0064-rpi-fbd-remember-only-the-frame-s-own-damage-for-the.patch):

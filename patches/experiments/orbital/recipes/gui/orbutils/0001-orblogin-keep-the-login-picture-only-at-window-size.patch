@@ -1,0 +1,192 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: redox-rpi
+Date: Fri, 27 Nov 2026 11:50:21 +0100
+Subject: [PATCH] orblogin: keep the login picture only at window size
+
+orblogin kept the decoded login picture at full size for its whole
+life, a clone of it, and the picture scaled to cover the window
+(larger than the window in zoom mode). Decode it only when the window
+size changes, scale and crop it to the window, and drop the full-size
+and scaled copies again. At 1920x1080 this keeps one 8 MB image
+instead of 3 + 3 + 11 MB.
+---
+ orbutils/src/orblogin/main.rs | 114 +++++++++++++++++++++++++---------
+ 1 file changed, 84 insertions(+), 30 deletions(-)
+
+diff --git a/orbutils/src/orblogin/main.rs b/orbutils/src/orblogin/main.rs
+index cb64226..d798b97 100644
+--- a/orbutils/src/orblogin/main.rs
++++ b/orbutils/src/orblogin/main.rs
+@@ -137,7 +137,10 @@ struct UiConfig {
+     font: Font,
+ 
+     image_mode: BackgroundMode,
+-    image: Image,
++    // Only the path: the picture is decoded when the window size changes,
++    // scaled and cropped to the window, and the full-size copy is dropped
++    // again (memory on small boards, redox-rpi #616).
++    image_path: &'static str,
+ 
+     btn_color_inactive: Color,
+     btn_color_active: Color,
+@@ -156,7 +159,11 @@ fn build_ui_config() -> Result<UiConfig, Box<dyn Error + 'static>> {
+         font: Font::find(Some("Sans"), None, None)?,
+ 
+         image_mode: BackgroundMode::from_str("zoom"),
+-        image: Image::from_path(IMAGE_PATH).map_err(|_| format!("Cannot load {}", IMAGE_PATH))?,
++        image_path: if std::path::Path::new(IMAGE_PATH).is_file() {
++            IMAGE_PATH
++        } else {
++            return Err(format!("Cannot load {}", IMAGE_PATH).into());
++        },
+ 
+         btn_color_inactive: Color::rgb(39, 72, 105),
+         btn_color_active: Color::rgb(59, 102, 135),
+@@ -164,6 +171,71 @@ fn build_ui_config() -> Result<UiConfig, Box<dyn Error + 'static>> {
+     })
+ }
+ 
++/// The login picture as drawn in a window of `size`: scaled and already
++/// cropped to the window, at `x`, `y`.
++struct Background {
++    size: (u32, u32),
++    image: Image,
++    x: i32,
++    y: i32,
++}
++
++impl Default for Background {
++    fn default() -> Self {
++        Background {
++            size: (0, 0),
++            image: Image::new(0, 0),
++            x: 0,
++            y: 0,
++        }
++    }
++}
++
++impl Background {
++    fn new(path: &str, mode: BackgroundMode, w: u32, h: u32) -> Self {
++        let image = match Image::from_path(path) {
++            Ok(image) => image,
++            Err(err) => {
++                eprintln!("orblogin: cannot load {}: {:?}", path, err);
++                return Background {
++                    size: (w, h),
++                    ..Background::default()
++                };
++            }
++        };
++
++        let (width, height) = find_scale(&image, mode, w, h);
++        let scaled = if width == image.width() && height == image.height() {
++            image
++        } else {
++            image.resize(width, height, orbclient::image::ResizeType::Lanczos3)
++        };
++
++        let (crop_x, crop_w) = if width > w {
++            ((width - w) / 2, w)
++        } else {
++            (0, width)
++        };
++        let (crop_y, crop_h) = if height > h {
++            ((height - h) / 2, h)
++        } else {
++            (0, height)
++        };
++
++        let mut cropped = Image::new(crop_w, crop_h);
++        scaled
++            .roi(&Rect::new(crop_x as i32, crop_y as i32, crop_w, crop_h))
++            .draw(&mut cropped, 0, 0);
++
++        Background {
++            size: (w, h),
++            image: cropped,
++            x: (w as i32 - crop_w as i32) / 2,
++            y: (h as i32 - crop_h as i32) / 2,
++        }
++    }
++}
++
+ struct UiLayout {
+     s_u: u32,
+     s_i: i32,
+@@ -293,7 +365,7 @@ struct App<'a> {
+     context: &'a softbuffer::Context<OwnedDisplayHandle>,
+     ui_config: UiConfig,
+     ui_state: UiState,
+-    scaled_image: Image,
++    scaled_image: Background,
+     window: OnceCell<Surface>,
+     output: &'a mut Option<(Command, String)>,
+ }
+@@ -400,7 +472,7 @@ fn login_window(
+         mouse_y: 0,
+         mouse_left: false,
+     };
+-    let scaled_image = ui_config.image.clone();
++    let scaled_image = Background::default();
+ 
+     let mut output = None;
+ 
+@@ -423,13 +495,13 @@ fn handle_redraw(
+     ui_config: &UiConfig,
+     ui_layout: UiLayout,
+     window: &mut OrbBuffer<'_>,
+-    scaled_image: &mut Image,
++    scaled_image: &mut Background,
+     ui_state: &UiState,
+ ) {
+     let UiConfig {
+         ref font,
+         image_mode,
+-        ref image,
++        image_path,
+         btn_color_inactive,
+         btn_color_active,
+         btn_border_color,
+@@ -472,35 +544,17 @@ fn handle_redraw(
+ 
+     let (w, h) = (window.width(), window.height());
+ 
+-    let (width, height) = find_scale(&image, image_mode, w, h);
+-
+-    if width == scaled_image.width() && height == scaled_image.height() {
+-        // Do not resize scaled image
+-    } else if width == image.width() && height == image.height() {
+-        *scaled_image = image.clone();
+-    } else {
+-        *scaled_image = image.resize(width, height, orbclient::image::ResizeType::Lanczos3);
++    if scaled_image.size != (w, h) {
++        *scaled_image = Background::new(image_path, image_mode, w, h);
+     }
+ 
+-    let (crop_x, crop_w) = if width > w {
+-        ((width - w) / 2, w)
+-    } else {
+-        (0, width)
+-    };
+-
+-    let (crop_y, crop_h) = if height > h {
+-        ((height - h) / 2, h)
+-    } else {
+-        (0, height)
+-    };
+-
+     window.set(Color::rgb(0, 0, 0));
+ 
+-    let x = (w as i32 - crop_w as i32) / 2;
+-    let y = (h as i32 - crop_h as i32) / 2;
++    let (bg_w, bg_h) = (scaled_image.image.width(), scaled_image.image.height());
+     scaled_image
+-        .roi(&Rect::new(crop_x as i32, crop_y as i32, crop_w, crop_h))
+-        .draw(window, x, y);
++        .image
++        .roi(&Rect::new(0, 0, bg_w, bg_h))
++        .draw(window, scaled_image.x, scaled_image.y);
+ 
+     let x = (window.width() as i32 - 216 * s_i) / 2;
+     let y = (window.height() as i32 - 164 * s_i) / 2;
