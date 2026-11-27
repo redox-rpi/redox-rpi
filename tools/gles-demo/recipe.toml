@@ -1,0 +1,14 @@
+# The [build] part of the recipe; scripts/build-image.sh adds [source].
+# gles-demo (#669): a rotating cube in OpenGL ES 2.0, drawn off-screen
+# through EGL surfaceless (Mesa's v3d driver) and copied into an Orbital
+# window with liborbital. Linked dynamically, as gles-probe.
+[build]
+template = "custom"
+dependencies = ["mesa", "liborbital"]
+script = """
+DYNAMIC_INIT
+"${CC}" ${CFLAGS} ${CPPFLAGS} "-I${COOKBOOK_SYSROOT}/include" "-I${COOKBOOK_SYSROOT}/usr/include" -O2 -Wall \\
+    -o gles-demo "${COOKBOOK_SOURCE}/gles-demo.c" ${LDFLAGS} -lEGL -lGLESv2 -lorbital -lm
+mkdir -p "${COOKBOOK_STAGE}/usr/bin"
+cp gles-demo "${COOKBOOK_STAGE}/usr/bin/gles-demo"
+"""

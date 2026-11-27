@@ -5,8 +5,8 @@
 # SIGKILL (so it cannot remove its name), start it again under the same name
 # and list its root through it.
 #
-# Needs an image with fatfsd (experiment usb-fat) and, for the fix,
-# --experiment scheme-reregister. Without the fix the second fatfsd fails.
+# Needs an image with fatfsd (experiment redox-fatfs2). The fix is base
+# patch 0123 (default since #693); without it the second fatfsd fails.
 # The host port for devshd is 12324, or T117_PORT=<port>.
 #
 # Usage:
@@ -53,7 +53,8 @@ qemu=$!
 trap 'kill $qemu 2>/dev/null; sleep 1; pkill -P $qemu 2>/dev/null' EXIT
 
 for _ in $(seq 60); do
-    devsh "echo ready" | grep -q ready && break
+    # devshd may answer before bcm2835-sdhostd lists the card's partitions.
+    devsh "ls /scheme/disk.mmc" | grep -aqx "0p1" && break
     sleep 3
 done
 

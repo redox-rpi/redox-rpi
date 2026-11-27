@@ -1,4 +1,4 @@
-From 9c941989102d596a4a4c35456f9375123728a79c Mon Sep 17 00:00:00 2001
+From 98d35dba43831b639fc40b996e23fb1b8a137f80 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Wed, 4 Nov 2026 19:46:41 +0100
 Subject: [PATCH] dwc2d: RPI_ETH_SPEED sets the LAN7800 speed from the first
@@ -76,10 +76,10 @@ index e405d55..3e007ea 100644
  pub fn link(bus: &mut Bus, f: &Lan78xxFunction) -> Result<bool, Error> {
      Regs { bus, f }.link()
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index 7f154f4..f005bcc 100644
+index 545b918..3cad661 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -520,6 +520,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -525,6 +525,7 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      let boot_start = Instant::now();
      let mut hc = Dwc2::new(base);
      println!("dwc2d: controller at {:#x}, core id {:#010x}", phys, hc.id());

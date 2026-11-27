@@ -16,7 +16,7 @@ Per `[interface.<name>]` section:
 
 | Key | Values | Now |
 |---|---|---|
-| `boards` | list of board names, e.g. `["raspi3bp"]` | used: the section applies only on these boards; missing means every board |
+| `boards` | list of board names, e.g. `["raspi3bp"]` | used: the section applies only on these boards (see Board names); missing means every board |
 | `ipv4` | `"dhcp"`, `"static"`, `"off"` (default `"off"`) | `"dhcp"` and `"off"`; `"static"` gives one line "not supported yet" |
 | `ipv6` | `"slaac"`, `"static"`, `"off"` (default `"off"`) | accepted, not used yet |
 | `address` | `"192.168.1.20/24"` | later, with `ipv4 = "static"` |
@@ -25,6 +25,22 @@ Per `[interface.<name>]` section:
 
 Any other key is an error: dhcpd prints one line and starts nothing from
 the file, so a key from a newer image is not silently ignored.
+
+## Board names
+
+dhcpd reads the board from the devicetree when it starts (the root
+`compatible`), so the same image works on every board. A `boards` entry
+matches either a short name or any root `compatible` string:
+
+| Short name | Board | devicetree |
+|---|---|---|
+| `raspi3bp` | Pi 3 Model B+ (also QEMU raspi3b with our scripts, which pass the 3B+ devicetree) | `raspberrypi,3-model-b-plus` |
+| `raspi3b` | Pi 3 Model B | `raspberrypi,3-model-b` |
+| `zero2w` | Pi Zero 2 W | `raspberrypi,model-zero-2-w` |
+| `raspi4b` | Pi 4 Model B | `raspberrypi,4-model-b` |
+| `pi400` | Pi 400 | `raspberrypi,400` |
+
+A SoC name such as `brcm,bcm2711` (Pi 4 and Pi 400) also works.
 
 ## Interface names
 
