@@ -112,7 +112,9 @@ def clean(rel):
     name = os.path.basename(rel)
     shutil.rmtree(os.path.join(recipe, "target"), ignore_errors=True)
     source = os.path.join(recipe, "source")
-    if os.path.isdir(os.path.join(source, ".git")):
+    # A same_as recipe's source is a link to another recipe's (relibc-tests-bins
+    # to relibc): leave it, or that recipe loses its patches.
+    if not os.path.islink(source) and os.path.isdir(os.path.join(source, ".git")):
         subprocess.run(["git", "-C", source, "reset", "-q", "--hard"], check=False)
         # -ff: also nested repositories, which -f leaves.
         subprocess.run(["git", "-C", source, "clean", "-ffdxq"], check=False)
