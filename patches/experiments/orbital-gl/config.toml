@@ -1,0 +1,7 @@
+# Experiment orbital-gl (#670, G4 step 3, test only): Orbital composites on
+# the GPU through EGL and Mesa's v3d driver, into its display buffers
+# (dma-buf). List it after orbital, vc4d, v3dd, v3d-ioctl, mesa-v3d and
+# v3d-prime: its orbital recipe builds Orbital from source.
+
+[packages]
+orbital = "source"
