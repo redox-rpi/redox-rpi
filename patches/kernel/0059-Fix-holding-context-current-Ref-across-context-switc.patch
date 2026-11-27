@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=E6=9C=9D=E5=80=89=E6=B0=B4=E5=B8=8C?= <mizuk1@mzk1.dev>
+Date: Sun, 8 Nov 2026 01:17:13 +0800
+Subject: [PATCH 59/60] Fix holding context::current() Ref across
+ context::switch
+
+---
+ src/context/memory.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index c404a40f..511a53c0 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -2840,7 +2840,7 @@ fn correct_inner<'l>(
+                 .request_fmap(scheme_number, offset, 1, flags, &mut token)
+                 .unwrap();
+ 
+-            let context_lock = crate::context::current();
++            let context_lock = Arc::clone(&*crate::context::current());
+             context_lock
+                 .write(token.token())
+                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
+-- 
+2.53.0
+
