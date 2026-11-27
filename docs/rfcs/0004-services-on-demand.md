@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft |
 | Created | 2026-11-27 |
-| Issues | [#764](https://github.com/redox-rpi/redox-rpi/issues/764), [#765](https://github.com/redox-rpi/redox-rpi/issues/765), [#766](https://github.com/redox-rpi/redox-rpi/issues/766), [#767](https://github.com/redox-rpi/redox-rpi/issues/767); related [#763](https://github.com/redox-rpi/redox-rpi/issues/763), [#622](https://github.com/redox-rpi/redox-rpi/issues/622) |
+| Issues | [#764](https://github.com/redox-rpi/redox-rpi/issues/764), [#765](https://github.com/redox-rpi/redox-rpi/issues/765), [#766](https://github.com/redox-rpi/redox-rpi/issues/766), [#767](https://github.com/redox-rpi/redox-rpi/issues/767), [#768](https://github.com/redox-rpi/redox-rpi/issues/768); related [#763](https://github.com/redox-rpi/redox-rpi/issues/763), [#622](https://github.com/redox-rpi/redox-rpi/issues/622) |
 | Releases | v0.8.0 (dhcpd on link state), later steps open |
 
 ## Summary
@@ -109,7 +109,7 @@ overstates what removing a service would free. Boot times are from
 | `dhcpd` (`10_dhcpd`) | always, resident | an interface with `ipv4 = "dhcp"` (#622) has a link | start or work on link up; on link down release the lease and remove address and routes (#763) | 1.9 MB | **first step** |
 | `timesync` (release image) | once at boot, then by timer | the network has an address | start after the first lease; exit after setting the clock; repeat through `timerd` | small, exits | with the dhcpd step |
 | `netstack` | always | an interface exists, or a program uses a local socket | keep; start before the first interface or local socket | 6.9 MB | keep for now |
-| `devshd` (`11_devshd`) | always, TCP port 2323, no login | development only | not in release images; in lab images explicitly | 5.2 MB | **release: off** |
+| `devshd` (`11_devshd`) | lab netboot image only (`config/raspi3bp.toml`); release images (`raspi3bp-sdcard.toml`, `--release-netboot`) already have none | lab tests | out of the image; installed on the card's data partition and started by a lab hook ([Lab tools](#lab-tools-outside-the-image)) | 5.2 MB | lab tools |
 | `audiod`, `bcm2835-pwmaudio`, startup sound | always | a program opens `/scheme/audio`, or the startup sound is on | scheme activation; startup sound only if on | 3.6 + 1.7 MB; pwmaudio had 1.0 s CPU in the first minute in QEMU | check the idle CPU now; on demand later |
 | `bcm2835-gpiod`, `-i2cd`, `-spid` (initfs) | always | a program or driver uses GPIO, I2C or SPI (the 3B+ power LED uses GPIO) | gpiod: keep (LED); i2cd and spid: scheme activation, or only with a devicetree overlay | 1.6 MB each | i2c and spi on demand |
 | `vesad`, `fbbootlogd`, `fbcond`, `getty@2` + `login` | always | a monitor is connected | start on EDID or hotplug from `rpi-fbd` (experiment); on a headless board not at all | about 4 + 7.7 + 6.2 + 1.9 + 5.9 MB | later, with `rpi-fbd` hotplug |
@@ -136,6 +136,111 @@ What the numbers say:
   the oneshot services that hold up the boot (governor, `/tmp`), not
   from the resident ones.
 
+## Lab tools outside the image
+
+The lab netboot image (`config/raspi3bp.toml`) differs from the release
+netboot image (`--release-netboot`) by a few things only: `devshd`,
+`socdump`, the data partition mount (`60_data`) and the startup-sound unit
+that uses it. Non-release builds also get the test experiments
+(`netstack-watch`, `oom-test`). The idea: the lab image becomes the release
+image plus one small hook. The lab tools are installed once on the test
+card's data partition and stay there until a new version is needed.
+
+### Where they live
+
+- The lab tools are packages in the lab package repository on the build
+  host (experiment `pkg-repo`, published with `scripts/publish-pkg-repo.sh`).
+  One package `redox-rpi-lab` depends on them: `devshd`, `socdump`,
+  `oomtest`, more later.
+- They are installed with `pkg-persist` (experiment `pkg-persist`) into
+  `/scheme/data/pkg` on the data partition. That partition survives a reset
+  and a netboot.
+- At boot the lab hook does two things, both only in the lab image:
+  - `pkg-persist` copies the files into the RAM root (`61_pkg-persist`, as
+    today);
+  - `62_lab.service` starts `devshd` if `/usr/bin/devshd` exists and its
+    version matches. That is a boot condition from step 3
+    ([#766](https://github.com/redox-rpi/redox-rpi/issues/766)).
+
+### Version check
+
+A lab tool is linked against the image's relibc and talks to the kernel
+and the schemes. So what has to match is not the tool's own version but
+the system ABI:
+
+- The build writes `/etc/lab/abi` into the lab image: a short hash of the
+  pinned kernel and relibc commits plus `patches/kernel` and
+  `patches/relibc`.
+- The lab packages are built with the same hash in their version
+  (`<version>+abi<hash>`), and `pkg-persist` records it.
+- The hook compares the two. If they differ, it starts nothing and writes
+  one line: `lab: tools built for abi X, image has abi Y; reinstall`.
+  `devshd` then does not answer, which is the signal for Pi Tests below.
+- Linking `devshd` statically, as `sigregs` already is, takes relibc out
+  of the dependency, but kernel and scheme changes still count. The ABI
+  check stays either way.
+
+### Replacing a version
+
+`pkg-persist update` (or `install` after an ABI change) puts the new
+version into `/scheme/data/pkg` and copies it into `/`. `pkg` replaces a
+package only after its download is complete. If the install fails, the old
+version stays on the partition, and the hook still refuses it while the
+ABI differs. Nothing half-installed is started. The tools are replaced
+only when the ABI hash or a lab package changes, not with every image.
+
+### Installing over the serial console, with no person
+
+Pi Tests already drives the release netboot image over the serial console
+alone (T-SEC rows), so the pieces exist:
+
+1. Stage the lab image and boot it. `pi-test.py` waits for
+   `redox login:` on serial and tries devsh, as today.
+2. If devsh does not answer within 30 s after the login prompt (new card,
+   data partition reset, ABI changed), `pi-test.py --ensure-lab` logs in
+   on the serial console. It runs `pkg-persist install redox-rpi-lab`,
+   then `/usr/lib/lab/start` (the hook's start step), and waits for devsh.
+   This takes about a minute, mostly the download over the LAN.
+3. Then the row goes on through devsh as today. `pi-test.py` notes in its
+   result whether it installed or found the tools.
+
+What the serial console needs:
+
+- the serial `getty` with a root login, which the image has today
+  (`30_getty_debug`);
+- network and the lab package repository on the build host's HTTP server
+  (already there for `pkg-repo`);
+- typing through the one serial reader that Pi Tests already uses (never
+  a second `ttyUSB0` reader).
+
+There is no file transfer over the serial line. Fallback without network,
+if ever needed: a base64 archive typed into `base64 -d`. `devshd` is about
+260 KB, so that is roughly 30 s at 115200 baud.
+
+### Effect on the scripts and images
+
+| Part | Change |
+|---|---|
+| `scripts/pi-test.py` | `--ensure-lab`: install over serial when devsh is missing (above); otherwise unchanged |
+| `scripts/netboot.sh` | none (it stages files and does not use devsh) |
+| lab image (`config/raspi3bp.toml`) | becomes `raspi3bp-release-netboot.toml` plus the data mount, `pkg-persist` and the lab hook; no `devshd` and no `socdump` packages |
+| release images (`raspi3bp-sdcard.toml`, `--release-netboot`) | no change: no lab hook, so even a card with lab tools on its data partition starts nothing and nothing listens. A release-build check fails the build if `devshd` or the hook is in the image ([#765](https://github.com/redox-rpi/redox-rpi/issues/765)) |
+| person tests, the Zero 2 W and Pi 400 cards | each card needs one install; the install is the same |
+
+### What it gains
+
+- **Size:** small. `devshd` is 258 KB, `socdump` 322 KB and `oomtest`
+  390 KB, so under 1 MB of the image's 256 MiB file system. The
+  netboot image does not get noticeably faster to load.
+- **The real gain:** the lab image and the release image become the same
+  except for the hook, so every lab row tests what users get. There is one
+  image variant less to keep in step. Lab tools can change without a new
+  image, as long as the ABI is the same.
+- **Cost:** the first boot after an ABI change, or of a fresh card, takes
+  about a minute more. A test that wipes the data partition reinstalls.
+  `devshd` starts after the data partition and the network, a little later
+  than now.
+
 ## Not in this RFC
 
 - No new init system. This extends the units Redox already has.
@@ -148,7 +253,8 @@ What the numbers say:
 | Step | Content | Issue |
 |---|---|---|
 | 1 | dhcpd on link state: work starts on link up for interfaces in the config; on link down release the lease and remove address and routes; no retries while the link is down | [#764](https://github.com/redox-rpi/redox-rpi/issues/764), refs #763, #622 |
-| 2 | `devshd` not in release images; lab images keep it explicitly | [#765](https://github.com/redox-rpi/redox-rpi/issues/765) |
+| 2 | release-build check (no `devshd`, no lab hook) and a user-guide note on how to get a development shell | [#765](https://github.com/redox-rpi/redox-rpi/issues/765) |
+| 2b | lab tools outside the image: `redox-rpi-lab` package, ABI check, lab hook, `pi-test.py --ensure-lab` | [#768](https://github.com/redox-rpi/redox-rpi/issues/768), after #766 |
 | 3 | init conditions at boot: devicetree node, file present; use them for `60_data`, the governor, i2c and spi | [#766](https://github.com/redox-rpi/redox-rpi/issues/766) |
 | 4 | audio idle cost: why `bcm2835-pwmaudio` uses CPU with nothing playing; stop the stream when idle | [#767](https://github.com/redox-rpi/redox-rpi/issues/767) |
 | 5 | init event triggers (`start_on`, `stop_on`) from `netcfg`; move dhcpd and timesync onto them | after step 1 |
