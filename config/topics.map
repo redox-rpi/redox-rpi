@@ -11,6 +11,7 @@
 
 # Shared by most changes
 scripts/build-image.sh                  -
+scripts/package-origins.py              ci
 patches/README.md                       -
 config/upstream.lock                    ci
 
