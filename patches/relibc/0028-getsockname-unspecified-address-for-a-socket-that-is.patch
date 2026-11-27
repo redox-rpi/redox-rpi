@@ -1,0 +1,105 @@
+From e9f38600e5e15ab63f51cccf2b158594ba4ae5ed Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 11:09:55 +0000
+Subject: [PATCH] getsockname: unspecified address for a socket that is not
+ bound or connected
+
+A socket that is neither bound nor connected has only the scheme base
+path as its fpath (netstack's Handle::Null, "/scheme/tcp/"), and
+inner_af_inet panicked with "missing address", which killed the
+process. OpenSSH's ssh client calls getsockname on such a socket before
+it connects, so every ssh connection died (redox-rpi #712). Return
+0.0.0.0:0 instead, as Linux does.
+
+Test sys_socket/getsockname_unbound: TCP and UDP, the output is the one
+Linux gives.
+---
+ src/platform/redox/socket.rs                  |  6 +++-
+ tests/Makefile.tests.mk                       |  1 +
+ .../sys_socket/getsockname_unbound.stdout     |  2 ++
+ tests/sys_socket/getsockname_unbound.c        | 35 +++++++++++++++++++
+ 4 files changed, 43 insertions(+), 1 deletion(-)
+ create mode 100644 tests/expected/sys_socket/getsockname_unbound.stdout
+ create mode 100644 tests/sys_socket/getsockname_unbound.c
+
+diff --git a/src/platform/redox/socket.rs b/src/platform/redox/socket.rs
+index b3d0834..e56f77e 100644
+--- a/src/platform/redox/socket.rs
++++ b/src/platform/redox/socket.rs
+@@ -129,7 +129,11 @@ fn inner_af_inet(local: bool, buf: &[u8], address_dst: &mut [u8]) -> socklen_t {
+         // Skip the remote part
+         parts.next();
+     }
+-    let mut unparsed_addr = Vec::from(parts.next().expect("missing address"));
++    // A socket that is not bound or connected yet has only the scheme's
++    // base path (netstack's Handle::Null, e.g. "/scheme/tcp/"): its name is
++    // the unspecified address, as on other systems.
++    let part = parts.next().filter(|p| p.contains(&b':')).unwrap_or(&b"0.0.0.0:0"[..]);
++    let mut unparsed_addr = Vec::from(part);
+ 
+     let sep = memchr::memchr(b':', &unparsed_addr).expect("missing port");
+     let (raw_addr, rest) = unparsed_addr.split_at_mut(sep);
+diff --git a/tests/Makefile.tests.mk b/tests/Makefile.tests.mk
+index a3a45a0..439ea2a 100644
+--- a/tests/Makefile.tests.mk
++++ b/tests/Makefile.tests.mk
+@@ -148,6 +148,7 @@ EXPECT_NAMES=\
+ 	sys_select/pselect \
+ 	sys_shm/shm \
+ 	sys_socket/getsockopt \
++	sys_socket/getsockname_unbound \
+ 	sys_socket/recv \
+ 	sys_socket/recvfrom \
+ 	sys_socket/unixnonblock \
+diff --git a/tests/expected/sys_socket/getsockname_unbound.stdout b/tests/expected/sys_socket/getsockname_unbound.stdout
+new file mode 100644
+index 0000000..2c036ee
+--- /dev/null
++++ b/tests/expected/sys_socket/getsockname_unbound.stdout
+@@ -0,0 +1,2 @@
++tcp: family 2, 0.0.0.0:0, len 16
++udp: family 2, 0.0.0.0:0, len 16
+diff --git a/tests/sys_socket/getsockname_unbound.c b/tests/sys_socket/getsockname_unbound.c
+new file mode 100644
+index 0000000..d24b7d3
+--- /dev/null
++++ b/tests/sys_socket/getsockname_unbound.c
+@@ -0,0 +1,35 @@
++// getsockname on a socket that is neither bound nor connected gives the
++// unspecified address (0.0.0.0:0), as on Linux. OpenSSH's ssh client does
++// this before it connects.
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/socket.h>
++
++#include "test_helpers.h"
++
++static void check(const char *name, int type) {
++    int fd = socket(AF_INET, type, 0);
++    ERROR_IF(socket, fd, == -1);
++
++    struct sockaddr_in addr;
++    memset(&addr, 0xff, sizeof(addr));
++    socklen_t len = sizeof(addr);
++    int status = getsockname(fd, (struct sockaddr *)&addr, &len);
++    ERROR_IF(getsockname, status, == -1);
++
++    char text[INET_ADDRSTRLEN];
++    inet_ntop(AF_INET, &addr.sin_addr, text, sizeof(text));
++    printf("%s: family %d, %s:%d, len %d\n", name, addr.sin_family, text,
++           ntohs(addr.sin_port), (int)len);
++
++    status = close(fd);
++    ERROR_IF(close, status, == -1);
++}
++
++int main(void) {
++    check("tcp", SOCK_STREAM);
++    check("udp", SOCK_DGRAM);
++    return EXIT_SUCCESS;
++}
+-- 
+2.53.0
+
