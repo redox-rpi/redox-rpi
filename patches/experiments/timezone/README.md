@@ -1,11 +1,14 @@
 # Experiment: time zone
 
-Issue [#46](https://github.com/redox-rpi/redox-rpi/issues/46), planned for
-v0.5.0. Local time with summer time, here Europe/Berlin.
+> **Now default** (maintainer decision, 2026-11-24, issue
+> [#46](https://github.com/redox-rpi/redox-rpi/issues/46)). The package
+> `zoneinfo` and the link `/etc/localtime` (Europe/Berlin) are in
+> [`config/raspi3bp-sdcard.toml`](../../../config/raspi3bp-sdcard.toml), so
+> every image has them. This directory keeps only this README, so commands
+> with `--experiment timezone` (older release commands) still build. The
+> text below is the history of the experiment.
 
-```bash
-scripts/build-image.sh --experiment timesync --experiment timerd --experiment timezone
-```
+Local time with summer time, here Europe/Berlin.
 
 As on Linux, `/etc/localtime` is a symlink to the zone's file in
 `/usr/share/zoneinfo`. The two kinds of programs on Redox use it
@@ -18,8 +21,9 @@ differently:
 
 So the image needs both: the package `zoneinfo`
 ([`tools/zoneinfo`](../../../tools/zoneinfo)) with the zone files, and the
-link, set in [`config.toml`](config.toml). To use another zone, add its
-file to `tools/zoneinfo` and change the link.
+link, now set in
+[`config/raspi3bp-sdcard.toml`](../../../config/raspi3bp-sdcard.toml). To use
+another zone, add its file to `tools/zoneinfo` and change the link.
 
 `TZ` in the environment overrides the link for one program, for example
 `env TZ=UTC date`. relibc understands only zone names there (`Europe/Berlin`),

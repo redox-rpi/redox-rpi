@@ -1,0 +1,82 @@
+[source]
+git = "https://gitlab.redox-os.org/redox-os/mesa.git"
+upstream = "https://gitlab.freedesktop.org/mesa/mesa"
+branch = "redox-24.0"
+shallow_clone = true
+[build]
+template = "custom"
+dependencies = [
+    "expat",
+    "libdrm",
+    "liborbital",
+    "zlib",
+    # disabled, see https://gitlab.redox-os.org/redox-os/redox/-/work_items/1883
+    # "libglvnd",
+]
+script = """
+DYNAMIC_INIT
+
+# G3 (#669): Mesa's own DRM uapi header leaves out sys/ioccom.h on
+# Redox but includes nothing instead, so _IOWR is missing; relibc has it in
+# sys/ioctl.h, which the libdrm port includes.
+grep -q "sys/ioctl.h" "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h" || \\
+    sed -i '0,/^#include <stdint.h>/s//#include <stdint.h>\\n#include <sys\\/ioctl.h>/' "${COOKBOOK_SOURCE}/include/drm-uapi/drm.h"
+
+# G3 (#669): relibc has no sys/sysinfo.h; the v3d driver only takes the
+# RAM size from it, which Mesa's os_get_total_physical_memory() also gives.
+V3DS="${COOKBOOK_SOURCE}/src/gallium/drivers/v3d/v3d_screen.c"
+if grep -q "sysinfo(&si)" "$V3DS"; then sed -i \\
+    -e 's|^#include <sys/sysinfo.h>|/* sys/sysinfo.h: not on Redox */|' \\
+    -e 's|struct sysinfo si;|uint64_t totalram = 0;|' \\
+    -e 's|sysinfo(&si);|os_get_total_physical_memory(\\&totalram);|' \\
+    -e 's|{ si.totalram }|{ totalram }|' "$V3DS"; fi
+
+# G3 (#669): with -Dshader-cache=disabled, v3d_screen.c still reads
+# screen->disk_cache, which only exists with ENABLE_SHADER_CACHE (an
+# upstream slip in Mesa 24.0).
+if grep -q "^        return screen->disk_cache;" "$V3DS"; then sed -i \\
+    "s|^        return screen->disk_cache;|#ifdef ENABLE_SHADER_CACHE\\n        return screen->disk_cache;\\n#else\\n        return NULL;\\n#endif|" "$V3DS"; fi
+
+# G4 (#670): PIPE_CAP_DMABUF asks the DRM driver for PRIME support
+# (DRM_CAP_PRIME) only on Linux, the BSDs and Managarm and answers 0
+# elsewhere, so EGL never offered dma-buf import on Redox. With a v3dd
+# without PRIME the query fails and the answer stays 0, as before.
+US="${COOKBOOK_SOURCE}/src/gallium/auxiliary/util/u_screen.c"
+grep -q "DETECT_OS_MANAGARM || DETECT_OS_REDOX" "$US" || \\
+    sed -i 's/DETECT_OS_BSD || DETECT_OS_MANAGARM)/DETECT_OS_BSD || DETECT_OS_MANAGARM || DETECT_OS_REDOX)/' "$US"
+
+# G4 (#670): glFinish asks v3d for a fence, which v3d makes by
+# exporting the last job's syncobj as a sync file (SYNCOBJ_HANDLE_TO_FD).
+# Redox has no sync files, the export fails, and v3d then returned no fence,
+# so glFinish did not wait for the GPU. Wait on the syncobj there instead.
+VC="${COOKBOOK_SOURCE}/src/gallium/drivers/v3d/v3d_context.c"
+grep -q "redox-rpi #670: no sync file" "$VC" || \\
+    sed -i '/"export failed/c\\                        drmSyncobjWait(v3d->fd, &v3d->out_sync, 1, INT64_MAX, 0, NULL); /* redox-rpi #670: no sync file export on Redox; wait, so glFinish ends after the GPU */' "$VC"
+
+#TODO: Should be CPPFLAGS but cookbook_meson isn't reading it
+export CFLAGS+=" -DHAVE_PTHREAD=1 -I${COOKBOOK_SYSROOT}/include/libdrm"
+export LDFLAGS+=" -lorbital"
+
+if [ "${COOKBOOK_DYNAMIC}" = "1" ]; then
+    # TODO: Fix wayland-scanner and enable wayland platform
+    # G3 (#669): no LLVM and no lavapipe, so Mesa fits a netboot image
+    # (with LLVM, mesa.pkgar alone is about 590 MB).
+    COOKBOOK_MESON_FLAGS+=(-Degl=enabled -Dplatforms=redox -Dvulkan-drivers=)
+else
+    # No vulkan, lavapipe or EGL which is strictly requires shared library support
+    COOKBOOK_MESON_FLAGS+=(-Dshared-llvm=disabled -Dshared-glapi=disabled -Dgbm=disabled -Dplatforms=)
+fi
+
+cookbook_meson \
+    -Ddri-drivers-path=/usr/lib/dri \
+    -Dglx=disabled \
+    -Dllvm=disabled \
+    -Dzstd=disabled \
+    -Dosmesa=true \
+    -Dshader-cache=disabled \
+    -Dgallium-drivers=swrast,v3d -Dtools=
+
+# G3 (#669): the build links every kmsro driver name to the same
+# megadriver, and the image would get each as a copy. Keep v3d and swrast.
+find "${COOKBOOK_STAGE}/usr/lib/dri" -name "*_dri.so" ! -name v3d_dri.so ! -name swrast_dri.so -delete
+"""

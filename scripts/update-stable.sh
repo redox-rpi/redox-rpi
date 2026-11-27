@@ -23,7 +23,9 @@
 #      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py. Network records (#259,
+#      serial console and run the regression set's oom and end checks
+#      (#676), then scripts/pi-test.py with the serial check (#674); both
+#      must pass. Network records (#259,
 #      scripts/network-record.py): the boot (seconds from the login prompt to
 #      the first devsh login), then a 15-minute soak after pi-test.py, pass
 #      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
@@ -43,6 +45,12 @@
 #   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
 #   its --summary goes into the day's report too. Skipped while the script
 #   does not exist; never fails this script.
+#   Every night, after the Redox part: the TinyCC VC4 track (#410), not
+#   gating. scripts/tcc-track.sh builds the bootcode with GCC and TCC and
+#   runs the resim tests; scripts/tcc-track-pi.py
+#   compares both on the Pi when it exists and no row is on the Pi; the
+#   record (scripts/tcc-track-record.py) goes into tcc.jsonl in
+#   redox-rpi/pi-tests. Logs in ~/redox-rpi/logs/tcc-track/<date>/.
 #
 # GitHub access: a token in ~/.config/redox-rpi/github-token (mode 600) with
 # write access to issues of redox-rpi/redox-rpi and to contents of
@@ -79,6 +87,8 @@ SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
 # Minutes of chaos in QEMU before the Pi test (#677); 0 leaves it out.
 CHAOS_MINUTES="${CHAOS_MINUTES:-15}"
+# Serial logs of the lab Pis, read for the panic KPI (#675).
+SERIAL_LOGS="${SERIAL_LOGS:-$HOME/redox-rpi/logs}"
 ISSUE_TITLE="Nightly: main fails on the Pi"
 # Seconds from the reset to "redox-rpi: network boot", and to the login prompt
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
@@ -135,6 +145,20 @@ fi
 head="$(git rev-parse HEAD)"
 log "$ref is $(git describe --tags --match 'v[0-9]*') ($head)"
 
+# The token never appears on a command line, in a URL or in .git/config:
+# the credential helper and curl read it from the file.
+# git_push <dir>: push HEAD of the clone in <dir> to its main.
+git_push() {
+    git -C "$1" -c credential.helper= \
+        -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
+        push -q origin HEAD:main
+}
+
+github() {
+    curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' < "$TOKEN_FILE")") \
+        -H "Accept: application/vnd.github+json" "$@"
+}
+
 # Quality KPIs (Quality's scripts/quality-kpis.py, PR #262; interface agreed
 # 2026-11-10): reads GitHub and git only, writes $kpis_dir. Never fails.
 kpis_dir=""
@@ -146,14 +170,79 @@ run_kpis() {
     kpis_dir="$(mktemp -d)"
     local clippy=()
     [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    # Panic KPI (#675): the kernel source of the last build and the serial logs.
+    local panic=()
+    [ -d upstream/redox/recipes/core/kernel/source/src ] && panic+=(--kernel upstream/redox/recipes/core/kernel/source)
+    [ -d "$SERIAL_LOGS" ] && panic+=(--serial-logs "$SERIAL_LOGS")
     if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
-        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" "${panic[@]}" \
         > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
         log "quality KPIs collected"
     else
         log "quality-kpis.py failed: $(tail -n 1 "$kpis_dir/log.txt")"
         rm -rf "$kpis_dir"
         kpis_dir=""
+    fi
+    return 0
+}
+
+# TinyCC VC4 track (#410, WBS 2.15 point 3), once per night after the Redox
+# part, so the Pi is on the stable image (or the night's) when it starts.
+# Not gating: never fails this script and never changes the stable image.
+tccrec=""
+run_tcc_track() {
+    [ -z "$tccrec" ] || return 0
+    tccrec="$(mktemp)"
+    [ -x scripts/tcc-track.sh ] || { log "no scripts/tcc-track.sh at $ref, no TCC track"; return 0; }
+    local dir pi=() queue
+    dir="$HOME/redox-rpi/logs/tcc-track/$(date -u +%Y-%m-%d)"
+    mkdir -p "$dir"
+    log "TCC track: host part (log in $dir)"
+    rm -f "$dir/host.json" "$dir/pi.json"
+    timeout 1200 scripts/tcc-track.sh --out "$dir" > "$dir/run.log" 2>&1 ||
+        log "TCC track: host part failed: $(tail -n 1 "$dir/run.log")"
+    if [ -x scripts/tcc-track-pi.py ] && [ -s "$dir/G.bin" ] && [ -s "$dir/T.bin" ]; then
+        # The night's own check (step 2) did not run on a night without changes.
+        if ! queue="$(PI_TESTS_CLONE="$TESTS" scripts/pi-tests-queue.sh 2> /dev/null)" ||
+            grep -q '^| .*\*\*on the Pi\*\*' <<< "$queue"; then
+            log "TCC track: a test is on the Pi (or no queue), no Pi part"
+        else
+            log "TCC track: Pi part"
+            timeout 900 scripts/tcc-track-pi.py --g "$dir/G.bin" --t "$dir/T.bin" --out "$dir/pi.json" \
+                --pi "$PI" --serial "$SERIAL_DEV" >> "$dir/run.log" 2>&1 || log "TCC track: Pi part failed"
+            pi=(--pi "$dir/pi.json")
+            # Not back on Redox (or no answer at all): tell the Pi test agent
+            # and the maintainer; their rules decide about a power cycle.
+            if ! grep -q '"pi_back": true' "$dir/pi.json" 2> /dev/null; then
+                log "TCC track: the Pi is NOT back on Redox"
+                tcc_pi_not_back "$dir"
+            fi
+        fi
+    fi
+    # A record every night, also when the host part failed (resim_pass false).
+    python3 scripts/tcc-track-record.py --host "$dir/host.json" "${pi[@]}" \
+        --build "${build_id:-${stable_id:-none}}" --out "$tccrec" | sed 's/^/TCC track: /' ||
+        log "TCC track: no record"
+    return 0
+}
+
+# The TCC track's Pi part left the Pi off Redox: open or update an issue for
+# the Pi test agent (labels needs:pi, topic:ci). Never fails.
+tcc_pi_not_back() {
+    [ "$push" = 1 ] || { log "--no-push: no issue about the Pi"; return 0; }
+    local title="Nightly TCC track: the Pi did not come back to Redox" number payload body
+    body="The TinyCC VC4 track's Pi part (scripts/tcc-track-pi.py) ended on $(date -u '+%Y-%m-%d %H:%M') UTC without \`redox login:\` (step: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("step","?"))' "$1/pi.json" 2> /dev/null || echo "no pi.json")). The Pi may still be in the bootcode monitor. Pi test agent: please bring it back under your rules (power cycle to /srv/tftp/redox). Logs: \`$1\` on the build host."
+    number="$(github "https://api.github.com/repos/$REPO/issues?state=open&per_page=100" |
+        python3 -c 'import json, sys; t = sys.argv[1]
+print(next((str(i["number"]) for i in json.load(sys.stdin) if i["title"] == t and "pull_request" not in i), ""))' "$title" 2> /dev/null)" || true
+    if [ -n "$number" ]; then
+        payload="$(python3 -c 'import json, sys; print(json.dumps({"body": sys.argv[1]}))' "$body")"
+        github -X POST "https://api.github.com/repos/$REPO/issues/$number/comments" -d "$payload" > /dev/null &&
+            log "commented on issue #$number" || true
+    else
+        payload="$(python3 -c 'import json, sys; print(json.dumps({"title": sys.argv[1], "body": sys.argv[2], "labels": ["topic:ci", "needs:pi"]}))' "$title" "$body")"
+        github -X POST "https://api.github.com/repos/$REPO/issues" -d "$payload" > /dev/null &&
+            log "opened an issue: $title" || true
     fi
     return 0
 }
@@ -165,6 +254,10 @@ stage_kpis() {
         cat "$netrec" >> "$TESTS/network.jsonl"
         git -C "$TESTS" add network.jsonl
     fi
+    if [ -n "$tccrec" ] && [ -s "$tccrec" ]; then
+        cat "$tccrec" >> "$TESTS/tcc.jsonl"
+        git -C "$TESTS" add tcc.jsonl
+    fi
     [ -n "$kpis_dir" ] || return 0
     cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
     git -C "$TESTS" add kpis.md kpis.json
@@ -173,7 +266,8 @@ stage_kpis() {
 # Nights without a report (nothing new, or a failed build): the KPI page on
 # its own commit. Never fails.
 push_kpis_only() {
-    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || return 0
+    run_tcc_track
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || return 0
     [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
     git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
     stage_kpis
@@ -237,7 +331,12 @@ fi
 # One option per word; the file may end without a newline.
 mapfile -t options < <(grep -v '^#' config/stable-image.conf | tr -s ' \t' '\n' | grep -v '^$')
 log "building with: ${options[*]}"
-scripts/build-image.sh "${options[@]}"
+if ! scripts/build-image.sh "${options[@]}"; then
+    # A failed build still gets the night's KPIs and TCC track record.
+    log "the build failed"
+    push_kpis_only
+    exit 1
+fi
 image="$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img"
 manifest="$(readlink -f build/manifests/netboot-latest.toml)"
 build_id="$(sed -n 's/^build_id = "\(.*\)"$/\1/p' "$manifest")"
@@ -315,7 +414,7 @@ restore_stable() {
 report="$(mktemp)"
 output="$(mktemp)"
 netrec="$(mktemp)"
-trap 'rm -f "$report" "$output" "$netrec" "$0"' EXIT
+trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$0"' EXIT
 # Chaos in QEMU (#677): the new image under chaos with no memory reserve,
 # CHAOS_MINUTES minutes, before the Pi test. Reported, never fails the night
 # (QEMU first; the 3B+ follows through a pi-tests row once it is stable).
@@ -337,9 +436,19 @@ stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
 if reset_pi record; then
+    # Out of memory (#676, #644): oomtest in its three modes must end by
+    # SIGKILL, devsh must answer afterwards. pi-test.py follows, so its serial
+    # check (#674) sees any panic of this boot and its checks show that the
+    # system still works.
+    log "running the regression set's oom and end checks"
+    oom_ok=1
+    python3 scripts/regression-set.py "$PI" --only oom --only end --report "$report" 2>&1 | tee "$output" ||
+        oom_ok=0
     log "running scripts/pi-test.py"
     if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
-        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
+        --serial-log "$SERIAL_LOG" \
+        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee -a "$output" &&
+        [ "$oom_ok" = 1 ]; then
         passed=1
     fi
     # Soak on the tested build, pass or fail (#259, #92).
@@ -349,20 +458,6 @@ if reset_pi record; then
 else
     echo "FAIL boot: no login prompt on the serial console" | tee "$output"
 fi
-
-# The token never appears on a command line, in a URL or in .git/config:
-# the credential helper and curl read it from the file.
-# git_push <dir>: push HEAD of the clone in <dir> to its main.
-git_push() {
-    git -C "$1" -c credential.helper= \
-        -c "credential.helper=!f() { echo username=x-access-token; printf 'password='; tr -d '[:space:]' < '$TOKEN_FILE'; echo; }; f" \
-        push -q origin HEAD:main
-}
-
-github() {
-    curl -fsS -H @<(printf 'Authorization: Bearer %s\n' "$(tr -d '[:space:]' < "$TOKEN_FILE")") \
-        -H "Accept: application/vnd.github+json" "$@"
-}
 
 # Our pkg repository follows the stable image (#44). Never devshd, and the
 # signing key stays in ~/.config/redox-rpi/pkg-key. Every non-release build
@@ -399,6 +494,7 @@ if [ "$passed" = 1 ]; then
     ln -sfn "$(basename "$backup")" "$STABLE_LINK"
     log "$build_id is the stable image, backup in $backup"
     publish_pkg_repo
+    run_tcc_track
     summary="$(grep -E '^(PASS|FAIL) ' "$output" | cut -d: -f1 | paste -sd ' ' -)"
     starts="$(sed -n 's/^PASS starts: //p' "$output" | head -1)"
     # The report goes to pi-tests, on top of its newest main.

@@ -107,15 +107,20 @@ Known limits:
 
 """
 
-# The session orblogin starts after the login: the info window, then the
-# launcher (the session ends when the launcher does).
+# The session orblogin starts after the login: the launcher, then the info
+# window (the session ends when the launcher does). The launcher comes
+# first (#449): Orbital sends Super+key to the window it made first, and the
+# launcher handles Super+T; the info window, made a second later, is the
+# newest and has the focus, so Enter reaches it.
 [[files]]
 path = "/usr/bin/desktop-session"
 mode = 0o755
 data = """
 #!/usr/bin/ion
+launcher &
+sleep 1
 orbterm /usr/bin/desktop-welcome &!
-launcher
+wait
 """
 
 [[files]]

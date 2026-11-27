@@ -320,46 +320,32 @@ Branch [`graphics-fb`](https://github.com/redox-rpi/redox-rpi/tree/graphics-fb)
 
 ## Next
 
-Updated 2026-11-10. Done since the last version of this list: draft PR
-[#113](https://github.com/redox-rpi/redox-rpi/pull/113) merged on
-2026-11-08 (experiments `rpi-fb` and `orbital` on main, kernel `0049`);
-the optional desktop in v0.4.0 runs on `rpi-fbd`
-([#255](https://github.com/redox-rpi/redox-rpi/pull/255)), with a game in
-v0.4.1 ([#298](https://github.com/redox-rpi/redox-rpi/pull/298)). The
-#116, #130 and #138 named here before are Pi test rows of that PR, not
-issues; row #138 (the DMA test blit) is still in the queue but blocks
-nothing now. Graphics work goes on apart from the weekly releases
-(maintainer, 2026-11-10).
+Updated 2026-11-24. Maintainer decision, 2026-11-24: the Pi 400 graphics
+drivers come first, next to bug fixes. The plan has five work packages, in
+this order (each an issue under redox-rpi/vc4d#8):
 
-In this order:
+1. **G1, [#667](https://github.com/redox-rpi/redox-rpi/issues/667): vc4d
+   (HVS5) as the display driver of the Pi 400 image**, instead of
+   `rpi-fbd`: experiment `vc4d` on main, flips on the vertical blank
+   interrupt instead of a timer, the cursor plane and a dragged window on an
+   overlay plane in Orbital, plus #449 and #599. On the BCM2835 the firmware
+   takes the HVS interrupts and clears their status bits (found on
+   2026-11-10), so the vertical blank comes from pixel valve 2 if the
+   firmware leaves that one alone; vc4d's `irq probe` log lines answer it.
+2. **G2, [#668](https://github.com/redox-rpi/redox-rpi/issues/668):
+   asynchronous `v3dd`**: fences, a job queue, one address space per client,
+   a binary interface like the Linux v3d ioctls.
+3. **G3, [#669](https://github.com/redox-rpi/redox-rpi/issues/669): OpenGL ES
+   through Mesa's v3d driver.** The build spike passed: `v3d_dri.so`
+   builds against relibc with three small patches (branch `mesa-v3d-spike`).
+   What is left is the winsys on top of G2.
+4. **G4, [#670](https://github.com/redox-rpi/redox-rpi/issues/670): Orbital
+   composes on the GPU.**
+5. **G5, [#671](https://github.com/redox-rpi/redox-rpi/issues/671): display
+   modes set by vc4d on the BCM2711** (EDID, HDMI PHY, the second port).
 
-1. **Direct boot (v0.5.0, [#324](https://github.com/redox-rpi/redox-rpi/issues/324)) first, if it needs graphics:**
-   the desktop on the boot stub's framebuffer, without U-Boot. Anything
-   that blocks it comes before the steps below until the Friday cut-off.
-2. **Noise bands on HDMI with vc4d (Pi test #275).** vc4shot of the same
-   buffer is clean and the buffers are contiguous (#276). Found on
-   2026-11-10: the firmware still takes the HVS interrupts and clears the
-   latched status bits, so vc4d's underrun check (EUFLOW) could be blind.
-   Branch `vc4d-fifo-diag` (vc4d `underrun-diag`) reads the channel's live
-   FIFO state every second and logs the composite output buffer (COB)
-   split; `/tmp/vc4d.cob` gives the channel a larger part of the COB at
-   runtime. Pi row in [redox-rpi/pi-tests](https://github.com/redox-rpi/pi-tests)
-   (serial; a screen check only if the FIFO is clean).
-3. **vc4d stage 2b ([#188](https://github.com/redox-rpi/redox-rpi/issues/188)):**
-   pixel valves, HDMI, EDID and modes without the firmware, the vertical
-   blank and real hotplug. QEMU's raspi3b has no HVS, pixel valve or HDMI
-   model, so only the logic runs there (fake registers); each part needs a
-   Pi row. Screen checks are collected for one visit with the user.
-4. **vc4d host tests in CI ([#271](https://github.com/redox-rpi/redox-rpi/issues/271)):**
-   the pure logic (display lists, register fields, mode and timing math)
-   in a crate without Redox dependencies, so `cargo test` and clippy run
-   on the build server and in CI. Done before larger stage 2b changes, so they
-   are checked.
-5. **vc4d stage 1 into vc4d's main** ([vc4d#1](https://github.com/redox-rpi/vc4d/pull/1)),
-   then experiment `vc4d` on redox-rpi main (only a recipe pinned to a
-   vc4d commit, RFC 0002), still not the default display driver.
-6. **Windows as planes** (step 2 of the stage plan): needs changes in
-   Orbital; the window drag costs about 90 % of a core today (#259).
+Elsewhere: vc4d host tests in CI ([#271](https://github.com/redox-rpi/redox-rpi/issues/271))
+run in vc4d's own CI; the display stalls on the Zero 2 W are #563.
 
 ## Effort: estimate and what it took
 

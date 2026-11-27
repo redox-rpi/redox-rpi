@@ -1,8 +1,12 @@
 # Signals reach a process in waitpid() (#387, experiment `waitpid-signal`)
 
-Build with experiment `sigcont-restart` (its relibc `0001` comes first;
-this patch applies on top) and `tcc` for the check:
-`--experiment tcc --experiment sigcont-restart --experiment waitpid-signal`.
+The fix is a default patch since #690:
+[`patches/relibc/0022`](../../relibc/0022-redox-rt-deliver-a-pending-signal-before-and-after-a.patch).
+This experiment now only adds the check, which needs experiment tcc.
+
+For the check: `--experiment tcc --experiment waitpid-signal` (until #690
+it also needed experiment `sigcont-restart`, whose patch is now relibc
+`0021`).
 
 ## What was wrong
 
@@ -29,7 +33,7 @@ signals.
 ## Fix
 
 relibc patch
-[`0001`](relibc/0001-redox-rt-deliver-a-pending-signal-before-and-after-a.patch):
+[`patches/relibc/0022`](../../relibc/0022-redox-rt-deliver-a-pending-signal-before-and-after-a.patch):
 `wrapper()` enters the signal trampoline when a signal the thread allows
 is pending, right before the blocking call and again after a call that
 succeeded (new `currently_pending_unblocked()` in `signal.rs`). A signal

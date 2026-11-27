@@ -1,7 +1,6 @@
 # Experiment waitpid-signal (#387): a caught signal must reach a process
-# that blocks in waitpid() (patch relibc/0001, on top of experiment
-# sigcont-restart's relibc/0001: build with both). The check needs tcc in the image (experiment
-# tcc): `ion /usr/share/waitpid-signal/check.ion`.
+# that blocks in waitpid() (default patch patches/relibc/0022 since #690, on
+# top of 0021). The check needs tcc in the image (experiment tcc): `ion /usr/share/waitpid-signal/check.ion`.
 
 [[files]]
 path = "/usr/share/waitpid-signal/wpsig.c"

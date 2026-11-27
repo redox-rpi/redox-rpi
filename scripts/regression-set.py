@@ -74,6 +74,15 @@ Checks, in this order:
                 line holds A with X, Y and RZ set (skip without
                 gamepad-test, experiment gamepad-test, or when it reports
                 no controllers handle or no --console: #455)
+  oom           #644, #662: oomtest (experiment oom-test, a test experiment)
+                in its three modes, touch, touch with 4 idle threads and
+                pipe: each ends by SIGKILL (exit status 137), not with exit
+                status 2 (an allocation failed in user space) and not with
+                a dead devsh. Afterwards no oomtest context is left and
+                `free` shows at most OOM_USED_KB more used memory than
+                before. QEMU's raspi3b has 1 GiB, the 3B+ about 600 MB free:
+                each mode takes 5-10 s on the 3B+ (Test 598). Skip without
+                /usr/bin/oomtest
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -100,6 +109,9 @@ Checks, in this order:
                 ok: that is the expected end without a reserve. Each failed
                 round's repeat command is in the detail. Skip without
                 /usr/bin/chaos
+  end           #673: devsh still answers in a new session; the detail
+                gives `free` before the first check and now (not judged:
+                the RAM root keeps the files the checks wrote)
   serial        with --serial-log: no kernel panic, "panicked at",
                 "RELIBC PANIC", "UNHANDLED EXCEPTION" or "main loop stuck"
                 (#92, #151) in the whole log, and no pcid or rtcd (base 0030)
@@ -135,6 +147,10 @@ RAW_MAX = 200  # lines of raw output kept per failed check (the last ones)
 CHAOS_KINDS = "memory,procs,threads,fds,signals"
 CHAOS_BATCH = 5  # rounds per chaos run; each round has chaos's 60 s deadline
 CHAOS_ROUND = re.compile(r"round (\d+) (ok|FAIL kind=(\S+): ([^;]*?)(?:, health check failed)? \(\d+ ms\); repeat: (.*))")
+OOM_MODES = ("", "-t 4", "pipe")
+OOM_TIMEOUT = 300  # s per oomtest mode (5-10 s on the 3B+)
+OOM_USED_KB = 2048  # more used memory after the oomtest runs than before (Test 598: 148 KB)
+FREE_RE = re.compile(r"^Mem:\s+(\d+)\s+(\d+)\s+(\d+)", re.M)  # total, used, free (KB)
 
 # One line of C (no #include, so ion's echo can write it): the parent waits
 # for child c (exits 7 after 3 s) while child s sends it SIGWINCH (28) and
@@ -601,6 +617,57 @@ def check_chaos(check, args):
     check("chaos", not failed and not lost and rounds > 0, detail, raw=failed)
 
 
+def free_kb(sh):
+    """(total, used, free) in KB from `free`, or None."""
+    m = FREE_RE.search("\n".join(sh.run("free", timeout=30)))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def oom_run(sh, mode):
+    """(ok, note) of one oomtest run: the kernel must end it with SIGKILL."""
+    out = sh.run(f"oomtest {mode}; echo OOM-RC $?", timeout=OOM_TIMEOUT)
+    text = "\n".join(out)
+    rc = re.search(r"OOM-RC (\d+)", text)
+    mib = re.findall(r"oomtest: (\d+) MiB", text)
+    reached = f" after {mib[-1]} MiB" if mib else ""
+    if (rc and rc.group(1) == "137") or "SIGKILL" in text:
+        return True, f"SIGKILL{reached}"
+    if rc and rc.group(1) == "2":
+        return False, f"exit 2, an allocation failed in user space{reached}"
+    return False, (f"exit {rc.group(1)}" if rc else "no exit status (devsh lost?)") + reached
+
+
+def check_oom(sh, check):
+    if not has(sh, "/usr/bin/oomtest"):
+        check("oom", None, "no /usr/bin/oomtest (experiment oom-test)")
+        return
+    before = free_kb(sh)
+    notes, ok = [], True
+    for mode in OOM_MODES:
+        good, note = oom_run(sh, mode)
+        ok &= good
+        notes.append(f"oomtest {mode or 'touch'}: {note}")
+    left = sum(l.strip() == "1" for l in sh.run("grep -c oomtest /scheme/sys/context", timeout=30))
+    after = free_kb(sh)
+    grew = after[1] - before[1] if before and after else None
+    ok &= not left and grew is not None and grew <= OOM_USED_KB
+    notes.append("no oomtest context left" if not left else "an oomtest context is left")
+    notes.append(f"used memory {grew:+d} KB" if grew is not None else "no `free` output")
+    check("oom", ok, "; ".join(notes))
+
+
+def check_end(check, args, first_free):
+    sh = pi_test.Shell(args.host, args.port)
+    try:
+        alive = any(l.strip() == "END-ALIVE" for l in sh.run("echo END-ALIVE", timeout=30))
+        now = free_kb(sh) if alive else None
+    finally:
+        sh.close()
+    mem = (f"used {first_free[1]} KB at the start, {now[1]} KB now" if first_free and now
+           else "no `free` output")
+    check("end", alive, ("devsh answers; " if alive else "devsh does not answer; ") + mem)
+
+
 def check_serial(check, args):
     text = serial_text(args.serial_log)
     bad = [l.strip()[:100] for l in text.splitlines() if SERIAL_BAD.search(l)]
@@ -652,11 +719,13 @@ def main():
         return not args.only or name in args.only
 
     t0 = time.time()
+    first_free = None
     if want("basics"):
         check_basics(None, check, args)
     sh = pi_test.Shell(args.host, args.port)
     try:
         tcc = any(l.strip() == "yes" for l in sh.run("which tcc > /dev/null && echo yes || echo no"))
+        first_free = free_kb(sh)
         steps = [
             ("signals-stop", lambda: check_signals_stop(sh, check, args)),
             ("waitpid", lambda: check_waitpid(sh, check, args, tcc)),
@@ -673,6 +742,7 @@ def main():
             ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
             ("ifconfig-mac", lambda: check_ifconfig_mac(sh, check, args)),
             ("gamepad-console", lambda: check_gamepad_console(sh, check, args)),
+            ("oom", lambda: check_oom(sh, check)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.
             ("tcp", lambda: pi_test.check_tcp(sh, check, args.tcp_host or pi_test.local_ip(sh), args.tcp_mib)),
@@ -701,6 +771,11 @@ def main():
             check("sopwith", False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
         finally:
             sh.close()
+    if want("end"):
+        try:
+            check_end(check, args, first_free)
+        except Exception as e:
+            check("end", False, f"error: {type(e).__name__}: {str(e).splitlines()[0][:150]}")
     if args.serial_log and want("serial"):
         check_serial(check, args)
 
