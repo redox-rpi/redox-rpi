@@ -2,9 +2,10 @@
 
 For [#712](https://github.com/redox-rpi/redox-rpi/issues/712), stage 1 of
 [home-server-storage.md](../../../docs/home-server-storage.md). Needs the
-experiment `sshd` (file `needs`): its OpenSSH build gives the `ssh` client
-and `ssh-keygen`, and its relibc fixes (poll, setitimer) are needed by the
-client too.
+experiments `sshd` and `timesync` (file `needs`). The OpenSSH build of
+`sshd` gives the `ssh` client and `ssh-keygen`, and its relibc fixes (poll,
+setitimer) are needed by the client too. `timesync` sets the clock, so the
+backup folders get real dates instead of 1970-01-01.
 
 - Package `rsync` (upstream `net/rsync` 3.4.1, with openssl3, zstd, lz4,
   xxhash).
@@ -31,8 +32,9 @@ client too.
   - `pull` never writes over local files: it restores into a new folder.
   - Server away: `homesync: server <host> port <port> not reachable,
     nothing changed`, exit 1 (ssh and rsync exit with 255).
-  - Dates are UTC. Without `timesync` the clock starts in 1970, so the
-    folder names are only in order, not real dates.
+  - Dates are UTC, from the clock `timesync` sets. Before its first NTP
+    answer (or without it) the clock may still be at the build time or
+    in 1970, so the folder names are then only in order.
   - Keys and passwords never go on the command line.
 - Needs the default relibc patch `0028`: `getsockname` on a socket
   that is not bound or connected yet returns `0.0.0.0:0`. Without it
@@ -42,7 +44,7 @@ client too.
 ## Test
 
 `scripts/test-homesync.sh` (QEMU, after `scripts/build-image.sh
---experiment sshd --experiment homesync`): a throwaway `sshd` as the
+--experiment sshd --experiment timesync --experiment homesync`): a throwaway `sshd` as the
 calling user on a random high port of the build host, with its own host
 key and `authorized_keys` under `build/homesync-test/`, ended with the
 script. The guest makes 100 files of 64 KiB, then setup, push, change one
