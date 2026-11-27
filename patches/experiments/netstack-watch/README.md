@@ -27,13 +27,15 @@ netstack-watch: timer events again after 42 s
 ```
 
 That is a main loop waiting for events that never come: the case Pi test 213
-could not show (see below). Every 10 min it also writes a heartbeat:
+could not show (see below). Every minute it also writes a heartbeat:
 
 ```
-netstack-watch: alive at 600 s, idle for 0 s, 3456 events (2900 network), 3100 frames in
+netstack-watch: alive at 60 s, idle for 0 s, 3456 events (2900 network), 3100 frames in
 ```
 
-If the heartbeats stop, the watchdog thread itself isn't running. This is a
+If the heartbeats stop, the watchdog thread itself isn't running. No
+heartbeat and no devsh answer for 2 min marks a halted Pi (Pi Tests'
+crash rows, #673). This is a
 diagnostic, not a fix.
 
 **On by default in test images** (`config/test-experiments.conf`): every

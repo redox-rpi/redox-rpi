@@ -1,0 +1,119 @@
+From 9460da217953f086cf53322a35794866d10b6b63 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 00:25:09 +0000
+Subject: [PATCH] ioctl: PRIME_FD_TO_HANDLE of another driver's buffer sends
+ the fd to the device
+
+redox-rt's sys_call_ro/wo/rw passed the caller's flags without the fd
+type's extra flags, so a call on two fds (&[usize], MULTIPLE_FDS2) reached
+the kernel as a call on one fd numbered by the array's address, and failed
+with EBADF. PRIME_FD_TO_HANDLE uses such a call. Add fd.extra_flags() as
+redox_syscall's own call_ro/wo/rw do.
+
+The kernel takes a call with two fds only when both belong to one scheme
+(EXDEV otherwise). For a buffer of another driver (a display's scanout
+buffer for the GPU), send a clone of the fd to the device's scheme, which
+imports it. The kernel answers an fd-passing call with the number of fds
+sent, so a second PRIME_FD_TO_HANDLE call without a payload asks the
+device for the imported buffer's handle.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ redox-rt/src/sys.rs               | 10 +++++-----
+ src/header/sys_ioctl/redox/drm.rs | 27 +++++++++++++++++++++++++--
+ 2 files changed, 30 insertions(+), 7 deletions(-)
+
+diff --git a/redox-rt/src/sys.rs b/redox-rt/src/sys.rs
+index 237c4a32..8512c5c4 100644
+--- a/redox-rt/src/sys.rs
++++ b/redox-rt/src/sys.rs
+@@ -185,7 +185,7 @@ pub fn sys_call_ro<T: Call>(
+             fd.raw_call(
+                 payload.as_mut_ptr(),
+                 payload.len(),
+-                flags | CallFlags::READ,
++                flags | fd.extra_flags() | CallFlags::READ,
+                 metadata,
+             )
+         };
+@@ -236,7 +236,7 @@ pub fn sys_call_ro<T: Call>(
+         fd.raw_call(
+             payload.as_mut_ptr(),
+             payload.len(),
+-            flags | CallFlags::READ,
++            flags | fd.extra_flags() | CallFlags::READ,
+             metadata,
+         )
+     };
+@@ -263,7 +263,7 @@ pub fn sys_call_wo<T: Call>(
+             fd.raw_call(
+                 payload.as_ptr(),
+                 payload.len(),
+-                flags | CallFlags::WRITE,
++                flags | fd.extra_flags() | CallFlags::WRITE,
+                 metadata,
+             )
+         };
+@@ -284,7 +284,7 @@ pub fn sys_call_wo<T: Call>(
+         fd.raw_call(
+             payload.as_ptr(),
+             payload.len(),
+-            flags | CallFlags::WRITE,
++            flags | fd.extra_flags() | CallFlags::WRITE,
+             metadata,
+         )
+     };
+@@ -308,7 +308,7 @@ pub fn sys_call_rw<T: Call>(
+         fd.raw_call(
+             payload.as_mut_ptr(),
+             payload.len(),
+-            flags | CallFlags::READ | CallFlags::WRITE,
++            flags | fd.extra_flags() | CallFlags::READ | CallFlags::WRITE,
+             metadata,
+         )
+     }
+diff --git a/src/header/sys_ioctl/redox/drm.rs b/src/header/sys_ioctl/redox/drm.rs
+index 39765b52..d9f305a1 100644
+--- a/src/header/sys_ioctl/redox/drm.rs
++++ b/src/header/sys_ioctl/redox/drm.rs
+@@ -106,12 +106,35 @@ impl Dev {
+     unsafe fn prime_fd_to_handle(&self, mut buf: IoctlBuffer) -> Result<c_int> {
+         let mut data = unsafe { buf.read::<drm_prime_handle>() }?;
+         let metadata = [PRIME_FD_TO_HANDLE];
+-        let handle = redox_rt::sys::sys_call_wo(
++        let handle = match redox_rt::sys::sys_call_wo(
+             &[self.fd as usize, data.fd as usize][..],
+             &[],
+             syscall::CallFlags::empty(),
+             &metadata,
+-        )?;
++        ) {
++            Ok(handle) => handle,
++            // The PRIME fd is another driver's (another scheme; the kernel
++            // takes one call to one scheme only): send a clone of it to this
++            // device's scheme, which imports the buffer (v3dd importing a
++            // display's scanout buffer). The kernel answers an fd-passing
++            // call with the number of fds sent, so a second call without a
++            // payload asks for the imported buffer's handle.
++            Err(err) if err.errno == syscall::error::EXDEV => {
++                redox_rt::sys::sys_call_wo(
++                    self.fd as usize,
++                    &(data.fd as usize).to_ne_bytes(),
++                    syscall::CallFlags::FD | syscall::CallFlags::FD_CLONE,
++                    &[],
++                )?;
++                redox_rt::sys::sys_call_wo(
++                    self.fd as usize,
++                    &[],
++                    syscall::CallFlags::empty(),
++                    &metadata,
++                )?
++            }
++            Err(err) => return Err(err.into()),
++        };
+         data.handle = handle as u32;
+         unsafe { buf.write(data) }?;
+         Ok(0)
+-- 
+2.53.0
+

@@ -150,17 +150,15 @@ date -u           # UTC explicitly
 timesync -n       # ask the time server, do not change the clock
 ```
 
-Time zones are not set up in the stable image: `date` shows UTC. For one
-command a POSIX rule works, for example Germany with summer time:
+`date` shows local time: the image is set to Europe/Berlin with summer
+time (`/etc/localtime`, [#46](https://github.com/redox-rpi/redox-rpi/issues/46)).
+For one command, `TZ` sets another zone:
 
 ```sh
-env TZ=CET-1CEST,M3.5.0,M10.5.0/3 date
+env TZ=UTC date
 ```
 
-Zone names such as `Europe/Berlin` and a system-wide setting
-(`/etc/localtime`) come with
-[#46](https://github.com/redox-rpi/redox-rpi/issues/46) (planned for
-v0.5.0). `date -s` cannot set the clock on Redox; `timesync -s` can
+`date -s` cannot set the clock on Redox; `timesync -s` can
 ([#51](https://github.com/redox-rpi/redox-rpi/issues/51)). All of it, with
 examples: [time.md](time.md).
 

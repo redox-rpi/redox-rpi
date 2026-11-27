@@ -1,4 +1,9 @@
-# Root port power cycle in dwc2d (experiment `usb-port-power`)
+# Root port power cycle in dwc2d (was experiment `usb-port-power`)
+
+**Default now:** the patch (was `0099`) moved to `patches/base/` as base
+`0126` and is in every image. `--experiment usb-port-power` is still
+accepted and does nothing, so older commands, release options and the
+nightly config keep working. This page stays as the documentation of the fix.
 
 Issue [#576](https://github.com/redox-rpi/redox-rpi/issues/576). After a
 warm reboot (`reboot` over devsh or the serial console) the Pi 3B+ often
@@ -18,7 +23,7 @@ powered, High speed; `PCGCCTL 0`). U-Boot hands over a working port, and the
 hub disappears during dwc2d's own init, whose only port-related step is the
 core soft reset.
 
-- **base `0099`:**
+- **base `0126`** (was `0099`):
   - `init_host` logs `HPRT0` and `PCGCCTL` as found (`dwc2d: at start
     …`) and writes `PCGCCTL` 0. When the port is connected, enabled and
     powered, it **skips the core soft reset** (`dwc2d: root port working

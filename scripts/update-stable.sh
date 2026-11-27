@@ -23,7 +23,9 @@
 #      redox-rpi/pi-tests) is marked "on the Pi".
 #   3. Build with the options in config/stable-image.conf.
 #   4. Stage the image on TFTP, reset the Pi, wait for the login prompt on the
-#      serial console and run scripts/pi-test.py. Network records (#259,
+#      serial console and run the regression set's oom and end checks
+#      (#676), then scripts/pi-test.py with the serial check (#674); both
+#      must pass. Network records (#259,
 #      scripts/network-record.py): the boot (seconds from the login prompt to
 #      the first devsh login), then a 15-minute soak after pi-test.py, pass
 #      or fail; they go into network.jsonl in redox-rpi/pi-tests with the
@@ -43,6 +45,9 @@
 #   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
 #   its --summary goes into the day's report too. Skipped while the script
 #   does not exist; never fails this script.
+#   Every night: scripts/check-patches.sh --report lists the experiments
+#   that do not apply and are not parked (#672); experiments.md in
+#   redox-rpi/pi-tests, and on a pass in the day's report too.
 #   Every night, after the Redox part: the TinyCC VC4 track (#410), not
 #   gating. scripts/tcc-track.sh builds the bootcode with GCC and TCC and
 #   runs the resim tests; scripts/tcc-track-pi.py
@@ -83,6 +88,8 @@ PI="$REDOX_PI"
 SERIAL_DEV="$REDOX_PI_SERIAL"
 SERIAL_LOG="$HOME/redox-rpi/logs/serial.log"
 TOKEN_FILE="$HOME/.config/redox-rpi/github-token"
+# Serial logs of the lab Pis, read for the panic KPI (#675).
+SERIAL_LOGS="${SERIAL_LOGS:-$HOME/redox-rpi/logs}"
 ISSUE_TITLE="Nightly: main fails on the Pi"
 # Seconds from the reset to "redox-rpi: network boot", and to the login prompt
 # (U-Boot falls back to TFTP when HTTP fails, which takes about 15 minutes).
@@ -164,8 +171,12 @@ run_kpis() {
     kpis_dir="$(mktemp -d)"
     local clippy=()
     [ -s build/clippy-redox.json ] && clippy=(--clippy build/clippy-redox.json)
+    # Panic KPI (#675): the kernel source of the last build and the serial logs.
+    local panic=()
+    [ -d upstream/redox/recipes/core/kernel/source/src ] && panic+=(--kernel upstream/redox/recipes/core/kernel/source)
+    [ -d "$SERIAL_LOGS" ] && panic+=(--serial-logs "$SERIAL_LOGS")
     if GH_TOKEN="$(tr -d '[:space:]' < "$TOKEN_FILE")" timeout 600 scripts/quality-kpis.py --rev HEAD \
-        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" \
+        --out "$kpis_dir/kpis.md" --json "$kpis_dir/kpis.json" --summary "${clippy[@]}" "${panic[@]}" \
         > "$kpis_dir/summary.md" 2> "$kpis_dir/log.txt"; then
         log "quality KPIs collected"
     else
@@ -173,6 +184,28 @@ run_kpis() {
         rm -rf "$kpis_dir"
         kpis_dir=""
     fi
+    return 0
+}
+
+# Experiments that do not apply on the pinned commits and are not parked
+# (scripts/check-patches.sh --report, #672). Written to experiments.md in
+# pi-tests with the KPIs. Never fails.
+exprep=""
+run_experiments() {
+    exprep="$(mktemp)"
+    local work
+    work="$(mktemp -d)"
+    if ! grep -q -- '--report' scripts/check-patches.sh 2> /dev/null; then
+        log "scripts/check-patches.sh at $ref has no --report, no experiments report"
+        : > "$exprep"
+    elif timeout 900 scripts/check-patches.sh --work "$work" --report "$exprep" > "$work/log.txt" 2>&1 ||
+        [ -s "$exprep" ]; then
+        log "experiments: $(head -n 1 "$exprep")"
+    else
+        log "check-patches.sh failed: $(tail -n 1 "$work/log.txt")"
+        : > "$exprep"
+    fi
+    rm -rf "$work"
     return 0
 }
 
@@ -248,6 +281,10 @@ stage_kpis() {
         cat "$tccrec" >> "$TESTS/tcc.jsonl"
         git -C "$TESTS" add tcc.jsonl
     fi
+    if [ -n "$exprep" ] && [ -s "$exprep" ]; then
+        { echo "# Experiments that do not apply"; echo; echo "Nightly $(date -u +%Y-%m-%d), \`scripts/check-patches.sh --report\` on the pinned commits at $(git rev-parse --short HEAD)."; echo; cat "$exprep"; } > "$TESTS/experiments.md"
+        git -C "$TESTS" add experiments.md
+    fi
     [ -n "$kpis_dir" ] || return 0
     cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
     git -C "$TESTS" add kpis.md kpis.json
@@ -257,7 +294,7 @@ stage_kpis() {
 # its own commit. Never fails.
 push_kpis_only() {
     run_tcc_track
-    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || return 0
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || [ -s "$exprep" ] || return 0
     [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
     git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
     stage_kpis
@@ -276,6 +313,7 @@ push_kpis_only() {
 }
 
 run_kpis
+run_experiments
 
 # Mondays: refresh the CI image mirror, release ci-image (#409,
 # docs/build-host.md "CI image mirror"). Uses its own token
@@ -404,14 +442,24 @@ restore_stable() {
 report="$(mktemp)"
 output="$(mktemp)"
 netrec="$(mktemp)"
-trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$0"' EXIT
+trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$exprep" "$0"' EXIT
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
 if reset_pi record; then
+    # Out of memory (#676, #644): oomtest in its three modes must end by
+    # SIGKILL, devsh must answer afterwards. pi-test.py follows, so its serial
+    # check (#674) sees any panic of this boot and its checks show that the
+    # system still works.
+    log "running the regression set's oom and end checks"
+    oom_ok=1
+    python3 scripts/regression-set.py "$PI" --only oom --only end --report "$report" 2>&1 | tee "$output" ||
+        oom_ok=0
     log "running scripts/pi-test.py"
     if python3 scripts/pi-test.py "$PI" --manifest "$manifest" --report "$report" --extended \
-        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee "$output"; then
+        --serial-log "$SERIAL_LOG" \
+        --note "Nightly stable image test (scripts/update-stable.sh)." 2>&1 | tee -a "$output" &&
+        [ "$oom_ok" = 1 ]; then
         passed=1
     fi
     # Soak on the tested build, pass or fail (#259, #92).
@@ -484,6 +532,9 @@ EOF
     { [ -s "$out" ] && echo; sed '1s/^## /# /' "$report"; } >> "$out"
     if [ -n "$kpis_dir" ] && [ -s "$kpis_dir/summary.md" ]; then
         { echo; echo "## Quality KPIs"; echo; cat "$kpis_dir/summary.md"; } >> "$out"
+    fi
+    if [ -s "$exprep" ]; then
+        { echo; echo "## Experiments"; echo; cat "$exprep"; } >> "$out"
     fi
     stage_kpis
     git -C "$TESTS" add lab.md "reports/stable-$date.md"

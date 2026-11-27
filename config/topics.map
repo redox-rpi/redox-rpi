@@ -74,6 +74,9 @@ patches/experiments/tcc/*               tcc
 patches/experiments/pkg-*               boot
 patches/experiments/prebuilt-programs/* relibc,stability
 patches/experiments/rpi-fb/*            graphics
+patches/experiments/vc4d/*              graphics
+patches/experiments/pointer-bench/*     graphics
+tools/pointer-bench/*                   graphics
 patches/experiments/orbital/*           graphics
 patches/experiments/relibc-tests/*      relibc
 patches/experiments/sig*                relibc,stability
