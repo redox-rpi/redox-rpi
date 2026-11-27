@@ -1,0 +1,133 @@
+From 88e4dbd7157eecaeb0d9d511ce5168e73ffa4814 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Wed, 25 Nov 2026 14:37:37 +0000
+Subject: [PATCH 26/26] time: gmtime is UTC; tzset names the summer time
+
+gmtime() and gmtime_r() converted with the system zone (get_localtime),
+so with /etc/localtime -> Europe/Berlin the epoch came out as 01:00 CET
+with tm_gmtoff 3600. POSIX: gmtime is always UTC. It now converts with
+Tz::UTC and gives EOVERFLOW for a time chrono cannot represent.
+
+tzset(), localtime() and mktime() set tzname/daylight from the time at
+hand, so a zone with summer time got daylight 0 and tzname[1] equal to
+tzname[0] except in the hour of a change. They now look at 1 January and
+1 July of the year: for Europe/Berlin tzname is CET/CEST, daylight 1,
+timezone -3600. Zones without summer time are unchanged.
+---
+ src/header/time/mod.rs | 67 +++++++++++++++++++++++++++---------------
+ 1 file changed, 43 insertions(+), 24 deletions(-)
+
+diff --git a/src/header/time/mod.rs b/src/header/time/mod.rs
+index 2bafbfc..8f81725 100755
+--- a/src/header/time/mod.rs
++++ b/src/header/time/mod.rs
+@@ -349,10 +349,19 @@ pub unsafe extern "C" fn gmtime_r(timer: *const time_t, result: *mut tm) -> *mut
+ 
+     // SAFETY: the caller is required to ensure that `result` is convertible
+     // to an `Out<tm>`.
+-    let result_out = unsafe { Out::nonnull(result) };
++    let mut result_out = unsafe { Out::nonnull(result) };
+ 
+-    let _ = get_localtime(timer_val, result_out);
+-    result
++    // POSIX: gmtime is always UTC, whatever the system zone is.
++    match Tz::UTC.timestamp_opt(timer_val, 0) {
++        MappedLocalTime::Single(t) => {
++            result_out.write(datetime_to_tm(&t));
++            result
++        }
++        _ => {
++            platform::ERRNO.set(EOVERFLOW);
++            ptr::null_mut()
++        }
++    }
+ }
+ 
+ /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/localtime.html>.
+@@ -395,10 +404,10 @@ pub unsafe extern "C" fn localtime_r(timer: *const time_t, result: *mut tm) -> *
+     // SAFETY: the caller is required to ensure that `daylight`, `timezone`
+     // and `tzname` are not accessed by user code.
+     unsafe { clear_timezone(&mut lock) };
+-    if let (Some(std_time), dst_time) = get_localtime(timer_val, result_out) {
++    if let (Some(std_time), _) = get_localtime(timer_val, result_out) {
+         // SAFETY: the caller is required to ensure that `daylight`,
+         // `timezone` and `tzname` are not accessed by user code.
+-        unsafe { set_timezone(&mut lock, &std_time, dst_time) };
++        unsafe { set_timezone_for_year(&mut lock, &std_time.timezone(), std_time.year()) };
+     }
+     result
+ }
+@@ -445,16 +454,7 @@ pub unsafe extern "C" fn mktime(timeptr: *mut tm) -> time_t {
+ 
+             unsafe { ptr::write(timeptr, datetime_to_tm(&tz_datetime)) };
+ 
+-            // Convert UTC time to local time
+-            let (std_time, dst_time) = match tz.timestamp_opt(timestamp, 0) {
+-                MappedLocalTime::Single(t) => (t, None),
+-                // This variant contains the two possible results, in the order (earliest, latest).
+-                MappedLocalTime::Ambiguous(t1, t2) => (t2, Some(t1)),
+-                MappedLocalTime::None => return timestamp,
+-            };
+-            {
+-                unsafe { set_timezone(&mut lock, &std_time, dst_time) };
+-            }
++            unsafe { set_timezone_for_year(&mut lock, &tz, tz_datetime.year()) };
+ 
+             timestamp
+         }
+@@ -685,17 +685,9 @@ pub unsafe extern "C" fn tzset() {
+     match tz_option {
+         Some(tz) => {
+             // IANA
+-            let datetime = now();
+-            let (std_time, dst_time) = match tz.from_local_datetime(&datetime) {
+-                MappedLocalTime::Single(t) => (t, None),
+-                // This variant contains the two possible results, in the order (earliest, latest).
+-                MappedLocalTime::Ambiguous(t1, t2) => (t2, Some(t1)),
+-                MappedLocalTime::None => return,
+-            };
+-
+             // SAFETY: the caller is required to ensure that `daylight`, `timezone`
+             // and `tzname` are not accessed by user code.
+-            unsafe { set_timezone(&mut lock, &std_time, dst_time) }
++            unsafe { set_timezone_for_year(&mut lock, &tz, now().year()) }
+         }
+         None => {
+             // POSIX
+@@ -915,6 +907,33 @@ unsafe fn set_timezone(
+     }
+ }
+ 
++/// Sets `tzname`, `timezone` and `daylight` for an IANA zone as POSIX wants
++/// them: the standard time and, if the zone has summer time in `year`, the
++/// summer time (`CET` and `CEST`, `daylight` 1 for Europe/Berlin). Looks at
++/// 1 January and 1 July, so it works on both hemispheres.
++///
++/// # Safety
++/// As for [`set_timezone`].
++unsafe fn set_timezone_for_year(
++    guard: &mut MutexGuard<'_, (Option<CString>, Option<CString>)>,
++    tz: &Tz,
++    year: i32,
++) {
++    let at = |month| match NaiveDate::from_ymd_opt(year, month, 1).and_then(|d| d.and_hms_opt(0, 0, 0)) {
++        Some(utc) => tz.from_utc_datetime(&utc),
++        None => tz.from_utc_datetime(&NaiveDateTime::default()),
++    };
++    let (jan, jul) = (at(1), at(7));
++    let is_dst = |t: &DateTime<Tz>| !t.offset().dst_offset().is_zero();
++    let (std_time, dst_time) = match (is_dst(&jan), is_dst(&jul)) {
++        (false, true) => (jan, Some(jul)),
++        (true, false) => (jul, Some(jan)),
++        _ => (jan, None),
++    };
++    // SAFETY: the caller upholds the requirements of `set_timezone`.
++    unsafe { set_timezone(guard, &std_time, dst_time) }
++}
++
+ /// # Safety
+ /// The caller must ensure that `daylight`, `timezone` and `tzname` are not
+ /// accessed by user code for the duration of the call (relibc functions are
+-- 
+2.53.0
+

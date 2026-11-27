@@ -1,0 +1,9 @@
+[package]
+name = "mmapstop"
+description = "Signal a process that waits in a scheme mmap page fault (kernel todo!s, #678)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

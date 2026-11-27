@@ -1,7 +1,7 @@
-# Experiment sig-pipe (#205): signals sent with kill() must reach a process
-# that loops on pipe read/write (patch relibc/0001: a forked child no longer
-# keeps signal delivery inhibited). The check needs tcc in the image
-# (experiment tcc): `ion /usr/share/sig-pipe/check.ion`.
+# Experiment sig-pipe (#205, #690): the check that signals sent with kill()
+# reach a forked child that loops on pipe read/write. The fix is the default
+# patch patches/relibc/0020. The check needs tcc in the image (experiment
+# tcc): `ion /usr/share/sig-pipe/check.ion`.
 
 [[files]]
 path = "/usr/share/sig-pipe/sigrepro.c"

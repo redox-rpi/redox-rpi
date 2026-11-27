@@ -1,4 +1,4 @@
-From a5da303e60d4f0718a08c25c082ca75796ff3cf7 Mon Sep 17 00:00:00 2001
+From d0ec652ea66819c145186c873d481f113705eee4 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Sun, 1 Nov 2026 10:25:06 +0000
 Subject: [PATCH] dwc2d: restart a stuck controller (#151)
@@ -258,12 +258,12 @@ index 495f084..fe8cfd3 100644
                  }
                  if let Err(err) = self.scan_port(hub, port, &mut changes.removed) {
 diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
-index dc89cd0..de9ec43 100644
+index 7ebca1a..5d75066 100644
 --- a/drivers/usb/dwc2d/src/main.rs
 +++ b/drivers/usb/dwc2d/src/main.rs
-@@ -460,6 +460,11 @@ impl Timer {
-     }
- }
+@@ -465,6 +465,11 @@ impl Timer {
+ /// reads on the LAN7800, a few control transfers each (#126).
+ const LINK_INTERVAL: Duration = Duration::from_secs(5);
  
 +/// Restarts of a stuck controller in a row before dwc2d gives up, and the
 +/// time between them.
@@ -273,7 +273,7 @@ index dc89cd0..de9ec43 100644
  /// How often to look for devices plugged in or removed.
  const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
  /// A test without a person writes a port to this file; the next rescan
-@@ -620,6 +625,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -625,6 +630,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
      if keyboard.is_some() || mouse.is_some() || irq_file.is_none() {
          timer.arm(Duration::ZERO);
      }
@@ -282,11 +282,12 @@ index dc89cd0..de9ec43 100644
      let mut hotplug = Timer::new().expect("dwc2d: failed to open /scheme/time");
      events
          .subscribe(hotplug.0.as_raw_fd() as usize, Source::Hotplug, event::EventFlags::READ)
-@@ -690,10 +697,14 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -699,11 +706,15 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                  hotplug.fired();
                  usbdiag::step("scan");
                  let mut cycled = Vec::new();
 +                let mut restart = false;
+                 let t = Instant::now();
                  if let Ok(request) = aside::cycle_request() {
                      let net = scheme.adapter_mut();
                      let request = request.trim();
@@ -297,7 +298,7 @@ index dc89cd0..de9ec43 100644
                          "network" => net.active.and_then(|a| bus.port_of(a)),
                          "keyboard" => keyboard.as_ref().and_then(|k| bus.port_of(k.address())),
                          "mouse" => mouse.as_ref().and_then(|m| bus.port_of(m.address())),
-@@ -716,11 +727,43 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+@@ -726,14 +737,46 @@ fn daemon(daemon: daemon::Daemon) -> ! {
                                  println!("dwc2d: cycle: {err:?}");
                              }
                          }
@@ -305,8 +306,11 @@ index dc89cd0..de9ec43 100644
                          None => println!("dwc2d: cycle: no port for {request:?}"),
                      }
                  }
+                 wake.part(0, t.elapsed());
+                 let t = Instant::now();
 -                let mut changes = bus.scan();
 +                let mut changes = if restart { Default::default() } else { bus.scan() };
+                 wake.part(1, t.elapsed());
                  changes.removed.extend(cycled);
 +                // A stuck controller (every request times out) does not come
 +                // back by itself: restart it and find the devices again.
