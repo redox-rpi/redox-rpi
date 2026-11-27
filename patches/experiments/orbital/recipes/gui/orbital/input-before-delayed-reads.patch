@@ -1,0 +1,25 @@
+diff --git a/src/core.rs b/src/core.rs
+index 7977405..1736703 100644
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -238,6 +238,11 @@ impl Orbital {
+                         match self.input.read_events(&mut events)? {
+                             ConsumerHandleEvent::Events(&[]) => break,
+                             ConsumerHandleEvent::Events(events) => {
++                                // Queue the new events first, so the delayed
++                                // reads below can return them now instead of
++                                // at the next input (redox-rpi Pi test 431).
++                                self.handler.handle_input(events);
++
+                                 let mut delayed_left = self.delayed.len();
+ 
+                                 while delayed_left > 0
+@@ -263,8 +268,6 @@ impl Orbital {
+                                         self.scheme_write(Response::new(res, read_op))?;
+                                     }
+                                 }
+-
+-                                self.handler.handle_input(events);
+                             }
+                             ConsumerHandleEvent::Handoff => {}
+                         }

@@ -19,6 +19,13 @@ whole core on polling the keyboard.
   packages from `static.redox-os.org` like the rest of the image. Orbital
   runs on VT 3 with `orblogin` and then the launcher; the switch to the
   text console on VT 2 is turned off. The serial console keeps its login.
+- `orbital` is built from source (pinned upstream commit) with one fix,
+  [`input-before-delayed-reads.patch`](recipes/gui/orbital/input-before-delayed-reads.patch):
+  when input arrived, Orbital first answered the reads it holds for
+  blocking windows and only then queued the new events, so a blocking
+  window saw each event only with the next input. A gamepad press showed
+  only at the release (Pi test 431); a key press the same way, hidden by
+  the many events of mouse motion. The patch queues the events first.
 - Two `rpi-fbd` patches it needs, in experiment `rpi-fb` (branch
   `graphics-gui`):
   - [`0064`](../rpi-fb/base/0064-rpi-fbd-remember-only-the-frame-s-own-damage-for-the.patch):
