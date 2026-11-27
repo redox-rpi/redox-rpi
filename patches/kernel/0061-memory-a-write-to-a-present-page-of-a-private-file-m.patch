@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 24 Nov 2026 14:18:02 +0000
+Subject: [PATCH] memory: a write to a present page of a private file mapping
+ copies it
+
+borrow_fmap maps MAP_PRIVATE pages of a scheme file eagerly and without
+write, as CoW, but the grant keeps Provider::FmapBorrowed. That arm of
+correct_inner never looked at the present frame: a write fault sent
+RequestMmap to the scheme for a page it already had, and hard-blocked
+for good, since no scheme answers it (redox-rpi#678). Now a write to a
+present, read-only page copies it into a frame of our own and drops the
+grant reference to the scheme page. A page that is already writable is
+a stale TLB entry and is kept. RequestMmap stays for pages that are not
+present.
+---
+ src/context/memory.rs | 30 +++++++++++++++++++++++++++---
+ 1 file changed, 27 insertions(+), 3 deletions(-)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 20a84994..1fdcbda6 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -2624,11 +2624,12 @@ fn correct_inner<'l>(
+     // By now, the memory at the faulting page is actually valid, but simply not yet mapped, either
+     // at all, or with the required flags.
+ 
+-    let faulting_frame_opt = addr_space
++    let faulting_translation = addr_space
+         .table
+         .utable
+-        .translate(faulting_page.start_address())
+-        .map(|(phys, _page_flags)| Frame::containing(phys));
++        .translate(faulting_page.start_address());
++    let faulting_frame_opt = faulting_translation.map(|(phys, _page_flags)| Frame::containing(phys));
++    let faulting_pte_writable = faulting_translation.is_some_and(|(_, page_flags)| page_flags.has_write());
+     let faulting_pageinfo_opt = faulting_frame_opt.map(|frame| (frame, get_page_info(frame)));
+ 
+     // TODO: Aligned readahead? AMD Zen3+ CPUs can smash 4 4k pages that are 16k-aligned, into a
+@@ -2810,6 +2811,29 @@ fn correct_inner<'l>(
+                 }
+             }
+         }
++        // A page that borrow_fmap already mapped. Present but read-only in a grant that allows
++        // writes means MAP_PRIVATE: borrow_fmap maps private pages without write, as CoW. A
++        // write copies it into a page of our own. Asking the scheme for it again (below) would
++        // block for good, since no scheme answers RequestMmap for a page it already gave
++        // (redox-rpi#678). A page that is writable already is a stale TLB entry: keep it.
++        Provider::FmapBorrowed { .. }
++            if access == AccessMode::Write && faulting_frame_opt.is_some() =>
++        {
++            let old_frame = faulting_frame_opt.expect("checked above");
++            if faulting_pte_writable {
++                old_frame
++            } else {
++                let new_frame = init_frame(RefCount::One, false)?;
++                unsafe {
++                    copy_frame_to_frame_directly(new_frame, old_frame);
++                }
++                // Drop this grant's reference to the scheme's page (borrow_fmap took one).
++                if get_page_info(old_frame).is_some() {
++                    flusher.queue(old_frame, None, TlbShootdownActions::FREE);
++                }
++                new_frame
++            }
++        }
+         // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.
+         Provider::FmapBorrowed { ref file_ref, .. } => {
+             let file_ref = file_ref.clone();
+-- 
+2.53.0
+

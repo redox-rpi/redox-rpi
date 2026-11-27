@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Tue, 24 Nov 2026 14:24:51 +0000
+Subject: [PATCH] scheme: a Stop while a thread waits for a scheme page stops
+ it after the fault
+
+Stop on a context that is HardBlocked in AwaitingMmap ended in todo!()
+(proc.rs). Overwriting the status with Stopped would lose AwaitingMmap,
+and the scheme reply (user.rs) would not find the context. Now Stop sets
+stop_pending and leaves the status alone; the page fault path stops the
+thread after switch() returns, before it goes back to user space.
+Unstop clears the flag, and SIGKILL ends the stop as before
+(redox-rpi#678).
+---
+ src/context/context.rs |  4 ++++
+ src/context/memory.rs  | 14 ++++++++++++++
+ src/scheme/proc.rs     |  8 +++++++-
+ 3 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/src/context/context.rs b/src/context/context.rs
+index 28555062..aad81b8f 100644
+--- a/src/context/context.rs
++++ b/src/context/context.rs
+@@ -169,6 +169,9 @@ pub struct Context {
+     /// reads Dead, not ForceKilled.
+     pub exiting_itself: bool,
+     pub fmap_ret: Option<Frame>,
++    /// A Stop came while the context waited for a scheme page (`AwaitingMmap`). The page
++    /// fault takes effect first, then the context stops before it returns to user space.
++    pub stop_pending: bool,
+     /// Priority
+     pub prio: usize,
+     /// Virtual Run Time
+@@ -255,6 +258,7 @@ impl Context {
+             is_active: false,
+             queue_key: None,
+             being_sigkilled: false,
++            stop_pending: false,
+             exiting_itself: false,
+             owner_proc_id,
+ 
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 86dc9c9c..71789efc 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -2871,6 +2871,20 @@ fn correct_inner<'l>(
+ 
+             super::switch(&mut token);
+ 
++            // A Stop that came while we waited (see stop_pending): stop now, before the
++            // return to user space. Unstop or a SIGKILL ends it.
++            loop {
++                let mut context = context_lock.write(token.token());
++                let stop = context.stop_pending && !context.being_sigkilled;
++                context.stop_pending = false;
++                if !stop {
++                    break;
++                }
++                context.hard_block(HardBlockedReason::Stopped);
++                drop(context);
++                super::switch(&mut token);
++            }
++
+             let frame = context_lock
+                 .write(token.token())
+                 .fmap_ret
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index bc1343bb..1b817110 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -1266,9 +1266,14 @@ impl ContextHandle {
+ 
+                         match guard.status {
+                             Status::Dead { .. } => return Err(Error::new(EOWNERDEAD)),
++                            // Keep AwaitingMmap, or the scheme's reply would not find the
++                            // context: the page fault stops it once the page is there.
+                             Status::HardBlocked {
+                                 reason: HardBlockedReason::AwaitingMmap { .. },
+-                            } => todo!(),
++                            } => {
++                                guard.stop_pending = true;
++                                return Ok(size_of::<usize>());
++                            }
+                             _ => (),
+                         }
+                         guard.status = Status::HardBlocked {
+@@ -1279,6 +1284,7 @@ impl ContextHandle {
+                     }
+                     ContextVerb::Unstop => {
+                         let mut guard = context.write(token.token());
++                        guard.stop_pending = false;
+ 
+                         if let Status::HardBlocked {
+                             reason: HardBlockedReason::Stopped,
+-- 
+2.53.0
+
