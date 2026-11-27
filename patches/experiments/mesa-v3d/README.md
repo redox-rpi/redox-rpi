@@ -49,7 +49,7 @@ only shows it. The angle depends only on the frame number, so a frame is
 the same on every renderer apart from edge pixels and shading rounding:
 
 ```bash
-gles-demo --window                     # until the window is closed
+gles-demo --window --frames 0          # until the window is closed (default: 100 frames)
 gles-demo --frames 100 --dump /tmp/v3d
 LIBGL_ALWAYS_SOFTWARE=1 gles-demo --frames 100 --dump /tmp/sw
 gles-demo --compare /tmp/sw-first.ppm /tmp/v3d-first.ppm
