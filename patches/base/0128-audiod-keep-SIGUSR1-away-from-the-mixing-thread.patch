@@ -1,0 +1,63 @@
+From 994aa44b624aea906339b49066d8fb321a7afafc Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Fri, 27 Nov 2026 21:41:56 +0000
+Subject: [PATCH] audiod: keep SIGUSR1 away from the mixing thread
+
+The mixing thread wakes the scheme thread with a process-directed
+SIGUSR1 after every chunk. Any thread that allows SIGUSR1 may take it.
+When the mixing thread takes it itself, the scheme thread leaves its read
+with EINTR, finds no signal, and the read is restarted, so the writers
+that got EWOULDBLOCK are not polled. Further SIGUSR1s merge into the
+pending one. tone or an SDL program then waits for room until another
+request comes in, and the driver plays silence (redox-rpi #770, #761).
+
+Block SIGUSR1 in the mixing thread so only the scheme thread takes it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ audiod/src/main.rs | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/audiod/src/main.rs b/audiod/src/main.rs
+index d338dcd..fbe8483 100644
+--- a/audiod/src/main.rs
++++ b/audiod/src/main.rs
+@@ -18,7 +18,27 @@ mod scheme;
+ 
+ extern "C" fn sigusr_handler(_sig: usize) {}
+ 
++/// Keep SIGUSR1 away from the mixing thread.
++///
++/// The mixing thread sends SIGUSR1 to its own process after every chunk, so
++/// that the scheme thread leaves its blocking read and polls the writers that
++/// got EWOULDBLOCK. SIGUSR1 is process-directed: any thread that allows it
++/// may take it. When the mixing thread takes it (for example in its next
++/// system call), the scheme thread is woken but finds no signal, restarts its
++/// read and sleeps on. Every further SIGUSR1 then merges into the pending
++/// one. A writer that waits for room (tone, an SDL program) is stuck until
++/// some other request comes in, and the driver plays silence meanwhile.
++fn block_sigusr1_in_this_thread() {
++    unsafe {
++        let mut set = MaybeUninit::<libc::sigset_t>::uninit();
++        libc::sigemptyset(set.as_mut_ptr());
++        libc::sigaddset(set.as_mut_ptr(), libc::SIGUSR1);
++        libc::pthread_sigmask(libc::SIG_BLOCK, set.as_ptr(), core::ptr::null_mut());
++    }
++}
++
+ fn uring_thread(inner_mutex: Arc<Mutex<AudioSchemeInner>>, pid: usize, shm_fd: Fd) -> Result<()> {
++    block_sigusr1_in_this_thread();
+     let mut ring = redox_rings::user::Producer::<AudioChunk>::from_fd(shm_fd, false, None)?;
+     loop {
+         let buffer = {
+@@ -42,6 +62,7 @@ fn uring_thread(inner_mutex: Arc<Mutex<AudioSchemeInner>>, pid: usize, shm_fd: F
+ }
+ 
+ fn scheme_thread(inner_mutex: Arc<Mutex<AudioSchemeInner>>, pid: usize, hw_file: Fd) -> Result<()> {
++    block_sigusr1_in_this_thread();
+     loop {
+         let buffer = {
+             let mut inner = inner_mutex.lock().unwrap();
+-- 
+2.53.0
+
