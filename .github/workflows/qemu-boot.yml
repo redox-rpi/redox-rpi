@@ -84,8 +84,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-system-arm zstd
 
+      # Pull requests: also against the base, so a change that breaks an
+      # experiment which applies on the base fails here (#672). Parked
+      # experiments (patches/experiments/parked.txt) never fail.
       - name: Check patches on the pinned commits
-        run: scripts/check-patches.sh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/check-patches.sh ${BASE_SHA:+--base "$BASE_SHA"}
 
       # The QEMU boot test builds only the kernel: this catches a recipe list
       # that a full image build would stop at (#394: patches/u-boot taken for

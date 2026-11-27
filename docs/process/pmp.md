@@ -54,7 +54,7 @@ Every role below can also be held, or shared, by a contributor who joins.
 | tcc | TCC |
 | assistant | Log triage (local language model) |
 | quality | Quality |
-| process (no label yet) | Process |
+| process | Process |
 | open firmware (`topic:boot`, own repository) | Open firmware |
 | VC4 tools (tinycc VC4 backend, resim, vc4-toolchain; own repositories) | VC4 Tools |
 | boards (Pi 4, Pi 5, test lab), dma | no owner yet (project lead) |
@@ -277,7 +277,14 @@ When the maintainer creates a new repository, the Process session:
    deletions" and "Block force pushes", enforcement active, no bypass
 2. adds a `CLAUDE.md` that links to this plan and names the owning session,
    and a README with the licence
-3. adds the repository to the table above
+3. adds the repository to the table above and runs the label sync for it
+
+**Labels** are one list for all repositories:
+[`labels.yml`](https://github.com/redox-rpi/.github/blob/main/.github/labels.yml)
+in `.github`, applied with `scripts/sync-labels.py` there (RFC 0002). A new
+label, or a label for a new topic, is a change to that list; nobody creates
+labels by hand in a single repository. Every row of the topic owners table
+has a `topic:` label.
 
 A new agent session gets this plan as the first link in its brief and
 keeps its rules in its own memory.
