@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@anthropic.com>
+Date: Tue, 24 Nov 2026 14:17:08 +0000
+Subject: [PATCH 60/60] memory: a failed page fault kills the process, not the
+ kernel
+
+A user page fault that ends in PfError::NonfatalInternalError hit
+todo!() in page_fault_handler. A thread that waits for a scheme mmap
+(AwaitingMmap) and is woken by SIGKILL comes back without a page and
+took this path, so killing such a thread panicked the kernel
+(redox-rpi#678).
+
+Generalise the OOM kill of 0058 into kill_current_process(reason): it
+marks every thread of the process as SIGKILLed and logs the reason;
+when the current thread is already being killed it only lets the
+thread exit. NonfatalInternalError now uses it with "PAGE FAULT
+FAILED". The OOM log line stays "OUT OF MEMORY: killing PID ...".
+
+request_fmap() in the FmapBorrowed arm of correct_inner returned an
+error that was unwrapped; it now ends the fault as PfError::Segv.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/context/memory.rs |  2 +-
+ src/memory/mod.rs     | 36 ++++++++++++++++++++++++++----------
+ 2 files changed, 27 insertions(+), 11 deletions(-)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 511a53c0..7369095a 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -2838,7 +2838,7 @@ fn correct_inner<'l>(
+             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
+             user_inner
+                 .request_fmap(scheme_number, offset, 1, flags, &mut token)
+-                .unwrap();
++                .map_err(|_| PfError::Segv)?;
+ 
+             let context_lock = Arc::clone(&*crate::context::current());
+             context_lock
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+index 65073050..7337293a 100644
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -1461,7 +1461,7 @@ pub fn page_fault_handler(
+             Err(PfError::Oom) => {
+                 // Out of memory: end the process that faulted, not the kernel
+                 // (redox-rpi#644).
+-                oom_kill_current_process(&mut token);
++                kill_current_process("OUT OF MEMORY", &mut token);
+                 if caused_by_kernel {
+                     // A usercopy inside a syscall: the syscall fails with
+                     // EFAULT and the thread exits when it returns.
+@@ -1472,7 +1472,17 @@ pub fn page_fault_handler(
+                 crate::syscall::process::exit_this_context(None, &mut token);
+             }
+             Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
+-            Err(PfError::NonfatalInternalError) => todo!(),
++            Err(PfError::NonfatalInternalError) => {
++                // The fault could not be resolved, e.g. a thread that waited
++                // for a scheme mmap was woken without a page (SIGKILL). End
++                // the process, not the kernel (redox-rpi#678).
++                kill_current_process("PAGE FAULT FAILED", &mut token);
++                if caused_by_kernel {
++                    stack.recover_and_efault();
++                    return Ok(());
++                }
++                crate::syscall::process::exit_this_context(None, &mut token);
++            }
+         }
+     }
+ 
+@@ -1484,14 +1494,24 @@ pub fn page_fault_handler(
+     Err(Segv)
+ }
+ /// Mark every thread of the current process as SIGKILLed, as a kill
+-/// through the proc scheme does. The other threads exit when they next run;
+-/// the caller ends the current thread. Allocates nothing.
+-fn oom_kill_current_process(token: &mut CleanLockToken) {
++/// through the proc scheme does, and log `reason`. The other threads exit
++/// when they next run; the caller ends the current thread. If the current
++/// thread is already being killed, the kill that did so has marked the
++/// other threads, and nothing more is done. Allocates nothing.
++fn kill_current_process(reason: &str, token: &mut CleanLockToken) {
+     let current = context::current();
++    crate::percpu::PercpuBlock::current()
++        .switch_internals
++        .being_sigkilled
++        .set(true);
+     let pid = {
+         let mut guard = current.write(token.token());
++        if guard.being_sigkilled {
++            return;
++        }
+         error!(
+-            "OUT OF MEMORY: killing PID {} NAME {} on CPU #{}",
++            "{}: killing PID {} NAME {} on CPU #{}",
++            reason,
+             guard.pid,
+             guard.name,
+             crate::cpu_id()
+@@ -1499,10 +1519,6 @@ fn oom_kill_current_process(token: &mut CleanLockToken) {
+         guard.being_sigkilled = true;
+         guard.pid
+     };
+-    crate::percpu::PercpuBlock::current()
+-        .switch_internals
+-        .being_sigkilled
+-        .set(true);
+ 
+     let mut contexts_guard = context::contexts(token.downgrade());
+     let (contexts, mut token) = contexts_guard.token_split();
+-- 
+2.53.0
+

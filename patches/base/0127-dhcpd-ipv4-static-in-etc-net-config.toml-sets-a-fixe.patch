@@ -1,0 +1,293 @@
+From e8f56ae723cfab498e1d43c9ab8aafab0d39dc17 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Wed, 25 Nov 2026 07:44:28 +0000
+Subject: [PATCH] dhcpd: ipv4 = "static" in /etc/net/config.toml sets a fixed
+ address (#622)
+
+A section with ipv4 = "static" gives the interface the address from
+address = "a.b.c.d/len" as soon as it appears, and keeps it when the link
+goes down. router and the first of dns are optional; dhcpd treats the
+fixed address like a lease that never ends, so it gets the default route
+and the name server under the same rules as a DHCP lease (the first wired
+interface wins). A missing or malformed value gives one line and skips
+the section.
+---
+ dhcpd/src/main.rs | 173 ++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 143 insertions(+), 30 deletions(-)
+
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index fcf23e1..16c8194 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -427,8 +427,8 @@ fn link_up(iface: &str) -> bool {
+     get_iface_cfg_value(iface, "link").map_or(true, |state| state.trim() != "0")
+ }
+ 
+-/// How the network starts: which interfaces get DHCP (redox-rpi #622,
+-/// docs/network-config.md in redox-rpi). No file: none.
++/// How the network starts: which interfaces get DHCP or a fixed address
++/// (redox-rpi #622, docs/network-config.md in redox-rpi). No file: none.
+ const CONFIG: &str = "/etc/net/config.toml";
+ 
+ #[derive(Deserialize, Default)]
+@@ -438,8 +438,9 @@ struct NetConfig {
+     interface: BTreeMap<String, IfaceConfig>,
+ }
+ 
+-/// One `[interface.<name>]` section. The keys for a fixed address and IPv6
+-/// are part of the format already; dhcpd uses only `boards` and `ipv4`.
++/// One `[interface.<name>]` section. The IPv6 key is part of the format
++/// already; dhcpd uses `boards`, `ipv4` and, with `ipv4 = "static"`,
++/// `address`, `router` and `dns`.
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+ #[allow(dead_code)]
+@@ -461,18 +462,55 @@ fn off() -> String {
+     "off".into()
+ }
+ 
+-/// The interfaces the configuration asks DHCP for on this board. A file
++/// What dhcpd starts on one interface.
++#[derive(Clone, Debug, PartialEq)]
++enum Start {
++    /// Ask a DHCP server.
++    Dhcp,
++    /// A fixed address from the file, given as a lease that never ends:
++    /// it gets the default route and the name server like a DHCP lease.
++    Static(Lease),
++}
++
++/// What the configuration starts on each interface of this board. A file
+ /// that cannot be read or parsed gives one line and no interface.
+-fn dhcp_ifaces() -> BTreeSet<String> {
++fn start_ifaces() -> BTreeMap<String, Start> {
+     let text = match std::fs::read_to_string(CONFIG) {
+         Ok(text) => text,
+-        Err(err) if err.kind() == ErrorKind::NotFound => return BTreeSet::new(),
++        Err(err) if err.kind() == ErrorKind::NotFound => return BTreeMap::new(),
+         Err(err) => {
+             eprintln!("dhcpd: {CONFIG}: {err}");
+-            return BTreeSet::new();
++            return BTreeMap::new();
+         }
+     };
+-    parse_dhcp_ifaces(&text, &board_names())
++    parse_start(&text, &board_names())
++}
++
++fn parse_ip(text: &str) -> Option<[u8; 4]> {
++    text.trim().parse::<std::net::Ipv4Addr>().ok().map(|ip| ip.octets())
++}
++
++/// The lease for `ipv4 = "static"`: `address` as `a.b.c.d/len` (needed),
++/// `router` and the first of `dns` (both optional).
++fn static_lease(cfg: &IfaceConfig) -> Result<Lease, String> {
++    let address = cfg.address.as_deref().ok_or("ipv4 = \"static\" needs address = \"a.b.c.d/len\"")?;
++    let (ip, len) = address
++        .split_once('/')
++        .ok_or_else(|| format!("address = {address:?}, expected \"a.b.c.d/len\""))?;
++    let addr = parse_ip(ip).ok_or_else(|| format!("address = {address:?}: not an IPv4 address"))?;
++    let mask_len = match len.trim().parse::<u32>() {
++        Ok(len) if len <= 32 => len,
++        _ => return Err(format!("address = {address:?}: prefix length must be 0 to 32")),
++    };
++    let router = match cfg.router.as_deref() {
++        Some(r) => Some(parse_ip(r).ok_or_else(|| format!("router = {r:?}: not an IPv4 address"))?),
++        None => None,
++    };
++    let dns = match cfg.dns.as_deref().and_then(|d| d.first()) {
++        Some(d) => Some(parse_ip(d).ok_or_else(|| format!("dns = {d:?}: not an IPv4 address"))?),
++        None => None,
++    };
++    Ok(Lease { addr, mask_len, router, dns, domain: None })
+ }
+ 
+ /// Short names for the boards in `boards`, by the devicetree's root
+@@ -508,12 +546,12 @@ fn names_for<'a>(compatible: impl Iterator<Item = &'a str>) -> Vec<String> {
+     names
+ }
+ 
+-fn parse_dhcp_ifaces(text: &str, board: &[String]) -> BTreeSet<String> {
++fn parse_start(text: &str, board: &[String]) -> BTreeMap<String, Start> {
+     let config: NetConfig = match toml::from_str(text) {
+         Ok(config) => config,
+         Err(err) => {
+             eprintln!("dhcpd: {CONFIG}: {err}");
+-            return BTreeSet::new();
++            return BTreeMap::new();
+         }
+     };
+     config
+@@ -525,12 +563,15 @@ fn parse_dhcp_ifaces(text: &str, board: &[String]) -> BTreeSet<String> {
+                 .is_none_or(|boards| boards.iter().any(|b| board.contains(b)))
+         })
+         .filter_map(|(name, cfg)| match cfg.ipv4.as_str() {
+-            "dhcp" => Some(name),
++            "dhcp" => Some((name, Start::Dhcp)),
+             "off" => None,
+-            "static" => {
+-                eprintln!("dhcpd: {CONFIG}: {name}: ipv4 = \"static\" is not supported yet");
+-                None
+-            }
++            "static" => match static_lease(&cfg) {
++                Ok(lease) => Some((name, Start::Static(lease))),
++                Err(err) => {
++                    eprintln!("dhcpd: {CONFIG}: {name}: {err}");
++                    None
++                }
++            },
+             other => {
+                 eprintln!("dhcpd: {CONFIG}: {name}: ipv4 = {other:?}, expected \"dhcp\", \"static\" or \"off\"");
+                 None
+@@ -587,22 +628,55 @@ fn try_lease(iface: &str, verbose: bool) -> Option<Lease> {
+     }
+ }
+ 
++/// Sets a fixed address from the configuration.
++fn set_static(iface: &str, lease: &Lease) -> Result<(), String> {
++    try_fmt!(
++        set_iface_cfg_value(
++            iface,
++            "addr/set",
++            &format!("{}/{}\n", fmt_ip(lease.addr), lease.mask_len)
++        ),
++        "failed to set ip"
++    );
++    println!("DHCP: {iface} fixed address {}/{}", fmt_ip(lease.addr), lease.mask_len);
++    Ok(())
++}
++
+ /// Gets a lease on every interface with a link, also those that appear or
+ /// get a link later, and keeps one default route: the first wired
+ /// interface with a lease, else Wi-Fi. After link-up it asks without pause;
+ /// with no lease after `ANSWER_WITHIN` it prints one line and then asks
+ /// quietly every `RETRY`. A link that goes down and up again (a cable
+ /// plugged in again) starts over.
+-fn watch(verbose: bool, wanted: BTreeSet<String>) -> ! {
++///
++/// An interface with a fixed address gets it as soon as it appears and
++/// keeps it when the link goes down.
++fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+     let mut leases: BTreeMap<String, Lease> = BTreeMap::new();
+     let mut waiting: BTreeMap<String, Waiting> = BTreeMap::new();
+     let mut links: BTreeMap<String, bool> = BTreeMap::new();
+     let mut default: Option<(String, Lease)> = None;
++    let mut failed: BTreeSet<String> = BTreeSet::new();
+     loop {
+         let mut ifaces = list_ifaces();
+-        ifaces.retain(|name| wanted.contains(name));
++        ifaces.retain(|name| wanted.contains_key(name));
+         ifaces.sort_by_key(|name| iface_order(name));
+         for iface in ifaces {
++            if let Some(Start::Static(lease)) = wanted.get(&iface) {
++                if !leases.contains_key(&iface) {
++                    match set_static(&iface, lease) {
++                        Ok(()) => {
++                            leases.insert(iface, lease.clone());
++                        }
++                        // Tried again on the next scan, quietly.
++                        Err(err) if failed.insert(iface.clone()) => {
++                            eprintln!("dhcpd: {iface}: {err}")
++                        }
++                        Err(_) => {}
++                    }
++                }
++                continue;
++            }
+             let up = link_up(&iface);
+             match links.insert(iface.clone(), up) {
+                 // Link lost: ask again when it is back, maybe on another
+@@ -642,14 +716,13 @@ fn watch(verbose: bool, wanted: BTreeSet<String>) -> ! {
+                     wait.next = Instant::now() + RETRY;
+                 }
+             }
+-            let want = preferred(&leases).map(|(n, l)| (n.clone(), l.clone()));
+-            if want.is_some() && want != default {
+-                let (name, lease) = want.as_ref().unwrap();
+-                if let Err(err) = apply_default(name, lease, verbose) {
+-                    eprintln!("dhcpd: {err}");
+-                    continue;
+-                }
+-                default = want;
++        }
++        let want = preferred(&leases).map(|(n, l)| (n.clone(), l.clone()));
++        if want.is_some() && want != default {
++            let (name, lease) = want.as_ref().unwrap();
++            match apply_default(name, lease, verbose) {
++                Ok(()) => default = want,
++                Err(err) => eprintln!("dhcpd: {err}"),
+             }
+         }
+         thread::sleep(SCAN);
+@@ -680,9 +753,9 @@ fn main() {
+         return;
+     }
+ 
+-    // Only the interfaces /etc/net/config.toml asks DHCP for; none: done,
+-    // silently (the minimal card has no file, #622).
+-    let wanted = dhcp_ifaces();
++    // Only the interfaces /etc/net/config.toml asks DHCP or a fixed address
++    // for; none: done, silently (the minimal card has no file, #622).
++    let wanted = start_ifaces();
+     if wanted.is_empty() {
+         return;
+     }
+@@ -693,7 +766,13 @@ fn main() {
+ mod test {
+     #[test]
+     fn config_test() {
+-        use super::parse_dhcp_ifaces;
++        let parse_dhcp_ifaces = |text: &str, board: &[String]| {
++            super::parse_start(text, board)
++                .into_iter()
++                .filter(|(_, start)| *start == super::Start::Dhcp)
++                .map(|(name, _)| name)
++                .collect::<std::collections::BTreeSet<_>>()
++        };
+         let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>();
+         let text = r#"
+ [interface.eth0]
+@@ -724,6 +803,40 @@ ipv6 = "slaac"
+         assert_eq!(parse_dhcp_ifaces(soc, &zero), names(&[]));
+     }
+ 
++    #[test]
++    fn static_test() {
++        use super::{parse_start, Lease, Start};
++        let one = |text: &str| parse_start(text, &[]).remove("eth0");
++        let full = "[interface.eth0]\nipv4 = \"static\"\naddress = \"192.168.1.20/24\"\nrouter = \"192.168.1.1\"\ndns = [\"192.168.1.1\", \"9.9.9.9\"]\n";
++        assert_eq!(
++            one(full),
++            Some(Start::Static(Lease {
++                addr: [192, 168, 1, 20],
++                mask_len: 24,
++                router: Some([192, 168, 1, 1]),
++                dns: Some([192, 168, 1, 1]),
++                domain: None,
++            }))
++        );
++        // Address only: no route, no name server.
++        let bare = "[interface.eth0]\nipv4 = \"static\"\naddress = \"10.0.0.2/8\"\n";
++        assert_eq!(
++            one(bare),
++            Some(Start::Static(Lease { addr: [10, 0, 0, 2], mask_len: 8, ..Lease::default() }))
++        );
++        // Each bad value skips the section.
++        for bad in [
++            "ipv4 = \"static\"\n",
++            "ipv4 = \"static\"\naddress = \"10.0.0.2\"\n",
++            "ipv4 = \"static\"\naddress = \"10.0.0.300/24\"\n",
++            "ipv4 = \"static\"\naddress = \"10.0.0.2/33\"\n",
++            "ipv4 = \"static\"\naddress = \"10.0.0.2/24\"\nrouter = \"gw\"\n",
++            "ipv4 = \"static\"\naddress = \"10.0.0.2/24\"\ndns = [\"x\"]\n",
++        ] {
++            assert_eq!(one(&format!("[interface.eth0]\n{bad}")), None, "{bad}");
++        }
++    }
++
+     use super::*;
+ 
+     fn reply(op: u8, tid: u32, mac: [u8; 6], options: &[u8]) -> Vec<u8> {
+-- 
+2.53.0
+

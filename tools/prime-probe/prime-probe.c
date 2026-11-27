@@ -22,6 +22,12 @@
  *       each (the export must keep the memory alive). --foreign offers v3dd
  *       two fds that are no display buffers, a regular file's and the
  *       display handle's own; v3dd must refuse both (FAIL otherwise).
+ *       --compose N (G4 step 3) composites like Orbital, on the GPU and
+ *       on the CPU, and prints both times: four windows of half the screen
+ *       as textures (BGRA bytes, as Orbital's windows), a 256x256 damaged
+ *       rect uploaded into one window per frame, background plus the
+ *       windows drawn with alpha blending into the display buffer, N
+ *       frames.
  *
  * Prints "prime-probe: PASS: ..." or "prime-probe: FAIL: ..." and exits 0
  * or 1.
@@ -225,9 +231,184 @@ static int foreign_test(int dfd)
 	return 0;
 }
 
+/* Orbital-like window contents: BGRA bytes (0xAARRGGBB words), opaque,
+ * a colour per window and a gradient, so a wrong texel shows. */
+static uint32_t window_px(int win, int x, int y)
+{
+	uint32_t r = (uint32_t)(60 + 50 * win) & 0xff, g = (uint32_t)(x * 255 / 1024) & 0xff,
+		 b = (uint32_t)(y * 255 / 1024) & 0xff;
+	return 0xff000000u | r << 16 | g << 8 | b;
+}
+
+/* The CPU's version of one frame: background, then each window blended
+ * (src over, alpha 255 for the body), as Orbital's roi blend. */
+static void cpu_compose(uint32_t *dst, uint32_t stride, int w, int h, uint32_t **win, int ww, int wh,
+			const int (*pos)[2], int nwin)
+{
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++)
+			dst[y * stride + x] = BG_XRGB;
+	for (int k = 0; k < nwin; k++)
+		for (int y = 0; y < wh; y++) {
+			int dy = pos[k][1] + y;
+			if (dy < 0 || dy >= h)
+				continue;
+			for (int x = 0; x < ww; x++) {
+				int dx = pos[k][0] + x;
+				if (dx < 0 || dx >= w)
+					continue;
+				uint32_t s = win[k][y * ww + x], a = s >> 24, d = dst[dy * stride + dx];
+				if (a == 255) {
+					dst[dy * stride + dx] = s;
+					continue;
+				}
+				uint32_t o = 0;
+				for (int c = 0; c < 24; c += 8) {
+					uint32_t sc = s >> c & 0xff, dc = d >> c & 0xff;
+					o |= ((sc * a + dc * (255 - a)) / 255) << c;
+				}
+				dst[dy * stride + dx] = o;
+			}
+		}
+}
+
+#define NWIN 4
+
+static int compose_bench(struct buf *b, int w, int h, int frames)
+{
+	int ww = w / 2, wh = h / 2;
+	const int pos[NWIN][2] = { { w / 16, h / 16 }, { w / 4, h / 5 }, { w / 2 - w / 8, h / 3 }, { w / 3, h / 2 - h / 16 } };
+	uint32_t *win[NWIN];
+	GLuint tex[NWIN];
+	for (int k = 0; k < NWIN; k++) {
+		win[k] = malloc((size_t)ww * wh * 4);
+		if (!win[k])
+			return fail("--compose: malloc");
+		for (int y = 0; y < wh; y++)
+			for (int x = 0; x < ww; x++)
+				win[k][y * ww + x] = window_px(k, x, y);
+	}
+	GLuint vs = shader(GL_VERTEX_SHADER,
+			   "uniform vec4 rect;\n" /* x, y, w, h in pixels */
+			   "uniform vec2 screen;\n"
+			   "attribute vec2 corner;\n"
+			   "varying vec2 uv;\n"
+			   "void main() {\n"
+			   "  uv = corner;\n"
+			   "  vec2 p = (rect.xy + corner * rect.zw) / screen * 2.0 - 1.0;\n"
+			   /* Row 0 of the buffer is the top: GL's y up is the buffer's down. */
+			   "  gl_Position = vec4(p.x, p.y, 0.0, 1.0);\n"
+			   "}\n");
+	GLuint fs = shader(GL_FRAGMENT_SHADER,
+			   /* highp: mediump texture coordinates miss texels across a 960 wide window. */
+			   "precision highp float;\n"
+			   "uniform sampler2D tex;\n"
+			   "varying vec2 uv;\n"
+			   /* BGRA bytes uploaded as RGBA: swap back. */
+			   "void main() { gl_FragColor = texture2D(tex, uv).bgra; }\n");
+	if (!vs || !fs)
+		return fail("--compose: shader compile");
+	GLuint prog = glCreateProgram();
+	glAttachShader(prog, vs);
+	glAttachShader(prog, fs);
+	glBindAttribLocation(prog, 0, "corner");
+	glLinkProgram(prog);
+	GLint linked = 0;
+	glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+	if (!linked)
+		return fail("--compose: program link");
+	glUseProgram(prog);
+	GLint u_rect = glGetUniformLocation(prog, "rect"), u_screen = glGetUniformLocation(prog, "screen");
+	glUniform2f(u_screen, (float)w, (float)h);
+	glUniform1i(glGetUniformLocation(prog, "tex"), 0);
+	static const GLfloat quad[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
+	glDisableVertexAttribArray(1);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
+	glEnableVertexAttribArray(0);
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	glGenTextures(NWIN, tex);
+	double t0 = now_ms();
+	for (int k = 0; k < NWIN; k++) {
+		glBindTexture(GL_TEXTURE_2D, tex[k]);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, ww, wh, 0, GL_RGBA, GL_UNSIGNED_BYTE, win[k]);
+	}
+	glFinish();
+	double t_full = (now_ms() - t0) / NWIN;
+	if (glGetError() != GL_NO_ERROR)
+		return fail("--compose: texture upload");
+
+	/* A 256x256 damaged rect per frame, its contents changing. */
+	int dw = ww < 256 ? ww : 256, dh = wh < 256 ? wh : 256;
+	uint32_t *dmg = malloc((size_t)dw * dh * 4);
+	if (!dmg)
+		return fail("--compose: malloc");
+	double t_up = 0, t_draw = 0;
+	glBindFramebuffer(GL_FRAMEBUFFER, b[0].fbo);
+	glViewport(0, 0, w, h);
+	glClearColor(BG_R / 255.0f, BG_G / 255.0f, BG_B / 255.0f, 1.0f);
+	for (int fr = 0; fr < frames; fr++) {
+		int k = fr % NWIN, dx = (fr * 37) % (ww - dw + 1), dy = (fr * 53) % (wh - dh + 1);
+		for (int y = 0; y < dh; y++)
+			for (int x = 0; x < dw; x++)
+				win[k][(dy + y) * ww + dx + x] = dmg[y * dw + x] = window_px(k, dx + x + fr, dy + y);
+		double a = now_ms();
+		glBindTexture(GL_TEXTURE_2D, tex[k]);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, dx, dy, dw, dh, GL_RGBA, GL_UNSIGNED_BYTE, dmg);
+		double c = now_ms();
+		glClear(GL_COLOR_BUFFER_BIT);
+		for (int i = 0; i < NWIN; i++) {
+			glBindTexture(GL_TEXTURE_2D, tex[i]);
+			glUniform4f(u_rect, (float)pos[i][0], (float)pos[i][1], (float)ww, (float)wh);
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		}
+		glFinish();
+		double d = now_ms();
+		t_up += c - a;
+		t_draw += d - c;
+	}
+	if (glGetError() != GL_NO_ERROR)
+		return fail("--compose: drawing");
+
+	/* The same scene on the CPU, into a buffer of the same size. */
+	uint32_t *ref = malloc((size_t)b[0].pitch * h);
+	if (!ref)
+		return fail("--compose: malloc");
+	int cpu_frames = frames < 20 ? frames : 20;
+	double e = now_ms();
+	for (int fr = 0; fr < cpu_frames; fr++)
+		cpu_compose(ref, b[0].pitch / 4, w, h, win, ww, wh, pos, NWIN);
+	double t_cpu = (now_ms() - e) / cpu_frames;
+
+	/* What the GPU drew must be the CPU's picture, pixel for pixel. */
+	int differ = 0;
+	uint32_t stride = b[0].pitch / 4;
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++)
+			differ += (b[0].cpu[y * stride + x] & 0xffffff) != (ref[y * stride + x] & 0xffffff);
+	printf("prime-probe: compose: %d windows of %dx%d at %dx%d; texture upload of a whole window %.2f ms; GPU frame %.2f ms (upload of %dx%d %.2f ms, draw+glFinish %.2f ms); CPU frame %.2f ms; %d pixels differ\n",
+	       NWIN, ww, wh, w, h, t_full, (t_up + t_draw) / frames, dw, dh, t_up / frames, t_draw / frames, t_cpu, differ);
+	for (int k = 0; k < NWIN; k++)
+		free(win[k]);
+	free(dmg);
+	free(ref);
+	glDeleteTextures(NWIN, tex);
+	glDeleteProgram(prog);
+	glDisable(GL_BLEND);
+	if (differ)
+		return fail("--compose: the GPU's picture differs from the CPU's");
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
-	int frames = 300, show = 0, lifetime = 0, foreign = 0, pattern_fill = 1;
+	int frames = 300, show = 0, lifetime = 0, foreign = 0, pattern_fill = 1, compose = 0;
 	setvbuf(stdout, NULL, _IONBF, 0);
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--frames") && i + 1 < argc)
@@ -240,8 +421,10 @@ int main(int argc, char **argv)
 			foreign = 1;
 		else if (!strcmp(argv[i], "--no-pattern"))
 			pattern_fill = 0;
+		else if (!strcmp(argv[i], "--compose") && i + 1 < argc)
+			compose = atoi(argv[++i]);
 		else {
-			printf("usage: prime-probe [--frames N] [--show] [--lifetime] [--foreign] [--no-pattern]\n");
+			printf("usage: prime-probe [--frames N] [--show] [--lifetime] [--foreign] [--no-pattern] [--compose N]\n");
 			return 2;
 		}
 	}
@@ -534,6 +717,9 @@ int main(int argc, char **argv)
 	double ms = now_ms() - start;
 	printf("prime-probe: %d frames at %dx%d, %.2f ms per frame (render+glFinish %.2f, SET_CRTC %.2f), import of %d buffers %.1f ms\n",
 	       done, w, h, ms / done, t_render / done, t_flip / done, NBUF, t_import);
+
+	if (compose > 0 && compose_bench(b, w, h, compose))
+		return 1;
 
 	if (lifetime) {
 		/* The display forgets the buffers; the GPU still has them. */

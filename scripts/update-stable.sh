@@ -45,6 +45,9 @@
 #   commit writes kpis.md and kpis.json into redox-rpi/pi-tests; on a pass
 #   its --summary goes into the day's report too. Skipped while the script
 #   does not exist; never fails this script.
+#   Every night: scripts/check-patches.sh --report lists the experiments
+#   that do not apply and are not parked (#672); experiments.md in
+#   redox-rpi/pi-tests, and on a pass in the day's report too.
 #   Every night, after the Redox part: the TinyCC VC4 track (#410), not
 #   gating. scripts/tcc-track.sh builds the bootcode with GCC and TCC and
 #   runs the resim tests; scripts/tcc-track-pi.py
@@ -184,6 +187,28 @@ run_kpis() {
     return 0
 }
 
+# Experiments that do not apply on the pinned commits and are not parked
+# (scripts/check-patches.sh --report, #672). Written to experiments.md in
+# pi-tests with the KPIs. Never fails.
+exprep=""
+run_experiments() {
+    exprep="$(mktemp)"
+    local work
+    work="$(mktemp -d)"
+    if ! grep -q -- '--report' scripts/check-patches.sh 2> /dev/null; then
+        log "scripts/check-patches.sh at $ref has no --report, no experiments report"
+        : > "$exprep"
+    elif timeout 900 scripts/check-patches.sh --work "$work" --report "$exprep" > "$work/log.txt" 2>&1 ||
+        [ -s "$exprep" ]; then
+        log "experiments: $(head -n 1 "$exprep")"
+    else
+        log "check-patches.sh failed: $(tail -n 1 "$work/log.txt")"
+        : > "$exprep"
+    fi
+    rm -rf "$work"
+    return 0
+}
+
 # TinyCC VC4 track (#410, WBS 2.15 point 3), once per night after the Redox
 # part, so the Pi is on the stable image (or the night's) when it starts.
 # Not gating: never fails this script and never changes the stable image.
@@ -256,6 +281,10 @@ stage_kpis() {
         cat "$tccrec" >> "$TESTS/tcc.jsonl"
         git -C "$TESTS" add tcc.jsonl
     fi
+    if [ -n "$exprep" ] && [ -s "$exprep" ]; then
+        { echo "# Experiments that do not apply"; echo; echo "Nightly $(date -u +%Y-%m-%d), \`scripts/check-patches.sh --report\` on the pinned commits at $(git rev-parse --short HEAD)."; echo; cat "$exprep"; } > "$TESTS/experiments.md"
+        git -C "$TESTS" add experiments.md
+    fi
     [ -n "$kpis_dir" ] || return 0
     cp "$kpis_dir/kpis.md" "$kpis_dir/kpis.json" "$TESTS/"
     git -C "$TESTS" add kpis.md kpis.json
@@ -265,7 +294,7 @@ stage_kpis() {
 # its own commit. Never fails.
 push_kpis_only() {
     run_tcc_track
-    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || return 0
+    [ -n "$kpis_dir" ] || [ -s "$netrec" ] || [ -s "$tccrec" ] || [ -s "$exprep" ] || return 0
     [ -d "$TESTS/.git" ] || git clone -q "https://github.com/$TESTS_REPO" "$TESTS" || return 0
     git -C "$TESTS" fetch -q origin && git -C "$TESTS" checkout -q --detach origin/main || return 0
     stage_kpis
@@ -284,6 +313,7 @@ push_kpis_only() {
 }
 
 run_kpis
+run_experiments
 
 # Mondays: refresh the CI image mirror, release ci-image (#409,
 # docs/build-host.md "CI image mirror"). Uses its own token
@@ -412,7 +442,7 @@ restore_stable() {
 report="$(mktemp)"
 output="$(mktemp)"
 netrec="$(mktemp)"
-trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$0"' EXIT
+trap 'rm -f "$report" "$output" "$netrec" "$tccrec" "$exprep" "$0"' EXIT
 stage "$image"
 log "staged $build_id on $TFTP/redox"
 passed=0
@@ -502,6 +532,9 @@ EOF
     { [ -s "$out" ] && echo; sed '1s/^## /# /' "$report"; } >> "$out"
     if [ -n "$kpis_dir" ] && [ -s "$kpis_dir/summary.md" ]; then
         { echo; echo "## Quality KPIs"; echo; cat "$kpis_dir/summary.md"; } >> "$out"
+    fi
+    if [ -s "$exprep" ]; then
+        { echo; echo "## Experiments"; echo; cat "$exprep"; } >> "$out"
     fi
     stage_kpis
     git -C "$TESTS" add lab.md "reports/stable-$date.md"
