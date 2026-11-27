@@ -1,0 +1,7 @@
+# Experiments that knowingly do not apply on the pinned upstream commits.
+# scripts/check-patches.sh never fails on them (#672). One per line: the
+# experiment's name, then why it is parked and where it gets fixed.
+# Remove the line in the pull request that makes the experiment apply again.
+boot-time      base patch 0111 (#614) broke it; refreshed on the upstream bump (#309, #696)
+driver-status  base patch 0111 (#614) broke it; refreshed on the upstream bump (#309, #696)
+ipv6           base patch 0111 (#614) broke it; refreshed on the upstream bump (#309, #696)
