@@ -82,6 +82,14 @@ Checks, in this order:
                 before. QEMU's raspi3b has 1 GiB, the 3B+ about 600 MB free:
                 each mode takes 5-10 s on the 3B+ (Test 598). Skip without
                 /usr/bin/oomtest
+  bugreport     #759: `bugreport --no-upload <text>` (experiment bugreport
+                or bugreport-upload) writes one report file and prints its
+                path; the file has the text and every section (release,
+                board, kernel, uptime, memory, summary, network, processes,
+                kernel log), the release's BUILD_ID, at most 256 KiB, no
+                full MAC address, and not a canary line written to a file in
+                the home directory just before. Skip without
+                /usr/bin/bugreport
   tcp           #364, #92: --tcp-mib MiB from this host with nc, same
                 SHA-256 (pi-test.py's check); --tcp-host is this host as the
                 guest sees it (QEMU user networking: 10.0.2.2)
@@ -568,6 +576,48 @@ def oom_run(sh, mode):
     return False, (f"exit {rc.group(1)}" if rc else "no exit status (devsh lost?)") + reached
 
 
+BUGREPORT_SECTIONS = ("What went wrong", "Report", "Release", "Board", "Kernel", "Uptime", "Memory",
+                      "Summary of the kernel log", "Network", "Processes", "Kernel log")
+FULL_MAC = re.compile(r"(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}(?![0-9a-fA-F:])")
+
+
+def check_bugreport(sh, check):
+    if not has(sh, "/usr/bin/bugreport"):
+        check("bugreport", None, "no /usr/bin/bugreport (experiment bugreport)")
+        return
+    token = f"BRCANARY{int(time.time())}"
+    sh.run(f"mkdir -p /home/root; echo {token} > /home/root/bugreport-canary.txt", timeout=30)
+    out = sh.run(f"env HOME=/home/root bugreport --no-upload regression set {token[:8]}", timeout=120)
+    path = next((l.split("Report written to ", 1)[1].strip() for l in out if "Report written to " in l), None)
+    if not path:
+        check("bugreport", False, "no \"Report written to\" line", raw=out)
+        return
+    text = "\n".join(sh.run(f"cat {path}", timeout=60))
+    size = next((int(l.split()[0]) for l in sh.run(f"wc -c < {path}", timeout=30) if l.strip().isdigit()), None)
+    release = "\n".join(sh.run("cat /etc/redox-rpi-release", timeout=30))
+    build = re.search(r'BUILD_ID="([^"]+)"', release)
+    missing = [t for t in BUGREPORT_SECTIONS if not re.search(rf"^== {re.escape(t)}\b", text, re.M)]
+    problems = []
+    if missing:
+        problems.append("missing sections: " + ", ".join(missing))
+    if "regression set BRCANARY" not in text:
+        problems.append("the text is not in it")
+    if build and build.group(1) not in text:
+        problems.append(f"no BUILD_ID {build.group(1)}")
+    if token in text:
+        problems.append("the canary from the home directory is in it")
+    macs = [m for m in FULL_MAC.findall(text) if not m.lower().endswith("xx:xx:xx")]
+    if macs:
+        problems.append(f"full MAC address {macs[0][:9]}...")
+    if size is None or size > 256 * 1024:
+        problems.append(f"size {size}")
+    sh.run(f"rm -f {path} /home/root/bugreport-canary.txt", timeout=30)
+    board = re.search(r"^== Board\n(.*)$", text, re.M)
+    detail = (f"{path.rsplit('/', 1)[-1]}, {size} bytes, board {board.group(1).strip() if board else '?'}; "
+              + ("; ".join(problems) if problems else "all sections, no home file, MACs cut"))
+    check("bugreport", not problems, detail, raw=None if not problems else text.splitlines()[:60])
+
+
 def check_oom(sh, check):
     if not has(sh, "/usr/bin/oomtest"):
         check("oom", None, "no /usr/bin/oomtest (experiment oom-test)")
@@ -669,6 +719,7 @@ def main():
             ("launcher-sopwith", lambda: check_launcher_sopwith(sh, check, args)),
             ("ifconfig-mac", lambda: check_ifconfig_mac(sh, check, args)),
             ("gamepad-console", lambda: check_gamepad_console(sh, check, args)),
+            ("bugreport", lambda: check_bugreport(sh, check)),
             ("oom", lambda: check_oom(sh, check)),
             # Last: after nc, the next command in the same devsh session gave
             # no output in both QEMU runs (2026-11-12), so nothing follows it.

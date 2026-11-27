@@ -186,6 +186,17 @@ also gets the **test experiments** in `config/test-experiments.conf` (now
 and A/B rows, where the watch thread would count, build with
 `--no-test-experiments`.
 
+## Reporting a bug from the image
+
+`bugreport` (experiments `bugreport` and `bugreport-upload`, #759) writes
+one text file with the system state, `~/bugreport-<date>-<time>.txt`, for
+a tester who has only a keyboard and a screen. In dev images built with
+`bugreport-upload` it also sends the file to the build host and prints an
+ID such as `BR-0007`: pass on the ID, and a session reads the report with
+`scripts/bugreport-receiver.py --list`. Release images keep the file only.
+What goes into the report and what stays out:
+[bugreport/README.md](../patches/experiments/bugreport/README.md).
+
 ## Known problems
 
 - Programs started from the shell crash at random (`no filetable fd present`
