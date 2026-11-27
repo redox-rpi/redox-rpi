@@ -578,7 +578,8 @@ def oom_run(sh, mode):
 
 BUGREPORT_SECTIONS = ("What went wrong", "Report", "Release", "Board", "Kernel", "Uptime", "Memory",
                       "Summary of the kernel log", "Network", "Processes", "Kernel log")
-FULL_MAC = re.compile(r"(?<![0-9a-fA-F:])(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}(?![0-9a-fA-F:])")
+# Both forms: aa:bb:cc:dd:ee:ff and aa-bb-cc-dd-ee-ff (netcfg has dashes, Test 680).
+FULL_MAC = re.compile(r"(?<![0-9a-fA-F:-])[0-9a-fA-F]{2}([:-])(?:[0-9a-fA-F]{2}\1){4}[0-9a-fA-F]{2}(?![0-9a-fA-F:-])")
 
 
 def check_bugreport(sh, check):
@@ -606,7 +607,18 @@ def check_bugreport(sh, check):
         problems.append(f"no BUILD_ID {build.group(1)}")
     if token in text:
         problems.append("the canary from the home directory is in it")
-    macs = [m for m in FULL_MAC.findall(text) if not m.lower().endswith("xx:xx:xx")]
+    macs = [m.group(0) for m in FULL_MAC.finditer(text)]
+    # The device half of each real MAC, in any form, must not be in it either.
+    for iface in sh.run("ls /scheme/netcfg/ifaces", timeout=30):
+        iface = iface.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.]+", iface):
+            continue
+        real = "".join(sh.run(f"cat /scheme/netcfg/ifaces/{iface}/mac", timeout=30)).strip()
+        parts = re.split(r"[:-]", real.lower())
+        if len(parts) == 6 and parts[3:] != ["00", "00", "00"]:
+            tail = re.compile(r"[:-]".join(parts[2:]), re.I)
+            if tail.search(text):
+                macs.append(f"{':'.join(parts[:3])} ({iface})")
     if macs:
         problems.append(f"full MAC address {macs[0][:9]}...")
     if size is None or size > 256 * 1024:

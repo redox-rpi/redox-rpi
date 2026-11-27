@@ -351,21 +351,25 @@ fn clean(s: &str) -> String {
     out
 }
 
-/// `aa:bb:cc:dd:ee:ff` becomes `aa:bb:cc:xx:xx:xx`.
+/// `aa:bb:cc:dd:ee:ff` becomes `aa:bb:cc:xx:xx:xx`; the same for the
+/// `aa-bb-cc-dd-ee-ff` form that `/scheme/netcfg/ifaces/<if>/mac` has.
 fn mask_macs(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     let hex = |c: u8| c.is_ascii_hexdigit();
+    let joins = |c: u8| hex(c) || c == b':' || c == b'-';
     while i < b.len() {
-        let is_mac = i + 17 <= b.len()
+        let sep = if i + 2 < b.len() { b[i + 2] } else { 0 };
+        let is_mac = (sep == b':' || sep == b'-')
+            && i + 17 <= b.len()
             && (0..6).all(|k| hex(b[i + 3 * k]) && hex(b[i + 3 * k + 1]))
-            && (0..5).all(|k| b[i + 3 * k + 2] == b':')
-            && (i == 0 || !(hex(b[i - 1]) || b[i - 1] == b':'))
-            && (i + 17 == b.len() || !(hex(b[i + 17]) || b[i + 17] == b':'));
+            && (0..5).all(|k| b[i + 3 * k + 2] == sep)
+            && (i == 0 || !joins(b[i - 1]))
+            && (i + 17 == b.len() || !joins(b[i + 17]));
         if is_mac {
             out.extend_from_slice(&b[i..i + 9]);
-            out.extend_from_slice(b"xx:xx:xx");
+            out.extend_from_slice(&[b'x', b'x', sep, b'x', b'x', sep, b'x', b'x']);
             i += 17;
         } else {
             out.push(b[i]);
@@ -452,6 +456,11 @@ mod tests {
         // Not a MAC: an IPv6 address and a time.
         assert_eq!(mask_macs("fe80::1 12:34:56"), "fe80::1 12:34:56");
         assert_eq!(mask_macs("aa:b8:27:eb:12:34:56"), "aa:b8:27:eb:12:34:56");
+        // The netcfg form, with dashes (Test 680).
+        assert_eq!(mask_macs("eth0: mac B8-27-EB-12-34-56 link up"), "eth0: mac B8-27-EB-xx-xx-xx link up");
+        // Mixed separators are not a MAC; a date with dashes is not one either.
+        assert_eq!(mask_macs("b8:27-eb:12:34:56"), "b8:27-eb:12:34:56");
+        assert_eq!(mask_macs("2026-11-27"), "2026-11-27");
     }
 
     #[test]
