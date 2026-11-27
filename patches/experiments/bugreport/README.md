@@ -35,7 +35,7 @@ A fixed list of sources, nothing else:
 - `uptime`, `free`, `ps`;
 - the network: interfaces with MAC, link and addresses, routes and name
   server from `/scheme/netcfg`, the drivers in `/scheme/network.*`;
-- a summary of the kernel log: panic, out-of-memory, fault, crash and
+- a summary of the kernel log: panic, out-of-memory, page fault, crash and
   error lines, and the USB (dwc2d) lines;
 - the kernel log `/scheme/sys/log`, last, losing its oldest lines if the
   report would pass 256 KiB.

@@ -301,7 +301,7 @@ fn summary(log: &str) -> String {
         v[v.len().saturating_sub(MAX_SUMMARY)..].to_vec()
     };
     let problems = pick(&|l| {
-        ["panic", "out of memory", "unhandled exception", "error", "crash", "segfault", "fault", "killed"]
+        ["panic", "out of memory", "unhandled exception", "error", "crash", "segfault", "page fault", "killed"]
             .iter()
             .any(|w| l.contains(w))
     });
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn summary_picks_lines() {
-        let s = summary("ok\nKERNEL PANIC: x\ndwc2d: device on root port\n");
+        let s = summary("ok\nDHCP: default route via 10.0.2.2\nKERNEL PANIC: x\ndwc2d: device on root port\n");
         assert!(s.contains("problem lines (1)") && s.contains("KERNEL PANIC"));
         assert!(s.contains("USB lines (1)"));
     }
