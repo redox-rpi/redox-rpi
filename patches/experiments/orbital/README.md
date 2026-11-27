@@ -25,10 +25,12 @@ whole core on polling the keyboard.
   upstream's `orblogin` kept its login picture (1024x768) decoded at full
   size, a clone of it and the copy scaled to cover the window (1920x1440
   at 1920x1080 in zoom mode) for as long as the login window was open.
-  It now decodes the picture when the window size changes, scales and
-  crops it to the window and drops the other copies: one 8 MB image at
-  1920x1080 instead of 3 + 3 + 11 MB. This matters on the Zero 2 W (250
-  MB for Redox).
+  It now decodes the picture when the window size changes, scales only
+  the visible part straight into a window-sized picture (bilinear) and
+  drops the original. The whole scaled copy is never made: freed memory
+  is not given back to the system, so the peak is what stays (a first
+  version that scaled, cropped and then freed was 3.8 MB larger, pi-tests
+  Test 677). This matters on the Zero 2 W (250 MB for Redox).
 - Two `rpi-fbd` patches it needs, in experiment `rpi-fb` (branch
   `graphics-gui`):
   - [`0064`](../rpi-fb/base/0064-rpi-fbd-remember-only-the-frame-s-own-damage-for-the.patch):

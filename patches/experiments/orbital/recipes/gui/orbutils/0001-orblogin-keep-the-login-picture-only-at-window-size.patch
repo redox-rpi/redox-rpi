@@ -6,15 +6,17 @@ Subject: [PATCH] orblogin: keep the login picture only at window size
 orblogin kept the decoded login picture at full size for its whole
 life, a clone of it, and the picture scaled to cover the window
 (larger than the window in zoom mode). Decode it only when the window
-size changes, scale and crop it to the window, and drop the full-size
-and scaled copies again. At 1920x1080 this keeps one 8 MB image
-instead of 3 + 3 + 11 MB.
+size changes and scale only the visible part straight into a picture
+of the window's size (bilinear), then drop the original. The whole
+scaled copy is never made: freed memory is not given back, so the
+peak is what stays. At 1824x984 the picture costs 7 MB, against
+3 + 10 MB before.
 ---
- orbutils/src/orblogin/main.rs | 114 +++++++++++++++++++++++++---------
- 1 file changed, 84 insertions(+), 30 deletions(-)
+ orbutils/src/orblogin/main.rs | 157 +++++++++++++++++++++++++++-------
+ 1 file changed, 127 insertions(+), 30 deletions(-)
 
 diff --git a/orbutils/src/orblogin/main.rs b/orbutils/src/orblogin/main.rs
-index cb64226..d798b97 100644
+index cb64226..cc3ff79 100644
 --- a/orbutils/src/orblogin/main.rs
 +++ b/orbutils/src/orblogin/main.rs
 @@ -137,7 +137,10 @@ struct UiConfig {
@@ -42,7 +44,7 @@ index cb64226..d798b97 100644
  
          btn_color_inactive: Color::rgb(39, 72, 105),
          btn_color_active: Color::rgb(59, 102, 135),
-@@ -164,6 +171,71 @@ fn build_ui_config() -> Result<UiConfig, Box<dyn Error + 'static>> {
+@@ -164,6 +171,114 @@ fn build_ui_config() -> Result<UiConfig, Box<dyn Error + 'static>> {
      })
  }
  
@@ -80,12 +82,6 @@ index cb64226..d798b97 100644
 +        };
 +
 +        let (width, height) = find_scale(&image, mode, w, h);
-+        let scaled = if width == image.width() && height == image.height() {
-+            image
-+        } else {
-+            image.resize(width, height, orbclient::image::ResizeType::Lanczos3)
-+        };
-+
 +        let (crop_x, crop_w) = if width > w {
 +            ((width - w) / 2, w)
 +        } else {
@@ -97,10 +93,11 @@ index cb64226..d798b97 100644
 +            (0, height)
 +        };
 +
-+        let mut cropped = Image::new(crop_w, crop_h);
-+        scaled
-+            .roi(&Rect::new(crop_x as i32, crop_y as i32, crop_w, crop_h))
-+            .draw(&mut cropped, 0, 0);
++        // Scale straight into the visible part: no copy of the whole scaled
++        // picture (it is larger than the window in zoom mode), since freed
++        // memory is not given back and the peak stays.
++        let cropped = scale_crop(&image, width, height, crop_x, crop_y, crop_w, crop_h);
++        drop(image);
 +
 +        Background {
 +            size: (w, h),
@@ -111,10 +108,58 @@ index cb64226..d798b97 100644
 +    }
 +}
 +
++/// The part (`crop_x`, `crop_y`, `crop_w` x `crop_h`) of `image` scaled to
++/// `width` x `height`, bilinear.
++fn scale_crop(
++    image: &Image,
++    width: u32,
++    height: u32,
++    crop_x: u32,
++    crop_y: u32,
++    crop_w: u32,
++    crop_h: u32,
++) -> Image {
++    let (iw, ih) = (image.width() as usize, image.height() as usize);
++    let (cw, ch) = (crop_w as usize, crop_h as usize);
++    if iw == 0 || ih == 0 || width == 0 || height == 0 || cw == 0 || ch == 0 {
++        return Image::new(0, 0);
++    }
++    let src = Renderer::data(image);
++    let sx = iw as f32 / width as f32;
++    let sy = ih as f32 / height as f32;
++    let mut out = vec![Color { data: 0 }; cw * ch].into_boxed_slice();
++    let lerp = |a: u8, b: u8, t: f32| a as f32 + (b as f32 - a as f32) * t;
++    let mix = |a: Color, b: Color, t: f32| -> [f32; 4] {
++        [
++            lerp(a.r(), b.r(), t),
++            lerp(a.g(), b.g(), t),
++            lerp(a.b(), b.b(), t),
++            lerp(a.a(), b.a(), t),
++        ]
++    };
++    for y in 0..ch {
++        let fy = (((y as u32 + crop_y) as f32 + 0.5) * sy - 0.5).max(0.0);
++        let y0 = (fy as usize).min(ih - 1);
++        let y1 = (y0 + 1).min(ih - 1);
++        let ty = fy - y0 as f32;
++        for x in 0..cw {
++            let fx = (((x as u32 + crop_x) as f32 + 0.5) * sx - 0.5).max(0.0);
++            let x0 = (fx as usize).min(iw - 1);
++            let x1 = (x0 + 1).min(iw - 1);
++            let tx = fx - x0 as f32;
++            let top = mix(src[y0 * iw + x0], src[y0 * iw + x1], tx);
++            let bottom = mix(src[y1 * iw + x0], src[y1 * iw + x1], tx);
++            let c = |i: usize| (top[i] + (bottom[i] - top[i]) * ty).round().clamp(0.0, 255.0) as u8;
++            out[y * cw + x] = Color::rgba(c(0), c(1), c(2), c(3));
++        }
++    }
++    Image::from_data(crop_w, crop_h, out).unwrap_or_else(|| Image::new(0, 0))
++}
++
  struct UiLayout {
      s_u: u32,
      s_i: i32,
-@@ -293,7 +365,7 @@ struct App<'a> {
+@@ -293,7 +408,7 @@ struct App<'a> {
      context: &'a softbuffer::Context<OwnedDisplayHandle>,
      ui_config: UiConfig,
      ui_state: UiState,
@@ -123,7 +168,7 @@ index cb64226..d798b97 100644
      window: OnceCell<Surface>,
      output: &'a mut Option<(Command, String)>,
  }
-@@ -400,7 +472,7 @@ fn login_window(
+@@ -400,7 +515,7 @@ fn login_window(
          mouse_y: 0,
          mouse_left: false,
      };
@@ -132,7 +177,7 @@ index cb64226..d798b97 100644
  
      let mut output = None;
  
-@@ -423,13 +495,13 @@ fn handle_redraw(
+@@ -423,13 +538,13 @@ fn handle_redraw(
      ui_config: &UiConfig,
      ui_layout: UiLayout,
      window: &mut OrbBuffer<'_>,
@@ -148,7 +193,7 @@ index cb64226..d798b97 100644
          btn_color_inactive,
          btn_color_active,
          btn_border_color,
-@@ -472,35 +544,17 @@ fn handle_redraw(
+@@ -472,35 +587,17 @@ fn handle_redraw(
  
      let (w, h) = (window.width(), window.height());
  
