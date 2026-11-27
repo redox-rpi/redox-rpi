@@ -77,10 +77,12 @@ Release candidates and releases are built by one build agent only; see
 - **Topic pages** in [docs/topics/](docs/topics/README.md) say what works,
   what is in progress and what comes next, per topic. Update the page of
   your topic in the same commit or pull request as your change.
-- **Labels:** `topic:<name>` for the topic, `needs:pi`, `needs:qemu`,
-  `needs:zero2w` or `needs:nothing` for the hardware, `in-progress` while
-  someone works on it. Release plans are milestones, for example
-  [v0.3.0](https://github.com/redox-rpi/redox-rpi/milestone/1).
+- **Labels:** `topic:<name>` for the topic, `needs:pi`, `needs:zero2w`,
+  `needs:qemu`, `needs:person` or `needs:nothing` for what a test needs,
+  `in-progress` while someone works on it. The full list is
+  [labels.yml](https://github.com/redox-rpi/.github/blob/main/.github/labels.yml).
+  Each sprint is a [milestone](https://github.com/redox-rpi/redox-rpi/milestones)
+  named after its release.
 - **Pull requests** name their issue (`Fixes #12`), so it closes on merge.
 
 ## Merging
