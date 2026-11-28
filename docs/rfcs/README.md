@@ -11,3 +11,4 @@ it could land. An RFC starts as **Draft**; the maintainer marks it
 | [0002](0002-project-structure.md) | Project structure: clean up, split the repositories, fit a session's context | Accepted |
 | [0003](0003-v1-criteria.md) | What makes v1.0 | Draft |
 | [0004](0004-services-on-demand.md) | Start services when they are needed | Draft |
+| [0005](0005-generic-extensions.md) | Generic Redox extensions apart from the Pi parts | Draft |
