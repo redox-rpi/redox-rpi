@@ -24,7 +24,9 @@
 # in) and the initramfs (initfs plus the RedoxFS partition of the image, which
 # runs from RAM as with network boot), made by scripts/fw-direct-boot.sh.
 # config.txt starts kernel8.img instead of U-Boot. Partition 2 is the data
-# partition, as for network boot.
+# partition, as for network boot. With --card-root the root filesystem is
+# partition 3 instead of part of the initramfs, and cmdline.txt names its
+# UUID: it no longer takes RAM (#786), and changes to it survive a reboot.
 #
 # Needs: curl, sfdisk, partx, mtools, cargo (builds tools/redoxfs-file).
 # Run scripts/build-uboot.sh first, and for network boot
@@ -35,9 +37,13 @@
 #                          [--boot-size <MiB>] [--data-size <MiB>]
 #   scripts/make-sdcard.sh --local <harddrive.img> [--out <file>]
 #   scripts/make-sdcard.sh --direct <harddrive.img> [--out <file>] [--data-size <MiB>]
+#                          [--card-root]
 #   all three also take [--family <name>]
 #   --local also takes [--live] and [--board pi4]
 #
+#   --card-root        with --direct: the root filesystem on the card
+#                      (partition 3) instead of in RAM; needs the data
+#                      partition, which Redox mounts by position (0p1)
 #   --live             with --local: the live bootloader (bootloader-live.efi)
 #                      as BOOTAA64.EFI, which copies the root filesystem into
 #                      RAM, as network boot does; for boards without an SD
@@ -84,6 +90,7 @@ image=
 direct=
 family=
 live=
+card_root=
 board=pi3
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -96,6 +103,7 @@ while [ $# -gt 0 ]; do
         --direct) direct="$2"; shift 2 ;;
         --family) family="$2"; shift 2 ;;
         --live) live=yes; shift ;;
+        --card-root) card_root=yes; shift ;;
         --board) board="$2"; shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -115,12 +123,24 @@ if [ -n "$live" ]; then
     [ -n "$live_efi" ] || { echo "bootloader-live.efi missing, run scripts/build-image.sh" >&2; exit 1; }
 fi
 
+if [ -n "$card_root" ]; then
+    [ -n "$direct" ] || { echo "--card-root needs --direct" >&2; exit 1; }
+    # Redox mounts the data partition by position (/scheme/disk.mmc/0p1):
+    # without it, that would be the root filesystem a second time.
+    [ "$data_mib" -gt 0 ] || { echo "--card-root needs the data partition (--data-size > 0)" >&2; exit 1; }
+fi
+
 uboot="$ROOT/build/u-boot/u-boot.bin"
 bootscr="$tftp/$dir/boot.scr"
 if [ -n "$direct" ]; then
     [ -z "$image" ] || { echo "--local and --direct do not go together" >&2; exit 1; }
     fw="$ROOT/build/fw-direct"
-    "$ROOT/scripts/fw-direct-boot.sh" --image "$direct" --out "$fw"
+    "$ROOT/scripts/fw-direct-boot.sh" --image "$direct" --out "$fw" ${card_root:+--card-root}
+    if [ -n "$card_root" ]; then
+        # The root filesystem from fw-direct-boot.sh's copy of the image,
+        # whose banner says "direct".
+        read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$fw/harddrive.img")
+    fi
     # Room for the initramfs and the firmware files.
     min_mib=$((($(wc -c < "$fw/initramfs") >> 20) + 32))
     [ "$BOOT_MIB" -ge "$min_mib" ] || BOOT_MIB=$min_mib
@@ -158,10 +178,17 @@ fi
 # FAT32 needs at least about 33 MiB; a smaller partition gets FAT16.
 if [ "$BOOT_MIB" -ge 48 ]; then fat32=-F; fat_type=c; else fat32=; fat_type=e; fi
 rm -f "$out"
-truncate -s "$((BOOT_MIB + data_mib))M" "$out"
+root_mib=0
+[ -z "$card_root" ] || root_mib=$(((root_sectors + 2047) / 2048))
+truncate -s "$((BOOT_MIB + data_mib + root_mib))M" "$out"
 {
     echo "start=2048, size=$(((BOOT_MIB - 1) * 2048)), type=$fat_type, bootable"
-    [ "$data_mib" -eq 0 ] || echo "start=$((BOOT_MIB * 2048)), type=da"
+    if [ -n "$card_root" ]; then
+        echo "start=$((BOOT_MIB * 2048)), size=$((data_mib * 2048)), type=da"
+        echo "start=$(((BOOT_MIB + data_mib) * 2048)), type=da"
+    elif [ "$data_mib" -gt 0 ]; then
+        echo "start=$((BOOT_MIB * 2048)), type=da"
+    fi
 } | sfdisk -q "$out"
 
 # Build the FAT partition in its own file, so it cannot grow past its size.
@@ -205,6 +232,7 @@ rm -f "$out.uuid"
 if [ -n "$direct" ]; then
     mcopy -i "$fat" "$fw/kernel8.img" ::kernel8.img
     mcopy -i "$fat" "$fw/initramfs" ::initramfs
+    [ -z "$card_root" ] || mcopy -i "$fat" "$fw/cmdline.txt" ::cmdline.txt
 elif [ -n "$image" ]; then
     mcopy -i "$fat" "$uboot" ::u-boot.bin
     efi="$out.efi"
@@ -238,6 +266,10 @@ elif [ "$data_mib" -gt 0 ]; then
     rm -f "$out.readme"
     dd if="$data" of="$out" bs=1M seek="$BOOT_MIB" conv=notrunc status=none
     rm -f "$data"
+fi
+if [ -n "$card_root" ]; then
+    dd if="$fw/harddrive.img" of="$out" bs=512 skip="$root_start" count="$root_sectors" \
+        seek="$(((BOOT_MIB + data_mib) * 2048))" conv=notrunc status=none
 fi
 
 # The build manifest goes with the image it describes (docs/versioning.md).
