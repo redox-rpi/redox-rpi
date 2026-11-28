@@ -148,6 +148,32 @@ args = ["/usr/lib/startup-sound.ion"]
 type = "oneshot_async"
 """
 
+# `sound-test`: a few test tones for a person at the screen, no arguments
+# (low, middle and high tone, a sweep, left and right), then the driver's
+# counters. Works with the headphone jack and with HDMI sound.
+[[files]]
+path = "/usr/bin/sound-test"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+echo "sound-test: three tones of 1 s (low 220 Hz, middle 440 Hz, high 880 Hz),"
+echo "            a sweep of 2 s, then 1 s left only and 1 s right only."
+echo "            Volume: $(volume)  (change it with: volume 70)"
+for hz in 220 440 880
+    echo "  $hz Hz"
+    tone -f $hz -s 1 > /scheme/audio
+end
+echo "  sweep, low to high"
+tone sweep -s 2 > /scheme/audio
+echo "  left only"
+tone -c left -s 1 > /scheme/audio
+echo "  right only"
+tone -c right -s 1 > /scheme/audio
+echo "sound-test: done. The driver's counters (loud_chunks grows when sound"
+echo "            reaches the driver):"
+cat /scheme/audiohw/stats
+"""
+
 # CPU clock at boot (#23): rpi-firmwared starts in the initfs, before /etc
 # is there, with the ondemand governor. If /etc/rpi-firmware/governor
 # exists, its word goes to the governor if it is `ondemand`, `performance`

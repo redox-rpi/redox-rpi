@@ -241,6 +241,7 @@ echo off > /scheme/data/startup-sound      # network or direct boot
 volume                                     # the volume, 0 to 100 (default 50)
 volume 70                                  # set it; also +10, -10, mute
 tone -s 2 > /scheme/audio                  # a test tone
+sound-test                                 # a few test tones, then the driver's counters
 ```
 
 `volume` keeps the volume across reboots (in `/etc/audio-volume`, or on
