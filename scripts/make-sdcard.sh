@@ -140,6 +140,30 @@ if [ -n "$direct" ]; then
         # The root filesystem from fw-direct-boot.sh's copy of the image,
         # whose banner says "direct".
         read -r root_start root_sectors < <(partx -g -o START,SECTORS -n 3 "$fw/harddrive.img")
+        # The data partition (partition 2) is mounted at /scheme/data by
+        # 60_data.service, which config/raspi3bp.toml has but the release
+        # image (config/raspi3bp-release-netboot.toml) leaves out on purpose.
+        # On a card-root card the partition is always there, so the root
+        # gets the unit when it lacks it (Pi test 733). The release image has
+        # no /usr/bin/redoxfs, so the unit runs the initfs's.
+        tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
+        [ -x "$tool" ] || cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
+        unit=/usr/lib/init.d/60_data.service
+        if ! "$tool" "$fw/harddrive.img" get "$unit" "$fw/60_data.service" >/dev/null 2>&1; then
+            cat > "$fw/60_data.service" <<'UNIT'
+[unit]
+description = "Data partition on the SD card"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "/scheme/initfs/bin/redoxfs"
+args = ["/scheme/disk.mmc/0p1", "data"]
+type = "oneshot"
+UNIT
+            "$tool" "$fw/harddrive.img" put "$unit" "$fw/60_data.service" >/dev/null
+            echo "make-sdcard: added $unit to the root filesystem"
+        fi
+        rm -f "$fw/60_data.service"
     fi
     # Room for the initramfs and the firmware files.
     min_mib=$((($(wc -c < "$fw/initramfs") >> 20) + 32))
