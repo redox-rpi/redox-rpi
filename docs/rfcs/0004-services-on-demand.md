@@ -241,6 +241,53 @@ if ever needed: a base64 archive typed into `base64 -d`. `devshd` is about
   `devshd` starts after the data partition and the network, a little later
   than now.
 
+## Consoles: the screen console only with a monitor
+
+Today every image starts two consoles:
+
+- `30_getty_debug`: getty on `/scheme/debug`, the serial port;
+- `getty@2`: getty on the screen console (`fbcond`).
+
+Each starts a `login`. On a Zero 2 W with no monitor, `ps` shows both
+pairs, and the screen one waits at a prompt that nobody can see. Together
+with `vesad`, `fbbootlogd` and `fbcond` this is about 25 MB of `ps`
+memory (table above).
+
+### Proposal
+
+- **Need:** the screen console is needed when a monitor is attached.
+- **Detection at boot:**
+  - Where `vc4d` runs, it reads the EDID over DDC and knows the hotplug
+    state.
+  - Elsewhere, `rpi-firmwared` asks the firmware for the display state
+    (mailbox property `GET_EDID_BLOCK`; it fails when no display is
+    attached).
+  - The owner publishes the state as a file it can block on, for example
+    `/scheme/display/connected` (principle 4).
+- **Start:** `getty@2` and `login` start only when that file says
+  connected. The unit uses a condition from step 3 now, and
+  `start_on = "display.connected"` from step 5 later.
+- **Hotplug:** a monitor plugged in later raises the event.
+  - With `vc4d` this is the HPD interrupt.
+  - The firmware path has no hotplug event. There, the boot check is all
+    we get, unless the HPD pin is read through `bcm2835-gpiod` with an
+    edge interrupt.
+  - No polling in either case.
+- **Unplug:** the session is kept. Ending a logged-in shell because a
+  cable moved would lose work. The getty for an empty prompt ends.
+- **Boot log on screen:** `fbbootlogd` follows the same rule. Kernel
+  messages on serial are unchanged.
+- **Person tests** use a monitor and a keyboard, so they get the console
+  as today.
+
+This refines step 6 (screen stack on monitor hotplug). The order:
+
+1. The boot check through the firmware, for all boards.
+2. Hotplug with `vc4d`.
+
+Serial login in release images and default passwords are a separate
+question: [RFC 0006](0006-console-login-release.md).
+
 ## Not in this RFC
 
 - No new init system. This extends the units Redox already has.
@@ -258,7 +305,7 @@ if ever needed: a base64 archive typed into `base64 -d`. `devshd` is about
 | 3 | init conditions at boot: devicetree node, file present; use them for `60_data`, the governor, i2c and spi | [#766](https://github.com/redox-rpi/redox-rpi/issues/766) |
 | 4 | audio idle cost: why `bcm2835-pwmaudio` uses CPU with nothing playing; stop the stream when idle | [#767](https://github.com/redox-rpi/redox-rpi/issues/767) |
 | 5 | init event triggers (`start_on`, `stop_on`) from `netcfg`; move dhcpd and timesync onto them | after step 1 |
-| 6 | screen stack on monitor hotplug (with `rpi-fbd`) | later |
+| 6 | screen stack on monitor hotplug: first a boot check through the firmware, then hotplug with `vc4d` ([Consoles](#consoles-the-screen-console-only-with-a-monitor)) | later |
 | 7 | scheme activation in init (audio, i2c, spi, sudo), proposed upstream | later |
 
 ## Open questions
