@@ -63,8 +63,12 @@
   board MAC from the firmware's devicetree, pi-test, `/scheme/data`, and
   the FAT boot partition through `fatfsd`. The banner says `direct`
   instead of `netboot`. **PR [#183](https://github.com/redox-rpi/redox-rpi/pull/183)**
-  (firmware session). Open: the root runs from the 222 MiB live disk in
-  RAM, and updates go through the FAT partition (`rpi-update`, test #72).
+  (firmware session). The root runs from the 222 MiB live disk in
+  RAM, and updates go through the FAT partition (`rpi-update`, test #72);
+  with `make-sdcard.sh --direct --card-root` the root stays on the card
+  instead (partition 3) and the RAM stays free
+  ([#786](https://github.com/redox-rpi/redox-rpi/issues/786)), but
+  `rpi-update` then replaces only the kernel and the initfs.
 - FAT boot partition from Redox (#15): `redox-fatfs2` on branch
   `fw-direct-boot` replaces the unmaintained `redox-fatfs`. Its daemon
   `fatfsd` serves a FAT partition as a scheme, built on the `fatfs` crate
