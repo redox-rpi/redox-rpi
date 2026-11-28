@@ -1,4 +1,4 @@
-From 2a28db234ddafd421110a1aadf9388a5b3939633 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 28 Nov 2026 14:38:49 +0000
 Subject: [PATCH] Say "Killed: out of memory" for a child the kernel ended for
@@ -119,7 +119,7 @@ index fe712b7c..8fc3b0a3 100644
  name = "tiff"
  version = "0.6.1"
 diff --git a/src/lib/shell/pipe_exec/job_control.rs b/src/lib/shell/pipe_exec/job_control.rs
-index 96a8ef71..cdec0d6b 100644
+index 96a8ef71..37e7b7bd 100644
 --- a/src/lib/shell/pipe_exec/job_control.rs
 +++ b/src/lib/shell/pipe_exec/job_control.rs
 @@ -318,7 +318,11 @@ impl<'a> Shell<'a> {
@@ -141,12 +141,12 @@ index 96a8ef71..cdec0d6b 100644
  }
 +
 +/// Whether the kernel ended `pid` because memory ran out: Redox lists such
-+/// processes in /scheme/proc/oom, one "<pid> <uid> <name>" line each.
++/// processes in /scheme/proc/oom, one "<seq> <pid> <uid> <name>" line each.
 +#[cfg(target_os = "redox")]
 +fn killed_by_oom(pid: Pid) -> bool {
 +    use std::{io::Read, os::unix::fs::OpenOptionsExt};
-+    // One read: it returns every line kept so far (at most 16), and a second
-+    // read would wait for the next kill.
++    // One read returns every line kept so far (at most 16), each
++    // "<seq> <pid> <uid> <name>"; the read never waits.
 +    let mut buf = [0u8; 4096];
 +    let len = std::fs::OpenOptions::new()
 +        .read(true)
@@ -157,7 +157,7 @@ index 96a8ef71..cdec0d6b 100644
 +    let pid = pid.to_string();
 +    String::from_utf8_lossy(&buf[..len])
 +        .lines()
-+        .any(|line| line.split_whitespace().next() == Some(pid.as_str()))
++        .any(|line| line.split_whitespace().nth(1) == Some(pid.as_str()))
 +}
 +
 +#[cfg(not(target_os = "redox"))]

@@ -1,4 +1,4 @@
-From 00525b0280296c810e504e7d7c5f8b540c98d5b5 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Sat, 28 Nov 2026 14:37:59 +0000
 Subject: [PATCH] procmgr: /scheme/proc/oom lists processes ended for lack of
@@ -6,7 +6,7 @@ Subject: [PATCH] procmgr: /scheme/proc/oom lists processes ended for lack of
 
 When the kernel reports a thread as ForceKilled with the out of memory
 reason, procmgr records the process once, when its last thread is gone:
-a line "<pid> <uid> <name>" in /scheme/proc/oom and a log line. The
+a line "<seq> <pid> <uid> <name>" in /scheme/proc/oom and a log line. The
 process itself still ends with SIGKILL, as POSIX and Linux have it.
 
 /scheme/proc/oom keeps the last 16 kills. A read returns the whole lines
@@ -21,11 +21,11 @@ it with a read-only file.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- bootstrap/src/procmgr.rs | 155 +++++++++++++++++++++++++++++++++++++--
- 1 file changed, 149 insertions(+), 6 deletions(-)
+ bootstrap/src/procmgr.rs | 159 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 153 insertions(+), 6 deletions(-)
 
 diff --git a/bootstrap/src/procmgr.rs b/bootstrap/src/procmgr.rs
-index a2253ead..fd771fd8 100644
+index a2253ead..2cc3384e 100644
 --- a/bootstrap/src/procmgr.rs
 +++ b/bootstrap/src/procmgr.rs
 @@ -36,6 +36,12 @@ use syscall::{
@@ -246,15 +246,19 @@ index a2253ead..fd771fd8 100644
              Handle::ProcCredsCapability => {
                  let Some(verb) = ProcCall::try_from_raw(metadata[0] as usize) else {
                      log::trace!("Invalid proc call: {metadata:?}");
-@@ -1956,6 +2065,39 @@ impl<'a> ProcScheme<'a> {
+@@ -1956,6 +2065,43 @@ impl<'a> ProcScheme<'a> {
              procs: &self.processes,
          }
      }
++    /// Keep `line` with its sequence number (counted from 1) in front, so a
++    /// reader sees when lines dropped out between two reads.
 +    fn record_oom(&mut self, line: Vec<u8>) {
 +        if self.oom_events.len() >= OOM_EVENTS_KEPT {
 +            self.oom_events.pop_front();
 +        }
-+        self.oom_events.push_back((self.oom_seq, line));
++        let mut numbered = alloc::format!("{} ", self.oom_seq + 1).into_bytes();
++        numbered.extend_from_slice(&line);
++        self.oom_events.push_back((self.oom_seq, numbered));
 +        self.oom_seq += 1;
 +        self.oom_fevents.extend_from_slice(&self.oom_subscribers);
 +    }
@@ -286,7 +290,7 @@ index a2253ead..fd771fd8 100644
      fn work_on(
          &mut self,
          mut state_entry: OccupiedEntry<VirtualId, PendingState, DefaultHashBuilder>,
-@@ -2805,6 +2947,7 @@ impl<'a> ProcScheme<'a> {
+@@ -2805,6 +2951,7 @@ impl<'a> ProcScheme<'a> {
          Ok(())
      }
      fn on_close(&mut self, id: usize) {
