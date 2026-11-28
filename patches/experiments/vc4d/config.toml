@@ -23,3 +23,8 @@ type = "notify"
 [[files]]
 path = "/etc/vc4d-edid-on"
 data = ""
+
+# TEST ONLY (branch g5w-test, redox-rpi#671 step 3): vc4d writes the firmware's mode itself.
+[[files]]
+path = "/etc/vc4d-mode-write"
+data = ""
