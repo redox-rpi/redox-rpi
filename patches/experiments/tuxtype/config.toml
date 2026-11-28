@@ -1,0 +1,20 @@
+# Experiment tuxtype (#529): builds the Tux Typing packages for the package
+# repository (scripts/publish-pkg-repo.sh). Tux Typing is not part of an
+# image: people install it with `pkg install tuxtype` (or
+# `pkg-persist install tuxtype` on network and direct boot), see README.md.
+
+[general]
+# The package build installs Tux Typing into its image; with the desktop
+# experiments that needs more than 256 MiB.
+filesystem_size = 384
+
+[packages]
+# From source with t4kcommon (recipes/games/tuxtype and
+# recipes/wip/games/math/t4kcommon in this experiment). The package
+# brings its launcher entry 72_tuxtype and /usr/bin/tuxtype-de.
+tuxtype = "source"
+t4kcommon = "source"
+sdl1 = "source"
+sdl1-image = "source"
+sdl1-mixer = "source"
+sdl1-ttf = "source"
