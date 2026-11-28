@@ -111,6 +111,9 @@ to Release & CI through the lead; R8 is owner work.
 
 ## Next
 
+- `bugreport` in the image (#759): experiments `bugreport` (file) and
+  `bugreport-upload` (dev images, receiver `scripts/bugreport-receiver.py`);
+  then a desktop launcher entry, and the default for every image (maintainer).
 - Test strategy matrix ([qmp.md](../process/qmp.md#test-strategy)) with
   V&V (#267); coverage kinds and targets
   ([qmp.md](../process/qmp.md#coverage)); code quality baseline

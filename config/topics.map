@@ -86,6 +86,8 @@ patches/experiments/t1-*                stability
 patches/experiments/serial-rx/*         stability
 patches/experiments/pty-sigint*         stability
 patches/experiments/chaos/*             stability
+patches/experiments/bugreport*          quality
+tools/bugreport/*                       quality
 
 # Scripts and tools
 scripts/check-patches.sh                ci
@@ -98,6 +100,7 @@ scripts/devsh.py                        ci
 scripts/qemu-*                          ci,quality
 scripts/regression-*                    ci
 scripts/code-metrics.py                 quality
+scripts/bugreport-*                     quality
 scripts/with-build-lock.sh              ci
 scripts/update-stable.sh                ci
 scripts/relibc-checkout.sh              relibc

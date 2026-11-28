@@ -1,0 +1,8 @@
+[package]
+name = "bugreport"
+description = "Report a bug from inside the image: one text file with the system state, uploaded to the build host in dev images"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
