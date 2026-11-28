@@ -8,8 +8,9 @@
  *       with the frame, reads the pixels back, checks them exactly and
  *       shows the frame with SDL_GL_SwapWindow.
  *   sdl-gles-probe --renderer [frames]
- *       SDL's 2D renderer (SDL_CreateRenderer), which takes OpenGL ES 2.0
- *       when the window can have it: a red square on blue each frame,
+ *       SDL's 2D renderer (SDL_CreateRenderer), OpenGL ES 2.0 unless
+ *       SDL_RENDER_DRIVER names another one (Orbital's default is the
+ *       software renderer, #769): a red square on blue each frame,
  *       read back with SDL_RenderReadPixels and checked.
  *
  * No pixel centre lies on an edge, so every renderer gives the same pixels
@@ -188,6 +189,8 @@ static int run_gl(int frames)
 
 static int run_renderer(int frames)
 {
+	if (!getenv("SDL_RENDER_DRIVER"))
+		SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengles2");
 	SDL_Window *win = SDL_CreateWindow("sdl-gles-probe renderer", SDL_WINDOWPOS_CENTERED,
 					   SDL_WINDOWPOS_CENTERED, SIZE, SIZE, 0);
 	if (!win)
