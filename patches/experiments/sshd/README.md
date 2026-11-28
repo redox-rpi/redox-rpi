@@ -31,11 +31,11 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
 - relibc `0043`: `ld.so` finds a program whose argv[0] starts with "-"
   (a login shell, "-ion"); it looks the program up by argv[0] and stopped
   with "failed to locate '-ion'".
-- base `0040` (after the default base patches): `procmgr` sends SIGCHLD
-  for an exited process without the permission check of `kill()`. The
-  pre-authentication child runs as user `sshd`; its SIGCHLD to the root
-  parent failed ("failed to send SIGCHLD to parent PID …: Operation not
-  permitted") and `sshd-session` waited forever after the login.
+- SIGCHLD from an exited process without the permission check of `kill()`
+  (the pre-authentication child runs as user `sshd`; its SIGCHLD to the
+  root parent failed with "Operation not permitted" and `sshd-session`
+  waited forever) was base `0040` here; it is default base `0135` since
+  redox-rpi#791.
 - `recipes/net/openssh/0001`: no `chroot` on Redox (relibc's `chroot`
   always fails with EPERM); the pre-authentication child changes into
   `/var/empty` and drops its privileges to user `sshd`, but keeps the
@@ -52,7 +52,7 @@ prebuilt aarch64 repository) and starts `sshd` on port 22.
   sends SIGHUP and SIGCONT to every process group that was in front on
   that terminal, and `tcgetattr` on it fails with EIO, as on Linux. It
   logs one line per hangup.
-- `recipes/core/ion/0001`: Ion exits (status 129) when its terminal is
+- `ion/0001` (on top of the default `patches/ion/`): Ion exits (status 129) when its terminal is
   gone. At the prompt it read the dead terminal forever (liner returns an
   empty line at end of file), and any message to the dead terminal
   panicked, e.g. the report that the job ended by SIGHUP: the

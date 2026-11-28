@@ -569,7 +569,8 @@ def oom_run(sh, mode):
     rc = re.search(r"OOM-RC (\d+)", text)
     mib = re.findall(r"oomtest: (\d+) MiB", text)
     reached = f" after {mib[-1]} MiB" if mib else ""
-    if (rc and rc.group(1) == "137") or "SIGKILL" in text:
+    # ion says "Killed: out of memory" since #791, "ended by signal SIGKILL" before.
+    if (rc and rc.group(1) == "137") or "SIGKILL" in text or "Killed: out of memory" in text:
         return True, f"SIGKILL{reached}"
     if rc and rc.group(1) == "2":
         return False, f"exit 2, an allocation failed in user space{reached}"

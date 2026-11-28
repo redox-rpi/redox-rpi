@@ -1,0 +1,181 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 14:38:49 +0000
+Subject: [PATCH] Say "Killed: out of memory" for a child the kernel ended for
+ lack of memory
+
+On Redox the kernel ends a process with SIGKILL when memory runs out,
+and procmgr lists it in /scheme/proc/oom. When a foreground child ends
+with SIGKILL and its PID is in that list, ion now prints
+"ion: Killed: out of memory (process <pid>)" instead of "process (<pid>)
+ended by signal SIGKILL", so the person at the terminal learns why the
+program vanished (redox-rpi#791). Other systems are unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Cargo.lock                             | 46 ++++++++++++++++++++++----
+ src/lib/shell/pipe_exec/job_control.rs | 29 +++++++++++++++-
+ src/lib/shell/pipe_exec/mod.rs         |  3 ++
+ 3 files changed, 71 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index fe712b7c..8fc3b0a3 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -157,9 +157,12 @@ checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
+ 
+ [[package]]
+ name = "buf_read_splitter"
+-version = "0.4.1"
++version = "1.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4645e4b1f94aa320084c653bc616681dd8f34c8d656cdd76f7e71efde19ada10"
++checksum = "6a6850642203d705e11397e3e1dd46a2c4cf10c28e64bf805d492c4f69975982"
++dependencies = [
++ "thiserror 2.0.21",
++]
+ 
+ [[package]]
+ name = "builtins-proc"
+@@ -1031,7 +1034,7 @@ dependencies = [
+  "serial_test_derive",
+  "small",
+  "smallvec",
+- "thiserror",
++ "thiserror 1.0.69",
+  "types-rs",
+  "unicode-segmentation",
+  "users",
+@@ -1322,7 +1325,7 @@ dependencies = [
+  "jni-sys",
+  "ndk-sys",
+  "num_enum",
+- "thiserror",
++ "thiserror 1.0.69",
+ ]
+ 
+ [[package]]
+@@ -2082,7 +2085,7 @@ dependencies = [
+  "getrandom 0.2.15",
+  "libredox",
+  "rust-argon2",
+- "thiserror",
++ "thiserror 1.0.69",
+  "zeroize",
+ ]
+ 
+@@ -2387,6 +2390,17 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "syn"
++version = "3.0.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "termion"
+ version = "4.0.5"
+@@ -2414,7 +2428,16 @@ version = "1.0.69"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+ dependencies = [
+- "thiserror-impl",
++ "thiserror-impl 1.0.69",
++]
++
++[[package]]
++name = "thiserror"
++version = "2.0.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
++dependencies = [
++ "thiserror-impl 2.0.21",
+ ]
+ 
+ [[package]]
+@@ -2428,6 +2451,17 @@ dependencies = [
+  "syn 2.0.100",
+ ]
+ 
++[[package]]
++name = "thiserror-impl"
++version = "2.0.21"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.10",
++]
++
+ [[package]]
+ name = "tiff"
+ version = "0.6.1"
+diff --git a/src/lib/shell/pipe_exec/job_control.rs b/src/lib/shell/pipe_exec/job_control.rs
+index 96a8ef71..37e7b7bd 100644
+--- a/src/lib/shell/pipe_exec/job_control.rs
++++ b/src/lib/shell/pipe_exec/job_control.rs
+@@ -318,7 +318,11 @@ impl<'a> Shell<'a> {
+                         } else {
+                             let _ = self.handle_signal(signal);
+                         }
+-                        signaled = Some(PipelineError::Interrupted(pid, signal));
++                        signaled = Some(if signal == Signal::SIGKILL && killed_by_oom(pid) {
++                            PipelineError::OutOfMemory(pid)
++                        } else {
++                            PipelineError::Interrupted(pid, signal)
++                        });
+                     }
+                 }
+                 Ok(WaitStatus::Stopped(pid, signal)) => {
+@@ -383,3 +387,26 @@ impl<'a> Shell<'a> {
+         status
+     }
+ }
++
++/// Whether the kernel ended `pid` because memory ran out: Redox lists such
++/// processes in /scheme/proc/oom, one "<seq> <pid> <uid> <name>" line each.
++#[cfg(target_os = "redox")]
++fn killed_by_oom(pid: Pid) -> bool {
++    use std::{io::Read, os::unix::fs::OpenOptionsExt};
++    // One read returns every line kept so far (at most 16), each
++    // "<seq> <pid> <uid> <name>"; the read never waits.
++    let mut buf = [0u8; 4096];
++    let len = std::fs::OpenOptions::new()
++        .read(true)
++        .custom_flags(nix::fcntl::OFlag::O_NONBLOCK.bits())
++        .open("/scheme/proc/oom")
++        .and_then(|mut file| file.read(&mut buf))
++        .unwrap_or(0);
++    let pid = pid.to_string();
++    String::from_utf8_lossy(&buf[..len])
++        .lines()
++        .any(|line| line.split_whitespace().nth(1) == Some(pid.as_str()))
++}
++
++#[cfg(not(target_os = "redox"))]
++fn killed_by_oom(_pid: Pid) -> bool { false }
+diff --git a/src/lib/shell/pipe_exec/mod.rs b/src/lib/shell/pipe_exec/mod.rs
+index eb03ff22..5bd4002d 100644
+--- a/src/lib/shell/pipe_exec/mod.rs
++++ b/src/lib/shell/pipe_exec/mod.rs
+@@ -93,6 +93,9 @@ pub enum PipelineError {
+     /// A signal interrupted a child process
+     #[error("process ({0}) ended by signal {1}")]
+     Interrupted(Pid, Signal),
++    /// The kernel ended a child process because memory ran out
++    #[error("Killed: out of memory (process {0})")]
++    OutOfMemory(Pid),
+     /// A subprocess had a core dump
+     #[error("process ({0}) had a core dump")]
+     CoreDump(Pid),
+-- 
+2.53.0
+

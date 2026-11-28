@@ -28,6 +28,9 @@ relibc = "source"
 # netutils from source with patches/netutils: nc errors to stderr with exit
 # status 1 (#407), ifconfig shows the MAC address (#171, #444).
 netutils = "source"
+# ion from source with patches/ion: "Killed: out of memory" when the kernel
+# ended a child for lack of memory (#791).
+ion = "source"
 # `reboot` command (tools/reboot).
 reboot = "source"
 # `i2c` and `spi` commands for the I2C and SPI drivers (tools/i2c,

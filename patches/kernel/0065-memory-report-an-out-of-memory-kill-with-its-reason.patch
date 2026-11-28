@@ -1,0 +1,113 @@
+From f4d1834aff3dcc4ed73941bb43d70c4160bcad52 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 14:37:59 +0000
+Subject: [PATCH] memory: report an out of memory kill with its reason
+
+The out of memory killer (redox-rpi#644) marks the threads of the
+faulting process as SIGKILLed. procmgr then saw a plain ForceKilled and
+could not tell it from kill -9, so nobody but the serial console learned
+why the program ended (redox-rpi#791).
+
+The killer now also sets oom_killed on every thread of the process. The
+status handle reports ForceKilled followed by a reason word
+(KILL_REASON_OOM = 1), the same way UnhandledExcp is followed by the
+exception. ContextStatus is unchanged; a reader that reads only the
+status word still sees ForceKilled.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/context/context.rs |  5 +++++
+ src/memory/mod.rs      |  2 ++
+ src/scheme/proc.rs     | 26 ++++++++++++++++++++++++++
+ 3 files changed, 33 insertions(+)
+
+diff --git a/src/context/context.rs b/src/context/context.rs
+index aad81b8f..221ace0f 100644
+--- a/src/context/context.rs
++++ b/src/context/context.rs
+@@ -168,6 +168,10 @@ pub struct Context {
+     /// writes ForceKill to its own status handle): it is a normal exit, so its status
+     /// reads Dead, not ForceKilled.
+     pub exiting_itself: bool,
++    /// Set with `being_sigkilled` by the out of memory killer: the status
++    /// handle then reports ForceKilled with the reason `KILL_REASON_OOM`
++    /// after it (redox-rpi#791).
++    pub oom_killed: bool,
+     pub fmap_ret: Option<Frame>,
+     /// A Stop came while the context waited for a scheme page (`AwaitingMmap`). The page
+     /// fault takes effect first, then the context stops before it returns to user space.
+@@ -260,6 +264,7 @@ impl Context {
+             being_sigkilled: false,
+             stop_pending: false,
+             exiting_itself: false,
++            oom_killed: false,
+             owner_proc_id,
+ 
+             euid: 0,
+diff --git a/src/memory/mod.rs b/src/memory/mod.rs
+index 7337293a..4598c0fe 100644
+--- a/src/memory/mod.rs
++++ b/src/memory/mod.rs
+@@ -1517,6 +1517,7 @@ fn kill_current_process(reason: &str, token: &mut CleanLockToken) {
+             crate::cpu_id()
+         );
+         guard.being_sigkilled = true;
++        guard.oom_killed = true;
+         guard.pid
+     };
+ 
+@@ -1534,6 +1535,7 @@ fn kill_current_process(reason: &str, token: &mut CleanLockToken) {
+             }
+             ctxt.status = context::Status::Runnable;
+             ctxt.being_sigkilled = true;
++            ctxt.oom_killed = true;
+             ctxt.cpu_id
+         };
+         context::wakeup_context(context_lock, cpu_id, &mut token.downgrade());
+diff --git a/src/scheme/proc.rs b/src/scheme/proc.rs
+index 1b817110..b92382f3 100644
+--- a/src/scheme/proc.rs
++++ b/src/scheme/proc.rs
+@@ -166,6 +166,10 @@ struct Handle {
+ }
+ pub struct ProcScheme;
+ 
++/// Reason word after ForceKilled in a thread status: the out of memory
++/// killer ended the thread (redox-rpi#791). 0 or no word: any other kill.
++const KILL_REASON_OOM: usize = 1;
++
+ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
+     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+@@ -1559,6 +1563,28 @@ impl ContextHandle {
+             ContextHandle::Status { .. } => {
+                 let status = {
+                     let context = context.read(token.token());
++                    // Killed by the out of memory killer: ForceKilled, followed by
++                    // the reason, so procmgr can tell it from a SIGKILL. A reader
++                    // that reads only the status word sees a plain ForceKilled
++                    // (redox-rpi#791).
++                    if context.oom_killed
++                        && context.being_sigkilled
++                        && !context.exiting_itself
++                        && matches!(
++                            context.status,
++                            Status::Runnable | Status::Dead { excp: None }
++                        )
++                    {
++                        let (status, reason) =
++                            buf.split_at(size_of::<usize>()).ok_or(Error::new(EINVAL))?;
++                        status.copy_from_slice(
++                            &(ContextStatus::ForceKilled as usize).to_ne_bytes(),
++                        )?;
++                        let len = reason.copy_common_bytes_from_slice(
++                            &KILL_REASON_OOM.to_ne_bytes(),
++                        )?;
++                        return Ok(size_of::<usize>() + len);
++                    }
+                     match context.status {
+                         // A thread that ended itself exited normally (Dead below).
+                         Status::Runnable | Status::Dead { excp: None }
+-- 
+2.53.0
+

@@ -1,0 +1,303 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 14:37:59 +0000
+Subject: [PATCH] procmgr: /scheme/proc/oom lists processes ended for lack of
+ memory
+
+When the kernel reports a thread as ForceKilled with the out of memory
+reason, procmgr records the process once, when its last thread is gone:
+a line "<seq> <pid> <uid> <name>" in /scheme/proc/oom and a log line. The
+process itself still ends with SIGKILL, as POSIX and Linux have it.
+
+/scheme/proc/oom keeps the last 16 kills. A read returns the whole lines
+the handle has not read yet, or 0 (end of file) when there is nothing
+new, so cat works. A program that wants to wait for the next kill (a
+graphical notice) subscribes with EVENT_READ (fevent/event queue); it
+gets a read event after each kill. Shells read it once when a child
+ended with SIGKILL (redox-rpi#791).
+
+fstat arrives as a StdFsCall (kind 4) from relibc; the oom handle answers
+it with a read-only file.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ bootstrap/src/procmgr.rs | 159 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 153 insertions(+), 6 deletions(-)
+
+diff --git a/bootstrap/src/procmgr.rs b/bootstrap/src/procmgr.rs
+index a2253ead..2cc3384e 100644
+--- a/bootstrap/src/procmgr.rs
++++ b/bootstrap/src/procmgr.rs
+@@ -36,6 +36,12 @@ use syscall::{
+     Sigcontrol, sig_bit,
+ };
+ 
++/// Reason word after ForceKilled in a thread status: the kernel's out of
++/// memory killer ended the thread (kernel patch, redox-rpi#791).
++const KILL_REASON_OOM: usize = 1;
++/// How many out of memory kills `oom` keeps for readers that come later.
++const OOM_EVENTS_KEPT: usize = 16;
++
+ #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+ enum VirtualId {
+     KernelId(Id),
+@@ -76,6 +82,16 @@ pub fn run(write_fd: FdGuard, socket: Socket, auth: FdGuard, event: FdGuard) ->
+     let mut new_awoken = VecDeque::new();
+ 
+     'outer: loop {
++        // Read events for `oom` handles after an out of memory kill.
++        for id in core::mem::take(&mut scheme.oom_fevents) {
++            let resp = Response::post_fevent(id, EventFlags::EVENT_READ.bits());
++            while let Err(err) = socket.write_response(resp, SignalBehavior::Interrupt) {
++                if err.errno != EINTR {
++                    log::error!("failed to post oom event: {err}");
++                    break;
++                }
++            }
++        }
+         log::trace!("AWOKEN {awoken:#?}");
+         while !awoken.is_empty() || !new_awoken.is_empty() {
+             awoken.append(&mut new_awoken);
+@@ -142,14 +158,21 @@ pub fn run(write_fd: FdGuard, socket: Socket, auth: FdGuard, event: FdGuard) ->
+             };
+             let thread = thread_rc.borrow();
+             let pid = thread.pid;
+-            let Some(proc_rc) = scheme.processes.get(&pid) else {
++            // An owned Rc, so the scheme can be changed below (record_oom).
++            let Some(proc_rc) = scheme.processes.get(&pid).cloned() else {
+                 // TODO(err)?
+                 continue;
+             };
+             let mut proc = proc_rc.borrow_mut();
+             log::trace!("THREAD EVENT FROM {}, {}", event.data, thread.pid.0);
+             let mut sts_buf = CtxtStsBuf::default();
+-            thread.status_hndl.read(&mut sts_buf).unwrap();
++            let sts_len = thread.status_hndl.read(&mut sts_buf).unwrap();
++            // The kernel puts a reason word after ForceKilled when the out of
++            // memory killer ended the thread (redox-rpi#791).
++            let oom_killed = sts_buf.status == ContextStatus::ForceKilled as usize
++                && sts_len >= 2 * size_of::<usize>()
++                && sts_buf[size_of::<usize>()..2 * size_of::<usize>()]
++                    == KILL_REASON_OOM.to_ne_bytes();
+ 
+             let status = if sts_buf.status == ContextStatus::Dead as usize {
+                 // dont-care, already called explicit exit()
+@@ -174,6 +197,14 @@ pub fn run(write_fd: FdGuard, socket: Socket, auth: FdGuard, event: FdGuard) ->
+             scheme.thread_lookup.remove(&event.data);
+             proc.threads.retain(|rc| !Rc::ptr_eq(rc, &thread_rc));
+ 
++            // Every thread of the process carries the reason; record the kill
++            // once, with the last thread.
++            if oom_killed && proc.threads.is_empty() {
++                let line = alloc::format!("{} {} {}\n", pid.0, proc.ruid, proc.name);
++                log::warn!("out of memory: ended PID {} ({})", pid.0, proc.name);
++                scheme.record_oom(line.into_bytes());
++            }
++
+             if matches!(proc.status, ProcessStatus::Exiting { .. }) {
+                 log::trace!("WAKING UP {}", proc.awaiting_threads_term.len(),);
+                 awoken.extend(proc.awaiting_threads_term.drain(..)); // TODO(opt)
+@@ -218,6 +249,24 @@ fn handle_scheme<'a>(
+                     op,
+                 )),
+                 Op::Dup(op) => Ready(Response::open_dup_like(scheme.on_dup(op.fd, op.buf()), op)),
++                Op::Read(mut op) if matches!(scheme.handles.get(op.fd), Some(Handle::Oom { .. })) => {
++                    Ready(Response::new(scheme.read_oom(op.fd, op.buf()), op))
++                }
++                // `oom`: EVENT_READ when a kill came that this handle has not read.
++                Op::Fevent { req, fd, req_flags }
++                    if matches!(scheme.handles.get(fd), Some(Handle::Oom { .. })) =>
++                {
++                    scheme.oom_subscribers.retain(|&id| id != fd);
++                    if req_flags.contains(EventFlags::EVENT_READ) {
++                        scheme.oom_subscribers.push(fd);
++                    }
++                    let unread = match scheme.handles.get(fd) {
++                        Some(Handle::Oom { next }) => scheme.oom_seq > *next,
++                        _ => false,
++                    };
++                    let ready = if unread { EventFlags::EVENT_READ } else { EventFlags::empty() };
++                    Response::ready_ok(ready.bits(), req)
++                }
+                 Op::Read(mut op) => Ready(Response::new(
+                     scheme.on_read(op.fd, op.offset, op.buf()),
+                     op,
+@@ -250,6 +299,40 @@ fn handle_scheme<'a>(
+                         Response::ready_err(EOPNOTSUPP, req)
+                     }
+                 }
++                // relibc sends fstat as a StdFsCall (kind 4, a Stat in the payload).
++                Op::StdFsCall(mut op)
++                    if matches!(scheme.handles.get(op.fd()), Some(Handle::Oom { .. })) =>
++                {
++                    let (payload, metadata) = op.payload_and_metadata();
++                    if metadata[0] != syscall::StdFsCallKind::Fstat as u64 {
++                        return Response::ready_err(EOPNOTSUPP, op);
++                    }
++                    let stat = syscall::Stat {
++                        st_mode: syscall::MODE_FILE | 0o444,
++                        ..Default::default()
++                    };
++                    // SAFETY: Stat is plain old data.
++                    let bytes = unsafe {
++                        core::slice::from_raw_parts(
++                            &stat as *const syscall::Stat as *const u8,
++                            size_of::<syscall::Stat>(),
++                        )
++                    };
++                    let len = payload.len().min(bytes.len());
++                    payload[..len].copy_from_slice(&bytes[..len]);
++                    Response::ready_ok(0, op)
++                }
++                Op::Fstat(mut op) if matches!(scheme.handles.get(op.fd), Some(Handle::Oom { .. })) => {
++                    op.buf().st_mode = syscall::MODE_FILE | 0o444;
++                    Response::ready_ok(0, op)
++                }
++                // `oom` never blocks: F_GETFL says read only, other commands do nothing.
++                Op::Fcntl { req, fd, cmd, .. }
++                    if matches!(scheme.handles.get(fd), Some(Handle::Oom { .. })) =>
++                {
++                    let result = if cmd == syscall::F_GETFL { O_RDONLY } else { 0 };
++                    Response::ready_ok(result, req)
++                }
+                 Op::Fstat(mut op) => {
+                     if let Handle::Ps(b) = &scheme.handles[op.fd] {
+                         op.buf().st_size = b.len() as _;
+@@ -500,6 +583,13 @@ struct ProcScheme<'a> {
+ 
+     queue: &'a RawEventQueue,
+     auth: FdGuard,
++
++    // The last out of memory kills, oldest first, with their sequence numbers;
++    // the `oom` handles that asked for read events, and those to notify.
++    oom_events: VecDeque<(u64, Vec<u8>)>,
++    oom_seq: u64,
++    oom_subscribers: Vec<usize>,
++    pub oom_fevents: Vec<usize>,
+ }
+ #[derive(Debug, Default)]
+ struct Pgrp {
+@@ -549,6 +639,10 @@ enum Handle {
+ 
+     // A handle that grants the holder the capability to open process scheme resource.
+     SchemeRoot,
++
++    // `oom`: one line per process the kernel ended because memory ran out
++    // (redox-rpi#791). `next` is the sequence number of the next line to read.
++    Oom { next: u64 },
+ }
+ 
+ #[derive(Clone, Copy, Debug)]
+@@ -603,6 +697,10 @@ impl<'a> ProcScheme<'a> {
+             next_internal_id: 1,
+             queue,
+             auth,
++            oom_events: VecDeque::new(),
++            oom_seq: 0,
++            oom_subscribers: Vec::new(),
++            oom_fevents: Vec::new(),
+         }
+     }
+     fn new_id(&mut self) -> ProcessId {
+@@ -871,6 +969,14 @@ impl<'a> ProcScheme<'a> {
+                             flags: NewFdFlags::POSITIONED,
+                         })
+                     }
++                    "oom" => {
++                        // Read only: the handle has no write.
++                        let next = self.oom_events.front().map_or(self.oom_seq, |e| e.0);
++                        Ok(OpenResult::ThisScheme {
++                            number: self.handles.insert(Handle::Oom { next }),
++                            flags: NewFdFlags::empty(),
++                        })
++                    }
+                     "proc-creds-capability" => {
+                         if ctx.uid != 0 {
+                             return Err(Error::new(EACCES));
+@@ -996,9 +1102,11 @@ impl<'a> ProcScheme<'a> {
+                 *dst_buf = (pid.0).to_ne_bytes();
+                 Ok(dst_buf.len())
+             }
+-            Handle::Init | Handle::Thread(_) | Handle::ProcCredsCapability | Handle::SchemeRoot => {
+-                Err(Error::new(EBADF))
+-            }
++            Handle::Init
++            | Handle::Thread(_)
++            | Handle::ProcCredsCapability
++            | Handle::SchemeRoot
++            | Handle::Oom { .. } => Err(Error::new(EBADF)),
+         }
+     }
+     fn on_dup(&mut self, old_id: usize, buf: &[u8]) -> Result<OpenResult> {
+@@ -1055,6 +1163,7 @@ impl<'a> ProcScheme<'a> {
+             }
+             Handle::Init
+             | Handle::Ps(_)
++            | Handle::Oom { .. }
+             | Handle::ProcCredsCapability
+             | Handle::SchemeRoot
+             | Handle::ProcObj(_)
+@@ -1332,7 +1441,7 @@ impl<'a> ProcScheme<'a> {
+                     }
+                 }
+             }
+-            Handle::Ps(_) => Response::ready_err(EOPNOTSUPP, op),
++            Handle::Ps(_) | Handle::Oom { .. } => Response::ready_err(EOPNOTSUPP, op),
+             Handle::ProcCredsCapability => {
+                 let Some(verb) = ProcCall::try_from_raw(metadata[0] as usize) else {
+                     log::trace!("Invalid proc call: {metadata:?}");
+@@ -1956,6 +2065,43 @@ impl<'a> ProcScheme<'a> {
+             procs: &self.processes,
+         }
+     }
++    /// Keep `line` with its sequence number (counted from 1) in front, so a
++    /// reader sees when lines dropped out between two reads.
++    fn record_oom(&mut self, line: Vec<u8>) {
++        if self.oom_events.len() >= OOM_EVENTS_KEPT {
++            self.oom_events.pop_front();
++        }
++        let mut numbered = alloc::format!("{} ", self.oom_seq + 1).into_bytes();
++        numbered.extend_from_slice(&line);
++        self.oom_events.push_back((self.oom_seq, numbered));
++        self.oom_seq += 1;
++        self.oom_fevents.extend_from_slice(&self.oom_subscribers);
++    }
++    /// The whole lines from `next` on that fit into `buf`; 0 (end of file)
++    /// when there is nothing new. A read never waits: wait with an event.
++    fn read_oom(&mut self, fd: usize, buf: &mut [u8]) -> Result<usize> {
++        let Some(Handle::Oom { next }) = self.handles.get_mut(fd) else {
++            return Err(Error::new(EBADF));
++        };
++        // Lines that were dropped while the reader was away are skipped.
++        if let Some(&(oldest, _)) = self.oom_events.front() {
++            *next = (*next).max(oldest);
++        }
++        let start = *next;
++        let mut len = 0;
++        for (seq, line) in self.oom_events.iter().filter(|e| e.0 >= start) {
++            if len + line.len() > buf.len() {
++                if len == 0 {
++                    return Err(Error::new(EINVAL));
++                }
++                break;
++            }
++            buf[len..len + line.len()].copy_from_slice(line);
++            len += line.len();
++            *next = seq + 1;
++        }
++        Ok(len)
++    }
+     fn work_on(
+         &mut self,
+         mut state_entry: OccupiedEntry<VirtualId, PendingState, DefaultHashBuilder>,
+@@ -2805,6 +2951,7 @@ impl<'a> ProcScheme<'a> {
+         Ok(())
+     }
+     fn on_close(&mut self, id: usize) {
++        self.oom_subscribers.retain(|&sub| sub != id);
+         if self.handles.try_remove(id).is_none() {
+             log::error!("on_close for nonexistent handle, id={id}");
+         }
+-- 
+2.53.0
+
