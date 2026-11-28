@@ -166,7 +166,8 @@ fit. `--board zero2w` therefore also sets `tftpblocksize 512`
 (`--tftp-blocksize`). With it, a real Zero 2 W loaded the whole image and
 booted Redox to the login prompt (2026-10-27). It is slow: many minutes for
 the 42 MB image, at times only a few KB/s, not timed exactly. A larger
-receive buffer in U-Boot's driver would allow full blocks and HTTP again.
+receive buffer in U-Boot's driver would allow full blocks and HTTP again. The experiment
+[`uboot-r8152`](../patches/experiments/uboot-r8152/) tries that ([#778](https://github.com/redox-rpi/redox-rpi/issues/778)).
 
 The Redox system itself runs from RAM and starts fresh on every boot; keep
 anything worth keeping in `/scheme/data`. It is a scheme path, not `/data`:

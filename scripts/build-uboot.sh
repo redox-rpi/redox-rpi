@@ -13,6 +13,10 @@
 # Usage:
 #   scripts/build-uboot.sh [rpi|qemu]    (default: rpi)
 #   scripts/build-uboot.sh rpi-net <server-ip> [<dir>]
+#   ... [--experiment <name>]...  also apply
+#                        patches/experiments/<name>/u-boot/*.patch after
+#                        patches/u-boot/ in build/u-boot-src. The names go
+#                        to experiments.txt next to u-boot.bin.
 #
 # Result: build/u-boot/u-boot.bin and the devicetrees in build/u-boot/dtb/,
 # or build/u-boot-qemu/u-boot.bin for qemu.
@@ -31,6 +35,18 @@ UBOOT_TAG="v2026.10"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/upstream/u-boot"
+experiments=()
+args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --experiment)
+            d="$ROOT/patches/experiments/${2:?--experiment needs a name}/u-boot"
+            [ -d "$d" ] || { echo "no U-Boot patches in $d" >&2; exit 1; }
+            experiments+=("$2"); shift 2 ;;
+        *) args+=("$1"); shift ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
 case "${1:-rpi}" in
     rpi) DEFCONFIG=rpi_arm64_defconfig; OUT="$ROOT/build/u-boot" ;;
     rpi-net)
@@ -56,12 +72,17 @@ fi
 # only when the tag or a patch changes, so unchanged files keep their times
 # and builds stay incremental.
 BUILD_SRC="$ROOT/build/u-boot-src"
-stamp="$UBOOT_TAG $(cat "$ROOT"/patches/u-boot/*.patch 2>/dev/null | sha256sum | cut -d' ' -f1)"
+# Experiment patches (patches/experiments/<name>/u-boot/) come after them.
+patches=("$ROOT"/patches/u-boot/*.patch)
+for exp in "${experiments[@]+"${experiments[@]}"}"; do
+    patches+=("$ROOT/patches/experiments/$exp/u-boot"/*.patch)
+done
+stamp="$UBOOT_TAG ${experiments[*]+"${experiments[*]}"} $(cat "${patches[@]}" 2>/dev/null | sha256sum | cut -d' ' -f1)"
 if [ "$(cat "$BUILD_SRC/.redox-rpi-stamp" 2>/dev/null)" != "$stamp" ]; then
     rm -rf "$BUILD_SRC"
     mkdir -p "$BUILD_SRC"
     git -C "$SRC" archive "$UBOOT_TAG" | tar -x -C "$BUILD_SRC"
-    for p in "$ROOT"/patches/u-boot/*.patch; do
+    for p in "${patches[@]}"; do
         [ -e "$p" ] || continue
         patch -p1 -s -N -d "$BUILD_SRC" < "$p"
     done
@@ -94,6 +115,7 @@ make -C "$BUILD_SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
 make -C "$BUILD_SRC" O="$OUT/obj" CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
 
 cp "$OUT/obj/u-boot.bin" "$OUT/u-boot.bin"
+printf '%s\n' "${experiments[@]+"${experiments[@]}"}" > "$OUT/experiments.txt"
 # Mainline devicetrees, used to boot this U-Boot in QEMU without Pi firmware.
 find "$OUT/obj" \( -name 'bcm2837-rpi-*.dtb' -o -name 'bcm2711-rpi-*.dtb' \) -exec cp {} "$OUT/dtb/" \;
-echo "u-boot: $OUT/u-boot.bin ($UBOOT_TAG)"
+echo "u-boot: $OUT/u-boot.bin ($UBOOT_TAG${experiments[*]:+, experiments ${experiments[*]}})"
