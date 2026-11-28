@@ -8,6 +8,12 @@
 #   <out>/initramfs    the initfs, then the RedoxFS partition (live disk)
 #   <out>/harddrive.img a copy of the image whose banner says "direct"
 #
+# With --card-root the initramfs is the initfs alone and the root filesystem
+# stays on the card (scripts/make-sdcard.sh --direct --card-root puts it
+# there): bcm2835-sdhostd and redoxfs in the initfs mount it by its UUID,
+# which goes into <out>/cmdline.txt as REDOXFS_UUID. The 222 MiB live disk
+# then no longer takes half the RAM of a Zero 2 W (#786).
+#
 # With --qemu it boots them in QEMU raspi3b with -kernel, -initrd and -dtb,
 # the way the Pi firmware loads kernel8.img and the initramfs; --test waits
 # for the login prompt and exits with 0 when it appears.
@@ -18,12 +24,14 @@
 # Usage:
 #   scripts/fw-direct-boot.sh [--image <harddrive.img>] [--out <dir>]
 #                             [--qemu] [--test] [--append <command line>]
-#                             [--boot-only]
+#                             [--boot-only] [--card-root]
 #
 #   --append  command line for QEMU (cmdline.txt on a Pi); NAME=value words
 #             with an upper-case NAME become Redox environment variables
 #   --boot-only  build nothing: boot the kernel8.img and initramfs already in
 #             --out (scripts/console-image.sh --test); implies --qemu
+#   --card-root  root filesystem on the card instead of in the initramfs;
+#             with --qemu the image's RedoxFS partition is the SD card
 
 set -euo pipefail
 
@@ -34,6 +42,7 @@ qemu=no
 test=no
 append=""
 boot_only=no
+card_root=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
@@ -42,6 +51,7 @@ while [ $# -gt 0 ]; do
         --test) qemu=yes; test=yes; shift ;;
         --append) append="$2"; shift 2 ;;
         --boot-only) boot_only=yes; qemu=yes; shift ;;
+        --card-root) card_root=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -83,9 +93,21 @@ aarch64-linux-gnu-objcopy -O binary \
 # stub finds it at the first 4 KiB boundary after the initfs.
 read -r start sectors < <(partx -g -o START,SECTORS -n 3 "$image")
 cp "$out/initfs" "$out/initramfs"
-truncate -s %4096 "$out/initramfs"
-dd if="$image" bs=512 skip="$start" count="$sectors" status=none >> "$out/initramfs"
+rm -f "$out/cmdline.txt"
+if [ "$card_root" = yes ]; then
+    # The RedoxFS header: signature "RedoxFS\0", version, then the UUID.
+    uuid="$(dd if="$image" bs=512 skip="$start" count=1 status=none | od -An -tx1 -j16 -N16 | tr -d ' \n')"
+    [ "${#uuid}" = 32 ] || { echo "no RedoxFS UUID in partition 3 of $image" >&2; exit 1; }
+    uuid="${uuid:0:8}-${uuid:8:4}-${uuid:12:4}-${uuid:16:4}-${uuid:20:12}"
+    # The words the stub passes into the environment, as the bootloader does
+    # for a root filesystem on a disk.
+    echo "REDOXFS_UUID=$uuid REDOXFS_BLOCK=0000000000000000" > "$out/cmdline.txt"
+else
+    truncate -s %4096 "$out/initramfs"
+    dd if="$image" bs=512 skip="$start" count="$sectors" status=none >> "$out/initramfs"
+fi
 echo "kernel8.img: $(wc -c < "$out/kernel8.img") bytes, initramfs: $(($(wc -c < "$out/initramfs") >> 20)) MiB, in $out"
+[ ! -f "$out/cmdline.txt" ] || echo "cmdline.txt: $(cat "$out/cmdline.txt")"
 fi
 
 [ "$qemu" = yes ] || exit 0
@@ -96,11 +118,25 @@ dtb="$ROOT/build/u-boot/dtb/bcm2837-rpi-3-b-plus.dtb"
 [ -f "$dtb" ] || { echo "$dtb missing, run scripts/build-uboot.sh" >&2; exit 1; }
 cp "$dtb" "$out/qemu.dtb"
 fdtput -t s "$out/qemu.dtb" /chosen stdout-path "serial0:115200n8"
-fdtput -t s "$out/qemu.dtb" /soc/mmc@7e202000 status disabled
+# With the root on the card, sdhost stays: the initfs starts bcm2835-sdhostd,
+# and QEMU moves the card to sdhost when the driver sets GPIO 48-53 to ALT0.
+[ -f "$out/cmdline.txt" ] || fdtput -t s "$out/qemu.dtb" /soc/mmc@7e202000 status disabled
 
 qemu=(qemu-system-aarch64 -M raspi3b -smp 4 -m 1024
     -kernel "$out/kernel8.img" -initrd "$out/initramfs" -dtb "$out/qemu.dtb"
     -display none -usb -device usb-kbd)
+if [ -f "$out/cmdline.txt" ]; then
+    # The card: the image's RedoxFS partition alone is enough, redoxfs finds
+    # it by its UUID. QEMU wants a power-of-two size for an SD card.
+    [ -f "$image" ] || image="$out/harddrive.img"
+    read -r start sectors < <(partx -g -o START,SECTORS -n 3 "$image")
+    dd if="$image" of="$out/card.img" bs=512 skip="$start" count="$sectors" status=none
+    size=$(stat -c %s "$out/card.img"); card=1048576
+    while [ "$card" -lt "$size" ]; do card=$((card * 2)); done
+    truncate -s "$card" "$out/card.img"
+    qemu+=(-drive file="$out/card.img",if=sd,format=raw)
+    append="$(cat "$out/cmdline.txt")${append:+ $append}"
+fi
 [ -z "$append" ] || qemu+=(-append "$append")
 if [ "$test" = no ]; then
     echo "Exit with Ctrl-A X."
