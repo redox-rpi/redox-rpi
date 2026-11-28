@@ -16,7 +16,7 @@ branch until they passed a test on a real Pi.
 
 | Feature | Where | State |
 |---|---|---|
-| Time from the network at boot (`timesync`) | stable image (experiment `timesync`) | in use since v0.2.0 |
+| Time from the network at boot (`timesync`) | every image (`config/raspi3bp-sdcard.toml`) | in use since v0.2.0, default since v0.8.0 ([#780](https://github.com/redox-rpi/redox-rpi/issues/780)) |
 | `timesync` waits for the network, retries | branch `timerd` | Pi tests #27, #41 passed; pull request [#59](https://github.com/redox-rpi/redox-rpi/pull/59), planned for v0.4.0 |
 | Timers (`timerd`) | branch `timerd`, experiment `timerd` | Pi test #27 passed; pull request [#59](https://github.com/redox-rpi/redox-rpi/pull/59), planned for v0.4.0 ([#22](https://github.com/redox-rpi/redox-rpi/issues/22)) |
 | Time zones | every image (`config/raspi3bp-sdcard.toml`) | default since v0.7.0 ([#46](https://github.com/redox-rpi/redox-rpi/issues/46)) |
@@ -72,7 +72,7 @@ timesync: trying again every 30 s
 **Other time servers:** give them as arguments, for example
 `timesync -n ptbtime1.ptb.de` to test one. The service's servers are set
 in the image's configuration (`args` in `65_timesync.service`, see
-[`patches/experiments/timesync`](../patches/experiments/timesync/config.toml)).
+[`config/raspi3bp-sdcard.toml`](../config/raspi3bp-sdcard.toml)).
 
 **No network at all:** the clock stays at the saved or build time and
 keeps running from there. Set it by hand (next section) or connect a

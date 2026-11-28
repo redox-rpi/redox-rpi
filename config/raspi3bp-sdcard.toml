@@ -56,6 +56,27 @@ volume = "source"
 audiotop = "source"
 # Time zone files for /etc/localtime below (tools/zoneinfo, #46).
 zoneinfo = "source"
+# The clock from the saved time and an NTP server (tools/timesync, service
+# 65_timesync below; #780, maintainer decision 2026-11-28, before that
+# experiment `timesync`). The Pi has no battery-backed clock.
+timesync = "source"
+
+# Named 65 so that it starts after 60_data.service (network-boot image),
+# which mounts /scheme/data with the saved time. It sets the clock from the
+# build or saved time at once and waits for the network itself
+# (patches/experiments/timesync/README.md, docs/time.md).
+[[files]]
+path = "/usr/lib/init.d/65_timesync.service"
+data = """
+[unit]
+description = "Set the clock from the saved time and an NTP server"
+requires_weak = ["00_base.target"]
+
+[service]
+cmd = "timesync"
+args = ["-d"]
+type = "oneshot_async"
+"""
 
 # The system's time zone, Europe/Berlin with summer time (#46; maintainer
 # decision 2026-11-24, before that experiment `timezone`). As on Linux,

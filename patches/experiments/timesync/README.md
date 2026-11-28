@@ -1,4 +1,11 @@
-# Experiment: timesync, the clock from an NTP server and the saved time
+# The clock from an NTP server and the saved time (was experiment `timesync`)
+
+**Default now:** since v0.8.0 the `timesync` package and the service
+`65_timesync.service` are in every image (`config/raspi3bp-sdcard.toml`,
+[#780](https://github.com/redox-rpi/redox-rpi/issues/780)).
+`--experiment timesync` is still accepted and does nothing, so older
+commands, release options and other experiments' `needs` keep working.
+This page stays as the documentation of `timesync`.
 
 The Raspberry Pi has no real-time clock, so Redox starts at 1970 and files
 are dated January 1st. [`tools/timesync`](../../../tools/timesync) asks an
@@ -6,10 +13,6 @@ NTP server (SNTP) for the time once the network is up and sets the clock.
 It writes the boot time, in nanoseconds since 1970, to
 `/scheme/sys/update_time_offset`, the same interface `rtcd` uses on PCs;
 With relibc patch `0011` it uses `clock_settime`, which writes the same file.
-
-```bash
-scripts/build-image.sh --experiment timesync
-```
 
 Without a network the clock still moves forward, like `fake-hwclock` on
 Linux: at start `timesync` sets it to the newest of
@@ -24,9 +27,8 @@ hour with `-d`, it saves the time again. So after a boot without a network
 the clock is at least where the last run left it, and never before the
 image was built.
 
-The experiment has no patches, only a [`config.toml`](config.toml): it adds
-the `timesync` package and the service `65_timesync.service`, which runs
-`timesync -d`. Named 65, it starts after `60_data.service` has mounted the
+The image config adds the `timesync` package and the service
+`65_timesync.service`, which runs `timesync -d`. Named 65, it starts after `60_data.service` has mounted the
 data partition (network-boot image). It does not wait for `10_net.target`:
 it sets the saved time at once, waits until DHCP has set a default route
 (`/scheme/netcfg/route/list`), then tries `pool.ntp.org` and

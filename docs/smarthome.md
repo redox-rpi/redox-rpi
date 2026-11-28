@@ -22,8 +22,8 @@ are on branch `mqtt-tls`, see [below](#encrypted-connections-tls).
 | `ha-bridge` | the Home Assistant service and its timer |
 
 ```bash
-scripts/build-image.sh --experiment timesync --experiment timerd \
-    --experiment mqtt --experiment ha-bridge
+scripts/build-image.sh --experiment timerd --experiment mqtt \
+    --experiment ha-bridge
 ```
 
 **Not supported:** MQTT 5, QoS 2 and TLS client certificates. Without TLS
@@ -179,7 +179,8 @@ it uses Home Assistant's
 
 **You need:** Home Assistant with the MQTT integration, connected to the
 same broker (discovery is on by default), and an image with the
-experiments `timesync`, `timerd`, `mqtt` and `ha-bridge`.
+experiments `timerd`, `mqtt` and `ha-bridge` (`timesync` is in every
+image).
 
 **On the Pi**, as root:
 
