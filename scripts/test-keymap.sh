@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Check the German keyboard layout (#36) in QEMU: the image switches inputd to
-# `de` at boot (/etc/keymap, config.toml); type on QEMU's USB keyboard at the console's
-# login prompt, and compare the file the typed command wrote. Needs an image built
-# with --experiment keyboard-de. Uses no network port, so it can run while
-# other QEMU tests use port 12323.
+# Check the German keyboard layout (#36) in QEMU: KEYMAP=de on the kernel
+# command line (cmdline.txt on a Pi, QEMU -append here) switches inputd to
+# `de` at boot; type on QEMU's USB keyboard at the console's login prompt,
+# and compare the file the typed command wrote. Any image since base 0144.
+# Uses no network port, so it can run while other QEMU tests use port 12323.
 #
 # Usage (on the build host):
-#   patches/experiments/keyboard-de/test-keymap.sh [image]
+#   scripts/test-keymap.sh [image]
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image="${1:-$ROOT/upstream/redox/build/aarch64/minimal/harddrive.img}"
 socket="$ROOT/images/qemu-keymap-monitor.sock"
 log="$ROOT/images/qemu-test.log"
@@ -21,7 +21,8 @@ rm -f "$socket" "$log"
 # The serial console only waits while the USB keyboard types, then shows the
 # file.
 "$ROOT/scripts/qemu-raspi3b.sh" --monitor "$socket" --image "$image" --timeout 600 \
-    --run "sleep 150" --run "cat /home/root/de.txt" \
+    --append "KEYMAP=de" \
+    --run "sleep 150" --run "cat /home/root/de.txt" --run "inputd --keymap" \
     < /dev/null > "$out" 2>&1 &
 qemu=$!
 trap 'kill $qemu 2>/dev/null || true' EXIT
@@ -72,6 +73,19 @@ time.sleep(2)
 PYEOF
 
 wait $qemu || { cat "$out"; echo "FAIL: QEMU run, see $log"; exit 1; }
+fail=0
+if tr -d "\r" < "$log" | grep -aqF "inputd: keyboard layout de from the command line"; then
+    echo "PASS: inputd took KEYMAP=de from the command line"
+else
+    echo "FAIL: no line (inputd: keyboard layout de from the command line) in $log"
+    fail=1
+fi
+if tr -d "\r" < "$log" | grep -aqx "de"; then
+    echo "PASS: inputd --keymap prints de"
+else
+    echo "FAIL: inputd --keymap did not print de"
+    fail=1
+fi
 expected='zyß@{[]}\~|#öäü€"§'"'"'<>éàô´^x'
 if tr -d '\r' < "$log" | grep -aqxF "$expected"; then
     echo "PASS: German layout typed $expected"
@@ -81,3 +95,4 @@ else
     echo "screen: $ROOT/images/qemu-keymap.ppm"
     exit 1
 fi
+exit $fail

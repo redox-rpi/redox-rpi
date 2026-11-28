@@ -1,0 +1,233 @@
+From f5c2fdc3b0fe13d5d86a8535363e4daa5dae3786 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 16:44:47 +0000
+Subject: [PATCH] inputd: keyboard layout at boot from KEYMAP= in cmdline.txt
+ (#36)
+
+inputd --keymap-boot [file] sets the layout named by KEYMAP= in the
+environment or on the kernel command line, the devicetree /chosen
+bootargs where the Raspberry Pi firmware puts cmdline.txt from the
+card FAT partition, else the one in file (default /etc/keymap). The
+unit 05_keymap runs it before the consoles start, so the layout of an
+image is one word in a file on the card.
+
+inputd --keymap prints the active layout: a read of the control handle
+returns its name. orblogin can show it instead of assuming us.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/inputd/Cargo.toml  |  1 +
+ drivers/inputd/src/lib.rs  |  7 +++
+ drivers/inputd/src/main.rs | 98 +++++++++++++++++++++++++++++---------
+ init.d/05_keymap.service   |  7 +++
+ init.d/30_console.target   |  1 +
+ 5 files changed, 91 insertions(+), 23 deletions(-)
+ create mode 100644 init.d/05_keymap.service
+
+diff --git a/drivers/inputd/Cargo.toml b/drivers/inputd/Cargo.toml
+index 8c1b9990..27d067c7 100644
+--- a/drivers/inputd/Cargo.toml
++++ b/drivers/inputd/Cargo.toml
+@@ -11,6 +11,7 @@ log.workspace = true
+ redox_syscall = { workspace = true, features = ["std"] }
+ orbclient.workspace = true
+ libredox.workspace = true
++fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ 
+ common = { path = "../common" }
+ daemon = { path = "../../daemon" }
+diff --git a/drivers/inputd/src/lib.rs b/drivers/inputd/src/lib.rs
+index 3cff9136..badf9f1f 100644
+--- a/drivers/inputd/src/lib.rs
++++ b/drivers/inputd/src/lib.rs
+@@ -150,6 +150,13 @@ impl ControlHandle {
+         let cmd = ControlEvent::from(KeymapActivate { keymap });
+         self.0.write(unsafe { any_as_u8_slice(&cmd) })
+     }
++
++    /// The name of the active keyboard mapping, e.g. "us".
++    pub fn active_keymap(&mut self) -> io::Result<String> {
++        let mut buf = [0; 32];
++        let len = io::Read::read(&mut self.0, &mut buf)?;
++        Ok(String::from_utf8_lossy(&buf[..len]).trim().to_owned())
++    }
+ }
+ 
+ #[derive(Debug)]
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 787daeef..c65a27ae 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -317,6 +317,7 @@ impl SchemeSync for InputScheme<'_> {
+         _fcntl_flags: u32,
+         _ctx: &CallerCtx,
+     ) -> syscall::Result<usize> {
++        let keymap = self.active_keymap.get_kind().to_string();
+         let handle = self.handles.get_mut(id)?;
+ 
+         match handle {
+@@ -348,9 +349,11 @@ impl SchemeSync for InputScheme<'_> {
+                 log::error!("producer tried to read");
+                 Err(SysError::new(EINVAL))
+             }
++            // The active keymap's name, for inputd --keymap.
+             Handle::Control => {
+-                log::error!("control tried to read");
+-                Err(SysError::new(EINVAL))
++                let len = keymap.len().min(buf.len());
++                buf[..len].copy_from_slice(&keymap.as_bytes()[..len]);
++                Ok(len)
+             }
+             Handle::SchemeRoot => Err(SysError::new(EBADF)),
+         }
+@@ -706,15 +709,51 @@ fn daemon_runner(redox_daemon: daemon::SchemeDaemon) -> ! {
+ }
+ 
+ const HELP: &str = r#"
+-inputd [-K keymap|--keymap-file file|-A vt|--keymaps]
++inputd [-K keymap|--keymap-file file|--keymap-boot [file]|--keymap|-A vt|--keymaps]
+    -A vt       : set current virtual display
+    -K keymap   : set keyboard mapping
+    --keymap-file file
+                : set the keyboard mapping named in file (e.g. /etc/keymap);
+                  nothing if the file does not exist
++   --keymap-boot [file]
++               : set the keyboard mapping from KEYMAP= in the environment or
++                 on the kernel command line (on a Raspberry Pi: cmdline.txt
++                 on the card's FAT partition), else from file (default
++                 /etc/keymap); nothing if neither names one
++   --keymap    : print the active keyboard mapping
+    --keymaps   : list available keyboard mappings
+ "#;
+ 
++/// The layout named in `path`: the first line that is not empty and not a
++/// `#` comment.
++fn keymap_from_file(path: &str) -> Option<String> {
++    let text = std::fs::read_to_string(path).ok()?;
++    let name = text
++        .lines()
++        .map(str::trim)
++        .find(|line| !line.is_empty() && !line.starts_with('#'))?;
++    Some(name.to_owned())
++}
++
++/// `KEYMAP` from the environment (the bootloader's), else `KEYMAP=name` on
++/// the kernel command line: the devicetree's `/chosen bootargs`, where the
++/// Raspberry Pi firmware puts `cmdline.txt` (#36). Also says where it came
++/// from.
++fn keymap_from_command_line() -> Option<(String, &'static str)> {
++    if let Ok(name) = std::env::var("KEYMAP") {
++        return Some((name, "the environment"));
++    }
++    let dtb = std::fs::read("/scheme/kernel.dtb").ok()?;
++    let fdt = fdt::Fdt::new(&dtb).ok()?;
++    let bootargs = fdt.find_node("/chosen")?.property("bootargs")?.value;
++    let bootargs = String::from_utf8_lossy(bootargs);
++    let name = bootargs
++        .trim_end_matches('\0')
++        .split_whitespace()
++        .find_map(|word| word.strip_prefix("KEYMAP="))?;
++    Some((name.to_owned(), "the command line"))
++}
++
+ fn main() {
+     let mut args = std::env::args().skip(1);
+ 
+@@ -732,29 +771,30 @@ fn main() {
+                     .expect("inputd: failed to activate VT");
+             }
+             // Activates a keymap.
+-            "-K" | "--keymap-file" => {
+-                let arg = if let Some(a) = args.next() {
+-                    a
+-                } else {
+-                    eprintln!("Error: Option {val} requires an argument.");
+-                    std::process::exit(1);
+-                };
+-                // The file holds the layout's name, e.g. "de"; lines with #
+-                // are comments
+-                let arg = if val == "--keymap-file" {
+-                    let Ok(text) = std::fs::read_to_string(&arg) else {
++            "-K" | "--keymap-file" | "--keymap-boot" => {
++                let arg = if val == "--keymap-boot" {
++                    let file = args.next().unwrap_or_else(|| "/etc/keymap".to_owned());
++                    let found = keymap_from_command_line()
++                        .map(|(name, from)| (name, from.to_owned()))
++                        .or_else(|| keymap_from_file(&file).map(|name| (name, file)));
++                    let Some((name, from)) = found else {
+                         std::process::exit(0);
+                     };
+-                    let Some(name) = text
+-                        .lines()
+-                        .map(str::trim)
+-                        .find(|line| !line.is_empty() && !line.starts_with('#'))
+-                    else {
+-                        std::process::exit(0);
+-                    };
+-                    name.to_owned()
++                    println!("inputd: keyboard layout {name} from {from}");
++                    name
++                } else if let Some(a) = args.next() {
++                    if val == "--keymap-file" {
++                        // The file holds the layout's name, e.g. "de".
++                        let Some(name) = keymap_from_file(&a) else {
++                            std::process::exit(0);
++                        };
++                        name
++                    } else {
++                        a
++                    }
+                 } else {
+-                    arg
++                    eprintln!("Error: Option {val} requires an argument.");
++                    std::process::exit(1);
+                 };
+ 
+                 let vt: KeymapKind = arg.to_ascii_lowercase().parse().unwrap_or_else(|_| {
+@@ -768,6 +808,18 @@ fn main() {
+                     .activate_keymap(vt as usize)
+                     .expect("inputd: failed to activate keymap");
+             }
++            // Prints the active keymap
++            "--keymap" => {
++                let mut handle =
++                    inputd::ControlHandle::new().expect("inputd: failed to open control handle");
++                match handle.active_keymap() {
++                    Ok(name) => println!("{name}"),
++                    Err(err) => {
++                        eprintln!("inputd: failed to read the active keymap: {err}");
++                        std::process::exit(1);
++                    }
++                }
++            }
+             // List available keymaps
+             "--keymaps" => {
+                 // TODO: configurable KeymapKind using files
+diff --git a/init.d/05_keymap.service b/init.d/05_keymap.service
+new file mode 100644
+index 00000000..beebaf57
+--- /dev/null
++++ b/init.d/05_keymap.service
+@@ -0,0 +1,7 @@
++[unit]
++description = "Keyboard layout: KEYMAP= in cmdline.txt, else /etc/keymap"
++
++[service]
++cmd = "inputd"
++args = ["--keymap-boot", "/etc/keymap"]
++type = "oneshot"
+diff --git a/init.d/30_console.target b/init.d/30_console.target
+index acd3e3c3..a49c3ca6 100644
+--- a/init.d/30_console.target
++++ b/init.d/30_console.target
+@@ -2,6 +2,7 @@
+ description = "Initialize consoles"
+ requires_weak = [
+     "00_base.target",
++    "05_keymap.service",
+     "30_getty_debug.service",
+     "getty@2.service",
+ ]
+-- 
+2.53.0
+

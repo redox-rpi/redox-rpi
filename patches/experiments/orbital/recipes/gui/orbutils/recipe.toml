@@ -1,10 +1,14 @@
 # Experiment orbital (#616): orbutils built from source so that orblogin
 # keeps its login picture only at window size (0001), not at full size plus
-# a clone plus the scaled copy. Upstream's recipe, pinned.
+# a clone plus the scaled copy; its layout menu shows the layout set at
+# boot (0002, #36). Upstream's recipe, pinned.
 [source]
 git = "https://gitlab.redox-os.org/redox-os/orbutils.git"
 rev = "380995d3e29453dbc6e8a30b39fccf085b07f6ee"
-patches = ["0001-orblogin-keep-the-login-picture-only-at-window-size.patch"]
+patches = [
+    "0001-orblogin-keep-the-login-picture-only-at-window-size.patch",
+    "0002-orblogin-show-the-keyboard-layout-set-at-boot.patch",
+]
 
 [build]
 template = "custom"

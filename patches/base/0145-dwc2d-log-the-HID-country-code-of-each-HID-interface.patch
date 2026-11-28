@@ -1,0 +1,35 @@
+From 7f2e76cd806f5b28973825109e5ef092cb0f5be2 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 17:10:15 +0000
+Subject: [PATCH] dwc2d: log the HID country code of each HID interface (#36)
+
+The HID class descriptor bCountryCode names the layout a keyboard is
+made for (9 German, 33 US, 0 not given). dwc2d prints it with the
+interfaces and endpoints at enumeration, to see which keyboards set it
+before the layout is chosen from it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/enumerate.rs | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 5574e170..91dd9b56 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -559,6 +559,12 @@ fn print_configuration(indent: &str, config: &[u8]) {
+                 "dwc2d: {indent}  interface {} alt {}: class {:#04x} subclass {:#04x} protocol {:#04x}",
+                 desc[2], desc[3], desc[5], desc[6], desc[7]
+             ),
++            // HID class descriptor: bCountryCode says which layout the
++            // keyboard is made for (9 German, 33 US, 0 not given; #36).
++            0x21 if desc.len() >= 6 => println!(
++                "dwc2d: {indent}    HID country code {}",
++                desc[4]
++            ),
+             5 if desc.len() >= 7 => println!(
+                 "dwc2d: {indent}    endpoint {:#04x}: {} max packet {}",
+                 desc[2],
+-- 
+2.53.0
+

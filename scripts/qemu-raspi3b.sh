@@ -50,6 +50,9 @@
 #                     ds1338,bus=i2c-bus.1,address=0x68 for a clock on I2C
 #                     bus 1 (QEMU has no DS3231; the DS1338 has the same
 #                     time registers)
+#   --append <words>  kernel command line words, as cmdline.txt on a Pi:
+#                     QEMU puts them into the devicetree's /chosen bootargs,
+#                     e.g. KEYMAP=de (#36)
 #   --monitor <path>  QEMU monitor on this Unix socket, e.g. for typing on the
 #                     USB keyboard with `sendkey`
 #   --qmp <path>      QMP on this Unix socket, e.g. for absolute pointer
@@ -101,6 +104,7 @@ usb_host=""
 usb_net_socket=""
 monitor=(-monitor none)
 devices=()
+append=()
 qmp=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -119,6 +123,7 @@ while [ $# -gt 0 ]; do
         --usb-net-socket) usb_net=yes; usb_net_socket="$2"; shift 2 ;;
         --usb-host) usb_host="$2"; shift 2 ;;
         --device) devices+=(-device "$2"); shift 2 ;;
+        --append) append=("-append" "$2"); shift 2 ;;
         --monitor) monitor=(-monitor "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         --qmp) qmp=(-qmp "unix:$(cd "$(dirname "$2")" && pwd)/$(basename "$2"),server,nowait"); shift 2 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -240,7 +245,7 @@ qemu=(qemu-system-aarch64
     "${firmware[@]}"
     -drive file=run.img,if=sd,format=raw
     -display none "${monitor[@]}" ${qmp[@]+"${qmp[@]}"}
-    ${devices[@]+"${devices[@]}"}
+    ${devices[@]+"${devices[@]}"} ${append[@]+"${append[@]}"}
     -usb)
 if [ -n "$usb_host" ]; then
     if [ "$usb_net" = yes ]; then
