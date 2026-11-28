@@ -24,7 +24,7 @@ type = "notify"
 path = "/etc/vc4d-edid-on"
 data = ""
 
-# TEST ONLY (branch g5x-test, redox-rpi#671 step 4): 1280x720, then back to the firmware's mode.
+# TEST ONLY (branch g5k-test, redox-rpi#671 step 4): 1280x720 kept, desktop at 720p.
 [[files]]
 path = "/etc/vc4d-mode-720p"
-data = "restore 15"
+data = "keep"
