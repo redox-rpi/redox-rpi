@@ -30,6 +30,16 @@ space on the CPU that took it (PR #382). The Pi 400 needs a screen or
 `hdmi_force_hotplug=1` in `config.txt`; without HDMI the firmware sets up
 no HVS channel and vc4d leaves the display alone.
 
+The base patch
+[`0001`](base/0001-rpi-firmwared-raw-property-file-for-other-drivers.patch)
+gives `rpi-firmwared` a `property` file (root only, not listed): a driver
+writes a whole property message and reads back the firmware's answer, so
+only `rpi-firmwared` uses the mailbox. vc4d reads the firmware's HDMI clock
+rates through it before it changes the mode on the Pi 4 and 400 ([#671](https://github.com/redox-rpi/redox-rpi/issues/671)
+step 4, redox-rpi/vc4d#36). It is the interface of experiment `rpi-fb`'s
+patch `0060`, written for the current driver; the two experiments do not
+go together.
+
 Settings (environment from the bootloader): `VC4D=off` (vc4d does not
 start), `VC4D_FLIP=off` (no flips, direct scanout), `VC4D_CHECK=off` (no
 check before the handover), `VC4D_IRQ_PROBE=off`, `VC4D_VBLANK=off`
