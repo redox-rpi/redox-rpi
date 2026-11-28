@@ -232,7 +232,6 @@ rm -f "$out.uuid"
 if [ -n "$direct" ]; then
     mcopy -i "$fat" "$fw/kernel8.img" ::kernel8.img
     mcopy -i "$fat" "$fw/initramfs" ::initramfs
-    [ -z "$card_root" ] || mcopy -i "$fat" "$fw/cmdline.txt" ::cmdline.txt
 elif [ -n "$image" ]; then
     mcopy -i "$fat" "$uboot" ::u-boot.bin
     efi="$out.efi"
@@ -246,6 +245,17 @@ else
     mcopy -i "$fat" "$uboot" ::u-boot.bin
     mcopy -i "$fat" "$bootscr" ::boot.scr
 fi
+# Keyboard layout at boot (#36): inputd takes KEYMAP= from the command line,
+# which the firmware reads from cmdline.txt, so the layout of a card is one
+# word in this file (inputd --keymaps lists the names). A direct-boot card
+# with its root on the card has its root partition there too.
+cmdline="KEYMAP=us"
+if [ -n "$direct" ] && [ -f "$fw/cmdline.txt" ]; then
+    cmdline="$(cat "$fw/cmdline.txt") $cmdline"
+fi
+echo "$cmdline" > "$out.cmdline"
+mcopy -i "$fat" "$out.cmdline" ::cmdline.txt
+rm -f "$out.cmdline"
 echo "Boot partition:"
 mdir -i "$fat" -/ ::
 dd if="$fat" of="$out" bs=1M seek=1 conv=notrunc status=none

@@ -1,0 +1,45 @@
+From 3ed147b33d4b44fe6b012318c99987402b2e1e15 Mon Sep 17 00:00:00 2001
+From: redox-rpi
+Date: Sat, 28 Nov 2026 16:45:25 +0000
+Subject: [PATCH] orblogin: show the keyboard layout set at boot
+
+orblogin assumed us as the active layout. With another layout set at
+boot (KEYMAP= in cmdline.txt or /etc/keymap, #36) choosing us in the
+menu did nothing, because us counted as active already. Ask inputd
+--keymap for the active one.
+---
+ orbutils/src/orblogin/keymap.rs | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/orbutils/src/orblogin/keymap.rs b/orbutils/src/orblogin/keymap.rs
+index 13f840d..965008a 100644
+--- a/orbutils/src/orblogin/keymap.rs
++++ b/orbutils/src/orblogin/keymap.rs
+@@ -8,7 +8,7 @@ pub struct KeymapState {
+ 
+ impl KeymapState {
+     pub fn new() -> Self {
+-        let active = "us".to_string();
++        let mut active = "us".to_string();
+         let mut list = vec!["us".to_string()];
+ 
+         if let Ok(output) = Command::new("inputd").arg("--keymaps").output() {
+@@ -17,7 +17,14 @@ impl KeymapState {
+                 .split("\n")
+                 .map(|s| s.to_string())
+                 .collect();
+-            // TODO: Get active keymap
++        }
++        // The layout set at boot (KEYMAP= in cmdline.txt or /etc/keymap),
++        // so that choosing us works when the boot layout is another one.
++        if let Ok(output) = Command::new("inputd").arg("--keymap").output() {
++            let name = String::from_utf8_lossy(&output.stdout[..]).trim().to_string();
++            if output.status.success() && !name.is_empty() {
++                active = name;
++            }
+         }
+ 
+         KeymapState { active, list }
+-- 
+2.53.0
+
