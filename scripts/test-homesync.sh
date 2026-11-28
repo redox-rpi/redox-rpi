@@ -10,8 +10,8 @@
 # directory is checked on the host. Nothing is installed on the host, and
 # sshd ends with the script.
 #
-# Needs an image built with --experiment sshd --experiment homesync, and
-# sshd and rsync on the host.
+# Needs an image built with --experiment sshd --experiment timesync
+# --experiment homesync, and sshd and rsync on the host.
 #
 # Usage: scripts/test-homesync.sh [--timeout <seconds>]
 set -euo pipefail
