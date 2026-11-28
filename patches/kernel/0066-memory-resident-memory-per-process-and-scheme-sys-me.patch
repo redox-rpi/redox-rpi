@@ -1,0 +1,336 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 16:27:17 +0000
+Subject: [PATCH] memory: resident memory per process and /scheme/sys/memory
+
+The PRIVATE and SHARED columns of /scheme/sys/context added up the
+size of all grants, so a process that reserved memory but never touched
+it looked as large as one that used it. They now count resident pages,
+found by walking the page tables of the user half: PRIVATE is pages
+mapped only by this process (plus its kernel stack), SHARED is pages
+also mapped elsewhere (copy on write after fork, shared memory, file
+pages). A new VIRT column keeps the old total.
+
+/scheme/sys/memory lists where memory goes, in kB: total, used and
+free frames, the kernel heap (size and used), kernel stacks, page
+tables, and the sums of private, shared, physical and virtual user
+memory over all address spaces.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/allocator/linked_list.rs |   8 +++
+ src/scheme/sys/context.rs    | 113 +++++++++++++++++++++++++++--------
+ src/scheme/sys/memory.rs     |  74 +++++++++++++++++++++++
+ src/scheme/sys/mod.rs        |   2 +
+ 4 files changed, 173 insertions(+), 24 deletions(-)
+ create mode 100644 src/scheme/sys/memory.rs
+
+diff --git a/src/allocator/linked_list.rs b/src/allocator/linked_list.rs
+index f17ef4ab..4823739e 100644
+--- a/src/allocator/linked_list.rs
++++ b/src/allocator/linked_list.rs
+@@ -16,6 +16,14 @@ impl Allocator {
+             *HEAP.lock() = Some(Heap::new(offset, size));
+         }
+     }
++
++    /// Size of the kernel heap and the bytes in use, both in bytes.
++    pub fn stats() -> (usize, usize) {
++        match *HEAP.lock() {
++            Some(ref heap) => (heap.size(), heap.used()),
++            None => (0, 0),
++        }
++    }
+ }
+ 
+ unsafe impl GlobalAlloc for Allocator {
+diff --git a/src/scheme/sys/context.rs b/src/scheme/sys/context.rs
+index 65d09bdd..d638be2c 100644
+--- a/src/scheme/sys/context.rs
++++ b/src/scheme/sys/context.rs
+@@ -5,11 +5,76 @@ use alloc::{
+ };
+ use core::fmt::Write;
+ 
+-use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Result};
++use crate::{
++    context,
++    context::{contexts, memory::AddrSpace},
++    memory::{get_page_info, Frame, RefCount, RmmA, PAGE_SIZE},
++    sync::CleanLockToken,
++    syscall::error::Result,
++};
++use rmm::{Arch, PageTable};
++
++/// Memory of one address space, in bytes.
++#[derive(Clone, Copy, Default)]
++pub struct Usage {
++    /// Resident pages mapped only here.
++    pub private: usize,
++    /// Resident pages also mapped elsewhere: copy on write after fork, shared memory, file pages.
++    pub shared: usize,
++    /// Mapped physical memory with no page frame of its own, such as device registers.
++    pub phys: usize,
++    /// Page tables of the user half.
++    pub tables: usize,
++    /// Size of all grants except physical ones (the old PRIVATE + SHARED).
++    pub virt: usize,
++}
++
++/// Count what the address space has in memory, by walking its page tables.
++pub fn usage(addr_space: &AddrSpace) -> Usage {
++    let mut usage = Usage::default();
++    for (_base, info) in addr_space.grants.iter() {
++        if !matches!(info.provider, context::memory::Provider::PhysBorrowed { .. }) {
++            usage.virt += info.page_count() * PAGE_SIZE;
++        }
++    }
++    // SAFETY: the caller holds the address space lock, so no table is freed during the walk.
++    unsafe { walk(addr_space.table.utable.table(), &mut usage) };
++    usage
++}
++
++unsafe fn walk(table: PageTable<RmmA>, usage: &mut Usage) {
++    usage.tables += PAGE_SIZE;
++    for i in 0..RmmA::PAGE_ENTRIES {
++        match table.entry_base(i) {
++            Some(base) if base.data() < crate::USER_END_OFFSET => {}
++            _ => break,
++        }
++        let Some(entry) = (unsafe { table.entry(i) }) else {
++            break;
++        };
++        if !entry.present() {
++            continue;
++        }
++        if table.level() > 0 {
++            if let Some(next) = unsafe { table.next(i) } {
++                unsafe { walk(next, usage) };
++            }
++            continue;
++        }
++        let Ok(phys) = entry.address() else {
++            continue;
++        };
++        match get_page_info(Frame::containing(phys)).and_then(|info| info.refcount()) {
++            Some(RefCount::One) => usage.private += PAGE_SIZE,
++            Some(_) => usage.shared += PAGE_SIZE,
++            None => usage.phys += PAGE_SIZE,
++        }
++    }
++}
+ 
+ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+     let mut string = format!(
+-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{}\n",
++        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{:<8}{}\n",
+         "PID",
+         "EUID",
+         "EGID",
+@@ -20,10 +85,12 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+         "SCHTIME",
+         "PRIVATE",
+         "SHARED",
++        "VIRT",
+         "NAME"
+     );
+ 
+     let mut rows = Vec::new();
++    let mut seen: Vec<(usize, Usage, bool)> = Vec::new();
+     {
+         let mut contexts = contexts(token.downgrade());
+         let (contexts, mut token) = contexts.token_split();
+@@ -47,32 +114,27 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+ 
+             let heap = match addr_space {
+                 Ok(addr_space) => {
+-                    let addr_space_guard = addr_space.acquire_read(token.downgrade());
+-                    let mut private_memory = 0;
+-                    let mut shared_memory = 0;
+-                    // TODO: All user programs must have some grant in order for executable memory to even
+-                    // exist, but is this a good indicator of whether it is user or kernel?
+-                    let is_kernel = addr_space_guard.grants.is_empty();
+-                    for (_base, info) in addr_space_guard.grants.iter() {
+-                        // wrap as method?
+-                        match info.provider {
+-                            context::memory::Provider::Allocated { .. } => {
+-                                private_memory += info.page_count() * crate::memory::PAGE_SIZE
+-                            }
+-                            // Excluded because it is not allocable by user, whether
+-                            // this region is counted toward usable memory remain unknown
+-                            context::memory::Provider::PhysBorrowed { .. } => {}
+-                            _ => shared_memory += info.page_count() * crate::memory::PAGE_SIZE,
++                    let key = alloc::sync::Arc::as_ptr(&addr_space) as usize;
++                    match seen.iter().find(|entry| entry.0 == key) {
++                        Some(&(_, usage, is_kernel)) => Some((usage, is_kernel)),
++                        None => {
++                            let addr_space_guard = addr_space.acquire_read(token.downgrade());
++                            // TODO: All user programs must have some grant in order for executable memory to even
++                            // exist, but is this a good indicator of whether it is user or kernel?
++                            let is_kernel = addr_space_guard.grants.is_empty();
++                            let usage = usage(&addr_space_guard);
++                            drop(addr_space_guard);
++                            seen.push((key, usage, is_kernel));
++                            Some((usage, is_kernel))
+                         }
+                     }
+-                    Some((private_memory, shared_memory, is_kernel))
+                 }
+                 Err(_) => None,
+             };
+ 
+             let mut stat_string = String::new();
+             stat_string.push(match heap {
+-                Some((_, _, is_kernel)) => {
++                Some((_, is_kernel)) => {
+                     if is_kernel {
+                         'K'
+                     } else {
+@@ -121,10 +183,10 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+                 sch_time_ns / 10_000_000
+             );
+ 
+-            let (priv_memory, shared_memory) = if let Some((privm, shrdm, _)) = heap {
+-                (memory + privm, shrdm)
++            let (priv_memory, shared_memory, virt_memory) = if let Some((usage, _)) = heap {
++                (memory + usage.private, usage.shared, usage.virt)
+             } else {
+-                (memory, 0)
++                (memory, 0, 0)
+             };
+ 
+             rows.push((
+@@ -138,6 +200,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+                 sch_time_string,
+                 format_bytes(priv_memory),
+                 format_bytes(shared_memory),
++                format_bytes(virt_memory),
+                 name,
+             ));
+         }
+@@ -155,12 +218,13 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+         sch_time_string,
+         priv_memory_string,
+         shared_memory_string,
++        virt_memory_string,
+         name,
+     ) in rows
+     {
+         let _ = writeln!(
+             string,
+-            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{}",
++            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{:<8}{}",
+             pid,
+             euid,
+             egid,
+@@ -171,6 +235,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+             sch_time_string,
+             priv_memory_string,
+             shared_memory_string,
++            virt_memory_string,
+             name,
+         );
+     }
+diff --git a/src/scheme/sys/memory.rs b/src/scheme/sys/memory.rs
+new file mode 100644
+index 00000000..6105f579
+--- /dev/null
++++ b/src/scheme/sys/memory.rs
+@@ -0,0 +1,74 @@
++use alloc::vec::Vec;
++
++use super::context::{usage, Usage};
++use crate::{
++    allocator::Allocator,
++    context::contexts,
++    memory::{free_frames, total_frames, used_frames, PAGE_SIZE},
++    sync::CleanLockToken,
++    syscall::error::Result,
++};
++
++/// Where the memory goes, in kB, one "name: value kB" line each.
++pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
++    let mut kernel_stacks = 0;
++    let mut sum = Usage::default();
++    let mut processes = 0;
++    let mut seen: Vec<usize> = Vec::new();
++    {
++        let mut contexts = contexts(token.downgrade());
++        let (contexts, mut token) = contexts.token_split();
++        for context_ref in contexts.iter() {
++            let context = context_ref.read(token.token());
++            kernel_stacks += context.kfx.len() + context.kstack.len();
++            let addr_space = context.addr_space().cloned();
++            drop(context);
++            let Ok(addr_space) = addr_space else {
++                continue;
++            };
++            let key = alloc::sync::Arc::as_ptr(&addr_space) as usize;
++            if seen.contains(&key) {
++                continue;
++            }
++            seen.push(key);
++            let guard = addr_space.acquire_read(token.downgrade());
++            let one = usage(&guard);
++            drop(guard);
++            processes += 1;
++            sum.private += one.private;
++            sum.shared += one.shared;
++            sum.phys += one.phys;
++            sum.tables += one.tables;
++            sum.virt += one.virt;
++        }
++    }
++    let (heap_size, heap_used) = Allocator::stats();
++    let kb = |bytes: usize| bytes / 1024;
++    let text = format!(
++        "MemTotal: {} kB\n\
++         MemUsed: {} kB\n\
++         MemFree: {} kB\n\
++         KernelHeap: {} kB\n\
++         KernelHeapUsed: {} kB\n\
++         KernelStacks: {} kB\n\
++         PageTables: {} kB\n\
++         UserPrivate: {} kB\n\
++         UserShared: {} kB\n\
++         UserPhys: {} kB\n\
++         UserVirtual: {} kB\n\
++         AddressSpaces: {}\n",
++        kb(total_frames() * PAGE_SIZE),
++        kb(used_frames() * PAGE_SIZE),
++        kb(free_frames() * PAGE_SIZE),
++        kb(heap_size),
++        kb(heap_used),
++        kb(kernel_stacks),
++        kb(sum.tables),
++        kb(sum.private),
++        kb(sum.shared),
++        kb(sum.phys),
++        kb(sum.virt),
++        processes,
++    );
++    Ok(text.into_bytes())
++}
+diff --git a/src/scheme/sys/mod.rs b/src/scheme/sys/mod.rs
+index f4c0dba6..d16049cc 100644
+--- a/src/scheme/sys/mod.rs
++++ b/src/scheme/sys/mod.rs
+@@ -33,6 +33,7 @@ mod fdstat;
+ mod iostat;
+ mod irq;
+ mod log;
++mod memory;
+ #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+ mod numa;
+ mod stat;
+@@ -78,6 +79,7 @@ const FILES: &[(&str, Kind)] = &[
+     ("iostat", Rd(iostat::resource)),
+     ("irq", Rd(irq::resource)),
+     ("log", Rd(log::resource)),
++    ("memory", Rd(memory::resource)),
+     #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+     ("numa", Rd(numa::resource)),
+     ("syscall", Rd(syscall::resource)),
+-- 
+2.53.0
+
