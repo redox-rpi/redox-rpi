@@ -1,0 +1,15 @@
+# Where bugreport sends its report (#759): the receiver on the build host,
+# scripts/bugreport-receiver.py. By address: the build host's name does not
+# resolve in QEMU. @BUILD_SERVER@ is filled in by scripts/build-image.sh from
+# REDOX_BUILD_SERVER (scripts/lab-env.sh). Dev images only: release images
+# never get this file, so their reports stay files: this experiment has a
+# test-only file, so --release refuses it.
+[packages]
+bugreport = "source"
+
+[[files]]
+path = "/etc/bugreport.conf"
+data = """
+# bugreport (experiment bugreport-upload): one HTTP POST per report.
+upload = http://@BUILD_SERVER@:8090/bugreport
+"""

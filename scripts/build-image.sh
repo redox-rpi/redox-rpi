@@ -718,6 +718,27 @@ for toml in glob.glob("recipes/**/recipe.toml", recursive=True):
         f.write(ident + "\n")
 PY
 
+# A recipe's target/ keeps the package of the recipe that built it, and the
+# cookbook publishes it again even when that recipe is gone: an experiment's
+# recipe, its patches or its "source" rule (#772, Test 685). Clean every
+# recipe whose target/ was made from another recipe, patches or rule than
+# this build wants; after the build, stamp what each target/ was made from.
+exp_touched=()
+for dir in "$ROOT"/patches/experiments/*/recipes/**/; do
+    compgen -G "$dir"recipe.toml > /dev/null || compgen -G "$dir"'*.patch' > /dev/null || continue
+    rel="${dir#"$ROOT"/patches/experiments/*/recipes/}"
+    exp_touched+=(--touched "${rel%/}")
+done
+exp_applied=()
+for exp in "${experiments[@]}"; do
+    for file in "$ROOT/patches/experiments/$exp"/recipes/**/recipe.toml; do
+        [ -e "$file" ] || continue
+        rel="${file#"$ROOT/patches/experiments/$exp/recipes/"}"
+        exp_applied+=(--applied "$exp:$(dirname "$rel")")
+    done
+done
+python3 "$ROOT/scripts/package-origins.py" check --config "$fs_config" "${exp_touched[@]}"
+
 # make only rebuilds packages when repo.tag is older than what it tracks,
 # which does not include our patches. The cookbook itself skips unchanged
 # recipes, so letting it check every time is cheap.
@@ -770,6 +791,7 @@ if [ "${1:-all}" = all ]; then
     touch "$repo_tag"
 fi
 make "${1:-all}" "${make_vars[@]}"
+python3 "$ROOT/scripts/package-origins.py" stamp --config "$fs_config"
 
 # The full manifest next to the image: the build inputs, hashes of the main
 # outputs and the packages the image was installed from.
@@ -858,6 +880,8 @@ manifest="$MANIFESTS/$image_name-$build_id.toml"
             $1 == "blake3" { gsub(/"/, "", $2); b = substr($2, 1, 16) }
             END { printf "%s = \"%s %s %s\"\n", name, v, s, b }' "$toml"
     done
+    echo
+    python3 "$ROOT/scripts/package-origins.py" manifest "${exp_applied[@]}" $(sort <<< "$packages")
 } > "$manifest"
 if [ "$dirty" = 1 ]; then
     cp "$drift_report" "${manifest%.toml}.diff"

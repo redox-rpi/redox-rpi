@@ -1,0 +1,21 @@
+[package]
+name = "serverfs"
+description = "serverfs: a directory on a home server (WebDAV) as a Redox scheme, read-only spike (#713)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "serverfs"
+path = "src/main.rs"
+
+[dependencies]
+redox-scheme = "0.12.0"
+redox_syscall = { version = "0.9.5", features = ["std"] }
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+
+# ring with Redox support, as Redox' pkgutils and tools/mqtt use.
+[patch.crates-io]
+ring = { git = "https://gitlab.redox-os.org/redox-os/ring.git", branch = "redox-0.17.16" }

@@ -54,6 +54,11 @@
 - [#200](https://github.com/redox-rpi/redox-rpi/issues/200) log triage with the local model, branch `log-triage`
   ([below](#log-triage)).
 
+- [#772](https://github.com/redox-rpi/redox-rpi/issues/773) stale packages after an experiment recipe goes away:
+  `scripts/package-origins.py` cleans a recipe whose recipe, patches or rule
+  changed since the last build in the clone; the manifest gets
+  `[package_origins]` (Quality).
+
 ## Next
 
 - [#9](https://github.com/redox-rpi/redox-rpi/issues/9) CI with the pinned revisions; [#13](https://github.com/redox-rpi/redox-rpi/issues/13) relibc tests on
