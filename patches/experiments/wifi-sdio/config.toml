@@ -1,0 +1,24 @@
+[packages]
+# Firmware, CLM and NVRAM files, downloaded at build time (tools/wifi-firmware).
+wifi-firmware = "source"
+# Network name and passphrase without echo (tools/wifi-set).
+wifi-set = "source"
+
+# The image's network settings plus wlan0, so dhcpd asks for a lease once
+# the Wi-Fi driver has joined a network. Replaces the file of
+# config/raspi3bp-sdcard.toml; keep its eth0 section the same.
+[[files]]
+path = "/etc/net/config.toml"
+data = """
+# How the network starts (docs/network-config.md in redox-rpi).
+# No section for an interface: nothing is started on it.
+
+[interface.eth0]
+ipv4 = "dhcp"
+ipv6 = "off"
+
+# Wi-Fi (experiment wifi-sdio): the driver registers it after the join.
+[interface.wlan0]
+ipv4 = "dhcp"
+ipv6 = "off"
+"""
