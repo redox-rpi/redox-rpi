@@ -90,8 +90,15 @@ fn main() {
             if libc::setgid(user.gid) != 0 {
                 fail(&format!("setgid({}): {}", user.gid, std::io::Error::last_os_error()));
             }
+            // Redox processes carry no supplementary groups (programs such
+            // as sudo read /etc/group by user name), and relibc's setgroups
+            // answers ENOSYS. Then there is nothing to drop; any other error
+            // stops here.
             if setgroups(groups.len() as _, groups.as_ptr()) != 0 {
-                fail(&format!("setgroups: {}", std::io::Error::last_os_error()));
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(libc::ENOSYS) {
+                    fail(&format!("setgroups: {err}"));
+                }
             }
             if libc::setuid(user.uid) != 0 {
                 fail(&format!("setuid({}): {}", user.uid, std::io::Error::last_os_error()));

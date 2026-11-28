@@ -120,11 +120,13 @@ mode = 0o755
 data = """
 #!/usr/bin/ion
 # Ends the desktop session of this user (#805): the desktop's programs
-# first, then the launcher, which ends desktop-session and with it Orbital.
-for prog in [cosmic-files cosmic-edit orbterm sopwith viewer editor calculator]
-    pkill -x $prog
+# first, then the launcher, which ends desktop-session and with it Orbital,
+# then back to the text console. pkill -x matches the full path on Redox.
+for prog in [cosmic-files cosmic-edit orbterm desktop-welcome sopwith viewer editor calculator]
+    pkill -x /usr/bin/$prog
 end
-pkill -x launcher
+pkill -x /usr/bin/launcher
+inputd -A 2
 """
 
 # What the desktop is and how to get back, shown by desktop on the console
