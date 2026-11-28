@@ -1,4 +1,4 @@
-From 77e18ada2c4449333c67027c4f395b57699d20b9 Mon Sep 17 00:00:00 2001
+From ab8bb6094d41b5ea9f8489d682c150a2d5ec9eaa Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 09:37:01 +0000
 Subject: [PATCH] inputd: German keyboard layout (de) with AltGr
@@ -12,10 +12,10 @@ table ignore AltGr as before.
 ---
  drivers/inputd/src/keymap.rs | 102 +++++++++++++++++++++++++++++++++--
  drivers/inputd/src/main.rs   |   9 +++-
- 2 files changed, 120 insertions(+), 6 deletions(-)
+ 2 files changed, 105 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/inputd/src/keymap.rs b/drivers/inputd/src/keymap.rs
-index 27d54751..b3eb5a85 100644
+index 27d5475..b3eb5a8 100644
 --- a/drivers/inputd/src/keymap.rs
 +++ b/drivers/inputd/src/keymap.rs
 @@ -340,6 +340,83 @@ mod keymaps {
@@ -175,7 +175,7 @@ index 27d54751..b3eb5a85 100644
              if shift {
                  c[1]
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 4d849c8f..64c17de3 100644
+index 37b1a16..d7d5f1b 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
 @@ -84,6 +84,7 @@ struct InputScheme<'a> {
@@ -185,16 +185,16 @@ index 4d849c8f..64c17de3 100644
 +    altgr: bool,
  
      has_new_events: bool,
-     pending_activate: Option<usize>,
-@@ -105,6 +106,7 @@ impl<'a> InputScheme<'a> {
+     /// Set once another VT has been active while the boot log (VT 1) is
+@@ -109,6 +110,7 @@ impl<'a> InputScheme<'a> {
              active_keymap: KeymapData::new(KeymapKind::US),
              lshift: false,
              rshift: false,
 +            altgr: false,
              has_new_events: false,
+             retire_bootlog: false,
              pending_activate: None,
-         }
-@@ -428,10 +430,13 @@ impl SchemeSync for InputScheme<'_> {
+@@ -444,10 +446,13 @@ impl SchemeSync for InputScheme<'_> {
                      orbclient::K_RIGHT_SHIFT => {
                          self.rshift = key_event.pressed;
                      }
@@ -209,7 +209,7 @@ index 4d849c8f..64c17de3 100644
                          key_event.character = ev;
                          events.to_mut()[i] = key_event.to_event();
                      }
-@@ -707,7 +712,7 @@ fn main() {
+@@ -727,7 +732,7 @@ fn main() {
              // List available keymaps
              "--keymaps" => {
                  // TODO: configurable KeymapKind using files
