@@ -1,4 +1,4 @@
-From bd47ddcfc29110563c5757b83125cec82034b4f4 Mon Sep 17 00:00:00 2001
+From 8a0db194ebd4761002ee1abb8235500a9c329f1d Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.xyz>
 Date: Mon, 16 Nov 2026 17:33:18 +0000
 Subject: [PATCH] inputd: with QUIET=1, the boot log does not take the screen
@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 51 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 8fe6c440..4cdded18 100644
+index c65a27ae..001f8dc3 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
 @@ -16,6 +16,8 @@ use std::collections::BTreeSet;
@@ -54,7 +54,7 @@ index 8fe6c440..4cdded18 100644
  enum Handle {
      Producer,
      Consumer {
-@@ -87,6 +95,10 @@ struct InputScheme<'a> {
+@@ -90,6 +98,10 @@ struct InputScheme<'a> {
  
      has_new_events: bool,
      pending_activate: Option<usize>,
@@ -65,15 +65,15 @@ index 8fe6c440..4cdded18 100644
  }
  
  impl<'a> InputScheme<'a> {
-@@ -107,6 +119,7 @@ impl<'a> InputScheme<'a> {
-             rshift: false,
+@@ -112,6 +124,7 @@ impl<'a> InputScheme<'a> {
+             dead_key: None,
              has_new_events: false,
              pending_activate: None,
 +            quiet: std::env::var("QUIET").is_ok_and(|v| !v.is_empty() && v != "0"),
          }
      }
  
-@@ -155,6 +168,7 @@ impl<'a> InputScheme<'a> {
+@@ -160,6 +173,7 @@ impl<'a> InputScheme<'a> {
          });
  
          self.active_vt = Some(new_active);
@@ -81,7 +81,7 @@ index 8fe6c440..4cdded18 100644
      }
  
      fn switch_keymap(&mut self, new_active: usize) {
-@@ -250,7 +264,9 @@ impl SchemeSync for InputScheme<'_> {
+@@ -256,7 +270,9 @@ impl SchemeSync for InputScheme<'_> {
                      return Err(SysError::new(EEXIST));
                  }
  
@@ -92,7 +92,7 @@ index 8fe6c440..4cdded18 100644
                  Handle::Consumer {
                      events: EventFlags::empty(),
                      pending: Vec::new(),
-@@ -608,6 +624,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+@@ -652,6 +668,10 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
  
      let _ = daemon.ready_sync_scheme(handler.socket(), &mut scheme);
  
@@ -103,7 +103,7 @@ index 8fe6c440..4cdded18 100644
      loop {
          scheme.has_new_events = false;
          match handler.process_requests_nonblocking(&mut scheme)? {
-@@ -659,6 +679,35 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+@@ -703,6 +723,35 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
      }
  }
  
