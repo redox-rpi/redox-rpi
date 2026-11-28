@@ -30,6 +30,13 @@ stub does what the Redox bootloader does on aarch64 before the jump:
    initfs, then, at the next 4 KiB boundary, an optional RedoxFS image. With
    one, it becomes the live disk (`DISK_LIVE_ADDR`, `DISK_LIVE_SIZE`,
    `REDOXFS_UUID` in the environment), as with `bootloader-live.efi`.
+   Without one, the root filesystem stays on the card: `cmdline.txt` then
+   names it with `REDOXFS_UUID=` and `REDOXFS_BLOCK=` (step 5), and
+   `redoxfs` in the initfs finds it through `bcm2835-sdhostd`
+   (`scripts/make-sdcard.sh --direct --card-root`,
+   [#786](https://github.com/redox-rpi/redox-rpi/issues/786)). The live
+   disk takes its whole size in RAM, 222 MiB with the release image: half
+   of a Zero 2 W.
 5. The command line from `/chosen` `bootargs` (`cmdline.txt` on a Pi):
    words `NAME=value` with an upper-case `NAME` go into the environment,
    the firmware's own lower-case Linux options do not. The word `quiet`
