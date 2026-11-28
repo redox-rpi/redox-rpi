@@ -24,7 +24,7 @@ type = "notify"
 path = "/etc/vc4d-edid-on"
 data = ""
 
-# TEST ONLY (branch g5w-test, redox-rpi#671 step 3): vc4d writes the firmware's mode itself.
+# TEST ONLY (branch g5x-test, redox-rpi#671 step 4): 1280x720, then back to the firmware's mode.
 [[files]]
-path = "/etc/vc4d-mode-write"
-data = ""
+path = "/etc/vc4d-mode-720p"
+data = "restore 15"
