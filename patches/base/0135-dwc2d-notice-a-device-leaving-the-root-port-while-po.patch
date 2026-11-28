@@ -1,0 +1,82 @@
+From fe709df8508a90c139ea6b7aaf8e0379716034fa Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 16:19:31 +0000
+Subject: [PATCH] dwc2d: notice a device leaving the root port while polls run
+ (#798)
+
+On the Zero 2 W a keyboard with a built-in hub sits directly on the
+root port. Unplugged, dwc2d printed nothing, kept its devices, and after
+plugging it back in one thread took a whole core and the keyboard and
+mouse stayed dead until a reboot.
+
+- A poll behind a high-speed hub waited for the microframe number to
+  leave the last microframes before its start split, with no timeout.
+  The frame number stops when the root port goes away, so the main loop
+  waited for good and no rescan ran. That wait now has the poll timeout.
+- The rescan also counts a root device as gone when the root port is
+  disabled (a disconnect disables it), not only when the connection bit
+  is clear. A device still connected is enumerated again by the next
+  rescan.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/dwc2.rs      | 12 +++++++++++-
+ drivers/usb/dwc2d/src/enumerate.rs | 11 +++++++++--
+ 2 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 975c1e8d..fd2ae059 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -236,6 +236,12 @@ impl Dwc2 {
+         self.write_port(HPRT0_PWR, 0);
+     }
+ 
++    /// Whether the root port is enabled: after a reset with a device on it,
++    /// until that device goes away.
++    pub fn root_enabled(&self) -> bool {
++        self.read(HPRT0) & HPRT0_ENA != 0
++    }
++
+     /// Whether a device is connected to the root port.
+     pub fn root_connected(&self) -> bool {
+         self.read(HPRT0) & HPRT0_CONN_STS != 0
+@@ -445,8 +451,12 @@ impl Dwc2 {
+             check_time("start split")?;
+             if periodic {
+                 // Leave the hub the rest of the frame for the transaction:
+-                // no start split in the last microframes.
++                // no start split in the last microframes. The frame number
++                // stops when the root port goes away, so this wait has the
++                // poll's timeout too (#798: a keyboard with a built-in hub
++                // unplugged from the Zero 2 W hung dwc2d here).
+                 while self.read(HFNUM) & 7 >= 5 {
++                    check_time("microframe")?;
+                     std::hint::spin_loop();
+                 }
+             }
+diff --git a/drivers/usb/dwc2d/src/enumerate.rs b/drivers/usb/dwc2d/src/enumerate.rs
+index 5574e170..d49d9cbd 100644
+--- a/drivers/usb/dwc2d/src/enumerate.rs
++++ b/drivers/usb/dwc2d/src/enumerate.rs
+@@ -481,8 +481,15 @@ impl Bus {
+ 
+         let root = self.hc.root_connected();
+         let root_device = self.devices.iter().any(|d| d.parent.is_none());
+-        if !root && (root_device || self.failed.contains(&None)) {
+-            println!("dwc2d: device on root port removed");
++        // A disconnect also disables the port; a device still connected to
++        // a disabled port is enumerated again by the next rescan (#798).
++        let disabled = root_device && !self.hc.root_enabled();
++        if (!root || disabled) && (root_device || self.failed.contains(&None)) {
++            if root {
++                println!("dwc2d: device on root port removed (port disabled)");
++            } else {
++                println!("dwc2d: device on root port removed");
++            }
+             for address in before.iter().copied() {
+                 changes.removed.push(address);
+             }
+-- 
+2.53.0
+
