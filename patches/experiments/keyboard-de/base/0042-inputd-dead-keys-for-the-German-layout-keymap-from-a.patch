@@ -1,7 +1,8 @@
-From 17e1c69dfb508231ab32ea08064cbed9f4b843c6 Mon Sep 17 00:00:00 2001
+From b36908b609ca6a9f0c3fd2ac8ca5653797d05ad7 Mon Sep 17 00:00:00 2001
 From: stephan-xyz <stephan@zehrer.net>
 Date: Thu, 29 Oct 2026 14:40:32 +0000
-Subject: [PATCH] inputd: dead keys for the German layout, keymap from a file
+Subject: [PATCH] inputd: dead keys for the German layout, keymap from a
+ file
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -17,7 +18,7 @@ boot unit can read the setting (#36).
  2 files changed, 86 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/inputd/src/keymap.rs b/drivers/inputd/src/keymap.rs
-index b3eb5a85..17fc130b 100644
+index b3eb5a8..17fc130 100644
 --- a/drivers/inputd/src/keymap.rs
 +++ b/drivers/inputd/src/keymap.rs
 @@ -484,9 +484,23 @@ pub struct KeymapData {
@@ -69,7 +70,7 @@ index b3eb5a85..17fc130b 100644
          self.kind
      }
 diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
-index 64c17de3..31bec666 100644
+index df69c06..fe0d234 100644
 --- a/drivers/inputd/src/main.rs
 +++ b/drivers/inputd/src/main.rs
 @@ -20,7 +20,7 @@ use std::os::fd::IntoRawFd;
@@ -89,16 +90,16 @@ index 64c17de3..31bec666 100644
 +    dead_key: Option<char>,
  
      has_new_events: bool,
-     pending_activate: Option<usize>,
-@@ -107,6 +109,7 @@ impl<'a> InputScheme<'a> {
+     /// The boot log (VT 1) gave back its display while another VT is
+@@ -113,6 +115,7 @@ impl<'a> InputScheme<'a> {
              lshift: false,
              rshift: false,
              altgr: false,
 +            dead_key: None,
              has_new_events: false,
-             pending_activate: None,
-         }
-@@ -171,6 +174,7 @@ impl<'a> InputScheme<'a> {
+             bootlog_released: false,
+             release_bootlog: false,
+@@ -205,6 +208,7 @@ impl<'a> InputScheme<'a> {
          );
  
          self.active_keymap = KeymapData::new(new_active.into());
@@ -106,7 +107,7 @@ index 64c17de3..31bec666 100644
      }
  }
  
-@@ -407,6 +411,10 @@ impl SchemeSync for InputScheme<'_> {
+@@ -450,6 +454,10 @@ impl SchemeSync for InputScheme<'_> {
                  buf.len() / size_of::<Event>(),
              )
          });
@@ -117,7 +118,7 @@ index 64c17de3..31bec666 100644
  
          for i in 0..events.len() {
              let mut new_active_opt = None;
-@@ -436,7 +444,31 @@ impl SchemeSync for InputScheme<'_> {
+@@ -479,7 +487,31 @@ impl SchemeSync for InputScheme<'_> {
  
                      key => {
                          let shift = self.lshift | self.rshift;
@@ -150,7 +151,7 @@ index 64c17de3..31bec666 100644
                          key_event.character = ev;
                          events.to_mut()[i] = key_event.to_event();
                      }
-@@ -462,6 +494,10 @@ impl SchemeSync for InputScheme<'_> {
+@@ -505,6 +537,10 @@ impl SchemeSync for InputScheme<'_> {
              }
          }
  
@@ -161,7 +162,7 @@ index 64c17de3..31bec666 100644
          let handle = self.handles.get_mut(id)?;
          assert!(matches!(handle, Handle::Producer));
  
-@@ -493,7 +529,7 @@ impl SchemeSync for InputScheme<'_> {
+@@ -536,7 +572,7 @@ impl SchemeSync for InputScheme<'_> {
              }
          }
  
@@ -170,7 +171,7 @@ index 64c17de3..31bec666 100644
      }
  
      fn on_sendfd(
-@@ -667,9 +703,12 @@ fn daemon_runner(redox_daemon: daemon::SchemeDaemon) -> ! {
+@@ -718,9 +754,12 @@ fn daemon_runner(redox_daemon: daemon::SchemeDaemon) -> ! {
  }
  
  const HELP: &str = r#"
@@ -184,7 +185,7 @@ index 64c17de3..31bec666 100644
     --keymaps   : list available keyboard mappings
  "#;
  
-@@ -690,13 +729,30 @@ fn main() {
+@@ -741,13 +780,30 @@ fn main() {
                      .expect("inputd: failed to activate VT");
              }
              // Activates a keymap.

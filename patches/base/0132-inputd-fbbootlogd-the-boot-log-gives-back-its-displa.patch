@@ -1,0 +1,209 @@
+From 1f7259e4808d69fce5ff60feb0ab268b6a45022c Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 14:37:26 +0000
+Subject: [PATCH] inputd, fbbootlogd: the boot log gives back its display while
+ another VT is active (#788)
+
+fbbootlogd held a framebuffer and a shadow buffer of the screen size for
+the whole run, though nothing shows VT 1 once the login console or
+Orbital is active (11.9 MB private and 7.9 MB shared on a Zero 2 W).
+
+When another VT becomes active, inputd fails the boot log's next read
+with EPIPE. fbbootlogd then drops its display map; log output goes on
+into the terminal without drawing (TextScreen::write_offscreen). When
+VT 1 is activated again (Super+F1), inputd hands the boot log a display
+the way it does after a display change, and fbbootlogd redraws the
+scrollback on it. A display that registers in between is handed over on
+that activation too.
+---
+ drivers/graphics/console-draw/src/lib.rs |  8 ++++
+ drivers/graphics/fbbootlogd/src/main.rs  | 23 +++++++++--
+ drivers/inputd/src/main.rs               | 52 +++++++++++++++++++++++-
+ 3 files changed, 77 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/graphics/console-draw/src/lib.rs b/drivers/graphics/console-draw/src/lib.rs
+index 8e58e8d..b8fa926 100644
+--- a/drivers/graphics/console-draw/src/lib.rs
++++ b/drivers/graphics/console-draw/src/lib.rs
+@@ -422,6 +422,14 @@ impl TextScreen {
+         map.dirty_fb(damage).unwrap();
+     }
+ 
++    /// Take output while no display is mapped (the boot log while another
++    /// VT is active); the next `handle_handoff` draws it.
++    pub fn write_offscreen(&mut self, buf: &[u8]) {
++        self.vte_parser.advance(&mut self.term, buf);
++        self.vte_parser.stop_sync(&mut self.term);
++        self.term_input.borrow_mut().clear();
++    }
++
+     fn redraw(&mut self, map: &mut DisplayMap, force_damage: bool) -> ClipRect {
+         let mut min_changed_x = map.width / self.font.width;
+         let mut max_changed_x = 0;
+diff --git a/drivers/graphics/fbbootlogd/src/main.rs b/drivers/graphics/fbbootlogd/src/main.rs
+index f6240ef..3ece3a5 100644
+--- a/drivers/graphics/fbbootlogd/src/main.rs
++++ b/drivers/graphics/fbbootlogd/src/main.rs
+@@ -92,10 +92,17 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Input => {
+                 let mut events = [Event::new(); 16];
+                 loop {
+-                    match input_handle
+-                        .read_events(&mut events)
+-                        .expect("fbbootlogd: error while reading events")
+-                    {
++                    let read = match input_handle.read_events(&mut events) {
++                        // inputd: another VT is active. Give back the
++                        // framebuffer and the shadow buffer until VT 1 is
++                        // activated again, which comes as a handoff (#788).
++                        Err(err) if err.raw_os_error() == Some(libc::EPIPE) => {
++                            bootlog.release(&event_queue);
++                            continue;
++                        }
++                        read => read.expect("fbbootlogd: error while reading events"),
++                    };
++                    match read {
+                         ConsumerHandleEvent::Events(&[]) => break,
+                         ConsumerHandleEvent::Events(events) => {
+                             for event in events {
+@@ -171,6 +178,12 @@ impl Fbbootlog {
+         eprintln!("fbbootlogd: mapped display");
+     }
+ 
++    fn release(&mut self, event_queue: &EventQueue<Source>) {
++        if let Some(map) = self.display_map.take() {
++            let _ = event_queue.unsubscribe(map.event_handle().as_raw_fd() as usize);
++        }
++    }
++
+     fn handle_input(&mut self, ev: &Event) {
+         match ev.to_option() {
+             EventOption::Key(key_event) => {
+@@ -229,6 +242,8 @@ impl Fbbootlog {
+     fn handle_logs(&mut self, buf: &[u8]) {
+         if let Some(map) = &mut self.display_map {
+             self.text_screen.write(map, buf, &mut VecDeque::new());
++        } else {
++            self.text_screen.write_offscreen(buf);
+         }
+     }
+ }
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 8fe6c44..892a18b 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -86,6 +86,12 @@ struct InputScheme<'a> {
+     rshift: bool,
+ 
+     has_new_events: bool,
++    /// The boot log (VT 1) gave back its display while another VT is
++    /// active (#788); activating VT 1 again hands it a display.
++    bootlog_released: bool,
++    /// Tell the boot log to give back its display: its next read fails
++    /// with EPIPE.
++    release_bootlog: bool,
+     pending_activate: Option<usize>,
+ }
+ 
+@@ -106,6 +112,8 @@ impl<'a> InputScheme<'a> {
+             lshift: false,
+             rshift: false,
+             has_new_events: false,
++            bootlog_released: false,
++            release_bootlog: false,
+             pending_activate: None,
+         }
+     }
+@@ -155,6 +163,32 @@ impl<'a> InputScheme<'a> {
+         });
+ 
+         self.active_vt = Some(new_active);
++
++        // The boot log holds a framebuffer and a shadow buffer of the screen
++        // size; nothing shows them while another VT is active (#788).
++        if self.vts.contains(&1) {
++            if new_active != 1 && !self.bootlog_released {
++                self.bootlog_released = true;
++                self.release_bootlog = true;
++                self.has_new_events = true;
++            } else if new_active == 1 && self.bootlog_released {
++                self.bootlog_released = false;
++                self.release_bootlog = false;
++                for handle in self.handles.values_mut() {
++                    if let Handle::Consumer {
++                        vt: 1,
++                        needs_handoff,
++                        notified,
++                        ..
++                    } = handle
++                    {
++                        *needs_handoff = true;
++                        *notified = false;
++                    }
++                }
++                self.has_new_events = true;
++            }
++        }
+     }
+ 
+     fn switch_keymap(&mut self, new_active: usize) {
+@@ -311,14 +345,23 @@ impl SchemeSync for InputScheme<'_> {
+         _fcntl_flags: u32,
+         _ctx: &CallerCtx,
+     ) -> syscall::Result<usize> {
++        let release_bootlog = self.release_bootlog;
+         let handle = self.handles.get_mut(id)?;
+ 
+         match handle {
+             Handle::Consumer {
+                 pending,
+                 needs_handoff,
++                vt,
+                 ..
+             } => {
++                if *vt == 1 && release_bootlog {
++                    // Another VT is active: the boot log gives back its
++                    // display until VT 1 is activated again (#788).
++                    self.release_bootlog = false;
++                    *needs_handoff = false;
++                    return Err(SysError::new(libredox::errno::EPIPE));
++                }
+                 if *needs_handoff {
+                     *needs_handoff = false;
+                     // Indicates that handoff to a new graphics driver is necessary.
+@@ -536,8 +579,12 @@ impl SchemeSync for InputScheme<'_> {
+                 }
+             };
+ 
++            let bootlog_released = self.bootlog_released;
+             for handle in self.handles.values_mut() {
+                 match handle {
++                    // A released boot log gets the new display when VT 1 is
++                    // activated again.
++                    Handle::Consumer { vt: 1, .. } if bootlog_released => continue,
+                     Handle::Consumer {
+                         needs_handoff,
+                         notified,
+@@ -629,6 +676,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+             continue;
+         }
+ 
++        let release_bootlog = scheme.release_bootlog;
+         for (id, handle) in scheme.handles.iter_mut() {
+             match handle {
+                 Handle::Consumer {
+@@ -636,9 +684,9 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+                     pending,
+                     needs_handoff,
+                     ref mut notified,
+-                    ..
++                    vt,
+                 } => {
+-                    if (!*needs_handoff && pending.is_empty())
++                    if (!*needs_handoff && pending.is_empty() && !(*vt == 1 && release_bootlog))
+                         || *notified
+                         || !events.contains(EventFlags::EVENT_READ)
+                     {
+-- 
+2.53.0
+
