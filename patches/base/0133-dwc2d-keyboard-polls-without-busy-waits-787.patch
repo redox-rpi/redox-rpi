@@ -1,0 +1,208 @@
+From c2a81cb4d11ae9d87cddf9e86b81b71e4f86a1ef Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 14:48:14 +0000
+Subject: [PATCH] dwc2d: keyboard polls without busy waits (#787)
+
+Each 10 ms poll of a USB keyboard waited in a busy loop until the
+controller had sent the interrupt IN in its (micro)frame, and behind a
+high-speed hub until the complete splits were done: several seconds of
+CPU a minute with a keyboard attached and nothing typed.
+
+- Without a transaction translator (keyboard on the socket or behind a
+  full-speed hub) the poll starts the packet and returns; the next poll
+  takes the result. The controller does the frame timing; a report
+  reaches inputd at most one poll (10 ms) later.
+- Behind a high-speed hub the splits must follow within microframes,
+  too soon for a wakeup, so that poll still waits. It polls every 30 ms
+  instead of 10 ms once no report has changed for 2 s and no key is
+  down.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/dwc2.rs | 60 +++++++++++++++++++++++++++--------
+ drivers/usb/dwc2d/src/hid.rs  | 56 ++++++++++++++++++++++++++++++--
+ 2 files changed, 101 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index 99460804..975c1e8d 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -343,6 +343,27 @@ impl Dwc2 {
+     /// halts. Returns the HCINT bits. Interrupt endpoints go out in the next
+     /// (micro)frame.
+     fn packet(&self, ch: usize, phase: &Phase, hcsplt_value: u32, timeout: Duration) -> Result<u32, Error> {
++        self.start_packet(ch, phase, hcsplt_value);
++
++        let start = Instant::now();
++        loop {
++            let status = self.read(hcint(ch));
++            if status & HCINT_CH_HLTD != 0 {
++                self.write(hcint(ch), u32::MAX);
++                return Ok(status);
++            }
++            if start.elapsed() > timeout {
++                let value = self.read(hcchar(ch));
++                self.write(hcchar(ch), value | HCCHAR_CHDIS);
++                return Err(Error::Timeout("channel halt"));
++            }
++            std::hint::spin_loop();
++        }
++    }
++
++    /// Program and enable a channel for a single packet, as [`Dwc2::packet`]
++    /// does, without waiting for it.
++    fn start_packet(&self, ch: usize, phase: &Phase, hcsplt_value: u32) {
+         self.write(hcint(ch), u32::MAX);
+         self.write(hcsplt(ch), hcsplt_value);
+         self.write(
+@@ -357,21 +378,34 @@ impl Dwc2 {
+             value |= HCCHAR_ODDFRM;
+         }
+         self.write(hcchar(ch), value);
++    }
+ 
+-        let start = Instant::now();
+-        loop {
+-            let status = self.read(hcint(ch));
+-            if status & HCINT_CH_HLTD != 0 {
+-                self.write(hcint(ch), u32::MAX);
+-                return Ok(status);
+-            }
+-            if start.elapsed() > timeout {
+-                let value = self.read(hcchar(ch));
+-                self.write(hcchar(ch), value | HCCHAR_CHDIS);
+-                return Err(Error::Timeout("channel halt"));
+-            }
+-            std::hint::spin_loop();
++    /// Start one packet from an interrupt IN endpoint of a device without a
++    /// transaction translator, and return at once: the controller sends it
++    /// in the next (micro)frame on its own, and the channel halts with the
++    /// data or a NAK. [`Dwc2::interrupt_in_result`] reads the result later,
++    /// so no CPU waits for the frame (#787).
++    pub fn interrupt_in_start(&self, ch: usize, phase: &Phase) {
++        self.start_packet(ch, phase, 0);
++    }
++
++    /// The result of [`Dwc2::interrupt_in_start`]: `None` while the channel
++    /// is busy, else as [`Dwc2::interrupt_in`].
++    pub fn interrupt_in_result(&self, ch: usize, len: usize) -> Option<Result<Option<(usize, u32)>, Error>> {
++        let status = self.read(hcint(ch));
++        if status & HCINT_CH_HLTD == 0 {
++            return None;
+         }
++        self.write(hcint(ch), u32::MAX);
++        Some(if status & HCINT_XFER_COMPL != 0 {
++            Ok(Some(self.moved(ch, len)))
++        } else if status & HCINT_STALL != 0 {
++            Err(Error::Stall)
++        } else if status & HCINT_NAK != 0 {
++            Ok(None)
++        } else {
++            Err(Error::Transfer(status))
++        })
+     }
+ 
+     /// Bytes moved by the last transfer on a channel and the data PID for
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 4893f088..43dfc42f 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -27,6 +27,16 @@ const PROTOCOL_BOOT: u16 = 0;
+ /// network adapters use 1 and 2.
+ const CHANNEL: usize = 3;
+ const POLL_INTERVAL: Duration = Duration::from_millis(10);
++/// Behind a high-speed hub each poll waits for its start and complete
++/// splits in a busy loop (they must follow within microframes, too soon
++/// for a wakeup). There the keyboard is polled less often while nothing
++/// happens: every `IDLE_POLL_INTERVAL` once no report has changed for
++/// `IDLE_AFTER` and no key is down (#787).
++const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(30);
++const IDLE_AFTER: Duration = Duration::from_secs(2);
++/// A packet started without waiting that has not finished after this long
++/// is halted and started again.
++const PENDING_LIMIT: Duration = Duration::from_millis(100);
+ 
+ /// The poll after `due`, on a fixed grid of `interval` from the first poll.
+ /// The timer wakes the driver late; taking `now + interval` added that
+@@ -125,6 +135,11 @@ pub struct Keyboard {
+     next_poll: Instant,
+     /// The key that repeats while held and when it repeats next.
+     repeat: Option<(u8, Instant)>,
++    /// When the packet on the channel was started without waiting (no
++    /// transaction translator), until its result is taken.
++    pending: Option<Instant>,
++    /// The last report that changed something.
++    last_change: Instant,
+ }
+ 
+ impl Keyboard {
+@@ -141,6 +156,8 @@ impl Keyboard {
+             input,
+             next_poll: Instant::now(),
+             repeat: None,
++            pending: None,
++            last_change: Instant::now(),
+         })
+     }
+ 
+@@ -172,7 +189,11 @@ impl Keyboard {
+         if now < self.next_poll {
+             return;
+         }
+-        self.next_poll = next_poll_after(self.next_poll, now, POLL_INTERVAL);
++        let idle = self.f.tt.is_some()
++            && self.report == [0; 8]
++            && now.duration_since(self.last_change) >= IDLE_AFTER;
++        let interval = if idle { IDLE_POLL_INTERVAL } else { POLL_INTERVAL };
++        self.next_poll = next_poll_after(self.next_poll, now, interval);
+ 
+         let phase = Phase {
+             dev_addr: self.f.address,
+@@ -185,12 +206,43 @@ impl Keyboard {
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(8),
+         };
+-        match self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
++        if self.f.tt.is_some() {
++            let result = self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5));
++            self.take(result);
++            return;
++        }
++        // Without a transaction translator: take the result of the packet
++        // started at the last poll, then start the next one. A report
++        // reaches inputd one poll later, at most 10 ms.
++        if let Some(started) = self.pending {
++            match self.hc.interrupt_in_result(CHANNEL, phase.len) {
++                Some(result) => {
++                    self.pending = None;
++                    self.take(result);
++                }
++                None if now.duration_since(started) < PENDING_LIMIT => return,
++                None => {
++                    self.hc.halt(CHANNEL);
++                    self.pending = None;
++                }
++            }
++        }
++        let phase = Phase { pid: self.pid, ..phase };
++        self.hc.interrupt_in_start(CHANNEL, &phase);
++        self.pending = Some(now);
++    }
++
++    /// Handle the result of one packet from the interrupt endpoint.
++    fn take(&mut self, result: Result<Option<(usize, u32)>, Error>) {
++        match result {
+             Ok(Some((len, next_pid))) => {
+                 self.pid = next_pid;
+                 if len >= 3 {
+                     let mut report = [0; 8];
+                     report[..len].copy_from_slice(&self.buf[..len]);
++                    if report != self.report {
++                        self.last_change = Instant::now();
++                    }
+                     self.update(report);
+                 }
+             }
+-- 
+2.53.0
+
