@@ -1,0 +1,140 @@
+From 926233d0fb882509fe9aa58d06cd07c69be1655e Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Fri, 20 Nov 2026 14:40:49 +0000
+Subject: [PATCH] bcm2835-sdhcid: retry card init, longer slot power cycle,
+ more log (redox-rpi #307)
+
+Person test with root on the card (Pi 400, #582): CMD0 and CMD8 were
+answered, the first ACMD41 timed out (interrupt flags 0x00018000), and
+sdhcid gave up at once: no disk, no root.
+- Start again from CMD0 up to three times when ACMD41 or CMD8 fails.
+- CMD55 always with its R1 answer, logged when APP_CMD is missing.
+- Clear 1.8 V signalling (Host Control 2 bit 3) after the reset, and
+  log Host Control 2 and the present state.
+- rpi-firmwared keeps the slot off for 500 ms instead of 50 ms, and
+  waits 100 ms after power on, so a card the boot chain used restarts.
+---
+ drivers/rpi-firmwared/src/main.rs            |  6 ++-
+ drivers/storage/bcm2835-sdhcid/src/sd/mod.rs | 43 +++++++++++++++++---
+ 2 files changed, 42 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/rpi-firmwared/src/main.rs b/drivers/rpi-firmwared/src/main.rs
+index 36538072..d512c6de 100644
+--- a/drivers/rpi-firmwared/src/main.rs
++++ b/drivers/rpi-firmwared/src/main.rs
+@@ -547,9 +547,11 @@ fn sd_power_on(mbox: &mut Mailbox) {
+     let mut cycle = || -> std::result::Result<(), String> {
+         mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 0])?;
+         mbox.set_property(TAG_SET_GPIO_STATE, &[SD_IO_1V8, 0])?;
+-        thread::sleep(std::time::Duration::from_millis(50));
++        // Long enough for the slot capacitors to discharge, so a card the
++        // boot chain used really restarts (at 3.3 V signalling).
++        thread::sleep(std::time::Duration::from_millis(500));
+         mbox.set_property(TAG_SET_GPIO_STATE, &[SD_VCC, 1])?;
+-        thread::sleep(std::time::Duration::from_millis(10));
++        thread::sleep(std::time::Duration::from_millis(100));
+         Ok(())
+     };
+     match cycle() {
+diff --git a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+index e91b499b..a3bd573a 100644
+--- a/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
++++ b/drivers/storage/bcm2835-sdhcid/src/sd/mod.rs
+@@ -225,7 +225,7 @@ pub struct SdHostCtrlRegs {
+     irpt_en: Mmio<u32>,
+ 
+     //Host Configuration bits
+-    _control2: Mmio<u32>,
++    control2: Mmio<u32>,
+ 
+     _rsvd: [Mmio<u32>; 47],
+ 
+@@ -316,9 +316,18 @@ impl SdHostCtrl {
+             );
+             // The reset switched the card off: 3.3 V, bus power on, and give
+             // the card time to come up.
++            // The boot chain may have left 1.8 V signalling on (Host
++            // Control 2 bit 3); the slot runs at 3.3 V now (rpi-firmwared).
++            let c2 = regs.control2.read();
++            regs.control2.write(c2 & !(1 << 19));
+             regs.control0.write(C0_POWER_3V3_ON);
+             settle(self.sd_clock);
+-            wait_msec(10);
++            wait_msec(50);
++            println!(
++                "EMMC: control2 was 0x{:08x}, present state 0x{:08x}",
++                c2,
++                regs.status.read()
++            );
+         }
+         reg_val = regs.control1.read();
+         regs.control1.write(reg_val | C1_CLK_INTLEN | C1_TOUNIT_MAX);
+@@ -339,13 +348,27 @@ impl SdHostCtrl {
+         regs.irpt_mask.write(0xffff_ffff);
+         settle(self.sd_clock);
+ 
++        // Some cards do not answer the first ACMD41 (redox-rpi #307, Pi 400
++        // with root on the card): start again from CMD0, up to three times.
++        let mut attempt = 0;
++        'op_cond: loop {
++        attempt += 1;
++        if attempt > 1 {
++            let status = self.regs.get_mut().unwrap().status.read();
++            println!("EMMC: card init attempt {attempt}, present state 0x{status:08x}");
++            wait_msec(100);
++        }
+         if let Err(_) = self.sd_cmd(CMD_GO_IDLE, 0) {
+             println!("failed to go idle");
+             return;
+         }
++        wait_msec(10);
+ 
+         if let Err(_) = self.sd_cmd(CMD_SEND_IF_COND, 0x0000_01aa) {
+             println!("failed to send if cond");
++            if attempt < 3 {
++                continue 'op_cond;
++            }
+             return;
+         }
+ 
+@@ -372,10 +395,15 @@ impl SdHostCtrl {
+                 }
+                 print!("\n");
+             } else {
+-                println!("ERROR: EMMC ACMD41 returned error");
++                println!("ERROR: EMMC ACMD41 returned error (attempt {attempt})");
++                if attempt < 3 {
++                    continue 'op_cond;
++                }
+                 return;
+             }
+         }
++        break;
++        }
+ 
+         if (reg_val & ACMD41_CMD_COMPLETE) == 0 || cnt <= 0 {
+             println!("ACMD41 TIMEOUT");
+@@ -605,13 +633,18 @@ impl SdHostCtrl {
+ 
+     pub unsafe fn sd_cmd(&mut self, mut code: u32, arg: u32) -> Result<u32> {
+         if (code & CMD_NEED_APP) != 0 {
+-            let pre_cmd = CMD_APP_CMD | if self.rca != 0 { CMD_RSPNS_48 } else { 0 };
++            // CMD55 has an R1 answer also before the card has an address;
++            // check it, so a card that did not take CMD55 shows in the log.
++            let pre_cmd = CMD_APP_CMD | CMD_RSPNS_48;
+             match self.sd_cmd(pre_cmd, self.rca) {
+                 Err(_) => {
+                     println!("ERROR: failed to send SD APP command");
+                     return Err(Error::new(EINVAL));
+                 }
+-                Ok(_) => {
++                Ok(app) => {
++                    if app == 0 {
++                        println!("EMMC: CMD55 answer without APP_CMD");
++                    }
+                     code &= !CMD_NEED_APP;
+                 }
+             }
+-- 
+2.53.0
+

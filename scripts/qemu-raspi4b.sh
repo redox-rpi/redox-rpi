@@ -19,6 +19,10 @@
 #   --card <file>    boot this SD card image as it is, e.g. one from
 #                    scripts/make-sdcard.sh --local <img> --live --board pi4
 #                    (U-Boot runs its boot.scr, the boot menu, the bootloader)
+#   --emmc2 <file>   also attach this image as a card on the EMMC2 controller
+#                    (the Pi 4/400 card slot). QEMU's own SD card (the image
+#                    above) sits on the Arasan controller; the experiment
+#                    pi400's bcm2835-sdhcid drives EMMC2 (#307)
 #   --test           no user input; exit 0 once every --expect pattern (default
 #                    "redox login:") appeared on the serial console, 1 on a
 #                    kernel panic or timeout. Log: images/qemu-raspi4b.log
@@ -37,6 +41,7 @@ IMAGES="$ROOT/images"
 image="$REDOX/build/aarch64/minimal/harddrive.img"
 test=no
 card=
+emmc2=
 expects=()
 run=()
 timeout=300
@@ -44,6 +49,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
         --card) card="$2"; shift 2 ;;
+        --emmc2) emmc2="$2"; shift 2 ;;
         --test) test=yes; shift ;;
         --expect) expects+=("$2"); shift 2 ;;
         --run) run+=("$2"); test=yes; shift 2 ;;
@@ -82,6 +88,17 @@ qemu=(qemu-system-aarch64 -M raspi4b -smp ${QEMU_SMP:-4} -m 2G
     -kernel "$uboot" -dtb qemu-4b.dtb
     -drive file=run4.img,if=sd,format=raw
     -display none -monitor none)
+
+if [ -n "$emmc2" ]; then
+    cp "$emmc2" emmc2.img
+    size=$(wc -c < emmc2.img); sd=1
+    while [ "$sd" -lt "$size" ]; do sd=$((sd * 2)); done
+    truncate -s "$sd" emmc2.img
+    # The first generic-sdhci on the system bus is EMMC2 (the second is the
+    # Arasan, which gets the card above through the GPIO's SD bus).
+    qemu+=(-drive file=emmc2.img,if=none,id=emmc2,format=raw
+        -device sd-card,drive=emmc2,bus=/generic-sdhci/sd-bus)
+fi
 
 if [ "$test" = no ]; then
     exec "${qemu[@]}" -serial mon:stdio -serial null
