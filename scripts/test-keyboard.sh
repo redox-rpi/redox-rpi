@@ -42,21 +42,30 @@ time.sleep(1)
 PYEOF
 }
 
-type_text $'root\n'
-sleep 2
-type_text $'password\n'
-sleep 4
-type_text $'touch /home/root/typed-on-usb-keyboard\n'
-sleep 3
-
-# A devshd session sometimes misses the command's output; ask again.
+# The screen console starts reading input some time after the serial login
+# prompt and devshd (#802): keys typed before are lost. Type the login and a
+# command until the file the command makes shows up, up to 8 times; a lost
+# part only costs a wrong login or an unknown command at the shell.
 found=no
-for _ in 1 2 3; do
-    if devsh "ls /home/root" | grep -q typed-on-usb-keyboard; then
-        found=yes
-        break
-    fi
+for attempt in $(seq 8); do
+    type_text $'\n'
+    sleep 1
+    type_text $'root\n'
+    sleep 2
+    type_text $'password\n'
+    sleep 4
+    type_text $'touch /home/root/typed-on-usb-keyboard\n'
     sleep 3
+    # A devshd session sometimes misses the command's output; ask again.
+    for _ in 1 2; do
+        if devsh "ls /home/root" | grep -q typed-on-usb-keyboard; then
+            found=yes
+            break 2
+        fi
+        sleep 2
+    done
+    echo "attempt $attempt: nothing typed arrived yet"
+    sleep 5
 done
 if [ "$found" = yes ]; then
     echo "PASS: typed on the USB keyboard"

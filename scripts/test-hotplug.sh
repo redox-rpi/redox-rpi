@@ -8,7 +8,8 @@
 #    (the test command for the real Pi, scripts/pi-hotplug-test.sh): the
 #    network moves to the second card; then unplug the first card.
 # 2. Without a network card: once the system is up, plug one in; dhcpd must
-#    configure the network and devshd must answer.
+#    configure the network and devshd must answer. dhcpd waits for a link
+#    without a word since #777.
 #
 # Needs an image built with scripts/build-image.sh (network boot). The host
 # ports for devshd are 12323 and 12399, or HOTPLUG_PORTS="<first> <second>".
@@ -142,17 +143,25 @@ monitor "device_del $kbd" > /dev/null
 check "keyboard unplugged" wait_log "dwc2d: keyboard removed" 10
 monitor "device_add usb-kbd,id=hpkbd" > /dev/null
 check "keyboard plugged in" wait_log "dwc2d: keyboard at address .*" 10
-sleep 2
-type_text $'root\n'
-sleep 2
-type_text $'password\n'
-sleep 4
-type_text $'touch /home/root/typed-after-hotplug\n'
-sleep 3
+# Type until the file the command makes shows up (#802): the screen console
+# may not read input yet, and a lost part only costs a wrong login or an
+# unknown command at the shell.
 typed=no
-for _ in 1 2 3; do
-    devsh $port1 "ls /home/root" | grep -q typed-after-hotplug && typed=yes && break
+for attempt in $(seq 8); do
+    type_text $'\n'
+    sleep 1
+    type_text $'root\n'
+    sleep 2
+    type_text $'password\n'
+    sleep 4
+    type_text $'touch /home/root/typed-after-hotplug\n'
     sleep 3
+    for _ in 1 2; do
+        devsh $port1 "ls /home/root" | grep -q typed-after-hotplug && typed=yes && break 2
+        sleep 2
+    done
+    echo "attempt $attempt: nothing typed arrived yet"
+    sleep 5
 done
 check "typed on the new keyboard" test "$typed" = yes
 
@@ -184,11 +193,18 @@ stop
 
 echo "== boot 2: network card plugged in after boot"
 boot 2
-check "dhcpd keeps trying without a card" wait_log "dhcpd: .*trying again" 240
+# Since #777 dhcpd waits for a link without a word (no "trying again" line,
+# no timer): after the login prompt, 30 s without a dhcpd line.
+check "system up without a card" wait_log "login:" 240
+quiet() {
+    sleep 30
+    ! tr -d '\r' < "$log" | grep -aqE "^(dhcpd|DHCP):"
+}
+check "dhcpd waits quietly without a card" quiet
 monitor "netdev_add user,id=hpnet,hostfwd=tcp::$port1-:2323" \
     "device_add usb-net,netdev=hpnet,id=hpnet0" > /dev/null
 check "network card found" wait_log "dwc2d: CDC Ethernet at address" 10
-check "dhcpd configured the network" wait_log "dhcpd: configured after" 30
+check "dhcpd configured the network" wait_log "DHCP: [a-z0-9]+ got [0-9.]+/[0-9]+" 30
 check "devshd through the new card" wait_devsh $port1 20
 stop
 
