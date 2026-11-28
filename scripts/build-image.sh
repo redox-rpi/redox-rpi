@@ -578,7 +578,7 @@ cat > "$ROOT/build/redox-rpi-version.toml" <<EOF
 path = "/etc/redox-rpi-release"
 data = """
 NAME="redox-rpi, for the Redox OS operating system"
-VERSION="$version"
+VERSION="${release:-$version}"
 BUILD_ID="$build_id"
 ${release:+RELEASE=\"$release\"
 }IMAGE="$image_name"
