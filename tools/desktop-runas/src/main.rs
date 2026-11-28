@@ -14,9 +14,11 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command};
 
-// The libc crate does not declare setgroups for Redox; relibc provides it.
+// The libc crate does not declare these for Redox; relibc provides them.
 extern "C" {
     fn setgroups(size: libc::size_t, list: *const libc::gid_t) -> libc::c_int;
+    fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t) -> libc::c_int;
+    fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t) -> libc::c_int;
 }
 
 struct User {
@@ -87,8 +89,10 @@ fn main() {
         unsafe {
             // gid, then the supplementary groups, then the uid: once the uid
             // is dropped, the others can no longer be changed.
-            if libc::setgid(user.gid) != 0 {
-                fail(&format!("setgid({}): {}", user.gid, std::io::Error::last_os_error()));
+            // setresgid/setresuid with all three ids: relibc's setgid/setuid
+            // leave the saved id at 0, so the process could become root again.
+            if setresgid(user.gid, user.gid, user.gid) != 0 {
+                fail(&format!("setresgid({}): {}", user.gid, std::io::Error::last_os_error()));
             }
             // Redox processes carry no supplementary groups (programs such
             // as sudo read /etc/group by user name), and relibc's setgroups
@@ -100,8 +104,8 @@ fn main() {
                     fail(&format!("setgroups: {err}"));
                 }
             }
-            if libc::setuid(user.uid) != 0 {
-                fail(&format!("setuid({}): {}", user.uid, std::io::Error::last_os_error()));
+            if setresuid(user.uid, user.uid, user.uid) != 0 {
+                fail(&format!("setresuid({}): {}", user.uid, std::io::Error::last_os_error()));
             }
             if libc::getuid() != user.uid
                 || libc::geteuid() != user.uid
@@ -110,7 +114,7 @@ fn main() {
             {
                 fail("the user or group did not change");
             }
-            if libc::setuid(0) == 0 {
+            if libc::setuid(0) == 0 || libc::seteuid(0) == 0 || libc::setgid(0) == 0 {
                 fail("could go back to root after the drop");
             }
         }
