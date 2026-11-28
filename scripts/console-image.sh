@@ -23,7 +23,16 @@
 # (network, sound, desktop, developer tools): the minimal Redox of the
 # firmware release card (rpi-open-firmware#56). Its default source image is
 # the release-netboot build (scripts/build-image.sh --release-netboot), which
-# has no devshd.
+# has no devshd. It also leaves out of the initfs what
+# config/console-prune-initfs.txt lists (drivers for hardware the Pi does
+# not have, sound), and takes their services out of the initfs targets.
+#
+# --root-on-card (#615 option A): the initramfs is the initfs alone, and the
+# RedoxFS (console.fs) goes into a partition of the card. The firmware then
+# reads about 13 MiB instead of about 49. <out>/cmdline-root.txt has the
+# words for cmdline.txt that name the partition (REDOXFS_UUID,
+# REDOXFS_BLOCK); 50_rootfs mounts it through bcm2835-sdhostd, as on the
+# U-Boot cards. Changes on the card are kept.
 #
 # Writes <out>/kernel8.img, <out>/initramfs (initfs, then the RedoxFS),
 # <out>/console.fs and <out>/manifest.txt (source build, prune lists, the
@@ -35,8 +44,8 @@
 # fusermount) for the redoxfs mount, as the upstream build's `make mount`.
 #
 # Usage:
-#   scripts/console-image.sh [--minimal] [--image <harddrive.img>] [--out <dir>]
-#                            [--size <MiB>] [--test]
+#   scripts/console-image.sh [--minimal] [--root-on-card] [--image <harddrive.img>]
+#                            [--out <dir>] [--size <MiB>] [--test]
 
 set -euo pipefail
 
@@ -47,6 +56,7 @@ out="$ROOT/build/console"
 size=32
 test=no
 minimal=no
+root_on_card=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) image="$2"; shift 2 ;;
@@ -54,6 +64,7 @@ while [ $# -gt 0 ]; do
         --size) size="$2"; shift 2 ;;
         --test) test=yes; shift ;;
         --minimal) minimal=yes; shift ;;
+        --root-on-card) root_on_card=yes; shift ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -109,6 +120,25 @@ cmp -s "$work/initfs.rebuilt" "$work/initfs.image" || {
     echo "redox-initfs-ar does not rebuild the image's initfs from base's build folder" >&2
     exit 1
 }
+# --minimal: no drivers for hardware the Pi does not have. A removed service
+# also leaves the targets that list it, so init does not look for it.
+initfs_prune="$ROOT/config/console-prune-initfs.txt"
+if [ "$minimal" = yes ]; then
+    while read -r pattern; do
+        pattern="${pattern%%#*}"
+        pattern="${pattern%"${pattern##*[![:space:]]}"}"
+        [ -n "$pattern" ] || continue
+        # shellcheck disable=SC2086
+        for path in $(cd "$work/initfs" && echo $pattern); do
+            [ -e "$work/initfs/$path" ] || continue
+            rm -rf -- "${work:?}/initfs/$path"
+            case "$path" in
+                lib/init.d/*.service)
+                    sed -i "/\"$(basename "$path")\"/d" "$work/initfs"/lib/init.d/*.target ;;
+            esac
+        done
+    done < "$initfs_prune"
+fi
 find "$work/initfs" -type f -exec sh -c 'head -c 4 "$1" | grep -q "ELF"' sh {} \; \
     -exec "$strip" --strip-unneeded {} \;
 "$initfs_ar" "$work/initfs" "$bootstrap" -o "$work/initfs.small" > /dev/null
@@ -158,15 +188,28 @@ fi
 
 # 3. The initramfs: the initfs, then the RedoxFS at the next 4 KiB boundary
 # (where rpi-boot-stub looks for it), as scripts/fw-direct-boot.sh does.
+# With --root-on-card the initfs alone, and the words that name the
+# partition for cmdline.txt (the UUID as rpi-boot-stub writes it, from the
+# RedoxFS header).
 cp "$work/initfs.small" "$out/initramfs"
-truncate -s %4096 "$out/initramfs"
-cat "$out/console.fs" >> "$out/initramfs"
+rm -f "$out/cmdline-root.txt"
+if [ "$root_on_card" = yes ]; then
+    uuid="$(od -A n -t x1 -j 16 -N 16 "$out/console.fs" | tr -d ' \n' |
+        sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')"
+    [[ "$uuid" =~ ^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$ ]] || { echo "no RedoxFS UUID in console.fs" >&2; exit 1; }
+    echo "REDOXFS_UUID=$uuid REDOXFS_BLOCK=0000000000000000" > "$out/cmdline-root.txt"
+else
+    truncate -s %4096 "$out/initramfs"
+    cat "$out/console.fs" >> "$out/initramfs"
+fi
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 {
     echo "# Console image (scripts/console-image.sh$([ "$minimal" = yes ] && echo " --minimal")), $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "source_image $(basename "$image") $(sha "$image")"
     echo "$release" | sed 's/^/release /'
     for f in "${prune[@]}"; do echo "prune ${f#"$ROOT"/} $(sha "$f")"; done
+    [ "$minimal" = no ] || echo "prune_initfs ${initfs_prune#"$ROOT"/} $(sha "$initfs_prune")"
+    [ "$root_on_card" = no ] || echo "root_on_card console.fs $(sha "$out/console.fs") $(cat "$out/cmdline-root.txt")"
     echo "kernel8.img $(wc -c < "$out/kernel8.img") $(sha "$out/kernel8.img")"
     echo "initramfs $(wc -c < "$out/initramfs") $(sha "$out/initramfs")"
     echo "initfs $(wc -c < "$work/initfs.small")"
@@ -174,9 +217,11 @@ sha() { sha256sum "$1" | cut -d' ' -f1; }
     echo "# root filesystem: path size"
     cat "$work/files.txt"
 } > "$out/manifest.txt"
+[ "$root_on_card" = no ] || echo "root on the card: console.fs as a partition, cmdline.txt: $(cat "$out/cmdline-root.txt")"
 echo "console image: initfs $(($(wc -c < "$work/initfs.small") >> 10)) KiB, root $((used_kib >> 10)) MiB in ${size} MiB," \
      "initramfs $(($(wc -c < "$out/initramfs") >> 20)) MiB, kernel8.img $(wc -c < "$out/kernel8.img") bytes, in $out"
 
 [ "$test" = yes ] || exit 0
+[ "$root_on_card" = no ] || { echo "--test boots the live disk only, not --root-on-card" >&2; exit 1; }
 # With the framebuffer size a Pi's cmdline.txt gives (row 467).
 "$ROOT/scripts/fw-direct-boot.sh" --out "$out" --boot-only --test --append RPI_FB=1280x720
