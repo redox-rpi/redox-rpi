@@ -38,6 +38,20 @@
 
 ## In progress
 
+- [#214](https://github.com/redox-rpi/redox-rpi/issues/214) cheaper
+  keyboard poll at idle, branch `dwc2d-idle-poll`, base `0096`. A poll of
+  the test Pi's low-speed keyboard behind the hub spins about 130 µs,
+  data or not, at 50 polls/s (Pi row 242: 22 ms/s, 2.2 % of a core). Now
+  the keyboard is polled every 10 ms only while a key is held and for 3 s
+  after the last change, otherwise every 40 ms; the same for mice and
+  other HID pointers. A keyboard that refuses SET_IDLE is logged. **QEMU** (idle, `dwc2d-idle` counters, +60 to
+  +180 s): timer wakeups 50.6/s → 19.5/s, their busy time 9.1 → 2.0 ms/s;
+  keyboard test passes, mouse test 18/18. Pi row 378 was inconclusive:
+  no keyboard on the 3B+, only a low-speed gamepad (0079:0011) polled as
+  a pointer, so the pointer poll got the same change. **Pi row 386
+  passes**: dwc2d at idle 74–77 → 44–46 wakeups/s, 2.8 → 1.2 % CPU;
+  pi-test pass. Keyboard path on the Pi and fast typing need a person.
+
 - [#25](https://github.com/redox-rpi/redox-rpi/issues/25) USB sticks,
   branch [`usb-storage`](https://github.com/redox-rpi/redox-rpi/tree/usb-storage)
   (on `usb-hotplug`), experiment `usb-storage` (base `0038` there).
@@ -53,6 +67,17 @@
   to inputd like the keyboard's, for Orbital (graphics topic). **QEMU
   passes** (`scripts/test-usb-mouse.sh` 18/18); Pi test #56 with a person,
   same visit as #50.
+- [#320](https://github.com/redox-rpi/redox-rpi/issues/320) USB joysticks
+  and gamepads, branch [`usb-gamepad`](https://github.com/redox-rpi/redox-rpi/tree/usb-gamepad),
+  base `0092`. A HID device whose application collection says Joystick or
+  Gamepad is no longer taken for a mouse (the DragonRise pad moved the
+  cursor); its axes, buttons and hat go to inputd as controller events,
+  which SDL2 reads as the Redox joystick (Sopwith, other SDL games). X/Y
+  pushed half way and the hat also press the D-pad. dwc2d prints the
+  report descriptor of each pad. Host tests for the parser
+  (`hidreport.rs`); QEMU has no USB gamepad, so `scripts/test-usb-mouse.sh`
+  checks only that mice and tablets still work. Person test with the
+  DragonRise pad at a visit.
 - [#50](https://github.com/redox-rpi/redox-rpi/issues/50) USB serial
   adapters (CDC-ACM, FTDI, CP210x, CH340: Zigbee/Thread sticks, Arduino),
   branch [`usb-serial`](https://github.com/redox-rpi/redox-rpi/tree/usb-serial)
