@@ -174,6 +174,47 @@ Redox does not follow symlinks into another scheme. Mounting a RedoxFS
 partition by path and finding the data again after a reboot is tested in
 QEMU; the netboot card's own layout only on real hardware.
 
+### A Zero 2 W as a development system
+
+A Zero 2 W with the Ethernet HAT can run as a development system that
+keeps its files: the card holds only the boot files and a large data
+partition, and the image comes from the server on every boot. A new image
+on the server needs no new card, and the data partition is kept.
+
+- **Directory:** a directory of its own, for example `homenode-zero2w/`,
+  not the test Zero's `redox-zero2w/`, so a test that stages an image for
+  another Zero does not replace it.
+- **Card:** a network-boot card for that directory, with the data
+  partition sized to the card. RedoxFS does not grow, so the size is
+  chosen when the card is made: about 5 % below the card's nominal size,
+  because cards of the same nominal size differ. For a 32 GB card:
+
+  ```sh
+  scripts/make-sdcard.sh --tftp-dir /srv/tftp --dir homenode-zero2w \
+      --boot-size 32 --data-size 28900 --out build/homenode-zero2w.img
+  ```
+
+  A card of another size needs its own card image.
+- **Data:** Redox mounts the card's second partition at `/scheme/data`
+  at every boot. With experiment `pkg-persist` in the image,
+  `pkg-persist install <package>` installs onto the data partition and
+  copies the package back into `/` after every boot, also after an image
+  swap ([pkg-persist](../patches/experiments/pkg-persist/README.md)).
+- **A newer image:** build it with `--zero2w` (128 MiB at most) and the
+  experiments the system needs, for example `pkg-hold`, `pkg-repo` and
+  `pkg-persist`, then put it into the directory:
+
+  ```sh
+  scripts/netboot.sh --server <server-ip> --board zero2w \
+      --dir homenode-zero2w --tftp-dir /srv/tftp --image <harddrive.img>
+  ```
+
+  The Zero boots it on the next power cycle; `<dir>/manifest.toml` names
+  the build. To go back, run the same command with the older image.
+- **Tests** on such a Zero stage into its directory and put the
+  development image back afterwards. They never write or format the
+  card's data partition.
+
 ## Without SD card (firmware network boot)
 
 The Pi 3B+ boot ROM can network-boot by itself when there is no SD card in
