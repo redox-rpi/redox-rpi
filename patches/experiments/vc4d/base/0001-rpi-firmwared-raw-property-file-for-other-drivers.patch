@@ -1,13 +1,14 @@
 From: stephan-xyz <stephan@zehrer.net>
 Subject: [PATCH] rpi-firmwared: raw property file for other drivers
 
-Other drivers (vc4d, rpi-fbd) send whole property messages through
+Other drivers (vc4d) send whole property messages through
 /scheme/rpi-firmware/property, so only rpi-firmwared uses the mailbox.
 Root only. The message buffer grows to 256 words for EDID blocks.
-Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
+The same interface as experiment rpi-fb's patch 0060, written for the
+current driver.
 ---
---- a/drivers/rpi-firmwared/src/main.rs
-+++ b/drivers/rpi-firmwared/src/main.rs
+--- a/drivers/rpi-firmwared/src/main.rs	2026-11-28 11:29:19.635174200 +0000
++++ b/drivers/rpi-firmwared/src/main.rs	2026-11-28 11:29:19.647107941 +0000
 @@ -19,6 +19,10 @@
  //!   changes and time at the minimum and maximum clock (ms) of the
  //!   governor; writing `ondemand`, `performance` or
@@ -28,7 +29,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
  }
  
  struct FirmwareScheme {
-@@ -367,7 +373,7 @@
+@@ -359,7 +365,7 @@
          path: &str,
          flags: usize,
          _fcntl_flags: u32,
@@ -37,7 +38,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
      ) -> Result<OpenResult> {
          if !matches!(self.handles.get(dirfd)?, Handle::Root) {
              return Err(Error::new(EACCES));
-@@ -375,6 +381,12 @@
+@@ -367,6 +373,12 @@
          let path = path.trim_matches('/');
          let handle = if path.is_empty() {
              Handle::Dir
@@ -50,7 +51,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
          } else if flags & O_WRONLY != 0 {
              // O_RDWR includes the O_WRONLY bit.
              match WRITABLE.iter().find(|name| **name == path) {
-@@ -400,7 +412,7 @@
+@@ -392,7 +404,7 @@
          _ctx: &CallerCtx,
      ) -> Result<usize> {
          let data = match self.handles.get(id)? {
@@ -59,7 +60,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
              Handle::Setting(_) => return Err(Error::new(EBADF)),
              _ => return Err(Error::new(EISDIR)),
          };
-@@ -418,6 +430,20 @@
+@@ -410,6 +422,20 @@
          _fcntl_flags: u32,
          _ctx: &CallerCtx,
      ) -> Result<usize> {
@@ -80,7 +81,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
          let Handle::Setting(name) = self.handles.get(id)? else {
              return Err(Error::new(EBADF));
          };
-@@ -463,6 +489,10 @@
+@@ -455,6 +481,10 @@
                  stat.st_size = data.len() as u64;
              }
              Handle::Setting(_) => stat.st_mode = 0o644 | MODE_FILE,
@@ -91,7 +92,7 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
              Handle::Dir | Handle::Root => stat.st_mode = 0o555 | MODE_DIR,
          }
          Ok(())
-@@ -470,7 +500,7 @@
+@@ -462,7 +492,7 @@
  
      fn fsize(&mut self, id: usize, _ctx: &CallerCtx) -> Result<u64> {
          match self.handles.get(id)? {
@@ -100,8 +101,8 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
              _ => Ok(0),
          }
      }
---- a/drivers/rpi-firmwared/src/mbox.rs
-+++ b/drivers/rpi-firmwared/src/mbox.rs
+--- a/drivers/rpi-firmwared/src/mbox.rs	2026-11-28 11:29:19.635216819 +0000
++++ b/drivers/rpi-firmwared/src/mbox.rs	2026-11-28 11:29:19.646983643 +0000
 @@ -27,8 +27,9 @@
  const TAG_RESPONSE: u32 = 1 << 31;
  const TIMEOUT: Duration = Duration::from_secs(1);
@@ -114,26 +115,43 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
  
  // Property tags.
  pub const TAG_FIRMWARE_REVISION: u32 = 0x0000_0001;
-@@ -135,6 +136,42 @@
+@@ -134,31 +135,7 @@
          buf[5..5 + request.len()].copy_from_slice(request);
          // buf[5 + value_words] stays 0: the end tag.
  
+-        let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
+-        // The buffer is uncached; make sure it is written before the
+-        // firmware hears about it.
+-        fence(Ordering::SeqCst);
+-        let deadline = Instant::now() + TIMEOUT;
+-        while self.read(MAIL1_STATUS) & STATUS_FULL != 0 {
+-            if Instant::now() > deadline {
+-                return Err("mailbox stays full".into());
+-            }
+-            std::hint::spin_loop();
+-        }
+-        self.write(MAIL1_WRITE, bus | CHANNEL_PROPERTY);
+-        loop {
+-            while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
+-                if Instant::now() > deadline {
+-                    return Err(format!("tag 0x{tag:08x}: no answer from the firmware"));
+-                }
+-                std::hint::spin_loop();
+-            }
+-            // Answers to other channels are not ours; drop them.
+-            if self.read(MAIL0_READ) == bus | CHANNEL_PROPERTY {
+-                break;
+-            }
+-        }
+-        fence(Ordering::SeqCst);
 +        self.send().map_err(|err| format!("tag 0x{tag:08x}: {err}"))?;
-+
-+        let buf = &*self.buf;
-+        if buf[1] != RESPONSE_OK {
-+            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
-+        }
-+        if buf[4] & TAG_RESPONSE == 0 {
-+            if !need_answer {
-+                return Ok(Vec::new());
-+            }
-+            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
-+        }
-+        // In bytes; round up to whole words (the board MAC is 6 bytes).
-+        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
-+        Ok(buf[5..5 + len.min(value_words)].to_vec())
-+    }
+ 
+         let buf = &*self.buf;
+         if buf[1] != RESPONSE_OK {
+@@ -192,4 +169,51 @@
+             _ => Err(format!("set clock {id}: short answer")),
+         }
+     }
 +
 +    /// A whole message from another driver (`property` file): copied into
 +    /// the buffer, sent, and the firmware's answer copied back.
@@ -154,37 +172,31 @@ Rebased from experiment rpi-fb patch 0060 for vc4d (redox-rpi#671 step 4).
 +    /// Hands the message in the buffer to the firmware and waits for its
 +    /// answer, which the firmware writes into the same buffer.
 +    fn send(&mut self) -> Result<(), String> {
-         let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
-         // The buffer is uncached; make sure it is written before the
-         // firmware hears about it.
-@@ -150,7 +187,7 @@
-         loop {
-             while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
-                 if Instant::now() > deadline {
--                    return Err(format!("tag 0x{tag:08x}: no answer from the firmware"));
++        let bus = (self.buf.physical() | DMA_BUS_OFFSET) as u32;
++        // The buffer is uncached; make sure it is written before the
++        // firmware hears about it.
++        fence(Ordering::SeqCst);
++        let deadline = Instant::now() + TIMEOUT;
++        while self.read(MAIL1_STATUS) & STATUS_FULL != 0 {
++            if Instant::now() > deadline {
++                return Err("mailbox stays full".into());
++            }
++            std::hint::spin_loop();
++        }
++        self.write(MAIL1_WRITE, bus | CHANNEL_PROPERTY);
++        loop {
++            while self.read(MAIL0_STATUS) & STATUS_EMPTY != 0 {
++                if Instant::now() > deadline {
 +                    return Err("no answer from the firmware".into());
-                 }
-                 std::hint::spin_loop();
-             }
-@@ -160,20 +197,7 @@
-             }
-         }
-         fence(Ordering::SeqCst);
--
--        let buf = &*self.buf;
--        if buf[1] != RESPONSE_OK {
--            return Err(format!("tag 0x{tag:08x}: firmware error 0x{:08x}", buf[1]));
--        }
--        if buf[4] & TAG_RESPONSE == 0 {
--            if !need_answer {
--                return Ok(Vec::new());
--            }
--            return Err(format!("tag 0x{tag:08x}: not supported by the firmware"));
--        }
--        // In bytes; round up to whole words (the board MAC is 6 bytes).
--        let len = ((buf[4] & !TAG_RESPONSE) as usize).div_ceil(4);
--        Ok(buf[5..5 + len.min(value_words)].to_vec())
++                }
++                std::hint::spin_loop();
++            }
++            // Answers to other channels are not ours; drop them.
++            if self.read(MAIL0_READ) == bus | CHANNEL_PROPERTY {
++                break;
++            }
++        }
++        fence(Ordering::SeqCst);
 +        Ok(())
-     }
- 
-     /// A tag that takes an id and answers with the id and one value, such as
++    }
+ }
