@@ -31,6 +31,11 @@ versions and hashes.
 - Before building, each recipe source is compared with its commit plus
   patches. A direct edit in `upstream/redox/recipes/core/*/source` stops the
   build: turn it into a patch, or delete the source to drop it.
+- A package is built or fetched again when its recipe, its patches or its
+  rule (source or binary) changed since the last build in the same clone,
+  for example when an experiment's recipe is no longer applied
+  ([#772](https://github.com/redox-rpi/redox-rpi/issues/773)). The state is
+  in `upstream/redox/.redox-rpi-package-origins.json`.
 - Uncommitted changes to `patches/`, `config/`, `scripts/` or `tools/` stop
   the build too.
 - `--allow-dirty` builds anyway: the build ID gets `-dirty.<hash>` and the
@@ -125,7 +130,9 @@ The build writes the manifest twice:
 - **Next to the image:** `build/manifests/<image>-<build ID>.toml`, which
   also has the hashes of `harddrive.img`, the kernel, `libc.so` and the
   bootloader, the GNU build ID of `libc.so` and every package with version,
-  source commit and hash.
+  source commit and hash. `[package_origins]` says for each package whether
+  it was fetched as a binary or built here, and where its recipe came from
+  (upstream, upstream with our patches, an experiment, `tools/`).
 
 `scripts/netboot.sh` puts the matching manifest into the TFTP directory as
 `manifest.toml`. `scripts/make-sdcard.sh --local` writes it as
