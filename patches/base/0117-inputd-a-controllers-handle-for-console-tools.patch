@@ -1,0 +1,155 @@
+From 4d2ca4f31845c4fe4307165981336c100902f8c5 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sun, 15 Nov 2026 18:20:47 +0000
+Subject: [PATCH] inputd: a controllers handle for console tools
+
+A text console program could not see gamepad events: inputd passes
+events only to consumers of the active VT, "consumer" opens a new,
+inactive VT and "consumer_bootlog" takes VT 1 away from the boot log.
+
+/scheme/input/controllers is read-only and gets only ControllerAxis and
+ControllerButton events (no keys or mouse) from all producers, whichever
+VT is active. It has no VT, no display and no handoff. ConsumerHandle::
+controllers() opens it. For gamepad-test --console (redox-rpi #320).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/inputd/src/lib.rs  | 10 ++++++
+ drivers/inputd/src/main.rs | 68 +++++++++++++++++++++++++++++---------
+ 2 files changed, 62 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/inputd/src/lib.rs b/drivers/inputd/src/lib.rs
+index 3cff9136..7fab1294 100644
+--- a/drivers/inputd/src/lib.rs
++++ b/drivers/inputd/src/lib.rs
+@@ -42,6 +42,16 @@ impl ConsumerHandle {
+         Ok(Self(file))
+     }
+ 
++    /// The controller events of all producers, whichever VT is active, and nothing else
++    /// (`/scheme/input/controllers`). It has no display.
++    pub fn controllers() -> io::Result<Self> {
++        let file = OpenOptions::new()
++            .read(true)
++            .custom_flags(O_NONBLOCK)
++            .open("/scheme/input/controllers")?;
++        Ok(Self(file))
++    }
++
+     pub fn bootlog_vt() -> io::Result<Self> {
+         let file = OpenOptions::new()
+             .read(true)
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 8fe6c440..6ce3183e 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -10,6 +10,11 @@
+ //! ## Input Consumer ("consumer")
+ //! Read events from `input:consumer`. Optionally, set the `EVENT_READ` flag to be notified when
+ //! events are available.
++//!
++//! ## Controller monitor ("controllers")
++//! Read the controller (gamepad) events of every producer from `input:controllers`, whichever VT
++//! is active, for example in a text console tool. It gets no key or mouse events, has no VT and
++//! no display.
+ 
+ use std::borrow::Cow;
+ use std::collections::BTreeSet;
+@@ -36,6 +41,9 @@ use keymap::KeymapKind;
+ 
+ use crate::keymap::KeymapData;
+ 
++/// The `vt` of a "controllers" handle: it belongs to no VT.
++const CONTROLLERS_VT: usize = usize::MAX;
++
+ enum Handle {
+     Producer,
+     Consumer {
+@@ -245,6 +253,13 @@ impl SchemeSync for InputScheme<'_> {
+                     vt,
+                 }
+             }
++            "controllers" => Handle::Consumer {
++                events: EventFlags::empty(),
++                pending: Vec::new(),
++                needs_handoff: false,
++                notified: false,
++                vt: CONTROLLERS_VT,
++            },
+             "consumer_bootlog" => {
+                 if !self.vts.insert(1) {
+                     return Err(SysError::new(EEXIST));
+@@ -467,24 +482,44 @@ impl SchemeSync for InputScheme<'_> {
+             )
+         };
+ 
+-        if let Some(active_vt) = self.active_vt {
+-            for handle in self.handles.values_mut() {
+-                match handle {
+-                    Handle::Consumer {
+-                        pending,
+-                        notified,
+-                        vt,
+-                        ..
+-                    } => {
+-                        if *vt != active_vt {
+-                            continue;
++        // Controller events alone, for "controllers" handles.
++        let controllers: Vec<u8> = events
++            .iter()
++            .filter(|e| {
++                matches!(
++                    e.to_option(),
++                    EventOption::ControllerAxis(_) | EventOption::ControllerButton(_)
++                )
++            })
++            .flat_map(|e| unsafe {
++                core::slice::from_raw_parts(e as *const Event as *const u8, size_of::<Event>())
++            })
++            .copied()
++            .collect();
++
++        for handle in self.handles.values_mut() {
++            match handle {
++                Handle::Consumer {
++                    pending,
++                    notified,
++                    vt,
++                    ..
++                } => {
++                    if *vt == CONTROLLERS_VT {
++                        if !controllers.is_empty() {
++                            pending.extend_from_slice(&controllers);
++                            *notified = false;
+                         }
+-
+-                        pending.extend_from_slice(buf);
+-                        *notified = false;
++                        continue;
+                     }
+-                    _ => continue,
++                    if Some(*vt) != self.active_vt {
++                        continue;
++                    }
++
++                    pending.extend_from_slice(buf);
++                    *notified = false;
+                 }
++                _ => continue,
+             }
+         }
+ 
+@@ -541,8 +576,9 @@ impl SchemeSync for InputScheme<'_> {
+                     Handle::Consumer {
+                         needs_handoff,
+                         notified,
++                        vt,
+                         ..
+-                    } => {
++                    } if *vt != CONTROLLERS_VT => {
+                         *needs_handoff = true;
+                         *notified = false;
+                     }
+-- 
+2.53.0
+

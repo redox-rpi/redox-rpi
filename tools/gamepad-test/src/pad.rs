@@ -7,7 +7,9 @@
 //! desktop page), which dwc2d (redox-rpi PR #378) and SDL's Redox joystick
 //! driver use.
 
-/// The 15 buttons SDL's "Redox OS Controller" has, in the order shown.
+/// The 15 buttons SDL's "Redox OS Controller" has, in the order shown. The
+/// D-pad row reads LEFT UP DOWN RIGHT, so LEFT sits left of RIGHT as on a
+/// pad (Pi test 431).
 pub const BUTTONS: [(u16, &str); 15] = [
     (1, "A"),
     (2, "B"),
@@ -20,10 +22,10 @@ pub const BUTTONS: [(u16, &str); 15] = [
     (9, "LS"),
     (10, "RS"),
     (11, "GUIDE"),
+    (0x93, "LEFT"),
     (0x90, "UP"),
     (0x91, "DOWN"),
     (0x92, "RIGHT"),
-    (0x93, "LEFT"),
 ];
 
 /// The six axes: X, Y, RX, RY are -32768..32767 (sticks), Z and RZ 0..255
@@ -126,9 +128,9 @@ mod tests {
         assert_eq!(pad.last, "button A pressed");
         assert_eq!(pad.id, Some(1));
         pad.apply(PadEvent::Button { id: 1, button: 0x93, pressed: true });
-        assert!(pad.pressed[14]);
+        assert!(pad.pressed[11]);
         pad.apply(PadEvent::Button { id: 1, button: 1, pressed: false });
-        assert!(!pad.pressed[0] && pad.pressed[14]);
+        assert!(!pad.pressed[0] && pad.pressed[11]);
         assert_eq!(pad.last, "button A released");
         assert_eq!(pad.events, 3);
         assert_eq!(pad.unknown, 0);

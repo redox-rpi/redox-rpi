@@ -3,6 +3,10 @@
 //! #320; dwc2d sends them for USB gamepads since PR #378).
 //!
 //! gamepad-test           the window; every event is also printed to stdout
+//! gamepad-test --console no window: prints each controller event and the
+//!                        held buttons on the text console, for images
+//!                        without Orbital (needs inputd's controllers
+//!                        handle, redox-rpi base patch 0098); Ctrl-C quits
 //! gamepad-test --send    no window: sends a fixed sequence of controller
 //!                        events through inputd, as dwc2d would (all
 //!                        buttons, then the axes), to check the window
@@ -11,6 +15,7 @@
 //! The window takes the controller events only while it is the front
 //! window. Esc or closing the window quits.
 
+mod console;
 mod pad;
 
 use std::env;
@@ -34,12 +39,18 @@ fn main() {
         send();
         return;
     }
+    if env::args().nth(1).as_deref() == Some("--console") {
+        console::run();
+    }
     if let Some(arg) = env::args().nth(1) {
-        eprintln!("usage: gamepad-test [--send]   (unknown argument {arg})");
+        eprintln!("usage: gamepad-test [--console | --send]   (unknown argument {arg})");
         std::process::exit(2);
     }
-    let mut window = Window::new_flags(-1, -1, W, H, "Gamepad test", &[]).unwrap_or_else(|| {
-        eprintln!("gamepad-test: no window (is Orbital running?)");
+    // Async: Orbital answers a blocked read only when the next input
+    // arrives, so a synchronous window saw each press only at the release
+    // (Pi test 431). This window polls instead.
+    let mut window = Window::new_flags(-1, -1, W, H, "Gamepad test", &[WindowFlag::Async]).unwrap_or_else(|| {
+        eprintln!("gamepad-test: no window (is Orbital running?); on a text console: gamepad-test --console");
         std::process::exit(1)
     });
     let mut pad = Pad::default();
@@ -64,6 +75,8 @@ fn main() {
         }
         if changed {
             draw(&mut window, &pad);
+        } else {
+            thread::sleep(Duration::from_millis(10));
         }
     }
 }
