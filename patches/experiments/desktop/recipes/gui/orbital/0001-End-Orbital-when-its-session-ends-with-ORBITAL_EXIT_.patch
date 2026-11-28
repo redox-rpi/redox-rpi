@@ -1,0 +1,42 @@
+From 586cbb4966880d942bb77ab403a8c8a0b444e082 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 15:40:46 +0000
+Subject: [PATCH] End Orbital when its session ends, with
+ ORBITAL_EXIT_WITH_SESSION
+
+Orbital spawned its login command and never waited for it, so a desktop
+started from the console could not be quit: only killing Orbital as root
+ended it. With ORBITAL_EXIT_WITH_SESSION set, a thread waits for the
+session and exits Orbital when it ends; the display and the VT go back
+to the console. Without the variable nothing changes.
+---
+ src/core.rs | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/src/core.rs b/src/core.rs
+index 7977405..280d1ff 100644
+--- a/src/core.rs
++++ b/src/core.rs
+@@ -149,7 +149,18 @@ impl Orbital {
+             event::EventFlags::READ,
+         )?;
+ 
+-        login_cmd.spawn()?;
++        let mut session = login_cmd.spawn()?;
++        // With ORBITAL_EXIT_WITH_SESSION set, Orbital ends when the session
++        // it started ends: the desktop can then be quit, and the console
++        // takes the display back (redox-rpi #805). Without it, as before,
++        // Orbital keeps running (orblogin loops back to its login).
++        if std::env::var_os("ORBITAL_EXIT_WITH_SESSION").is_some() {
++            std::thread::spawn(move || {
++                let status = session.wait();
++                log::info!("orbital: the session ended ({:?}), exiting", status);
++                std::process::exit(0);
++            });
++        }
+ 
+         let mut event_iter = event_queue.map(|e| e.map(|e| e.user_data));
+         let mut fake_input_event = None; // TODO: a hack
+-- 
+2.53.0
+

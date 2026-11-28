@@ -1,14 +1,20 @@
 # Experiment desktop: Orbital with the COSMIC text editor and file manager
 # in the image, but not started at boot. The text console comes up as
-# without it; the command `desktop` (as root) starts Orbital on VT 3 and
-# switches to it. Super+F2 goes back to the console, Super+F3 to the
-# desktop again. Build after rpi-fb, orbital, orbital-apps and
-# cosmic-apps-source.
+# without it; the command `desktop` starts Orbital on VT 3 for the user who
+# is logged in, without a second login, and switches to it. Super+F2 goes
+# back to the console, Super+F3 to the desktop again; "Quit desktop" in the
+# launcher ends it and the console takes the display back (#805). Build
+# after rpi-fb, orbital, orbital-apps and cosmic-apps-source.
 
 # `desktop` looks for Orbital with grep. Upstream extrautils dropped grep
 # (its build of 2026-11-18, source f5e8626a); uutils-grep has it now.
 [packages]
 uutils-grep = {}
+# Runs the session as the user who typed `desktop` (tools/desktop-runas).
+desktop-runas = "source"
+# Orbital from source with the end-with-session patch
+# (recipes/gui/orbital/).
+orbital = "source"
 
 # Experiment orbital starts Orbital at boot and stays on its VT: undo both.
 [[files]]
@@ -27,7 +33,7 @@ inputd -A 2
 [[files]]
 path = "/etc/motd"
 data = """
-Type `desktop` to start the graphical desktop (beta); as user: `sudo desktop`.
+Type `desktop` to start the graphical desktop (beta).
 
 """
 
@@ -36,24 +42,32 @@ path = "/usr/bin/desktop"
 mode = 0o755
 data = """
 #!/usr/bin/ion
-# Starts the desktop (Orbital) from the text console, or switches to it
-# when it already runs. It shows /usr/share/desktop/info.txt first, here
-# and after the login in a window (desktop-session), since the console's
-# text cannot be seen from the desktop. Orbital keeps running until the
-# next reboot. --yes is still accepted (it asked once), it changes nothing.
-# @args[1..] fails when there are no arguments, so skip the script's name.
+# Starts the desktop (Orbital) from the text console for the user who is
+# logged in, or switches to it when it already runs (#805). Orbital needs
+# root: a user's `desktop` runs itself again through sudo with --user.
+# Orbital then starts the session through desktop-runas as that user, so
+# there is no second login. "Quit desktop" in the launcher ends the session,
+# Orbital ends with it (ORBITAL_EXIT_WITH_SESSION) and the console comes
+# back. It shows /usr/share/desktop/info.txt first, here and after the start
+# in a window (desktop-session). --yes is still accepted, it changes nothing.
+let who = $USER
+let next_is_user = 0
 let skip = 1
 for arg in @args
     if test $skip = 1
         let skip = 0
+    else if test $next_is_user = 1
+        let who = $arg
+        let next_is_user = 0
+    else if test $arg = --user
+        let next_is_user = 1
     else if test $arg != --yes && test $arg != -y
         echo "usage: desktop"
         exit 2
     end
 end
 if test "$USER" != root
-    echo "desktop: run it as root (sudo desktop)"
-    exit 1
+    exec sudo /usr/bin/desktop --user $USER
 end
 # Whether Orbital runs, from ps (test -e cannot stat its scheme). ion's
 # own $find looks for it in ps's output, so the image needs no grep.
@@ -63,11 +77,12 @@ fn orbital_runs
 end
 if not orbital_runs
     cat /usr/share/desktop/info.txt
-    echo "desktop: starting Orbital, its log goes to /tmp/desktop.log"
+    echo "desktop: starting Orbital for $who, its log goes to /tmp/desktop.log"
     export VT=3
+    export ORBITAL_EXIT_WITH_SESSION=1
     # &! runs it in the background, disowned: else ion waits for it before
     # this script ends.
-    orbital orblogin /usr/bin/desktop-session &> /tmp/desktop.log &!
+    orbital /usr/bin/desktop-runas $who /usr/bin/desktop-session &> /tmp/desktop.log &!
     # Wait up to 30 s for it (ion has no `while not`).
     let tries = 0
     while test $tries -lt 30
@@ -86,6 +101,32 @@ inputd -A 3
 echo "desktop: Super+F2 goes back to the console, Super+F3 to the desktop"
 """
 
+# "Quit desktop" in the launcher (#805): ends the session's launcher; the
+# session (desktop-session) then ends, and Orbital with it. The programs
+# still open on the desktop are ended first, so none is left behind.
+[[files]]
+path = "/usr/share/ui/apps/zz_quit-desktop"
+data = """
+name=Quit desktop
+binary=/usr/bin/desktop-quit
+icon=/usr/share/icons/actions/system-log-out.png
+author=redox-rpi
+description=End the desktop and go back to the text console
+"""
+
+[[files]]
+path = "/usr/bin/desktop-quit"
+mode = 0o755
+data = """
+#!/usr/bin/ion
+# Ends the desktop session of this user (#805): the desktop's programs
+# first, then the launcher, which ends desktop-session and with it Orbital.
+for prog in [cosmic-files cosmic-edit orbterm sopwith viewer editor calculator]
+    pkill -x $prog
+end
+pkill -x launcher
+"""
+
 # What the desktop is and how to get back, shown by desktop on the console
 # and in a window after the login (desktop-welcome).
 [[files]]
@@ -97,12 +138,14 @@ Redox desktop (beta)
   Super+F3   back to the desktop
              (or type desktop on the console)
   Super+T    a terminal
+  Quit desktop (launcher menu): back to the
+             console, the desktop ends
 
 Known limits:
 - Slow: everything draws in software; dragging a
   window costs much of a core.
-- Once started, the desktop cannot be stopped; its
-  memory (40 to 80 MB) comes back only with a reboot.
+- Quit desktop (in the launcher menu) ends it and
+  gives its memory back.
 - No browser, one screen resolution, no HDMI hotplug.
 
 """

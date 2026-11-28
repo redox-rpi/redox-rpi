@@ -3,26 +3,39 @@
 For the release image (v0.4.0-rc2, [#33](https://github.com/redox-rpi/redox-rpi/issues/33)):
 Redox's desktop, Orbital, with COSMIC Files and the game SDL Sopwith is
 in the image but does not start at boot. The Pi boots to the text console
-as without it. As root:
+as without it. Logged in on the console, as any user:
 
     desktop
 
 prints what the desktop is, how to get back and its main limits
 (`/usr/share/desktop/info.txt`, see Beta limits below) and starts
-Orbital on VT 3: the login window (user `user`, empty password: press
-Enter), then the desktop with the launcher. After the login the same text
-opens in a window (`desktop-session` runs `desktop-welcome` in orbterm,
-then the launcher), since the console cannot be seen from the desktop;
-Enter in it, or its close button, closes it. When Orbital already runs,
-`desktop` just switches to it. Until v0.4.1 it asked `[y/N]` first;
-`--yes` is still accepted and changes nothing. Keys:
+Orbital on VT 3 for that user, with no second login
+([#805](https://github.com/redox-rpi/redox-rpi/issues/805)):
+
+- Orbital needs root, so a user's `desktop` runs itself again through
+  `sudo` with `--user <name>`;
+- Orbital (from source with `recipes/gui/orbital/0001`) starts the session
+  through `desktop-runas` (`tools/desktop-runas`). That helper is not setuid
+  on disk and refuses to run for anyone but root; it drops the group, the
+  supplementary groups and then the user, checks the drop, and execs
+  `desktop-session` as the user;
+- `desktop-session` starts the launcher, then the same text in a window
+  (`desktop-welcome` in orbterm), since the console cannot be seen from the
+  desktop.
+
+When Orbital already runs, `desktop` just switches to it. `--yes` is still
+accepted and changes nothing. Keys and menu:
 
 - **Super+F2**: back to the text console (Orbital keeps running);
-- **Super+F3**: to the desktop again (or run `desktop` again).
+- **Super+F3**: to the desktop again (or run `desktop` again);
+- **Quit desktop** in the launcher: ends the desktop's programs and the
+  launcher (`desktop-quit`). The session ends, Orbital ends with it
+  (`ORBITAL_EXIT_WITH_SESSION`), and inputd gives the display back to the
+  console, where the shell that ran `desktop` is still open.
 
-Orbital runs until the next reboot; its log goes to `/tmp/desktop.log`.
-After each login on the console `/etc/motd` points to it: "Type `desktop` to
-start the graphical desktop (beta)".
+Orbital's log goes to `/tmp/desktop.log`. After each login on the console
+`/etc/motd` points to it: "Type `desktop` to start the graphical desktop
+(beta)". `orblogin` stays in the image for a later direct graphical boot.
 
 Build it after the experiments it configures:
 
@@ -68,7 +81,7 @@ Most of it is the COSMIC editor and files apps and their icons and fonts.
   software.
 - No browser and no cosmic-term (orbterm is the terminal, Super+T).
 - One resolution: the firmware's mode at power-on. No HDMI hotplug.
-- Orbital cannot be stopped from the console; reboot to free its memory.
+- Quit desktop in the launcher ends Orbital and frees its memory (#805).
 
 ## Results
 
