@@ -28,10 +28,10 @@ check, before cooking, compares each target/ with what this build wants:
   commit): unknown, so cleaned if an experiment has a recipe or patches for
   it, or if it was built here (target/.../build/) although this build does
   not ask for "source" or "local". Any other gets its stamp.
-Cleaning removes target/, the package in repo/, the patch files the recipe
-no longer lists and .redox-rpi-cook-patches, and puts a git source back to
-its commit, nested repositories included; the cookbook then builds or
-fetches the package again. A config that cannot be read stops the build:
+Cleaning removes target/, source/ (not the tree behind a same_as link),
+the package in repo/, the patch files the recipe no longer lists and
+.redox-rpi-cook-patches; the cookbook then fetches the source again,
+applies the patches and builds, or fetches the binary package. A config that cannot be read stops the build:
 the rules are then unknown.
 
 manifest: prints a [package_origins] table for the given packages, each
@@ -112,12 +112,16 @@ def clean(rel):
     name = os.path.basename(rel)
     shutil.rmtree(os.path.join(recipe, "target"), ignore_errors=True)
     source = os.path.join(recipe, "source")
-    # A same_as recipe's source is a link to another recipe's (relibc-tests-bins
-    # to relibc): leave it, or that recipe loses its patches.
-    if not os.path.islink(source) and os.path.isdir(os.path.join(source, ".git")):
-        subprocess.run(["git", "-C", source, "reset", "-q", "--hard"], check=False)
-        # -ff: also nested repositories, which -f leaves.
-        subprocess.run(["git", "-C", source, "clean", "-ffdxq"], check=False)
+    # The source goes as a whole, so the cookbook fetches it again and applies
+    # the recipe's patches to a fresh tree. A reset (git reset/clean) can leave
+    # a tree the cookbook takes as patched although it is not: images without
+    # their experiment's patches (2026-11-28, orbital-gl). A same_as recipe's
+    # source is a link to another recipe's (relibc-tests-bins to relibc):
+    # remove only the link, never the tree behind it.
+    if os.path.islink(source):
+        pass
+    elif os.path.isdir(source):
+        shutil.rmtree(source, ignore_errors=True)
     keep = listed_patches(recipe)
     for patch in glob.glob(os.path.join(recipe, "*.patch")):
         if os.path.basename(patch) in keep:
