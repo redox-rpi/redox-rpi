@@ -80,6 +80,7 @@ patches/experiments/pointer-bench/*     graphics
 tools/pointer-bench/*                   graphics
 tools/desktop-runas/*                   graphics
 patches/experiments/orbital/*           graphics
+patches/experiments/desktop/*           graphics
 patches/experiments/relibc-tests/*      relibc
 patches/experiments/sig*                relibc,stability
 patches/experiments/ldso-*              stability
