@@ -144,7 +144,8 @@ if [ -n "$direct" ]; then
         # 60_data.service, which config/raspi3bp.toml has but the release
         # image (config/raspi3bp-release-netboot.toml) leaves out on purpose.
         # On a card-root card the partition is always there, so the root
-        # gets the unit when it lacks it (Pi test 733).
+        # gets the unit when it lacks it (Pi test 733). The release image has
+        # no /usr/bin/redoxfs, so the unit runs the initfs's.
         tool="$ROOT/tools/redoxfs-file/target/release/redoxfs-file"
         [ -x "$tool" ] || cargo build --release --manifest-path "$ROOT/tools/redoxfs-file/Cargo.toml"
         unit=/usr/lib/init.d/60_data.service
@@ -155,7 +156,7 @@ description = "Data partition on the SD card"
 requires_weak = ["00_base.target"]
 
 [service]
-cmd = "redoxfs"
+cmd = "/scheme/initfs/bin/redoxfs"
 args = ["/scheme/disk.mmc/0p1", "data"]
 type = "oneshot"
 UNIT
