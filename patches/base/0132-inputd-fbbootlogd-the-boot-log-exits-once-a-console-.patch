@@ -1,0 +1,123 @@
+From b2ce8f7988b160aea2afc9347ad66c95a4bda14b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 14:31:00 +0000
+Subject: [PATCH] inputd, fbbootlogd: the boot log exits once a console has
+ taken over (#788)
+
+Once another VT (the login console or Orbital) has been active while the
+boot log on VT 1 is open, inputd fails the boot log's next read with
+EPIPE. fbbootlogd then exits: nothing shows VT 1 any more, and it held its
+framebuffer mapping and a 1000-line scrollback for the rest of the run
+(11.9 MB private and 7.9 MB shared on a Zero 2 W). The log stays in logd
+and on the serial console; inputd drops VT 1 when the handle closes.
+---
+ drivers/graphics/fbbootlogd/src/main.rs | 16 ++++++++++++----
+ drivers/inputd/src/main.rs              | 21 +++++++++++++++++++--
+ 2 files changed, 31 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/graphics/fbbootlogd/src/main.rs b/drivers/graphics/fbbootlogd/src/main.rs
+index f6240ef..c38d8d0 100644
+--- a/drivers/graphics/fbbootlogd/src/main.rs
++++ b/drivers/graphics/fbbootlogd/src/main.rs
+@@ -92,10 +92,18 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+             Source::Input => {
+                 let mut events = [Event::new(); 16];
+                 loop {
+-                    match input_handle
+-                        .read_events(&mut events)
+-                        .expect("fbbootlogd: error while reading events")
+-                    {
++                    let read = match input_handle.read_events(&mut events) {
++                        // inputd: another VT (the login console or Orbital)
++                        // took over. Nothing shows the boot log any more;
++                        // exit and give back the framebuffer and the
++                        // scrollback (#788). The log stays in logd.
++                        Err(err) if err.raw_os_error() == Some(libc::EPIPE) => {
++                            eprintln!("fbbootlogd: a console took over, exiting");
++                            std::process::exit(0);
++                        }
++                        read => read.expect("fbbootlogd: error while reading events"),
++                    };
++                    match read {
+                         ConsumerHandleEvent::Events(&[]) => break,
+                         ConsumerHandleEvent::Events(events) => {
+                             for event in events {
+diff --git a/drivers/inputd/src/main.rs b/drivers/inputd/src/main.rs
+index 8fe6c44..37b1a16 100644
+--- a/drivers/inputd/src/main.rs
++++ b/drivers/inputd/src/main.rs
+@@ -86,6 +86,10 @@ struct InputScheme<'a> {
+     rshift: bool,
+ 
+     has_new_events: bool,
++    /// Set once another VT has been active while the boot log (VT 1) is
++    /// open: its next read fails with EPIPE, and fbbootlogd exits and gives
++    /// back its framebuffer and scrollback (#788).
++    retire_bootlog: bool,
+     pending_activate: Option<usize>,
+ }
+ 
+@@ -106,6 +110,7 @@ impl<'a> InputScheme<'a> {
+             lshift: false,
+             rshift: false,
+             has_new_events: false,
++            retire_bootlog: false,
+             pending_activate: None,
+         }
+     }
+@@ -155,6 +160,11 @@ impl<'a> InputScheme<'a> {
+         });
+ 
+         self.active_vt = Some(new_active);
++
++        if new_active != 1 && self.vts.contains(&1) && !self.retire_bootlog {
++            self.retire_bootlog = true;
++            self.has_new_events = true;
++        }
+     }
+ 
+     fn switch_keymap(&mut self, new_active: usize) {
+@@ -311,14 +321,20 @@ impl SchemeSync for InputScheme<'_> {
+         _fcntl_flags: u32,
+         _ctx: &CallerCtx,
+     ) -> syscall::Result<usize> {
++        let retire_bootlog = self.retire_bootlog;
+         let handle = self.handles.get_mut(id)?;
+ 
+         match handle {
+             Handle::Consumer {
+                 pending,
+                 needs_handoff,
++                vt,
+                 ..
+             } => {
++                if *vt == 1 && retire_bootlog {
++                    // A console took over: the boot log is done (#788).
++                    return Err(SysError::new(libredox::errno::EPIPE));
++                }
+                 if *needs_handoff {
+                     *needs_handoff = false;
+                     // Indicates that handoff to a new graphics driver is necessary.
+@@ -629,6 +645,7 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+             continue;
+         }
+ 
++        let retire_bootlog = scheme.retire_bootlog;
+         for (id, handle) in scheme.handles.iter_mut() {
+             match handle {
+                 Handle::Consumer {
+@@ -636,9 +653,9 @@ fn daemon(daemon: daemon::SchemeDaemon) -> anyhow::Result<()> {
+                     pending,
+                     needs_handoff,
+                     ref mut notified,
+-                    ..
++                    vt,
+                 } => {
+-                    if (!*needs_handoff && pending.is_empty())
++                    if (!*needs_handoff && pending.is_empty() && !(*vt == 1 && retire_bootlog))
+                         || *notified
+                         || !events.contains(EventFlags::EVENT_READ)
+                     {
+-- 
+2.53.0
+
