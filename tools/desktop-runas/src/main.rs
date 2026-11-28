@@ -14,6 +14,11 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::{exit, Command};
 
+// The libc crate does not declare setgroups for Redox; relibc provides it.
+extern "C" {
+    fn setgroups(size: libc::size_t, list: *const libc::gid_t) -> libc::c_int;
+}
+
 struct User {
     name: String,
     uid: libc::uid_t,
@@ -85,7 +90,7 @@ fn main() {
             if libc::setgid(user.gid) != 0 {
                 fail(&format!("setgid({}): {}", user.gid, std::io::Error::last_os_error()));
             }
-            if libc::setgroups(groups.len() as _, groups.as_ptr()) != 0 {
+            if setgroups(groups.len() as _, groups.as_ptr()) != 0 {
                 fail(&format!("setgroups: {}", std::io::Error::last_os_error()));
             }
             if libc::setuid(user.uid) != 0 {
