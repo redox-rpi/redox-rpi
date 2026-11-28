@@ -1,0 +1,127 @@
+From 69fd38490882cc486b76115f5bc4178ae5a8f280 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 15:02:26 +0000
+Subject: [PATCH] lived: write into the live disk itself instead of an overlay
+ (redox-rpi #796)
+
+The live disk is RAM that the bootloader (or rpi-boot-stub) filled with
+a copy of the RedoxFS partition and reserved for it. lived mapped it
+read-only and copied every written 4 KiB block into a HashMap overlay
+that was never freed: on a Zero 2 W lived grew by 1 MB while Orbital
+ran and stayed there. Map it writable and write in place; lived no
+longer grows with use.
+
+The only other reader of the original image is the installer's fast
+install (installer_tui), which clones the pristine live disk; it is not
+part of the Raspberry Pi images.
+---
+ drivers/storage/lived/src/main.rs | 55 +++++++++++--------------------
+ 1 file changed, 19 insertions(+), 36 deletions(-)
+
+diff --git a/drivers/storage/lived/src/main.rs b/drivers/storage/lived/src/main.rs
+index 7297674..6cf29eb 100644
+--- a/drivers/storage/lived/src/main.rs
++++ b/drivers/storage/lived/src/main.rs
+@@ -2,7 +2,7 @@
+ 
+ #![feature(int_roundings)]
+ 
+-use std::collections::{BTreeMap, HashMap};
++use std::collections::BTreeMap;
+ use std::fs::File;
+ use std::os::fd::AsRawFd;
+ 
+@@ -13,10 +13,14 @@ use libredox::flag;
+ use syscall::error::*;
+ use syscall::PAGE_SIZE;
+ 
++/// The live disk is RAM that the bootloader (or rpi-boot-stub) filled with a
++/// copy of the RedoxFS partition and reserved for it: writes go straight into
++/// it. A copy-on-write overlay kept every written 4 KiB block in this
++/// process's heap for good (redox-rpi #796). Nothing reads the original image
++/// after boot on our boards; upstream's installer_tui fast install does, but
++/// it is not part of our images.
+ struct LiveDisk {
+-    original: &'static [u8],
+-    //TODO: drop overlay blocks if they match the original
+-    overlay: HashMap<u64, Box<[u8]>>,
++    data: &'static mut [u8],
+ }
+ 
+ impl LiveDisk {
+@@ -35,7 +39,7 @@ impl LiveDisk {
+                 addr: core::ptr::null_mut(),
+                 offset: start as u64,
+                 length: size,
+-                prot: flag::PROT_READ,
++                prot: flag::PROT_READ | flag::PROT_WRITE,
+                 flags: flag::MAP_SHARED,
+             })
+             .map_err(|err| anyhow!("failed to mmap livedisk: {}", err))?;
+@@ -43,10 +47,7 @@ impl LiveDisk {
+             std::slice::from_raw_parts_mut(base as *mut u8, size)
+         };
+ 
+-        Ok(LiveDisk {
+-            original,
+-            overlay: HashMap::new(),
+-        })
++        Ok(LiveDisk { data: original })
+     }
+ }
+ 
+@@ -56,42 +57,24 @@ impl Disk for LiveDisk {
+     }
+ 
+     fn size(&self) -> u64 {
+-        self.original.len() as u64
++        self.data.len() as u64
+     }
+ 
+-    async fn read(&mut self, mut block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
+-        if block as usize * PAGE_SIZE + buffer.len() > self.original.len() {
++    async fn read(&mut self, block: u64, buffer: &mut [u8]) -> syscall::Result<usize> {
++        let offset = block as usize * PAGE_SIZE;
++        if offset + buffer.len() > self.data.len() {
+             return Err(syscall::Error::new(EINVAL));
+         }
+-        for chunk in buffer.chunks_mut(PAGE_SIZE) {
+-            let offset = block as usize * PAGE_SIZE;
+-            match self.overlay.get(&block) {
+-                Some(overlay) => {
+-                    chunk.copy_from_slice(&overlay[..chunk.len()]);
+-                }
+-                None => {
+-                    chunk.copy_from_slice(&self.original[offset..offset + chunk.len()]);
+-                }
+-            }
+-            block += 1;
+-        }
++        buffer.copy_from_slice(&self.data[offset..offset + buffer.len()]);
+         Ok(buffer.len())
+     }
+ 
+-    async fn write(&mut self, mut block: u64, buffer: &[u8]) -> syscall::Result<usize> {
+-        if block as usize * PAGE_SIZE + buffer.len() > self.original.len() {
++    async fn write(&mut self, block: u64, buffer: &[u8]) -> syscall::Result<usize> {
++        let offset = block as usize * PAGE_SIZE;
++        if offset + buffer.len() > self.data.len() {
+             return Err(syscall::Error::new(EINVAL));
+         }
+-        for chunk in buffer.chunks(PAGE_SIZE) {
+-            self.overlay.entry(block).or_insert_with(|| {
+-                let offset = block as usize * PAGE_SIZE;
+-                self.original[offset..offset + PAGE_SIZE]
+-                    .to_vec()
+-                    .into_boxed_slice()
+-            })[..chunk.len()]
+-                .copy_from_slice(chunk);
+-            block += 1;
+-        }
++        self.data[offset..offset + buffer.len()].copy_from_slice(buffer);
+         Ok(buffer.len())
+     }
+ }
+-- 
+2.53.0
+
