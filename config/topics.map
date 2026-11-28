@@ -64,6 +64,7 @@ patches/experiments/ha-bridge/*         network
 patches/experiments/late-dhcp/*         network,time
 patches/experiments/timerd*             time
 patches/experiments/timesync/*          time
+patches/experiments/wifi-sdio/*         network,zero2w
 patches/experiments/timezone/*          time
 patches/experiments/sdhost-*            sdcard
 patches/experiments/redoxfs-*           sdcard
@@ -122,6 +123,8 @@ tools/sigregs/*                         relibc,stability
 tools/chaos/*                           stability
 tools/timerd/*                          time
 tools/timesync/*                        time
+tools/wifi-firmware/*                   network,zero2w
+tools/wifi-set/*                        network,zero2w
 tools/redoxfs-file/*                    sdcard
 tools/reboot/*                          boot
 tools/tcc-bench/*                       tcc

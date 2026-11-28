@@ -1,0 +1,9 @@
+[package]
+name = "wifi-set"
+description = "Writes the Wi-Fi settings file from two lines read without echo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

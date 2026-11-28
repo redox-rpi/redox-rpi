@@ -1,0 +1,617 @@
+From 30ef85738180c2fdc41676f1650ff5a4ccd39120 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 11:37:07 +0000
+Subject: [PATCH 115/115] bcm2835-sdiod: the Pi Zero 2 W (CYW43436 family) next
+ to the Pi 3B+
+
+Board from the devicetree. On the Zero 2 W WL_REG_ON is GPIO 41 and the
+chip gets its 32.768 kHz sleep clock from GPCLK2 on GPIO 43. Chips with an
+ARM CM3 and SOCRAM (CYW43430/43436) download and start as in brcmfmac.
+Firmware and NVRAM by chip ID and revision as Raspberry Pi OS does,
+fw=<name> overrides; the CLM file is optional for those chips. The driver
+asks the firmware whether it has its own supplicant (sup_wpa). wlan0
+reports its link state (up after the join, then from link events).
+---
+ drivers/net/bcm2835-sdiod/Cargo.toml   |   2 +-
+ drivers/net/bcm2835-sdiod/src/chip.rs  | 150 ++++++++++++++---
+ drivers/net/bcm2835-sdiod/src/erom.rs  |   4 +
+ drivers/net/bcm2835-sdiod/src/main.rs  | 221 ++++++++++++++++++++++---
+ drivers/net/bcm2835-sdiod/src/netif.rs |  25 ++-
+ init.d/50_bcm2835-sdiod.service        |   2 +-
+ 6 files changed, 350 insertions(+), 54 deletions(-)
+
+diff --git a/drivers/net/bcm2835-sdiod/Cargo.toml b/drivers/net/bcm2835-sdiod/Cargo.toml
+index b6b16cf2..d54b7dfa 100644
+--- a/drivers/net/bcm2835-sdiod/Cargo.toml
++++ b/drivers/net/bcm2835-sdiod/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "bcm2835-sdiod"
+-description = "Raspberry Pi 3B+ Wi-Fi chip over SDIO"
++description = "Raspberry Pi 3B+ and Zero 2 W Wi-Fi chip over SDIO"
+ version = "0.1.0"
+ edition = "2021"
+ 
+diff --git a/drivers/net/bcm2835-sdiod/src/chip.rs b/drivers/net/bcm2835-sdiod/src/chip.rs
+index bf2d8fd4..7fcd923d 100644
+--- a/drivers/net/bcm2835-sdiod/src/chip.rs
++++ b/drivers/net/bcm2835-sdiod/src/chip.rs
+@@ -1,11 +1,18 @@
+ //! Cores on the chip's backplane: finding them, resetting them, and the
+-//! RAM of the ARM Cortex-R4 that runs the firmware.
++//! RAM the firmware runs from.
++//!
++//! The CYW43455 (Pi 3B+) runs its firmware on an ARM Cortex-R4 with its own
++//! RAM banks; the firmware starts from a reset vector written to address 0.
++//! The CYW43430/43436 family (Pi Zero 2 W) has an ARM Cortex-M3 and a
++//! separate SOCRAM core at backplane address 0; the M3 starts from the
++//! vector table at the start of that RAM. The steps follow Linux' brcmfmac
++//! (chip.c, ISC licence).
+ 
+ use std::thread;
+ use std::time::Duration;
+ 
+ use crate::bus::Bus;
+-use crate::erom::{self, Core, CORE_80211, CORE_ARM_CR4, CORE_CHIPCOMMON, CORE_SDIO_DEV};
++use crate::erom::{self, Core, CORE_80211, CORE_ARM_CM3, CORE_ARM_CR4, CORE_CHIPCOMMON, CORE_SDIO_DEV, CORE_SOCRAM};
+ use crate::host::wait_until;
+ 
+ const CHIPCOMMON_BASE: u32 = 0x1800_0000;
+@@ -28,12 +35,33 @@ const ARMCR4_BANKINFO: u32 = 0x44;
+ const ARMCR4_BSZ_MASK: u32 = 0x7f;
+ const ARMCR4_BLK_1K: u32 = 0x200;
+ 
++// SOCRAM core registers: core info (bank count), bank index and info, and
++// the power-down array of the selected bank.
++const SOCRAM_COREINFO: u32 = 0x00;
++const SOCRAM_BANKIDX: u32 = 0x10;
++const SOCRAM_BANKINFO: u32 = 0x40;
++const SOCRAM_BANKPDA: u32 = 0x44;
++const SOCRAM_SRNB_MASK: u32 = 0xf0;
++const SOCRAM_BSZ_MASK: u32 = 0x7f;
++const SOCRAM_BANK_UNIT: u32 = 8192;
++
++/// CYW43430 chip ID (also on Pi Zero 2 W boards with a 43436S/43430B0).
++const CHIP_43430: u16 = 0xa9a6;
++
+ // 802.11 core wrapper IOCTL.
+ const D11_IOCTL_PHYCLOCKEN: u32 = 0x4;
+ const D11_IOCTL_PHYRESET: u32 = 0x8;
+ 
++pub enum Arm {
++    /// Cortex-R4 with its own RAM (CYW43455).
++    Cr4(Core),
++    /// Cortex-M3 with RAM in the SOCRAM core (CYW43430/43436).
++    Cm3 { arm: Core, socram: Core },
++}
++
+ pub struct Chip {
+-    pub cr4: Core,
++    pub id: u16,
++    pub arm: Arm,
+     pub d11: Core,
+     pub sdio: Core,
+     /// Backplane address and size of the firmware's RAM.
+@@ -68,17 +96,37 @@ impl Chip {
+                 .ok_or(format!("no core 0x{id:03x} in the EROM at 0x{erom_addr:08x}"))
+         };
+         find(CORE_CHIPCOMMON)?;
+-        let (cr4, d11, sdio) = (find(CORE_ARM_CR4)?, find(CORE_80211)?, find(CORE_SDIO_DEV)?);
++        let (d11, sdio) = (find(CORE_80211)?, find(CORE_SDIO_DEV)?);
+         let id = chipid as u16;
+-        // Where the CR4's RAM starts on the backplane depends on the chip.
+-        let rambase = match id {
+-            0x4345 => 0x0019_8000,
+-            _ => return Err(format!("RAM base of chip 0x{id:04x} unknown")),
++        let (arm, rambase, ramsize) = if let Ok(cr4) = find(CORE_ARM_CR4) {
++            // Where the CR4's RAM starts on the backplane depends on the chip.
++            let rambase = match id {
++                0x4345 => 0x0019_8000,
++                _ => return Err(format!("RAM base of chip 0x{id:04x} unknown")),
++            };
++            let ramsize = cr4_ramsize(bus, &cr4)?;
++            (Arm::Cr4(cr4), rambase, ramsize)
++        } else {
++            let arm = find(CORE_ARM_CM3).map_err(|_| "neither an ARM CR4 nor an ARM CM3 core".to_string())?;
++            let socram = find(CORE_SOCRAM)?;
++            // The bank registers answer only while the core runs.
++            if !core_is_up(bus, &socram)? {
++                core_reset(bus, &socram, 0, 0, 0)?;
++            }
++            let ramsize = socram_ramsize(bus, &socram)?;
++            (Arm::Cm3 { arm, socram }, 0, ramsize)
+         };
+-        let ramsize = cr4_ramsize(bus, &cr4)?;
+-        println!("bcm2835-sdiod: RAM 0x{rambase:08x}, {} KiB", ramsize / 1024);
++        println!(
++            "bcm2835-sdiod: {} RAM 0x{rambase:08x}, {} KiB",
++            match arm {
++                Arm::Cr4(_) => "ARM CR4,",
++                Arm::Cm3 { .. } => "ARM CM3, SOCRAM",
++            },
++            ramsize / 1024
++        );
+         Ok(Chip {
+-            cr4,
++            id,
++            arm,
+             d11,
+             sdio,
+             rambase,
+@@ -86,26 +134,80 @@ impl Chip {
+         })
+     }
+ 
+-    /// Holds the ARM and resets the 802.11 core, for a firmware download.
++    /// Holds the ARM and resets the 802.11 core (and the SOCRAM), for a
++    /// firmware download.
+     pub fn set_passive(&self, bus: &mut Bus) -> Result<(), String> {
+-        let halted = bus.read32(self.cr4.wrap + AI_IOCTL)? & ARMCR4_IOCTL_CPUHALT;
+-        core_reset(bus, &self.cr4, halted, ARMCR4_IOCTL_CPUHALT, ARMCR4_IOCTL_CPUHALT)?;
+-        core_reset(
+-            bus,
+-            &self.d11,
+-            D11_IOCTL_PHYRESET | D11_IOCTL_PHYCLOCKEN,
+-            D11_IOCTL_PHYCLOCKEN,
+-            D11_IOCTL_PHYCLOCKEN,
+-        )
++        let d11 = |bus: &mut Bus| {
++            core_reset(
++                bus,
++                &self.d11,
++                D11_IOCTL_PHYRESET | D11_IOCTL_PHYCLOCKEN,
++                D11_IOCTL_PHYCLOCKEN,
++                D11_IOCTL_PHYCLOCKEN,
++            )
++        };
++        match &self.arm {
++            Arm::Cr4(cr4) => {
++                let halted = bus.read32(cr4.wrap + AI_IOCTL)? & ARMCR4_IOCTL_CPUHALT;
++                core_reset(bus, cr4, halted, ARMCR4_IOCTL_CPUHALT, ARMCR4_IOCTL_CPUHALT)?;
++                d11(bus)
++            }
++            Arm::Cm3 { arm, socram } => {
++                core_disable(bus, arm, 0, 0)?;
++                d11(bus)?;
++                core_reset(bus, socram, 0, 0, 0)?;
++                // brcmfmac: the CYW43430 remaps RAM bank 3 unless told not to.
++                if self.id == CHIP_43430 {
++                    bus.write32(socram.base + SOCRAM_BANKIDX, 3)?;
++                    bus.write32(socram.base + SOCRAM_BANKPDA, 0)?;
++                }
++                Ok(())
++            }
++        }
+     }
+ 
+-    /// Writes the reset vector to address 0 and lets the ARM run.
++    /// Lets the ARM run: the CR4 from the reset vector written to address 0,
++    /// the CM3 from the vector table at the start of the SOCRAM.
+     pub fn set_active(&self, bus: &mut Bus, reset_vector: u32) -> Result<(), String> {
+-        bus.write32(0, reset_vector)?;
+-        core_reset(bus, &self.cr4, ARMCR4_IOCTL_CPUHALT, 0, 0)
++        match &self.arm {
++            Arm::Cr4(cr4) => {
++                bus.write32(0, reset_vector)?;
++                core_reset(bus, cr4, ARMCR4_IOCTL_CPUHALT, 0, 0)
++            }
++            Arm::Cm3 { arm, socram } => {
++                if !core_is_up(bus, socram)? {
++                    return Err("SOCRAM core not up after the download".into());
++                }
++                core_reset(bus, arm, 0, 0, 0)
++            }
++        }
+     }
+ }
+ 
++/// A core runs: clock on, not forced, not in reset.
++fn core_is_up(bus: &mut Bus, core: &Core) -> Result<bool, String> {
++    let ioctl = bus.read32(core.wrap + AI_IOCTL)?;
++    let reset = bus.read32(core.wrap + AI_RESETCTRL)?;
++    Ok(ioctl & (IOCTL_FGC | IOCTL_CLK) == IOCTL_CLK && reset & RESETCTRL_RESET == 0)
++}
++
++/// The SOCRAM size: the sum of its RAM banks (brcmfmac
++/// brcmf_chip_socram_ramsize, core revision 8 and later).
++fn socram_ramsize(bus: &mut Bus, socram: &Core) -> Result<u32, String> {
++    let info = bus.read32(socram.base + SOCRAM_COREINFO)?;
++    let banks = (info & SOCRAM_SRNB_MASK) >> 4;
++    let mut size = 0;
++    for idx in 0..banks {
++        bus.write32(socram.base + SOCRAM_BANKIDX, idx)?;
++        let bank = bus.read32(socram.base + SOCRAM_BANKINFO)?;
++        size += ((bank & SOCRAM_BSZ_MASK) + 1) * SOCRAM_BANK_UNIT;
++    }
++    if size == 0 {
++        return Err(format!("SOCRAM reports no RAM (core info 0x{info:08x})"));
++    }
++    Ok(size)
++}
++
+ fn cr4_ramsize(bus: &mut Bus, cr4: &Core) -> Result<u32, String> {
+     let cap = bus.read32(cr4.base + ARMCR4_CAP)?;
+     let banks = (cap & 0xf) + (cap >> 4 & 0xf);
+diff --git a/drivers/net/bcm2835-sdiod/src/erom.rs b/drivers/net/bcm2835-sdiod/src/erom.rs
+index 0d11227c..cdfe067f 100644
+--- a/drivers/net/bcm2835-sdiod/src/erom.rs
++++ b/drivers/net/bcm2835-sdiod/src/erom.rs
+@@ -23,6 +23,10 @@ pub const CORE_CHIPCOMMON: u16 = 0x800;
+ pub const CORE_80211: u16 = 0x812;
+ pub const CORE_SDIO_DEV: u16 = 0x829;
+ pub const CORE_ARM_CR4: u16 = 0x83e;
++/// ARM Cortex-M3 of the CYW43430/43436 family, with its RAM in a SOCRAM
++/// core instead of the ARM's own banks.
++pub const CORE_ARM_CM3: u16 = 0x82a;
++pub const CORE_SOCRAM: u16 = 0x80e;
+ 
+ /// Broadcom's designer code. ARM's (0x43b) entries are bus components.
+ const DESIGNER_BROADCOM: u32 = 0x4bf;
+diff --git a/drivers/net/bcm2835-sdiod/src/main.rs b/drivers/net/bcm2835-sdiod/src/main.rs
+index 0f3bf646..616e2b1d 100644
+--- a/drivers/net/bcm2835-sdiod/src/main.rs
++++ b/drivers/net/bcm2835-sdiod/src/main.rs
+@@ -1,9 +1,13 @@
+-//! First steps towards Wi-Fi on the Raspberry Pi 3B+: talk to the CYW43455
+-//! over SDIO.
++//! Wi-Fi on the Raspberry Pi 3B+ (CYW43455) and the Pi Zero 2 W (CYW43436
++//! family) over SDIO.
+ //!
+-//! The Pi 3B+ wires its Wi-Fi chip to GPIO 34-39, which ALT3 connects to the
+-//! Arasan SDHCI controller ("EMMC"). The SD card uses the other controller,
+-//! sdhost, on GPIO 48-53 (ALT0), so the Arasan is free for SDIO.
++//! Both boards wire their Wi-Fi chip to GPIO 34-39, which ALT3 connects to
++//! the Arasan SDHCI controller ("EMMC"). The SD card uses the other
++//! controller, sdhost, on GPIO 48-53 (ALT0), so the Arasan is free for SDIO.
++//! The chip's power line WL_REG_ON is pin 129 on the firmware's GPIO
++//! expander on the 3B+ (`/scheme/rpi-firmware/wifi_power`) and GPIO 41 on
++//! the Zero 2 W, whose chip also needs a 32.768 kHz sleep clock on GPIO 43
++//! (GPCLK2).
+ //!
+ //! This probe powers the chip up, initialises the SDIO card, reads the CCCR
+ //! and CIS, enables function 1, wakes the backplane clock and reads the
+@@ -16,7 +20,9 @@
+ //! prints what it finds and exits.
+ //!
+ //! `bcm2835-sdiod standard` loads the standard firmware instead of the
+-//! minimal one.
++//! minimal one (CYW43455). `bcm2835-sdiod fw=<name>` loads
++//! `<name>.bin`/`.txt`/`.clm_blob` (for example `brcmfmac43436s-sdio`)
++//! instead of the files chosen by chip ID and revision.
+ 
+ use std::fs;
+ use std::process;
+@@ -74,7 +80,101 @@ const VENDOR_BROADCOM: u16 = 0x02d0;
+ const GPFSEL_ALT3: u32 = 7;
+ 
+ const FIRMWARE_DIR: &str = "/usr/lib/firmware/brcm";
+-const NVRAM_FILE: &str = "brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt";
++
++/// The chips this driver knows: CYW43455 (Pi 3B+), CYW43430 and CYW43436
++/// (the Pi Zero 2 W has one of these, depending on the board revision).
++const CHIP_43455: u16 = 0x4345;
++const CHIP_43430: u16 = 0xa9a6;
++const CHIP_43436: u16 = 0xaa6c;
++
++#[derive(Clone, Copy, PartialEq)]
++enum Board {
++    Pi3BPlus,
++    Zero2W,
++}
++
++impl Board {
++    fn name(self) -> &'static str {
++        match self {
++            Board::Pi3BPlus => "Pi 3B+",
++            Board::Zero2W => "Pi Zero 2 W",
++        }
++    }
++}
++
++/// The board, from the devicetree's root `compatible`.
++fn board(fdt: &Fdt) -> Board {
++    let zero = fdt
++        .root()
++        .compatible()
++        .all()
++        .any(|c| c == "raspberrypi,model-zero-2-w");
++    if zero {
++        Board::Zero2W
++    } else {
++        Board::Pi3BPlus
++    }
++}
++
++/// Firmware, NVRAM and regulatory data for a chip.
++struct Files {
++    firmware: String,
++    nvram: String,
++    /// The CYW43455 needs it; for the others it is used when present.
++    clm: String,
++    clm_needed: bool,
++    label: String,
++}
++
++/// Picks the files as Raspberry Pi OS does: by chip ID and revision, the
++/// board's own file first (`<name>.raspberrypi,model-zero-2-w.<ext>`),
++/// else the plain one. `fw=<name>` on the command line overrides the name.
++fn files(board: Board, id: u16, rev: u32) -> Result<Files, String> {
++    let mut variant = "minimal".to_string();
++    let mut name = None;
++    for arg in std::env::args().skip(1) {
++        match arg.strip_prefix("fw=") {
++            Some(n) => name = Some(n.to_string()),
++            None => variant = arg,
++        }
++    }
++    if id == CHIP_43455 && name.is_none() {
++        return Ok(Files {
++            firmware: format!("{FIRMWARE_DIR}/cyfmac43455-sdio-{variant}.bin"),
++            nvram: format!("{FIRMWARE_DIR}/brcmfmac43455-sdio.raspberrypi,3-model-b-plus.txt"),
++            clm: format!("{FIRMWARE_DIR}/cyfmac43455-sdio.clm_blob"),
++            clm_needed: true,
++            label: format!("{variant} firmware"),
++        });
++    }
++    // Raspberry Pi OS (firmware-nonfree) links the CYW43430 revision 1 name
++    // to the 43436S files and the B0 (revision 2 and later) name to the
++    // 43436 files for the Zero 2 W; a CYW43436 chip ID takes the 43436 files.
++    let name = match name {
++        Some(n) => n,
++        None => match (id, rev) {
++            (CHIP_43436, _) => "brcmfmac43436-sdio".into(),
++            (CHIP_43430, 1) => "brcmfmac43436s-sdio".into(),
++            (CHIP_43430, r) if r >= 2 => "brcmfmac43436-sdio".into(),
++            _ => return Err(format!("no firmware known for chip 0x{id:04x} rev {rev}")),
++        },
++    };
++    let pick = |ext: &str| {
++        let own = format!("{FIRMWARE_DIR}/{name}.raspberrypi,model-zero-2-w.{ext}");
++        if board == Board::Zero2W && fs::metadata(&own).is_ok() {
++            own
++        } else {
++            format!("{FIRMWARE_DIR}/{name}.{ext}")
++        }
++    };
++    Ok(Files {
++        firmware: pick("bin"),
++        nvram: pick("txt"),
++        clm: pick("clm_blob"),
++        clm_needed: false,
++        label: name,
++    })
++}
+ 
+ /// Function block sizes, in the FBR of each function.
+ const FBR_BLOCK_SIZE: [u32; 3] = [0, 0x110, 0x210];
+@@ -91,8 +191,9 @@ fn main() {
+ fn probe() -> Result<(), String> {
+     let dtb = fs::read("/scheme/kernel.dtb").map_err(|e| format!("no devicetree: {e}"))?;
+     let fdt = Fdt::new(&dtb).map_err(|e| format!("bad devicetree: {e:?}"))?;
++    let board = board(&fdt);
+     let emmc_phys = emmc_address(&fdt).ok_or("no brcm,bcm2835-sdhci in the devicetree")?;
+-    println!("bcm2835-sdiod: EMMC at 0x{emmc_phys:08x}");
++    println!("bcm2835-sdiod: {}, EMMC at 0x{emmc_phys:08x}", board.name());
+ 
+     // GPIO sits 1 MiB below EMMC on all BCM283x.
+     let gpio = Gpio(map(emmc_phys - 0x10_0000, 0x1000)?);
+@@ -102,7 +203,15 @@ fn probe() -> Result<(), String> {
+             .into());
+     }
+ 
+-    power_cycle();
++    match board {
++        Board::Pi3BPlus => power_cycle(),
++        Board::Zero2W => {
++            // The clock manager sits 2 MiB below EMMC (0x7e101000).
++            let cm = map(emmc_phys - 0x1f_f000, 0x1000)?;
++            sleep_clock(&gpio, cm);
++            power_cycle_gpio(&gpio);
++        }
++    }
+ 
+     // Wi-Fi CLK, CMD, DAT0-3 on GPIO 34-39 to the Arasan, pull-ups on CMD
+     // and DAT0-3 (like the sdio overlay of the Pi firmware).
+@@ -168,10 +277,15 @@ fn probe() -> Result<(), String> {
+     println!("bcm2835-sdiod: at {clock} Hz, 4 bits:");
+     report("CMD53", fast);
+ 
+-    if chipid52 & 0xffff != 0x4345 || chipid53 != chipid52 || fast != chipid52 {
+-        return Err("chip IDs differ or are not CYW43455".into());
++    let id = chipid52 as u16;
++    let rev = chipid52 >> 16 & 0xf;
++    if chipid53 != chipid52 || fast != chipid52 {
++        return Err("chip IDs differ between the reads".into());
+     }
+-    println!("bcm2835-sdiod: chip ID OK");
++    if ![CHIP_43455, CHIP_43430, CHIP_43436].contains(&id) {
++        return Err(format!("chip 0x{id:04x} is not a CYW43455, 43430 or 43436"));
++    }
++    println!("bcm2835-sdiod: chip ID OK (0x{id:04x} rev {rev})");
+ 
+     for (func, size) in [(1, bus::F1_BLOCK), (2, wifi::F2_BLOCK)] {
+         host.write_byte(0, FBR_BLOCK_SIZE[func], size as u8)?;
+@@ -180,13 +294,13 @@ fn probe() -> Result<(), String> {
+     let mut bus = Bus::new(host);
+     let chip = Chip::attach(&mut bus, chipid52)?;
+ 
+-    let variant = std::env::args().nth(1).unwrap_or("minimal".into());
+-    let fw_path = format!("{FIRMWARE_DIR}/cyfmac43455-sdio-{variant}.bin");
+-    let nvram_path = format!("{FIRMWARE_DIR}/{NVRAM_FILE}");
+-    let (firmware, nvram_text) = match (fs::read(&fw_path), fs::read(&nvram_path)) {
++    let files = files(board, id, rev)?;
++    println!("bcm2835-sdiod: firmware {}, NVRAM {}", files.firmware, files.nvram);
++    let (fw_path, nvram_path) = (&files.firmware, &files.nvram);
++    let (firmware, nvram_text) = match (fs::read(fw_path), fs::read(nvram_path)) {
+         (Ok(fw), Ok(nv)) => (fw, nv),
+         (fw, nv) => {
+-            for (path, result) in [(&fw_path, fw.err()), (&nvram_path, nv.err())] {
++            for (path, result) in [(fw_path, fw.err()), (nvram_path, nv.err())] {
+                 if let Some(err) = result {
+                     println!("bcm2835-sdiod: no {path}: {err}");
+                 }
+@@ -198,7 +312,8 @@ fn probe() -> Result<(), String> {
+     };
+     let nvram = nvram::prepare(&nvram_text);
+     println!(
+-        "bcm2835-sdiod: {variant} firmware, {} bytes; NVRAM {} bytes",
++        "bcm2835-sdiod: {}, {} bytes; NVRAM {} bytes",
++        files.label,
+         firmware.len(),
+         nvram.len()
+     );
+@@ -216,9 +331,15 @@ fn probe() -> Result<(), String> {
+     let mac: [u8; 6] = mac[..6].try_into().unwrap();
+     println!("bcm2835-sdiod: MAC address {}", station::mac(&mac));
+ 
+-    let clm_path = format!("{FIRMWARE_DIR}/cyfmac43455-sdio.clm_blob");
+-    let clm = fs::read(&clm_path).map_err(|e| format!("{clm_path}: {e}"))?;
+-    station::load_clm(&mut control, &mut bus, &clm)?;
++    match fs::read(&files.clm) {
++        Ok(clm) => station::load_clm(&mut control, &mut bus, &clm)?,
++        Err(e) if files.clm_needed => return Err(format!("{}: {e}", files.clm)),
++        Err(_) => println!("bcm2835-sdiod: no {}, using the firmware's own regulatory data", files.clm),
++    }
++    match control.get_var_u32(&mut bus, "sup_wpa") {
++        Ok(v) => println!("bcm2835-sdiod: firmware supplicant: sup_wpa answers {v}"),
++        Err(e) => println!("bcm2835-sdiod: firmware supplicant: sup_wpa not available ({e})"),
++    }
+     station::up(&mut control, &mut bus)?;
+     let networks = station::scan(&mut control, &mut bus)?;
+     station::print_networks(&networks);
+@@ -283,6 +404,64 @@ fn power_cycle() {
+     thread::sleep(Duration::from_millis(150));
+ }
+ 
++/// Pi Zero 2 W: WL_REG_ON is GPIO 41. Low, then high, so the chip starts
++/// from reset.
++fn power_cycle_gpio(gpio: &Gpio) {
++    const PIN: usize = 41;
++    const GPSET1: usize = 0x20;
++    const GPCLR1: usize = 0x2c;
++    const GPLEV1: usize = 0x38;
++    let bit = 1 << (PIN - 32);
++    println!(
++        "bcm2835-sdiod: WL_ON (GPIO 41) function {} level {}",
++        gpio.function(PIN),
++        gpio.read(GPLEV1) & bit != 0
++    );
++    gpio.set_function(PIN, 1); // output
++    gpio.write(GPCLR1, bit);
++    thread::sleep(Duration::from_millis(20));
++    gpio.write(GPSET1, bit);
++    // brcmfmac waits for the chip's internal regulators after power-on.
++    thread::sleep(Duration::from_millis(150));
++    println!("bcm2835-sdiod: WL_ON cycled, level {}", gpio.read(GPLEV1) & bit != 0);
++}
++
++/// Pi Zero 2 W: the chip's 32.768 kHz sleep clock (LPO) comes from GPCLK2
++/// on GPIO 43 (ALT0). If the firmware did not start it, start it from the
++/// 19.2 MHz oscillator (divisor 585 + 3840/4096, MASH 1).
++fn sleep_clock(gpio: &Gpio, cm: *mut ()) {
++    const PIN: usize = 43;
++    const GPFSEL_ALT0: u32 = 4;
++    const CM_GP2CTL: usize = 0x80;
++    const CM_GP2DIV: usize = 0x84;
++    const PASSWD: u32 = 0x5a00_0000;
++    const ENAB: u32 = 1 << 4;
++    const BUSY: u32 = 1 << 7;
++    const SRC_OSC: u32 = 1;
++    const MASH_1: u32 = 1 << 9;
++    let reg = |off: usize| unsafe { (cm as *mut u32).add(off / 4) };
++    let ctl = unsafe { reg(CM_GP2CTL).read_volatile() };
++    let div = unsafe { reg(CM_GP2DIV).read_volatile() };
++    println!(
++        "bcm2835-sdiod: GPIO 43 function {}, GPCLK2 ctl 0x{ctl:08x} div 0x{div:08x}",
++        gpio.function(PIN)
++    );
++    if ctl & ENAB == 0 || ctl & 0xf != SRC_OSC {
++        unsafe {
++            reg(CM_GP2CTL).write_volatile(PASSWD | (ctl & !ENAB & 0xffff));
++            let _ = wait_until(Duration::from_millis(10), || reg(CM_GP2CTL).read_volatile() & BUSY == 0);
++            reg(CM_GP2DIV).write_volatile(PASSWD | 585 << 12 | 3840);
++            reg(CM_GP2CTL).write_volatile(PASSWD | MASH_1 | SRC_OSC);
++            reg(CM_GP2CTL).write_volatile(PASSWD | MASH_1 | SRC_OSC | ENAB);
++        }
++        println!("bcm2835-sdiod: GPCLK2 started at 32768 Hz");
++    }
++    if gpio.function(PIN) != GPFSEL_ALT0 {
++        gpio.set_function(PIN, GPFSEL_ALT0);
++        println!("bcm2835-sdiod: GPIO 43 set to GPCLK2");
++    }
++}
++
+ /// The EMMC clock from rpi-firmwared, a line "emmc <rate> <max>".
+ fn emmc_clock() -> u32 {
+     let rate = fs::read_to_string("/scheme/rpi-firmware/clocks").ok().and_then(|text| {
+diff --git a/drivers/net/bcm2835-sdiod/src/netif.rs b/drivers/net/bcm2835-sdiod/src/netif.rs
+index 1078b547..db1d951e 100644
+--- a/drivers/net/bcm2835-sdiod/src/netif.rs
++++ b/drivers/net/bcm2835-sdiod/src/netif.rs
+@@ -31,6 +31,10 @@ struct Wlan {
+     rx_frames: u64,
+     tx_frames: u64,
+     tx_errors: u64,
++    /// Associated with the network: up after the join, then as the
++    /// firmware's link events say. netstack reads it through the `link`
++    /// file, and dhcpd asks for a lease only while it is up.
++    link: bool,
+ }
+ 
+ impl Wlan {
+@@ -47,12 +51,15 @@ impl Wlan {
+         self.rx_frames += self.control.rx.len().saturating_sub(before) as u64;
+         for e in self.control.take_events() {
+             match e.kind {
+-                event::E_LINK => println!(
+-                    "bcm2835-sdiod: link {} ({}), reason {}",
+-                    if e.flags & event::LINK_UP != 0 { "up" } else { "down" },
+-                    mac(&e.addr),
+-                    e.reason
+-                ),
++                event::E_LINK => {
++                    self.link = e.flags & event::LINK_UP != 0;
++                    println!(
++                        "bcm2835-sdiod: link {} ({}), reason {}",
++                        if self.link { "up" } else { "down" },
++                        mac(&e.addr),
++                        e.reason
++                    )
++                }
+                 _ => wifi::log_event(&e),
+             }
+         }
+@@ -80,6 +87,10 @@ impl NetworkAdapter for Wlan {
+         Ok(Some(frame.len()))
+     }
+ 
++    fn link_up(&mut self) -> bool {
++        self.link
++    }
++
+     fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
+         match self.control.send_data(&mut self.bus, buf) {
+             Ok(()) => {
+@@ -108,7 +119,7 @@ pub fn serve(bus: Bus, control: Control, mac: [u8; 6]) -> ! {
+     std::env::set_var("INIT_NOTIFY", writer.into_raw_fd().to_string());
+ 
+     daemon::Daemon::new(move |daemon| {
+-        let adapter = Wlan { bus, control, mac, rx_frames: 0, tx_frames: 0, tx_errors: 0 };
++        let adapter = Wlan { bus, control, mac, rx_frames: 0, tx_frames: 0, tx_errors: 0, link: true };
+         let mut scheme = NetworkScheme::new(move || adapter, daemon, SCHEME.to_string());
+         println!("bcm2835-sdiod: {SCHEME} registered, MAC {}", crate::station::mac(&mac));
+         let mut logged = (0, 0);
+diff --git a/init.d/50_bcm2835-sdiod.service b/init.d/50_bcm2835-sdiod.service
+index 97076562..30dfab2f 100644
+--- a/init.d/50_bcm2835-sdiod.service
++++ b/init.d/50_bcm2835-sdiod.service
+@@ -1,5 +1,5 @@
+ [unit]
+-description = "Raspberry Pi 3B+ Wi-Fi chip probe over SDIO"
++description = "Wi-Fi chip over SDIO (Pi 3B+, Pi Zero 2 W)"
+ condition_architecture = ["aarch64"]
+ condition_board = ["raspi3bp"]
+ 
+-- 
+2.53.0
+
