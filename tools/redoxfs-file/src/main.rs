@@ -17,7 +17,7 @@ use std::process::exit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use redoxfs::{Disk, FileSystem, Node, TreePtr, BLOCK_SIZE};
-use syscall::error::{Error, Result, EIO};
+use syscall::error::{Error, Result, EIO, ENOENT};
 
 const SECTOR_SIZE: u64 = 512;
 
@@ -206,7 +206,21 @@ fn main() {
     } else {
         let data = std::fs::read(local).unwrap_or_else(|e| fail(format!("failed to read {local}: {e}")));
         fs.tx(|tx| {
-            let node_ptr = find(tx)?;
+            // A missing file is created (mode 0644, owner root) in its parent
+            // directory, which must exist.
+            let node_ptr = match find(tx) {
+                Ok(ptr) => ptr,
+                Err(e) if e.errno == ENOENT => {
+                    let (dir, name) = target.trim_end_matches('/').rsplit_once('/').unwrap_or(("", target));
+                    let mut parent = TreePtr::root();
+                    for part in dir.split('/').filter(|s| !s.is_empty()) {
+                        parent = tx.find_node(parent, part)?.ptr();
+                    }
+                    tx.create_node(parent, name, Node::MODE_FILE | 0o644, now.as_secs(), now.subsec_nanos())?
+                        .ptr()
+                }
+                Err(e) => return Err(e),
+            };
             tx.truncate_node(node_ptr, 0, now.as_secs(), now.subsec_nanos())?;
             let written = tx.write_node(node_ptr, 0, &data, now.as_secs(), now.subsec_nanos())?;
             assert_eq!(written, data.len(), "short write");
