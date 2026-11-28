@@ -1,0 +1,161 @@
+From 66df0d94d9d6cd3e61285fd7b9bc5844892bc058 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 15:01:08 +0000
+Subject: [PATCH] graphics-ipc, console-draw: shadow buffers in their own
+ mapping, freed before a mode change (redox-rpi #797)
+
+fbcond grew by about 5.5 MB when Orbital took the display and did not
+shrink afterwards (Zero 2 W, v0.7.0-rc1). A connector hotplug allocates
+new display buffers before the old ones are dropped, and relibc's
+allocator keeps a freed screen-sized buffer resident: it gives memory
+back only at the top of a heap segment.
+
+CpuBackedBuffer now keeps its shadow buffer in an anonymous mapping that
+is unmapped on drop, and handle_connector_hotplug releases the old shadow
+buffers before it allocates the new ones.
+---
+ Cargo.lock                               |  1 +
+ drivers/graphics/console-draw/src/lib.rs |  7 +++
+ drivers/graphics/graphics-ipc/Cargo.toml |  1 +
+ drivers/graphics/graphics-ipc/src/lib.rs | 69 +++++++++++++++++++++++-
+ 4 files changed, 76 insertions(+), 2 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index adc557f..e1f3d85 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1122,6 +1122,7 @@ version = "0.1.0"
+ dependencies = [
+  "drm",
+  "drm-sys",
++ "libc",
+ ]
+ 
+ [[package]]
+diff --git a/drivers/graphics/console-draw/src/lib.rs b/drivers/graphics/console-draw/src/lib.rs
+index 8e58e8d..2fdc032 100644
+--- a/drivers/graphics/console-draw/src/lib.rs
++++ b/drivers/graphics/console-draw/src/lib.rs
+@@ -578,6 +578,13 @@ impl TextScreen {
+             return Ok(());
+         }
+ 
++        // Give back the old buffers before allocating the new ones, so a mode
++        // change never holds two sets (redox-rpi #797). The old framebuffers
++        // stay registered until they are removed below.
++        for (_crtc, _fb, buffer) in map.displays.iter_mut() {
++            buffer.release_shadow();
++        }
++
+         let mut new_displays = vec![];
+         let mut new_mapping = vec![];
+         for (crtc, (connector_info, preferred_mode)) in crtc_connector_map {
+diff --git a/drivers/graphics/graphics-ipc/Cargo.toml b/drivers/graphics/graphics-ipc/Cargo.toml
+index 569f33e..8f924a4 100644
+--- a/drivers/graphics/graphics-ipc/Cargo.toml
++++ b/drivers/graphics/graphics-ipc/Cargo.toml
+@@ -7,6 +7,7 @@ edition = "2021"
+ [dependencies]
+ drm.workspace = true
+ drm-sys.workspace = true
++libc.workspace = true
+ 
+ [lints]
+ workspace = true
+diff --git a/drivers/graphics/graphics-ipc/src/lib.rs b/drivers/graphics/graphics-ipc/src/lib.rs
+index 54a3156..6b6d554 100644
+--- a/drivers/graphics/graphics-ipc/src/lib.rs
++++ b/drivers/graphics/graphics-ipc/src/lib.rs
+@@ -67,7 +67,65 @@ pub enum RedoxDrmEvent {
+ pub struct CpuBackedBuffer {
+     buffer: DumbBuffer,
+     map: DumbMapping<'static>,
+-    shadow: Option<Box<[u8]>>,
++    shadow: Option<ShadowBuf>,
++}
++
++/// A shadow buffer in its own anonymous mapping. From the heap, a buffer of
++/// the screen size stayed resident after it was freed: relibc's allocator
++/// gives memory back only at the top of a segment, so a console kept every
++/// buffer it ever had (fbcond after Orbital, redox-rpi #797). The mapping
++/// goes back to the system on drop.
++struct ShadowBuf {
++    ptr: *mut u8,
++    len: usize,
++}
++
++impl ShadowBuf {
++    fn new(len: usize) -> io::Result<ShadowBuf> {
++        let ptr = unsafe {
++            libc::mmap(
++                core::ptr::null_mut(),
++                len.max(1),
++                libc::PROT_READ | libc::PROT_WRITE,
++                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
++                -1,
++                0,
++            )
++        };
++        if ptr == libc::MAP_FAILED {
++            return Err(io::Error::last_os_error());
++        }
++        // Anonymous memory comes zeroed.
++        Ok(ShadowBuf {
++            ptr: ptr.cast(),
++            len,
++        })
++    }
++}
++
++// The mapping belongs to the buffer alone, like the Box it replaces.
++unsafe impl Send for ShadowBuf {}
++unsafe impl Sync for ShadowBuf {}
++
++impl core::ops::Deref for ShadowBuf {
++    type Target = [u8];
++    fn deref(&self) -> &[u8] {
++        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
++    }
++}
++
++impl core::ops::DerefMut for ShadowBuf {
++    fn deref_mut(&mut self) -> &mut [u8] {
++        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
++    }
++}
++
++impl Drop for ShadowBuf {
++    fn drop(&mut self) {
++        unsafe {
++            libc::munmap(self.ptr.cast(), self.len.max(1));
++        }
++    }
+ }
+ 
+ impl CpuBackedBuffer {
+@@ -89,7 +147,7 @@ impl CpuBackedBuffer {
+         {
+             None
+         } else {
+-            Some(vec![0; map.len()].into_boxed_slice())
++            Some(ShadowBuf::new(map.len())?)
+         };
+ 
+         Ok(CpuBackedBuffer {
+@@ -103,6 +161,13 @@ impl CpuBackedBuffer {
+         &self.buffer
+     }
+ 
++    /// Unmap the shadow buffer now, before this buffer is dropped (a mode
++    /// change allocates the new buffers first). Drawing then goes straight to
++    /// the mapping.
++    pub fn release_shadow(&mut self) {
++        self.shadow = None;
++    }
++
+     pub fn has_shadow_buf(&self) -> bool {
+         self.shadow.is_some()
+     }
+-- 
+2.53.0
+
