@@ -1,0 +1,9 @@
+[package]
+name = "desktop-runas"
+description = "Run the desktop session as the user who started it, from root Orbital, without a second login"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"

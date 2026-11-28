@@ -1,0 +1,15 @@
+# Experiment desktop (#805): Orbital from source, pinned to the commit of
+# the upstream package, so that it ends with its session (0001,
+# ORBITAL_EXIT_WITH_SESSION) and "Quit desktop" can bring the console back.
+[source]
+git = "https://gitlab.redox-os.org/redox-os/orbital.git"
+rev = "56620bba7dfd2652bd6b4e97909faecfcde2e27d"
+patches = ["0001-End-Orbital-when-its-session-ends-with-ORBITAL_EXIT_.patch"]
+
+[build]
+template = "cargo"
+
+[package]
+dependencies = [
+    "orbdata"
+]
