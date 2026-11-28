@@ -1,0 +1,309 @@
+From 12c0499057cce19c1ef8449682520354e9273eec Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 09:20:15 +0000
+Subject: [PATCH 131/131] dhcpd: wait for link events, undo the lease on link
+ down (#764)
+
+dhcpd blocks on netcfg events (a new interface, a link that went up or
+down) and keeps a timer only while a link is up without a lease. On link
+down it removes the address and its routes (addr/rm); the default route
+moves to another lease or, with none left, the name server goes back to
+/etc/net/dns and the domain is cleared. A DHCPRELEASE cannot go out
+without a link, so the server lets the lease run out. A fixed address
+stays. /tmp/dhcpd.status has one line per interface: no link, asking,
+no answer, bound <address> via <router>, fixed <address>. Fixes the
+address and route that stayed after link down (#763).
+---
+ dhcpd/Cargo.toml  |   4 +
+ dhcpd/src/main.rs | 201 ++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 190 insertions(+), 15 deletions(-)
+
+diff --git a/dhcpd/Cargo.toml b/dhcpd/Cargo.toml
+index a7b1b23a..fac0fe30 100644
+--- a/dhcpd/Cargo.toml
++++ b/dhcpd/Cargo.toml
+@@ -10,5 +10,9 @@ toml.workspace = true
+ # The board, from the devicetree's root compatible (redox-rpi #653).
+ fdt = { git = "https://github.com/repnop/fdt.git", rev = "059bb23" }
+ 
++[target.'cfg(target_os = "redox")'.dependencies]
++# Link and interface events from netcfg (redox-rpi #764).
++redox_event.workspace = true
++
+ [lints]
+ workspace = true
+diff --git a/dhcpd/src/main.rs b/dhcpd/src/main.rs
+index 16c81944..3c125382 100644
+--- a/dhcpd/src/main.rs
++++ b/dhcpd/src/main.rs
+@@ -642,12 +642,150 @@ fn set_static(iface: &str, lease: &Lease) -> Result<(), String> {
+     Ok(())
+ }
+ 
++/// What one interface is doing, for `STATUS`.
++fn set_status(status: &mut BTreeMap<String, String>, iface: &str, text: String) {
++    if status.get(iface) == Some(&text) {
++        return;
++    }
++    status.insert(iface.to_string(), text);
++    let all: String = status.iter().map(|(i, t)| format!("{i}: {t}\n")).collect();
++    let _ = std::fs::write(STATUS, all);
++}
++
++/// One status line per interface (redox-rpi #764, RFC 0004): `no link`,
++/// `asking`, `no answer`, `bound <address> via <router>`, `fixed <address>`.
++const STATUS: &str = "/tmp/dhcpd.status";
++
++/// Undoes a lease when its link went down: removes the address and every
++/// route through the interface (netcfg `addr/rm`). A DHCPRELEASE cannot be
++/// sent without a link, so the server lets the lease run out.
++fn release(iface: &str, lease: &Lease) {
++    match set_iface_cfg_value(iface, "addr/rm", "\n") {
++        Ok(()) => println!(
++            "DHCP: {iface} link down, {}/{} and its routes removed",
++            fmt_ip(lease.addr),
++            lease.mask_len
++        ),
++        Err(err) => eprintln!("dhcpd: {iface}: {err}"),
++    }
++}
++
++/// No lease is left: the name server goes back to the image's
++/// `/etc/net/dns` (what netstack starts with), the domain is cleared.
++fn clear_default(verbose: bool) {
++    let dns = std::fs::read_to_string("/etc/net/dns")
++        .ok()
++        .and_then(|d| parse_ip(&d))
++        .unwrap_or([8, 8, 8, 8]);
++    let _ = set_cfg_value("resolv/nameserver", &fmt_ip(dns));
++    let _ = set_cfg_value("resolv/domain", "\n");
++    if verbose {
++        println!("DHCP: no lease, name server {}", fmt_ip(dns));
++    }
++}
++
++/// Waits for netcfg: a new interface (`ifaces`) or a link that went up or
++/// down (`ifaces/<name>/link`), and for the next DHCP retry while a link is
++/// up without a lease. With no link there is no timer at all.
++#[cfg(target_os = "redox")]
++struct Events {
++    queue: event::RawEventQueue,
++    timer: File,
++    /// Kept open: netcfg posts events on these handles.
++    watched: BTreeMap<String, File>,
++}
++
++#[cfg(target_os = "redox")]
++impl Events {
++    fn new() -> Result<Self, String> {
++        use std::os::fd::AsRawFd;
++        let queue = event::RawEventQueue::new().map_err(|e| format!("event queue: {e:?}"))?;
++        // CLOCK_MONOTONIC
++        let timer = OpenOptions::new()
++            .read(true)
++            .write(true)
++            .open("/scheme/time/1")
++            .map_err(|e| format!("/scheme/time/1: {e}"))?;
++        queue
++            .subscribe(timer.as_raw_fd() as usize, 0, event::EventFlags::READ)
++            .map_err(|e| format!("timer events: {e:?}"))?;
++        let mut events = Events { queue, timer, watched: BTreeMap::new() };
++        events.watch("ifaces")?;
++        Ok(events)
++    }
++
++    /// Subscribes to a netcfg file once.
++    fn watch(&mut self, path: &str) -> Result<(), String> {
++        use std::os::fd::AsRawFd;
++        if self.watched.contains_key(path) {
++            return Ok(());
++        }
++        let file = File::open(format!("/scheme/netcfg/{path}")).map_err(|e| format!("{path}: {e}"))?;
++        self.queue
++            .subscribe(file.as_raw_fd() as usize, 1, event::EventFlags::READ)
++            .map_err(|e| format!("{path} events: {e:?}"))?;
++        self.watched.insert(path.to_string(), file);
++        Ok(())
++    }
++
++    /// Blocks until an event, or until `deadline` if one is given.
++    fn wait(&mut self, deadline: Option<Instant>) {
++        if let Some(deadline) = deadline {
++            let left = deadline.saturating_duration_since(Instant::now());
++            if left.is_zero() {
++                return;
++            }
++            // TimeSpec: i64 seconds, i32 nanoseconds, padding.
++            let mut now = [0u8; 16];
++            if self.timer.read(&mut now).ok() != Some(16) {
++                thread::sleep(left);
++                return;
++            }
++            let sec = i64::from_ne_bytes(now[0..8].try_into().unwrap());
++            let nsec = i32::from_ne_bytes(now[8..12].try_into().unwrap()) as i64;
++            let at = sec * 1_000_000_000 + nsec + left.as_nanos() as i64;
++            let mut spec = [0u8; 16];
++            spec[0..8].copy_from_slice(&(at / 1_000_000_000).to_ne_bytes());
++            spec[8..12].copy_from_slice(&((at % 1_000_000_000) as i32).to_ne_bytes());
++            if self.timer.write(&spec).ok() != Some(16) {
++                thread::sleep(left);
++                return;
++            }
++        }
++        if self.queue.next_event().is_err() {
++            thread::sleep(SCAN);
++        }
++    }
++}
++
++/// Elsewhere (unit tests on the build host): ask again every `SCAN`.
++#[cfg(not(target_os = "redox"))]
++struct Events;
++
++#[cfg(not(target_os = "redox"))]
++impl Events {
++    fn new() -> Result<Self, String> {
++        Ok(Events)
++    }
++    fn watch(&mut self, _path: &str) -> Result<(), String> {
++        Ok(())
++    }
++    fn wait(&mut self, deadline: Option<Instant>) {
++        let left = deadline.map_or(SCAN, |d| d.saturating_duration_since(Instant::now()));
++        thread::sleep(left.min(SCAN));
++    }
++}
++
+ /// Gets a lease on every interface with a link, also those that appear or
+ /// get a link later, and keeps one default route: the first wired
+ /// interface with a lease, else Wi-Fi. After link-up it asks without pause;
+ /// with no lease after `ANSWER_WITHIN` it prints one line and then asks
+-/// quietly every `RETRY`. A link that goes down and up again (a cable
+-/// plugged in again) starts over.
++/// quietly every `RETRY`.
++///
++/// When a link goes down, the lease is undone (redox-rpi #764): address and
++/// routes go, the default route moves to another lease or, with none left,
++/// the name server goes back to the image's. While no link is up dhcpd
++/// blocks on netcfg's link events: no timer, no lines.
+ ///
+ /// An interface with a fixed address gets it as soon as it appears and
+ /// keeps it when the link goes down.
+@@ -657,6 +795,14 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+     let mut links: BTreeMap<String, bool> = BTreeMap::new();
+     let mut default: Option<(String, Lease)> = None;
+     let mut failed: BTreeSet<String> = BTreeSet::new();
++    let mut status: BTreeMap<String, String> = BTreeMap::new();
++    let mut events = match Events::new() {
++        Ok(events) => events,
++        Err(err) => {
++            eprintln!("dhcpd: {err}");
++            process::exit(1);
++        }
++    };
+     loop {
+         let mut ifaces = list_ifaces();
+         ifaces.retain(|name| wanted.contains_key(name));
+@@ -666,9 +812,10 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+                 if !leases.contains_key(&iface) {
+                     match set_static(&iface, lease) {
+                         Ok(()) => {
+-                            leases.insert(iface, lease.clone());
++                            leases.insert(iface.clone(), lease.clone());
++                            set_status(&mut status, &iface, format!("fixed {}/{}", fmt_ip(lease.addr), lease.mask_len));
+                         }
+-                        // Tried again on the next scan, quietly.
++                        // Tried again with the next event, quietly.
+                         Err(err) if failed.insert(iface.clone()) => {
+                             eprintln!("dhcpd: {iface}: {err}")
+                         }
+@@ -677,13 +824,22 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+                 }
+                 continue;
+             }
++            if let Err(err) = events.watch(&format!("ifaces/{iface}/link")) {
++                if failed.insert(iface.clone()) {
++                    eprintln!("dhcpd: {err}");
++                }
++            }
+             let up = link_up(&iface);
+             match links.insert(iface.clone(), up) {
+-                // Link lost: ask again when it is back, maybe on another
+-                // network. Address and route stay until then.
++                // Link lost: undo the lease; ask again when it is back,
++                // maybe on another network.
+                 Some(true) if !up => {
+-                    leases.remove(&iface);
+                     waiting.remove(&iface);
++                    // The default route through it went with addr/rm; the
++                    // comparison below moves it or clears the name server.
++                    if let Some(lease) = leases.remove(&iface) {
++                        release(&iface, &lease);
++                    }
+                 }
+                 // Link back: start over.
+                 Some(false) if up => {
+@@ -691,7 +847,11 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+                 }
+                 _ => {}
+             }
+-            if !up || leases.contains_key(&iface) {
++            if !up {
++                set_status(&mut status, &iface, "no link".into());
++                continue;
++            }
++            if leases.contains_key(&iface) {
+                 continue;
+             }
+             let wait = waiting.entry(iface.clone()).or_insert_with(Waiting::new);
+@@ -701,9 +861,14 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+             match try_lease(&iface, verbose) {
+                 Some(lease) => {
+                     waiting.remove(&iface);
++                    let via = lease.router.map_or(String::new(), |r| format!(" via {}", fmt_ip(r)));
++                    set_status(&mut status, &iface, format!("bound {}/{}{via}", fmt_ip(lease.addr), lease.mask_len));
+                     leases.insert(iface, lease);
+                 }
+-                None if wait.since.elapsed() < ANSWER_WITHIN => {}
++                None if wait.since.elapsed() < ANSWER_WITHIN => {
++                    set_status(&mut status, &iface, "asking".into());
++                    wait.next = Instant::now() + SCAN;
++                }
+                 None => {
+                     if !wait.told {
+                         eprintln!(
+@@ -713,19 +878,25 @@ fn watch(verbose: bool, wanted: BTreeMap<String, Start>) -> ! {
+                         );
+                         wait.told = true;
+                     }
++                    set_status(&mut status, &iface, "no answer".into());
+                     wait.next = Instant::now() + RETRY;
+                 }
+             }
+         }
+         let want = preferred(&leases).map(|(n, l)| (n.clone(), l.clone()));
+-        if want.is_some() && want != default {
+-            let (name, lease) = want.as_ref().unwrap();
+-            match apply_default(name, lease, verbose) {
+-                Ok(()) => default = want,
+-                Err(err) => eprintln!("dhcpd: {err}"),
++        if want != default {
++            match &want {
++                Some((name, lease)) => match apply_default(name, lease, verbose) {
++                    Ok(()) => default = want,
++                    Err(err) => eprintln!("dhcpd: {err}"),
++                },
++                None => {
++                    clear_default(verbose);
++                    default = None;
++                }
+             }
+         }
+-        thread::sleep(SCAN);
++        events.wait(waiting.values().map(|w| w.next).min());
+     }
+ }
+ 
+-- 
+2.53.0
+

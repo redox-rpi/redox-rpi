@@ -1,0 +1,189 @@
+From 9d2559a0ea24aa7879c39a8f77fc71a909b3aeb7 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 09:20:14 +0000
+Subject: [PATCH 129/131] netstack: addr/rm and an event on ifaces/<name>/link
+ (#764)
+
+netcfg gets ifaces/<name>/addr/rm: any write removes the interface's
+address and every route through it, also a default route. netstack reads
+each device's link (the driver keeps it) at most every 500 ms from its
+poll and, when it changed, posts an event to readers of
+ifaces/<name>/link, so dhcpd can wait for a link instead of asking again.
+Step 1 of RFC 0004 in redox-rpi.
+---
+ netstack/src/link/ethernet.rs      |  4 ++++
+ netstack/src/link/mod.rs           |  2 ++
+ netstack/src/router/route_table.rs |  6 +++++
+ netstack/src/scheme/mod.rs         | 32 ++++++++++++++++++++++++++
+ netstack/src/scheme/netcfg/mod.rs  | 36 ++++++++++++++++++++++++++++++
+ 5 files changed, 80 insertions(+)
+
+diff --git a/netstack/src/link/ethernet.rs b/netstack/src/link/ethernet.rs
+index 78dcde0e..4dfd4beb 100644
+--- a/netstack/src/link/ethernet.rs
++++ b/netstack/src/link/ethernet.rs
+@@ -486,4 +486,8 @@ impl LinkDevice for EthernetLink {
+         let IpCidr::Ipv4(addr) = addr;
+         self.ip_address = Some(addr);
+     }
++
++    fn clear_ip_address(&mut self) {
++        self.ip_address = None;
++    }
+ }
+diff --git a/netstack/src/link/mod.rs b/netstack/src/link/mod.rs
+index 68425172..78abad8e 100644
+--- a/netstack/src/link/mod.rs
++++ b/netstack/src/link/mod.rs
+@@ -29,6 +29,8 @@ pub trait LinkDevice {
+ 
+     fn ip_address(&self) -> Option<IpCidr>;
+     fn set_ip_address(&mut self, addr: IpCidr);
++    /// Forget the address (netcfg `addr/rm`, dhcpd on link down)
++    fn clear_ip_address(&mut self) {}
+ 
+     /// The joined IPv4 multicast groups, for devices that filter in hardware
+     fn set_multicast(&mut self, _groups: &[Ipv4Address]) {}
+diff --git a/netstack/src/router/route_table.rs b/netstack/src/router/route_table.rs
+index 51943c93..83ee72fe 100644
+--- a/netstack/src/router/route_table.rs
++++ b/netstack/src/router/route_table.rs
+@@ -81,6 +81,12 @@ impl RouteTable {
+         self.rules.retain(|rule| rule.filter != filter);
+     }
+ 
++    /// Removes every rule through `dev`: its network, multicast and a
++    /// default route through it.
++    pub fn remove_device(&mut self, dev: &str) {
++        self.rules.retain(|rule| rule.dev.as_ref() != dev);
++    }
++
+     pub fn change_src(&mut self, old_src: IpAddress, new_src: IpAddress) {
+         for rule in self.rules.iter_mut().filter(|rule| rule.src == old_src) {
+             rule.src = new_src;
+diff --git a/netstack/src/scheme/mod.rs b/netstack/src/scheme/mod.rs
+index 031f1e27..32d81874 100644
+--- a/netstack/src/scheme/mod.rs
++++ b/netstack/src/scheme/mod.rs
+@@ -1,4 +1,5 @@
+ use std::cell::RefCell;
++use std::collections::BTreeMap;
+ use std::fs::File;
+ use std::io::{Read, Write};
+ use std::os::fd::{FromRawFd, RawFd};
+@@ -71,6 +72,10 @@ pub struct Smolnetd {
+ 
+     /// The groups last given to the link devices
+     multicast: Option<Vec<Ipv4Address>>,
++    /// The link state last told to netcfg readers, per device (#764)
++    links: BTreeMap<Rc<str>, bool>,
++    /// When the links were read last
++    links_read: Option<::std::time::Instant>,
+ }
+ 
+ impl Smolnetd {
+@@ -170,6 +175,8 @@ impl Smolnetd {
+                 Rc::clone(&devices),
+             )?,
+             multicast: None,
++            links: BTreeMap::new(),
++            links_read: None,
+         })
+     }
+ 
+@@ -272,6 +279,7 @@ impl Smolnetd {
+         };
+ 
+         self.update_multicast();
++        self.update_links();
+         self.notify_sockets()?;
+ 
+         Ok(::std::cmp::min(
+@@ -280,6 +288,30 @@ impl Smolnetd {
+         ))
+     }
+ 
++    /// Tell netcfg readers when a device's link went up or down. The driver
++    /// keeps the state (it asks the PHY every few seconds); this reads it at
++    /// most every LINK_READ, from the poll that runs at least every
++    /// MAX_CHECK_TIMEOUT anyway, so a busy network costs no extra reads.
++    fn update_links(&mut self) {
++        const LINK_READ: ::std::time::Duration = ::std::time::Duration::from_millis(500);
++        let now_t = ::std::time::Instant::now();
++        if self.links_read.is_some_and(|t| now_t.duration_since(t) < LINK_READ) {
++            return;
++        }
++        self.links_read = Some(now_t);
++        let now: Vec<(Rc<str>, bool)> = self
++            .devices
++            .borrow()
++            .iter()
++            .map(|dev| (dev.name().clone(), dev.link_up()))
++            .collect();
++        for (name, up) in now {
++            if self.links.insert(name.clone(), up).is_some_and(|was| was != up) {
++                self.netcfg_scheme.link_changed(&name, up);
++            }
++        }
++    }
++
+     /// Give the link devices the joined multicast groups when they changed.
+     fn update_multicast(&mut self) {
+         let mut groups: Vec<Ipv4Address> = self
+diff --git a/netstack/src/scheme/netcfg/mod.rs b/netstack/src/scheme/netcfg/mod.rs
+index 9b99670d..ddfbf219 100644
+--- a/netstack/src/scheme/netcfg/mod.rs
++++ b/netstack/src/scheme/netcfg/mod.rs
+@@ -323,6 +323,31 @@ fn mk_iface_node(
+                             Ok(())
+                         }
+                     },
++                    // Any write removes the address and every route through
++                    // this interface, also a default route (redox-rpi #764:
++                    // dhcpd on link down).
++                    "rm" => {
++                        wo [iface, notifier, devices, route_table, name] (bool, false)
++                        |cur_value, _line| {
++                            *cur_value = true;
++                            Ok(())
++                        }
++                        |cur_value| {
++                            if mem::take(cur_value) {
++                                if let Some(dev) = devices.borrow_mut().get_mut(&name) {
++                                    if let Some(old_addr) = dev.ip_address() {
++                                        iface.borrow_mut().update_ip_addrs(|addrs| addrs.retain(|addr| *addr != old_addr));
++                                    }
++                                    dev.clear_ip_address();
++                                }
++                                route_table.borrow_mut().remove_device(&name);
++                                notifier.borrow_mut().schedule_notify(&format!("ifaces/{name}/addr/list"));
++                                notifier.borrow_mut().schedule_notify("route/list");
++                            }
++                            prefer_default_source(&iface, &route_table.borrow());
++                            Ok(())
++                        }
++                    },
+                 }
+     }
+ }
+@@ -511,6 +536,17 @@ impl NetCfgScheme {
+         })
+     }
+ 
++    /// Tells readers of `ifaces/<name>/link` (dhcpd) that the link went up
++    /// or down (redox-rpi #764), so they can wait instead of asking again.
++    pub fn link_changed(&mut self, name: &str, up: bool) {
++        debug!("netcfg: {name} link {}", if up { "up" } else { "down" });
++        self.inner.notifier.borrow_mut().schedule_notify(&format!("ifaces/{name}/link"));
++        let fds_to_notify = self.inner.notifier.borrow_mut().get_notified_fds();
++        for fd in fds_to_notify {
++            let _ = post_fevent(self.handler.socket(), fd, syscall::EVENT_READ.bits());
++        }
++    }
++
+     /// Tells readers of `ifaces` (dhcpd) that a device was added.
+     pub fn interface_added(&mut self, name: &str) {
+         debug!("netcfg: interface {name} added");
+-- 
+2.53.0
+

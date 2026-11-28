@@ -1,0 +1,58 @@
+From d4be667b1365e4900ed84d1969fcd8f47f10c034 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 28 Nov 2026 09:20:15 +0000
+Subject: [PATCH 130/131] testnetd: a link that a test can pull and plug (#764)
+
+echo 0 > /tmp/testnetd.link takes the fake adapter's link down: its
+link file says 0 and nothing is answered. echo 1, or no file, brings it
+back. For QEMU and Pi tests of dhcpd on link state without a person.
+---
+ drivers/net/testnetd/src/main.rs | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/net/testnetd/src/main.rs b/drivers/net/testnetd/src/main.rs
+index 32432d32..7270b5e3 100644
+--- a/drivers/net/testnetd/src/main.rs
++++ b/drivers/net/testnetd/src/main.rs
+@@ -7,6 +7,10 @@
+ //! another interface should arrive here. The counters are written to
+ //! `/tmp/testnetd.log` after each change.
+ //!
++//! `echo 0 > /tmp/testnetd.link` takes the link down (as if the cable were
++//! pulled: nothing is answered, the `link` file says 0), `echo 1` or no
++//! file brings it back (redox-rpi #764, dhcpd on link state).
++//!
+ //! Run from a shell: it starts itself again as a daemon and returns once
+ //! the scheme is registered.
+ 
+@@ -23,6 +27,11 @@ use responder::{Counters, Responder};
+ 
+ const NIC_MAC: [u8; 6] = [0x02, 0, 0, 0, 0x09, 0x02];
+ const LOG: &str = "/tmp/testnetd.log";
++const LINK: &str = "/tmp/testnetd.link";
++
++fn link() -> bool {
++    std::fs::read_to_string(LINK).map_or(true, |state| state.trim() != "0")
++}
+ 
+ struct TestAdapter {
+     responder: Responder,
+@@ -65,7 +74,15 @@ impl NetworkAdapter for TestAdapter {
+         Ok(Some(frame.len()))
+     }
+ 
++    fn link_up(&mut self) -> bool {
++        link()
++    }
++
+     fn write_packet(&mut self, buf: &[u8]) -> Result<usize> {
++        // No cable: the frame goes nowhere.
++        if !link() {
++            return Ok(buf.len());
++        }
+         let replies = self.responder.handle(buf);
+         self.rx.extend(replies);
+         self.log();
+-- 
+2.53.0
+
