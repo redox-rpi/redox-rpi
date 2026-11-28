@@ -1,0 +1,276 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <noreply@anthropic.com>
+Date: Tue, 24 Nov 2026 15:33:42 +0000
+Subject: [PATCH] memory: out of memory in fork, mremap and DMA allocation is
+ ENOMEM
+
+Three places panicked when a page or a page table could not be
+allocated (redox-rpi#679):
+
+- Grant::copy_mappings (fork, AddrSpaceWrapper::try_clone): a shared
+  anonymous grant is mapped lazily, so the clone fills every untouched
+  page, and expect("TODO: handle OOM") fired when memory ran out. Any
+  process could reach it with a large MAP_SHARED mapping and fork().
+  Now the grant is copied either completely or not at all: on an error
+  the pages copied into the new address space are unmapped and their
+  refs dropped, and fork fails with ENOMEM. A page table allocation
+  failure in the new address space used to end the loop silently and
+  left the child's grant half mapped (the rest would fault in as zero
+  pages); it is now ENOMEM as well.
+- Grant::transfer (moving grants, e.g. mremap): expect("TODO: OOM").
+  It now maps all pages at the destination first, while they are still
+  mapped at the source, and unmaps the source only when that worked. On
+  failure the grant goes back unchanged and the move fails with ENOMEM.
+- Grant::zeroed_phys_contiguous (DMA buffers through
+  /scheme/memory/zeroed?phys_contiguous): expect("TODO: page table OOM").
+  It now unmaps what it mapped, frees the range and returns ENOMEM.
+
+No OOM kill: the call fails with ENOMEM.
+
+Known limits: shared pages that copy_mappings filled in the parent
+before the error stay in the parent (they are valid pages of its
+mapping). A move of several grants in one call can stop after some of
+them moved. Lazy sharing across fork, which would avoid filling the
+untouched pages at all, needs back references and is a design change
+upstream.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/context/memory.rs | 145 +++++++++++++++++++++++++++++++++---------
+ 1 file changed, 115 insertions(+), 30 deletions(-)
+
+diff --git a/src/context/memory.rs b/src/context/memory.rs
+index 71789efc..b6d487e8 100644
+--- a/src/context/memory.rs
++++ b/src/context/memory.rs
+@@ -481,7 +481,7 @@ impl AddrSpaceWrapper {
+             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
+             let middle_span = middle.span();
+ 
+-            dst.grants.insert(match src_opt.as_mut() {
++            let moved = match src_opt.as_mut() {
+                 Some((_, other_mapper, other_flusher)) => middle.transfer(
+                     dst_grant_base,
+                     page_flags(new_flags),
+@@ -489,7 +489,7 @@ impl AddrSpaceWrapper {
+                     Some(&mut dst.table.utable),
+                     other_flusher,
+                     &mut dst_flusher,
+-                )?,
++                ),
+                 None => middle.transfer(
+                     dst_grant_base,
+                     page_flags(new_flags),
+@@ -497,8 +497,20 @@ impl AddrSpaceWrapper {
+                     None,
+                     &mut dst_flusher,
+                     &mut NopFlusher,
+-                )?,
+-            });
++                ),
++            };
++            match moved {
++                Ok(grant) => dst.grants.insert(grant),
++                Err((middle, err)) => {
++                    // Out of memory: the grant stays where it was. Grants
++                    // moved before it in this call stay moved.
++                    src_opt
++                        .as_mut()
++                        .map_or(&mut dst.grants, |(g, _, _)| &mut *g)
++                        .insert(middle);
++                    return Err(err);
++                }
++            }
+ 
+             prev_grant_end = middle_span.base.next_by(middle_span.count);
+             let pages_advanced = prev_grant_end.offset_from(remaining_src_span.base);
+@@ -1366,18 +1378,34 @@ impl Grant {
+             clean_and_invalidate_dcache(base, span.count);
+         }
+ 
+-        for (i, page) in span.pages().enumerate() {
+-            let frame = base.next_by(i);
+-
+-            get_page_info(frame)
++        for i in 0..span.count {
++            get_page_info(base.next_by(i))
+                 .expect("PageInfo must exist for allocated frame")
+                 .refcount
+                 .store(RefCount::One.to_raw(), Ordering::Relaxed);
++        }
++
++        for (i, page) in span.pages().enumerate() {
++            let frame = base.next_by(i);
+ 
+             unsafe {
+-                let result = mapper
+-                    .map_phys(page.start_address(), frame.base(), flags, 0)
+-                    .expect("TODO: page table OOM");
++                let Some(result) = mapper.map_phys(page.start_address(), frame.base(), flags, 0)
++                else {
++                    // No memory for a page table: unmap what is mapped and
++                    // free the whole range once the TLBs are flushed
++                    // (redox-rpi#679).
++                    for done in span.pages().take(i) {
++                        if let Some((_, _, _, flush)) = mapper.unmap_phys(done.start_address()) {
++                            flush.ignore();
++                        }
++                    }
++                    flusher.queue(
++                        base,
++                        NonZeroUsize::new(span.count),
++                        TlbShootdownActions::FREE,
++                    );
++                    return Err(Enomem);
++                };
+                 result.ignore();
+ 
+                 flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+@@ -1789,8 +1817,15 @@ impl Grant {
+             CopyMappingsMode::Borrowed => (true, RefKind::Shared),
+         };
+ 
++        // Pages [0, done) are copied into dst. On an error the grant is not
++        // copied at all: those pages are unmapped from dst again and their
++        // refs dropped (redox-rpi#679). Pages the loop filled in the source
++        // (shared pages that were never touched) stay there.
++        let mut done = 0;
+         // TODO: Page table iterator
++        let result = (|| -> Result<(), Enomem> {
+         for page_idx in 0..page_count {
++            done = page_idx;
+             let src_page = src_base.next_by(page_idx);
+             let dst_page = dst_base.next_by(page_idx).start_address();
+ 
+@@ -1820,11 +1855,12 @@ impl Grant {
+                         // TODO: Omit the unnecessary subsequent add_ref call.
+                         let must_be_zero = true;
+                         let new_frame =
+-                            init_frame(RefCount::One, must_be_zero).expect("TODO: handle OOM");
+-                        let src_flush = unsafe {
+-                            src_mapper
+-                                .map_phys(src_page.start_address(), new_frame.base(), flags, 0)
+-                                .expect("TODO: handle OOM")
++                            init_frame(RefCount::One, must_be_zero).map_err(|_| Enomem)?;
++                        let Some(src_flush) = (unsafe {
++                            src_mapper.map_phys(src_page.start_address(), new_frame.base(), flags, 0)
++                        }) else {
++                            handle_free_action(new_frame, None);
++                            return Err(Enomem);
+                         };
+                         unsafe {
+                             src_flush.ignore();
+@@ -1906,7 +1942,9 @@ impl Grant {
+                     0,
+                 )
+             }) else {
+-                break;
++                // No memory for a page table: drop the ref taken for dst.
++                dst_flusher.queue(src_frame, None, TlbShootdownActions::FREE);
++                return Err(Enomem);
+             };
+             unsafe {
+                 map_result.ignore();
+@@ -1914,6 +1952,20 @@ impl Grant {
+ 
+             dst_flusher.queue(src_frame, None, TlbShootdownActions::NEW_MAPPING);
+         }
++        Ok(())
++        })();
++
++        if let Err(err) = result {
++            for page_idx in 0..done {
++                let dst_page = dst_base.next_by(page_idx).start_address();
++                if let Some((phys, _, _, flush)) = unsafe { dst_mapper.unmap_phys(dst_page) } {
++                    // dst is a new address space that has never run.
++                    unsafe { flush.ignore() };
++                    dst_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::FREE);
++                }
++            }
++            return Err(err);
++        }
+ 
+         Ok(Grant {
+             base: dst_base,
+@@ -1942,13 +1994,58 @@ impl Grant {
+         mut dst_mapper: Option<&mut PageMapper>,
+         src_flusher: &mut Flusher,
+         dst_flusher: &mut impl GenericFlusher,
+-    ) -> Result<Grant> {
++    ) -> Result<Grant, (Grant, Error)> {
+         assert!(!self.info.is_pinned());
+ 
++        // First map every page at dst while it is still mapped at src: a
++        // page table allocation can fail, unmapping never allocates. On
++        // failure the dst pages are unmapped again and the grant comes back
++        // unchanged, still mapped at src (redox-rpi#679). A move does not
++        // change the frames' refcounts.
+         for src_page in self.span().pages() {
+             let dst_page = dst_base.next_by(src_page.offset_from(self.base));
+ 
+             // TODO: Validate flags?
++            let Some((phys, _)) = src_mapper.translate(src_page.start_address()) else {
++                continue;
++            };
++            let mapped = {
++                let mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
++                unsafe { mapper.map_phys(dst_page.start_address(), phys, flags, 0) }
++            };
++            let Some(flush) = mapped else {
++                let done = PageSpan::new(self.base, src_page.offset_from(self.base));
++                for undo_page in done.pages() {
++                    if src_mapper.translate(undo_page.start_address()).is_none() {
++                        continue;
++                    }
++                    let undo_dst = dst_base.next_by(undo_page.offset_from(self.base));
++                    let mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
++                    if let Some((phys, _, _, flush)) =
++                        unsafe { mapper.unmap_phys(undo_dst.start_address()) }
++                    {
++                        unsafe { flush.ignore() };
++                        // Other threads of a running dst address space may
++                        // have the entry in their TLB: flush it, but do not
++                        // free the frame, src still owns it. Within one
++                        // address space dst_flusher is a NopFlusher and
++                        // src_flusher flushes that address space.
++                        let frame = Frame::containing(phys);
++                        if dst_mapper.is_some() {
++                            dst_flusher.queue(frame, None, TlbShootdownActions::MOVE);
++                        } else {
++                            src_flusher.queue(frame, None, TlbShootdownActions::MOVE);
++                        }
++                    }
++                }
++                return Err((self, Error::new(ENOMEM)));
++            };
++            unsafe {
++                flush.ignore();
++            }
++        }
++
++        for src_page in self.span().pages() {
+             let Some((phys, lvl, _flags, flush)) =
+                 (unsafe { src_mapper.unmap_phys(src_page.start_address()) })
+             else {
+@@ -1961,18 +2058,6 @@ impl Grant {
+             debug_assert_eq!(lvl, 0, "no userspace pages have huge mappings");
+ 
+             src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
+-
+-            let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
+-
+-            // TODO: Preallocate to handle OOM?
+-            let flush = unsafe {
+-                dst_mapper
+-                    .map_phys(dst_page.start_address(), phys, flags, 0)
+-                    .expect("TODO: OOM")
+-            };
+-            unsafe {
+-                flush.ignore();
+-            }
+             dst_flusher.queue(
+                 Frame::containing(phys),
+                 None,
+-- 
+2.53.0
+
