@@ -1,13 +1,13 @@
 # Experiment: keyboard-de, German keyboard layout (#36)
 
 **Merged:** the patches are base patches in every image now:
-[`0136`](../../base/0136-inputd-German-keyboard-layout-de-with-AltGr.patch)
+[`0141`](../../base/0141-inputd-German-keyboard-layout-de-with-AltGr.patch)
 (de map, AltGr),
-[`0137`](../../base/0137-inputd-dead-keys-for-the-German-layout-keymap-from-a.patch)
+[`0142`](../../base/0142-inputd-dead-keys-for-the-German-layout-keymap-from-a.patch)
 (dead keys, `--keymap-file`),
-[`0138`](../../base/0138-usbhidd-ISO-keys-and-as-dwc2d-sends-them-redox-rpi-3.patch)
+[`0143`](../../base/0143-usbhidd-ISO-keys-and-as-dwc2d-sends-them-redox-rpi-3.patch)
 (usbhidd ISO keys) and
-[`0139`](../../base/0139-inputd-keyboard-layout-at-boot-from-KEYMAP-in-cmdlin.patch)
+[`0144`](../../base/0144-inputd-keyboard-layout-at-boot-from-KEYMAP-in-cmdlin.patch)
 (layout at boot). `--experiment keyboard-de` is accepted and does nothing.
 
 The USB keyboard typed with the US layout only. `dwc2d` sends the key's

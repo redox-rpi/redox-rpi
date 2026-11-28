@@ -2,7 +2,7 @@
 # Check the German keyboard layout (#36) in QEMU: KEYMAP=de on the kernel
 # command line (cmdline.txt on a Pi, QEMU -append here) switches inputd to
 # `de` at boot; type on QEMU's USB keyboard at the console's login prompt,
-# and compare the file the typed command wrote. Any image since base 0139.
+# and compare the file the typed command wrote. Any image since base 0144.
 # Uses no network port, so it can run while other QEMU tests use port 12323.
 #
 # Usage (on the build host):
