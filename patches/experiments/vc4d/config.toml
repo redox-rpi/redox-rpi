@@ -18,3 +18,8 @@ cmd = "vc4d"
 inherit_envs = ["VC4D", "VC4D_FAKE", "VC4D_LOG", "VC4D_FLIP", "VC4D_CHECK", "VC4D_IRQ_PROBE", "VC4D_VBLANK"]
 type = "notify"
 """
+
+# TEST ONLY (branch g5-edid-test, redox-rpi#671 step 1): EDID read on the BCM2711.
+[[files]]
+path = "/etc/vc4d-edid-on"
+data = ""

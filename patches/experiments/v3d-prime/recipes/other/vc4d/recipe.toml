@@ -4,7 +4,7 @@
 # imports dma-buf fds (DRM_CAP_PRIME import).
 [source]
 git = "https://github.com/redox-rpi/vc4d.git"
-rev = "c4c5a12ebf136e448dd2c8a164347a29d4fa00bd"
+rev = "3583ef86f4acce8d5c2264540cc5bd03579084a4"
 
 [build]
 template = "cargo"
