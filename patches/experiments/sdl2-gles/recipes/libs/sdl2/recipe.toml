@@ -2,7 +2,8 @@
 # framebuffer backend for windows without OpenGL) plus OpenGL ES through
 # EGL on Mesa: the Orbital driver's OpenGL part is rewritten for EGL's
 # surfaceless platform (pbuffer, copied into the window on swap), see
-# README.md. The first patch is orbital-apps' own, unchanged.
+# README.md. The first patch is orbital-apps' own, unchanged. The last one
+# makes SDL's 2D renderer default to software (#769).
 [source]
 git = "https://gitlab.redox-os.org/redox-os/sdl2.git"
 branch = "redox-2.0.33"
@@ -599,6 +600,33 @@ index 449f395..c30bca5 100644
  }
  
 
+PATCH
+fi
+if ! grep -q "Default it to the software renderer" src/video/orbital/SDL_orbitalvideo.c; then
+patch -p1 <<'PATCH'
+--- a/src/video/orbital/SDL_orbitalvideo.c
++++ b/src/video/orbital/SDL_orbitalvideo.c
+@@ -42,6 +42,7 @@
+ #include "SDL_orbitalwindow.h"
+ #include "SDL_orbitalframebuffer.h"
+ #include "SDL_orbitalopengl.h"
++#include "SDL_hints.h"
+ 
+ #include <assert.h>
+ #include <fcntl.h>
+@@ -179,6 +180,12 @@
+ 
+ 	ORBITAL_InitOSKeymap();
+ 
++	// SDL's 2D renderer would pick its OpenGL ES 2.0 backend, which draws on
++	// the V3D and reads every frame back with the CPU (redox-rpi #769).
++	// Default it to the software renderer; SDL_RENDER_DRIVER or a program's
++	// own hint still choose another one. SDL_GL contexts stay on the V3D.
++	SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, "software", SDL_HINT_DEFAULT);
++
+ 	SDL_zero(desktop_mode);
+ 	desktop_mode.w = orb_display_width();
+ 	desktop_mode.h = orb_display_height();
 PATCH
 fi
 '''
