@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.net>
+Date: Sat, 7 Nov 2026 09:00:00 +0000
+Subject: [PATCH] aarch64: build relibc for the Cortex-A53 (redox-rpi cpu-a53)
+
+---
+
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -27,7 +27,7 @@ export CFLAGS=-I$(TARGET_HEADERS)
+ # The aarch64 signal entry returns with `br x18`, so compiled code must
+ # never keep a value in x18 (redox-rpi #1).
+ ifeq ($(TARGET),aarch64-unknown-redox)
+-export RUSTFLAGS+=-Zfixed-x18
++export RUSTFLAGS+=-Zfixed-x18 -Ctarget-cpu=cortex-a53 -Ctarget-feature=-aes,-sha2
+ CFLAGS+=-ffixed-x18
+ endif
+ 
+-- 
