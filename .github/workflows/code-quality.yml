@@ -72,7 +72,7 @@ jobs:
           PY
       - name: cargo test (tool crates with host tests)
         run: |
-          for crate in assistant cputop socdump timerd timesync welcome; do
+          for crate in assistant cputop diagread socdump timerd timesync welcome; do
               echo "::group::$crate"
               (cd "tools/$crate" && cargo test --quiet)
               echo "::endgroup::"
@@ -140,7 +140,7 @@ jobs:
           echo "" >> "$sum"
           echo "| Crate (host tests) | Line coverage |" >> "$sum"
           echo "|---|---|" >> "$sum"
-          for crate in assistant cputop socdump timerd timesync welcome; do
+          for crate in assistant cputop diagread socdump timerd timesync welcome; do
               cov="$(cd "tools/$crate" && cargo llvm-cov --quiet --summary-only 2>/dev/null | awk '/^TOTAL/ {print $10}')"
               echo "| $crate | ${cov:-n/a} |" >> "$sum"
           done

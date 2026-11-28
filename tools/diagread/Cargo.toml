@@ -1,0 +1,10 @@
+[package]
+name = "diagread"
+description = "Read the display sampler ring of the open Pi firmware (rpi-open-firmware #66), on Redox and Linux"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+fdt = "0.1.5"
+libc = "0.2"
