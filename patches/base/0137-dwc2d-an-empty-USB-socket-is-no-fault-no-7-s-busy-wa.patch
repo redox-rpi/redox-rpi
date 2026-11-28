@@ -1,0 +1,135 @@
+From e7a9ce2db9ca57067b6f9a07e4619d2900653666 Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 14:30:47 +0000
+Subject: [PATCH] dwc2d: an empty USB socket is no fault, no 7 s busy wait at
+ boot (#787)
+
+On boards whose root port is the USB socket itself (Zero, Zero W,
+Zero 2 W, A, A+, 3A+, from the devicetree), nothing on the port is the
+normal case. The root port recovery for the onboard hub (#576) waited
+2 s for a connection three times and power-cycled the port, all in busy
+loops: about 7 s of CPU and 7 s later network and input at every boot.
+Now such a board waits at most 300 ms for a connection and starts with an
+empty bus; the hotplug rescan finds what is plugged in later.
+
+The 1 s wait for late network adapters at boot is skipped when nothing
+is on the root port.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/dwc2.rs |  5 ++++
+ drivers/usb/dwc2d/src/main.rs | 50 +++++++++++++++++++++++++++++++----
+ 2 files changed, 50 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/dwc2.rs b/drivers/usb/dwc2d/src/dwc2.rs
+index f15cac28..99460804 100644
+--- a/drivers/usb/dwc2d/src/dwc2.rs
++++ b/drivers/usb/dwc2d/src/dwc2.rs
+@@ -231,6 +231,11 @@ impl Dwc2 {
+         }
+     }
+ 
++    /// Switch the root port's power on (it may be on already).
++    pub fn power_port(&self) {
++        self.write_port(HPRT0_PWR, 0);
++    }
++
+     /// Whether a device is connected to the root port.
+     pub fn root_connected(&self) -> bool {
+         self.read(HPRT0) & HPRT0_CONN_STS != 0
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index f2e24d76..4dedd230 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -343,6 +343,14 @@ const RX_CHANNEL: usize = 1;
+ /// How often to look for received frames without an interrupt.
+ const POLL_FALLBACK: Duration = Duration::from_millis(10);
+ 
++/// Whether the board's root port is a USB socket ([`SOCKET_BOARDS`]), from
++/// the devicetree's root `compatible`.
++fn root_port_is_socket(fdt: &Fdt) -> bool {
++    fdt.find_node("/")
++        .and_then(|root| root.property("compatible"))
++        .is_some_and(|p| p.value.split(|&b| b == 0).any(|c| SOCKET_BOARDS.iter().any(|s| s.as_bytes() == c)))
++}
++
+ fn get_dtb() -> Vec<u8> {
+     std::fs::read("/scheme/kernel.dtb").unwrap_or_default()
+ }
+@@ -472,6 +480,20 @@ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+ /// How long to look for devices at boot when there is no network adapter.
+ const BOOT_CONNECT_WAIT: Duration = Duration::from_secs(1);
++/// How long to wait for a device on a root port that is a USB socket (see
++/// [`root_port_is_socket`]). A device signals its connection within 100 ms
++/// of power (USB 2.0, 7.1.7.3); U-Boot has powered the port long before.
++const SOCKET_CONNECT_WAIT: Duration = Duration::from_millis(300);
++/// Boards whose root port is the USB socket itself, without an onboard hub:
++/// nothing on the port is the normal case there (#787).
++const SOCKET_BOARDS: &[&str] = &[
++    "raspberrypi,model-zero-2-w",
++    "raspberrypi,model-zero-w",
++    "raspberrypi,model-zero",
++    "raspberrypi,3-model-a-plus",
++    "raspberrypi,model-a-plus",
++    "raspberrypi,model-a",
++];
+ 
+ user_data! {
+     enum Source {
+@@ -508,7 +530,8 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+     // Network adapters must exist before the network stack starts, so the
+     // daemon reports ready only after enumeration.
+-    let mut bus = match start_bus(&mut hc) {
++    let socket = Fdt::new(&dtb).is_ok_and(|fdt| root_port_is_socket(&fdt));
++    let mut bus = match start_bus(&mut hc, socket) {
+         Ok(bus) => bus,
+         Err(err) => {
+             eprintln!("dwc2d: {:?}", err);
+@@ -560,9 +583,11 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+     // hub). No wait for the link: dhcpd starts when the adapter's `link` file
+     // says up (#560), so the boot does not wait for autonegotiation, 1.7 to
+     // 3 s on the 3B+ with a cable and 10 s without one (#536). The link is
+-    // followed with every rescan from here on.
++    // followed with every rescan from here on. With nothing on the root port
++    // nothing comes this way either; the hotplug rescan finds what is
++    // plugged in later (#787).
+     let start = Instant::now();
+-    while net.adapters.is_empty() && start.elapsed() < BOOT_CONNECT_WAIT {
++    while net.adapters.is_empty() && !bus.devices.is_empty() && start.elapsed() < BOOT_CONNECT_WAIT {
+         dwc2::delay(Duration::from_millis(50));
+         let changes = bus.scan();
+         boot_probe(&mut bus, &mut net, &mut keyboard, &mut mouse, changes.added);
+@@ -766,11 +791,26 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+ 
+ /// Bring up the controller and enumerate the devices behind the root port.
+ /// With nothing on the root port, the bus starts empty and a later rescan
+-/// finds what is plugged in.
+-fn start_bus(hc: &mut Dwc2) -> Result<Bus, dwc2::Error> {
++/// finds what is plugged in. `socket`: the root port is a USB socket (see
++/// [`root_port_is_socket`]).
++fn start_bus(hc: &mut Dwc2, socket: bool) -> Result<Bus, dwc2::Error> {
+     hc.init_host()?;
+     println!("dwc2d: host mode, {} channels", hc.channels());
+ 
++    // An empty socket is no fault: no waits for a connection and no
++    // recovery below, which took 7 s of busy waiting at every boot (#787).
++    if socket {
++        hc.power_port();
++        let start = Instant::now();
++        while !hc.root_connected() && start.elapsed() < SOCKET_CONNECT_WAIT {
++            dwc2::delay(Duration::from_millis(10));
++        }
++        if !hc.root_connected() {
++            println!("dwc2d: nothing on the USB socket");
++            return Ok(Bus::new(hc));
++        }
++    }
++
+     // Devices sometimes fail their first requests after a reset (seen on the
+     // real Pi 3B+ hub); reset the port and start over, like Linux does.
+     // When that does not help, or nothing connects, reset the root port
+-- 
+2.53.0
+

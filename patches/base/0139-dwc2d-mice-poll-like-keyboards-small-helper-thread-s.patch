@@ -1,0 +1,400 @@
+From ae256ee11b9bdc529fa30de66b5a38d1218f295b Mon Sep 17 00:00:00 2001
+From: stephan-xyz <stephan@zehrer.xyz>
+Date: Sat, 28 Nov 2026 16:01:44 +0000
+Subject: [PATCH] dwc2d: mice poll like keyboards; small helper thread stacks
+ (#798)
+
+- Keyboards and mice share the polling of #787 (InterruptPoll in
+  hid.rs): no busy wait without a transaction translator, every 30 ms
+  while idle behind a high-speed hub. A low-speed mouse behind the
+  Zero 2 W hub cost about 8 % of a core. The data is read out of the DMA
+  buffer before the next packet is started into it.
+- After 10 failed polls in a row a keyboard or mouse is polled every
+  500 ms until it works again or the rescan removes it, with a log line
+  each way: behind a hub each failed poll waited its whole 5 ms timeout.
+- The input and test-file threads get 64 KiB stacks instead of 2 MiB;
+  each keyboard or mouse added 2 MB to dwc2d.
+- While /tmp/dwc2d-input-log exists, key events are printed too, like
+  mouse events (tests without a person).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2d/src/aside.rs |   9 +-
+ drivers/usb/dwc2d/src/hid.rs   | 199 ++++++++++++++++++++++++---------
+ drivers/usb/dwc2d/src/main.rs  |   5 +-
+ drivers/usb/dwc2d/src/mouse.rs |  13 ++-
+ 4 files changed, 163 insertions(+), 63 deletions(-)
+
+diff --git a/drivers/usb/dwc2d/src/aside.rs b/drivers/usb/dwc2d/src/aside.rs
+index f964d45c..21b74a60 100644
+--- a/drivers/usb/dwc2d/src/aside.rs
++++ b/drivers/usb/dwc2d/src/aside.rs
+@@ -19,6 +19,11 @@ use std::time::Duration;
+ 
+ use inputd::ProducerHandle;
+ 
++/// Stack of the helper threads: they only pass events on and read small
++/// files. The default of 2 MiB added 2 MB to dwc2d with each keyboard or
++/// mouse (#798).
++const THREAD_STACK: usize = 64 * 1024;
++
+ /// Events held while inputd does not take them; more are dropped.
+ const INPUT_QUEUE: usize = 256;
+ static INPUT_DROPPED: AtomicU64 = AtomicU64::new(0);
+@@ -30,7 +35,7 @@ impl Input {
+     pub fn new() -> io::Result<Self> {
+         let mut producer = ProducerHandle::new()?;
+         let (sender, receiver) = sync_channel::<orbclient::Event>(INPUT_QUEUE);
+-        thread::Builder::new().name("dwc2d-input".into()).spawn(move || {
++        thread::Builder::new().name("dwc2d-input".into()).stack_size(THREAD_STACK).spawn(move || {
+             for event in receiver {
+                 let _ = producer.write_event(event);
+             }
+@@ -60,7 +65,7 @@ static INPUT_LOG_ON: AtomicBool = AtomicBool::new(false);
+ /// ([`crate::CYCLE_REQUEST`]) and whether to print input events
+ /// ([`crate::INPUT_LOG`]).
+ pub fn spawn_files() {
+-    let _ = thread::Builder::new().name("dwc2d-files".into()).spawn(|| loop {
++    let _ = thread::Builder::new().name("dwc2d-files".into()).stack_size(THREAD_STACK).spawn(|| loop {
+         if let Ok(request) = std::fs::read_to_string(crate::CYCLE_REQUEST) {
+             let _ = std::fs::remove_file(crate::CYCLE_REQUEST);
+             *CYCLE.lock().unwrap() = Some(request);
+diff --git a/drivers/usb/dwc2d/src/hid.rs b/drivers/usb/dwc2d/src/hid.rs
+index 43dfc42f..216889e0 100644
+--- a/drivers/usb/dwc2d/src/hid.rs
++++ b/drivers/usb/dwc2d/src/hid.rs
+@@ -26,18 +26,140 @@ const PROTOCOL_BOOT: u16 = 0;
+ /// The host channel for keyboard reports; 0 does control transfers, the
+ /// network adapters use 1 and 2.
+ const CHANNEL: usize = 3;
+-const POLL_INTERVAL: Duration = Duration::from_millis(10);
++/// Polls of an interrupt IN endpoint, for keyboards and mice.
++pub const POLL_INTERVAL: Duration = Duration::from_millis(10);
+ /// Behind a high-speed hub each poll waits for its start and complete
+ /// splits in a busy loop (they must follow within microframes, too soon
+-/// for a wakeup). There the keyboard is polled less often while nothing
+-/// happens: every `IDLE_POLL_INTERVAL` once no report has changed for
+-/// `IDLE_AFTER` and no key is down (#787).
++/// for a wakeup). There a device is polled less often while nothing
++/// happens: every `IDLE_POLL_INTERVAL` once it has sent no data for
++/// `IDLE_AFTER` (#787, #798).
+ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(30);
+ const IDLE_AFTER: Duration = Duration::from_secs(2);
++/// After this many failed polls in a row (a device that went away before
++/// the rescan noticed, a stuck transaction translator), poll only every
++/// `FAILED_POLL_INTERVAL`: each failed poll behind a hub waits its whole
++/// timeout (#798).
++const FAILURE_LIMIT: u32 = 10;
++const FAILED_POLL_INTERVAL: Duration = Duration::from_millis(500);
++/// How long a poll behind a hub may wait for its splits.
++const SPLIT_TIMEOUT: Duration = Duration::from_millis(5);
+ /// A packet started without waiting that has not finished after this long
+ /// is halted and started again.
+ const PENDING_LIMIT: Duration = Duration::from_millis(100);
+ 
++/// The polling of one interrupt IN endpoint (#787, #798).
++///
++/// Without a transaction translator (device on the socket or behind a
++/// full-speed hub) a poll takes the result of the packet started at the
++/// last poll and starts the next one: the controller does the frame
++/// timing, no CPU waits, and data reaches the caller one poll later.
++/// Behind a high-speed hub the splits must follow within microframes, so
++/// that poll waits for its packet.
++pub struct InterruptPoll {
++    /// The device, for the log.
++    what: &'static str,
++    /// When the packet on the channel was started without waiting, until
++    /// its result is taken.
++    pending: Option<Instant>,
++    /// The last poll that brought data.
++    last_data: Instant,
++    /// Failed polls in a row.
++    failures: u32,
++}
++
++impl InterruptPoll {
++    pub fn new(what: &'static str) -> Self {
++        Self { what, pending: None, last_data: Instant::now(), failures: 0 }
++    }
++
++    fn worked(&mut self) {
++        if self.failures >= FAILURE_LIMIT {
++            println!("dwc2d: {}: polls work again", self.what);
++        }
++        self.failures = 0;
++    }
++
++    fn failed(&mut self, why: std::fmt::Arguments) {
++        self.failures = self.failures.saturating_add(1);
++        if self.failures == FAILURE_LIMIT {
++            println!(
++                "dwc2d: {}: {FAILURE_LIMIT} polls failed in a row (last: {why}), polling every {FAILED_POLL_INTERVAL:?}",
++                self.what
++            );
++        }
++    }
++
++    /// The time from this poll to the next. `active`: the device is in use
++    /// even without data (a key held down).
++    pub fn interval(&self, tt: bool, active: bool) -> Duration {
++        if self.failures >= FAILURE_LIMIT {
++            FAILED_POLL_INTERVAL
++        } else if tt && !active && self.last_data.elapsed() >= IDLE_AFTER {
++            IDLE_POLL_INTERVAL
++        } else {
++            POLL_INTERVAL
++        }
++    }
++
++    /// One poll on channel `ch`. When a packet arrived, `read` gets its
++    /// length and takes the data out of the DMA buffer, before the next
++    /// packet is started into it; its result is returned. `phase.pid` is
++    /// ignored; `pid` is the endpoint's data PID and is updated with each
++    /// packet.
++    pub fn poll<R>(
++        &mut self,
++        hc: &Dwc2,
++        ch: usize,
++        phase: Phase,
++        tt: Option<(u8, u8)>,
++        pid: &mut u32,
++        read: impl FnOnce(usize) -> R,
++    ) -> Option<R> {
++        let mut data = None;
++        if tt.is_some() {
++            let result = hc.interrupt_in(ch, &Phase { pid: *pid, ..phase }, tt, SPLIT_TIMEOUT);
++            return self.take(result, pid).map(read);
++        }
++        if let Some(started) = self.pending {
++            match hc.interrupt_in_result(ch, phase.len) {
++                Some(result) => {
++                    self.pending = None;
++                    // Read before the next packet is started into the buffer.
++                    data = self.take(result, pid).map(read);
++                }
++                None if started.elapsed() < PENDING_LIMIT => return None,
++                None => {
++                    hc.halt(ch);
++                    self.pending = None;
++                    self.failed(format_args!("no result after {PENDING_LIMIT:?}"));
++                }
++            }
++        }
++        hc.interrupt_in_start(ch, &Phase { pid: *pid, ..phase });
++        self.pending = Some(Instant::now());
++        data
++    }
++
++    fn take(&mut self, result: Result<Option<(usize, u32)>, Error>, pid: &mut u32) -> Option<usize> {
++        match result {
++            Ok(Some((len, next_pid))) => {
++                *pid = next_pid;
++                self.worked();
++                self.last_data = Instant::now();
++                Some(len)
++            }
++            Ok(None) => {
++                self.worked();
++                None
++            }
++            Err(err) => {
++                self.failed(format_args!("{err:?}"));
++                None
++            }
++        }
++    }
++}
++
+ /// The poll after `due`, on a fixed grid of `interval` from the first poll.
+ /// The timer wakes the driver late; taking `now + interval` added that
+ /// delay to every poll, and on the Pi a 10 ms poll came every ~20 ms. A
+@@ -135,11 +257,9 @@ pub struct Keyboard {
+     next_poll: Instant,
+     /// The key that repeats while held and when it repeats next.
+     repeat: Option<(u8, Instant)>,
+-    /// When the packet on the channel was started without waiting (no
+-    /// transaction translator), until its result is taken.
+-    pending: Option<Instant>,
+-    /// The last report that changed something.
+-    last_change: Instant,
++    poll: InterruptPoll,
++    /// Print every key event (tests without a person).
++    pub log: bool,
+ }
+ 
+ impl Keyboard {
+@@ -156,8 +276,8 @@ impl Keyboard {
+             input,
+             next_poll: Instant::now(),
+             repeat: None,
+-            pending: None,
+-            last_change: Instant::now(),
++            poll: InterruptPoll::new("keyboard"),
++            log: false,
+         })
+     }
+ 
+@@ -189,10 +309,7 @@ impl Keyboard {
+         if now < self.next_poll {
+             return;
+         }
+-        let idle = self.f.tt.is_some()
+-            && self.report == [0; 8]
+-            && now.duration_since(self.last_change) >= IDLE_AFTER;
+-        let interval = if idle { IDLE_POLL_INTERVAL } else { POLL_INTERVAL };
++        let interval = self.poll.interval(self.f.tt.is_some(), self.report != [0; 8]);
+         self.next_poll = next_poll_after(self.next_poll, now, interval);
+ 
+         let phase = Phase {
+@@ -206,47 +323,16 @@ impl Keyboard {
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(8),
+         };
+-        if self.f.tt.is_some() {
+-            let result = self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5));
+-            self.take(result);
+-            return;
+-        }
+-        // Without a transaction translator: take the result of the packet
+-        // started at the last poll, then start the next one. A report
+-        // reaches inputd one poll later, at most 10 ms.
+-        if let Some(started) = self.pending {
+-            match self.hc.interrupt_in_result(CHANNEL, phase.len) {
+-                Some(result) => {
+-                    self.pending = None;
+-                    self.take(result);
+-                }
+-                None if now.duration_since(started) < PENDING_LIMIT => return,
+-                None => {
+-                    self.hc.halt(CHANNEL);
+-                    self.pending = None;
+-                }
+-            }
+-        }
+-        let phase = Phase { pid: self.pid, ..phase };
+-        self.hc.interrupt_in_start(CHANNEL, &phase);
+-        self.pending = Some(now);
+-    }
+-
+-    /// Handle the result of one packet from the interrupt endpoint.
+-    fn take(&mut self, result: Result<Option<(usize, u32)>, Error>) {
+-        match result {
+-            Ok(Some((len, next_pid))) => {
+-                self.pid = next_pid;
+-                if len >= 3 {
+-                    let mut report = [0; 8];
+-                    report[..len].copy_from_slice(&self.buf[..len]);
+-                    if report != self.report {
+-                        self.last_change = Instant::now();
+-                    }
+-                    self.update(report);
+-                }
++        let buf = &self.buf;
++        let read = |len: usize| {
++            let mut report = [0; 8];
++            report[..len.min(8)].copy_from_slice(&buf[..len.min(8)]);
++            (len, report)
++        };
++        if let Some((len, report)) = self.poll.poll(&self.hc, CHANNEL, phase, self.f.tt, &mut self.pid, read) {
++            if len >= 3 {
++                self.update(report);
+             }
+-            Ok(None) | Err(_) => {}
+         }
+     }
+ 
+@@ -283,6 +369,9 @@ impl Keyboard {
+         let Some(scancode) = scancode(usage) else {
+             return;
+         };
++        if self.log {
++            println!("dwc2d: keyboard: usage {usage:#04x} {}", if pressed { "down" } else { "up" });
++        }
+         let event = KeyEvent {
+             character: '\0',
+             scancode,
+diff --git a/drivers/usb/dwc2d/src/main.rs b/drivers/usb/dwc2d/src/main.rs
+index 4dedd230..0d12ea01 100644
+--- a/drivers/usb/dwc2d/src/main.rs
++++ b/drivers/usb/dwc2d/src/main.rs
+@@ -475,7 +475,7 @@ const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
+ /// switches it off and on (see [`Bus::cycle_port`]): `network`, `keyboard`
+ /// or `mouse` for the port of the device in use, or `<hub address> <port>`.
+ const CYCLE_REQUEST: &str = "/tmp/dwc2d-cycle";
+-/// While this file exists, mouse events are printed too (tests without a
++/// While this file exists, mouse and keyboard events are printed too (tests without a
+ /// person); looked at with every rescan.
+ const INPUT_LOG: &str = "/tmp/dwc2d-input-log";
+ /// How long to look for devices at boot when there is no network adapter.
+@@ -769,6 +769,9 @@ fn daemon(daemon: daemon::Daemon) -> ! {
+                 if let Some(m) = mouse.as_mut() {
+                     m.log = aside::input_log();
+                 }
++                if let Some(k) = keyboard.as_mut() {
++                    k.log = aside::input_log();
++                }
+                 // New adapters bring their link with them; the others are
+                 // asked now and then.
+                 let t = Instant::now();
+diff --git a/drivers/usb/dwc2d/src/mouse.rs b/drivers/usb/dwc2d/src/mouse.rs
+index b2c60179..f9e81567 100644
+--- a/drivers/usb/dwc2d/src/mouse.rs
++++ b/drivers/usb/dwc2d/src/mouse.rs
+@@ -13,6 +13,7 @@ use crate::aside::Input;
+ use orbclient::{ButtonEvent, MouseEvent, MouseRelativeEvent, ScrollEvent};
+ 
+ use crate::dwc2::{Dwc2, Error, Phase, Speed};
++use crate::hid::InterruptPoll;
+ use crate::enumerate::{Bus, Device};
+ use crate::regs::*;
+ 
+@@ -41,7 +42,6 @@ const USAGE_WHEEL: u16 = 0x38;
+ /// The host channel for mouse reports; the keyboard uses 3, USB sticks 4
+ /// and 5.
+ const CHANNEL: usize = 6;
+-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+ /// The largest report read; mice send 3 to 8 bytes.
+ const REPORT_MAX: usize = 64;
+ 
+@@ -370,6 +370,7 @@ pub struct Mouse {
+     position: Option<(i32, i32)>,
+     input: Input,
+     next_poll: Instant,
++    poll: InterruptPoll,
+     /// Print every event (tests without a person).
+     pub log: bool,
+ }
+@@ -388,6 +389,7 @@ impl Mouse {
+             position: None,
+             input,
+             next_poll: Instant::now(),
++            poll: InterruptPoll::new("mouse"),
+             log: false,
+         })
+     }
+@@ -402,7 +404,8 @@ impl Mouse {
+     pub fn poll(&mut self) -> Duration {
+         let now = Instant::now();
+         if now >= self.next_poll {
+-            self.next_poll = crate::hid::next_poll_after(self.next_poll, now, POLL_INTERVAL);
++            let interval = self.poll.interval(self.f.tt.is_some(), self.buttons.contains(&true));
++            self.next_poll = crate::hid::next_poll_after(self.next_poll, now, interval);
+             self.poll_now();
+         }
+         self.next_poll.saturating_duration_since(Instant::now())
+@@ -420,9 +423,9 @@ impl Mouse {
+             buf_phys: self.buf.physical(),
+             len: usize::from(self.f.max_packet).min(REPORT_MAX),
+         };
+-        if let Ok(Some((len, next_pid))) = self.hc.interrupt_in(CHANNEL, &phase, self.f.tt, Duration::from_millis(5)) {
+-            self.pid = next_pid;
+-            let report = self.buf[..len].to_vec();
++        let buf = &self.buf;
++        let read = |len: usize| buf[..len.min(REPORT_MAX)].to_vec();
++        if let Some(report) = self.poll.poll(&self.hc, CHANNEL, phase, self.f.tt, &mut self.pid, read) {
+             self.update(&report);
+         }
+     }
+-- 
+2.53.0
+
